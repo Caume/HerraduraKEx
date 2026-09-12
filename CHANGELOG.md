@@ -2,6 +2,77 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.6] - 2026-09-11
+
+### TODO #288 — `qcmdpc_bgf_variants.py` measured hybrid parameter sets and labelled them "deployed"
+
+Found by surveying all 33 exit-status-gating `SecurityProofsCode` scripts after TODO #286.
+`qcmdpc_bgf_variants.py` — TODO #250's decoder-variant comparison — **exited 1 with 6 of its
+18 recorded findings not reproducing**, at head, under both `--quick` and the full run.
+
+**The cause was a half-updated script.** It hardcoded `r` in some places while reading `d`
+and `t` from the suite, so #276's adoption of BIKE-128 left it measuring instances that
+correspond to no real parameter set:
+
+| site | what it built |
+|---|---|
+| §4's tuning grid | `(467, 71, 134)` — `r = 467` is a literal chosen against the retired `d = 15` |
+| §6's `r` windows | `r ∈ 443…523` at `d = 71` — 71 support positions in a 443-bit ring is 16% density, not an MDPC code |
+| §4's sample sizing | still branching on `d == 15` |
+| §5's title | `(r = 523, d = 15, t = 18)` over code measuring BIKE-128 |
+| §3, §7 | the suite's `NB_ITER = 5`, against a policy modelling a 20-iteration decoder |
+
+§6's curve fit returned **`r* = inf`** — there was no waterfall left to fit — and §1's pinning
+failed, which is the gate every other section is explicitly conditioned on.
+
+**Fixed by declaring what the script actually is: a retired-instance study.** `RETIRED =
+(523, 15, 18)` and `NB_ITER_RETIRED = 20` are literals; §§2–6 name them; §7 remains the
+argument that carries the result to what ships. Re-pointing the whole file at BIKE-128 was
+considered and rejected: the deployed `(d, t)` has a reachable waterfall at `r ≈ 9800` (#285
+§3), but a decode there costs ~55 ms against ~1 ms here, turning minutes into hours, and §7
+already supplies the transfer. #250's four verdict-carrying findings never stopped
+reproducing — what broke was the evidence chain, not the verdict.
+
+**§1 is now stronger than the check it replaces**, and the reason is worth recording. The
+first reading was that `POL_BASE` had lost its referent entirely, since it models a decoder
+#276 removed from the tree. It has two:
+
+* **(a)** The shared substrate is pinned against the *real* `SUITE.qcmdpc_bgf_decode` at the
+  deployed parameters, by configuring `SwPolicy` with the suite's `QCMDPC_TH_*` constants —
+  BIKE Level 1 is expressible in this file's policy object, so the loop, flip logic, bitplane
+  counters and iteration-0 second pass are held to a function that exists rather than to a
+  copy of themselves. **7/7.**
+* **(b)** `POL_BASE` is pinned by §5 against the *measurement* the retired decoder left
+  behind: §11.8.7's `0.264% [0.236%, 0.295%]` over 120 000 trials — a sharper referent than
+  any sample this script can afford. §1(b) therefore asserts only that the retired instance is
+  well-formed and decodes.
+
+Restored numbers: `r* = 1620` against §11.8.7's 1723; completion attribution back to **0
+direct completions vs 10 that needed the resume**, which is what §2's census predicts; baseline
+DFR `0.3500%` over 4000 trials, inside §11.8.7's interval; #250's verdict at 3.8 bits bought
+against 119.8 needed. **18/18 in 670 s.**
+
+**Check B′′ had a blind spot, and this is what fell through it.** B′′ (v7.0.4) requires a
+protocol-family token in the window next to a currency claim — which is what took it from 35
+findings (33 of them on *correct* sentences) to one. The cost is a false negative in the files
+most likely to carry the defect: a file entirely about QC-MDPC never says "QC-MDPC" in a
+sentence, because it has no reason to. So a file whose **name** establishes a family now gets
+that family as a default. Verified against the originating sentence:
+
+```
+STALE CURRENCY CLAIM -- qcmdpc_bgf_variants.py:830 says 'deployed parameters (r = 523,'
+  where herradura.h QCMDPC_R = 12323.  The family (QC-MDPC) comes from the FILENAME...
+```
+
+The widening surfaced four more, and **all four are correct sentences** — e.g. "the deployed
+rule fails 150 times out of 150 at `d = 15`", where *deployed* modifies the rule and `d = 15`
+is the retired width it fails at. Each is exempted with a specific reason, and the table says
+plainly that if that list grows without reasons this specific, the widening is what to
+revisit rather than the exemptions.
+
+**Also:** CLAUDE.md described `check_docs_consistency.py` as having "four checks" — stale since
+#286 and #287 added B′′ and E. Corrected to six, with each named.
+
 ## [7.0.5] - 2026-09-11
 
 ### TODO #287 — the MCP server is agent-facing, has a trust-model regression test, and nothing ran it

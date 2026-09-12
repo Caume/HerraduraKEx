@@ -379,6 +379,34 @@ _FAMILIES = {
     'HKEX-RNL': {'n': 'RNL_N', 'q': 'RNL_Q', 'p': 'RNL_P'},
 }
 
+# THE FAMILY MAY COME FROM THE FILE, NOT THE SENTENCE (TODO #288).  Requiring a
+# family token in the window is what took this check from 35 findings (33 of
+# them on correct sentences) to one, and it is still the right requirement --
+# but it bought a false negative in the files most likely to carry the defect.
+# qcmdpc_bgf_variants.py titled a section "Paired DFR at the deployed
+# parameters (r = 523, d = 15, t = 18)" over code measuring BIKE-128, and this
+# check did not see it, because a file entirely about QC-MDPC never says
+# "QC-MDPC" in a sentence -- it has no reason to.
+#
+# So a file whose NAME establishes a family gets that family as a default, and
+# its currency claims are checked without needing the token inline.  The name
+# is the evidence on purpose: a docstring can drift, and a filename that says
+# `qcmdpc_` is a commitment the rest of the file is organised around.
+_FAMILY_BY_FILENAME = [
+    ('qcmdpc', 'QC-MDPC'),
+    ('hkex_rnl', 'HKEX-RNL'),
+    ('rnl_parameter', 'HKEX-RNL'),
+]
+
+
+def _default_family(filename):
+    low = filename.lower()
+    for token, fam in _FAMILY_BY_FILENAME:
+        if token in low:
+            return fam
+    return None
+
+
 # family token, then a currency word, then an assignment -- in either order for
 # the first two, since "the deployed QC-MDPC set" and "QC-MDPC, as currently
 # deployed," both occur.  The window is deliberately short: a currency claim and
@@ -393,6 +421,14 @@ _CURRENCY_PATTERNS = [
     for fam in _FAMILIES
 ]
 
+# The same claim with no family token, for files that carry a default family.
+# Only applied when _default_family() names one, so it cannot fire on the
+# general corpus that produced the 33 false positives.
+_CURRENCY_RE_NOFAM = re.compile(
+    r"%s[^\n]{0,40}?(?<![A-Za-z0-9_])([rdtnqp])\s*=\s*(\d[\d,]*)"
+    r"(?![\d,]*[A-Za-z])" % _CURRENCY_WORDS, re.I)
+
+
 # (path relative to SecurityProofsCode, regex, reason).  Each must match.
 CURRENCY_EXEMPT = [
     ('qcmdpc_parameter_selection.py',
@@ -400,6 +436,32 @@ CURRENCY_EXEMPT = [
      "HISTORICAL -- names the set TODO #276 replaced, and marks it with "
      "'then-'.  The whole script is a before/after argument; see its RETIRED "
      "constant"),
+    # The four below are what the filename-default widening of TODO #288 turned
+    # up, and every one is a CORRECT sentence.  That is the cost of the
+    # widening and it is worth paying at this size -- four entries with crisp
+    # reasons, against the class that let qcmdpc_bgf_variants.py title a
+    # section "the deployed parameters (r = 523, d = 15, t = 18)" over code
+    # measuring BIKE-128.  If this list starts growing without each entry
+    # having a reason this specific, the widening is the thing to revisit.
+    ('qcmdpc_dfr_weak_keys.py',
+     r"the deployed rule fails 150 times out of 150 at d = 15",
+     "CORRECT AS WRITTEN -- 'deployed' modifies the RULE (BIKE L1, which is "
+     "deployed) and 'd = 15' is the retired width it fails at.  The sentence "
+     "is precisely about the deployed rule meeting the retired parameters"),
+    ('hkex_rnl_lattice_2026.py',
+     r"the parameters then\s*\n?deployed: the n=256 number was cited",
+     "HISTORICAL -- 'then deployed', past tense, describing the state TODO "
+     "#216 changed.  TODO #286 rewrote this paragraph into the past tense for "
+     "exactly this reason"),
+    ('hkex_rnl_failure_rate.py',
+     r'f"n=\{RNL_DEPLOYED_N\}, p=2048 \(more noise\)"',
+     "NOT A CLAIM -- p=2048 is a hypothetical noise variant, labelled as one.  "
+     "The currency word is the VARIABLE NAME RNL_DEPLOYED_N sitting adjacent "
+     "in an f-string; the rendered label reads 'n=1024, p=2048 (more noise)' "
+     "and carries no currency word at all"),
+    ('hkex_rnl_failure_rate.py',
+     r'f"n=\{RNL_DEPLOYED_N\}, p=8192 \(less noise\)"',
+     "NOT A CLAIM -- the same f-string adjacency, for the low-noise variant"),
 ]
 
 
@@ -492,6 +554,30 @@ def check_currency_claims(consts):
             continue
         text = read(os.path.join(root, name))
         covered = exempt_spans.get(name, [])
+
+        # A file whose name establishes a family has its currency claims read
+        # without an inline family token (TODO #288).
+        fam_default = _default_family(name)
+        if fam_default is not None:
+            for m in _CURRENCY_RE_NOFAM.finditer(text):
+                if any(lo <= m.start() and m.end() <= hi for lo, hi in covered):
+                    continue
+                const = _FAMILIES[fam_default].get(m.group(1).lower())
+                checked += 1
+                if const is None or const not in consts:
+                    continue
+                if int(m.group(2).rstrip(",")) != consts[const]:
+                    line = text[:m.start()].count("\n") + 1
+                    fail("B''", "STALE CURRENCY CLAIM -- SecurityProofsCode/%s:%d "
+                                "says %r where herradura.h %s = %d.  The family "
+                                "(%s) comes from the FILENAME, so the sentence "
+                                "does not have to name it.  Either it means a "
+                                "RETIRED value -- say so and add a "
+                                "CURRENCY_EXEMPT entry -- or it is out of date."
+                                % (name, line,
+                                   m.group(0).replace("\n", " ")[:70],
+                                   const, consts[const], fam_default))
+
         for pat in _CURRENCY_PATTERNS:
             for m in pat.finditer(text):
                 if any(lo <= m.start() and m.end() <= hi for lo, hi in covered):

@@ -17427,3 +17427,116 @@ in both directions.
 
 Status: **DONE v7.0.5** — both MCP harnesses now run in CI, the server enforces the schemas it advertises (an unknown argument no longer drops silently, which is TODO #274's fail-open shape at the agent boundary), tool coverage goes five-of-eight to eight-of-eight with the key-echo check on three tools in two shapes, one trust-model overstatement is withdrawn and pinned, and CLAUDE.md's tool-emitted counts are held to the tools by check E.
 
+---
+
+### #288: `qcmdpc_bgf_variants.py` measures hybrid parameter sets and labels them "deployed"
+
+Found by surveying all 33 exit-status-gating `SecurityProofsCode` scripts after TODO #286
+(31 pass; this is the second of two that do not).  `qcmdpc_bgf_variants.py` -- TODO #250's
+decoder-variant comparison -- **exits 1 with 6 of its 18 recorded findings not reproducing**,
+at head, under both `--quick` (480 s) and the full run:
+
+```
+[FAIL] POL_BASE reproduces the shipped decoder on 60 instances
+[FAIL] the pinning sample contains both outcomes
+[FAIL] a failure leaves a residual error far heavier than t/2
+[FAIL] [deployed] the tuning grid separates rules at all
+[FAIL] a genuine low-weight COMPLETION essentially never fires, as §2 predicted
+[FAIL] the fitted r* for the shipped decoder is in the same range as §11.8.7's 1723 (within 2x)
+```
+
+**The cause is a HALF-updated script**, and it is the same family as #286 leg A without being
+the same mistake: that one read "before" from the present tense, this one reads *some* of the
+parameters from the suite and hardcodes the rest, so it measures instances that correspond to
+no real parameter set.
+
+* line 637: `(467, SUITE._QCMDPC_D, SUITE._QCMDPC_T, "deployed", ...)` -- `r = 467` is a
+  literal chosen relative to the retired `d = 15`, paired with the suite's current `d = 71`
+  and `t = 134`.  The result is `(467, 71, 134)`, which is neither the retired set nor
+  BIKE-128, and it carries the tag `"deployed"`.
+* line 640: `th_ship = max(ceil(0.66 d), (d+1)//2 + 2)` -- the PRE-#276 threshold rule,
+  recomputed at `d = 71`.  So the grid's "baseline point" is the old rule at the new width,
+  which is neither the shipped rule (BIKE L1, affine in the SYNDROME WEIGHT) nor the old one
+  at its own width.  That is why the §1 pinning fails, and §1 is explicitly the gate
+  everything else rests on: "a variant comparison whose baseline is not the deployed decoder
+  measures the wrong thing, so this runs first and everything below is gated on it."
+* line 642: `for _ in range(30 if d == 15 else 10)` -- sample-size logic still branching on
+  the retired `d`.
+* line 723: the §5 section title hardcodes `"Paired DFR at the deployed parameters (r = 523,
+  d = 15, t = 18)"` while line 730 reads `r, d, t` from the suite.  **The title and the
+  measurement disagree**: it measures BIKE-128 and titles it as the toy set.
+* the `r*` finding compares against §11.8.7's fitted `1723`, which TODO #285 replaced
+  outright -- that fit was at `d = 15`, `t = 18`, and the deployed instance has no such
+  figure.  So this finding cannot reproduce even in principle and needs re-pointing at
+  #285 §3's `2^-67` bound rather than repair.
+
+**Not a wrong CONCLUSION, as far as the run shows.**  The four findings that carry #250's
+actual answer -- that no decoder-side variant closes the DFR gap, that the ranking transfers
+to the mid-scale set, that ranking by DFR at one `r` does not rank by `r*`, and that the
+available improvement is real -- all still report OK.  What has broken is the evidence
+chain, not the verdict.  The fix is to decide, per section, whether it measures the RETIRED
+instance (then name it with a literal, as #286 did) or the DEPLOYED one (then read all three
+parameters, and take the shipped threshold rule with them), and to re-point the `r*`
+comparison at #285's replacement figure.
+
+**And it exposes a blind spot in check B'', shipped hours earlier in v7.0.4.**  Line 723 is a
+textbook currency claim -- a currency word next to `r = 523`, `d = 15`, `t = 18` -- and B''
+does NOT flag it, because B'' requires a protocol-FAMILY token in the window and this file
+never names its family in a sentence: the entire file is about QC-MDPC, so it never needs to.
+Requiring the family token is what took that check from 35 findings (33 of them false) to
+one, so the requirement is right and the consequence is a false negative for exactly the
+files most likely to carry the defect.  The fix is a per-FILE family default: a script whose
+name or module docstring establishes the family should not have to repeat it per sentence.
+That is a small change to `_CURRENCY_PATTERNS` plus a family-from-filename map, and it must
+be re-validated against the 33-script corpus, because loosening the window is precisely how
+the 33 false positives came back last time.
+
+**Done in v7.0.5... v7.0.6.**  Option (a): the script is DECLARED a retired-instance study
+rather than re-pointed at BIKE-128.  `RETIRED = (523, 15, 18)` and `NB_ITER_RETIRED = 20` are
+literals, §§2-6 name them, §7 stays the transfer argument.  Re-pointing was considered and
+rejected on cost: the deployed `(d, t)` has a reachable waterfall at `r ~ 9800` (#285 §3), but
+a decode there is ~55 ms against ~1 ms here, so the run would go from minutes to hours and buy
+nothing §7 does not already give.  **18/18 reproduced in 669 s, exit 0.**
+
+**§1 came out STRONGER than this item predicted, and the prediction was wrong in an
+instructive way.**  The item assumed `POL_BASE` had lost its referent because #276 removed the
+decoder it models from the tree.  It has two:
+
+* **(a)** the shared substrate -- loop, flip logic, bitplane counters, iteration-0 second pass
+  -- is pinned against the REAL `SUITE.qcmdpc_bgf_decode` at the deployed parameters, because
+  BIKE L1 is expressible as `SwPolicy(QCMDPC_TH_SLOPE, QCMDPC_TH_OFFSET, QCMDPC_TH_MIN,
+  late_shipped=False)`.  7/7.  That holds the substrate to a function that EXISTS rather than
+  to a copy of itself, which is strictly better than the single pinning it replaces.
+* **(b)** `POL_BASE` is pinned by §5 against the MEASUREMENT its decoder left behind --
+  §11.8.7's `0.264% [0.236%, 0.295%]` over 120 000 trials, a sharper referent than this
+  script's own 4 000-trial sample.  So §1(b) asserts only that the retired instance is
+  well-formed and decodes.  The first draft of (b) asserted "the sample contains both
+  outcomes" and failed 60/0 -- correctly, since at a 0.264% DFR sixty trials expect 0.16
+  failures.  That was a wrong test, not a wrong fix, and it is recorded because the same
+  mistake is easy to repeat at this DFR.
+
+Restored: `r* = 1620` against 1723 (was `inf`); attribution back to 0 direct completions vs 10
+needing the resume, which is what §2's census predicts; baseline DFR 0.3500% over 4000 trials,
+inside §11.8.7's interval; #250's verdict at 3.8 bits against 119.8 needed.
+
+**The B'' blind spot is closed by a FILENAME family default.**  Verified against the
+originating sentence: re-introducing §5's old title produces `STALE CURRENCY CLAIM --
+qcmdpc_bgf_variants.py:830 says 'deployed parameters (r = 523,' ... The family (QC-MDPC) comes
+from the FILENAME`.  The widening cost four new findings and ALL FOUR ARE CORRECT SENTENCES --
+"the deployed rule fails 150 times out of 150 at d = 15" is about the deployed RULE at the
+retired WIDTH, and two more are an f-string adjacency where the currency word is the variable
+name `RNL_DEPLOYED_N`.  Each is exempted with its own reason, and the table records the
+tripwire: if that list grows without reasons this specific, revisit the widening rather than
+the exemptions.  Requiring the token remains right -- it is what took B'' from 35 findings, 33
+of them on correct sentences, to one.
+
+**Also fixed:** CLAUDE.md called `check_docs_consistency.py` a "four checks" script, stale
+since #286 and #287 added B'' and E.  Now six, each named.
+
+**Note for #289:** this script's `--quick` runtime went 480 s -> 669 s, because §6 now finds
+real waterfalls instead of bailing out with fewer than three usable points.  That puts it at
+the 10-minute boundary #289 uses to sort scripts, and it is a cost of the repair rather than a
+regression.
+
+Status: **DONE v7.0.6** — the script is declared a retired-instance study with RETIRED/NB_ITER_RETIRED literals, §1 now pins the substrate against the real shipped decoder and POL_BASE against §11.8.7's recorded measurement, 18/18 findings reproduce, and check B'' gains a filename family default that catches the sentence which started the item.
+
