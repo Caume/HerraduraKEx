@@ -771,6 +771,25 @@ SecurityProofsCode/                                 — standalone Python proof/
                               footers, README, CLAUDE.md, KATEX_RULES.md) agrees with
                               SecurityProofs.md, and that the advertised expression
                               counts match what validate_katex.js measures (TODO #231)
+  run_findings_gates.py     — runs every findings-gating script here, and is what
+                              CI's `analysis-findings` job invokes (TODO #289).
+                              DISCOVERS its set rather than reading a list: a
+                              script whose exit status is its own verdict is run,
+                              with nothing to add anywhere.  That is the fix for
+                              a three-item pattern -- #285, #286 and #287 each
+                              added ONE script to a native-python step and
+                              excluded the rest as too slow, and the excluded set
+                              twice held a script that was already failing.
+                              Skipping one needs a reason in EXCLUDED, which is
+                              self-invalidating: an entry naming an absent or
+                              no-longer-gating file FAILS.  A script that
+                              ADVERTISES a findings gate and is not discovered is
+                              an error too -- discovery reads the exit CALL, so a
+                              fourth exit shape would otherwise be invisible.
+                              Runs everything even after a failure and re-lists
+                              the failures at the end, because #286 found three
+                              broken gates in one script and #288 six.
+                              `--list` prints the set without running it
 SecurityProofs.md                                   — split index (redirects to Parts 1–9; quantum analysis is in SecurityProofs-2.md §6)
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
@@ -1279,8 +1298,9 @@ other way in the Arduino harness: [7] passed at 80% agreement and never asserted
 1,000,000 measured trials of that n=32 Ring-LWR construction produced no disagreement at
 all (DFR ≤ 3e-6 at 95%), so the slack was masking a silent check, not absorbing noise.
 
-`.github/workflows/ci.yml` runs eleven
-jobs on every push/PR, all required/blocking: `native-c`, `native-go`, `native-python`
+`.github/workflows/ci.yml` runs twelve
+jobs on every push/PR, eleven of them required/blocking (the twelfth,
+`analysis-findings`, is on probation — see below): `native-c`, `native-go`, `native-python`
 (one job per language — build/no-build + suite tests + that language's own `CliTest/*.sh`
 scripts, split from a single combined `native` job in TODO #205), `native-interop`
 (the `CliTest/*.sh` scripts that exercise two or more CLIs at once — builds both C and Go —
@@ -1305,9 +1325,33 @@ four `native-*` jobs),
 simavr — ran `continue-on-error: true` until TODO #185
 promoted it after confirming 100% pass history since its one known failure mode, an SRAM
 overflow, was fixed in TODO #155), `fuzz-smoke` (30s/target libFuzzer/go-fuzz/Hypothesis/
-CLI-argv run, TODO #187), and `sanitizers` (C suite/tests/CLI under ASan+UBSan plus a
-bounded valgrind memcheck pass, TODO #188). Locally, run the same scripts by hand as
-described below.
+CLI-argv run, TODO #187), `sanitizers` (C suite/tests/CLI under ASan+UBSan plus a
+bounded valgrind memcheck pass, TODO #188), and `analysis-findings` (TODO #289 — every
+findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; `continue-on-
+error: true` for now, on the `arduino` job's TODO #185 route). Locally, run the same
+scripts by hand as described below.
+
+**The findings gates, and why they are a job rather than a step (TODO #289).** 35
+findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
+stops reproducing" — a count read from the runner rather than by hand, and checked by
+`check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
+after it each added ONE script to a step in `native-python` and excluded the rest on
+runtime grounds — **twice leaving a script that was already failing inside the excluded
+set** (#286 found `qcmdpc_parameter_selection.py` broken three ways, #288 found
+`qcmdpc_bgf_variants.py` broken six). Every exclusion was individually defensible; the
+pattern was not. `SecurityProofsCode/run_findings_gates.py` is the replacement and its
+one structural idea is that **the set is DISCOVERED, not enumerated** — a script whose
+exit status is its own verdict is run, with nothing to add anywhere, because a list is
+exactly what makes "nobody got round to it" look identical to "it passes". Three things
+to know before touching it. (1) Excluding a script needs a reason in `EXCLUDED`, which
+is self-invalidating like every other curated table here: an entry naming a file that is
+absent, or that is no longer gating, FAILS. (2) Discovery reads the exit CALL, so a
+fourth exit shape would be silently skipped — the same blind spot #288 found in check
+B″ — and the guard against it is that a script ADVERTISING a findings gate in its own
+header and not discovered is an error, checked in both negative controls. (3) Failures
+do not stop the run: #286 hit three and #288 six, so a `set -e` loop reporting the first
+and hiding the rest is not hypothetical. The two QC-MDPC scripts stay in `native-python`
+as well, deliberately, because that job is required and this one is not yet.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
@@ -1466,6 +1510,12 @@ python3 SecurityProofsCode/nl_fscx_rot_analysis.py   # rotational differential a
 # The two QC-MDPC scripts take minutes to over an hour at full sample sizes and
 # both accept --quick (smaller samples; the findings still gate the exit status):
 python3 SecurityProofsCode/qcmdpc_bgf_variants.py --quick   # ~11 min; --full is ~72 min
+
+# All of them at once, which is what CI's analysis-findings job runs (TODO #289).
+# --quick is the default here and is applied only to scripts that declare it;
+# --full runs everything at its default sample sizes (hours, not minutes).
+python3 SecurityProofsCode/run_findings_gates.py --list   # what would run, and how
+python3 SecurityProofsCode/run_findings_gates.py         # ~73 min on an aarch64 SBC
 ```
 
 ## Core Cryptographic Architecture

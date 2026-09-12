@@ -2,6 +2,89 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.7] - 2026-09-12
+
+### TODO #289 — the findings gates run in a job of their own, and the set is discovered rather than listed
+
+Three items in a row added **one** `SecurityProofsCode` script to a step in `native-python`
+and excluded the rest on runtime grounds, and **twice the excluded set turned out to hold a
+script that was already failing**:
+
+| item | added | what the exclusion cost |
+|---|---|---|
+| #285 | `qcmdpc_dfr_weak_keys.py` | `qcmdpc_parameter_selection.py` was failing at that moment, three gates |
+| #286 | `qcmdpc_parameter_selection.py` | `qcmdpc_bgf_variants.py` was failing at that moment, six findings (#288) |
+| #288 | — | fixed that script; the exclusion stood, and was this item's last open instance |
+
+Every exclusion was individually defensible. The pattern was not: *"too slow for a step"* had
+twice been the reason a broken script stayed broken.
+
+**A twelfth CI job, `analysis-findings`.** CI already runs eleven jobs in parallel, so a job
+of its own costs runner time and **nothing on the critical path** — which removes the runtime
+argument entirely. A job alone would not have been enough, though: all three exclusions were
+made against a *list*, and a list is exactly what makes "nobody got round to adding it"
+indistinguishable from "it passes".
+
+**So `SecurityProofsCode/run_findings_gates.py` enumerates nothing.**
+
+* **Discovery.** A script whose exit status is its own verdict — `sys.exit(main())`,
+  `raise SystemExit(main())`, `sys.exit(run_tests())`, or a bare `sys.exit(1)` — is run.
+  Three shapes because three are in use. Writing a new gating script requires adding it
+  nowhere.
+* **Excluding one needs a reason**, in `EXCLUDED`, self-invalidating like every other curated
+  table here: an entry naming a file that is absent, or that is no longer gating, **fails**.
+  It ships empty.
+* **The blind spot discovery would otherwise have** — the same class #288 found in check B′′:
+  discovery reads the exit *call*, so a fourth exit shape would be silently skipped. A script
+  that **advertises** a findings gate in its own header and is not discovered is therefore an
+  error. One direction only; a gating script need not advertise, and most do not.
+* **Failures do not stop the run.** #286 found three broken gates in one script and #288 six,
+  so a `set -e` loop reporting the first and hiding the rest is not hypothetical. Every script
+  runs; failures are re-listed with their last 40 lines; a per-script timeout (3600 s) makes a
+  hang a failure rather than a consumed job.
+
+All three properties are demonstrated rather than asserted — an orphan exclusion, a claimant
+with an unknown exit shape, and a failing gate each produce the intended non-zero exit.
+
+**Measured, all 35 at head, every one exit 0 — 73.4 min total.** Timings are from an
+aarch64 SBC and are an upper bound on what a GitHub runner will see; the shape is what
+matters, not the absolute figures:
+
+| tier | scripts | subtotal |
+|---|---|---|
+| under 60 s | 17 | 5.6 min |
+| 60 s – 5 min | 13 | 25.1 min |
+| over 5 min | 5 | 42.8 min |
+
+The heavy five are `qcmdpc_bgf_variants.py` (672 s), `nl_fscx_v2_round_constants.py`
+(608 s), `annealed_moment_ladder.py` (581 s), `lin_cycle_mean.py` (372 s) and
+`nl_fscx_exact_trail_search.py` (332 s) — 58% of the total in 14% of the scripts, which
+is why "add it to a step if it is cheap" kept producing a defensible exclusion. 18 of the
+35 declare `--quick`; the 17 that do not are all in the cheap tiers except
+`nl_fscx_v2_round_constants.py` and `nl_fscx_exact_trail_search.py`, so there is no
+script whose cost forces a decision.
+
+**Three decisions recorded in the job itself.** It is `continue-on-error: true` for now, on
+the route #185 used to promote `arduino` — the risk being watched is not build flakiness but
+*sampling*, since several of these scripts draw from `os.urandom` through the suite's keygen
+and a gate tight enough to be useful can fail on a rare draw; discovering that on a required
+check is the wrong way round. It installs **bare `python3`**: three scripts have solver-backed
+sections (`z3-solver`, `pulp`, `highspy`) that skip with a printed NOTE, so the job gates the
+rest of those scripts and not those sections — a decision, not an omission. And the two
+QC-MDPC scripts **stay in `native-python` as well**, because that job is required and this one
+is not yet.
+
+**The old rule is recorded where it did the damage.** `native-python`'s step comment read
+*"add a script here only when its `--quick` runtime is minutes, not tens of minutes"*. It now
+says the rule changed, and that a third script should not be added there.
+
+**One correction to the item's own survey.** It counted 33 gating scripts and said 18 had no
+`--quick` mode, `annealed_moment_ladder.py` among them. Both figures came from a hand-written
+grep and both are wrong: there are **35**, and `annealed_moment_ladder.py` does declare
+`--quick` (581 s with it, against the 1601 s that was measured without). The count is no
+longer hand-written anywhere — `check_docs_consistency.py` gained a check-E row holding
+CLAUDE.md's figure to what the runner reports, verified against a deliberate off-by-one.
+
 ## [7.0.6] - 2026-09-11
 
 ### TODO #288 — `qcmdpc_bgf_variants.py` measured hybrid parameter sets and labelled them "deployed"

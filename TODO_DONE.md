@@ -17540,3 +17540,141 @@ regression.
 
 Status: **DONE v7.0.6** — the script is declared a retired-instance study with RETIRED/NB_ITER_RETIRED literals, §1 now pins the substrate against the real shipped decoder and POL_BASE against §11.8.7's recorded measurement, 18/18 findings reproduce, and check B'' gains a filename family default that catches the sentence which started the item.
 
+---
+
+### #289: which analysis scripts does CI run, and what is the rule?
+
+Three items in a row have now added ONE script to `native-python`'s findings-gate step and
+excluded the rest on runtime grounds, and twice the excluded set has turned out to contain a
+script that was already failing:
+
+| item | added | excluded | what the exclusion cost |
+|---|---|---|---|
+| #285 | `qcmdpc_dfr_weak_keys.py` (~3.5 min) | everything else | `qcmdpc_parameter_selection.py` was failing at that moment, three gates |
+| #286 | `qcmdpc_parameter_selection.py` (~58 s) | `qcmdpc_bgf_variants.py` at ~11 min | `qcmdpc_bgf_variants.py` was failing at that moment, six findings (TODO #288) |
+| #287 | -- | -- | -- |
+| #288 | -- | `qcmdpc_bgf_variants.py`, now at 669 s | fixed the script; the exclusion stands and is now this item's only open instance |
+
+Each exclusion was individually defensible and the pattern is not: "too slow for a step" has
+now twice been the reason a broken script stayed broken, and the next exclusion is
+`qcmdpc_bgf_variants.py` again.  This item is the DECISION, not another one-off.
+
+**What the survey established, so the decision rests on numbers.**  All 33 scripts run at
+head; measured `--quick` (or plain, where there is no `--quick`) runtimes:
+
+* under 90 s: 19 scripts
+* 90 s to 10 min: 12 scripts, the slowest being `nl_fscx_v2_round_constants.py` at 608 s
+* over 10 min: 2 -- `annealed_moment_ladder.py` at 1601 s and `qcmdpc_bgf_variants.py` at
+  960 s under `--quick` (~72 min with `--full`).  TODO #288's repair moved the latter to
+  669 s -- it was bailing out of §6 with fewer than three usable points and now does the
+  work -- so it sits just under the ten-minute line rather than just over it, which is
+  close enough to the boundary that it should not be the thing the rule turns on.
+
+So the whole corpus is roughly 85 minutes of `--quick`, dominated by two scripts.  That is
+too much for a step inside `native-python` and entirely reasonable for a SEPARATE job, which
+is the option none of the three items considered: CI already runs eleven jobs in parallel,
+and a twelfth that does nothing but collect these exit statuses would add no wall-clock time
+to the critical path while removing the excuse permanently.
+
+**Options, with the recommendation first.**
+
+1. **A new `analysis-findings` job** running all 33 under `--quick`, non-blocking at first if
+   the flake risk is unknown, promoted once a few runs confirm it is stable -- the route
+   TODO #185 used for the `arduino` job.  Costs one runner for ~85 min of its own time,
+   nothing on the critical path.
+2. Keep the step and add the two cheap tiers (under 10 min), leaving only the two heavy
+   scripts excluded -- better than today, still leaves `qcmdpc_bgf_variants.py` out, which is
+   the one that just broke.
+3. A scheduled weekly run rather than per-push, as `codeql.yml` does.  Cheapest, but a
+   finding then breaks quietly for up to a week, and both defects found so far had been
+   broken across releases.
+
+Whichever is chosen, record it where the next item will look: `ci.yml`'s step comment
+currently says "add a script here only when its `--quick` runtime is minutes, not tens of
+minutes", which is the rule that produced the pattern above.
+
+---
+
+**RESOLVED on option 1 (v7.0.7): a separate `analysis-findings` job, and the set it runs
+is DISCOVERED rather than listed.**
+
+The job costs one runner and nothing on the critical path -- CI already runs eleven jobs
+in parallel and this is the twelfth -- so the runtime argument that produced the pattern
+above stops being an argument. But a job alone would not have stopped it: the three
+exclusions were made against a LIST, and a list is exactly what makes "nobody got round
+to adding it" indistinguishable from "it passes". So the mechanism is
+`SecurityProofsCode/run_findings_gates.py`, which enumerates nothing:
+
+* **Discovery.** A script whose exit status is its own verdict -- `sys.exit(main())`,
+  `raise SystemExit(main())`, `sys.exit(run_tests())`, or a bare `sys.exit(1)` on a
+  failed finding -- is run. Three shapes because three are in use, not by design.
+  Nothing has to be added anywhere when a script is written.
+* **Skipping is possible and deliberately awkward.** `EXCLUDED` maps a name to a reason
+  and is self-invalidating the way every other curated table in this repo is: an entry
+  naming a file that is absent, or that is no longer a gating script, FAILS. It ships
+  EMPTY, because option 1 removes the only reason anything was ever in it.
+* **The blind spot discovery would otherwise have**, and it is the same class TODO #288
+  found in check B'' of `check_docs_consistency.py`: discovery reads the exit CALL, so a
+  script gating through a fourth shape would be silently skipped. So the CLAIM is checked
+  against the discovery -- a script that advertises a findings gate in its own header and
+  is not discovered is an ERROR. One direction only; a gating script need not advertise,
+  and 20 of the 35 do not.
+* **Failures do not stop the run.** #286 found three broken gates in one script and #288
+  six; a `set -e` loop reports the first and hides the rest, so every script runs, the
+  failures are re-listed with their last 40 lines, and the exit status is non-zero if any
+  failed. A per-script timeout (default 3600 s) makes a hang a failure rather than a
+  consumed job.
+
+**What it found on the first run: nothing.** All 35 gates reproduce at head. That is the
+expected result immediately after #285/#286/#288 repaired the two that did not, and it is
+worth recording as the baseline this job now defends rather than as a null outcome.
+
+**Measured, all 35 at head, every one exit 0 — 73.4 min total.** Timings are from an
+aarch64 SBC and are an upper bound on what a GitHub runner will see; the shape is what
+matters, not the absolute figures:
+
+| tier | scripts | subtotal |
+|---|---|---|
+| under 60 s | 17 | 5.6 min |
+| 60 s – 5 min | 13 | 25.1 min |
+| over 5 min | 5 | 42.8 min |
+
+The heavy five are `qcmdpc_bgf_variants.py` (672 s), `nl_fscx_v2_round_constants.py`
+(608 s), `annealed_moment_ladder.py` (581 s), `lin_cycle_mean.py` (372 s) and
+`nl_fscx_exact_trail_search.py` (332 s) — 58% of the total in 14% of the scripts, which
+is why "add it to a step if it is cheap" kept producing a defensible exclusion. 18 of the
+35 declare `--quick`; the 17 that do not are all in the cheap tiers except
+`nl_fscx_v2_round_constants.py` and `nl_fscx_exact_trail_search.py`, so there is no
+script whose cost forces a decision.
+
+**Three decisions recorded rather than left to be re-derived.**
+
+1. **Non-blocking at first** (`continue-on-error: true`), on the route TODO #185 used to
+   promote `arduino`. The risk being watched is not build flakiness but SAMPLING: several
+   of these scripts draw keys and errors from `os.urandom` through the suite's own keygen,
+   and a gate tight enough to be useful can fail on a rare draw. Discovering that on a
+   REQUIRED check is the wrong way round. Promotion is deleting one line; if a gate does
+   flake, the fix is that gate's threshold -- the class CLAUDE.md's Testing section
+   already describes, a probabilistic property asserted as a deterministic one -- not the
+   flag.
+2. **Bare `python3`, knowingly.** Three scripts have solver-backed sections (`z3-solver`,
+   `pulp`, `highspy`) that skip with a printed NOTE without them, so this job gates the
+   rest of those scripts and not those sections. Installing the solvers would widen the
+   gate and make the job's runtime unpredictable, and the sections concerned are bounds
+   searches recorded in `SecurityProofs-*.md` rather than assertions about shipped code.
+   Recorded in the job so the next reader finds a decision rather than an omission.
+3. **The two QC-MDPC scripts stay in `native-python` as well.** They are the two that
+   #285 and #286 found broken, they cover the parameters a deployed KEM rests on, and
+   `native-python` is REQUIRED where this job is not yet. The step's comment -- which
+   read "add a script here only when its `--quick` runtime is minutes, not tens of
+   minutes", the rule that produced this item -- now says the rule changed and that a
+   third script should not be added there.
+
+**One correction to this item's own survey.** It counted 33 gating scripts and reported
+that 18 of them had no `--quick` mode, `annealed_moment_ladder.py` among them. Both
+numbers came from a hand-written grep and both are wrong: there are **35**, and
+`annealed_moment_ladder.py` does declare `--quick` (17 of the 35 do not, and only two of
+those are heavy). The count is no longer hand-written anywhere -- `check_docs_
+consistency.py`'s check E holds CLAUDE.md's figure to what the runner reports.
+
+Status: **DONE v7.0.7** — a twelfth CI job running every findings-gating analysis script, with the set discovered rather than listed so the exclusion pattern cannot recur.

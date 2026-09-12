@@ -155,13 +155,20 @@ jobs:
       # releases after #276 moved the QC-MDPC parameters out from under it,
       # with nothing anywhere noticing.
       #
-      # Running all 34 is not on the table, and neither is running the whole
-      # QC-MDPC family: qcmdpc_bgf_variants.py is ~11 min under --quick and ~72
-      # without, which is a job of its own rather than a step. What runs here are
-      # the scripts whose findings gates are both meaningful and cheap, each
-      # deciding its own exit status -- so a claim that stops reproducing reddens
-      # CI rather than printing quietly into a log nobody reads. Add a script
-      # here only when its --quick runtime is minutes, not tens of minutes.
+      # THE RULE FOR THIS STEP CHANGED IN TODO #289, and the old one is worth
+      # recording because it caused the damage: it read "add a script here only
+      # when its --quick runtime is minutes, not tens of minutes", and three
+      # items in a row duly added one script and excluded the rest -- twice
+      # leaving a script that was ALREADY FAILING inside the excluded set. The
+      # whole corpus now runs in the `analysis-findings` job at the bottom of
+      # this file, which discovers its own set instead of reading a list.
+      #
+      # These two stay HERE as well, and the duplication is deliberate: they are
+      # the two QC-MDPC gates that #285 and #286 found broken, they are the ones
+      # that cover the parameters a deployed KEM rests on, and native-python is
+      # a REQUIRED job where analysis-findings is still on probation. ~4.5 min
+      # of a job that already runs longer than that. Do not add a third script
+      # here -- the new job takes it automatically.
       #
       # TODO #286 added the second one, and the reason is the argument for this
       # step existing at all: qcmdpc_parameter_selection.py was ALREADY FAILING
@@ -606,3 +613,54 @@ jobs:
           valgrind --error-exitcode=99 --leak-check=full \
             --show-leak-kinds=definite,indirect \
             /tmp/herr_tests_valgrind -r 3 -t 0.2
+
+  analysis-findings:
+    name: SecurityProofsCode findings gates (TODO #289)
+    runs-on: ubuntu-latest
+    # NON-BLOCKING ON PURPOSE, and only for now. TODO #185 promoted the
+    # `arduino` job this same way, after a pass history confirmed it. The
+    # specific risk being watched here is not build flakiness but SAMPLING:
+    # several of these scripts draw keys and errors from os.urandom through
+    # the suite's own keygen, and a statistical gate that is tight enough to
+    # be useful can fail on a rare draw. Finding that out on a REQUIRED check
+    # is the wrong way round. Promote by deleting this line once a run
+    # history exists; if a gate does flake, the fix is that gate's threshold
+    # (the class CLAUDE.md's Testing section already describes -- a
+    # probabilistic property asserted as a deterministic one), not this flag.
+    continue-on-error: true
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3
+
+      # TODO #289. About three dozen SecurityProofsCode/ scripts advertise
+      # "exits non-zero if a finding stops reproducing". TODO #285 found that
+      # NO job collected that status, and the three items that followed each
+      # added ONE script to a step in native-python and excluded the rest on
+      # runtime grounds -- twice leaving a script that was already failing
+      # inside the excluded set (#286 found three broken gates, #288 six).
+      # "Too slow for a step" was a real constraint and the wrong answer to
+      # it: CI runs twelve jobs in parallel, so a job of its own costs runner
+      # time and nothing on the critical path.
+      #
+      # The runner DISCOVERS its own set rather than reading a list -- see its
+      # header. That is the half that stops this recurring: a list makes "we
+      # did not get round to adding it" indistinguishable from "it passes",
+      # which is precisely what happened three times. Excluding a script is
+      # still possible and needs a reason in EXCLUDED, which is self-
+      # invalidating like every other curated table in this repo.
+      #
+      # BARE python3, KNOWINGLY. Three scripts here have solver-backed
+      # sections (z3-solver, pulp, highspy) that skip with a printed NOTE
+      # without them, so this job gates the rest of those scripts and not
+      # those sections. Installing the solvers would make the gate wider and
+      # the job's runtime unpredictable; the sections they cover are bounds
+      # searches whose results are recorded in SecurityProofs-*.md rather
+      # than assertions about the shipped code. Recorded here so the next
+      # person reads a decision rather than an omission.
+      - name: Every findings gate still reproduces
+        run: python3 SecurityProofsCode/run_findings_gates.py --quick

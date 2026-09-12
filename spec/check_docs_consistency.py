@@ -491,6 +491,15 @@ DOC_COUNTS = [
      r"parity — (\d+) rows over",
      r"parameter's VALUE: (\d+) rows, four cells each",
      "the TODO #278 parameter-value table's size, quoted in the same entry"),
+    # TODO #289. The runner DISCOVERS its set, so this number moves whenever a
+    # script gains or loses a findings gate -- which is exactly the kind of
+    # number a hand count in CLAUDE.md gets wrong quietly. --list does not run
+    # anything, so this stays cheap.
+    ("findings-gating analysis scripts",
+     ["python3", _p("SecurityProofsCode", "run_findings_gates.py"), "--list"],
+     r"findings gates: (\d+) discovered",
+     r"(\d+)\s*\n?findings-gating scripts in `SecurityProofsCode/`",
+     "run_findings_gates.py's discovered set, quoted in CLAUDE.md's Testing section"),
 ]
 
 
