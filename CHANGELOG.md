@@ -2,6 +2,83 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.9] - 2026-09-13
+
+### TODO #291 — 46 of 81 analysis scripts had no verdict, and 22 printed one they discarded
+
+**The gap.** TODO #289 made the findings-gate set DISCOVERED rather than listed, and
+#290 taught discovery a second flag spelling. Both answer "which of the gating scripts
+run"; neither asks how many scripts gate at all. The answer was **35 of 81**. Of the 46
+that did not, 33 are cited by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim,
+and **22 computed a PASS/FAIL-shaped verdict and then exited 0 regardless** — the defect
+class TODO #233 removed from the test harnesses, one layer out, in the layer that backs
+the security documents. `qc_mdpc_bgf_prototype.py` printed `PRF uniformity: FAIL` from a
+`main()` returning `None`; `hkex_rnl_failure_rate.py`, whose §6 table TODO #286 found
+wrong in the unsafe direction on every row, was not a gate, so that repair was
+undefended.
+
+### Added
+- **`NON_GATING` in `SecurityProofsCode/run_findings_gates.py`, and the coverage rule
+  that makes it matter.** Every `SecurityProofsCode/*.py` now either gates or is declared
+  non-gating with a reason, and the runner FAILS on one that is neither — so adding an
+  analysis script forces the question rather than leaving a silent hole. The table is
+  self-invalidating in both directions like `EXCLUDED`: an entry naming an absent file
+  fails, and so does one naming a script that has since become a gate.
+- **38 scripts converted into gates: 35 -> 73 discovered.** Seven are declared
+  non-gating — five `hkex_cfscx_*.py` design-space surveys of rejected constructions,
+  `nl_fscx_v2_orbit.py` (a sampled distribution, where a gate would mean inventing a
+  threshold), and `stern_ct_demo.py`, whose verdict is that a timing leak is STILL
+  THERE, so a gate would fail the day someone fixed it. "It is only a demo" was not
+  accepted as a reason: `hpks_threshold_demo.py`, `oprf_demo.py`, `vdf_demo.py` and
+  `hkex_pake_demo.py` all assert something falsifiable and all gate now.
+- **A `--quick` mode for `nl_fscx_rot_analysis.py`** (1207 s -> 194 s) and one for
+  `nl_fscx_v1_ratchet_collision.py`, per this item's rule that the answer to a slow
+  script is a reduced-sample mode in the script, never an exclusion.
+- **`stern_ring_challenge_bias.py` now checks the fix it used to recommend** — the
+  TODO #164 rejection sampling, in both files that carried the modulo-3 bias.
+
+### Fixed
+- **`nl_fscx_v1_ratchet_collision.py` could not complete at its default settings, and
+  nothing had noticed because nothing ran it.** `FULL_SWEEP=1` (the default) scans all
+  2^32 inputs into a dict keyed by their images: 4.4 GB of RSS in three minutes,
+  OOM-killed at 636 s. `--quick` forces the sweep off; the findings it gates live at
+  n=8/16 and in §5.
+- **Eight stale-prose defects the conversion turned up**, none of which a gate would
+  have caught: `hkex_gf_test.py` printed "~128 bits" as the function-field-sieve margin
+  at n=256 (that is its own BSGS generic figure; the FFS leaves ~80-90 and TODO #212's
+  Pohlig-Hellman recovers keys at ~2^36.5) — WITHDRAWN;
+  `hkex_rnl_sparse_hybrid_2026.py` hardcoded `N = 256  # deployed ring degree` and
+  anchored its bit budget on the 105-115-bit Core-SVP band TODO #216 retracted — it now
+  reads `RNLN` from the suite and quotes #216's direct ~206;
+  `hkex_rnl_failure_rate.py` labelled its retired-width §3 "deployed parameters" and,
+  in its SUMMARY, still asserted the "HKEX-RNL-128 = n=512, >=128-bit" recommendation
+  that TODO #286 had withdrawn from §6 immediately above it;
+  `hkex_rnl_lattice_2026.py` called n=512 "currently promoted as production-track"
+  after its own result demoted it; `stern_ring_challenge_bias.py` still tracked TODO
+  #164 as open work (shipped v1.9.127) and called 32 rounds the "production" count (it
+  is the demo default; production is 219); and `nl_fscx_v2_csp.py` concluded "almost no
+  key has a commuting partner" over measurements showing 62% do (the true, weaker
+  statement is that the candidate set is O(1)) while printing an n=4 row that fails its
+  own stated criterion without comment.
+- **A fourth exit shape and a third `--quick` spelling in the runner's own discovery** —
+  both instances of the blind spot it already documents. `_GATING_RE` listed exact call
+  spellings, so five scripts whose entry point is `run()` read as non-gating; it now
+  matches `sys.exit(<call>)` for any function, since exiting with a computed status is
+  the property, not the function's name (`sys.exit(0)` still does not count). And two
+  scripts read `'--fast' in sys.argv` rather than declaring it in argparse — one of
+  them, `stern_f_multiround_fs.py`, a discovered gate since #289, so it had been running
+  at full sample size inside a job that had asked for the reduced one.
+- **Check B'' of `spec/check_docs_consistency.py` read only one ordering.** It required
+  the currency word BEFORE the number, and three of the defects above wrote it after
+  ("N = 256  # deployed ring degree"), in files whose filename already supplied the
+  protocol family — so the check was pointed straight at them and could not see them.
+  The reverse ordering is now checked, at a cost of three exemptions, all correct
+  sentences where the currency word modifies a later number.
+- **A skipped section is no longer scored.** `hfscx_256_analysis.py` §4 is `--full`-only
+  and returned `None`, which read as a failed finding; `zkp_pqc_exploration.py`'s
+  `--skip2/--skip3` sections now contribute no finding rather than a passing one. This
+  is TODO #234's Arduino finding pointing the other way.
+
 ## [7.0.8] - 2026-09-12
 
 ### TODO #290 — the findings-gates job's first run failed, and its "bare python3" premise was false

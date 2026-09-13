@@ -120,6 +120,7 @@ def hdr(s):
 
 
 def run():
+    findings = []
     print(DIV)
     print("  hkex_cy_test.py — FSCX-CY: Carry-Injection Non-Linear FSCX")
     print(DIV)
@@ -162,6 +163,7 @@ def run():
             affine_violations += 1
     print(f"  [1C] GF(2)-affine violations:       {affine_violations}/{N}  "
           f"→ {'NON-LINEAR confirmed' if affine_violations > 0 else 'appears linear'}")
+    findings.append(("FSCX-CY is not GF(2)-affine", affine_violations > 0))
 
     # 1D. Differential non-uniformity sample
     # For a linear map, Δf(a,b) = f(a⊕Δ,b) ⊕ f(a,b) is constant over all a.
@@ -174,6 +176,7 @@ def run():
         diffs.add(fscx_cy(A ^ DELTA, B_fixed, n) ^ fscx_cy(A, B_fixed, n))
     print(f"  [1D] Differential: Δfscx_cy for Δ=1, fixed B: "
           f"{len(diffs)} distinct output differences (linear → exactly 1)")
+    findings.append(("the output difference is not constant", len(diffs) > 1))
 
     # ── Test 2: Period analysis ──────────────────────────────────────────────
     hdr("Test 2 — Functional period: FSCX vs FSCX-CY  (full permutation)")
@@ -207,6 +210,14 @@ def run():
         print(f"  K={K:#04x}  FSCX  g_K^{n_small} = XOR-trans: {str(is_std):5}  c={c_std}")
         print(f"  K={K:#04x}  CY    g_K^{n_small} = XOR-trans: {str(is_trans):5}  "
               + (f"c={c_val}" if is_trans else "(varies by x — not a translation)"))
+        # FSCX's g_K^n IS a translation (c = 0, the S_n = 0 identity); CY's is
+        # not, and that is exactly why HKEX-CY cannot agree on a key.  K = 0 is
+        # excluded from the second half and is not an exception being waived:
+        # the carry term is A AND 0 = 0 there, so fscx_cy IS fscx at that key
+        # and a translation is the correct answer.
+        findings.append((f"K={K:#04x}: FSCX translates" +
+                         ("" if K == 0 else ", FSCX-CY does not"),
+                         is_std and (K == 0 or not is_trans)))
 
     # ── Test 4: HKEX-CY correctness attempt ─────────────────────────────────
     hdr("Test 4 — HKEX-CY: direct replacement of FSCX with FSCX-CY")
@@ -232,6 +243,7 @@ def run():
         print(f"  n={n}: sk_A == sk_B:  {matched}/{TRIALS}  "
               f"(accidental rate ≈ 2^-{n} = {accidental:.1e})  "
               f"[{'EXPECTED FAIL' if matched <= 2 else 'UNEXPECTED'}]")
+        findings.append((f"HKEX-CY does not agree at n={n}", matched <= 2))
 
     print()
     print("  Why it fails (algebraic):")
@@ -262,6 +274,7 @@ def run():
                 matched += 1
         print(f"  n={n}, fixed K_pub: sk_A == sk_B: {matched}/{TRIALS}  "
               f"[{'EXPECTED FAIL' if matched <= 2 else 'UNEXPECTED'}]")
+        findings.append((f"the fixed-B variant does not agree at n={n}", matched <= 2))
 
     # ── Test 6: Eve's attack on FSCX-CY ─────────────────────────────────────
     hdr("Test 6 — Eve's classical attack on FSCX-CY public values")
@@ -284,6 +297,7 @@ def run():
         print(f"  n={n}: Eve succeeded {hits}/{TRIALS}  "
               f"(rate={hits/TRIALS:.2e})  "
               f"{'[PASS — attack fails]' if hits == 0 else f'[WARN: {hits} hits]'}")
+        findings.append((f"the classical linear attack fails at n={n}", hits == 0))
 
     # ── Test 7: Performance benchmark ────────────────────────────────────────
     hdr("Test 7 — Performance: FSCX vs FSCX-CY  (n=64, r=48 steps)")
@@ -335,6 +349,14 @@ def run():
       cipher where T(K) is precomputed and encoded in the protocol.
 """)
 
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    return 1 if bad else 0
+
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())

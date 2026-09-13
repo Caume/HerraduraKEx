@@ -70,6 +70,7 @@ primitives below are transcribed from `Herradura cryptographic suite.py`.
 
 import math
 import random
+import sys
 import time
 
 SEP  = "=" * 74
@@ -236,6 +237,7 @@ def rho_cost_bits(factors):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section1():
+    ok = True
     print(SEP2)
     print("§1  Factorisation of 2^n - 1, and the order of g = 3")
     print(SEP2)
@@ -245,6 +247,8 @@ def section1():
         assert all(is_prime(p) for p in fac), f"non-prime in factor list at n={n}"
         order = element_order(GF_GEN, n, fac)
         primitive = order == (1 << n) - 1
+        ok = ok and (primitive == (n in (64, 256)))
+        ok = ok and max(fac).bit_length() <= 80
         print(f"  n = {n}")
         print(f"    2^n - 1 factors as: " + " * ".join(str(p) for p in fac))
         print(f"    all factors verified prime, product verified = 2^{n} - 1")
@@ -257,6 +261,7 @@ def section1():
     print("  prime factor of ord(g) is the same as that of 2^n - 1, so the subgroup")
     print("  structure gives the defender no relief.")
     print()
+    return ok
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -264,6 +269,7 @@ def section1():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section2():
+    ok = True
     print(SEP2)
     print("§2  Pohlig-Hellman cost vs. the documented FFS figures")
     print(SEP2)
@@ -275,6 +281,13 @@ def section2():
     print("  n     largest prime factor   PH + rho cost   §9.2.4 FFS estimate (bits)")
     for n, fac in sorted(FACTORS.items()):
         bits = rho_cost_bits(fac)
+        if n == 256:
+            # The headline of TODO #212, as an inequality: Pohlig-Hellman plus
+            # rho at the deployed field costs under 2^40, tens of bits below
+            # the 80-90 the FFS estimate of SecurityProofs-3.md §9.2.4 records
+            # (DOC_FFS holds that as display text, so the bound is written out
+            # here rather than read from it).
+            ok = ok and bits < 40.0
         print(f"  {n:<5} {max(fac).bit_length():>2} bits"
               f"               2^{bits:<12.1f}  {DOC_FFS[n]}")
     print()
@@ -296,6 +309,7 @@ def section2():
     print("  bits, and it governs HKEX-GF, HPKS and HPKE alike.  2^36.5 is not a")
     print("  security margin — see §5 for the wall-clock estimate.")
     print()
+    return ok
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -303,6 +317,7 @@ def section2():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section3():
+    ok = True
     print(SEP2)
     print("§3  Exact private-key recovery at n=32 and n=64")
     print(SEP2)
@@ -317,6 +332,7 @@ def section3():
         rec, order = pohlig_hellman(C, n, FACTORS[n], verbose=True)
         dt = time.time() - t0
         print(f"    recovered x = {rec}")
+        ok = ok and gf_pow(GF_GEN, rec, poly, n) == C and rec == a % order
         print(f"    g^x == C: {gf_pow(GF_GEN, rec, poly, n) == C}"
               f"    x == a exactly: {rec == a % order}"
               f"    [{dt:.3f}s total]")
@@ -327,6 +343,7 @@ def section3():
     print("  non-matching exponent to g = 3 being non-primitive: true at n=32, where")
     print("  ord(g) = (2^32 - 1)/15, but not a property to rely on at n=256.")
     print()
+    return ok
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -352,6 +369,7 @@ def section4():
     sk_eve = gf_pow(C2, a_rec, poly, n)
     print(f"  HKEX-GF   Alice C = g^a, Bob C2 = g^b, shared sk = C2^a")
     print(f"            Eve sees only C and C2, recovers a, computes C2^a:")
+    ok = sk_eve == sk_real
     print(f"            sk matches: {sk_eve == sk_real}")
     print()
 
@@ -373,6 +391,7 @@ def section4():
     pub = gf_pow(GF_GEN, priv, poly, n)
     honest_msg = rng.getrandbits(n)
     R, s = hpks_sign(honest_msg, priv, rng.getrandbits(n - 4) | 1)
+    ok = ok and hpks_verify(honest_msg, pub, R, s)
     print(f"  HPKS      honest signature verifies: {hpks_verify(honest_msg, pub, R, s)}")
 
     priv_rec, _ = pohlig_hellman(pub, n, FACTORS[n])
@@ -381,12 +400,14 @@ def section4():
     print(f"            Eve recovers the signing key from the public key alone,")
     print(f"            then signs a message she chose:")
     print(f"            forged signature verifies: {hpks_verify(forged_msg, pub, Rf, sf)}")
+    ok = ok and hpks_verify(forged_msg, pub, Rf, sf) and priv_rec == priv
     print(f"            recovered key == signing key: {priv_rec == priv}")
     print()
     print("  HPKE follows HKEX-GF exactly — the recovered exponent is the El Gamal")
     print("  decryption key.  Note that HPKS reduces its scalar modulo 2^n - 1, the")
     print("  same smooth-ish modulus whose factorisation makes the recovery cheap.")
     print()
+    return ok
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -532,10 +553,13 @@ def main():
     print("TODO #212, #237 — Pohlig-Hellman against HKEX-GF / HPKS / HPKE / OPRF")
     print(SEP)
     print()
-    section1()
-    section2()
-    section3()
-    section4()
+    findings = [("2^n - 1 factors as recorded and g's order is as claimed",
+                 section1()),
+                ("PH + rho at n=256 costs under 2^40, far below the FFS figure",
+                 section2()),
+                ("private keys are recovered exactly at n=32 and n=64", section3()),
+                ("the recovered exponent yields the session key and a forgery",
+                 section4())]
     section5()
     section6()
     print(SEP)
@@ -546,8 +570,16 @@ def main():
     print("         makes F(k, .) offline-evaluable and voids the aPAKE's offline-")
     print("         dictionary-attack resistance.")
     print(SEP)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    print(SEP)
     print()
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

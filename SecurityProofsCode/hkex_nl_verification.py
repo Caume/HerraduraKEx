@@ -14,6 +14,7 @@ hkex_nl_verification.py — Verification of three open questions from the NL-FSC
 """
 
 import random
+import sys
 from collections import Counter
 
 random.seed(0xC0FFEE_DEAD)
@@ -718,3 +719,34 @@ Q3 — NL-FSCX design  (v1 non-bijective, v2 bijective + exact inverse)
       nl_fscx v1  for HKEX KDF / HPKS commitment (one-way, no inverse)
       → best security where one-way matters; exact inverse where needed
 """)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Findings gate (TODO #291)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Everything above is module-level, so the answers to Q1-Q3 are still in scope
+# here.  These are the three answers the script exists to give, plus the two
+# supporting measurements each rests on; nothing new is computed.
+_FINDINGS = [
+    ("Q1: counter-mode HSKE round-trips over NL-FSCX v1", correct_ctr == 200),
+    # Q2's answer is the NEGATIVE one and it is easy to write backwards: the
+    # naive m^-1 inversion recovers s in NEITHER setting, because rounding
+    # noise amplified by ||m^-1||_1 wraps mod q.  Blinding is therefore not
+    # what stops it, which is the point of running both arms.
+    ("Q2: naive inversion recovers s in neither the fixed nor the blinded arm",
+     attacks["fixed_m"] == 0 and attacks["blinded_m"] == 0),
+    ("Q3: NL-FSCX v1 is NOT bijective in A", non_bij_B > 0),
+    ("Q3: iterative inversion of v1 does not recover A", correct == 0),
+    ("Q3: v2 is bijective in A for every B, with an exact inverse",
+     non_bij_v2 == 0 and correct_v2_inv == 1000),
+    ("Q3: v2 is non-linear over GF(2)", failures > 0),
+]
+_bad = [name for name, ok in _FINDINGS if not ok]
+print()
+if _bad:
+    print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+          % (len(_bad), ", ".join(_bad)))
+else:
+    print("*** OK: all %d findings reproduce ***" % len(_FINDINGS))
+sys.exit(1 if _bad else 0)

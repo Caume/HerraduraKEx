@@ -48,6 +48,7 @@
 
 import hashlib
 import os
+import sys
 import time
 
 SEP = "─" * 70
@@ -830,10 +831,32 @@ def main():
     print("Ligero-style IOP-based ZKP for NL-FSCX v1 — TODO #122 Batch 4")
     print(SEP)
     print(f"  field GF(2^{GF_BITS}), poly 0x{GF_POLY:X}")
-    demo_proof = section3_tests()
-    section4_sizes(demo_proof)
+    # TODO #291: §3 and §4 gate on `assert`, which raises rather than exiting,
+    # so no runner could see the verdict (run_findings_gates.py discovers an
+    # exit CALL).  The assertions are unchanged; only the reporting is new.
+    failed = []
+    demo_proof = None
+    try:
+        demo_proof = section3_tests()
+    except AssertionError as exc:
+        failed.append("§3 completeness/soundness: %s" % (exc or "assertion failed"))
+    if demo_proof is not None:
+        try:
+            section4_sizes(demo_proof)
+        except AssertionError as exc:
+            failed.append("§4 proof sizes: %s" % (exc or "assertion failed"))
     section5_conclusion()
+
+    print(SEP)
+    if failed:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(failed), ", ".join(failed)))
+    else:
+        print("*** OK: the Ligero prototype is complete and sound on every "
+              "tampered case ***")
+    print(SEP)
+    return 1 if failed else 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

@@ -45,6 +45,7 @@ transition probability than the already-measured da=db=0 case?
 Usage: python3 SecurityProofsCode/nl_fscx_rx_differential_2025.py
 """
 import random
+import sys
 
 random.seed(0xC0DE_2025)
 
@@ -111,11 +112,13 @@ def main():
     print("against the already-measured da=db=0 (pure rotational) baseline.\n")
 
     trials = 20000
+    improvements = []
     for n in (16, 32):
         for k in (1, n // 4):
             _, p_zero = best_output_diff_prob(n, k, 0, 0, trials, rng)
             da, db, p_best = hill_climb(n, k, trials, rng, iters=150)
             improved = "YES" if p_best > p_zero * 1.15 else "no"
+            improvements.append(improved == "YES")
             print(f"n={n:3d} k={k:2d}: da=db=0 best-dc prob={p_zero:.4f}  |  "
                   f"hill-climb best prob={p_best:.4f} at da={da:#x},db={db:#x}  "
                   f"materially-improved={improved}")
@@ -130,7 +133,23 @@ def main():
     print("This does NOT rule out a better trail outside hill-climbing's reach; a full")
     print("SAT/SMT reproduction of the paper's exhaustive search is needed to close that")
     print("gap (see SecurityProofs-5.md \u00a711.8.3, TODO #158, for caveats).")
+    print()
+
+    # TODO #291.  The finding IS the conclusion's premise -- "if no
+    # configuration above shows a materially higher probability" -- so the gate
+    # is that premise, evaluated instead of left to the reader.  A row turning
+    # YES does not mean this script is broken; it means the conclusion it backs
+    # has stopped holding, which is exactly what a gate should say.
+    bad = sum(1 for imp in improvements if imp)
+    if bad:
+        print("*** FAILED: %d of %d configurations now beat the da=db=0 baseline "
+              "by >15%% -- the conclusion above no longer follows ***"
+              % (bad, len(improvements)))
+    else:
+        print("*** OK: no configuration beats the pure-rotational baseline "
+              "(%d checked) ***" % len(improvements))
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

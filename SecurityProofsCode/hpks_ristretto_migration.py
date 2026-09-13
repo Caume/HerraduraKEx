@@ -350,14 +350,32 @@ def main():
     print("hpks_ristretto_migration.py — ristretto255 drop-in evaluation (TODO #127)")
     print()
     t0 = time.monotonic()
+    # TODO #291: every section here already gates -- on `assert`, which raises
+    # rather than returning, so the script has always failed loudly on a broken
+    # finding and NO runner could see it: run_findings_gates.py discovers an
+    # exit CALL, and an AssertionError is not one.  Catching the assertions and
+    # reporting them the way the rest of this directory does is the whole
+    # change; the checks themselves are untouched.
+    failed = []
     for s in (section1, section2, section3, section4, section5, section6):
-        s()
+        try:
+            s()
+        except AssertionError as exc:
+            failed.append("%s: %s" % (s.__name__, exc or "assertion failed"))
+            print("  *** %s FAILED an assertion ***" % s.__name__)
         print()
         sys.stdout.flush()
     print(SEP)
+    if failed:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(failed), ", ".join(failed)))
+    else:
+        print("*** OK: all 6 sections reproduce ***")
     print(f"Total runtime: {time.monotonic()-t0:.1f} s")
     print("END hpks_ristretto_migration.py")
     print(SEP)
+    return 1 if failed else 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

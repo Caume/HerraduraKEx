@@ -474,6 +474,9 @@ def _rand_ternary(n):
     return out
 
 
+FINDINGS = []
+
+
 def section5():
     print(SEP)
     print("§5  MPC-in-the-head φ_A gadget prototype (ZKBoo-(2,3) over Z_q)")
@@ -491,6 +494,7 @@ def section5():
     print(f"  §5.1 completeness  (n={n}, R={R}, {TRIALS_COMPLETE} trials): "
           f"{TRIALS_COMPLETE - fails}/{TRIALS_COMPLETE} accepted"
           f"{'   [FAIL]' if fails else '   [PASS]'}")
+    FINDINGS.append(("§5.1 the gadget is complete", fails == 0))
 
     # one full-size run to confirm n=256 works end to end
     n2 = 256
@@ -500,6 +504,7 @@ def section5():
     ok256 = gadget_verify(e, proof256, n2, R)
     print(f"       full-size check (n=256, R={R}): "
           f"{'accepted   [PASS]' if ok256 else 'REJECTED   [FAIL]'}")
+    FINDINGS.append(("§5.1 the gadget is complete at n=256", ok256))
 
     # -- 5.2 cheat class 1: e is not φ(s) (honest MPC, false statement) --------
     n = 32
@@ -514,6 +519,7 @@ def section5():
     print(f"  §5.2 cheat: e ≠ φ(s)      ({TRIALS_CHEAT} trials): "
           f"{caught}/{TRIALS_CHEAT} rejected (expected 100% — output-sum check)"
           f"{'   [PASS]' if caught == TRIALS_CHEAT else '   [FAIL]'}")
+    FINDINGS.append(("§5.2 e != phi(s) is always rejected", caught == TRIALS_CHEAT))
 
     # -- 5.3 cheat class 2: s not ternary --------------------------------------
     caught = 0
@@ -527,6 +533,7 @@ def section5():
     print(f"  §5.3 cheat: s not ternary ({TRIALS_CHEAT} trials): "
           f"{caught}/{TRIALS_CHEAT} rejected (expected 100% — ternary check)"
           f"{'   [PASS]' if caught == TRIALS_CHEAT else '   [FAIL]'}")
+    FINDINGS.append(("§5.3 a non-ternary s is always rejected", caught == TRIALS_CHEAT))
 
     # -- 5.4 cheat class 3: corrupted view (soundness-error measurement) -------
     # The prover claims a flipped e-bit and patches party 0's cleartext o2
@@ -563,6 +570,11 @@ def section5():
     exp = TRIALS_CHEAT * (1 / 3) ** R3
     print(f"  §5.4 cheat: corrupted view (R={R3}, {TRIALS_CHEAT} trials): "
           f"{passed} passed — expected ≈ {exp:.1f}  [(1/3)^R soundness error]")
+    # A soundness ERROR, so the bar has to follow the statistic (the class
+    # CLAUDE.md's Testing section describes): expected (1/3)^R of the trials
+    # survive, and the gate is a 4-sigma Poisson band around that, not zero.
+    FINDINGS.append(("§5.4 the corrupted-view cheat survives at (1/3)^R",
+                     passed <= exp + 4 * max(exp, 1.0) ** 0.5))
 
     # -- 5.5 measured proof sizes ----------------------------------------------
     sz32  = _proof_bytes(gadget_prove(_rand_ternary(32), _phi(_rand_ternary(32)),
@@ -631,5 +643,12 @@ if __name__ == '__main__':
     section5()
     section6()
     print(SEP)
+    _bad = [name for name, ok in FINDINGS if not ok]
+    if _bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(_bad), ", ".join(_bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(FINDINGS))
     print("Done.")
     print(SEP)
+    sys.exit(1 if _bad else 0)

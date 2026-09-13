@@ -76,6 +76,7 @@ def section1(trials: int = 5_000) -> None:
     print(f"  SAC          : {'PASS' if sac_ok else 'FAIL'}  "
           f"(|mean−128| < 3·SE)")
     print(f"  Time         : {elapsed:.1f} s")
+    return sac_ok
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -105,6 +106,7 @@ def section2(trials: int = 5_000) -> None:
     sac_ok = abs(mean - 128.0) < 3 * (std / math.sqrt(trials))
     print(f"  Key-SAC      : {'PASS' if sac_ok else 'FAIL'}")
     print(f"  Time         : {elapsed:.1f} s")
+    return sac_ok
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -137,17 +139,18 @@ def section3(trials: int = 5_000) -> None:
     p05 = chi2 < 293.2
     print(f"  Uniformity     : {'PASS (p>0.05)' if p05 else 'inspect'}")
     print(f"  Time           : {elapsed:.1f} s")
+    return p05
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # §4 — Collision sanity (no accidental collisions far below birthday bound)
 # ═══════════════════════════════════════════════════════════════════════════
-def section4(full: bool) -> None:
+def section4(full: bool) -> bool:
     print(SEP)
     if not full:
         print("§4 — Collision sanity  (run with --full for 2^17 trials)")
         print(SEP)
-        return
+        return True   # not run is not a failed finding
     trials = 1 << 17  # 131 072 — birthday at n=256 is 2^128; expected: 0
     print(f"§4 — Collision sanity  ({trials} trials, expected 0 collisions)")
     print(SEP)
@@ -166,6 +169,7 @@ def section4(full: bool) -> None:
     print(f"  Collisions   : {collisions}")
     print(f"  Result       : {'PASS' if collisions == 0 else 'FAIL'}")
     print(f"  Time         : {elapsed:.1f} s")
+    return collisions == 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -197,6 +201,7 @@ def section5(trials: int = 200) -> None:
           f"(expected 0)")
     print(f"  Result                      : {'PASS' if successes == 0 else 'FAIL'}")
     print(f"  Time                        : {elapsed:.1f} s")
+    return successes == 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -224,6 +229,7 @@ def section6(trials: int = 1_000) -> None:
     print(f"  Domains differ : {differ}/{examined}")
     print(f"  Result         : {'PASS' if differ == examined else 'FAIL'}")
     print(f"  Time           : {elapsed:.1f} s")
+    return differ == examined
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -252,29 +258,37 @@ def section7(trials: int = 200) -> None:
     print(f"  F1^64(s,m)==0 (fixed pts): {fps}/{trials}    (expected: 0)")
     print(f"  Near-zero (≤1 bit set)   : {near_fps}/{trials}  (expected ≈ 0)")
     print(f"  Time                     : {elapsed:.1f} s")
+    return fps == 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════════════════
-def main() -> None:
+def main() -> int:
     full = '--full' in sys.argv
     print()
     print("hfscx_256_analysis.py — HFSCX-256-DM empirical security tests")
     print(f"  Backs SecurityProofs.md §11.9 (TODO #34)")
     print()
-    section1()
-    section2()
-    section3()
-    section4(full)
-    section5()
-    section6()
-    section7()
+    findings = [("§1 input-bit SAC", section1()),
+                ("§2 key-bit SAC", section2()),
+                ("§3 byte uniformity", section3()),
+                ("§4 no collisions far below the birthday bound", section4(full)),
+                ("§5 length-extension resistance", section5()),
+                ("§6 keyed/unkeyed domain separation", section6()),
+                ("§7 no DM fixed points", section7())]
     print()
     print(SEP)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print("END hfscx_256_analysis.py")
     print(SEP)
+    return 1 if bad else 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

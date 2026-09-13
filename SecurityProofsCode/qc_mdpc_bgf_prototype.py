@@ -62,7 +62,7 @@ All arithmetic is on Python ints as GF(2)[x] coefficient bitmasks (bit i =
 coefficient of x^i).  Self-contained: no imports from the suite.
 """
 
-import os, math, time, random
+import os, math, re, sys, time, random
 
 # ── NL-FSCX v1 at n = 256 (local re-implementation, matches the suite) ──────
 
@@ -381,10 +381,34 @@ def section4_dfr(r=523, d=15, t=18, trials=300):
     print("  correct; residual toy-scale failures are expected and key-dependent.")
     print("  Brute-force decap at these parameters (t=18 over N=1046 positions)")
     print("  would need C(1046,18) ≈ 2^{124} trials — the trapdoor is essential.")
-    return fails
+    return fails, trials
 
 
 # ── §5  Production parameter discussion (work item 4) ───────────────────────
+
+def _header_qcmdpc():
+    """(r, d, t) as herradura.h declares them, or None if unreadable.
+
+    TODO #291: §5's table is a LITERAL, and since TODO #276 adopted BIKE-128
+    its 128-bit row is also the row the suite ships -- so it can now drift
+    against the header, which is the one thing this script cannot notice by
+    running.  Read rather than trusted; still no import from the suite.
+    """
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "herradura.h")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+    except OSError:
+        return None
+    out = {}
+    for name in ("QCMDPC_R", "QCMDPC_D", "QCMDPC_T"):
+        m = re.search(r"#define\s+%s\s+(\d+)" % name, src)
+        if not m:
+            return None
+        out[name] = int(m.group(1))
+    return out["QCMDPC_R"], out["QCMDPC_D"], out["QCMDPC_T"]
+
 
 def section5_parameters():
     print(SEP)
@@ -404,6 +428,20 @@ def section5_parameters():
     print("  XOF changes from SHA-3 to the HFSCX-256-DM counter-mode PRF.")
     print("  Remaining gap for production: constant-time C implementation of the")
     print("  rotation/popcount kernels and the BIKE weak-key rejection tests.")
+    print()
+    hdr = _header_qcmdpc()
+    if hdr is None:
+        print("  (herradura.h not readable from here — the 128-bit row is not"
+              " cross-checked this run.)")
+        return None
+    r_h, d_h, t_h = hdr
+    match = (r_h, 2 * d_h, t_h) == (12323, 142, 134)
+    print(f"  Cross-check against herradura.h: QCMDPC_R={r_h}, w=2*QCMDPC_D="
+          f"{2 * d_h}, QCMDPC_T={t_h}  ->  128-bit row {'matches' if match else 'DIFFERS'}")
+    print("  (Since TODO #276 the 128-bit row above is also the DEPLOYED set, so a")
+    print("   drift between this table and the header is a real defect, not a")
+    print("   difference between a prototype and production.)")
+    return match
 
 
 def main():
@@ -417,9 +455,9 @@ def main():
     print()
     ok_prf = section3_prf_uniformity()
     print()
-    fails = section4_dfr()
+    fails, trials = section4_dfr()
     print()
-    section5_parameters()
+    row_ok = section5_parameters()
     print()
     print(SEP)
     print(f"Done ({time.time()-t0:.1f}s).")
@@ -429,7 +467,27 @@ def main():
     print(f"  BGF decoder DFR at toy scale: {fails} failures (see §4)")
     print("  Work items 1–4 prototyped; item 5 (CLI integration) requires the")
     print("  C port and is deferred to a follow-up batch.")
+    print()
+
+    # TODO #291: this summary printed PASS/FAIL and exited 0 either way -- the
+    # defect class TODO #233 removed from the test harnesses, here in the layer
+    # that backs the security documents.  The DFR bar is loose on purpose: §4
+    # says toy-scale failures are "expected and key-dependent", so anything
+    # under 5% is the prototype working, and a decoder that has actually
+    # regressed fails far past that.
+    findings = [("§3 the PRF's support sampling is uniform", ok_prf),
+                ("§4 the BGF prototype decodes at toy scale",
+                 fails <= 0.05 * trials)]
+    if row_ok is not None:
+        findings.append(("§5's 128-bit row still matches herradura.h", row_ok))
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

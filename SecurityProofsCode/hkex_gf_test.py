@@ -161,6 +161,7 @@ def hdr(s):
     print(f"\n{DIV}\n  {s}\n{DIV}")
 
 def run():
+    findings = []
     print(DIV)
     print("  hkex_gf_test.py — HKEX-GF: Diffie-Hellman over GF(2ⁿ)*")
     print(DIV)
@@ -183,6 +184,7 @@ def run():
                 errors += 1                                        # identity
         print(f"  n={n}: 1000 trials — commutativity + associativity + identity  "
               f"{'[PASS]' if errors == 0 else f'[FAIL errors={errors}]'}")
+        findings.append((f"GF(2^{n}) field axioms", errors == 0))
 
     # ── Test 2: Key exchange correctness ────────────────────────────────────
     hdr("Test 2 — HKEX-GF correctness: g^{ab} = g^{ba}")
@@ -196,6 +198,7 @@ def run():
                 passed += 1
         results[n] = (passed, TRIALS)
         print(f"  n={n}: {passed}/{TRIALS}  {'[PASS]' if passed == TRIALS else '[FAIL]'}")
+        findings.append((f"HKEX-GF agreement at n={n}", passed == TRIALS))
 
     # ── Test 3: Eve's linear attack resistance ───────────────────────────────
     hdr("Test 3 — Eve's classical attack: sk_eve = S_{r+1}·(C⊕C₂)")
@@ -211,6 +214,7 @@ def run():
         rate = hits / TRIALS
         print(f"  n={n}: Eve succeeded {hits}/{TRIALS}  (rate={rate:.2e})  "
               f"{'[PASS — attack fails]' if hits == 0 else f'[WARN: {hits} hits]'}")
+        findings.append((f"the classical linear attack fails at n={n}", hits == 0))
 
     # ── Test 4: DLP hardness illustration (small n only) ────────────────────
     hdr("Test 4 — DLP hardness: baby-step giant-step on small GF(2^n)")
@@ -245,7 +249,9 @@ def run():
         print(f"  Private key = {a_priv}, BSGS recovered = {a_recov}, "
               f"correct = {match}  [{t_bsgs*1000:.1f} ms]")
     else:
+        match = False
         print(f"  BSGS: no solution found (n=16 field arithmetic issue)")
+    findings.append(("BSGS recovers the n=16 private key", match))
 
     print()
     print("  DLP cost vs. n (BSGS, O(√(2ⁿ−1)) operations):")
@@ -281,6 +287,7 @@ def run():
                 passed += 1
         print(f"  n={n}: fscx_revolve²(P, K, i, r) = P  "
               f"{passed}/{TRIALS}  {'[PASS]' if passed == TRIALS else '[FAIL]'}")
+        findings.append((f"FSCX period preserved at n={n}", passed == TRIALS))
 
     # ── Test 6: Performance benchmark ────────────────────────────────────────
     hdr("Test 6 — Performance benchmark")
@@ -307,13 +314,27 @@ def run():
   Operations:    XOR + left-shift only (carryless polynomial arithmetic).
   FSCX impact:   Zero. HSKE/HPKS/HPKE use standard FSCX; period M^n=I intact.
 
-  Security margins (index calculus / function-field sieve):
-    n = 64   : ~40 bits  (demonstration only)
-    n = 128  : ~60-80 bits  (marginal)
-    n = 256  : ~128 bits  (recommended minimum)
-    n = 512  : ~192 bits  (conservative)
+  Security margins:  WITHDRAWN (TODO #291).  This block read
+    "index calculus / function-field sieve ... n = 256 : ~128 bits", which is
+    the generic-group figure of Test 4's BSGS table and not what GF(2^256)*
+    costs.  Two later results supersede it and both are far lower: the function
+    field sieve leaves ~80-90 bits (SecurityProofs-3.md §9.2.4), and
+    Pohlig-Hellman plus Pollard rho over the largest prime factor of 2^256 - 1
+    costs about 2^36.5 group operations, recovering keys end to end
+    (TODO #212, hkex_gf_pohlig_hellman.py).  Read that script for the number;
+    nothing here bounds it.
 """)
+
+    print(DIV)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    print(DIV)
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())

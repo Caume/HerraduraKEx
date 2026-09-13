@@ -52,7 +52,10 @@ matching Go's wide-value-then-%3 reduction, whose bias is negligible at ~2^-32).
 
 Usage: python3 SecurityProofsCode/stern_ring_challenge_bias.py
 """
+import os
 import random
+import re
+import sys
 
 SEP = "=" * 72
 
@@ -97,34 +100,73 @@ def section3_distinguishing_cost():
         print(f"  z={z} ({conf} one-tail confidence): "
               f"~{n_challenge_draws:,.0f} challenge draws needed for slot value 0")
     print()
-    print("  At SDF_ROUNDS=32 (C/Go/Python production rounds per signature), that is")
+    print("  At the DEMO default of 32 rounds per signature (production is SDF_ROUNDS")
+    print("  = 219, where it takes ~7x fewer signatures), that is")
     print("  roughly n_challenge_draws / 32 signatures from the SAME ring needed before")
     print("  the skew becomes statistically visible per slot.")
 
 
-def section4_recommendation():
+def section4_fix_shipped():
     print()
     print(SEP)
-    print("4. Recommended fix")
+    print("4. The fix, and whether it is still in place")
     print(SEP)
-    print("  Match the already-negligible-bias pattern this codebase uses elsewhere:")
-    print("    - Go's own stern-ring code already reduces a full 32-bit random value")
-    print("      mod 3 (bias ~2^-32) instead of a single byte -- C/Python should match it,")
-    print("      or")
-    print("    - Apply the same rejection-sampling fix as TODO #2's _rnl_rand_poly bias")
-    print("      (draw byte v, reject v >= 255, i.e. threshold = 255 - 255%3 = 255,")
-    print("      leaving exactly 85 acceptable residues per value -- trivial, ~0.4%")
-    print("      rejection rate).")
-    print("  Tracked as TODO #164.")
+    print("  FIXED in v1.9.127 (TODO #164).  Until TODO #291 this section still read")
+    print("  \"Recommended fix ... Tracked as TODO #164\" in the present tense, four")
+    print("  years of releases after the fix shipped -- so a reader met a live")
+    print("  anonymity leak that no longer existed.  What shipped: `stern_ring_sign`")
+    print("  (herradura.h) and `hpks_stern_ring_sign` (the Python suite) now REJECT")
+    print("  the byte 255 and reduce the rest, giving exactly 85/85/85.  Go and the")
+    print("  Arduino code were never affected -- they reduce a 32-bit draw, bias")
+    print("  ~2^-32.")
+    print()
+    print("  So the useful thing this script can do now is check the fix is still")
+    print("  there.  That is a SOURCE check and is stated as one: the biased shape")
+    print("  is one byte reduced mod 3 with nothing rejected, and its absence from")
+    print("  the two files that carried it is what is asserted.")
+    print()
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(here)
+    targets = [("Python suite", os.path.join(root, "Herradura cryptographic suite.py"),
+                r"if v != 255"),
+               ("herradura.h", os.path.join(root, "herradura.h"),
+                r"if \(rnd1 != 255\) break;")]
+    ok = True
+    for label, path, pattern in targets:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                src = fh.read()
+        except OSError:
+            print(f"  {label:<14} NOT READABLE from here — not checked this run")
+            continue
+        found = re.search(pattern, src) is not None
+        ok = ok and found
+        print(f"  {label:<14} rejection sampling present: {found}")
+    return ok
 
 
 def main():
     rng = random.Random(0xC0DE_1590)
-    section1_exact_distribution()
+    counts = section1_exact_distribution()
     section2_monte_carlo(5_000_000, rng)
     section3_distinguishing_cost()
-    section4_recommendation()
+    fix_in_place = section4_fix_shipped()
+
+    findings = [
+        # The arithmetic the whole item rested on: 256 = 3*85 + 1.
+        ("byte % 3 is 86/85/85, not uniform", counts == [86, 85, 85]),
+        # And the fix that removed it is still in both files that carried it.
+        ("the rejection-sampling fix of TODO #164 is still in place", fix_in_place),
+    ]
+    bad = [name for name, ok in findings if not ok]
+    print()
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

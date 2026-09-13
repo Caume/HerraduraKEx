@@ -628,7 +628,12 @@ jobs:
     # (the class CLAUDE.md's Testing section already describes -- a
     # probabilistic property asserted as a deterministic one), not this flag.
     continue-on-error: true
-    timeout-minutes: 180
+    # Raised from 180 by TODO #291, which took the discovered set from 35
+    # scripts to 73: measured 73.4 min before and about 120 min after, on an
+    # aarch64 SBC that is an upper bound on a runner. The headroom is for the
+    # heavy tail (five scripts are over five minutes each), not for a hang --
+    # the runner has its own per-script timeout for that.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
@@ -688,5 +693,12 @@ jobs:
       # missing z3 now prints what to install and exits NON-ZERO rather than
       # tracebacking or passing vacuously. A gate whose subject is absent has
       # not reproduced its finding.
+      #
+      # WHAT THIS JOB COVERS SINCE TODO #291: every .py in SecurityProofsCode/,
+      # because that item asked the prior question -- which scripts GATE -- and
+      # found 46 of 81 that did not, 22 of them computing a PASS/FAIL verdict
+      # and discarding it. It is 73 gating and 7 declared non-gating now, and
+      # the runner FAILS on a script that is neither, so a new analysis script
+      # cannot quietly join the uncovered set.
       - name: Every findings gate still reproduces
         run: python3 SecurityProofsCode/run_findings_gates.py --quick

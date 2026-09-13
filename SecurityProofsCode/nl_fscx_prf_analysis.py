@@ -39,6 +39,7 @@ Sections:
 
 import os
 import random
+import sys
 import math
 import time
 from collections import Counter
@@ -999,3 +1000,43 @@ print(f"""
 print(SEP)
 print("END nl_fscx_prf_analysis.py  (§10 range-compression mechanism added v1.5.43)")
 print(SEP)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Findings gate (TODO #291)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# The matrix above is prose; these are the cells of it that are MEASURED here,
+# read back from the module-level variables the sections left behind.  The
+# baseline rows are included deliberately: a run in which linear FSCX stopped
+# failing would mean the tests had stopped testing, which is the failure mode a
+# summary table cannot show.
+_FINDINGS = [
+    ("§1 the linear baseline is 100% predictable", lin_match == TRIALS_1),
+    ("§1 NL-FSCX v1 is at the random level (both instantiations)",
+     nl_match_stern <= max(4 * expected_random, 4)
+     and nl_match_hske <= max(4 * expected_random, 4)),
+    ("§2 the linear baseline is 100% BLR-linear", lin_blr == TRIALS_BLR),
+    ("§2 NL-FSCX v1 is not BLR-linear",
+     nl_blr_s <= max(4 * expected_blr_random, 4)
+     and nl_blr_h <= max(4 * expected_blr_random, 4)),
+]
+# §9's n=12 cell is NOT gated, and that is a decision rather than an omission:
+# F_stern measures ABOVE the random-function bound there (0.43 against 0.090),
+# which is the reported state -- the matrix prints "~" for it and §10 records the
+# range compression behind it as an OPEN gap.  Gating the current direction would
+# make the TODO #43 fix fail this script, and gating the opposite would assert a
+# result nobody has.  What is gated is that the LINEAR BASELINE still reaches
+# bias 1.0, since that is what shows the measurement is still working.
+if EXHAUSTIVE_N12 and n12_max_bias is not None:
+    _FINDINGS.append(("§9 the linear baseline is still perfectly correlated",
+                      b12_lin >= 0.99))
+_bad = [name for name, ok in _FINDINGS if not ok]
+print()
+if _bad:
+    print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+          % (len(_bad), ", ".join(_bad)))
+else:
+    print("*** OK: all %d findings reproduce ***" % len(_FINDINGS))
+print(SEP)
+sys.exit(1 if _bad else 0)

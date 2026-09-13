@@ -47,6 +47,7 @@ primitives below are transcribed from `Herradura cryptographic suite.py`.
 
 import math
 import random
+import sys
 
 SEP  = "=" * 74
 SEP2 = "-" * 74
@@ -118,6 +119,7 @@ def section1():
 
     print(f"  {'n':>5} {'steps':>6} {'rank F(.,0)':>12} {'kernel':>8} {'rank C_DM(.,0)':>16} {'verdict':>12}")
     print(f"  {'-' * 5} {'-' * 6} {'-' * 12} {'-' * 8} {'-' * 16} {'-' * 12}")
+    ok_dm = True
     for n in (16, 32, 64, 128, 256):
         s = n // 4
 
@@ -129,6 +131,10 @@ def section1():
         rank_F = gf2_rank([Ls(1 << j) for j in range(n)], n)
         rank_C = gf2_rank([Ls(1 << j) ^ (1 << j) for j in range(n)], n)
         verdict = "bijective" if rank_C == n else "COLLISIONS"
+        # §1's whole result: the inner map halves the rank at every size, and
+        # the DM feed-forward restores full rank.  Both halves are gated -- a
+        # rank_F that stopped being n/2 would be a different primitive.
+        ok_dm = ok_dm and rank_C == n and rank_F == n // 2
         print(f"  {n:>5} {s:>6} {rank_F:>12} {n - rank_F:>8} {rank_C:>16} {verdict:>12}")
     print()
     print("  The inner map's rank is exactly n/2 — at n=256 it compresses the chaining")
@@ -152,7 +158,7 @@ def section1():
           f"|image C_DM(.,0)| = {img_C} of {1 << n}")
     print(f"  => zero-block compression is {'injective (no weakness)' if img_C == (1 << n) else 'NOT injective'}")
     print()
-    return True
+    return ok_dm and img_C == (1 << n) and img_F < (1 << n)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -196,6 +202,7 @@ def section2():
 
     print(f"  {'n':>5} {'rank M':>8} {'affine keys':>12} {'delta=0':>9} {'delta=2^(n-1)':>14} {'characterisation':>17}")
     print(f"  {'-' * 5} {'-' * 8} {'-' * 12} {'-' * 9} {'-' * 14} {'-' * 17}")
+    ok_char = True
     for n in (8, 12, 16):
         N = 1 << n
         rkM = gf2_rank([M(1 << j, n) for j in range(n)], n)
@@ -204,6 +211,9 @@ def section2():
         dm = sum(1 for K in range(N) if delta(K, n) == 1 << (n - 1))
         pred = {K for K in range(N) if delta(K, n) in (0, 1 << (n - 1))}
         tag = "exact" if affine == pred else "differs (M singular)"
+        # The characterisation is claimed exact wherever M is invertible, and
+        # n=12 (rank 10) is the documented exception, not a waiver.
+        ok_char = ok_char and ((affine == pred) if rkM == n else (n == 12))
         print(f"  {n:>5} {rkM:>8} {len(affine):>12} {d0:>9} {dm:>14} {tag:>17}")
     print()
     print("  n=12 is the one mismatch and is outside the design regime: M is singular")
@@ -247,6 +257,7 @@ def section2():
     print(f"  Demonstration at n=16, K=2^9 (delta=0): the map is fully predicted by its")
     print(f"  {n} basis images plus a constant — {ok}/500 random inputs reproduced exactly.")
     print()
+    return ok_char and ok == 500
 
 
 def main():
@@ -255,14 +266,21 @@ def main():
     print("TODO #159 second pass — carry-degeneracy of NL-FSCX v1/v2 constructions")
     print(SEP)
     print()
-    section1()
-    section2()
+    findings = [("§1 the zero block halves the rank and DM restores it", section1()),
+                ("§2 pi_K is affine exactly when delta(K) is 0 or 2^(n-1)", section2())]
     print(SEP)
     print("Summary: §1 HFSCX-256-DM clean (feed-forward load-bearing, now documented);")
     print("         §2 NL-FSCX v2 affine weak-key class -> TODO #168.")
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print(SEP)
     print()
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

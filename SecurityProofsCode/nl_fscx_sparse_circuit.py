@@ -163,6 +163,7 @@ def algebraic_degree_empirical(f, n, max_order=8, trials=300):
 
 
 def section2_degree_analysis():
+    ok = True
     print(SEP)
     print("§2  Algebraic degree of F1_prefix(A, B, n, k) — empirical detection")
     print()
@@ -181,12 +182,16 @@ def section2_degree_analysis():
                 n, max_order=min(n, 8), trials=300
             )
             safe = "YES" if deg >= 2 else ("1 → need r≥3" if deg == 1 else "0 (linear!)")
+            # The Theorem-13 condition this section exists to check: degree >= 2
+            # at k >= 4, which is the regime the size argument then uses.
+            ok = ok and (deg >= 2 or k < 4)
             tag = " ← full" if k == n else ""
             print(f"  {n:>5}  {k:>5}  {ag:>10}  {deg:>10}  {safe:>16}{tag}")
     print()
     print("  Degree ≥ 2 after 1 step iff at least 2 of the first k bits of B are 1.")
     print("  For k ≥ 4 and random B, this holds with probability > 1 − (k+1)/2^k.")
     print("  At k=4: Pr ≈ 1 − 5/16 = 0.69 — must require wt(B[0..k-1]) ≥ 2 in keygen.")
+    return ok
 
 
 # ── §3  Differential resistance ──────────────────────────────────────────────
@@ -317,7 +322,7 @@ def main():
     t0 = time.time()
     section1_gate_counts()
     print()
-    section2_degree_analysis()
+    deg_ok = section2_degree_analysis()
     print()
     section3_differential()
     print()
@@ -333,7 +338,14 @@ def main():
     print("  Degree ≥ 2 preserved for k ≥ 4 with wt(B[0..k-1]) ≥ 2.")
     print("  Proof size reduction from k-reduction is ≤ ~1.6× (overhead dominates).")
     print("  The 180 KB goal requires a different ZKP system (IOP/σ-protocol).")
+    print()
+    if deg_ok:
+        print("*** OK: the prefix adder keeps algebraic degree >= 2 at every k >= 4 ***")
+    else:
+        print("*** FAILED: a k >= 4 prefix adder dropped below algebraic degree 2 — "
+              "Theorem 13's precondition no longer holds ***")
+    return 0 if deg_ok else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

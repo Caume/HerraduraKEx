@@ -1334,7 +1334,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; `cont
 error: true` for now, on the `arduino` job's TODO #185 route). Locally, run the same
 scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 35
+**The findings gates, and why they are a job rather than a step (TODO #289).** 73
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -1355,6 +1355,31 @@ header and not discovered is an error, checked in both negative controls. (3) Fa
 do not stop the run: #286 hit three and #288 six, so a `set -e` loop reporting the first
 and hiding the rest is not hypothetical. The two QC-MDPC scripts stay in `native-python`
 as well, deliberately, because that job is required and this one is not yet.
+
+**And which scripts GATE, which is the prior question (TODO #291).** #289 and #290 both
+answer "which of the gating scripts run"; nothing asked how many scripts gate at all.
+The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
+by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
+verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
+backs the security documents rather than the one that tests the code. It is now **73
+gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
+other: the runner FAILS on a script that is neither, which is the part that does not
+decay, since adding an analysis script now forces the question. Four things worth knowing.
+(1) `NON_GATING` is self-invalidating in both directions like `EXCLUDED` — an entry naming
+an absent file fails, and so does one naming a script that has since become a gate. (2)
+"It is only a demo" is not a reason: `hpks_threshold_demo.py`, `oprf_demo.py`,
+`vdf_demo.py` and `hkex_pake_demo.py` all assert something falsifiable and all gate. The
+seven that do not are five `hkex_cfscx_*.py` design-space surveys of rejected
+constructions, `nl_fscx_v2_orbit.py` (a sampled distribution, where a gate would mean
+inventing a threshold), and `stern_ct_demo.py`, whose verdict is that a timing leak is
+STILL THERE — a gate would fail if anyone fixed it. (3) The conversion turned up a
+FOURTH exit shape and a THIRD `--quick` spelling, both the blind spot the runner already
+documents: five scripts name their entry point `run()` rather than `main()` and read as
+non-gating, and two declare `--fast` through `sys.argv` rather than argparse — one of
+them (`stern_f_multiround_fs.py`) already a gate, so it had been running at full sample
+size since #289. (4) A section that did not run must not be scored: `--full`-only and
+`--skip2/--skip3` sections return "no finding", never a passing one, or a skipped section
+becomes a vacuous pass — the inverse of what TODO #234 found in the Arduino harness.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
@@ -1515,11 +1540,13 @@ python3 SecurityProofsCode/nl_fscx_rot_analysis.py   # rotational differential a
 python3 SecurityProofsCode/qcmdpc_bgf_variants.py --quick   # ~11 min; --full is ~72 min
 
 # All of them at once, which is what CI's analysis-findings job runs (TODO #289).
-# --quick is the default here and is applied to scripts declaring --quick OR
-# --fast (two spellings of one reduced-sample mode -- TODO #290);
+# --quick is the default here and is applied to scripts declaring --quick or
+# --fast, in argparse OR straight out of sys.argv -- three spellings of one
+# reduced-sample mode (TODO #290, #291);
 # --full runs everything at its default sample sizes (hours, not minutes).
+# --list also prints the 7 scripts DECLARED non-gating and why (TODO #291).
 python3 SecurityProofsCode/run_findings_gates.py --list   # what would run, and how
-python3 SecurityProofsCode/run_findings_gates.py         # ~73 min on an aarch64 SBC
+python3 SecurityProofsCode/run_findings_gates.py         # ~120 min on an aarch64 SBC
 ```
 
 ## Core Cryptographic Architecture

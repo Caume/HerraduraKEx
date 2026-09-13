@@ -17,30 +17,53 @@ threshold, it shows that *no* threshold in the sparse regime captures HKEX-RNL's
 deployed secret distribution except with probability far below the security target.
 
   §1  CBD(η=1) coefficient law — exact and empirical
-  §2  Exact Hamming-weight law of a CBD(η=1) secret at n=256
+  §2  Exact Hamming-weight law of a CBD(η=1) secret at the deployed ring
   §3  Threshold-independent sparsity test — P[HW ≤ h] across the whole sparse regime
   §4  Hybrid-attack guessing-space entropy — the precondition the speedup needs
-  §5  Bit budget vs HKEX-RNL's 105–115-bit Core-SVP estimate
+  §5  Bit budget vs HKEX-RNL's Core-SVP estimate
 
-Deployed parameters: q=65537, p=4096, pp=4, η=1, n=256
-Self-contained (no imports from the suite), per SecurityProofsCode convention; the
-sampler in §1 is copied verbatim from `_rnl_cbd_poly` in
+Deployed parameters: q=65537, p=4096, pp=4, η=1, and the ring degree READ FROM THE
+SUITE.  TODO #291 found both of those written here as literals and both stale: the
+degree said 256, retired by TODO #223 in favour of 1024, and §5's budget was anchored
+on the 105–115-bit Core-SVP figure that TODO #216 retracted (it computes ~32 bits at
+n=256 and ~206 at n=1024, directly).  Neither error changed this worksheet's verdict —
+a CBD(η=1) secret is ~50% dense at every width — but "deployed" was wrong in the
+unsafe direction, which is the TODO #286 class.  The ring degree is now consulted
+rather than asserted; everything else here remains self-contained, and the sampler in
+§1 is still copied verbatim from `_rnl_cbd_poly` in
 `Herradura cryptographic suite.py`.
+
+Exits non-zero if a finding stops reproducing (TODO #291).
 """
 
+import importlib.util
 import os
+import sys
 from math import comb, log2
+
+# The deployed ring degree, read from the suite for the reason TODO #286 gave
+# when it did the same to hkex_rnl_failure_rate.py: a literal cannot be wrong
+# about itself only if it is not a literal.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+_SPEC = importlib.util.spec_from_file_location(
+    '_hkex_suite', os.path.join(_ROOT, 'Herradura cryptographic suite.py'))
+_SUITE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_SUITE)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 Q       = 65537   # Fermat prime modulus (deployed)
 ETA     = 1       # CBD(η=1): secret coefficients in {-1, 0, 1}
-N       = 256     # deployed ring degree
+N       = _SUITE.RNLN   # ring degree, consulted rather than asserted
 TRIALS  = 20000   # empirical sample count for §1/§2
 
-# HKEX-RNL's current estimated security (SecurityProofs-4.md §11.6)
-CORE_SVP_LO, CORE_SVP_HI = 105, 115
+# Core-SVP at the deployed ring, computed DIRECTLY by TODO #216
+# (hkex_rnl_lattice_2026.py): ~206 classical / ~187 quantum at n = 1024.  The
+# 105-115 band this script used to carry is the figure #216 retracted, and it
+# was never a figure for this ring in any case.
+CORE_SVP_DIRECT_216 = 206
 
 # The paper's own headline improvements
 RING_FACTOR_BITS = log2(N)   # the claimed O(N) speedup, in bits, at N=256
@@ -229,17 +252,16 @@ def section5():
     print(SEP)
     print("§5  Bit budget vs HKEX-RNL's Core-SVP estimate")
     print(SEP)
-    print(f"HKEX-RNL deployed estimate (§11.6): {CORE_SVP_LO}-{CORE_SVP_HI} bits Core-SVP")
+    print(f"HKEX-RNL at the deployed n={N}: ~{CORE_SVP_DIRECT_216} bits Core-SVP, "
+          f"computed directly (TODO #216)")
     print(f"Paper's claimed ring-structure speedup: O(N) = 2^{RING_FACTOR_BITS:.0f} "
           f"({RING_FACTOR_BITS:.0f} bits) at N={N}")
     print(f"Paper's measured maximum improvement:  {MEASURED_MAX_BITS} bits "
           f"(on sparse FHE parameter sets)")
     print()
     print("Stakes if the attack DID apply (it does not — §3, §4):")
-    lo = CORE_SVP_LO - MEASURED_MAX_BITS
-    hi = CORE_SVP_HI - MEASURED_MAX_BITS
-    print(f"    {CORE_SVP_LO}-{CORE_SVP_HI} bits  ->  {lo}-{hi} bits  "
-          f"(a material loss — hence this re-check)")
+    print(f"    ~{CORE_SVP_DIRECT_216} bits  ->  ~{CORE_SVP_DIRECT_216 - MEASURED_MAX_BITS}"
+          f" bits  (a material loss — hence this re-check)")
     print()
     print("Applicability verdict:")
     print("    §3: the sparsity precondition fails for ANY sparse-regime threshold,")
@@ -247,7 +269,7 @@ def section5():
     print("    §4: the guessing-space reduction the speedup monetizes does not exist")
     print("        at 50% density.")
     print()
-    print(f"=> No revision to the {CORE_SVP_LO}-{CORE_SVP_HI}-bit Core-SVP estimate.")
+    print(f"=> No revision to the ~{CORE_SVP_DIRECT_216}-bit Core-SVP estimate.")
     print("   'Small' (CBD, bounded magnitude) and 'sparse' (few nonzero positions)")
     print("   are distinct properties, and HKEX-RNL is small but emphatically not sparse.")
     print()
@@ -260,16 +282,40 @@ def main():
     print(f"Deployed: q={Q}, n={N}, η={ETA}   |   eprint 2026/366 [Hou-Jiang]")
     print(SEP)
     print()
-    section1()
-    section2()
-    section3()
-    section4()
+    nz = section1()
+    mean, sd = section2()
+    loosest = section3()
+    cbd_bits = section4()
     section5()
+
+    findings = [
+        # The sampler really does produce a ~50%-dense secret (the empirical
+        # density is within five standard errors of 1/2).
+        ("CBD(eta=1) is 50% dense as sampled",
+         abs(nz - 0.5) < 5 * (0.5 / (TRIALS ** 0.5))),
+        # The exact law agrees with the binomial the argument rests on.
+        ("the Hamming weight follows Binomial(n, 1/2)",
+         abs(mean - N / 2) < 5 * sd and abs(sd - (N ** 0.5) / 2) < 1.0),
+        # The threshold-independent result: no sparse-regime threshold is
+        # reachable with probability above the security target.
+        ("no sparsity threshold below 12% density is reachable",
+         loosest / N > 0.12),
+        # And the guessing space the speedup needs does not exist here.
+        ("the guessing space stays far above the sparse-FHE regime",
+         cbd_bits - sparse_ternary_bits(1) > 0.9 * cbd_bits),
+    ]
+    bad = [name for name, ok in findings if not ok]
     print(SEP)
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print("Done. See SecurityProofs-4.md §11.6 for the write-up.")
     print(SEP)
     print()
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

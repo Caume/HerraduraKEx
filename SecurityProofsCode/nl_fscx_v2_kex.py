@@ -32,7 +32,7 @@ which forms a non-abelian permutation group (Theorem 15).
 Runtime: ~10 s on a modest CPU.
 """
 
-import importlib.util, os, time
+import importlib.util, os, sys, time
 from pathlib import Path
 
 # ── suite import ──────────────────────────────────────────────────────────────
@@ -325,8 +325,23 @@ def main():
     section4(n=32, commuting_example=comm_ex)
     section5(32, anomalies, safe, nonabelian, comm_ex)
 
+    # TODO #291.  The two results §5 concludes from, checked rather than read:
+    # the permutation family is non-abelian (so there is a group to talk about
+    # at all), and a randomly drawn key pair does NOT commute (so the Ko-Lee /
+    # AAG shape has no samplable instance).  comm_ex is None exactly when the
+    # commuting-pair search found nothing, which is the reported state.
+    findings = [("the pi_K family is non-abelian", nonabelian),
+                ("random key pairs do not commute", comm_ex is None)]
+    bad = [name for name, ok in findings if not ok]
+    print()
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print(f"\nTotal runtime: {time.time() - t0:.1f} s")
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -42,7 +42,9 @@ Runtime: minutes-to-hours with the n=32 sweep on slow hosts.
 Set env FULL_SWEEP=0 to skip n=32 and use extrapolated values only.
 """
 
+import argparse
 import math
+import sys
 import os
 import random
 import time
@@ -250,7 +252,18 @@ def section5_drbg_walk():
 # ---------------------------------------------------------------------------
 
 # Set env FULL_SWEEP=0 to skip the n=32 exhaustive scan (slow on small hosts).
-FULL_SWEEP = os.environ.get('FULL_SWEEP', '1') != '0'
+# TODO #291: --quick forces FULL_SWEEP off, and the reason is not runtime.  The
+# n=32 exhaustive scan builds a dict keyed by the image of all 2^32 inputs; the
+# default (FULL_SWEEP on) reached 4.4 GB of RSS in three minutes here and was
+# OOM-killed at 636 s, so the DEFAULT of this script cannot complete on an
+# ordinary host, let alone a CI runner.  §2 and the n=32 rows degrade to
+# "extrapolated" exactly as the FULL_SWEEP=0 path already documents; the
+# findings this script gates on live at n=8/16 and in §5, and do not move.
+_QUICK_AP = argparse.ArgumentParser(add_help=False)
+_QUICK_AP.add_argument('--quick', action='store_true',
+                       help='skip the n=32 exhaustive scan (which needs >4 GB)')
+_QUICK = _QUICK_AP.parse_known_args()[0].quick
+FULL_SWEEP = (not _QUICK) and os.environ.get('FULL_SWEEP', '1') != '0' 
 
 def main():
     print("=" * 68)
@@ -346,6 +359,30 @@ def main():
     print("    the extrapolated collision probability is negligible.")
     print()
 
+    # TODO #291.  Two findings, and both are qualitative on purpose: the image
+    # fraction is what makes the ratchet's birthday bound non-trivial, and the
+    # extrapolation is only usable while it stays in the random-function band.
+    frac_by_n = dict(fractions)
+    findings = [
+        ("nl_fscx_v1 is non-bijective at every measured width",
+         all(f < 1.0 for f in frac_by_n.values()) and len(frac_by_n) >= 2),
+        # 1 - 1/e = 0.632 is the one-iterate image of a random function, and
+        # the measured fraction sits on it from n=16 up (0.634).  n=8 is
+        # EXCLUDED and not waived: at 256 points the asymptotic figure does not
+        # apply and the measurement reads 0.828.  A drift off the band at the
+        # larger widths means the map or the domain constant has changed, not
+        # that the bound moved.
+        ("the image fraction stays in the random-function band from n=16 up",
+         all(0.55 < f < 0.72 for n, f in frac_by_n.items() if n >= 16)),
+    ]
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    return 1 if bad else 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

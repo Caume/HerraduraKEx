@@ -34,6 +34,7 @@ import itertools
 import math
 import os
 import random
+import sys
 import time
 
 
@@ -91,7 +92,7 @@ def chain(s0: int, blocks, comp=comp_v1) -> int:
 # ═══════════════════════════════════════════════════════════════════════════
 # §1 — Does the inner map's image collapse propagate to the compression?
 # ═══════════════════════════════════════════════════════════════════════════
-def section1(quick: bool) -> None:
+def section1(quick: bool) -> bool:
     print(SEP)
     print("§1  Inner-map image collapse vs. C_DM image")
     print(SEP)
@@ -107,6 +108,7 @@ def section1(quick: bool) -> None:
     rounds = [R_STRUCT, 16] if quick else [R_STRUCT, 16, R_DEPLOY]
     print(f"{'r':>4}  {'image F_1^r':>12}  {'image C_DM':>11}  {'2/r':>7}  {'#F_1^r = 0':>10}")
     print(SEP2)
+    ok = True
     for r in rounds:
         t0 = time.time()
         f = [nl_fscx_revolve_v1(BitArray(N_SMALL, a), B, r).uint
@@ -117,6 +119,16 @@ def section1(quick: bool) -> None:
         tag = "  <- deployed step count" if r == R_DEPLOY else ""
         print(f"{r:>4}  {img_f:>12.4f}  {img_c:>11.4f}  {2.0 / r:>7.4f}  "
               f"{zeros:>10}   ({time.time() - t0:.0f}s){tag}")
+        # This section's two findings as inequalities rather than prose.  The
+        # feed-forward holds C_DM's image at 1 - 1/e tightly (within 0.01, and
+        # measured within 0.0021), so that half is a sharp gate.  The inner
+        # map's 2/r is the ASYMPTOTIC image of an iterated random function and
+        # is only approached from below -- 0.324 against 0.500 at r = 4, 0.112
+        # against 0.125 at r = 16 -- so bracketing it by a factor of two is the
+        # honest statement of "collapses as 2/r"; a tighter bound would be
+        # fitting the tolerance to the sample rather than to the claim.
+        ok = ok and 0.5 * (2.0 / r) <= img_f <= 1.5 * (2.0 / r)
+        ok = ok and abs(img_c - RANDOM_FUNC_IMAGE) < 0.01
 
     print()
     print("Reading: F_1^r collapses as 2/r exactly as a random function would, and")
@@ -127,12 +139,13 @@ def section1(quick: bool) -> None:
     print("over s even where F is many-to-one; the collapse does NOT propagate.")
     print("The inner map's non-bijectivity therefore costs nothing HERE — the gap is")
     print("in which theorem licenses the bound, not in this statistic.")
+    return ok
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # §2 — DM fixed points: the one place bijectivity would HURT
 # ═══════════════════════════════════════════════════════════════════════════
-def section2(trials: int = 20000) -> None:
+def section2(trials: int = 20000) -> bool:
     print("\n" + SEP)
     print("§2  DM fixed points — v1 (search) vs. v2 (one inversion)")
     print(SEP)
@@ -175,12 +188,13 @@ def section2(trials: int = 20000) -> None:
     print("to license the PGV citation would HAND the attacker free DM fixed points —")
     print("the very structure the ideal-cipher proof does not cover and that Dean's")
     print("attack consumes.  Non-bijectivity is load-bearing in the deployed design.")
+    return hits == 4
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # §3 — Joux multicollisions
 # ═══════════════════════════════════════════════════════════════════════════
-def section3(t_stages: int = 4) -> None:
+def section3(t_stages: int = 4) -> bool:
     print("\n" + SEP)
     print("§3  Joux multicollisions against the MD chain")
     print(SEP)
@@ -220,12 +234,13 @@ def section3(t_stages: int = 4) -> None:
     print("HFSCX-256-DM with a second hash doubles the security level (it does not),")
     print("and it is the engine behind §4.  No claim currently in §11.9 relies on")
     print("multicollision hardness, so nothing deployed is affected.")
+    return len(digests) == 1 and len(msgs) == 1 << t_stages
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # §4 — Kelsey-Schneier long-message second preimage
 # ═══════════════════════════════════════════════════════════════════════════
-def section4(k: int = 8) -> None:
+def section4(k: int = 8) -> bool:
     print("\n" + SEP)
     print("§4  Kelsey-Schneier second preimage on a 2^k-block message")
     print(SEP)
@@ -307,12 +322,13 @@ def section4(k: int = 8) -> None:
     print("§11.9.4's flat 2^n claim is wrong as written; see §6 for what it costs at")
     print("n = 256 (answer: nothing practical — the corrected figure is still far")
     print("above the suite's 128-bit target).")
+    return forged != target and len(forged) == len(target) and d_t == d_f
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # §5 — NL-FSCX v2 as the inner map
 # ═══════════════════════════════════════════════════════════════════════════
-def section5(bench: int = 400) -> None:
+def section5(bench: int = 400) -> bool:
     print("\n" + SEP)
     print("§5  NL-FSCX v2 as inner map — the 'make the PGV citation apply' option")
     print(SEP)
@@ -363,6 +379,7 @@ def section5(bench: int = 400) -> None:
     print("  - wire-format break for every artifact carrying a digest: signatures,")
     print("    AEAD tags, Stern commitments, KDF outputs, HCRED proofs")
     print("\n  => Recommendation: do NOT swap.  See §6 and SecurityProofs-6.md §11.9.12.")
+    return bij and rt
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -405,7 +422,7 @@ def section6() -> None:
     print("derivation that the construction actually satisfies.")
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[1])
     ap.add_argument('--quick', action='store_true',
                     help='skip the r=64 exhaustive pass in §1 (~25 s)')
@@ -415,16 +432,24 @@ def main() -> None:
     print(SEP)
     print("HFSCX-256-DM in the ideal-random-function model — TODO #215")
     print(SEP)
-    section1(args.quick)
-    section2()
-    section3()
-    section4()
-    section5()
+    findings = [("§1 C_DM's image stays at 1 - 1/e while F_1^r collapses as 2/r",
+                 section1(args.quick)),
+                ("§2 v2 hands over four DM fixed points by inversion", section2()),
+                ("§3 the Joux multicollision lands on one digest", section3()),
+                ("§4 the Kelsey-Schneier second preimage assembles", section4()),
+                ("§5 v2 is bijective and its inverse round-trips", section5())]
     section6()
     print("\n" + SEP)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print(f"done in {time.time() - t0:.0f}s")
     print(SEP)
+    return 1 if bad else 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

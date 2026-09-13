@@ -262,6 +262,7 @@ def demo_single_party():
     print(f"  e        : {e:08x}")
     print(f"  s        : {s:08x}")
     print(f"  g^s·C^e  : {'== R  ✓ PASS' if ok else '≠ R  ✗ FAIL'}")
+    return ok
 
 
 def demo_rogue_key_attack():
@@ -289,6 +290,9 @@ def demo_rogue_key_attack():
     print(f"  Mallory rogue C_M     : {C_M_rogue:08x}   (chosen to cancel C_v)")
     print(f"  Naive C_agg = C_v·C_M : {C_agg_naive:08x}  == g^{{a_M}} = {g_aM:08x}")
     print(f"  Mallory signs alone   : {'FORGED ✗  (attack succeeds)' if ok else 'failed'}")
+    # The rogue-key attack SUCCEEDING is the finding here: it is what makes the
+    # coefficient binding below load-bearing rather than decorative.
+    return ok
     print()
     print("  → Naive key aggregation is INSECURE: Mallory can cancel any victim key.")
 
@@ -310,6 +314,7 @@ def demo_threshold_2_of_2():
     print(f"  e        : {e:08x}")
     print(f"  s (agg)  : {s:08x}")
     print(f"  Verify   : {'✓ PASS' if ok else '✗ FAIL'}")
+    return ok
 
 
 def demo_threshold_3_of_3():
@@ -331,6 +336,7 @@ def demo_threshold_3_of_3():
     print(f"  3-of-3 sign+verify    : {'✓ PASS' if ok_valid else '✗ FAIL'}")
     print(f"  Tampered s (s^1)      : {'✓ rejected' if not ok_bad else '✗ accepted (FAIL)'}")
     print(f"  Wrong aggregate pubkey: {'✓ rejected' if not ok_wrong else '✗ accepted (FAIL)'}")
+    return ok_valid and not ok_bad and not ok_wrong
 
 
 def demo_coefficient_binding_blocks_rogue_key():
@@ -365,6 +371,7 @@ def demo_coefficient_binding_blocks_rogue_key():
     print(f"  μ_M = {mu_M:016x}")
     print(f"  C_agg (keyed) = {C_agg:08x}")
     print(f"  Mallory partial-sig alone: {'✗ accepted (FAIL)' if ok_forge else '✓ rejected — attack blocked'}")
+    return not ok_forge
 
 
 def demo_composite_modulus_note():
@@ -399,13 +406,25 @@ if __name__ == '__main__':
     print("MuSig2-style key aggregation with NL-FSCX v1 challenge")
     print(f"Demo uses n={GF32_N} for speed; production uses n=256.\n")
 
-    demo_single_party()
-    demo_rogue_key_attack()
-    demo_threshold_2_of_2()
-    demo_threshold_3_of_3()
-    demo_coefficient_binding_blocks_rogue_key()
+    findings = [
+        ("single-party HPKS-NL verifies", demo_single_party()),
+        ("the rogue-key attack succeeds without coefficient binding",
+         demo_rogue_key_attack()),
+        ("2-of-2 threshold signing verifies", demo_threshold_2_of_2()),
+        ("3-of-3 verifies and both tampered variants are rejected",
+         demo_threshold_3_of_3()),
+        ("coefficient binding blocks the rogue-key attack",
+         demo_coefficient_binding_blocks_rogue_key()),
+    ]
     demo_composite_modulus_note()
 
     print("\n" + "="*70)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print("  All demos complete.")
     print("="*70)
+    sys.exit(1 if bad else 0)

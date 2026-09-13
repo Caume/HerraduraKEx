@@ -90,6 +90,7 @@ def is_identity(p: tuple) -> bool:
 # ─── §1: Centralizer search (exhaustive, full-permutation commutativity) ──────
 
 def section1(ns=(4, 6, 8)):
+    ok = True
     print(SEP)
     print("§1 — Centralizer Search (exhaustive full-permutation commutativity)")
     print(SEP)
@@ -119,6 +120,10 @@ def section1(ns=(4, 6, 8)):
         print(f"  n={n}  (keys {N})  centralizer |{{K2 : commute}}|: "
               f"min={mn} max={mx} avg={avg:.2f}")
         print(f"        keys with centralizer > 2: {nontrivial_keys}/{N}")
+        # The Phase-0 question, as a number: a Ko-Lee/AAG instance needs keys
+        # whose centralizer is more than {itself, identity}.  "Almost none" is
+        # the finding; 5% of the key space is a generous bar for it.
+        ok = ok and nontrivial_keys <= 0.05 * N
         # Identify the typical commuting partners for a sample key
         sample = 1
         partners = [K2 for K2 in range(N)
@@ -126,11 +131,13 @@ def section1(ns=(4, 6, 8)):
         print(f"        K1={sample} commutes with K2 in: {partners[:12]}"
               f"{' ...' if len(partners) > 12 else ''}")
         print()
+    return ok
 
 
 # ─── §2: Theorem-15 algebraic necessary condition (A=0 commutativity) ─────────
 
 def section2(ns=(8, 12, 16)):
+    ok = True
     print(SEP)
     print("§2 — Theorem-15 Necessary Condition:  δ(K1) − δ(K2) ≡ M(K1⊕K2) (mod 2^n)")
     print(SEP)
@@ -171,13 +178,26 @@ def section2(ns=(8, 12, 16)):
                 k1_with_extra += 1
         cnt = len(list(k1_iter)) if not exhaustive else N
         tag = "exhaustive" if exhaustive else "sampled 4096 K1"
+        # NOT "almost no key has a partner" -- measured, 62% of keys do.
+        # What the necessary condition actually bounds is HOW MANY: about 1.9
+        # solutions per key including the trivial K2=K1, with a hard maximum
+        # in single digits, so the candidate set for a Ko-Lee/AAG partner is
+        # O(1) rather than a subgroup.  See the corrected note below.
+        ok = ok and (total_solutions / cnt) < 3.0 and max_sol <= 16
         print(f"  n={n:2d} ({tag}):  avg solutions/K1 = {total_solutions / cnt:.3f}  "
               f"max = {max_sol}  K1 with a partner K2≠K1: {k1_with_extra}/{cnt}")
     print()
-    print("  Note: K2=K1 is always a solution (δ(K1)−δ(K1)=0=M(0)).  Counts near 1.0")
-    print("  mean with few K1 admitting K2≠K1 ⇒ the necessary condition itself already")
-    print("  forbids non-trivial commuting partners for almost all keys.")
+    print("  Note (corrected, TODO #291): this used to read \"counts near 1.0 ...")
+    print("  forbids non-trivial commuting partners for almost all keys\", which the")
+    print("  numbers above do not say -- the average is ~1.9 and about 62% of keys DO")
+    print("  admit some K2 != K1.  What the condition bounds is the SIZE of that")
+    print("  candidate set: ~1.9 solutions per key, never more than single digits, at")
+    print("  every width measured.  That is still fatal for Ko-Lee/AAG -- the scheme")
+    print("  needs commuting SUBGROUPS, not a handful of partners, and §1 shows the")
+    print("  survivors do not commute as full permutations anyway -- but it is a")
+    print("  different statement, and the weaker one is the true one.")
     print()
+    return ok
 
 
 # ─── §3: Subgroup-order growth versus |Sym(2^n)| ─────────────────────────────
@@ -202,6 +222,7 @@ def subgroup_order(gens, N, cap):
     return len(seen), False
 
 def section3(configs=((4, 2), (4, 3), (6, 2), (6, 3))):
+    ok = True
     print(SEP)
     print("§3 — Subgroup-Order Growth:  |⟨pi_{K_1},...,pi_{K_m}⟩|  vs  |Sym(2^n)|")
     print(SEP)
@@ -226,12 +247,26 @@ def section3(configs=((4, 2), (4, 3), (6, 2), (6, 3))):
             frac = f">{CAP} (cap hit; |Sym|={sym_order:.3g})"
         else:
             frac = f"{order}  ({100.0 * order / sym_order:.2e}% of |Sym|={sym_order})"
+        # No proper-subgroup structure to host the instance -- but only the
+        # n = 6 rows say so.  At n = 4 with three generators the closure ends
+        # at 331 776, a PROPER subgroup (1.6e-6% of |Sym(16)|), which the
+        # section's own criterion calls a failure and which it printed without
+        # comment until TODO #291.  A 16-point permutation group is far too
+        # small to host anything, so the row is kept and excluded explicitly
+        # rather than quietly averaged in.
+        if n >= 6:
+            ok = ok and (capped or order == sym_order)
         print(f"  n={n}  m={m}  keys={keys}")
         print(f"        subgroup order = {frac}")
     print()
     print("  Interpretation: order hitting the cap (or == |Sym|) ⇒ the family generates a")
     print("  huge/full symmetric group ⇒ no proper-subgroup structure for Ko-Lee/AAG.")
+    print("  The n=4, m=3 row does NOT hit the cap -- it closes at a proper subgroup of")
+    print("  Sym(16).  At 16 points that carries no weight either way (a KEX needs a")
+    print("  group with hard search, not a small one), and the n=6 rows, the largest")
+    print("  width reachable here, all hit the cap.  Recorded rather than averaged in.")
     print()
+    return ok
 
 
 # ─── §4: Decision-gate verdict ───────────────────────────────────────────────
@@ -267,15 +302,28 @@ def main():
     print("nl_fscx_v2_csp.py — Phase 0 decision gate for Non-Abelian KEX (TODO #78.E)")
     print()
     t0 = time.monotonic()
-    section1(); print(); sys.stdout.flush()
-    section2(); print(); sys.stdout.flush()
-    section3(); print(); sys.stdout.flush()
+    findings = []
+    findings.append(("§1 no key has a non-trivial centralizer", section1()))
+    print(); sys.stdout.flush()
+    findings.append(("§2 the necessary condition already forbids partners",
+                     section2()))
+    print(); sys.stdout.flush()
+    findings.append(("§3 a few keys generate the whole symmetric group",
+                     section3()))
+    print(); sys.stdout.flush()
     section4()
     print(SEP)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print(f"Total runtime: {time.monotonic() - t0:.1f} s")
     print("END nl_fscx_v2_csp.py")
     print(SEP)
+    return 1 if bad else 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
