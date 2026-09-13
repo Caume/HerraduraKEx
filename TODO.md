@@ -128,3 +128,101 @@ no rating in either direction, and is filed as an outstanding proof obligation b
 figures already published, not as a gate on anything.
 
 Status: **OPEN**
+
+### #291: the OTHER 46 analysis scripts have no verdict — a printed `FAIL` exits 0
+
+TODO #289 asked "which findings-gating scripts does CI run?" and answered it structurally:
+`run_findings_gates.py` DISCOVERS them, so nothing has to be added anywhere and "nobody got
+round to it" can no longer look like "it passes".  #290 then found the first thing that
+discovery could not see (a spelling: `--fast`, not `--quick`).  Both items are about the
+set of scripts that gate.  **Neither touches the prior question: which scripts gate at
+all.**
+
+**The census, measured at head** (`run_findings_gates.py --list`, plus a scan of
+`SecurityProofs-*.md` and `CLAUDE.md` for each filename):
+
+| | scripts |
+|---|---|
+| `SecurityProofsCode/*.py` | 81 |
+| discovered as findings gates (#289) | 35 |
+| **not gates** | **46** (45 analyses + the runner itself) |
+| of those, CITED by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim | 33 |
+| of those, printing a PASS/FAIL-shaped verdict and exiting 0 regardless | 22 (16 of them cited) |
+
+So a little over half of the analysis corpus produces output that nothing reads, and
+**22 scripts contain the exact defect TODO #233 removed from the test harnesses** — a
+verdict computed, printed, and then discarded by an exit status of 0 — one layer out, in
+the layer that backs the security documents rather than the one that tests the code.
+
+**The exemplar, and it is not a hypothetical.**  `qc_mdpc_bgf_prototype.py` (cited in
+`SecurityProofs-5.md`) ends `main()` with
+
+```
+    print(f"  PRF uniformity: {'PASS' if ok_prf else 'FAIL'}")
+    print(f"  BGF decoder DFR at toy scale: {fails} failures (see §4)")
+```
+
+and `main()` returns `None` to a bare `if __name__ == "__main__": main()`.  `ok_prf`
+False prints `FAIL` and exits 0.  It also carries a PRIVATE `bgf_decode` with a threshold
+schedule "tuned empirically at r=523, d=15, t=18" and no import from the suite — the twin-
+decoder class TODO #285 retired from `qcmdpc_dfr_weak_keys.py` after finding it had
+diverged from the shipped decoder twice.  Nothing compares the two, and nothing would say
+so if the comparison failed.
+
+**The second exemplar is the one that should settle the question.**
+`hkex_rnl_failure_rate.py` is the script whose §6 printed a security table in which every
+row was wrong in the unsafe direction, found and withdrawn by TODO #286 — three documented
+paragraphs of it in `CLAUDE.md`.  It is still not a gate.  Whatever repair #286 made to it
+cannot be defended by CI, and the next drift in it is invisible for the same reason the
+first one was.
+
+**Scope.**
+
+1. **Triage all 45 non-gating analyses into three buckets**, with the bucket recorded, not
+   inferred: (a) holds a claim a document cites → make its exit status its verdict, the
+   `sys.exit(main())` shape the other 35 use; (b) holds no claim — a demo, an
+   exploration, a superseded construction — → declared non-gating WITH A REASON;
+   (c) obsolete → deleted, and its citations with it.  The 12 uncited scripts
+   (`hkex_cfscx_*.py`, `hkex_pake_demo.py`, `hpks_threshold_demo.py`,
+   `nl_fscx_v2_kex.py`, `nl_fscx_v2_orbit.py`, `oprf_demo.py`, `stern_ct_demo.py`,
+   `vdf_demo.py`) are the likely (b)/(c) population; the 16 that already PRINT a verdict
+   are the likely (a) population and are where the work should start, because for them
+   "what is the finding?" is already answered in their own source.
+2. **The declaration must be self-invalidating**, like `EXCLUDED`, `CLI_FLAG_PARITY`,
+   `PARAM_DIVERGENCE` and every other curated table in this repo: an entry naming a file
+   that is absent, or that HAS since become a gate, fails.  Otherwise bucket (b) is just
+   the old exclusion list with better manners.
+3. **Close discovery's remaining hole in the other direction.**  Today the runner errors
+   when a script ADVERTISES a gate and is not discovered.  It cannot error when a script
+   neither advertises, gates, nor is declared — which is precisely the 46.  After (1) and
+   (2) every `SecurityProofsCode/*.py` is discovered or declared, and the runner should
+   fail on anything that is neither.  That is the check that makes this item unrepeatable;
+   the triage alone is a one-off.
+4. **Cost, which is the reason to expect resistance.**  The 35 current gates cost 73.4 min
+   under `--quick` on the reference SBC and 58% of that is five scripts.  The 45 are
+   UNMEASURED — several are large (`zkp_pqc_exploration.py` at 59 KB,
+   `nl_fscx_prf_analysis.py` at 50 KB, the four `hkex_cfscx_*.py` at 34-48 KB each) and
+   some may be hours.  Measure before converting, and where a script is genuinely too
+   slow, the answer is a `--quick` mode in that script, NOT an exclusion — #289's whole
+   finding was that the exclusion route produces a defensible-looking list with broken
+   scripts in it.
+5. **Do not invent thresholds.**  A script that explores rather than concludes has no
+   finding to gate, and forcing one on it manufactures a false gate — worse than no gate,
+   because it reads as coverage.  Bucket (b) with an honest reason is the correct outcome
+   for those, and a triage that lands most of the corpus in (a) should be treated as a
+   sign the reasons were not written carefully.
+
+**Knock-on.**  `CLAUDE.md`'s "35 findings-gating scripts" figure is held to what the runner
+reports by `check_docs_consistency.py`'s check E (TODO #287), so it follows the conversion
+automatically; the `SecurityProofsCode/` inventory in `CLAUDE.md` and the run instructions
+in the Testing section will need re-checking by hand, per TODO #145's rule.  Any script
+promoted into the gate set also enters `analysis-findings`, which is still
+`continue-on-error: true` — that job's promotion to required is #289's decision 1 and is
+NOT this item; converting scripts under a non-blocking job first is the right order.
+
+**Explicitly out of scope.**  (i) The CONTENT of any finding: this item makes verdicts
+observable, it does not re-derive them, and a script that turns out to be failing gets its
+own item the way #286 and #288 did.  (ii) The 35 existing gates.  (iii) Promoting
+`analysis-findings` to blocking.
+
+Status: **OPEN**
