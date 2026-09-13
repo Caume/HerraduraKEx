@@ -2,6 +2,43 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.8] - 2026-09-12
+
+### TODO #290 — the findings-gates job's first run failed, and its "bare python3" premise was false
+
+`analysis-findings` (TODO #289) went red on its first run with **three gates "stopped
+reproducing"** — and nothing had stopped reproducing.  All three are `z3` consumers and
+the job installs a bare `python3`:
+
+| script | without `z3-solver`, before this release |
+|---|---|
+| `fscx_periodicity_z3.py` | module-level `import z3` → traceback, exit 1 |
+| `hpks_schnorr_z3.py` | module-level `import z3` → traceback, exit 1 |
+| `nl_fscx_exact_trail_search.py` | `return 2` with a one-line message |
+
+#289 chose the bare interpreter on the stated ground that the solver-backed scripts *"skip
+with a printed NOTE"* without their solver.  That holds for `pulp`/`highspy`, which back
+**one section** of `nl_fscx_v2_bounds.py`; it was false for all three `z3` consumers, two
+of which are z3 from top to bottom and so have no section to skip.
+
+- **`analysis-findings` now installs `z3-solver`.**  Softening the scripts instead would
+  turn three honest failures into three vacuous passes — the confusion #289 exists to
+  remove.  The two pure-z3 proofs cost 18 s and 47 s and concern the deployed GF(2^n)
+  arithmetic and FSCX period structure.  `pulp`/`highspy` stay out on #289's reasoning,
+  which is correct for them.
+- **All three scripts now fail cleanly** rather than tracebacking: the install line, exit
+  2.  The rule is recorded in CLAUDE.md's dependency table — a script decides its exit
+  status by what is left without the solver, non-zero if the solver *was* the gate, zero
+  with a NOTE if the gate survives without it.
+- **`run_findings_gates.py` recognises `--fast` as well as `--quick`.**  Three scripts
+  spell their reduced-sample mode `--fast` (`nl_fscx_exact_trail_search.py`,
+  `rnl_parameter_selection.py`, `hkex_rnl_lattice_2026.py`) and were running at their
+  default budgets inside a job that had asked for the reduced one — for the trail search,
+  **19 s instead of over twenty minutes**, passing at both.
+
+The runner itself behaved as designed: 35 scripts discovered, every one run despite the
+failures, all three re-listed at the end, so a single run produced the whole defect.
+
 ## [7.0.7] - 2026-09-12
 
 ### TODO #289 — the findings gates run in a job of their own, and the set is discovered rather than listed

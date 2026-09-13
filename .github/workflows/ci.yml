@@ -632,10 +632,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # z3-solver backs three of the gates below and is NOT optional here --
+      # see the note on the runner step. Everything else in this job runs on a
+      # bare python3. The install must FAIL the step rather than be skipped:
+      # a missing solver is now a failing gate, by design, but one that fails
+      # in the runner reads as "a finding stopped reproducing", which is the
+      # wrong diagnosis. `--break-system-packages` is for an
+      # externally-managed runner python3; the plain form is tried first so
+      # this keeps working either way.
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3
+          sudo apt-get install -y --no-install-recommends python3 python3-pip
+          python3 -m pip install z3-solver \
+            || python3 -m pip install --break-system-packages z3-solver
+          python3 -c 'import z3; print("z3", z3.get_version_string())'
 
       # TODO #289. About three dozen SecurityProofsCode/ scripts advertise
       # "exits non-zero if a finding stops reproducing". TODO #285 found that
@@ -654,13 +665,28 @@ jobs:
       # still possible and needs a reason in EXCLUDED, which is self-
       # invalidating like every other curated table in this repo.
       #
-      # BARE python3, KNOWINGLY. Three scripts here have solver-backed
-      # sections (z3-solver, pulp, highspy) that skip with a printed NOTE
-      # without them, so this job gates the rest of those scripts and not
-      # those sections. Installing the solvers would make the gate wider and
-      # the job's runtime unpredictable; the sections they cover are bounds
-      # searches whose results are recorded in SecurityProofs-*.md rather
-      # than assertions about the shipped code. Recorded here so the next
-      # person reads a decision rather than an omission.
+      # z3-solver IS INSTALLED, and the first run of this job is why (TODO
+      # #290). The step above used to be a bare python3 on the stated ground
+      # that the solver-backed scripts "skip with a printed NOTE" without
+      # their solver. That is true of pulp/highspy in nl_fscx_v2_bounds.py
+      # §(d) -- one section of a script that gates on other things -- and it
+      # was FALSE of all three z3 consumers: fscx_periodicity_z3.py and
+      # hpks_schnorr_z3.py are z3 from top to bottom and died on a
+      # module-level `import z3` (ModuleNotFoundError, exit 1, 0 s), and
+      # nl_fscx_exact_trail_search.py returned 2 with a one-line message. So
+      # the job's first run reported three gates "stopped reproducing" when
+      # nothing had stopped reproducing, and the two pure-z3 gates had no
+      # content left to gate on anyway. 18 s and 47 s respectively, plus the
+      # trail search -- a bounded cost against two SMT proofs about the
+      # deployed GF arithmetic and FSCX period structure.
+      #
+      # pulp/highspy stay OUT: those genuinely are one section of a script
+      # that gates without them, and the bounds they compute are recorded in
+      # SecurityProofs-*.md rather than asserted about shipped code.
+      #
+      # The local counterpart of this decision is in the three scripts: a
+      # missing z3 now prints what to install and exits NON-ZERO rather than
+      # tracebacking or passing vacuously. A gate whose subject is absent has
+      # not reproduced its finding.
       - name: Every findings gate still reproduces
         run: python3 SecurityProofsCode/run_findings_gates.py --quick

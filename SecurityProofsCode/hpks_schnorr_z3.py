@@ -42,7 +42,29 @@ the production width behaves the same way.
 Usage: python3 SecurityProofsCode/hpks_schnorr_z3.py
 """
 import secrets
-import z3
+
+try:
+    import z3
+except ImportError:  # pragma: no cover -- see _require_z3()
+    z3 = None
+
+
+def _require_z3():
+    """This script IS its z3 sections, so a missing solver is a FAILED gate.
+
+    TODO #290.  Every other optional-dependency consumer in this directory
+    degrades to a printed NOTE because the solver backs ONE section of a
+    script that still checks other things.  Here there is nothing left to
+    check, so printing a NOTE and exiting 0 would turn "the finding was never
+    re-verified" into "the finding reproduces" -- the precise confusion
+    TODO #289's runner exists to remove.  Exit non-zero and say what to
+    install; CI installs z3-solver in the `analysis-findings` job for this
+    reason.
+    """
+    if z3 is None:
+        print("z3 is required: pip install z3-solver")
+        return False
+    return True
 
 # Primitive polynomials for small illustrative widths (lower n bits).
 GF_POLY = {
@@ -196,6 +218,9 @@ def check_width_random(n, poly, trials=200):
 
 
 def main():
+    if not _require_z3():
+        return 2
+
     print("Mechanized (Z3/SMT) verification of the HPKS Schnorr identity")
     print("(SecurityProofs-2.md Section 2: g^s * C^e == R)")
     print("=" * 70)

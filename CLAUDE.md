@@ -1188,18 +1188,21 @@ grandfathered pre-#154 entries, live in the `todo-status` skill
 
 The shipped primitives and CLIs have **none**, in any language, and that is a property
 worth preserving — `./build_c.sh`, `./build_go.sh` and every `HerraduraCli/` entry point
-run against a bare toolchain.  Three optional packages exist, all analysis- or
-tooling-only, and every consumer of them degrades to a printed NOTE rather than failing:
+run against a bare toolchain.  Four optional packages exist, all analysis- or
+tooling-only.  Most consumers degrade to a printed NOTE rather than failing; `z3-solver`
+is the documented exception, for the reason in its row (TODO #290).
 
 | package | used by | absent ⇒ | install |
 |---|---|---|---|
 | `jsonschema` | `spec/generate_spec.py` schema validation | NOTE, but CI passes `--require-schema` so a skipped validation cannot pass | `pip install jsonschema` |
-| `z3-solver` | `SecurityProofsCode/nl_fscx_exact_trail_search.py` (TODO #214) | section skipped | `pip install z3-solver` |
+| `z3-solver` | `SecurityProofsCode/nl_fscx_exact_trail_search.py` (TODO #214), `fscx_periodicity_z3.py`, `hpks_schnorr_z3.py` | **the gate FAILS** — those last two are z3 from top to bottom, so there is no section left to skip and a printed NOTE plus exit 0 would report a finding as reproducing that was never checked.  All three print the install line and exit non-zero; CI's `analysis-findings` job installs the package for exactly this reason (TODO #290) | `pip install z3-solver` |
 | `pulp` (CBC) | `SecurityProofsCode/nl_fscx_v2_bounds.py` §(d) MILP bounds (TODO #247) | section skipped | `sudo apt-get install -y python3-pulp`, or a venv: `python3 -m venv ~/.venvs/herradura-milp && ~/.venvs/herradura-milp/bin/pip install pulp` |
 | `highspy` | the same §(d) model under a stronger backend (TODO #252 §11.35.6) | CBC is used instead, and reaches one round fewer | `~/.venvs/herradura-milp/bin/pip install highspy` (PuLP finds it as the `HiGHS` solver) |
 
 Never add one to a shipped primitive.  If an analysis script needs a solver, it imports it
-inside a `try`/`except ImportError` and prints what to install.
+inside a `try`/`except ImportError` and prints what to install — and then decides its exit
+status by what is left: non-zero if the solver WAS the gate, zero with a NOTE if the gate
+survives without it.
 
 ## Build Commands
 
@@ -1512,7 +1515,8 @@ python3 SecurityProofsCode/nl_fscx_rot_analysis.py   # rotational differential a
 python3 SecurityProofsCode/qcmdpc_bgf_variants.py --quick   # ~11 min; --full is ~72 min
 
 # All of them at once, which is what CI's analysis-findings job runs (TODO #289).
-# --quick is the default here and is applied only to scripts that declare it;
+# --quick is the default here and is applied to scripts declaring --quick OR
+# --fast (two spellings of one reduced-sample mode -- TODO #290);
 # --full runs everything at its default sample sizes (hours, not minutes).
 python3 SecurityProofsCode/run_findings_gates.py --list   # what would run, and how
 python3 SecurityProofsCode/run_findings_gates.py         # ~73 min on an aarch64 SBC

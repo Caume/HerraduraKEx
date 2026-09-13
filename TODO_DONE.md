@@ -17657,7 +17657,11 @@ script whose cost forces a decision.
    flake, the fix is that gate's threshold -- the class CLAUDE.md's Testing section
    already describes, a probabilistic property asserted as a deterministic one -- not the
    flag.
-2. **Bare `python3`, knowingly.** Three scripts have solver-backed sections (`z3-solver`,
+2. **Bare `python3`, knowingly.** (**Superseded by #290**, which found this reasoning
+   false for `z3-solver`: two of the three `z3` consumers are z3 from top to bottom, so
+   they had no section to skip and tracebacked instead.  The job installs `z3-solver`
+   now; `pulp`/`highspy` stay out, where the reasoning does hold.) Three scripts have
+   solver-backed sections (`z3-solver`,
    `pulp`, `highspy`) that skip with a printed NOTE without them, so this job gates the
    rest of those scripts and not those sections. Installing the solvers would widen the
    gate and make the job's runtime unpredictable, and the sections concerned are bounds
@@ -17678,3 +17682,70 @@ those are heavy). The count is no longer hand-written anywhere -- `check_docs_
 consistency.py`'s check E holds CLAUDE.md's figure to what the runner reports.
 
 Status: **DONE v7.0.7** — a twelfth CI job running every findings-gating analysis script, with the set discovered rather than listed so the exclusion pattern cannot recur.
+
+### #290: the findings-gates job's first run failed, and its "bare python3" premise was false
+
+`analysis-findings` (TODO #289) went red on its very first run, reporting **three gates
+stopped reproducing**:
+
+```
+FAILED (exit 1): fscx_periodicity_z3.py         ModuleNotFoundError: No module named 'z3'
+FAILED (exit 1): hpks_schnorr_z3.py             ModuleNotFoundError: No module named 'z3'
+FAILED (exit 2): nl_fscx_exact_trail_search.py  z3 is required: pip install z3-solver
+```
+
+Nothing had stopped reproducing.  All three pass with `z3-solver` installed, which is why
+this was invisible locally: the solver is installed on the development host, and before
+#289 no job ran these scripts at all.
+
+**The premise.** #289 installed a bare `python3` deliberately, and item 2 of its own
+write-up states the reason: *"Three scripts have solver-backed sections (`z3-solver`,
+`pulp`, `highspy`) that skip with a printed NOTE without them, so this job gates the rest
+of those scripts and not those sections."*  That is true of `pulp`/`highspy` —
+`nl_fscx_v2_bounds.py` §(d) is one section of a script that gates on several others — and
+it was **false of all three `z3` consumers**:
+
+| script | z3 content | without z3, before this item |
+|---|---|---|
+| `fscx_periodicity_z3.py` | the whole file (SMT proofs of §1's Theorems 2–4) | module-level `import z3` → traceback, exit 1 |
+| `hpks_schnorr_z3.py` | the whole file (the `g^s · C^e == R` identity) | module-level `import z3` → traceback, exit 1 |
+| `nl_fscx_exact_trail_search.py` | every section | `return 2` with a one-line message |
+
+So the statement about *sections* was applied to two scripts that have no non-z3 section,
+and the third already declined to pretend.  CLAUDE.md's dependency table carried the same
+reading (`z3-solver` … *"section skipped"*) and named only one of the three consumers.
+
+**The fix is to install the solver, not to soften the scripts.** The tempting repair —
+make the two pure-z3 scripts print a NOTE and exit 0, matching the repo's optional-
+dependency convention — converts three honest failures into three vacuous passes, which
+is *precisely* the confusion #289 exists to remove: a gate that never ran would again look
+identical to a gate that passed.  `z3-solver` is one `pip install`, the two scripts cost
+18 s and 47 s, and what they prove is about the deployed GF(2^n) arithmetic and FSCX
+period structure.  `pulp`/`highspy` stay out, on #289's reasoning, which is sound for
+them.
+
+Three changes:
+
+1. **`analysis-findings` installs `z3-solver`**, and the job comment now records what the
+   first run showed rather than the premise it was written on.
+2. **All three scripts fail cleanly rather than tracebacking.** The two pure-z3 ones guard
+   the import and exit **2** with the install line, like the trail search already did.  The
+   rule, now stated in CLAUDE.md: a script decides its exit status by what is left without
+   the solver — non-zero if the solver *was* the gate, zero with a NOTE if the gate
+   survives without it.
+3. **`run_findings_gates.py` learned the second spelling of its reduced-sample mode.**
+   `_QUICK_RE` matched `--quick` only, so the three scripts that spell it `--fast`
+   (`nl_fscx_exact_trail_search.py`, `rnl_parameter_selection.py`,
+   `hkex_rnl_lattice_2026.py`) ran at their **default** budgets inside a job that had asked
+   for the reduced one.  For the trail search that is the difference between **19 s** and
+   over twenty minutes, and it passes at both.  Same shape as the `_CLAIM_RE` blind spot
+   the runner already documents: discovery reads a spelling, so a second spelling is
+   invisible until it is named.
+
+**What this says about #289's shape.** The runner worked exactly as designed — it
+discovered all 35 scripts, ran every one despite failures, and re-listed them at the end,
+so one run produced the whole defect.  The non-blocking flag also did its job on the first
+try, though not for the risk it was watching: #289 expected *sampling* flakiness, and what
+arrived was a missing dependency.  The flag stays until a pass history exists.
+
+Status: **DONE v7.0.8** — `analysis-findings` installs `z3-solver`, the three z3 consumers fail cleanly instead of tracebacking, and the runner recognises `--fast` as well as `--quick`.

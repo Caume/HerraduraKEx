@@ -26,8 +26,12 @@ cli_surface_gaps, PARAM_DIVERGENCE): an entry naming a file that does not
 exist, or that is no longer a gating script, FAILS -- so an exclusion cannot
 outlive its reason.
 
-WHAT `--quick` MEANS HERE.  A script that declares a `--quick` flag is run with
-it; one that does not is run as it is.  `--quick` in this directory is a
+WHAT `--quick` MEANS HERE.  A script that declares a reduced-sample flag is run
+with it; one that does not is run as it is.  TWO SPELLINGS are in use and both
+count -- `--quick` in 20 scripts and `--fast` in three (TODO #290, which found
+those three running at their DEFAULT budgets inside a job that had asked for the
+reduced one: for nl_fscx_exact_trail_search.py that is 19 s against twenty-odd
+minutes, with the same verdicts).  `--quick` in this directory is a
 smaller-sample mode that still reproduces every finding (the sample sizes move,
 the verdicts do not), which is the property that makes it usable as a gate --
 see qcmdpc_dfr_weak_keys.py's header for the canonical statement.  Pass --full
@@ -62,7 +66,13 @@ _GATING_RE = re.compile(
     r"|sys\.exit\(\s*run_tests\(\)"
     r"|sys\.exit\(\s*1\s*\)")
 
-_QUICK_RE = re.compile(r"""add_argument\(\s*['"]--quick['"]""")
+# A reduced-sample mode, under either of the two names this directory uses.
+# TODO #290: three scripts spell it `--fast` (nl_fscx_exact_trail_search.py,
+# rnl_parameter_selection.py, hkex_rnl_lattice_2026.py) and looking only for
+# `--quick` ran all three at their default budgets in a job that had asked for
+# the reduced one.  Same shape as the _CLAIM_RE blind spot below: the runner
+# reads a spelling, so a second spelling is invisible until it is named.
+_QUICK_RE = re.compile(r"""add_argument\(\s*['"](--quick|--fast)['"]""")
 
 # The blind spot the three shapes above would otherwise have.  Discovery reads
 # the exit CALL, so a script that gates through a fourth shape is silently not
@@ -85,9 +95,9 @@ EXCLUDED = {}
 def discover():
     """Every .py here whose exit status is its own verdict, plus the claimants.
 
-    Returns (gating, unclaimed) -- gating as (name, declares --quick) pairs,
-    unclaimed as the names that advertise a findings gate without matching any
-    exit shape discovery knows.
+    Returns (gating, unclaimed) -- gating as (name, reduced-sample flag or
+    None) pairs, unclaimed as the names that advertise a findings gate without
+    matching any exit shape discovery knows.
     """
     gating, claims = [], []
     for name in sorted(os.listdir(HERE)):
@@ -96,7 +106,8 @@ def discover():
         with open(os.path.join(HERE, name), encoding="utf-8") as fh:
             src = fh.read()
         if _GATING_RE.search(src):
-            gating.append((name, bool(_QUICK_RE.search(src))))
+            m = _QUICK_RE.search(src)
+            gating.append((name, m.group(1) if m else None))
         elif _CLAIM_RE.search(src):
             claims.append(name)
     return gating, claims
@@ -118,7 +129,8 @@ def check_exclusions(found):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", default=True,
-                    help="pass --quick to scripts that declare it (the default)")
+                    help="pass --quick/--fast to scripts that declare one "
+                         "(the default)")
     ap.add_argument("--full", dest="quick", action="store_false",
                     help="run every script at its default sample sizes")
     ap.add_argument("--list", action="store_true",
@@ -145,18 +157,19 @@ def main():
             print("  EXCLUSION ERROR: " + line)
 
     if a.list:
-        for name, has_quick in runnable:
-            print("  %-44s %s" % (name, "--quick" if (has_quick and a.quick) else ""))
+        for name, quick_flag in runnable:
+            print("  %-44s %s" % (name, quick_flag if (quick_flag and a.quick)
+                                        else ""))
         for name, reason in sorted(EXCLUDED.items()):
             print("  %-44s EXCLUDED: %s" % (name, reason))
         return 1 if orphans else 0
 
     failures = []
     t_all = time.time()
-    for name, has_quick in runnable:
+    for name, quick_flag in runnable:
         argv = [sys.executable, os.path.join(HERE, name)]
-        if has_quick and a.quick:
-            argv.append("--quick")
+        if quick_flag and a.quick:
+            argv.append(quick_flag)
         t0 = time.time()
         try:
             proc = subprocess.run(argv, cwd=os.path.dirname(HERE),
@@ -170,7 +183,7 @@ def main():
 
         print("  [%s] %6.0f s  %s%s"
               % ("ok  " if rc == 0 else "FAIL", dt, name,
-                 " --quick" if (has_quick and a.quick) else ""))
+                 " " + quick_flag if (quick_flag and a.quick) else ""))
         sys.stdout.flush()
         if rc != 0:
             failures.append((name, rc, out.decode("utf-8", "replace")))
