@@ -21,7 +21,29 @@ hand proof) observation that the actual period is always n or n/2.
 Usage: python3 SecurityProofsCode/fscx_periodicity_z3.py
 """
 import random
-import z3
+
+try:
+    import z3
+except ImportError:  # pragma: no cover -- see _require_z3()
+    z3 = None
+
+
+def _require_z3():
+    """This script IS its z3 sections, so a missing solver is a FAILED gate.
+
+    TODO #290.  Every other optional-dependency consumer in this directory
+    degrades to a printed NOTE because the solver backs ONE section of a
+    script that still checks other things.  Here there is nothing left to
+    check, so printing a NOTE and exiting 0 would turn "the finding was never
+    re-verified" into "the finding reproduces" -- the precise confusion
+    TODO #289's runner exists to remove.  Exit non-zero and say what to
+    install; CI installs z3-solver in the `analysis-findings` job for this
+    reason.
+    """
+    if z3 is None:
+        print("z3 is required: pip install z3-solver")
+        return False
+    return True
 
 
 def M(x, n):
@@ -105,6 +127,9 @@ def empirical_period(n, trials=20):
 
 
 def main():
+    if not _require_z3():
+        return 2
+
     widths = [8, 16, 32, 64, 128, 256]
     print("Mechanized (Z3/SMT) verification of SecurityProofs-1.md Section 1 claims")
     print("=" * 78)
