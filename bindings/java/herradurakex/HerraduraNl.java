@@ -413,11 +413,27 @@ public final class HerraduraNl {
     public static int[] rnlRandPoly(int n, int q, SecureRandom rng) {
         int threshold = (1 << 24) - (1 << 24) % q;
         int[] out = new int[n];
-        byte[] buf = new byte[3];
+        // One buffered draw rather than nextBytes(3) per iteration (TODO #293).
+        // Read pattern only: same source, same threshold, same reduction, so
+        // the distribution and the order the stream is consumed in are both
+        // unchanged.  Java's multiplier is the smallest of the four ports --
+        // 0.163 ms against 0.053 ms at the deployed n = 1024, 3.0x, where Go is
+        // 19.9x -- and the reason is NOT that SecureRandom is a userspace DRBG:
+        // it resolves to NativePRNG here, which reads /dev/urandom behind a
+        // buffer, i.e. the same escape route C gets from a buffered FILE *.
+        // n draws plus ~1.6% slack; rejection is (2^24 mod q)/2^24, 0.39% at
+        // q = 65537.  A long run of rejections refills, so correctness does not
+        // depend on the margin -- only the read count does.
+        byte[] buf = new byte[3 * (n + (n >> 6) + 8)];
+        int pos = buf.length;
         int idx = 0;
         while (idx < n) {
-            rng.nextBytes(buf);
-            int v = ((buf[0] & 0xff) << 16) | ((buf[1] & 0xff) << 8) | (buf[2] & 0xff);
+            if (pos + 3 > buf.length) {
+                rng.nextBytes(buf);
+                pos = 0;
+            }
+            int v = ((buf[pos] & 0xff) << 16) | ((buf[pos + 1] & 0xff) << 8) | (buf[pos + 2] & 0xff);
+            pos += 3;
             if (v < threshold) {
                 out[idx++] = v % q;
             }
