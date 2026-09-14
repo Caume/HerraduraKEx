@@ -74,6 +74,19 @@ undefended.
   protocol family — so the check was pointed straight at them and could not see them.
   The reverse ordering is now checked, at a cost of three exemptions, all correct
   sentences where the currency word modifies a later number.
+- **`nl_fscx_sparse_circuit.py` §2 asserted a condition its own measurements do not
+  support, and the corpus run is what caught it.** The 73-gate verification run came
+  back 72 ok / 1 FAIL, the failure being a gate written by this item and flaky rather
+  than one-directional: §2 detects algebraic degree by sampling, and its k=4 row was a
+  ~69% coin flip because the sampler drew `B` with `wt(B) >= 2` over the whole word
+  while the claim is about the low `k` bits. Replaced with an exact Mobius-transform
+  degree computation, which contradicts the claim: of the 176 values of `B` at
+  n=8, k=4 satisfying `wt(B[0..k-1]) >= 2`, **16 have degree 1**, and they are exactly
+  those with both of `B`'s two lowest bits clear — the prefix carry chain never starts,
+  so no AND term appears however many higher bits are set. Confirmed exactly at n=16.
+  The corrected keygen rule, now in the script, its §5 conclusions and
+  SecurityProofs-4.md §11.8.2, is **`wt(B[0..k-1]) >= 2` AND `B[0..1] != 0`**
+  (k=4 acceptance ~0.69 -> ~0.63).
 - **A skipped section is no longer scored.** `hfscx_256_analysis.py` §4 is `--full`-only
   and returned `None`, which read as a failed finding; `zkp_pqc_exploration.py`'s
   `--skip2/--skip3` sections now contribute no finding rather than a passing one. This

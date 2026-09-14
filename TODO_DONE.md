@@ -17943,5 +17943,48 @@ here, OOM-killed at 636 s.  Its DEFAULT invocation cannot complete on an ordinar
 host, and nothing had noticed because nothing ran it.  `--quick` forces the sweep off;
 the findings it gates live at n=8/16 and in §5 and do not move.
 
-Status: **DONE v7.0.9** — every SecurityProofsCode script now gates or says why not, 35 -> 73 gating, and the conversion turned up eight stale-prose defects plus three blind spots in the discovery mechanism itself.
+**The verification run, and the one gate it caught — which is the point of the
+exercise.**  All 73 under `--quick`: **103.8 min, 72 ok, 1 FAIL** —
+`nl_fscx_sparse_circuit.py`, a gate written in this very item, and flaky rather
+than wrong-in-one-direction (it had passed when run by hand).  Chasing it turned
+into the ninth defect, and the sharpest one:
+
+§2 of that script detects algebraic degree by sampling 300 random higher-order
+differences, and closes with *"Degree >= 2 after 1 step iff at least 2 of the
+first k bits of B are 1 ... must require wt(B[0..k-1]) >= 2 in keygen"*.  Its own
+sampler drew B with `wt(B) >= 2` over the WHOLE word, not over the low k, so the
+k=4 row was a ~69% coin flip and had been reporting a different answer run to run
+for as long as it existed.  Restricting the draw to the stated condition did not
+settle it either — so the detector was replaced with an EXACT Mobius-transform
+degree computation (2^n evaluations; the widths here are 8 and 16, so it is
+cheap), and the exact answer contradicts the claim:
+
+* of the **176** values of B at n=8, k=4 that satisfy `wt(B[0..k-1]) >= 2`,
+  **16 have degree 1** — the "iff" is false and the keygen rule it recommends is
+  insufficient;
+* those 16 are **exactly** the B with both of the two LOWEST bits clear (low
+  nibble 1100).  The mechanism is the prefix adder itself: the carry chain has to
+  start somewhere, and with B[0]=B[1]=0 no carry enters the prefix, so the AND
+  terms that carry the degree never appear however many higher bits are set;
+* not an n=8 artefact — the same class is exactly degree 1 at n=16, while
+  neighbouring low nibbles are 2 and 3.
+
+Corrected rule, now in the script, in its §5 conclusions and in
+SecurityProofs-4.md §11.8.2: **wt(B[0..k-1]) >= 2 AND B[0..1] != 0**, which drops
+k=4 acceptance from ~0.69 to ~0.63.  The sampled row is kept for continuity and is
+explicitly NOT the gate any more.
+
+That is worth stating plainly: the corpus-wide run's only failure was a gate this
+item wrote, and it failed because the section it guards was making a claim its own
+measurements did not support — which is the class of thing the item exists to
+surface, arriving on schedule.
+
+**Timing, for the next reader.**  103.8 min for 73 scripts against 73.4 min for 35,
+i.e. 38 more scripts for 30 more minutes: the tail did not move, because the five
+heavy scripts were already in the set.  The new heaviest arrivals are
+`nl_fscx_v2_csp_analysis.py` (508 s), `nl_fscx_rx_exact_search.py` (337 s),
+`fscx_branch_number.py` (253 s), `nl_fscx_prf_analysis.py` (216 s) and
+`hkex_rnl_failure_rate.py` (207 s).
+
+Status: **DONE v7.0.9** — every SecurityProofsCode script now gates or says why not, 35 -> 73 gating, and the conversion turned up nine defects (eight stale-prose, one a false theorem-condition found by the corpus run itself) plus three blind spots in the discovery mechanism.
 
