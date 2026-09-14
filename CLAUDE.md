@@ -1147,6 +1147,43 @@ benchmarks/                                          — recorded benchmark outp
                                                       rnl_ring_cost.py measures the HKEX-RNL
                                                       ring-cost curve (n=32..1024) and audits
                                                       what the `-t` cap actually caps (TODO #225);
+                                                      rnl_deployed_ring_cost.{c,go,py} is the
+                                                      DEPLOYED ring in the three languages that
+                                                      ship it (TODO #292).  READ THIS FIRST if
+                                                      you quote an HKEX-RNL cost figure:
+                                                      benchmark [40]'s four rows are n=32..256,
+                                                      i.e. the ring TODO #223 RETIRED, because
+                                                      both harnesses transcribe the primitives
+                                                      and use ONE variable for the ring
+                                                      dimension and the key width, so they
+                                                      raise above 256 (#225) -- until #292 the
+                                                      only published figure for the protocol
+                                                      this suite recommends was an interpreted-
+                                                      Python one.  Full handshake at n=1024:
+                                                      C 0.508 ms, Go 1.517 ms, Python 39.96 ms
+                                                      (pure-Python NTT; the .py prints which
+                                                      path is live, and a Python RNL figure
+                                                      without that label is not a figure).
+                                                      Three things worth knowing.  (1) The C
+                                                      handshake is FOUR NTTs and ~7 us of
+                                                      everything else, so cost work there is
+                                                      NTT work and nothing else.  (2) Scaling
+                                                      is 4.6x for 4x the dimension against
+                                                      [40]'s n=256 row, so #223 bought
+                                                      ~32 -> ~206 Core-SVP bits for 4.6x the
+                                                      time -- and HKEX-RNL is 32x FASTER than
+                                                      [34]'s HKEX-GF handshake, so no cost
+                                                      argument favours the classical quartet.
+                                                      (3) The three languages DISAGREE about
+                                                      where the time goes, which is why there
+                                                      are three files: in Go the m_blind
+                                                      derivation is 40% of a handshake and 21x
+                                                      C's, a 50x CSPRNG read pattern filed as
+                                                      TODO #293.  They GATE on a
+                                                      both-sides-agree control but are NOT in
+                                                      run_findings_gates.py's set (it scans
+                                                      SecurityProofsCode/ only) -- host-specific
+                                                      cost figures do not belong in CI;
                                                       compare_*.py drivers, incl.
                                                       compare_fscx_revolve_closed_form.py
                                                       (TODO #213, C/Go/Python)
@@ -1500,7 +1537,7 @@ valgrind --leak-check=full --show-leak-kinds=definite,indirect \
 
 The `-r`/`--rounds` flag caps iterations per security test; `-t`/`--time` sets the wall-clock limit for both tests and benchmarks. CLI flags override `HTEST_ROUNDS`/`HTEST_TIME` env vars.
 
-**What `-t` actually bounds (TODO #225).** It caps iteration *count*, not wall time, and only at the granularity of `_trange`'s poll — `(i & 63) == 63`. A call site requesting fewer than 64 iterations is never polled, so the cap cannot reach it however slow its work becomes: 18 of the Python suite's 95 capped sites are in that category and carry ~71% of the time spent inside capped sites (worst: `test_hpke_stern_f_correctness`, 30 iterations requested, ~97 s against a 2.0 s cap). A truncated site always stops at a multiple of 64, never in between. Separately, 16 sites pass a literal count to `_trange` instead of `_iters(...)`, so `-r` does not reach them either. Every run now prints a closing `--- Time cap: ... ---` line reporting sites entered, truncated, and unpollable. The startup banner reports whether `_rnl_poly_mul` took the numpy or pure-Python path, and the `RNL_SIZES` the tests exercise — which is **not** the suite's deployed `RNLN`. Baseline: `benchmarks/rnl_ring_cost.py`.
+**What `-t` actually bounds (TODO #225).** It caps iteration *count*, not wall time, and only at the granularity of `_trange`'s poll — `(i & 63) == 63`. A call site requesting fewer than 64 iterations is never polled, so the cap cannot reach it however slow its work becomes: 18 of the Python suite's 95 capped sites are in that category and carry ~71% of the time spent inside capped sites (worst: `test_hpke_stern_f_correctness`, 30 iterations requested, ~97 s against a 2.0 s cap). A truncated site always stops at a multiple of 64, never in between. Separately, 16 sites pass a literal count to `_trange` instead of `_iters(...)`, so `-r` does not reach them either. Every run now prints a closing `--- Time cap: ... ---` line reporting sites entered, truncated, and unpollable. The startup banner reports whether `_rnl_poly_mul` took the numpy or pure-Python path, and the `RNL_SIZES` the tests exercise — which is **not** the suite's deployed `RNLN`. Baseline: `benchmarks/rnl_ring_cost.py`; for what the deployed ring costs in each language, `benchmarks/rnl_deployed_ring_cost.{c,go,py}` (TODO #292) — benchmark [40]'s own HKEX-RNL rows stop at the retired n = 256.
 
 The suite files run EVE (eavesdropper) bypass tests inline on every execution.
 

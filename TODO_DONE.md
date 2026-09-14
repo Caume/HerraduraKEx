@@ -17988,3 +17988,128 @@ heavy scripts were already in the set.  The new heaviest arrivals are
 
 Status: **DONE v7.0.9** — every SecurityProofsCode script now gates or says why not, 35 -> 73 gating, and the conversion turned up nine defects (eight stale-prose, one a false theorem-condition found by the corpus run itself) plus three blind spots in the discovery mechanism.
 
+---
+
+### #292: the deployed HKEX-RNL ring is benchmarked in no compiled language
+
+TODO #223 moved HKEX-RNL from n = 256 to n = 1024 and made it the suite's one production-
+track key exchange.  **Nothing has measured that ring in C or Go since.**  Both benchmark
+harnesses stop one power of two short of it:
+
+```
+CryptosuiteTests/Herradura_tests.c   rnl_sizes[] = {32, 64, 128, 256}
+CryptosuiteTests/Herradura_tests.py  RNL_SIZES   = [32, 64, 128, 256]
+```
+
+against `RNL_N 1024` in the header they sit beside.  So benchmark [40] prints a four-row
+HKEX-RNL table in which **every row is a ring the suite retired**, and it prints it in the
+"Performance Benchmarks" section of the harness a reader runs to find out what the suite
+costs.  Nothing is wrong with those numbers; they answer a question nobody asked.
+
+**This is not an oversight and cannot be fixed in the harness.**  TODO #225 established
+why: each harness transcribes the primitives rather than importing them, and uses ONE
+variable for both the ring dimension and the key width, so its KDF line computes
+`_RNL_KDF_DC_256 >> (256 - n_rnl)` and raises `ValueError: negative shift count` for any
+`n > 256`.  The suite keeps the two separate — the ring is 1024 while the derived session
+key stays `KEYBITS = 256` — which is exactly the distinction #223 introduced and the
+harnesses predate.  #225 saw this, measured the deployed ring in PYTHON
+(`benchmarks/rnl_ring_cost.py`), and correctly left the compiled targets alone, because
+its question was where the `native-python` job's time goes rather than what the protocol
+costs.
+
+**The consequence.**  The only published cost figure for the protocol this suite
+recommends is an interpreted-Python figure, and the C column a reader would trust instead
+is of the wrong ring.  That is a gap in the same family as #285's — a number exists, it is
+cited, and no job or script produces the number that was actually meant.
+
+**Scope.**  Three siblings under `benchmarks/`, one per language that ships HKEX-RNL,
+driving the SHIPPED path (`herradura.h`'s `rnl_keygen`/`rnl_agree`, the Go package's
+`RnlKeygen`/`RnlAgree`, the suite's `_rnl_keygen`/`_rnl_agree`) rather than a
+transcription, and printing one table shape so the three columns can be read together.
+Per-step rows, not just a handshake total, because a total cannot say where the time goes.
+
+**They must gate.**  A throughput figure for a key exchange whose two sides do not
+reconcile to the same key is not a slow handshake, it is no handshake — and a benchmark
+that asserts nothing exits 0 either way, which is the class TODO #229 fixed in `CliTest`
+and #291 fixed across `SecurityProofsCode/`.  The control runs before any timing and
+exits non-zero.
+
+**The Python column needs a label or it is not a figure.**  The suite picks a numpy or a
+pure-Python NTT at import and its banner reports which (TODO #225).  The two differ by
+more than an order of magnitude, so the script prints the live path in its own header.
+
+**RESOLVED (v7.0.10).**  Three siblings under `benchmarks/`, one per language that ships
+HKEX-RNL, all driving the shipped path at `RNL_N` and printing one table shape:
+
+```
+benchmarks/rnl_deployed_ring_cost.c    herradura.h's rnl_keygen / rnl_agree
+benchmarks/rnl_deployed_ring_cost.go   herradurakex/herradura's RnlKeygen / RnlAgree
+benchmarks/rnl_deployed_ring_cost.py   the suite's _rnl_keygen / _rnl_agree
+```
+
+Measured, ARM64 SBC, per operation:
+
+```
+                                  C          Go        Python (pure-Python NTT)
+  keygen (s, C)               0.121 ms    0.235 ms      9.78 ms
+  agree, reconciler (+hint)   0.119 ms    0.249 ms      9.62 ms
+  agree, receiver             0.118 ms    0.226 ms      9.50 ms
+  poly_mul alone (NTT)        0.114 ms    0.197 ms      9.32 ms
+  m_blind derivation          0.030 ms    0.642 ms      1.01 ms
+  full handshake              0.508 ms    1.517 ms     39.96 ms
+                             1970 /s      659 /s         25 /s
+```
+
+**Four results.**
+
+1. **The C handshake is four NTTs and 7 µs of everything else.**  `rnl_poly_mul` is
+   0.114 ms against a 0.121 ms keygen, so CBD sampling, rounding, hint generation and
+   reconciliation together are 6% of one keygen.  `4 x 0.119 + 0.030 = 0.506` against a
+   measured 0.508 — the model is checked, not fitted.  Future cost work on HKEX-RNL in C
+   is NTT work; there is nothing else in it.
+
+2. **Scaling is O(n log n), confirmed against the harness it corrects.**  Benchmark [40]
+   measures 9.08 K handshakes/s at n = 256 (0.110 ms); this measures 0.508 ms at
+   n = 1024 — 4.6x for 4x the dimension, not 16x.  TODO #223's ring move bought
+   ~32 -> ~206 Core-SVP bits for 4.6x the time, which is the first time that trade has
+   been stated with both halves measured.
+
+3. **HKEX-RNL is 32x FASTER than the classical protocol it replaces.**  Benchmark [34]
+   measures HKEX-GF's full handshake at 62 ops/s at n = 256 in the same C, against
+   1970 /s here at n = 1024.  The classical quartet is demo-only on a ~2^36.5
+   Pohlig-Hellman break, and it is also the slower construction by a factor of 32 — so
+   there is no cost argument for preferring it, which nothing in the tree could previously
+   say.
+
+4. **The three languages disagree about where the time goes, and that is the finding.**
+   In C and Python the handshake is the NTT.  In Go it is not: `m_blind` derivation alone
+   is 0.642 ms of 1.517 — more than all four NTTs together and 21x the same step in C.
+   Cause measured rather than inferred: `1028 x rand.Read(3)` costs 0.613 ms against
+   0.012 ms for one `rand.Read(3084)`, a factor of 50, and 0.613 of the 0.642 is that.
+   Filed as **TODO #293** rather than fixed here — a change to a shipped primitive is not
+   a measurement item's to make.  This is the half a one-language benchmark cannot
+   produce, and it is why the item shipped three files instead of one.
+
+**They gate.**  Each runs a 20-iteration control (5 in Python, where a handshake is 40 ms)
+and exits non-zero without timing anything if the two sides do not reconcile to the same
+key.  A throughput figure for a key exchange that does not agree is not a slow handshake,
+it is no handshake — the class TODO #229 fixed in `CliTest` and #291 across
+`SecurityProofsCode/`.  They are not discovered by `run_findings_gates.py`, which scans
+`SecurityProofsCode/` only; that is correct, since these are cost measurements whose
+numbers are host-specific and would fail CI on any other machine.
+
+**One defect of my own, recorded because it is the failure mode of this kind of script.**
+A first Python pass timed with 10 iterations and reported keygen at 25.2 ms against
+`poly_mul`'s 9.4 — arithmetically impossible, since a keygen is one `poly_mul` plus
+sampling and rounding.  The excess was one-off setup amortised over too few runs.  The
+`--iters` floor fixes it (9.78 against 9.32) and the header says to check a row's
+arithmetic before quoting it: a benchmark whose parts do not add up is reporting its own
+warm-up.
+
+**Not changed, deliberately.**  The harnesses' `rnl_sizes[]` / `RNL_SIZES` still stop at
+256.  Moving them needs the ring dimension separated from the key width in code that
+predates the distinction (TODO #225), which is a harness rewrite and not this item; the
+benchmark headers and CLAUDE.md now say the [40] column is the retired ring, so the figure
+is labelled rather than silently wrong.
+
+Status: **DONE v7.0.10** — the deployed n = 1024 ring is now measured in all three shipping languages, benchmark [40]'s four HKEX-RNL rows are the ring TODO #223 retired, and the three-column table found a 50x CSPRNG read pattern that is 40% of a Go handshake (TODO #293).

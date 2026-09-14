@@ -2,6 +2,96 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.10] - 2026-09-13
+
+### TODO #292 — the deployed HKEX-RNL ring was benchmarked in no compiled language
+
+TODO #223 moved HKEX-RNL from `n = 256` to `n = 1024` and made it the suite's one
+production-track key exchange.  Nothing has measured that ring in C or Go since.  Both
+benchmark harnesses stop one power of two short of it — `rnl_sizes[] = {32, 64, 128, 256}`
+in `Herradura_tests.c`, `RNL_SIZES = [32, 64, 128, 256]` in the Python one — against
+`RNL_N 1024` in the header they sit beside.  So benchmark **[40] prints a four-row
+HKEX-RNL table in which every row is a ring the suite retired**, in the "Performance
+Benchmarks" section a reader runs to find out what the suite costs.
+
+That is not fixable in the harnesses, for the reason TODO #225 recorded: each transcribes
+the primitives rather than importing them and uses one variable for both the ring
+dimension and the key width, so its KDF line computes `_RNL_KDF_DC_256 >> (256 - n_rnl)`
+and raises on any `n > 256`.  #225 measured the deployed ring in **Python** and correctly
+left the compiled targets alone — its question was where the `native-python` job's time
+goes.  The consequence stood until now: the only published cost figure for the protocol
+this suite recommends was an interpreted-Python figure.
+
+**Added — `benchmarks/rnl_deployed_ring_cost.{c,go,py}`**, one per language that ships
+HKEX-RNL, each driving the shipped path (`rnl_keygen`/`rnl_agree`, `RnlKeygen`/`RnlAgree`,
+`_rnl_keygen`/`_rnl_agree`) rather than a transcription, and printing one table shape so
+the three columns read together.  Measured, ARM64 SBC, per operation:
+
+| | C | Go | Python (pure-Python NTT) |
+|---|---|---|---|
+| keygen (s, C) | 0.121 ms | 0.235 ms | 9.78 ms |
+| agree, reconciler (+hint) | 0.119 ms | 0.249 ms | 9.62 ms |
+| agree, receiver | 0.118 ms | 0.226 ms | 9.50 ms |
+| `poly_mul` alone (NTT) | 0.114 ms | 0.197 ms | 9.32 ms |
+| m_blind derivation | 0.030 ms | 0.642 ms | 1.01 ms |
+| **full handshake** | **0.508 ms** (1970 /s) | **1.517 ms** (659 /s) | **39.96 ms** (25 /s) |
+
+Four results.
+
+1. **The C handshake is four NTTs and 7 µs of everything else.**  `4 x 0.119 + 0.030 =
+   0.506` against a measured 0.508, so the model is checked rather than fitted.  Cost work
+   on HKEX-RNL in C is NTT work; there is nothing else in it.
+2. **Scaling is O(n log n), confirmed against the harness it corrects.**  [40] measures
+   0.110 ms at `n = 256`; this measures 0.508 ms at `n = 1024` — 4.6x for 4x the
+   dimension.  #223's ring move bought ~32 -> ~206 Core-SVP bits for 4.6x the time, the
+   first statement of that trade with both halves measured.
+3. **HKEX-RNL is 32x faster than the classical protocol it replaces.**  [34] measures
+   HKEX-GF's handshake at 62 ops/s in the same C.  The classical quartet is demo-only on a
+   ~2^36.5 Pohlig–Hellman break and is *also* the slower construction by 32x, so no cost
+   argument exists for preferring it — which nothing in the tree could previously say.
+4. **The three languages disagree about where the time goes**, which is the half a
+   one-language benchmark cannot produce.  See #293 below.
+
+They **gate**: each runs a control (20 handshakes, 5 in Python) and exits non-zero without
+timing anything if the two sides do not reconcile to the same key.  A throughput figure
+for a key exchange that does not agree is not a slow handshake, it is no handshake — the
+class TODO #229 fixed in `CliTest` and #291 across `SecurityProofsCode/`.  They are not
+discovered by `run_findings_gates.py`, which scans `SecurityProofsCode/` only, and that is
+correct: these are host-specific cost measurements and would fail CI on any other machine.
+
+The Python sibling prints which NTT path is live.  The suite picks numpy or pure-Python at
+import (TODO #225) and the two differ by more than an order of magnitude, so a Python
+figure for HKEX-RNL without that label is not a figure.  It also carries a `--iters` floor
+and the reason for it: a first pass timed with 10 iterations reported keygen at 25.2 ms
+against `poly_mul`'s 9.4, which is arithmetically impossible — a benchmark whose parts do
+not add up is reporting its own warm-up.
+
+**Not changed, deliberately.**  The harnesses' `rnl_sizes[]` / `RNL_SIZES` still stop at
+256; moving them is a harness rewrite (#225's one-variable problem), so the [40] column is
+now *labelled* as the retired ring in the benchmark headers and CLAUDE.md rather than
+silently wrong.
+
+### TODO #293 (opened) — the CSPRNG is read three bytes at a time
+
+Found by #292's measurement.  In C and in Python a handshake is the NTT; **in Go it is
+not** — `m_blind` derivation alone is 0.642 ms of a 1.517 ms handshake, more than all four
+`RnlPolyMul` calls together and 21x the same step in C.
+
+Cause measured rather than inferred: `RnlRandPoly` reads three bytes per iteration of its
+rejection loop, ~1028 `crypto/rand.Read` calls per polynomial at `n = 1024`, and timed on
+its own `1028 x rand.Read(3)` is **0.613 ms against 0.012 ms for one `rand.Read(3084)`** —
+a factor of 50, accounting for 0.613 of the 0.642.  The fix pattern is twenty lines below
+it in the same file: `RnlCBDPoly` draws its whole buffer in one call.
+
+The shape is not Go's alone — Python's `_rnl_rand_poly` calls `os.urandom(3)` per draw and
+Java's `rnlRandPoly` fills a 3-byte array — and C escapes it by accident rather than
+design, reading the same 3 bytes at a time through a buffered `FILE *`.  Only in Go does
+it dominate, because only there is the NTT fast enough for it to surface (1.8% of a
+handshake in Python, 40% in Go).  Filed rather than fixed: a change to a shipped primitive
+in three languages is not a measurement item's to make, and the parity axes compare
+declared constants and primitive presence, not sampling strategy, so a three-way split
+here is invisible to every checker and is a position to record either way.
+
 ## [7.0.9] - 2026-09-13
 
 ### TODO #291 — 46 of 81 analysis scripts had no verdict, and 22 printed one they discarded
