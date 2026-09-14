@@ -90,6 +90,7 @@ correctness.  There is no middle ground.
 """
 
 import secrets
+import sys
 
 # ── Primitives ───────────────────────────────────────────────────────────────
 
@@ -138,9 +139,11 @@ def test_hske():
         if D   == P:  correct   += 1
     print(f"  c_K = S_i·(M+I)·K ≠ 0 (K present in E) : {key_in_E}/{T}")
     print(f"  D == P (correct decryption)              : {correct}/{T}")
+    _ok = key_in_E == T and correct == T
     print(f"  → K is private, appears as non-zero offset in E.")
     print(f"  → Full round-trip (i+r=n) makes K cancel: D=P always.")
     print(f"  → HSKE is a symmetric cipher; security needs a pre-shared K.")
+    return _ok
 
 # ── Part 2: HPKE mechanism ───────────────────────────────────────────────────
 
@@ -160,9 +163,11 @@ def test_hpke():
         if alice_side == eve:       all_public += 1
     print(f"  sk_A == sk_B             : {all_equal}/{T}")
     print(f"  sk_A == S_{{r+1}}·(C⊕C2) : {all_public}/{T}  ← all public")
+    _ok = all_equal == T and all_public == T
     print(f"  → HPKE is correct because sk_A=sk_B=S_{{r+1}}·(C⊕C2).")
     print(f"  → The fscx_revolve_n nonce N=C⊕C2 is public; sk has zero secrecy.")
     print(f"  → HPKE works correctly but is insecure for the same reason as HKEX.")
+    return _ok
 
 # ── Part 3: Exhaustive nonce search ──────────────────────────────────────────
 
@@ -179,6 +184,8 @@ def test_nonces():
     #   sk_private = sk is NOT equal to M^r·(C⊕C2) ⊕ S_r·(public_nonce_term)
     # We compute the "public formula" for sk as M^r·(C⊕C2) ⊕ S_r·na
     # and check whether sk differs from it (it shouldn't, per the theorem).
+
+    verdicts = []
 
     def run(label, na_fn, nb_fn):
         correct = sk_is_public = 0
@@ -199,6 +206,7 @@ def test_nonces():
                    else "correct+PRIVATE?" if (match_c and not match_p)
                    else "BROKEN" if not match_c
                    else "?")
+        verdicts.append(verdict)
         print(f"  {label:<22} {correct:>8}  {sk_is_public:>12}  {verdict}")
 
     # Symmetric helper: B→B2, A→A2, C→C2, C2→C
@@ -218,6 +226,8 @@ def test_nonces():
     print("  Column 'sk≠f(C,C2)' counts how often sk differs from the prediction.")
     print("  Only rows that are CORRECT AND have sk≠public would be a fix.")
     print("  No such row exists — the theorem holds unconditionally.")
+    # A "correct+PRIVATE?" row would be the counterexample; there is none.
+    return "correct+PRIVATE?" not in verdicts
 
 # ── Part 4: Prove S_r·n_A = h(C,C2) for any correct nonce ───────────────────
 
@@ -235,6 +245,7 @@ def test_theorem_directly():
     # let's see how S_r·n_A varies with different (A,B) giving the same C).
     # Then repeat for nonce = N = C⊕C2 (the correct one).
 
+    ok_theorem = True
     for nonce_label, nonce_fn in [("N=C⊕C2 (correct)", lambda A,B,C,C2: C^C2),
                                    ("B (incorrect)",    lambda A,B,C,C2: B)]:
         # Fix a target C by choosing one (A0,B0) pair
@@ -254,6 +265,7 @@ def test_theorem_directly():
             Srna_values.add(Sk(na, r, n))
 
         varies = len(Srna_values) > 1
+        ok_theorem = ok_theorem and (varies == ("incorrect" in nonce_label))
         print(f"  nonce = {nonce_label}:")
         print(f"    Distinct S_r·n_A values across 20 (A,B) pairs with same C: "
               f"{len(Srna_values)}")
@@ -262,14 +274,18 @@ def test_theorem_directly():
         else:
             print(f"    → S_r·n_A varies → correctness must break. Theorem confirmed.")
         print()
+    return ok_theorem
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def run():
-    test_hske()
-    test_hpke()
-    test_nonces()
-    test_theorem_directly()
+    findings = [("HSKE: K is a private offset and the round trip cancels it",
+                 test_hske()),
+                ("HPKE: correct, and its session key is S_{r+1}.(C ⊕ C2)",
+                 test_hpke()),
+                ("no nonce choice is correct AND private", test_nonces()),
+                ("S_r.n_A is constant for a correct nonce and varies otherwise",
+                 test_theorem_directly())]
 
     print("=" * 65)
     print("Summary")
@@ -294,6 +310,14 @@ def run():
   cancellation that enables correctness (S_n = 0) does not
   simultaneously expose sk as a linear function of public values.
 """)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    return 1 if bad else 0
+
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())

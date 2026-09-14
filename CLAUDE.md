@@ -794,7 +794,7 @@ SecurityProofs.md                                   — split index (redirects t
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
-SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (686 math expressions)
+SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (693 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.10: PQ signature options · HPKE-Stern-KEM (672 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
@@ -1147,6 +1147,43 @@ benchmarks/                                          — recorded benchmark outp
                                                       rnl_ring_cost.py measures the HKEX-RNL
                                                       ring-cost curve (n=32..1024) and audits
                                                       what the `-t` cap actually caps (TODO #225);
+                                                      rnl_deployed_ring_cost.{c,go,py} is the
+                                                      DEPLOYED ring in the three languages that
+                                                      ship it (TODO #292).  READ THIS FIRST if
+                                                      you quote an HKEX-RNL cost figure:
+                                                      benchmark [40]'s four rows are n=32..256,
+                                                      i.e. the ring TODO #223 RETIRED, because
+                                                      both harnesses transcribe the primitives
+                                                      and use ONE variable for the ring
+                                                      dimension and the key width, so they
+                                                      raise above 256 (#225) -- until #292 the
+                                                      only published figure for the protocol
+                                                      this suite recommends was an interpreted-
+                                                      Python one.  Full handshake at n=1024:
+                                                      C 0.508 ms, Go 1.517 ms, Python 39.96 ms
+                                                      (pure-Python NTT; the .py prints which
+                                                      path is live, and a Python RNL figure
+                                                      without that label is not a figure).
+                                                      Three things worth knowing.  (1) The C
+                                                      handshake is FOUR NTTs and ~7 us of
+                                                      everything else, so cost work there is
+                                                      NTT work and nothing else.  (2) Scaling
+                                                      is 4.6x for 4x the dimension against
+                                                      [40]'s n=256 row, so #223 bought
+                                                      ~32 -> ~206 Core-SVP bits for 4.6x the
+                                                      time -- and HKEX-RNL is 32x FASTER than
+                                                      [34]'s HKEX-GF handshake, so no cost
+                                                      argument favours the classical quartet.
+                                                      (3) The three languages DISAGREE about
+                                                      where the time goes, which is why there
+                                                      are three files: in Go the m_blind
+                                                      derivation is 40% of a handshake and 21x
+                                                      C's, a 50x CSPRNG read pattern filed as
+                                                      TODO #293.  They GATE on a
+                                                      both-sides-agree control but are NOT in
+                                                      run_findings_gates.py's set (it scans
+                                                      SecurityProofsCode/ only) -- host-specific
+                                                      cost figures do not belong in CI;
                                                       compare_*.py drivers, incl.
                                                       compare_fscx_revolve_closed_form.py
                                                       (TODO #213, C/Go/Python)
@@ -1334,7 +1371,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; `cont
 error: true` for now, on the `arduino` job's TODO #185 route). Locally, run the same
 scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 35
+**The findings gates, and why they are a job rather than a step (TODO #289).** 73
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -1355,6 +1392,31 @@ header and not discovered is an error, checked in both negative controls. (3) Fa
 do not stop the run: #286 hit three and #288 six, so a `set -e` loop reporting the first
 and hiding the rest is not hypothetical. The two QC-MDPC scripts stay in `native-python`
 as well, deliberately, because that job is required and this one is not yet.
+
+**And which scripts GATE, which is the prior question (TODO #291).** #289 and #290 both
+answer "which of the gating scripts run"; nothing asked how many scripts gate at all.
+The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
+by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
+verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
+backs the security documents rather than the one that tests the code. It is now **73
+gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
+other: the runner FAILS on a script that is neither, which is the part that does not
+decay, since adding an analysis script now forces the question. Four things worth knowing.
+(1) `NON_GATING` is self-invalidating in both directions like `EXCLUDED` — an entry naming
+an absent file fails, and so does one naming a script that has since become a gate. (2)
+"It is only a demo" is not a reason: `hpks_threshold_demo.py`, `oprf_demo.py`,
+`vdf_demo.py` and `hkex_pake_demo.py` all assert something falsifiable and all gate. The
+seven that do not are five `hkex_cfscx_*.py` design-space surveys of rejected
+constructions, `nl_fscx_v2_orbit.py` (a sampled distribution, where a gate would mean
+inventing a threshold), and `stern_ct_demo.py`, whose verdict is that a timing leak is
+STILL THERE — a gate would fail if anyone fixed it. (3) The conversion turned up a
+FOURTH exit shape and a THIRD `--quick` spelling, both the blind spot the runner already
+documents: five scripts name their entry point `run()` rather than `main()` and read as
+non-gating, and two declare `--fast` through `sys.argv` rather than argparse — one of
+them (`stern_f_multiround_fs.py`) already a gate, so it had been running at full sample
+size since #289. (4) A section that did not run must not be scored: `--full`-only and
+`--skip2/--skip3` sections return "no finding", never a passing one, or a skipped section
+becomes a vacuous pass — the inverse of what TODO #234 found in the Arduino harness.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
@@ -1475,7 +1537,7 @@ valgrind --leak-check=full --show-leak-kinds=definite,indirect \
 
 The `-r`/`--rounds` flag caps iterations per security test; `-t`/`--time` sets the wall-clock limit for both tests and benchmarks. CLI flags override `HTEST_ROUNDS`/`HTEST_TIME` env vars.
 
-**What `-t` actually bounds (TODO #225).** It caps iteration *count*, not wall time, and only at the granularity of `_trange`'s poll — `(i & 63) == 63`. A call site requesting fewer than 64 iterations is never polled, so the cap cannot reach it however slow its work becomes: 18 of the Python suite's 95 capped sites are in that category and carry ~71% of the time spent inside capped sites (worst: `test_hpke_stern_f_correctness`, 30 iterations requested, ~97 s against a 2.0 s cap). A truncated site always stops at a multiple of 64, never in between. Separately, 16 sites pass a literal count to `_trange` instead of `_iters(...)`, so `-r` does not reach them either. Every run now prints a closing `--- Time cap: ... ---` line reporting sites entered, truncated, and unpollable. The startup banner reports whether `_rnl_poly_mul` took the numpy or pure-Python path, and the `RNL_SIZES` the tests exercise — which is **not** the suite's deployed `RNLN`. Baseline: `benchmarks/rnl_ring_cost.py`.
+**What `-t` actually bounds (TODO #225).** It caps iteration *count*, not wall time, and only at the granularity of `_trange`'s poll — `(i & 63) == 63`. A call site requesting fewer than 64 iterations is never polled, so the cap cannot reach it however slow its work becomes: 18 of the Python suite's 95 capped sites are in that category and carry ~71% of the time spent inside capped sites (worst: `test_hpke_stern_f_correctness`, 30 iterations requested, ~97 s against a 2.0 s cap). A truncated site always stops at a multiple of 64, never in between. Separately, 16 sites pass a literal count to `_trange` instead of `_iters(...)`, so `-r` does not reach them either. Every run now prints a closing `--- Time cap: ... ---` line reporting sites entered, truncated, and unpollable. The startup banner reports whether `_rnl_poly_mul` took the numpy or pure-Python path, and the `RNL_SIZES` the tests exercise — which is **not** the suite's deployed `RNLN`. Baseline: `benchmarks/rnl_ring_cost.py`; for what the deployed ring costs in each language, `benchmarks/rnl_deployed_ring_cost.{c,go,py}` (TODO #292) — benchmark [40]'s own HKEX-RNL rows stop at the retired n = 256.
 
 The suite files run EVE (eavesdropper) bypass tests inline on every execution.
 
@@ -1515,11 +1577,13 @@ python3 SecurityProofsCode/nl_fscx_rot_analysis.py   # rotational differential a
 python3 SecurityProofsCode/qcmdpc_bgf_variants.py --quick   # ~11 min; --full is ~72 min
 
 # All of them at once, which is what CI's analysis-findings job runs (TODO #289).
-# --quick is the default here and is applied to scripts declaring --quick OR
-# --fast (two spellings of one reduced-sample mode -- TODO #290);
+# --quick is the default here and is applied to scripts declaring --quick or
+# --fast, in argparse OR straight out of sys.argv -- three spellings of one
+# reduced-sample mode (TODO #290, #291);
 # --full runs everything at its default sample sizes (hours, not minutes).
+# --list also prints the 7 scripts DECLARED non-gating and why (TODO #291).
 python3 SecurityProofsCode/run_findings_gates.py --list   # what would run, and how
-python3 SecurityProofsCode/run_findings_gates.py         # ~73 min on an aarch64 SBC
+python3 SecurityProofsCode/run_findings_gates.py         # ~120 min on an aarch64 SBC
 ```
 
 ## Core Cryptographic Architecture

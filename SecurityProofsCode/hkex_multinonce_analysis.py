@@ -85,6 +85,7 @@ cancellation that makes sk a linear function of public information.
 """
 
 import secrets
+import sys
 
 # ── Primitives ───────────────────────────────────────────────────────────────
 
@@ -139,6 +140,7 @@ def part1():
         if direct == predicted: ok += 1
     print(f"  direct == M^r·A + M·S_r·B ⊕ Φ_r : {ok}/{T}")
     print(f"  → Multi-nonce revolve is still a GF(2)-affine map in all inputs.")
+    return ok == T
 
 # ── Part 2: B cancels regardless of nonce count ──────────────────────────────
 
@@ -158,8 +160,10 @@ def part2():
         predicted = Mpow(C ^ C2, r, n) ^ phi_xor(Nv, n)
         if sk_a == predicted: ok += 1
     print(f"  sk_A == M^r·(C⊕C2) ⊕ Φ^A_r : {ok}/{T}")
+    _part2_ok = ok == T
     print(f"  → B (and A) cancel for ANY nonce sequence.")
     print(f"  → Private info in Φ is the only remaining variable.")
+    return _part2_ok
 
 # ── Part 3: Exhaustive nonce strategies ──────────────────────────────────────
 
@@ -190,12 +194,15 @@ def part3():
     print(f"  {'Strategy':<35} {'Correct':>8}  {'Φ^A=Φ^B':>8}  Verdict")
     print(f"  {'-'*35} {'-'*8}  {'-'*8}  -------")
 
+    verdicts = []
+
     def show(label, na_fn, nb_fn):
         c, p = test_strategy(label, na_fn, nb_fn)
         verdict = ("CORRECT+PUBLIC" if c==T and p==T
                    else "correct+private?"  if c==T and p<T
                    else "broken" if c==0
                    else f"partial ({c}/{T})+?")
+        verdicts.append(verdict)
         print(f"  {label:<35} {c:>8}  {p:>8}  {verdict}")
 
     # All public (same for Alice and Bob)
@@ -239,6 +246,9 @@ def part3():
     print("  • N_j=M^j·B      → Φ^A=0 (r is EVEN in GF(2)) → sk = M^r·(C⊕C2) = PUBLIC")
     print("  • Other private  → Φ^A ≠ Φ^B → sk_A ≠ sk_B → BROKEN")
     print("  No strategy is simultaneously CORRECT and PRIVATE.")
+    # The whole point of the table: a row reading "correct+private?" would be
+    # the counterexample this script exists to look for.
+    return "correct+private?" not in verdicts
 
 # ── Part 4: More exchanged public values ─────────────────────────────────────
 
@@ -250,6 +260,7 @@ def part4():
     print("  Alice publishes C^(t)=revolve(A,B,i_t) for t=1..k")
     print("  sk uses all k pairs of public values in derivation")
     print()
+    _part4_ok = True
 
     for k_vals in [1, 2, 4]:
         i_vals = [n // (2**(t+1)) for t in range(k_vals)]   # i1=32, i2=16, i3=8, i4=4
@@ -283,11 +294,13 @@ def part4():
             if sk_a == sk_eve: eve_ok += 1
 
         print(f"  k={k_vals} exchanged pairs: correct={ok}/{T}  eve_recovers={eve_ok}/{T}")
+        _part4_ok = _part4_ok and ok == T and eve_ok == T
 
     print()
     print("  → Additional linear public values do not help.")
     print("  → Each pair's contribution to sk is M^r·(C⊕C2) — publicly computable.")
     print("  → Eve XORs all contributions together. sk remains public for any k.")
+    return _part4_ok
 
 # ── Part 5: The collapse of M^j·B nonces ─────────────────────────────────────
 
@@ -307,20 +320,22 @@ def part5():
         p  = phi_xor(nA, n)
         if p == 0: ok_zero += 1
     print(f"  Φ_r == 0 for random B: {ok_zero}/{T}  ({'always' if ok_zero==T else 'sometimes'})")
+    _part5_ok = ok_zero == T
     print()
     print(f"  This is a GF(2) consequence of the same algebra that makes S_n=0.")
     print(f"  Even-length sums of M^j·x always cancel in pairs: M^j ⊕ M^j = 0.")
     print(f"  Trying to 'hide' private data in per-step nonces this way")
     print(f"  produces Φ=0 — identical to using no nonce at all.")
+    return _part5_ok
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def run():
-    part1()
-    part2()
-    part3()
-    part4()
-    part5()
+    findings = [("the multi-nonce closed form holds", part1()),
+                ("A and B cancel for any nonce sequence", part2()),
+                ("no nonce strategy is correct AND private", part3()),
+                ("extra exchanged pairs stay publicly computable", part4()),
+                ("N_j = M^j.B collapses to Phi = 0", part5())]
     print()
     print("=" * 65)
     print("Conclusion")
@@ -355,6 +370,14 @@ def run():
   combination of GF(2)-linear steps — however many, however arranged
   — remains GF(2)-linear. Security requires genuine nonlinearity.
 """)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    return 1 if bad else 0
+
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())

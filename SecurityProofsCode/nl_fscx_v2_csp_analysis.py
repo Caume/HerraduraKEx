@@ -238,6 +238,11 @@ def section3():
         ok += found == K
     print(f"      n={n}: success {ok}/{trials}, mean guesses {tot_guesses/trials:.0f} "
           f"(brute force = {N}; delta-image size = {len(section3.delta_img[n])})")
+    # The §4 claim, as two inequalities: the attack does NOT recover the key
+    # most of the time, and what it does cost is no better than half of brute
+    # force.  A run where either flipped would be a real attack, not a broken
+    # script -- which is why it is worth failing on.
+    _s4_ok = (ok / trials) < 0.5 and (tot_guesses / trials) > N / 4
     print()
     print("      MEASURED (n=12): recovers the exact key in ~20% of trials with a mean of")
     print("      ~1659 delta-image guesses — no better than half of brute force (4096),")
@@ -245,8 +250,12 @@ def section3():
     print("      The guess space IS the delta image (~2^{n-1}), so the speedup over brute")
     print("      force is only ~2x at r=1 — and the linearization breaks entirely at")
     print("      r >= 2 (carries compose non-linearly across steps).")
+    return _s4_ok
+
+
 section3.delta_img = {}
 section3.minv = {}
+
 
 def build_minv(n):
     """Invert M by table (M is linear; may be non-bijective — table maps image points)."""
@@ -258,6 +267,7 @@ def build_minv(n):
 # ─── §4: Walsh spectrum of the key map ────────────────────────────────────────
 
 def section4():
+    _s5_ok = True
     print(SEP)
     print("§4 — Walsh Spectrum of K -> F2^r(P, K) at n=8, 12 (Q3)")
     print(SEP)
@@ -271,7 +281,8 @@ def section4():
         bound = math.sqrt(4 * n * math.log(2) / N)
         print(f"  n={n}, P=0x{P:0{n//4}X}, random-fn bound ~{bound:.4f}:")
         print(f"  {'r':>4}  {'max |bias|':>11}")
-        for r in [1, 2, 4, 3 * n // 4]:
+        rs = [1, 2, 4, 3 * n // 4]
+        for r in rs:
             outs = [f2_r(P, K, r, n) for K in range(N)]
             maxb = 0.0
             for b in range(n):
@@ -286,9 +297,18 @@ def section4():
                             f[x ^ half], f[x] = u + v, u - v
                 maxb = max(maxb, max(abs(v) for v in f[1:]) / N)  # skip mask 0
             flag = "  <-- above bound" if maxb > 2 * bound else ""
+            # NOT "no row exceeds the bound" -- the low-r rows do, and say so
+            # in the table (0.30 against 0.09 at n=12, r=1).  The claim this
+            # section supports is that the bias DECAYS INTO the random-function
+            # band as r grows, so the gate is on the largest r measured at each
+            # width, with 20% slack for the sample.  A low-r row rising is
+            # expected; the last row rising would be the finding.
+            if r == rs[-1]:
+                _s5_ok = _s5_ok and maxb <= 1.2 * bound
             print(f"  {r:>4}  {maxb:>11.4f}{flag}")
             sys.stdout.flush()
         print()
+    return _s5_ok
 
 # ─── §5: Rotational differential rate at n=32 ─────────────────────────────────
 
@@ -351,14 +371,24 @@ def main():
     t0 = time.monotonic()
     section1(); print(); sys.stdout.flush()
     section2(); print(); sys.stdout.flush()
-    section3(); print(); sys.stdout.flush()
-    section4(); print(); sys.stdout.flush()
+    s4_ok = section3(); print(); sys.stdout.flush()
+    s5_ok = section4(); print(); sys.stdout.flush()
     section5(); print(); sys.stdout.flush()
     section6()
     print(SEP)
+    findings = [("§3's delta-image key search does not beat brute force", s4_ok),
+                ("§4: the key-mask linear bias decays into the random band by the "
+                 "largest r measured", s5_ok)]
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print(f"Total runtime: {time.monotonic()-t0:.1f} s")
     print("END nl_fscx_v2_csp_analysis.py")
     print(SEP)
+    return 1 if bad else 0
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

@@ -17749,3 +17749,367 @@ try, though not for the risk it was watching: #289 expected *sampling* flakiness
 arrived was a missing dependency.  The flag stays until a pass history exists.
 
 Status: **DONE v7.0.8** — `analysis-findings` installs `z3-solver`, the three z3 consumers fail cleanly instead of tracebacking, and the runner recognises `--fast` as well as `--quick`.
+
+### #291: the OTHER 46 analysis scripts have no verdict — a printed `FAIL` exits 0
+
+TODO #289 asked "which findings-gating scripts does CI run?" and answered it structurally:
+`run_findings_gates.py` DISCOVERS them, so nothing has to be added anywhere and "nobody got
+round to it" can no longer look like "it passes".  #290 then found the first thing that
+discovery could not see (a spelling: `--fast`, not `--quick`).  Both items are about the
+set of scripts that gate.  **Neither touches the prior question: which scripts gate at
+all.**
+
+**The census, measured at head** (`run_findings_gates.py --list`, plus a scan of
+`SecurityProofs-*.md` and `CLAUDE.md` for each filename):
+
+| | scripts |
+|---|---|
+| `SecurityProofsCode/*.py` | 81 |
+| discovered as findings gates (#289) | 35 |
+| **not gates** | **46** (45 analyses + the runner itself) |
+| of those, CITED by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim | 33 |
+| of those, printing a PASS/FAIL-shaped verdict and exiting 0 regardless | 22 (16 of them cited) |
+
+So a little over half of the analysis corpus produces output that nothing reads, and
+**22 scripts contain the exact defect TODO #233 removed from the test harnesses** — a
+verdict computed, printed, and then discarded by an exit status of 0 — one layer out, in
+the layer that backs the security documents rather than the one that tests the code.
+
+**The exemplar, and it is not a hypothetical.**  `qc_mdpc_bgf_prototype.py` (cited in
+`SecurityProofs-5.md`) ends `main()` with
+
+```
+    print(f"  PRF uniformity: {'PASS' if ok_prf else 'FAIL'}")
+    print(f"  BGF decoder DFR at toy scale: {fails} failures (see §4)")
+```
+
+and `main()` returns `None` to a bare `if __name__ == "__main__": main()`.  `ok_prf`
+False prints `FAIL` and exits 0.  It also carries a PRIVATE `bgf_decode` with a threshold
+schedule "tuned empirically at r=523, d=15, t=18" and no import from the suite — the twin-
+decoder class TODO #285 retired from `qcmdpc_dfr_weak_keys.py` after finding it had
+diverged from the shipped decoder twice.  Nothing compares the two, and nothing would say
+so if the comparison failed.
+
+**The second exemplar is the one that should settle the question.**
+`hkex_rnl_failure_rate.py` is the script whose §6 printed a security table in which every
+row was wrong in the unsafe direction, found and withdrawn by TODO #286 — three documented
+paragraphs of it in `CLAUDE.md`.  It is still not a gate.  Whatever repair #286 made to it
+cannot be defended by CI, and the next drift in it is invisible for the same reason the
+first one was.
+
+**Scope.**
+
+1. **Triage all 45 non-gating analyses into three buckets**, with the bucket recorded, not
+   inferred: (a) holds a claim a document cites → make its exit status its verdict, the
+   `sys.exit(main())` shape the other 35 use; (b) holds no claim — a demo, an
+   exploration, a superseded construction — → declared non-gating WITH A REASON;
+   (c) obsolete → deleted, and its citations with it.  The 12 uncited scripts
+   (`hkex_cfscx_*.py`, `hkex_pake_demo.py`, `hpks_threshold_demo.py`,
+   `nl_fscx_v2_kex.py`, `nl_fscx_v2_orbit.py`, `oprf_demo.py`, `stern_ct_demo.py`,
+   `vdf_demo.py`) are the likely (b)/(c) population; the 16 that already PRINT a verdict
+   are the likely (a) population and are where the work should start, because for them
+   "what is the finding?" is already answered in their own source.
+2. **The declaration must be self-invalidating**, like `EXCLUDED`, `CLI_FLAG_PARITY`,
+   `PARAM_DIVERGENCE` and every other curated table in this repo: an entry naming a file
+   that is absent, or that HAS since become a gate, fails.  Otherwise bucket (b) is just
+   the old exclusion list with better manners.
+3. **Close discovery's remaining hole in the other direction.**  Today the runner errors
+   when a script ADVERTISES a gate and is not discovered.  It cannot error when a script
+   neither advertises, gates, nor is declared — which is precisely the 46.  After (1) and
+   (2) every `SecurityProofsCode/*.py` is discovered or declared, and the runner should
+   fail on anything that is neither.  That is the check that makes this item unrepeatable;
+   the triage alone is a one-off.
+4. **Cost, which is the reason to expect resistance.**  The 35 current gates cost 73.4 min
+   under `--quick` on the reference SBC and 58% of that is five scripts.  The 45 are
+   UNMEASURED — several are large (`zkp_pqc_exploration.py` at 59 KB,
+   `nl_fscx_prf_analysis.py` at 50 KB, the four `hkex_cfscx_*.py` at 34-48 KB each) and
+   some may be hours.  Measure before converting, and where a script is genuinely too
+   slow, the answer is a `--quick` mode in that script, NOT an exclusion — #289's whole
+   finding was that the exclusion route produces a defensible-looking list with broken
+   scripts in it.
+5. **Do not invent thresholds.**  A script that explores rather than concludes has no
+   finding to gate, and forcing one on it manufactures a false gate — worse than no gate,
+   because it reads as coverage.  Bucket (b) with an honest reason is the correct outcome
+   for those, and a triage that lands most of the corpus in (a) should be treated as a
+   sign the reasons were not written carefully.
+
+**Knock-on.**  `CLAUDE.md`'s "35 findings-gating scripts" figure is held to what the runner
+reports by `check_docs_consistency.py`'s check E (TODO #287), so it follows the conversion
+automatically; the `SecurityProofsCode/` inventory in `CLAUDE.md` and the run instructions
+in the Testing section will need re-checking by hand, per TODO #145's rule.  Any script
+promoted into the gate set also enters `analysis-findings`, which is still
+`continue-on-error: true` — that job's promotion to required is #289's decision 1 and is
+NOT this item; converting scripts under a non-blocking job first is the right order.
+
+**Explicitly out of scope.**  (i) The CONTENT of any finding: this item makes verdicts
+observable, it does not re-derive them, and a script that turns out to be failing gets its
+own item the way #286 and #288 did.  (ii) The 35 existing gates.  (iii) Promoting
+`analysis-findings` to blocking.
+
+---
+
+**RESOLVED (v7.0.9): 73 gating, 7 declared non-gating, and the runner fails on a
+script that is neither.**
+
+The triage ran as scoped.  Of the 45 non-gating analyses, **38 became gates** and
+**7 are declared** in `run_findings_gates.py`'s new `NON_GATING` table; nothing was
+deleted, because every candidate for bucket (c) turned out to be either cited or
+cheap enough to gate.  The discovered set went from **35 to 73**, and with the 7
+declarations that is every `SecurityProofsCode/*.py` accounted for — the runner now
+fails on one that is neither, which is the half of this item that does not decay.
+
+**Bucket (b), and why each of the seven is there.**  Five `hkex_cfscx_*.py` are
+design-space surveys of constructions that were rejected and never shipped, cited by
+nothing; `nl_fscx_v2_orbit.py` reports a sampled orbit-length distribution, where a
+gate would mean inventing the threshold this item warned against (its load-bearing
+conclusions are in `nl_fscx_v2_csp.py`, which does gate); and `stern_ct_demo.py`
+prints `[PASS]` when a timing correlation is HIGH, so a gate there would fail the day
+someone made the Python permutation constant-time, and would flake on a loaded
+machine anyway.  "It is only a demo" was explicitly not accepted as a reason:
+`hpks_threshold_demo.py`, `oprf_demo.py`, `vdf_demo.py` and `hkex_pake_demo.py` all
+assert something falsifiable and all gate now.
+
+**What the conversion FOUND, which is the part worth recording.**  Reading 45 scripts
+closely turned up eight defects that no gate would have caught, because they are
+stale prose rather than failing measurements:
+
+1. `hkex_gf_test.py` printed "Security margins (index calculus / function-field
+   sieve): n = 256 : ~128 bits".  That is the BSGS generic-group figure from its own
+   Test 4, not what GF(2^256)* costs: the FFS leaves ~80-90 bits and TODO #212's
+   Pohlig-Hellman recovers keys end to end at ~2^36.5.  Withdrawn, with a pointer to
+   the script that computes the number.
+2. `hkex_rnl_sparse_hybrid_2026.py` carried `N = 256  # deployed ring degree` — the
+   width TODO #223 retired — and anchored §5 on the 105-115-bit Core-SVP band TODO
+   #216 retracted.  It now reads `RNLN` from the suite (~206 at n=1024, computed
+   directly) and every section runs at the deployed ring.
+3. `hkex_rnl_failure_rate.py` labelled its §3 "n=256 ... deployed parameters", four
+   releases after #223.  §3 is the retired width; §7 is the deployed one.
+4. The same file's SUMMARY still printed "§6 verdict: HKEX-RNL-128 = (n=512 ...)
+   Estimated >=128-bit classical Core-SVP security" and labelled §7's row n=512 —
+   the recommendation TODO #286 WITHDREW inside §6, left standing in the summary
+   below it, over numbers §286 had re-pointed at n=1024.
+5. `hkex_rnl_lattice_2026.py` called the n=512 set "currently promoted as
+   production-track".  Its own result demoted it and #223 then chose n=1024.
+6. `stern_ring_challenge_bias.py` closed with "Recommended fix ... Tracked as TODO
+   #164" in the present tense.  #164 SHIPPED in v1.9.127; the rejection sampling is
+   in both files that carried the bias.  The section now records the fix and CHECKS
+   it is still in place, so the script guards the fix it once recommended.  Its §3
+   also called 32 the "C/Go/Python production rounds"; 32 is the demo default and
+   219 is production, the same confusion check B'' pins in README.md.
+7. `nl_fscx_v2_csp.py` §2 concluded "counts near 1.0 ... forbids non-trivial
+   commuting partners for almost all keys" over its own measurements of ~1.9 average
+   solutions and 62% of keys admitting a partner.  The true statement is weaker and
+   still fatal to Ko-Lee/AAG (the candidate set is O(1), not a subgroup), and is now
+   what the section says and what the gate checks.
+8. The same script's §3 states its criterion as "order hitting the cap (or ==
+   |Sym|)" and then printed an n=4, m=3 row that does neither — a proper subgroup of
+   Sym(16) — without comment.  Recorded and excluded explicitly.
+
+**Three mechanism defects, all instances of blind spots the runner already
+documented.**  (a) A FOURTH exit shape: `_GATING_RE` listed exact call spellings, so
+five converted scripts whose entry point is `run()` read as non-gating.  It now
+matches `sys.exit(<call>)` / `raise SystemExit(<call>)` for any function, because
+naming the function was never the point — exiting with a computed status is.
+`sys.exit(0)` still does not count.  (b) A THIRD `--quick` spelling: two scripts read
+`'--fast' in sys.argv` rather than declaring it in argparse, and one of them,
+`stern_f_multiround_fs.py`, has been a discovered gate since #289 — so it had been
+running at FULL sample size inside a job asking for the reduced one, exactly #290's
+finding in a third dress.  (c) Check B'' of `check_docs_consistency.py` read only ONE
+ordering, currency-word-then-number.  Defects 2, 3 and 5 above all wrote it the other
+way round ("N = 256  # deployed ring degree"), inside files whose FILENAME already
+supplied the family, so the check was pointed straight at them and could not see
+them.  The reverse ordering is now checked; it cost three exemptions, all correct
+sentences where the currency word modifies a later number, and each says which.
+
+**One design rule the conversion produced, worth stating because it is easy to get
+backwards.**  A section that did not RUN must not be scored: `hfscx_256_analysis.py`
+§4 is `--full`-only and returned `None`, which read as a failed finding on the first
+run, and `zkp_pqc_exploration.py`'s `--skip2/--skip3` sections now contribute no
+finding rather than a passing one.  This is TODO #234's Arduino finding pointing the
+other way — there, a check that never asserted was scored as a pass.
+
+**Cost, measured.**  All 45 were timed before conversion (aarch64 SBC, upper bound on
+a runner): 33 under 60 s, seven between 60 s and five minutes, and five heavy —
+`nl_fscx_rot_analysis.py` at 1207 s, `nl_fscx_v2_csp_analysis.py` at 526 s,
+`nl_fscx_rx_exact_search.py` at 347 s, `fscx_branch_number.py` at 254 s and
+`hkex_rnl_failure_rate.py` at 212 s.  Per this item's rule the answer to a slow script
+was a `--quick` mode in the script, never an exclusion: `nl_fscx_rot_analysis.py`
+gained one and runs in 194 s.
+
+**And one script could not run AT ALL, which only running it could show.**
+`nl_fscx_v1_ratchet_collision.py` defaults to `FULL_SWEEP=1`, an exhaustive scan over
+all 2^32 inputs building a dict keyed by their images: 4.4 GB of RSS in three minutes
+here, OOM-killed at 636 s.  Its DEFAULT invocation cannot complete on an ordinary
+host, and nothing had noticed because nothing ran it.  `--quick` forces the sweep off;
+the findings it gates live at n=8/16 and in §5 and do not move.
+
+**The verification run, and the one gate it caught — which is the point of the
+exercise.**  All 73 under `--quick`: **103.8 min, 72 ok, 1 FAIL** —
+`nl_fscx_sparse_circuit.py`, a gate written in this very item, and flaky rather
+than wrong-in-one-direction (it had passed when run by hand).  Chasing it turned
+into the ninth defect, and the sharpest one:
+
+§2 of that script detects algebraic degree by sampling 300 random higher-order
+differences, and closes with *"Degree >= 2 after 1 step iff at least 2 of the
+first k bits of B are 1 ... must require wt(B[0..k-1]) >= 2 in keygen"*.  Its own
+sampler drew B with `wt(B) >= 2` over the WHOLE word, not over the low k, so the
+k=4 row was a ~69% coin flip and had been reporting a different answer run to run
+for as long as it existed.  Restricting the draw to the stated condition did not
+settle it either — so the detector was replaced with an EXACT Mobius-transform
+degree computation (2^n evaluations; the widths here are 8 and 16, so it is
+cheap), and the exact answer contradicts the claim:
+
+* of the **176** values of B at n=8, k=4 that satisfy `wt(B[0..k-1]) >= 2`,
+  **16 have degree 1** — the "iff" is false and the keygen rule it recommends is
+  insufficient;
+* those 16 are **exactly** the B with both of the two LOWEST bits clear (low
+  nibble 1100).  The mechanism is the prefix adder itself: the carry chain has to
+  start somewhere, and with B[0]=B[1]=0 no carry enters the prefix, so the AND
+  terms that carry the degree never appear however many higher bits are set;
+* not an n=8 artefact — the same class is exactly degree 1 at n=16, while
+  neighbouring low nibbles are 2 and 3.
+
+Corrected rule, now in the script, in its §5 conclusions and in
+SecurityProofs-4.md §11.8.2: **wt(B[0..k-1]) >= 2 AND B[0..1] != 0**, which drops
+k=4 acceptance from ~0.69 to ~0.63.  The sampled row is kept for continuity and is
+explicitly NOT the gate any more.
+
+That is worth stating plainly: the corpus-wide run's only failure was a gate this
+item wrote, and it failed because the section it guards was making a claim its own
+measurements did not support — which is the class of thing the item exists to
+surface, arriving on schedule.
+
+**Timing, for the next reader.**  103.8 min for 73 scripts against 73.4 min for 35,
+i.e. 38 more scripts for 30 more minutes: the tail did not move, because the five
+heavy scripts were already in the set.  The new heaviest arrivals are
+`nl_fscx_v2_csp_analysis.py` (508 s), `nl_fscx_rx_exact_search.py` (337 s),
+`fscx_branch_number.py` (253 s), `nl_fscx_prf_analysis.py` (216 s) and
+`hkex_rnl_failure_rate.py` (207 s).
+
+Status: **DONE v7.0.9** — every SecurityProofsCode script now gates or says why not, 35 -> 73 gating, and the conversion turned up nine defects (eight stale-prose, one a false theorem-condition found by the corpus run itself) plus three blind spots in the discovery mechanism.
+
+---
+
+### #292: the deployed HKEX-RNL ring is benchmarked in no compiled language
+
+TODO #223 moved HKEX-RNL from n = 256 to n = 1024 and made it the suite's one production-
+track key exchange.  **Nothing has measured that ring in C or Go since.**  Both benchmark
+harnesses stop one power of two short of it:
+
+```
+CryptosuiteTests/Herradura_tests.c   rnl_sizes[] = {32, 64, 128, 256}
+CryptosuiteTests/Herradura_tests.py  RNL_SIZES   = [32, 64, 128, 256]
+```
+
+against `RNL_N 1024` in the header they sit beside.  So benchmark [40] prints a four-row
+HKEX-RNL table in which **every row is a ring the suite retired**, and it prints it in the
+"Performance Benchmarks" section of the harness a reader runs to find out what the suite
+costs.  Nothing is wrong with those numbers; they answer a question nobody asked.
+
+**This is not an oversight and cannot be fixed in the harness.**  TODO #225 established
+why: each harness transcribes the primitives rather than importing them, and uses ONE
+variable for both the ring dimension and the key width, so its KDF line computes
+`_RNL_KDF_DC_256 >> (256 - n_rnl)` and raises `ValueError: negative shift count` for any
+`n > 256`.  The suite keeps the two separate — the ring is 1024 while the derived session
+key stays `KEYBITS = 256` — which is exactly the distinction #223 introduced and the
+harnesses predate.  #225 saw this, measured the deployed ring in PYTHON
+(`benchmarks/rnl_ring_cost.py`), and correctly left the compiled targets alone, because
+its question was where the `native-python` job's time goes rather than what the protocol
+costs.
+
+**The consequence.**  The only published cost figure for the protocol this suite
+recommends is an interpreted-Python figure, and the C column a reader would trust instead
+is of the wrong ring.  That is a gap in the same family as #285's — a number exists, it is
+cited, and no job or script produces the number that was actually meant.
+
+**Scope.**  Three siblings under `benchmarks/`, one per language that ships HKEX-RNL,
+driving the SHIPPED path (`herradura.h`'s `rnl_keygen`/`rnl_agree`, the Go package's
+`RnlKeygen`/`RnlAgree`, the suite's `_rnl_keygen`/`_rnl_agree`) rather than a
+transcription, and printing one table shape so the three columns can be read together.
+Per-step rows, not just a handshake total, because a total cannot say where the time goes.
+
+**They must gate.**  A throughput figure for a key exchange whose two sides do not
+reconcile to the same key is not a slow handshake, it is no handshake — and a benchmark
+that asserts nothing exits 0 either way, which is the class TODO #229 fixed in `CliTest`
+and #291 fixed across `SecurityProofsCode/`.  The control runs before any timing and
+exits non-zero.
+
+**The Python column needs a label or it is not a figure.**  The suite picks a numpy or a
+pure-Python NTT at import and its banner reports which (TODO #225).  The two differ by
+more than an order of magnitude, so the script prints the live path in its own header.
+
+**RESOLVED (v7.0.10).**  Three siblings under `benchmarks/`, one per language that ships
+HKEX-RNL, all driving the shipped path at `RNL_N` and printing one table shape:
+
+```
+benchmarks/rnl_deployed_ring_cost.c    herradura.h's rnl_keygen / rnl_agree
+benchmarks/rnl_deployed_ring_cost.go   herradurakex/herradura's RnlKeygen / RnlAgree
+benchmarks/rnl_deployed_ring_cost.py   the suite's _rnl_keygen / _rnl_agree
+```
+
+Measured, ARM64 SBC, per operation:
+
+```
+                                  C          Go        Python (pure-Python NTT)
+  keygen (s, C)               0.121 ms    0.235 ms      9.78 ms
+  agree, reconciler (+hint)   0.119 ms    0.249 ms      9.62 ms
+  agree, receiver             0.118 ms    0.226 ms      9.50 ms
+  poly_mul alone (NTT)        0.114 ms    0.197 ms      9.32 ms
+  m_blind derivation          0.030 ms    0.642 ms      1.01 ms
+  full handshake              0.508 ms    1.517 ms     39.96 ms
+                             1970 /s      659 /s         25 /s
+```
+
+**Four results.**
+
+1. **The C handshake is four NTTs and 7 µs of everything else.**  `rnl_poly_mul` is
+   0.114 ms against a 0.121 ms keygen, so CBD sampling, rounding, hint generation and
+   reconciliation together are 6% of one keygen.  `4 x 0.119 + 0.030 = 0.506` against a
+   measured 0.508 — the model is checked, not fitted.  Future cost work on HKEX-RNL in C
+   is NTT work; there is nothing else in it.
+
+2. **Scaling is O(n log n), confirmed against the harness it corrects.**  Benchmark [40]
+   measures 9.08 K handshakes/s at n = 256 (0.110 ms); this measures 0.508 ms at
+   n = 1024 — 4.6x for 4x the dimension, not 16x.  TODO #223's ring move bought
+   ~32 -> ~206 Core-SVP bits for 4.6x the time, which is the first time that trade has
+   been stated with both halves measured.
+
+3. **HKEX-RNL is 32x FASTER than the classical protocol it replaces.**  Benchmark [34]
+   measures HKEX-GF's full handshake at 62 ops/s at n = 256 in the same C, against
+   1970 /s here at n = 1024.  The classical quartet is demo-only on a ~2^36.5
+   Pohlig-Hellman break, and it is also the slower construction by a factor of 32 — so
+   there is no cost argument for preferring it, which nothing in the tree could previously
+   say.
+
+4. **The three languages disagree about where the time goes, and that is the finding.**
+   In C and Python the handshake is the NTT.  In Go it is not: `m_blind` derivation alone
+   is 0.642 ms of 1.517 — more than all four NTTs together and 21x the same step in C.
+   Cause measured rather than inferred: `1028 x rand.Read(3)` costs 0.613 ms against
+   0.012 ms for one `rand.Read(3084)`, a factor of 50, and 0.613 of the 0.642 is that.
+   Filed as **TODO #293** rather than fixed here — a change to a shipped primitive is not
+   a measurement item's to make.  This is the half a one-language benchmark cannot
+   produce, and it is why the item shipped three files instead of one.
+
+**They gate.**  Each runs a 20-iteration control (5 in Python, where a handshake is 40 ms)
+and exits non-zero without timing anything if the two sides do not reconcile to the same
+key.  A throughput figure for a key exchange that does not agree is not a slow handshake,
+it is no handshake — the class TODO #229 fixed in `CliTest` and #291 across
+`SecurityProofsCode/`.  They are not discovered by `run_findings_gates.py`, which scans
+`SecurityProofsCode/` only; that is correct, since these are cost measurements whose
+numbers are host-specific and would fail CI on any other machine.
+
+**One defect of my own, recorded because it is the failure mode of this kind of script.**
+A first Python pass timed with 10 iterations and reported keygen at 25.2 ms against
+`poly_mul`'s 9.4 — arithmetically impossible, since a keygen is one `poly_mul` plus
+sampling and rounding.  The excess was one-off setup amortised over too few runs.  The
+`--iters` floor fixes it (9.78 against 9.32) and the header says to check a row's
+arithmetic before quoting it: a benchmark whose parts do not add up is reporting its own
+warm-up.
+
+**Not changed, deliberately.**  The harnesses' `rnl_sizes[]` / `RNL_SIZES` still stop at
+256.  Moving them needs the ring dimension separated from the key width in code that
+predates the distinction (TODO #225), which is a harness rewrite and not this item; the
+benchmark headers and CLAUDE.md now say the [40] column is the retired ring, so the figure
+is labelled rather than silently wrong.
+
+Status: **DONE v7.0.10** — the deployed n = 1024 ring is now measured in all three shipping languages, benchmark [40]'s four HKEX-RNL rows are the ring TODO #223 retired, and the three-column table found a 50x CSPRNG read pattern that is 40% of a Go handshake (TODO #293).

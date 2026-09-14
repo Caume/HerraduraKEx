@@ -399,16 +399,33 @@ def main():
     print(SEP)
     print()
     section1()
-    section2()
-    section3(n=8, gammas=tuple(range(1, 8)) if full else (1,))
+    exact = section2()
+    results = section3(n=8, gammas=tuple(range(1, 8)) if full else (1,))
     section4(n=8, g=1)
     section5(n=8, g=1)
     section6(n=16)
     print(SEP)
+
+    # TODO #291.  Two findings, and they are the two this script was written to
+    # establish over the Monte-Carlo version it supersedes: the DP really is
+    # exact (checked against brute force), and the certified single-round
+    # optimum is still the PURE-ROTATIONAL characteristic -- an XOR component
+    # buys nothing.  The second is the one that would matter if it changed.
+    findings = [("§2 the DP distribution equals brute force", exact)]
+    for g, (base, p, best_at) in sorted(results.items()):
+        findings.append((f"§3 g={g}: the optimum is still da=db=0",
+                         best_at[:2] == (0, 0) and p <= base * 1.001))
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print("Done. See SecurityProofs-5.md \u00a711.8.3 (NL-FSCX rotational) for the write-up.")
     print(SEP)
     print()
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

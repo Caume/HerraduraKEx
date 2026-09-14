@@ -231,6 +231,9 @@ def section(title):
     print(DIVIDER)
 
 
+FINDINGS = []
+
+
 def run_part_I():
     """
     Part I — HKEX-GF: GF(2ⁿ) Diffie-Hellman
@@ -257,6 +260,7 @@ def run_part_I():
         if abc_L != abc_R:
             errors += 1
     status = "[PASS]" if errors == 0 else f"[FAIL] errors={errors}"
+    FINDINGS.append(("GF(2^n) field axioms", errors == 0))
     print(f"  500 trials: commutativity + associativity  {status}")
 
     # ── I-B: DH correctness ───────────────────────────────────────────────
@@ -271,6 +275,7 @@ def run_part_I():
             else:
                 print(f"  [FAIL n={n}] sk_a={sk_a:#x}  sk_b={sk_b:#x}")
         status = "[PASS]" if passed == TRIALS else f"[FAIL] {passed}/{TRIALS}"
+        FINDINGS.append((f"HKEX-GF agreement at n={n}", passed == TRIALS))
         print(f"  n={n:>3}: {passed}/{TRIALS}  {status}")
 
     # ── I-C: Eve's linear attack fails ───────────────────────────────────
@@ -290,6 +295,7 @@ def run_part_I():
         rate = hits / TRIALS_EVE
         # With random 32/64-bit values, accidental match probability ≈ 2^-n
         status = "[PASS — attack fails]" if hits == 0 else f"[WARN] {hits} accidental matches"
+        FINDINGS.append(("the classical linear attack fails against HKEX-GF", hits == 0))
         print(f"  n={n:>3}: Eve succeeded {hits}/{TRIALS_EVE} times (rate={rate:.2e})  {status}")
 
     # ── I-D: FSCX period preserved for HSKE ──────────────────────────────
@@ -307,6 +313,7 @@ def run_part_I():
             if D == P:
                 passed += 1
         status = "[PASS]" if passed == TRIALS_HSKE else f"[FAIL] {passed}/{TRIALS_HSKE}"
+        FINDINGS.append(("HSKE round-trips unchanged", passed == TRIALS_HSKE))
         print(f"  n={n:>3}: {passed}/{TRIALS_HSKE}  {status}")
 
 
@@ -404,6 +411,7 @@ def run_part_II():
     match_rate = matched / TRIALS
     status = ("[PASS — unexpected correctness! Investigate.]" if matched == TRIALS
               else "[EXPECTED FAIL — no algebraic identity guarantees correctness]")
+    FINDINGS.append(("HKEX-CY still does not agree on a key", matched < TRIALS))
     print(f"  sk_alice == sk_bob:  {matched}/{TRIALS}  (rate={match_rate:.4f})")
     print(f"  {status}")
     if matched > 0 and matched < TRIALS:
@@ -432,6 +440,8 @@ def run_part_II():
         if sk_eve == sk_alice:
             eve_hits += 1
     rate = eve_hits / TRIALS_EVE
+    FINDINGS.append(("the classical linear attack fails against FSCX-CY too",
+                     eve_hits == 0))
     status = ("[PASS — attack fails]" if eve_hits == 0
               else f"[PARTIAL — {eve_hits} hits, rate={rate:.2e}]")
     print(f"  Eve succeeded: {eve_hits}/{TRIALS_EVE}  (rate={rate:.2e})")
@@ -482,4 +492,10 @@ if __name__ == "__main__":
     run_part_II()
     run_summary()
 
-    sys.exit(0)
+    _bad = [name for name, ok in FINDINGS if not ok]
+    if _bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(_bad), ", ".join(_bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(FINDINGS))
+    sys.exit(1 if _bad else 0)

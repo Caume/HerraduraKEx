@@ -35,6 +35,7 @@ Runtime: ~5 min on a modest CPU (power-law sweep is the bottleneck).
 Set FULL_DECAY_SWEEP=False to skip §3 (~4 min) and use pre-computed constants.
 """
 
+import argparse
 import math
 import time
 import random
@@ -52,6 +53,23 @@ SEP2 = "─" * 72
 def rol(x, r, n):
     r %= n; m = (1 << n) - 1
     return ((x << r) | (x >> (n - r))) & m
+
+# TODO #291: this script measured 1207 s with no reduced-sample mode, which is
+# why it was one of the two heavy non-gating scripts.  --quick divides every
+# sample count by QUICK_DIV; the findings below are order-of-magnitude
+# statements (a rate near 0.3, and a rate at or below 1e-4), so they survive the
+# smaller samples -- the sample sizes move, the verdicts do not.
+_AP = argparse.ArgumentParser(add_help=False)
+_AP.add_argument('--quick', action='store_true',
+                 help='divide every sample count by 8 (~1/8 the runtime)')
+_QUICK = _AP.parse_known_args()[0].quick
+QUICK_DIV = 8 if _QUICK else 1
+
+
+def _T(n_trials):
+    """Sample count, reduced under --quick but never below 2000."""
+    return max(2000, n_trials // QUICK_DIV)
+
 
 def fscx(A, B, n):
     m = (1 << n) - 1
@@ -95,7 +113,8 @@ def section1():
     print()
     # Sampled at n=32 (n-independence check)
     n = 32
-    trials = 200_000
+    _s1_ok = True
+    trials = _T(200_000)
     print(f"  n={n} (sampled {trials}):")
     print(f"  {'k':>4}  {'p_rot':>10}  {'log2(p)':>10}")
     m = (1 << n) - 1
@@ -107,6 +126,7 @@ def section1():
             if rol((A+B)&m, k, n) == (rol(A,k,n)+rol(B,k,n))&m:
                 hits += 1
         p = hits / trials
+        _s1_ok = _s1_ok and 0.15 <= p <= 0.50
         print(f"  k={k:<3}  {p:.6f}  {math.log2(p):.3f}")
 
     print()
@@ -114,6 +134,7 @@ def section1():
     print("  so the only non-equivariance is in ROL((A+B) mod 2^n, n/4) vs")
     print("  ROL(ROL(A,k)+ROL(B,k) mod 2^n, n/4).  The two differ exactly when")
     print("  the carry pattern of (ROL(A,k)+ROL(B,k)) differs from ROL(A+B, k).")
+    return _s1_ok
 
 # ─── §2: One-sided vs. two-sided ─────────────────────────────────────────────
 
@@ -126,9 +147,10 @@ def section2():
     print()
 
     n = 32
-    trials = 100_000
+    trials = _T(100_000)
     B_fixed = 0xDEADBEEF
     print(f"  n={n}, r=8, {trials} trials, B_fixed=0x{B_fixed:08X}")
+    _s2_ok = True
     print(f"  {'k':>4}  {'two-sided':>12}  {'one-sided':>12}  {'ratio':>10}")
     for k in [1, 2, 4, 8, 16]:
         h2 = h1 = 0
@@ -144,6 +166,10 @@ def section2():
                 h1 += 1
         p2, p1 = h2/trials, h1/trials
         ratio_str = f"{p2/p1:.1f}×" if p1 > 0 else "∞"
+        # The section's claim, and the one every PRF use of F1 rests on: with B
+        # held fixed (the keyed case) the rotational rate is not merely small,
+        # it is zero at this sample size.
+        _s2_ok = _s2_ok and p1 <= 1e-4
         print(f"  k={k:<3}  {p2:.4e}      {p1:.4e}      {ratio_str}")
 
     print()
@@ -160,6 +186,8 @@ def section2():
     print("  keystream, HFSCX-256-DM) use B as a fixed key.  Rotating the input A")
     print("  does not create a rotational pair in the output.  These uses are")
     print("  ROTATION-SAFE; the rotational NOTE in TODO #74 does NOT affect them.")
+    return _s2_ok
+
 
 # ─── §3: Multi-round power-law decay ─────────────────────────────────────────
 
@@ -169,7 +197,7 @@ def section3():
     print(SEP)
 
     n = 32
-    trials = 200_000
+    trials = _T(200_000)
 
     if not FULL_DECAY_SWEEP:
         print("  (skipped — set FULL_DECAY_SWEEP=True to run)")
@@ -328,7 +356,7 @@ def section6():
     print("  Two-sided rate at r=8, stratified by wt(B); uniform-B baseline last row.")
     print()
 
-    n, r, trials = 32, 8, 50_000
+    n, r, trials = 32, 8, _T(50_000)
     weights = [1, 2, 4, 8, 16, 24, 32]
     print(f"  n={n}, r={r}, {trials} trials per (wt, k)")
     print(f"  {'wt(B)':>7}  {'k=1':>10}  {'k=2':>10}  {'k=4':>10}  {'k=8':>10}")
@@ -358,7 +386,7 @@ def section7(results, base):
     print("  baseline (fine-grained sweep around the transition).")
     print()
 
-    n, r, trials = 32, 8, 50_000
+    n, r, trials = 32, 8, _T(50_000)
     fine = {}
     print(f"  {'wt(B)':>7}  {'k=1':>10}  {'k=8':>10}  {'max elev':>10}")
     threshold = None
@@ -389,7 +417,7 @@ def section8():
     print("  the attacker also submits ROL(m,k)?  Model at n=32, r=64 rounds.")
     print()
 
-    n, r, trials = 32, 64, 50_000
+    n, r, trials = 32, 64, _T(50_000)
     m_all = (1 << n) - 1
 
     print(f"  (a) ONE-SIDED in s (m fixed sparse), n={n}, r={r}, {trials} trials:")
@@ -439,9 +467,11 @@ def main():
     print("nl_fscx_rot_analysis.py — Rotational structure of NL-FSCX v1 (TODO #75)")
     print()
     t_total = time.monotonic()
-    section1()
+    findings = [("§1 the single-round rotational rate stays near 0.25-0.38",
+                 section1())]
     print(); sys.stdout.flush()
-    section2()
+    findings.append(("§2 the one-sided (keyed) rotational rate stays at zero",
+                     section2()))
     print(); sys.stdout.flush()
     section3()
     print(); sys.stdout.flush()
@@ -456,9 +486,17 @@ def main():
     section8()
     print()
     print(SEP)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print(f"Total runtime: {time.monotonic()-t_total:.1f} s")
     print("END nl_fscx_rot_analysis.py")
     print(SEP)
+    return 1 if bad else 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

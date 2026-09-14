@@ -105,6 +105,7 @@ the superposition principle  f(A⊕X) = f(A)⊕f(X).
 """
 
 import secrets
+import sys
 
 # ---------------------------------------------------------------------------
 # Primitives
@@ -242,6 +243,7 @@ def case_c_verify_offset(n=64, trials=2000):
 # ---------------------------------------------------------------------------
 
 def run():
+    findings = []
     print("=" * 65)
     print("  Can fscx_revolve_n in key generation fix the HKEX break?")
     print("=" * 65)
@@ -252,6 +254,8 @@ def run():
     c, e, t = case_a()
     print(f"  Correctness  (sk_a == sk_b) : {c}/{t}  {'✓' if c==t else '✗'}")
     print(f"  Eve recovers sk             : {e}/{t}  {'✓' if e==t else '✗'}")
+    findings.append(("(a) public nonce: correct, and Eve still wins",
+                     c == t and e == t))
     print(f"  Eve's formula: sk = S_{{r+1}}·(C⊕C2) ⊕ M^r·S_i·Φ_a")
     print(f"  ⇒ Break survives. Eve just adds the known nonce offset.")
 
@@ -261,6 +265,7 @@ def run():
     c, e, t = case_b()
     print(f"  Correctness  (sk_a == sk_b) : {c}/{t}  {'✓' if c==0 else '✗'}")
     print(f"  Eve naive formula works     : {e}/{t}")
+    findings.append(("(b) private nonce: the parties disagree", c == 0))
     print(f"  ⇒ Scheme is broken differently: Alice and Bob disagree on sk.")
 
     # --- Case (c) ---
@@ -268,6 +273,7 @@ def run():
     print("  Prediction: sk_a ⊕ sk_b  =  M^r · S_i · (B ⊕ B2)")
     m, t = case_c_verify_offset()
     print(f"  Formula matches            : {m}/{t}  {'✓' if m==t else '✗'}")
+    findings.append(("(c) the disagreement is exactly M^r.S_i.(B ⊕ B2)", m == t))
     print(f"  ⇒ The offset is exactly M^r·S_i·(B⊕B2); non-zero unless B=B2.")
 
     # --- Summary ---
@@ -295,6 +301,14 @@ def run():
   "cancellation trick" that enables correctness cannot simultaneously be
   exploited to compute sk from public values alone.
 """)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    return 1 if bad else 0
+
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())

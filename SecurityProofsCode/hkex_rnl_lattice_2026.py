@@ -450,8 +450,12 @@ def section8(results, pinned):
     HKEX-RNL-128  n=512          ~220 classical / ~200 quantum
 
   The gaps are {105-0.292*b256:.0f} and {220-0.292*b512:.0f} bits.  Both documented figures are too high, and
-  the n=512 set — currently promoted as production-track and the recommended
-  answer to n=256 being below target — does not reach 128 bits either.
+  the n=512 set — which was, when this was written, promoted as production-track
+  and the recommended answer to n=256 being below target — does not reach 128
+  bits either.  (Tense corrected by TODO #291.  This item's own result demoted that candidate
+  and TODO #223 then chose the ring the suite now carries, so the present-tense
+  claim had been false since v2.7.19 while still reading as a statement about
+  the shipped suite.)
 
   Even on the most defender-generous model here ({gen_name.strip()}), n=256 is
   {gen(b256):.0f} bits and n=512 is {gen(b512):.0f} bits.  No cost model rescues either set.

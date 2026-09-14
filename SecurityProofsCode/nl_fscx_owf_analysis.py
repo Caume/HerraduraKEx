@@ -151,12 +151,14 @@ def section1():
     print(f"  Trials: {trials}, B=0x{B32:08x}")
     print(f"  Max same-(dA,dY) pair count : {mc}  (expected ~{expected_max:.5f} for uniform)")
     print(f"  Distinct (dA,dY) pairs seen : {len(freq)}")
+    _s1_ok = mc <= 1
     if mc <= 1:
         print("  Result: no differential occurs more than once — consistent with uniform "
               "differential distribution  [PASS]")
     else:
         print(f"  Result: max count={mc} — investigate (may indicate differential cluster)  "
               "[INSPECT]")
+    return _s1_ok
 
 # ─── §2: Linear Cryptanalysis (Walsh Spectrum) ────────────────────────────────
 
@@ -178,6 +180,7 @@ def walsh_max_bias_exhaustive(B, n, r=1):
             if bias > max_bias:
                 max_bias = bias
     return max_bias
+
 
 def section2():
     print(SEP)
@@ -224,6 +227,7 @@ def section2():
     print(f"  Statistical threshold (3σ) : {threshold:.4f}")
     ok = max_bias32 < threshold
     print(f"  Result : {'consistent with no linear structure  [PASS]' if ok else 'investigate  [INSPECT]'}")
+    return ok
 
 # ─── §3: Rotational Cryptanalysis ─────────────────────────────────────────────
 
@@ -276,6 +280,9 @@ def section3():
         if lhs == rhs:
             rx_matches += 1
     print(f"  RX rate={rx_matches/trials_rx:.2e}  (expected ~{expected:.2e})  [PASS]")
+    _s3_ok = rx_matches <= max(4 * expected * trials_rx, 4)
+    return _s3_ok
+
 
 # ─── §4: B=0 Degenerate Case ──────────────────────────────────────────────────
 
@@ -457,11 +464,13 @@ def main():
     print("nl_fscx_owf_analysis.py — NL-FSCX v1 OWF cryptanalysis (TODO #74, §11.8.3)")
     print()
     t_total = time.monotonic()
-    section1()
+    findings = []
+    findings.append(("§1 no differential repeats at n=32, r=8", section1()))
     print(); sys.stdout.flush()
-    section2()
+    findings.append(("§2 max linear bias stays under the 3-sigma threshold",
+                     section2()))
     print(); sys.stdout.flush()
-    section3()
+    findings.append(("§3 the rotational rate stays at the random level", section3()))
     print(); sys.stdout.flush()
     section4()
     print(); sys.stdout.flush()
@@ -470,10 +479,17 @@ def main():
     section6()
     print()
     print(SEP)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print(f"Total runtime: {time.monotonic()-t_total:.1f} s")
     print("END nl_fscx_owf_analysis.py")
     print(SEP)
+    return 1 if bad else 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

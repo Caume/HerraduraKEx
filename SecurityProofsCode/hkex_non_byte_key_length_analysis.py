@@ -70,6 +70,7 @@ a bit-sliced C prototype is out of scope for a research-only script.
 
 import time
 import random
+import sys
 
 # ─────────────────────────────────────────────────────────────────────────
 # Part 0 — general-n FSCX primitives (Python bigints: n need not be a
@@ -214,15 +215,21 @@ def main():
     # sample both divisible-by-3 and coprime-to-3 cases
     non_byte = [251, 255, 509, 257, 241, 253]
 
+    findings = []
+    ok_gcd = True
     print(f"{'n':>5}  {'poly-gcd':>9}  {'gcd(3,n)':>9}  {'agree':>6}  note")
     for n in byte_aligned + non_byte:
         inv_poly = m_is_invertible_via_poly_gcd(n)
         inv_gcd3 = m_is_invertible_via_gcd3(n)
         agree = "yes" if inv_poly == inv_gcd3 else "MISMATCH"
+        # Part 1's result: the cheap gcd(3, n) test decides invertibility of M
+        # at EVERY width, byte-aligned or not.
+        ok_gcd = ok_gcd and inv_poly == inv_gcd3
         note = "byte-aligned" if n in byte_aligned else (
             "SINGULAR (3 | n) -- FSCX undefined" if not inv_poly else "invertible, non-byte")
         print(f"{n:>5}  {str(inv_poly):>9}  {str(inv_gcd3):>9}  {agree:>6}  {note}")
 
+    findings.append(("gcd(3, n) decides invertibility of M at every width", ok_gcd))
     invertible_non_byte = [n for n in non_byte if m_is_invertible_via_poly_gcd(n)]
 
     print()
@@ -230,14 +237,24 @@ def main():
     print("Part 1b — order of M (Theorem 3 claims n/2 for n=2^k; general n?)")
     print("=" * 78)
     print(f"{'n':>5}  {'order(M)':>10}  {'n/2':>6}  {'n':>6}  note")
+    ok_thm3 = True
     for n in byte_aligned:
         order = order_of_M(n, max_mult=2)
+        ok_thm3 = ok_thm3 and order == n // 2
         print(f"{n:>5}  {order!s:>10}  {n // 2:>6}  {n:>6}  matches Theorem 3 (order == n/2)" if order == n // 2 else f"{n:>5}  {order!s:>10}  {n // 2:>6}  {n:>6}")
+    findings.append(("Theorem 3's order(M) = n/2 holds at every byte-aligned n",
+                     ok_thm3))
+    ok_nonbyte_order = True
     for n in invertible_non_byte:
         order = order_of_M(n, max_mult=8)
+        # The reason a non-byte n is not free: order(M) is no longer n/2, so
+        # i = n/4 means something different there (see conclusion point 3).
+        ok_nonbyte_order = ok_nonbyte_order and order != n // 2
         rel = ("== n" if order == n else "== n/2" if order == n / 2 else "neither n nor n/2")
         print(f"{n:>5}  {order!s:>10}  {n / 2:>6}  {n:>6}  order {rel}")
 
+    findings.append(("no invertible non-byte n keeps order(M) = n/2",
+                     ok_nonbyte_order))
     print()
     print("=" * 78)
     print("Part 2 — avalanche diffusion, byte-aligned vs. nearest invertible")
@@ -314,6 +331,15 @@ supported parameter family. The analysis above is the documented record
 for this decision -- see TODO_DONE.md #204 and SecurityProofs-1.md
 §1.2.1.""")
 
+    bad = [name for name, ok in findings if not ok]
+    print()
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    return 1 if bad else 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

@@ -212,6 +212,7 @@ def section(title):
     print("=" * 70)
 
 def analyse_branch_numbers(n, exhaustive):
+    ok = True
     mat_M = build_matrix(M_op, n)
     mat_T = transpose_mat(mat_M, n)
 
@@ -232,7 +233,11 @@ def analyse_branch_numbers(n, exhaustive):
             Bn_d, Bn_l, _, _ = branch_number_sampled(mk, mk_T, n)
         min_img = min(hamming(mat_vec(mk, 1 << j, n)) for j in range(min(n, 64)))
         eq = "✓" if Bn_d == Bn_l else "✗"
+        # The header's standing claim: M is a symmetric circulant, so its
+        # differential and linear branch numbers coincide at every power.
+        ok = ok and Bn_d == Bn_l
         print(f"  {k:>3}  {Bn_d:>8}  {Bn_l:>8}  {eq:>10}  {min_img:>12}")
+    return ok and sym
 
 def analyse_diffusion(n, max_steps=None):
     if max_steps is None:
@@ -292,16 +297,19 @@ def main():
 
     summary = {}
 
+    findings = []
     for n, exhaustive in [(16, True), (32, False)]:
         section(f"n = {n}")
-        analyse_branch_numbers(n, exhaustive)
+        findings.append((f"n={n}: M is symmetric and Bn_d = Bn_l at every power",
+                         analyse_branch_numbers(n, exhaustive)))
         si, t_Bc, t_half, row_i = analyse_diffusion(n)
         summary[n] = (si, t_Bc, t_half, row_i)
 
     # n=64: branch numbers are expensive to sample per-k; do M^1 only exhaustively-ish
     section("n = 64")
     n = 64
-    analyse_branch_numbers(64, exhaustive=False)
+    findings.append(("n=64: M is symmetric and Bn_d = Bn_l at every power",
+                     analyse_branch_numbers(64, exhaustive=False)))
     si, t_Bc, t_half, row_i = analyse_diffusion(64, max_steps=100)
     summary[64] = (si, t_Bc, t_half, row_i)
 
@@ -358,7 +366,30 @@ def main():
       resistance.
 """)
 
+    # The diffusion half.  Note WHICH threshold is gated: B-complete diffusion
+    # (every output bit depending on every B bit) is NOT reached at any width
+    # inside the n + n/2 step budget -- the table prints ">max" -- so the
+    # measured statement is the half-coverage one, which lands on n/2 - 1 at
+    # every width, and the fact that B-complete stays out of reach.  Gating the
+    # ">max" is deliberate: it is a property of the fixed linear map M, so it
+    # can only change if the primitive does.
+    for n in (16, 32, 64):
+        _si, t_Bc, t_half, _row = summary[n]
+        findings.append((f"n={n}: half-coverage of A and B lands at n/2 - 1",
+                         t_half == n // 2 - 1))
+        findings.append((f"n={n}: B-complete diffusion stays out of reach",
+                         not t_Bc))
+
+    bad = [name for name, ok in findings if not ok]
+    print()
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print(f"Done: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    return 1 if bad else 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

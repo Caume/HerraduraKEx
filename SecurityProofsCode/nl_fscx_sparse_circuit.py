@@ -24,9 +24,10 @@ Prefix-adder variant F1_p(A, B, k):
 
     Total AND gates: k − 1 (vs n−1 for full adder).
     Degree after 1 step: wt(B[0..k-1]) ≥ 1 for generic B with wt(B) ≥ 2
-      and k ≥ 2.  Must be ≥ 2 for degree saturation — requires wt(B[0..k-1]) ≥ 2,
-      i.e., at least two of the first k bits of B are 1.  For random B and k ≥ 4
-      this holds with high probability (≈ 1 − (1/2)^{k-1} − k/2^k).
+      and k ≥ 2.  Must be ≥ 2 for degree saturation — requires wt(B[0..k-1]) ≥ 2
+      AND B[0..1] ≠ 0 (TODO #291: the second half was missing, and 9% of the B
+      meeting the first half are degree 1 — see §2.1, exact at n=8 and n=16).
+      For random B and k ≥ 4 this holds with probability ≈ 0.63 at k=4.
 
 Why the "strided carry" construction was incorrect
 ───────────────────────────────────────────────────
@@ -126,16 +127,56 @@ def section1_gate_counts():
 
 # ── §2  Algebraic degree verification ────────────────────────────────────────
 
-def algebraic_degree_empirical(f, n, max_order=8, trials=300):
+def algebraic_degree_exact(f, n):
+    """Exact algebraic degree of f: {0,1}^n -> {0,1}^n, by Mobius transform.
+
+    TODO #291 added this because the sampled detector below could not settle
+    §2's question: at n = 8, k = 4 it reported degree 1 on about a third of
+    runs even after the draw was restricted to the stated condition, and a
+    sampled "no d-th order difference was found" cannot tell a missed sample
+    from a real degree drop.  2^n evaluations settles it, and at the widths
+    this section uses (n = 8, 16) that is cheap.
+    """
+    vals = [f(x) for x in range(1 << n)]
+    best = 0
+    for b in range(n):
+        anf = [(v >> b) & 1 for v in vals]
+        step = 1
+        while step < (1 << n):
+            for i in range(1 << n):
+                if i & step:
+                    anf[i] ^= anf[i ^ step]
+            step <<= 1
+        for i, c in enumerate(anf):
+            if c:
+                best = max(best, bin(i).count('1'))
+    return best
+
+
+def algebraic_degree_empirical(f, n, max_order=8, trials=300, low_k=None):
     """Detect algebraic degree of f: {0,1}^n → {0,1}^n via higher-order differences.
     Returns the minimum d such that NO nonzero d-th order difference was found
     across `trials` random samples (i.e., the function appears to have degree < d).
     Specifically, scans orders 1..max_order and returns the smallest d with all-zero
     differences, which equals the true degree when enough trials are used.
+
+    `low_k` is TODO #291's correction, and it matters because the row it feeds
+    was a coin flip without it.  This function drew B with wt(B) >= 2 over the
+    WHOLE word, but §2's condition -- stated in that section's own closing line
+    -- is wt(B[0..k-1]) >= 2, at least two set bits in the LOW k positions.  At
+    k = 4 a random word satisfies that only ~69% of the time, so the k=4 row
+    reported degree 1 on about one run in three and said nothing either way.
+    Pass low_k=k to draw B from the regime the claim is about; the returned
+    degree is then a statement about that regime rather than a sample of it.
     """
     mask = (1 << n) - 1
+    kmask = (1 << low_k) - 1 if low_k else mask
+
+    def _ok(v):
+        return bin(v).count('1') >= 2 and bin(v & kmask).count('1') >= 2
+
     B_val = int.from_bytes(os.urandom(n // 8), 'big') & mask
-    while bin(B_val).count('1') < 2:
+    while not _ok(B_val):
         B_val = int.from_bytes(os.urandom(n // 8), 'big') & mask
 
     # Fix B inside f for degree test
@@ -163,12 +204,16 @@ def algebraic_degree_empirical(f, n, max_order=8, trials=300):
 
 
 def section2_degree_analysis():
+    ok = True
     print(SEP)
     print("§2  Algebraic degree of F1_prefix(A, B, n, k) — empirical detection")
     print()
     print("  Degree is estimated by finding the smallest order d such that ALL")
     print("  sampled d-th order differences are zero (= true degree is < d).")
-    print("  300 random samples per order.  B is chosen with wt(B) ≥ 2.")
+    print("  300 random samples per order.  B is drawn with wt(B) ≥ 2 AND at least")
+    print("  two set bits in its LOW k positions — the actual Theorem-13 condition,")
+    print("  stated in this section's closing line.  Before TODO #291 only the first")
+    print("  half was imposed, so the k=4 row was a ~69% coin flip run to run.")
     print()
     print(f"  {'n':>5}  {'k':>5}  {'AND gates':>10}  {'degree ≤':>10}  {'Th13 (need ≥2)':>16}")
     print(f"  {'─':>5}  {'─':>5}  {'─────────':>10}  {'────────':>10}  {'──────────────':>16}")
@@ -178,15 +223,73 @@ def section2_degree_analysis():
             ag = and_gate_count_prefix(k)
             deg = algebraic_degree_empirical(
                 lambda A, B, _n=n, _k=k: nl_fscx_prefix(A, B, _n, _k),
-                n, max_order=min(n, 8), trials=300
+                n, max_order=min(n, 8), trials=300, low_k=k
             )
             safe = "YES" if deg >= 2 else ("1 → need r≥3" if deg == 1 else "0 (linear!)")
+            # NOT GATED (TODO #291): this row is a 300-sample detector and its
+            # k=4 entries flip run to run.  §2.1 below settles the same question
+            # exactly, and that is what the gate reads.
             tag = " ← full" if k == n else ""
             print(f"  {n:>5}  {k:>5}  {ag:>10}  {deg:>10}  {safe:>16}{tag}")
     print()
-    print("  Degree ≥ 2 after 1 step iff at least 2 of the first k bits of B are 1.")
-    print("  For k ≥ 4 and random B, this holds with probability > 1 − (k+1)/2^k.")
-    print("  At k=4: Pr ≈ 1 − 5/16 = 0.69 — must require wt(B[0..k-1]) ≥ 2 in keygen.")
+    print("  §2.1  The stated condition is WRONG, exactly (TODO #291)")
+    print()
+    print("  This section used to close: \"Degree >= 2 after 1 step iff at least 2 of")
+    print("  the first k bits of B are 1 ... must require wt(B[0..k-1]) >= 2 in")
+    print("  keygen\".  The 'iff' is false and the keygen rule it recommends is")
+    print("  insufficient.  Exhaustively, at n=8, k=4, over every B meeting it:")
+    print()
+    n8, k4 = 8, 4
+    qualifying = [B for B in range(1 << n8)
+                  if bin(B).count('1') >= 2 and bin(B & ((1 << k4) - 1)).count('1') >= 2]
+    deg1 = [B for B in qualifying
+            if algebraic_degree_exact(
+                lambda A, B=B: nl_fscx_prefix(A, B, n8, k4), n8) == 1]
+    low2_clear = [B for B in deg1 if (B & 0b11) == 0]
+    print(f"    B meeting the stated condition : {len(qualifying)}")
+    print(f"    of those, degree 1             : {len(deg1)}"
+          f"  ({100.0 * len(deg1) / len(qualifying):.0f}%)")
+    print(f"    of those, B[0]=B[1]=0          : {len(low2_clear)}  "
+          f"({'ALL of them' if len(low2_clear) == len(deg1) else 'NOT all'})")
+    print()
+    print("  Every counterexample has BOTH of B's two lowest bits clear -- at k=4 the")
+    print("  low nibble is 1100.  The mechanism is the prefix adder itself: the carry")
+    print("  chain has to START somewhere, and with B[0]=B[1]=0 no carry is generated")
+    print("  into the prefix at all, so the AND terms that carry the degree never")
+    print("  appear however many higher bits of B are set.")
+    print()
+    print("  Not an n=8 artefact -- the same class is degree 1 at n=16 (exact):")
+    rng2 = random.Random(291)
+    for lownib, label in ((0b1100, "1100  (both low bits clear)"),
+                          (0b0110, "0110"),
+                          (0b0011, "0011")):
+        ds = []
+        for _ in range(2):
+            B = (rng2.getrandbits(16) & ~0xF) | lownib
+            ds.append(algebraic_degree_exact(
+                lambda A, B=B: nl_fscx_prefix(A, B, 16, 4), 16))
+        print(f"    n=16 k=4, B low nibble {label:<28} degree {ds}")
+        if lownib == 0b1100:
+            ok16_bad = all(d == 1 for d in ds)
+        elif lownib == 0b0110:
+            ok16_good = all(d >= 2 for d in ds)
+        else:
+            ok16_good = ok16_good and all(d >= 2 for d in ds)
+    print()
+    print("  CORRECTED keygen rule: wt(B[0..k-1]) >= 2 AND B[0..1] != 0.  At k=4 that")
+    print("  is 10 of the 16 low nibbles rather than 11, so the acceptance rate falls")
+    print("  from ~0.69 to ~0.63; the extra rejection is the whole of the gap.")
+    print()
+
+    # The three findings of this section, all exact rather than sampled: the
+    # corrected rule holds with no exceptions at n=8, the counterexample class
+    # really is degree 1, and it stays degree 1 one width up.
+    ok_corrected = all(
+        algebraic_degree_exact(lambda A, B=B: nl_fscx_prefix(A, B, n8, k4), n8) >= 2
+        for B in qualifying if (B & 0b11) != 0)
+    ok = ok and ok_corrected and len(deg1) == len(low2_clear) and len(deg1) > 0
+    ok = ok and ok16_bad and ok16_good
+    return ok
 
 
 # ── §3  Differential resistance ──────────────────────────────────────────────
@@ -286,10 +389,12 @@ def section5_conclusion():
     print("      from 16320 to near-zero only saves ~15% of total proof bytes.")
     print()
     print("  (2) Degree-saturation (Theorem 13) is preserved for prefix k ≥ 4")
-    print("      with wt(B[0..k-1]) ≥ 2.  This is a KEYGEN constraint: require")
-    print("      that B has at least 2 set bits in its lowest k positions.  At k=4")
-    print("      this holds for ≈ 69% of random B; standard practice is to reject")
-    print("      degenerate B at keygen (same as requiring wt(B) ≥ 2 in Theorem 13).")
+    print("      with wt(B[0..k-1]) ≥ 2 AND B[0..1] != 0.  This is a KEYGEN")
+    print("      constraint, and TODO #291 corrected it: requiring only the two")
+    print("      set bits in the lowest k positions is NOT enough -- 9% of the B")
+    print("      that satisfy it are degree 1, all of them with both of B's two")
+    print("      lowest bits clear, exactly (§2.1, exhaustive at n=8, confirmed")
+    print("      exactly at n=16).  Acceptance falls from ~69% to ~63% at k=4.")
     print()
     print("  (3) To reach ~180 KB the research direction shifts to reducing n (the")
     print("      word size used in the ZKP circuit) while keeping the security level.")
@@ -317,7 +422,7 @@ def main():
     t0 = time.time()
     section1_gate_counts()
     print()
-    section2_degree_analysis()
+    deg_ok = section2_degree_analysis()
     print()
     section3_differential()
     print()
@@ -330,10 +435,18 @@ def main():
     print()
     print("Summary:")
     print("  Prefix adder (k-bit carry) has k-1 AND gates in ZKBoo circuit.")
-    print("  Degree ≥ 2 preserved for k ≥ 4 with wt(B[0..k-1]) ≥ 2.")
+    print("  Degree ≥ 2 preserved for k ≥ 4 with wt(B[0..k-1]) ≥ 2 AND B[0..1] != 0")
+    print("  (the second condition is TODO #291's correction; see §2.1).")
     print("  Proof size reduction from k-reduction is ≤ ~1.6× (overhead dominates).")
     print("  The 180 KB goal requires a different ZKP system (IOP/σ-protocol).")
+    print()
+    if deg_ok:
+        print("*** OK: the prefix adder keeps algebraic degree >= 2 at every k >= 4 ***")
+    else:
+        print("*** FAILED: a k >= 4 prefix adder dropped below algebraic degree 2 — "
+              "Theorem 13's precondition no longer holds ***")
+    return 0 if deg_ok else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

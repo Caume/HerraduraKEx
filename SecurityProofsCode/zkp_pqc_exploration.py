@@ -52,6 +52,7 @@ import sys
 import time
 
 # ── CLI flags ─────────────────────────────────────────────────────────────────
+FINDINGS = []
 _FAST  = '--fast'  in sys.argv
 _SKIP2 = '--skip2' in sys.argv
 _SKIP3 = '--skip3' in sys.argv
@@ -292,6 +293,7 @@ def section2_completeness():
             fail += 1
     elapsed = time.time() - t0
     status = "PASS" if fail == 0 else "FAIL"
+    FINDINGS.append(("§3 ZKBoo completeness", fail == 0))
     print(f"  Failures : {fail}/{TRIALS}  [{status}]")
     print(f"  Time     : {elapsed:.2f} s  ({elapsed/TRIALS*1000:.1f} ms/proof)")
 
@@ -903,6 +905,7 @@ def section3_soundness():
     print(f"  Note: FS challenge includes y; wrong A causes ch_seed mismatch.")
     print(f"        Per-round coincidence prob ≈ 1/3 → expected ≈ {expected:.1f} passes.")
     status = "PASS" if passed <= upper else f"FAIL ({passed} > upper bound {upper})"
+    FINDINGS.append(("§3.5 ZKBoo soundness stays at (1/3)^R", passed <= upper))
     print(f"  Result : [{status}]")
     print(f"  Time   : {elapsed:.2f} s")
 
@@ -1154,6 +1157,7 @@ def section3_zkbpp_empirical():
         B = int.from_bytes(os.urandom(1), 'big') & mask
         if not zkbpp_verify(zkbpp_prove(A, B)):
             fail += 1
+    FINDINGS.append(("§3.7 ZKB++ completeness", fail == 0))
     print(f"  Completeness (n={_ZK_N}, R={_ZK_R}, {TRIALS} trials): "
           f"{TRIALS - fail}/{TRIALS}  "
           f"[{'PASS' if fail == 0 else 'FAIL'}]  ({time.time()-t0:.2f} s)")
@@ -1166,6 +1170,8 @@ def section3_zkbpp_empirical():
         pf['y'] = _f1(A, B, _ZK_N)     # claim the true y with a wrong witness
         if zkbpp_verify(pf):
             cheat += 1
+    FINDINGS.append(("§3.7 ZKB++ soundness stays at (1/3)^R",
+                     cheat <= int((1 / 3) ** _ZK_R * SOUND * 4) + 2))
     print(f"  Soundness ({SOUND} cheating trials): {cheat} accepted  "
           f"[{'PASS' if cheat <= int((1/3)**_ZK_R * SOUND * 4) + 2 else 'FAIL'}]")
     print()
@@ -1341,5 +1347,17 @@ if __name__ == '__main__':
 
     print()
     print(SEP)
+    # TODO #291: §2 and §3 already computed PASS/FAIL verdicts and threw them
+    # away.  The skips are honest here -- a section that did not run adds no
+    # finding rather than a passing one.
+    _bad = [name for name, ok in FINDINGS if not ok]
+    if not FINDINGS:
+        print("*** NOTE: every gating section was skipped (--skip2/--skip3) ***")
+    elif _bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(_bad), ", ".join(_bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(FINDINGS))
     print("Done.")
     print(SEP)
+    sys.exit(1 if _bad else 0)

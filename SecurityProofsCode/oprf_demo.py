@@ -30,7 +30,7 @@ Four-section analysis of OPRF from HerraduraKEx primitives:
 Runtime: ~1 s on a modest CPU.
 """
 
-import importlib.util, os, math, time
+import importlib.util, os, math, sys, time
 from pathlib import Path
 
 # ── suite import ──────────────────────────────────────────────────────────────
@@ -104,7 +104,10 @@ def oprf_direct(x: bytes, k: int, n: int = DEMO_N) -> int:
     return _gfpow(hash_to_field(x, n), k, n)
 
 
-def main() -> None:
+FINDINGS = []
+
+
+def main() -> int:
     t0 = time.time()
     print("=" * 64)
     print("OPRF demo — HerraduraKEx primitives  (TODO #78.G)")
@@ -129,6 +132,8 @@ def main() -> None:
     print(f"    F via protocol   = 0x{F_proto:08x}")
     print(f"    F direct check   = 0x{F_direct:08x}")
     print(f"    Correct: {F_proto == F_direct}")
+    FINDINGS.append(("§1 the 2HashDH OPRF unblinds to the direct evaluation",
+                     F_proto == F_direct))
 
     # Verify the GF exponent law: gf_pow(gf_pow(x,r),k) == gf_pow(x, r·k mod 2³²−1)
     x_fe  = hash_to_field(pw)
@@ -136,6 +141,7 @@ def main() -> None:
     rhs   = _gfpow(x_fe, (r * k_s) % GF_ORDER)
     print(f"\n  GF exponent law  gf_pow(gf_pow(H(x),r),k) == gf_pow(H(x), r·k mod 2³²−1):")
     print(f"    lhs = 0x{lhs:08x},  rhs = 0x{rhs:08x},  holds: {lhs == rhs}")
+    FINDINGS.append(("§1 the GF exponent law holds", lhs == rhs))
 
     # Obliviousness: three alpha values are indistinguishable under CDH
     _, a_same   = oprf_blind(pw)              # same pw, fresh r
@@ -171,6 +177,11 @@ def main() -> None:
     print(f"\n  Single-step symmetry A3:   {sym_ok}/{TRIALS} ({100*sym_ok/TRIALS:.0f}%)  ← should be 100%")
     print(f"  Iterated commutativity:    {com_ok}/{TRIALS} ({100*com_ok/TRIALS:.1f}%)")
 
+    FINDINGS.append(("§2 nl_fscx_v1 is symmetric in its two inputs (A3)",
+                     sym_ok == TRIALS))
+    # The negative result this section exists for: iterating it does NOT
+    # commute, so a DH-style OPRF over NL-FSCX v1 is not available.
+    FINDINGS.append(("§2 iterated NL-FSCX v1 does not commute", com_ok == 0))
     if sym_ok == TRIALS:
         print("\n  A3 confirmed: nl_fscx_v1(A,B) == nl_fscx_v1(B,A) holds universally.")
     else:
@@ -218,6 +229,8 @@ def main() -> None:
     print(f"  F_NL (protocol) = 0x{F_nl_client:08x}")
     print(f"  F_NL (direct)   = 0x{F_nl_direct:08x}")
     print(f"  Correct: {F_nl_client == F_nl_direct}")
+    FINDINGS.append(("§3 the NL-hardened OPRF output matches the direct one",
+                     F_nl_client == F_nl_direct))
     print()
     print("  Protocol note: client uses k_nl only after unblinding the DH layer.")
     print("  beta_nl (server response) is NOT used — server sends plain beta_dh")
@@ -256,6 +269,8 @@ def main() -> None:
     print(f"  Registration verifier:          0x{verifier.hex()[:16]}...")
     print(f"  Login correct pw — key match:   {verifier == login_ok}")
     print(f"  Login wrong pw   — key match:   {verifier == login_bad}")
+    FINDINGS.append(("§4 the aPAKE verifier matches on the right password only",
+                     verifier == login_ok and verifier != login_bad))
     print()
     print("  Offline attack after database theft:")
     print("    PAKE (before): attacker can compute hfscx_256(guess + salt) locally.")
@@ -289,7 +304,15 @@ def main() -> None:
     print("     ops — fast in C/Go, acceptable in Python with caching.")
 
     print(f"\nTotal runtime: {time.time() - t0:.1f} s")
+    bad = [name for name, ok in FINDINGS if not ok]
+    print()
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(FINDINGS))
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

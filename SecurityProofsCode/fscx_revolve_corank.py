@@ -61,6 +61,7 @@ primitives below are transcribed from `Herradura cryptographic suite.py`.
 """
 
 import random
+import sys
 
 SEP  = "=" * 74
 SEP2 = "-" * 74
@@ -154,15 +155,18 @@ def section1():
     print("    fscx_revolve(P, K, i) = M^i . P  XOR  T_i . K")
     print()
     print("  n     i            rank(T_i)   co-rank   note")
+    deployed = {}
     for n in (64, 128, 256):
         for i, note in ((n // 4, "i = n/4   (encrypt)"),
                         (3 * n // 4, "r = 3n/4  (decrypt)"),
                         (n // 4 + 1, "n/4 + 1   (odd)")):
             rk = rank_gf2(key_map_columns(i, n), n)
+            deployed[(n, i)] = n - rk
             print(f"  {n:<5} {i:<12} {rk:<11} {n - rk:<9} {note}")
     print()
     print("  The deployed parameters lose 126 of 256 dimensions in both directions.")
     print()
+    return deployed[(256, 64)] == 126 and deployed[(256, 192)] == 126
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,6 +203,7 @@ def section2():
     print("  n has i = n/4 even, so no deployed parameter set is invertible.")
     print("  The odd-i consequence — Shannon-perfect one-time HSKE — is TODO #211.")
     print()
+    return bad == 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -218,6 +223,7 @@ def section3(trials=200):
     print(f"  Checking the first 8 basis functionals against {trials} random keys each,")
     print("  with the plaintext held fixed:")
     print()
+    ok_ker = len(ker) == 126
     rng = random.Random(20260820)
     P = rng.getrandbits(n)
     lin = fscx_revolve(P, 0, i, n)          # M^i . P
@@ -228,6 +234,7 @@ def section3(trials=200):
             E = fscx_revolve(P, K, i, n)
             vals.add(parity(lam & E))
         agree = parity(lam & lin) in vals and len(vals) == 1
+        ok_ker = ok_ker and agree
         print(f"    lambda_{idx}: observed values {sorted(vals)}"
               f"   matches lambda.(M^i.P): {agree}")
     print()
@@ -240,6 +247,7 @@ def section3(trials=200):
         if parity(fscx_revolve(P2, K2, 64, n)) == parity(P2):
             same += 1
     print(f"    i=64 (even): parity(E) == parity(P) in {same}/{trials} trials")
+    ok_even = same == trials
     same = 0
     for _ in range(trials):
         P2 = rng.getrandbits(n)
@@ -248,6 +256,7 @@ def section3(trials=200):
             same += 1
     print(f"    i=65 (odd):  parity(E) == parity(P) XOR parity(K) in {same}/{trials}")
     print()
+    return ok_ker and ok_even and same == trials
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -325,9 +334,9 @@ def main():
     print("TODO #210 — co-rank of the classical FSCX_REVOLVE key map")
     print(SEP)
     print()
-    section1()
-    section2()
-    section3()
+    findings = [("co-rank 126 at the deployed i = n/4 and r = 3n/4", section1()),
+                ("closed form 2(2^v2(i) - 1) matches the primitive", section2()),
+                ("the 126 functionals are key-independent", section3())]
     section4()
     section5()
     print(SEP)
@@ -336,7 +345,15 @@ def main():
     print("         for every key.  Invertible exactly for odd i -> TODO #211.")
     print(SEP)
     print()
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    print()
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

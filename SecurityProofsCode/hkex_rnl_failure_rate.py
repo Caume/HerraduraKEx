@@ -4,7 +4,10 @@ hkex_rnl_failure_rate.py — Empirical HKEX-RNL key-agreement failure-rate analy
 
   §1  Empirical failure rate (n=32,  10 000 trials) — fast baseline
   §2  Per-coefficient noise analysis (n=32, 10 000 trials)
-  §3  Empirical failure rate (n=256,  up to 5 000 trials) — deployed parameters
+  §3  Empirical failure rate (n=256,  up to 5 000 trials) — the RETIRED width,
+      kept as the mid-size point between §1 and §7 (TODO #291: this line called
+      it "deployed parameters", four releases after TODO #223 moved the ring to
+      1024; §7 is the deployed one)
   §4  p-sensitivity sweep (n=32, 2 000 trials per p value)
   §5  Peikert reconciliation failure rate (n=32 and n=256) — expect 0 failures
   §6  LWE/LWR security estimator — BKZ primal attack, candidate parameters for HKEX-RNL-128
@@ -18,6 +21,7 @@ import importlib.util
 import os
 import time
 import math
+import sys
 from collections import Counter
 
 # The suite is loaded for one reason (TODO #286): the deployed ring dimension is
@@ -310,7 +314,7 @@ def section2():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# §3 — Empirical failure rate (n=256, deployed)
+# §3 — Empirical failure rate at the retired n=256 (the deployed ring is §7)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section3():
@@ -688,13 +692,42 @@ def main():
     print(f"  n=256 (without reconciliation) : {f3}/{t3} failures  ({f3/t3*100:.4f}%)")
     print(f"  n=32  (Peikert reconciliation) : 0 failures  (0.0000%)  [asserted]")
     print(f"  n=256 (Peikert reconciliation) : 0 failures  (0.0000%)  [asserted]")
-    print(f"  n=512 (Peikert reconciliation) : {f7}/{t7} failures  ({f7/t7*100:.4f}%)")
+    print(f"  n={RNL_DEPLOYED_N} (Peikert reconciliation, DEPLOYED) : {f7}/{t7} failures  "
+          f"({f7/t7*100:.4f}%)")
     print()
-    print("  §6 verdict: HKEX-RNL-128 = (n=512, q=65537, p=4096, η=1)")
-    print("    Estimated ≥128-bit classical Core-SVP security (BKZ primal model).")
+    # TODO #291: this block used to read "§6 verdict: HKEX-RNL-128 = (n=512,
+    # q=65537, p=4096, η=1) / Estimated >=128-bit classical Core-SVP security"
+    # and to label §7's row n=512.  Both were left behind by TODO #286, which
+    # WITHDREW that recommendation inside §6 and re-pointed §7 at the deployed
+    # ring -- the summary went on asserting the withdrawn claim, and mislabelled
+    # the width the numbers above it came from.
+    print("  §6 verdict: nothing recommended here.  The deployed set is")
+    print(f"    n={RNL_DEPLOYED_N}, q={Q}, p=4096, η={ETA}, pp={PP}, chosen in TODO #223 from")
+    print("    TODO #216's DIRECT Core-SVP computation (~206 classical at n=1024);")
+    print("    the n=512 candidate this section used to promote is ~87 and demoted.")
     print(f"    Peikert 1-bit reconciliation eliminates all key-agreement failures at n={RNL_DEPLOYED_N}.")
     print()
 
+    findings = [
+        # §1/§3: the un-reconciled failure rate is a real, non-trivial rate --
+        # if it ever reads zero, the measurement has stopped measuring.
+        ("the un-reconciled exchange fails at a measurable rate", f1 > 0),
+        # The claim the whole script exists for, at the ring that ships.
+        (f"Peikert reconciliation gives 0 failures at the deployed n={RNL_DEPLOYED_N}",
+         f7 == 0 and t7 >= 200),
+        # And §6 stays withdrawn rather than re-anchored (TODO #286).
+        ("§6 recommends nothing and §7 runs at the deployed ring",
+         (chosen_n, chosen_p, chosen_eta) == (RNL_DEPLOYED_N, 4096, ETA)),
+    ]
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    print()
+    return 1 if bad else 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

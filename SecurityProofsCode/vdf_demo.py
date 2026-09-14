@@ -214,6 +214,9 @@ def nl_vdf_verify(x: int, y: int, t: int, domain: int, P: int, n: int) -> bool:
 
 # ── Demo ──────────────────────────────────────────────────────────────────────
 
+FINDINGS = []
+
+
 def main():
     random.seed(42)
     n    = DEMO_N
@@ -258,6 +261,7 @@ def main():
         t_ver   = time.monotonic() - t0
 
         speedup = t_eval / t_ver if t_ver > 0 else float('inf')
+        FINDINGS.append((f"§1 the FSCX VDF verifies at t={t}", ok))
         print(f"  {t:>6}  {t_eval*1000:>10.3f}  {t_ver*1000:>12.3f}  {speedup:>7.1f}x  {ok}")
     print()
 
@@ -276,6 +280,10 @@ def main():
     for t in [1, 8, P, 2 * P]:
         seq    = vdf_eval(x2, d2, t, n)
         attack = fscx_matrix_eval(x2, d2, t, n)
+        # The negative result: the closed form reproduces the sequential
+        # evaluation exactly, which is what breaks the FSCX VDF outright.
+        FINDINGS.append((f"§2 the matrix attack reproduces the VDF output at t={t}",
+                         seq == attack))
         print(f"    t={t:3d}: sequential=0x{seq:08x}  matrix=0x{attack:08x}  match={seq==attack}")
     print()
 
@@ -352,6 +360,7 @@ def main():
             t_ver  = time.monotonic() - t0
 
             speedup = t_eval / t_ver if t_ver > 0 else float('inf')
+            FINDINGS.append((f"§3 the NL-FSCX VDF verifies at t={t}", ok))
             print(f"  {t:>6}  {t_eval*1000:>10.3f}  {t_ver*1000:>12.3f}  {speedup:>7.1f}x  {ok}")
         print()
     print("  No known closed form for nl_fscx_revolve_v1 — matrix attack does not apply.")
@@ -393,11 +402,18 @@ def main():
     elapsed = time.monotonic() - t0_total
     print()
     print(SEP)
+    bad = [name for name, ok in FINDINGS if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(FINDINGS))
     print(f"Total runtime: {elapsed:.1f} s")
     print("END vdf_demo.py")
     print(SEP)
     print()
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

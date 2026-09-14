@@ -345,6 +345,7 @@ def main():
     print(f"  Server verify                                                [{(t4-t3)*1000:.0f} ms]")
     print()
 
+    ok_good = sk_client is not None and sk_client == sk_server
     if sk_client is not None and sk_client == sk_server:
         print(f"  + AUTHENTICATION PASSED")
         print(f"  session key (client): {sk_client.hex()}")
@@ -367,6 +368,7 @@ def main():
     sk_client2, msg3b = pake_client_msg3(c_state2, msg2b, PASSWORD_BAD)
     t_bad = time.monotonic() - t0
 
+    ok_bad = sk_client2 is None
     if sk_client2 is None:
         print(f"  + Client aborted early: pw_verifier mismatch (nl_fscx_v1 check failed).")
         print(f"    ZKBoo proof never generated.  Time: {t_bad*1000:.0f} ms.")
@@ -417,11 +419,21 @@ def main():
     elapsed = time.monotonic() - t_total
     print()
     print(SEP)
+    # TODO #291: the two things a PAKE has to do, checked rather than printed.
+    findings = [("the correct password yields one shared session key", ok_good),
+                ("the wrong password yields none", ok_bad)]
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
     print(f"Total runtime: {elapsed:.1f} s")
     print("END hkex_pake_demo.py")
     print(SEP)
     print()
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

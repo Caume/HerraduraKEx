@@ -19,6 +19,15 @@ failed finding -- is run, and nothing has to be added anywhere for that to
 happen.  The previous shape was a list in `ci.yml`, and a list is exactly what
 lets "we did not get round to adding it" look identical to "it passes".
 
+EVERY .py HERE IS EITHER DISCOVERED OR DECLARED (TODO #291).  Discovery answers
+"which of the gating scripts run"; until #291 nothing asked which scripts GATE.
+The answer was 35 of 81 -- 46 produced output that no exit status carried, 33 of
+them cited by SecurityProofs-*.md or CLAUDE.md as backing a claim, and 22 of them
+computing a PASS/FAIL verdict and then discarding it, which is TODO #233's defect
+one layer out.  So a script that does not gate must say why in NON_GATING, and
+the runner FAILS on one that is neither discovered nor declared.  That is the
+part that does not decay: adding an analysis script now forces the question.
+
 Skipping is still possible and is deliberately awkward: add the script to
 EXCLUDED with a reason.  That table is self-invalidating the way every other
 curated table in this repo is (spec/check_docs_consistency.py's anchors,
@@ -58,13 +67,22 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 SELF = os.path.basename(os.path.abspath(__file__))
 
-# A script "gates" when its exit status carries its own verdict.  Three shapes
-# are in use; all three are here because all three occur, not by design.
+# A script "gates" when its exit status carries its own verdict.
+#
+# TODO #291 GENERALISED THIS, and the reason is the blind spot the file already
+# documents below: the first version listed three exact call shapes
+# (`sys.exit(main())`, `raise SystemExit(main())`, `sys.exit(run_tests())`) plus
+# a bare `sys.exit(1)`, and #291 converted five scripts whose entry point is
+# called `run()` -- every one of them read as "does not gate".  Naming the
+# function was never the point; EXITING WITH A COMPUTED STATUS is.  So the
+# pattern is now `sys.exit(<call>)` / `raise SystemExit(<call>)` for any
+# function, plus an exit on a literal-or-expression 1.  `sys.exit(0)` still
+# does not count, and should not: a script that always exits 0 is not a gate.
 _GATING_RE = re.compile(
-    r"sys\.exit\(\s*main\(\)"
-    r"|raise\s+SystemExit\(\s*main\(\)\s*\)"
-    r"|sys\.exit\(\s*run_tests\(\)"
-    r"|sys\.exit\(\s*1\s*\)")
+    r"sys\.exit\(\s*[A-Za-z_]\w*\("
+    r"|raise\s+SystemExit\(\s*[A-Za-z_]\w*\("
+    r"|sys\.exit\(\s*1\b"
+    r"|raise\s+SystemExit\(\s*1\b")
 
 # A reduced-sample mode, under either of the two names this directory uses.
 # TODO #290: three scripts spell it `--fast` (nl_fscx_exact_trail_search.py,
@@ -72,7 +90,25 @@ _GATING_RE = re.compile(
 # `--quick` ran all three at their default budgets in a job that had asked for
 # the reduced one.  Same shape as the _CLAIM_RE blind spot below: the runner
 # reads a spelling, so a second spelling is invisible until it is named.
-_QUICK_RE = re.compile(r"""add_argument\(\s*['"](--quick|--fast)['"]""")
+_QUICK_RE = re.compile(
+    r"""add_argument\(\s*['"](--quick|--fast)['"]"""
+    r"""|['"](--quick|--fast)['"]\s+in\s+sys\.argv""")
+
+
+def _quick_flag(src):
+    """The reduced-sample flag a script declares, or None.
+
+    TODO #291 added the THIRD spelling, for the same reason #290 added the
+    second: two scripts (stern_f_multiround_fs.py, hybrid_credential_phi.py)
+    read the flag straight out of sys.argv rather than through argparse, so an
+    argparse-only pattern ran them at full sample sizes inside a job that had
+    asked for the reduced one -- and stern_f_multiround_fs.py was ALREADY a
+    discovered gate, so it had been running that way since #289.
+    """
+    m = _QUICK_RE.search(src)
+    if not m:
+        return None
+    return m.group(1) or m.group(2)
 
 # The blind spot the three shapes above would otherwise have.  Discovery reads
 # the exit CALL, so a script that gates through a fourth shape is silently not
@@ -92,25 +128,69 @@ _CLAIM_RE = re.compile(r"exits?\s+non-?zero", re.I)
 EXCLUDED = {}
 
 
+# name -> reason.  A script here is NOT a gate and does not run: it holds no
+# finding whose loss would be a defect.  Self-invalidating in both directions
+# like EXCLUDED -- an entry naming an absent file fails, and so does one naming
+# a script that HAS since become a gate, so making one gate forces its entry
+# out.  Keep the reasons this specific; "it is only a demo" is not one, since
+# several demos gate (hpks_threshold_demo.py, oprf_demo.py, vdf_demo.py all
+# assert something falsifiable and all run here).
+NON_GATING = {
+    "hkex_cfscx_blong.py":
+        "DESIGN-SPACE SURVEY.  Five convolution strategies for a large-B FSCX "
+        "variant, none of them shipped, none cited by any document.  Its tables "
+        "are the record of why each was rejected; there is no claim about the "
+        "suite for a gate to defend",
+    "hkex_cfscx_compress.py":
+        "DESIGN-SPACE SURVEY -- the compress-to-trapdoor construction, rejected; "
+        "same reason as hkex_cfscx_blong.py",
+    "hkex_cfscx_intops.py":
+        "DESIGN-SPACE SURVEY -- padlock/asymmetric/hash-like schemes over the "
+        "integer-op expansion, none adopted; same reason as hkex_cfscx_blong.py",
+    "hkex_cfscx_preshared.py":
+        "DESIGN-SPACE SURVEY -- five preshared-value constructions, none adopted; "
+        "same reason as hkex_cfscx_blong.py",
+    "hkex_cfscx_twostep.py":
+        "DESIGN-SPACE SURVEY -- eight two-step constructions, none adopted; same "
+        "reason as hkex_cfscx_blong.py",
+    "nl_fscx_v2_orbit.py":
+        "DISTRIBUTIONAL CHARACTERISATION.  Sampled orbit lengths of pi_K: medians, "
+        "a bimodal split and a non-monotone n=24 anomaly.  Gating it would mean "
+        "inventing thresholds for a sampled distribution, which TODO #291 "
+        "explicitly warns against; the conclusions that mattered are in "
+        "nl_fscx_v2_csp.py, which does gate",
+    "stern_ct_demo.py":
+        "ITS VERDICT IS THAT A LEAK IS STILL THERE.  The demo measures wall-clock "
+        "timing against Hamming weight in the branchy Python _stern_apply_perm "
+        "and reports [PASS] when the correlation is high -- so a gate would fail "
+        "if anyone made that code constant-time, and would flake on a loaded "
+        "machine.  Python is a reference implementation and this is a documented "
+        "accepted risk, not a regression to defend",
+}
+
+
 def discover():
     """Every .py here whose exit status is its own verdict, plus the claimants.
 
-    Returns (gating, unclaimed) -- gating as (name, reduced-sample flag or
-    None) pairs, unclaimed as the names that advertise a findings gate without
-    matching any exit shape discovery knows.
+    Returns (gating, unclaimed, undeclared) -- gating as (name, reduced-sample
+    flag or None) pairs, unclaimed as the names that advertise a findings gate
+    without matching any exit shape discovery knows, and undeclared as the
+    scripts that neither gate nor appear in NON_GATING (TODO #291).
     """
-    gating, claims = [], []
+    gating, claims, undeclared = [], [], []
     for name in sorted(os.listdir(HERE)):
         if not name.endswith(".py") or name == SELF:
             continue
         with open(os.path.join(HERE, name), encoding="utf-8") as fh:
             src = fh.read()
         if _GATING_RE.search(src):
-            m = _QUICK_RE.search(src)
-            gating.append((name, m.group(1) if m else None))
-        elif _CLAIM_RE.search(src):
+            gating.append((name, _quick_flag(src)))
+            continue
+        if _CLAIM_RE.search(src):
             claims.append(name)
-    return gating, claims
+        if name not in NON_GATING:
+            undeclared.append(name)
+    return gating, claims, undeclared
 
 
 def check_exclusions(found):
@@ -123,6 +203,28 @@ def check_exclusions(found):
         elif name not in names:
             bad.append("%s: excluded, but it is no longer a gating script -- "
                        "delete the entry (reason on file: %s)" % (name, reason))
+    return bad
+
+
+def check_declarations(found, undeclared):
+    """TODO #291's coverage rule, in both directions.
+
+    A script that neither gates nor is declared non-gating is an error -- that
+    is the 46-script hole #291 closed.  And a NON_GATING entry that describes
+    nothing is an error too, exactly as an EXCLUDED one is: naming a file that
+    is gone, or one that has since become a gate, fails until the entry goes.
+    """
+    names = {n for n, _ in found}
+    bad = []
+    for name in undeclared:
+        bad.append("%s: neither gates nor is declared -- make its exit status "
+                   "its verdict, or add it to NON_GATING with a reason" % name)
+    for name, reason in sorted(NON_GATING.items()):
+        if not os.path.exists(os.path.join(HERE, name)):
+            bad.append("%s: declared non-gating, but no such file" % name)
+        elif name in names:
+            bad.append("%s: declared non-gating, but it DOES gate now -- delete "
+                       "the entry (reason on file: %s)" % (name, reason))
     return bad
 
 
@@ -140,16 +242,17 @@ def main():
                          "a hang must fail rather than consume the job")
     a = ap.parse_args()
 
-    found, unclaimed = discover()
-    orphans = check_exclusions(found)
+    found, unclaimed, undeclared = discover()
+    orphans = check_exclusions(found) + check_declarations(found, undeclared)
     orphans += ["%s: its header advertises a findings gate, but its exit shape "
                 "is not one this runner discovers -- teach _GATING_RE the shape "
                 "or the script will never run in CI" % n for n in unclaimed]
     runnable = [(n, q) for n, q in found if n not in EXCLUDED]
 
     print("=" * 78)
-    print("  findings gates: %d discovered, %d excluded, %d to run  (TODO #289)"
-          % (len(found), len(EXCLUDED), len(runnable)))
+    print("  findings gates: %d discovered, %d excluded, %d to run  (TODO #289); "
+          "%d declared non-gating (TODO #291)"
+          % (len(found), len(EXCLUDED), len(runnable), len(NON_GATING)))
     print("=" * 78)
 
     if orphans:
@@ -162,6 +265,8 @@ def main():
                                         else ""))
         for name, reason in sorted(EXCLUDED.items()):
             print("  %-44s EXCLUDED: %s" % (name, reason))
+        for name, reason in sorted(NON_GATING.items()):
+            print("  %-44s NON-GATING: %s" % (name, reason.split(".")[0]))
         return 1 if orphans else 0
 
     failures = []
@@ -202,7 +307,9 @@ def main():
 
     print()
     if orphans:
-        print("*** FAILED: %d exclusion(s) describe nothing ***" % len(orphans))
+        print("*** FAILED: %d coverage error(s) -- an exclusion or non-gating "
+              "declaration that describes nothing, or a script that is neither "
+              "***" % len(orphans))
     if failures:
         print("*** FAILED: %d finding gate(s) stopped reproducing: %s ***"
               % (len(failures), ", ".join(n for n, _, _ in failures)))

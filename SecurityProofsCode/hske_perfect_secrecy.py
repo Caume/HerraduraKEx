@@ -63,6 +63,7 @@ primitives below are transcribed from `Herradura cryptographic suite.py`.
 
 import math
 import random
+import sys
 import time
 from collections import Counter
 
@@ -127,6 +128,7 @@ def predicted_corank(i, n):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section1():
+    all_ok = True
     print(SEP2)
     print("§1  T_i is invertible if and only if i is odd")
     print(SEP2)
@@ -143,11 +145,13 @@ def section1():
             evens = [2, 4, 16, n // 4, n // 2, 3 * n // 4]
         odd_ok = all(key_map_rank(i, n) == n for i in odds)
         even_ok = all(key_map_rank(i, n) < n for i in evens)
+        all_ok = all_ok and odd_ok and even_ok
         print(f"  {n:<6} {len(odds):<14} {str(odd_ok):<16} {len(evens):<15} {even_ok}")
     print()
     print("  No exceptions.  The deployed i = n/4 is even at every supported n,")
     print("  so no shipped parameter set is the invertible one (TODO #210).")
     print()
+    return all_ok
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -155,6 +159,7 @@ def section1():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section2(trials=500):
+    all_ok = True
     print(SEP2)
     print("§2  Odd i is correct, and costs exactly the same")
     print(SEP2)
@@ -173,6 +178,7 @@ def section2(trials=500):
             if fscx_revolve(fscx_revolve(P, K, i, n), K, r, n) == P:
                 ok += 1
         corank = predicted_corank(i, n)
+        all_ok = all_ok and ok == trials and (corank == 0) == (i % 2 == 1)
         tag = "deployed" if i == 64 else ""
         print(f"    n=256  (i, r) = ({i:>3}, {r:>3})  round-trip {ok}/{trials}"
               f"   total steps {i + r}   leaks {corank:>3} bits  {tag}")
@@ -181,6 +187,7 @@ def section2(trials=500):
     print("  sum to n either way.  Odd i is not a trade-off: it is the same work")
     print("  for 126 fewer leaked bits.")
     print()
+    return all_ok
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,6 +213,7 @@ def mutual_information_exhaustive(i, n):
 
 
 def section3():
+    all_ok = True
     print(SEP2)
     print("§3  I(P; E) = co-rank(T_i), measured exhaustively")
     print(SEP2)
@@ -219,6 +227,7 @@ def section3():
         corank = n - key_map_rank(i, n)
         pred = predicted_corank(i, n)
         ok = abs(mi - corank) < 1e-9 and corank == pred
+        all_ok = all_ok and ok
         print(f"  {i:<4} {mi:<17.6f} {corank:<14} {pred:<11} {ok}")
     print()
     print("  Mutual information and co-rank agree exactly, so the leak of TODO #210")
@@ -228,6 +237,7 @@ def section3():
     print()
     print("  I(P; E) = 0 — Shannon's condition — holds exactly when i is odd.")
     print()
+    return all_ok
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -235,6 +245,7 @@ def section3():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section4():
+    all_ok = True
     print(SEP2)
     print("§4  At odd i the cipher is a Latin square, as the one-time pad is")
     print(SEP2)
@@ -247,6 +258,10 @@ def section4():
             seen = Counter(fscx_revolve(P, k, i, n) for k in range(size))
             distinct = len(seen)
             mult = sorted(set(seen.values()))
+            # Odd i: a Latin square (every ciphertext exactly once).  Even i:
+            # a proper coset, so strictly fewer than 2^n ciphertexts.
+            all_ok = all_ok and ((distinct == size and mult == [1])
+                                 if i % 2 else distinct < size)
             print(f"  n={n:<3} i={i:<3} ({'odd ' if i % 2 else 'even'})  "
                   f"distinct ciphertexts {distinct:>6} of {size:<6} "
                   f"each hit {mult} time(s)")
@@ -256,6 +271,7 @@ def section4():
     print("  and which coset it is depends on P alone — that is the leak, seen from")
     print("  the other side.")
     print()
+    return all_ok
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -286,12 +302,14 @@ def section5(trials=200):
             ok += 1
     print(f"    n=256  i=65 (the perfectly-secret parameter)")
     print(f"    P1 XOR P2 recovered from (E1, E2) alone: {ok}/{trials}")
+    _s5_ok = ok == trials
     print()
     print("  So the perfect-secrecy claim in §3 is conditional on all three of its")
     print("  hypotheses — key uniform, key as wide as the message, key used once —")
     print("  and the third fails catastrophically rather than gracefully.  HSKE has")
     print("  no nonce and no integrity check, so nothing in the format prevents it.")
     print()
+    return _s5_ok
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -342,19 +360,27 @@ def main():
     print("TODO #211 — Shannon-perfect one-time HSKE at odd step counts")
     print(SEP)
     print()
-    section1()
-    section2()
-    section3()
-    section4()
-    section5()
+    findings = [("T_i is invertible exactly at odd i", section1()),
+                ("odd i round-trips and costs the same n steps", section2()),
+                ("I(P;E) equals co-rank(T_i) exhaustively at n=8", section3()),
+                ("odd i is a Latin square, even i a proper coset", section4()),
+                ("key reuse recovers P1 XOR P2 at the odd parameter", section5())]
     section6()
     print(SEP)
     print("Summary: I(P;E) = co-rank(T_i), zero exactly for odd i.  One-time HSKE at")
     print("         odd i is Shannon-perfect — equal to a one-time pad, not better,")
     print("         and for the same step count as the leaky deployed even i.")
     print(SEP)
+    bad = [name for name, ok in findings if not ok]
+    if bad:
+        print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
+              % (len(bad), ", ".join(bad)))
+    else:
+        print("*** OK: all %d findings reproduce ***" % len(findings))
+    print(SEP)
     print()
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

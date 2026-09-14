@@ -424,9 +424,22 @@ _CURRENCY_PATTERNS = [
 # The same claim with no family token, for files that carry a default family.
 # Only applied when _default_family() names one, so it cannot fire on the
 # general corpus that produced the 33 false positives.
+#
+# TWO ORDERINGS, and the second is TODO #291's addition.  Every pattern above
+# reads the currency word BEFORE the assignment, and three real defects wrote
+# it after -- "N = 256  # deployed ring degree",
+# "§3 Empirical failure rate (n=256, ...) — deployed parameters" -- so they were
+# invisible to a check that was otherwise pointed straight at them (both files
+# carry an hkex_rnl filename default).  The reverse ordering costs three
+# exemptions, all of them correct sentences where the currency word modifies a
+# LATER number than the one matched, and each says which.
 _CURRENCY_RE_NOFAM = re.compile(
     r"%s[^\n]{0,40}?(?<![A-Za-z0-9_])([rdtnqp])\s*=\s*(\d[\d,]*)"
     r"(?![\d,]*[A-Za-z])" % _CURRENCY_WORDS, re.I)
+
+_CURRENCY_RE_NOFAM_REV = re.compile(
+    r"(?<![A-Za-z0-9_])([rdtnqp])\s*=\s*(\d[\d,]*)(?![\d,]*[A-Za-z])"
+    r"[^\n]{0,40}?%s" % _CURRENCY_WORDS, re.I)
 
 
 # (path relative to SecurityProofsCode, regex, reason).  Each must match.
@@ -462,6 +475,33 @@ CURRENCY_EXEMPT = [
     ('hkex_rnl_failure_rate.py',
      r'f"n=\{RNL_DEPLOYED_N\}, p=8192 \(less noise\)"',
      "NOT A CLAIM -- the same f-string adjacency, for the low-noise variant"),
+    # The three below are what TODO #291's REVERSE ordering turned up (the
+    # currency word after the number rather than before it).  That widening
+    # also turned up three genuine defects -- a "deployed ring degree" literal
+    # of 256 in hkex_rnl_sparse_hybrid_2026.py and two "deployed" labels on
+    # hkex_rnl_failure_rate.py's retired-width section -- so the ratio is three
+    # for three, and these are the correct sentences it cost.
+    ('hkex_rnl_failure_rate.py',
+     r'it called n=256 "current" four minor versions after TODO #223',
+     "HISTORICAL -- the comment DESCRIBES the defect TODO #286 fixed, in the "
+     "past tense, immediately above the code that now reads RNLN from the "
+     "suite instead"),
+    ('hkex_rnl_failure_rate.py',
+     r"§3 — Empirical failure rate at the retired n=256 \(the deployed ring is §7\)",
+     "CORRECT AS WRITTEN -- the sentence says the width is RETIRED and points "
+     "at §7 for the deployed one.  The currency word belongs to '§7', not to "
+     "the 256.  This heading is itself TODO #291's fix for the version that "
+     "did call n=256 deployed"),
+    ('qcmdpc_dfr_weak_keys.py',
+     r"just under r = 9900, 80% of the deployed \{R_DEP\}",
+     "CORRECT AS WRITTEN -- 'the deployed' modifies R_DEP, the constant printed "
+     "immediately after it; 9900 is the reachable waterfall §3 measures at 80% "
+     "of it"),
+    ('hkex_rnl_lattice_2026.py',
+     r"n=768 clears both at the deployed p=4096 with nothing else changed",
+     "CORRECT AS WRITTEN -- 'deployed' modifies p=4096 (RNL_P, deployed), the "
+     "number AFTER it; n=768 is the candidate being discussed and TODO #223 "
+     "rejected it on a ring-structure ground"),
 ]
 
 
@@ -568,7 +608,8 @@ def check_currency_claims(consts):
         # without an inline family token (TODO #288).
         fam_default = _default_family(name)
         if fam_default is not None:
-            for m in _CURRENCY_RE_NOFAM.finditer(text):
+            for m in list(_CURRENCY_RE_NOFAM.finditer(text)) + \
+                     list(_CURRENCY_RE_NOFAM_REV.finditer(text)):
                 if any(lo <= m.start() and m.end() <= hi for lo, hi in covered):
                     continue
                 const = _FAMILIES[fam_default].get(m.group(1).lower())
