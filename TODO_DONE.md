@@ -18255,3 +18255,145 @@ turns ~1028 of those into a handful of `read(2)` calls, and rewriting it would r
 control rather than buy anything.
 
 Status: **DONE v7.0.11** — Go, Python and Java now buffer the rejection sampler's draws; Go's m_blind falls 13.4x from 40% of a handshake to 4.4%, the coefficient stream is proved byte-identical, and two of this item's own figures (the 50x, and Java's reason for escaping) are corrected.
+
+### #294: the Σ-protocol's masking value is modulo-biased in three of four languages
+
+**Found while proposing follow-on work to #293**, by scanning for the same CSPRNG
+read-pattern class elsewhere in the tree.  What turned up next to it is sharper than the
+read pattern: `rnl_sigma_sign` samples the ZK masking polynomial `y ∈ [-γ, γ]^n`, and
+**C rejection-samples while Go, Python and Java take a raw modulo**.
+
+| language | how it draws `y` | |
+|---|---|---|
+| C `herradura.h:2955` | `thresh = (1<<24) - (1<<24) % range`, then `do {...} while (v >= thresh)` | **rejection-sampled, correct** |
+| Go `herradura/herradura.go:2270` | `int(binary.BigEndian.Uint32(buf)) % rangeSz` | raw modulo |
+| Python suite:2319 | `int.from_bytes(os.urandom(4), 'big') % (2 * gamma + 1)` | raw modulo |
+| Java `HerraduraNl.java:906` | `(int) (v % (2L * gamma + 1)) - gamma` | raw modulo |
+
+A 3-vs-1 split in which **C is the one that is right** — the mirror of #277's byte-order
+split, and unlike that one it is not a wire disagreement at all.  `rnl-sigma` is
+`"status": "production"` in `spec/` with `cli_support` true in all four languages, so this
+is the witness-hiding distribution of a production proof of knowledge of an HKEX-RNL
+private key.
+
+**THE MAGNITUDE IS TINY AND MUST NOT BE OVERSOLD.**  This is not a break and this item
+does not claim one.  At `γ = 8192`, `rangeSz = 16385` and `2^32 mod 16385 = 16`, so 16 of
+16385 residues are over-represented by a relative `3.815e-06`; at `γ = 4096`,
+`rangeSz = 8193` and `2^32 mod 8193 = 64`, giving 64 residues and `1.908e-06`.  There is
+no distinguisher at any sample size a prover will ever produce.
+
+**Three things make it worth fixing anyway.**
+
+1. **The repo has already ruled on this exact class.**  v1.5.6 replaced the `% q` bias in
+   `_rnl_rand_poly` with 3-byte rejection sampling, and `stern_ring_challenge_bias.py`
+   analyses the same question for the Stern challenge.  C's sampler here follows that
+   standard; the other three were simply never held to it.
+2. **Nothing in the repo can see it, and that is the recurring finding.**  `y` is local
+   randomness that never reaches an artifact, so no round-trip, no interop matrix and no
+   KAT can detect the divergence — confirmed: no `KAT/*.json` pins an `rnl-sigma` object,
+   and a proof is randomised per signature so none could.  `check_language_parity.py`'s
+   PARAMETERS axis compares a constant's VALUE and its census compares primitive
+   PRESENCE; neither reads a sampling strategy.  This is #293's invisibility property
+   found a second time, one axis over: #293's split was in READ PATTERN, this one is in
+   DISTRIBUTION.
+3. **Go's expression is separately a 32-bit portability defect**, and that axis is sharper
+   than the bias.  `int(binary.BigEndian.Uint32(buf))` is 32 bits wide on `GOARCH=386` /
+   `arm`, so any draw `≥ 2^31` — HALF of them — becomes negative, and Go's `%` truncates
+   toward zero and keeps the sign.  Measured under `GOARCH=386`: `0xffffffff` gives
+   `y = -8193` and `0x80000000` gives `y = -8200`, both outside the valid `[-8192, 8192]`.
+   On 64-bit, which is what CI runs, it is correct — so this is a portability defect
+   rather than a live break, and a silent one: an out-of-range `y` does not fail the norm
+   check on `z`, it just biases what the mask hides.
+
+**Scope.**
+
+* Replace the raw modulo in Go, Python and Java with **C's scheme verbatim** — 3-byte
+  draws, `thresh = (1<<24) - (1<<24) % range`, reject and redraw — so that all four agree
+  on the sampler rather than three agreeing on a different correct one.  Adopting C's draw
+  WIDTH is what disposes of item (3) as a side effect: a 24-bit value is non-negative in a
+  32-bit `int`, so there is nothing left to truncate.
+* Buffer the draws while there, per #293: the sampler is `n` coefficients per attempt and
+  up to `SIGMA_MAX_ATTEMPTS = 1000` attempts, and #293 already established what a per-draw
+  CSPRNG read costs in each of these three languages.
+* Verify by a **deterministic range assertion** (`y ∈ [-γ, γ]` on every draw) and by the
+  fixed-byte-stream replay harness #293 introduced, NOT by a sampled distribution test.  A
+  `3.8e-06` relative excess is unmeasurable by sampling, and this repo's own rule (TODO
+  #233, #234) is that a probabilistic property must not be asserted as a deterministic
+  one — here the deterministic statements are the range bound and the agreement of the
+  four consumption orders.
+* Record the position on C: it needs no change and is again the control.
+
+**What this does NOT touch.**  The rejection threshold on `z` (`bound = γ - t`), the
+challenge derivation, `ZkpRnlParams`, and the wire format of a proof — a proof's
+`(w, c, z)` are unchanged in type and range, so every pinned artifact, every interop pair
+and every existing signature stays valid.
+
+**RESOLVED (v7.0.12).**  All three raw-modulo samplers now use herradura.h's scheme
+verbatim, and the verification is deterministic throughout, as the scope required.
+
+**What was measured, and the two axes came apart.**
+
+| | bias (relative excess) | 32-bit `int` | after |
+|---|---|---|---|
+| C | none — rejection-sampled | n/a | unchanged, the control |
+| Go | 3.815e-06 at γ=8192 | **`y = -8193`, `-8200` under `GOARCH=386`** | fixed on both axes |
+| Python | 3.815e-06 at γ=8192 | n/a (arbitrary precision) | fixed |
+| Java | 3.815e-06 at γ=8192 | n/a (the `long` cast was width-correct) | fixed |
+
+**Five results.**
+
+1. **The bias was real, tiny, and the weaker of the two arguments.**  `2^32 mod 16385 = 16`
+   at γ=8192 and `2^32 mod 8193 = 64` at γ=4096, giving relative excesses of `3.815e-06`
+   and `1.908e-06` over 16 and 64 residues respectively.  Recorded as computed, not as a
+   break.  What justified the item was the DIVERGENCE plus item (3) below, and the fact —
+   confirmed rather than assumed — that no `KAT/*.json` pins an `rnl-sigma` object and
+   none could, a proof being randomised per signature.
+
+2. **Go's 32-bit defect was the sharp end, and it is demonstrated rather than argued.**
+   Under `GOARCH=386` the old expression produced `y = -8193` from `0xffffffff` and
+   `y = -8200` from `0x80000000`, outside the valid `[-8192, 8192]`.  The fix removes the
+   CLASS rather than the instance: a 24-bit draw is non-negative in a 32-bit `int`, so
+   adopting C's draw width leaves nothing to truncate.  The replay harness below now runs
+   Go under `GOARCH=386` and gets the SAME vector as the other four columns, which it
+   could not before.
+
+3. **Adopting C's scheme rather than inventing a fourth correct one is the decision worth
+   recording.**  A 4-byte draw with rejection would also have been correct, and would have
+   left four languages with two correct samplers and no way for any checker to notice if
+   one later drifted.  Taking `thresh = (1<<24) - (1<<24) % range` verbatim means the four
+   consumption orders are now byte-identical, which is a property a replay harness CAN
+   pin — and the only property of a local sampler that anything can pin.
+
+4. **Verified deterministically, per this repo's own rule.**  A `3.8e-06` relative excess
+   is unmeasurable by sampling, and TODO #233/#234 forbid asserting a probabilistic
+   property as a deterministic one.  So: one fixed byte stream (SHA-256 counter mode)
+   through all four samplers yields identical coefficient vectors and identical byte
+   counts at both parameter sets — `n=1024, γ=8192` consuming 3072 bytes, `n=32, γ=4096`
+   consuming 96 — across C, Go, Go/386, Python and Java.  Plus a 2,000,000-draw stress
+   pass per γ asserting the range bound on every draw: both endpoints are ATTAINED exactly
+   (`[-8192, 8192]`, `[-4096, 4096]`, so the range is not a subset), with rejection rates
+   0.0880% against a theoretical 0.0916% and 0.0384% against 0.0366%.
+
+5. **It is also strictly faster, which was a side effect and not the point.**  The old
+   draw was unbuffered, so #293's pattern applied here too.  Per polynomial at `n = 1024`,
+   γ=8192: Go 0.611 → 0.032 ms (18.9x), Python 1.071 → 0.519 ms (2.1x), Java 0.176 →
+   0.049 ms (3.6x).  Those land within a few percent of #293's 19.9 / 2.2 / 3.0 for the
+   same change to `RnlRandPoly`, which is a useful cross-check that the two items measured
+   the same mechanism — and Java's run again reports `SUN/NativePRNG`, confirming #293's
+   correction about why that port's multiplier is the smallest.
+
+**Not changed, deliberately.**  C, which was already right and is again the control.  The
+rejection threshold on `z` (`bound = γ - t`), the challenge derivation, `ZkpRnlParams`,
+`SIGMA_MAX_ATTEMPTS`, and the wire format — `(w, c, z)` keep their type and range, so
+every pinned artifact and every existing signature stays valid.  No `SecurityProofs-*.md`
+section is touched: §11.13's Σ-protocol analysis assumes `y ← Unif[-γ, γ]`, which is what
+the code now does and what the prose always said.
+
+**Verification.**  C/Go/Python suites and Java `SelfTest` green; all five checkers green;
+`KAT/generate_kat.py --check`, `verify_kat.go`, `test_kat_vectors.sh`, `test_kat_pem.sh`
+and `test_cross_lang_matrix.sh` pass unchanged; `test_zkp_hybrid_family.sh` 141 PASS / 0
+FAIL including the full 4x4 `rnl-sigma` sign/verify matrix in both directions.
+
+Status: **DONE v7.0.12** — C rejection-sampled the Σ-protocol mask and the other three took a raw modulo; all four now share C's scheme, which also removes a 32-bit `int` truncation in Go that put `y` outside `[-γ, γ]`.
+
+---

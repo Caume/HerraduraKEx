@@ -896,15 +896,35 @@ public final class HerraduraNl {
         final int bound = gamma - t;
         final int half = q / 2;
 
-        byte[] rb = new byte[4];
+        /* TODO #294: rejection-sample y, using herradura.h's scheme verbatim --
+         * 24-bit draws against (1 << 24) - (1 << 24) % range -- rather than a
+         * fourth correct sampler.  Until v7.0.12 this was `% (2L*gamma + 1)`
+         * over a 32-bit draw, as Go's and Python's were: at gamma = 8192 that
+         * over-represented 16 of 16385 residues by a relative 3.8e-06 (64 of
+         * 8193 and 1.9e-06 at gamma = 4096).  The bias is unobservable; the
+         * DIVERGENCE is the finding, and nothing in the repo could see it
+         * either -- y is local randomness reaching no artifact, so no KAT, no
+         * round-trip and no interop pair can compare two samplers here.
+         * Java's expression was at least width-correct (the long cast), unlike
+         * Go's, which truncated to a negative int on a 32-bit GOARCH.
+         * Buffered per TODO #293, where this port's SecureRandom was measured
+         * at 3.0x for the same change; the buffer refills when short, so
+         * correctness never depends on the slack. */
+        final int range = 2 * gamma + 1;
+        final int thresh = (1 << 24) - (1 << 24) % range;
+        byte[] rb = new byte[3 * (n + (n >> 6) + 8)];
+        int pos = rb.length;
         for (int attempt = 0; attempt < SIGMA_MAX_ATTEMPTS; attempt++) {
             int[] yv = new int[n], yq = new int[n];
-            for (int i = 0; i < n; i++) {
-                rng.nextBytes(rb);
-                long v = ((long) (rb[0] & 0xff) << 24) | ((rb[1] & 0xff) << 16)
-                       | ((rb[2] & 0xff) << 8) | (rb[3] & 0xff);
-                yv[i] = (int) (v % (2L * gamma + 1)) - gamma;
+            for (int i = 0; i < n; ) {
+                if (pos + 3 > rb.length) { rng.nextBytes(rb); pos = 0; }
+                int v = ((rb[pos] & 0xff) << 16) | ((rb[pos + 1] & 0xff) << 8)
+                      | (rb[pos + 2] & 0xff);
+                pos += 3;
+                if (v >= thresh) continue;
+                yv[i] = v % range - gamma;
                 yq[i] = Math.floorMod(yv[i], q);
+                i++;
             }
             int[] my = rnlPolyMul(mPoly, yq, q, n);
             int[] w = new int[n];

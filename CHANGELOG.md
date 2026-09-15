@@ -2,6 +2,59 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.12] - 2026-09-14
+
+### TODO #294 — the Σ-protocol's masking value was modulo-biased in three of four languages
+
+Found while scanning for #293's read-pattern class elsewhere in the tree.  Next to it sat
+something sharper: `rnl_sigma_sign` samples the ZK masking polynomial `y ∈ [-γ, γ]^n`, and
+**C rejection-sampled while Go, Python and Java took a raw modulo** — a 3-vs-1 split in
+which C was the one that was right.  `rnl-sigma` is `production` in `spec/` with
+`cli_support` in all four languages, so this is the witness-hiding distribution of a
+production proof of knowledge of an HKEX-RNL private key.
+
+**The bias itself is tiny and is not the reason for the change.**  At `γ = 8192`,
+`2^32 mod 16385 = 16`, so 16 of 16385 residues were over-represented by a relative
+`3.815e-06` (64 of 8193 and `1.908e-06` at `γ = 4096`).  No distinguisher exists at any
+sample size a prover will produce.  The reasons are that the repo already ruled on this
+class (v1.5.6 replaced the `% q` bias in `_rnl_rand_poly` with 3-byte rejection sampling),
+that **nothing in the tree could see the divergence** — `y` is local randomness reaching
+no artifact, so no KAT pins an `rnl-sigma` object and none could, and
+`check_language_parity.py` compares constant VALUES and primitive PRESENCE, never a
+sampling strategy — and that Go's expression carried a second, sharper defect.
+
+**Go's was also a 32-bit portability defect.**  `int(binary.BigEndian.Uint32(buf))` is 32
+bits wide on `GOARCH=386`/`arm`, so any draw `≥ 2^31` — half of them — went negative, and
+Go's `%` truncates toward zero keeping the sign.  Measured under `GOARCH=386`:
+`0xffffffff` gave `y = -8193` and `0x80000000` gave `y = -8200`, both outside the valid
+`[-8192, 8192]`.  Correct on 64-bit, which is what CI runs, so it was silent — and an
+out-of-range `y` does not fail the norm check on `z`, it just biases what the mask hides.
+
+Go, Python and Java now use **herradura.h's scheme verbatim** — 24-bit draws against
+`thresh = (1<<24) - (1<<24) % range`, reject and redraw — rather than a fourth correct
+sampler, buffered per #293.  Adopting C's draw WIDTH removes the 32-bit class rather than
+patching the instance: a 24-bit value is non-negative in a 32-bit `int`.
+
+Verified deterministically, as the item required, because a `3.8e-06` relative excess is
+unmeasurable by sampling and this repo does not assert a probabilistic property as a
+deterministic one (TODO #233, #234).  One fixed byte stream through all four samplers
+produces **identical coefficient vectors and identical byte counts** at both parameter
+sets — C, Go, Python, Java, and Go again under `GOARCH=386`, which now agrees with the
+other four where before it could not.  A 2,000,000-draw stress pass attains both endpoints
+exactly (`[-8192, 8192]`, `[-4096, 4096]`) with rejection rates matching theory (0.0880%
+vs 0.0916%, 0.0384% vs 0.0366%).
+
+The change is also strictly faster, since the old draw was unbuffered.  Per polynomial at
+`n = 1024`, `γ = 8192`: Go 0.611 → 0.032 ms (18.9x), Python 1.071 → 0.519 ms (2.1x), Java
+0.176 → 0.049 ms (3.6x) — within a few percent of #293's 19.9 / 2.2 / 3.0 for the same
+change to the other sampler, and re-confirming that Java's `SecureRandom` resolves to
+`NativePRNG`.
+
+**C is unchanged and is again the control.**  Nothing on the wire moves: a proof's
+`(w, c, z)` keep their type and range, so every pinned artifact, every interop pair and
+every existing signature stays valid — `CliTest/test_zkp_hybrid_family.sh` passes 141/0
+including the full 4x4 `rnl-sigma` sign/verify matrix.
+
 ## [7.0.11] - 2026-09-14
 
 ### TODO #293 — the CSPRNG was read three bytes at a time, and in Go that was 40% of a handshake

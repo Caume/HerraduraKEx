@@ -2260,16 +2260,49 @@ func RnlSigmaSign(sPoly, mPoly, cPoly []int, n int, msg []byte) (w, c, z []int, 
 		return sigmaPolyMulN(f, g, n, q)
 	}
 
+	// TODO #294: rejection-sample y, and do it exactly as herradura.h's
+	// rnl_sigma_sign has always done -- 24-bit draws against
+	// (1<<24) - (1<<24)%range -- rather than inventing a fourth correct
+	// sampler.  Until v7.0.12 this was a raw `% rangeSz` over a 32-bit draw,
+	// as Python's and Java's were, which is two defects in one expression.
+	//
+	// The BIAS is real but tiny and is not the sharp end: 2^32 mod 16385 = 16
+	// at gamma = 8192, so 16 of 16385 residues were over-represented by a
+	// relative 3.8e-06 (64 of 8193 and 1.9e-06 at gamma = 4096).  Nothing
+	// could observe that, and nothing in the repo could observe the DIVERGENCE
+	// either: y is local randomness that reaches no artifact, so no KAT, no
+	// round-trip and no interop pair can see a sampler disagreement here.
+	//
+	// The 32-BIT DEFECT is the sharp end and it was Go's alone.  `int` is 32
+	// bits on GOARCH=386/arm, so int(BigEndian.Uint32(buf)) went NEGATIVE for
+	// any draw >= 2^31 -- half of them -- and Go's % truncates toward zero
+	// keeping the sign: 0xffffffff gave y = -8193 and 0x80000000 gave
+	// y = -8200, outside the valid [-8192, 8192].  A 24-bit draw is
+	// non-negative in a 32-bit int, so adopting C's width removes the class
+	// rather than patching this instance.
+	//
+	// Buffered per TODO #293: n coefficients per attempt, up to
+	// sigmaMaxAttempts of them.  The buffer refills when short, so correctness
+	// never depends on the slack being generous -- only the read count does.
 	rangeSz := 2*gamma + 1
-	buf := make([]byte, 4)
+	thresh := (1 << 24) - (1<<24)%rangeSz
+	buf := make([]byte, 3*(n+n/64+8))
+	pos := len(buf)
 	for attempt := 0; attempt < sigmaMaxAttempts; attempt++ {
 		y := make([]int, n)
-		for i := range y {
-			if _, rerr := rand.Read(buf); rerr != nil {
-				return nil, nil, nil, rerr
+		for i := 0; i < n; {
+			if pos+3 > len(buf) {
+				if _, rerr := rand.Read(buf); rerr != nil {
+					return nil, nil, nil, rerr
+				}
+				pos = 0
 			}
-			v := int(binary.BigEndian.Uint32(buf)) % rangeSz
-			y[i] = v - gamma
+			v := int(buf[pos])<<16 | int(buf[pos+1])<<8 | int(buf[pos+2])
+			pos += 3
+			if v < thresh {
+				y[i] = v%rangeSz - gamma
+				i++
+			}
 		}
 		yQ := make([]int, n)
 		for i, yi := range y {

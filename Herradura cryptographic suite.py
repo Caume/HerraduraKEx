@@ -2312,12 +2312,34 @@ def rnl_sigma_sign(s_poly, m_poly, C_poly, n, msg_bytes):
     bound = gamma - t
     h     = q // 2  # centering threshold
 
+    # TODO #294: rejection-sample y, using herradura.h's scheme verbatim --
+    # 24-bit draws against (1 << 24) - (1 << 24) % range -- rather than a
+    # fourth correct sampler.  Until v7.0.12 this was `% (2*gamma + 1)` over a
+    # 32-bit draw, as Go's and Java's were: at gamma = 8192 that
+    # over-represented 16 of 16385 residues by a relative 3.8e-06 (64 of 8193
+    # and 1.9e-06 at gamma = 4096).  The bias is unobservable; the DIVERGENCE
+    # is the finding, and nothing in the repo could see it either, because y is
+    # local randomness that reaches no artifact -- no KAT pins an rnl-sigma
+    # object and none could, a proof being randomised per signature.
+    # Buffered per TODO #293 (n coefficients per attempt, up to
+    # _SIGMA_MAX_ATTEMPTS attempts); the buffer refills when short, so
+    # correctness never depends on the slack.
+    _range = 2 * gamma + 1
+    _thresh = (1 << 24) - (1 << 24) % _range
+
     for _ in range(_SIGMA_MAX_ATTEMPTS):
         # Sample mask y ← Unif[-γ, γ]^n
         y = []
-        for _ in range(n):
-            v = int.from_bytes(os.urandom(4), 'big') % (2 * gamma + 1)
-            y.append(v - gamma)
+        buf = b''
+        pos = 0
+        while len(y) < n:
+            if pos + 3 > len(buf):
+                buf = os.urandom(3 * (n - len(y) + (n >> 6) + 8))
+                pos = 0
+            v = int.from_bytes(buf[pos:pos + 3], 'big')
+            pos += 3
+            if v < _thresh:
+                y.append(v % _range - gamma)
 
         y_q  = [yi % q for yi in y]
         my   = _rnl_poly_mul(m_poly, y_q, q, n)

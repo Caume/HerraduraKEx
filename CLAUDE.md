@@ -1088,7 +1088,28 @@ spec/                                                — machine-readable protoc
                                                       constant "genpkey's --xmss-height cap".  That
                                                       class needs CliTest/test_param_bounds.sh,
                                                       which runs the four CLIs, and is claimed by
-                                                      cross-lang-compat
+                                                      cross-lang-compat.  A SECOND KNOWN LIMIT,
+                                                      found by TODO #294: the axis compares a
+                                                      constant's VALUE and the census compares a
+                                                      primitive's PRESENCE, so neither can see HOW
+                                                      a primitive uses its constants -- a sampling
+                                                      STRATEGY is invisible here.  rnl_sigma_sign
+                                                      drew its ZK mask y by REJECTION SAMPLING in C
+                                                      and by raw modulo in the other three, a
+                                                      3-vs-1 split with C the correct one, and
+                                                      nothing in the repo could see it: y is local
+                                                      randomness reaching no artifact, so no KAT
+                                                      pins it and none could (a proof is randomised
+                                                      per signature), and no round-trip or interop
+                                                      pair compares two samplers.  That is #293's
+                                                      invisibility property one axis over -- #293's
+                                                      split was in READ PATTERN, #294's in
+                                                      DISTRIBUTION.  The only check available for
+                                                      this class is a FIXED-STREAM REPLAY, which
+                                                      pins the four consumption orders against each
+                                                      other; it works only because #294 adopted C's
+                                                      scheme verbatim in the other three rather
+                                                      than inventing a fourth correct sampler
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,
