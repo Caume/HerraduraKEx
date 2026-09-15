@@ -36,12 +36,20 @@
  *
  * RECORDED (ARM64 SBC, gcc -O2), per operation:
  *
- *   keygen (s, C)                     0.121 ms
- *   agree, reconciler side (+hint)    0.119 ms
- *   agree, receiver side              0.118 ms
+ *   keygen (s, C)                     0.120 ms
+ *   agree, reconciler side (+hint)    0.118 ms
+ *   agree, receiver side              0.117 ms
  *   rnl_poly_mul alone (NTT)          0.114 ms
- *   m_blind derivation (rand+add)     0.030 ms
- *   full two-party handshake          0.508 ms   (1970 /s)
+ *   m_blind derivation (rand+add)     0.029 ms
+ *   full two-party handshake          0.505 ms   (1979 /s)
+ *
+ * These are v7.0.11 figures and they are the SAME figures v7.0.10 recorded
+ * (0.121 / 0.119 / 0.118 / 0.114 / 0.030 / 0.508).  That is the point of
+ * re-running them: TODO #293 buffered the CSPRNG read in Go, Python and Java
+ * and deliberately did NOT touch C, which had been amortising all along
+ * through a buffered FILE *.  The C column is therefore the CONTROL for that
+ * change -- it establishes that the host has not moved between the two
+ * releases, so the Go and Python columns below can be compared across them.
  *
  * FOUR THINGS THE TABLE SAYS, and the last two are the ones worth keeping.
  *
@@ -64,27 +72,40 @@
  *     construction by a factor of 32 -- so cost is not what keeps it in the
  *     tree, and no cost argument exists for preferring it.
  *
- * (4) THE THREE LANGUAGES DO NOT AGREE ABOUT WHERE THE TIME GOES, which is
- *     what makes a three-column table worth more than a C column.  Same host,
- *     same ring, per handshake:
+ * (4) THE THREE LANGUAGES DID NOT AGREE ABOUT WHERE THE TIME GOES, which is
+ *     what made a three-column table worth more than a C column -- and is
+ *     what this file found.  Same host, same ring, per handshake, with the
+ *     v7.0.10 measurement that opened TODO #293 and the v7.0.11 one that
+ *     closed it:
  *
- *                          C          Go        Python (pure-Python NTT)
- *       poly_mul       0.114 ms    0.197 ms      9.32 ms
- *       m_blind        0.030 ms    0.642 ms      1.01 ms
- *       handshake      0.508 ms    1.517 ms     39.96 ms
+ *                       C         Go v7.0.10 -> v7.0.11   Python (pure-Py NTT)
+ *       poly_mul    0.114 ms      0.197 ->  0.179 ms      9.32  ->  9.28 ms
+ *       m_blind     0.029 ms      0.642 ->  0.048 ms      1.01  ->  0.590 ms
+ *       handshake   0.505 ms      1.517 ->  1.088 ms     39.96  -> 39.36 ms
  *
- *     In C and Python the handshake is the NTT.  In Go it is NOT: m_blind
- *     derivation alone is 0.642 ms of a 1.517 ms handshake -- more than all
- *     four NTTs together, and 21x the same step here.  The cause is the
- *     CSPRNG read pattern, and C is the one port that escapes it by accident:
- *     rnl_rand_poly above draws THREE BYTES per rejection-sampling iteration
- *     exactly as Go's RnlRandPoly and Python's _rnl_rand_poly do, ~1028 of
- *     them per polynomial at n = 1024, but it reads them through a BUFFERED
- *     FILE * and they do not.  Measured in Go, same byte count either way:
- *     1028 x rand.Read(3) is 0.613 ms against 0.012 ms for one rand.Read(3084),
- *     a factor of 50, and 0.613 of the 0.642 is that.  Filed as TODO #293; not
- *     fixed here, because this item is a measurement and that is a change to a
- *     shipped primitive in three languages.
+ *     In C and Python the handshake was always the NTT.  In Go it was NOT:
+ *     m_blind derivation alone was 0.642 ms of a 1.517 ms handshake -- more
+ *     than all four NTTs together, and 21x the same step here.  The cause was
+ *     the CSPRNG read pattern, and C is the one port that escaped it by
+ *     accident: rnl_rand_poly above draws THREE BYTES per rejection-sampling
+ *     iteration exactly as Go's RnlRandPoly and Python's _rnl_rand_poly did,
+ *     ~1028 of them per polynomial at n = 1024, but it reads them through a
+ *     BUFFERED FILE * and they did not.
+ *
+ *     TODO #293 buffered all three (Go, Python, Java; C needed nothing).
+ *     Go's m_blind is now 0.048 ms -- 13.4x cheaper, 4.4% of a handshake
+ *     rather than 40% -- and a Go handshake is 2.15x C's rather than 3.0x.
+ *     Two numbers in the paragraph above are WORTH CORRECTING rather than
+ *     leaving as they were written.  The "factor of 50" was 1028 x
+ *     rand.Read(3) against ONE rand.Read(3084), i.e. reads with no sampler
+ *     around them; against the buffered sampler actually shipped, arithmetic
+ *     and modulo included, it is 19.9x (0.614 -> 0.031 ms), and the residue
+ *     is loop cost rather than read cost.  And Java, which #293 expected to
+ *     escape because SecureRandom is "a userspace DRBG rather than a kernel
+ *     read", escapes for C's reason instead: it resolves to NativePRNG, which
+ *     reads /dev/urandom behind a buffer.  Its multiplier is 3.0x (0.163 ->
+ *     0.053 ms), the smallest of the four, but the mechanism is buffering,
+ *     not the entropy source.
  *
  *     The Python column is the PURE-PYTHON NTT path -- this host has no numpy.
  *     The suite chooses the path at import and its banner reports which one is

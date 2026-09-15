@@ -2,6 +2,74 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.11] - 2026-09-14
+
+### TODO #293 — the CSPRNG was read three bytes at a time, and in Go that was 40% of a handshake
+
+TODO #292's three-column table existed to find out whether the three shipping languages
+agree about where an HKEX-RNL handshake's time goes.  They did not.  `RnlRandPoly` read
+THREE BYTES per iteration of its rejection-sampling loop — ~1028 separate
+`crypto/rand.Read` calls per polynomial at the deployed `n = 1024` — so deriving `m_blind`
+cost 0.642 ms of a 1.517 ms handshake: more than all four `RnlPolyMul` calls together, and
+21x the same step in C.  Python's `_rnl_rand_poly` (`os.urandom(3)` per draw) and Java's
+`rnlRandPoly` (`nextBytes` on a 3-byte array) share the shape; C escapes it through a
+buffered `FILE *`.
+
+All three now refill a buffer instead.  Measured per polynomial at `n = 1024`, the shipped
+sampler against the same sampler reading one buffer:
+
+| | shipped (per-draw) | buffered | ratio | absolute saving |
+|---|---|---|---|---|
+| C | already buffered via `FILE *` | — | — | — |
+| Go | 0.614 ms | 0.031 ms | **19.9x** | 0.583 ms |
+| Python | 1.002 ms | 0.459 ms | 2.2x | 0.543 ms |
+| Java | 0.163 ms | 0.053 ms | 3.0x | 0.110 ms |
+
+and per handshake, in `benchmarks/rnl_deployed_ring_cost.{c,go,py}`:
+
+```
+                    C            Go                 Python (pure-Python NTT)
+  poly_mul      0.114 ms    0.197 ->  0.179 ms      9.32  ->  9.28 ms
+  m_blind       0.029 ms    0.642 ->  0.048 ms      1.01  ->  0.590 ms
+  handshake     0.505 ms    1.517 ->  1.088 ms     39.96  -> 39.36 ms
+```
+
+Go's `m_blind` is 13.4x cheaper and 4.4% of a handshake rather than 40%; a Go handshake is
+28% faster and 2.15x C's rather than 3.0x.
+
+**No wire, distribution or security change, and that is demonstrated rather than asserted.**
+A replay harness fed one fixed byte stream through both shapes and compared coefficient
+sequences: identical at `n` = 1024 / 256 / 64 / 1 and `q` = 65537 / 12289 / 257.  That pins
+not merely the same distribution but the same CONSUMPTION ORDER of the stream, which is
+what `KAT/hkex_rnl.json` encodes — `generate_kat.py --check`, Go `verify_kat.go` and Java
+`KatVerify` all pass on the pinned deployed vector, and the C/Go/Python suites and Java
+`SelfTest` are green.  Each port draws `n + n/64 + 8` coefficients' worth and REFILLS if a
+run of rejections outlasts the slack, so the margin sets the read count and never
+correctness — which matters because `q` is a parameter.
+
+**Two of TODO #293's own numbers are corrected.**  The 50x it recorded compared
+`1028 x rand.Read(3)` against one `rand.Read(3084)` — reads with no sampler around them —
+and is a ceiling the fix cannot reach; against the shipped buffered sampler it is 19.9x,
+the residue being loop arithmetic.  And Java was expected to escape because `SecureRandom`
+is "a userspace DRBG rather than a kernel read": it resolves to **NativePRNG**, which reads
+`/dev/urandom` behind a buffer, so Java escapes by C's mechanism, not a different source.
+
+**Python and Java were included on the absolute saving, not the fraction.**  Python's
+0.59 ms is 1.5% of its interpreted-NTT handshake, but the saving is within 7% of Go's for
+the same five-line change, and what the pure-Python path makes small is the fraction rather
+than the saving.  No numpy-path figure is projected — that host has no numpy, and a Python
+RNL figure without a live path label is not a figure.  The other half of the argument is
+that a three-way split in sampling strategy is invisible to every checker in the repo
+(`spec/check_language_parity.py` compares declared constants and primitive presence, not
+read patterns), so leaving it would have been a position nothing re-examined.
+
+**Not changed, deliberately.**  C's `rnl_rand_poly` keeps its `fread(buf, 3, 1, urnd)` —
+stdio already collapses ~1028 of those into a handful of `read(2)` calls — and re-running
+the untouched C column reproduced v7.0.10's figures (0.505 against 0.508 ms), which is what
+licenses comparing the Go and Python columns across the two releases at all.
+`CryptosuiteTests/`'s `rnl_rand_poly_n` / `rnl32_rand_poly` and the `.ino` copy are harness
+re-implementations at retired dimensions (TODO #225), out of scope.
+
 ## [7.0.10] - 2026-09-13
 
 ### TODO #292 — the deployed HKEX-RNL ring was benchmarked in no compiled language

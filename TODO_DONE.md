@@ -18113,3 +18113,145 @@ benchmark headers and CLAUDE.md now say the [40] column is the retired ring, so 
 is labelled rather than silently wrong.
 
 Status: **DONE v7.0.10** — the deployed n = 1024 ring is now measured in all three shipping languages, benchmark [40]'s four HKEX-RNL rows are the ring TODO #223 retired, and the three-column table found a 50x CSPRNG read pattern that is 40% of a Go handshake (TODO #293).
+
+### #293: the CSPRNG is read three bytes at a time, and in Go that is 40% of a handshake
+
+Found by TODO #292's measurement, and it is the reason a three-column table was worth
+building rather than a C column.  At the deployed ring, **the three languages do not agree
+about where a handshake's time goes.**  Same host, per handshake:
+
+```
+                     C          Go        Python (pure-Python NTT)
+  poly_mul       0.114 ms    0.197 ms      9.32 ms
+  m_blind        0.030 ms    0.642 ms      1.01 ms
+  handshake      0.508 ms    1.517 ms     39.96 ms
+```
+
+In C and in Python the handshake is the NTT — `poly_mul` is 97% of an `agree` in Python
+and four of them plus 7 µs is the whole thing in C.  **In Go it is not.**  `m_blind`
+derivation alone is 0.642 ms of a 1.517 ms handshake: more than all four `RnlPolyMul`
+calls together, and **21x the same step in C**.
+
+**Cause, measured rather than inferred.**  `RnlRandPoly` reads THREE BYTES per iteration
+of its rejection-sampling loop:
+
+```go
+buf := make([]byte, 3)
+for i < n {
+        if _, err := rand.Read(buf); err != nil { ... }
+```
+
+At `n = 1024` and a 0.39% rejection rate that is ~1028 separate `crypto/rand.Read` calls
+per polynomial.  Timed on its own, against the identical byte count drawn once:
+
+```
+  1028 x rand.Read(3)      0.613 ms
+     1 x rand.Read(3084)   0.012 ms      50x
+```
+
+0.613 of the 0.642 ms is that pattern — the cost is the per-call overhead, not the
+arithmetic and not the entropy.  **The fix pattern is already twenty lines below it in the
+same file**: `RnlCBDPoly` draws its entire buffer in one `rand.Read`.
+
+**The shape is not Go's alone; the consequence is.**  Python's `_rnl_rand_poly` calls
+`os.urandom(3)` per draw (0.70 ms of its 1.01 ms sampler) and Java's `rnlRandPoly` calls
+`rng.nextBytes(buf)` on a 3-byte array, so three of the four ports share it — C alone
+amortises, and not by design either: it reads the same 3 bytes at a time, but through a
+buffered `FILE *` that turns ~1028 reads into a handful.  What differs is whether it
+matters.  In Python the interpreted NTT is 39 ms and buries it at 1.8% of a handshake; in
+Go the NTT is fast enough for it to surface as 40%.  Java is unmeasured here and
+`SecureRandom.nextBytes` is a userspace DRBG rather than a kernel read, so its multiplier
+should be far smaller — worth confirming, not assuming.
+
+**Why it was invisible.**  `RnlRandPoly` is called once per handshake to blind the public
+polynomial, and at the retired `n = 256` it drew a quarter as many times against a
+protocol whose other steps were also cheaper, so it never dominated.  The one place the
+ratio becomes visible is a deployed-ring benchmark in a compiled language, which did not
+exist until #292.
+
+**Not a security defect and not a wire change.**  Buffering a CSPRNG read changes no
+output distribution: the draws are the same rejection sampling over the same source, and
+`RnlCBDPoly` already establishes that reading ahead is acceptable here.  What it does
+change is a shipped primitive in three languages, which is why #292 filed it rather than
+fixing it in passing.
+
+**Scope.**  Refill a buffer in Go's `RnlRandPoly` instead of reading per draw; keep the
+rejection threshold and the modulus reduction exactly as they are.  Decide separately
+whether Python and Java follow — the parity axes (`spec/check_language_parity.py`) compare
+declared constants and primitive presence, not sampling strategy, so a three-way split
+here is invisible to every checker and is a position to record either way.  Re-run all
+three `benchmarks/rnl_deployed_ring_cost.*` and update the recorded blocks, since the C
+file's cross-language table quotes the other two columns.
+
+**RESOLVED (v7.0.11).**  All three affected ports buffered; C unchanged and used as the
+control.  Measured on a quiet host, per polynomial at the deployed n = 1024, the shipped
+rejection sampler against the same sampler reading one buffer:
+
+| | shipped (per-draw) | buffered | ratio | absolute saving |
+|---|---|---|---|---|
+| C | already buffered via `FILE *` | — | — | — |
+| Go | 0.614 ms | 0.031 ms | **19.9x** | 0.583 ms |
+| Python | 1.002 ms | 0.459 ms | 2.2x | 0.543 ms |
+| Java | 0.163 ms | 0.053 ms | 3.0x | 0.110 ms |
+
+and in the deployed-ring benchmarks, per handshake:
+
+```
+                    C            Go                 Python (pure-Python NTT)
+  poly_mul      0.114 ms    0.197 ->  0.179 ms      9.32  ->  9.28 ms
+  m_blind       0.029 ms    0.642 ->  0.048 ms      1.01  ->  0.590 ms
+  handshake     0.505 ms    1.517 ->  1.088 ms     39.96  -> 39.36 ms
+```
+
+Go's `m_blind` is 13.4x cheaper and now 4.4% of a handshake rather than 40%; a Go
+handshake is 28% faster and 2.15x C's rather than 3.0x.  Five results.
+
+**(1) TWO OF THIS ITEM'S OWN NUMBERS WERE WRONG, both in the flattering direction.**
+The **50x is a ceiling the fix cannot reach**: it compared `1028 x rand.Read(3)` against
+one `rand.Read(3084)`, i.e. reads with no sampler around them.  Against the buffered
+sampler actually shipped -- same rejection loop, same threshold, same modulus reduction --
+it is **19.9x**, and the residue is loop arithmetic rather than read cost.  And **Java
+does not escape for the reason this item guessed.**  It predicted a small multiplier
+because `SecureRandom` is "a userspace DRBG rather than a kernel read"; it resolves to
+**NativePRNG**, which reads `/dev/urandom` behind a buffer.  Java escapes by C's
+mechanism -- buffering -- not by a different entropy source.  Worth confirming rather
+than assuming was the right instinct; the confirmation changed the explanation, not the
+conclusion.
+
+**(2) THE PYTHON/JAVA DECISION: all three follow, and the deciding number is the
+ABSOLUTE saving.**  Python's 1.8%-of-a-handshake reads like a reason to skip it and is
+not one.  The saving there is 0.54 ms on the sampler and 0.42 ms on the benchmark row --
+within 7% of Go's -- for the same five-line change; what the pure-Python NTT makes small
+is the FRACTION, not the saving.  What the fraction becomes on a numpy host is **not
+recorded**: this host has no numpy, and a Python RNL figure without a live path label is
+not a figure (#292's own rule, which would have been broken by projecting one).  The
+second half of the argument is the one this item already made: a three-way split in
+sampling strategy is invisible to every checker in the repo, so "leave Python and Java"
+is a position nothing would ever re-examine.
+
+**(3) THE DISTRIBUTION CLAIM IS DEMONSTRATED, NOT ASSERTED.**  "Read pattern only" is
+exactly the kind of claim that is easy to state and easy to get wrong, so a replay
+harness fed ONE fixed byte stream through both shapes and compared coefficient
+sequences: identical at n = 1024 / 256 / 64 / 1 and q = 65537 / 12289 / 257.  That pins
+the stronger property -- not merely the same distribution but the same CONSUMPTION ORDER
+of the stream, which is what `KAT/hkex_rnl.json` encodes.  `generate_kat.py --check`, Go
+`verify_kat.go` and Java `KatVerify` all pass on the pinned deployed n = 1024 vector.
+
+**(4) THE BUFFER REFILLS, SO CORRECTNESS NEVER DEPENDS ON THE MARGIN.**  Each port draws
+`n + n/64 + 8` coefficients' worth against a 0.39% rejection rate at q = 65537, and a run
+of rejections that outlasts the slack refills rather than reading short.  The margin sets
+the number of reads and nothing else -- which matters because `q` is a parameter and a
+margin tuned to one `q` would otherwise be a latent bug at another.
+
+**(5) C IS THE CONTROL, AND IT EARNED ITS KEEP.**  Re-running the untouched C column
+reproduced v7.0.10's figures (0.505 against 0.508 ms handshake, 0.114 poly_mul), which is
+what licenses comparing the Go and Python columns ACROSS the two releases at all.  A
+benchmark change without an unchanged column is an uncontrolled measurement.
+
+**Not changed, deliberately.**  `CryptosuiteTests/`'s `rnl_rand_poly_n` / `rnl32_rand_poly`
+and the `.ino` copy are harness re-implementations at retired dimensions (#225), out of
+scope here.  C's shipped `rnl_rand_poly` keeps its `fread(buf, 3, 1, urnd)`: stdio already
+turns ~1028 of those into a handful of `read(2)` calls, and rewriting it would remove the
+control rather than buy anything.
+
+Status: **DONE v7.0.11** — Go, Python and Java now buffer the rejection sampler's draws; Go's m_blind falls 13.4x from 40% of a handshake to 4.4%, the coefficient stream is proved byte-identical, and two of this item's own figures (the 50x, and Java's reason for escaping) are corrected.

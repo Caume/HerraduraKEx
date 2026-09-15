@@ -25,26 +25,40 @@ Run:
     python3 benchmarks/rnl_deployed_ring_cost.py
     python3 benchmarks/rnl_deployed_ring_cost.py --iters 5   # faster, noisier
 
-RECORDED (ARM64 SBC, CPython 3.11, PURE-PYTHON NTT -- no numpy on that host):
+RECORDED (ARM64 SBC, PURE-PYTHON NTT -- no numpy on that host), at v7.0.11,
+i.e. AFTER TODO #293:
 
     keygen (s, C)                        9.78 ms
-    agree, reconciler side (+hint)       9.62 ms
-    agree, receiver side                 9.50 ms
-    _rnl_poly_mul alone (NTT)            9.32 ms
-    m_blind derivation (rand+add)        1.01 ms
-    full two-party handshake            39.96 ms   (25 /s)
+    agree, reconciler side (+hint)       9.61 ms
+    agree, receiver side                 9.48 ms
+    _rnl_poly_mul alone (NTT)            9.28 ms
+    m_blind derivation (rand+add)        0.59 ms
+    full two-party handshake            39.36 ms   (25 /s)
 
-which is 79x the C sibling's 0.508 ms.  That factor is the interpreted NTT and
-nothing else: _rnl_poly_mul is 9.32 ms of a 9.62 ms agree, i.e. 97% of it.  On a
+which is 78x the C sibling's 0.505 ms.  That factor is the interpreted NTT and
+nothing else: _rnl_poly_mul is 9.28 ms of a 9.61 ms agree, i.e. 97% of it.  On a
 host with numpy the same script reports the numpy path and a much smaller
 factor -- which is the point of printing the path rather than the figure alone.
 
-The m_blind row carries a finding that is invisible from this column alone.
-_rnl_rand_poly calls os.urandom(3) once per rejection-sampling draw, ~1028 of
-them per polynomial, which is 0.70 ms of its 1.01 ms -- but 1.01 ms against a
+The m_blind row carried a finding that was invisible from this column alone.
+_rnl_rand_poly called os.urandom(3) once per rejection-sampling draw, ~1028 of
+them per polynomial, which was 0.70 ms of its 1.01 ms -- but 1.01 ms against a
 39.96 ms handshake is 1.8%, so nothing here would ever have pointed at it.  The
-same shape in Go is 40% of a handshake, because there the NTT is fast enough for
-it to surface.  See TODO #293 and the .go sibling.
+same shape in Go was 40% of a handshake, because there the NTT is fast enough
+for it to surface.  TODO #293 buffered all three affected ports and the row is
+now 0.59 ms.
+
+READ THAT 1.8% BEFORE CONCLUDING PYTHON DID NOT NEED IT.  The fraction is small
+here for one reason -- the NTT above it is the interpreted one -- and the
+fraction, not the saving, is what the pure-Python path makes small.  The
+ABSOLUTE saving is 0.42 ms on this row and 0.54 ms measured on the sampler
+alone, within 7% of Go's 0.58 ms, for the same five-line change.  What the
+fraction becomes on a numpy host is NOT recorded here, because this host has no
+numpy and a Python RNL figure without a live path label is not a figure -- the
+one rule this file exists to enforce.  #293 buffered Python on the absolute
+saving and on the fact that a three-way split in sampling strategy is invisible
+to every checker in the repo (spec/check_language_parity.py compares declared
+constants and primitive presence, not read patterns), not on a projection.
 
 USE --iters, and here is why it exists.  A first draft timed with 10 iterations
 and reported keygen at 25.2 ms against poly_mul's 9.4, which is impossible --

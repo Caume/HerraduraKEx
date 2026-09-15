@@ -9,33 +9,39 @@
 //
 // Run:  go run benchmarks/rnl_deployed_ring_cost.go
 //
-// RECORDED (ARM64 SBC), per operation:
+// RECORDED (ARM64 SBC), per operation, at v7.0.11 -- i.e. AFTER TODO #293:
 //
-//	keygen (s, C)                     0.235 ms
-//	agree, reconciler side (+hint)    0.249 ms
-//	agree, receiver side              0.226 ms
-//	RnlPolyMul alone (NTT)            0.197 ms
-//	m_blind derivation (rand+add)     0.642 ms
-//	full two-party handshake          1.517 ms   (659 /s)
+//	keygen (s, C)                     0.271 ms
+//	agree, reconciler side (+hint)    0.262 ms
+//	agree, receiver side              0.256 ms
+//	RnlPolyMul alone (NTT)            0.179 ms
+//	m_blind derivation (rand+add)     0.048 ms
+//	full two-party handshake          1.088 ms   (919 /s)
 //
-// THE FINDING, and Go is where it surfaces.  In C and in Python the handshake
-// is the NTT; here it is not.  m_blind derivation is 0.642 ms of a 1.517 ms
-// handshake -- more than all four RnlPolyMul calls together, and 21x the same
-// step in C (0.030 ms).  RnlRandPoly reads THREE BYTES per iteration of its
-// rejection loop, ~1028 crypto/rand.Read calls per polynomial at n = 1024.
-// Measured on its own, same byte count either way:
+// THE FINDING, and Go is where it surfaced.  In C and in Python the handshake
+// is the NTT; here it was not.  At v7.0.10 m_blind derivation was 0.642 ms of
+// a 1.517 ms handshake -- more than all four RnlPolyMul calls together, and
+// 21x the same step in C (0.029 ms).  RnlRandPoly read THREE BYTES per
+// iteration of its rejection loop, ~1028 crypto/rand.Read calls per polynomial
+// at n = 1024.  Measured on its own, same byte count either way:
 //
 //	1028 x rand.Read(3)      0.613 ms
 //	   1 x rand.Read(3084)   0.012 ms      50x
 //
-// so 0.613 of the 0.642 ms is per-call overhead, not entropy and not
-// arithmetic.  The fix pattern is twenty lines below it in the same file:
-// RnlCBDPoly draws its whole buffer in one call.  Python's _rnl_rand_poly and
-// Java's rnlRandPoly share the shape; C alone amortises it, through a buffered
-// FILE * rather than by design.  Only in Go does it dominate, because only
-// here is the NTT fast enough for it to show.  Filed as TODO #293 rather than
-// fixed here -- this item measures, and that is a change to a shipped
-// primitive in three languages.
+// so 0.613 of the 0.642 ms was per-call overhead, not entropy and not
+// arithmetic.  The fix pattern was twenty lines below it in the same file:
+// RnlCBDPoly has always drawn its whole buffer in one call.
+//
+// FIXED IN v7.0.11 (TODO #293), and the numbers above are the post-fix ones.
+// m_blind is 0.048 ms -- 13.4x cheaper, 4.4% of a handshake rather than 40%
+// -- and a handshake is 1.088 ms, 28% off, putting Go at 2.15x C rather than
+// 3.0x.  Read the 50x above as what it is, a CEILING: it compares reads with
+// no sampler around them.  Against the buffered sampler that actually shipped
+// -- same rejection loop, same threshold, same modulus reduction -- the ratio
+// is 19.9x (0.614 -> 0.031 ms) and the residue is loop arithmetic.  Python and
+// Java were buffered in the same item (2.2x and 3.0x); C needed nothing, and
+// remains the control that says the host has not moved between the two
+// releases.
 //
 // Go runs the NTT itself 1.7x slower than C (0.197 against 0.114), which is the
 // expected shape of []int with bounds checks against int32_t arrays and is not

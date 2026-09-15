@@ -1160,7 +1160,7 @@ benchmarks/                                          — recorded benchmark outp
                                                       only published figure for the protocol
                                                       this suite recommends was an interpreted-
                                                       Python one.  Full handshake at n=1024:
-                                                      C 0.508 ms, Go 1.517 ms, Python 39.96 ms
+                                                      C 0.505 ms, Go 1.088 ms, Python 39.36 ms
                                                       (pure-Python NTT; the .py prints which
                                                       path is live, and a Python RNL figure
                                                       without that label is not a figure).
@@ -1174,12 +1174,25 @@ benchmarks/                                          — recorded benchmark outp
                                                       time -- and HKEX-RNL is 32x FASTER than
                                                       [34]'s HKEX-GF handshake, so no cost
                                                       argument favours the classical quartet.
-                                                      (3) The three languages DISAGREE about
+                                                      (3) The three languages DISAGREED about
                                                       where the time goes, which is why there
-                                                      are three files: in Go the m_blind
-                                                      derivation is 40% of a handshake and 21x
-                                                      C's, a 50x CSPRNG read pattern filed as
-                                                      TODO #293.  They GATE on a
+                                                      are three files and is what the table
+                                                      found: in Go the m_blind derivation was
+                                                      40% of a handshake and 21x C's, a CSPRNG
+                                                      read pattern fixed in TODO #293
+                                                      (v7.0.11), which buffered Go, Python and
+                                                      Java -- C had always amortised through a
+                                                      buffered FILE *, so it is UNCHANGED and
+                                                      is the control proving the host did not
+                                                      move between the two releases.  Go's
+                                                      m_blind is now 0.048 ms, 4.4% of a
+                                                      handshake, and Go is 2.15x C rather than
+                                                      3.0x.  #293 also corrected two of #292's
+                                                      own numbers: the 50x was reads with no
+                                                      sampler around them (the shipped fix is
+                                                      19.9x), and Java escapes by NativePRNG
+                                                      buffering /dev/urandom, not by being a
+                                                      userspace DRBG.  They GATE on a
                                                       both-sides-agree control but are NOT in
                                                       run_findings_gates.py's set (it scans
                                                       SecurityProofsCode/ only) -- host-specific
