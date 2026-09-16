@@ -441,6 +441,25 @@ public final class HerraduraNl {
         return out;
     }
 
+    /* TODO #295: rnlCbdPoly implements CBD(1) and only CBD(1) -- the bit-pair
+     * extraction below (two bits per coefficient, four per byte) IS eta = 1
+     * written out.  Python's _rnl_cbd_poly has a general eta > 1 branch; Java,
+     * C and Go have the fast path alone, and until #295 that was silent: RNLB
+     * was declared here, compared against the other three by
+     * spec/check_language_parity.py's PARAMETERS axis, and read by nothing, so
+     * raising it would have moved Python's secret distribution and left this
+     * sampling CBD(1) with every check green.  Java has no compile-time
+     * assertion, so this fires at class load -- still before any key is
+     * generated.  An assertion rather than a general path is the recorded
+     * decision; see the matching comment in herradura.h. */
+    static {
+        if (RNLB != 1) {
+            throw new ExceptionInInitializerError(
+                "rnlCbdPoly implements CBD(1) only; raising RNLB needs a "
+                + "general eta path here, in C and in Go (Python has one)");
+        }
+    }
+
     /** CBD(1) polynomial: coefficient = a - b (mod q), a/b each one random bit. */
     public static int[] rnlCbdPoly(int n, int q, SecureRandom rng) {
         byte[] raw = new byte[(n + 3) / 4];

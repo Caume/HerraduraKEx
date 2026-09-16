@@ -609,6 +609,13 @@ const R3Value = 5 * 256 / 8 // 160
 // See SecurityProofs-8.md 11.34.8.
 const I3Value = 5 * 256 / 16 // 80
 
+// nlV3ISteps scales I3Value to a runtime width.  TODO #295: the duplex call
+// site wrote the ratio out as `5*n/16` and I3Value was read by nothing, so the
+// constant named a round count the code never consulted.  I3Value is the value
+// at the 256-bit reference width; scaling by n/256 is the same number at 256
+// and the same ratio elsewhere.
+func nlV3ISteps(n int) int { return n * I3Value / 256 }
+
 // V3Rows returns the chi row partition for width n: 5-bit rows followed by
 // 7-bit rows, the unique such partition with the fewest 7-rows. Both lengths
 // are odd and >= 5, so the minimum-row-5 constraint holds by construction.
@@ -971,7 +978,7 @@ func v2dplexPerm(state []byte, tw *BitArray, v3 bool) []byte {
 	sa := NewBitArray(n, new(big.Int).SetBytes(state))
 	var r *BitArray
 	if v3 {
-		r = NlFscxRevolveV3(sa, tw, 5*n/16)
+		r = NlFscxRevolveV3(sa, tw, nlV3ISteps(n))
 	} else {
 		r = NlFscxRevolveV2(sa, tw, n/4)
 	}
@@ -1503,6 +1510,21 @@ func RnlRandPoly(n, q int) []int {
 }
 
 // RnlCBDPoly samples n coefficients from CBD(eta=1): values in {-1,0,1} mod q.
+// TODO #295: RnlCBDPoly implements CBD(1) and only CBD(1) -- the bit-pair
+// extraction below (two bits per coefficient, four coefficients per byte) IS
+// eta = 1 written out.  Python's _rnl_cbd_poly has a general eta > 1 branch;
+// Go, C and Java have the fast path alone, and until #295 that was silent:
+// RnlEta was declared here, compared against the other three by
+// spec/check_language_parity.py's PARAMETERS axis, and read by nothing, so
+// raising it would have moved Python's secret distribution and left this
+// sampling CBD(1) with every check green.
+//
+// The guard below fails the BUILD if RnlEta leaves 1, in both directions:
+// uint(RnlEta-1) does not fit a uint when RnlEta is 0 and uint(1-RnlEta) does
+// not when it exceeds 1.  An assertion rather than a general path is the
+// recorded decision -- see the matching comment in herradura.h.
+const _ = uint(RnlEta-1) | uint(1-RnlEta)
+
 func RnlCBDPoly(n, q int) []int {
 	p := make([]int, n)
 	buf := make([]byte, (n+3)/4)
@@ -1602,6 +1624,25 @@ const (
 	SdfMaxRounds = 4096
 )
 
+// sternT and sternNRows scale the Stern-F parameters to a runtime width.
+//
+// TODO #295.  Go's Stern is width-parametric -- n is an argument, where C
+// compiles for a single KEYBITS -- so every call site used to write the RATIO
+// as a literal (`n / 16`, `seed.size / 2`) and SdfT and SdfNRows above were
+// read by NOTHING but two banner Printf calls.  That is worse than an unused
+// constant: the banner printed SdfT while the code derived its own weight, so
+// retuning the constant would have moved the printed parameter and left the
+// actual one at n/16, in a protocol where a mismatched error weight is a total
+// interop break.  Deriving from the constant instead makes it govern the code,
+// which is what #295's use census checks.
+//
+// The constants are the values at the suite's 256-bit reference width (C
+// writes them as KEYBITS/2 and KEYBITS/16), so scaling by n/256 reproduces the
+// ratio exactly at every width the suite uses: 256 -> (128, 16) as before, and
+// 32 -> (16, 2), which is the assembly and Arduino target's N=32, t=2.
+func sternT(n int) int     { return n * SdfT / 256 }
+func sternNRows(n int) int { return n * SdfNRows / 256 }
+
 // SternHash computes the Fiat-Shamir chain hash over items using NL-FSCX v1,
 // then applies HFSCX-256 to eliminate range compression (TODO #43, v1.6.0).
 // ds is the domain-separation tag (0=challenge, 1=c0, 2=c1, 3=c2, 4=KEM) (TODO #36, v1.6.1).
@@ -1636,7 +1677,7 @@ func SternMatrixRow(seed *BitArray, row int) *BitArray {
 // SternBuildH precomputes all n/2 rows of the parity-check matrix.
 // Hot paths (sign/verify) call this once and reuse H via sternSyndromeH.
 func SternBuildH(seed *BitArray) []*BitArray {
-	nRows := seed.size / 2
+	nRows := sternNRows(seed.size)
 	H := make([]*BitArray, nRows)
 	for i := range H {
 		H[i] = SternMatrixRow(seed, i)
@@ -1741,7 +1782,7 @@ func SternRandError(n, t int) *BitArray {
 // SternFKeygen generates (seed, e, syndrome): random seed, weight-t error, H·e^T.
 func SternFKeygen(n int) (*BitArray, *BitArray, *big.Int) {
 	seed := NewRandBitArray(n)
-	e := SternRandError(n, n/16)
+	e := SternRandError(n, sternT(n))
 	return seed, e, SternSyndrome(seed, e)
 }
 
@@ -1788,7 +1829,7 @@ func HpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
 			"Stern signatures have sub-128-bit soundness (demo only)", rounds, SdfProductionRounds)
 	}
 	n := msg.size
-	t := n / 16
+	t := sternT(n)
 	H := SternBuildH(seed)
 	sig := &SternSig{Rounds: make([]SternRound, rounds)}
 	type rtmp struct{ r, y, pi, sr, sy *BitArray }
@@ -1839,7 +1880,7 @@ func HpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
 func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *big.Int) bool {
 	rounds := len(sig.Rounds)
 	n := msg.size
-	t := n / 16
+	t := sternT(n)
 	H := SternBuildH(seed)
 	c0s := make([]*BitArray, rounds)
 	c1s := make([]*BitArray, rounds)
@@ -1896,7 +1937,7 @@ func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *bi
 // HpkeSternFEncap generates K = hash(seed, e'), ct = H·e'^T (Niederreiter KEM).
 // Returns (K, ct, e'). e' is returned for demo decap; production needs QC-MDPC decoder.
 func HpkeSternFEncap(seed *BitArray, n int) (*BitArray, *big.Int, *BitArray) {
-	ePrime := SternRandError(n, n/16)
+	ePrime := SternRandError(n, sternT(n))
 	ct := SternSyndrome(seed, ePrime)
 	return SternHash(4, seed, ePrime), ct, ePrime
 }
@@ -1967,7 +2008,7 @@ func sternRingChallenges(rounds, k int, msg *BitArray,
 // given pre-chosen challenge b using the HVZK simulator (no secret key needed).
 // H must be pre-built from seed (SternBuildH).
 func sternSimulateRound(b int, H []*BitArray, syndrome *big.Int, n int) SternRound {
-	t := n / 16
+	t := sternT(n)
 	var rnd SternRound
 	rnd.B = b
 	switch b {
@@ -2042,7 +2083,7 @@ func HpksSternRingSign(msg, e *BitArray, j int, ring []RingKeypair, rounds int) 
 
 	// Step 2: commit for real signer j
 	Hj := SternBuildH(ring[j].Seed)
-	t := n / 16
+	t := sternT(n)
 	type rtmp struct{ r, y, pi, sr, sy *BitArray }
 	tmp := make([]rtmp, rounds)
 	for r := 0; r < rounds; r++ {
@@ -2096,7 +2137,7 @@ func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) b
 	k := sig.K
 	rounds := sig.Rounds
 	n := msg.size
-	t := n / 16
+	t := sternT(n)
 
 	// Re-derive joint challenges
 	joint := sternRingChallenges(rounds, k, msg, sig.Members)
@@ -3363,9 +3404,15 @@ func TwkV3Decrypt(ct *BitArray, key []byte, sector uint64, bidx uint32) *BitArra
 const (
 	WotsW     = 16
 	WotsLog2W = 4
-	WotsL1    = 64 // 256 / log2(16)
-	WotsL2    = 3  // checksum digits base-16
-	WotsL     = 67
+	// TODO #295: WotsLog2W used to be declared and read by nothing -- its
+	// value appeared as the literals 4 and 0xF below, and this line's comment
+	// spelled out the derivation instead of performing it.  Java's Wots.java
+	// already wrote L1 = N / LOG2W; Go and C did not, so the constant named
+	// the Winternitz digit width without governing it, in a parameter that
+	// sets the signature's wire size.
+	WotsL1 = 256 / WotsLog2W // 64
+	WotsL2 = 3               // checksum digits base-16
+	WotsL  = 67
 )
 
 // wotsH applies one hash-chain step: h(x) = NlFscxRevolveV1(ROL(x,n/8), x, n/4).
@@ -3386,14 +3433,14 @@ func wotsChain(x *BitArray, steps int) *BitArray {
 func wotsMsgToDigits(msgHash []byte) []int {
 	digits := make([]int, WotsL)
 	for i := 0; i < WotsL1; i++ {
-		digits[i] = int((msgHash[i/2] >> (4 * uint(1-(i%2)))) & 0xF)
+		digits[i] = int((msgHash[i/2] >> (WotsLog2W * uint(1-(i%2)))) & (WotsW - 1))
 	}
 	cs := 0
 	for i := 0; i < WotsL1; i++ {
 		cs += WotsW - 1 - digits[i]
 	}
 	for i := 0; i < WotsL2; i++ {
-		digits[WotsL1+i] = (cs >> (4 * uint(WotsL2-1-i))) & 0xF
+		digits[WotsL1+i] = (cs >> (WotsLog2W * uint(WotsL2-1-i))) & (WotsW - 1)
 	}
 	return digits
 }

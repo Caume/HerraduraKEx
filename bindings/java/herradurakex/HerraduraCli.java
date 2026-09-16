@@ -288,7 +288,13 @@ public final class HerraduraCli {
     /** herradura.h ZKP_NL_PROD_ROUNDS -- the CLI default in all four
      *  implementations, giving full 128-bit soundness rather than the
      *  demo round count the suite files use. */
-    private static final int ZKP_CLI_ROUNDS = 219;
+    /* TODO #295: was a third literal 219.  Hcred.CLI_ROUNDS is the suite's
+     * declaration of this parameter and spec/check_language_parity.py pairs it
+     * with the other three languages' ZKP_NL_PROD_ROUNDS -- but the CLI, its
+     * only caller, kept its own copy, so the suite constant was read by
+     * nothing and the row's stated reason ("Java names it for the CLI, which
+     * is its only caller") was false. */
+    private static final int ZKP_CLI_ROUNDS = Hcred.CLI_ROUNDS;
 
     private static String privLabel(String algo) {
         switch (algo) {
@@ -1905,7 +1911,7 @@ public final class HerraduraCli {
     }
 
     private static final int HCRED_SIGN_ROUNDS = 219; // production Stern-F soundness
-    private static final int HCRED_CLI_ROUNDS = 219;  // production ZKBoo soundness
+    private static final int HCRED_CLI_ROUNDS = Hcred.CLI_ROUNDS; // production ZKBoo soundness
 
     private static void cmdCredIssue(Map<String, String> opt) throws IOException {
         Codec.HcredPubKey pub = loadHcredPubkey(req(opt, "in", "cred-issue"));

@@ -2015,6 +2015,12 @@ CENSUS_EXEMPT = {
                    "fixed-width stem is what the manifest names"),
     ],
     "go": [
+        (r"^(sternT|sternNRows|nlV3ISteps)$", "width-scaling helpers added by TODO "
+         "#295 so that SdfT, SdfNRows and I3Value GOVERN the code instead of "
+         "being restated as the literal ratios n/16, n/2 and 5n/16 at the call "
+         "site. Go alone needs them: its Stern and v3 duplex take the width as "
+         "an argument, where C compiles for a single KEYBITS and Python and "
+         "Java read the constant directly. Not a protocol step in any language"),
         (r"^(New|new)", "constructors for BitArray/QcMdpcPrf — the receiver surface "
                         "the DECL_PATTERNS comment excludes, reached through a "
                         "top-level func because Go has no constructors"),
@@ -2389,8 +2395,6 @@ PARAMETERS = {
                  "row weight"),
     "qcmdpc-t": (["QCMDPC_T", "QcMdpcT", "_QCMDPC_T", "Stern.QCMDPC_T"], "wire",
                  "error weight"),
-    "qcmdpc-w": (["QCMDPC_W", None, None, None], "local",
-                 "2d, the full row weight; the other three write 2*d at the call site"),
     "qcmdpc-nb-iter": (["QCMDPC_NB_ITER", "QcMdpcNbIter", "_QCMDPC_NB_ITER",
                         "Stern.QCMDPC_NB_ITER"], "local",
                        "BGF decoder iterations.  LOCAL and it matters: this changes the "
@@ -2724,6 +2728,214 @@ def check_parameters(errors):
     return counts, observed
 
 
+# ---------------------------------------------------------------------------
+# THE SEVENTH AXIS: is a declared parameter actually READ? (TODO #295)
+#
+# PARAMETERS above compares a constant's VALUE across the four languages and the
+# parameter census asserts every suite constant is named by a row.  Both read
+# DECLARATIONS.  Neither asks whether the code that constant governs ever
+# consults it -- and a constant declared in all four languages and read by one
+# of them passes every check in this file while the other three carry its value
+# as a literal.
+#
+# That is not hypothetical and it is not rare.  When #295 was written this
+# census flagged TEN cells across SIX rows, and every language was an offender:
+#
+#   rnl-eta       C, Go, Java  the CBD samplers hardcoded the eta = 1 bit-pair
+#                              extraction; only Python's _rnl_cbd_poly took eta
+#                              as an argument and branched on it.  Raising
+#                              RNL_ETA would have moved Python's secret
+#                              distribution and left three languages sampling
+#                              CBD(1), with the PARAMETERS row still green
+#                              because all four still DECLARED the same number
+#   sdf-t         Go           six call sites wrote `n / 16`; SdfT's only two
+#                              appearances were banner Printf arguments
+#   sdf-n-rows    Go           `seed.size / 2` at the call site
+#   nl-v3-i-steps Go           `5*n/16` at the call site
+#   wots-log2w    C, Go        the literals `4` and `0xF`, four places, with the
+#                              derivation written in the COMMENT beside the
+#                              declaration instead of performed
+#   qcmdpc-w      C            vestigial: nothing in any language computes the
+#                              full row weight, so both it and its row are gone
+#
+# TWO OF THOSE SIX ROWS CARRIED A REASON THAT WAS FALSE, which is the part no
+# other check could have caught.  qcmdpc-w's said "the other three write 2*d at
+# the call site" -- no language writes it anywhere, so the row documented a call
+# site that does not exist.  zkp-nl-prod-rounds' said Java "names it for the
+# CLI, which is its only caller" -- the CLI declared its own literal 219 and
+# never read the suite constant.  A curated reason about how a constant is USED
+# cannot be validated by a checker that only reads declarations.
+#
+# WHY A DIAGNOSTIC USE DOES NOT COUNT, and this is what makes the check worth
+# having rather than vacuous.  SdfT was not unreferenced: it appeared twice,
+# both times as an argument to a banner Printf, while the code derived its own
+# error weight from the width.  That is strictly worse than an unused constant
+# -- the banner would have printed a retuned SdfT while Stern kept using n/16,
+# in a protocol where a mismatched error weight is a total interop break.  So an
+# occurrence inside a print-like call's argument list is counted separately and
+# does not make a cell live.  A first pass of this census without that rule
+# scored SdfT as read, which is how the rule got written.
+#
+# KNOWN LIMIT, found by this item's own negative control.  The census asks
+# whether the constant is read ANYWHERE in the shipped path, so it cannot tell a
+# live read from one in dead code.  Reverting Go's call sites to `n / 16` while
+# leaving `func sternT` in place left SdfT "read" by a function nothing called,
+# and the check stayed green; it fires only once the helper goes too.  That is
+# the same shape as the two limits recorded above this table -- the axis reads
+# what the source SAYS, never what runs -- and closing it needs a call graph,
+# which is a different tool.  What the census does close is the case that
+# actually occurred six times here: a constant no code mentions at all, or
+# mentions only to print.
+#
+# CORPUS: the shipped path only -- suite, its walkthrough program, the CLI and
+# the codec.  Tests, benchmarks, KAT generators and docs/examples are NOT
+# consumers for this purpose: RNL_ETA's only C reference outside its #define was
+# a printf label in benchmarks/rnl_deployed_ring_cost.c, and counting that would
+# have scored the very cell this axis exists to find.  Getting the corpus wrong
+# in the LENIENT direction makes the whole check pass vacuously, which is the
+# failure mode check_docs_consistency.py's check E was built to avoid, so both
+# mistakes here were made on the way in and are recorded rather than smoothed
+# over.
+PARAM_USE_CORPUS = {
+    "c": [("herradura.h",), ("Herradura cryptographic suite.c",),
+          ("HerraduraCli", "herradura_cli.c"), ("HerraduraCli", "herradura_codec.h")],
+    "go": [("herradura", "herradura.go"), ("Herradura cryptographic suite.go",),
+           ("herradura", "codec.go"), ("HerraduraCli", "herradura_cli.go")],
+    "python": [("Herradura cryptographic suite.py",), ("HerraduraCli", "herradura.py"),
+               ("HerraduraCli", "codec.py"), ("HerraduraCli", "primitives.py")],
+    # java: every herradurakex/*.java, JAVA_NON_SUITE included -- HerraduraCli.java
+    # and Codec.java are this language's CLI and codec layer, so they are
+    # consumers here even though the parity extractor does not read them.
+}
+
+PARAM_DIAGNOSTIC_CALLS = {
+    "c": r"\b(?:printf|fprintf|sprintf|snprintf|puts|fputs)\s*\(",
+    "go": (r"\bfmt\.(?:Printf|Println|Print|Fprintf|Fprintln|Sprintf|Sprintln|Errorf)\s*\("
+           r"|\blog\.(?:Printf|Println|Fatalf|Fatalln)\s*\("),
+    "python": r"\bprint\s*\(",
+    "java": r"\b(?:System\.(?:out|err)\.(?:printf|println|print)|String\.format)\s*\(",
+}
+
+PARAM_USE_DECL = {
+    "c": r"#define\s+{n}\b",
+    "go": r"\b{n}\s*(?:[A-Za-z_]\w*\s*)?=",
+    "python": r"^\s*{n}\s*(?::\s*int\s*)?=",
+    "java": r"static\s+final\s+\w+\s+{n}\s*=",
+}
+
+# Self-invalidating in both directions, like every other curated table here: an
+# entry naming a cell that IS read fails (the gap closed -- delete the entry),
+# and so does one naming a row or language that does not exist.  EMPTY, and that
+# is the point: #295 fixed all ten cells rather than exempting any, so a future
+# entry here means a genuine declaration-only parameter was argued for, not that
+# the check was switched off.  Key: (row id, language) -> reason.
+PARAM_USE_EXEMPT = {}
+
+
+def _param_use_corpus():
+    """Comment-stripped shipped-path text per language."""
+    out = {}
+    for lang, parts in PARAM_USE_CORPUS.items():
+        chunks = []
+        for rel in parts:
+            with open(os.path.join(REPO, *rel), encoding="utf-8") as fh:
+                text = fh.read()
+            if lang == "python":
+                text = re.sub(r'"""(?:.|\n)*?"""', " ", text)
+                text = re.sub(r"[']{3}(?:.|\n)*?[']{3}", " ", text)
+                text = re.sub(r"#[^\n]*", " ", text)
+            else:
+                text = _strip_comments(text)
+            chunks.append(text)
+        out[lang] = "\n".join(chunks)
+    jdir = os.path.join(REPO, "bindings", "java", "herradurakex")
+    jtexts = []
+    for f in sorted(os.listdir(jdir)):
+        if f.endswith(".java"):
+            with open(os.path.join(jdir, f), encoding="utf-8") as fh:
+                jtexts.append(_strip_comments(fh.read()))
+    out["java"] = "\n".join(jtexts)
+    return out
+
+
+def _param_diagnostic_spans(text, lang):
+    """Argument-list spans of print-like calls, located by paren depth."""
+    spans = []
+    for m in re.finditer(PARAM_DIAGNOSTIC_CALLS[lang], text):
+        i = text.find("(", m.end() - 1)
+        if i < 0:
+            continue
+        depth, j = 0, i
+        while j < len(text):
+            if text[j] == "(":
+                depth += 1
+            elif text[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        spans.append((i, j))
+    return spans
+
+
+def check_param_use(errors):
+    """Every PARAMETERS cell must name a constant that language's shipped code
+    READS -- outside its own declaration, and outside a diagnostic call."""
+    text = _param_use_corpus()
+    spans = {lang: _param_diagnostic_spans(text[lang], lang) for lang in PARAM_LANGS}
+    seen_exempt = set()
+    live = 0
+    for rid, (cells, _observable, _meaning) in sorted(PARAMETERS.items()):
+        for lang, cell in zip(PARAM_LANGS, cells):
+            if cell is None:
+                continue
+            bare = re.escape(cell.split(".")[-1])
+            decl = PARAM_USE_DECL[lang].format(n=bare)
+            body = text[lang]
+            real = diag = 0
+            for m in re.finditer(r"\b%s\b" % bare, body):
+                ls = body.rfind("\n", 0, m.start()) + 1
+                le = body.find("\n", m.end())
+                le = len(body) if le < 0 else le
+                if re.search(decl, body[ls:le], re.M):
+                    continue
+                if any(a <= m.start() <= b for a, b in spans[lang]):
+                    diag += 1
+                else:
+                    real += 1
+            key = (rid, lang)
+            if real:
+                if key in PARAM_USE_EXEMPT:
+                    seen_exempt.add(key)
+                    errors.append(
+                        f"parameter {rid!r}: PARAM_USE_EXEMPT entry for {lang} describes "
+                        f"a constant that IS read ({cell}) -- delete the entry")
+                live += 1
+                continue
+            if key in PARAM_USE_EXEMPT:
+                seen_exempt.add(key)
+                continue
+            hint = (f" -- its {diag} occurrence(s) are all inside print-like calls, so the "
+                    f"code derives its own value while a banner reports this one"
+                    if diag else "")
+            errors.append(
+                f"parameter {rid!r}: {lang} declares {cell} and never READS it{hint}. "
+                f"Either make the code implementing this parameter consult the constant, "
+                f"or add a PARAM_USE_EXEMPT entry saying why it is declaration-only")
+    for key in sorted(PARAM_USE_EXEMPT):
+        if key in seen_exempt:
+            continue
+        rid, lang = key
+        if rid not in PARAMETERS:
+            errors.append(f"PARAM_USE_EXEMPT names row {rid!r}, which no longer exists")
+        elif lang not in PARAM_LANGS:
+            errors.append(f"PARAM_USE_EXEMPT names language {lang!r}, which is not one of "
+                          f"{PARAM_LANGS}")
+        else:
+            errors.append(f"PARAM_USE_EXEMPT entry {key} matches no cell -- delete it")
+    return live
+
+
 def main():
     errors = []
     numbers = check_numbered_tests(errors)
@@ -2731,6 +2943,7 @@ def main():
     checked = check_primitives(errors)
     census = check_census(errors)
     param_counts, _param_values = check_parameters(errors)
+    param_used = check_param_use(errors)
 
     if errors:
         print("Language parity: FAILED")
@@ -2766,6 +2979,13 @@ def main():
         f"{sum(1 for d in PARAM_DIVERGENCE.values() if d['status'] == 'acknowledged')} "
         f"acknowledged); {local_rows} rows are 'local', where a disagreement reaches no "
         f"artifact and this axis is the only check."
+    )
+    total_cells = sum(1 for cells, _o, _m in PARAMETERS.values() for c in cells if c)
+    print(
+        f"OK: parameter-use census — all {param_used} of {total_cells} declared "
+        f"PARAMETERS cells are READ by that language's shipped code, outside their own "
+        f"declaration and outside diagnostic calls; "
+        f"{len(PARAM_USE_EXEMPT)} declaration-only exemption(s)."
     )
     return 0
 
