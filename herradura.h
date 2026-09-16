@@ -1818,6 +1818,25 @@ static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
 
 /* CBD(eta=1): 4 coefficients per byte — bit-pairs (0-1),(2-3),(4-5),(6-7).
    Produces {-1,0,1} with P(-1)=P(1)=1/4, P(0)=1/2; zero mean. */
+/* TODO #295.  BOTH SAMPLERS BELOW IMPLEMENT CBD(1) AND ONLY CBD(1): the
+ * bit-pair extraction (two bits per coefficient, four coefficients per byte)
+ * IS eta = 1 written out, and there is no path here for any other eta.
+ * Python's _rnl_cbd_poly has a general eta > 1 branch; C, Go and Java have the
+ * fast path alone.  Until TODO #295 that was silent -- RNL_ETA was declared in
+ * all four languages, compared by spec/check_language_parity.py's PARAMETERS
+ * axis, and READ only by Python, so raising it would have moved Python's secret
+ * distribution and left the other three sampling CBD(1) with every check green.
+ *
+ * The assertion is the fix rather than a general path, and that is a decision:
+ * an eta > 1 branch in three more languages is code no deployed configuration
+ * runs and no test can exercise without moving the parameter, which is how the
+ * divergence it guards against would arrive in the first place.  This turns a
+ * silent divergence into a build failure, and it makes the constant govern the
+ * code that implements it -- which is what #295's use census checks. */
+_Static_assert(RNL_ETA == 1,
+               "rnl_cbd_poly implements CBD(1) only; raising RNL_ETA needs a "
+               "general eta path here, in Go and in Java (Python has one)");
+
 static void rnl_cbd_poly_dim(int32_t *p, FILE *urnd, int n)
 {
     int i;
@@ -4692,7 +4711,13 @@ static int hpkst_verify(const BitArray *C_agg, const BitArray *R,
 
 #define WOTS_W     16
 #define WOTS_LOG2W  4
-#define WOTS_L1    64   /* KEYBITS / log2(W) = 256/4 */
+/* TODO #295: WOTS_LOG2W used to be declared and read by nothing -- the four
+   places its value appears were written as the literals `4` and `0xF`, and the
+   comment on this line spelled out the derivation instead of performing it.
+   Java's Wots.java already wrote `L1 = N / LOG2W`; C and Go did not, so the
+   constant named the Winternitz digit width without governing it, in a
+   parameter that sets the signature's wire size. */
+#define WOTS_L1    (KEYBITS / WOTS_LOG2W)   /* 64 */
 #define WOTS_L2     3   /* checksum digits in base-16 */
 #define WOTS_L     67   /* total chain count */
 
@@ -4745,11 +4770,11 @@ static inline void _wots_msg_to_digits(int digits[WOTS_L],
                                         const uint8_t msg_hash[KEYBYTES])
 {
     for (int i = 0; i < WOTS_L1; i++)
-        digits[i] = (msg_hash[i/2] >> (4 * (1 - (i%2)))) & 0xF;
+        digits[i] = (msg_hash[i/2] >> (WOTS_LOG2W * (1 - (i%2)))) & (WOTS_W - 1);
     int cs = 0;
     for (int i = 0; i < WOTS_L1; i++) cs += (WOTS_W - 1 - digits[i]);
     for (int i = 0; i < WOTS_L2; i++)
-        digits[WOTS_L1 + i] = (cs >> (4 * (WOTS_L2 - 1 - i))) & 0xF;
+        digits[WOTS_L1 + i] = (cs >> (WOTS_LOG2W * (WOTS_L2 - 1 - i))) & (WOTS_W - 1);
 }
 
 /* WOTS-F sign: sig[i] = h^(w-1-d_i)(sk[i]). */
@@ -6883,7 +6908,6 @@ static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_
 #define QCMDPC_R       12323
 #define QCMDPC_D       71
 #define QCMDPC_T       134
-#define QCMDPC_W       (2 * QCMDPC_D)
 #define QCMDPC_RBYTES  ((QCMDPC_R + 7) / 8)       /* 1541 */
 #define QCMDPC_RWORDS  ((QCMDPC_R + 63) / 64)     /* 193  */
 #define QCMDPC_NB_ITER 5

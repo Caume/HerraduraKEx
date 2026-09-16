@@ -18397,3 +18397,143 @@ FAIL including the full 4x4 `rnl-sigma` sign/verify matrix in both directions.
 Status: **DONE v7.0.12** — C rejection-sampled the Σ-protocol mask and the other three took a raw modulo; all four now share C's scheme, which also removes a 32-bit `int` truncation in Go that put `y` outside `[-γ, γ]`.
 
 ---
+### #295: a parameter can be declared in all four languages and read by none of them
+
+`spec/check_language_parity.py`'s PARAMETERS axis (TODO #278) compares a
+constant's VALUE across C/Go/Python/Java — 82 rows, four cells each, naming the
+constant and never its number so the checker reads and evaluates it from each
+language's source.  The parameter census beside it asserts that every suite
+constant is named by some row.  Both read DECLARATIONS.  Neither asks whether
+the code that constant governs ever CONSULTS it.
+
+So a constant could be declared in all four languages, agree in all four, be
+named by a row, and be read by one language — with the other three carrying its
+value as a literal and every check in the repo green.  That is the third
+direction on this axis: #278's limit is *declared but not enforced*
+(`XMSS_MAX_H`), #294's is *used differently* (a sampling strategy), and this is
+*declared and not used at all*.
+
+**THE CENSUS FOUND TEN CELLS ACROSS SIX ROWS, and every language was an
+offender somewhere.**
+
+| row | languages | what the code wrote instead |
+|---|---|---|
+| `rnl-eta` | C, Go, Java | the CBD sampler's η=1 bit-pair extraction, hardcoded |
+| `sdf-t` | Go | `n / 16` at six call sites |
+| `sdf-n-rows` | Go | `seed.size / 2` |
+| `nl-v3-i-steps` | Go | `5*n/16` |
+| `wots-log2w` | C, Go | the literals `4` and `0xF`, four places |
+| `qcmdpc-w` | C | nothing — vestigial in every language |
+
+`rnl-eta` is the one worth stating plainly.  Python's `_rnl_cbd_poly(n, eta, q)`
+takes η and branches: an `eta == 1` bit-pair fast path and a general popcount
+path above it.  C's `rnl_cbd_poly`, Go's `RnlCBDPoly(n, q)` and Java's
+`rnlCbdPoly(n, q, rng)` are the fast path alone — Go and Java do not even accept
+η as a parameter, and C's `RNL_ETA` appeared nowhere in the tree outside its own
+`#define` except as a `printf` label in a benchmark.  A 3-vs-1 split with Python
+the correct one: the mirror image of #294, where C was alone and right.
+
+**MAGNITUDE, HONESTLY: nothing was presently wrong.**  At the deployed η=1 all
+four sample CBD(1), agree, and every KAT passes.  This was a latent trap, not a
+break.  Two things stop it being hypothetical.  Parameters in this repo DO move
+— #223 moved `RNL_N` 256→1024 and #276 moved `QCMDPC_R/D/T`, each breaking
+harnesses and documents that had hardcoded them — and the failure mode is
+silent: raise η in the header and Python's secret distribution moves while three
+languages keep sampling CBD(1), with the PARAMETERS row still green because all
+four still DECLARE the same number.
+
+**TWO OF THE SIX ROWS CARRIED A REASON THAT WAS FALSE**, which is the part no
+other check could have caught.  `qcmdpc-w`'s said "the other three write `2*d` at
+the call site" — no language writes it anywhere, so the row documented a call
+site that does not exist.  `zkp-nl-prod-rounds`' said Java "names it for the CLI,
+which is its only caller" — `HerraduraCli.java` declared its own literal `219`
+(twice) and never read `Hcred.CLI_ROUNDS`.  A curated reason about how a
+constant is USED cannot be validated by a checker that only reads declarations.
+
+**RESOLVED (v7.0.13).**
+
+**The checker is the deliverable.**  `check_param_use()` in
+`spec/check_language_parity.py` is the SEVENTH axis: every PARAMETERS cell must
+name a constant that language's shipped code READS, outside its own declaration
+and outside a diagnostic call.  `PARAM_USE_EXEMPT` is self-invalidating in both
+directions like every other curated table there — an entry naming a cell that IS
+read fails, and so does one naming a row or language that does not exist.  It
+ships EMPTY: all ten cells were fixed rather than exempted, so a future entry
+means a genuine declaration-only parameter was argued for, not that the check was
+switched off.
+
+**A DIAGNOSTIC USE DOES NOT COUNT, and that rule is what makes the check worth
+having.**  `SdfT` was not unreferenced: it appeared twice, both times as an
+argument to a banner `Printf`, while Stern derived its own error weight from the
+width.  That is strictly worse than an unused constant — the banner would have
+printed a retuned `SdfT` while the code kept using `n/16`, in a protocol where a
+mismatched error weight is a total interop break.  A first pass of the census
+without that rule scored `SdfT` as read, which is how the rule got written.
+
+**The corpus is the shipped path only** — suite, walkthrough program, CLI,
+codec.  Tests, benchmarks, KAT generators and `docs/examples` are not consumers
+here: `RNL_ETA`'s only C reference outside its `#define` was a `printf` label in
+`benchmarks/rnl_deployed_ring_cost.c`, and counting it would have scored the very
+cell this axis exists to find.  Getting the corpus wrong in the LENIENT
+direction makes the whole check pass vacuously — check E's failure mode — so
+both mistakes were made on the way in and are recorded in the source rather than
+smoothed over.
+
+**The fixes, and one recorded decision.**
+
+1. **`rnl-eta` is an ASSERTION, not a general η path.**  `_Static_assert` in C, a
+   `const _ = uint(RnlEta-1) | uint(1-RnlEta)` build guard in Go, a class-load
+   check in Java.  An η>1 branch in three more languages is code no deployed
+   configuration runs and no test can exercise without moving the parameter —
+   which is how the divergence it guards against would arrive in the first
+   place.  The assertion turns a silent divergence into a build failure and
+   makes the constant govern the code.  Verified by negative control: C fails to
+   compile, Go fails in BOTH directions (η=0 and η=2), Java throws
+   `ExceptionInInitializerError` before any key is generated.
+2. **Go's three width-parametric derivations** now scale from the constant:
+   `sternT`, `sternNRows`, `nlV3ISteps`, each `n * CONST / 256`.  Go's Stern and
+   v3 duplex take the width as an argument where C compiles for a single
+   `KEYBITS`, so the ratio was written out at the call site and the constant was
+   read by nothing.  Exact at every width the suite uses — 256 → (128, 16) as
+   before, 32 → (16, 2), which is the assembly and Arduino target's N=32, t=2.
+3. **`WOTS_LOG2W`** now derives `WOTS_L1 = (KEYBITS / WOTS_LOG2W)` and drives the
+   digit extraction (`>> WOTS_LOG2W`, `& (WOTS_W - 1)`) in C and Go.  Java's
+   `Wots.java` already wrote `L1 = N / LOG2W`; C and Go had the derivation in the
+   COMMENT beside the declaration instead of performing it.
+4. **`QCMDPC_W` and its row are deleted.**  No language computes the full row
+   weight, so both the constant and the row describing it were vestigial.
+5. **Java's CLI reads `Hcred.CLI_ROUNDS`** instead of declaring `219` twice more.
+
+**A KNOWN LIMIT, found by this item's own negative control** and recorded in the
+source.  The census asks whether a constant is read ANYWHERE in the shipped
+path, so it cannot tell a live read from one in dead code: reverting Go's call
+sites to `n / 16` while leaving `func sternT` in place left `SdfT` "read" by a
+function nothing called, and the check stayed green — it fires only once the
+helper goes too.  Same shape as the two limits already recorded on this axis:
+it reads what the source SAYS, never what runs.  Closing it needs a call graph,
+which is a different tool.  What the census does close is the case that actually
+occurred six times here — a constant no code mentions at all, or mentions only
+to print.
+
+**One regression caught downstream and fixed rather than reverted.**
+`generate_spec.py --check` went stale: `_resolve` handled only `NAME / <digits>`,
+so `(KEYBITS / WOTS_LOG2W)` emitted the STRING `"KEYBITS / WOTS_LOG2W"` where
+`spec/` had carried the integer 64.  The resolver now accepts a named divisor and
+the WOTS block registers `WOTS_LOG2W` in its env; `spec/herradura-protocol-
+spec.json` is byte-identical and `l1` is still 64.
+`check_docs_consistency.py`'s check E separately caught CLAUDE.md's "83 rows"
+against the 82 left by the `qcmdpc-w` deletion — both checks doing exactly the
+job they were built for.
+
+**Verification.**  All four build; C/Go/Python suites and Java `SelfTest` exit 0;
+all five checkers OK; `generate_kat.py --check`, `generate_pem_kat.py --check`,
+`verify_kat.go` and `test_kat_vectors.sh` pass — the KATs are the value-
+preservation proof, since every fix had to leave WOTS, Stern and the v3 duplex
+bit-identical; `test_cross_lang_matrix.sh` and `test_zkp_hybrid_family.sh` pass.
+Three negative controls on the new axis: a reverted fix is caught (with the
+diagnostic-only message for `sdf-t`), an exemption naming a cell that IS read is
+caught, and an exemption naming a deleted row is caught.
+
+Status: **DONE v7.0.13** — a constant could be declared in all four languages, agree in all four, and be read by one; ten such cells across six rows, and the seventh axis that now fails on the next one.
+
+---

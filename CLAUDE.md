@@ -1041,7 +1041,7 @@ spec/                                                — machine-readable protoc
                                                       PARAMETERS / PARAM_DIVERGENCE (TODO #278),
                                                       in check_language_parity.py, are the SIXTH
                                                       axis and the first to compare a numeric
-                                                      parameter's VALUE: 83 rows, four cells each,
+                                                      parameter's VALUE: 82 rows, four cells each,
                                                       naming the CONSTANT and never its number, so
                                                       the checker reads and evaluates it from each
                                                       language's source and the table cannot go
@@ -1110,6 +1110,76 @@ spec/                                                — machine-readable protoc
                                                       other; it works only because #294 adopted C's
                                                       scheme verbatim in the other three rather
                                                       than inventing a fourth correct sampler
+                                                      PARAM_USE_CORPUS / PARAM_USE_EXEMPT (TODO
+                                                      #295), in check_language_parity.py, are the
+                                                      SEVENTH axis and the one BELOW the sixth:
+                                                      PARAMETERS compares a constant's VALUE and
+                                                      the parameter census asserts every constant
+                                                      is named by a row, but both read
+                                                      DECLARATIONS, so neither asks whether the
+                                                      code that constant governs ever CONSULTS it.
+                                                      A constant could be declared in all four
+                                                      languages, agree in all four, be named by a
+                                                      row, and be READ BY ONE -- the other three
+                                                      carrying its value as a literal, every check
+                                                      green.  Ten such cells across six rows when
+                                                      #295 ran the census, and EVERY LANGUAGE was
+                                                      an offender somewhere: rnl-eta in C, Go and
+                                                      Java (the CBD samplers hardcode the eta=1
+                                                      bit-pair extraction; only Python's
+                                                      _rnl_cbd_poly takes eta and branches, and C's
+                                                      RNL_ETA appeared nowhere outside its #define
+                                                      but a benchmark printf), sdf-t / sdf-n-rows /
+                                                      nl-v3-i-steps in Go (the ratios n/16,
+                                                      seed.size/2, 5n/16 written out at the call
+                                                      site), wots-log2w in C and Go (the literals 4
+                                                      and 0xF, with the derivation in the COMMENT
+                                                      beside the declaration instead of performed),
+                                                      qcmdpc-w in C (vestigial everywhere; the
+                                                      constant and its row are now deleted).  This
+                                                      is the THIRD direction on the axis -- #278's
+                                                      limit is declared-but-not-ENFORCED, #294's is
+                                                      used-DIFFERENTLY, #295's is declared and not
+                                                      used AT ALL.  TWO OF THE SIX ROWS CARRIED A
+                                                      FALSE REASON, which is what no other check
+                                                      could catch: qcmdpc-w's cited a 2*d call site
+                                                      existing in no language, and
+                                                      zkp-nl-prod-rounds' said Java "names it for
+                                                      the CLI, which is its only caller" while the
+                                                      CLI declared its own literal 219 twice.  A
+                                                      curated reason about how a constant is USED
+                                                      cannot be validated by a checker that only
+                                                      reads declarations.  A DIAGNOSTIC USE DOES
+                                                      NOT COUNT, and that rule is what keeps this
+                                                      from being vacuous: SdfT was not
+                                                      unreferenced, it appeared twice as banner
+                                                      Printf arguments while Stern derived its own
+                                                      error weight from the width -- strictly worse
+                                                      than an unused constant, since the banner
+                                                      would have printed a retuned SdfT while the
+                                                      code kept using n/16.  A first pass without
+                                                      the rule scored it as read.  CORPUS is the
+                                                      shipped path only (suite, walkthrough, CLI,
+                                                      codec): counting benchmarks would have scored
+                                                      RNL_ETA live off a printf label, and getting
+                                                      the corpus wrong in the LENIENT direction
+                                                      makes the whole check pass vacuously.
+                                                      PARAM_USE_EXEMPT is self-invalidating in both
+                                                      directions and ships EMPTY -- all ten cells
+                                                      were FIXED, so a future entry means a
+                                                      declaration-only parameter was argued for,
+                                                      not that the check was switched off.  KNOWN
+                                                      LIMIT, found by #295's own negative control:
+                                                      the census asks whether a constant is read
+                                                      ANYWHERE in the shipped path, so it cannot
+                                                      tell a live read from one in DEAD CODE --
+                                                      reverting Go's call sites while leaving func
+                                                      sternT in place kept SdfT "read" and the
+                                                      check green.  Closing that needs a call
+                                                      graph; what the census does close is the case
+                                                      that occurred six times here, a constant no
+                                                      code mentions at all or mentions only to
+                                                      print
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,

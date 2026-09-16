@@ -2,6 +2,62 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.13] - 2026-09-15
+
+### TODO #295 — a parameter can be declared in all four languages and read by none of them
+
+`spec/check_language_parity.py`'s PARAMETERS axis (#278) compares a constant's VALUE across
+C/Go/Python/Java, and the census beside it asserts every suite constant is named by a row.
+Both read DECLARATIONS.  Neither asks whether the code that constant governs ever CONSULTS
+it — so a constant could be declared in all four, agree in all four, be named by a row, and
+be read by ONE, with the other three carrying its value as a literal and every check green.
+That is the third direction on this axis: #278's limit is *declared but not enforced*,
+#294's is *used differently*, this is *declared and not used at all*.
+
+**Ten cells across six rows, every language an offender somewhere.**  `rnl-eta` in C, Go and
+Java — the CBD samplers hardcode the η=1 bit-pair extraction, and only Python's
+`_rnl_cbd_poly` takes η and branches on it; Go and Java do not even accept it as a
+parameter, and C's `RNL_ETA` appeared nowhere in the tree outside its own `#define` except
+as a `printf` label in a benchmark.  `sdf-t`, `sdf-n-rows` and `nl-v3-i-steps` in Go — the
+ratios `n/16`, `seed.size/2` and `5*n/16` written out at the call site.  `wots-log2w` in C
+and Go — the literals `4` and `0xF`, four places, with the derivation in the COMMENT beside
+the declaration instead of performed.  `qcmdpc-w` in C — vestigial in every language.
+
+**Nothing was presently wrong, and the entry says so.**  At the deployed η=1 all four sample
+CBD(1) and every KAT passes.  This was a latent trap.  It is not hypothetical because
+parameters in this repo do move — #223 moved `RNL_N`, #276 moved `QCMDPC_R/D/T` — and the
+failure mode is silent.
+
+**Two of the six rows carried a reason that was FALSE**, which no other check could catch.
+`qcmdpc-w`'s cited a `2*d` call site that exists in no language; `zkp-nl-prod-rounds`' said
+Java "names it for the CLI, which is its only caller" while the CLI declared its own literal
+`219` twice and never read the suite constant.
+
+**The checker is the deliverable.**  `check_param_use()` is the seventh axis: every
+PARAMETERS cell must name a constant that language's shipped code READS, outside its own
+declaration and outside a diagnostic call.  `PARAM_USE_EXEMPT` is self-invalidating in both
+directions and ships EMPTY — all ten cells were fixed, not exempted.  **A diagnostic use does
+not count**, and that rule is what keeps the check from being vacuous: `SdfT` appeared twice,
+both as banner `Printf` arguments, while Stern derived its own error weight — a banner that
+would have reported a retuned constant while the code kept using `n/16`.  A first pass
+without the rule scored it as read.
+
+**Fixes.**  `rnl-eta` is an ASSERTION rather than a general η path — `_Static_assert` in C, a
+build guard in Go, a class-load check in Java — because an η>1 branch in three more languages
+is code no deployed configuration runs and no test can exercise without moving the parameter.
+Go's three width-parametric derivations now scale from the constant (`n * CONST / 256`, exact
+at 256 → (128, 16) and at 32 → (16, 2), the assembly target).  `WOTS_LOG2W` now derives
+`WOTS_L1` and drives the digit extraction in C and Go.  `QCMDPC_W` and its row are deleted.
+Java's CLI reads `Hcred.CLI_ROUNDS`.
+
+**A known limit, found by this item's own negative control:** the census cannot tell a live
+read from one in dead code — leaving `func sternT` in place while reverting its call sites
+kept `SdfT` "read".  Recorded in the source alongside the axis's two existing limits.
+
+`generate_spec.py`'s `_resolve` handled only `NAME / <digits>`, so `(KEYBITS / WOTS_LOG2W)`
+emitted a string where `spec/` carried 64; it now accepts a named divisor, and the spec is
+byte-identical.
+
 ## [7.0.12] - 2026-09-14
 
 ### TODO #294 — the Σ-protocol's masking value was modulo-biased in three of four languages

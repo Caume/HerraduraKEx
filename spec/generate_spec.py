@@ -1362,9 +1362,18 @@ def _resolve(expr, env):
     expression string if it can't be resolved (e.g. unknown identifier)."""
     if isinstance(expr, int):
         return expr
-    m = re.fullmatch(r"([A-Z_][A-Z0-9_]*)\s*/\s*(\d+)", expr)
+    # TODO #295: the divisor may itself be a named constant.  WOTS_L1 was the
+    # literal 64 with "KEYBITS / log2(W) = 256/4" in its comment; #295 made it
+    # (KEYBITS / WOTS_LOG2W) so that WOTS_LOG2W governs the digit width instead
+    # of being restated as `4` and `0xF` at the call sites.  Resolving only
+    # NAME / <digits> turned that into the STRING "KEYBITS / WOTS_LOG2W" in
+    # spec/, which --check caught as staleness.
+    m = re.fullmatch(r"([A-Z_][A-Z0-9_]*)\s*/\s*([A-Z_][A-Z0-9_]*|\d+)", expr)
     if m and m.group(1) in env:
-        return env[m.group(1)] // int(m.group(2))
+        rhs = m.group(2)
+        div = env.get(rhs) if not rhs.isdigit() else int(rhs)
+        if isinstance(div, int) and div:
+            return env[m.group(1)] // div
     return expr
 
 
@@ -1399,7 +1408,10 @@ def build_parameters():
     for name, key in [("WOTS_LOG2W", "log2_w"), ("WOTS_L1", "l1"), ("WOTS_L2", "l2"), ("WOTS_L", "l_total")]:
         v = extract_const_int(h_src, name)
         if v:
+            v = _resolve(v, env)          # TODO #295: WOTS_L1 is (KEYBITS / WOTS_LOG2W)
             wots[key] = v
+            if isinstance(v, int):
+                env[name] = v
     if wots:
         params["wots"] = wots
     rnl_n = extract_const_int(h_src, "RNL_N")
