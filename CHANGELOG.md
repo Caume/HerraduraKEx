@@ -2,6 +2,73 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.14] - 2026-09-16
+
+### TODO #296 — the fixed-stream replay #294 prescribed did not exist, and nothing could tell
+
+TODO #294 found `rnl_sigma_sign` drawing its ZK mask by rejection sampling in C and by raw
+modulo in the other three, and recorded that the only check available for that class is a
+FIXED-STREAM REPLAY — a sampler's output is fresh per call and reaches no artifact, so no
+KAT pins it and none could.  It verified its own fix that way and threw the harness away;
+`CLAUDE.md` went on asserting, present tense, that the check existed.  A grep for it
+across every `.sh`, `.py`, `.c` and `.go` returned `CLAUDE.md` alone.  24 functions in
+`herradura.h` read the CSPRNG directly and #294 examined one of them.
+
+`KAT/sampler_replay.json` is that harness kept: four leaf samplers, each with a fixed input
+stream, the value the shipped sampler produces, and — where all four ports read at the same
+granularity — the bytes consumed.  It needed no new test script and no CI wiring, because
+four ports against one pinned vector is four ports against each other and every consumer
+already existed: `generate_kat.py --check` (the regenerate-and-diff IS Python's replay),
+`verify_kat_c` via `fmemopen`, `verify_kat.go` via a swapped `rand.Reader`, and
+`KatVerify` via a `SecureRandom` subclass.  `KAT/sampler_replay_vector.h` is the generated
+C view, on `hcred_kkw_vector.h`'s precedent, and is regenerate-and-diff checked.
+
+The census found three of four samplers disagreeing across ports, every implementation
+individually correct: the weight-t error vector had **three** schemes (C Fisher–Yates on a
+1-byte draw, Go Fisher–Yates over `crypto/rand.Int`, Python/Java rejection into a set on a
+4-byte draw) and the OPRF blinding scalar another three.  No distribution was wrong; what
+was wrong is that a primitive with three consumption orders cannot be pinned against
+itself.  Both now converge on Python and Java's scheme, adopting it verbatim rather than
+inventing a fifth — #294's precedent.  That also lifts C's `uint8_t idx[KEYBITS]` cap of
+n ≤ 256.
+
+**And one real defect, reachable only under a chosen stream.**  C's `oprf_blind` rejected a
+degenerate scalar with `continue` inside a `do/while`, which jumps to the CONDITION and not
+to the top of the body — so a rejected draw re-tested the previous iteration's verdict,
+uninitialised on the first.  Had the garbage compared equal to 1 it would have returned
+r = 1, i.e. `alpha = H(x)` with the blinding gone.  Reachability against `/dev/urandom` is
+2^-255, so this is not a practical vulnerability; it is UB that no random run could enter,
+which is why the `sanitizers` job never saw it and a fixed stream found it immediately.
+Now a `for(;;)` with an explicit `break`, the shape the other three already had.
+
+`spec/check_language_parity.py` gains an **eighth axis**, `check_randomness`, which is what
+stops the harness decaying: every sampler in the vector must be pinned in all four
+languages and every table entry must name a row the vector carries (self-invalidating both
+ways), and `RANDOMNESS_CENSUS` records every function reading raw entropy — derived from
+source each run and compared, 24/24/27/30 in C/Go/Python/Java — so a new randomness
+consumer anywhere fails CI until someone says whether a fixed stream reaches it.  The axis
+caught its own blind spot on the way in: the Java regex matched a bare `\w+` first
+argument to `new BigInteger(bits, rng)`, so `Oprf.blind` and `Oprf.keygen` were not
+censused at all, and it was the pinned-sampler cross-check that said so.
+
+Two limits are recorded rather than asserted away.  `rnl_rand_poly` pins output but not
+byte count: it is block-buffered in Go, Python and Java (#293) and unbuffered in C, so the
+byte-to-draw mapping is common and the total is not.  And the census is syntactic, so a
+sixth spelling of "read the CSPRNG" would go unseen; the guard is that an empty
+per-language census is an error.  Pinning the remaining 101 consumers means replaying whole
+operations rather than leaf samplers, filed as TODO #297.
+
+### Changed
+- `herradura.h`: `oprf_blind`'s rejection loop is a `for(;;)` with an explicit `break`;
+  `stern_rand_error` is 4-byte rejection sampling into a set.
+- `herradura/herradura.go`: `SternRandError`, `OprfBlind` and `OprfKeygen` converge on the
+  Python/Java draw schemes.
+- `KAT/generate_kat.py`: emits `sampler_replay.json` and `sampler_replay_vector.h`; both
+  are covered by `--check`.
+- `KAT/verify_kat.go`, `KAT/verify_kat_c.c`, `bindings/java/herradurakex/KatVerify.java`:
+  replay the vector through their own port.
+- `spec/check_language_parity.py`: eighth axis, `check_randomness`.
+
 ## [7.0.13] - 2026-09-15
 
 ### TODO #295 — a parameter can be declared in all four languages and read by none of them

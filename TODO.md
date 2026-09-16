@@ -130,3 +130,41 @@ figures already published, not as a gate on anything.
 Status: **OPEN**
 
 ---
+
+---
+
+### #297: the sampler replay reaches leaf samplers, not whole operations
+
+TODO #296 built the fixed-stream replay #294 prescribed and pinned **four leaf samplers**
+in all four languages.  Its raw-entropy census counts **105** functions that read the
+CSPRNG directly — 24 in C, 24 in Go, 27 in Python, 30 in Java — so 101 of them are
+recorded as existing and are not individually pinned.
+
+**What is missing, precisely.**  A leaf sampler is separately callable, so a fixed stream
+reaches it directly.  The rest are protocol operations — `rnl_sigma_sign`, `zkp_nl_prove`,
+`hcred_prove_kkw`, `stern_f_keygen`, `qcmdpc_keygen`, `hpake_register` and so on — whose
+draw loops are inline and whose consumption order is only observable by replaying the
+**whole operation**: supply a key, a message and a stream, and pin what comes out.  That
+is strictly stronger than what #296 pins, because it covers the ORDER in which an
+operation visits its samplers, not only what each sampler does in isolation.
+
+**Why it is worth doing, and the precedent is #294 itself.**  #294's own defect was in
+`rnl_sigma_sign`'s inline mask draw — one of the 101, not one of the four.  #296 pins the
+samplers that primitive *calls* but not the primitive itself, so the exact shape that
+started this line of work is still not pinned.  Note what makes this newly possible: a
+signature is randomised per call and so cannot be KAT'd, but under a fixed stream it is
+deterministic, which is the whole insight #294 recorded and #296 implemented for leaves.
+
+**The cost, which is why it is separate.**  Each operation needs a fixed *statement* as
+well as a fixed stream — a keypair, a message, parameters — so the vector grows a setup
+section per row, and the four consumers grow a driver per row rather than sharing one
+switch.  #296 deliberately stopped at the boundary where a row is one call with scalar
+arguments.
+
+**Do not start by widening the census.**  The census is a tripwire on the set of names and
+is already exhaustive in both directions; what this item adds is coverage, not detection.
+And read #296's note on `rnl_rand_poly` first: block buffering (#293) means byte-count
+equality is not available on every row, and a whole-operation replay will meet that on
+more of them than a leaf replay does.
+
+Status: **OPEN**

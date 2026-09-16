@@ -2165,26 +2165,44 @@ static void stern_apply_perm(BitArray *out, const uint8_t *perm,
     }
 }
 
-/* Generate weight-SDF_T error vector via partial Fisher-Yates + /dev/urandom. */
+/* Generate a weight-SDF_T error vector from /dev/urandom. */
+/* TODO #296: 4-byte rejection sampling into a set, the scheme Python's
+ * _csprng_weight_t and Java's csprngWeightT already used.  This was a partial
+ * Fisher-Yates over a uint8_t index array drawing ONE byte per step against a
+ * shrinking range, and Go's was a partial Fisher-Yates over crypto/rand.Int --
+ * three distinct schemes for one primitive across four languages.  All three
+ * were unbiased, so nothing was WRONG; what was wrong is that a primitive with
+ * three consumption orders cannot be pinned against itself, and local
+ * randomness reaching no artifact has no other check available (TODO #294).
+ * Adopting an existing scheme verbatim rather than inventing a fourth is #294's
+ * precedent.  The 4-byte draw also removes the uint8_t index array's hard cap
+ * of n <= 256, which the byte-at-a-time draw could not have followed.
+ * NOT a constant-time sampler: the draw count depends on rejections and on
+ * duplicate positions.  Neither was the Fisher-Yates it replaces (its rejection
+ * count varied too), and Stern's timing exposure is a recorded open position --
+ * SecurityProofsCode/stern_ct_demo.py exists to say the leak is still there. */
 static void stern_rand_error(BitArray *e, FILE *urnd)
 {
-    uint8_t idx[KEYBITS];
-    int i;
-    for (i = 0; i < KEYBITS; i++) idx[i] = (uint8_t)i;
+    static const uint64_t span = (uint64_t)1 << 32;
+    const uint64_t threshold = span - (span % (uint64_t)KEYBITS);
+    int count = 0;
     memset(e->b, 0, KEYBYTES);
-    for (i = KEYBITS - 1; i >= KEYBITS - SDF_T; i--) {
-        unsigned int range = (unsigned int)(i + 1);
-        unsigned int thresh = 256 - (256 % range);
-        uint8_t rnd;
-        int j;
-        do {
-            if (fread(&rnd, 1, 1, urnd) != 1) {
-                fputs("urandom error\n", stderr); exit(1);
-            }
-        } while ((unsigned int)rnd >= thresh);
-        j = (int)(rnd % range);
-        { uint8_t tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp; }
-        e->b[KEYBYTES - 1 - idx[i] / 8] |= (uint8_t)(1u << (idx[i] % 8));
+    while (count < SDF_T) {
+        uint8_t buf[4];
+        uint64_t v;
+        unsigned int pos;
+        uint8_t mask;
+        if (fread(buf, 1, 4, urnd) != 4) {
+            fputs("urandom error\n", stderr); exit(1);
+        }
+        v = ((uint64_t)buf[0] << 24) | ((uint64_t)buf[1] << 16)
+          | ((uint64_t)buf[2] << 8)  | (uint64_t)buf[3];
+        if (v >= threshold) continue;
+        pos = (unsigned int)(v % (uint64_t)KEYBITS);
+        mask = (uint8_t)(1u << (pos % 8));
+        if (e->b[KEYBYTES - 1 - pos / 8] & mask) continue;   /* already chosen */
+        e->b[KEYBYTES - 1 - pos / 8] |= mask;
+        count++;
     }
 }
 
@@ -4341,13 +4359,25 @@ static void oprf_blind(const uint8_t *x, size_t xlen,
 {
     BitArray hx, r_inv, check;
     oprf_hash_to_field(&hx, x, xlen);
-    do {
+    /* TODO #296: this was a do/while whose zero-or-one rejection used `continue`
+     * -- which in a do/while jumps to the CONDITION, not to the top of the body.
+     * A rejected draw therefore re-tested the PREVIOUS iteration's `check`, and
+     * on the first iteration that object is uninitialised stack.  Reaching it
+     * needs a 256-bit draw of exactly 0 or 1 (p = 2^-255), so no run against
+     * /dev/urandom ever took the branch and the sanitizers job could not see it;
+     * a fixed stream reaches it on purpose, and valgrind then reports the
+     * conditional jump.  Had the garbage compared equal to 1, oprf_blind would
+     * have returned r = 1 -- alpha = H(x), the blinding gone and the client's
+     * input in the clear.  A for(;;) with an explicit break removes the class,
+     * and is the shape Go, Python and Java already had. */
+    for (;;) {
         ba_rand(r_out, urnd);
         if (ba_is_zero(r_out) || ba_cmp256(r_out, &ONE_BA) == 0) continue;
         /* verify gcd(r, ORD) == 1 by checking r * r^{-1} == 1 mod ORD */
         ba_modinv_ord(&r_inv, r_out);
         ba_mul_mod_ord(&check, r_out, &r_inv);
-    } while (ba_cmp256(&check, &ONE_BA) != 0);
+        if (ba_cmp256(&check, &ONE_BA) == 0) break;
+    }
     gf_pow_ba(alpha_out, &hx, r_out);
 }
 

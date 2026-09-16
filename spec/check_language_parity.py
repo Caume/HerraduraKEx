@@ -60,6 +60,8 @@ this item closed rather than absorbed into it.
 Usage:
     python3 spec/check_language_parity.py     # exit 1 on any inconsistency
 """
+import glob
+import json
 import math
 import os
 import re
@@ -2936,6 +2938,289 @@ def check_param_use(errors):
     return live
 
 
+
+# ---------------------------------------------------------------------------
+# TODO #296: the EIGHTH axis — the raw-entropy census, and the sampler replay
+# it guards.
+#
+# WHERE IT SITS.  The sixth axis compares a constant's VALUE and the seventh
+# asks whether that constant is ever READ.  Both are statements about code that
+# is the same on every run.  This one is about the code that is NOT: a sampler's
+# output is fresh per call, reaches no artifact, and is therefore invisible to
+# every other check in this repo.  TODO #294 proved that the hard way --
+# rnl_sigma_sign drew its ZK mask by rejection sampling in C and by raw modulo
+# in the other three, a 3-vs-1 split that shipped, because no KAT pins a value
+# that is random by construction and no interop pair compares two samplers.
+#
+# WHAT #294 PRESCRIBED AND DID NOT KEEP.  It recorded that the only check
+# available for this class is a FIXED-STREAM REPLAY: replace the entropy source
+# with pinned bytes, and a randomised primitive becomes deterministic and
+# comparable across ports.  It verified its own fix that way and threw the
+# harness away.  CLAUDE.md went on asserting, present tense, that such a check
+# existed.  KAT/sampler_replay.json is that harness kept, and this axis is what
+# stops it decaying.
+#
+# TWO THINGS ARE CHECKED, and the second is the one that does not decay.
+#
+# (1) VECTOR-TO-TABLE AGREEMENT.  Every sampler named in the vector must be
+#     pinned in ALL FOUR languages by SAMPLER_REPLAY_PINNED, and every entry in
+#     SAMPLER_REPLAY_PINNED must name a sampler the vector actually carries.
+#     Self-invalidating in both directions like every other curated table here:
+#     deleting a row from the vector fails until the table follows, and claiming
+#     a pin the vector does not carry fails outright.
+#
+# (2) THE RAW-ENTROPY CENSUS.  RANDOMNESS_CENSUS records, per language, every
+#     function that reads RAW ENTROPY -- as opposed to calling a higher sampler.
+#     The set is DERIVED from the source on every run and compared against the
+#     recorded one, so adding, removing or renaming a randomness consumer in any
+#     language is a CI failure until the table is updated.  That is the point: a
+#     new consumer is exactly where the next #294 will be, and the failure forces
+#     someone to say whether a fixed stream reaches it.
+#
+# WHY A NAME SET RATHER THAN A REASON PER FUNCTION.  There are 24/24/27/30 of
+# them.  A prose reason on each would be a hundred sentences that nobody reads
+# and that rot; the SET is the tripwire, and the four pinned rows are where the
+# argument lives.  What the census cannot do is say whether an unpinned consumer
+# is CORRECT -- only that it exists and that someone looked.  Pinning the rest
+# means replaying whole signing and keygen operations rather than leaf samplers,
+# which is TODO #297.
+#
+# KNOWN LIMIT, and it is the same shape as #295's.  "Reads raw entropy" is a
+# syntactic test over each language's own primitives (fread(urnd)/ba_rand,
+# rand.Read/rand.Int/NewRandBitArray, os.urandom/BitArray.random,
+# nextBytes/new BigInteger(bits, rng)).  A port that reached the CSPRNG by some
+# fifth spelling would not be censused at all -- the blind spot #288 found in
+# check_docs_consistency's check B" and #289 found in its own discovery rule.
+# The guard against it is that the recorded counts are asserted to be non-zero
+# per language: a regex that stopped matching fails as "the extractor broke"
+# rather than passing with an empty census.
+# ---------------------------------------------------------------------------
+
+# Which sampler each language's port is called, per row of
+# KAT/sampler_replay.json.  A name here is the function the replay consumer
+# actually drives, so it doubles as documentation of where the sampler lives.
+SAMPLER_REPLAY_PINNED = {
+    "rnl_cbd_poly": {
+        "c": "rnl_cbd_poly_dim", "go": "RnlCBDPoly",
+        "python": "_rnl_cbd_poly", "java": "HerraduraNl.java::rnlCbdPoly",
+    },
+    "rnl_rand_poly": {
+        "c": "rnl_rand_poly", "go": "RnlRandPoly",
+        "python": "_rnl_rand_poly", "java": "HerraduraNl.java::rnlRandPoly",
+    },
+    "stern_weight_t": {
+        "c": "stern_rand_error", "go": "SternRandError",
+        "python": "_csprng_weight_t", "java": "Stern.java::csprngWeightT",
+    },
+    "oprf_blind_scalar": {
+        "c": "oprf_blind", "go": "OprfBlind",
+        "python": "oprf_blind", "java": "Oprf.java::blind",
+    },
+}
+
+# Every function in the shipped suite that reads RAW ENTROPY.  Derived from the
+# source on every run and compared against this list; see the header.
+RANDOMNESS_CENSUS = {
+    "c": [
+        "ba_rand", "hcred_prove", "hcred_prove_kkw", "hpake_login_demo",
+        "hpake_register", "hpke_encrypt", "hpks_sign", "hpks_stern_f_sign",
+        "hpkst_sign", "hske_decrypt_masked", "hske_encrypt_masked", "oprf_blind",
+        "oprf_keygen", "rnl_cbd_poly", "rnl_cbd_poly_dim", "rnl_rand_poly",
+        "rnl_sigma_sign", "stern_f_keygen", "stern_rand_error", "stern_ring_sign",
+        "stern_ring_simulate", "zkp_nl_keygen", "zkp_nl_pp_prove", "zkp_nl_prove",
+    ],   # 24
+    "go": [
+        "HcredProve", "HcredProveKkw", "HpakeLoginDemo", "HpakeRegister",
+        "HpkeEncrypt", "HpksSternFSign", "HpksSternRingSign", "HpkstSign",
+        "HskeDecryptMasked", "HskeEncryptMasked", "NewRandBitArray", "OprfBlind",
+        "OprfKeygen", "QcMdpcEncap", "QcMdpcKeygen", "RnlCBDPoly", "RnlRandPoly",
+        "RnlSigmaSign", "SternFKeygen", "SternRandError", "ZkpNlKeygen",
+        "ZkpNlProve", "ZkpNlProvepp", "sternSimulateRound",
+    ],   # 24
+    "python": [
+        "_csprng_weight_t", "_dplex_encrypt", "_hcred_mpc_round", "_rnl_cbd_poly",
+        "_rnl_rand_poly", "_stern_simulate_round", "hcred_prove_kkw",
+        "hpake_login_demo", "hpake_register", "hpke_encrypt", "hpks_stern_f_sign",
+        "hpks_stern_ring_sign", "hpkst_sign", "hske_decrypt_masked",
+        "hske_encrypt_masked", "hske_nl_aead_encrypt", "main", "oprf_blind",
+        "oprf_keygen", "qcmdpc_encap", "qcmdpc_keygen", "random",
+        "rnl_sigma_sign", "stern_f_keygen", "zkp_nl_keygen", "zkp_nl_prove",
+        "zkp_nl_prove_pp",
+    ],   # 27
+    "java": [
+        "Duplex.java::encrypt", "Hcred.java::mpcRound", "Hcred.java::proveKkw",
+        "Herradura.java::hpkeEncrypt", "Herradura.java::hpksSign",
+        "Herradura.java::hskeDecryptMasked", "Herradura.java::hskeEncryptMasked",
+        "HerraduraNl.java::hpkeNl3Encrypt", "HerraduraNl.java::hpkeNlEncrypt",
+        "HerraduraNl.java::hpksNlSign", "HerraduraNl.java::hskeNlAeadEncrypt",
+        "HerraduraNl.java::rnlCbdPoly", "HerraduraNl.java::rnlRandPoly",
+        "HerraduraNl.java::rnlSigmaSign", "Hfscx256.java::encFile",
+        "Hpake.java::loginDemo", "Hpake.java::register", "HpksT.java::sign",
+        "Oprf.java::blind", "Oprf.java::keygen",
+        "Stern.java::csprngWeightT", "Stern.java::hpksSternFSign",
+        "Stern.java::qcmdpcEncap", "Stern.java::qcmdpcKeygen",
+        "Stern.java::sternFKeygen", "SternRing.java::sign",
+        "SternRing.java::simulateRound", "ZkpNl.java::prove",
+        "ZkpNl.java::provePp", "ZkpNl.java::randomBig",
+    ],   # 30
+}
+
+# Per-language raw-entropy spellings.  A new way to reach the CSPRNG must be
+# added here or its callers are censused as drawing nothing.
+RANDOMNESS_RAW_PATTERNS = {
+    "c": r"\bfread\s*\([^;]*urnd|\bba_rand\s*\(",
+    "go": r"\brand\.(?:Read|Int)\s*\(|\bNewRandBitArray\s*\(",
+    "python": r"\bos\.urandom\s*\(|\bBitArray\.random\s*\(",
+    # The first argument is a bit COUNT and is written as a qualified
+    # constant (Herradura.N, Stern.N), so [\w.]+ rather than \w+ -- with
+    # \w+ the census missed Oprf.blind and Oprf.keygen entirely, and it was
+    # the pinned-sampler cross-check below that said so.  That is the
+    # "fifth spelling" blind spot this header warns about, caught once.
+    "java": r"\.nextBytes\s*\(|new\s+BigInteger\s*\(\s*[\w.]+\s*,\s*rng\s*\)",
+}
+
+_REPLAY_VECTOR = os.path.join(REPO, "KAT", "sampler_replay.json")
+
+
+def _slurp(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def _brace_bodies(src, fnpat, endpat=r"^\}"):
+    """(name, body) per top-level function, body ending at a column-0 '}'."""
+    lines = src.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        m = re.match(fnpat, lines[i])
+        if m:
+            j = i + 1
+            while j < len(lines) and not re.match(endpat, lines[j]):
+                j += 1
+            out.append((m.group(1), "\n".join(lines[i:j + 1])))
+            i = j + 1
+        else:
+            i += 1
+    return out
+
+
+def _py_bodies(src):
+    """(name, body) per def, delimited by indentation."""
+    lines = src.split("\n")
+    out = []
+    for i, ln in enumerate(lines):
+        m = re.match(r"(\s*)def\s+(\w+)\s*\(", ln)
+        if not m:
+            continue
+        ind = len(m.group(1))
+        j = i + 1
+        while j < len(lines):
+            s = lines[j]
+            if s.strip() and (len(s) - len(s.lstrip())) <= ind \
+                    and not s.lstrip().startswith(("#", ")")):
+                break
+            j += 1
+        out.append((m.group(2), "\n".join(lines[i:j])))
+    return out
+
+
+def _randomness_consumers():
+    """Derive, per language, the set of functions that read raw entropy."""
+    found = {}
+
+    src = _slurp(os.path.join(REPO, "herradura.h"))
+    found["c"] = {n for n, b in _brace_bodies(
+        src, r"^static\s+(?:inline\s+)?[\w \*]+?\b(\w+)\s*\(")
+        if re.search(RANDOMNESS_RAW_PATTERNS["c"], b)}
+
+    src = _slurp(os.path.join(REPO, "herradura", "herradura.go"))
+    found["go"] = {n for n, b in _brace_bodies(
+        src, r"^func\s+(?:\([^)]*\)\s*)?(\w+)\s*\(")
+        if re.search(RANDOMNESS_RAW_PATTERNS["go"], b)}
+
+    src = _slurp(os.path.join(REPO, "Herradura cryptographic suite.py"))
+    found["python"] = {n for n, b in _py_bodies(src)
+                       if re.search(RANDOMNESS_RAW_PATTERNS["python"], b)}
+
+    found["java"] = set()
+    jdir = os.path.join(REPO, "bindings", "java", "herradurakex")
+    for path in sorted(glob.glob(os.path.join(jdir, "*.java"))):
+        base = os.path.basename(path)
+        if base in JAVA_NON_SUITE:
+            continue
+        for n, body in _brace_bodies(
+                _slurp(path),
+                r"^    (?:public |private |protected )?static "
+                r"[\w\[\]<>., ]*?\b(\w+)\s*\(", r"^    \}"):
+            if re.search(RANDOMNESS_RAW_PATTERNS["java"], body):
+                found["java"].add(f"{base}::{n}")
+    return found
+
+
+def check_randomness(errors):
+    """Eighth axis: the raw-entropy census and the sampler replay it guards."""
+    # --- (1) vector <-> table, both directions -----------------------------
+    try:
+        with open(_REPLAY_VECTOR, encoding="utf-8") as f:
+            vector = json.load(f)
+    except (OSError, ValueError) as exc:
+        errors.append(f"sampler replay: cannot read KAT/sampler_replay.json ({exc})")
+        vector = {"samplers": []}
+
+    vector_names = [r["name"] for r in vector.get("samplers", [])]
+    if not vector_names:
+        errors.append("sampler replay: KAT/sampler_replay.json carries no samplers "
+                      "— the vector is empty, which would make this axis vacuous")
+    for name in vector_names:
+        if name not in SAMPLER_REPLAY_PINNED:
+            errors.append(
+                f"sampler replay: KAT/sampler_replay.json has a row '{name}' that "
+                "SAMPLER_REPLAY_PINNED does not name — add it with its four "
+                "per-language functions, or the replay consumers will not follow it")
+    for name, cells in SAMPLER_REPLAY_PINNED.items():
+        if name not in vector_names:
+            errors.append(
+                f"sampler replay: SAMPLER_REPLAY_PINNED names '{name}' but "
+                "KAT/sampler_replay.json has no such row — delete the entry, or "
+                "regenerate the vector (python3 KAT/generate_kat.py)")
+        missing = [l for l in ("c", "go", "python", "java") if not cells.get(l)]
+        if missing:
+            errors.append(
+                f"sampler replay: '{name}' has no pinned function for "
+                f"{', '.join(missing)} — a sampler pinned in three languages is "
+                "exactly the split this axis exists to catch")
+
+    # --- (2) the raw-entropy census ----------------------------------------
+    found = _randomness_consumers()
+    for lang in ("c", "go", "python", "java"):
+        got = found[lang]
+        if not got:
+            errors.append(
+                f"randomness census: no raw-entropy consumer found in {lang} — the "
+                "extractor broke (RANDOMNESS_RAW_PATTERNS no longer matches), "
+                "rather than the suite having stopped using the CSPRNG")
+            continue
+        want = set(RANDOMNESS_CENSUS[lang])
+        for name in sorted(got - want):
+            errors.append(
+                f"randomness census: {lang} function '{name}' reads raw entropy and "
+                "is not in RANDOMNESS_CENSUS — add it, and say whether a fixed "
+                "stream reaches it (KAT/sampler_replay.json) or why it cannot")
+        for name in sorted(want - got):
+            errors.append(
+                f"randomness census: RANDOMNESS_CENSUS names {lang} function "
+                f"'{name}', which no longer reads raw entropy — delete the entry "
+                "rather than leaving a census that describes the old source")
+        # Every pinned sampler must be one of that language's censused consumers.
+        for sname, cells in SAMPLER_REPLAY_PINNED.items():
+            fn = cells.get(lang)
+            if fn and fn not in got:
+                errors.append(
+                    f"sampler replay: '{sname}' claims {lang} function '{fn}', which "
+                    "the raw-entropy census does not find — the pin names a "
+                    "function that does not draw, so the replay proves nothing")
+    return found, vector_names
+
 def main():
     errors = []
     numbers = check_numbered_tests(errors)
@@ -2944,6 +3229,7 @@ def main():
     census = check_census(errors)
     param_counts, _param_values = check_parameters(errors)
     param_used = check_param_use(errors)
+    rnd_census, replay_rows = check_randomness(errors)
 
     if errors:
         print("Language parity: FAILED")
@@ -2986,6 +3272,14 @@ def main():
         f"PARAMETERS cells are READ by that language's shipped code, outside their own "
         f"declaration and outside diagnostic calls; "
         f"{len(PARAM_USE_EXEMPT)} declaration-only exemption(s)."
+    )
+    print(
+        f"OK: raw-entropy census — "
+        + ", ".join(f"{lang} {len(rnd_census[lang])}"
+                    for lang in ("c", "go", "python", "java"))
+        + f" function(s) read the CSPRNG directly, all recorded; "
+        f"{len(replay_rows)} sampler(s) pinned against a fixed stream in all four "
+        f"languages by KAT/sampler_replay.json."
     )
     return 0
 

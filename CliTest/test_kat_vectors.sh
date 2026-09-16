@@ -5,6 +5,15 @@
 #
 # TODO #226 adds KAT/hkex_rnl.json on the same terms: the same generator emits
 # both, --check covers both, and the Go verifier recomputes both.
+#
+# TODO #296 adds KAT/sampler_replay.json, and it needs no step of its own here:
+# all four consumers below already read it.  --check REGENERATES it, which is
+# Python's half (the generator drives the shipped samplers against the pinned
+# stream, so a diff IS the Python replay) and also diffs the generated C view
+# KAT/sampler_replay_vector.h; verify_kat.go, verify_kat_c and -- over in
+# test_java_bindings.sh -- herradurakex.KatVerify each replay the same stream
+# through their own port.  Four ports against one pinned vector is four ports
+# against each other, so there is no separate cross-language step to write.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,7 +45,8 @@ fi
 # Both files must exist; a missing one would otherwise pass silently, since
 # --check only compares what it regenerates.
 for f in KAT/classical_quartet.json KAT/hkex_rnl.json KAT/nl_fscx_v3.json \
-         KAT/hcred_kkw.json; do
+         KAT/hcred_kkw.json KAT/sampler_replay.json \
+         KAT/sampler_replay_vector.h; do
     [ -s "$f" ] || { echo "FAIL: $f missing or empty"; exit 1; }
 done
 

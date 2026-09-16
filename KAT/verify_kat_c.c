@@ -29,6 +29,7 @@
 
 #include "../herradura.h"
 #include "hcred_kkw_vector.h"
+#include "sampler_replay_vector.h"
 
 #if HCRED_N != KKW_KAT_N
 #  error "herradura.h's HCRED_N does not match the vector's width"
@@ -119,6 +120,121 @@ static int apply_tamper(HcredKkwProof *p, const char *which,
     return -1;
 }
 
+/* ── TODO #296: fixed-stream sampler replay ──────────────────────────────
+ *
+ * Replays the suite's leaf CSPRNG samplers against the vector's fixed stream.
+ * C needs no injection machinery for this and that is not an accident: every
+ * sampler here already takes its entropy as a `FILE *`, so fmemopen over the
+ * pinned bytes drives the SHIPPED function with no hook, no global and no
+ * build flag.  The other three ports each need one (rand.Reader, os.urandom,
+ * a SecureRandom subclass).
+ *
+ * ftell on that stream is the bytes-consumed assertion, and it is the half
+ * that catches a port reading ahead of or behind the others -- which is how a
+ * buffered read pattern (TODO #293) shows up here at all.
+ */
+static void replay_cbd(void)
+{
+    static int32_t got[RPL_CBD_N];
+    FILE *f = fmemopen((void *)rpl_cbd_stream, sizeof rpl_cbd_stream, "rb");
+    int i, bad_at = -1;
+
+    if (!f) { bad("replay rnl_cbd_poly (fmemopen)"); return; }
+    rnl_cbd_poly_dim(got, f, RPL_CBD_N);
+    for (i = 0; i < RPL_CBD_N; i++)
+        if (got[i] != rpl_cbd_expect[i]) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL replay rnl_cbd_poly: coeff %d is %d, vector says %d\n",
+               bad_at, (int)got[bad_at], (int)rpl_cbd_expect[bad_at]);
+        failures++;
+    } else {
+        ok("replay rnl_cbd_poly");
+    }
+    if (ftell(f) != RPL_CBD_CONSUMED) {
+        printf("FAIL replay rnl_cbd_poly: consumed %ld bytes, vector says %d\n",
+               ftell(f), RPL_CBD_CONSUMED);
+        failures++;
+    }
+    fclose(f);
+}
+
+static void replay_rand_poly(void)
+{
+    static int32_t got[RPL_RAND_N];
+    FILE *f = fmemopen((void *)rpl_rand_stream, sizeof rpl_rand_stream, "rb");
+    int i, bad_at = -1;
+
+    if (!f) { bad("replay rnl_rand_poly (fmemopen)"); return; }
+    rnl_rand_poly(got, f);
+    for (i = 0; i < RPL_RAND_N; i++)
+        if (got[i] != rpl_rand_expect[i]) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL replay rnl_rand_poly: coeff %d is %d, vector says %d\n",
+               bad_at, (int)got[bad_at], (int)rpl_rand_expect[bad_at]);
+        failures++;
+    } else {
+        ok("replay rnl_rand_poly (output only -- see the header on `consumed`)");
+    }
+    /* No byte-count assertion here, deliberately, and the generated header
+     * emits no RPL_RAND_CONSUMED so one cannot be written by mistake: this
+     * port reads 3 bytes per draw while Go, Python and Java read one block
+     * (TODO #293).  The byte-to-draw MAPPING is what all four share, and the
+     * output above is what pins it. */
+    fclose(f);
+}
+
+static void replay_weight_t(void)
+{
+    FILE *f = fmemopen((void *)rpl_wt_stream, sizeof rpl_wt_stream, "rb");
+    BitArray e;
+    int i, w = 0;
+
+    if (!f) { bad("replay stern_rand_error (fmemopen)"); return; }
+    stern_rand_error(&e, f);
+    if (memcmp(e.b, rpl_wt_expect, KEYBYTES) != 0)
+        bad("replay stern_rand_error");
+    else
+        ok("replay stern_rand_error");
+    for (i = 0; i < KEYBYTES; i++) {
+        uint8_t b = e.b[i];
+        while (b) { w += b & 1; b >>= 1; }
+    }
+    if (w != RPL_WT_WEIGHT) {
+        printf("FAIL replay stern_rand_error: weight %d, vector says %d\n",
+               w, RPL_WT_WEIGHT);
+        failures++;
+    }
+    if (ftell(f) != RPL_WT_CONSUMED) {
+        printf("FAIL replay stern_rand_error: consumed %ld bytes, vector says %d\n",
+               ftell(f), RPL_WT_CONSUMED);
+        failures++;
+    }
+    fclose(f);
+}
+
+static void replay_oprf(void)
+{
+    FILE *f = fmemopen((void *)rpl_oprf_stream, sizeof rpl_oprf_stream, "rb");
+    BitArray r, alpha;
+
+    if (!f) { bad("replay oprf_blind (fmemopen)"); return; }
+    oprf_blind(rpl_oprf_input, sizeof rpl_oprf_input, &r, &alpha, f);
+    if (memcmp(r.b, rpl_oprf_expect_r, KEYBYTES) != 0)
+        bad("replay oprf_blind r");
+    else
+        ok("replay oprf_blind r");
+    if (memcmp(alpha.b, rpl_oprf_expect_alpha, KEYBYTES) != 0)
+        bad("replay oprf_blind alpha");
+    else
+        ok("replay oprf_blind alpha");
+    if (ftell(f) != RPL_OPRF_CONSUMED) {
+        printf("FAIL replay oprf_blind: consumed %ld bytes, vector says %d\n",
+               ftell(f), RPL_OPRF_CONSUMED);
+        failures++;
+    }
+    fclose(f);
+}
+
 int main(void)
 {
     HcredKkwProof proof;
@@ -173,10 +289,17 @@ int main(void)
         printf("PASS hcred_kkw[n256] tamper (%d/%d rejected)\n",
                KKW_KAT_TAMPER_COUNT, KKW_KAT_TAMPER_COUNT);
 
+    /* 3. The fixed-stream sampler replay (TODO #296). */
+    replay_cbd();
+    replay_rand_poly();
+    replay_weight_t();
+    replay_oprf();
+
     if (failures) {
         printf("*** FAILED: %d check(s) reported [FAIL] ***\n", failures);
         return 1;
     }
-    puts("*** OK: KAT/hcred_kkw.json[n256] verified against herradura.h ***");
+    puts("*** OK: KAT/hcred_kkw.json[n256] and KAT/sampler_replay.json "
+         "verified against herradura.h ***");
     return 0;
 }

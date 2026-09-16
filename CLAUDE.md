@@ -1180,6 +1180,135 @@ spec/                                                — machine-readable protoc
                                                       that occurred six times here, a constant no
                                                       code mentions at all or mentions only to
                                                       print
+                                                      RANDOMNESS_CENSUS /
+                                                      SAMPLER_REPLAY_PINNED (TODO #296),
+                                                      in check_language_parity.py, are the
+                                                      EIGHTH axis, and they are about the
+                                                      code the other seven cannot reach.
+                                                      Axes six and seven ask what a
+                                                      constant's VALUE is and whether it is
+                                                      READ -- both statements about code
+                                                      that is the same on every run.  A
+                                                      SAMPLER's output is not: it is fresh
+                                                      per call, reaches no artifact, and so
+                                                      no KAT pins it and NONE COULD.  #294
+                                                      proved that the hard way and recorded
+                                                      the only check available for the
+                                                      class -- a FIXED-STREAM REPLAY, which
+                                                      replaces the entropy source with
+                                                      pinned bytes, makes a randomised
+                                                      primitive deterministic, and then
+                                                      holds the four consumption orders
+                                                      against each other.  IT THEN THREW
+                                                      THE HARNESS AWAY, and this file went
+                                                      on asserting in the present tense
+                                                      that the check existed; a grep for it
+                                                      across every .sh, .py, .c and .go
+                                                      returned THIS FILE ALONE.  That is
+                                                      #287's withdrawn trust-model sentence
+                                                      and #291's 22 discarded verdicts one
+                                                      layer out.  KAT/sampler_replay.json
+                                                      is the harness kept: four leaf
+                                                      samplers, each with a fixed stream,
+                                                      the value the SHIPPED sampler
+                                                      produces, and -- where all four ports
+                                                      read at the same granularity -- the
+                                                      bytes consumed.  It needed NO new
+                                                      test script and NO CI wiring, because
+                                                      four ports against one pinned vector
+                                                      is four ports against each other, and
+                                                      every consumer already existed:
+                                                      generate_kat.py --check (the
+                                                      regenerate-and-diff IS Python's
+                                                      replay), verify_kat_c via fmemopen,
+                                                      verify_kat.go via a swapped
+                                                      rand.Reader, KatVerify via a
+                                                      SecureRandom subclass.  C and Java
+                                                      needed no injection machinery at all
+                                                      -- their samplers take the source as
+                                                      a parameter -- and Go's package-
+                                                      variable swap is the one fragile
+                                                      hook, loud rather than silent if a
+                                                      future Go bypasses it.  WHAT THE
+                                                      CENSUS FOUND: three of the four
+                                                      samplers disagreed across ports with
+                                                      every implementation individually
+                                                      CORRECT -- the weight-t error vector
+                                                      had THREE schemes (C Fisher-Yates on
+                                                      a 1-byte draw, Go Fisher-Yates over
+                                                      crypto/rand.Int, Python/Java
+                                                      rejection into a set on 4 bytes) and
+                                                      the OPRF blinding scalar another
+                                                      three.  No distribution was wrong; a
+                                                      primitive with three consumption
+                                                      orders simply cannot be pinned
+                                                      against itself.  Both converge on
+                                                      Python/Java's scheme, adopted
+                                                      VERBATIM rather than a fifth correct
+                                                      one invented (#294's precedent),
+                                                      which also lifts C's uint8_t index
+                                                      cap of n <= 256.  AND ONE REAL
+                                                      DEFECT: C's oprf_blind rejected a
+                                                      degenerate scalar with `continue`
+                                                      inside a do/while, which jumps to the
+                                                      CONDITION -- so a rejected draw
+                                                      re-tested the previous iteration's
+                                                      verdict, uninitialised on the first,
+                                                      and had it compared equal to 1 the
+                                                      function would have returned r = 1,
+                                                      i.e. alpha = H(x) with the blinding
+                                                      GONE.  Reachability against
+                                                      /dev/urandom is 2^-255, so it is UB
+                                                      and a logic error rather than a
+                                                      practical vulnerability -- and that
+                                                      is exactly why the sanitizers job
+                                                      never saw it and a chosen stream
+                                                      found it at once.  THE AXIS CAUGHT
+                                                      ITS OWN BLIND SPOT on the way in: the
+                                                      Java census regex matched a bare \w+
+                                                      first argument to
+                                                      new BigInteger(bits, rng), so
+                                                      Oprf.blind and Oprf.keygen were not
+                                                      censused AT ALL, and what noticed was
+                                                      the rule that a pinned sampler must
+                                                      appear among that language's
+                                                      censused consumers.  The census is a
+                                                      NAME SET, derived from source every
+                                                      run and compared -- 24/24/27/30 in
+                                                      C/Go/Python/Java -- so adding,
+                                                      removing or renaming a randomness
+                                                      consumer anywhere fails CI until
+                                                      someone says whether a fixed stream
+                                                      reaches it.  A set rather than a
+                                                      reason per function is deliberate:
+                                                      there are 105, and a hundred prose
+                                                      reasons rot.  TWO LIMITS, recorded
+                                                      rather than asserted away.
+                                                      rnl_rand_poly pins OUTPUT but not
+                                                      byte count -- it is block-buffered in
+                                                      Go, Python and Java (#293) and
+                                                      unbuffered in C, so the byte-to-draw
+                                                      mapping is common and the total is
+                                                      not; the generated header emits no
+                                                      RPL_RAND_CONSUMED so the C consumer
+                                                      cannot assert it by mistake.  And the
+                                                      census is SYNTACTIC, so a sixth
+                                                      spelling of "read the CSPRNG" would
+                                                      go unseen; the guard is that an empty
+                                                      per-language census is an error, not
+                                                      a pass.  A branch a random stream
+                                                      never enters is not covered either,
+                                                      which is why the OPRF stream's first
+                                                      draw is r = 1 EXACTLY and the
+                                                      weight-t stream is the first label
+                                                      whose draws collide twice -- without
+                                                      those the repaired code and the
+                                                      duplicate-skip path are unguarded,
+                                                      and in the negative control they
+                                                      were.  Pinning the remaining 101
+                                                      consumers means replaying whole
+                                                      operations rather than leaf samplers:
+                                                      TODO #297
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,
