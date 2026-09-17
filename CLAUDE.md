@@ -1739,6 +1739,30 @@ size since #289. (4) A section that did not run must not be scored: `--full`-onl
 `--skip2/--skip3` sections return "no finding", never a passing one, or a skipped section
 becomes a vacuous pass — the inverse of what TODO #234 found in the Arduino harness.
 
+**And whether a red run means anything, which is the question under all of that (TODO
+#299).** A gate that fails at random trains everyone to re-run it, and re-running is also
+the response to a real failure — so one flaky gate degrades the whole job. #299 found
+both shapes on one PR. `hfscx_256_analysis.py` §3 gated on `chi2 < 293.2`, the p = 0.05
+critical value, against a FRESH `os.urandom` sample every run: a correct hash fails that
+one run in twenty by construction, and the measured null (median 251.1, 2/40 over the
+threshold across 40 local samples) is the nominal rate exactly. It is now a REPLICATION —
+an exceedance is confirmed against a second independent sample at the 0.001 level — so
+the false-failure rate is 5e-5 and power is untouched, since a hash biased enough to
+matter puts chi2 in the thousands over 160,000 byte samples, not at 300. That is
+`CLAUDE.md`'s own Testing class (a probabilistic property asserted as a deterministic
+one, the thing TODO #233 fixed in three tests) surfacing in the ANALYSIS layer, where
+nobody had looked because until #289 and #291 nothing collected these exit statuses at
+all. The other shape is the opposite and is not a flake: `stern_ring_challenge_bias.py`
+§4 is a SOURCE check on a shipped fix, anchored on a literal spelling, and TODO #297
+moved that spelling when it extracted the challenge trit into a named sampler in all four
+ports. The fix was still there; the gate was RIGHT to fire, because the sentence it
+defended had become unverifiable. Re-anchor a source check on the named helper, scope it
+to that helper's body (every one of these files carries an unrelated 255), and know its
+inherent limit — it reads syntax, so it cannot see whether the helper is still CALLED,
+which is #295's dead-code limit one axis over and is covered here only by
+`KAT/operation_replay.json`'s ring row. The census of which other gates compare a fresh
+sample to a fixed threshold is TODO #300, still OPEN.
+
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
 surface under the repo's Security tab rather than as a required check.

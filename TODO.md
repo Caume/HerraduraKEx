@@ -184,3 +184,32 @@ protocols: the useful assertion is different for each, and a shared harness woul
 converge on the weakest one they have in common, which is completeness again.
 
 Status: **OPEN**
+
+### #300: which findings gates decide a verdict from a fresh random sample against a fixed threshold?
+
+TODO #299(b) found `hfscx_256_analysis.py` §3 gating on `chi2 < 293.2` — the
+p = 0.05 critical value — applied to a fresh `os.urandom` sample every run, so a
+correct hash failed CI one run in twenty by construction.  It was found because
+it fired on an unrelated PR, which is exactly how TODO #285 found that no job
+collected these exit statuses: by accident, one instance at a time.
+
+There are 73 findings-gating scripts in `SecurityProofsCode/`.  Nothing asks how
+many of them compare a freshly sampled statistic to a fixed threshold, and each
+that does carries its own false-failure rate into a job that #289 built on the
+premise that a red run means something.  The work is a census, on the model of
+the parameter-use census (#295) and the randomness census (#296): find every
+gate whose verdict is a sampled quantity, report its nominal false-failure rate,
+and require each to be either seeded, replicated, or slack enough that the rate
+is negligible.
+
+Three things to get right, from #299's own experience.  (1) A threshold at the
+0.05 level is not automatically a defect — it is a defect when it GATES; the
+same number printed as a reported statistic is fine, so the census has to
+separate the two.  (2) Seeding is not always the answer: a fixed seed makes the
+verdict reproduce perfectly and reduces the claim to one sample, which is right
+for a regression check and wrong for a distributional one.  (3) The inverse
+error is the one TODO #234 found in the Arduino harness — slack wide enough to
+never fire is a vacuous pass, so any widened threshold needs a control showing
+it still fails on a real bias.
+
+Status: **OPEN**

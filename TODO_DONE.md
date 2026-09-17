@@ -18884,3 +18884,85 @@ the fix; `test_kat_vectors`, `test_cross_lang_matrix` and the Stern family
 scripts pass.  Negative controls in the text above.
 
 Status: **DONE v7.0.15** — five randomised operations pinned against a fixed statement and a fixed stream in four languages, which found a ring signature that named its own signer in two of them.
+
+### #299: a source check anchored on a spelling, and a CI gate that failed one run in twenty by construction
+
+TODO #297's CI run failed the `analysis-findings` job twice, on two different
+scripts, and the two failures are opposite kinds.  One was caused by #297 and is
+a real stale claim; the other had been latent since the gate was written and is
+a flaky test.  Both are recorded here because the *pair* is the lesson: the job
+that #289 built to stop "nobody got round to it" looking like "it passes" is
+only useful if a red run means something, and a gate that cries wolf one run in
+twenty trains everyone to re-run it — which is also the response to a real
+failure.
+
+**(a) `stern_ring_challenge_bias.py` — the anchor moved.**  §4 of that script is
+a SOURCE check: TODO #164 fixed a biased challenge trit (`byte % 3` is 86/85/85,
+because 256 = 3·85 + 1) by rejecting the byte 255, and §4 asserts the fix is
+still in the files that carried it.  It asserted that by grepping
+`herradura.h` for the literal `if (rnd1 != 255) break;` and the Python suite for
+`if v != 255`.  TODO #297 EXTRACTED that trit into a named sampler in all four
+ports — precisely because a sampler written inline in four places is one the
+manifest cannot see — so the literal vanished from `herradura.h` while the fix
+it stood for was still there, one function further in.  The gate was right to
+fire: the sentence it was defending had become unverifiable.  A source check
+anchored on a spelling fails when the spelling moves, and the repair is to
+anchor it on the named helper.
+
+The check is also WIDER than before, which is the part worth keeping.  It now
+covers all four shipped ports rather than two, scoped per helper body rather
+than per file — every one of these files contains an unrelated 255 somewhere, so
+a whole-file search would keep passing after the rejection was deleted — and it
+distinguishes "the helper is gone" from "the helper is there and the rejection
+is not".  Five negative controls, all firing: the rejection deleted from each of
+C, Go, Python and Java in turn, and the C helper renamed away.
+
+Two sentences of §4's prose were RETIRED rather than re-pointed, because both
+were wrong in detail and #297 is what made that visible.  It said Go and the
+Arduino code "were never affected — they reduce a 32-bit draw, bias ~2^-32":
+Go reduced a whole n-BIT draw (n = 256, so bias ~2^-256, and 32 bytes spent per
+trit), and the Arduino port draws no challenge trit AT ALL — its simulated
+member is hardcoded to `b = 0`, so it has nothing to bias.  Java drew
+`Random.nextInt(3)`, unbiased by a third route again.  Three correct schemes and
+one wrong one, for a single trit.
+
+**(b) `hfscx_256_analysis.py` §3 — a probabilistic property asserted as a
+deterministic one.**  The gate was `chi2 < 293.2`, the p = 0.05 critical value
+for df = 255, applied to a FRESH `os.urandom` sample on every run.  A perfectly
+uniform hash therefore fails it one run in twenty, and on #297's PR it did:
+338.7 in one of the two runs and a clean pass in the other, with nothing in the
+tree touching HFSCX-256.  Measured null over 40 independent local samples:
+median 251.1, max 294.9, 2/40 above 293.2 — the nominal 5% exactly, so the hash
+is fine and the threshold is the defect.  This is the class `CLAUDE.md`'s
+Testing section already names, the same one that made C's [45] fail 38.5% of
+runs before TODO #233; it had simply never been looked for in
+`SecurityProofsCode/`, because until TODO #291 and #289 nothing collected these
+exit statuses at all.
+
+The gate is now a REPLICATION: an exceedance of the 0.05 value is confirmed
+against a second independent sample at the 0.001 value before it counts.
+False-failure rate 0.05 × 0.001 = 5e-5 rather than 1 in 20, the extra ~4 s is
+paid only on the 5% of runs that need it, and power is essentially untouched —
+a hash biased enough to matter puts χ² in the thousands over 160,000 byte
+samples, not at 300.  Controls on both branches with the sampler stubbed: 338.7
+then 251.0 passes (the flake), 338.7 then 400.0 fails (a real bias), and the
+boundary pair 300.0 then 330.4 passes.
+
+**KNOWN LIMIT.**  (b) fixes one gate, not the class.  Nothing systematically
+asks which of the 73 findings gates decide a verdict from a fresh random sample
+against a fixed threshold — this one was found because it fired, which is the
+same way #285 found that no job collected these statuses.  A census of
+threshold-vs-sample gates is filed as TODO #300.  (a) has a limit of its own
+that is inherent rather than deferrable: a source check reads syntax, so it
+cannot see whether the helper it found is CALLED.  `stern_ring_trit` could
+survive intact beside a ring signer that stopped calling it — which is #295's
+dead-code limit one axis over — and what covers that here is
+`KAT/operation_replay.json`'s ring row, whose pinned stream makes a changed
+consumption order a failure.
+
+**Verification.**  Both scripts exit 0.  All five checkers OK, including check
+D, whose claims table anchors on §4's prose.  `run_findings_gates.py --list`
+still discovers both as gating.  No shipped source file changed — this item
+touches two analysis scripts and the documents.
+
+Status: **DONE v7.0.16** — a source check re-anchored on the helper TODO #297 extracted, and a χ² gate that failed one CI run in twenty by construction made a replication.

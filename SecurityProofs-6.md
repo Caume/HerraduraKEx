@@ -177,6 +177,8 @@ Per-slot tags: ds=1 for c0, ds=2 for c1, ds=3 for c2, ds=4 for the KEM key, ds=0
 | §6 Domain separation (unkeyed vs keyed), 1 000 trials | 1000 / 1000 differ | Keyed mode distinct from unkeyed for all non-zero $K$. |
 | §7 Fixed-point search (DM), 200 random $(s, m)$ pairs | 0 with $F_1^{64}(s,m)=0$, 0 near-zero | Fixed-point condition is preimage of zero under A2; no instances found, consistent with $\Omega(2^{256})$ classical hardness (§11.9.8). |
 
+**A note on the chi-square row, added by TODO #299.** The measured value above is a v1.9.0 observation and stands; the *criterion* beside it no longer is.  Until v7.0.16 §3 gated the script's exit status on that 293.2 threshold applied to a fresh sample every run, which fails a perfectly uniform hash one run in twenty by construction — and did, on TODO #297's CI run, at 338.7.  The measured null over 40 independent samples is median 251.1 with 2/40 above 293.2, i.e. the nominal 5% exactly, so the hash is fine and the threshold was the defect.  §3 now confirms an exceedance against a second independent sample at the 0.001 level before failing, which leaves the claim in this table unchanged and the false-failure rate at 5e-5.
+
 These tests rule out trivial weaknesses (low diffusion, biased output, length-extension, accidental key collisions, structural fixed points).  They do **not** constitute a formal proof: collision and preimage hardness rest on A1 + A2.  `SecurityProofsCode/hfscx_dm_rf_model.py` (TODO #215) adds the model-level companion to these: image-collapse propagation, Davies-Meyer fixed points under both inner maps, and working Joux / Kelsey-Schneier attacks against the chain — see §11.9.12.
 
 ### 11.9.11 Summary
