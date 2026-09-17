@@ -18728,3 +18728,241 @@ are byte-identical.
 Status: **DONE v7.0.14** — the fixed-stream replay #294 prescribed and discarded, kept this time: four samplers pinned in four languages, three of which had three different consumption orders, and a `continue` in a `do/while` that could have returned an unblinded OPRF scalar.
 
 ---
+
+---
+
+### #297: the sampler replay reaches leaf samplers, not whole operations
+
+TODO #296 built the fixed-stream replay #294 prescribed and pinned **four leaf samplers**
+in all four languages.  Its raw-entropy census counts **105** functions that read the
+CSPRNG directly — 24 in C, 24 in Go, 27 in Python, 30 in Java — so 101 of them are
+recorded as existing and are not individually pinned.
+
+**What is missing, precisely.**  A leaf sampler is separately callable, so a fixed stream
+reaches it directly.  The rest are protocol operations — `rnl_sigma_sign`, `zkp_nl_prove`,
+`hcred_prove_kkw`, `stern_f_keygen`, `qcmdpc_keygen`, `hpake_register` and so on — whose
+draw loops are inline and whose consumption order is only observable by replaying the
+**whole operation**: supply a key, a message and a stream, and pin what comes out.  That
+is strictly stronger than what #296 pins, because it covers the ORDER in which an
+operation visits its samplers, not only what each sampler does in isolation.
+
+**Why it is worth doing, and the precedent is #294 itself.**  #294's own defect was in
+`rnl_sigma_sign`'s inline mask draw — one of the 101, not one of the four.  #296 pins the
+samplers that primitive *calls* but not the primitive itself, so the exact shape that
+started this line of work is still not pinned.  Note what makes this newly possible: a
+signature is randomised per call and so cannot be KAT'd, but under a fixed stream it is
+deterministic, which is the whole insight #294 recorded and #296 implemented for leaves.
+
+**The cost, which is why it is separate.**  Each operation needs a fixed *statement* as
+well as a fixed stream — a keypair, a message, parameters — so the vector grows a setup
+section per row, and the four consumers grow a driver per row rather than sharing one
+switch.  #296 deliberately stopped at the boundary where a row is one call with scalar
+arguments.
+
+**Do not start by widening the census.**  The census is a tripwire on the set of names and
+is already exhaustive in both directions; what this item adds is coverage, not detection.
+And read #296's note on `rnl_rand_poly` first: block buffering (#293) means byte-count
+equality is not available on every row, and a whole-operation replay will meet that on
+more of them than a leaf replay does.
+
+**RESOLVED (v7.0.15).**  `KAT/operation_replay.json` is the harness, on exactly
+#296's terms one level up, plus `KAT/operation_replay_vector.h`, its generated C
+view.  Five rows, each a fixed STATEMENT and a fixed stream against the shipped
+operation:
+
+| row | what it reaches that a leaf row cannot | `consumed` |
+|---|---|---|
+| `stern_f_keygen` | the ORDER of two already-pinned samplers (seed, then the weight-t vector) | 100 |
+| `hpks_stern_f_sign` | per round a weight-t draw then a permutation seed, six rounds, all three challenge branches | 580 |
+| `zkp_nl_prove` | per round two n-bit shares then three 32-byte tapes | 400 |
+| `hpks_stern_ring_sign` | a trit that no leaf sampler drew, then one of three branch-specific draw sequences per simulated member-round | 1332 |
+| `rnl_sigma_sign` | the inline mask loop #294 was about — a sampler that is not a callable function in any port | null |
+
+It needed **no new test script, no CI wiring and no injection machinery**, for
+#296's reason plus one that was checked before the vector was designed: every
+operation here already takes its entropy as a parameter in C (`FILE *`) and Java
+(`SecureRandom`), and Python's `os.urandom` patch and Go's `rand.Reader` swap
+already existed.  The same four consumers follow the new vector.
+
+**WHAT IT FOUND, and it is not a consumption-order divergence.**
+`hpks_stern_ring_sign` simulates the non-signer ring members.  For a simulated
+member's `b = 0` round the dummy commitment is `c0 = hash(pi_dum, 0)` in Python
+and Java — and was `hash(0, 0)` in C and Go, **one fixed 256-bit constant**.  The
+real signer's `c0` is `hash(pi_seed, H·r^T)` with `pi_seed` freshly drawn, so it
+never takes that value.  A non-signer's round is `b = 0` about a third of the
+time, so at the default `rounds = 32` every non-signer carries the constant with
+probability `1 - (2/3)^32 = 1 - 6e-6` and the signer carries it never: **the
+signer is the ring member with none of them, read straight off the public
+signature.**  Measured rather than argued, k=4, rounds=32, signer = member 2:
+
+```
+most-repeated c0 appears 31 times across 128 member-rounds
+  member 0:  9 round(s)
+  member 1: 13 round(s)
+  member 2:  0 round(s)   <-- THE REAL SIGNER
+  member 3:  9 round(s)
+verify: 1
+```
+
+That last line is why nothing caught it for the life of the port: the signature
+**verifies**.  `c0` is unchecked for `b = 0` by construction, so every
+round-trip, every 4×4 interop matrix and every tamper test passes a ring
+signature whose whole purpose — that the verifier cannot tell who signed — is
+gone.  Anonymity is not a property any of those tests assert, and no KAT could
+pin it, because a ring signature is randomised per call.  A fixed stream makes it
+deterministic, and then the four ports can be compared; that is #294's insight
+reaching the thing it was always for.
+
+**AND A THREE-SCHEME SAMPLER UNDERNEATH IT.**  The per-round challenge trit was
+written **inline in all four ports, three different ways**: one byte with the
+single value 255 rejected (C, Python), a whole n-bit BitArray reduced modulo 3
+(Go — biased by a relative `2^-32`, and 32 bytes per trit rather than 1), and
+`Random.nextInt(3)` (Java).  All three are uniform enough to pass anything that
+was looking, and nothing was.  C's and Python's scheme is adopted verbatim in the
+other two (#294's precedent), and the sampler is now a NAMED function in all four
+— `stern_ring_trit` / `sternRingTrit` / `_stern_ring_trit` / `SternRing.ringTrit`
+— with a `PRIMITIVES` entry, because a sampler written inline in four places is
+one the manifest cannot see.  Two smaller divergences went with the extraction:
+C's loop gave up after 8 tries and fell through to `b = 0` (2^-64, but biased
+toward the branch that carried the defect), and a short `/dev/urandom` read
+fabricated a challenge from `(i ^ r)` — the only fail-open read in `herradura.h`,
+where every other sampler treats it as fatal.
+
+**SIX FIXES.**
+1. `herradura.h` `stern_ring_simulate`: draw `pi_dum` for the `b = 0` dummy
+   commitment instead of hashing two zeros — the anonymity fix.
+2. `herradura/herradura.go` `sternSimulateRound`: the same.
+3. `herradura/herradura.go`: `sternRingTrit`, replacing the n-bit-modulo-3 draw.
+4. `bindings/java/.../SternRing.java`: `ringTrit`, replacing `nextInt(3)`.
+5. `herradura.h` and the Python suite: the trit extracted to a named function,
+   the 8-try bound and the fail-open fallback removed with it.
+6. `spec/check_language_parity.py`: `OPERATION_REPLAY_PINNED`, and the manifest
+   and census entries the extraction forced.
+
+**THE AXIS.**  `OPERATION_REPLAY_PINNED` sits beside `SAMPLER_REPLAY_PINNED` and
+is checked by the same code, generalised: vector-to-table agreement in both
+directions, four cells per row, and every pinned name cross-checked against that
+language's raw-entropy census — the rule that caught the axis's own blind spot at
+#296.  The two tables are kept SEPARATE deliberately: a consumer absent from the
+sampler table may be fully covered by an operation row that calls it, and one
+absent from both is genuinely unpinned.  The census moved to **c 25, go 25,
+python 28, java 31** — the extraction added a consumer to each, which the census
+demanded before it would pass, which is the census working.
+
+**TWO LIMITS, recorded rather than asserted away.**
+
+*`rnl_sigma_sign` is pinned on the single-attempt path only, and that is the
+minority path.*  The operation retries — it draws a fresh mask and re-tests a
+norm bound — and at the deployed ring it accepts about one attempt in three or
+four.  Python, Go and Java buffer the draw (#293) and C does not, so at an
+attempt boundary the buffered ports discard the tail of a block C would have gone
+on to use, and every attempt after the first reads from a different offset in the
+three than in C.  The row's stream is therefore CHOSEN to accept on the first
+attempt, is exactly one block long so a retry exhausts it rather than passing
+quietly, and the generator asserts `consumed == one block`.  Closing this would
+mean buffering C for a test's benefit, which #293 deliberately declined.
+
+*The vector reaches five of the 109 censused consumers.*  This item pinned the
+operations that have a cheap fixed statement and exist in all four ports.  It did
+not pin `hcred_prove_kkw` (already a verify-side vector, #266, and ~70 s per
+n=256 verification in Python), `qcmdpc_keygen` / `qcmdpc_encap` (C and Java take
+a seeded PRF where Go and Python draw inside, so a four-way row needs plumbing
+those two do not have), or the HPAKE and HSKE-masked operations (checked by hand
+and found to agree, but not pinned).  What is now true and was not is that
+*adding* a randomness consumer anywhere fails CI until someone says which of the
+two vectors reaches it.
+
+**Verification.**  All four languages build; the C, Go and Python suites and
+Java's `SelfTest` close with `*** OK: no check reported [FAIL] ***`; all five
+checkers pass, the eighth axis at 25/25/28/31 consumers with 4 samplers and 5
+operations pinned four ways; `generate_kat.py --check` reports both vectors and
+both generated headers current, and the four pre-existing KAT files are
+byte-identical; `verify_kat.go`, `verify_kat_c` and `KatVerify` all reproduce all
+five operation rows in their own port, including the byte counts on the four rows
+that carry one; the ring signature still verifies in C, Go, Python and Java after
+the fix; `test_kat_vectors`, `test_cross_lang_matrix` and the Stern family
+scripts pass.  Negative controls in the text above.
+
+Status: **DONE v7.0.15** — five randomised operations pinned against a fixed statement and a fixed stream in four languages, which found a ring signature that named its own signer in two of them.
+
+### #299: a source check anchored on a spelling, and a CI gate that failed one run in twenty by construction
+
+TODO #297's CI run failed the `analysis-findings` job twice, on two different
+scripts, and the two failures are opposite kinds.  One was caused by #297 and is
+a real stale claim; the other had been latent since the gate was written and is
+a flaky test.  Both are recorded here because the *pair* is the lesson: the job
+that #289 built to stop "nobody got round to it" looking like "it passes" is
+only useful if a red run means something, and a gate that cries wolf one run in
+twenty trains everyone to re-run it — which is also the response to a real
+failure.
+
+**(a) `stern_ring_challenge_bias.py` — the anchor moved.**  §4 of that script is
+a SOURCE check: TODO #164 fixed a biased challenge trit (`byte % 3` is 86/85/85,
+because 256 = 3·85 + 1) by rejecting the byte 255, and §4 asserts the fix is
+still in the files that carried it.  It asserted that by grepping
+`herradura.h` for the literal `if (rnd1 != 255) break;` and the Python suite for
+`if v != 255`.  TODO #297 EXTRACTED that trit into a named sampler in all four
+ports — precisely because a sampler written inline in four places is one the
+manifest cannot see — so the literal vanished from `herradura.h` while the fix
+it stood for was still there, one function further in.  The gate was right to
+fire: the sentence it was defending had become unverifiable.  A source check
+anchored on a spelling fails when the spelling moves, and the repair is to
+anchor it on the named helper.
+
+The check is also WIDER than before, which is the part worth keeping.  It now
+covers all four shipped ports rather than two, scoped per helper body rather
+than per file — every one of these files contains an unrelated 255 somewhere, so
+a whole-file search would keep passing after the rejection was deleted — and it
+distinguishes "the helper is gone" from "the helper is there and the rejection
+is not".  Five negative controls, all firing: the rejection deleted from each of
+C, Go, Python and Java in turn, and the C helper renamed away.
+
+Two sentences of §4's prose were RETIRED rather than re-pointed, because both
+were wrong in detail and #297 is what made that visible.  It said Go and the
+Arduino code "were never affected — they reduce a 32-bit draw, bias ~2^-32":
+Go reduced a whole n-BIT draw (n = 256, so bias ~2^-256, and 32 bytes spent per
+trit), and the Arduino port draws no challenge trit AT ALL — its simulated
+member is hardcoded to `b = 0`, so it has nothing to bias.  Java drew
+`Random.nextInt(3)`, unbiased by a third route again.  Three correct schemes and
+one wrong one, for a single trit.
+
+**(b) `hfscx_256_analysis.py` §3 — a probabilistic property asserted as a
+deterministic one.**  The gate was `chi2 < 293.2`, the p = 0.05 critical value
+for df = 255, applied to a FRESH `os.urandom` sample on every run.  A perfectly
+uniform hash therefore fails it one run in twenty, and on #297's PR it did:
+338.7 in one of the two runs and a clean pass in the other, with nothing in the
+tree touching HFSCX-256.  Measured null over 40 independent local samples:
+median 251.1, max 294.9, 2/40 above 293.2 — the nominal 5% exactly, so the hash
+is fine and the threshold is the defect.  This is the class `CLAUDE.md`'s
+Testing section already names, the same one that made C's [45] fail 38.5% of
+runs before TODO #233; it had simply never been looked for in
+`SecurityProofsCode/`, because until TODO #291 and #289 nothing collected these
+exit statuses at all.
+
+The gate is now a REPLICATION: an exceedance of the 0.05 value is confirmed
+against a second independent sample at the 0.001 value before it counts.
+False-failure rate 0.05 × 0.001 = 5e-5 rather than 1 in 20, the extra ~4 s is
+paid only on the 5% of runs that need it, and power is essentially untouched —
+a hash biased enough to matter puts χ² in the thousands over 160,000 byte
+samples, not at 300.  Controls on both branches with the sampler stubbed: 338.7
+then 251.0 passes (the flake), 338.7 then 400.0 fails (a real bias), and the
+boundary pair 300.0 then 330.4 passes.
+
+**KNOWN LIMIT.**  (b) fixes one gate, not the class.  Nothing systematically
+asks which of the 73 findings gates decide a verdict from a fresh random sample
+against a fixed threshold — this one was found because it fired, which is the
+same way #285 found that no job collected these statuses.  A census of
+threshold-vs-sample gates is filed as TODO #300.  (a) has a limit of its own
+that is inherent rather than deferrable: a source check reads syntax, so it
+cannot see whether the helper it found is CALLED.  `stern_ring_trit` could
+survive intact beside a ring signer that stopped calling it — which is #295's
+dead-code limit one axis over — and what covers that here is
+`KAT/operation_replay.json`'s ring row, whose pinned stream makes a changed
+consumption order a failure.
+
+**Verification.**  Both scripts exit 0.  All five checkers OK, including check
+D, whose claims table anchors on §4's prose.  `run_findings_gates.py --list`
+still discovers both as gating.  No shipped source file changed — this item
+touches two analysis scripts and the documents.
+
+Status: **DONE v7.0.16** — a source check re-anchored on the helper TODO #297 extracted, and a χ² gate that failed one CI run in twenty by construction made a replication.

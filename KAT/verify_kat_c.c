@@ -30,6 +30,7 @@
 #include "../herradura.h"
 #include "hcred_kkw_vector.h"
 #include "sampler_replay_vector.h"
+#include "operation_replay_vector.h"
 
 #if HCRED_N != KKW_KAT_N
 #  error "herradura.h's HCRED_N does not match the vector's width"
@@ -235,6 +236,270 @@ static void replay_oprf(void)
     fclose(f);
 }
 
+/* ── TODO #297: fixed-stream OPERATION replay ────────────────────────────
+ *
+ * One level above the leaf replay above.  A leaf row is one call with scalar
+ * arguments; these rows supply a fixed STATEMENT as well as a fixed stream and
+ * pin what a whole randomised operation produces -- so the order in which it
+ * visits its samplers, and any inline draw loop that is not a callable sampler
+ * at all, is pinned across the four ports.  #294's own defect was of the
+ * second kind: rnl_sigma_sign's mask draw is written out inside the signing
+ * loop.
+ *
+ * C again needs no injection machinery: every operation here already takes its
+ * entropy as a `FILE *`, so fmemopen over the pinned bytes drives the SHIPPED
+ * function.  ftell is the bytes-consumed assertion where the vector carries
+ * one.
+ */
+static int cmp_ba(const BitArray *got, const uint8_t *want, const char *what)
+{
+    if (memcmp(got->b, want, KEYBYTES) != 0) { bad(what); return 0; }
+    return 1;
+}
+
+static void op_stern_keygen(void)
+{
+    FILE *f = fmemopen((void *)opr_sfk_stream, sizeof opr_sfk_stream, "rb");
+    BitArray seed, e;
+    uint8_t syndr[SDF_SYNBYTES];
+
+    if (!f) { bad("op stern_f_keygen (fmemopen)"); return; }
+    stern_f_keygen(&seed, &e, syndr, f);
+    if (cmp_ba(&seed, opr_sfk_seed, "op stern_f_keygen seed"))
+        ok("op stern_f_keygen seed");
+    if (cmp_ba(&e, opr_sfk_e, "op stern_f_keygen e"))
+        ok("op stern_f_keygen e");
+    /* The vector's syndrome is already transposed into this header's byte
+     * order by the generator -- see the comment beside opr_sfk_syndrome. */
+    if (memcmp(syndr, opr_sfk_syndrome, SDF_SYNBYTES) != 0)
+        bad("op stern_f_keygen syndrome");
+    else
+        ok("op stern_f_keygen syndrome");
+    if (ftell(f) != OPR_SFK_CONSUMED) {
+        printf("FAIL op stern_f_keygen: consumed %ld bytes, vector says %d\n",
+               ftell(f), OPR_SFK_CONSUMED);
+        failures++;
+    }
+    fclose(f);
+}
+
+static void op_stern_sign(void)
+{
+    FILE *f = fmemopen((void *)opr_sfs_stream, sizeof opr_sfs_stream, "rb");
+    SternSig sig;
+    BitArray msg, e, seed;
+    int i, bad_at = -1;
+
+    if (!f) { bad("op hpks_stern_f_sign (fmemopen)"); return; }
+    memcpy(msg.b, opr_sfs_msg, KEYBYTES);
+    memcpy(e.b, opr_sfs_e, KEYBYTES);
+    memcpy(seed.b, opr_sfs_seed, KEYBYTES);
+    stern_sig_alloc(&sig, OPR_SFS_ROUNDS);
+    hpks_stern_f_sign(&sig, &msg, &e, &seed, f);
+
+    for (i = 0; i < OPR_SFS_ROUNDS; i++)
+        if (memcmp(sig.c0[i].b, opr_sfs_c0[i], KEYBYTES) != 0 ||
+            memcmp(sig.c1[i].b, opr_sfs_c1[i], KEYBYTES) != 0 ||
+            memcmp(sig.c2[i].b, opr_sfs_c2[i], KEYBYTES) != 0) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL op hpks_stern_f_sign: commitments differ at round %d\n", bad_at);
+        failures++;
+    } else {
+        ok("op hpks_stern_f_sign commitments");
+    }
+
+    bad_at = -1;
+    for (i = 0; i < OPR_SFS_ROUNDS; i++)
+        if (sig.b[i] != opr_sfs_challenge[i]) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL op hpks_stern_f_sign: challenge %d is %d, vector says %d\n",
+               bad_at, sig.b[bad_at], opr_sfs_challenge[bad_at]);
+        failures++;
+    } else {
+        ok("op hpks_stern_f_sign challenges");
+    }
+
+    /* The three challenge values reveal three different pairs, and the
+     * vector's stream is chosen so all three occur -- so this one comparison
+     * covers all three response branches. */
+    bad_at = -1;
+    for (i = 0; i < OPR_SFS_ROUNDS; i++)
+        if (memcmp(sig.resp_a[i].b, opr_sfs_resp_a[i], KEYBYTES) != 0 ||
+            memcmp(sig.resp_b[i].b, opr_sfs_resp_b[i], KEYBYTES) != 0) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL op hpks_stern_f_sign: response differs at round %d (b=%d)\n",
+               bad_at, sig.b[bad_at]);
+        failures++;
+    } else {
+        ok("op hpks_stern_f_sign responses");
+    }
+
+    if (ftell(f) != OPR_SFS_CONSUMED) {
+        printf("FAIL op hpks_stern_f_sign: consumed %ld bytes, vector says %d\n",
+               ftell(f), OPR_SFS_CONSUMED);
+        failures++;
+    }
+    stern_sig_free(&sig);
+    fclose(f);
+}
+
+static void op_zkp_nl_prove(void)
+{
+    FILE *f = fmemopen((void *)opr_zk_stream, sizeof opr_zk_stream, "rb");
+    ZkpNlRound *proof;
+    int i, bad_at = -1;
+
+    if (!f) { bad("op zkp_nl_prove (fmemopen)"); return; }
+    proof = zkp_nl_prove(OPR_ZK_A, OPR_ZK_B, OPR_ZK_Y, OPR_ZK_N, OPR_ZK_ROUNDS,
+                         opr_zk_msg, sizeof opr_zk_msg, f);
+    if (!proof) { bad("op zkp_nl_prove (null proof)"); fclose(f); return; }
+
+    for (i = 0; i < OPR_ZK_ROUNDS; i++)
+        if (memcmp(proof[i].com_0, opr_zk_com0[i], 32) != 0 ||
+            memcmp(proof[i].com_1, opr_zk_com1[i], 32) != 0 ||
+            memcmp(proof[i].com_2, opr_zk_com2[i], 32) != 0) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL op zkp_nl_prove: commitments differ at round %d\n", bad_at);
+        failures++;
+    } else {
+        ok("op zkp_nl_prove commitments");
+    }
+
+    bad_at = -1;
+    for (i = 0; i < OPR_ZK_ROUNDS; i++) {
+        if (proof[i].e != (uint8_t)opr_zk_e[i] ||
+            proof[i].view_len != (size_t)OPR_ZK_VIEWLEN ||
+            memcmp(proof[i].view_p1, opr_zk_view1[i], OPR_ZK_VIEWLEN) != 0 ||
+            memcmp(proof[i].view_p2, opr_zk_view2[i], OPR_ZK_VIEWLEN) != 0) {
+            bad_at = i; break;
+        }
+    }
+    if (bad_at >= 0) {
+        printf("FAIL op zkp_nl_prove: views differ at round %d (e=%d, vector says %d)\n",
+               bad_at, proof[bad_at].e, opr_zk_e[bad_at]);
+        failures++;
+    } else {
+        ok("op zkp_nl_prove views");
+    }
+
+    if (ftell(f) != OPR_ZK_CONSUMED) {
+        printf("FAIL op zkp_nl_prove: consumed %ld bytes, vector says %d\n",
+               ftell(f), OPR_ZK_CONSUMED);
+        failures++;
+    }
+    zkp_nl_proof_free(proof, OPR_ZK_ROUNDS);
+    fclose(f);
+}
+
+static void op_rnl_sigma_sign(void)
+{
+    FILE *f = fmemopen((void *)opr_sigma_stream, sizeof opr_sigma_stream, "rb");
+    static int32_t w[OPR_SIGMA_N], c[OPR_SIGMA_N], z[OPR_SIGMA_N];
+    int i, bad_at = -1;
+
+    if (!f) { bad("op rnl_sigma_sign (fmemopen)"); return; }
+    if (rnl_sigma_sign(opr_sigma_s, opr_sigma_m, opr_sigma_cpub, OPR_SIGMA_N,
+                       opr_sigma_msg, sizeof opr_sigma_msg, f, w, c, z) != 0) {
+        /* The vector's stream is exactly one buffered block long and is chosen
+         * to accept on the FIRST attempt; a port that retries here has already
+         * run off the end of the stream. */
+        bad("op rnl_sigma_sign (rejection limit or short stream)");
+        fclose(f);
+        return;
+    }
+    for (i = 0; i < OPR_SIGMA_N; i++)
+        if (w[i] != opr_sigma_w[i] || c[i] != opr_sigma_c[i] ||
+            z[i] != opr_sigma_z[i]) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL op rnl_sigma_sign: coeff %d is (w=%d c=%d z=%d), "
+               "vector says (w=%d c=%d z=%d)\n", bad_at,
+               (int)w[bad_at], (int)c[bad_at], (int)z[bad_at],
+               (int)opr_sigma_w[bad_at], (int)opr_sigma_c[bad_at],
+               (int)opr_sigma_z[bad_at]);
+        failures++;
+    } else {
+        ok("op rnl_sigma_sign (w, c, z) -- output only, see the vector on `consumed`");
+    }
+    fclose(f);
+}
+
+/* The ring row.  Two divergences lived in this operation and neither was
+ * visible to any other check: the challenge trit had three schemes across the
+ * four ports, and the b = 0 dummy commitment was a CONSTANT in C and Go, which
+ * identified the real signer from the public signature.  See
+ * stern_ring_simulate in herradura.h. */
+static void op_stern_ring_sign(void)
+{
+    FILE *f = fmemopen((void *)opr_ring_stream, sizeof opr_ring_stream, "rb");
+    SternRingSig sig;
+    BitArray msg, e, seeds[OPR_RING_K];
+    uint8_t syndrs[OPR_RING_K][SDF_SYNBYTES];
+    int i, n = OPR_RING_K * OPR_RING_ROUNDS, bad_at = -1;
+
+    if (!f) { bad("op stern_ring_sign (fmemopen)"); return; }
+    memcpy(msg.b, opr_ring_msg, KEYBYTES);
+    memcpy(e.b, opr_ring_e, KEYBYTES);
+    for (i = 0; i < OPR_RING_K; i++) {
+        memcpy(seeds[i].b, opr_ring_seeds[i], KEYBYTES);
+        memcpy(syndrs[i], opr_ring_syndromes[i], SDF_SYNBYTES);
+    }
+    stern_ring_alloc(&sig, OPR_RING_K, OPR_RING_ROUNDS);
+    stern_ring_sign(&sig, &msg, &e, OPR_RING_J, seeds,
+                    (const uint8_t *)syndrs, f);
+
+    for (i = 0; i < n; i++)
+        if (memcmp(sig.c0[i].b, opr_ring_c0[i], KEYBYTES) != 0 ||
+            memcmp(sig.c1[i].b, opr_ring_c1[i], KEYBYTES) != 0 ||
+            memcmp(sig.c2[i].b, opr_ring_c2[i], KEYBYTES) != 0) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL op stern_ring_sign: commitments differ at member %d round %d\n",
+               bad_at / OPR_RING_ROUNDS, bad_at % OPR_RING_ROUNDS);
+        failures++;
+    } else {
+        ok("op stern_ring_sign commitments");
+    }
+
+    bad_at = -1;
+    for (i = 0; i < n; i++)
+        if (sig.b[i] != opr_ring_challenge[i]) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL op stern_ring_sign: challenge at member %d round %d is %d, "
+               "vector says %d\n", bad_at / OPR_RING_ROUNDS,
+               bad_at % OPR_RING_ROUNDS, sig.b[bad_at], opr_ring_challenge[bad_at]);
+        failures++;
+    } else {
+        ok("op stern_ring_sign challenges");
+    }
+
+    bad_at = -1;
+    for (i = 0; i < n; i++)
+        if (memcmp(sig.resp_a[i].b, opr_ring_resp_a[i], KEYBYTES) != 0 ||
+            memcmp(sig.resp_b[i].b, opr_ring_resp_b[i], KEYBYTES) != 0) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL op stern_ring_sign: response differs at member %d round %d (b=%d)\n",
+               bad_at / OPR_RING_ROUNDS, bad_at % OPR_RING_ROUNDS, sig.b[bad_at]);
+        failures++;
+    } else {
+        ok("op stern_ring_sign responses");
+    }
+
+    /* The signature must still VERIFY -- the fix changed a dummy commitment
+     * that no verifier checks, and a vector alone would not say so. */
+    if (!stern_ring_verify(&sig, &msg, seeds, (const uint8_t *)syndrs)) {
+        bad("op stern_ring_sign verifies");
+    } else {
+        ok("op stern_ring_sign verifies");
+    }
+
+    if (ftell(f) != OPR_RING_CONSUMED) {
+        printf("FAIL op stern_ring_sign: consumed %ld bytes, vector says %d\n",
+               ftell(f), OPR_RING_CONSUMED);
+        failures++;
+    }
+    stern_ring_free(&sig);
+    fclose(f);
+}
+
 int main(void)
 {
     HcredKkwProof proof;
@@ -295,11 +560,18 @@ int main(void)
     replay_weight_t();
     replay_oprf();
 
+    /* 4. The fixed-stream OPERATION replay (TODO #297). */
+    op_stern_keygen();
+    op_stern_sign();
+    op_zkp_nl_prove();
+    op_stern_ring_sign();
+    op_rnl_sigma_sign();
+
     if (failures) {
         printf("*** FAILED: %d check(s) reported [FAIL] ***\n", failures);
         return 1;
     }
-    puts("*** OK: KAT/hcred_kkw.json[n256] and KAT/sampler_replay.json "
-         "verified against herradura.h ***");
+    puts("*** OK: KAT/hcred_kkw.json[n256], KAT/sampler_replay.json and "
+         "KAT/operation_replay.json verified against herradura.h ***");
     return 0;
 }

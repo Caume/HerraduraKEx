@@ -112,10 +112,8 @@ def section2(trials: int = 5_000) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 # §3 — Output Hamming weight + byte uniformity (chi-square)
 # ═══════════════════════════════════════════════════════════════════════════
-def section3(trials: int = 5_000) -> None:
-    print(SEP)
-    print(f"§3 — Output Hamming weight + byte uniformity  ({trials} trials)")
-    print(SEP)
+def _byte_chi2(trials: int):
+    """One independent sample: (chi2, mean weight, std, elapsed)."""
     weights = []
     byte_counts = Counter()
     t0 = time.monotonic()
@@ -126,23 +124,56 @@ def section3(trials: int = 5_000) -> None:
             byte_counts[b] += 1
     elapsed = time.monotonic() - t0
     mean = sum(weights) / trials
-    std  = math.sqrt(sum((w - mean) ** 2 for w in weights) / trials)
-    # Byte distribution: 32 bytes/digest × trials, 256 buckets
+    std = math.sqrt(sum((w - mean) ** 2 for w in weights) / trials)
+    # Byte distribution: 32 bytes/digest x trials, 256 buckets
     expected = trials * 32 / 256
     chi2 = sum((byte_counts.get(v, 0) - expected) ** 2 / expected
                for v in range(256))
-    # χ²(0.001, 255) ≈ 330.5; χ²(0.05, 255) ≈ 293.2; χ²(0.95, 255) ≈ 219.0
+    return chi2, mean, std, elapsed
+
+
+def section3(trials: int = 5_000) -> bool:
+    print(SEP)
+    print(f"§3 — Output Hamming weight + byte uniformity  ({trials} trials)")
+    print(SEP)
+    # chi2(0.001, 255) ~ 330.5; chi2(0.05, 255) ~ 293.2; chi2(0.95, 255) ~ 219.0
+    P05, P001 = 293.2, 330.5
+    chi2, mean, std, elapsed = _byte_chi2(trials)
     print(f"  Mean weight    : {mean:.3f}  (ideal 128.0)")
     print(f"  Weight std dev : {std:.3f}  (ideal ≈ 8.0 = √(256/4))")
     print(f"  Byte chi²      : {chi2:.1f}  (df=255, expected ≈ 255)")
-    print(f"  Critical χ²    : 0.05→293.2,  0.001→330.5")
-    p05 = chi2 < 293.2
-    print(f"  Uniformity     : {'PASS (p>0.05)' if p05 else 'inspect'}")
+    print(f"  Critical χ²    : 0.05→{P05},  0.001→{P001}")
+
+    # THE GATE IS A REPLICATION, NOT A SINGLE TEST, and the reason is that this
+    # script's exit status is a CI gate (TODO #291).  `chi2 < 293.2` is the
+    # p = 0.05 critical value applied to a FRESH os.urandom sample every run, so
+    # a perfectly uniform hash fails it one run in twenty BY CONSTRUCTION -- and
+    # it did, on the PR for TODO #297, with 338.7 against a measured null of
+    # median 251.1 and 2/40 samples over 293.2, i.e. exactly the nominal rate.
+    # That is the defect class CLAUDE.md's Testing section names: a
+    # probabilistic property asserted as a deterministic one.  A flaky gate is
+    # worse than no gate, because the first response to a known-flaky failure is
+    # to re-run it, and that is also the response to a real one.
+    #
+    # So an exceedance is CONFIRMED against a second independent sample at the
+    # 0.001 level before it counts: false-failure rate 0.05 x 0.001 = 5e-5
+    # rather than 1 in 20, and the extra ~4 s is paid only on the 5% of runs
+    # that need it.  Power is essentially untouched -- a hash biased enough to
+    # matter puts chi2 in the thousands over 160,000 byte samples, not at 300.
+    ok = chi2 < P05
+    if not ok:
+        print(f"  Uniformity     : over the 0.05 critical value — "
+              f"confirming against a second independent sample")
+        chi2b, _, _, elapsed_b = _byte_chi2(trials)
+        elapsed += elapsed_b
+        ok = chi2b < P001
+        print(f"  Byte chi² (#2) : {chi2b:.1f}  "
+              f"({'below' if ok else 'ABOVE'} the 0.001 critical value)")
+    print(f"  Uniformity     : {'PASS' if ok else 'FAIL — non-uniform in two independent samples'}")
     print(f"  Time           : {elapsed:.1f} s")
-    return p05
+    return ok
 
 
-# ═══════════════════════════════════════════════════════════════════════════
 # §4 — Collision sanity (no accidental collisions far below birthday bound)
 # ═══════════════════════════════════════════════════════════════════════════
 def section4(full: bool) -> bool:

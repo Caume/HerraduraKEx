@@ -116,30 +116,71 @@ def section4_fix_shipped():
     print("  years of releases after the fix shipped -- so a reader met a live")
     print("  anonymity leak that no longer existed.  What shipped: `stern_ring_sign`")
     print("  (herradura.h) and `hpks_stern_ring_sign` (the Python suite) now REJECT")
-    print("  the byte 255 and reduce the rest, giving exactly 85/85/85.  Go and the")
-    print("  Arduino code were never affected -- they reduce a 32-bit draw, bias")
-    print("  ~2^-32.")
+    print("  the byte 255 and reduce the rest, giving exactly 85/85/85.")
     print()
     print("  So the useful thing this script can do now is check the fix is still")
     print("  there.  That is a SOURCE check and is stated as one: the biased shape")
-    print("  is one byte reduced mod 3 with nothing rejected, and its absence from")
-    print("  the two files that carried it is what is asserted.")
+    print("  is one byte reduced mod 3 with nothing rejected, and the REJECTION's")
+    print("  presence in every port that draws this trit is what is asserted.")
+    print()
+    print("  TODO #297 moved the anchor and WIDENED the check, and the move is why")
+    print("  this gate failed rather than drifting: until then the trit was written")
+    print("  INLINE in all four ports, this section grepped two files for two")
+    print("  hand-written shapes, and #297 extracted a named sampler in each -- so")
+    print("  the literal `if (rnd1 != 255) break;` vanished from herradura.h while")
+    print("  the fix it stood for was still there.  A source check anchored on a")
+    print("  spelling fails when the spelling moves; that is the failure mode it")
+    print("  has, and the repair is to anchor it on the named helper instead.")
+    print()
+    print("  #297 also RETIRED the other half of this section's old prose.  It said")
+    print("  Go and the Arduino code \"were never affected -- they reduce a 32-bit")
+    print("  draw, bias ~2^-32\", and both halves were wrong in detail: Go reduced a")
+    print("  whole n-BIT draw (n = 256, so bias ~2^-256, and 32 bytes per trit), and")
+    print("  the Arduino port draws no challenge trit AT ALL -- its simulated member")
+    print("  is hardcoded to b = 0, so it has nothing to bias.  Java drew")
+    print("  Random.nextInt(3), unbiased by a different route again.  Three correct")
+    print("  schemes and one wrong one for a single trit is the asymmetry #297")
+    print("  removed by adopting this rejection sampler in all four.")
     print()
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(here)
-    targets = [("Python suite", os.path.join(root, "Herradura cryptographic suite.py"),
-                r"if v != 255"),
-               ("herradura.h", os.path.join(root, "herradura.h"),
-                r"if \(rnd1 != 255\) break;")]
+    # Anchored on the HELPER, not on a spelling of its body: each entry names the
+    # file, the regex that finds the extracted sampler's definition, and the
+    # rejection that must appear inside it.  A port that loses the helper and a
+    # port that keeps the helper but drops the rejection are different failures,
+    # and this reports which.  Arduino is absent on purpose -- it draws no trit.
+    targets = [
+        ("Python suite", "Herradura cryptographic suite.py",
+         r"def _stern_ring_trit\b", r"if v != 255", r"\ndef "),
+        ("herradura.h", "herradura.h",
+         r"stern_ring_trit\s*\(FILE", r"if \(v != 255\)", r"\n\}"),
+        ("Go suite", os.path.join("herradura", "herradura.go"),
+         r"func sternRingTrit\b", r"if b\[0\] != 255", r"\n\}"),
+        ("Java suite", os.path.join("bindings", "java", "herradurakex",
+                                    "SternRing.java"),
+         r"int ringTrit\s*\(", r"if \(v != 255\)", r"\n    \}"),
+    ]
     ok = True
-    for label, path, pattern in targets:
+    for label, rel, defpat, rejpat, endpat in targets:
+        path = os.path.join(root, rel)
         try:
             with open(path, encoding="utf-8") as fh:
                 src = fh.read()
         except OSError:
-            print(f"  {label:<14} NOT READABLE from here — not checked this run")
+            print(f"  {label:<14} NOT READABLE from here -- not checked this run")
             continue
-        found = re.search(pattern, src) is not None
+        mdef = re.search(defpat, src)
+        if mdef is None:
+            ok = False
+            print(f"  {label:<14} sampler NOT FOUND (no match for {defpat!r})")
+            continue
+        # The helper's body only: from its definition to the start of whatever
+        # follows it at top level.  Scoping it matters -- every one of these
+        # files contains an unrelated 255 somewhere, so a whole-file search
+        # would keep passing after the rejection was deleted.
+        mend = re.search(endpat, src[mdef.end():])
+        body = src[mdef.end():mdef.end() + (mend.start() if mend else len(src))]
+        found = re.search(rejpat, body) is not None
         ok = ok and found
         print(f"  {label:<14} rejection sampling present: {found}")
     return ok

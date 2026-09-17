@@ -2,6 +2,74 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.16] - 2026-09-16
+
+### Fixed
+- TODO #299: TODO #297's CI run failed the `analysis-findings` job on two
+  scripts, for opposite reasons, and both are fixed here.
+  `stern_ring_challenge_bias.py` §4 is a SOURCE check that TODO #164's
+  rejection-sampling fix is still shipped, and it was anchored on the literal
+  `if (rnd1 != 255) break;` — a spelling #297 removed from `herradura.h` when it
+  extracted the challenge trit into a named sampler in all four ports.  The fix
+  was still there, one function further in; the gate was right to fire, because
+  the sentence it defended had become unverifiable.  Re-anchored on the named
+  helper, and WIDENED from two ports to four, scoped to the helper's own body
+  (every one of these files carries an unrelated 255, so a whole-file search
+  would keep passing after the rejection was deleted) and distinguishing a
+  missing helper from a helper that lost its rejection.
+- TODO #299: `hfscx_256_analysis.py` §3 gated on `chi2 < 293.2`, the p = 0.05
+  critical value for df = 255, applied to a fresh `os.urandom` sample every run
+  — so a perfectly uniform hash failed CI one run in twenty by construction, and
+  on #297's PR it did (338.7 in one run, a clean pass in the other, with nothing
+  in the tree touching HFSCX-256).  Measured null over 40 local samples: median
+  251.1, 2/40 above the threshold, the nominal rate exactly.  The gate is now a
+  REPLICATION — an exceedance is confirmed against a second independent sample
+  at the 0.001 level — dropping the false-failure rate to 5e-5 while leaving
+  power untouched.  This is the class `CLAUDE.md`'s Testing section names, found
+  in the analysis layer rather than the test layer.
+
+### Changed
+- TODO #299: two retired sentences in `stern_ring_challenge_bias.py` §4, both
+  wrong in detail and both made visible by #297.  Go and Arduino were said to be
+  unaffected because "they reduce a 32-bit draw": Go reduced a whole n-bit draw
+  (n = 256, 32 bytes per trit), and the Arduino port draws no challenge trit at
+  all — its simulated member is hardcoded to `b = 0`.
+
+### Added
+- TODO #300 (OPEN): a census of findings gates that compare a freshly sampled
+  statistic to a fixed threshold.  #299(b) was found because it fired on an
+  unrelated PR; 73 scripts gate and nothing asks how many carry the same shape.
+
+## [7.0.15] - 2026-09-16
+
+### Changed
+- TODO #297: the fixed-stream replay now reaches whole OPERATIONS, not only leaf
+  samplers.  New `KAT/operation_replay.json` and its generated C view
+  `KAT/operation_replay_vector.h` pin five randomised operations -- Stern-F
+  keygen, Stern-F signing, Stern-F ring signing, the NL-FSCX ZKBoo prover and the
+  Ring-LWR Sigma signer -- against a fixed statement and a fixed stream, in all
+  four languages, through the four KAT consumers that already existed.
+- **Ring-signature anonymity fixed in the C and Go ports.**  For a simulated ring
+  member's `b = 0` round, `stern_ring_simulate` hashed two ZERO BitArrays into
+  the dummy commitment `c0`, so that commitment was one fixed constant in every
+  such round while the real signer's `c0` never took it.  With the default `rounds = 32` each
+  non-signer shows the constant with probability `1 - (2/3)^32` and the signer
+  never does, so the signer was identifiable from the public signature.  Python
+  and Java always drew a random dummy; their form is adopted verbatim.  Existing
+  signatures still verify -- `c0` is unchecked for `b = 0`, which is why no
+  round-trip or interop test could see it.
+- `hpks_stern_ring_sign`'s per-round challenge trit is now one named sampler in
+  all four ports (`stern_ring_trit` / `sternRingTrit` / `_stern_ring_trit` /
+  `SternRing.ringTrit`).  It had three implementations while it was written
+  inline: a byte with 255 rejected (C, Python), a whole n-bit draw reduced modulo
+  3 (Go, biased by a relative 2^-32 and 32 bytes per trit), and
+  `Random.nextInt(3)` (Java).  C's bounded 8-try loop and its fail-open
+  `(i ^ r)` fallback on a short `/dev/urandom` read went with the extraction.
+- `spec/check_language_parity.py`'s eighth axis gains `OPERATION_REPLAY_PINNED`
+  alongside `SAMPLER_REPLAY_PINNED`, self-invalidating in both directions and
+  cross-checked against the raw-entropy census the same way.  The census is now
+  c 25, go 25, python 28, java 31.
+
 ## [7.0.14] - 2026-09-16
 
 ### TODO #296 — the fixed-stream replay #294 prescribed did not exist, and nothing could tell

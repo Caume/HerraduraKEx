@@ -865,7 +865,7 @@ spec/                                                — machine-readable protoc
                                                       each of C/Go/Python/Java, set-alignment of
                                                       C/Go/Python's shared [1]-[51] numbering, a
                                                       manifest of suite-internal (non-CLI)
-                                                      primitives -- 198 entries, four cells each --
+                                                      primitives -- 199 entries, four cells each --
                                                       so a primitive with no `--algo` tag can still
                                                       be caught missing in a language, and since
                                                       v6.1.0 an INTERNAL-SURFACE CENSUS that closed
@@ -1305,10 +1305,98 @@ spec/                                                — machine-readable protoc
                                                       those the repaired code and the
                                                       duplicate-skip path are unguarded,
                                                       and in the negative control they
-                                                      were.  Pinning the remaining 101
+                                                      were.  Pinning the remaining
                                                       consumers means replaying whole
-                                                      operations rather than leaf samplers:
-                                                      TODO #297
+                                                      operations rather than leaf samplers,
+                                                      which TODO #297 did.
+                                                      OPERATION_REPLAY_PINNED (TODO #297)
+                                                      sits BESIDE the sampler table and is
+                                                      checked by the same generalised code:
+                                                      KAT/operation_replay.json pins five
+                                                      whole randomised OPERATIONS -- Stern-F
+                                                      keygen and signing, Stern-F RING
+                                                      signing, the ZKBoo prover and the
+                                                      Ring-LWR Sigma signer -- each against a
+                                                      fixed STATEMENT as well as a fixed
+                                                      stream.  That is the new part: a leaf
+                                                      row is one call with scalar arguments,
+                                                      while an operation is a function of its
+                                                      key and message too, so every row states
+                                                      its inputs in full rather than deriving
+                                                      them from another row (a derived
+                                                      statement makes one row's failure
+                                                      cascade and hides which diverged).  It
+                                                      needed no new script, no CI wiring and
+                                                      no injection machinery -- every
+                                                      operation already takes its entropy as a
+                                                      parameter in C (FILE *) and Java
+                                                      (SecureRandom), and the four consumers
+                                                      #296 built follow the second vector as
+                                                      they do the first.  The two tables are
+                                                      SEPARATE on purpose: a consumer absent
+                                                      from the sampler table may be covered by
+                                                      an operation row that calls it, and one
+                                                      absent from both is genuinely unpinned.
+                                                      WHAT IT FOUND is not a consumption-order
+                                                      divergence but an ANONYMITY BREAK.
+                                                      hpks_stern_ring_sign simulates the
+                                                      non-signer members; for a simulated
+                                                      member's b = 0 round the dummy
+                                                      commitment c0 was hash(ZERO, ZERO) in C
+                                                      and Go -- one fixed constant -- while
+                                                      the real signer's c0 uses a freshly
+                                                      drawn pi_seed and never takes it.  At
+                                                      the default rounds = 32 every
+                                                      non-signer shows the constant with
+                                                      probability 1 - (2/3)^32 and the signer
+                                                      never does, so the signer is the member
+                                                      with none of them, read off the public
+                                                      signature.  Measured, k=4: the signer
+                                                      scored 0 where the other three scored
+                                                      9, 13 and 9.  It survived because the
+                                                      signature VERIFIES -- c0 is unchecked
+                                                      for b = 0 by construction -- so every
+                                                      round-trip, 4x4 interop matrix and
+                                                      tamper test passed it, and no KAT could
+                                                      pin a ring signature that is randomised
+                                                      per call.  Python and Java always drew a
+                                                      dummy; their form is adopted verbatim.
+                                                      UNDERNEATH IT, the per-round challenge
+                                                      trit had THREE schemes while it was
+                                                      written INLINE in all four: a byte with
+                                                      255 rejected (C, Python), a whole n-bit
+                                                      draw reduced modulo 3 (Go, biased 2^-32
+                                                      and 32 bytes per trit), and
+                                                      Random.nextInt(3) (Java).  It is now one
+                                                      NAMED sampler in each port with a
+                                                      PRIMITIVES entry, because a sampler
+                                                      written inline in four places is one the
+                                                      manifest cannot see -- and C's 8-try
+                                                      bound and its fail-open (i ^ r) fallback
+                                                      on a short /dev/urandom read went with
+                                                      the extraction.  KNOWN LIMIT: the
+                                                      rnl_sigma_sign row is pinned on the
+                                                      SINGLE-ATTEMPT path, which is the
+                                                      MINORITY path -- the operation retries
+                                                      and accepts about one attempt in three
+                                                      or four, and at an attempt boundary the
+                                                      buffered ports (#293) discard a block
+                                                      tail that unbuffered C goes on to use,
+                                                      so the byte-to-draw mapping is common
+                                                      only until the first retry.  The row's
+                                                      stream is chosen to accept first time,
+                                                      is exactly one block long so a retry
+                                                      exhausts it rather than passing quietly,
+                                                      and the generator asserts it.  What the
+                                                      cross-port design CANNOT do is see a
+                                                      property all four ports get wrong: the
+                                                      constant was found by reading four
+                                                      implementations side by side, and had
+                                                      all four hashed zeros the vector would
+                                                      have pinned the agreed constant forever.
+                                                      That class -- no test anywhere asserts a
+                                                      HIDING property, only completeness and
+                                                      soundness -- is TODO #298
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,
@@ -1650,6 +1738,30 @@ them (`stern_f_multiround_fs.py`) already a gate, so it had been running at full
 size since #289. (4) A section that did not run must not be scored: `--full`-only and
 `--skip2/--skip3` sections return "no finding", never a passing one, or a skipped section
 becomes a vacuous pass — the inverse of what TODO #234 found in the Arduino harness.
+
+**And whether a red run means anything, which is the question under all of that (TODO
+#299).** A gate that fails at random trains everyone to re-run it, and re-running is also
+the response to a real failure — so one flaky gate degrades the whole job. #299 found
+both shapes on one PR. `hfscx_256_analysis.py` §3 gated on `chi2 < 293.2`, the p = 0.05
+critical value, against a FRESH `os.urandom` sample every run: a correct hash fails that
+one run in twenty by construction, and the measured null (median 251.1, 2/40 over the
+threshold across 40 local samples) is the nominal rate exactly. It is now a REPLICATION —
+an exceedance is confirmed against a second independent sample at the 0.001 level — so
+the false-failure rate is 5e-5 and power is untouched, since a hash biased enough to
+matter puts chi2 in the thousands over 160,000 byte samples, not at 300. That is
+`CLAUDE.md`'s own Testing class (a probabilistic property asserted as a deterministic
+one, the thing TODO #233 fixed in three tests) surfacing in the ANALYSIS layer, where
+nobody had looked because until #289 and #291 nothing collected these exit statuses at
+all. The other shape is the opposite and is not a flake: `stern_ring_challenge_bias.py`
+§4 is a SOURCE check on a shipped fix, anchored on a literal spelling, and TODO #297
+moved that spelling when it extracted the challenge trit into a named sampler in all four
+ports. The fix was still there; the gate was RIGHT to fire, because the sentence it
+defended had become unverifiable. Re-anchor a source check on the named helper, scope it
+to that helper's body (every one of these files carries an unrelated 255), and know its
+inherent limit — it reads syntax, so it cannot see whether the helper is still CALLED,
+which is #295's dead-code limit one axis over and is covered here only by
+`KAT/operation_replay.json`'s ring row. The census of which other gates compare a fresh
+sample to a fixed threshold is TODO #300, still OPEN.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

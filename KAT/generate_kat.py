@@ -20,6 +20,7 @@ import importlib.util
 import json
 import os
 import sys
+import warnings
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SUITE_PATH = os.path.join(_ROOT, "Herradura cryptographic suite.py")
@@ -1072,6 +1073,472 @@ def emit_replay_header(vec: dict) -> str:
     L += ["#endif /* SAMPLER_REPLAY_VECTOR_H */", ""]
     return "\n".join(L)
 
+
+# ---------------------------------------------------------------------------
+# TODO #297: the fixed-stream OPERATION replay.
+#
+# WHAT THIS ADDS OVER sampler_replay.json.  TODO #296 pinned four LEAF samplers:
+# each is separately callable, so a fixed stream reaches it directly and one row
+# is one call with scalar arguments.  The raw-entropy census counts 105 functions
+# that read the CSPRNG, so 101 were left recorded-but-unpinned, and they are not
+# leaves -- they are protocol operations whose draw loops are INLINE.  What a
+# leaf row cannot see is the ORDER in which an operation visits its samplers, or
+# an inline loop that is not a named sampler at all.  #294's own defect was of
+# exactly that kind: rnl_sigma_sign's mask draw is written out inside the
+# signing loop and is not a function anyone can call.
+#
+# WHY IT IS POSSIBLE AT ALL, restated because it is the whole insight: a
+# signature is randomised per call, so no KAT can pin one and none could.  Under
+# a fixed stream it is deterministic.  That is #294's observation, applied to
+# whole operations rather than to the leaves #296 stopped at.
+#
+# WHAT A ROW CARRIES, and the new part is `statement`.  An operation is a
+# function of its stream AND its statement -- a key, a message, parameters -- so
+# every row states its inputs explicitly in hex rather than deriving them from
+# another row.  A derived statement would make one row's failure cascade into
+# the next and would hide which of the two actually diverged.
+#
+# INJECTION NEEDS NOTHING NEW, in any of the four.  Every operation here takes
+# its entropy as a parameter in C (`FILE *`) and in Java (`SecureRandom`);
+# Python patches os.urandom and Go swaps rand.Reader exactly as #296 does.  That
+# was checked before the vector was designed, and it is why this item is a
+# vector plus four drivers rather than a new mechanism.
+#
+# THE ONE THING THAT DOES NOT CARRY, and it is a limit rather than a defect.
+# rnl_sigma_sign RETRIES: it draws a fresh mask and re-tests a norm bound, and
+# at the deployed ring it accepts about one attempt in three or four.  Python,
+# Go and Java buffer the draw (TODO #293) and C does not, so the two agree
+# byte-for-byte only until the first retry -- at an attempt boundary the
+# buffered ports discard the tail of a block that C would have gone on to use,
+# and every attempt after the first reads from a different offset in the three
+# than in C.  So the sigma row's stream is CHOSEN to accept on the first
+# attempt, `attempts` records that, and the generator asserts it: regenerating
+# with a stream that happens to retry would silently produce a vector only three
+# of the four ports can reproduce.  Note what this means honestly -- the row
+# pins the MINORITY path, since most real signatures retry.  Pinning the retry
+# path would mean buffering C for a test's benefit, which #293 declined.
+# ---------------------------------------------------------------------------
+
+_OPREPLAY_OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "operation_replay.json")
+_OPREPLAY_HDR_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "operation_replay_vector.h")
+
+
+def i32_hex(vals) -> str:
+    """Centered integer coefficients as 4-byte big-endian two's complement.
+
+    Two's complement rather than an offset encoding because that is what C's
+    int32_t already holds: the consumer compares against the array verbatim and
+    no port has to agree with any other about where the zero point sits.
+    """
+    return "".join(f"{v & 0xFFFFFFFF:08x}" for v in vals)
+
+
+def _unhex_i32(s: str) -> list:
+    out = []
+    for i in range(0, len(s), 8):
+        v = int(s[i:i + 8], 16)
+        out.append(v - (1 << 32) if v >= (1 << 31) else v)
+    return out
+
+
+def _nbit_hex(x, n: int) -> str:
+    """A BitArray or an int as n bits of big-endian hex."""
+    v = x.uint if hasattr(x, "uint") else int(x)
+    return f"{v:0{(n + 3) // 4}x}"
+
+
+def gen_operation_replay() -> dict:
+    rows = []
+    n = KEYBITS
+
+    # --- Stern-F keygen: BitArray.random(n), THEN the weight-t error vector ---
+    # No statement at all, which is what makes this the cheapest possible
+    # operation row and still a real one: it pins the ORDER of two samplers both
+    # of which #296 already pins individually.  Swapping the two lines leaves
+    # every distribution correct, every round-trip passing and every leaf row
+    # green, and changes both outputs here.
+    # Slack above the 100 bytes consumed: the weight-t draw rejects and
+    # retries, so the total is data-dependent and cannot be computed here.
+    stream = det_bytes(b"op-stern-keygen", 256)
+    with _replay(stream) as st:
+        seed, e_int, syndrome = suite.stern_f_keygen(n)
+    sf_t = max(2, n // 16)
+    rows.append({
+        "name": "stern_f_keygen",
+        "calls": {"c": "stern_f_keygen", "go": "SternFKeygen",
+                  "python": "stern_f_keygen", "java": "Stern.sternFKeygen"},
+        "params": {"n": n, "t": sf_t, "n_rows": n // 2},
+        "statement": {},
+        "stream": stream.hex(),
+        "expect": {"seed": _nbit_hex(seed, n),
+                   "e": _nbit_hex(e_int, n),
+                   "syndrome": _nbit_hex(syndrome, n // 2)},
+        "consumed": st.pos,
+    })
+
+    # --- Stern-F signing: per round a weight-t draw, THEN a permutation seed ---
+    # The keypair comes from the row above for convenience, but the ROW writes it
+    # out in full: a consumer reads this row's own `statement` and never row 0's
+    # output, so a keygen divergence cannot masquerade as a signing one.
+    sign_msg = BitArray(n, int.from_bytes(det_bytes(b"op-stern-msg", n // 8), "big"))
+    sign_e = int.from_bytes(bytes.fromhex(rows[0]["expect"]["e"]), "big")
+    sign_seed = BitArray(n, int.from_bytes(bytes.fromhex(rows[0]["expect"]["seed"]), "big"))
+    sign_syn = int.from_bytes(bytes.fromhex(rows[0]["expect"]["syndrome"]), "big")
+    rounds = 6
+    # The label is chosen: the first one tried gave challenges {0, 2}
+    # only, leaving the b = 1 response branch unpinned.
+    stream = det_bytes(b"op-stern-sign-1", 1024)
+    with _replay(stream) as st:
+        with warnings.catch_warnings():
+            # rounds < 219 warns by design (production soundness).  A vector is
+            # not a deployment; the round count is small so the row stays small.
+            warnings.simplefilter("ignore", RuntimeWarning)
+            commits, challenges, responses = suite.hpks_stern_f_sign(
+                sign_msg, sign_e, sign_seed, sign_syn, n, rounds)
+    # The three challenge branches reveal three DIFFERENT pairs, so a stream
+    # whose challenges miss a value leaves that branch unpinned.  Asserted, not
+    # hoped for -- this is #296's chosen-stream rule carried forward.
+    assert set(challenges) == {0, 1, 2}, \
+        ("operation replay: the stern_f_sign stream must produce all three "
+         "challenge values; got %r" % (sorted(set(challenges)),))
+    rows.append({
+        "name": "hpks_stern_f_sign",
+        "calls": {"c": "hpks_stern_f_sign", "go": "HpksSternFSign",
+                  "python": "hpks_stern_f_sign", "java": "Stern.hpksSternFSign"},
+        "params": {"n": n, "t": sf_t, "n_rows": n // 2, "rounds": rounds},
+        "statement": {"msg": _nbit_hex(sign_msg, n),
+                      "e": _nbit_hex(sign_e, n),
+                      "seed": _nbit_hex(sign_seed, n),
+                      "syndrome": _nbit_hex(sign_syn, n // 2)},
+        "stream": stream.hex(),
+        "expect": {
+            "commits": [[c0.hex() if isinstance(c0, bytes) else _nbit_hex(c0, 256),
+                         c1.hex() if isinstance(c1, bytes) else _nbit_hex(c1, 256),
+                         c2.hex() if isinstance(c2, bytes) else _nbit_hex(c2, 256)]
+                        for c0, c1, c2 in commits],
+            "challenges": list(challenges),
+            # Every response is a pair of n-bit values whichever branch produced
+            # it, so one uniform shape serves all three.
+            "responses": [[_nbit_hex(a, n), _nbit_hex(b, n)] for a, b in responses],
+        },
+        "consumed": st.pos,
+    })
+
+    # --- ZKBoo prover: per round two n-bit shares, then three 32-byte tapes ---
+    zn, zrounds = 16, 4
+    zA = int.from_bytes(det_bytes(b"op-zkboo-a", (zn + 7) // 8), "big") & ((1 << zn) - 1)
+    zB = int.from_bytes(det_bytes(b"op-zkboo-b", (zn + 7) // 8), "big") & ((1 << zn) - 1)
+    zy = suite.nl_fscx_v1(BitArray(zn, zA), BitArray(zn, zB)).uint
+    zmsg = b"HerraduraKEx operation replay"
+    # Exactly what the operation must consume -- there is no rejection
+    # anywhere in ZKBoo's draws -- so a port that reads one byte more
+    # exhausts the stream and says so, rather than diverging quietly.
+    stream = det_bytes(b"op-zkboo", zrounds * (2 * ((zn + 7) // 8) + 96))
+    with _replay(stream) as st:
+        proof = suite.zkp_nl_prove(zA, zB, zy, zn, zrounds, zmsg)
+    rows.append({
+        "name": "zkp_nl_prove",
+        "calls": {"c": "zkp_nl_prove", "go": "ZkpNlProve",
+                  "python": "zkp_nl_prove", "java": "ZkpNl.prove"},
+        "params": {"n": zn, "rounds": zrounds, "nb": (zn + 7) // 8},
+        "statement": {"a": _nbit_hex(zA, zn), "b": _nbit_hex(zB, zn),
+                      "y": _nbit_hex(zy, zn), "msg_hex": zmsg.hex()},
+        "stream": stream.hex(),
+        "expect": {"rounds": [{"com_0": r["com_0"].hex(),
+                               "com_1": r["com_1"].hex(),
+                               "com_2": r["com_2"].hex(),
+                               "e": r["e"],
+                               "view_p1": r["view_p1"].hex(),
+                               "view_p2": r["view_p2"].hex()} for r in proof]},
+        "consumed": st.pos,
+    })
+
+    # --- Stern-F ring signing: the operation that had the DEFECT (TODO #297) ---
+    # k-1 simulated members, each round of each drawing a challenge trit and then
+    # one of three branch-specific draw sequences, followed by the real signer's
+    # rounds.  That shape is why this row earns its size: no leaf sampler is
+    # involved in choosing the trit, the branch taken decides what is drawn next,
+    # and the whole thing reaches the wire through commitments a verifier accepts
+    # whatever they contain.
+    #
+    # Two divergences lived here, both invisible to every other check because a
+    # simulated member's randomness reaches no artifact a verifier examines:
+    #   - the trit had THREE schemes (C/Python one byte rejecting 255, Go a
+    #     whole n-bit draw modulo 3, Java Random.nextInt(3));
+    #   - and the b = 0 dummy commitment was hash(ZERO, ZERO) in C and Go, a
+    #     CONSTANT marking every simulated b = 0 round, so the signer was the
+    #     member whose rounds never carried it.  That is an anonymity break, and
+    #     the row below is what stops it coming back.
+    ring_k, ring_rounds, ring_j = 3, 4, 1
+    ring_keys, ring_e = [], None
+    for idx in range(ring_k):
+        with _replay(det_bytes(b"op-ring-key-%d" % idx, 256)):
+            rseed, re_int, rsyn = suite.stern_f_keygen(n)
+        ring_keys.append((rseed, rsyn))
+        if idx == ring_j:
+            ring_e = re_int
+    ring_msg = BitArray(n, int.from_bytes(det_bytes(b"op-ring-msg", n // 8), "big"))
+    stream = det_bytes(b"op-ring-sign", 8192)
+    with _replay(stream) as st:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            r_commits, r_challenges, r_responses = suite.hpks_stern_ring_sign(
+                ring_msg, ring_e, ring_j, ring_keys, n, ring_rounds)
+    # The b = 0 branch is the one that carried the defect, so a stream whose
+    # simulated members never draw it would pin the fix and prove nothing.
+    sim_b = [r_challenges[i][r] for i in range(ring_k) for r in range(ring_rounds)
+             if i != ring_j]
+    assert 0 in sim_b, \
+        ("operation replay: the ring stream must make a SIMULATED member draw "
+         "b = 0 -- that is the branch whose dummy commitment was a constant in "
+         "C and Go; got %r" % (sorted(set(sim_b)),))
+    rows.append({
+        "name": "hpks_stern_ring_sign",
+        "calls": {"c": "stern_ring_sign", "go": "HpksSternRingSign",
+                  "python": "hpks_stern_ring_sign", "java": "SternRing.sign"},
+        "params": {"n": n, "t": sf_t, "n_rows": n // 2, "rounds": ring_rounds,
+                   "k": ring_k, "j": ring_j},
+        "statement": {
+            "msg": _nbit_hex(ring_msg, n),
+            "e": _nbit_hex(ring_e, n),
+            "seeds": [_nbit_hex(sd, n) for sd, _ in ring_keys],
+            "syndromes": [_nbit_hex(sy, n // 2) for _, sy in ring_keys],
+        },
+        "stream": stream.hex(),
+        "expect": {
+            "commits": [[[_nbit_hex(c, n) for c in r_commits[i][r]]
+                         for r in range(ring_rounds)] for i in range(ring_k)],
+            "challenges": [[r_challenges[i][r] for r in range(ring_rounds)]
+                           for i in range(ring_k)],
+            "responses": [[[_nbit_hex(a, n), _nbit_hex(b, n)]
+                           for a, b in (r_responses[i][r] for r in range(ring_rounds))]
+                          for i in range(ring_k)],
+        },
+        "consumed": st.pos,
+    })
+
+    # --- Ring-LWR Sigma signing: the inline mask draw TODO #294 was about ---
+    # The statement is an HKEX-RNL keypair plus C = round_p(m*s), derived here
+    # under its own fixed stream and then written out in full, so the row is
+    # self-contained.
+    sig_stream_stmt = det_bytes(b"op-sigma-stmt", 3 * (RNLN + (RNLN >> 6) + 8) + 4096)
+    with _replay(sig_stream_stmt):
+        m_poly = suite._rnl_rand_poly(RNLN, RNLQ)
+        s_poly = suite._rnl_cbd_poly(RNLN, RNLB, RNLQ)
+    C_poly = suite._rnl_round(suite._rnl_poly_mul(m_poly, s_poly, RNLQ, RNLN),
+                              RNLQ, RNLP)
+    gamma, sig_t = suite._sigma_params(RNLN)
+    sig_msg = (b"HerraduraKEx operation replay" + b"\x00" * 32)[:32]
+    # v24 is the first label whose FIRST attempt clears the norm bound; see
+    # the header on why any other label would produce a three-port vector.
+    # The stream is exactly one block long, so a retry cannot silently pass
+    # either: it exhausts the stream before the assertion is reached.
+    blk = 3 * (RNLN + (RNLN >> 6) + 8)
+    stream = det_bytes(b"op-sigma-v24", blk)
+    with _replay(stream) as st:
+        w, c, z = suite.rnl_sigma_sign(s_poly, m_poly, C_poly, RNLN, sig_msg)
+    assert st.pos == blk, \
+        ("operation replay: the rnl_sigma_sign stream must accept on the FIRST "
+         "attempt (consumed %d, one block is %d) -- a retry makes the row "
+         "reproducible in the three buffered ports only" % (st.pos, blk))
+    assert suite.rnl_sigma_verify(m_poly, C_poly, RNLN, sig_msg, w, c, z), \
+        "operation replay: the pinned rnl_sigma proof does not verify"
+    rows.append({
+        "name": "rnl_sigma_sign",
+        "calls": {"c": "rnl_sigma_sign", "go": "RnlSigmaSign",
+                  "python": "rnl_sigma_sign", "java": "HerraduraNl.rnlSigmaSign"},
+        "params": {"n": RNLN, "q": RNLQ, "p": RNLP, "gamma": gamma, "t": sig_t,
+                   "threshold": (1 << 24) - (1 << 24) % (2 * gamma + 1),
+                   "attempts": 1},
+        "statement": {"s_poly": poly_hex(s_poly, 3), "m_poly": poly_hex(m_poly, 3),
+                      "c_poly": poly_hex(C_poly, 3), "msg_hex": sig_msg.hex()},
+        "stream": stream.hex(),
+        "expect": {"w": i32_hex(w), "c": i32_hex(c), "z": i32_hex(z)},
+        # Null by design: C is unbuffered, the other three read one block
+        # (TODO #293).  Only the byte-to-draw MAPPING is common, and it is
+        # common only because `attempts` is 1 -- see the header.
+        "consumed": None,
+        "consumed_note": ("C reads 3 bytes per draw; Go, Python and Java read "
+                          "3*(n + n/64 + 8) in one block (TODO #293).  Equal "
+                          "only up to the first retry, which is why this row's "
+                          "stream accepts on attempt 1."),
+    })
+
+    return {
+        "description": ("TODO #297: fixed-stream replay of whole randomised "
+                        "OPERATIONS, one level above KAT/sampler_replay.json's "
+                        "leaf samplers.  Each row supplies a fixed statement and "
+                        "a fixed stream and pins what the SHIPPED operation "
+                        "produces, so the ORDER in which it visits its samplers "
+                        "-- and any inline draw loop that is not a callable "
+                        "sampler at all -- is pinned across the four ports."),
+        "note": ("`statement` is stated in full rather than derived from another "
+                 "row, so a divergence is attributed to the operation that has "
+                 "it.  `consumed` is null where the ports read at different "
+                 "granularities; see consumed_note on that row."),
+        "operations": rows,
+    }
+
+
+def _c_bytes2(name: str, rows: list, per_line: int = 16) -> str:
+    """A [rows][len] uint8_t table, every row the same length."""
+    ln = len(rows[0])
+    out = [f"static const uint8_t {name}[{len(rows)}][{ln}] = {{"]
+    for data in rows:
+        assert len(data) == ln, f"{name}: ragged row"
+        out.append("    {")
+        for i in range(0, ln, per_line):
+            out.append("        " + " ".join(f"0x{b:02x}," for b in data[i:i + per_line]))
+        out.append("    },")
+    out.append("};")
+    return "\n".join(out)
+
+
+def _c_int_list(name: str, vals, per_line: int = 16) -> str:
+    out = [f"static const int {name}[{len(vals)}] = {{"]
+    for i in range(0, len(vals), per_line):
+        out.append("    " + " ".join(f"{v}," for v in vals[i:i + per_line]))
+    out.append("};")
+    return "\n".join(out)
+
+
+def emit_operation_header(vec: dict) -> str:
+    """Transpose operation_replay.json into C arrays.
+
+    Same reason as emit_replay_header's: the shipped C tree has no JSON parser.
+    A pure deterministic transform, so --check diffs it and a vector regenerated
+    without re-emitting the header fails rather than drifting.
+    """
+    rows = {r["name"]: r for r in vec["operations"]}
+    hx = bytes.fromhex
+
+    L = ["/* KAT/operation_replay_vector.h — GENERATED, do not edit.",
+         " *",
+         " * KAT/operation_replay.json transposed into C arrays (TODO #297), so",
+         " * the dependency-free C tree can replay whole randomised OPERATIONS",
+         " * against a fixed statement and a fixed stream.  Regenerate with:",
+         " *",
+         " *     python3 KAT/generate_kat.py",
+         " *",
+         " * `python3 KAT/generate_kat.py --check` diffs this against the JSON.",
+         " */",
+         "#ifndef OPERATION_REPLAY_VECTOR_H",
+         "#define OPERATION_REPLAY_VECTOR_H",
+         ""]
+
+    r = rows["stern_f_keygen"]
+    L += ["/* Stern-F keygen: seed first, then the weight-t error vector. */",
+          f"#define OPR_SFK_N         {r['params']['n']}",
+          f"#define OPR_SFK_T         {r['params']['t']}",
+          f"#define OPR_SFK_CONSUMED  {r['consumed']}",
+          _c_bytes("opr_sfk_stream", hx(r["stream"])),
+          _c_bytes("opr_sfk_seed", hx(r["expect"]["seed"])),
+          _c_bytes("opr_sfk_e", hx(r["expect"]["e"])),
+          # BYTE ORDER, and it is the trap TODO #266 recorded: the JSON holds
+          # the syndrome as a big-endian INTEGER (row i is bit i), which is what
+          # Python, Go and Java compute, while herradura.h packs row i into
+          # syndr[i/8] bit i%8.  That is the same integer written
+          # little-endian, so the transposition happens HERE, once, rather than
+          # in the C consumer where a reader would have to infer it.
+          _c_bytes("opr_sfk_syndrome",
+                   int(r["expect"]["syndrome"], 16).to_bytes(
+                       r["params"]["n_rows"] // 8, "little")), ""]
+
+    r = rows["hpks_stern_f_sign"]
+    e = r["expect"]
+    L += ["/* Stern-F signing: per round a weight-t draw, then a permutation seed. */",
+          f"#define OPR_SFS_N         {r['params']['n']}",
+          f"#define OPR_SFS_ROUNDS    {r['params']['rounds']}",
+          f"#define OPR_SFS_CONSUMED  {r['consumed']}",
+          _c_bytes("opr_sfs_stream", hx(r["stream"])),
+          _c_bytes("opr_sfs_msg", hx(r["statement"]["msg"])),
+          _c_bytes("opr_sfs_e", hx(r["statement"]["e"])),
+          _c_bytes("opr_sfs_seed", hx(r["statement"]["seed"])),
+          _c_bytes("opr_sfs_syndrome", hx(r["statement"]["syndrome"])),
+          _c_bytes2("opr_sfs_c0", [hx(c[0]) for c in e["commits"]]),
+          _c_bytes2("opr_sfs_c1", [hx(c[1]) for c in e["commits"]]),
+          _c_bytes2("opr_sfs_c2", [hx(c[2]) for c in e["commits"]]),
+          _c_int_list("opr_sfs_challenge", e["challenges"]),
+          _c_bytes2("opr_sfs_resp_a", [hx(p[0]) for p in e["responses"]]),
+          _c_bytes2("opr_sfs_resp_b", [hx(p[1]) for p in e["responses"]]), ""]
+
+    r = rows["zkp_nl_prove"]
+    e = r["expect"]["rounds"]
+    L += ["/* ZKBoo prover: per round two n-bit shares, then three 32-byte tapes. */",
+          f"#define OPR_ZK_N          {r['params']['n']}",
+          f"#define OPR_ZK_ROUNDS     {r['params']['rounds']}",
+          f"#define OPR_ZK_VIEWLEN    {len(hx(e[0]['view_p1']))}",
+          f"#define OPR_ZK_CONSUMED   {r['consumed']}",
+          f"#define OPR_ZK_A          0x{r['statement']['a']}ULL",
+          f"#define OPR_ZK_B          0x{r['statement']['b']}ULL",
+          f"#define OPR_ZK_Y          0x{r['statement']['y']}ULL",
+          _c_bytes("opr_zk_msg", hx(r["statement"]["msg_hex"])),
+          _c_bytes("opr_zk_stream", hx(r["stream"])),
+          _c_bytes2("opr_zk_com0", [hx(x["com_0"]) for x in e]),
+          _c_bytes2("opr_zk_com1", [hx(x["com_1"]) for x in e]),
+          _c_bytes2("opr_zk_com2", [hx(x["com_2"]) for x in e]),
+          _c_int_list("opr_zk_e", [x["e"] for x in e]),
+          _c_bytes2("opr_zk_view1", [hx(x["view_p1"]) for x in e]),
+          _c_bytes2("opr_zk_view2", [hx(x["view_p2"]) for x in e]), ""]
+
+    r = rows["hpks_stern_ring_sign"]
+    e, st = r["expect"], r["statement"]
+    k, rr = r["params"]["k"], r["params"]["rounds"]
+    # Flattened to [k * rounds] in member-major order, which is exactly how
+    # SternRingSig indexes its own arrays (i * rounds + r) -- so the consumer
+    # compares element for element with no reshaping to get wrong.
+    flat = [(i, j) for i in range(k) for j in range(rr)]
+    L += ["/* Stern-F ring signing: the operation TODO #297 found a defect in.",
+          " * Flat [k * rounds] arrays, member-major, matching SternRingSig.",
+          " */",
+          f"#define OPR_RING_N        {r['params']['n']}",
+          f"#define OPR_RING_K        {k}",
+          f"#define OPR_RING_ROUNDS   {rr}",
+          f"#define OPR_RING_J        {r['params']['j']}",
+          f"#define OPR_RING_CONSUMED {r['consumed']}",
+          _c_bytes("opr_ring_stream", hx(r["stream"])),
+          _c_bytes("opr_ring_msg", hx(st["msg"])),
+          _c_bytes("opr_ring_e", hx(st["e"])),
+          _c_bytes2("opr_ring_seeds", [hx(x) for x in st["seeds"]]),
+          # Same little-endian transposition as opr_sfk_syndrome, and for the
+          # same reason -- herradura.h packs row i into byte i/8.
+          _c_bytes2("opr_ring_syndromes",
+                    [int(x, 16).to_bytes(r["params"]["n_rows"] // 8, "little")
+                     for x in st["syndromes"]]),
+          _c_bytes2("opr_ring_c0", [hx(e["commits"][i][j][0]) for i, j in flat]),
+          _c_bytes2("opr_ring_c1", [hx(e["commits"][i][j][1]) for i, j in flat]),
+          _c_bytes2("opr_ring_c2", [hx(e["commits"][i][j][2]) for i, j in flat]),
+          _c_int_list("opr_ring_challenge", [e["challenges"][i][j] for i, j in flat]),
+          _c_bytes2("opr_ring_resp_a", [hx(e["responses"][i][j][0]) for i, j in flat]),
+          _c_bytes2("opr_ring_resp_b", [hx(e["responses"][i][j][1]) for i, j in flat]), ""]
+
+    r = rows["rnl_sigma_sign"]
+    st, e = r["statement"], r["expect"]
+    # No OPR_SIGMA_CONSUMED macro: `consumed` is null on this row by design
+    # (C unbuffered, the other three block-buffered, TODO #293), so the C
+    # consumer must not be able to assert a total that is only true of them.
+    L += ["/* Ring-LWR Sigma signing: the inline mask draw TODO #294 was about.",
+          " * The stream accepts on the FIRST attempt -- see operation_replay.json.",
+          " */",
+          f"#define OPR_SIGMA_N       {r['params']['n']}",
+          f"#define OPR_SIGMA_Q       {r['params']['q']}",
+          f"#define OPR_SIGMA_GAMMA   {r['params']['gamma']}",
+          f"#define OPR_SIGMA_T       {r['params']['t']}",
+          f"#define OPR_SIGMA_THRESH  {r['params']['threshold']}",
+          _c_bytes("opr_sigma_msg", hx(st["msg_hex"])),
+          _c_bytes("opr_sigma_stream", hx(r["stream"])),
+          _c_i32_array("opr_sigma_s", _vec_unhex(st["s_poly"])),
+          _c_i32_array("opr_sigma_m", _vec_unhex(st["m_poly"])),
+          _c_i32_array("opr_sigma_cpub", _vec_unhex(st["c_poly"])),
+          _c_i32_array("opr_sigma_w", _unhex_i32(e["w"])),
+          _c_i32_array("opr_sigma_c", _unhex_i32(e["c"])),
+          _c_i32_array("opr_sigma_z", _unhex_i32(e["z"])), ""]
+
+    L += ["#endif /* OPERATION_REPLAY_VECTOR_H */", ""]
+    return "\n".join(L)
+
 def main() -> int:
     if "--capture-kkw" in sys.argv:
         vec = capture_kkw()
@@ -1097,7 +1564,14 @@ def main() -> int:
 
     outputs = [(_OUT_PATH, generate()), (_RNL_OUT_PATH, generate_rnl()),
                (_V3_OUT_PATH, generate_v3()),
-               (_REPLAY_OUT_PATH, gen_sampler_replay())]
+               (_REPLAY_OUT_PATH, gen_sampler_replay()),
+               (_OPREPLAY_OUT_PATH, gen_operation_replay())]
+    # (generated C view, its JSON source, the emitter).  Each is a pure
+    # deterministic transform of its JSON, so unlike the JSON's other consumers
+    # these ARE diffed -- regenerating one without the other fails rather than
+    # drifting (TODO #296, #297).
+    headers = [(_REPLAY_HDR_PATH, _REPLAY_OUT_PATH, emit_replay_header),
+               (_OPREPLAY_HDR_PATH, _OPREPLAY_OUT_PATH, emit_operation_header)]
     if "--check" in sys.argv:
         rc = 0
         for path, vectors in outputs:
@@ -1110,18 +1584,16 @@ def main() -> int:
                 rc = 1
             else:
                 print(f"{os.path.basename(path)} is up to date.")
-        # The generated C view of the replay vector is a pure transform of it,
-        # so unlike the JSON's consumers it IS diffed -- regenerating one
-        # without the other fails rather than drifting (TODO #296).
-        hdr = emit_replay_header(dict(outputs)[_REPLAY_OUT_PATH])
-        with open(_REPLAY_HDR_PATH) as f:
-            if f.read() != hdr:
-                sys.stderr.write(f"{os.path.basename(_REPLAY_HDR_PATH)} is stale "
-                                 "— rerun python3 KAT/generate_kat.py\n")
-                rc = 1
-            else:
-                print(f"{os.path.basename(_REPLAY_HDR_PATH)} matches "
-                      f"{os.path.basename(_REPLAY_OUT_PATH)}.")
+        for hdr_path, src_path, emit in headers:
+            hdr = emit(dict(outputs)[src_path])
+            with open(hdr_path) as f:
+                if f.read() != hdr:
+                    sys.stderr.write(f"{os.path.basename(hdr_path)} is stale "
+                                     "— rerun python3 KAT/generate_kat.py\n")
+                    rc = 1
+                else:
+                    print(f"{os.path.basename(hdr_path)} matches "
+                          f"{os.path.basename(src_path)}.")
         # The KKW vector is pinned, so it is CHECKED here, never diffed.
         rc |= check_kkw(_KKW_OUT_PATH)
         return rc
@@ -1129,9 +1601,10 @@ def main() -> int:
         with open(path, "w") as f:
             f.write(json.dumps(vectors, indent=2, sort_keys=False) + "\n")
         print(f"Wrote {path}")
-    with open(_REPLAY_HDR_PATH, "w") as f:
-        f.write(emit_replay_header(dict(outputs)[_REPLAY_OUT_PATH]))
-    print(f"Wrote {_REPLAY_HDR_PATH}")
+    for hdr_path, src_path, emit in headers:
+        with open(hdr_path, "w") as f:
+            f.write(emit(dict(outputs)[src_path]))
+        print(f"Wrote {hdr_path}")
     # A plain run must not silently leave the pinned vector unexamined: it is
     # the one output this mode cannot rewrite, so say so and check it instead.
     print(f"NOTE: {os.path.basename(_KKW_OUT_PATH)} is pinned, not regenerated "

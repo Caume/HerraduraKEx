@@ -753,6 +753,25 @@ needed no change (already draw a wide 32-bit value, bias $\approx 2^{-32}$).
 `CliTest/test_ring.sh` (21/21) and `CliTest/test_stern_interop.sh` (9/9) both re-verified
 passing after the fix.
 
+**Corrected and superseded (TODO #297, #299).** The sentence above about Go and Arduino
+was wrong in both halves, and is retained only so the correction has something to point
+at.  Go did not draw "a wide 32-bit value": it drew a whole n-bit `NewRandBitArray(n)`
+and reduced that mod 3, so at n = 256 the bias was ~2^-256 rather than ~2^-32 and each
+trit cost 32 bytes of CSPRNG output.  The Arduino ring code draws no challenge trit at
+all — its simulated member is hardcoded to b = 0 — so it had nothing to bias and "needed
+no change" for a different reason than the one given.  Java, which did not exist when
+this was written, drew `Random.nextInt(3)`: unbiased by a third route again.  TODO #297
+found all four and replaced them with one named rejection sampler per port
+(`stern_ring_trit` / `sternRingTrit` / `_stern_ring_trit` / `ringTrit`), on the ground
+that a sampler written inline in four places is one no manifest can compare.  TODO #299
+then re-anchored `stern_ring_challenge_bias.py` §4's source check on those helpers, after
+#297's extraction removed the literal byte sequence the check had been grepping for and
+failed the gate — the fix was still shipped, but the sentence defending it had become
+unverifiable.  Note that §4 remains a SOURCE check: it reads syntax, so it cannot see
+whether the helper it finds is still CALLED.  What covers that is
+`KAT/operation_replay.json`'s ring row, whose pinned stream makes a changed consumption
+order a failure.
+
 **Outcome for the remaining scope.** Work item 1 named three candidate targets; only
 HPKS-Stern-Ring's OR-composition has been passed over so far. NL-FSCX v2's CSP-based
 construction and the HFSCX-256-DM finalizer remain for a future pass — TODO #159 stays

@@ -72,6 +72,31 @@ public final class SternRing {
         return m < 0 ? m + 3 : m;
     }
 
+    /** A uniform challenge in {0, 1, 2} for a SIMULATED ring member.
+     *
+     * TODO #297: this was Random.nextInt(3), which is correct but is a THIRD
+     * scheme -- C and Python draw ONE byte and reject the single value 255,
+     * while Go drew a whole n-bit BitArray and reduced it modulo 3.  Four
+     * ports, three schemes, one trit, and nothing in the repo could see it: a
+     * simulated member's challenge is local randomness that reaches no
+     * artifact, and the signature verifies whichever value it takes, so no
+     * round-trip or interop pair compares two samplers.  C's and Python's
+     * scheme is adopted VERBATIM rather than a fourth invented (#294's
+     * precedent).
+     *
+     * Not a correctness fix on this side -- nextInt(3) is unbiased -- but a
+     * consumption-order one, which is the whole point of
+     * KAT/operation_replay.json: four ports that agree on a distribution and
+     * not on how they spend the stream cannot be pinned against each other. */
+    private static int ringTrit(SecureRandom rng) {
+        byte[] one = new byte[1];
+        for (;;) {
+            rng.nextBytes(one);
+            int v = one[0] & 0xFF;
+            if (v != 255) return v % 3;
+        }
+    }
+
     /** HVZK simulator for one Stern round given a pre-chosen challenge
      * {@code b}. Returns {@code {c0, c1, c2, resp0, resp1}}. Matches
      * Python's {@code _stern_simulate_round}. */
@@ -165,7 +190,7 @@ public final class SternRing {
             RingKey member = ringKeys.get(i);
             BigInteger[] hRowsI = Stern.sternBuildH(member.seed, Stern.SDFNR);
             for (int r = 0; r < rounds; r++) {
-                int b = rng.nextInt(3);
+                int b = ringTrit(rng);
                 challenges[i][r] = b;
                 Object[] sim = simulateRound(b, member.syndrome, hRowsI, rng);
                 c0[i][r] = (BigInteger) sim[0];

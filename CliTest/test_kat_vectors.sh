@@ -14,6 +14,13 @@
 # test_java_bindings.sh -- herradurakex.KatVerify each replay the same stream
 # through their own port.  Four ports against one pinned vector is four ports
 # against each other, so there is no separate cross-language step to write.
+#
+# TODO #297 adds KAT/operation_replay.json on exactly the same terms, one level
+# up: whole randomised OPERATIONS rather than leaf samplers, with a fixed
+# statement alongside the fixed stream.  Same four consumers, same generated C
+# view (KAT/operation_replay_vector.h), same argument -- so again no step of its
+# own.  If you add a THIRD vector of this shape, the thing to check is that all
+# four consumers follow it, not that this script grew a section.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -46,7 +53,8 @@ fi
 # --check only compares what it regenerates.
 for f in KAT/classical_quartet.json KAT/hkex_rnl.json KAT/nl_fscx_v3.json \
          KAT/hcred_kkw.json KAT/sampler_replay.json \
-         KAT/sampler_replay_vector.h; do
+         KAT/sampler_replay_vector.h KAT/operation_replay.json \
+         KAT/operation_replay_vector.h; do
     [ -s "$f" ] || { echo "FAIL: $f missing or empty"; exit 1; }
 done
 

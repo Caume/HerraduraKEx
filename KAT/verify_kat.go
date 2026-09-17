@@ -16,6 +16,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"strings"
 
 	. "herradurakex/herradura"
 )
@@ -509,6 +510,304 @@ func verifySamplerReplay(v map[string]interface{}) int {
 	return fails
 }
 
+// ── TODO #297: fixed-stream OPERATION replay ────────────────────────────────
+//
+// One level above verifySamplerReplay.  A leaf row is one call with scalar
+// arguments; these rows supply a fixed STATEMENT as well as a fixed stream and
+// pin what a whole randomised operation produces, so the ORDER in which it
+// visits its samplers -- and any inline draw loop that is not a callable
+// sampler at all -- is held against the other three ports.  TODO #294's own
+// defect was of the second kind: RnlSigmaSign's mask draw is written out inside
+// the signing loop.
+//
+// The rand.Reader swap is the same fragile hook verifySamplerReplay documents,
+// and the same argument applies: if a future Go bypasses the package variable,
+// every row here fails LOUDLY rather than passing vacuously.  Do not "fix" such
+// a failure by relaxing the comparison.
+func verifyOperationReplay(v map[string]interface{}) int {
+	fails := 0
+	check := func(name, got, want string) {
+		if got != want {
+			fmt.Printf("FAIL %s: got %s want %s\n", name, got, want)
+			fails++
+		} else {
+			fmt.Println("PASS " + name)
+		}
+	}
+	baHex := func(ba *BitArray, n int) string { return fmt.Sprintf("%0*x", n/4, &ba.Val) }
+	// Centered coefficients as 4-byte big-endian two's complement, which is
+	// what the vector holds because it is what C's int32_t already holds.
+	i32Hex := func(vals []int) string {
+		var sb strings.Builder
+		for _, x := range vals {
+			sb.WriteString(fmt.Sprintf("%08x", uint32(int32(x))))
+		}
+		return sb.String()
+	}
+	strList := func(x interface{}) []interface{} { return x.([]interface{}) }
+
+	saved := rand.Reader
+	defer func() { rand.Reader = saved }()
+
+	rows, ok := v["operations"].([]interface{})
+	if !ok || len(rows) == 0 {
+		fmt.Fprintln(os.Stderr, "operation_replay.json has no operations")
+		return fails + 1
+	}
+
+	for _, ri := range rows {
+		r := ri.(map[string]interface{})
+		name := str(r, "name")
+		params := r["params"].(map[string]interface{})
+		stmt := r["statement"].(map[string]interface{})
+		expect := r["expect"].(map[string]interface{})
+		cr := &countingReader{data: mustHex(str(r, "stream"))}
+		rand.Reader = cr
+
+		switch name {
+		case "stern_f_keygen":
+			n := num(params, "n")
+			seed, e, syn := SternFKeygen(n)
+			check("op "+name+" seed", baHex(seed, n), str(expect, "seed"))
+			check("op "+name+" e", baHex(e, n), str(expect, "e"))
+			check("op "+name+" syndrome",
+				fmt.Sprintf("%0*x", num(params, "n_rows")/4, syn),
+				str(expect, "syndrome"))
+
+		case "hpks_stern_f_sign":
+			n, rounds := num(params, "n"), num(params, "rounds")
+			msg := NewFromBytes(mustHex(str(stmt, "msg")), 0, n)
+			e := NewFromBytes(mustHex(str(stmt, "e")), 0, n)
+			seed := NewFromBytes(mustHex(str(stmt, "seed")), 0, n)
+			sig := HpksSternFSign(msg, e, seed, rounds)
+			coms, chs, resps := strList(expect["commits"]), strList(expect["challenges"]),
+				strList(expect["responses"])
+			bad := -1
+			for i := 0; i < rounds; i++ {
+				c := strList(coms[i])
+				if baHex(sig.Rounds[i].C0, n) != c[0].(string) ||
+					baHex(sig.Rounds[i].C1, n) != c[1].(string) ||
+					baHex(sig.Rounds[i].C2, n) != c[2].(string) {
+					bad = i
+					break
+				}
+			}
+			if bad >= 0 {
+				fmt.Printf("FAIL op %s: commitments differ at round %d\n", name, bad)
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " commitments")
+			}
+			bad = -1
+			for i := 0; i < rounds; i++ {
+				if sig.Rounds[i].B != int(chs[i].(float64)) {
+					bad = i
+					break
+				}
+			}
+			if bad >= 0 {
+				fmt.Printf("FAIL op %s: challenge %d is %d, vector says %v\n",
+					name, bad, sig.Rounds[bad].B, chs[bad])
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " challenges")
+			}
+			// All three challenge values occur in this vector's stream, so
+			// this one comparison covers all three response branches.
+			bad = -1
+			for i := 0; i < rounds; i++ {
+				p := strList(resps[i])
+				if baHex(sig.Rounds[i].RespA, n) != p[0].(string) ||
+					baHex(sig.Rounds[i].RespB, n) != p[1].(string) {
+					bad = i
+					break
+				}
+			}
+			if bad >= 0 {
+				fmt.Printf("FAIL op %s: response differs at round %d (b=%d)\n",
+					name, bad, sig.Rounds[bad].B)
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " responses")
+			}
+
+		case "zkp_nl_prove":
+			n, rounds := num(params, "n"), num(params, "rounds")
+			a, _ := new(big.Int).SetString(str(stmt, "a"), 16)
+			b, _ := new(big.Int).SetString(str(stmt, "b"), 16)
+			y, _ := new(big.Int).SetString(str(stmt, "y"), 16)
+			proof, err := ZkpNlProve(a.Uint64(), b.Uint64(), y.Uint64(), n, rounds,
+				mustHex(str(stmt, "msg_hex")))
+			if err != nil {
+				fmt.Printf("FAIL op %s: %s\n", name, err)
+				fails++
+				continue
+			}
+			want := strList(expect["rounds"])
+			bad := -1
+			for i := 0; i < rounds; i++ {
+				w := want[i].(map[string]interface{})
+				if hex.EncodeToString(proof[i].Com0[:]) != str(w, "com_0") ||
+					hex.EncodeToString(proof[i].Com1[:]) != str(w, "com_1") ||
+					hex.EncodeToString(proof[i].Com2[:]) != str(w, "com_2") {
+					bad = i
+					break
+				}
+			}
+			if bad >= 0 {
+				fmt.Printf("FAIL op %s: commitments differ at round %d\n", name, bad)
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " commitments")
+			}
+			bad = -1
+			for i := 0; i < rounds; i++ {
+				w := want[i].(map[string]interface{})
+				if proof[i].E != num(w, "e") ||
+					hex.EncodeToString(proof[i].ViewP1) != str(w, "view_p1") ||
+					hex.EncodeToString(proof[i].ViewP2) != str(w, "view_p2") {
+					bad = i
+					break
+				}
+			}
+			if bad >= 0 {
+				fmt.Printf("FAIL op %s: views differ at round %d (e=%d)\n",
+					name, bad, proof[bad].E)
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " views")
+			}
+
+		case "hpks_stern_ring_sign":
+			// Two divergences lived in this operation and neither was visible
+			// to any other check: the challenge trit had three schemes across
+			// the four ports, and the b = 0 dummy commitment was a CONSTANT in
+			// C and Go, which identified the real signer from the public
+			// signature.  See sternSimulateRound.
+			n := num(params, "n")
+			k, rounds := num(params, "k"), num(params, "rounds")
+			j := num(params, "j")
+			seeds := strList(stmt["seeds"])
+			syns := strList(stmt["syndromes"])
+			ring := make([]RingKeypair, k)
+			for i := 0; i < k; i++ {
+				sy, _ := new(big.Int).SetString(syns[i].(string), 16)
+				ring[i] = RingKeypair{
+					Seed:     NewFromBytes(mustHex(seeds[i].(string)), 0, n),
+					Syndrome: sy,
+				}
+			}
+			msg := NewFromBytes(mustHex(str(stmt, "msg")), 0, n)
+			e := NewFromBytes(mustHex(str(stmt, "e")), 0, n)
+			sig := HpksSternRingSign(msg, e, j, ring, rounds)
+			coms, chs, resps := strList(expect["commits"]), strList(expect["challenges"]),
+				strList(expect["responses"])
+			bi, br := -1, -1
+			for i := 0; i < k && bi < 0; i++ {
+				mc := strList(coms[i])
+				for r := 0; r < rounds; r++ {
+					c := strList(mc[r])
+					rd := sig.Members[i].Rounds[r]
+					if baHex(rd.C0, n) != c[0].(string) || baHex(rd.C1, n) != c[1].(string) ||
+						baHex(rd.C2, n) != c[2].(string) {
+						bi, br = i, r
+						break
+					}
+				}
+			}
+			if bi >= 0 {
+				fmt.Printf("FAIL op %s: commitments differ at member %d round %d\n",
+					name, bi, br)
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " commitments")
+			}
+			bi, br = -1, -1
+			for i := 0; i < k && bi < 0; i++ {
+				mb := strList(chs[i])
+				for r := 0; r < rounds; r++ {
+					if sig.Members[i].Rounds[r].B != int(mb[r].(float64)) {
+						bi, br = i, r
+						break
+					}
+				}
+			}
+			if bi >= 0 {
+				fmt.Printf("FAIL op %s: challenge at member %d round %d is %d, vector says %v\n",
+					name, bi, br, sig.Members[bi].Rounds[br].B, strList(chs[bi])[br])
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " challenges")
+			}
+			bi, br = -1, -1
+			for i := 0; i < k && bi < 0; i++ {
+				mr := strList(resps[i])
+				for r := 0; r < rounds; r++ {
+					p := strList(mr[r])
+					rd := sig.Members[i].Rounds[r]
+					if baHex(rd.RespA, n) != p[0].(string) || baHex(rd.RespB, n) != p[1].(string) {
+						bi, br = i, r
+						break
+					}
+				}
+			}
+			if bi >= 0 {
+				fmt.Printf("FAIL op %s: response differs at member %d round %d (b=%d)\n",
+					name, bi, br, sig.Members[bi].Rounds[br].B)
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " responses")
+			}
+			// The signature must still VERIFY: the fix changed a dummy
+			// commitment no verifier checks, and a vector alone would not say so.
+			if !HpksSternRingVerify(msg, sig, ring) {
+				fmt.Println("FAIL op " + name + " verifies")
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " verifies")
+			}
+
+		case "rnl_sigma_sign":
+			n := num(params, "n")
+			sPoly := unpackPoly(str(stmt, "s_poly"), n, 3)
+			mPoly := unpackPoly(str(stmt, "m_poly"), n, 3)
+			cPoly := unpackPoly(str(stmt, "c_poly"), n, 3)
+			w, c, z, err := RnlSigmaSign(sPoly, mPoly, cPoly, n,
+				mustHex(str(stmt, "msg_hex")))
+			if err != nil {
+				// The stream is exactly one buffered block and is chosen to
+				// accept on the FIRST attempt; a retry runs off its end.
+				fmt.Printf("FAIL op %s: %s\n", name, err)
+				fails++
+				continue
+			}
+			check("op "+name+" w", i32Hex(w), str(expect, "w"))
+			check("op "+name+" c", i32Hex(c), str(expect, "c"))
+			check("op "+name+" z", i32Hex(z), str(expect, "z"))
+
+		default:
+			fmt.Printf("FAIL op replay: unknown operation %q -- a row was added "+
+				"to the vector and no Go consumer follows it\n", name)
+			fails++
+			continue
+		}
+
+		// A null `consumed` means the ports read at different granularities
+		// and only the output is common; the row carries the reason.
+		if cv, present := r["consumed"]; present && cv != nil {
+			want := int(cv.(float64))
+			if cr.pos != want {
+				fmt.Printf("FAIL op %s: consumed %d stream bytes, vector says %d\n",
+					name, cr.pos, want)
+				fails++
+			} else {
+				fmt.Printf("PASS op %s consumed %d bytes\n", name, want)
+			}
+		}
+	}
+	return fails
+}
+
 func main() {
 	data, err := os.ReadFile("KAT/classical_quartet.json")
 	if err != nil {
@@ -678,6 +977,20 @@ func main() {
 			fails++
 		} else {
 			fails += verifySamplerReplay(sv)
+		}
+	}
+
+	// ── operation replay (TODO #297) ────────────────────────────────────
+	if vdata, err := os.ReadFile("KAT/operation_replay.json"); err != nil {
+		fmt.Fprintln(os.Stderr, "cannot read KAT/operation_replay.json:", err)
+		fails++
+	} else {
+		var ov map[string]interface{}
+		if err := json.Unmarshal(vdata, &ov); err != nil {
+			fmt.Fprintln(os.Stderr, "cannot parse KAT/operation_replay.json:", err)
+			fails++
+		} else {
+			fails += verifyOperationReplay(ov)
 		}
 	}
 
