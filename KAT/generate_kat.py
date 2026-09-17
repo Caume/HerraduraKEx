@@ -15,6 +15,7 @@ Usage:
     python3 KAT/generate_kat.py            # regenerate KAT/classical_quartet.json
     python3 KAT/generate_kat.py --check     # regenerate to a temp file and diff
 """
+import contextlib
 import importlib.util
 import json
 import os
@@ -825,6 +826,252 @@ def check_kkw(path: str) -> int:
     return rc
 
 
+
+# ---------------------------------------------------------------------------
+# TODO #296: the fixed-stream sampler replay.
+#
+# WHY THIS VECTOR EXISTS.  TODO #294 found rnl_sigma_sign drawing its ZK mask by
+# rejection sampling in C and by raw modulo in the other three -- a 3-vs-1 split
+# that had shipped, because local randomness reaches no artifact: no KAT pins it
+# and none can (a signature is randomised per call), and no round-trip or interop
+# pair compares two samplers.  #294 recorded that the ONLY check available for
+# that class is a fixed-stream replay, which makes a randomised primitive
+# deterministic by replacing its entropy source, and then pins the four
+# consumption orders against each other.  It verified its own fix that way and
+# threw the harness away, leaving the claim in CLAUDE.md with nothing enforcing
+# it.  This is that harness, kept.
+#
+# WHAT IS PINNED.  Per row: the sampler's OUTPUT given a fixed input stream, and
+# -- where all four ports read the stream at the same granularity -- the number
+# of bytes consumed.  Output pins the byte order, the rejection threshold, the
+# modular reduction and the order the stream is consumed in; byte count pins
+# that no port reads ahead of or behind the others.
+#
+# WHY consumed IS null ON ONE ROW.  rnl_rand_poly is block-buffered in Go,
+# Python and Java (TODO #293) and unbuffered in C, which reads 3 bytes per draw
+# through a buffered FILE *.  The byte-to-draw MAPPING is identical -- draw i
+# takes stream[3i:3i+3] in all four -- so the output is pinnable and is pinned.
+# The TOTAL is not: the three buffered ports read 3*(n + n/64 + 8) bytes whatever
+# they use, and on a refill they discard the 0-2 byte remainder that C would have
+# used.  The slack is ~1.6% against a 0.39% rejection rate at q = 65537, so a
+# refill is about ten standard deviations out and no run will see one; the
+# divergence is recorded rather than asserted away, and closing it would mean
+# buffering C for a test's benefit, which #293 deliberately did not do.
+#
+# THE STREAMS are HFSCX-256 in counter mode (det_bytes), but nothing downstream
+# needs that: the bytes are stored literally as hex, so a consumer reads them and
+# needs no derivation and no hash.  They are arbitrary fixed constants.
+# ---------------------------------------------------------------------------
+
+_REPLAY_OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "sampler_replay.json")
+
+
+class _ReplayStream:
+    """A fixed byte stream standing in for os.urandom, counting what it serves."""
+
+    def __init__(self, data: bytes):
+        self.data = data
+        self.pos = 0
+
+    def urandom(self, n: int) -> bytes:
+        if self.pos + n > len(self.data):
+            raise RuntimeError(
+                "sampler replay: stream exhausted (%d asked, %d left) — the "
+                "vector's stream is too short for this sampler"
+                % (n, len(self.data) - self.pos))
+        chunk = self.data[self.pos:self.pos + n]
+        self.pos += n
+        return chunk
+
+
+@contextlib.contextmanager
+def _replay(data: bytes):
+    """Run the SHIPPED sampler against `data` instead of the CSPRNG.
+
+    Patches the suite module's own `os` reference, which is the process-wide
+    module object — hence the finally.  Driving the shipped function rather than
+    a transcription is the point: a transcription would pin this file's opinion
+    of the sampler, which is the very thing the vector exists to check.
+    """
+    st = _ReplayStream(data)
+    real = suite.os.urandom
+    suite.os.urandom = st.urandom
+    try:
+        yield st
+    finally:
+        suite.os.urandom = real
+
+
+def gen_sampler_replay() -> dict:
+    rows = []
+
+    # --- CBD(1) polynomial: one read of (n+3)/4, four coefficients per byte ---
+    stream = det_bytes(b"replay-cbd", (RNLN + 3) // 4)
+    with _replay(stream) as st:
+        coeffs = suite._rnl_cbd_poly(RNLN, RNLB, RNLQ)
+    rows.append({
+        "name": "rnl_cbd_poly",
+        "calls": {"c": "rnl_cbd_poly_dim", "go": "RnlCBDPoly",
+                  "python": "_rnl_cbd_poly", "java": "HerraduraNl.rnlCbdPoly"},
+        "params": {"n": RNLN, "q": RNLQ, "eta": RNLB},
+        "stream": stream.hex(),
+        "expect_poly": poly_hex(coeffs, 3),
+        "consumed": st.pos,
+    })
+
+    # --- uniform in Z_q^n: 3-byte big-endian rejection sampling ---
+    stream = det_bytes(b"replay-randpoly", 3 * (RNLN + (RNLN >> 6) + 8))
+    with _replay(stream) as st:
+        coeffs = suite._rnl_rand_poly(RNLN, RNLQ)
+    rows.append({
+        "name": "rnl_rand_poly",
+        "calls": {"c": "rnl_rand_poly", "go": "RnlRandPoly",
+                  "python": "_rnl_rand_poly", "java": "HerraduraNl.rnlRandPoly"},
+        "params": {"n": RNLN, "q": RNLQ,
+                   "threshold": (1 << 24) - (1 << 24) % RNLQ},
+        "stream": stream.hex(),
+        "expect_poly": poly_hex(coeffs, 3),
+        # Deliberately null — see the header: C is unbuffered, the other three
+        # are block-buffered (TODO #293), so only the MAPPING is common.
+        "consumed": None,
+        "consumed_note": ("C reads 3 bytes per draw; Go, Python and Java read "
+                          "3*(n + n/64 + 8) in one block (TODO #293).  The "
+                          "byte-to-draw mapping is identical, the total is not."),
+    })
+
+    # --- weight-t error vector: 4-byte big-endian rejection into a set ---
+    # The label is chosen, not arbitrary: it is the first one whose stream makes
+    # the sampler draw a position it has ALREADY taken -- twice -- so the
+    # duplicate-skip path is exercised rather than merely present.  The first
+    # label tried consumed exactly 4t bytes, i.e. sixteen distinct draws, and a
+    # port that dropped the duplicate check would have passed it.
+    # The OTHER branch, v >= threshold, is UNREACHABLE at this width and that is
+    # arithmetic rather than luck: 256 divides 2^32, so threshold is exactly
+    # 2^32 and a 4-byte draw is always below it.  Worth knowing before widening
+    # the type -- a threshold held in a uint32 would wrap to 0 here and reject
+    # every draw forever.  All four ports compute it in 64 bits.
+    stream = det_bytes(b"replay-weightt-2", 256)
+    with _replay(stream) as st:
+        e_int = suite._csprng_weight_t(KEYBITS, suite.SDFT)
+    rows.append({
+        "name": "stern_weight_t",
+        "calls": {"c": "stern_rand_error", "go": "SternRandError",
+                  "python": "_csprng_weight_t", "java": "Stern.csprngWeightT"},
+        "params": {"n": KEYBITS, "t": suite.SDFT,
+                   "threshold": (1 << 32) - (1 << 32) % KEYBITS},
+        "stream": stream.hex(),
+        "expect_value": f"{e_int:0{KEYBITS // 4}x}",
+        "expect_weight": bin(e_int).count("1"),
+        "consumed": st.pos,
+    })
+
+    # --- OPRF blinding scalar: 32 raw bytes, reject r <= 1 or gcd(r, ORD) != 1 ---
+    # The FIRST draw is r = 1 exactly, and that is the point of this row rather
+    # than a decoration.  C rejected r <= 1 with a `continue` inside a do/while,
+    # which jumps to the CONDITION and not to the top of the body, so a rejected
+    # draw re-tested the previous iteration's verdict -- uninitialised on the
+    # first (TODO #296).  A stream of random-looking bytes never enters that
+    # branch (it needs a 256-bit draw of 0 or 1, p = 2^-255), so a vector built
+    # only from det_bytes leaves the repaired code unguarded: deleting the
+    # rejection again would still pass.  With r = 1 leading, it does not.
+    # The gcd rejection is exercised too, by the det_bytes tail: the accepted
+    # scalar is the third draw, so two are refused for gcd(r, ORD) != 1.
+    stream = (b"\x00" * 31 + b"\x01") + det_bytes(b"replay-oprf", 32 * 16)
+    oprf_input = b"HerraduraKEx sampler replay"
+    with _replay(stream) as st:
+        r_val, alpha_val = suite.oprf_blind(oprf_input)
+    rows.append({
+        "name": "oprf_blind_scalar",
+        "calls": {"c": "oprf_blind", "go": "OprfBlind",
+                  "python": "oprf_blind", "java": "Oprf.blind"},
+        "params": {"bits": KEYBITS, "input_hex": oprf_input.hex()},
+        "stream": stream.hex(),
+        "expect_r": f"{r_val:0{KEYBITS // 4}x}",
+        "expect_alpha": f"{alpha_val:0{KEYBITS // 4}x}",
+        "consumed": st.pos,
+    })
+
+    return {
+        "description": ("TODO #296: fixed-stream replay of the suite's leaf "
+                        "CSPRNG samplers.  Each row replaces the entropy source "
+                        "with `stream` and pins what the SHIPPED sampler "
+                        "produces, so four ports that agree on a distribution "
+                        "but not on a consumption order cannot stay that way "
+                        "unnoticed."),
+        "note": ("`consumed` is the number of stream bytes the sampler reads.  "
+                 "A null means the four ports read at different granularities "
+                 "and only the output is common — see consumed_note on that row."),
+        "samplers": rows,
+    }
+
+
+_REPLAY_HDR_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "sampler_replay_vector.h")
+
+
+def emit_replay_header(vec: dict) -> str:
+    """Transpose sampler_replay.json into C arrays.
+
+    Same reason as emit_kkw_header's: the shipped C tree has no JSON parser and
+    that property is worth more than the convenience of one.  A pure
+    deterministic transform of the JSON, so --check diffs it and a vector
+    regenerated without re-emitting the header fails rather than drifting.
+    """
+    rows = {r["name"]: r for r in vec["samplers"]}
+
+    L = ["/* KAT/sampler_replay_vector.h — GENERATED, do not edit.",
+         " *",
+         " * KAT/sampler_replay.json transposed into C arrays (TODO #296), so",
+         " * the dependency-free C tree can replay the suite's leaf CSPRNG",
+         " * samplers against a fixed stream.  Regenerate with:",
+         " *",
+         " *     python3 KAT/generate_kat.py",
+         " *",
+         " * `python3 KAT/generate_kat.py --check` diffs this against the JSON.",
+         " */",
+         "#ifndef SAMPLER_REPLAY_VECTOR_H",
+         "#define SAMPLER_REPLAY_VECTOR_H",
+         ""]
+
+    r = rows["rnl_cbd_poly"]
+    L += [f"#define RPL_CBD_N         {r['params']['n']}",
+          f"#define RPL_CBD_Q         {r['params']['q']}",
+          f"#define RPL_CBD_ETA       {r['params']['eta']}",
+          f"#define RPL_CBD_CONSUMED  {r['consumed']}",
+          _c_bytes("rpl_cbd_stream", bytes.fromhex(r["stream"])),
+          _c_i32_array("rpl_cbd_expect", _vec_unhex(r["expect_poly"])), ""]
+
+    r = rows["rnl_rand_poly"]
+    # consumed is null on this row by design: C reads 3 bytes per draw, the
+    # other three ports read one block (TODO #293).  No CONSUMED macro is
+    # emitted, so the C consumer cannot accidentally assert a total that is
+    # only true of the buffered ports.
+    L += [f"#define RPL_RAND_N        {r['params']['n']}",
+          f"#define RPL_RAND_Q        {r['params']['q']}",
+          f"#define RPL_RAND_THRESH   {r['params']['threshold']}",
+          _c_bytes("rpl_rand_stream", bytes.fromhex(r["stream"])),
+          _c_i32_array("rpl_rand_expect", _vec_unhex(r["expect_poly"])), ""]
+
+    r = rows["stern_weight_t"]
+    L += [f"#define RPL_WT_N          {r['params']['n']}",
+          f"#define RPL_WT_T          {r['params']['t']}",
+          f"#define RPL_WT_WEIGHT     {r['expect_weight']}",
+          f"#define RPL_WT_CONSUMED   {r['consumed']}",
+          _c_bytes("rpl_wt_stream", bytes.fromhex(r["stream"])),
+          _c_bytes("rpl_wt_expect", bytes.fromhex(r["expect_value"])), ""]
+
+    r = rows["oprf_blind_scalar"]
+    L += [f"#define RPL_OPRF_BITS     {r['params']['bits']}",
+          f"#define RPL_OPRF_CONSUMED {r['consumed']}",
+          _c_bytes("rpl_oprf_input", bytes.fromhex(r["params"]["input_hex"])),
+          _c_bytes("rpl_oprf_stream", bytes.fromhex(r["stream"])),
+          _c_bytes("rpl_oprf_expect_r", bytes.fromhex(r["expect_r"])),
+          _c_bytes("rpl_oprf_expect_alpha", bytes.fromhex(r["expect_alpha"])), ""]
+
+    L += ["#endif /* SAMPLER_REPLAY_VECTOR_H */", ""]
+    return "\n".join(L)
+
 def main() -> int:
     if "--capture-kkw" in sys.argv:
         vec = capture_kkw()
@@ -849,7 +1096,8 @@ def main() -> int:
         return 0
 
     outputs = [(_OUT_PATH, generate()), (_RNL_OUT_PATH, generate_rnl()),
-               (_V3_OUT_PATH, generate_v3())]
+               (_V3_OUT_PATH, generate_v3()),
+               (_REPLAY_OUT_PATH, gen_sampler_replay())]
     if "--check" in sys.argv:
         rc = 0
         for path, vectors in outputs:
@@ -862,6 +1110,18 @@ def main() -> int:
                 rc = 1
             else:
                 print(f"{os.path.basename(path)} is up to date.")
+        # The generated C view of the replay vector is a pure transform of it,
+        # so unlike the JSON's consumers it IS diffed -- regenerating one
+        # without the other fails rather than drifting (TODO #296).
+        hdr = emit_replay_header(dict(outputs)[_REPLAY_OUT_PATH])
+        with open(_REPLAY_HDR_PATH) as f:
+            if f.read() != hdr:
+                sys.stderr.write(f"{os.path.basename(_REPLAY_HDR_PATH)} is stale "
+                                 "— rerun python3 KAT/generate_kat.py\n")
+                rc = 1
+            else:
+                print(f"{os.path.basename(_REPLAY_HDR_PATH)} matches "
+                      f"{os.path.basename(_REPLAY_OUT_PATH)}.")
         # The KKW vector is pinned, so it is CHECKED here, never diffed.
         rc |= check_kkw(_KKW_OUT_PATH)
         return rc
@@ -869,6 +1129,9 @@ def main() -> int:
         with open(path, "w") as f:
             f.write(json.dumps(vectors, indent=2, sort_keys=False) + "\n")
         print(f"Wrote {path}")
+    with open(_REPLAY_HDR_PATH, "w") as f:
+        f.write(emit_replay_header(dict(outputs)[_REPLAY_OUT_PATH]))
+    print(f"Wrote {_REPLAY_HDR_PATH}")
     # A plain run must not silently leave the pinned vector unexamined: it is
     # the one output this mode cannot rewrite, so say so and check it instead.
     print(f"NOTE: {os.path.basename(_KKW_OUT_PATH)} is pinned, not regenerated "

@@ -2592,23 +2592,33 @@ static void stern_apply_perm_ba(BitArray *out, const uint8_t *perm,
     }
 }
 
+/* TODO #296: 4-byte rejection sampling into a set, tracking the shipped
+ * herradura.h.  This harness TRANSCRIBES the suite rather than including it
+ * (see benchmarks/rnl_deployed_ring_cost.c on why), so the copy does not follow
+ * automatically -- and #296's raw-entropy census reads the SUITE, not
+ * CryptosuiteTests, so it would not have said this had gone stale either.  It
+ * was found by hand; keeping the retired Fisher-Yates here would have left the
+ * harness exercising a sampler the suite no longer has. */
 static void stern_rand_error_ba(BitArray *e)
 {
-    uint8_t idx[KEYBITS];
-    int i;
-    for (i = 0; i < KEYBITS; i++) idx[i] = (uint8_t)i;
+    static const uint64_t span = (uint64_t)1 << 32;
+    const uint64_t threshold = span - (span % (uint64_t)KEYBITS);
+    int count = 0;
     memset(e->b, 0, KEYBYTES);
-    for (i = KEYBITS - 1; i >= KEYBITS - SDF_T; i--) {
-        unsigned int range = (unsigned int)(i + 1);
-        unsigned int thresh = 256 - (256 % range);
-        uint8_t rnd;
-        int j;
-        do {
-            if (fread(&rnd, 1, 1, urnd_fp) != 1) { fputs("urandom\n", stderr); exit(1); }
-        } while ((unsigned int)rnd >= thresh);
-        j = (int)(rnd % range);
-        { uint8_t tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp; }
-        e->b[KEYBYTES - 1 - idx[i] / 8] |= (uint8_t)(1u << (idx[i] % 8));
+    while (count < SDF_T) {
+        uint8_t buf[4];
+        uint64_t v;
+        unsigned int pos;
+        uint8_t mask;
+        if (fread(buf, 1, 4, urnd_fp) != 4) { fputs("urandom\n", stderr); exit(1); }
+        v = ((uint64_t)buf[0] << 24) | ((uint64_t)buf[1] << 16)
+          | ((uint64_t)buf[2] << 8)  | (uint64_t)buf[3];
+        if (v >= threshold) continue;
+        pos = (unsigned int)(v % (uint64_t)KEYBITS);
+        mask = (uint8_t)(1u << (pos % 8));
+        if (e->b[KEYBYTES - 1 - pos / 8] & mask) continue;
+        e->b[KEYBYTES - 1 - pos / 8] |= mask;
+        count++;
     }
 }
 
@@ -3014,23 +3024,27 @@ static uint32_t stern_syndrome_64(uint64_t seed, uint64_t e)
     return s;
 }
 
+/* TODO #296: same scheme as stern_rand_error_ba above, at this file's own
+ * 64-bit demo width (SDF64_N, SDF64_T).  Converged together so the harness
+ * carries ONE sampling idea rather than two. */
 static uint64_t stern_rand_error_64(void)
 {
-    uint8_t idx[SDF64_N];
+    static const uint64_t span = (uint64_t)1 << 32;
+    const uint64_t threshold = span - (span % (uint64_t)SDF64_N);
     uint64_t e = 0;
-    int i;
-    for (i = 0; i < SDF64_N; i++) idx[i] = (uint8_t)i;
-    for (i = SDF64_N - 1; i >= SDF64_N - SDF64_T; i--) {
-        unsigned int range = (unsigned int)(i + 1);
-        unsigned int thresh = 256 - (256 % range);
-        uint8_t rnd;
-        int j;
-        do {
-            if (fread(&rnd, 1, 1, urnd_fp) != 1) { fputs("urandom\n", stderr); exit(1); }
-        } while ((unsigned int)rnd >= thresh);
-        j = (int)(rnd % range);
-        { uint8_t tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp; }
-        e |= (uint64_t)1 << idx[i];
+    int count = 0;
+    while (count < SDF64_T) {
+        uint8_t buf[4];
+        uint64_t v;
+        unsigned int pos;
+        if (fread(buf, 1, 4, urnd_fp) != 4) { fputs("urandom\n", stderr); exit(1); }
+        v = ((uint64_t)buf[0] << 24) | ((uint64_t)buf[1] << 16)
+          | ((uint64_t)buf[2] << 8)  | (uint64_t)buf[3];
+        if (v >= threshold) continue;
+        pos = (unsigned int)(v % (uint64_t)SDF64_N);
+        if ((e >> pos) & 1u) continue;
+        e |= (uint64_t)1 << pos;
+        count++;
     }
     return e;
 }

@@ -1758,23 +1758,43 @@ func SternApplyPerm(perm []int, v *BitArray) *BitArray {
 	return out
 }
 
-// SternRandError generates a weight-t error vector via partial Fisher-Yates.
+// SternRandError generates a weight-t error vector by 4-byte rejection
+// sampling into a set -- the scheme Python's _csprng_weight_t and Java's
+// csprngWeightT already used, adopted here by TODO #296.
+//
+// This was a partial Fisher-Yates over crypto/rand.Int, and C's was a partial
+// Fisher-Yates drawing ONE byte per step against a shrinking range: three
+// distinct schemes for one primitive across four languages.  All three were
+// unbiased, so nothing produced a wrong distribution; what was wrong is that a
+// primitive with three consumption orders cannot be pinned against itself, and
+// local randomness that reaches no artifact has no other check available
+// (TODO #294).  Adopting an existing scheme verbatim rather than inventing a
+// fourth correct one is #294's precedent.
+//
+// The 4-byte read is deliberately NOT buffered the way RnlRandPoly's is: t is
+// 16 at the deployed width, so there is no #293-shaped cost here, and an
+// unbuffered read is what makes the byte-for-byte stream consumption identical
+// to the other three ports -- which is the property KAT/sampler_replay.json
+// pins.
 func SternRandError(n, t int) *BitArray {
-	idx := make([]int, n)
-	for i := range idx {
-		idx[i] = i
-	}
-	for i := n - 1; i >= n-t; i-- {
-		j, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
-		if err != nil {
-			log.Fatalf("rand.Int: %s", err)
-		}
-		ji := int(j.Int64())
-		idx[i], idx[ji] = idx[ji], idx[i]
-	}
+	const span = uint64(1) << 32
+	threshold := span - span%uint64(n)
 	e := &BitArray{size: n}
-	for i := n - 1; i >= n-t; i-- {
-		e.Val.SetBit(&e.Val, idx[i], 1)
+	buf := make([]byte, 4)
+	for count := 0; count < t; {
+		if _, err := rand.Read(buf); err != nil {
+			log.Fatalf("rand.Read: %s", err)
+		}
+		v := uint64(buf[0])<<24 | uint64(buf[1])<<16 | uint64(buf[2])<<8 | uint64(buf[3])
+		if v >= threshold {
+			continue
+		}
+		pos := int(v % uint64(n))
+		if e.Val.Bit(pos) == 1 {
+			continue // already chosen
+		}
+		e.Val.SetBit(&e.Val, pos, 1)
+		count++
 	}
 	return e
 }
@@ -3637,14 +3657,26 @@ func oprfHashToField(data []byte, n int) *big.Int {
 }
 
 // OprfKeygen returns a random OPRF server key in [2, 2^n-2].
+//
+// TODO #296: the draw is n/8 raw big-endian bytes masked with ord, which is
+// what Python's oprf_keygen and Java's Oprf.keygen do.  It was
+// rand.Int(rand.Reader, ord) -- a big.Int rejection over [0, ord) -- so the
+// four ports had three different draw schemes for one scalar.  All were
+// uniform over the accepted set; the point is that three consumption orders
+// cannot be pinned against each other, which is the only check this class of
+// randomness admits.  Note rand.Int could never return ord itself while a
+// masked 32-byte draw can, so the explicit k < ord test now carries that case
+// rather than the draw excluding it silently.
 func OprfKeygen(n int) (*big.Int, error) {
 	ord := oprfOrd(n)
+	one := big.NewInt(1)
+	buf := make([]byte, n/8)
 	for {
-		k, err := rand.Int(rand.Reader, ord)
-		if err != nil {
+		if _, err := rand.Read(buf); err != nil {
 			return nil, err
 		}
-		if k.Cmp(big.NewInt(1)) > 0 {
+		k := new(big.Int).And(new(big.Int).SetBytes(buf), ord)
+		if k.Cmp(one) > 0 && k.Cmp(ord) < 0 {
 			return k, nil
 		}
 	}
@@ -3656,12 +3688,19 @@ func OprfBlind(x []byte, n int) (r, alpha *big.Int, err error) {
 	ord := oprfOrd(n)
 	poly := GfPoly[n]
 	hx := oprfHashToField(x, n)
+	// TODO #296: n/8 raw big-endian bytes masked with ord, matching Python's
+	// oprf_blind and Java's Oprf.blind; was rand.Int(rand.Reader, ord).  The
+	// ModInverse test below is kept: it is exactly Python's and Java's
+	// gcd(r, ord) == 1, and C's r * r^-1 == 1 mod ORD, by three spellings of
+	// one predicate.
+	one := big.NewInt(1)
+	buf := make([]byte, n/8)
 	for {
-		rCand, e := rand.Int(rand.Reader, ord)
-		if e != nil {
+		if _, e := rand.Read(buf); e != nil {
 			return nil, nil, e
 		}
-		if rCand.Cmp(big.NewInt(1)) <= 0 {
+		rCand := new(big.Int).And(new(big.Int).SetBytes(buf), ord)
+		if rCand.Cmp(one) <= 0 {
 			continue
 		}
 		rInv := new(big.Int).ModInverse(rCand, ord)

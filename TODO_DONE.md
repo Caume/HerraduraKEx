@@ -18537,3 +18537,194 @@ caught, and an exemption naming a deleted row is caught.
 Status: **DONE v7.0.13** — a constant could be declared in all four languages, agree in all four, and be read by one; ten such cells across six rows, and the seventh axis that now fails on the next one.
 
 ---
+
+### #296: the fixed-stream replay #294 prescribed did not exist, and nothing could tell
+
+TODO #294 found `rnl_sigma_sign` drawing its zero-knowledge mask by rejection sampling in
+C and by raw modulo in the other three — a 3-vs-1 split that had shipped and that nothing
+in the repo could see.  The reason it could not be seen is a property of the object, not
+an oversight: a sampler's output is fresh per call and reaches no artifact, so no KAT
+pins it and **none could** (a proof is randomised per signature), and no round-trip or
+interop pair compares two samplers against each other.  #294 recorded the only check that
+is available for that class — a **fixed-stream replay**, which replaces the entropy
+source with pinned bytes, makes a randomised primitive deterministic, and then holds the
+four consumption orders against each other.
+
+It verified its own fix that way and threw the harness away.  `CLAUDE.md` went on saying,
+present tense, that such a check existed:
+
+> The only check available for this class is a FIXED-STREAM REPLAY, which pins the four
+> consumption orders against each other
+
+`grep -rl 'fixed.stream'` across every `.sh`, `.py`, `.c` and `.go` in the tree returned
+**`CLAUDE.md` alone**.  That is this repo's own recurring defect class one layer out — the
+withdrawn trust-model sentence of #287, the 22 scripts of #291 that computed a verdict and
+discarded it — and it is what this item is about.  The scale is the other half: **24
+functions** in `herradura.h` read the CSPRNG directly, and #294 examined one of them.
+
+**What the census found before any harness was written.**  Three of the four samplers
+examined disagreed, and every disagreement was between implementations that were all
+individually correct:
+
+| sampler | C | Go | Python | Java |
+|---|---|---|---|---|
+| weight-t error vector | Fisher–Yates, **1-byte** draw, shrinking range | Fisher–Yates over `crypto/rand.Int` (big.Int bitmask) | rejection **into a set**, 4-byte draw | as Python |
+| OPRF blinding scalar | 32 raw bytes, broken rejection (below) | `rand.Int(Reader, ord)` | 32 raw bytes, `r>1 && gcd(r,ORD)==1` | as Python |
+| ZKBoo share + tapes | big-endian `nb` bytes, then 3×32 | identical | identical | identical |
+
+Three distinct schemes for the weight-t vector, three for the OPRF scalar.  **No
+distribution was wrong** — every one of them is unbiased, and this item found no bias
+anywhere.  What is wrong is that a primitive with three consumption orders cannot be
+pinned against itself, which leaves the class #294 identified permanently unguarded.  The
+ZKBoo row is recorded because it is the control: the census is not merely finding noise.
+
+**AND ONE REAL DEFECT, which only a chosen stream reaches.**  C's `oprf_blind` rejected a
+degenerate scalar with `continue` inside a `do { ... } while (...)`:
+
+```c
+do {
+    ba_rand(r_out, urnd);
+    if (ba_is_zero(r_out) || ba_cmp256(r_out, &ONE_BA) == 0) continue;
+    ba_modinv_ord(&r_inv, r_out);
+    ba_mul_mod_ord(&check, r_out, &r_inv);
+} while (ba_cmp256(&check, &ONE_BA) != 0);
+```
+
+`continue` in a `do/while` jumps to the **condition**, not to the top of the body.  A
+rejected draw therefore re-tested the *previous* iteration's `check` — and on the first
+iteration that object is uninitialised stack.  Had the garbage compared equal to 1,
+`oprf_blind` would have returned `r = 1`, i.e. `alpha = H(x)` with the blinding removed
+and the client's input in the clear.
+
+Its reachability against `/dev/urandom` is `p = 2^-255`, so **this is not a practical
+vulnerability and is not presented as one**.  It is undefined behaviour and a logic
+error, and the reason it survived is exactly the reason this item exists: no run ever
+entered the branch, so the `sanitizers` job could not see it.  Fed `r = 1` as the first
+draw, valgrind reports the conditional jump at `herradura.h:4350` reading the stack
+allocation at `4341`.  A scan for the same shape found this to be the only `continue`
+inside a `do/while` in `herradura.h`.
+
+**RESOLVED (v7.0.14).**
+
+**The harness, which is the deliverable.**  `KAT/sampler_replay.json` pins four leaf
+samplers: for each, a fixed input stream, the value the *shipped* sampler produces from
+it, and — where all four ports read at the same granularity — the number of bytes
+consumed.  Output pins the byte order, the rejection threshold, the modular reduction and
+the consumption order; the byte count pins that no port reads ahead of or behind the
+others.  It needed **no new test script and no CI wiring**, because four ports checked
+against one pinned vector is four ports checked against each other, and every consumer
+already existed:
+
+| language | consumer | how the stream is injected |
+|---|---|---|
+| Python | `KAT/generate_kat.py --check` | `os.urandom` patched; the regenerate-and-diff **is** the replay |
+| C | `KAT/verify_kat_c` | `fmemopen` — every sampler already takes a `FILE *` |
+| Go | `KAT/verify_kat.go` | `rand.Reader` swapped for a counting reader |
+| Java | `herradurakex.KatVerify` | a `SecureRandom` subclass; every sampler already takes one |
+
+C and Java needed no injection machinery at all, which is worth recording: their samplers
+take the entropy source as a parameter.  Go has to swap a package variable, and that is
+the one fragile hook here — a future Go that sourced `rand.Read` from the kernel directly
+would feed the samplers real entropy.  That failure is **loud** by construction (every row
+would mismatch), and the source says not to repair it by relaxing the comparison.
+
+`KAT/sampler_replay_vector.h` is the generated C view, on `hcred_kkw_vector.h`'s
+precedent: the shipped C tree has no JSON parser and that property is worth more than the
+convenience of one.  Being a pure deterministic transform, it **is** regenerate-and-diff
+checked, so editing one without re-emitting the other fails rather than drifting.
+
+**The eighth axis, which is what stops it decaying.**  `spec/check_language_parity.py`
+gains `check_randomness`, and it does two things.  (1) Every sampler in the vector must be
+pinned in all four languages by `SAMPLER_REPLAY_PINNED`, and every table entry must name a
+row the vector carries — self-invalidating in both directions like every other curated
+table here.  (2) `RANDOMNESS_CENSUS` records, per language, every function that reads
+**raw entropy** rather than calling a higher sampler; the set is **derived from source on
+every run** and compared, so adding, removing or renaming a randomness consumer anywhere
+is a CI failure until someone says whether a fixed stream reaches it.  24 / 24 / 27 / 30
+functions in C / Go / Python / Java.
+
+A name set rather than a reason per function is a deliberate choice: there are 105 of
+them, and a hundred prose reasons is a hundred sentences that rot.  The set is the
+tripwire; the four pinned rows are where the argument lives.
+
+**The axis caught its own blind spot, and that is why the cross-check exists.**  The Java
+census regex matched `new BigInteger(<bits>, rng)` with a bare `\w+` first argument, but
+the suite writes `new BigInteger(Herradura.N, rng)` — so `Oprf.blind` and `Oprf.keygen`
+were not censused **at all**.  Nothing in the census could notice; what noticed is the
+rule that a pinned sampler must appear among that language's censused consumers, which
+failed with "the pin names a function that does not draw".  This is the fifth-spelling
+blind spot the header warns about, caught once, in the item that introduced it.
+
+**Five fixes.**
+
+1. **C's `oprf_blind` `continue`** — now a `for(;;)` with an explicit `break`, removing
+   the class rather than the instance, and matching the shape Go, Python and Java already
+   had.  Valgrind is silent afterwards.
+2. **The weight-t sampler converges on Python/Java's 4-byte rejection-into-a-set**, in C
+   and Go.  Adopting an existing scheme verbatim rather than inventing a fifth correct one
+   is #294's precedent.  Two further reasons for that direction specifically: C's `uint8_t
+   idx[KEYBITS]` hard-capped it at `n ≤ 256` and the byte draw could not have followed the
+   parameter, and it was already 2 of 4.
+3. **The OPRF blinding scalar converges the same way** — Go moves from `rand.Int` to an
+   `n/8`-byte masked draw.  `rand.Int` could never return `ord` itself while a masked draw
+   can, so the explicit `k < ord` test now carries that case rather than the draw
+   excluding it silently.
+4. **Go's `SternRandError` reads 4 bytes unbuffered, deliberately** — `t` is 16, so there
+   is no #293-shaped cost, and unbuffered is what makes the byte-for-byte consumption
+   identical to the other three.
+5. **The Java census regex widened** to `[\w.]+`, per the blind spot above.
+6. **`CryptosuiteTests/Herradura_tests.c`'s two transcribed samplers follow**, and how
+   they were found matters.  That harness TRANSCRIBES the suite rather than including it,
+   so `stern_rand_error_ba` was a byte-for-byte copy of the retired shipped function at the
+   SAME width — a stale duplicate the moment the suite moved.  The raw-entropy census reads
+   the SUITE, not `CryptosuiteTests/`, so **the axis would not have said so**; this one was
+   found by hand.  Go's harness calls the package and Python's copy was already the
+   adopted scheme, so C's was the only one.  `stern_rand_error_64`, at that file's own
+   64-bit demo width, is converged with it so the harness carries one sampling idea.
+
+**One row pins output but NOT byte count, and the reason is recorded rather than
+asserted away.**  `rnl_rand_poly` is block-buffered in Go, Python and Java (#293) and
+unbuffered in C.  The byte-to-draw *mapping* is identical — draw `i` takes
+`stream[3i:3i+3]` in all four — so the output is pinnable and is pinned.  The *total* is
+not: the buffered ports read `3*(n + n/64 + 8)` bytes whatever they use, and on a refill
+discard the 0–2 byte remainder C would have used.  The slack is ~1.6% against a 0.39%
+rejection rate, so a refill is about ten standard deviations out.  Closing it would mean
+buffering C for a test's benefit, which #293 deliberately declined to do.  The generated
+header emits **no** `RPL_RAND_CONSUMED`, so the C consumer cannot assert it by mistake.
+
+**A branch a random stream never enters is not covered, and the vector is built around
+that.**  The OPRF stream's first draw is `r = 1` **exactly**, chosen rather than derived:
+a stream of random-looking bytes never enters the `r <= 1` rejection (it needs a 256-bit
+draw of 0 or 1), so a vector built only from `det_bytes` would have left the repaired code
+unguarded — deleting the rejection again would still have passed, and in the negative
+control it did.  With `r = 1` leading, that control fires three ways.  The weight-t stream
+is likewise the first label whose draws collide **twice**, so the duplicate-skip path is
+exercised rather than merely present; the first label tried consumed exactly `4t` bytes
+and a port that dropped the duplicate check would have passed it.  The *other* weight-t
+branch, `v >= threshold`, is **unreachable at this width** and that is arithmetic rather
+than luck: 256 divides 2^32, so the threshold is exactly 2^32 and a 4-byte draw is always
+below it.  Worth knowing before anyone narrows the type — a threshold held in a `uint32`
+wraps to 0 there and rejects every draw forever.  All four ports compute it in 64 bits.
+
+**KNOWN LIMIT.**  The census is syntactic, over each language's own raw-entropy spellings.
+A port reaching the CSPRNG by a sixth spelling would not be censused at all.  The guard is
+that an empty per-language census is an error — a regex that stopped matching fails as
+"the extractor broke" rather than passing vacuously — plus the pinned-sampler cross-check
+that caught the Java case above.  And the census says only that a consumer *exists* and
+that someone looked, never that it is correct: pinning the remaining 101 means replaying
+whole signing and keygen operations rather than leaf samplers, which is TODO #297.
+
+**Verification.**  All four languages build; C, Go and Python suites and Java `SelfTest`
+green; all five checkers green, the new axis reporting 24/24/27/30 raw-entropy consumers
+and 4 samplers pinned in all four languages; `generate_kat.py --check`,
+`generate_pem_kat.py --check`, `verify_kat.go`, `verify_kat_c` and `KatVerify` all pass
+with the replay rows; `test_kat_vectors.sh`, `test_cross_lang_matrix.sh`,
+`test_zkp_hybrid_family.sh`, `test_kat_pem.sh`, `test_vectors.sh` and `test_oprf*.sh`
+pass.  Seven negative controls fire: Go weight-t byte order, C weight-t byte order, the
+reintroduced `oprf_blind` `continue` bug, a new randomness consumer, a stale census entry,
+a pin with no vector row, and a vector row with no pin.  The three pre-existing KAT files
+are byte-identical.
+
+Status: **DONE v7.0.14** — the fixed-stream replay #294 prescribed and discarded, kept this time: four samplers pinned in four languages, three of which had three different consumption orders, and a `continue` in a `do/while` that could have returned an unblinded OPRF scalar.
+
+---

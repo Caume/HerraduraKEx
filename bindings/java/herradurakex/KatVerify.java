@@ -5,7 +5,9 @@ import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.SecureRandom;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -341,11 +343,142 @@ public final class KatVerify {
             fails += verifyKkw(new String(Files.readAllBytes(kkwPath)));
         }
 
+        // ── sampler replay (TODO #296) ──────────────────────────────────
+        Path replayPath = path.resolveSibling("sampler_replay.json");
+        if (!Files.exists(replayPath)) {
+            System.out.println("FAIL sampler_replay: " + replayPath + " not found");
+            fails++;
+        } else {
+            fails += verifySamplerReplay(new String(Files.readAllBytes(replayPath)));
+        }
+
         if (fails > 0) {
             System.out.println(fails + " vector set(s) FAILED");
             System.exit(1);
         }
         System.out.println("All KAT vectors verified against the Java herradurakex package.");
+    }
+
+    // ── TODO #296: fixed-stream sampler replay ──────────────────────────
+    //
+    // Replays the suite's leaf CSPRNG samplers against the vector's fixed
+    // stream.  Java needs no hook and no global for this: every sampler here
+    // already takes its SecureRandom as a parameter, so a subclass serving
+    // pinned bytes drives the SHIPPED function directly.  Go, by contrast, has
+    // to swap a package variable.
+    //
+    // Why this vector can exist at all: a sampler's output reaches no artifact,
+    // so no ordinary KAT can pin it and none could (TODO #294).  Replacing the
+    // entropy source makes a randomised primitive deterministic, and then the
+    // four consumption orders can be held against each other -- which is the
+    // only check this class of randomness admits.
+
+    /** A SecureRandom that serves pinned bytes and counts what it served. */
+    private static final class FixedRandom extends SecureRandom {
+        private static final long serialVersionUID = 1L;
+        private final byte[] data;
+        private int pos;
+
+        FixedRandom(byte[] data) { this.data = data; }
+
+        @Override
+        public void nextBytes(byte[] b) {
+            if (pos + b.length > data.length) {
+                throw new IllegalStateException(
+                    "sampler replay: stream exhausted (" + b.length + " asked, "
+                    + (data.length - pos) + " left)");
+            }
+            System.arraycopy(data, pos, b, 0, b.length);
+            pos += b.length;
+        }
+
+        int consumed() { return pos; }
+    }
+
+    private static int replayCheck(String name, String got, String want) {
+        if (!got.equals(want)) {
+            System.out.println("FAIL " + name + ": got " + got + " want " + want);
+            return 1;
+        }
+        System.out.println("PASS " + name);
+        return 0;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int verifySamplerReplay(String text) {
+        int fails = 0;
+        Map<String, Object> root = (Map<String, Object>) Json.parse(text);
+        List<Object> rows = (List<Object>) root.get("samplers");
+        if (rows == null || rows.isEmpty()) {
+            System.out.println("FAIL sampler_replay: no samplers in the vector");
+            return 1;
+        }
+
+        for (Object ro : rows) {
+            Map<String, Object> r = (Map<String, Object>) ro;
+            String name = (String) r.get("name");
+            Map<String, Object> params = (Map<String, Object>) r.get("params");
+            FixedRandom rng = new FixedRandom(unhexBytes((String) r.get("stream")));
+
+            if ("rnl_cbd_poly".equals(name)) {
+                int n = ((Number) params.get("n")).intValue();
+                int q = ((Number) params.get("q")).intValue();
+                fails += replayCheck("replay " + name,
+                        polyHex(HerraduraNl.rnlCbdPoly(n, q, rng), 3),
+                        (String) r.get("expect_poly"));
+            } else if ("rnl_rand_poly".equals(name)) {
+                int n = ((Number) params.get("n")).intValue();
+                int q = ((Number) params.get("q")).intValue();
+                fails += replayCheck("replay " + name,
+                        polyHex(HerraduraNl.rnlRandPoly(n, q, rng), 3),
+                        (String) r.get("expect_poly"));
+            } else if ("stern_weight_t".equals(name)) {
+                int n = ((Number) params.get("n")).intValue();
+                int t = ((Number) params.get("t")).intValue();
+                BigInteger e = Stern.csprngWeightT(t, rng);
+                fails += replayCheck("replay " + name,
+                        String.format("%0" + (n / 4) + "x", e),
+                        (String) r.get("expect_value"));
+                int wt = ((Number) r.get("expect_weight")).intValue();
+                if (e.bitCount() != wt) {
+                    System.out.println("FAIL replay " + name + ": weight "
+                            + e.bitCount() + ", vector says " + wt);
+                    fails++;
+                }
+            } else if ("oprf_blind_scalar".equals(name)) {
+                int bits = ((Number) params.get("bits")).intValue();
+                Oprf.Blinded bl = Oprf.blind(unhexBytes((String) params.get("input_hex")), rng);
+                fails += replayCheck("replay " + name + " r",
+                        String.format("%0" + (bits / 4) + "x", bl.r),
+                        (String) r.get("expect_r"));
+                fails += replayCheck("replay " + name + " alpha",
+                        String.format("%0" + (bits / 4) + "x", bl.alpha),
+                        (String) r.get("expect_alpha"));
+            } else {
+                System.out.println("FAIL sampler_replay: unknown sampler \"" + name
+                        + "\" -- a row was added to the vector and no Java "
+                        + "consumer follows it");
+                fails++;
+                continue;
+            }
+
+            // A null `consumed` means the four ports read at different
+            // granularities and only the output is common; the row carries the
+            // reason.  Anything else is asserted, and that half is what catches
+            // a port reading ahead of or behind the others.
+            Object consumed = r.get("consumed");
+            if (consumed != null) {
+                int want = ((Number) consumed).intValue();
+                if (rng.consumed() != want) {
+                    System.out.println("FAIL replay " + name + ": consumed "
+                            + rng.consumed() + " stream bytes, vector says " + want);
+                    fails++;
+                } else {
+                    System.out.println("PASS replay " + name + " consumed " + want + " bytes");
+                }
+            }
+        }
+        return fails;
     }
 
     // ── HCRED-KKW (TODO #266) ───────────────────────────────────────────────

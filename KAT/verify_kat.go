@@ -9,9 +9,11 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"os"
 
@@ -406,6 +408,107 @@ func verifyKkwSet(name string, v kkwSet) int {
 	return fails
 }
 
+// ── TODO #296: fixed-stream sampler replay ──────────────────────────────
+//
+// Replaces crypto/rand's source with the vector's fixed stream and checks
+// what the SHIPPED samplers produce.  This is the only check available for a
+// sampler whose output reaches no artifact (TODO #294): no KAT can pin a
+// value that is fresh per call, and no interop pair compares two samplers.
+//
+// The swap is `rand.Reader = <fixed>`, which is a documented package variable
+// but not a guaranteed one -- a future Go that sourced rand.Read from the
+// kernel directly would silently feed these samplers real entropy.  That
+// failure mode is LOUD rather than silent here by construction: the outputs
+// would not match the vector and every row would fail.  Do not "fix" such a
+// failure by relaxing the comparison.
+type countingReader struct {
+	data []byte
+	pos  int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	if c.pos >= len(c.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, c.data[c.pos:])
+	c.pos += n
+	return n, nil
+}
+
+func verifySamplerReplay(v map[string]interface{}) int {
+	fails := 0
+	check := func(name, got, want string) {
+		if got != want {
+			fmt.Printf("FAIL %s: got %s want %s\n", name, got, want)
+			fails++
+		} else {
+			fmt.Println("PASS " + name)
+		}
+	}
+
+	saved := rand.Reader
+	defer func() { rand.Reader = saved }()
+
+	rows, ok := v["samplers"].([]interface{})
+	if !ok || len(rows) == 0 {
+		fmt.Fprintln(os.Stderr, "sampler_replay.json has no samplers")
+		return fails + 1
+	}
+
+	for _, ri := range rows {
+		r := ri.(map[string]interface{})
+		name := str(r, "name")
+		params := r["params"].(map[string]interface{})
+		cr := &countingReader{data: mustHex(str(r, "stream"))}
+		rand.Reader = cr
+
+		switch name {
+		case "rnl_cbd_poly":
+			check("replay "+name, polyHex(RnlCBDPoly(num(params, "n"), num(params, "q")), 3),
+				str(r, "expect_poly"))
+		case "rnl_rand_poly":
+			check("replay "+name, polyHex(RnlRandPoly(num(params, "n"), num(params, "q")), 3),
+				str(r, "expect_poly"))
+		case "stern_weight_t":
+			n := num(params, "n")
+			e := SternRandError(n, num(params, "t"))
+			check("replay "+name, fmt.Sprintf("%0*x", n/4, &e.Val), str(r, "expect_value"))
+		case "oprf_blind_scalar":
+			n := num(params, "bits")
+			rr, alpha, err := OprfBlind(mustHex(str(params, "input_hex")), n)
+			if err != nil {
+				fmt.Printf("FAIL replay %s: %s\n", name, err)
+				fails++
+				continue
+			}
+			check("replay "+name+" r", fmt.Sprintf("%0*x", n/4, rr), str(r, "expect_r"))
+			check("replay "+name+" alpha", fmt.Sprintf("%0*x", n/4, alpha), str(r, "expect_alpha"))
+		default:
+			fmt.Printf("FAIL replay: unknown sampler %q -- a row was added to "+
+				"the vector and no Go consumer follows it\n", name)
+			fails++
+			continue
+		}
+
+		// A null `consumed` means the four ports read the stream at
+		// different granularities and only the output is common; the
+		// vector carries the reason on the row.  Anything else is an
+		// assertion, and it is the half that catches a port reading
+		// ahead of or behind the others.
+		if cv, present := r["consumed"]; present && cv != nil {
+			want := int(cv.(float64))
+			if cr.pos != want {
+				fmt.Printf("FAIL replay %s: consumed %d stream bytes, vector says %d\n",
+					name, cr.pos, want)
+				fails++
+			} else {
+				fmt.Printf("PASS replay %s consumed %d bytes\n", name, want)
+			}
+		}
+	}
+	return fails
+}
+
 func main() {
 	data, err := os.ReadFile("KAT/classical_quartet.json")
 	if err != nil {
@@ -561,6 +664,20 @@ func main() {
 				}
 				fails += verifyKkwSet("hcred_kkw["+sn+"]", sv)
 			}
+		}
+	}
+
+	// ── sampler replay (TODO #296) ──────────────────────────────────────
+	if vdata, err := os.ReadFile("KAT/sampler_replay.json"); err != nil {
+		fmt.Fprintln(os.Stderr, "cannot read KAT/sampler_replay.json:", err)
+		fails++
+	} else {
+		var sv map[string]interface{}
+		if err := json.Unmarshal(vdata, &sv); err != nil {
+			fmt.Fprintln(os.Stderr, "cannot parse KAT/sampler_replay.json:", err)
+			fails++
+		} else {
+			fails += verifySamplerReplay(sv)
 		}
 	}
 
