@@ -2518,6 +2518,37 @@ static void stern_ring_challenges(int *joint_out, int rounds, int k,
     }
 }
 
+/* Rejection-sample a uniform trit in {0, 1, 2} for a SIMULATED ring member.
+ *
+ * Extracted from stern_ring_sign's loop by TODO #297, and extracted in all four
+ * ports at once, because one trit had THREE schemes: this byte-with-rejection,
+ * Go drawing a whole n-bit BitArray and reducing it modulo 3, and Java calling
+ * Random.nextInt(3).  A sampler written inline in four places is a sampler
+ * nobody compares; naming it is what makes the manifest able to.
+ *
+ * 256 is not divisible by 3, so a plain `byte % 3` is biased (86/256 against
+ * 85/256 per residue, TODO #164).  Rejecting the single value 255 leaves 255
+ * values over 3 residues exactly.
+ *
+ * Two smaller divergences went with the extraction.  The loop was bounded at
+ * 8 tries and fell through with rnd1 = 255, i.e. b = 0, where the other three
+ * retry indefinitely -- 2^-64, but a bias toward the branch that carried the
+ * defect.  And a failed read fabricated a challenge from (i ^ r) rather than
+ * exiting, which is the only fail-open read in this file; every other sampler
+ * here treats a short read from /dev/urandom as fatal, and so does this now. */
+static int stern_ring_trit(FILE *urnd)
+{
+    uint8_t v;
+    for (;;) {
+        if (fread(&v, 1, 1, urnd) != 1) {
+            fputs("urandom error\n", stderr);
+            exit(1);
+        }
+        if (v != 255)
+            return (int)(v % 3u);
+    }
+}
+
 /* HVZK simulator for one Stern round given pre-chosen challenge b.
  * Fills c0[idx], c1[idx], c2[idx], b[idx], resp_a[idx], resp_b[idx].
  * H_mat must be pre-built for the member's seed (call stern_build_H once). */
@@ -2530,11 +2561,36 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
     BitArray items[2], pi_sim, r_sim, y_sim, sr_sim, sy_sim;
 
     if (b == 0) {
-        /* c1 = hash(sr_sim wt-t), c2 = hash(sy_sim random), c0 dummy */
-        BitArray zero; memset(zero.b, 0, KEYBYTES);
+        /* c1 = hash(sr_sim wt-t), c2 = hash(sy_sim random), c0 dummy.
+         *
+         * THE DUMMY MUST BE RANDOM, and until TODO #297 it was not: this branch
+         * hashed TWO ZERO BitArrays, so c0 was one fixed 256-bit constant in
+         * every b = 0 simulated round of every ring signature this port ever
+         * produced.  The real signer's c0 is hash(pi_seed, H*r^T) with pi_seed
+         * freshly drawn, so it never takes that value -- which means the public
+         * signature carries a MARKER on the simulated members and not on the
+         * signer.  A non-signer's rounds are b = 0 about a third of the time,
+         * so at the default rounds = 32 every non-signer shows the constant
+         * with probability 1 - (2/3)^32 = 1 - 6e-6 and the signer never does:
+         * the signer is the member with none, read straight off the wire.  That
+         * is the anonymity the construction exists to provide, gone.
+         *
+         * Python and Java always drew a dummy here; C and Go did not, and no
+         * test could see it -- a ring signature with an identifiable signer
+         * still VERIFIES (c0 is unchecked for b = 0), so every round-trip and
+         * every interop pair passes.  Found by pinning the whole operation
+         * against a fixed stream and comparing the four ports, which is what
+         * KAT/operation_replay.json is for.
+         *
+         * Python's and Java's form is adopted verbatim -- hash(pi_dum, zero),
+         * with pi_dum drawn AFTER sy_sim -- rather than a third arrangement
+         * invented, so the four consumption orders agree (TODO #294's
+         * precedent). */
+        BitArray zero, pi_dum; memset(zero.b, 0, KEYBYTES);
         stern_rand_error(&sr_sim, urnd);
         ba_rand(&sy_sim, urnd);
-        items[0] = zero; items[1] = zero;
+        ba_rand(&pi_dum, urnd);
+        items[0] = pi_dum; items[1] = zero;
         stern_hash(&sig->c0[idx], items, 2, 1);    /* unchecked */
         stern_hash(&sig->c1[idx], &sr_sim, 1, 2);
         stern_hash(&sig->c2[idx], &sy_sim, 1, 3);
@@ -2609,17 +2665,7 @@ static void stern_ring_sign(SternRingSig *sig,
         if (i == j) continue;
         stern_build_H(H_mat_i, &seeds[i]);
         for (r = 0; r < rounds; r++) {
-            /* Rejection-sample a uniform trit: 256 is not divisible by 3, so a
-             * plain `byte % 3` is biased (86/256 vs 85/256 per residue, TODO
-             * #164). Reject the one out-of-range byte value (255) instead. */
-            uint8_t rnd1;
-            int b_pre;
-            int tries;
-            for (tries = 0; tries < 8; tries++) {
-                if (fread(&rnd1, 1, 1, urnd) != 1) { rnd1 = (uint8_t)(i ^ r); break; }
-                if (rnd1 != 255) break;
-            }
-            b_pre = (int)(rnd1 % 3u);
+            int b_pre = stern_ring_trit(urnd);
             stern_ring_simulate(sig, i * rounds + r, b_pre,
                                  H_mat_i, syn_i, urnd);
         }

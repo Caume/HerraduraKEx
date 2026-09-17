@@ -891,6 +891,16 @@ PRIMITIVES = {
         "go": r"^func sternFsChallenges\(",
         "java": r"Stern.java::private static int\[\] deriveChallenges\(",
     },
+    "stern-ring-trit": {
+        # TODO #297.  A one-line sampler that had THREE implementations across
+        # the four ports while it was written inline in each -- which is the
+        # case this manifest exists for, and could not see while the thing had
+        # no name.  Extracted in all four at once for that reason.
+        "c": r"static int stern_ring_trit\(",
+        "go": r"^func sternRingTrit\(",
+        "python": r"^def _stern_ring_trit\(",
+        "java": r"SternRing.java::private static int ringTrit\(",
+    },
     "stern-simulate-round": {
         # C names it stern_ring_simulate; the entry carries that name. No
         # absence
@@ -3018,6 +3028,44 @@ SAMPLER_REPLAY_PINNED = {
     },
 }
 
+# The same, one level up, for KAT/operation_replay.json (TODO #297).  A row here
+# is a whole randomised OPERATION rather than a leaf sampler: what it pins is the
+# ORDER in which the operation visits its samplers, and any inline draw loop that
+# is not a callable sampler at all.  #294's defect was of the second kind, which
+# is why rnl_sigma_sign is in this table and not in the one above.
+#
+# The two tables are kept separate rather than merged, and that is deliberate:
+# they answer different questions of an unpinned consumer.  A name absent from
+# SAMPLER_REPLAY_PINNED may still be fully covered by an operation row that calls
+# it; a name absent from BOTH is genuinely unpinned.
+OPERATION_REPLAY_PINNED = {
+    "stern_f_keygen": {
+        "c": "stern_f_keygen", "go": "SternFKeygen",
+        "python": "stern_f_keygen", "java": "Stern.java::sternFKeygen",
+    },
+    "hpks_stern_f_sign": {
+        "c": "hpks_stern_f_sign", "go": "HpksSternFSign",
+        "python": "hpks_stern_f_sign", "java": "Stern.java::hpksSternFSign",
+    },
+    "zkp_nl_prove": {
+        "c": "zkp_nl_prove", "go": "ZkpNlProve",
+        "python": "zkp_nl_prove", "java": "ZkpNl.java::prove",
+    },
+    "rnl_sigma_sign": {
+        "c": "rnl_sigma_sign", "go": "RnlSigmaSign",
+        "python": "rnl_sigma_sign", "java": "HerraduraNl.java::rnlSigmaSign",
+    },
+    # The row that found something.  Two divergences lived here: the challenge
+    # trit had three schemes across four ports, and the b = 0 dummy commitment
+    # was a CONSTANT in C and Go, which identified the real signer from the
+    # public signature -- a ring signature with no anonymity that verified
+    # perfectly, so every round-trip and interop test passed it.
+    "hpks_stern_ring_sign": {
+        "c": "stern_ring_sign", "go": "HpksSternRingSign",
+        "python": "hpks_stern_ring_sign", "java": "SternRing.java::sign",
+    },
+}
+
 # Every function in the shipped suite that reads RAW ENTROPY.  Derived from the
 # source on every run and compared against this list; see the header.
 RANDOMNESS_CENSUS = {
@@ -3027,7 +3075,8 @@ RANDOMNESS_CENSUS = {
         "hpkst_sign", "hske_decrypt_masked", "hske_encrypt_masked", "oprf_blind",
         "oprf_keygen", "rnl_cbd_poly", "rnl_cbd_poly_dim", "rnl_rand_poly",
         "rnl_sigma_sign", "stern_f_keygen", "stern_rand_error", "stern_ring_sign",
-        "stern_ring_simulate", "zkp_nl_keygen", "zkp_nl_pp_prove", "zkp_nl_prove",
+        "stern_ring_simulate", "stern_ring_trit", "zkp_nl_keygen",
+        "zkp_nl_pp_prove", "zkp_nl_prove",
     ],   # 24
     "go": [
         "HcredProve", "HcredProveKkw", "HpakeLoginDemo", "HpakeRegister",
@@ -3035,11 +3084,12 @@ RANDOMNESS_CENSUS = {
         "HskeDecryptMasked", "HskeEncryptMasked", "NewRandBitArray", "OprfBlind",
         "OprfKeygen", "QcMdpcEncap", "QcMdpcKeygen", "RnlCBDPoly", "RnlRandPoly",
         "RnlSigmaSign", "SternFKeygen", "SternRandError", "ZkpNlKeygen",
-        "ZkpNlProve", "ZkpNlProvepp", "sternSimulateRound",
-    ],   # 24
+        "ZkpNlProve", "ZkpNlProvepp", "sternRingTrit", "sternSimulateRound",
+    ],   # 25
     "python": [
         "_csprng_weight_t", "_dplex_encrypt", "_hcred_mpc_round", "_rnl_cbd_poly",
-        "_rnl_rand_poly", "_stern_simulate_round", "hcred_prove_kkw",
+        "_rnl_rand_poly", "_stern_ring_trit", "_stern_simulate_round",
+        "hcred_prove_kkw",
         "hpake_login_demo", "hpake_register", "hpke_encrypt", "hpks_stern_f_sign",
         "hpks_stern_ring_sign", "hpkst_sign", "hske_decrypt_masked",
         "hske_encrypt_masked", "hske_nl_aead_encrypt", "main", "oprf_blind",
@@ -3059,10 +3109,10 @@ RANDOMNESS_CENSUS = {
         "Oprf.java::blind", "Oprf.java::keygen",
         "Stern.java::csprngWeightT", "Stern.java::hpksSternFSign",
         "Stern.java::qcmdpcEncap", "Stern.java::qcmdpcKeygen",
-        "Stern.java::sternFKeygen", "SternRing.java::sign",
-        "SternRing.java::simulateRound", "ZkpNl.java::prove",
+        "Stern.java::sternFKeygen", "SternRing.java::ringTrit",
+        "SternRing.java::sign", "SternRing.java::simulateRound", "ZkpNl.java::prove",
         "ZkpNl.java::provePp", "ZkpNl.java::randomBig",
-    ],   # 30
+    ],   # 31
 }
 
 # Per-language raw-entropy spellings.  A new way to reach the CSPRNG must be
@@ -3080,6 +3130,7 @@ RANDOMNESS_RAW_PATTERNS = {
 }
 
 _REPLAY_VECTOR = os.path.join(REPO, "KAT", "sampler_replay.json")
+_OPREPLAY_VECTOR = os.path.join(REPO, "KAT", "operation_replay.json")
 
 
 def _slurp(path):
@@ -3157,38 +3208,55 @@ def _randomness_consumers():
     return found
 
 
-def check_randomness(errors):
-    """Eighth axis: the raw-entropy census and the sampler replay it guards."""
-    # --- (1) vector <-> table, both directions -----------------------------
+def _check_replay_table(errors, path, key, table, table_name, noun):
+    """One replay vector against its curated table, both directions.
+
+    Shared by the leaf vector (TODO #296) and the operation vector (#297): the
+    rules are identical one level apart, and writing them twice is how the two
+    would drift.
+    """
+    rel = os.path.join("KAT", os.path.basename(path))
     try:
-        with open(_REPLAY_VECTOR, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             vector = json.load(f)
     except (OSError, ValueError) as exc:
-        errors.append(f"sampler replay: cannot read KAT/sampler_replay.json ({exc})")
-        vector = {"samplers": []}
+        errors.append(f"{noun} replay: cannot read {rel} ({exc})")
+        vector = {key: []}
 
-    vector_names = [r["name"] for r in vector.get("samplers", [])]
-    if not vector_names:
-        errors.append("sampler replay: KAT/sampler_replay.json carries no samplers "
-                      "— the vector is empty, which would make this axis vacuous")
-    for name in vector_names:
-        if name not in SAMPLER_REPLAY_PINNED:
+    names = [r["name"] for r in vector.get(key, [])]
+    if not names:
+        errors.append(f"{noun} replay: {rel} carries no {key} — the vector is "
+                      "empty, which would make this axis vacuous")
+    for name in names:
+        if name not in table:
             errors.append(
-                f"sampler replay: KAT/sampler_replay.json has a row '{name}' that "
-                "SAMPLER_REPLAY_PINNED does not name — add it with its four "
-                "per-language functions, or the replay consumers will not follow it")
-    for name, cells in SAMPLER_REPLAY_PINNED.items():
-        if name not in vector_names:
+                f"{noun} replay: {rel} has a row '{name}' that {table_name} does "
+                "not name — add it with its four per-language functions, or the "
+                "replay consumers will not follow it")
+    for name, cells in table.items():
+        if name not in names:
             errors.append(
-                f"sampler replay: SAMPLER_REPLAY_PINNED names '{name}' but "
-                "KAT/sampler_replay.json has no such row — delete the entry, or "
-                "regenerate the vector (python3 KAT/generate_kat.py)")
+                f"{noun} replay: {table_name} names '{name}' but {rel} has no such "
+                "row — delete the entry, or regenerate the vector "
+                "(python3 KAT/generate_kat.py)")
         missing = [l for l in ("c", "go", "python", "java") if not cells.get(l)]
         if missing:
             errors.append(
-                f"sampler replay: '{name}' has no pinned function for "
-                f"{', '.join(missing)} — a sampler pinned in three languages is "
+                f"{noun} replay: '{name}' has no pinned function for "
+                f"{', '.join(missing)} — a {noun} pinned in three languages is "
                 "exactly the split this axis exists to catch")
+    return names
+
+
+def check_randomness(errors):
+    """Eighth axis: the raw-entropy census and the two replays it guards."""
+    # --- (1) vector <-> table, both directions, for both vectors -----------
+    vector_names = _check_replay_table(
+        errors, _REPLAY_VECTOR, "samplers", SAMPLER_REPLAY_PINNED,
+        "SAMPLER_REPLAY_PINNED", "sampler")
+    op_names = _check_replay_table(
+        errors, _OPREPLAY_VECTOR, "operations", OPERATION_REPLAY_PINNED,
+        "OPERATION_REPLAY_PINNED", "operation")
 
     # --- (2) the raw-entropy census ----------------------------------------
     found = _randomness_consumers()
@@ -3211,15 +3279,21 @@ def check_randomness(errors):
                 f"randomness census: RANDOMNESS_CENSUS names {lang} function "
                 f"'{name}', which no longer reads raw entropy — delete the entry "
                 "rather than leaving a census that describes the old source")
-        # Every pinned sampler must be one of that language's censused consumers.
-        for sname, cells in SAMPLER_REPLAY_PINNED.items():
-            fn = cells.get(lang)
-            if fn and fn not in got:
-                errors.append(
-                    f"sampler replay: '{sname}' claims {lang} function '{fn}', which "
-                    "the raw-entropy census does not find — the pin names a "
-                    "function that does not draw, so the replay proves nothing")
-    return found, vector_names
+        # Every pinned sampler or operation must be one of that language's
+        # censused consumers.  This is the cross-check that caught the axis's
+        # own blind spot at #296 -- a Java regex that missed Oprf.blind -- so it
+        # applies to both tables.
+        for table, noun in ((SAMPLER_REPLAY_PINNED, "sampler"),
+                            (OPERATION_REPLAY_PINNED, "operation")):
+            for sname, cells in table.items():
+                fn = cells.get(lang)
+                if fn and fn not in got:
+                    errors.append(
+                        f"{noun} replay: '{sname}' claims {lang} function '{fn}', "
+                        "which the raw-entropy census does not find — the pin "
+                        "names a function that does not draw, so the replay "
+                        "proves nothing")
+    return found, vector_names, op_names
 
 def main():
     errors = []
@@ -3229,7 +3303,7 @@ def main():
     census = check_census(errors)
     param_counts, _param_values = check_parameters(errors)
     param_used = check_param_use(errors)
-    rnd_census, replay_rows = check_randomness(errors)
+    rnd_census, replay_rows, op_rows = check_randomness(errors)
 
     if errors:
         print("Language parity: FAILED")
@@ -3279,7 +3353,8 @@ def main():
                     for lang in ("c", "go", "python", "java"))
         + f" function(s) read the CSPRNG directly, all recorded; "
         f"{len(replay_rows)} sampler(s) pinned against a fixed stream in all four "
-        f"languages by KAT/sampler_replay.json."
+        f"languages by KAT/sampler_replay.json, and {len(op_rows)} whole "
+        f"operation(s) by KAT/operation_replay.json."
     )
     return 0
 

@@ -106,6 +106,12 @@ README = _p("README.md")
 INTRO = _p("docs", "INTRODUCTION.md")
 JAVA_README = _p("bindings", "java", "README.md")
 CHANGELOG = _p("CHANGELOG.md")
+# Check D reaches SECURITY.md too since TODO #297: that file carries prose
+# claims ABOUT PROTOCOL PROPERTIES, and one of them ("only the former
+# survives at shipped parameters", of ring anonymity) was false in two of
+# the four ports for the life of those ports.  check_security_md.py
+# compares STATUSES, not sentences, so nothing read that claim before.
+SECURITY = _p("SECURITY.md")
 MIGRATING = _p("MIGRATING.md")
 PYPROJECT = _p("pyproject.toml")
 
@@ -866,6 +872,10 @@ REQUIRED_CLAIMS = [
      "#265/3: INTRODUCTION must record that the BGF QC-MDPC decoder ships"),
     (README, r"every `\[FAIL\]` fails the build",
      "#265/5: TODO #233 (v3.0.8) made any [FAIL] blocking, with no allow-list"),
+    (SECURITY, r"That sentence was false in the C and Go ports until v7\.0\.15",
+     "#297: HPKS-Ring's anonymity claim must keep the correction -- C and Go "
+     "hashed a CONSTANT dummy commitment for a simulated b = 0 round, which "
+     "identified the signer from the public signature"),
 ]
 
 FORBIDDEN_CLAIMS = [
@@ -883,6 +893,10 @@ FORBIDDEN_CLAIMS = [
      "fail the build. There is no allow-list; nothing is expected to fail."),
     (README, r"[Dd]on't treat either as a build gate",
      "#265/5: [FAIL] IS a build gate since v3.0.8 (TODO #233)"),
+    (SECURITY, r"only the former survives at shipped parameters \|",
+     "#297: that sentence, ending the row, is the UNCORRECTED claim. Ring "
+     "anonymity did not survive in C or Go until v7.0.15, and the row must "
+     "say so rather than asserting the property flatly"),
 ]
 
 

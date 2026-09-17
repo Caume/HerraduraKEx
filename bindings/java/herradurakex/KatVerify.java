@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -350,6 +351,15 @@ public final class KatVerify {
             fails++;
         } else {
             fails += verifySamplerReplay(new String(Files.readAllBytes(replayPath)));
+        }
+
+        // ── operation replay (TODO #297) ────────────────────────────────
+        Path opPath = path.resolveSibling("operation_replay.json");
+        if (!Files.exists(opPath)) {
+            System.out.println("FAIL operation_replay: " + opPath + " not found");
+            fails++;
+        } else {
+            fails += verifyOperationReplay(new String(Files.readAllBytes(opPath)));
         }
 
         if (fails > 0) {
@@ -721,4 +731,287 @@ public final class KatVerify {
                     + tamper.size() + " rejected)");
         return fails;
     }
+
+    // ── TODO #297: fixed-stream OPERATION replay ────────────────────────
+    //
+    // One level above verifySamplerReplay.  A leaf row is one call with scalar
+    // arguments; these rows supply a fixed STATEMENT as well as a fixed stream
+    // and pin what a whole randomised operation produces, so the ORDER in which
+    // it visits its samplers -- and any inline draw loop that is not a callable
+    // sampler at all -- is held against the other three ports.  TODO #294's own
+    // defect was of the second kind: rnlSigmaSign's mask draw is written out
+    // inside the signing loop.
+    //
+    // Java needs nothing new here either: every operation below already takes
+    // its SecureRandom as a parameter, so FixedRandom above drives the SHIPPED
+    // code with no hook and no global.
+
+    /** Centered coefficients as 4-byte big-endian two's complement -- the
+     *  encoding the vector uses because it is what C's int32_t already holds. */
+    private static String i32Hex(int[] vals) {
+        StringBuilder sb = new StringBuilder();
+        for (int v : vals) sb.append(String.format("%08x", v));
+        return sb.toString();
+    }
+
+    private static String hexOf(byte[] b) {
+        StringBuilder sb = new StringBuilder();
+        for (byte x : b) sb.append(String.format("%02x", x & 0xFF));
+        return sb.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int verifyOperationReplay(String text) {
+        int fails = 0;
+        Map<String, Object> root = (Map<String, Object>) Json.parse(text);
+        List<Object> rows = (List<Object>) root.get("operations");
+        if (rows == null || rows.isEmpty()) {
+            System.out.println("FAIL operation_replay: no operations in the vector");
+            return 1;
+        }
+
+        for (Object ro : rows) {
+            Map<String, Object> r = (Map<String, Object>) ro;
+            String name = (String) r.get("name");
+            Map<String, Object> params = (Map<String, Object>) r.get("params");
+            Map<String, Object> stmt = (Map<String, Object>) r.get("statement");
+            Map<String, Object> expect = (Map<String, Object>) r.get("expect");
+            FixedRandom rng = new FixedRandom(unhexBytes((String) r.get("stream")));
+
+            if ("stern_f_keygen".equals(name)) {
+                int n = ((Number) params.get("n")).intValue();
+                int nRows = ((Number) params.get("n_rows")).intValue();
+                Stern.SternKeypair kp = Stern.sternFKeygen(rng);
+                fails += replayCheck("op " + name + " seed",
+                        String.format("%0" + (n / 4) + "x", kp.seed),
+                        (String) expect.get("seed"));
+                fails += replayCheck("op " + name + " e",
+                        String.format("%0" + (n / 4) + "x", kp.e),
+                        (String) expect.get("e"));
+                fails += replayCheck("op " + name + " syndrome",
+                        String.format("%0" + (nRows / 4) + "x", kp.syndrome),
+                        (String) expect.get("syndrome"));
+
+            } else if ("hpks_stern_f_sign".equals(name)) {
+                int n = ((Number) params.get("n")).intValue();
+                int rounds = ((Number) params.get("rounds")).intValue();
+                BigInteger msg = new BigInteger((String) stmt.get("msg"), 16);
+                BigInteger e = new BigInteger((String) stmt.get("e"), 16);
+                BigInteger seed = new BigInteger((String) stmt.get("seed"), 16);
+                Stern.SternSignature sig = Stern.hpksSternFSign(msg, e, seed, rounds, rng);
+                List<Object> coms = (List<Object>) expect.get("commits");
+                List<Object> chs = (List<Object>) expect.get("challenges");
+                List<Object> resps = (List<Object>) expect.get("responses");
+                String w = "%0" + (n / 4) + "x";
+                int bad = -1;
+                for (int i = 0; i < rounds; i++) {
+                    List<Object> c = (List<Object>) coms.get(i);
+                    if (!String.format(w, sig.c0[i]).equals(c.get(0))
+                            || !String.format(w, sig.c1[i]).equals(c.get(1))
+                            || !String.format(w, sig.c2[i]).equals(c.get(2))) { bad = i; break; }
+                }
+                if (bad >= 0) {
+                    System.out.println("FAIL op " + name + ": commitments differ at round " + bad);
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " commitments");
+                }
+                bad = -1;
+                for (int i = 0; i < rounds; i++) {
+                    if (sig.challenges[i] != ((Number) chs.get(i)).intValue()) { bad = i; break; }
+                }
+                if (bad >= 0) {
+                    System.out.println("FAIL op " + name + ": challenge " + bad + " is "
+                            + sig.challenges[bad] + ", vector says " + chs.get(bad));
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " challenges");
+                }
+                // All three challenge values occur in this vector's stream, so
+                // this one comparison covers all three response branches.
+                bad = -1;
+                for (int i = 0; i < rounds; i++) {
+                    List<Object> p = (List<Object>) resps.get(i);
+                    if (!String.format(w, sig.resp0[i]).equals(p.get(0))
+                            || !String.format(w, sig.resp1[i]).equals(p.get(1))) { bad = i; break; }
+                }
+                if (bad >= 0) {
+                    System.out.println("FAIL op " + name + ": response differs at round "
+                            + bad + " (b=" + sig.challenges[bad] + ")");
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " responses");
+                }
+
+            } else if ("zkp_nl_prove".equals(name)) {
+                int n = ((Number) params.get("n")).intValue();
+                int rounds = ((Number) params.get("rounds")).intValue();
+                List<ZkpNl.ProofRound> proof = ZkpNl.prove(
+                        new BigInteger((String) stmt.get("a"), 16),
+                        new BigInteger((String) stmt.get("b"), 16),
+                        new BigInteger((String) stmt.get("y"), 16),
+                        n, rounds, unhexBytes((String) stmt.get("msg_hex")), rng);
+                List<Object> want = (List<Object>) expect.get("rounds");
+                int bad = -1;
+                for (int i = 0; i < rounds; i++) {
+                    Map<String, Object> wv = (Map<String, Object>) want.get(i);
+                    ZkpNl.ProofRound pr = proof.get(i);
+                    if (!hexOf(pr.com0).equals(wv.get("com_0"))
+                            || !hexOf(pr.com1).equals(wv.get("com_1"))
+                            || !hexOf(pr.com2).equals(wv.get("com_2"))) { bad = i; break; }
+                }
+                if (bad >= 0) {
+                    System.out.println("FAIL op " + name + ": commitments differ at round " + bad);
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " commitments");
+                }
+                bad = -1;
+                for (int i = 0; i < rounds; i++) {
+                    Map<String, Object> wv = (Map<String, Object>) want.get(i);
+                    ZkpNl.ProofRound pr = proof.get(i);
+                    if (pr.e != ((Number) wv.get("e")).intValue()
+                            || !hexOf(pr.viewP1).equals(wv.get("view_p1"))
+                            || !hexOf(pr.viewP2).equals(wv.get("view_p2"))) { bad = i; break; }
+                }
+                if (bad >= 0) {
+                    System.out.println("FAIL op " + name + ": views differ at round " + bad
+                            + " (e=" + proof.get(bad).e + ")");
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " views");
+                }
+
+            } else if ("hpks_stern_ring_sign".equals(name)) {
+                // Two divergences lived in this operation and neither was
+                // visible to any other check: the challenge trit had three
+                // schemes across the four ports, and the b = 0 dummy
+                // commitment was a CONSTANT in C and Go, which identified the
+                // real signer from the public signature.  See ringTrit and
+                // simulateRound in SternRing.java.
+                int n = ((Number) params.get("n")).intValue();
+                int k = ((Number) params.get("k")).intValue();
+                int rounds = ((Number) params.get("rounds")).intValue();
+                int j = ((Number) params.get("j")).intValue();
+                List<Object> seeds = (List<Object>) stmt.get("seeds");
+                List<Object> syns = (List<Object>) stmt.get("syndromes");
+                List<SternRing.RingKey> ring = new ArrayList<SternRing.RingKey>();
+                for (int i = 0; i < k; i++) {
+                    ring.add(new SternRing.RingKey(
+                            new BigInteger((String) seeds.get(i), 16),
+                            new BigInteger((String) syns.get(i), 16)));
+                }
+                BigInteger msg = new BigInteger((String) stmt.get("msg"), 16);
+                BigInteger e = new BigInteger((String) stmt.get("e"), 16);
+                SternRing.RingSignature sig = SternRing.sign(msg, e, j, ring, rounds, rng);
+                List<Object> coms = (List<Object>) expect.get("commits");
+                List<Object> chs = (List<Object>) expect.get("challenges");
+                List<Object> resps = (List<Object>) expect.get("responses");
+                String w = "%0" + (n / 4) + "x";
+                int bi = -1, br = -1;
+                for (int i = 0; i < k && bi < 0; i++) {
+                    List<Object> mc = (List<Object>) coms.get(i);
+                    for (int rr2 = 0; rr2 < rounds; rr2++) {
+                        List<Object> c = (List<Object>) mc.get(rr2);
+                        if (!String.format(w, sig.c0[i][rr2]).equals(c.get(0))
+                                || !String.format(w, sig.c1[i][rr2]).equals(c.get(1))
+                                || !String.format(w, sig.c2[i][rr2]).equals(c.get(2))) {
+                            bi = i; br = rr2; break;
+                        }
+                    }
+                }
+                if (bi >= 0) {
+                    System.out.println("FAIL op " + name + ": commitments differ at member "
+                            + bi + " round " + br);
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " commitments");
+                }
+                bi = -1; br = -1;
+                for (int i = 0; i < k && bi < 0; i++) {
+                    List<Object> mb = (List<Object>) chs.get(i);
+                    for (int rr2 = 0; rr2 < rounds; rr2++) {
+                        if (sig.challenges[i][rr2] != ((Number) mb.get(rr2)).intValue()) {
+                            bi = i; br = rr2; break;
+                        }
+                    }
+                }
+                if (bi >= 0) {
+                    System.out.println("FAIL op " + name + ": challenge at member " + bi
+                            + " round " + br + " is " + sig.challenges[bi][br]);
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " challenges");
+                }
+                bi = -1; br = -1;
+                for (int i = 0; i < k && bi < 0; i++) {
+                    List<Object> mr = (List<Object>) resps.get(i);
+                    for (int rr2 = 0; rr2 < rounds; rr2++) {
+                        List<Object> p = (List<Object>) mr.get(rr2);
+                        if (!String.format(w, sig.resp0[i][rr2]).equals(p.get(0))
+                                || !String.format(w, sig.resp1[i][rr2]).equals(p.get(1))) {
+                            bi = i; br = rr2; break;
+                        }
+                    }
+                }
+                if (bi >= 0) {
+                    System.out.println("FAIL op " + name + ": response differs at member "
+                            + bi + " round " + br + " (b=" + sig.challenges[bi][br] + ")");
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " responses");
+                }
+                // Must still VERIFY: the fix changed a dummy commitment no
+                // verifier checks, and a vector alone would not say so.
+                if (!SternRing.verify(msg, sig, ring)) {
+                    System.out.println("FAIL op " + name + " verifies");
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " verifies");
+                }
+
+            } else if ("rnl_sigma_sign".equals(name)) {
+                int n = ((Number) params.get("n")).intValue();
+                HerraduraNl.SigmaProof pf = HerraduraNl.rnlSigmaSign(
+                        unpackPoly((String) stmt.get("s_poly"), n, 3),
+                        unpackPoly((String) stmt.get("m_poly"), n, 3),
+                        unpackPoly((String) stmt.get("c_poly"), n, 3),
+                        n, unhexBytes((String) stmt.get("msg_hex")), rng);
+                if (pf == null) {
+                    // The stream is exactly one buffered block and is chosen to
+                    // accept on the FIRST attempt; a retry runs off its end.
+                    System.out.println("FAIL op " + name + ": rejection limit reached");
+                    fails++;
+                    continue;
+                }
+                fails += replayCheck("op " + name + " w", i32Hex(pf.w), (String) expect.get("w"));
+                fails += replayCheck("op " + name + " c", i32Hex(pf.c), (String) expect.get("c"));
+                fails += replayCheck("op " + name + " z", i32Hex(pf.z), (String) expect.get("z"));
+
+            } else {
+                System.out.println("FAIL operation_replay: unknown operation \"" + name
+                        + "\" -- a row was added to the vector and no Java "
+                        + "consumer follows it");
+                fails++;
+                continue;
+            }
+
+            // A null `consumed` means the ports read at different
+            // granularities and only the output is common; the row carries
+            // the reason.
+            Object cv = r.get("consumed");
+            if (cv != null) {
+                int want = ((Number) cv).intValue();
+                if (rng.consumed() != want) {
+                    System.out.println("FAIL op " + name + ": consumed " + rng.consumed()
+                            + " stream bytes, vector says " + want);
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " consumed " + want + " bytes");
+                }
+            }
+        }
+        return fails;
+    }
+
 }

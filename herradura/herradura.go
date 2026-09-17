@@ -2033,10 +2033,21 @@ func sternSimulateRound(b int, H []*BitArray, syndrome *big.Int, n int) SternRou
 	rnd.B = b
 	switch b {
 	case 0:
-		// c1 = hash(sr wt-t), c2 = hash(sy), c0 dummy (unchecked for b=0)
+		// c1 = hash(sr wt-t), c2 = hash(sy), c0 dummy (unchecked for b=0).
+		//
+		// piDum is drawn rather than hashing two ZEROS, and that is a fix
+		// rather than a tidy-up (TODO #297): a constant c0 appears in every
+		// b = 0 simulated round and in none of the real signer's, so the
+		// signer was the one ring member whose rounds never carried it --
+		// identifiable from the public signature at 1 - (2/3)^rounds per
+		// non-signer.  See herradura.h's stern_ring_simulate for the full
+		// argument; C had the same defect and Python and Java did not, whose
+		// form -- hash(piDum, zero), piDum drawn AFTER sy -- is adopted
+		// verbatim so the four consumption orders agree.
 		sr := SternRandError(n, t)
 		sy := NewRandBitArray(n)
-		rnd.C0 = SternHash(1, NewBitArray(n, new(big.Int)), NewBitArray(n, new(big.Int)))
+		piDum := NewRandBitArray(n)
+		rnd.C0 = SternHash(1, piDum, NewBitArray(n, new(big.Int)))
 		rnd.C1 = SternHash(2, sr)
 		rnd.C2 = SternHash(3, sy)
 		rnd.RespA = sr
@@ -2073,6 +2084,39 @@ func sternSimulateRound(b int, H []*BitArray, syndrome *big.Int, n int) SternRou
 	return rnd
 }
 
+// sternRingTrit draws a uniform challenge in {0, 1, 2} for a SIMULATED ring
+// member.
+//
+// TODO #297: this was written inline as
+//
+//	int(uint32(new(big.Int).SetBytes(NewRandBitArray(n).Bytes()).Uint64()) % 3)
+//
+// -- an n-BIT draw, 32 bytes at the deployed width, reduced modulo 3 -- where C
+// and Python draw ONE byte and reject the single value 255, and Java called
+// Random.nextInt(3).  Three schemes across four ports for one trit, and nothing
+// in the repo could see it: a simulated member's challenge is local randomness
+// that reaches no artifact, and the signature verifies whichever value it takes,
+// so no round-trip or interop pair compares two samplers.  That is #294's
+// invisibility property in an OPERATION rather than a leaf sampler, which is
+// what the operation replay exists to reach.
+//
+// C's and Python's scheme is adopted VERBATIM rather than a fourth correct one
+// invented (#294's precedent).  It is also the unbiased one -- reducing a
+// uint32 modulo 3 over-represents one residue by a relative 2^-32, negligible
+// but not zero, where rejecting 255 leaves 255 values across 3 residues exactly
+// -- and it reads 1 byte per trit rather than 32.
+func sternRingTrit() int {
+	var b [1]byte
+	for {
+		if _, err := rand.Read(b[:]); err != nil {
+			log.Fatalf("ERROR while drawing a ring challenge: %s", err)
+		}
+		if b[0] != 255 {
+			return int(b[0] % 3)
+		}
+	}
+}
+
 // HpksSternRingSign produces a ring signature proving knowledge of the secret
 // key at index j among the ring_keys without revealing j.
 func HpksSternRingSign(msg, e *BitArray, j int, ring []RingKeypair, rounds int) *SternRingSig {
@@ -2095,8 +2139,7 @@ func HpksSternRingSign(msg, e *BitArray, j int, ring []RingKeypair, rounds int) 
 		}
 		H := SternBuildH(ring[i].Seed)
 		for r := 0; r < rounds; r++ {
-			b := int(uint32(new(big.Int).SetBytes(
-				NewRandBitArray(n).Bytes()).Uint64()) % 3)
+			b := sternRingTrit()
 			sig.Members[i].Rounds[r] = sternSimulateRound(b, H, ring[i].Syndrome, n)
 		}
 	}

@@ -131,40 +131,56 @@ Status: **OPEN**
 
 ---
 
----
+### #298: every zero-knowledge test asserts completeness and soundness, and none asserts hiding
 
-### #297: the sampler replay reaches leaf samplers, not whole operations
+TODO #297 found a ring signature that identified its own signer — the `b = 0`
+dummy commitment was a constant in the C and Go ports, so the real signer was the
+one ring member whose rounds never carried it, readable straight off the public
+signature.  It shipped for the life of both ports, and the reason it shipped is
+worth more than the bug.
 
-TODO #296 built the fixed-stream replay #294 prescribed and pinned **four leaf samplers**
-in all four languages.  Its raw-entropy census counts **105** functions that read the
-CSPRNG directly — 24 in C, 24 in Go, 27 in Python, 30 in Java — so 101 of them are
-recorded as existing and are not individually pinned.
+**What every existing test of these protocols checks.**  The suite has Stern-F,
+Stern-F ring, ZKP-NL ZKBoo, ZKBoo++, the Ring-LWR Σ-protocol and HCRED-KKW, and
+each is covered — numbered tests [44], [45], [50], the 4×4 matrices in
+`test_zkp_hybrid_family.sh`, `KAT/hcred_kkw.json`'s tamper table, and now
+`KAT/operation_replay.json`.  Every one of those asserts **completeness** (an
+honest transcript verifies) or **soundness** (a tampered one does not).  Not one
+asserts the **hiding** property: that the transcript does not reveal the witness,
+the signer, or which member was simulated.  So the defect #297 found was not
+missed by a weak test — it was outside what any of them assert, and a ring
+signature with zero anonymity passes all of them by construction.
 
-**What is missing, precisely.**  A leaf sampler is separately callable, so a fixed stream
-reaches it directly.  The rest are protocol operations — `rnl_sigma_sign`, `zkp_nl_prove`,
-`hcred_prove_kkw`, `stern_f_keygen`, `qcmdpc_keygen`, `hpake_register` and so on — whose
-draw loops are inline and whose consumption order is only observable by replaying the
-**whole operation**: supply a key, a message and a stream, and pin what comes out.  That
-is strictly stronger than what #296 pins, because it covers the ORDER in which an
-operation visits its samplers, not only what each sampler does in isolation.
+**Why this is not the same item as #297.**  The operation replay pins what the
+four ports produce and holds them against each other, which is how the constant
+surfaced — but only because a HUMAN read the four implementations side by side.
+Had all four hashed two zeros, every port would have agreed, the vector would have
+pinned the agreed-upon constant, and the axis would be green forever.  A
+cross-port check cannot see a property all four get wrong; that is the class this
+item is about, and it is the same shape as #277's 3-1 byte-order split surviving
+because nothing asked one port to reproduce another's expansion.
 
-**Why it is worth doing, and the precedent is #294 itself.**  #294's own defect was in
-`rnl_sigma_sign`'s inline mask draw — one of the 101, not one of the four.  #296 pins the
-samplers that primitive *calls* but not the primitive itself, so the exact shape that
-started this line of work is still not pinned.  Note what makes this newly possible: a
-signature is randomised per call and so cannot be KAT'd, but under a fixed stream it is
-deterministic, which is the whole insight #294 recorded and #296 implemented for leaves.
+**What a hiding test can actually assert**, since the strong statement (a
+simulator's output is computationally indistinguishable) is not something a test
+harness proves.  Three falsifiable things it can:
 
-**The cost, which is why it is separate.**  Each operation needs a fixed *statement* as
-well as a fixed stream — a keypair, a message, parameters — so the vector grows a setup
-section per row, and the four consumers grow a driver per row rather than sharing one
-switch.  #296 deliberately stopped at the boundary where a row is one call with scalar
-arguments.
+1. **No structural marker distinguishes a simulated member from the real one.**
+   For a ring signature, tally each commitment field across members and rounds: a
+   value repeating across member-rounds, or a field that is constant, or a field
+   whose distribution differs between the signer's rounds and everyone else's, is
+   a finding.  This one alone catches #297's defect, and catches it in all four
+   ports at once rather than by comparison.
+2. **The signer index is not recoverable by the obvious statistics.**  Run k
+   signatures with a known signer, compute a per-member score, and assert the
+   signer is not identified above chance.  The failing form of this is loud: at
+   `rounds = 32` the pre-fix ports scored the signer correctly every time.
+3. **A revealed view carries no more than the protocol says it may.**  For ZKBoo,
+   the two revealed party views must not determine the third; for Stern, a `b = 1`
+   response must not determine `y`.  These are checkable lengths-and-supports
+   statements, not indistinguishability arguments.
 
-**Do not start by widening the census.**  The census is a tripwire on the set of names and
-is already exhaustive in both directions; what this item adds is coverage, not detection.
-And read #296's note on `rnl_rand_poly` first: block buffering (#293) means byte-count
-equality is not available on every row, and a whole-operation replay will meet that on
-more of them than a leaf replay does.
+**Start with the ring signature**, where the defect actually was, and where (1)
+is a dozen lines.  Do NOT start by writing a general framework for all six
+protocols: the useful assertion is different for each, and a shared harness would
+converge on the weakest one they have in common, which is completeness again.
 
 Status: **OPEN**

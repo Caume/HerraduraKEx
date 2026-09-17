@@ -2,6 +2,36 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.15] - 2026-09-16
+
+### Changed
+- TODO #297: the fixed-stream replay now reaches whole OPERATIONS, not only leaf
+  samplers.  New `KAT/operation_replay.json` and its generated C view
+  `KAT/operation_replay_vector.h` pin five randomised operations -- Stern-F
+  keygen, Stern-F signing, Stern-F ring signing, the NL-FSCX ZKBoo prover and the
+  Ring-LWR Sigma signer -- against a fixed statement and a fixed stream, in all
+  four languages, through the four KAT consumers that already existed.
+- **Ring-signature anonymity fixed in the C and Go ports.**  For a simulated ring
+  member's `b = 0` round, `stern_ring_simulate` hashed two ZERO BitArrays into
+  the dummy commitment `c0`, so that commitment was one fixed constant in every
+  such round while the real signer's `c0` never took it.  With the default `rounds = 32` each
+  non-signer shows the constant with probability `1 - (2/3)^32` and the signer
+  never does, so the signer was identifiable from the public signature.  Python
+  and Java always drew a random dummy; their form is adopted verbatim.  Existing
+  signatures still verify -- `c0` is unchecked for `b = 0`, which is why no
+  round-trip or interop test could see it.
+- `hpks_stern_ring_sign`'s per-round challenge trit is now one named sampler in
+  all four ports (`stern_ring_trit` / `sternRingTrit` / `_stern_ring_trit` /
+  `SternRing.ringTrit`).  It had three implementations while it was written
+  inline: a byte with 255 rejected (C, Python), a whole n-bit draw reduced modulo
+  3 (Go, biased by a relative 2^-32 and 32 bytes per trit), and
+  `Random.nextInt(3)` (Java).  C's bounded 8-try loop and its fail-open
+  `(i ^ r)` fallback on a short `/dev/urandom` read went with the extraction.
+- `spec/check_language_parity.py`'s eighth axis gains `OPERATION_REPLAY_PINNED`
+  alongside `SAMPLER_REPLAY_PINNED`, self-invalidating in both directions and
+  cross-checked against the raw-entropy census the same way.  The census is now
+  c 25, go 25, python 28, java 31.
+
 ## [7.0.14] - 2026-09-16
 
 ### TODO #296 — the fixed-stream replay #294 prescribed did not exist, and nothing could tell
