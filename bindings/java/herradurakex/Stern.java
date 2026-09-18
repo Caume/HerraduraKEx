@@ -226,7 +226,11 @@ public final class Stern {
         BigInteger[] syArr = new BigInteger[rounds];
 
         for (int i = 0; i < rounds; i++) {
-            BigInteger r = csprngWeightT(SDFT, rng);
+            // UNIFORM r since v8.0.0 (TODO #298).  It was csprngWeightT, so
+            // both of the verifier's weight checks fell on the prover's own
+            // blinding value and wt(e) was never bound -- see the b = 0 case
+            // in hpksSternFVerify.
+            BigInteger r = new BigInteger(N, rng).and(MASK);
             BigInteger y = eInt.xor(r).and(MASK);
             BigInteger piSeed = new BigInteger(N, rng).and(MASK);
             int[] perm = sternGenPerm(piSeed);
@@ -293,10 +297,14 @@ public final class Stern {
                 BigInteger sr = sig.resp0[i], sy = sig.resp1[i];
                 if (!sternHash(2, sr).equals(sig.c1[i])) return false;
                 if (!sternHash(3, sy).equals(sig.c2[i])) return false;
-                if (sr.bitCount() != SDFT) return false;
+                // wt(sigma(r) ^ sigma(y)) = wt(sigma(e)) = wt(e).  THIS is the
+                // check that binds the witness to weight t; until v8.0.0 it
+                // read sr.bitCount(), which binds only the blinding value, and
+                // a Gaussian-elimination preimage of the PUBLIC syndrome then
+                // signed anything (TODO #298).
+                if (sr.xor(sy).bitCount() != SDFT) return false;
             } else if (b == 1) {
                 BigInteger piSeed = sig.resp0[i], r = sig.resp1[i];
-                if (r.bitCount() != SDFT) return false;
                 int[] perm = sternGenPerm(piSeed);
                 BigInteger hr = sternSyndromeH(hRows, r);
                 if (!sternHash(1, piSeed, hr).equals(sig.c0[i])) return false;

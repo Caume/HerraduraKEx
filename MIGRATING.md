@@ -39,6 +39,14 @@ permutations the failure is **silent** — you get plaintext-shaped garbage, not
 If you have stored any, decrypt them with a pre-4.0.0 build first. See
 [section 8](#8-fpe-and-twk-subkey-derivation-v400).
 
+The eighteenth is the reason the version is **8.0.0**, and it is the only entry on this
+list that is a **security fix rather than a format change**. No stored key changes, no
+PEM field moves, and every private and public key you hold stays valid. What changed is
+what `verify --algo hpks-stern` ACCEPTS — because the rule it applied before bound
+nothing, and signatures could be forged from the public key alone. See
+[section 18](#18-hpks-stern-f-binds-the-witness-weight-v800), and read it before
+trusting any signature made by an earlier build.
+
 ---
 
 ## Summary table
@@ -56,6 +64,7 @@ If you have stored any, decrypt them with a pre-4.0.0 build first. See
 | [NL-FSCX v2 round constants](#9-nl-fscx-v2-round-constants-v500) | v5.0.0 | Every `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe` and `twk` ciphertext written by any earlier build | **Decrypt with a pre-5.0.0 build before upgrading.** Five constructions at once; for `fpe`/`twk` the failure is silent |
 | [`nl-zkboo` and `rnl-sigma` message padding, Python CLI only](#10-nl-zkboo-and-rnl-sigma-message-padding-python-cli-only-v600) | v6.0.0 | `sign --algo nl-zkboo` / `--algo rnl-sigma` signatures produced by the **Python** CLI over a message whose length is not exactly 32 bytes | Re-sign on v6.0.0+. Those signatures never verified under the C or Go CLIs anyway — that was the bug |
 | [HPKE-Stern-KEM moves to BIKE-128 parameters](#17-hpke-stern-kem-moves-to-bike-128-parameters-v700) | v7.0.0 | Every `hpke-stern-kem` key and ciphertext, and every `hybrid-rnl-stern` artifact carrying one | **Regenerate on v7.0.0+.** `r` sizes the wire format, so old artifacts are unreadable — but the row is demo-only and the old parameters were worth ~2^21 operations, so nothing with a security claim is being broken |
+| [HPKS-Stern-F binds the witness weight](#18-hpks-stern-f-binds-the-witness-weight-v800) | v8.0.0 | Every `hpks-stern` signature, and every HPKS-Stern-Ring, HCRED-issuance and `hybrid-rnl-stern` artifact carrying one | **Re-sign on v8.0.0+, and treat every pre-8.0.0 signature as unverified.** Keys are unchanged and still valid; the old verification rule bound nothing, so it accepted forgeries |
 
 ---
 
@@ -871,3 +880,72 @@ roughly 33 ms in C and 170 ms in Python, against 3.8 ms in Python at the old par
 The Python decoder was rewritten bit-sliced in v6.7.3 specifically so that this change
 would be affordable there; under the per-position decoder that preceded it the same
 decapsulation takes 5.6 seconds.
+
+---
+
+## 18. HPKS-Stern-F binds the witness weight (v8.0.0)
+
+**This is the reason the version is 8.0.0, and unlike every other entry here it is a
+security fix.** Nothing about the stored format changed: every `hpks-stern` private and
+public key you hold is still valid and still readable, and the signature PEM has the same
+fields in the same places. What changed is the verification RULE — so a signature written
+before v8.0.0 will not verify on v8.0.0+, and one written by v8.0.0+ will not verify on an
+earlier build.
+
+**What was wrong.** Stern's three-challenge protocol proves knowledge of a LOW-WEIGHT
+preimage of a syndrome. The weight is the whole scheme: a preimage of any weight is free,
+because `H` is an n/2 × n matrix over GF(2) and Gaussian elimination inverts it.
+
+This implementation drew the per-round blinding value `r` with weight `t` and then checked,
+for `b = 0`, that `wt(σ(r)) = t`, and for `b = 1`, that `wt(r) = t`. Both of those are the
+prover's own blinding value. **No branch ever constrained `wt(e)`**, and `b = 2` checked no
+weight at all. The statement actually proved was "I know some `e` with `H·e^T = s`", which
+anyone holding the public key can satisfy:
+
+```
+# with (seed, syndrome) — the PUBLIC key — and nothing else:
+#   e' = gauss_solve(H(seed), syndrome)      # weight ~n/4, not t
+#   sign(msg, e')                            # verifies on any pre-8.0.0 build
+```
+
+Demonstrated against the shipped Python suite with a weight-67 `e′` at n = 256, t = 16;
+the same rule is in all seven implementations (C, Go, Python, Java, ARM Thumb-2, NASM
+i386, Arduino), and HPKS-Stern-Ring, HCRED issuance and `hybrid-rnl-stern` all inherit it.
+See TODO #298 and `SecurityProofsCode/stern_f_weight_binding.py` §1.
+
+**What changed.**
+
+| | through v7.0.16 | v8.0.0+ |
+|---|---|---|
+| blinding value `r` | weight `t` | **uniform** |
+| `b = 0` check | `wt(respA) = t` — i.e. `wt(σ(r))` | **`wt(respA ⊕ respB) = t`** — i.e. `wt(σ(e))` |
+| `b = 1` check | `wt(respB) = t` — i.e. `wt(r)` | none (`r` is uniform now) |
+| `b = 2` check | no weight check | no weight check |
+| what is bound | the prover's blinding value | **the witness** |
+| PEM fields and widths | — | unchanged |
+
+That is textbook Stern, which this code had departed from. The departure is also what made
+the second defect possible: with `r` weight-t the real `y = e ⊕ r` had weight ≈ 2t where a
+ring simulator's dummy was uniform, so one `b = 0` round identified the signer of a ring
+signature with certainty. Restoring uniform `r` closes both — see the 8.0.0 CHANGELOG entry.
+
+**What to do.**
+
+1. **Treat every `hpks-stern` signature made before v8.0.0 as unverified.** Not "expired"
+   — unverified. The rule that accepted it did not establish what it was supposed to.
+2. **Re-sign.** Your keys are fine, so this is a re-sign and not a re-key:
+
+```
+herradura sign --algo hpks-stern --key signer_priv.pem --in msg.bin --out msg.sig
+```
+
+3. Both ends must be on the same side of the upgrade, as in sections 7 and 17.
+
+**How the failure presents.** Loudly. A pre-8.0.0 signature fed to a v8.0.0 verifier
+returns a plain verification failure, not a parse error and not silent garbage — the b = 0
+rounds fail the weight check. There is no silent-acceptance path in either direction.
+
+**What this does *not* change.** Key generation, key formats, `hpke-stern` / `hpke-stern-kem`
+(the KEM side never had this rule), the round count, and the soundness-per-round figure of
+`(2/3)^rounds` — production still needs `--rounds 219`. `SDF_ROUNDS` and every parameter in
+`spec/` are untouched.

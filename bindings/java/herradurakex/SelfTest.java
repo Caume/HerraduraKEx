@@ -35,7 +35,8 @@ import java.security.SecureRandom;
  * [26] hpks_stern_ring [27] rnl_m_blind_guard [28] zkp_nl_zkboo
  * [29] zkp_nl_zkbpp [30] rnl_sigma [31] hcred_kkw
  * [32] qcmdpc_weak_key_screen [33] hske_nl_aead
- * [34] qcprf_seed_expansion. New checks append at [35]
+ * [34] qcprf_seed_expansion [35] stern_witness_binding.
+ * New checks append at [36]
  * onward; a check's
  * number is never reassigned once given, matching TODO.md/TODO_DONE.md's
  * own numbering discipline (TODO #154).
@@ -1152,11 +1153,133 @@ public final class SelfTest {
             }
         }
 
+        // [35] The two properties no Stern test asserted (TODO #298).
+        //
+        // Every other check on Stern-F and Stern-Ring asserts COMPLETENESS (an
+        // honest transcript verifies) or SOUNDNESS-BY-TAMPER (a poked one does
+        // not), and neither can see either defect below.
+        //
+        // (a) WITNESS-WEIGHT BINDING.  The b = 0 response must bind wt(e) = t.
+        //     Until v8.0.0 the prover drew r weight-t and the verifier checked
+        //     wt(sigma(r)) for b = 0 and wt(r) for b = 1 -- both the prover's
+        //     own BLINDING value -- so nothing bound wt(e), and the statement
+        //     proved was only "I know some preimage of s under H".  H is
+        //     n/2 x n, so a preimage is one Gaussian elimination away from the
+        //     PUBLIC key: universal forgery with no secret.  The honest
+        //     signature is checked FIRST as an accept control, or a verifier
+        //     that rejected everything would score the forgery case perfectly.
+        //
+        // (b) COMMITMENT DISTINCTNESS.  No commitment value may repeat across
+        //     the member-rounds of one ring signature -- TODO #297's constant
+        //     b = 0 dummy c0 stated as an invariant, so it is catchable in ONE
+        //     port rather than by reading four side by side, which is exactly
+        //     what #298 is about.
+        //
+        // NOT checked here, deliberately: that a simulated b = 0 pair carries
+        // the same wt(respA ^ respB) as a real one.  The VERIFIER checks that
+        // since v8.0.0, so a simulator regression fails the round-trip cases
+        // and a check asserting it here would pass vacuously.
+        {
+            int rounds = 12;
+            Stern.SternKeypair kp = Stern.sternFKeygen(rng);
+            BigInteger msg = new BigInteger(Herradura.N, rng);
+
+            Stern.SternSignature honest =
+                    Stern.hpksSternFSign(msg, kp.e, kp.seed, rounds, rng);
+            boolean honestOk =
+                    Stern.hpksSternFVerify(msg, honest, kp.seed, kp.syndrome);
+
+            BigInteger[] hRows = Stern.sternBuildH(kp.seed, Herradura.N / 2);
+            BigInteger eForged = solveSyndrome(hRows, kp.syndrome, Herradura.N);
+            boolean solved = Stern.sternSyndromeH(hRows, eForged)
+                    .equals(kp.syndrome);
+            boolean offWeight = eForged.bitCount() != Stern.SDFT;
+            Stern.SternSignature forged =
+                    Stern.hpksSternFSign(msg, eForged, kp.seed, rounds, rng);
+            boolean forgedOk =
+                    Stern.hpksSternFVerify(msg, forged, kp.seed, kp.syndrome);
+
+            int k = 3;
+            java.util.List<SternRing.RingKey> ring = new java.util.ArrayList<>();
+            BigInteger[] es = new BigInteger[k];
+            for (int i = 0; i < k; i++) {
+                Stern.SternKeypair m = Stern.sternFKeygen(rng);
+                ring.add(new SternRing.RingKey(m.seed, m.syndrome));
+                es[i] = m.e;
+            }
+            int j = 1;
+            BigInteger rmsg = new BigInteger(Herradura.N, rng);
+            SternRing.RingSignature rsig =
+                    SternRing.sign(rmsg, es[j], j, ring, rounds, rng);
+            boolean ringOk = SternRing.verify(rmsg, rsig, ring);
+            java.util.Set<BigInteger> seen = new java.util.HashSet<>();
+            int dups = 0;
+            for (int i = 0; i < k; i++) {
+                for (int r = 0; r < rounds; r++) {
+                    BigInteger[] trio = { rsig.c0[i][r], rsig.c1[i][r], rsig.c2[i][r] };
+                    for (BigInteger c : trio) {
+                        if (!seen.add(c)) dups++;
+                    }
+                }
+            }
+
+            if (!(honestOk && solved && offWeight && !forgedOk
+                    && ringOk && dups == 0)) {
+                System.out.println("FAIL [35] stern_witness_binding (honest="
+                        + honestOk + " solved=" + solved + " offWeight=" + offWeight
+                        + " forgeryAccepted=" + forgedOk + " ring=" + ringOk
+                        + " dupCommits=" + dups + ")");
+                fails++;
+            } else {
+                System.out.println("PASS [35] stern_witness_binding");
+            }
+        }
+
         if (fails > 0) {
             System.out.println(fails + " test(s) FAILED");
             System.exit(1);
         }
         System.out.println("All round-trip self-tests passed.");
+    }
+
+    /**
+     * Any e' with H.e'^T == syndrome, by Gaussian elimination over GF(2) —
+     * PUBLIC data only.  Free variables are left at zero, which is why the
+     * result lands near weight n/4 rather than t.  [35]'s forgery witness.
+     */
+    private static BigInteger solveSyndrome(BigInteger[] hRows,
+                                            BigInteger syndrome, int n) {
+        BigInteger[] rows = new BigInteger[hRows.length];
+        int[] rhs = new int[hRows.length];
+        for (int i = 0; i < hRows.length; i++) {
+            rows[i] = hRows[i];
+            rhs[i] = syndrome.testBit(i) ? 1 : 0;
+        }
+        int[] pivCol = new int[hRows.length];
+        int[] pivRow = new int[hRows.length];
+        int nPiv = 0, row = 0;
+        for (int col = n - 1; col >= 0; col--) {
+            int sel = -1;
+            for (int k = row; k < rows.length; k++) {
+                if (rows[k].testBit(col)) { sel = k; break; }
+            }
+            if (sel < 0) continue;
+            BigInteger tr = rows[row]; rows[row] = rows[sel]; rows[sel] = tr;
+            int trh = rhs[row]; rhs[row] = rhs[sel]; rhs[sel] = trh;
+            for (int k = 0; k < rows.length; k++) {
+                if (k != row && rows[k].testBit(col)) {
+                    rows[k] = rows[k].xor(rows[row]);
+                    rhs[k] ^= rhs[row];
+                }
+            }
+            pivCol[nPiv] = col; pivRow[nPiv] = row; nPiv++;
+            row++;
+        }
+        BigInteger e = BigInteger.ZERO;
+        for (int i = 0; i < nPiv; i++) {
+            if (rhs[pivRow[i]] == 1) e = e.setBit(pivCol[i]);
+        }
+        return e;
     }
 
     /**

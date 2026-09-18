@@ -408,13 +408,22 @@ static void stern_fs_challenges_32(uint32 *chals, uint32 msg,
     }
 }
 
+
+/* Exact-weight-t test, factored out by TODO #298: the check now runs on
+ * respA ^ respB rather than on respA alone. */
+static int stern_wt_is_t_32(uint32 v) {
+    if (!v) return 0;
+    v &= v - 1; if (!v) return 0;
+    v &= v - 1; return v == 0;
+}
+
 static void hpks_stern_f_sign_32(SternSig32 *sig, uint32 msg,
                                    uint32 e, uint32 seed) {
     static uint8_t perm[SDF_N];
     static uint32 r_tmp[SDF_ROUNDS],  y_tmp[SDF_ROUNDS];
     static uint32 pi_tmp[SDF_ROUNDS], sr_tmp[SDF_ROUNDS], sy_tmp[SDF_ROUNDS];
     for (int i = 0; i < SDF_ROUNDS; i++) {
-        uint32 r  = stern_rand_error_32();
+        uint32 r  = prng_next();           /* UNIFORM since v8.0.0, TODO #298 */
         uint32 y  = e ^ r;
         uint32 pi = prng_next();
         stern_gen_perm_32(perm, pi);
@@ -448,11 +457,9 @@ static int hpks_stern_f_verify_32(const SternSig32 *sig, uint32 msg,
         if (bv == 0) {
             if (stern_hash1_32(ra) != sig->c1[i]) return 0;
             if (stern_hash1_32(rb) != sig->c2[i]) return 0;
-            uint32 v = ra; if (!v) return 0;
-            v &= v-1; if (!v) return 0; v &= v-1; if (v) return 0;
+            /* wt(sigma(r) ^ sigma(y)) = wt(e) -- TODO #298 */
+            if (!stern_wt_is_t_32(ra ^ rb)) return 0;
         } else if (bv == 1) {
-            uint32 v = rb; if (!v) return 0;
-            v &= v-1; if (!v) return 0; v &= v-1; if (v) return 0;
             uint32 hr = stern_syndrome_32(seed, rb);
             if (stern_hash2_32(ra, hr) != sig->c0[i]) return 0;
             stern_gen_perm_32(perm, ra);
@@ -515,15 +522,15 @@ static void stern_ring_simulate_32(SternRingSig32 *sig, int i, int r, int b,
                                      uint32 seed, uint32 synd) {
     static uint8_t perm[SDF_N];
     if (b == 0) {
-        uint32 sr = stern_rand_error_32();
-        uint32 sy = prng_next();
+        uint32 sr = prng_next();
+        uint32 sy = sr ^ stern_rand_error_32();   /* TODO #298 */
         sig->c0[i][r] = stern_hash2_32(0, 0);   /* dummy: not checked when b==0 */
         sig->c1[i][r] = stern_hash1_32(sr);
         sig->c2[i][r] = stern_hash1_32(sy);
         sig->b[i][r] = 0; sig->respA[i][r] = sr; sig->respB[i][r] = sy;
     } else if (b == 1) {
         uint32 pi    = prng_next();
-        uint32 r_sim = stern_rand_error_32();
+        uint32 r_sim = prng_next();               /* UNIFORM, TODO #298 */
         stern_gen_perm_32(perm, pi);
         uint32 hr = stern_syndrome_32(seed, r_sim);
         uint32 sr = stern_apply_perm_32(perm, r_sim);
@@ -562,7 +569,7 @@ static void stern_ring_sign_32(SternRingSig32 *sig, uint32 msg, uint32 e, int j,
 
     /* commit phase for the real signer j (challenge-independent) */
     for (r = 0; r < SDF_ROUNDS; r++) {
-        uint32 rr = stern_rand_error_32();
+        uint32 rr = prng_next();           /* UNIFORM since v8.0.0, TODO #298 */
         uint32 yy = e ^ rr;
         uint32 pi = prng_next();
         stern_gen_perm_32(perm, pi);
@@ -607,11 +614,8 @@ static int stern_ring_verify_32(const SternRingSig32 *sig, uint32 msg,
             if (bv == 0) {
                 if (stern_hash1_32(ra) != sig->c1[i][r]) return 0;
                 if (stern_hash1_32(rb) != sig->c2[i][r]) return 0;
-                uint32 v = ra; if (!v) return 0;
-                v &= v - 1; if (!v) return 0; v &= v - 1; if (v) return 0;
+                if (!stern_wt_is_t_32(ra ^ rb)) return 0;   /* wt(e), #298 */
             } else if (bv == 1) {
-                uint32 v = rb; if (!v) return 0;
-                v &= v - 1; if (!v) return 0; v &= v - 1; if (v) return 0;
                 uint32 hr = stern_syndrome_32(seeds[i], rb);
                 if (stern_hash2_32(ra, hr) != sig->c0[i][r]) return 0;
                 stern_gen_perm_32(perm, ra);

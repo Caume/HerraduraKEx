@@ -18966,3 +18966,126 @@ still discovers both as gating.  No shipped source file changed — this item
 touches two analysis scripts and the documents.
 
 Status: **DONE v7.0.16** — a source check re-anchored on the helper TODO #297 extracted, and a χ² gate that failed one CI run in twenty by construction made a replication.
+
+### #298: every zero-knowledge test asserts completeness and soundness, and none asserts hiding
+
+TODO #297 found a ring signature that identified its own signer — the `b = 0`
+dummy commitment was a constant in the C and Go ports, so the real signer was the
+one ring member whose rounds never carried it, readable straight off the public
+signature.  It shipped for the life of both ports, and the reason it shipped is
+worth more than the bug.
+
+**What every existing test of these protocols checks.**  The suite has Stern-F,
+Stern-F ring, ZKP-NL ZKBoo, ZKBoo++, the Ring-LWR Σ-protocol and HCRED-KKW, and
+each is covered — numbered tests [44], [45], [50], the 4×4 matrices in
+`test_zkp_hybrid_family.sh`, `KAT/hcred_kkw.json`'s tamper table, and now
+`KAT/operation_replay.json`.  Every one of those asserts **completeness** (an
+honest transcript verifies) or **soundness** (a tampered one does not).  Not one
+asserts the **hiding** property: that the transcript does not reveal the witness,
+the signer, or which member was simulated.  So the defect #297 found was not
+missed by a weak test — it was outside what any of them assert, and a ring
+signature with zero anonymity passes all of them by construction.
+
+**Why this is not the same item as #297.**  The operation replay pins what the
+four ports produce and holds them against each other, which is how the constant
+surfaced — but only because a HUMAN read the four implementations side by side.
+Had all four hashed two zeros, every port would have agreed, the vector would have
+pinned the agreed-upon constant, and the axis would be green forever.  A
+cross-port check cannot see a property all four get wrong; that is the class this
+item is about, and it is the same shape as #277's 3-1 byte-order split surviving
+because nothing asked one port to reproduce another's expansion.
+
+**What a hiding test can actually assert**, since the strong statement (a
+simulator's output is computationally indistinguishable) is not something a test
+harness proves.  Three falsifiable things it can:
+
+1. **No structural marker distinguishes a simulated member from the real one.**
+   For a ring signature, tally each commitment field across members and rounds: a
+   value repeating across member-rounds, or a field that is constant, or a field
+   whose distribution differs between the signer's rounds and everyone else's, is
+   a finding.  This one alone catches #297's defect, and catches it in all four
+   ports at once rather than by comparison.
+2. **The signer index is not recoverable by the obvious statistics.**  Run k
+   signatures with a known signer, compute a per-member score, and assert the
+   signer is not identified above chance.  The failing form of this is loud: at
+   `rounds = 32` the pre-fix ports scored the signer correctly every time.
+3. **A revealed view carries no more than the protocol says it may.**  For ZKBoo,
+   the two revealed party views must not determine the third; for Stern, a `b = 1`
+   response must not determine `y`.  These are checkable lengths-and-supports
+   statements, not indistinguishability arguments.
+
+**Start with the ring signature**, where the defect actually was, and where (1)
+is a dozen lines.  Do NOT start by writing a general framework for all six
+protocols: the useful assertion is different for each, and a shared harness would
+converge on the weakest one they have in common, which is completeness again.
+
+**WHAT IT FOUND — a second anonymity break, and under it a universal forgery.**
+Assertion (1) was written first, as scoped, and fired at once on a property
+**all four ports got wrong**, which is the class the item was filed for and the
+one no cross-port check can reach.  The `b = 0` and `b = 2` simulated responses
+drew a UNIFORM dummy where the real signer's were `σ(e ⊕ r)` and `e ⊕ r` of
+weight ≈ 2t: measured on one signature at k=4, rounds=32, the signer's
+`wt(respA ⊕ respB)` was **exactly t = 16** on every `b = 0` round and 117–143 for
+every other member.  Not a statistic — a single `b = 0` round names the signer
+with certainty, where #297's marker needed `1 − (2/3)^32`.
+
+Chasing why the real `y` was low-weight reached the verifier, and that is the
+finding that outranks the item.  The prover drew `r` **weight-t** and the
+verifier checked `wt(σ(r)) = t` for `b = 0` and `wt(r) = t` for `b = 1` — both of
+them the prover's own BLINDING value.  **Nothing bound `wt(e)`.**  The statement
+proved was "I know some preimage of `s` under `H`", and `H` is n/2 × n, so a
+preimage is one Gaussian elimination away from the PUBLIC key.  Demonstrated
+against the shipped suite: a weight-67 `e′` derived from `(seed, syndrome)` alone
+signs messages that verify.  **Universal forgery of HPKS-Stern-F, from public
+data, in milliseconds** — in C, Go, Python, Java, ARM, NASM and Arduino alike,
+and inherited by the ring signature, HCRED issuance and `hybrid-rnl-stern`.
+
+**One root cause, two symptoms.**  Textbook Stern draws `r` UNIFORM and checks
+`wt(σ(y) ⊕ σ(r)) = wt(σ(e)) = t`, which binds the witness.  Moving the weight
+check onto `r` is what unbound `wt(e)` AND what made the real `y` low-weight and
+so distinguishable from a uniform simulated one.  Restoring uniform `r` fixes
+both: the `b = 2` simulator, unchanged, becomes a PERFECT simulation, and the
+`b = 0` one becomes perfect by drawing `sr` uniform and `sy = sr ⊕ (weight-t)`.
+
+**What shipped.**  Seven implementations: `r` uniform in every signer and every
+simulator, the `b = 0` weight check moved to `wt(respA ⊕ respB)`, and the `b = 1`
+weight check deleted.  This changes what an existing `--algo hpks-stern`
+signature ACCEPTS, so it is MAJOR with a `MIGRATING.md` entry.
+
+Guards, at two layers.  Numbered test **[53]** in C, Go and Python and **[35]**
+in Java's `SelfTest` build the Gaussian-elimination forgery from the public key
+and assert the verifier rejects it, with the honest signature checked first as an
+accept control; the same test asserts no commitment value repeats across the
+member-rounds of one ring signature, which is #297's marker as an invariant
+catchable in ONE port.  `SecurityProofsCode/stern_f_weight_binding.py` is the
+findings gate: §1 the forgery, §2 a signer-identification rate over k signatures
+(gated with #299's replication rather than against a fixed threshold on one
+sample), §3 the NEGATIVE CONTROLS — both markers re-run against the retired forms
+and required to FIRE, because a hiding test that cannot fail is TODO #234's
+vacuous pass one layer out.
+
+The anonymity half turned out to be **self-enforcing**, which is worth recording:
+since the verifier now checks `wt(respA ⊕ respB) = t` on every `b = 0` round of
+every member, a simulator that regresses produces signatures that do not verify,
+and the existing round-trip tests catch it.  So [53] deliberately does NOT assert
+that property — a case asserting what the verifier enforces would pass vacuously.
+
+Writing [53] also caught the Python test harness's own transcription of the ring
+simulator still hashing ZERO for all three dummy commitments: **TODO #297's fix
+never reached it**, and nothing could see that, because the harness is a second
+copy and #296's census reads the suite.  Fixed with the rest.
+
+**One thing deliberately NOT fixed, and the reason.**  The Arduino ring still hashes a
+constant for its `b = 0` dummy commitment — TODO #297's marker, untouched here — because
+that port's ring is degenerate by construction: member 0 is ALWAYS the simulated one and
+ALWAYS at `b = 0` (the verifier rejects anything else), so the signer is member 1 by
+definition and there is no anonymity for a random dummy to protect.  Drawing one there
+would be theatre.  Its `b = 0` RESPONSE pair did move with the rest, because that one is
+a correctness matter: the verifier now checks `wt(respA ^ respB) = t` on every port.
+
+Assertion (3) — a revealed view carries no more than the protocol allows — is NOT
+in this item.  It is a different statement per scheme, and folding it in here is
+how this becomes the general framework the scoping note above warns against.
+Filed as **TODO #301**.
+
+Status: **DONE v8.0.0** — the hiding assertion #298 asked for found a second anonymity break in all four ports, and under it a universal forgery: nothing bound the witness weight, so a Gaussian-elimination preimage of the public syndrome signed anything.

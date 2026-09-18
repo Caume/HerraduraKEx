@@ -1461,8 +1461,17 @@ def _stern_simulate_round(b: int, syndrome: int, H_rows: list, n: int, t: int):
     """
     mask = (1 << n) - 1
     if b == 0:
-        sr_sim = _csprng_weight_t(n, t)
-        sy_sim = int.from_bytes(os.urandom(n // 8), 'big') & mask
+        # sr_sim is UNIFORM and sy_sim = sr_sim XOR (weight-t), because the
+        # real transcript's pair is (sigma(r), sigma(r) XOR sigma(e)) with r
+        # uniform: sigma(r) is then uniform and sigma(e) is an independent
+        # uniform weight-t vector, so this is a PERFECT simulation of the b = 0
+        # response (TODO #298).  Until v8.0.0 it drew sr_sim weight-t and
+        # sy_sim uniform, which is the transcript the OLD protocol produced --
+        # and the signer's sy was sigma(e XOR r) of weight <= 2t where every
+        # simulated one had weight ~n/2, so wt(sr XOR sy) was exactly t for the
+        # signer and ~n/2 for everyone else.  ONE b = 0 round named the signer.
+        sr_sim = int.from_bytes(os.urandom(n // 8), 'big') & mask
+        sy_sim = sr_sim ^ _csprng_weight_t(n, t)
         pi_dum = BitArray.random(n)
         c0 = _stern_hash(n, pi_dum, BitArray(n, 0), ds=1)          # unchecked
         c1 = _stern_hash(n, BitArray(n, sr_sim), ds=2)
@@ -1470,7 +1479,9 @@ def _stern_simulate_round(b: int, syndrome: int, H_rows: list, n: int, t: int):
         return c0, c1, c2, (sr_sim, sy_sim)
     elif b == 1:
         pi_sim = BitArray.random(n)
-        r_sim  = _csprng_weight_t(n, t)
+        # UNIFORM since v8.0.0: the b = 1 response reveals r itself, and the
+        # real r is now uniform rather than weight-t (TODO #298).
+        r_sim  = int.from_bytes(os.urandom(n // 8), 'big') & mask
         perm   = _stern_gen_perm(pi_sim, n)
         Hr_sim = _stern_syndrome_H(H_rows, r_sim)
         sr_sim = _stern_apply_perm(perm, r_sim, n)
@@ -1513,15 +1524,24 @@ def hpks_stern_f_sign(msg: 'BitArray', e_int: int, seed: 'BitArray',
                       syndrome: int, n: int = None, rounds: int = None):
     """HPKS-Stern-F: sign msg using Stern's 3-challenge protocol + Fiat-Shamir.
 
-    Correct Stern blinding: prover draws weight-t r and sets y = e ⊕ r so that
-    wt(r) = t is verifiable for b=1 and wt(σ(r)) = t for b=0.
+    Stern blinding: prover draws a UNIFORM r and sets y = e ⊕ r, so the b=0
+    response binds wt(σ(y) ⊕ σ(r)) = wt(σ(e)) = wt(e) = t.
 
     Commits per round:
       c0 = H(σ_seed, H·r^T)   c1 = H(σ(r))   c2 = H(σ(y))
     Responses:
-      b=0: (σ(r), σ(y))  → check c1, c2, wt(σ(r))=t
-      b=1: (σ_seed, r)   → check c0, c1, wt(r)=t
+      b=0: (σ(r), σ(y))  → check c1, c2, wt(σ(r) ⊕ σ(y)) = t
+      b=1: (σ_seed, r)   → check c0, c1
       b=2: (σ_seed, y)   → check c0 via H(σ_seed, H·y^T⊕s), check c2
+
+    THE WEIGHT CHECK IS THE WHOLE SCHEME, and until v8.0.0 it was on the wrong
+    vector (TODO #298).  r was drawn weight-t and b=0 checked wt(σ(r)) = t while
+    b=1 checked wt(r) = t — so every weight check fell on the prover's own
+    blinding value and NOTHING bound wt(e).  The statement proved was "I know
+    some preimage of s under H", and H is n/2 × n, so a preimage is one Gaussian
+    elimination away from the PUBLIC key: a weight-67 e′ with H·e′^T = s signs
+    messages that verify, with no secret at all.  Universal forgery, demonstrated
+    in SecurityProofsCode/stern_f_weight_binding.py §1.
 
     Soundness: (2/3)^rounds; production needs rounds ≥ 219 for 128-bit soundness.
     """
@@ -1544,7 +1564,7 @@ def hpks_stern_f_sign(msg: 'BitArray', e_int: int, seed: 'BitArray',
     commits    = []
     round_data = []
     for _ in range(rounds):
-        r_int   = _csprng_weight_t(n, t)                            # weight-t blinding
+        r_int   = int.from_bytes(os.urandom(n // 8), 'big') & ((1 << n) - 1)
         y_int   = (e_int ^ r_int) & ((1 << n) - 1)                # y = e ⊕ r
         pi_seed = BitArray.random(n)
         perm    = _stern_gen_perm(pi_seed, n)
@@ -1603,10 +1623,9 @@ def hpks_stern_f_verify(msg: 'BitArray', sig, seed: 'BitArray',
             sr, sy = resp
             if _stern_hash(n, BitArray(n, sr), ds=2) != c1:          return False
             if _stern_hash(n, BitArray(n, sy), ds=3) != c2:          return False
-            if bin(sr).count('1') != t:                               return False
+            if bin(sr ^ sy).count('1') != t:                          return False
         elif b == 1:                                      # reveal (σ_seed, r)
             pi_seed, r_int = resp
-            if bin(r_int).count('1') != t:                            return False
             perm = _stern_gen_perm(pi_seed, n)
             Hr   = _stern_syndrome_H(H_rows, r_int)
             if _stern_hash(n, pi_seed, BitArray(n, Hr), ds=1) != c0: return False
@@ -2142,7 +2161,7 @@ def hpks_stern_ring_sign(msg: 'BitArray', e_int: int, j: int,
     mask       = (1 << n) - 1
     round_data_j = []
     for r in range(rounds):
-        r_int   = _csprng_weight_t(n, t)
+        r_int   = int.from_bytes(os.urandom(n // 8), 'big') & mask
         y_int   = (e_int ^ r_int) & mask
         pi_seed = BitArray.random(n)
         perm    = _stern_gen_perm(pi_seed, n)
@@ -2220,10 +2239,9 @@ def hpks_stern_ring_verify(msg: 'BitArray', sig, ring_keys: list,
                 sr, sy = resp
                 if _stern_hash(n, BitArray(n, sr), ds=2) != c1: return False
                 if _stern_hash(n, BitArray(n, sy), ds=3) != c2: return False
-                if bin(sr).count('1') != t:                      return False
+                if bin(sr ^ sy).count('1') != t:                 return False
             elif b == 1:
                 pi_seed, r_int = resp
-                if bin(r_int).count('1') != t:                   return False
                 perm = _stern_gen_perm(pi_seed, n)
                 Hr   = _stern_syndrome_H(H_rows_i, r_int)
                 if _stern_hash(n, pi_seed, BitArray(n, Hr), ds=1) != c0: return False

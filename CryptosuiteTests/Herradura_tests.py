@@ -655,7 +655,7 @@ def hpks_stern_f_sign(msg, e_int, seed, syndrome, n, rounds):
     t      = max(2, n // 16)
     commits = []; round_data = []
     for _ in range(rounds):
-        r_int   = _csprng_weight_t(n, t)           # SA-07: was random.sample()
+        r_int   = int.from_bytes(os.urandom(n // 8), 'big') & ((1 << n) - 1)  # UNIFORM, TODO #298
         y_int   = (e_int ^ r_int) & ((1 << n) - 1)
         pi_seed = BitArray.random(n)
         perm    = _stern_gen_perm(pi_seed, n)
@@ -697,10 +697,9 @@ def hpks_stern_f_verify(msg, sig, seed, syndrome, n):
             sr, sy = resp
             if _stern_hash(n, BitArray(n, sr), ds=2) != c1: return False
             if _stern_hash(n, BitArray(n, sy), ds=3) != c2: return False
-            if bin(sr).count('1') != t:                     return False
+            if bin(sr ^ sy).count('1') != t:                return False
         elif b == 1:
             pi_seed, r_int = resp
-            if bin(r_int).count('1') != t:                  return False
             perm = _stern_gen_perm(pi_seed, n)
             Hr   = _stern_syndrome(seed.uint, r_int, n, n_rows)
             if _stern_hash(n, pi_seed, BitArray(n, Hr), ds=1) != c0: return False
@@ -762,21 +761,21 @@ def _ring_stern_simulate_round(b, seed_int, syndrome, n):
     """HVZK simulator: returns (c0,c1,c2,b,resp) for pre-chosen challenge b."""
     n_rows = n // 2; t = max(2, n // 16)
     if b == 0:
-        sr = _csprng_weight_t(n, t)
-        sy = int.from_bytes(os.urandom(n // 8), 'big')
-        c0 = _stern_hash(n, BitArray(n, 0), BitArray(n, 0), ds=1)
+        sr = int.from_bytes(os.urandom(n // 8), 'big') & ((1 << n) - 1)
+        sy = sr ^ _csprng_weight_t(n, t)
+        c0 = _stern_hash(n, BitArray.random(n), BitArray(n, 0), ds=1)  # #297
         c1 = _stern_hash(n, BitArray(n, sr), ds=2)
         c2 = _stern_hash(n, BitArray(n, sy), ds=3)
         return (c0, c1, c2), b, (sr, sy)
     elif b == 1:
         pi = BitArray.random(n)
-        r  = _csprng_weight_t(n, t)
+        r  = int.from_bytes(os.urandom(n // 8), 'big') & ((1 << n) - 1)
         perm = _stern_gen_perm(pi, n)
         Hr   = _stern_syndrome(seed_int, r, n, n_rows)
         sr   = _stern_apply_perm(perm, r, n)
         c0   = _stern_hash(n, pi, BitArray(n, Hr), ds=1)
         c1   = _stern_hash(n, BitArray(n, sr), ds=2)
-        c2   = _stern_hash(n, BitArray(n, 0), ds=3)
+        c2   = _stern_hash(n, BitArray.random(n), ds=3)   # dummy, #297
         return (c0, c1, c2), b, (pi, r)
     else:
         pi = BitArray.random(n)
@@ -786,7 +785,7 @@ def _ring_stern_simulate_round(b, seed_int, syndrome, n):
         Hys  = Hy ^ syndrome
         sy   = _stern_apply_perm(perm, y, n)
         c0   = _stern_hash(n, pi, BitArray(n, Hys), ds=1)
-        c1   = _stern_hash(n, BitArray(n, 0), ds=2)
+        c1   = _stern_hash(n, BitArray.random(n), ds=2)   # dummy, #297
         c2   = _stern_hash(n, BitArray(n, sy), ds=3)
         return (c0, c1, c2), b, (pi, y)
 
@@ -828,7 +827,7 @@ def hpks_stern_ring_sign_local(msg, e_int, j, ring_keys, n, rounds):
     j_r_tmp  = []; j_y_tmp  = []; j_pi_tmp = []
     j_sr_tmp = []; j_sy_tmp = []
     for r in range(rounds):
-        rv = _csprng_weight_t(n, t)
+        rv = int.from_bytes(os.urandom(n // 8), 'big') & ((1 << n) - 1)
         yv = e_int ^ rv
         pi = BitArray.random(n)
         perm = _stern_gen_perm(pi, n)
@@ -883,10 +882,9 @@ def hpks_stern_ring_verify_local(msg, sig, ring_keys, n):
                 sr, sy = resp
                 if _stern_hash(n, BitArray(n, sr), ds=2) != c1: return False
                 if _stern_hash(n, BitArray(n, sy), ds=3) != c2: return False
-                if bin(sr).count('1') != t:                     return False
+                if bin(sr ^ sy).count('1') != t:                return False
             elif b == 1:
                 pi_seed, r_int = resp
-                if bin(r_int).count('1') != t:                  return False
                 perm = _stern_gen_perm(pi_seed, n)
                 Hr   = _stern_syndrome(seed_i.uint, r_int, n, n_rows)
                 if _stern_hash(n, pi_seed, BitArray(n, Hr), ds=1) != c0: return False
@@ -3907,6 +3905,119 @@ def test_qcprf_seed_expansion():
           f"guard={guarded}  [{'PASS' if ok else 'FAIL'}]\n")
 
 
+
+# ---------------------------------------------------------------------------
+# Security test [53]: the two properties no Stern test asserted (TODO #298).
+#
+# Every other check on Stern-F and Stern-Ring in this repo asserts COMPLETENESS
+# (an honest transcript verifies) or SOUNDNESS-BY-TAMPER (a poked one does not),
+# and neither can see either defect below.
+#
+# (a) WITNESS-WEIGHT BINDING.  The b = 0 response must bind wt(e) = t.  Until
+#     v8.0.0 the prover drew r weight-t and the verifier checked wt(sigma(r))
+#     for b = 0 and wt(r) for b = 1 -- both the prover's own BLINDING value --
+#     so nothing bound wt(e) and the statement proved was only "I know some
+#     preimage of s under H".  H is n/2 x n, so a preimage is one Gaussian
+#     elimination away from the PUBLIC key: universal forgery with no secret.
+#     This case builds that forgery from (seed, syndrome) alone and asserts the
+#     verifier rejects it.  The honest signature is checked FIRST as an accept
+#     control, because a verifier that rejected everything would otherwise
+#     score the forgery case perfectly.
+#
+# (b) COMMITMENT DISTINCTNESS.  No commitment value may repeat across the
+#     member-rounds of one ring signature.  That is TODO #297's defect -- the
+#     constant b = 0 dummy c0 -- stated as an invariant rather than as a
+#     cross-port comparison, so it is catchable in ONE port instead of by
+#     reading four side by side, which is the whole point of #298.
+#
+# NOT tested here, deliberately: that a simulated b = 0 pair has the same
+# wt(respA ^ respB) as a real one.  Since v8.0.0 the VERIFIER checks exactly
+# that, so a simulator regression makes the signature fail to verify and the
+# existing round-trip cases already catch it.  A case asserting a property the
+# verifier enforces would pass vacuously.
+# ---------------------------------------------------------------------------
+
+def _stern_solve_syndrome(H_rows, syndrome, n):
+    """Any e' with H.e'^T == syndrome, by Gaussian elimination over GF(2).
+    Uses only PUBLIC data.  Free variables are left at zero, which is why the
+    result lands near weight n/4 rather than t."""
+    aug = [[H_rows[i], (syndrome >> i) & 1] for i in range(len(H_rows))]
+    pivots = []
+    row = 0
+    for col in range(n - 1, -1, -1):
+        sel = None
+        for k in range(row, len(aug)):
+            if (aug[k][0] >> col) & 1:
+                sel = k
+                break
+        if sel is None:
+            continue
+        aug[row], aug[sel] = aug[sel], aug[row]
+        for k in range(len(aug)):
+            if k != row and ((aug[k][0] >> col) & 1):
+                aug[k][0] ^= aug[row][0]
+                aug[k][1] ^= aug[row][1]
+        pivots.append((col, row))
+        row += 1
+    e = 0
+    for col, k in pivots:
+        if aug[k][1]:
+            e |= 1 << col
+    return e
+
+
+def test_stern_witness_binding():
+    print("[53] Stern-F witness binding + ring commitment distinctness  [SECURITY]")
+    n = 64
+    n_rows = n // 2
+    t = max(2, n // 16)
+    rounds = 12
+
+    # (a) accept control, then the linear-algebra forgery
+    seed, e_int, syn = stern_f_keygen(n)
+    H_rows = [_stern_matrix_row(seed.uint, i, n).uint for i in range(n_rows)]
+    msg = BitArray.random(n)
+    honest = hpks_stern_f_sign(msg, e_int, seed, syn, n, rounds)
+    honest_ok = hpks_stern_f_verify(msg, honest, seed, syn, n)
+
+    e_forged = _stern_solve_syndrome(H_rows, syn, n)
+    solved = _stern_syndrome(seed.uint, e_forged, n, n_rows) == syn
+    off_weight = bin(e_forged).count('1') != t
+    forged = hpks_stern_f_sign(msg, e_forged, seed, syn, n, rounds)
+    forged_ok = hpks_stern_f_verify(msg, forged, seed, syn, n)
+
+    # (b) commitment distinctness over one ring signature
+    k = 3
+    ring_keys = []
+    ring_es = []
+    for _ in range(k):
+        s_i, e_i, syn_i = stern_f_keygen(n)
+        ring_keys.append((s_i, syn_i))
+        ring_es.append(e_i)
+    j = 1
+    rmsg = BitArray.random(n)
+    rsig = hpks_stern_ring_sign_local(rmsg, ring_es[j], j, ring_keys, n, rounds)
+    ring_ok = hpks_stern_ring_verify_local(rmsg, rsig, ring_keys, n)
+    all_commits = rsig[0]
+    seen = set()
+    dups = 0
+    for i in range(k):
+        for r in range(rounds):
+            for c in all_commits[i][r]:
+                v = c.uint if hasattr(c, 'uint') else int(c)
+                if v in seen:
+                    dups += 1
+                seen.add(v)
+
+    ok = (honest_ok and solved and off_weight and not forged_ok
+          and ring_ok and dups == 0)
+    print(f"    n={n} rounds={rounds}  honest={honest_ok}  "
+          f"forged-witness wt={bin(e_forged).count('1')} (t={t}) "
+          f"syndrome-matches={solved}  forgery-accepted={forged_ok}")
+    print(f"    ring k={k} verified={ring_ok}  repeated commitments="
+          f"{dups}/{3 * k * rounds}  [{'PASS' if ok else 'FAIL'}]\n")
+
+
 def bench_zkp_nl():
     n = 32; rounds = 16
     print(f"[43] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
@@ -4042,6 +4153,7 @@ if __name__ == '__main__':
     test_hcred_kkw()
     test_qcmdpc_weak_key_screen()
     test_qcprf_seed_expansion()
+    test_stern_witness_binding()
 
     # Cap accounting (TODO #225) — say what -t actually did, so a future ring or
     # parameter change can be told from a slower host by reading the log.

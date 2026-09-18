@@ -102,8 +102,14 @@ public final class SternRing {
      * Python's {@code _stern_simulate_round}. */
     private static Object[] simulateRound(int b, BigInteger syn, BigInteger[] hRows, SecureRandom rng) {
         if (b == 0) {
-            BigInteger srSim = Stern.csprngWeightT(Stern.SDFT, rng);
-            BigInteger sySim = new BigInteger(N, rng).and(MASK);
+            // srSim UNIFORM and sySim = srSim ^ (weight-t): a PERFECT
+            // simulation of the real (sigma(r), sigma(r) ^ sigma(e)) now that
+            // r is uniform.  Until v8.0.0 srSim was weight-t and sySim
+            // uniform, so wt(sr ^ sy) was ~N/2 on every simulated round and
+            // exactly t on the signer's -- ONE b = 0 round named the signer
+            // straight off the public signature (TODO #298).
+            BigInteger srSim = new BigInteger(N, rng).and(MASK);
+            BigInteger sySim = srSim.xor(Stern.csprngWeightT(Stern.SDFT, rng));
             BigInteger piDum = new BigInteger(N, rng).and(MASK);
             BigInteger c0 = Stern.sternHash(1, piDum, BigInteger.ZERO);
             BigInteger c1 = Stern.sternHash(2, srSim);
@@ -111,7 +117,9 @@ public final class SternRing {
             return new Object[] { c0, c1, c2, srSim, sySim };
         } else if (b == 1) {
             BigInteger piSim = new BigInteger(N, rng).and(MASK);
-            BigInteger rSim = Stern.csprngWeightT(Stern.SDFT, rng);
+            // UNIFORM: the b = 1 response reveals r, and the real r is now
+            // uniform (TODO #298).
+            BigInteger rSim = new BigInteger(N, rng).and(MASK);
             int[] perm = Stern.sternGenPerm(piSim);
             BigInteger hrSim = Stern.sternSyndromeH(hRows, rSim);
             BigInteger srSim = Stern.sternApplyPerm(perm, rSim);
@@ -210,7 +218,7 @@ public final class SternRing {
         BigInteger[] srArr = new BigInteger[rounds];
         BigInteger[] syArr = new BigInteger[rounds];
         for (int r = 0; r < rounds; r++) {
-            BigInteger rInt = Stern.csprngWeightT(Stern.SDFT, rng);
+            BigInteger rInt = new BigInteger(N, rng).and(MASK);
             BigInteger yInt = eInt.xor(rInt).and(MASK);
             BigInteger piSeed = new BigInteger(N, rng).and(MASK);
             int[] perm = Stern.sternGenPerm(piSeed);
@@ -278,10 +286,10 @@ public final class SternRing {
                     BigInteger sr = sig.resp0[i][r], sy = sig.resp1[i][r];
                     if (!Stern.sternHash(2, sr).equals(sig.c1[i][r])) return false;
                     if (!Stern.sternHash(3, sy).equals(sig.c2[i][r])) return false;
-                    if (sr.bitCount() != Stern.SDFT) return false;
+                    // binds wt(e) -- see Stern.hpksSternFVerify (TODO #298)
+                    if (sr.xor(sy).bitCount() != Stern.SDFT) return false;
                 } else if (b == 1) {
                     BigInteger piSeed = sig.resp0[i][r], rInt = sig.resp1[i][r];
-                    if (rInt.bitCount() != Stern.SDFT) return false;
                     int[] perm = Stern.sternGenPerm(piSeed);
                     BigInteger hr = Stern.sternSyndromeH(hRowsI, rInt);
                     if (!Stern.sternHash(1, piSeed, hr).equals(sig.c0[i][r])) return false;

@@ -2330,7 +2330,11 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
 
     for (i = 0; i < rounds; i++) {
         BitArray items[2];
-        stern_rand_error(&r[i], urnd);
+        /* UNIFORM r since v8.0.0 (TODO #298).  It was stern_rand_error, i.e.
+         * weight-t, which put both of the verifier's weight checks on the
+         * prover's own blinding value and left wt(e) unbound entirely -- see
+         * hpks_stern_f_verify's b = 0 case. */
+        ba_rand(&r[i], urnd);
         ba_xor(&y[i], e, &r[i]);
         ba_rand(&pi[i], urnd);
         stern_syndrome_H(Hr + i * SDF_SYNBYTES, H_mat, &r[i]);
@@ -2382,15 +2386,24 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
         int bv = sig->b[i];
         BitArray tmp;
         if (bv == 0) {
+            BitArray xr;
             stern_hash(&tmp, &sig->resp_a[i], 1, 2);
             if (!ba_equal(&tmp, &sig->c1[i])) return 0;
             stern_hash(&tmp, &sig->resp_b[i], 1, 3);
             if (!ba_equal(&tmp, &sig->c2[i])) return 0;
-            if (ba_popcount(&sig->resp_a[i]) != SDF_T) return 0;
+            /* wt(sigma(r) ^ sigma(y)) = wt(sigma(e)) = wt(e).  THIS is the
+             * check that binds the witness to weight t.  Until v8.0.0 it read
+             * ba_popcount(&sig->resp_a[i]), i.e. wt(sigma(r)) -- the prover's
+             * own blinding value -- and the b = 1 branch checked wt(r), so
+             * NOTHING bound wt(e).  The statement proved was "I know some
+             * preimage of s under H", and H is n/2 x n, so a preimage is one
+             * Gaussian elimination away from the PUBLIC key: universal forgery
+             * (TODO #298). */
+            ba_xor(&xr, &sig->resp_a[i], &sig->resp_b[i]);
+            if (ba_popcount(&xr) != SDF_T) return 0;
         } else if (bv == 1) {
             uint8_t Hr[SDF_SYNBYTES];
             BitArray items[2], sr2;
-            if (ba_popcount(&sig->resp_b[i]) != SDF_T) return 0;
             stern_syndrome_H(Hr, H_mat, &sig->resp_b[i]);
             items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hr);
             stern_hash(&tmp, items, 2, 1);
@@ -2586,9 +2599,16 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
          * with pi_dum drawn AFTER sy_sim -- rather than a third arrangement
          * invented, so the four consumption orders agree (TODO #294's
          * precedent). */
-        BitArray zero, pi_dum; memset(zero.b, 0, KEYBYTES);
-        stern_rand_error(&sr_sim, urnd);
-        ba_rand(&sy_sim, urnd);
+        /* sr_sim UNIFORM and sy_sim = sr_sim ^ (weight-t): a PERFECT
+         * simulation of the real (sigma(r), sigma(r) ^ sigma(e)) now that r is
+         * uniform.  Until v8.0.0 sr_sim was weight-t and sy_sim uniform, so
+         * wt(sr ^ sy) was ~n/2 on every simulated round and exactly t on the
+         * signer's: ONE b = 0 round named the signer, off the public
+         * signature, with no statistics at all (TODO #298). */
+        BitArray zero, pi_dum, se_sim; memset(zero.b, 0, KEYBYTES);
+        ba_rand(&sr_sim, urnd);
+        stern_rand_error(&se_sim, urnd);
+        ba_xor(&sy_sim, &sr_sim, &se_sim);
         ba_rand(&pi_dum, urnd);
         items[0] = pi_dum; items[1] = zero;
         stern_hash(&sig->c0[idx], items, 2, 1);    /* unchecked */
@@ -2600,7 +2620,9 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
     } else if (b == 1) {
         /* c0 = hash(pi_sim, H*r_sim^T), c1 = hash(sigma(r_sim)), c2 dummy */
         ba_rand(&pi_sim, urnd);
-        stern_rand_error(&r_sim, urnd);
+        /* UNIFORM: the b = 1 response reveals r, and the real r is now
+         * uniform (TODO #298). */
+        ba_rand(&r_sim, urnd);
         stern_gen_perm(perm, &pi_sim, KEYBITS);
         stern_syndrome_H(Hr_sim, H_mat, &r_sim);
         stern_apply_perm(&sr_sim, perm, &r_sim, KEYBITS);
@@ -2679,7 +2701,7 @@ static void stern_ring_sign(SternRingSig *sig,
         for (r = 0; r < rounds; r++) {
             int idx = j * rounds + r;
             BitArray items[2];
-            stern_rand_error(&r_tmp[r], urnd);
+            ba_rand(&r_tmp[r], urnd);
             ba_xor(&y_tmp[r], e, &r_tmp[r]);
             ba_rand(&pi_tmp[r], urnd);
             stern_syndrome_H(Hr_tmp + r * SDF_SYNBYTES, H_mat, &r_tmp[r]);
@@ -2754,15 +2776,17 @@ static int stern_ring_verify(const SternRingSig *sig,
             int bv  = sig->b[idx];
             BitArray tmp;
             if (bv == 0) {
+                BitArray xr;
                 stern_hash(&tmp, &sig->resp_a[idx], 1, 2);
                 if (!ba_equal(&tmp, &sig->c1[idx])) return 0;
                 stern_hash(&tmp, &sig->resp_b[idx], 1, 3);
                 if (!ba_equal(&tmp, &sig->c2[idx])) return 0;
-                if (ba_popcount(&sig->resp_a[idx]) != SDF_T) return 0;
+                /* binds wt(e) -- see hpks_stern_f_verify (TODO #298) */
+                ba_xor(&xr, &sig->resp_a[idx], &sig->resp_b[idx]);
+                if (ba_popcount(&xr) != SDF_T) return 0;
             } else if (bv == 1) {
                 uint8_t Hr[SDF_SYNBYTES];
                 BitArray items[2], sr2;
-                if (ba_popcount(&sig->resp_b[idx]) != SDF_T) return 0;
                 stern_syndrome_H(Hr, H_mat, &sig->resp_b[idx]);
                 items[0] = sig->resp_a[idx]; syndr_to_ba(&items[1], Hr);
                 stern_hash(&tmp, items, 2, 1);

@@ -1849,7 +1849,6 @@ func HpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
 			"Stern signatures have sub-128-bit soundness (demo only)", rounds, SdfProductionRounds)
 	}
 	n := msg.size
-	t := sternT(n)
 	H := SternBuildH(seed)
 	sig := &SternSig{Rounds: make([]SternRound, rounds)}
 	type rtmp struct{ r, y, pi, sr, sy *BitArray }
@@ -1859,7 +1858,10 @@ func HpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
 	c2s := make([]*BitArray, rounds)
 
 	for i := 0; i < rounds; i++ {
-		r := SternRandError(n, t)
+		// UNIFORM r since v8.0.0 (TODO #298).  It was drawn weight-t, which
+		// put every weight check on the prover's own blinding value and left
+		// wt(e) unbound -- see HpksSternFVerify's b = 0 case.
+		r := NewRandBitArray(n)
 		y := e.Xor(r)
 		pi := NewRandBitArray(n)
 		perm := SternGenPerm(pi, n)
@@ -1925,13 +1927,14 @@ func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *bi
 			if !SternHash(3, r.RespB).Equal(r.C2) {
 				return false
 			}
-			if CountBits(&r.RespA.Val) != t {
+			// wt(sigma(r) XOR sigma(y)) = wt(sigma(e)) = wt(e).  THIS is the
+			// check that binds the witness to weight t; until v8.0.0 it read
+			// CountBits(&r.RespA.Val), i.e. wt(sigma(r)), which binds only the
+			// prover's own blinding value (TODO #298).
+			if CountBits(new(big.Int).Xor(&r.RespA.Val, &r.RespB.Val)) != t {
 				return false
 			}
 		case 1:
-			if CountBits(&r.RespB.Val) != t {
-				return false
-			}
 			hrBA := SyndrToBA(n, sternSyndromeH(H, r.RespB))
 			if !SternHash(1, r.RespA, hrBA).Equal(r.C0) {
 				return false
@@ -2044,8 +2047,13 @@ func sternSimulateRound(b int, H []*BitArray, syndrome *big.Int, n int) SternRou
 		// argument; C had the same defect and Python and Java did not, whose
 		// form -- hash(piDum, zero), piDum drawn AFTER sy -- is adopted
 		// verbatim so the four consumption orders agree.
-		sr := SternRandError(n, t)
-		sy := NewRandBitArray(n)
+		// sr uniform and sy = sr XOR (weight-t): a PERFECT simulation of the
+		// real (sigma(r), sigma(r) XOR sigma(e)) now that r is uniform.  Until
+		// v8.0.0 sr was weight-t and sy uniform, so wt(sr XOR sy) was ~n/2 on
+		// every simulated round and exactly t on the signer's -- one b = 0
+		// round named the signer (TODO #298).
+		sr := NewRandBitArray(n)
+		sy := sr.Xor(SternRandError(n, t))
 		piDum := NewRandBitArray(n)
 		rnd.C0 = SternHash(1, piDum, NewBitArray(n, new(big.Int)))
 		rnd.C1 = SternHash(2, sr)
@@ -2055,7 +2063,8 @@ func sternSimulateRound(b int, H []*BitArray, syndrome *big.Int, n int) SternRou
 	case 1:
 		// c0 = hash(pi, H·r^T), c1 = hash(σ(r)), c2 dummy (unchecked for b=1)
 		pi := NewRandBitArray(n)
-		r := SternRandError(n, t)
+		// UNIFORM: the b = 1 response reveals r, and the real r is now uniform.
+		r := NewRandBitArray(n)
 		perm := SternGenPerm(pi, n)
 		hr := SyndrToBA(n, sternSyndromeH(H, r))
 		sr := SternApplyPerm(perm, r)
@@ -2146,11 +2155,10 @@ func HpksSternRingSign(msg, e *BitArray, j int, ring []RingKeypair, rounds int) 
 
 	// Step 2: commit for real signer j
 	Hj := SternBuildH(ring[j].Seed)
-	t := sternT(n)
 	type rtmp struct{ r, y, pi, sr, sy *BitArray }
 	tmp := make([]rtmp, rounds)
 	for r := 0; r < rounds; r++ {
-		rv := SternRandError(n, t)
+		rv := NewRandBitArray(n)
 		yv := e.Xor(rv)
 		pi := NewRandBitArray(n)
 		perm := SternGenPerm(pi, n)
@@ -2230,13 +2238,11 @@ func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) b
 				if !SternHash(3, rnd.RespB).Equal(rnd.C2) {
 					return false
 				}
-				if CountBits(&rnd.RespA.Val) != t {
+				// binds wt(e) -- see HpksSternFVerify (TODO #298)
+				if CountBits(new(big.Int).Xor(&rnd.RespA.Val, &rnd.RespB.Val)) != t {
 					return false
 				}
 			case 1:
-				if CountBits(&rnd.RespB.Val) != t {
-					return false
-				}
 				hrBA := SyndrToBA(n, sternSyndromeH(H, rnd.RespB))
 				if !SternHash(1, rnd.RespA, hrBA).Equal(rnd.C0) {
 					return false
