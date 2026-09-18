@@ -125,6 +125,13 @@ _CLAIM_RE = re.compile(r"exits?\s+non-?zero", re.I)
 # eleven rather than inside one of them.  An entry here must say what makes its
 # script unrunnable in CI -- not that it is slow -- and will fail generation
 # once that stops being true.
+# TODO #300's fresh-entropy detection.  Kept beside discovery because the two
+# have to agree about what the gate set is.
+_OS_ENTROPY_RE  = re.compile(r"\bos\.urandom\b|\bsecrets\.\w+|\bSystemRandom\b")
+_UNSEEDED_RE    = re.compile(r"random\.Random\(\s*\)")
+_MODRAND_SEED_RE = re.compile(r"random\.seed\(\s*[^)\s]")
+_MODRAND_USE_RE = re.compile(r"\brandom\.(?!Random\b|seed\b)\w+\(")
+
 EXCLUDED = {}
 
 
@@ -168,6 +175,249 @@ NON_GATING = {
         "accepted risk, not a regression to defend",
 }
 
+
+# ── TODO #300: which gates decide a verdict from a FRESH random sample? ──────
+#
+# #289 built this job on the premise that a red run means something, and #299
+# found that premise failing two ways at once on one PR.  Nothing then asked how
+# many of the gates have the same shape.  This is that census.
+#
+# THE DERIVED HALF, which cannot go stale: a gating script that draws fresh
+# entropy -- os.urandom, secrets, random.Random() with no seed, or module-level
+# random.* without random.seed(<literal>) -- must carry an entry below.  Of the
+# 74, 43 draw only from a LITERAL seed and 6 draw no randomness at all, so their
+# verdicts reproduce run to run and cannot flake; the 25 that do are the
+# population this table covers.
+#
+# THE CURATED HALF, which is the actual work: what does the EXIT STATUS depend
+# on?  #300's first rule is that sampling is not the defect -- deciding on a
+# fresh sample against a fixed threshold is.  stern_ring_challenge_bias.py draws
+# from os.urandom and gates on `counts == [86, 85, 85]`, which is arithmetic;
+# nl_fscx_sparse_circuit.py samples 300 differences per order and gates on an
+# EXHAUSTIVE degree computation, with the sampled row explicitly left ungated by
+# #291.  Both are `exact` here.
+#
+# The four verdict codes, and the rule for each:
+#
+#   exact       the gate holds with probability 1 for correct code.  A fresh
+#               sample changes WHICH instance is tested, not the outcome.
+#   negligible  a sampled statistic against a fixed threshold, with the nominal
+#               per-run false-failure rate STATED.  Must be < 1e-6.
+#   replicated  #299's shape: an exceedance is confirmed against a second
+#               independent sample at a stricter level before it fails.
+#   follows     the threshold is computed FROM the statistic's own null rather
+#               than fixed -- hybrid_credential_phi.py's 4-sigma Poisson band
+#               around the expected (1/3)^R survivors is the model.
+#
+# Every entry carries a RATE or an ARGUMENT.  A rate is a number someone
+# derived; an argument is a reason the rate is not the binding consideration,
+# and entries resting on one are counted separately in the census line so the
+# distinction cannot quietly erode.  #300's third rule is why: slack wide enough
+# never to fire is TODO #234's vacuous pass, so "the threshold is generous" is
+# not on its own a safe answer.
+#
+# WHAT THE CENSUS FOUND, all three fixed here.  (a) hfscx_256_analysis.py §1 and
+# §2 gated |mean-128| < 3.SE on a fresh sample -- #299's own defect, in #299's
+# own file, one section over, left because §3 was the one that fired.  (b)
+# qc_mdpc_bgf_prototype.py §3 gated abs(z) < 3 on a fresh chi-square, and was
+# wrong twice: flaky at ~1 run in 200 measured, and TWO-SIDED on a one-sided
+# claim -- its single observed failure in 200 samples was z = -3.66, the sampler
+# looking TOO uniform.  (c) qcmdpc_bgf_failure_rate.py was the inverse error and
+# the worse one: main() had a single `return 0`, so it was discovered, run every
+# CI run, and could not go red.  A gate that cannot fail is not a gate.
+#
+# name -> (code, rate-or-None, reason).  rate is the nominal per-run
+# false-failure probability; None means the entry rests on its argument.
+# A red run must be worth believing.  At 1e-3 a failure is 99.9% likely to be
+# real, which is the standard the rest of this job is built to; the measured
+# total is currently 5.4e-5, and it is dominated ENTIRELY by one gate -- #299's
+# replicated chi-square in hfscx_256_analysis.py §3 at 5e-5.  Everything else in
+# the table sums to about 4e-6.  If this budget is ever approached, replicate
+# the largest contributor; raising the number is how the premise rots.
+_FLAKE_BUDGET = 1e-3
+
+SAMPLED_GATES = {
+    # ── replicated ──────────────────────────────────────────────────────────
+    "hfscx_256_analysis.py": ("replicated", 5e-5,
+        "§3's byte-uniformity chi-square is #299's replication (0.05 trigger, "
+        "0.001 confirmation, 5e-5).  §1 and §2 were 3.SE one-shot SAC gates at "
+        "2.7e-3 each until #300 and are now the same shape at 1.9e-8, so §3 "
+        "dominates.  The null was measured over 24 blocks: z in [-1.50, +1.84], "
+        "median 0.33, none past 2 sigma"),
+    "qc_mdpc_bgf_prototype.py": ("replicated", 4.6e-9,
+        "§3's PRF support uniformity, made ONE-SIDED and replicated by #300.  "
+        "Only an over-large chi-square is evidence against uniformity, and the "
+        "measured null (200 samples) fired once, at z = -3.66 -- the left tail, "
+        "i.e. the sampler looking too good.  Negative control: a sampler missing "
+        "10% of positions scores z = +20.85 in both samples"),
+    "stern_f_weight_binding.py": ("replicated", 1e-10,
+        "§2's signer-identification rate over k signatures, built on #299's "
+        "pattern from the start (TODO #298).  §1 and §3 are exact: a "
+        "Gaussian-elimination witness either verifies or does not, and the "
+        "negative controls score 20/20 and 32/33"),
+    # ── follows ─────────────────────────────────────────────────────────────
+    "hybrid_credential_phi.py": ("follows", None,
+        "§5.4 gates a SOUNDNESS ERROR, so the bar follows the statistic: "
+        "expected (1/3)^R of TRIALS_CHEAT survive and the band is 4-sigma "
+        "Poisson around that, not zero.  This is the model the other entries "
+        "are measured against"),
+    "zkp_pqc_exploration.py": ("follows", None,
+        "§3.5 gates ZKBoo soundness the same way -- `passed <= int(expected*4)+2` "
+        "around the expected (1/3)^R survivors.  §3/§3.7 completeness is exact "
+        "(`fail == 0`) and §3.6's cheat counts are exact zeros"),
+    # ── negligible, with the rate derived ───────────────────────────────────
+    "hkex_gf_test.py": ("negligible", 1.2e-6,
+        "Test 3 gates `hits == 0` where Eve's linear attack succeeds only by "
+        "collision, at 2^-n over TRIALS = 5000 at n = 32: 5000 * 2^-32.  Its "
+        "other gates (`errors == 0`, `passed == TRIALS`) are exact"),
+    "hkex_cy_test.py": ("negligible", 1.2e-6,
+        "Same shape and the same 5000 * 2^-32 at n = 32: `hits == 0` for the "
+        "linear attack, and `matched <= 2` for HKEX-CY agreement, where the "
+        "accidental rate is 2^-n so three hits is far past astronomical"),
+    "hkex_nl_proposal.py": ("negligible", 1.2e-6,
+        "`hits == 0` for the classical attack at 5000 * 2^-32, as hkex_gf_test; "
+        "its `passed == TRIALS`, `errors == 0` and `matched < TRIALS` gates are "
+        "exact"),
+    "hkex_rnl_sparse_hybrid_2026.py": ("negligible", 5.7e-7,
+        "`abs(nz - 0.5) < 5 * SE` on the CBD(eta=1) density -- a two-sided "
+        "5-sigma test, 5.7e-7.  The weight-law gate beside it compares the mean "
+        "to 5 sample STANDARD DEVIATIONS rather than standard errors, which is "
+        "slack rather than flaky and is why this entry is not `exact`"),
+    "qcmdpc_bgf_failure_rate.py": ("negligible", 1e-36,
+        "`failures == 0` over 400 trials, the gate #300 added to a main() that "
+        "previously had a single `return 0`.  At BIKE-128 the DFR is ~2^-128 "
+        "(#285 §2), so 400 * 2^-128 is zero for every purpose -- and a failure "
+        "at this sample size is a DECODER REGRESSION, not a DFR event"),
+    "hkex_rnl_failure_rate.py": ("negligible", 1e-40,
+        "`f1 > 0` over 10 000 un-reconciled trials at n = 32, where the failure "
+        "rate is percent-scale by construction -- P(f1 == 0) is (1-p)^10000.  "
+        "`f7 == 0 and t7 >= 200` at the deployed ring is the reconciled DFR, "
+        "which no sample of 200 can make fire"),
+    "nl_fscx_v1_ratchet_collision.py": ("negligible", 1e-12,
+        "The image fraction is a 50 000-sample coverage estimate with SE ~ 0.002 "
+        "against a band of [0.55, 0.72] centred on 1 - 1/e -- about 40 SE of "
+        "headroom.  n = 8 is excluded from the band by the entry's own comment "
+        "because the asymptotic figure does not apply at 256 points"),
+    "nl_fscx_v2_kex.py": ("negligible", 1e-9,
+        "`comm_ex is None` fails only if a randomly drawn key pair happens to "
+        "commute, which is the property the script exists to refute; the "
+        "non-abelian gate beside it is a constructive witness and exact"),
+    "nl_fscx_ligero.py": ("negligible", 1e-9,
+        "§3's soundness asserts are rejections of a wrong statement, which can "
+        "pass only at the protocol's own soundness error (2^-lambda per "
+        "repetition); completeness (`assert ok`) is exact"),
+    # ── exact: the verdict does not depend on the draw ──────────────────────
+    "stern_ring_challenge_bias.py": ("exact", None,
+        "Samples, but gates on `counts == [86, 85, 85]` (arithmetic: 256 = "
+        "3*85+1) and on a SOURCE check that the rejection fix is still present.  "
+        "The cleanest illustration of #300's first rule"),
+    "nl_fscx_sparse_circuit.py": ("exact", None,
+        "Gates on `algebraic_degree_exact`, an exhaustive computation.  Its "
+        "300-sample degree detector is deliberately NOT gated -- #291 found the "
+        "k=4 row flipping run to run and left it ungated with a comment saying "
+        "so, which is this census's rule arrived at one item early"),
+    "hkex_classical_break.py": ("exact", None,
+        "`sk_alice == sk_bob == sk_eve` -- the break either works on a drawn "
+        "instance or the algebra is wrong"),
+    "hkex_fscxn_analysis.py": ("exact", None,
+        "`c == t and e == t`: correctness and Eve's recovery both hold on every "
+        "instance, being GF(2)-linear identities"),
+    "hkex_multinonce_analysis.py": ("exact", None,
+        "`ok == T` on both halves -- an identity that holds for every draw"),
+    "hkex_nonce_impossibility.py": ("exact", None,
+        "Four protocol identities (HSKE round trip, HPKE session key, the nonce "
+        "impossibility, S_r.n_A constant), each exact per instance"),
+    "hkex_pake_demo.py": ("exact", None,
+        "The correct password yields one shared key (exact) and the wrong one "
+        "does not (fails only on a 2^-n key collision)"),
+    "oprf_demo.py": ("exact", None,
+        "Blind/evaluate/unblind round trips and the verifiable-OPRF proof, all "
+        "exact per instance"),
+    "hpks_threshold_demo.py": ("exact", None,
+        "Five protocol outcomes -- single-party verify, the rogue-key attack "
+        "succeeding, 2-of-2 and 3-of-3 verifying, and coefficient binding "
+        "blocking the attack -- each exact on the instance drawn"),
+    "hpks_schnorr_z3.py": ("exact", None,
+        "z3 decides each drawn instance outright; a random width-n instance is "
+        "proved or refuted, never estimated"),
+    "qcmdpc_parameter_selection.py": ("negligible", None,
+        "RESTS ON AN ARGUMENT, not a derived rate.  Its sampled gates are "
+        "BEFORE/AFTER comparisons whose two sides differ by orders of magnitude "
+        "-- t = 134 decoding without failure, the BIKE rule beating the deployed "
+        "one, rejection rates straddling 1%, the retired d failing at >= 90% of "
+        "trials.  A margin that wide is not a few sigma apart, so the binding "
+        "consideration is the separation and not a tail probability.  If any of "
+        "these is ever tightened, derive the rate"),
+}
+
+
+def _fresh_entropy(src):
+    """Which fresh-entropy sources a script draws from, if any (TODO #300).
+
+    Fresh means "different every run", which is what makes a verdict able to
+    flake.  A literal seed is not fresh -- `random.Random(1234)` reproduces --
+    so the test for module-level `random.*` is use WITHOUT a literal seed call.
+    """
+    why = []
+    if _OS_ENTROPY_RE.search(src):
+        why.append("os.urandom/secrets")
+    if _UNSEEDED_RE.search(src):
+        why.append("random.Random()")
+    if _MODRAND_USE_RE.search(src) and not _MODRAND_SEED_RE.search(src):
+        why.append("module random.* unseeded")
+    return why
+
+
+def check_sampling(found):
+    """TODO #300's census rule, in both directions.
+
+    A gating script that draws fresh entropy must say what its verdict rests
+    on; an entry naming a script that no longer gates, or that no longer draws
+    fresh entropy, must go.  Same self-invalidating shape as EXCLUDED and
+    NON_GATING -- a curated reason cannot outlive the thing it describes.
+    """
+    bad = []
+    fresh = {}
+    for name, _ in found:
+        with open(os.path.join(HERE, name), encoding="utf-8") as fh:
+            why = _fresh_entropy(fh.read())
+        if why:
+            fresh[name] = why
+    for name in sorted(fresh):
+        if name not in SAMPLED_GATES:
+            bad.append("%s: draws fresh entropy (%s) and gates, but has no "
+                       "SAMPLED_GATES entry -- say what its verdict rests on"
+                       % (name, ", ".join(fresh[name])))
+    names = {n for n, _ in found}
+    for name, (code, rate, reason) in sorted(SAMPLED_GATES.items()):
+        if not os.path.exists(os.path.join(HERE, name)):
+            bad.append("%s: in SAMPLED_GATES, but no such file" % name)
+        elif name not in names:
+            bad.append("%s: in SAMPLED_GATES, but it is no longer a gating "
+                       "script -- delete the entry" % name)
+        elif name not in fresh:
+            bad.append("%s: in SAMPLED_GATES, but it no longer draws fresh "
+                       "entropy -- delete the entry (it reproduces now)" % name)
+        if code not in ("exact", "negligible", "replicated", "follows"):
+            bad.append("%s: unknown verdict code %r" % (name, code))
+        if code == "negligible" and rate is None and "ARGUMENT" not in reason:
+            bad.append("%s: declared negligible with no rate and no stated "
+                       "argument -- derive the rate or say why it is not the "
+                       "binding consideration" % name)
+    # THE BUDGET, and it is deliberately a JOB-level number rather than a
+    # per-gate one.  A per-gate bound is a constant somebody picks, and the
+    # first draft of this check picked 1e-6 and then flagged three gates at
+    # 1.2e-6 -- a rate of one run in 860 000, which is not a defect and was
+    # only "too high" against an arbitrary line.  What #289's premise actually
+    # rests on is the rate of the WHOLE job: if the gates together flake more
+    # often than this, a red run stops meaning something and everyone starts
+    # re-running, which is also the response to a real failure.
+    total = sum(r for _, r, _ in SAMPLED_GATES.values() if r is not None)
+    if total >= _FLAKE_BUDGET:
+        bad.append("the job's nominal false-failure rate is %.1e per run, over "
+                   "the %.0e budget -- replicate the largest contributor rather "
+                   "than raising the budget" % (total, _FLAKE_BUDGET))
+    return bad, fresh
 
 def discover():
     """Every .py here whose exit status is its own verdict, plus the claimants.
@@ -244,6 +494,8 @@ def main():
 
     found, unclaimed, undeclared = discover()
     orphans = check_exclusions(found) + check_declarations(found, undeclared)
+    sampling_bad, fresh = check_sampling(found)
+    orphans += sampling_bad
     orphans += ["%s: its header advertises a findings gate, but its exit shape "
                 "is not one this runner discovers -- teach _GATING_RE the shape "
                 "or the script will never run in CI" % n for n in unclaimed]
@@ -253,6 +505,21 @@ def main():
     print("  findings gates: %d discovered, %d excluded, %d to run  (TODO #289); "
           "%d declared non-gating (TODO #291)"
           % (len(found), len(EXCLUDED), len(runnable), len(NON_GATING)))
+    # TODO #300: what a red run is worth, as a number rather than a premise.
+    rates = [r for c, r, _ in SAMPLED_GATES.values() if r is not None]
+    argued = sum(1 for c, r, _ in SAMPLED_GATES.values() if r is None)
+    by_code = {}
+    for code, _, _ in SAMPLED_GATES.values():
+        by_code[code] = by_code.get(code, 0) + 1
+    print("  fresh-sampling gates: %d of %d classified (TODO #300) -- %s; "
+          "%d rest on an argument"
+          % (len(fresh), len(found),
+             ", ".join("%d %s" % (n, c) for c, n in sorted(by_code.items())),
+             argued))
+    print("  nominal false-failure rate of the whole job: %.1e per run "
+          "(sum over the %d gates with a derived rate; the other %d are "
+          "argued; the remaining %d gates draw no fresh entropy and cannot flake)"
+          % (sum(rates), len(rates), argued, len(found) - len(fresh)))
     print("=" * 78)
 
     if orphans:

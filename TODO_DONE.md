@@ -19089,3 +19089,109 @@ how this becomes the general framework the scoping note above warns against.
 Filed as **TODO #301**.
 
 Status: **DONE v8.0.0** — the hiding assertion #298 asked for found a second anonymity break in all four ports, and under it a universal forgery: nothing bound the witness weight, so a Gaussian-elimination preimage of the public syndrome signed anything.
+
+### #300: which findings gates decide a verdict from a fresh random sample against a fixed threshold?
+
+TODO #299(b) found `hfscx_256_analysis.py` §3 gating on `chi2 < 293.2` — the
+p = 0.05 critical value — applied to a fresh `os.urandom` sample every run, so a
+correct hash failed CI one run in twenty by construction.  It was found because
+it fired on an unrelated PR, which is exactly how TODO #285 found that no job
+collected these exit statuses: by accident, one instance at a time.
+
+There are 73 findings-gating scripts in `SecurityProofsCode/`.  Nothing asks how
+many of them compare a freshly sampled statistic to a fixed threshold, and each
+that does carries its own false-failure rate into a job that #289 built on the
+premise that a red run means something.  The work is a census, on the model of
+the parameter-use census (#295) and the randomness census (#296): find every
+gate whose verdict is a sampled quantity, report its nominal false-failure rate,
+and require each to be either seeded, replicated, or slack enough that the rate
+is negligible.
+
+Three things to get right, from #299's own experience.  (1) A threshold at the
+0.05 level is not automatically a defect — it is a defect when it GATES; the
+same number printed as a reported statistic is fine, so the census has to
+separate the two.  (2) Seeding is not always the answer: a fixed seed makes the
+verdict reproduce perfectly and reduces the claim to one sample, which is right
+for a regression check and wrong for a distributional one.  (3) The inverse
+error is the one TODO #234 found in the Arduino harness — slack wide enough to
+never fire is a vacuous pass, so any widened threshold needs a control showing
+it still fails on a real bias.
+
+**THE CENSUS.**  `SAMPLED_GATES` in `run_findings_gates.py`, beside `EXCLUDED`
+and `NON_GATING` and self-invalidating in both directions like both — an entry
+naming a script that no longer gates, or that no longer draws fresh entropy,
+fails until it is deleted, and a fresh-sampling gating script with no entry
+fails until one is written.  It lives in the runner rather than in a new script
+so it cannot drift from `discover()`: the population it censuses is defined by
+the same function that decides what runs.
+
+**The derived half**: a gating script draws FRESH entropy if it uses
+`os.urandom`, `secrets`, `random.Random()` with no seed, or module-level
+`random.*` without a literal `random.seed(...)`.  **25 of 74** do; of the rest,
+43 draw only from a literal seed and 6 draw no randomness at all, so their
+verdicts reproduce run to run and cannot flake.  That split is the first result, and it is most of the answer:
+two thirds of the gate set was never at risk.
+
+**The curated half** classifies what the EXIT STATUS rests on, in four codes —
+`exact` (holds with probability 1 for correct code; a fresh sample changes which
+instance is tested, not the outcome), `negligible` (a stated nominal rate),
+`replicated` (#299's confirm-against-a-second-sample), and `follows` (the
+threshold is computed from the statistic's own null, as
+`hybrid_credential_phi.py` §5.4 already did).  Distribution: 10 exact, 10
+negligible, 3 replicated, 2 follows.
+
+**THE BUDGET IS A JOB-LEVEL NUMBER, and that is a correction to this item's own
+framing.**  #300 asked for a per-gate rule ("slack enough that the rate is
+negligible"), and the first draft implemented one at 1e-6 — which immediately
+flagged three gates at 1.2e-6, a rate of one run in 860,000.  A per-gate bound
+is a constant somebody picks, and picking it to make the current table pass is
+the vacuous-threshold failure mode this item's own rule (3) warns about.  What
+#289's premise actually rests on is the rate of the WHOLE job, so that is what
+is bounded: **5.4e-5 per run**, against a stated budget of 1e-3, and printed in
+the runner's banner every run.  It is dominated ENTIRELY by #299's own
+replicated chi-square at 5e-5; everything else together is about 4e-6.
+
+**WHAT IT FOUND — three, all fixed here, and they are three different shapes.**
+
+(a) `hfscx_256_analysis.py` §1 and §2 gated `|mean − 128| < 3·SE` on a fresh
+sample: a two-sided 3-sigma test that a correct hash fails about one run in 370.
+That is #299's defect, in #299's own file, one section over, left behind because
+§3 was the one that happened to fire.  Now replicated at 1.9e-8.  The null was
+measured first — 24 blocks of 5,000 trials gave z in [−1.50, +1.84], median
+0.33, none past 2 sigma — so the hash is fine and the failures were pure tail.
+
+(b) `qc_mdpc_bgf_prototype.py` §3 gated `abs(z) < 3` on a fresh chi-square, and
+was wrong twice.  Flaky, at about one run in 200 measured over 200 samples.  And
+**two-sided on a one-sided claim**: the finding defended is "no bias was
+detected", so only a chi-square that is too LARGE is evidence against it, and
+the single exceedance in 200 samples was z = −3.66 — the left tail, the sampler
+looking TOO uniform.  The gate's one observed failure mode was evidence FOR the
+finding it defends.  Now one-sided and replicated at 4.6e-9; negative control, a
+sampler missing 10% of positions, scores z = +20.85 in both samples.
+
+(c) `qcmdpc_bgf_failure_rate.py` was the INVERSE error and the worst of the
+three: `main()` had a single `return 0`.  The runner discovered it (it ends in
+`sys.exit(main())`), ran it for about a minute of every CI run, and a red result
+was impossible.  A gate that cannot fail is not a gate, and this one had been
+sitting inside the job #289 built on the premise that a red run means something,
+from #289 until #300 looked.  It is now a real gate rather than a `NON_GATING`
+declaration, because there IS something falsifiable: at BIKE-128 no trial count
+reaches the DFR (#285 §2), so a failure at 400 trials is a DECODER REGRESSION,
+not a DFR event.  False-failure rate 400 × 2^-128; power total.  Negative
+control: a decoder stubbed to return `None` exits 1.
+
+**KNOWN LIMIT, recorded rather than argued away.**  One entry —
+`qcmdpc_parameter_selection.py` — rests on an argument rather than a derived
+rate: its sampled gates are BEFORE/AFTER comparisons whose two sides differ by
+orders of magnitude, so the binding consideration is the separation and not a
+tail probability.  That is a defensible answer and it is also exactly the shape
+that rots, which is why entries resting on an argument are COUNTED SEPARATELY in
+the runner's banner.  If any of those thresholds is ever tightened, the rate has
+to be derived.
+
+Six negative controls, all firing: a fresh-sampling gate with no entry, an entry
+naming an absent file, an entry for a script that no longer samples, an unknown
+verdict code, a `negligible` entry with neither rate nor argument, and the job
+budget exceeded.
+
+Status: **DONE v8.0.1** — 25 of 74 gates decide from a fresh sample, the job's flake budget is 5.4e-5 per run, and the census found two flaky gates and one that could not fail at all.

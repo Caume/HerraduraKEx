@@ -546,6 +546,15 @@ DOC_COUNTS = [
      r"findings gates: (\d+) discovered",
      r"(\d+)\s*\n?findings-gating scripts in `SecurityProofsCode/`",
      "run_findings_gates.py's discovered set, quoted in CLAUDE.md's Testing section"),
+    # TODO #300.  The census classifies every gating script that draws FRESH
+    # entropy, and that population moves whenever a script starts or stops
+    # sampling -- another number a hand count gets wrong quietly.  Same --list
+    # invocation, so it costs nothing extra.
+    ("fresh-sampling findings gates",
+     ["python3", _p("SecurityProofsCode", "run_findings_gates.py"), "--list"],
+     r"fresh-sampling gates: (\d+) of \d+ classified",
+     r"\*\*(\d+) of the 74\*\* decide a verdict from a\s+fresh random sample",
+     "the TODO #300 sampling census, quoted in CLAUDE.md's Testing section"),
 ]
 
 

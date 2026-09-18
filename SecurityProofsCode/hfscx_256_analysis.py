@@ -48,12 +48,61 @@ def popcount_bytes(b: bytes) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# The SAC gate, as a REPLICATION (TODO #300)
+#
+# §1 and §2 both gated on |mean - 128| < 3.SE against a FRESH os.urandom sample
+# every run.  That is a two-sided 3-sigma test, so a perfectly good hash fails
+# it about one run in 370 BY CONSTRUCTION -- #299's defect, in the same file,
+# one section over, left behind because §3 was the one that happened to fire.
+#
+# The null is well behaved: 24 independent blocks of 5 000 trials measured z in
+# [-1.50, +1.84], median 0.33, none past 2 sigma.  So an exceedance here is a
+# tail event rather than a bias, and the right response is #299's -- confirm it
+# against a SECOND independent sample at a stricter level.  4.5 sigma takes the
+# per-section false-failure rate from 2.7e-3 to about 1.9e-8, and costs the
+# extra sample on only 0.27% of runs.
+#
+# Power is untouched, and that is the point: an avalanche bias worth the name
+# misses 128 by many standard errors in EVERY sample.  The flip count is
+# Binomial(256, 1/2), so sigma = 8 and SE = 8/sqrt(5000) = 0.113 -- a hash whose
+# avalanche mean is off by a single bit sits at z = 8.8, comfortably past the
+# 4.5 confirmation level in both samples, while the nominal tail does not.
+# ═══════════════════════════════════════════════════════════════════════════
+_SAC_TRIGGER = 3.0      # first-sample threshold, in standard errors
+_SAC_CONFIRM = 4.5      # second-sample threshold; 1.9e-8 combined
+
+
+def _sac_z(mean: float, std: float, trials: int) -> float:
+    """Standardised distance of the avalanche mean from the ideal 128."""
+    se = std / math.sqrt(trials) if std > 0 else float('inf')
+    return abs(mean - 128.0) / se
+
+
+def _sac_replicated(label: str, mean: float, std: float, trials: int,
+                    resample) -> bool:
+    """Gate on |mean-128|, confirming any exceedance against a fresh sample."""
+    z = _sac_z(mean, std, trials)
+    if z < _SAC_TRIGGER:
+        print(f"  {label:<13}: PASS  (|mean−128| = {z:.2f}·SE < "
+              f"{_SAC_TRIGGER}·SE)")
+        return True
+    print(f"  {label:<13}: {z:.2f}·SE from ideal — over {_SAC_TRIGGER}·SE, "
+          f"confirming against a second independent sample")
+    mean2, std2, _ = resample(trials)
+    z2 = _sac_z(mean2, std2, trials)
+    ok = z2 < _SAC_CONFIRM
+    print(f"  {label:<13}: second sample mean {mean2:.3f} "
+          f"({z2:.2f}·SE)  {'below' if ok else 'ABOVE'} {_SAC_CONFIRM}·SE")
+    print(f"  {label:<13}: {'PASS' if ok else 'FAIL — off-ideal in two '
+          'independent samples'}")
+    return ok
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # §1 — Avalanche on input bit flips
 # ═══════════════════════════════════════════════════════════════════════════
-def section1(trials: int = 5_000) -> None:
-    print(SEP)
-    print(f"§1 — Avalanche on input bit flips  ({trials} trials, msg=16 B)")
-    print(SEP)
+def section1_sample(trials: int):
+    """One independent input-bit avalanche sample: (mean, std, elapsed)."""
     flips = []
     t0 = time.monotonic()
     for _ in range(trials):
@@ -67,14 +116,20 @@ def section1(trials: int = 5_000) -> None:
     elapsed = time.monotonic() - t0
     mean = sum(flips) / trials
     std  = math.sqrt(sum((f - mean) ** 2 for f in flips) / trials)
+    return mean, std, elapsed, flips
+
+
+def section1(trials: int = 5_000) -> bool:
+    print(SEP)
+    print(f"§1 — Avalanche on input bit flips  ({trials} trials, msg=16 B)")
+    print(SEP)
+    mean, std, elapsed, flips = section1_sample(trials)
     print(f"  Ideal mean   : 128.0")
     print(f"  Mean         : {mean:.3f}")
     print(f"  Std dev      : {std:.3f}")
     print(f"  Min / Max    : {min(flips)} / {max(flips)}")
-    # SAC criterion: mean within 1 standard error of 128 is acceptable
-    sac_ok = abs(mean - 128.0) < 3 * (std / math.sqrt(trials))
-    print(f"  SAC          : {'PASS' if sac_ok else 'FAIL'}  "
-          f"(|mean−128| < 3·SE)")
+    sac_ok = _sac_replicated("SAC", mean, std, trials,
+                             lambda t: section1_sample(t)[:3])
     print(f"  Time         : {elapsed:.1f} s")
     return sac_ok
 
@@ -82,10 +137,8 @@ def section1(trials: int = 5_000) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 # §2 — Avalanche on key bit flips (keyed MAC mode)
 # ═══════════════════════════════════════════════════════════════════════════
-def section2(trials: int = 5_000) -> None:
-    print(SEP)
-    print(f"§2 — Avalanche on key bit flips  ({trials} trials, keyed MAC)")
-    print(SEP)
+def section2_sample(trials: int):
+    """One independent key-bit avalanche sample: (mean, std, elapsed)."""
     iv_const = int.from_bytes(_HFSCX256_IV_BYTES, 'big')
     flips = []
     t0 = time.monotonic()
@@ -99,12 +152,20 @@ def section2(trials: int = 5_000) -> None:
     elapsed = time.monotonic() - t0
     mean = sum(flips) / trials
     std  = math.sqrt(sum((f - mean) ** 2 for f in flips) / trials)
+    return mean, std, elapsed, flips
+
+
+def section2(trials: int = 5_000) -> bool:
+    print(SEP)
+    print(f"§2 — Avalanche on key bit flips  ({trials} trials, keyed MAC)")
+    print(SEP)
+    mean, std, elapsed, flips = section2_sample(trials)
     print(f"  Ideal mean   : 128.0")
     print(f"  Mean         : {mean:.3f}")
     print(f"  Std dev      : {std:.3f}")
     print(f"  Min / Max    : {min(flips)} / {max(flips)}")
-    sac_ok = abs(mean - 128.0) < 3 * (std / math.sqrt(trials))
-    print(f"  Key-SAC      : {'PASS' if sac_ok else 'FAIL'}")
+    sac_ok = _sac_replicated("Key-SAC", mean, std, trials,
+                             lambda t: section2_sample(t)[:3])
     print(f"  Time         : {elapsed:.1f} s")
     return sac_ok
 
