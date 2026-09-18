@@ -324,31 +324,68 @@ def section1_survey():
 
 # ── §3  PRF seed-distribution uniformity (work item 2) ──────────────────────
 
+# The gate below is ONE-SIDED and REPLICATED (TODO #300).  It was `abs(z) < 3`
+# against a fresh os.urandom seed every run, and that is wrong twice over.
+#
+# TWO-SIDED ON A ONE-SIDED CLAIM.  The finding being defended is "no bias was
+# detected".  Only a chi-square that is too LARGE is evidence against it; one
+# that is too small means the sample came out more uniform than chance, which
+# is evidence FOR the claim.  Measured over 200 independent samples the gate
+# fired exactly once, at z = -3.66 -- the left tail.  The one observed failure
+# mode of this gate was the sampler looking too good.
+#
+# AND FLAKY.  Two-sided 3-sigma is about one run in 370 by construction; the
+# measurement above saw 1 in 200, consistent with that (the normal
+# approximation to chi-square is skewed at this dof, which is also why the
+# median sits at -0.43 rather than 0).  That is #299's defect again.
+#
+# So: trigger on the upper tail only, and confirm an exceedance against a
+# second independent sample, as #299 prescribes.  1.4e-3 -> about 4.6e-9, with
+# power untouched -- a sampler with a real bias puts chi-square far above the
+# threshold in every sample, not one in 200.
+_PRF_TRIGGER = 3.0      # one-sided, first sample
+_PRF_CONFIRM = 4.5      # one-sided, second sample
+
+
+def _prf_chi2_z(prf_seed_bytes, r, d, keys):
+    """One independent sample: the chi-square z-score of the support counts."""
+    counts = [0] * r
+    prf = NlFscxPrf(prf_seed_bytes)
+    for _ in range(keys):
+        for j in prf.sparse_support(r, d):
+            counts[j] += 1
+    expect = keys * d / r
+    chi2 = sum((c - expect) ** 2 / expect for c in counts)
+    dof = r - 1
+    return chi2, dof, (chi2 - dof) / math.sqrt(2 * dof)
+
+
 def section3_prf_uniformity(r=523, d=15, keys=400):
     print(SEP)
     print(f"§3  NL-FSCX PRF seeding uniformity (work item 2) — {keys} keygens, r={r}, d={d}")
     print()
-    counts = [0] * r
-    prf = NlFscxPrf(os.urandom(32))
-    for _ in range(keys):
-        for j in prf.sparse_support(r, d):
-            counts[j] += 1
+    chi2, dof, z = _prf_chi2_z(os.urandom(32), r, d, keys)
     total = keys * d
     expect = total / r
-    chi2 = sum((c - expect) ** 2 / expect for c in counts)
-    dof = r - 1
-    # normal approximation of chi-square tail: z = (chi2 − dof)/sqrt(2·dof)
-    z = (chi2 - dof) / math.sqrt(2 * dof)
     print(f"  support positions sampled: {total}  (expected {expect:.1f} per position)")
     print(f"  chi-square = {chi2:.1f}  (dof = {dof}),  z-score = {z:+.2f}")
-    verdict = "PASS (consistent with uniform)" if abs(z) < 3 else "FAIL (non-uniform!)"
+    ok = z < _PRF_TRIGGER
+    if not ok:
+        print(f"  z is above +{_PRF_TRIGGER} — confirming against a second "
+              f"independent sample")
+        chi2b, _, z2 = _prf_chi2_z(os.urandom(32), r, d, keys)
+        ok = z2 < _PRF_CONFIRM
+        print(f"  second sample: chi-square = {chi2b:.1f},  z = {z2:+.2f}  "
+              f"({'below' if ok else 'ABOVE'} +{_PRF_CONFIRM})")
+    verdict = ("PASS (consistent with uniform)" if ok else
+               "FAIL (non-uniform in two independent samples!)")
     print(f"  {verdict}")
     print()
     print("  The QCSD hardness assumption needs (h0, h1, e) indistinguishable")
     print("  from uniform sparse vectors; rejection sampling from the NL-FSCX")
     print("  counter-mode XOF gives exact uniformity per index, so any bias")
     print("  would have to come from the XOF itself — none detected.")
-    return abs(z) < 3
+    return ok
 
 
 # ── §4  BGF decoder DFR measurement (work item 3) ───────────────────────────

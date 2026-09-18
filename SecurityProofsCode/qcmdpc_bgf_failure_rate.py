@@ -152,6 +152,30 @@ def main():
         print("below what any sample can see.  See the module docstring, and "
               "qcmdpc_dfr_weak_keys.py")
         print("§2-§4 for the analysis that survives at these parameters.")
+
+    # THE GATE, added by TODO #300.  Until then main() had a single `return 0`:
+    # the runner DISCOVERED this file (it ends in sys.exit(main())), ran it for
+    # about a minute of every CI run, and a red result was impossible.  That is
+    # the inverse of the flake #299 fixed and the same vacuous pass TODO #234
+    # found in the Arduino harness -- a gate that cannot fail is not a gate, and
+    # this one had been sitting inside the job #289 built on the premise that a
+    # red run means something.
+    #
+    # There IS something falsifiable here, which is why this is a gate rather
+    # than a NON_GATING declaration.  At BIKE-128 no trial count reaches the DFR
+    # (#285 §2), so a failure at this sample size is not a DFR event: it is a
+    # DECODER REGRESSION.  The false-failure rate is trials x DFR, i.e. 400 x
+    # 2^-128, which is zero for every purpose -- and the power is total, because
+    # any change that breaks decoding shows up on the first trial, not the
+    # millionth.  What this cannot see is the rate itself, and that limit is the
+    # whole subject of the docstring above.
+    if failures:
+        print()
+        print(f"*** FAILED: {failures} decoding failure(s) in {args.trials} "
+              f"trials at parameters where the expected count is ~0 ***")
+        print("    At BIKE-128 a failure at this sample size is a decoder "
+              "regression, not a DFR event.")
+        return 1
     return 0
 
 

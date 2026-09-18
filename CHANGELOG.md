@@ -2,6 +2,73 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.0.1] - 2026-09-18
+
+### Fixed
+- TODO #300: `hfscx_256_analysis.py` §1 and §2 gated `|mean − 128| < 3·SE`
+  against a fresh `os.urandom` sample every run — a two-sided 3-sigma test that
+  a correct hash fails about one run in 370 by construction.  That is TODO
+  #299's defect, in #299's own file, one section over, left behind because §3
+  was the one that happened to fire.  Both are now REPLICATIONS on #299's
+  pattern (trigger at 3·SE, confirm a second independent sample at 4.5·SE),
+  taking each from 2.7e-3 to 1.9e-8.  The null was measured first: 24 blocks of
+  5,000 trials gave z in [−1.50, +1.84], median 0.33, none past 2 sigma, so the
+  hash is fine and the failures were pure tail.  Power is untouched — the flip
+  count is Binomial(256, 1/2), so a hash whose avalanche mean is off by a single
+  bit sits at z = 8.8 in every sample.
+- TODO #300: `qc_mdpc_bgf_prototype.py` §3 gated `abs(z) < 3` on a chi-square of
+  the PRF's support sampling, drawn fresh every run, and was wrong two ways.
+  Flaky, at about one run in 200 measured over 200 independent samples.  And
+  **two-sided on a one-sided claim**: the finding defended is "no bias was
+  detected", so only an over-large chi-square is evidence against it — and the
+  single exceedance in those 200 samples was z = −3.66, the left tail, the
+  sampler looking *too* uniform.  The gate's one observed failure mode was
+  evidence *for* the finding it defends.  Now one-sided and replicated at
+  4.6e-9, with a negative control (a sampler missing 10% of positions) scoring
+  z = +20.85 in both samples.
+- TODO #300: `qcmdpc_bgf_failure_rate.py` could not fail.  `main()` had a single
+  `return 0`, so the runner discovered it (it ends in `sys.exit(main())`), ran
+  it for about a minute of every CI run, and a red result was impossible — the
+  inverse of the flake above, and the same vacuous pass TODO #234 found in the
+  Arduino harness, sitting inside the job TODO #289 built on the premise that a
+  red run means something.  It now gates on `failures == 0`, which is real
+  rather than a `NON_GATING` declaration: at BIKE-128 no trial count reaches the
+  DFR (#285 §2), so a failure at 400 trials is a DECODER REGRESSION, not a DFR
+  event.  False-failure rate 400 × 2^-128; power total; negative control (a
+  decoder stubbed to return `None`) exits 1.
+
+### Added
+- TODO #300: `SAMPLED_GATES` and `check_sampling` in
+  `SecurityProofsCode/run_findings_gates.py` — the census of which gates decide
+  a verdict from a fresh random sample.  It lives in the runner rather than in a
+  new script so it cannot drift from `discover()`.  Derived half: a gating
+  script draws fresh entropy if it uses `os.urandom`, `secrets`,
+  `random.Random()` unseeded, or module-level `random.*` without a literal
+  `random.seed(...)`.  **25 of the 74 do; of the rest, 43 draw only from a
+  literal seed and 6 draw no randomness at all, so neither can flake** — two thirds of the gate set was never at risk,
+  which is most of the answer.  Curated half: four verdict codes — `exact` (10),
+  `negligible` (10), `replicated` (3), `follows` (2) — each entry carrying a
+  derived rate or a stated argument, counted separately in the runner's banner
+  so the distinction cannot quietly erode.  Self-invalidating in both directions
+  like `EXCLUDED` and `NON_GATING`.  Six negative controls, all firing.
+- TODO #300: the runner now prints the job's nominal false-failure rate every
+  run — **5.4e-5**, against a stated budget of 1e-3.  The number #289's premise
+  rests on, computed rather than assumed, and dominated entirely by #299's own
+  replicated chi-square at 5e-5 (everything else together is about 4e-6).
+- TODO #300: a fourth tool-emitted count in `check_docs_consistency.py`'s check
+  E, so CLAUDE.md's "25 of the 74" is held to the tool that prints it rather
+  than to a hand count.
+
+### Changed
+- TODO #300: the flake budget is a **job-level** bound, not a per-gate one, and
+  that is a correction to #300's own framing.  The item asked for a per-gate
+  rule ("slack enough that the rate is negligible"); the first draft implemented
+  one at 1e-6 and immediately flagged three gates at 1.2e-6 — one run in
+  860,000.  A per-gate bound is a constant somebody picks, and picking it to
+  make the current table pass is the vacuous-threshold failure mode #300's own
+  third rule warns about.  What the premise rests on is the rate of the whole
+  job, so that is what is bounded.
+
 ## [8.0.0] - 2026-09-17
 
 **BREAKING (wire/CLI surface): HPKS-Stern-F signatures produced before 8.0.0 no

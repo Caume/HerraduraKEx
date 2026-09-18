@@ -1817,6 +1817,38 @@ member), so a simulator regression fails the existing round-trip tests, and a ca
 asserting it would pass vacuously. The remaining hiding assertion -- a revealed view
 carries no more than the protocol allows -- is TODO #301, still OPEN.
 
+**And how often a green run is green by luck, which is what makes the rest of it
+worth anything (TODO #300).** #299 fixed one gate that failed one CI run in twenty and
+filed the obvious next question: how many of the others decide a verdict the same way?
+The census is in `run_findings_gates.py`'s `SAMPLED_GATES`, beside `EXCLUDED` and
+`NON_GATING` and self-invalidating like both. **25 of the 74** decide a verdict from a
+fresh random sample; of the rest, 43 draw only from a literal seed and 6 draw no
+randomness at all, so they reproduce run to run and cannot flake. Four things worth knowing. (1) SAMPLING IS NOT THE
+DEFECT -- deciding on a fresh sample against a FIXED threshold is.
+`stern_ring_challenge_bias.py` draws from `os.urandom` and gates on
+`counts == [86, 85, 85]`, which is arithmetic; `nl_fscx_sparse_circuit.py` samples 300
+differences per order and gates on an EXHAUSTIVE degree computation, having had its
+sampled row left ungated by #291 for this exact reason. Both are `exact`. (2) The budget
+is a JOB-level number, not a per-gate one. A per-gate bound is a constant somebody picks,
+and the first draft of this check picked 1e-6 and then flagged three gates at 1.2e-6 --
+one run in 860 000, a defect only against an arbitrary line. What #289's premise rests on
+is the rate of the whole job: **5.4e-5 per run**, dominated ENTIRELY by #299's own
+replicated chi-square at 5e-5, with everything else together at about 4e-6. (3) Every
+entry carries a derived RATE or a stated ARGUMENT, and the two are counted separately in
+the runner's banner so the distinction cannot quietly erode -- because #300's own third
+rule is that slack wide enough never to fire is TODO #234's vacuous pass, so "the
+threshold is generous" is not by itself an answer. (4) THE CENSUS FOUND THREE, all fixed
+in v8.0.1, and the third is the one to remember. `hfscx_256_analysis.py` §1 and §2 gated
+`|mean-128| < 3.SE` on a fresh sample -- #299's defect, in #299's own file, one section
+over, left because §3 was the one that happened to fire. `qc_mdpc_bgf_prototype.py` §3
+gated `abs(z) < 3` on a fresh chi-square and was wrong TWICE: flaky at about 1 run in 200
+measured, and two-sided on a one-sided claim -- its single observed failure across 200
+samples was z = -3.66, the sampler looking TOO uniform, so the gate's one real failure
+mode was evidence FOR the finding it defends. And `qcmdpc_bgf_failure_rate.py` was the
+inverse error and the worst of the three: `main()` had a single `return 0`, so the runner
+discovered it, ran it every CI run, and it could not go red. A gate that cannot fail is
+not a gate, and that one sat inside this job from #289 until #300 looked.
+
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
 surface under the repo's Security tab rather than as a required check.
