@@ -19195,3 +19195,87 @@ verdict code, a `negligible` entry with neither rate nor argument, and the job
 budget exceeded.
 
 Status: **DONE v8.0.1** — 25 of 74 gates decide from a fresh sample, the job's flake budget is 5.4e-5 per run, and the census found two flaky gates and one that could not fail at all.
+
+### #301: a revealed view must carry no more than the protocol says it may
+
+TODO #298 wrote the first two of the three hiding assertions it scoped — no
+structural marker separates a simulated member from the real one, and the signer
+index is not recoverable by the obvious statistics — and deliberately left the
+third.  This is it.
+
+**The assertion.**  For ZKBoo and ZKB++ the two revealed party views must not
+determine the third; for Stern a `b = 1` response must not determine `y`; for
+KKW an opened pre-processing emulation must not determine the online one.  These
+are checkable lengths-and-supports statements rather than indistinguishability
+arguments, which is why they are testable at all.
+
+**Why it is a separate item and not #298's third section.**  The useful
+statement is DIFFERENT for each of the six protocols, and #298's own scoping
+note is the reason to keep them apart: a shared harness over all six converges
+on the weakest assertion they have in common, which is completeness again.  Each
+of these wants its own dozen lines against its own protocol.
+
+**What #298 established that this one inherits.**  A hiding test needs a
+NEGATIVE CONTROL that fires, or it is TODO #234's vacuous pass one layer out —
+`stern_f_weight_binding.py` §3 is the shape to copy.  And where the assertion
+can be made an invariant the VERIFIER enforces, prefer that: #298's anonymity
+half became self-enforcing, and a test asserting what the verifier already
+checks passes vacuously.
+
+Start with ZKBoo, where "two views must not determine the third" is the sharpest
+of them and where the shares are already materialised in the proof object.
+
+**THE ASSERTION, MADE A COUNT.**  The statement is testable because it is a claim
+about the SIZE OF A SET: the witness is n bits, so at the demo width every
+candidate can be ENUMERATED and checked against the revealed views.  A correct
+construction leaves ALL of them.  `SecurityProofsCode/zkboo_view_hiding.py`
+measures it, and the answer is that the revealed pair narrows the witness by
+**exactly zero bits** — 256/256 at n = 8, 4096/4096 at n = 12, unchanged with 32
+rounds opened.  No defect in the shipped code.
+
+**WHERE THE HIDING LIVES, which is the part worth keeping.**  It is ONE TERM.
+Party e+1's AND gate has both operands revealed, so it is fully determined and is
+what the verifier CHECKS.  Party e+2's `+1` neighbour IS the hidden party, so its
+revealed `and_out` carries `a_e` and `c_e` — and the only thing between an
+observer and those bits is `r_{p+1}`, a tape bit of the party that was never
+opened.  Delete that term from `_zkp_nl_evaluate_circuit` and the transcript
+starts naming the witness.
+
+**THE CONTROL IS THE TEST, and two drafts of it were wrong.**  The first broke
+only the CHECKER, which made the control fire by excluding the true witness —
+i.e. it measured the checker disagreeing with the proof it was checking, not a
+leak.  The second broke the prover's cross-party mask and still did not leak,
+because `c_e` remains masked by the hidden party's OWN tape bit; that one taught
+the actual mechanism.  The control that works makes the mask bits KNOWN (a PRG
+stuck at a constant): the candidate set collapses to 4/256 — six bits — **with
+the true witness still inside**, which is the property that separates a real leak
+from a broken checker and is now asserted in §3.
+
+**PYTHON-ONLY ON PURPOSE**, where #298 needed a test in four ports, and the
+reason is checkable rather than asserted: the masking term is pinned BYTE-EXACTLY
+by `KAT/operation_replay.json`'s `zkp_nl_prove` row, whose expected
+`view_p1`/`view_p2` carry the packed gate outputs.  A port that drops it fails
+that vector in C, Go, Java and Python alike.  §4 re-derives the row with the term
+removed and checks the bytes move, so the coverage claim is demonstrated.  All
+four ports were separately read and all four carry `^ ri[p] ^ ri[p1]`.
+
+**WHAT IT FOUND IN #300, one item old.**  #301's own gate samples only through
+the suite — `zkp_nl_keygen`, `zkp_nl_prove` — and #300's census read each
+script's OWN source for `os.urandom`/`secrets`/`random.*`.  So the census was
+blind to the very script that exposed it, and to two others:
+`qcmdpc_dfr_weak_keys.py` (suite `qcmdpc_keygen`/`encap`) and
+`rnl_parameter_selection.py`, which #300 had classified as drawing NO randomness
+at all.  The detector now closes over the suite's internal call graph — 28 of 222
+suite functions draw fresh entropy transitively — and flags a gating script that
+calls one.  DERIVED, not listed: a crude "calls something named keygen" regex
+flagged seven, four of them locally-defined helpers taking a seeded `rng`; the
+call-graph version finds exactly the three that are real.  The census is now 28
+of 75, and its seven negative controls all still fire.
+
+**NOT IN THIS ITEM, deliberately.**  ZKB++ opens SEEDS rather than views — a
+different exposure surface with its own `aux` field — and KKW opens a
+pre-processing emulation.  Each wants its own dozen lines against its own
+protocol, which is #298's scoping note and the whole reason #301 exists
+separately.  Filed as **TODO #302**.
+
+Status: **DONE v8.0.2** — the revealed pair of ZKBoo views narrows the witness by exactly zero bits, measured by enumeration with a control that collapses it to six, and #301's own gate exposed a blind spot in #300's census one item old.

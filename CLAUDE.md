@@ -803,6 +803,35 @@ SecurityProofsCode/                                 — standalone Python proof/
                               footers, README, CLAUDE.md, KATEX_RULES.md) agrees with
                               SecurityProofs.md, and that the advertised expression
                               counts match what validate_katex.js measures (TODO #231)
+  zkboo_view_hiding.py      — what a ZKBoo transcript carries, and the last
+                             of TODO #298's three hiding assertions (TODO
+                             #301).  The two revealed party views must not
+                             determine the third, and that is testable because
+                             it is a claim about the SIZE OF A SET: at the demo
+                             width every candidate witness can be ENUMERATED.
+                             Measured: the revealed pair narrows the witness by
+                             EXACTLY ZERO bits (256/256 at n=8, 4096/4096 at
+                             n=12, unchanged at 32 rounds opened).  READ THIS
+                             BEFORE TOUCHING _zkp_nl_evaluate_circuit: the
+                             hiding rests on ONE TERM.  Party e+1's AND gate has
+                             both operands open and is what the verifier checks;
+                             party e+2's `+1` neighbour IS the hidden party, so
+                             its revealed and_out carries a_e and c_e, and the
+                             only mask is r_{p+1}, a tape bit of the party never
+                             opened.  §3's control makes those bits known (a PRG
+                             stuck at a constant) and the candidate set collapses
+                             to 4/256, six bits, with the true witness still
+                             inside -- that last part is what separates a real
+                             leak from a checker disagreeing with its prover, and
+                             two earlier drafts of the control failed exactly
+                             there.  PYTHON-ONLY ON PURPOSE: the masking term is
+                             pinned byte-exactly by KAT/operation_replay.json's
+                             zkp_nl_prove row, so a port that drops it fails that
+                             vector in all four languages, and §4 demonstrates
+                             that rather than asserting it.  ZKB++ and KKW are
+                             deliberately out of scope -- #298's note that a
+                             shared harness converges on completeness again.
+                             Exits non-zero if a finding stops reproducing
   run_findings_gates.py     — runs every findings-gating script here, and is what
                               CI's `analysis-findings` job invokes (TODO #289).
                               DISCOVERS its set rather than reading a list: a
@@ -1724,7 +1753,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; `cont
 error: true` for now, on the `arduino` job's TODO #185 route). Locally, run the same
 scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 74
+**The findings gates, and why they are a job rather than a step (TODO #289).** 75
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -1751,7 +1780,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **74
+backs the security documents rather than the one that tests the code. It is now **75
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.
@@ -1821,9 +1850,9 @@ carries no more than the protocol allows -- is TODO #301, still OPEN.
 worth anything (TODO #300).** #299 fixed one gate that failed one CI run in twenty and
 filed the obvious next question: how many of the others decide a verdict the same way?
 The census is in `run_findings_gates.py`'s `SAMPLED_GATES`, beside `EXCLUDED` and
-`NON_GATING` and self-invalidating like both. **25 of the 74** decide a verdict from a
-fresh random sample; of the rest, 43 draw only from a literal seed and 6 draw no
-randomness at all, so they reproduce run to run and cannot flake. Four things worth knowing. (1) SAMPLING IS NOT THE
+`NON_GATING` and self-invalidating like both. **28 of the 75** decide a verdict from a
+fresh random sample; the rest draw only from a literal seed or draw nothing at all, so
+they reproduce run to run and cannot flake. Four things worth knowing. (1) SAMPLING IS NOT THE
 DEFECT -- deciding on a fresh sample against a FIXED threshold is.
 `stern_ring_challenge_bias.py` draws from `os.urandom` and gates on
 `counts == [86, 85, 85]`, which is arithmetic; `nl_fscx_sparse_circuit.py` samples 300
@@ -1848,6 +1877,31 @@ mode was evidence FOR the finding it defends. And `qcmdpc_bgf_failure_rate.py` w
 inverse error and the worst of the three: `main()` had a single `return 0`, so the runner
 discovered it, ran it every CI run, and it could not go red. A gate that cannot fail is
 not a gate, and that one sat inside this job from #289 until #300 looked.
+
+**And what a revealed view carries, which is the last of #298's three (TODO #301).**
+#298 scoped three hiding assertions and wrote two; this is the third, at the protocol it
+said to start with. For ZKBoo the statement is that THE TWO REVEALED PARTY VIEWS MUST NOT
+DETERMINE THE THIRD, and it is testable because it is a claim about the SIZE OF A SET: the
+witness is n bits, so at the demo width every candidate can be ENUMERATED and counted.
+`SecurityProofsCode/zkboo_view_hiding.py` does that. Result: the revealed pair narrows the
+witness by **exactly zero bits** -- 256/256 at n = 8 and 4096/4096 at n = 12, unchanged at
+32 rounds opened. Three things to know before touching `_zkp_nl_evaluate_circuit`. (1)
+WHERE THE HIDING LIVES is one term. Party e+1's AND gate has both operands open and is what
+the verifier checks; party e+2's `+1` neighbour IS the hidden party, so its revealed
+`and_out` carries a_e and c_e, and the only thing between an observer and those bits is
+`r_{p+1}` = a tape bit of the party that was never opened. Delete that one term and the
+transcript starts naming the witness. (2) THE CONTROL IS THE TEST. A PRG stuck at a
+constant makes those mask bits known, and the candidate set collapses to 4/256 -- six bits
+-- with the true witness still inside, which is what distinguishes a real leak from a
+checker that simply disagrees with the prover. Two earlier drafts of that control fired for
+the wrong reason and were thrown away; a hiding test whose control fires by excluding the
+true witness is measuring its own bug. (3) IT IS PYTHON-ONLY ON PURPOSE, where #298 needed
+four ports: the masking term is pinned BYTE-EXACTLY by `KAT/operation_replay.json`'s
+`zkp_nl_prove` row, whose expected `view_p1`/`view_p2` carry the packed gate outputs, so a
+port that drops it fails that vector in all four languages. §4 demonstrates that rather
+than asserting it. ZKB++ (which opens SEEDS, a different exposure surface) and KKW are NOT
+in this item, for #298's reason: a harness spanning all three converges on completeness
+again.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
