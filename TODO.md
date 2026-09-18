@@ -131,60 +131,6 @@ Status: **OPEN**
 
 ---
 
-### #298: every zero-knowledge test asserts completeness and soundness, and none asserts hiding
-
-TODO #297 found a ring signature that identified its own signer — the `b = 0`
-dummy commitment was a constant in the C and Go ports, so the real signer was the
-one ring member whose rounds never carried it, readable straight off the public
-signature.  It shipped for the life of both ports, and the reason it shipped is
-worth more than the bug.
-
-**What every existing test of these protocols checks.**  The suite has Stern-F,
-Stern-F ring, ZKP-NL ZKBoo, ZKBoo++, the Ring-LWR Σ-protocol and HCRED-KKW, and
-each is covered — numbered tests [44], [45], [50], the 4×4 matrices in
-`test_zkp_hybrid_family.sh`, `KAT/hcred_kkw.json`'s tamper table, and now
-`KAT/operation_replay.json`.  Every one of those asserts **completeness** (an
-honest transcript verifies) or **soundness** (a tampered one does not).  Not one
-asserts the **hiding** property: that the transcript does not reveal the witness,
-the signer, or which member was simulated.  So the defect #297 found was not
-missed by a weak test — it was outside what any of them assert, and a ring
-signature with zero anonymity passes all of them by construction.
-
-**Why this is not the same item as #297.**  The operation replay pins what the
-four ports produce and holds them against each other, which is how the constant
-surfaced — but only because a HUMAN read the four implementations side by side.
-Had all four hashed two zeros, every port would have agreed, the vector would have
-pinned the agreed-upon constant, and the axis would be green forever.  A
-cross-port check cannot see a property all four get wrong; that is the class this
-item is about, and it is the same shape as #277's 3-1 byte-order split surviving
-because nothing asked one port to reproduce another's expansion.
-
-**What a hiding test can actually assert**, since the strong statement (a
-simulator's output is computationally indistinguishable) is not something a test
-harness proves.  Three falsifiable things it can:
-
-1. **No structural marker distinguishes a simulated member from the real one.**
-   For a ring signature, tally each commitment field across members and rounds: a
-   value repeating across member-rounds, or a field that is constant, or a field
-   whose distribution differs between the signer's rounds and everyone else's, is
-   a finding.  This one alone catches #297's defect, and catches it in all four
-   ports at once rather than by comparison.
-2. **The signer index is not recoverable by the obvious statistics.**  Run k
-   signatures with a known signer, compute a per-member score, and assert the
-   signer is not identified above chance.  The failing form of this is loud: at
-   `rounds = 32` the pre-fix ports scored the signer correctly every time.
-3. **A revealed view carries no more than the protocol says it may.**  For ZKBoo,
-   the two revealed party views must not determine the third; for Stern, a `b = 1`
-   response must not determine `y`.  These are checkable lengths-and-supports
-   statements, not indistinguishability arguments.
-
-**Start with the ring signature**, where the defect actually was, and where (1)
-is a dozen lines.  Do NOT start by writing a general framework for all six
-protocols: the useful assertion is different for each, and a shared harness would
-converge on the weakest one they have in common, which is completeness again.
-
-Status: **OPEN**
-
 ### #300: which findings gates decide a verdict from a fresh random sample against a fixed threshold?
 
 TODO #299(b) found `hfscx_256_analysis.py` §3 gating on `chi2 < 293.2` — the
@@ -211,5 +157,36 @@ for a regression check and wrong for a distributional one.  (3) The inverse
 error is the one TODO #234 found in the Arduino harness — slack wide enough to
 never fire is a vacuous pass, so any widened threshold needs a control showing
 it still fails on a real bias.
+
+Status: **OPEN**
+
+### #301: a revealed view must carry no more than the protocol says it may
+
+TODO #298 wrote the first two of the three hiding assertions it scoped — no
+structural marker separates a simulated member from the real one, and the signer
+index is not recoverable by the obvious statistics — and deliberately left the
+third.  This is it.
+
+**The assertion.**  For ZKBoo and ZKB++ the two revealed party views must not
+determine the third; for Stern a `b = 1` response must not determine `y`; for
+KKW an opened pre-processing emulation must not determine the online one.  These
+are checkable lengths-and-supports statements rather than indistinguishability
+arguments, which is why they are testable at all.
+
+**Why it is a separate item and not #298's third section.**  The useful
+statement is DIFFERENT for each of the six protocols, and #298's own scoping
+note is the reason to keep them apart: a shared harness over all six converges
+on the weakest assertion they have in common, which is completeness again.  Each
+of these wants its own dozen lines against its own protocol.
+
+**What #298 established that this one inherits.**  A hiding test needs a
+NEGATIVE CONTROL that fires, or it is TODO #234's vacuous pass one layer out —
+`stern_f_weight_binding.py` §3 is the shape to copy.  And where the assertion
+can be made an invariant the VERIFIER enforces, prefer that: #298's anonymity
+half became self-enforcing, and a test asserting what the verifier already
+checks passes vacuously.
+
+Start with ZKBoo, where "two views must not determine the third" is the sharpest
+of them and where the shares are already materialised in the proof object.
 
 Status: **OPEN**

@@ -1092,6 +1092,16 @@ Round (repeated for soundness):
      b=2: reveal σ(y) = σ(π(e ⊕ r))    → verifier checks c₂ and weight(y)
 ```
 
+**Where the weight check lives, and why it is the whole scheme.**  Notice that exactly
+one branch checks a *weight*.  That is not incidental: finding *some* vector with
+H·e^T = s is easy — H is a matrix over GF(2) and Gaussian elimination inverts it in
+milliseconds from public data alone.  What is hard, and what the protocol must prove,
+is knowing a *low-weight* one.  A version of this protocol that checks the weight of
+the prover's own blinding vector r instead of the witness proves nothing at all, and
+that is exactly the bug TODO #298 found in this suite: every build before v8.0.0
+accepted signatures made with a Gaussian-elimination vector and no secret key.  If you
+take one thing from this section, take that the weight check is the scheme.
+
 Each round, a cheating prover survives with probability 2/3 — it can anticipate two
 of the three challenges, never all three.  After 32 rounds (the suite's demo default)
 the probability a cheater passes every check is (2/3)^32 ≈ 5.6 × 10^{-6}, which is far

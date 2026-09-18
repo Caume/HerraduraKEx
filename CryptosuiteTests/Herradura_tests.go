@@ -1671,6 +1671,7 @@ func main() {
 	testHcredKkw()
 	testQcmdpcWeakKeyScreen()
 	testQcprfSeedExpansion()
+	testSternWitnessBinding()
 
 	// Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
 	// so that `native-go` can actually fail.  There is no allow-list: the C
@@ -2221,6 +2222,136 @@ var (
 		12320, 12321, 12322,
 	}
 )
+
+// ---------------------------------------------------------------------------
+// [53] The two properties no Stern test asserted (TODO #298).
+//
+// Every other check on Stern-F and Stern-Ring here asserts COMPLETENESS (an
+// honest transcript verifies) or SOUNDNESS-BY-TAMPER (a poked one does not),
+// and neither can see either defect below.
+//
+// (a) WITNESS-WEIGHT BINDING.  The b = 0 response must bind wt(e) = t.  Until
+//     v8.0.0 the prover drew r weight-t and the verifier checked wt(sigma(r))
+//     for b = 0 and wt(r) for b = 1 -- both the prover's own BLINDING value --
+//     so nothing bound wt(e), and the statement proved was only "I know some
+//     preimage of s under H".  H is n/2 x n, so a preimage is one Gaussian
+//     elimination away from the PUBLIC key: universal forgery, no secret.  The
+//     honest signature is checked FIRST as an accept control, or a verifier
+//     that rejected everything would score the forgery case perfectly.
+//
+// (b) COMMITMENT DISTINCTNESS.  No commitment value may repeat across the
+//     member-rounds of one ring signature -- TODO #297's constant b = 0 dummy
+//     c0 stated as an invariant, so it is catchable in ONE port rather than by
+//     reading four side by side, which is what #298 is about.
+//
+// NOT tested here, deliberately: that a simulated b = 0 pair carries the same
+// wt(respA ^ respB) as a real one.  The VERIFIER checks exactly that since
+// v8.0.0, so a simulator regression fails the existing round-trip cases and a
+// case asserting it would pass vacuously.
+// ---------------------------------------------------------------------------
+
+// sternSolveSyndrome returns any e' with H·e'^T == syndrome, by Gaussian
+// elimination over GF(2).  PUBLIC data only.  Free variables stay at zero,
+// which is why the result lands near weight n/4 rather than t.
+func sternSolveSyndrome(H []*BitArray, syndrome *big.Int, n int) *big.Int {
+	rows := make([]*big.Int, len(H))
+	rhs := make([]uint, len(H))
+	for i := range H {
+		rows[i] = new(big.Int).Set(&H[i].Val)
+		rhs[i] = syndrome.Bit(i)
+	}
+	type piv struct{ col, row int }
+	pivots := []piv{}
+	row := 0
+	for col := n - 1; col >= 0; col-- {
+		sel := -1
+		for k := row; k < len(rows); k++ {
+			if rows[k].Bit(col) == 1 {
+				sel = k
+				break
+			}
+		}
+		if sel < 0 {
+			continue
+		}
+		rows[row], rows[sel] = rows[sel], rows[row]
+		rhs[row], rhs[sel] = rhs[sel], rhs[row]
+		for k := 0; k < len(rows); k++ {
+			if k != row && rows[k].Bit(col) == 1 {
+				rows[k].Xor(rows[k], rows[row])
+				rhs[k] ^= rhs[row]
+			}
+		}
+		pivots = append(pivots, piv{col, row})
+		row++
+	}
+	e := new(big.Int)
+	for _, pv := range pivots {
+		if rhs[pv.row] == 1 {
+			e.SetBit(e, pv.col, 1)
+		}
+	}
+	return e
+}
+
+func testSternWitnessBinding() {
+	fmt.Println("[53] Stern-F witness binding + ring commitment distinctness  [SECURITY]")
+	n := 64
+	t := n * SdfT / 256
+	if t < 2 {
+		t = 2
+	}
+	rounds := 12
+
+	seed, e, syn := SternFKeygen(n)
+	msg := NewRandBitArray(n)
+	honest := HpksSternFSign(msg, e, seed, rounds)
+	honestOK := HpksSternFVerify(msg, honest, seed, syn)
+
+	H := SternBuildH(seed)
+	eForged := NewBitArray(n, sternSolveSyndrome(H, syn, n))
+	solved := SternSyndrome(seed, eForged).Cmp(syn) == 0
+	offWeight := eForged.Popcount() != t
+	forged := HpksSternFSign(msg, eForged, seed, rounds)
+	forgedOK := HpksSternFVerify(msg, forged, seed, syn)
+
+	k := 3
+	ring := make([]RingKeypair, k)
+	es := make([]*BitArray, k)
+	for i := 0; i < k; i++ {
+		sd, ei, sy := SternFKeygen(n)
+		ring[i] = RingKeypair{Seed: sd, Syndrome: sy}
+		es[i] = ei
+	}
+	j := 1
+	rmsg := NewRandBitArray(n)
+	rsig := HpksSternRingSign(rmsg, es[j], j, ring, rounds)
+	ringOK := HpksSternRingVerify(rmsg, rsig, ring)
+	seen := map[string]bool{}
+	dups := 0
+	for i := 0; i < k; i++ {
+		for r := 0; r < rounds; r++ {
+			rd := rsig.Members[i].Rounds[r]
+			for _, c := range []*BitArray{rd.C0, rd.C1, rd.C2} {
+				key := c.Val.Text(16)
+				if seen[key] {
+					dups++
+				}
+				seen[key] = true
+			}
+		}
+	}
+
+	ok := honestOK && solved && offWeight && !forgedOK && ringOK && dups == 0
+	status := "FAIL"
+	if ok {
+		status = "PASS"
+	}
+	fmt.Printf("    n=%d rounds=%d  honest=%v  forged-witness wt=%d (t=%d) syndrome-matches=%v  forgery-accepted=%v\n",
+		n, rounds, honestOK, eForged.Popcount(), t, solved, forgedOK)
+	fmt.Printf("    ring k=%d verified=%v  repeated commitments=%d/%d  [%s]\n\n",
+		k, ringOK, dups, 3*k*rounds, status)
+}
 
 // [52] The QC-MDPC PRF's seed expansion (TODO #277).
 //

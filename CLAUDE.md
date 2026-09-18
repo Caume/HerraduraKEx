@@ -733,6 +733,38 @@ SecurityProofsCode/                                 — standalone Python proof/
   stern_f_round_count_resolution.py — reruns #217's uniformity statistic at
                              3M seeds, dropping the resolution floor 0.4418 ->
                              0.0588 bits and settling r=219 vs 220 (TODO #222)
+  stern_f_weight_binding.py — the two properties no Stern test asserted
+                             (TODO #298), and the item that found a UNIVERSAL
+                             FORGERY.  READ §1 FIRST if you touch the Stern
+                             verifier: the b = 0 check must be on
+                             respA XOR respB, which is wt(sigma(e)) = wt(e).
+                             Until v8.0.0 it was on respA alone -- wt(sigma(r)),
+                             the prover's own BLINDING value -- and b = 1
+                             checked wt(r), so no branch bound the witness at
+                             all.  The statement proved was "I know some
+                             preimage of s under H", and H is n/2 x n, so a
+                             preimage is one Gaussian elimination away from the
+                             PUBLIC key: a weight-67 e' signs anything, in
+                             milliseconds, with no secret.  §2 is the RING
+                             ANONYMITY half and the same root cause: with r
+                             weight-t the real y = e XOR r had weight ~2t where
+                             a simulator's dummy was uniform, so ONE b = 0 round
+                             named the signer (measured: wt(respA XOR respB)
+                             exactly t for the signer, 117-143 for every other
+                             member, k = 4, rounds = 32).  It gates an
+                             IDENTIFICATION RATE, with #299's replication rather
+                             than a fixed threshold on one sample.  §3 is the
+                             part that keeps the rest honest: both markers are
+                             re-run against the RETIRED constructions and must
+                             FIRE -- a hiding test that cannot fail is #234's
+                             vacuous pass one layer out, and the §2 control is a
+                             transcript rebuild rather than a second copy of the
+                             whole ring signer, because the STATISTIC is what is
+                             under test.  What #298 could NOT have found by
+                             comparison, and the reason it exists: all four
+                             ports drew the uniform dummy, so the operation
+                             replay pinned it green.  Exits non-zero if a
+                             finding stops reproducing
   nl_fscx_exact_trail_search.py — exact xdp+ trail bounds for NL-FSCX v1/v2
                              via SMT; rotation table; key-averaging gap
                              (TODO #214)
@@ -1274,14 +1306,14 @@ spec/                                                — machine-readable protoc
                                                       appear among that language's
                                                       censused consumers.  The census is a
                                                       NAME SET, derived from source every
-                                                      run and compared -- 24/24/27/30 in
+                                                      run and compared -- 25/25/28/31 in
                                                       C/Go/Python/Java -- so adding,
                                                       removing or renaming a randomness
                                                       consumer anywhere fails CI until
                                                       someone says whether a fixed stream
                                                       reaches it.  A set rather than a
                                                       reason per function is deliberate:
-                                                      there are 105, and a hundred prose
+                                                      there are 109, and a hundred prose
                                                       reasons rot.  TWO LIMITS, recorded
                                                       rather than asserted away.
                                                       rnl_rand_poly pins OUTPUT but not
@@ -1692,7 +1724,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; `cont
 error: true` for now, on the `arduino` job's TODO #185 route). Locally, run the same
 scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 73
+**The findings gates, and why they are a job rather than a step (TODO #289).** 74
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -1719,7 +1751,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **73
+backs the security documents rather than the one that tests the code. It is now **74
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.
@@ -1762,6 +1794,28 @@ inherent limit — it reads syntax, so it cannot see whether the helper is still
 which is #295's dead-code limit one axis over and is covered here only by
 `KAT/operation_replay.json`'s ring row. The census of which other gates compare a fresh
 sample to a fixed threshold is TODO #300, still OPEN.
+
+**And what a test asserts, which is prior to whether it runs (TODO #298).** #289,
+#290, #291 and #299 all answer questions about the gating MACHINERY. #298 asked what the
+gates and the numbered tests actually SAY, and the answer for the whole zero-knowledge
+family was: completeness (an honest transcript verifies) or soundness-by-tamper (a poked
+one does not), and nothing else. Neither can see a HIDING failure, so a ring signature
+with zero anonymity passed every round-trip, every 4x4 interop matrix and every KAT by
+construction -- which is how #297's constant dummy shipped. Writing the first hiding
+assertion found a second anonymity break **in all four ports at once** (the b = 0 and
+b = 2 simulated responses were uniform where a real signer's have weight ~2t, so ONE
+b = 0 round named the signer) and, underneath it, that **nothing bound the witness
+weight**: HPKS-Stern-F was universally forgeable from the public key by Gaussian
+elimination. Three things to carry forward. (1) A cross-port check cannot see a property
+all four ports get wrong -- that is the standing blind spot of #277, #294, #296 and #297,
+and the only exit from it is an assertion about ONE implementation. (2) A hiding test
+needs a negative control that FIRES, checked in `stern_f_weight_binding.py` §3, or it is
+#234's vacuous pass. (3) Where the property can be made an invariant the VERIFIER
+enforces, prefer that and then do NOT also assert it in a test: #298's anonymity half is
+now self-enforcing (`wt(respA ^ respB) = t` is checked on every b = 0 round of every
+member), so a simulator regression fails the existing round-trip tests, and a case
+asserting it would pass vacuously. The remaining hiding assertion -- a revealed view
+carries no more than the protocol allows -- is TODO #301, still OPEN.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
@@ -1834,6 +1888,23 @@ Whenever a TODO adds or removes a test number or CLI subcommand, re-check this s
 #  theirs directly.  All four also assert that what keygen PRODUCES the
 #  screen ACCEPTS, which no pinned vector can.  Java's counterpart is
 #  SelfTest.java's [32]
+#  [53] is TODO #298's guard for the two properties no Stern test asserted.
+#  Every other check on Stern-F and Stern-Ring asserts COMPLETENESS or
+#  SOUNDNESS-BY-TAMPER, and neither can see (a) that the verifier binds
+#  wt(e) = t, or (b) that no commitment value repeats across the member-rounds
+#  of one ring signature.  (a) builds the GAUSSIAN-ELIMINATION forgery from the
+#  PUBLIC key -- which every build before v8.0.0 accepted -- and asserts the
+#  verifier rejects it, with the honest signature checked FIRST as an accept
+#  control.  (b) is #297's constant-dummy marker stated as an INVARIANT, so it
+#  is catchable in ONE port rather than by reading four implementations side by
+#  side; it caught #297's fix having never reached this harness's own copy of
+#  the ring simulator.  Calls the SUITE rather than a local transcription, as
+#  [50] does.  NOT asserted here, deliberately: that a simulated b = 0 pair
+#  carries the same wt(respA ^ respB) as a real one -- the VERIFIER checks that
+#  since v8.0.0, so a simulator regression fails the existing round-trips and a
+#  case asserting it would pass vacuously.  Java's counterpart is
+#  SelfTest.java's [35].  Runs BEFORE fclose(urnd_fp) in the C harness, since
+#  unlike [51] and [52] it draws keys
 #  [52] is TODO #277's guard for the QC-MDPC PRF's SEED EXPANSION, and it is a
 #  four-way PINNED vector because the four languages did not agree.  C XORed
 #  the counter into the TOP four bytes of the seed where Python, Go and Java

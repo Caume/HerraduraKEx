@@ -2668,7 +2668,9 @@ static void hpks_stern_f_sign_t(SternSigT *sig, const BitArray *msg,
 
     for (i = 0; i < SDF_TEST_ROUNDS; i++) {
         BitArray items[2];
-        stern_rand_error_ba(&r[i]);
+        /* UNIFORM blinding since v8.0.0 (TODO #298): the verifier's weight
+         * check moved onto resp_a ^ resp_b, which is wt(e). */
+        ba_rand(&r[i], urnd_fp);
         ba_xor(&y[i], e, &r[i]);
         ba_rand(&pi[i], urnd_fp);
         stern_syndrome_ba(Hr[i], seed, &r[i]);
@@ -2710,11 +2712,14 @@ static int hpks_stern_f_verify_t(const SternSigT *sig, const BitArray *msg,
             if (!ba_equal(&tmp, &sig->c1[i])) return 0;
             stern_hash_ba(&tmp, &sig->resp_b[i], 1, 3);
             if (!ba_equal(&tmp, &sig->c2[i])) return 0;
-            if (ba_popcount(&sig->resp_a[i]) != SDF_T) return 0;
+            {   BitArray _xr;
+                ba_xor(&_xr, &sig->resp_a[i], &sig->resp_b[i]);
+                if (ba_popcount(&_xr) != SDF_T) return 0;   /* wt(e), #298 */
+            }
         } else if (bv == 1) {
             uint8_t Hr[SDF_SYNBYTES];
             BitArray items[2], sr2;
-            if (ba_popcount(&sig->resp_b[i]) != SDF_T) return 0;
+            /* no wt(r) check: r is uniform since v8.0.0 (TODO #298) */
             stern_syndrome_ba(Hr, seed, &sig->resp_b[i]);
             items[0] = sig->resp_a[i]; syndr_to_ba_t(&items[1], Hr);
             stern_hash_ba(&tmp, items, 2, 1);
@@ -2909,7 +2914,7 @@ static void hpks_stern_f_sign_32(SternSig32T *sig, uint32_t msg,
     for (i = 0; i < SDF32_TEST_ROUNDS; i++) {
         uint32_t items[2];
         uint16_t Hr;
-        r[i]    = stern32_rand_error();
+        r[i]    = stern32_rand_seed();   /* UNIFORM, TODO #298 */
         y[i]    = e ^ r[i];
         pi_s[i] = stern32_rand_seed();
         Hr = stern32_syndrome(seed, r[i]);
@@ -2947,11 +2952,11 @@ static int hpks_stern_f_verify_32(const SternSig32T *sig, uint32_t msg,
         if (bv == 0) {
             if (stern32_hash(0, sig->resp_a[i]) != sig->c1[i]) return 0;
             if (stern32_hash(0, sig->resp_b[i]) != sig->c2[i]) return 0;
-            if (__builtin_popcount(sig->resp_a[i]) != SDF32_T) return 0;
+            if (__builtin_popcount(sig->resp_a[i] ^ sig->resp_b[i]) != SDF32_T) return 0;
         } else if (bv == 1) {
             uint32_t sr2;
             uint16_t Hr;
-            if (__builtin_popcount(sig->resp_b[i]) != SDF32_T) return 0;
+            /* no wt(r) check -- TODO #298 */
             Hr  = stern32_syndrome(seed, sig->resp_b[i]);
             items[0] = sig->resp_a[i]; items[1] = (uint32_t)Hr;
             if (stern32_hash_n(items, 2) != sig->c0[i]) return 0;
@@ -3120,7 +3125,7 @@ static void hpks_stern_f_sign_64(SternSig64T *sig, uint64_t msg,
     for (i = 0; i < SDF64_TEST_ROUNDS; i++) {
         uint64_t items[2];
         uint32_t Hr;
-        r[i]    = stern_rand_error_64();
+        r[i]    = stern64_rand_seed();   /* UNIFORM, TODO #298 */
         y[i]    = e ^ r[i];
         pi_s[i] = stern64_rand_seed();
         Hr = stern_syndrome_64(seed, r[i]);
@@ -3158,11 +3163,11 @@ static int hpks_stern_f_verify_64(const SternSig64T *sig, uint64_t msg,
         if (bv == 0) {
             if (stern_hash_64(0, sig->resp_a[i]) != sig->c1[i]) return 0;
             if (stern_hash_64(0, sig->resp_b[i]) != sig->c2[i]) return 0;
-            if (__builtin_popcountll(sig->resp_a[i]) != SDF64_T) return 0;
+            if (__builtin_popcountll(sig->resp_a[i] ^ sig->resp_b[i]) != SDF64_T) return 0;
         } else if (bv == 1) {
             uint64_t sr2;
             uint32_t Hr;
-            if (__builtin_popcountll(sig->resp_b[i]) != SDF64_T) return 0;
+            /* no wt(r) check -- TODO #298 */
             Hr  = stern_syndrome_64(seed, sig->resp_b[i]);
             items[0] = sig->resp_a[i]; items[1] = (uint64_t)Hr;
             if (stern_hash_64_n(items, 2) != sig->c0[i]) return 0;
@@ -3340,7 +3345,7 @@ static void hpks_stern_f_sign_128(SternSig128T *sig, __uint128_t msg,
     for (i = 0; i < SDF128_TEST_ROUNDS; i++) {
         __uint128_t items[2];
         uint64_t Hr;
-        r[i]    = stern_rand_error_128();
+        r[i]    = stern128_rand_seed();   /* UNIFORM, TODO #298 */
         y[i]    = e ^ r[i];
         pi_s[i] = stern128_rand_seed();
         Hr = stern_syndrome_128(seed, r[i]);
@@ -3378,11 +3383,11 @@ static int hpks_stern_f_verify_128(const SternSig128T *sig, __uint128_t msg,
         if (bv == 0) {
             if (stern_hash_128(0, sig->resp_a[i]) != sig->c1[i]) return 0;
             if (stern_hash_128(0, sig->resp_b[i]) != sig->c2[i]) return 0;
-            if (popcount128(sig->resp_a[i]) != SDF128_T) return 0;
+            if (popcount128(sig->resp_a[i] ^ sig->resp_b[i]) != SDF128_T) return 0;
         } else if (bv == 1) {
             __uint128_t sr2;
             uint64_t Hr;
-            if (popcount128(sig->resp_b[i]) != SDF128_T) return 0;
+            /* no wt(r) check -- TODO #298 */
             Hr  = stern_syndrome_128(seed, sig->resp_b[i]);
             items[0] = sig->resp_a[i]; items[1] = (__uint128_t)Hr;
             if (stern_hash_128_n(items, 2) != sig->c0[i]) return 0;
@@ -3635,6 +3640,142 @@ static void test_fstern_range_n32(void)
          ? "     PASS — all fractions >= 60%; compression consistent with n=32 mixing\n"
          : "     NOTE — fraction(s) < 60%; compression persists at n=32;"
            " see TODO #42 Step 2\n");
+}
+
+/* ------------------------------------------------------------------------
+ * [53] The two properties no Stern test asserted (TODO #298).
+ *
+ * Every other check on Stern-F and Stern-Ring here asserts COMPLETENESS (an
+ * honest transcript verifies) or SOUNDNESS-BY-TAMPER (a poked one does not),
+ * and neither can see either defect below.
+ *
+ * (a) WITNESS-WEIGHT BINDING.  The b = 0 response must bind wt(e) = t.  Until
+ *     v8.0.0 the prover drew r weight-t and the verifier checked wt(sigma(r))
+ *     for b = 0 and wt(r) for b = 1 -- both the prover's own BLINDING value --
+ *     so nothing bound wt(e) and the statement proved was only "I know some
+ *     preimage of s under H".  H is n/2 x n, so a preimage is one Gaussian
+ *     elimination away from the PUBLIC key: universal forgery, no secret.
+ *     The honest signature is checked FIRST as an accept control, or a
+ *     verifier that rejected everything would score this case perfectly.
+ *
+ * (b) COMMITMENT DISTINCTNESS.  No commitment value may repeat across the
+ *     member-rounds of one ring signature -- TODO #297's constant b = 0 dummy
+ *     c0 stated as an invariant, so it is catchable in ONE port rather than by
+ *     reading four implementations side by side, which is what #298 is about.
+ *
+ * Calls the SUITE rather than this file's local transcription, as [50] does:
+ * a second copy of a rule under test is a second place for it to drift.
+ *
+ * NOT tested here, deliberately: that a simulated b = 0 pair carries the same
+ * wt(respA ^ respB) as a real one.  The VERIFIER checks exactly that since
+ * v8.0.0, so a simulator regression fails the existing round-trip cases and a
+ * case asserting it here would pass vacuously.
+ * ---------------------------------------------------------------------- */
+
+/* Any e' with H*e'^T == syndr, by Gaussian elimination over GF(2).  PUBLIC
+ * data only.  Free variables stay at zero, which is why the result lands near
+ * weight KEYBITS/4 rather than SDF_T. */
+static void stern_solve_syndrome(BitArray *e_out,
+                                 const BitArray H_mat[SDF_N_ROWS],
+                                 const uint8_t *syndr)
+{
+    static BitArray rows[SDF_N_ROWS];
+    static uint8_t  rhs[SDF_N_ROWS];
+    int piv_col[SDF_N_ROWS], piv_row[SDF_N_ROWS], npiv = 0;
+    int i, k, col, row = 0;
+
+    for (i = 0; i < SDF_N_ROWS; i++) {
+        rows[i] = H_mat[i];
+        rhs[i]  = (uint8_t)((syndr[i / 8] >> (i % 8)) & 1u);
+    }
+    for (col = KEYBITS - 1; col >= 0; col--) {
+        int byte = KEYBYTES - 1 - col / 8;
+        uint8_t mask = (uint8_t)(1u << (col % 8));
+        int sel = -1;
+        for (k = row; k < SDF_N_ROWS; k++)
+            if (rows[k].b[byte] & mask) { sel = k; break; }
+        if (sel < 0) continue;
+        if (sel != row) {
+            BitArray tba = rows[row]; rows[row] = rows[sel]; rows[sel] = tba;
+            { uint8_t tb = rhs[row]; rhs[row] = rhs[sel]; rhs[sel] = tb; }
+        }
+        for (k = 0; k < SDF_N_ROWS; k++) {
+            if (k != row && (rows[k].b[byte] & mask)) {
+                ba_xor(&rows[k], &rows[k], &rows[row]);
+                rhs[k] ^= rhs[row];
+            }
+        }
+        piv_col[npiv] = col; piv_row[npiv] = row; npiv++;
+        row++;
+    }
+    memset(e_out->b, 0, KEYBYTES);
+    for (i = 0; i < npiv; i++)
+        if (rhs[piv_row[i]])
+            e_out->b[KEYBYTES - 1 - piv_col[i] / 8] |=
+                (uint8_t)(1u << (piv_col[i] % 8));
+}
+
+static void test_stern_witness_binding(void)
+{
+    enum { RK = 3, RND = 12 };
+    BitArray seed, e, e_forged, msg, H_mat[SDF_N_ROWS];
+    uint8_t  syndr[SDF_SYNBYTES], syn_chk[SDF_SYNBYTES];
+    static SternSig sf_sig;
+    BitArray ring_seeds[RK], ring_e[RK], rmsg;
+    uint8_t  ring_syndrs[RK * SDF_SYNBYTES];
+    SternRingSig rsig;
+    int honest_ok, forged_ok, solved, off_weight, ring_ok, dups = 0;
+    int i, j, r, a, b, ok;
+
+    printf("[53] Stern-F witness binding + ring commitment distinctness  [SECURITY]\n");
+
+    stern_f_keygen(&seed, &e, syndr, urnd_fp);
+    ba_rand(&msg, urnd_fp);
+    stern_sig_alloc(&sf_sig, RND);
+    hpks_stern_f_sign(&sf_sig, &msg, &e, &seed, urnd_fp);
+    honest_ok = hpks_stern_f_verify(&sf_sig, &msg, &seed, syndr);
+
+    stern_build_H(H_mat, &seed);
+    stern_solve_syndrome(&e_forged, H_mat, syndr);
+    stern_syndrome_H(syn_chk, H_mat, &e_forged);
+    solved     = memcmp(syn_chk, syndr, SDF_SYNBYTES) == 0;
+    off_weight = ba_popcount(&e_forged) != SDF_T;
+    hpks_stern_f_sign(&sf_sig, &msg, &e_forged, &seed, urnd_fp);
+    forged_ok = hpks_stern_f_verify(&sf_sig, &msg, &seed, syndr);
+    stern_sig_free(&sf_sig);
+
+    for (i = 0; i < RK; i++) {
+        ba_rand(&ring_seeds[i], urnd_fp);
+        stern_rand_error_ba(&ring_e[i]);
+        stern_syndrome_ba(ring_syndrs + i * SDF_SYNBYTES,
+                          &ring_seeds[i], &ring_e[i]);
+    }
+    j = 1;
+    ba_rand(&rmsg, urnd_fp);
+    stern_ring_alloc(&rsig, RK, RND);
+    stern_ring_sign(&rsig, &rmsg, &ring_e[j], j,
+                    ring_seeds, ring_syndrs, urnd_fp);
+    ring_ok = stern_ring_verify(&rsig, &rmsg, ring_seeds, ring_syndrs);
+    /* O(m^2) over m = 3*k*rounds = 108 values; a hash set would be faster and
+     * would need a hash function this file does not otherwise have. */
+    for (a = 0; a < RK * RND * 3; a++) {
+        const BitArray *va = (a % 3 == 0) ? &rsig.c0[a / 3]
+                           : (a % 3 == 1) ? &rsig.c1[a / 3] : &rsig.c2[a / 3];
+        for (b = 0; b < a; b++) {
+            const BitArray *vb = (b % 3 == 0) ? &rsig.c0[b / 3]
+                               : (b % 3 == 1) ? &rsig.c1[b / 3] : &rsig.c2[b / 3];
+            if (ba_equal(va, vb)) { dups++; break; }
+        }
+    }
+    stern_ring_free(&rsig);
+    (void)r;
+
+    ok = honest_ok && solved && off_weight && !forged_ok && ring_ok && dups == 0;
+    printf("    rounds=%d  honest=%d  forged-witness wt=%d (t=%d) "
+           "syndrome-matches=%d  forgery-accepted=%d\n",
+           RND, honest_ok, ba_popcount(&e_forged), SDF_T, solved, forged_ok);
+    printf("    ring k=%d verified=%d  repeated commitments=%d/%d  [%s]\n\n",
+           RK, ring_ok, dups, 3 * RK * RND, ok ? "PASS" : "FAIL");
 }
 
 /* [20] HPKS-Stern-Ring (78.I): OR-composed ring signature, k=3, N=256 */
@@ -5776,6 +5917,9 @@ int main(int argc, char *argv[])
                    n_run, ok_verify, n_run, miss, all_ok ? "PASS" : "FAIL");
         }
     }
+
+    /* Must run BEFORE fclose(urnd_fp): it draws keys. */
+    test_stern_witness_binding();
 
     fclose(urnd_fp);
 

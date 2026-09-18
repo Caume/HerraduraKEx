@@ -3627,8 +3627,9 @@ hpks_stern_f_sign_32:
 hsfs_loop:
     cmp     r4, #SDF_ROUNDS
     bge     hsfs_loop_done
-    @ r = stern_rand_error_32()
-    bl      stern_rand_error_32
+    @ r = prng_next()  -- UNIFORM since v8.0.0 (TODO #298); it was
+    @ stern_rand_error_32, i.e. weight-t, which left wt(e) unbound
+    bl      prng_next
     mov     r5, r0              @ r5 = r
     @ y = e XOR r
     eor     r6, r10, r5         @ r6 = y
@@ -3825,16 +3826,14 @@ hsfv_case0:
     ldr     r1, [r3, r4, lsl #2]
     cmp     r0, r1
     bne     hsfv_fail
-    @ check wt(sr) == SDF_T
-    mov     r0, r6
+    @ check wt(sr XOR sy) == SDF_T -- this is wt(sigma(e)) = wt(e), the only
+    @ check that binds the WITNESS.  Until v8.0.0 it tested sr alone, i.e. the
+    @ prover's own blinding value (TODO #298).
+    eor     r0, r6, r7
     bl      stern_popcount_eq2
     cbz     r0, hsfv_fail
     b       hsfv_round_next
 hsfv_case1:
-    @ check wt(r) == SDF_T
-    mov     r0, r7
-    bl      stern_popcount_eq2
-    cbz     r0, hsfv_fail
     @ check hash2(1, pi, H·r^T) == c0[i]
     mov     r0, r10
     mov     r1, r7
@@ -4500,8 +4499,8 @@ hrs2_sim_loop:
     bl      stern_hash2_32
     ldr     r3, =ring0_c0
     str     r0, [r3, r4, lsl #2]
-    @ sr0 = rand_error_32()  -> respA
-    bl      stern_rand_error_32
+    @ sr0 = prng_next() -> respA   (UNIFORM since v8.0.0, TODO #298)
+    bl      prng_next
     mov     r5, r0
     ldr     r3, =ring0_respA
     str     r5, [r3, r4, lsl #2]
@@ -4511,9 +4510,10 @@ hrs2_sim_loop:
     bl      stern_hash1_32
     ldr     r3, =ring0_c1
     str     r0, [r3, r4, lsl #2]
-    @ sy0 = prng_next() -> respB
-    bl      prng_next
-    mov     r6, r0
+    @ sy0 = sr0 XOR rand_error_32() -> respB, so wt(respA XOR respB) == t
+    @ exactly as in a real signer's round (TODO #298)
+    bl      stern_rand_error_32
+    eor     r6, r5, r0
     ldr     r3, =ring0_respB
     str     r6, [r3, r4, lsl #2]
     @ c2 = hash1_32(3, sy0)
@@ -4535,7 +4535,7 @@ hrs2_sim_done:
 hrs2_commit_loop:
     cmp     r4, #SDF_ROUNDS
     bge     hrs2_commit_done
-    bl      stern_rand_error_32
+    bl      prng_next
     mov     r5, r0
     eor     r6, r10, r5
     bl      prng_next
@@ -4692,9 +4692,12 @@ hrv2_m0_loop:
     ldr     r6, [r3, r4, lsl #2]
     cmp     r5, r6
     bne     hrv2_fail
-    @ check popcount(respA) == t=2
+    @ check popcount(respA XOR respB) == t=2  (binds wt(e), TODO #298)
     ldr     r3, =ring0_respA
     ldr     r0, [r3, r4, lsl #2]
+    ldr     r3, =ring0_respB
+    ldr     r1, [r3, r4, lsl #2]
+    eor     r0, r0, r1
     bl      stern_popcount_eq2
     cmp     r0, #1
     bne     hrv2_fail
@@ -4772,6 +4775,9 @@ hrv2_b0:
     bne     hrv2_fail
     ldr     r3, =sdf_respA
     ldr     r0, [r3, r4, lsl #2]
+    ldr     r3, =sdf_respB
+    ldr     r1, [r3, r4, lsl #2]
+    eor     r0, r0, r1
     bl      stern_popcount_eq2
     cmp     r0, #1
     bne     hrv2_fail
@@ -4786,13 +4792,10 @@ hrv2_b0:
     bne     hrv2_fail
     b       hrv2_m1_next
 hrv2_b1:
-    @ popcount(respB)==2; hrBA=syn(seed,respB); c0=hash2(1,respA,hrBA); sr2=perm(respB); c1=hash1(2,sr2)
+    @ hrBA=syn(seed,respB); c0=hash2(1,respA,hrBA); sr2=perm(respB); c1=hash1(2,sr2)
+    @ (no weight check: r is uniform since v8.0.0, TODO #298)
     ldr     r3, =sdf_respB
     ldr     r8, [r3, r4, lsl #2]
-    mov     r0, r8
-    bl      stern_popcount_eq2
-    cmp     r0, #1
-    bne     hrv2_fail
     ldr     r3, =sdf_respA
     ldr     r7, [r3, r4, lsl #2]  @ pi
     mov     r0, r10

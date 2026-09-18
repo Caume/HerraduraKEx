@@ -1187,9 +1187,12 @@ def gen_operation_replay() -> dict:
     sign_seed = BitArray(n, int.from_bytes(bytes.fromhex(rows[0]["expect"]["seed"]), "big"))
     sign_syn = int.from_bytes(bytes.fromhex(rows[0]["expect"]["syndrome"]), "big")
     rounds = 6
-    # The label is chosen: the first one tried gave challenges {0, 2}
-    # only, leaving the b = 1 response branch unpinned.
-    stream = det_bytes(b"op-stern-sign-1", 1024)
+    # The label is chosen: the first one tried gave challenges {0, 2} only,
+    # leaving the b = 1 response branch unpinned, and TODO #298's move to a
+    # UNIFORM blinding value changed what each stream produces, so -1 had to be
+    # re-chosen as well.  The assert below is what makes that a re-choice
+    # rather than a silent loss of coverage.
+    stream = det_bytes(b"op-stern-sign-2", 1024)
     with _replay(stream) as st:
         with warnings.catch_warnings():
             # rounds < 219 warns by design (production soundness).  A vector is

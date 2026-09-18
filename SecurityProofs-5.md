@@ -302,6 +302,28 @@ where $\sigma_{\mathbf{e}} \in S_N$ is a fixed permutation encoding the support 
 
    $b = 2$: reveal $(\pi, \mathbf{y} \oplus \mathbf{e})$; verifier checks $\mathrm{wt}(\pi(\mathbf{y} \oplus \mathbf{e})) = t$ and the syndrome relation.
 
+**What shipped was not this, until v8.0.0 (TODO #298).**  The description above is
+textbook Stern and it is correct; the implementation had departed from it, and Theorem 17
+below is stated over the protocol described here rather than over the one that ran.  Two
+deviations, one root cause.  The prover drew its blinding value with **weight t** instead
+of uniformly, and the verifier's weight check moved with it: the `b = 0` branch checked
+the weight of the permuted blinding value and `b = 1` checked the weight of the blinding
+value itself, while `b = 2` checked no weight at all.  Every check therefore fell on the
+prover's OWN blinding value and **no branch constrained the weight of the witness**.  The
+statement actually proved was "I know some preimage of the syndrome under H", and H is an
+n/2 by n matrix over GF(2), so Gaussian elimination produces one from the PUBLIC key in
+milliseconds: signatures made with a weight-67 witness at n = 256 verified.  The reduction
+above is to SD(N, t), the problem of finding a preimage **of weight t**; without the
+weight check the reduction is to preimage-finding with no weight constraint, which is
+linear algebra.  The second deviation follows from the first: with a weight-t blinding
+value the honest revealed value in the `b = 0` and `b = 2` branches has weight about 2t
+where a ring simulator's dummy is uniform, which is the HPKS-Stern-Ring anonymity break of
+the same item.  v8.0.0 restores exactly the protocol described above — blinding value
+uniform, `b = 0` checking that the XOR of the two revealed values has weight t — and that
+single change closes both.  This is a MAJOR break of what `verify --algo hpks-stern`
+accepts; see `MIGRATING.md` section 18 and
+`SecurityProofsCode/stern_f_weight_binding.py`.
+
 Soundness error per round: $2/3$.  After $\lceil\lambda / \log_2(3/2)\rceil \approx 1.7\lambda$ rounds, soundness error $\leq 2^{-\lambda}$.  Fiat-Shamir in the quantum random oracle model [Unruh 2015] produces a non-interactive signature.  The commitment hash `_stern_hash` (SecurityProofs-6.md §11.9.9) now finalizes through HFSCX-256-DM with a per-slot domain-separation tag (ds=1 for $c_0$, ds=2 for $c_1$, ds=3 for $c_2$, ds=4 for the KEM key).  Under the ROM on HFSCX-256-DM (SecurityProofs-6.md §11.9), this provides the independent quantum random oracles required by Unruh's transform.
 
 **Theorem 17 — EUF-CMA of HPKS-Stern-F.**

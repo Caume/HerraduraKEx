@@ -2,6 +2,71 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.0.0] - 2026-09-17
+
+**BREAKING (wire/CLI surface): HPKS-Stern-F signatures produced before 8.0.0 no
+longer verify, and signatures produced by 8.0.0+ do not verify on earlier
+builds.** See `MIGRATING.md` section 18.  This is a security fix, not a format
+change: the PEM layout is byte-identical and every stored KEY is still valid —
+only the verification RULE moved, because the old one bound nothing.
+
+### Security
+- TODO #298: **HPKS-Stern-F was universally forgeable from the public key.**
+  The prover drew its blinding value `r` with weight `t` and the verifier
+  checked `wt(σ(r)) = t` for `b = 0` and `wt(r) = t` for `b = 1` — both of them
+  the prover's OWN blinding value.  Nothing anywhere bound `wt(e)`, so the
+  statement proved was "I know some preimage of `s` under `H`", and `H` is
+  n/2 × n: a preimage is one Gaussian elimination away from the public
+  `(seed, syndrome)`.  Demonstrated against the shipped suite — a weight-67 `e′`
+  derived from public data alone signs messages that verify, in milliseconds,
+  with no secret key.  Present in all seven implementations (C, Go, Python,
+  Java, ARM Thumb-2, NASM i386, Arduino) and inherited by HPKS-Stern-Ring, HCRED
+  issuance and `hybrid-rnl-stern`.  Fixed by restoring textbook Stern: `r` is
+  UNIFORM, the `b = 0` check becomes `wt(respA ⊕ respB) = wt(σ(e)) = t`, and the
+  `b = 1` weight check is deleted.
+- TODO #298: **a second HPKS-Stern-Ring anonymity break, in all four full-width
+  ports**, and the same root cause.  The `b = 0` and `b = 2` simulated responses
+  drew a uniform dummy where a real signer's are `σ(e ⊕ r)` and `e ⊕ r` of weight
+  ≈ 2t.  Measured on ONE signature at k = 4, rounds = 32: the signer's
+  `wt(respA ⊕ respB)` was exactly t = 16 on every `b = 0` round and 117–143 for
+  every other member — a single `b = 0` round names the signer with certainty,
+  where TODO #297's marker needed `1 − (2/3)^32`.  With `r` uniform the `b = 2`
+  simulator becomes a PERFECT simulation unchanged, and the `b = 0` one becomes
+  perfect by drawing `sr` uniform and `sy = sr ⊕ (weight-t)`.  This is the class
+  #298 was filed for and the one no cross-port check can reach: all four ports
+  agreed, so the operation replay of #297 pinned it green.
+- TODO #298: TODO #297's constant-dummy fix had never reached
+  `CryptosuiteTests/Herradura_tests.py`'s own transcription of the ring
+  simulator — all three dummy commitments there still hashed ZERO.  Found by the
+  new test, which is the point of stating the property as an invariant.
+
+### Added
+- TODO #298: numbered test **[53]** in C, Go and Python, and **[35]** in Java's
+  `SelfTest`, asserting the two properties no Stern test asserted: that a
+  Gaussian-elimination witness built from the public key is REJECTED (with the
+  honest signature checked first as an accept control), and that no commitment
+  value repeats across the member-rounds of one ring signature.  The second is
+  #297's marker as a per-port invariant — catchable in one port instead of by
+  reading four implementations side by side, which is what #298 is about.
+- TODO #298: `SecurityProofsCode/stern_f_weight_binding.py`, a findings gate in
+  three sections: §1 the forgery, §2 a signer-identification rate over k
+  signatures (gated with TODO #299's replication rather than a fixed threshold
+  on one sample), and §3 the NEGATIVE CONTROLS — both markers re-run against the
+  retired constructions and required to FIRE.  A hiding test that cannot fail is
+  TODO #234's vacuous pass one layer out.  Discovered automatically by
+  `run_findings_gates.py`, taking the gating set to 74.
+- TODO #301 (OPEN): the third hiding assertion #298 scoped and deliberately did
+  not write — a revealed view must carry no more than the protocol says it may.
+  Separate because the useful statement differs per protocol, and a shared
+  harness over all six converges on completeness again.
+
+### Changed
+- TODO #298: `KAT/operation_replay.json` and its generated C view re-pinned.
+  The `hpks_stern_f_sign` row's stream label had to be re-chosen as well: the
+  generator asserts the pinned stream exercises all three challenge branches,
+  and a uniform `r` changes which challenges a given stream produces — the
+  assert is what made that a re-choice rather than a silent loss of coverage.
+
 ## [7.0.16] - 2026-09-16
 
 ### Fixed

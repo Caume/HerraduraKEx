@@ -3822,7 +3822,9 @@ hpks_stern_f_sign_32:
 .hsfs_loop:
     cmp  ebp, SDF_ROUNDS
     jge  .hsfs_loop_done
-    call stern_rand_error_32
+    ; UNIFORM r since v8.0.0 (TODO #298); was stern_rand_error_32, i.e.
+    ; weight-t, which left wt(e) bound by nothing
+    call prng_next
     mov  [sdf_r_tmp + ebp*4], eax
     xor  eax, edi
     mov  [sdf_y_tmp + ebp*4], eax
@@ -3957,16 +3959,17 @@ hpks_stern_f_verify_32:
     call stern_hash1_32
     cmp  eax, [sdf_c2 + ebp*4]
     jne  .hsfv_fail
+    ; wt(sr XOR sy) == SDF_T -- that is wt(sigma(e)) = wt(e), the only check
+    ; that binds the WITNESS.  Until v8.0.0 it tested respA alone, i.e. the
+    ; prover's own blinding value (TODO #298).
     mov  eax, edx
+    xor  eax, [sdf_respB + ebp*4]
     call stern_popcount_eq2
     test eax, eax
     jz   .hsfv_fail
     jmp  .hsfv_round_next
 .hsfv_case1:
-    mov  eax, [sdf_respB + ebp*4]
-    call stern_popcount_eq2
-    test eax, eax
-    jz   .hsfv_fail
+    ; no weight check: r is uniform since v8.0.0 (TODO #298)
     mov  eax, esi
     mov  ebx, [sdf_respB + ebp*4]
     call stern_syndrome_32
@@ -4563,8 +4566,8 @@ hpks_stern_ring2_sign_32:
     xor  ecx, ecx
     call stern_hash2_32
     mov  [ring0_c0 + ebp*4], eax
-    ; sr0 = rand_error_32() -> respA
-    call stern_rand_error_32
+    ; sr0 = prng_next() -> respA   (UNIFORM since v8.0.0, TODO #298)
+    call prng_next
     mov  esi, eax
     mov  [ring0_respA + ebp*4], esi
     ; c1 = hash1_32(2, sr0)
@@ -4572,9 +4575,11 @@ hpks_stern_ring2_sign_32:
     mov  ebx, esi
     call stern_hash1_32
     mov  [ring0_c1 + ebp*4], eax
-    ; sy0 = prng_next() -> respB
-    call prng_next
+    ; sy0 = sr0 XOR rand_error_32() -> respB, so wt(respA XOR respB) == t
+    ; exactly as in a real signer's round (TODO #298)
+    call stern_rand_error_32
     mov  edi, eax
+    xor  edi, esi
     mov  [ring0_respB + ebp*4], edi
     ; c2 = hash1_32(3, sy0)
     mov  eax, 3
@@ -4592,7 +4597,7 @@ hpks_stern_ring2_sign_32:
 .hrs2_commit_loop:
     cmp  ebp, SDF_ROUNDS
     jge  .hrs2_commit_done
-    call stern_rand_error_32       ; eax = r
+    call prng_next                 ; eax = r  (UNIFORM, TODO #298)
     mov  [sdf_r_tmp + ebp*4], eax
     mov  ebx, eax
     xor  ebx, edi
@@ -4718,8 +4723,9 @@ hpks_stern_ring2_verify_32:
     call stern_hash1_32
     cmp  eax, [ring0_c1 + ebp*4]
     jne  .hrv2_fail
-    ; popcount(respA) == 2
+    ; popcount(respA XOR respB) == 2  (binds wt(e), TODO #298)
     mov  eax, [ring0_respA + ebp*4]
+    xor  eax, [ring0_respB + ebp*4]
     call stern_popcount_eq2
     cmp  eax, 1
     jne  .hrv2_fail
@@ -4767,13 +4773,14 @@ hpks_stern_ring2_verify_32:
     jne  .hrv2_fail
     jmp  .hrv2_m1_next
 .hrv2_b0:
-    ; c1=hash1(2,respA), popcount==2, c2=hash1(3,respB)
+    ; c1=hash1(2,respA), popcount(respA XOR respB)==2, c2=hash1(3,respB)
     mov  eax, 2
     mov  ebx, [sdf_respA + ebp*4]
     call stern_hash1_32
     cmp  eax, [sdf_c1 + ebp*4]
     jne  .hrv2_fail
     mov  eax, [sdf_respA + ebp*4]
+    xor  eax, [sdf_respB + ebp*4]
     call stern_popcount_eq2
     cmp  eax, 1
     jne  .hrv2_fail
@@ -4784,11 +4791,8 @@ hpks_stern_ring2_verify_32:
     jne  .hrv2_fail
     jmp  .hrv2_m1_next
 .hrv2_b1:
-    ; popcount(respB)==2; hr=syn(seed,respB); c0=hash2(1,respA,hr); sr2=perm(respB); c1=hash1(2,sr2)
-    mov  eax, [sdf_respB + ebp*4]
-    call stern_popcount_eq2
-    cmp  eax, 1
-    jne  .hrv2_fail
+    ; hr=syn(seed,respB); c0=hash2(1,respA,hr); sr2=perm(respB); c1=hash1(2,sr2)
+    ; (no weight check: r is uniform since v8.0.0, TODO #298)
     mov  eax, esi
     mov  ebx, [sdf_respB + ebp*4]
     call stern_syndrome_32     ; H·r^T
