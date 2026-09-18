@@ -58,6 +58,7 @@ Run:  python3 SecurityProofsCode/run_findings_gates.py [--quick|--full] [--list]
 """
 
 import argparse
+import ast
 import os
 import re
 import subprocess
@@ -306,6 +307,25 @@ SAMPLED_GATES = {
         "§3's soundness asserts are rejections of a wrong statement, which can "
         "pass only at the protocol's own soundness error (2^-lambda per "
         "repetition); completeness (`assert ok`) is exact"),
+    # ── found by TODO #301's widening: sampling through the SUITE ───────────
+    "zkboo_view_hiding.py": ("exact", None,
+        "Draws a fresh ZKBoo keypair and proof every run, and the verdict is a "
+        "COUNT over that proof: all 2^n candidates for the witness survive the "
+        "revealed views, for any proof.  A fresh sample changes which transcript "
+        "is enumerated, not the answer -- §3's control is what makes the count "
+        "able to move at all.  This entry is the one that found #300's blind "
+        "spot: its own script samples only through the suite"),
+    "rnl_parameter_selection.py": ("exact", None,
+        "Calls the suite's _rnl_keygen in §3 and §4, but the GATE is `worst is "
+        "None` from §2's lattice estimate, which is a deterministic computation.  "
+        "#300's first rule exactly: the script samples, the verdict does not"),
+    "qcmdpc_dfr_weak_keys.py": ("negligible", None,
+        "RESTS ON AN ARGUMENT.  §1 pins the shipped decoder against a "
+        "per-position reference (exact per drawn instance) and §6's oracle check "
+        "is exact; the sampled one is §4's multiplicity cliff against the "
+        "deployed screen bound, measured at 31-32 against a bound of 6, so the "
+        "margin is ~5x and not a few sigma.  Tighten the bound and derive the "
+        "rate"),
     # ── exact: the verdict does not depend on the draw ──────────────────────
     "stern_ring_challenge_bias.py": ("exact", None,
         "Samples, but gates on `counts == [86, 85, 85]` (arithmetic: 256 = "
@@ -351,6 +371,52 @@ SAMPLED_GATES = {
 }
 
 
+def _suite_fresh_functions():
+    """Suite functions that draw fresh entropy, TRANSITIVELY (TODO #301).
+
+    #300's detector read each script's OWN source, which misses the script that
+    calls `suite.zkp_nl_keygen()` and samples through it -- and #301's own gate
+    was the first of those, so the census was blind to the script that exposed
+    it.  Derived rather than listed: parse the suite, find the functions that
+    touch os.urandom/secrets directly, then close over the suite's internal call
+    graph.  28 of 222 at the time of writing.
+
+    A NAME SET is deliberately coarse -- it cannot tell a call whose result
+    reaches the verdict from one that does not -- but coarse in the SAFE
+    direction: a false positive costs an entry with a reason, where a false
+    negative is a gate nobody classified.  Three of the four scripts a crude
+    "calls something called keygen" regex flagged were locally-defined helpers
+    taking a seeded rng; this finds exactly the three that are real.
+    """
+    path = os.path.join(os.path.dirname(HERE), "Herradura cryptographic suite.py")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        tree = ast.parse(src)
+    except (OSError, SyntaxError):
+        return set()
+    direct, calls = set(), {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            body = ast.get_source_segment(src, node) or ""
+            if _OS_ENTROPY_RE.search(body):
+                direct.add(node.name)
+            calls[node.name] = {c.func.id for c in ast.walk(node)
+                                if isinstance(c, ast.Call)
+                                and isinstance(c.func, ast.Name)}
+    fresh, changed = set(direct), True
+    while changed:
+        changed = False
+        for fn, cs in calls.items():
+            if fn not in fresh and (cs & fresh):
+                fresh.add(fn)
+                changed = True
+    return fresh
+
+
+_SUITE_FRESH = None
+
+
 def _fresh_entropy(src):
     """Which fresh-entropy sources a script draws from, if any (TODO #300).
 
@@ -365,6 +431,16 @@ def _fresh_entropy(src):
         why.append("random.Random()")
     if _MODRAND_USE_RE.search(src) and not _MODRAND_SEED_RE.search(src):
         why.append("module random.* unseeded")
+    if not why:
+        # Indirect: sampling through the suite (TODO #301).  Only asked when
+        # nothing direct was found, since it is the more expensive test.
+        global _SUITE_FRESH
+        if _SUITE_FRESH is None:
+            _SUITE_FRESH = _suite_fresh_functions()
+        via = sorted(fn for fn in _SUITE_FRESH
+                     if re.search(r"\.\s*" + re.escape(fn) + r"\s*\(", src))
+        if via:
+            why.append("suite: " + ", ".join(via[:3]))
     return why
 
 

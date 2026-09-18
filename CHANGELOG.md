@@ -2,6 +2,46 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.0.2] - 2026-09-18
+
+### Added
+- TODO #301: `SecurityProofsCode/zkboo_view_hiding.py` — the last of the three
+  hiding assertions TODO #298 scoped, at the protocol #301 said to start with.
+  For ZKBoo the statement is that **the two revealed party views must not
+  determine the third**, and it is testable because it is a claim about the size
+  of a set: the witness is n bits, so at the demo width every candidate can be
+  ENUMERATED and checked against the transcript.  Measured: the revealed pair
+  narrows the witness by **exactly zero bits** — 256/256 at n = 8, 4096/4096 at
+  n = 12, unchanged with 32 rounds opened.  **No defect in the shipped code**,
+  and all four ports separately read and carrying the same masking term.
+  ~1.3 s at `--quick`, 5 s at full size; discovered automatically by
+  `run_findings_gates.py`, taking the gating set to 75.
+- TODO #302 (OPEN): the same assertion for ZKB++ and KKW, deliberately not
+  folded in here.  ZKB++ opens SEEDS rather than views — a different exposure
+  surface, with its own `aux` field because party 2's share is derived rather
+  than seeded — and KKW opens a pre-processing emulation.  #298's scoping note
+  is the reason: a harness spanning all three converges on completeness again.
+
+### Fixed
+- TODO #301: #300's sampling census could not see a gate that samples **through
+  the suite**.  Its detector read each script's own source for `os.urandom`,
+  `secrets` and `random.*`, so it was blind to `zkboo_view_hiding.py` — the
+  script written in this very item — and to two others:
+  `qcmdpc_dfr_weak_keys.py`, which calls the suite's `qcmdpc_keygen`/`encap`,
+  and `rnl_parameter_selection.py`, which #300 had classified as drawing **no
+  randomness at all**.  The detector now closes over the suite's internal call
+  graph (28 of 222 suite functions draw fresh entropy transitively) and flags a
+  gating script that calls one.  Derived rather than listed, and the difference
+  matters: a crude "calls something named `keygen`" regex flags seven, four of
+  them locally-defined helpers taking a seeded `rng`; the call-graph version
+  finds exactly the three that are real.  The census is now **28 of 75**, and
+  its seven negative controls all still fire.
+
+### Changed
+- TODO #301: `check_docs_consistency.py`'s check E anchor for the census count
+  no longer hardcodes the gate-set total, so the two numbers can move
+  independently without the anchor going stale.
+
 ## [8.0.1] - 2026-09-18
 
 ### Fixed

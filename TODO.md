@@ -131,33 +131,35 @@ Status: **OPEN**
 
 ---
 
-### #301: a revealed view must carry no more than the protocol says it may
+### #302: the same hiding assertion for ZKB++ and KKW
 
-TODO #298 wrote the first two of the three hiding assertions it scoped — no
-structural marker separates a simulated member from the real one, and the signer
-index is not recoverable by the obvious statistics — and deliberately left the
-third.  This is it.
+TODO #301 wrote the revealed-view assertion for ZKBoo and stopped there on
+purpose.  These two are the rest of it, and they are separate because the
+exposure surface is different in each — which is #298's scoping note and the
+reason #301 was not folded into #298.
 
-**The assertion.**  For ZKBoo and ZKB++ the two revealed party views must not
-determine the third; for Stern a `b = 1` response must not determine `y`; for
-KKW an opened pre-processing emulation must not determine the online one.  These
-are checkable lengths-and-supports statements rather than indistinguishability
-arguments, which is why they are testable at all.
+**ZKB++** opens SEEDS rather than views.  `zkp_nl_prove_pp` derives a party's
+share and tape from a 16-byte seed, so revealing two seeds reveals two shares and
+two tapes — but party 2's share is DERIVED (`s2 = A ^ s0 ^ s1`) rather than
+seeded, which is why the proof carries an `aux` field.  The assertion is the same
+shape as #301's (enumerate the witness, count survivors) but the unknowns and the
+freedom are not: what masks the hidden party's bits when a seed rather than a
+tape is the revealed object is the question to answer first.
 
-**Why it is a separate item and not #298's third section.**  The useful
-statement is DIFFERENT for each of the six protocols, and #298's own scoping
-note is the reason to keep them apart: a shared harness over all six converges
-on the weakest assertion they have in common, which is completeness again.  Each
-of these wants its own dozen lines against its own protocol.
+**KKW** opens a pre-processing emulation plus an online execution.  The statement
+is that an opened emulation must not determine the unopened online one.  That is
+a different enumeration again, and `KAT/hcred_kkw.json`'s tamper table is about
+soundness, not hiding, so nothing currently asserts it.
 
-**What #298 established that this one inherits.**  A hiding test needs a
-NEGATIVE CONTROL that fires, or it is TODO #234's vacuous pass one layer out —
-`stern_f_weight_binding.py` §3 is the shape to copy.  And where the assertion
-can be made an invariant the VERIFIER enforces, prefer that: #298's anonymity
-half became self-enforcing, and a test asserting what the verifier already
-checks passes vacuously.
+**What to copy from #301.**  The count-the-survivors shape; and above all the
+control discipline — a control that fires by excluding the TRUE witness is
+measuring the checker disagreeing with the prover, not a leak.  #301 threw away
+two drafts on exactly that.  Assert that the true witness survives the control.
 
-Start with ZKBoo, where "two views must not determine the third" is the sharpest
-of them and where the shares are already materialised in the proof object.
+**And check the cheap answer first.**  #301 turned out to need no per-port test
+because `KAT/operation_replay.json` already pins the masking term byte-exactly in
+all four languages.  Ask whether the same is true here before writing four tests:
+the ZKBoo row pins `view_p1`/`view_p2`, and whether a ZKB++ or KKW row pins the
+equivalent is a five-minute check, not an assumption.
 
 Status: **OPEN**

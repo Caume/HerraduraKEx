@@ -553,7 +553,7 @@ DOC_COUNTS = [
     ("fresh-sampling findings gates",
      ["python3", _p("SecurityProofsCode", "run_findings_gates.py"), "--list"],
      r"fresh-sampling gates: (\d+) of \d+ classified",
-     r"\*\*(\d+) of the 74\*\* decide a verdict from a\s+fresh random sample",
+     r"\*\*(\d+) of the \d+\*\* decide a verdict from a\s+fresh random sample",
      "the TODO #300 sampling census, quoted in CLAUDE.md's Testing section"),
 ]
 
