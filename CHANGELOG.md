@@ -2,6 +2,62 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.0.4] - 2026-09-19
+
+### Changed
+- TODO #304: **a `follows` gate can hide the job's dominant flake rate — and all
+  three of them did.**  TODO #300 split every sampled gate into one carrying a
+  derived RATE and one resting on a stated ARGUMENT, and counted them separately
+  "so the distinction cannot quietly erode".  The erosion ran the other way: an
+  argued entry whose rate is perfectly derivable, larger than everything the
+  banner adds up, and invisible there because `follows` entries contribute
+  nothing to the sum.  Auditing the three found that **the bar follows the
+  statistic, but the statistic's null was a MODEL and nothing had checked the
+  model.**
+  - `zkp_pqc_exploration.py` §3.5 — **the worst, at 6.0e-3 per run, one CI run in
+    167 and 111x the 5.4e-5 the job then advertised.**  Measured null over 1500
+    samples: mean 2.028 against a modelled 1.235, variance 2.093, 9 exceedances.
+    The missing term is that the cheating prover's "wrong" witness is a FIXED
+    function of the instance (`y ^ 0xFF`), so about one trial in 131 hands it a
+    genuine preimage of `y` and COMPLETENESS passes it — the trial is not a
+    cheat.  Conditioned on the trial actually being a cheat, survival is
+    518/39695 = 0.01305 against (1/3)^4 = 0.01235 and the model is intact.  Those
+    trials are now discarded rather than the band widened (TODO #302 §2's lesson:
+    structure belongs in the prediction), restoring 2.6e-4, and #299's
+    replication takes it to 6.6e-8.
+  - `zkp_pqc_exploration.py` §3.7 — **its finding was false.**  It claimed ZKB++
+    soundness "stays at (1/3)^R"; a genuine cheat survives 0 times in 39,708
+    (95% upper bound 7.5e-5 per trial, so per-round survival < 0.093).  ZKB++
+    rebinds `out_e` to the public `y`, so a wrong witness dies every round
+    regardless of the challenge, where ZKBoo's survives whenever the challenge
+    coincides.  Every acceptance the gate ever counted was the honest-proof trial
+    above, and its bar of 6 was slack enough to absorb a real regression while
+    reading PASS — TODO #234's vacuous pass wearing a soundness argument.  Now
+    `cheat == 0`, which is EXACT and cannot flake.
+  - `hybrid_credential_phi.py` §5.4 — the one whose model was RIGHT.  Measured
+    null over 60 samples: mean 3.77 against the expected 3.704, variance 3.57
+    against Poisson's 3.70, 0/60 exceedances.  A correctly calibrated 4-sigma
+    band on a mean of 3.7 still fires at 4.7e-4, which is what it did in TODO
+    #302's own gate run; replicated to 2.2e-7.
+  - `zkbpp_kkw_view_hiding.py` §2 — **TODO #302's own new entry, audited in the
+    same pass as #304 said it must be, and the one that came back SOUND.**  200,000
+    bootstrap replications over 60 pooled runs gave zero exceedances of the shipped
+    1-bit band, so its rate is an upper bound of 1e-5 rather than an estimate.  The
+    measurement also settled two things the argument could not: the unit of
+    observation really is the ROUND (between-call over within-call variance is 0.88
+    seeded, 1.27 derived — no detectable correlation, despite rounds in one call
+    sharing the witness), and the n = 8 seeded cell sits at a mean of 1.126, a
+    0.17-bit bias eating a sixth of the band and the thing to watch if the ladder
+    moves.  **No code change**: an analytic estimate put this cell at ~7e-3 and a
+    wider `max(1 bit, 5 SE)` band was drafted on the strength of it, then dropped
+    when the bootstrap refuted the estimate — retuning a gate that measures fine
+    is the same error as widening a band instead of finding the missing term.
+- TODO #304: `run_findings_gates.py` — `follows` was the one verdict code exempt
+  from the rate-or-argument rule.  It now owes both a rate and the token
+  `MEASURED`, the second because the arithmetic is only as good as the null it is
+  done against and the way to know is to sample it.  Self-invalidating in the
+  usual way: the rule fired on this item's own entry before it was fixed.
+
 ## [8.0.3] - 2026-09-18
 
 ### Added

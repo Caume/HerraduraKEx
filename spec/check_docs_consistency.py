@@ -555,6 +555,16 @@ DOC_COUNTS = [
      r"fresh-sampling gates: (\d+) of \d+ classified",
      r"\*\*(\d+) of the \d+\*\* decide a verdict from a\s+fresh random sample",
      "the TODO #300 sampling census, quoted in CLAUDE.md's Testing section"),
+    # TODO #304.  The job's nominal false-failure rate is the number #289's
+    # whole premise rests on, it is printed by the runner, and CLAUDE.md quoted
+    # it by hand -- so nothing compared them, which is the same reporting gap
+    # one layer up from the one #304 closes inside the census.  It moves
+    # whenever any gate's rate is derived or re-derived.
+    ("nominal job false-failure rate",
+     ["python3", _p("SecurityProofsCode", "run_findings_gates.py"), "--list"],
+     r"false-failure rate of the whole job: ([\d.]+e-\d+) per run",
+     r"is the rate of the whole job: \*\*([\d.]+e-\d+) per run\*\*",
+     "run_findings_gates.py's flake budget, quoted in CLAUDE.md's Testing section"),
 ]
 
 
@@ -584,11 +594,13 @@ def check_doc_counts():
             fail("E", "ANCHOR LOST -- CLAUDE.md: /%s/ no longer matches (%s)."
                       % (doc_re, why))
             continue
-        if int(claimed.group(1)) != int(got.group(1)):
+        # float() rather than int(): TODO #304 added a RATE to this table, and
+        # every count already here parses identically as a float.
+        if float(claimed.group(1)) != float(got.group(1)):
             fail("E", "CLAUDE.md says %s for the %s where %s reports %s (%s)."
                       % (claimed.group(1), label, os.path.basename(argv[-1]),
                          got.group(1), why))
-    print("  E: %d tool-emitted count(s) in CLAUDE.md checked against the tool"
+    print("  E: %d tool-emitted number(s) in CLAUDE.md checked against the tool"
           % len(DOC_COUNTS))
 
 

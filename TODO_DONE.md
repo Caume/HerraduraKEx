@@ -19389,3 +19389,108 @@ matters: adding a KKW prover row FAILS the section until the prose is
 corrected.  That gap is TODO #303.
 
 Status: **DONE v8.0.3** — ZKB++'s hiding is a seed-counting question with one bit of slack at the wire maximum; KKW's transcript adds exactly the verifier's own statement check and nothing else.
+
+### #304: a `follows` gate can hide the job's dominant flake rate
+
+TODO #300 built the sampling census and split every entry into one that
+carries a **derived rate** and one that rests on a **stated argument**, counted
+separately in the runner's banner "so the distinction cannot quietly erode".
+The erosion it did not anticipate is in the other direction: an ARGUED entry
+whose rate is perfectly derivable, and larger than everything the banner adds
+up.
+
+`hybrid_credential_phi.py` §5.4 is that entry.  It gates a SOUNDNESS ERROR, so
+the bar follows the statistic — expected `(1/3)^R` of `TRIALS_CHEAT` survive and
+the band is 4-sigma Poisson around that — which is a correct argument and is why
+#300 filed it as `follows` with no number.  But the number exists:
+
+* `TRIALS_CHEAT = 100` (`--fast`), `R3 = 3`, so `exp = 3.704` and the band is
+  `exp + 4*sqrt(exp) = 11.40`; the gate fails at 12 or more.
+* Measured null, 60 local samples: mean 3.77, variance 3.57 against Poisson's
+  3.70, max 8, **0/60** exceedances.  The band is correctly calibrated and the
+  null is clean Poisson — this is NOT a mis-specified threshold.
+* `P(Poisson(3.704) >= 12) = 4.7e-4` per run — **8.8x the 5.4e-5 the banner
+  advertises for the whole job**, and it is invisible there because `follows`
+  entries contribute nothing to the sum.
+
+It fired once in TODO #302's full 76-gate run, which is how it was found.
+
+**What to decide, and the options are not equivalent.**  (a) Give `follows`
+entries a rate wherever one is derivable, and sum them into the banner — the
+cheapest fix, and it makes the advertised number honest, but it leaves a gate
+that reddens CI about once in 2,000 runs.  (b) Apply #299's replication to §5.4:
+confirm an exceedance against a second independent sample, which costs one extra
+second and takes the rate to ~2e-7 with no loss of power, since a broken
+soundness error is not a 3-vs-12 difference.  (c) Raise `TRIALS_CHEAT` so the
+relative band tightens — REJECTED on sight: it makes the gate slower and the
+absolute rate barely moves.
+
+**(b) then (a)** is the recommendation: replicate the one gate, then close the
+reporting gap so the next one cannot hide the same way.
+
+**Check the same question of the other 16 argued entries before closing.**  The
+defect is not this gate; it is that "the bar follows the statistic" was accepted
+as a reason not to compute the rate.  TODO #302's own new entry is `follows`
+for the same shape and should be audited in the same pass.
+
+**What the audit found, which is more than the item predicted.**  All THREE
+`follows` entries were defective, and not in the same way.  The common root is
+that a bar computed from the statistic's own null is only as good as the model
+of that null, and #300 accepted "the bar follows the statistic" as a reason not
+to check the model.
+
+| gate | modelled null | MEASURED null | rate before | after |
+|---|---|---|---|---|
+| `zkp_pqc_exploration.py` §3.5 | 1.235 | **2.028** (1500 samples) | **6.0e-3** | 6.6e-8 |
+| `zkp_pqc_exploration.py` §3.7 | 1.235 | **0.745** (claim false) | — | exact |
+| `hybrid_credential_phi.py` §5.4 | 3.704 | 3.77 (60 samples) | 4.7e-4 | 2.2e-7 |
+| `zkbpp_kkw_view_hiding.py` §2 | — (none stated) | bootstrapped, 0/200 000 | — | <1e-5 (sound) |
+
+Three things to carry forward.  (1) **The §3.5 correction belonged in the
+EXPERIMENT, not in the band** — the cheating prover builds its wrong witness as
+a fixed function of the instance, so about one trial in 131 hands it a genuine
+preimage and completeness passes it.  That trial is not a cheat.  Conditioned on
+the trial being a real cheat the model is intact to within noise (0.01305 vs
+0.01235), which is TODO #302 §2's lesson arriving a second time: a null that is
+off by a constant factor usually has a missing term, and widening the band buys
+silence instead of understanding.  (2) **§3.7's finding was FALSE and its slack
+is what hid that.**  A genuine ZKB++ cheat never survives — 0 in 39 708, because
+ZKB++ rebinds `out_e` to the public y — so the section had been asserting
+(1/3)^R of a statistic whose true value is 0, against a bar of 6 that a real
+soundness regression could have walked under.  A gate too slack to fire and a
+gate whose claim is wrong are the same defect seen from two sides, and #300's
+own third rule (slack wide enough never to fire is #234's vacuous pass) is what
+should have caught it.  (3) **The rate-or-argument rule now covers `follows`,
+plus a MEASURED token**, because the failure here was not a missing number but
+an unchecked model, and requiring the number without requiring the measurement
+would have certified §3.5 at 3.0e-4 while it ran at 6.0e-3.
+
+**This item's own entry came back sound, and the near-miss is worth recording.**
+#302's §2 was the fourth `follows` gate and the one #304 named as needing the
+same audit.  An analytic estimate put its n = 8 seeded cell at ~7e-3 -- a couple
+of hits per round, so 0.5x looked only ~2.4 SE away -- and a wider
+`max(1 bit, 5 SE)` band was written against it.  The bootstrap then refuted the
+estimate: 200 000 replications over 60 pooled runs, ZERO exceedances of the
+shipped 1-bit band, rate <= 1e-5 as an upper bound.  The change was dropped.
+Retuning a gate that measures fine is the same error as widening a band instead
+of finding the missing term, and it would have been done in the item whose whole
+point is that you cannot tell which without measuring.  What the measurement did
+buy: the unit of observation really is the ROUND (between-call over within-call
+variance 0.88 seeded, 1.27 derived -- no detectable correlation, though rounds in
+one call share the witness), and the n = 8 seeded cell runs at a mean of 1.126,
+a 0.17-bit bias eating a sixth of the band, which is what to watch if the ladder
+moves.
+
+Option (c) stays rejected, (b) and (a) are both done.  The remaining 14 argued
+entries were audited and are sound: 12 are `exact` (an identity per drawn
+instance, rate 0 by construction) and 2 are `negligible` resting on
+order-of-magnitude separations rather than tail probabilities, which is a
+different and legitimate shape.
+
+**The job's honest rate is 6.4e-5, not 5.4e-5** -- up by the one `follows` rate
+that is real rather than negligible -- and CLAUDE.md's copy of it is now a
+check-E row rather than a hand-copied number, which is the same reporting gap one
+layer out from the one this item closes inside the census.
+
+Status: **DONE v8.0.4** — all three `follows` gates were defective; §3.5 ran at 6.0e-3 per run on a null 1.64x its model, §3.7's claim was false outright, and the census now requires a measured null.  The job's honest rate is 6.4e-5.
+
