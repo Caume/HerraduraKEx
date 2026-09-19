@@ -2,6 +2,84 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.0.3] - 2026-09-18
+
+### Added
+- TODO #302: `SecurityProofsCode/zkbpp_kkw_view_hiding.py` — the other two of
+  the three hiding assertions TODO #298 scoped.  #301 wrote the ZKBoo one and
+  said why these were not folded in, and the scoping note was right: neither
+  reduces to #301's enumeration.
+  - **ZKB++ reveals LESS per round than ZKBoo, which makes it harder rather
+    than easier.**  Party e+1's gate outputs are recomputed by the verifier, so
+    `gates_p2` is the only revealed gate vector — and it is exactly the one
+    whose mask is a tape bit of the party that was never opened.  Under an ideal
+    seed expansion every candidate survives (§1), so the content is one level
+    down, in the seed.
+  - **The seed budget, measured (§2).**  A 16-byte seed determines the hidden
+    party's share AND its tape, so a candidate survives only if some seed
+    supplies both.  A round constrains that seed by **2n-1** bits when the
+    hidden party is 0 or 1, and by **n-1** when it is party 2 — whose share is
+    derived (`s2 = A ^ s0 ^ s1`) rather than seeded.  Validated against
+    `2^(k-c)` at n = 4, 6 and 8 in both regimes.
+  - **The consequence is the finding.**  With k = 128 the slack is `129-2n`:
+    113 bits at the CLI default n = 8, and **one bit at n = 64, which is
+    `_ZKP_NL_MAX_N` exactly** — so at that one width ZKB++ is computationally
+    but not statistically hiding.  Not a defect and not a fix: seed-based
+    schemes are computationally ZK by construction, and reaching the excluded
+    candidates means searching 2^128 seeds.  The point is that nothing here had
+    drawn the line, or noticed that the wire bound and the seed length are one
+    bit apart.
+  - **KKW's answer is an identity, not a count (§4).**  Enumeration is
+    unavailable (the witness lives in Z_q^288) and unnecessary: every
+    hidden-party unknown is determined in one pass for any candidate —
+    `lambda_in` from `z_in`, `lambda_xy` from the sum-to-product relation (so
+    `aux` buys no freedom either way), `lambda_z` from the revealed `t` —
+    leaving exactly one residual equation, measured to be
+    `u' - u == -rho.(circuit(w') - targets)` mod q: the verifier's own statement
+    projection, a function of public data alone, and identical in every online
+    emulation, so the τ emulations are one constraint rather than τ.  The
+    constructive half solves for a **second witness the public statement cannot
+    separate** and shows the transcript cannot separate it either.
+  - **Both controls follow #301's discipline.**  A 1-byte ZKB++ seed collapses
+    256 candidates to one; a constant KKW pad makes `z_in` name the witness.
+    Both assert that the true witness is what survives — the thing that
+    separates a leak from a checker disagreeing with its prover.
+  - **The cheap answer was asked and CHECKED, not assumed (§6).**  ZKB++ is
+    covered twice over: `zkp_nl_pp_prove` (C) and `ZkpNlProvepp` (Go) call the
+    same circuit evaluators ZKBoo uses, so `KAT/operation_replay.json`'s
+    `zkp_nl_prove` row pins its masking term too, and the seed length is already
+    `check_language_parity.py`'s `zkpp-seed-bytes` PARAMETERS row.  KKW is
+    covered nowhere — `KAT/hcred_kkw.json` is verify-side by construction so no
+    port's prover is exercised, and KKW has no CLI surface so the 4×4 interop
+    matrix does not reach it.  §6 self-invalidates: adding a KKW prover row
+    fails the section until the prose is corrected.  Filed as TODO #303.
+
+### Changed
+- `SecurityProofsCode/run_findings_gates.py`: `SAMPLED_GATES` gains the new
+  script, classified `follows` — five of its six sections are exact, and §2's
+  bar follows its own statistic rather than sitting at a fixed level.  Getting
+  that section to gate honestly took three attempts and each failure is worth
+  recording, since all three are the shapes TODO #299 and #300 warn about.
+  (1) The **true witness's cell is not a random draw** — the prover's own seed
+  is inside the enumerated space, so that cell always scores a hit and inflated
+  the mean by one per round; it is excluded from the tally and counted only
+  where it belongs, in §1 and §3's survivor count.  (2) When the hidden party is
+  party 2 its share is **not** seeded, so a candidate colliding with the true
+  seed's tape pattern inherits that seed — a certain hit, which is arithmetic
+  and now sits in the prediction rather than in a wider band.  (3) The remaining
+  scatter was a **wrong unit of observation**: a round's 2^n candidates are
+  scored against one enumerated seed multiset, so they move together and are one
+  measurement, not 2^n.  Banding them as independent cells was an order of
+  magnitude too tight and flaked at about one run in three.  §2 now observes per
+  ROUND and gates the **exponent** to within 1 bit, where the two candidate
+  exponents (2n-1 against n-1) differ by n bits; the constant is reported and
+  deliberately **not** gated, because small-width combinatorics move it by
+  0.2-0.6 bits and gating that would be gating an artifact.  A cell with fewer
+  than 5 rounds is reported and not scored.  The job is now 76 gates, with the
+  nominal false-failure rate unchanged at 5.4e-5 per run.
+- `CLAUDE.md`: the gate counts (76 gating, 29 of 76 fresh-sampling), the new
+  script's entry, and a Testing section paragraph for #302.
+
 ## [8.0.2] - 2026-09-18
 
 ### Added

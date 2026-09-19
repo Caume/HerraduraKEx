@@ -832,6 +832,77 @@ SecurityProofsCode/                                 — standalone Python proof/
                              deliberately out of scope -- #298's note that a
                              shared harness converges on completeness again.
                              Exits non-zero if a finding stops reproducing
+  zkbpp_kkw_view_hiding.py  — the other two of TODO #298's three hiding
+                             assertions (TODO #302).  #301 did ZKBoo and
+                             stopped; these are separate because THE EXPOSURE
+                             SURFACE DIFFERS, which is the thing the file
+                             measures rather than assumes.  ZKB++ OPENS SEEDS:
+                             only party e+2's gate outputs are revealed (e+1's
+                             are recomputed by the verifier), so the one
+                             revealed gate vector is exactly the one masked by
+                             the unopened party's tape, and under an ideal
+                             expansion the witness is completely free.  But the
+                             hidden party's 16-BYTE SEED determines its share
+                             AND its tape, so the freedom is a COUNTING
+                             question, and §2 answers it: a round constrains
+                             that seed by 2n-1 bits when the hidden party is 0
+                             or 1, and by only n-1 when it is party 2, whose
+                             share is DERIVED (s2 = A ^ s0 ^ s1) rather than
+                             seeded.  Validated against 2^(k-c) at three widths
+                             in both regimes -- on the EXPONENT, where the
+                             alternative is n bits away, and NOT on the constant,
+                             which small-width combinatorics move by 0.2-0.6
+                             bits.  Two corrections went into the PREDICTION
+                             rather than into a wider band (the true witness's
+                             cell is not a random draw, since the prover's own
+                             seed is in the enumerated space; and a party-2
+                             pattern collision inherits that seed, worth 1.28x
+                             at 15 sigma when left out), and the unit of
+                             observation is the ROUND: a round's 2^n candidates
+                             meet ONE seed multiset and move together, so
+                             banding them as independent cells was an order of
+                             magnitude too tight and flaked at 1 run in 3.
+                             THE CONSEQUENCE IS THE FINDING:
+                             with k = 128 the slack is 129-2n, so it is 113 bits
+                             at the CLI default n = 8 and ONE BIT at n = 64,
+                             which is _ZKP_NL_MAX_N exactly.  ZKB++ stays
+                             COMPUTATIONALLY hiding there -- reaching the
+                             excluded candidates means searching 2^128 seeds --
+                             but it is not STATISTICALLY hiding, and no document
+                             here drew that line.  KKW needs no enumeration and
+                             could not have one (the witness is in Z_q^288): the
+                             observer's system is SOLVABLE IN CLOSED FORM, every
+                             hidden-party unknown determined in one pass for ANY
+                             candidate, leaving exactly one residual equation --
+                             and §4 measures what it is:
+                             u' - u == -rho.(circuit(w') - targets) mod q, the
+                             VERIFIER'S OWN STATEMENT PROJECTION, identical in
+                             every online emulation, so the tau of them are not
+                             tau independent constraints.  §4 then CONSTRUCTS a
+                             second witness the statement cannot separate (the
+                             residual is quadratic in a delta-block coefficient,
+                             degree asserted not assumed, and the true value is
+                             one root) and shows the transcript cannot separate
+                             it either.  Both controls follow #301's discipline
+                             -- a 1-byte ZKB++ seed collapses 256 candidates to
+                             the true one, a constant KKW pad makes z_in name
+                             the witness -- and BOTH ASSERT THE TRUE WITNESS
+                             SURVIVES, which is what separates a leak from a
+                             checker disagreeing with its prover.  §6 CHECKS the
+                             cross-port scope instead of asserting it: ZKB++ is
+                             covered twice over (C's zkp_nl_pp_prove calls the
+                             shared zkp_nl_eval_3p and Go's ZkpNlProvepp calls
+                             zkpNlEvalCircuit, so the zkp_nl_prove replay row
+                             pins its masking term; and the seed length, which
+                             §2 makes a security parameter, is the
+                             zkpp-seed-bytes PARAMETERS row), while KKW is
+                             covered NOWHERE -- hcred_kkw.json is VERIFY-SIDE by
+                             construction so it exercises no port's PROVER, and
+                             KKW has no CLI surface so the 4x4 matrix does not
+                             reach it.  That check is self-invalidating: adding
+                             a KKW prover row FAILS §6 until the prose is
+                             corrected.  Exits non-zero if a finding stops
+                             reproducing
   run_findings_gates.py     — runs every findings-gating script here, and is what
                               CI's `analysis-findings` job invokes (TODO #289).
                               DISCOVERS its set rather than reading a list: a
@@ -1753,7 +1824,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; `cont
 error: true` for now, on the `arduino` job's TODO #185 route). Locally, run the same
 scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 75
+**The findings gates, and why they are a job rather than a step (TODO #289).** 76
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -1780,7 +1851,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **75
+backs the security documents rather than the one that tests the code. It is now **76
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.
@@ -1850,7 +1921,7 @@ carries no more than the protocol allows -- is TODO #301, still OPEN.
 worth anything (TODO #300).** #299 fixed one gate that failed one CI run in twenty and
 filed the obvious next question: how many of the others decide a verdict the same way?
 The census is in `run_findings_gates.py`'s `SAMPLED_GATES`, beside `EXCLUDED` and
-`NON_GATING` and self-invalidating like both. **28 of the 75** decide a verdict from a
+`NON_GATING` and self-invalidating like both. **29 of the 76** decide a verdict from a
 fresh random sample; the rest draw only from a literal seed or draw nothing at all, so
 they reproduce run to run and cannot flake. Four things worth knowing. (1) SAMPLING IS NOT THE
 DEFECT -- deciding on a fresh sample against a FIXED threshold is.
@@ -1902,6 +1973,49 @@ port that drops it fails that vector in all four languages. §4 demonstrates tha
 than asserting it. ZKB++ (which opens SEEDS, a different exposure surface) and KKW are NOT
 in this item, for #298's reason: a harness spanning all three converges on completeness
 again.
+
+**And the other two of #298's three, where the surface is not the same (TODO #302).**
+#301 wrote the ZKBoo hiding assertion and said why ZKB++ and KKW were not folded in: a
+harness spanning all three converges on completeness again. `zkbpp_kkw_view_hiding.py`
+is those two, and the scoping note was right -- neither reduces to #301's dozen lines.
+Four things to carry forward. (1) **ZKB++ reveals LESS per round than ZKBoo and is
+therefore harder to reason about, not easier.** Party e+1's gate outputs are recomputed
+by the verifier, so `gates_p2` is the only revealed gate vector -- and it is exactly the
+one whose mask is a tape bit of the unopened party. Under an ideal seed expansion that
+leaves every candidate consistent, which makes #301's enumeration nearly vacuous here;
+the content is one level down. (2) **The seed is the surface.** A 16-byte seed
+determines the hidden party's share AND its tape, so a candidate survives only if some
+seed supplies both, and that is a counting question with an exact answer: 2n-1 bits of
+constraint when the hidden party is 0 or 1, n-1 when it is party 2, whose share is
+derived rather than seeded. Measured against 2^(k-c) at three widths in both regimes -- on the
+EXPONENT, which is where the claim lives and where the alternative is n bits
+away, not on the constant, which small-width combinatorics move by 0.2-0.6 bits.
+And the unit of observation is the ROUND: a round's candidates meet one seed
+multiset and move together, so banding them as independent cells was an order of
+magnitude too tight and flaked at about 1 run in 3 before it was fixed.
+With k = 128 the slack is 129-2n, which is 113 bits at the CLI default and **ONE BIT at
+n = 64 = `_ZKP_NL_MAX_N`** -- so at that one width ZKB++ is computationally but not
+statistically hiding, a line no document here had drawn. Not a defect and not a fix:
+seed-based schemes are computationally ZK by construction, and reaching the excluded
+candidates means searching 2^128 seeds. It is a property, now recorded with its
+threshold. (3) **KKW's answer is an identity, not a count**, and that is better.
+Enumeration is unavailable (the witness is in Z_q^288) and unnecessary: every
+hidden-party unknown is determined in one pass for ANY candidate -- lambda_in from
+z_in, lambda_xy from the sum-to-product relation (so `aux` buys no extra freedom either
+way), lambda_z from the revealed t -- leaving exactly one residual equation, and it is
+`u' - u == -rho.(circuit(w') - targets)`, the verifier's own statement projection.
+Identical in every online emulation, so tau emulations are ONE constraint, not tau. The
+constructive half is the part to keep: a second witness the public statement cannot
+separate, built by solving the residual's quadratic in a delta-block coefficient, which
+the transcript cannot separate either. (4) **The cross-port answer differs between the
+two, and §6 CHECKS it rather than asserting it** -- #287's withdrawn trust-model
+sentence is what an unchecked scope paragraph becomes. ZKB++ is covered twice (neither
+port carries its own circuit, so ZKBoo's replay row pins its masking term; and the seed
+length is a `PARAMETERS` row, which §2 promotes from formatting to security). KKW is
+covered nowhere: `hcred_kkw.json` is VERIFY-SIDE by construction so no port's PROVER is
+exercised, and KKW has no CLI surface so the 4x4 interop matrix does not reach it. That
+gap is filed as TODO #303, not folded in here, and §6 self-invalidates -- adding the row
+fails the section until the prose is corrected.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

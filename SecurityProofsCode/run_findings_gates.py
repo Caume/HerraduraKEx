@@ -308,6 +308,23 @@ SAMPLED_GATES = {
         "pass only at the protocol's own soundness error (2^-lambda per "
         "repetition); completeness (`assert ok`) is exact"),
     # ── found by TODO #301's widening: sampling through the SUITE ───────────
+    "zkbpp_kkw_view_hiding.py": ("follows", None,
+        "Five of its six sections are exact for zkboo_view_hiding.py's reason "
+        "(TODO #302): §1 and §3 enumerate every candidate against a fresh "
+        "transcript, §4's u' - u == -rho.(residual) is an identity mod q, §5 "
+        "is an equality, §6 reads source.  §2 is the one sampled section, and "
+        "the bar FOLLOWS the statistic rather than sitting at a fixed level: "
+        "it gates the EXPONENT of the seed-budget law to within 1 bit, where "
+        "the two candidate exponents (2n-1 against n-1) differ by n bits, so "
+        "the band is ~n-1 bits clear of the alternative at every width it "
+        "measures.  The CONSTANT is deliberately not gated -- small-width "
+        "combinatorics move it by 0.2-0.6 bits and gating that would be "
+        "gating an artifact.  Observations are per ROUND, not per candidate: "
+        "a round's candidates meet one enumerated seed multiset and move "
+        "together, and a draft that banded them as independent cells was an "
+        "order of magnitude too tight and flaked at 1 run in 3.  A cell with "
+        "fewer than 5 rounds is reported and NOT scored, because a threshold "
+        "a thin statistic always clears is #234's vacuous pass"),
     "zkboo_view_hiding.py": ("exact", None,
         "Draws a fresh ZKBoo keypair and proof every run, and the verdict is a "
         "COUNT over that proof: all 2^n candidates for the witness survive the "

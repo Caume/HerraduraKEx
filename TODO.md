@@ -131,35 +131,84 @@ Status: **OPEN**
 
 ---
 
-### #302: the same hiding assertion for ZKB++ and KKW
+### #303: pin KKW's PROVER across the four ports
 
-TODO #301 wrote the revealed-view assertion for ZKBoo and stopped there on
-purpose.  These two are the rest of it, and they are separate because the
-exposure surface is different in each — which is #298's scoping note and the
-reason #301 was not folded into #298.
+TODO #302 §6 asked #301's cheap question of both protocols and got two
+different answers.  ZKB++ is covered twice over.  KKW is covered **nowhere**,
+and the two reasons compound:
 
-**ZKB++** opens SEEDS rather than views.  `zkp_nl_prove_pp` derives a party's
-share and tape from a 16-byte seed, so revealing two seeds reveals two shares and
-two tapes — but party 2's share is DERIVED (`s2 = A ^ s0 ^ s1`) rather than
-seeded, which is why the proof carries an `aux` field.  The assertion is the same
-shape as #301's (enumerate the witness, count survivors) but the unknowns and the
-freedom are not: what masks the hidden party's bits when a seed rather than a
-tape is the revealed object is the question to answer first.
+* `KAT/hcred_kkw.json` is VERIFY-SIDE by construction — `hcred_prove_kkw`
+  draws one `os.urandom` root per emulation, so a proof is not a function of
+  its statement and regenerate-and-diff cannot work.  Every port CONSUMES that
+  vector; none is asked to PRODUCE anything.
+* KKW has no CLI surface in any language, so `test_cross_lang_matrix.sh`'s
+  HCRED block — which covers the sigma variant — never reaches it.
 
-**KKW** opens a pre-processing emulation plus an online execution.  The statement
-is that an opened emulation must not determine the unopened online one.  That is
-a different enumeration again, and `KAT/hcred_kkw.json`'s tamper table is about
-soundness, not hiding, so nothing currently asserts it.
+So the four `_hcred_kkw_pre` / `_hcred_kkw_party` implementations have never
+been compared against each other in either direction.  Numbered test [50]
+exercises each port's prover against *its own* verifier, which is exactly the
+shape that let three of the four ports ship a transcription bug under #266.
 
-**What to copy from #301.**  The count-the-survivors shape; and above all the
-control discipline — a control that fires by excluding the TRUE witness is
-measuring the checker disagreeing with the prover, not a leak.  #301 threw away
-two drafts on exactly that.  Assert that the true witness survives the control.
+**The available check is the one #296 and #297 built.**  The entropy is
+injectable — C takes a `FILE *`, Java a `SecureRandom` — so a
+`hcred_prove_kkw` row in `KAT/operation_replay.json` makes the operation
+deterministic and holds the four consumption orders against each other.  No
+new script and no CI wiring; the four consumers follow a third vector as they
+follow the second.
 
-**And check the cheap answer first.**  #301 turned out to need no per-port test
-because `KAT/operation_replay.json` already pins the masking term byte-exactly in
-all four languages.  Ask whether the same is true here before writing four tests:
-the ZKBoo row pins `view_p1`/`view_p2`, and whether a ZKB++ or KKW row pins the
-equivalent is a five-minute check, not an assumption.
+**Two things to settle first, before writing the row.**  (1) HCRED's width is
+a runtime argument in Python and Go but a compile-time constant in C and Java
+(`HCRED_N`, `Hcred.N`), which is why `hcred_kkw.json` ships two sets — so the
+replay row has the same n=256-only constraint, and one n=256 proof costs ~70 s
+in Python.  Decide whether the row is worth that before building it.  (2) What
+the row would pin is the CONSUMPTION ORDER, not the hiding property: a pad
+that is predictable in all four ports passes a cross-port vector by
+construction.  That half is #302 §4-§5's job and stays where it is — this item
+is about divergence, which is a different failure.
+
+Status: **OPEN**
+
+### #304: a `follows` gate can hide the job's dominant flake rate
+
+TODO #300 built the sampling census and split every entry into one that
+carries a **derived rate** and one that rests on a **stated argument**, counted
+separately in the runner's banner "so the distinction cannot quietly erode".
+The erosion it did not anticipate is in the other direction: an ARGUED entry
+whose rate is perfectly derivable, and larger than everything the banner adds
+up.
+
+`hybrid_credential_phi.py` §5.4 is that entry.  It gates a SOUNDNESS ERROR, so
+the bar follows the statistic — expected `(1/3)^R` of `TRIALS_CHEAT` survive and
+the band is 4-sigma Poisson around that — which is a correct argument and is why
+#300 filed it as `follows` with no number.  But the number exists:
+
+* `TRIALS_CHEAT = 100` (`--fast`), `R3 = 3`, so `exp = 3.704` and the band is
+  `exp + 4*sqrt(exp) = 11.40`; the gate fails at 12 or more.
+* Measured null, 60 local samples: mean 3.77, variance 3.57 against Poisson's
+  3.70, max 8, **0/60** exceedances.  The band is correctly calibrated and the
+  null is clean Poisson — this is NOT a mis-specified threshold.
+* `P(Poisson(3.704) >= 12) = 4.7e-4` per run — **8.8x the 5.4e-5 the banner
+  advertises for the whole job**, and it is invisible there because `follows`
+  entries contribute nothing to the sum.
+
+It fired once in TODO #302's full 76-gate run, which is how it was found.
+
+**What to decide, and the options are not equivalent.**  (a) Give `follows`
+entries a rate wherever one is derivable, and sum them into the banner — the
+cheapest fix, and it makes the advertised number honest, but it leaves a gate
+that reddens CI about once in 2,000 runs.  (b) Apply #299's replication to §5.4:
+confirm an exceedance against a second independent sample, which costs one extra
+second and takes the rate to ~2e-7 with no loss of power, since a broken
+soundness error is not a 3-vs-12 difference.  (c) Raise `TRIALS_CHEAT` so the
+relative band tightens — REJECTED on sight: it makes the gate slower and the
+absolute rate barely moves.
+
+**(b) then (a)** is the recommendation: replicate the one gate, then close the
+reporting gap so the next one cannot hide the same way.
+
+**Check the same question of the other 16 argued entries before closing.**  The
+defect is not this gate; it is that "the bar follows the statistic" was accepted
+as a reason not to compute the rate.  TODO #302's own new entry is `follows`
+for the same shape and should be audited in the same pass.
 
 Status: **OPEN**
