@@ -862,6 +862,24 @@ SecurityProofsCode/                                 — standalone Python proof/
                              meet ONE seed multiset and move together, so
                              banding them as independent cells was an order of
                              magnitude too tight and flaked at 1 run in 3.
+                             TODO #304 audited this entry -- it was filed
+                             `follows` with NO rate, which is precisely the hole
+                             that item closes -- and it came back SOUND: 200 000
+                             bootstrap replications over 60 pooled runs, ZERO
+                             exceedances of the 1-bit band, so <= 1e-5 as an
+                             upper bound.  Two things the measurement settled
+                             that the argument could not.  The unit of
+                             observation really is the ROUND: rounds inside one
+                             call share the witness, yet between-call over
+                             within-call variance is 0.88 seeded and 1.27
+                             derived, i.e. no detectable correlation.  And the
+                             n = 8 seeded cell runs at a mean of 1.126, a
+                             0.17-bit bias eating a sixth of the band, which is
+                             what to watch if the ladder ever moves.  NO code
+                             change: an analytic estimate put that cell at ~7e-3
+                             and a wider max(1 bit, 5 SE) band was drafted
+                             against it, then dropped when the bootstrap refuted
+                             the estimate.
                              THE CONSEQUENCE IS THE FINDING:
                              with k = 128 the slack is 129-2n, so it is 113 bits
                              at the CLI default n = 8 and ONE BIT at n = 64,
@@ -1932,8 +1950,10 @@ sampled row left ungated by #291 for this exact reason. Both are `exact`. (2) Th
 is a JOB-level number, not a per-gate one. A per-gate bound is a constant somebody picks,
 and the first draft of this check picked 1e-6 and then flagged three gates at 1.2e-6 --
 one run in 860 000, a defect only against an arbitrary line. What #289's premise rests on
-is the rate of the whole job: **5.4e-5 per run**, dominated ENTIRELY by #299's own
-replicated chi-square at 5e-5, with everything else together at about 4e-6. (3) Every
+is the rate of the whole job: **6.4e-5 per run** (5.4e-5 until TODO #304 derived the
+three `follows` rates that had been missing from the sum), dominated by #299's own
+replicated chi-square at 5e-5 and #302's seed-budget gate at 1e-5, with everything else
+together at about 4e-6. (3) Every
 entry carries a derived RATE or a stated ARGUMENT, and the two are counted separately in
 the runner's banner so the distinction cannot quietly erode -- because #300's own third
 rule is that slack wide enough never to fire is TODO #234's vacuous pass, so "the
@@ -2016,6 +2036,39 @@ covered nowhere: `hcred_kkw.json` is VERIFY-SIDE by construction so no port's PR
 exercised, and KKW has no CLI surface so the 4x4 interop matrix does not reach it. That
 gap is filed as TODO #303, not folded in here, and §6 self-invalidates -- adding the row
 fails the section until the prose is corrected.
+
+**And what the bar is measured against, which is what "the bar follows the statistic"
+was standing in for (TODO #304).** #300's census gave every sampled gate either a derived
+RATE or a stated ARGUMENT and counted the two separately "so the distinction cannot
+quietly erode". It eroded the other way: `follows` entries -- the ones whose threshold is
+computed FROM the statistic's own null -- contribute nothing to the banner's sum, so an
+argued gate could be the job's dominant flake source and the advertised number would not
+move. **All three `follows` entries were defective, and the common root is that the null
+was a MODEL and nothing had checked the model.** (1) `zkp_pqc_exploration.py` §3.5 ran at
+**6.0e-3 per run -- one CI run in 167, and 111x the 5.4e-5 the job then advertised** -- on a
+measured null of 2.028 against a modelled 1.235 (1500 samples). The missing term is that
+the cheating prover's wrong witness is a FIXED function of the instance, so about one
+trial in 131 hands it a genuine preimage and COMPLETENESS passes it: that trial is not a
+cheat, and conditioned on the trial being one the model is intact (0.01305 vs 0.01235).
+The correction went into the EXPERIMENT, not the band -- TODO #302 §2's lesson a second
+time. (2) §3.7 of the same file was the inverse and worse: its finding claimed ZKB++
+soundness "stays at (1/3)^R" and **a genuine cheat survives 0 times in 39,708**, because
+ZKB++ rebinds `out_e` to the public y so a wrong witness dies every round. Its bar of 6
+was slack enough to absorb a real regression while reading PASS -- a false claim and a
+vacuous pass are the same defect from two sides, which is #300's own third rule. It is
+EXACT now. (3) `hybrid_credential_phi.py` §5.4 is the one whose model was RIGHT (measured
+3.77 against 3.704 over 60 samples) and which flaked anyway at 4.7e-4, because a correctly
+calibrated 4-sigma band on a mean of 3.7 simply does fire that often; it fired in #302's
+own gate run. Both are replicated per #299 now. Two things to carry forward. **A `follows`
+entry now owes a rate AND the token `MEASURED`**, the second because requiring the number
+alone would have certified §3.5 at 3.0e-4 while it ran at 6.0e-3 -- the arithmetic is only
+as good as the null it is done against. And **#302's own entry was audited in the same
+pass, as #304 said it must be** -- and it came back SOUND, at <=1e-5 with zero exceedances
+in 200,000 bootstrap replications. A wider band was drafted for it on an analytic estimate
+of ~7e-3 and dropped when the bootstrap refuted the estimate, which is the same discipline
+the other two got: retuning a gate that measures fine is widening a band under another
+name. **The job's honest rate is 6.4e-5, not 5.4e-5**, and CLAUDE.md's copy of it is now a
+check-E row rather than a hand-copied number -- the same reporting gap one layer out.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

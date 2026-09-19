@@ -880,32 +880,99 @@ def _cheat_prove_zkboo(B, y_target, n=_ZK_N, rounds=_ZK_R):
     proof['y'] = y_target
     return proof
 
+
+# THE TRIAL THAT IS NOT A CHEAT (TODO #304).  Both soundness experiments below
+# build their "wrong" witness as a FIXED function of the instance -- y ^ 0xFF
+# in §3.5, A ^ 0xFF in §3.7 -- and at n = 8 that lands on a genuine preimage of
+# y under F1(., B) about one trial in 131.  When it does, the prover is not
+# cheating: the proof is honest, and COMPLETENESS passes it with probability 1.
+#
+# Counting those as surviving cheats put §3.5's null at 2.028 per 100 trials
+# against a modelled 1.235 (measured over 1500 samples), and its false-failure
+# rate at 6.0e-3 per run -- one CI run in 167, and 111x the 5.4e-5 the job
+# then advertised.  The correction belongs in the EXPERIMENT and not in a
+# wider band: conditioned on the trial actually being a cheat, ZKBoo's survival
+# is 518/39695 = 0.01305 against (1/3)^4 = 0.01235, which is the model, intact.
+# Same shape as TODO #302 §2, where two structural terms belonged in the
+# prediction rather than in the tolerance.
+
+def _is_real_cheat(A_wrong, B, y, n):
+    """False when the 'wrong' witness is a genuine preimage -- see above."""
+    return _f1(A_wrong, B, n) != y
+
+
+def _zkboo_cheat_sample(trials, n=_ZK_N, rounds=_ZK_R):
+    """One §3.5 sample: (cheats attempted, cheats that survived)."""
+    mask = (1 << n) - 1
+    attempted = survived = 0
+    for _ in range(trials):
+        A_true = int.from_bytes(os.urandom(1), 'big') & mask
+        B      = int.from_bytes(os.urandom(1), 'big') & mask
+        y      = _f1(A_true, B, n)
+        if not _is_real_cheat((y ^ 0xFF) & mask, B, y, n):
+            continue                     # an honest proof, not a cheat
+        attempted += 1
+        if zkboo_verify(_cheat_prove_zkboo(B, y, n, rounds)):
+            survived += 1
+    return attempted, survived
+
+
+def _zkbpp_cheat_sample(trials, n=_ZK_N, rounds=_ZK_R):
+    """One §3.7 sample: (cheats attempted, cheats that survived)."""
+    mask = (1 << n) - 1
+    attempted = survived = 0
+    for _ in range(trials):
+        A = int.from_bytes(os.urandom(1), 'big') & mask
+        B = int.from_bytes(os.urandom(1), 'big') & mask
+        y = _f1(A, B, n)
+        A_wrong = (A ^ 0xFF) & mask
+        if not _is_real_cheat(A_wrong, B, y, n):
+            continue
+        attempted += 1
+        pf = zkbpp_prove(A_wrong, B)
+        pf['y'] = y
+        if zkbpp_verify(pf):
+            survived += 1
+    return attempted, survived
+
+
 def section3_soundness():
     print(SEP2)
     print(f"§3.5  NL-FSCX ZKBoo — Soundness ({SOUND} cheating trials, "
           f"n={_ZK_N}, R={_ZK_R})")
     t0 = time.time()
-    passed = 0
-    mask = (1 << _ZK_N) - 1
-    for _ in range(SOUND):
-        A_true = int.from_bytes(os.urandom(1), 'big') & mask
-        B      = int.from_bytes(os.urandom(1), 'big') & mask
-        y      = _f1(A_true, B, _ZK_N)
-        proof  = _cheat_prove_zkboo(B, y)
-        if zkboo_verify(proof):
-            passed += 1
-    elapsed = time.time() - t0
+    tried, passed = _zkboo_cheat_sample(SOUND)
     # The Fiat-Shamir ch_seed includes y (the public target).  The cheating prover's
     # proof was built with F1(A_wrong, B) ≠ y, so ch_seed differs → per-round challenge
     # matches by coincidence with probability 1/3, all R rounds independently: (1/3)^R.
-    # Expected passes ≈ (1/3)^R × SOUND.
-    expected = (1 / 3) ** _ZK_R * SOUND
+    # Expected passes ≈ (1/3)^R × (cheats actually attempted); the trials where the
+    # "wrong" witness was a genuine preimage are excluded above, not counted here.
+    expected = (1 / 3) ** _ZK_R * tried
     upper    = int(expected * 4) + 2    # generous 4σ threshold
-    print(f"  Cheat passes : {passed}/{SOUND}")
+    print(f"  Cheat passes : {passed}/{tried}   "
+          f"({SOUND - tried} trial(s) discarded: the wrong witness was a "
+          f"genuine preimage, so the proof was honest)")
     print(f"  Note: FS challenge includes y; wrong A causes ch_seed mismatch.")
     print(f"        Per-round coincidence prob ≈ 1/3 → expected ≈ {expected:.1f} passes.")
-    status = "PASS" if passed <= upper else f"FAIL ({passed} > upper bound {upper})"
-    FINDINGS.append(("§3.5 ZKBoo soundness stays at (1/3)^R", passed <= upper))
+    # TODO #299's REPLICATION (applied by TODO #304).  The bar follows the
+    # statistic, but even with the honest-proof trials discarded it still fires
+    # at 2.6e-4 per run on a correct implementation -- four times the whole
+    # job's measured total of 6.4e-5.  An exceedance is therefore confirmed
+    # against a second independent sample before it fails, taking the rate to
+    # 6.6e-8.  Power is unaffected by the
+    # alternatives that are actually reachable: a dropped verifier check makes
+    # the per-round survival 2/3 or 1, i.e. an expected 30 or 100 passes
+    # against a bar of 6, which both samples clear with probability ~1.
+    ok = passed <= upper
+    if not ok:
+        tried2, passed2 = _zkboo_cheat_sample(SOUND)
+        upper2 = int((1 / 3) ** _ZK_R * tried2 * 4) + 2
+        ok = passed2 <= upper2
+        print(f"  Replication  : {passed2}/{tried2} (bar {upper2}) — "
+              f"{'not confirmed, first sample was a tail' if ok else 'CONFIRMED'}")
+    elapsed = time.time() - t0
+    status = "PASS" if ok else f"FAIL ({passed} > upper bound {upper}, replicated)"
+    FINDINGS.append(("§3.5 ZKBoo soundness stays at (1/3)^R", ok))
     print(f"  Result : [{status}]")
     print(f"  Time   : {elapsed:.2f} s")
 
@@ -1162,18 +1229,22 @@ def section3_zkbpp_empirical():
           f"{TRIALS - fail}/{TRIALS}  "
           f"[{'PASS' if fail == 0 else 'FAIL'}]  ({time.time()-t0:.2f} s)")
 
-    cheat = 0
-    for _ in range(SOUND):
-        A = int.from_bytes(os.urandom(1), 'big') & mask
-        B = int.from_bytes(os.urandom(1), 'big') & mask
-        pf = zkbpp_prove((A ^ 0xFF) & mask, B)
-        pf['y'] = _f1(A, B, _ZK_N)     # claim the true y with a wrong witness
-        if zkbpp_verify(pf):
-            cheat += 1
-    FINDINGS.append(("§3.7 ZKB++ soundness stays at (1/3)^R",
-                     cheat <= int((1 / 3) ** _ZK_R * SOUND * 4) + 2))
-    print(f"  Soundness ({SOUND} cheating trials): {cheat} accepted  "
-          f"[{'PASS' if cheat <= int((1/3)**_ZK_R * SOUND * 4) + 2 else 'FAIL'}]")
+    # NOT (1/3)^R, AND THE GATE USED TO SAY IT WAS (TODO #304).  ZKB++ reveals
+    # only party e+2's gate outputs and rebinds out_e to the public y, so a
+    # wrong witness fails EVERY round regardless of which challenge lands --
+    # where ZKBoo's cheat survives a round whenever the challenge coincides.
+    # Measured: 0 survivors in 39 708 genuine cheats (95% upper bound 7.5e-5
+    # per trial, so per-round survival < 0.093, nowhere near 1/3).  The old bar
+    # of `<= int((1/3)^R * SOUND * 4) + 2` = 6 was therefore slack enough to
+    # absorb a real soundness regression while reading PASS, and every
+    # acceptance it ever counted was the discarded honest-proof trial above.
+    # The gate is now EXACT, which is both sharper and un-flakeable.
+    tried, cheat = _zkbpp_cheat_sample(SOUND)
+    FINDINGS.append(("§3.7 a genuine ZKB++ cheat never survives", cheat == 0))
+    print(f"  Soundness ({tried} cheating trials, {SOUND - tried} discarded as "
+          f"honest): {cheat} accepted  [{'PASS' if cheat == 0 else 'FAIL'}]")
+    print(f"        ZKB++ rebinds out_e to y, so a wrong witness dies every "
+          f"round — not (1/3)^R as this section claimed until TODO #304.")
     print()
 
     # Empirical per-round sizes; extrapolate to production R=219
