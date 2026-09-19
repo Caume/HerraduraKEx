@@ -19279,3 +19279,113 @@ protocol, which is #298's scoping note and the whole reason #301 exists
 separately.  Filed as **TODO #302**.
 
 Status: **DONE v8.0.2** — the revealed pair of ZKBoo views narrows the witness by exactly zero bits, measured by enumeration with a control that collapses it to six, and #301's own gate exposed a blind spot in #300's census one item old.
+
+### #302: the same hiding assertion for ZKB++ and KKW
+
+TODO #301 wrote the revealed-view assertion for ZKBoo and stopped there on
+purpose.  These two are the rest of it, and they are separate because the
+exposure surface is different in each — which is #298's scoping note and the
+reason #301 was not folded into #298.
+
+**ZKB++** opens SEEDS rather than views.  `zkp_nl_prove_pp` derives a party's
+share and tape from a 16-byte seed, so revealing two seeds reveals two shares and
+two tapes — but party 2's share is DERIVED (`s2 = A ^ s0 ^ s1`) rather than
+seeded, which is why the proof carries an `aux` field.  The assertion is the same
+shape as #301's (enumerate the witness, count survivors) but the unknowns and the
+freedom are not: what masks the hidden party's bits when a seed rather than a
+tape is the revealed object is the question to answer first.
+
+**KKW** opens a pre-processing emulation plus an online execution.  The statement
+is that an opened emulation must not determine the unopened online one.  That is
+a different enumeration again, and `KAT/hcred_kkw.json`'s tamper table is about
+soundness, not hiding, so nothing currently asserts it.
+
+**What to copy from #301.**  The count-the-survivors shape; and above all the
+control discipline — a control that fires by excluding the TRUE witness is
+measuring the checker disagreeing with the prover, not a leak.  #301 threw away
+two drafts on exactly that.  Assert that the true witness survives the control.
+
+**And check the cheap answer first.**  #301 turned out to need no per-port test
+because `KAT/operation_replay.json` already pins the masking term byte-exactly in
+all four languages.  Ask whether the same is true here before writing four tests:
+the ZKBoo row pins `view_p1`/`view_p2`, and whether a ZKB++ or KKW row pins the
+equivalent is a five-minute check, not an assumption.
+
+**What it found.**
+
+*ZKB++ reveals LESS per round than ZKBoo, which makes it harder, not easier.*
+Party e+1's gate outputs are recomputed by the verifier, so `gates_p2` is the
+only revealed gate vector — and it is exactly the one whose mask is a tape bit
+of the party that was never opened.  Under an ideal seed expansion every
+candidate survives, so #301's enumeration is nearly vacuous here and the
+content is one level down, in the seed.
+
+*The seed budget, measured.*  A 16-byte seed determines the hidden party's
+share AND its tape, so a candidate survives only if some seed supplies both.
+That is exact arithmetic: a round constrains the seed by **2n-1** bits when the
+hidden party is 0 or 1, and by **n-1** when it is party 2 — whose share is
+DERIVED (s2 = A ^ s0 ^ s1) rather than seeded, which is the `share2`/`aux`
+asymmetry this item's text asked about.  Validated against 2^(k-c) at n = 4, 6
+and 8 in both regimes.
+
+*The consequence, which is the finding.*  With k = 128 the slack is 129-2n:
+113 bits at the CLI default n = 8, and **ONE BIT at n = 64, which is
+`_ZKP_NL_MAX_N` exactly.*  At that one width ZKB++ is computationally but not
+statistically hiding.  NOT a defect and NOT a fix: seed-based schemes are
+computationally ZK by construction, and reaching the excluded candidates means
+searching 2^128 seeds.  It is a property, and the point is that no document
+here had drawn the line or noticed that the wire bound and the seed length are
+one bit apart.
+
+*KKW's answer is an identity, not a count.*  Enumeration is unavailable (the
+witness lives in Z_q^288) and turns out to be unnecessary: the observer's
+system is SOLVABLE IN CLOSED FORM.  Every hidden-party unknown is determined in
+one pass for ANY candidate — lambda_in from z_in, lambda_xy from the
+sum-to-product relation (so `aux` buys no freedom either way, which was worth
+checking), lambda_z from the revealed t — leaving exactly ONE residual
+equation.  Measured, it is
+
+    u' - u  ==  -rho . (circuit(w') - targets)   (mod q)
+
+the verifier's own statement projection, a function of public data alone, and
+IDENTICAL in every online emulation — so the tau emulations are one constraint,
+not tau.  The constructive half: a SECOND witness the public statement cannot
+separate, obtained by solving the residual's quadratic in a delta-block
+coefficient (degree 2 asserted, not assumed), which the transcript cannot
+separate either.
+
+**What §2 cost to gate honestly, which is the transferable part.**  Three
+drafts, each a shape #299 and #300 warn about.  (1) The TRUE WITNESS'S CELL IS
+NOT A RANDOM DRAW — the prover's own seed is inside the enumerated space, so
+that cell always scores a hit and inflated the mean by one per round.  It is
+excluded from the tally and counted only where it belongs, in §1 and §3's
+survivor count.  (2) When the hidden party is party 2 its share is not seeded,
+so a candidate colliding with the true seed's tape PATTERN inherits that seed —
+a certain hit, arithmetic rather than a discrepancy, and it now sits in the
+prediction rather than in a wider band.  Left out, it read as a 1.28x excess at
+15 sigma.  (3) THE UNIT OF OBSERVATION WAS WRONG: a round's 2^n candidates are
+scored against one enumerated seed multiset, so they move together and are ONE
+measurement, not 2^n.  Banding them as independent cells was an order of
+magnitude too tight and flaked at about one run in three.  §2 now observes per
+round and gates the EXPONENT to within 1 bit — where the two candidate
+exponents differ by n bits — and reports the constant without gating it, since
+small-width combinatorics move it by 0.2-0.6 bits and gating that would be
+gating an artifact.  Five consecutive quick runs land every cell inside 0.43
+bits.
+
+**Both controls follow #301's discipline.**  A 1-byte ZKB++ seed collapses 256
+candidates to one; a constant KKW pad makes z_in name the witness outright.
+Both assert THE TRUE WITNESS IS WHAT SURVIVES, which is what separates a leak
+from a checker disagreeing with its prover.
+
+**The cheap answer, asked and CHECKED.**  ZKB++ is covered twice over —
+`zkp_nl_pp_prove` (C) and `ZkpNlProvepp` (Go) call the same circuit evaluators
+ZKBoo uses, so `operation_replay.json`'s `zkp_nl_prove` row pins the masking
+term for ZKB++ too; and the seed length, which §2 promotes from a formatting
+choice to a security parameter, is already `check_language_parity.py`'s
+`zkpp-seed-bytes` PARAMETERS row.  KKW is covered NOWHERE, and §6 checks that
+in source rather than asserting it, self-invalidating in the direction that
+matters: adding a KKW prover row FAILS the section until the prose is
+corrected.  That gap is TODO #303.
+
+Status: **DONE v8.0.3** — ZKB++'s hiding is a seed-counting question with one bit of slack at the wire maximum; KKW's transcript adds exactly the verifier's own statement check and nothing else.
