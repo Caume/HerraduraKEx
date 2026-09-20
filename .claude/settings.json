@@ -3,6 +3,22 @@
     "bgIsolation": "none"
   },
   "permissions": {
-    "allow": ["Bash(sed *)", "Bash(*)"]
+    "allow": [
+      "Bash(sed *)",
+      "Bash(*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-polling-loops.py\""
+          }
+        ]
+      }
+    ]
   }
 }
