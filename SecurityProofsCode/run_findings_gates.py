@@ -231,10 +231,12 @@ NON_GATING = {
 # false-failure probability; None means the entry rests on its argument.
 # A red run must be worth believing.  At 1e-3 a failure is 99.9% likely to be
 # real, which is the standard the rest of this job is built to; the measured
-# total is currently 5.4e-5, and it is dominated ENTIRELY by one gate -- #299's
-# replicated chi-square in hfscx_256_analysis.py §3 at 5e-5.  Everything else in
-# the table sums to about 4e-6.  If this budget is ever approached, replicate
-# the largest contributor; raising the number is how the premise rots.
+# total is currently 6.4e-5 (5.4e-5 before TODO #304 derived the three `follows`
+# rates this sum had been missing), and it is dominated by two gates -- #299's
+# replicated chi-square in hfscx_256_analysis.py §3 at 5e-5 and #302's
+# seed-budget gate at 1e-5.  Everything else in the table sums to about 4e-6.
+# If this budget is ever approached, replicate the largest contributor; raising
+# the number is how the premise rots.
 _FLAKE_BUDGET = 1e-3
 
 SAMPLED_GATES = {
@@ -257,15 +259,32 @@ SAMPLED_GATES = {
         "Gaussian-elimination witness either verifies or does not, and the "
         "negative controls score 20/20 and 32/33"),
     # ── follows ─────────────────────────────────────────────────────────────
-    "hybrid_credential_phi.py": ("follows", None,
+    "hybrid_credential_phi.py": ("follows", 2.2e-7,
         "§5.4 gates a SOUNDNESS ERROR, so the bar follows the statistic: "
         "expected (1/3)^R of TRIALS_CHEAT survive and the band is 4-sigma "
-        "Poisson around that, not zero.  This is the model the other entries "
-        "are measured against"),
-    "zkp_pqc_exploration.py": ("follows", None,
-        "§3.5 gates ZKBoo soundness the same way -- `passed <= int(expected*4)+2` "
-        "around the expected (1/3)^R survivors.  §3/§3.7 completeness is exact "
-        "(`fail == 0`) and §3.6's cheat counts are exact zeros"),
+        "Poisson around that, not zero.  MEASURED null, 60 samples: mean 3.77 "
+        "against the expected 3.704, variance 3.57 against Poisson's 3.70, "
+        "0/60 exceedances -- the one entry of the three whose model needed no "
+        "correction.  A correct 4-sigma band on a mean of 3.7 nevertheless "
+        "fires at P(X >= 12) = 4.7e-4, which is what it did in TODO #302's "
+        "gate run and is 8.8x what the whole job then advertised; #299's "
+        "replication takes it to 2.2e-7 for one extra second"),
+    "zkp_pqc_exploration.py": ("follows", 6.6e-8,
+        "§3.5 gates ZKBoo soundness the same way -- `passed <= "
+        "int(expected*4)+2` around the expected (1/3)^R survivors -- and TODO "
+        "#304 found the MODEL wrong, not the bar.  MEASURED null, 1500 "
+        "samples: mean 2.028 against a modelled 1.235, variance 2.093, 9 "
+        "exceedances, i.e. 6.0e-3 per run and 111x the 5.4e-5 then advertised. "
+        "The missing term is that the 'cheat' is built as a fixed function of "
+        "the instance, so about 1 trial in 131 hands it a GENUINE preimage and "
+        "completeness passes it: conditioned on the trial being a real cheat, "
+        "survival is 518/39695 = 0.01305 against (1/3)^4 = 0.01235 and the "
+        "model is intact.  Those trials are now discarded, restoring 2.6e-4, "
+        "and replicated to 6.6e-8.  §3.7 became EXACT in the same pass -- its "
+        "claim that ZKB++ soundness is also (1/3)^R is FALSE (0 survivors in "
+        "39 708 genuine cheats; ZKB++ rebinds out_e to y, so a wrong witness "
+        "dies every round), and its old bar of 6 was slack enough to absorb a "
+        "real regression.  §3/§3.7 completeness is exact (`fail == 0`)"),
     # ── negligible, with the rate derived ───────────────────────────────────
     "hkex_gf_test.py": ("negligible", 1.2e-6,
         "Test 3 gates `hits == 0` where Eve's linear attack succeeds only by "
@@ -308,7 +327,20 @@ SAMPLED_GATES = {
         "pass only at the protocol's own soundness error (2^-lambda per "
         "repetition); completeness (`assert ok`) is exact"),
     # ── found by TODO #301's widening: sampling through the SUITE ───────────
-    "zkbpp_kkw_view_hiding.py": ("follows", None,
+    "zkbpp_kkw_view_hiding.py": ("follows", 1e-5,
+        "MEASURED null (TODO #304), and the one `follows` entry that turned out "
+        "sound: 200 000 bootstrap replications of §2's statistic over 60 pooled "
+        "runs gave ZERO exceedances of the shipped 1-bit band, so the rate is "
+        "an upper bound rather than an estimate.  Two things the measurement "
+        "settled that the argument could not.  The unit of observation really "
+        "is the ROUND -- rounds inside one call share the witness, and the "
+        "between-call to within-call variance ratio is 0.88 (seeded) and 1.27 "
+        "(derived), i.e. no detectable correlation -- and the n = 8 seeded cell "
+        "sits at a mean of 1.126, a 0.17-bit bias that eats a sixth of the band "
+        "and is the thing to watch if the ladder ever moves.  An analytic "
+        "estimate said this cell ran at ~7e-3 and a wider band was drafted on "
+        "the strength of it; the bootstrap refuted that and the change was "
+        "dropped, which is the same discipline the other two entries got.  "
         "Five of its six sections are exact for zkboo_view_hiding.py's reason "
         "(TODO #302): §1 and §3 enumerate every candidate against a fresh "
         "transcript, §4's u' - u == -rho.(residual) is an identity mod q, §5 "
@@ -497,6 +529,24 @@ def check_sampling(found):
             bad.append("%s: declared negligible with no rate and no stated "
                        "argument -- derive the rate or say why it is not the "
                        "binding consideration" % name)
+        # TODO #304.  `follows` was the one code exempt from the rate-or-
+        # argument rule, on the ground that a bar computed from the statistic's
+        # own null needs no number.  All three entries that used it were then
+        # found flaking above the whole job's budget, because the NULL IS A
+        # MODEL and nothing had checked the model: zkp_pqc_exploration.py §3.5
+        # ran at 1.64x its modelled mean and 6.0e-3 per run, and §3.7's claim
+        # was false outright.  A `follows` entry now owes the same rate, plus
+        # the token MEASURED, because the arithmetic is only as good as the
+        # null it is done against and the way to know is to sample it.
+        if code == "follows":
+            if rate is None and "ARGUMENT" not in reason:
+                bad.append("%s: declared follows with no rate -- a bar that "
+                           "follows the statistic still fires at some rate "
+                           "against the true null; derive it" % name)
+            if "MEASURED" not in reason:
+                bad.append("%s: declared follows without a MEASURED null -- "
+                           "the bar is computed from a MODEL of the null, so "
+                           "say what the null actually measured" % name)
     # THE BUDGET, and it is deliberately a JOB-level number rather than a
     # per-gate one.  A per-gate bound is a constant somebody picks, and the
     # first draft of this check picked 1e-6 and then flagged three gates at

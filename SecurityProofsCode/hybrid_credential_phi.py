@@ -541,40 +541,64 @@ def section5():
     # computation (c = 0 recompute, or c = 2 via commitment binding) → the
     # per-round soundness error is 1/3 and survival is (1/3)^R.
     R3 = 3
-    passed = 0
-    for _ in range(TRIALS_CHEAT):
-        s = _rand_ternary(n)
-        e = _phi(s)
-        flip = os.urandom(1)[0] % n
-        e[flip] ^= 1
-        execs, rounds_data = [], []
-        for _r in range(R3):
-            seeds, sh, a, b, o1, o2 = _mpc_views(s, n)
-            delta = (e[flip] - _phi(s)[flip]) % Q
-            o2[0][flip] = (o2[0][flip] + delta) % Q          # patch the sum
-            coms = [_commit(j, seeds, sh, a, b, o1, o2) for j in range(3)]
-            execs.append((seeds, sh, a, b, o1, o2))
-            rounds_data.append((coms, o1, o2))
-        chals = _fs_challenges(e, rounds_data, R3)
-        proof = []
-        for r in range(R3):
-            seeds, sh, a, b, o1, o2 = execs[r]
-            coms, _, _ = rounds_data[r]
-            c = chals[r]; cp1 = (c + 1) % 3
-            aux = sh[2] if 2 in (c, cp1) else None
-            proof.append(dict(coms=coms, o1=o1, o2=o2,
-                              seed_c=seeds[c], seed_c1=seeds[cp1], aux=aux,
-                              a1=a[cp1], b1=b[cp1]))
-        if gadget_verify(e, proof, n, R3):
-            passed += 1
+
+    def _corrupted_view_sample(trials):
+        """One independent sample of the corrupted-view cheat."""
+        survived = 0
+        for _ in range(trials):
+            s = _rand_ternary(n)
+            e = _phi(s)
+            flip = os.urandom(1)[0] % n
+            e[flip] ^= 1
+            execs, rounds_data = [], []
+            for _r in range(R3):
+                seeds, sh, a, b, o1, o2 = _mpc_views(s, n)
+                delta = (e[flip] - _phi(s)[flip]) % Q
+                o2[0][flip] = (o2[0][flip] + delta) % Q      # patch the sum
+                coms = [_commit(j, seeds, sh, a, b, o1, o2) for j in range(3)]
+                execs.append((seeds, sh, a, b, o1, o2))
+                rounds_data.append((coms, o1, o2))
+            chals = _fs_challenges(e, rounds_data, R3)
+            proof = []
+            for r in range(R3):
+                seeds, sh, a, b, o1, o2 = execs[r]
+                coms, _, _ = rounds_data[r]
+                c = chals[r]; cp1 = (c + 1) % 3
+                aux = sh[2] if 2 in (c, cp1) else None
+                proof.append(dict(coms=coms, o1=o1, o2=o2,
+                                  seed_c=seeds[c], seed_c1=seeds[cp1], aux=aux,
+                                  a1=a[cp1], b1=b[cp1]))
+            if gadget_verify(e, proof, n, R3):
+                survived += 1
+        return survived
+
+    passed = _corrupted_view_sample(TRIALS_CHEAT)
     exp = TRIALS_CHEAT * (1 / 3) ** R3
+    bar = exp + 4 * max(exp, 1.0) ** 0.5
     print(f"  §5.4 cheat: corrupted view (R={R3}, {TRIALS_CHEAT} trials): "
           f"{passed} passed — expected ≈ {exp:.1f}  [(1/3)^R soundness error]")
     # A soundness ERROR, so the bar has to follow the statistic (the class
     # CLAUDE.md's Testing section describes): expected (1/3)^R of the trials
     # survive, and the gate is a 4-sigma Poisson band around that, not zero.
-    FINDINGS.append(("§5.4 the corrupted-view cheat survives at (1/3)^R",
-                     passed <= exp + 4 * max(exp, 1.0) ** 0.5))
+    #
+    # THE BAR IS RIGHT AND STILL FLAKES (TODO #304).  The null was measured over
+    # 60 samples -- mean 3.77 against the expected 3.704, variance 3.57 against
+    # Poisson's 3.70, 0/60 exceedances -- so unlike zkp_pqc_exploration.py §3.5
+    # this model needed no correction.  But a correctly calibrated 4-sigma
+    # Poisson band on a mean of 3.7 still fires at P(X >= 12) = 4.7e-4 per run,
+    # which is 8.8x the 5.4e-5 the job then advertised, and it FIRED once in TODO
+    # #302's full gate run.  #299's replication closes it: confirm against a
+    # second independent sample before failing, 2.2e-7, one extra second.
+    # Power is untouched for the alternatives a code change can reach -- losing
+    # either detection branch takes survival to (2/3)^R = 29.6 expected, which
+    # both samples clear with probability ~1.
+    ok = passed <= bar
+    if not ok:
+        again = _corrupted_view_sample(TRIALS_CHEAT)
+        ok = again <= bar
+        print(f"       replication: {again} passed (bar {bar:.1f}) — "
+              f"{'first sample was a tail' if ok else 'CONFIRMED'}")
+    FINDINGS.append(("§5.4 the corrupted-view cheat survives at (1/3)^R", ok))
 
     # -- 5.5 measured proof sizes ----------------------------------------------
     sz32  = _proof_bytes(gadget_prove(_rand_ternary(32), _phi(_rand_ternary(32)),
