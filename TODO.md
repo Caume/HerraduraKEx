@@ -234,3 +234,86 @@ reuse across two signatures under one key yields the private key by subtraction.
 Status: **OPEN**
 
 ---
+
+### #309: an entropy-injection seam for the four CLIs — env var and explicit flag
+
+**TODO #306 stated this limit in `CLI_DRAW_COVERAGE`'s header rather than after the fact,
+and deliberately did not act on it.**  59 raw-entropy draws sit in the four CLIs across 17
+roles, 9 of them `cli_only` -- drawn nowhere but the CLI, so no suite-level pin can reach
+them however much pinning is done.  The reason is one sentence: **no CLI takes an entropy
+source as a parameter in any of the four languages.**  Closing that is a change to the
+shipped surface, not to a checker, which is why it is its own item.
+
+**The machinery already exists in every language; it is the CLI that has no seam.**  Each
+of the four KAT consumers #296 and #297 built injects a fixed stream today:
+
+| language | how the CLI draws now | seam that already works elsewhere |
+|---|---|---|
+| C | `fopen("/dev/urandom", "rb")`, once per subcommand (8+ call sites in `herradura_cli.c`) | `fmemopen` over a byte array — `verify_kat_c.c:140`; every suite sampler already takes `FILE *urnd` |
+| Go | `rand.Read` inside `NewRandBitArray` | `rand.Reader = <fixed>`, a documented package variable — `verify_kat.go:576` |
+| Python | `os.urandom`, `BitArray.random`, `secrets.token_bytes` — three spellings, no chokepoint | `generate_kat.py --check`'s regenerate-and-diff IS the replay |
+| Java | `private static final SecureRandom RNG` in `HerraduraCli.java:88` | `FixedRandom extends SecureRandom` — `KatVerify.java:387` |
+
+So the work is not inventing a mechanism.  It is (a) giving each CLI ONE entropy
+chokepoint where it currently has many, and (b) letting that chokepoint be pointed at a
+file.  C's is the largest change and the most mechanical: replace the per-subcommand
+`fopen` with a single accessor.  Python's is the subtlest, because three spellings have to
+converge before there is anything to point.
+
+**What it buys, concretely.**  Every `cli_only` role in `CLI_DRAW_COVERAGE` becomes
+pinnable, and two of them are the ones worth pinning: `hske_nla1_nonce` (A1 is
+`E = P ^ ks` — a repeated nonce under one key is a two-time pad outright) and
+`threshold_commit_nonce` (`s_j = k_j - a_j.e`, so a repeat recovers that signer's share).
+Both are drawn in all four CLIs with nothing comparing the four draws.  The axis would
+then report a `pinned` status beside `suite` / `cli_only` / `owed`, and rows would retire
+into it the way #305's `transitive` rows retire when an operation row is added.
+
+**THE HAZARD, and it is the reason this item needs arguing rather than implementing.**  An
+environment variable that replaces the CSPRNG in a shipped binary is the sharpest footgun
+this repo could add.  Set it by accident -- in a Dockerfile, a CI job, a systemd unit, a
+shell profile -- and `genpkey` emits a deterministic private key that looks exactly like a
+real one, with no artifact recording that it was produced under a fixed stream.  That is
+strictly worse than the gap it closes.  Any design must answer all of these IN THE ITEM,
+not in review:
+
+* **Fail-closed, not fail-open.**  #274's and #287's finding was the same shape twice: an
+  unrecognised input silently taking the weaker branch.  A named stream file that is
+  missing, short, or unreadable must ABORT, never fall back to `/dev/urandom`.
+* **Loud, on stderr, every invocation.**  Not once, not behind `--verbose`.
+* **Marked in the artifact, or argued why not.**  A key produced under a fixed stream and
+  a key produced from `/dev/urandom` are currently indistinguishable on disk.  The
+  strongest version refuses to write private key material at all under injection and only
+  serves the operations a replay vector needs; the weakest stamps the PEM.  Neither is
+  obviously right and the choice belongs in this item.
+* **Compile-time gating is on the table and is not free.**  `#ifdef`-ing it out of release
+  builds makes the CLI under test a different binary from the CLI that ships, which is the
+  defect `CliTest/test_param_bounds.sh` exists because of -- a bound that is declared but
+  not enforced on the path people actually run.  Argue it either way; do not assume it.
+* **Env var AND flag, and they are not the same hazard.**  A flag (`--entropy-file`) is
+  visible in `ps` and in shell history and cannot be inherited by a child process; an env
+  var (`HERRADURA_TEST_ENTROPY`) is what a harness sets without rewriting argv and is
+  exactly what leaks into every subprocess. If both ship, the flag should be the primary
+  and the env var should require the flag, or the env var should be dropped.
+
+**Scope note.**  This is a new public surface with nothing existing changed, so **MINOR**,
+not MAJOR -- no PEM label, no `--algo` value and no existing flag moves.  It touches all
+four CLIs and `spec/check_docs_consistency.py`'s `cli_flag_matrix` / `cli_flag_value_gaps`
+axes, which will see a new flag in four ports and fail until it is in all four or a
+`CLI_FLAG_PARITY` row explains the gap.
+
+**Ordering against #308.**  #308 moves the classical Schnorr nonce OUT of the CLI and into
+a suite operation, where the existing replay already reaches it.  Doing #308 first shrinks
+this item's target -- `schnorr_nonce` leaves `CLI_DRAW_COVERAGE` entirely -- and settles
+whether the remaining `cli_only` roles are best closed by a seam or by the same move.  If
+most of them turn out to be #308-shaped (a draw that belongs in a suite function the CLI
+should be calling), this item is smaller than it looks and possibly unnecessary; that
+question should be answered before any shipped surface is added.
+
+**What must NOT happen.**  Shipping the seam and then treating the `cli_only` rows as
+closed without actually adding vectors.  The seam is a precondition for pinning, not
+pinning -- #296's own diagnosis of #294 was a harness built and then thrown away while the
+documents went on asserting in the present tense that the check existed.
+
+Status: **OPEN**
+
+---

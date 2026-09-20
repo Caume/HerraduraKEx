@@ -19794,7 +19794,8 @@ figure moved before a single row was written.
 * **What this axis CANNOT do, recorded in the header rather than after the fact.**  No
   CLI takes an entropy source as a parameter in any of the four languages, so a
   fixed-stream replay does not reach this layer without a new shipped surface (an
-  injection env var) -- a change to the product, deliberately not made here.  What was
+  injection env var) -- a change to the product, deliberately not made here and filed as
+  **TODO #309**, which owes the hazard argument before the seam.  What was
   missing was never the replay; it was knowing which draws exist, in which ports, and
   what compares them.
 

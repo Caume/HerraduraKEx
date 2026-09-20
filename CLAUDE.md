@@ -1690,10 +1690,12 @@ spec/                                                — machine-readable protoc
                                                       as a parameter in any language, so
                                                       a fixed-stream replay does NOT
                                                       reach this layer without a new
-                                                      shipped surface, and what was
-                                                      missing was never the replay -- it
-                                                      was knowing which draws exist, in
-                                                      which ports, and what compares them
+                                                      shipped surface (TODO #309, which
+                                                      owes the hazard argument before the
+                                                      seam), and what was missing was
+                                                      never the replay -- it was knowing
+                                                      which draws exist, in which ports,
+                                                      and what compares them
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,
@@ -2318,7 +2320,9 @@ because the fix is not a vector — it is to make the three CLIs call the operat
 (4) **A fixed-stream replay does not reach this layer and the item does not pretend
 otherwise.** No CLI takes an entropy source as a parameter in any of the four languages, so
 pinning here needs a new shipped surface (an injection env var), which is a change to the
-product and is deliberately not made. What was missing was never the replay; it was knowing
+product and is deliberately not made — filed as TODO #309, which owes the hazard argument
+before the seam: an env var that replaces the CSPRNG is one accidental export away from a
+deterministic `genpkey` whose output is indistinguishable on disk from a real key. What was missing was never the replay; it was knowing
 which draws exist, in which ports, and what compares them.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
