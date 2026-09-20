@@ -19711,3 +19711,95 @@ up were each resolved rather than recorded.
 Status: **DONE v8.0.6** — the census is 24/25/28/31 and every consumer is now pinned, covered by a call-graph-confirmed operation, or owed to a numbered item; a dead duplicate sampler that the parity manifest was anchored on is gone.
 
 ---
+
+### #306: the randomness census stops at the suite boundary, and a Schnorr nonce is on the other side
+
+**Found by TODO #305 while answering a different question.**  #305 asked how much of
+`RANDOMNESS_CENSUS` is pinned.  Writing the coverage reasons forced a look at why Go and
+Python are ABSENT from the `hpks_sign` row, and the answer is not that they take the
+nonce as a parameter.  It is that **they draw it in the CLI**, which this census does not
+read at all.
+
+`HerraduraCli/herradura.py`'s `cmd_sign` contains `k = BitArray.random(nbits)` and builds
+the classical Schnorr signature inline.  A Schnorr nonce is the most failure-sensitive
+draw in the classical stack -- reuse or bias recovers the private key from two signatures
+-- and it is invisible to the axis built to notice exactly this kind of draw.
+
+**Measured before filing.**  Raw-entropy call sites outside the censused corpus, by the
+census's own per-language patterns: **C 18, Go 15, Python 13, Java 6 -- 52 in all**,
+across the four CLIs.  None is censused, so none can be pinned, and none would fail CI if
+it changed.
+
+**The inconsistency is inside one file.**  `PARAM_USE_CORPUS` (TODO #295) defines the
+shipped path as *suite, walkthrough, CLI, codec* -- deliberately, because "getting the
+corpus wrong in the LENIENT direction makes the whole check pass vacuously".  The
+randomness census, in the same checker, reads the suite alone.  Two corpora, one file, no
+statement anywhere about why they differ.
+
+**What is owed.**  Either extend the corpus to the CLIs and absorb the 52 sites -- with
+`REPLAY_COVERAGE` rows for each, which #305's machinery already supports -- or record a
+reason why a CLI draw is out of scope, which will have to survive the Schnorr nonce being
+one of them.  The first is expected; the second is the honest alternative and must be
+argued rather than assumed.
+
+**Note on what this is NOT.**  No defect is claimed in any of the 52.  #305's scope
+sentence applies unchanged: a census says a draw exists and that someone looked, never
+that it is correct.
+
+**RESULT (v8.0.7).**  The corpus now reaches past the suite boundary, and the measured
+figure moved before a single row was written.
+
+* **59 sites, not 52** -- c 18, go 15, python 15, java 11 -- because widening the corpus
+  exposed two blind spots in `RANDOMNESS_RAW_PATTERNS` that no amount of re-reading the
+  suite could have shown.  `secrets.token_bytes`, imported as `_sec` INSIDE the branch
+  that uses it, is a sixth spelling; in the suite it sits in `main`, which draws by other
+  means as well, so the census was correct there BY LUCK.  And
+  `new BigInteger(Herradura.N, RNG)` is not a new spelling at all -- it is the same one
+  in a different CASE, because every suite port names the parameter `rng` while
+  `HerraduraCli.java` holds a static field `RNG`.  Two Java CLI functions read as drawing
+  nothing, one of them `cmdThresholdCommit`.  Adding both patterns moves NO suite name,
+  and that non-move is what turns "the suite census was already right" from a claim into
+  a check.
+* **`CLI_CORPUS` / `RANDOMNESS_CLI_CENSUS` / `CLI_DRAW_COVERAGE`**, in
+  `spec/check_language_parity.py`, as the fourth part of the eighth axis.  17 draw ROLES
+  over 59 sites: 7 `suite` (some port draws the role inside a censused suite consumer and
+  `via` names the `REPLAY_COVERAGE` row), 9 `cli_only` (no port draws it in a suite, so no
+  pin could ever reach it) and 1 `owed`.
+* **The accounting is at SITE granularity.**  A cell is (function, count) and the counts
+  must sum to what the source holds, because `cmd_genpkey` alone holds six draws and a
+  name set would let a seventh be added in silence -- which is how 52 sites accumulated
+  on the far side of an unstated boundary in the first place.
+* **THE FINDING, and it is not the nonce's absence but what is in its place.**  C's
+  `herradura.h` exports `hpks_sign`, it draws its own nonce, `KAT/classical_quartet.json`
+  pins it -- and `herradura_cli.c` DOES NOT CALL IT, transcribing the whole signer inline;
+  the suite copy is reached only by `docs/examples` and the FFI shim.  Go and Python never
+  had the operation.  So three of four CLIs sign with an unpinned transcription and Java
+  is the one that calls the suite.  The pinned function and the shipped path are different
+  code in the port that has both -- #295's dead-code limit aimed at a sampler instead of
+  at a constant.  Filed as **TODO #308**, because the fix is not a vector: it is to make
+  the three CLIs call the operation they copy.
+* **A second connection, to #307.**  `REPLAY_COVERAGE`'s `qcmdpc_keygen` row records
+  `c: None -- the seed is a parameter, not a draw`, which is true of `herradura.h` and
+  stops one frame short: `herradura_cli.c` draws that seed and calls `qcprf_init`, in
+  three places.  #307's text now says so, and three `suite` roles record it.
+* **Seventeen negative controls, all firing**, including the two that prove the pattern
+  widening is load-bearing: reverting Java's `rng` to case-sensitive makes two censused
+  CLI functions vanish, and reverting `token_bytes` drops `cmd_genpkey`'s site count from
+  five to three.  The others cover a bogus status, a `suite` row with no `via`, a `via`
+  naming no row, an `owed` row with no item, a row with no reason, a `cli_only` row that
+  delegates, a role naming a function that draws nothing, a port with no cell and no
+  explanation, `absent` contradicting a cell, `absent` with an empty reason, an
+  over-claimed count, a deleted role, and both directions of the census.  The unmutated
+  table is silent.
+* **What this axis CANNOT do, recorded in the header rather than after the fact.**  No
+  CLI takes an entropy source as a parameter in any of the four languages, so a
+  fixed-stream replay does not reach this layer without a new shipped surface (an
+  injection env var) -- a change to the product, deliberately not made here.  What was
+  missing was never the replay; it was knowing which draws exist, in which ports, and
+  what compares them.
+
+Status: **DONE v8.0.7** -- the randomness corpus now reaches the four CLIs: 59 raw-entropy
+sites, every one claimed by one of 17 roles, two census patterns that were silently blind,
+and three of four CLIs found signing with a transcription of a signer the fourth calls.
+
+---

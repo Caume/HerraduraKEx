@@ -2,6 +2,63 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.0.7] - 2026-09-20
+
+### Added
+- **The randomness corpus now reaches past the suite boundary (TODO #306).**
+  `spec/check_language_parity.py` gains `CLI_CORPUS`, `RANDOMNESS_CLI_CENSUS` and
+  `CLI_DRAW_COVERAGE` as the fourth part of the eighth axis. `PARAM_USE_CORPUS`, forty
+  lines up in the same file, has always read suite + walkthrough + CLI + codec and says
+  why; the randomness census read the suite alone, with no sentence anywhere about the
+  difference. **59 raw-entropy sites sit in the four CLIs** (c 18, go 15, python 15,
+  java 11), every one now claimed by one of **17 named draw roles** — 7 `suite`
+  (delegated to a censused suite consumer, with `via` naming the `REPLAY_COVERAGE` row),
+  9 `cli_only` (drawn nowhere but the CLI, so no pin could reach them) and 1 `owed`.
+  The accounting is at SITE granularity: a cell is (function, count) and the counts must
+  sum to what the source holds, because `cmd_genpkey` alone holds six draws and a name
+  set would let a seventh be added in silence.
+- A check-E row in `check_docs_consistency.py` holding CLAUDE.md's CLI site count to the
+  tool that prints it — the item's own filed figure was 52, which is exactly the drift a
+  hand-copied count does not survive.
+
+### Changed
+- **`RANDOMNESS_RAW_PATTERNS` widened twice, and both were blind spots the suite could
+  not have shown.** `secrets.token_bytes`, imported as `_sec` inside the branch that uses
+  it, is a sixth spelling of "read the CSPRNG"; in the suite it sits in `main`, which
+  draws by other means, so the census was correct there BY LUCK. And
+  `new BigInteger(Herradura.N, RNG)` is not a new spelling at all but the same one in a
+  different CASE, since every suite port names the parameter `rng` while
+  `HerraduraCli.java` holds a static field `RNG` — two Java CLI functions read as drawing
+  nothing, one of them the threshold-nonce commit. Adding both patterns moves NO suite
+  name, which is what turns "the suite census was already right" from a claim into a
+  check.
+- TODO #307's `qcmdpc_keygen` entry now records where C's PRF seed actually comes from:
+  `herradura_cli.c` draws it and calls `qcprf_init`, in three places. The
+  `REPLAY_COVERAGE` row's `c: None — the seed is a parameter, not a draw` is true of
+  `herradura.h` and stopped one frame short.
+
+### Notes
+- **The finding is not the Schnorr nonce's absence but what is in its place.** C's
+  `herradura.h` exports `hpks_sign`, it draws its own nonce and
+  `KAT/classical_quartet.json` pins it — and `herradura_cli.c` DOES NOT CALL IT,
+  transcribing the whole signer inline; the suite copy is reached only by `docs/examples`
+  and the FFI shim. Go and Python never had the operation. So three of four CLIs sign
+  with an unpinned transcription and Java is the one that calls the suite: the pinned
+  function and the shipped path are different code in the port that has both, which is
+  TODO #295's dead-code limit (reachability is not liveness) aimed at a sampler instead
+  of at a constant. Filed as **TODO #308** — the fix is not a vector, it is to make the
+  three CLIs call the operation they copy.
+- Seventeen negative controls, all firing, including the two that prove the widening is
+  load-bearing: reverting Java's `rng` to case-sensitive makes two censused CLI functions
+  vanish, and reverting `token_bytes` drops `cmd_genpkey`'s site count from five to three.
+- **Known limit, in the header rather than after the fact.** No CLI takes an entropy
+  source as a parameter in any of the four languages, so a fixed-stream replay does not
+  reach this layer without a new shipped surface (an injection env var) — a change to the
+  product, deliberately not made here. What was missing was never the replay; it was
+  knowing which draws exist, in which ports, and what compares them.
+- No defect is claimed in any of the 59 draws. A census says a draw exists and that
+  someone looked, never that it is correct.
+
 ## [8.0.6] - 2026-09-20
 
 ### Added

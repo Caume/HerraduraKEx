@@ -590,6 +590,17 @@ DOC_COUNTS = [
      r"and (\d+) still OWED a pin",
      r"(\d+) consumers are still OWED a pin",
      "check_language_parity.py's REPLAY_COVERAGE table, quoted in CLAUDE.md's Testing section"),
+    # TODO #306.  The number that measures the corpus, not the coverage: how
+    # many raw-entropy draws sit in the four CLIs, on the far side of the
+    # boundary the randomness census used to stop at.  Held to the tool for
+    # check E's own reason -- the item's own filed figure was 52 and the
+    # widened patterns make it 59, which is exactly the drift a hand-copied
+    # count does not survive.
+    ("CLI raw-entropy sites",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"raw-entropy site\(s\) in the four CLIs, (\d+) in\s+all",
+     r"(\d+) raw-entropy draws sit in the four CLIs",
+     "check_language_parity.py's CLI_DRAW_COVERAGE table, quoted in CLAUDE.md's Testing section"),
 ]
 
 
