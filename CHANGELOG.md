@@ -2,6 +2,62 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.0.6] - 2026-09-20
+
+### Added
+- **TODO #305: `REPLAY_COVERAGE`, a third part to `spec/check_language_parity.py`'s
+  eighth axis — how much of the randomness census the pinning actually REACHES.**
+  `RANDOMNESS_CENSUS` (#296) is a name set derived from source every run, whose job is
+  to force a question when it changes; #297 and #303 pinned six whole operations against
+  it. Nothing counted what that left. **10 consumers per language were named by a pinned
+  row; 15 / 15 / 18 / 21 were not** (C / Go / Python / Java). Every censused consumer is
+  now either pinned or carries a coverage row, self-invalidating in both directions: an
+  unclaimed consumer fails, and a row whose cell names an ALREADY-pinned function fails
+  too, so pinning something forces its row out rather than leaving a stale claim.
+- **Three statuses, because the third is the point.** `transitive` (covered by a pinned
+  operation that calls it), `unpinned` (a fixed stream would prove nothing new) and
+  `owed` — pinning applies and is not done, which needs a TODO item number as well as a
+  reason. `owed` exists so work cannot be parked inside a prose sentence, which is #295's
+  false-reason finding aimed at a table instead of a constant. The count is printed and
+  is now a check-E row in `check_docs_consistency.py`, so retiring work by retitling a
+  row moves a number CLAUDE.md is held to.
+- **The `transitive` half is DERIVED, not curated.** The checker walks a per-language
+  call graph from the pinned operation and fails a claim no call path supports. Nine
+  negative controls confirm each rule fires, per TODO #234.
+
+### Changed
+- **`herradura.h`: deleted `rnl_cbd_poly`, a second copy of the CBD sampler.** It
+  specialised `rnl_cbd_poly_dim` to `RNL_N` with its own `fread` and its own loop, and
+  **nothing in the repository called it** — but it was not inert: the raw-entropy census
+  counted it as an unpinned consumer, and `check_language_parity.py`'s `rnl-cbd-poly`
+  manifest row anchored C's cell on the DEAD copy while the protocol ran the live one, so
+  the check asserting C has a CBD sampler was pointing at the duplicate. That is #295's
+  dead-code limit with the sign flipped: a duplicate is worse than an unused constant,
+  because every syntactic checker reads it as the live thing. The row is re-anchored on
+  `rnl_cbd_poly_dim` and the `_Static_assert` message follows it.
+- **`SecurityProofsCode/zkbpp_kkw_view_hiding.py` §6: the ZKB++ coverage claim is
+  NARROWED.** §6 said ZKB++ was "covered twice over". The two halves are the CIRCUIT
+  (neither C nor Go carries its own, so ZKBoo's pinned row covers the masking term) and
+  the seed LENGTH (a `PARAMETERS` row). Neither is the seed ORDER: `zkp_nl_pp_prove`
+  reads raw entropy itself, and a shared evaluator says nothing about the sequence of
+  draws around it. A new check asserts that absence, so pinning the prover FIRES §6 and
+  forces the prose to be corrected — the same self-invalidating handoff #302 left #303.
+  All 6 findings reproduce.
+- **`spec/check_language_parity.py`: body extraction unions Java OVERLOADS.**
+  `SternRing.sign` has two, and a name-keyed body map silently kept the three-line
+  wrapper that calls nothing, which read as the ring row failing to reach `ringTrit` and
+  `simulateRound`. The census never noticed because it tests each extracted body in turn;
+  a call graph walks from a name, so it would have shipped a false negative.
+
+### Notes
+- Two items were filed rather than folded in. **TODO #306**: the census corpus is the
+  SUITE ALONE while `PARAM_USE_CORPUS` in the same file is suite + CLI, so **52
+  raw-entropy call sites across the four CLIs are uncensused — including Python's
+  classical Schnorr nonce**, `k = BitArray.random(nbits)` in `cmd_sign`. **TODO #307**:
+  the four owed pins (`qcmdpc_keygen`, `qcmdpc_encap`, `zkp_nl_pp_prove`, `hcred_prove`).
+- Scope, unchanged from #303: a coverage row says a draw exists and that someone looked,
+  never that it is correct, and a pinned row sees DIVERGENCE only — #298's rule (1).
+
 ## [8.0.5] - 2026-09-19
 
 ### Added

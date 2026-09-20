@@ -19603,3 +19603,111 @@ second transposition of a KKW proof would be a new place for exactly the
 byte-order disagreements these vectors exist to catch.
 
 Status: **DONE v8.0.5** — KKW's prover is pinned by an `hcred_prove_kkw` row in `KAT/operation_replay.json` at n=256, (4, 4, 2); all four ports reproduce it field for field, `consumed` is exact at 128 bytes, and #302 §6's self-invalidating check fired and is now inverted.
+
+### #305: how much of the randomness census is actually pinned
+
+**This is TODO #300's question one axis over.**  #300 asked of the findings gates: the
+SET is the tripwire, but how many of them decide a verdict from a fresh random sample?
+The answer was 29 of 76 and three real defects, one of which could not fail at all.
+`RANDOMNESS_CENSUS` (TODO #296) has the identical structure -- a name set, derived from
+source every run, whose purpose is to force a question when it changes -- and the
+identical question has never been put to it.
+
+Its own header says what it cannot do: *"What the census cannot do is say whether an
+unpinned consumer is CORRECT -- only that it exists and that someone looked."*  It then
+hands the remainder to #297, which pinned five whole operations, and #303 added a sixth.
+**Nothing counts what that leaves**, and "someone looked" decays into "someone looked
+once" exactly the way #296 found #294's prescription had.
+
+**Measured before filing.**  Of the censused raw-entropy consumers, 10 per language are
+named by a pinned row; **15 / 15 / 18 / 21 are not** (C / Go / Python / Java).  Part of
+that residue is covered TRANSITIVELY and is fine -- `stern_ring_trit` and
+`stern_ring_simulate` are reached by the ring row, which is precisely why #297 kept the
+two tables separate.  The rest is not.
+
+**What is owed.**  A coverage column beside the two pinned tables, self-invalidating in
+both directions like every other curated table here: a censused consumer that no pinned
+row names and no coverage row claims FAILS, and a coverage row whose consumer has since
+been pinned FAILS until it is deleted.  So pinning something forces its row out rather
+than leaving a stale claim, and adding a consumer forces the question #296 built the
+census to force.
+
+**The transitive half must be DERIVED, not curated, and that is the design point.**
+TODO #295 found two of six curated reasons about how a constant is USED carrying a
+FALSE claim -- the class no checker that reads declarations can catch.  A prose "covered
+by the ring row" is the same kind of claim and would rot the same way.  So a
+`transitive` entry names the pinned operation row, and the checker CONFIRMS the claim by
+walking the call graph from that operation's function in each of the four languages.
+That also touches #295's recorded limit ("closing that needs a call graph") from the
+other side, though it does not close it: reachability is not liveness.
+
+**Three things the measurement already turned up**, each of which this item must either
+pin or write a reason for.
+
+* **`qcmdpc_keygen` and `qcmdpc_encap` are unpinned in all four.**  TODO #277 found a
+  3-vs-1 byte-order split inside the PRF that keygen drives, and the only thing that
+  could catch it was a dedicated pinned vector (numbered test [52]).  The draw ORDER
+  around that PRF has no such vector.  #284 pinned KEM ARTIFACTS, but those are
+  verify-side: a pinned key and a pinned ciphertext say nothing about how the key was
+  sampled, which is #303's distinction exactly.
+* **ZKB++'s prover is unpinned, and this NARROWS a claim TODO #302 §6 makes.**  §6 says
+  ZKB++ is "covered twice over", one half being that the `zkp_nl_prove` row pins its
+  masking term because neither port carries its own circuit.  That is true OF THE
+  CIRCUIT and does not extend to `zkp_nl_pp_prove` / `ZkpNlProvepp`, which read raw
+  entropy themselves -- the SEED draw order is its own consumption order and nothing
+  pins it.  §6 is a CHECKED scope paragraph, so the sentence is to be narrowed against
+  the measurement, on #286's precedent of withdrawing rather than re-anchoring.
+* **The census sets disagree four ways and nothing says why.**  C's `qcmdpc_keygen`
+  takes a `QcMdpcPrf *prf`, so the seed is a PARAMETER and it reads no raw entropy and
+  is not censused at all, while the other three draw it inside.  That is a genuine
+  structural difference and almost certainly correct.  It is also indistinguishable,
+  from where the checker stands, from an extractor that dropped a cell -- which is the
+  hazard #278 hit with `None` cells and had to cross-check.  A coverage row's absent
+  cell is cross-checked here by construction: rule (1) means a wrongly-absent cell
+  surfaces as an unclaimed censused name.
+
+**Scope, stated because #302 §6 is what an unchecked scope paragraph becomes.**  This
+item asserts nothing about whether an unpinned consumer is CORRECT, and a new pinned row
+sees DIVERGENCE only.  #298's rule (1) still binds: a cross-port check cannot see a
+property all four ports get wrong.
+
+**RESULT (v8.0.6).**  The mechanism shipped, and the three things the measurement turned
+up were each resolved rather than recorded.
+
+* **The count.** 10 consumers per language were named by a pinned row; 15 / 15 / 18 / 21
+  were not.  `REPLAY_COVERAGE` now accounts for every one: **4 rows `transitive`, 16
+  `unpinned`, 4 `owed`**.  The closing report prints all three and the `owed` count is a
+  check-E row, because that is the number whose quiet movement -- in either direction --
+  is the failure the status was invented to prevent.
+* **The `transitive` half is derived.**  `_calls_reach` walks a per-language call graph
+  from the pinned operation, and a claim no call path supports FAILS.  Building it found
+  a false negative waiting to happen: **Java overloads**.  `SternRing.sign` has two, and
+  a name-keyed body map keeps the three-line wrapper that calls nothing, so the ring
+  row's coverage of `ringTrit` and `simulateRound` read as unreachable.  The census never
+  noticed because it tests each extracted body in turn.  Bodies are unioned per name now.
+* **NINE NEGATIVE CONTROLS, all firing** (#234's rule, and #300's third): a false
+  `transitive` claim; a `via` naming no row; a cell naming a function that does not draw;
+  a cell naming an ALREADY-pinned function; an `owed` row with no item; an `unpinned` row
+  with no reason; a deleted row leaving a consumer unclaimed; two rows claiming one
+  consumer; a bogus status.  The unmutated table is silent.
+* **The dead duplicate.**  C's `rnl_cbd_poly` specialised `rnl_cbd_poly_dim` to `RNL_N`
+  with its own `fread` and its own loop, and **nothing in the repository called it**.  Not
+  inert: the census counted it as an unpinned consumer, and the `rnl-cbd-poly` manifest
+  row anchored C's cell on the DEAD copy, so the check asserting C has a CBD sampler was
+  pointing at the duplicate while the protocol ran the other one.  Deleted, row
+  re-anchored, `_Static_assert` message followed, C rebuilt clean.  This is #295's
+  dead-code limit with the sign flipped -- a duplicate is worse than an unused constant,
+  because every syntactic checker reads it as the live thing.
+* **§6 narrowed, not re-argued.**  TODO #302 §6's "covered twice over" is true of the
+  CIRCUIT and the seed LENGTH and not of the seed ORDER.  A new check asserts that
+  absence, so pinning `zkp_nl_pp_prove` fires §6 and forces the prose to be corrected --
+  the handoff #302 left #303, reused.  All 6 findings reproduce.
+* **Two items filed rather than folded in.**  #306: the corpus is the SUITE ALONE while
+  `PARAM_USE_CORPUS` in the same file is suite + CLI, leaving **52 raw-entropy call sites
+  across the four CLIs uncensused, one of them Python's classical Schnorr nonce**.  #307:
+  the four owed pins.  Both were discovered by writing coverage reasons, which is the
+  argument for the table: a reason you cannot write honestly is a finding.
+
+Status: **DONE v8.0.6** — the census is 24/25/28/31 and every consumer is now pinned, covered by a call-graph-confirmed operation, or owed to a numbered item; a dead duplicate sampler that the parity manifest was anchored on is gone.
+
+---
