@@ -3412,14 +3412,591 @@ RANDOMNESS_CENSUS = {
 RANDOMNESS_RAW_PATTERNS = {
     "c": r"\bfread\s*\([^;]*urnd|\bba_rand\s*\(",
     "go": r"\brand\.(?:Read|Int)\s*\(|\bNewRandBitArray\s*\(",
-    "python": r"\bos\.urandom\s*\(|\bBitArray\.random\s*\(",
+    # token_bytes is `secrets.token_bytes`, and it is matched UNQUALIFIED
+    # because the CLI imports it as `_sec` inside the branch that uses it --
+    # a module alias no pattern anchored on `secrets.` would have seen.  That
+    # is the SIXTH spelling this header warns about, and TODO #306 found it
+    # by widening the corpus rather than by reading the suite again: in the
+    # suite it happens to sit in `main`, which draws by other means too, so
+    # the census was right there BY LUCK.  Adding the pattern moves no suite
+    # name, which is the check that says so rather than assuming it.
+    "python": r"\bos\.urandom\s*\(|\bBitArray\.random\s*\(|\btoken_bytes\s*\(",
     # The first argument is a bit COUNT and is written as a qualified
     # constant (Herradura.N, Stern.N), so [\w.]+ rather than \w+ -- with
     # \w+ the census missed Oprf.blind and Oprf.keygen entirely, and it was
     # the pinned-sampler cross-check below that said so.  That is the
     # "fifth spelling" blind spot this header warns about, caught once.
-    "java": r"\.nextBytes\s*\(|new\s+BigInteger\s*\(\s*[\w.]+\s*,\s*rng\s*\)",
+    #
+    # The SOURCE is matched case-INSENSITIVELY, and that is TODO #306's
+    # second finding rather than tidiness.  Every suite port names the
+    # parameter `rng`; HerraduraCli.java holds a static field `RNG`, so
+    # `new BigInteger(Herradura.N, RNG)` read as not a draw at all and TWO
+    # CLI functions -- one of them the threshold-nonce commit -- were
+    # censused as drawing nothing once the corpus reached them.  Not a fifth
+    # spelling: the SAME spelling in a different case, which is the harder
+    # blind spot to predict.
+    "java": r"\.nextBytes\s*\(|new\s+BigInteger\s*\(\s*[\w.]+\s*,\s*(?i:rng)\s*\)",
 }
+
+# ---------------------------------------------------------------------------
+# TODO #306: the corpus, which is prior to the census.
+#
+# Everything above reads THE SUITE.  PARAM_USE_CORPUS, forty lines up in this
+# same file, reads the suite AND the walkthrough AND the CLI AND the codec, and
+# says why in its own header: "getting the corpus wrong in the LENIENT direction
+# makes the whole check pass vacuously".  Two corpora, one file, and no sentence
+# anywhere about why the randomness axis used the narrower one.
+#
+# It was not a considered scope.  TODO #305 found it while writing the reason
+# for hpks_sign being absent in Go and Python -- they do not take the nonce as a
+# parameter, they DRAW IT IN THE CLI -- and measured 52 raw-entropy call sites
+# on the far side of the boundary.  A classical Schnorr nonce is among them, and
+# nonce reuse or bias recovers the private key from two signatures.
+#
+# WHAT WIDENING THE CORPUS FOUND, before any row was written.  The measured 52
+# is 59, because the census PATTERNS had two blind spots that only a wider
+# corpus could expose, both of the kind RANDOMNESS_RAW_PATTERNS' own header
+# warns about and neither predictable from the suite:
+#
+#   * `secrets.token_bytes`, imported as `_sec` inside the branch that uses it.
+#     A sixth spelling.  In the suite it sits in `main`, which draws by other
+#     means as well, so the census was right there BY LUCK -- and adding the
+#     pattern moves no suite name, which is what turns that from a claim into a
+#     check.
+#   * `new BigInteger(Herradura.N, RNG)`.  Not a new spelling at all: the same
+#     one in a different CASE, because every suite port names the parameter
+#     `rng` and the CLI holds a static field `RNG`.  Two Java CLI functions read
+#     as drawing nothing, and one of them is the threshold-nonce commit.
+#
+# AND THE ONE THAT IS NOT ABOUT PATTERNS.  C's herradura.h DOES export
+# hpks_sign, which draws its own nonce and which KAT/classical_quartet.json
+# pins -- and herradura_cli.c DOES NOT CALL IT.  cmd_sign transcribes the whole
+# Schnorr signer inline, ba_rand through ba_sub_mod_ord, and the suite copy is
+# reached only by docs/examples/c/hello_herradura.c and the FFI shim.  Go and
+# Python never had the operation at all.  So THREE OF FOUR CLIs sign with an
+# unpinned transcription and the fourth, Java, is the one that calls the suite
+# (Herradura.hpksSign at HerraduraCli.java:1414).  #305's hpks_sign coverage row
+# is true of the FUNCTION and was standing in for the shipped path; that is
+# #295's dead-code limit -- reachability is not liveness -- aimed at a sampler
+# instead of at a constant.
+#
+# WHAT THIS AXIS CANNOT DO, stated before the table rather than after it.  A CLI
+# takes no entropy source as a parameter in any of the four languages: C opens
+# /dev/urandom, Go uses crypto/rand, Python os.urandom, Java a static
+# SecureRandom.  So a fixed-stream replay does NOT reach this layer without a
+# new shipped surface (an injection env var), and that is a change to the
+# product, not to a checker -- deliberately not made here.  What IS available is
+# the accounting, and the accounting is the thing that was missing: which draw,
+# in which ports, and what -- if anything -- compares it across them.
+CLI_CORPUS = {
+    "c": [(("HerraduraCli", "herradura_cli.c"),
+           r"^(?:static\s+)?(?:inline\s+)?[\w \*]+?\b(\w+)\s*\(", r"^\}"),
+          (("HerraduraCli", "herradura_codec.h"),
+           r"^(?:static\s+)?(?:inline\s+)?[\w \*]+?\b(\w+)\s*\(", r"^\}")],
+    "go": [(("HerraduraCli", "herradura_cli.go"),
+            r"^func\s+(?:\([^)]*\)\s*)?(\w+)\s*\(", r"^\}")],
+    "python": [(("HerraduraCli", "herradura.py"), None, None),
+               (("HerraduraCli", "codec.py"), None, None),
+               (("HerraduraCli", "primitives.py"), None, None)],
+    "java": [(("bindings", "java", "herradurakex", "HerraduraCli.java"),
+              r"^    (?:public |private |protected )?static "
+              r"[\w\[\]<>., ]*?\b(\w+)\s*\(", r"^    \}"),
+             (("bindings", "java", "herradurakex", "Codec.java"),
+              r"^    (?:public |private |protected )?static "
+              r"[\w\[\]<>., ]*?\b(\w+)\s*\(", r"^    \}")],
+}
+
+# Derived from CLI_CORPUS every run and compared, exactly as RANDOMNESS_CENSUS
+# is: a CLI function that starts or stops drawing fails CI until it is filed.
+# Names carry their FILE, uniformly in all four languages and not only in Java
+# -- a CLI spreads over a binary and a codec, and `cmd_enc` alone would not say
+# which.
+RANDOMNESS_CLI_CENSUS = {
+    "c": [
+        "herradura_cli.c::cmd_enc", "herradura_cli.c::cmd_encfile",
+        "herradura_cli.c::cmd_genpkey", "herradura_cli.c::cmd_kex",
+        "herradura_cli.c::cmd_sign", "herradura_cli.c::cmd_threshold_commit",
+        "herradura_cli.c::encrypt_pem_text_to_file",
+    ],
+    "go": [
+        "herradura_cli.go::cmdEnc", "herradura_cli.go::cmdEncfile",
+        "herradura_cli.go::cmdGenpkey", "herradura_cli.go::cmdKex",
+        "herradura_cli.go::cmdSign", "herradura_cli.go::cmdThresholdCommit",
+        "herradura_cli.go::encryptPEMText",
+    ],
+    "python": [
+        "herradura.py::_encrypt_pem", "herradura.py::cmd_enc",
+        "herradura.py::cmd_encfile", "herradura.py::cmd_genpkey",
+        "herradura.py::cmd_kex", "herradura.py::cmd_sign",
+        "herradura.py::cmd_threshold_commit",
+    ],
+    "java": [
+        "HerraduraCli.java::cmdEnc", "HerraduraCli.java::cmdGenpkey",
+        "HerraduraCli.java::cmdKexHybrid", "HerraduraCli.java::cmdKexRnl",
+        "HerraduraCli.java::cmdThresholdCommit",
+        "HerraduraCli.java::encryptPemText",
+    ],
+}
+
+# What each CLI draw IS, and what compares it across the four ports.
+#
+# A ROLE, not a function: one CLI function holds several draws (cmd_genpkey
+# holds six in C) and one role spans several functions (Java splits the kex
+# responder nonce between cmdKexRnl and cmdKexHybrid).  So a cell is
+# (function, SITE COUNT), and the site counts are checked against the source:
+# per language and function, the counts of every row claiming it must SUM to the
+# number of raw-entropy sites actually there.  That is the part that does not
+# decay.  A name set alone would let a seventh draw be added to cmd_genpkey in
+# silence -- which is precisely how 52 sites accumulated on the far side of a
+# boundary nobody had stated.
+#
+# THREE STATUSES.
+#
+#   suite     At least one port draws this role inside a CENSUSED SUITE
+#             consumer instead of in its CLI, and `via` names the
+#             REPLAY_COVERAGE (or pinned) row that accounts for it there.  The
+#             row then records the asymmetry: which ports inline the draw and
+#             which delegate it.  DERIVED, not asserted -- every `via` must name
+#             a real row, and a port with no CLI cell must have a cell in one of
+#             them.
+#   cli_only  No port draws this role in the suite: the role exists nowhere but
+#             the CLI, so no suite-level pin could reach it however much pinning
+#             were done.  Needs a reason.
+#   owed      Pinning applies and is not done.  Needs a reason AND an item
+#             number, on REPLAY_COVERAGE's rule and for its reason: a prose
+#             reason is where work gets parked.
+#
+# `via` is REQUIRED by `suite`, FORBIDDEN to `cli_only` (which asserts no port
+# draws the role in its suite, and a delegation would contradict that) and
+# ALLOWED to `owed` -- schnorr_nonce is owed in three ports and delegated in the
+# fourth, and collapsing that to one status per row would lose which is which.
+#
+# `absent` is the third branch of the per-language rule -- a port that ships no
+# such draw at all, neither in its CLI nor in its suite.  It ships EMPTY, on
+# PARAM_USE_EXEMPT's precedent: every port of every role here is accounted for
+# by a cell or by a `via` row, so an entry appearing later means a genuine
+# per-language absence was argued for, not that the rule was relaxed.
+CLI_DRAW_COVERAGE = {
+    # --- the passphrase envelope -------------------------------------------
+    "pem_envelope_salt": {
+        "status": "cli_only",
+        "reason":
+            "The PBKDF2 salt for `genpkey --passphrase`.  No suite function "
+            "draws it: the envelope is assembled in the CLI in all four ports, "
+            "which is why KAT/pem/enc_priv.pem exists and is the one artifact "
+            "there that IS regenerate-and-diff checked -- salt and nonce are "
+            "arguments the primitive accepts, so pinning them pins the file.  "
+            "That pins the ARTIFACT, not the DRAW: generate_pem_kat.py supplies "
+            "the salt, and no path from the CLI's own draw reaches the vector",
+        "c": ("herradura_cli.c::encrypt_pem_text_to_file", 1),
+        "go": ("herradura_cli.go::encryptPEMText", 1),
+        "python": ("herradura.py::_encrypt_pem", 1),
+        "java": ("HerraduraCli.java::encryptPemText", 1),
+    },
+    "pem_envelope_nonce": {
+        "status": "suite", "via": ["hske_nl_aead_encrypt"],
+        "reason":
+            "The envelope's AEAD nonce, and the ports SPLIT on where it comes "
+            "from: C, Go and Java draw it in the CLI and pass it in, while "
+            "Python lets hske_nl_aead_encrypt draw its own and returns it.  "
+            "Same wire format either way -- the nonce travels in the DER -- so "
+            "no round-trip or interop test can see the difference, which is "
+            "this axis's standing shape",
+        "c": ("herradura_cli.c::encrypt_pem_text_to_file", 1),
+        "go": ("herradura_cli.go::encryptPEMText", 1),
+        "python": None,
+        "java": ("HerraduraCli.java::encryptPemText", 1),
+    },
+
+    # --- genpkey -----------------------------------------------------------
+    "classical_privkey": {
+        "status": "cli_only",
+        "reason":
+            "The HKEX-GF/HPKS/HPKE private exponent.  ONE draw with no order "
+            "to compare -- a single uniform value, used immediately -- so a "
+            "fixed stream would pin the identity function.  What a divergence "
+            "here would look like is a WIDTH or a masking difference, and that "
+            "is the PARAMETERS axis's `bits` row, not this one",
+        "c": ("herradura_cli.c::cmd_genpkey", 1),
+        "go": ("herradura_cli.go::cmdGenpkey", 1),
+        "python": ("herradura.py::cmd_genpkey", 1),
+        "java": ("HerraduraCli.java::cmdGenpkey", 1),
+    },
+    "rnl_kex_nonce_a": {
+        "status": "cli_only",
+        "reason":
+            "The HKEX-RNL initiator's contributory nonce n_A, 32 bytes, "
+            "written into the public key PEM.  It reaches an artifact, so the "
+            "4x4 interop matrix and KAT/pem/ both see the FORMAT -- and "
+            "neither sees the draw, because a nonce is accepted as whatever "
+            "the peer sent",
+        "c": ("herradura_cli.c::cmd_genpkey", 1),
+        "go": ("herradura_cli.go::cmdGenpkey", 1),
+        "python": ("herradura.py::cmd_genpkey", 1),
+        "java": ("HerraduraCli.java::cmdGenpkey", 1),
+    },
+    "hcred_seed_h": {
+        "status": "cli_only",
+        "reason":
+            "HCRED's per-user seed_H, drawn at genpkey and committed to in the "
+            "credential.  Java draws it as a BigInteger and the other three as "
+            "a bit array, which is the CASE difference that hid two Java CLI "
+            "functions from this census until the pattern was widened",
+        "c": ("herradura_cli.c::cmd_genpkey", 1),
+        "go": ("herradura_cli.go::cmdGenpkey", 1),
+        "python": ("herradura.py::cmd_genpkey", 1),
+        "java": ("HerraduraCli.java::cmdGenpkey", 1),
+    },
+    "hash_sig_master_seed": {
+        "status": "cli_only",
+        "reason":
+            "Two draws per port, one for hpks-wots and one for hpks-xmss: the "
+            "32-byte master seed every chain and every leaf is derived from.  "
+            "The DERIVATION is deterministic in the seed and pinned four ways, "
+            "so a divergence would be visible -- but only if the seed were "
+            "shared, and it never is.  Python's is the `secrets.token_bytes` "
+            "pair, the sixth spelling this item added to the patterns",
+        "c": ("herradura_cli.c::cmd_genpkey", 2),
+        "go": ("herradura_cli.go::cmdGenpkey", 2),
+        "python": ("herradura.py::cmd_genpkey", 2),
+        "java": ("HerraduraCli.java::cmdGenpkey", 2),
+    },
+    "qcmdpc_keygen_prf_seed": {
+        "status": "suite", "via": ["qcmdpc_keygen"],
+        "reason":
+            "THE C CELL OF AN OWED PIN, and it is in the CLI.  "
+            "REPLAY_COVERAGE's qcmdpc_keygen row records `c: None -- takes a "
+            "QcMdpcPrf *; the seed is a parameter, not a draw`, which is true "
+            "of herradura.h and stops one frame short: herradura_cli.c draws "
+            "that seed itself and calls qcprf_init.  So when TODO #307 pins "
+            "QC-MDPC keygen, three ports supply the stream to the suite "
+            "function and C supplies it HERE",
+        "c": ("herradura_cli.c::cmd_genpkey", 1),
+        "go": None, "python": None, "java": None,
+    },
+
+    # --- kex ---------------------------------------------------------------
+    "rnl_kex_nonce_b": {
+        "status": "cli_only",
+        "reason":
+            "The HKEX-RNL responder's n_B, the other half of the contributory "
+            "pair, drawn while answering and returned in the response PEM.  "
+            "Java is the only port that splits the responder across two "
+            "functions, one per algorithm, which is why this role and the "
+            "hybrid one are separate rows rather than a count of two",
+        "c": ("herradura_cli.c::cmd_kex", 1),
+        "go": ("herradura_cli.go::cmdKex", 1),
+        "python": ("herradura.py::cmd_kex", 1),
+        "java": ("HerraduraCli.java::cmdKexRnl", 1),
+    },
+    "hybrid_kex_nonce_b": {
+        "status": "cli_only",
+        "reason":
+            "The same responder nonce on the hybrid-rnl-stern path, where the "
+            "session key is the KDF of a Ring-LWR agreement AND a Stern-KEM "
+            "encapsulation.  Worth its own row because that path's failure is "
+            "SILENT by construction since TODO #235 -- implicit rejection "
+            "means dec always exits 0 -- so a mismatch here surfaces as two "
+            "peers with different keys and no error",
+        "c": ("herradura_cli.c::cmd_kex", 1),
+        "go": ("herradura_cli.go::cmdKex", 1),
+        "python": ("herradura.py::cmd_kex", 1),
+        "java": ("HerraduraCli.java::cmdKexHybrid", 1),
+    },
+    "hybrid_kem_prf_seed": {
+        "status": "suite", "via": ["qcmdpc_encap"],
+        "reason":
+            "C's PRF seed for the Stern-KEM half of the hybrid handshake, the "
+            "same asymmetry as the keygen row one level down: three ports "
+            "encapsulate through a suite function that draws, C's takes the "
+            "PRF already seeded",
+        "c": ("herradura_cli.c::cmd_kex", 1),
+        "go": None, "python": None, "java": None,
+    },
+
+    # --- enc ---------------------------------------------------------------
+    "hske_nla1_nonce": {
+        "status": "cli_only",
+        "reason":
+            "HSKE-NL-A1's counter-mode nonce.  All four ports draw it in the "
+            "CLI, and this is the row where that is most load-bearing: A1 is "
+            "ks = nl_fscx_revolve_v1(K, K^ctr, i) with E = P ^ ks, so a "
+            "repeated nonce under one key is a two-time pad outright.  Nothing "
+            "compares the four draws",
+        "c": ("herradura_cli.c::cmd_enc", 1),
+        "go": ("herradura_cli.go::cmdEnc", 1),
+        "python": ("herradura.py::cmd_enc", 1),
+        "java": ("HerraduraCli.java::cmdEnc", 1),
+    },
+    "duplex_nonce": {
+        "status": "suite", "via": ["duplex_encrypt"],
+        "reason":
+            "The sponge-duplex nonce for hske-duplex2/3.  C and Go draw it in "
+            "the CLI; Python's suite duplex draws its own and Python ships no "
+            "duplex subcommand at all, and Java's CLI hands RNG to "
+            "Duplex.v2Encrypt/v3Encrypt.  Three shapes for one nonce",
+        "c": ("herradura_cli.c::cmd_enc", 1),
+        "go": ("herradura_cli.go::cmdEnc", 1),
+        "python": None, "java": None,
+    },
+    "hpke_ephemeral_r": {
+        "status": "suite",
+        "via": ["hpke_encrypt", "hpke_nl_encrypt", "hpke_nl3_encrypt"],
+        "reason":
+            "The El Gamal ephemeral exponent, and the site counts are the "
+            "finding: ONE draw in C and Go, which share a branch across hpke, "
+            "hpke-nl and hpke-nl3; THREE in Python, one per algorithm; NONE in "
+            "Java, whose CLI calls the suite for each.  Three via rows because "
+            "Java splits the operation three ways -- and the other two ports "
+            "have no such operation to name, so REPLAY_COVERAGE's "
+            "hpke_nl_encrypt and hpke_nl3_encrypt rows are Java-only for "
+            "exactly this reason",
+        "c": ("herradura_cli.c::cmd_enc", 1),
+        "go": ("herradura_cli.go::cmdEnc", 1),
+        "python": ("herradura.py::cmd_enc", 3),
+        "java": None,
+    },
+    "qcmdpc_encap_prf_seed": {
+        "status": "suite", "via": ["qcmdpc_encap"],
+        "reason":
+            "C's PRF seed for `enc --algo hpke-stern-kem`, the third and last "
+            "place herradura_cli.c seeds a QcMdpcPrf the other three ports "
+            "seed inside the suite",
+        "c": ("herradura_cli.c::cmd_enc", 1),
+        "go": None, "python": None, "java": None,
+    },
+
+    # --- sign --------------------------------------------------------------
+    "schnorr_nonce": {
+        "status": "owed", "item": 308, "via": ["hpks_sign"],
+        "reason":
+            "THE DRAW THIS ITEM WAS FILED FOR.  A classical Schnorr nonce: "
+            "reuse across two signatures under one key yields the private key "
+            "by subtraction, and bias yields it by lattice reduction.  C, Go "
+            "and Python draw it in the CLI and build the signature inline; "
+            "Java alone calls Herradura.hpksSign.  C's herradura.h EXPORTS "
+            "hpks_sign and KAT/classical_quartet.json pins it, and "
+            "herradura_cli.c does not call it -- the suite copy is reached "
+            "only by docs/examples and the FFI shim.  So the pinned function "
+            "and the shipped path are different code in the port that has "
+            "both, which is #295's dead-code limit aimed at a sampler.  This "
+            "is `owed` and not `cli_only` because the fix is not a vector: it "
+            "is to make the three CLIs CALL the operation they transcribe",
+        "c": ("herradura_cli.c::cmd_sign", 1),
+        "go": ("herradura_cli.go::cmdSign", 1),
+        "python": ("herradura.py::cmd_sign", 1),
+        "java": None,
+    },
+    "threshold_commit_nonce": {
+        "status": "cli_only",
+        "reason":
+            "HPKS-T's per-signer commitment nonce k_j, and the same arithmetic "
+            "as the row above applies to it -- a threshold Schnorr partial is "
+            "s_j = k_j - a_j.e, so a repeat recovers that signer's share.  All "
+            "four ports draw it in the CLI; the suite's hpkst_sign is the "
+            "AGGREGATE path and is not what `threshold-commit` calls.  Java's "
+            "is the second of the two sites the case-blind pattern missed",
+        "c": ("herradura_cli.c::cmd_threshold_commit", 1),
+        "go": ("herradura_cli.go::cmdThresholdCommit", 1),
+        "python": ("herradura.py::cmd_threshold_commit", 1),
+        "java": ("HerraduraCli.java::cmdThresholdCommit", 1),
+    },
+
+    # --- encfile -----------------------------------------------------------
+    "encfile_nonce": {
+        "status": "suite", "via": ["hfscx256_enc_file"],
+        "reason":
+            "The HFSCX-256 file-encryption nonce.  Java hands RNG to "
+            "Hfscx256.encFile, which is why REPLAY_COVERAGE's "
+            "hfscx256_enc_file row has a Java cell and nothing else; the other "
+            "three draw it in the CLI and pass it down",
+        "c": ("herradura_cli.c::cmd_encfile", 1),
+        "go": ("herradura_cli.go::cmdEncfile", 1),
+        "python": ("herradura.py::cmd_encfile", 1),
+        "java": None,
+    },
+}
+
+_CLI_DRAW_STATUSES = ("suite", "cli_only", "owed")
+_CLI_BODY_CACHE = {}
+
+
+def _cli_bodies(lang):
+    """{file::name: body} for one language's CLI corpus, cached."""
+    if lang in _CLI_BODY_CACHE:
+        return _CLI_BODY_CACHE[lang]
+    out = {}
+    for parts, fnpat, endpat in CLI_CORPUS[lang]:
+        path = os.path.join(REPO, *parts)
+        base = os.path.basename(path)
+        src = _slurp(path)
+        pairs = _py_bodies(src) if fnpat is None else \
+            _brace_bodies(src, fnpat, endpat)
+        for n, b in pairs:
+            out.setdefault(f"{base}::{n}", []).append(b)
+    _CLI_BODY_CACHE[lang] = out
+    return out
+
+
+def _cli_draw_sites():
+    """{lang: {file::name: number of raw-entropy sites}}, derived."""
+    out = {}
+    for lang in ("c", "go", "python", "java"):
+        pat = RANDOMNESS_RAW_PATTERNS[lang]
+        counts = {}
+        for name, bodies in _cli_bodies(lang).items():
+            # MATCHES, not matching lines: two draws on one line is one site
+            # under a per-line count, and the two are identical across the
+            # corpus today -- which is the reason to count the stricter way
+            # now rather than after someone writes the line that separates
+            # them.
+            n = sum(len(re.findall(pat, b)) for b in bodies)
+            if n:
+                counts[name] = n
+        out[lang] = counts
+    return out
+
+
+def _check_cli_draws(errors):
+    """Fourth part of the eighth axis: the corpus past the suite boundary.
+
+    See CLI_CORPUS's header.  Two tripwires and one derived claim.  The census
+    is a NAME SET like RANDOMNESS_CENSUS; the site COUNTS are held by
+    CLI_DRAW_COVERAGE's cells, so a new draw inside an already-censused command
+    fails until a role claims it; and a `suite` row's `via` is checked against
+    the real coverage tables rather than believed.
+    """
+    langs = ("c", "go", "python", "java")
+    sites = _cli_draw_sites()
+
+    for lang in langs:
+        got = set(sites[lang])
+        if not got:
+            errors.append(
+                f"CLI randomness census: no raw-entropy consumer found in the "
+                f"{lang} CLI — the extractor broke (CLI_CORPUS's function "
+                "pattern no longer matches, or RANDOMNESS_RAW_PATTERNS does), "
+                "rather than the CLI having stopped drawing")
+            continue
+        want = set(RANDOMNESS_CLI_CENSUS[lang])
+        for name in sorted(got - want):
+            errors.append(
+                f"CLI randomness census: {lang} CLI function '{name}' reads raw "
+                "entropy and is not in RANDOMNESS_CLI_CENSUS — add it, and give "
+                "it a CLI_DRAW_COVERAGE role saying what the draw IS")
+        for name in sorted(want - got):
+            errors.append(
+                f"CLI randomness census: RANDOMNESS_CLI_CENSUS names {lang} CLI "
+                f"function '{name}', which no longer reads raw entropy — delete "
+                "the entry rather than leaving a census describing the old CLI")
+
+    # Roles -> per-language claimed site counts.
+    claimed = {l: {} for l in langs}
+    for role, row in CLI_DRAW_COVERAGE.items():
+        status = row.get("status")
+        if status not in _CLI_DRAW_STATUSES:
+            errors.append(
+                f"CLI draw coverage: role '{role}' has status {status!r}, which "
+                f"is not one of {', '.join(_CLI_DRAW_STATUSES)}")
+            continue
+        if not row.get("reason"):
+            errors.append(
+                f"CLI draw coverage: role '{role}' carries no reason — the "
+                "reason is the whole content of the entry")
+        if status == "owed" and not row.get("item"):
+            errors.append(
+                f"CLI draw coverage: role '{role}' is owed and names no TODO "
+                "item — 'owed' exists so that work cannot be parked inside a "
+                "prose reason, which needs somewhere to be parked instead")
+        vias = row.get("via") or []
+        if status == "suite" and not vias:
+            errors.append(
+                f"CLI draw coverage: role '{role}' is 'suite' and names no via "
+                "row — the status asserts a suite consumer accounts for the "
+                "ports that do not draw here, so it has to say which")
+        if status == "cli_only" and vias:
+            errors.append(
+                f"CLI draw coverage: role '{role}' is cli_only and names via "
+                f"row(s) {vias} — 'cli_only' asserts no suite consumer draws "
+                "this role in any port, which a delegation contradicts")
+        for v in vias:
+            if v not in REPLAY_COVERAGE and v not in OPERATION_REPLAY_PINNED \
+                    and v not in SAMPLER_REPLAY_PINNED:
+                errors.append(
+                    f"CLI draw coverage: role '{role}' delegates to '{v}', "
+                    "which is named by no REPLAY_COVERAGE, "
+                    "OPERATION_REPLAY_PINNED or SAMPLER_REPLAY_PINNED row — a "
+                    "delegation cannot rest on a row that does not exist")
+
+        absent = row.get("absent") or {}
+        for lang in langs:
+            cell = row.get(lang)
+            if cell:
+                fn, n = cell
+                if fn not in sites[lang]:
+                    errors.append(
+                        f"CLI draw coverage: role '{role}' names {lang} CLI "
+                        f"function '{fn}', which reads no raw entropy — delete "
+                        "the cell rather than leaving a claim about a function "
+                        "that no longer draws")
+                    continue
+                if not isinstance(n, int) or n < 1:
+                    errors.append(
+                        f"CLI draw coverage: role '{role}' claims {n!r} sites "
+                        f"for {lang} '{fn}' — a cell claims at least one")
+                    continue
+                claimed[lang][fn] = claimed[lang].get(fn, 0) + n
+                if lang in absent:
+                    errors.append(
+                        f"CLI draw coverage: role '{role}' marks {lang} absent "
+                        f"and also names '{fn}' — a port cannot both draw it "
+                        "and not have it")
+                continue
+            # No CLI cell: some other port's suite must account for it, or the
+            # port must be declared absent.
+            if lang in absent:
+                if not absent[lang]:
+                    errors.append(
+                        f"CLI draw coverage: role '{role}' marks {lang} absent "
+                        "with no reason")
+                continue
+            covered = any(
+                (REPLAY_COVERAGE.get(v) or OPERATION_REPLAY_PINNED.get(v)
+                 or SAMPLER_REPLAY_PINNED.get(v) or {}).get(lang)
+                for v in vias)
+            if not covered:
+                errors.append(
+                    f"CLI draw coverage: role '{role}' gives {lang} no CLI "
+                    f"function, no via row naming a {lang} suite consumer, and "
+                    "no `absent` reason — every port is accounted for, or the "
+                    "role's shape is a guess")
+
+    # The direction that does not decay, at SITE granularity: every raw-entropy
+    # draw in the CLI corpus is claimed by exactly one role's count.
+    for lang in langs:
+        for fn, n in sorted(sites[lang].items()):
+            c = claimed[lang].get(fn, 0)
+            if c != n:
+                errors.append(
+                    f"CLI draw coverage: {lang} CLI function '{fn}' has {n} "
+                    f"raw-entropy site(s) and CLI_DRAW_COVERAGE claims {c} — "
+                    "every draw belongs to exactly one role, or the count is "
+                    "not an accounting")
+        for fn in sorted(set(claimed[lang]) - set(sites[lang])):
+            errors.append(
+                f"CLI draw coverage: {lang} CLI function '{fn}' is claimed by a "
+                "role and draws nothing")
+
+
+def _cli_draw_counts():
+    """(roles by status, total sites per language), for the closing report."""
+    by = {k: 0 for k in _CLI_DRAW_STATUSES}
+    for row in CLI_DRAW_COVERAGE.values():
+        if row.get("status") in by:
+            by[row["status"]] += 1
+    sites = _cli_draw_sites()
+    return by, {l: sum(sites[l].values()) for l in ("c", "go", "python", "java")}
+
 
 _REPLAY_VECTOR = os.path.join(REPO, "KAT", "sampler_replay.json")
 _OPREPLAY_VECTOR = os.path.join(REPO, "KAT", "operation_replay.json")
@@ -3673,6 +4250,8 @@ def check_randomness(errors):
                         "proves nothing")
     # --- (3) coverage of the census by the two vectors (TODO #305) --------
     _check_coverage(errors, found)
+    # --- (4) the corpus past the suite boundary (TODO #306) ---------------
+    _check_cli_draws(errors)
     return found, vector_names, op_names
 
 
@@ -3849,6 +4428,17 @@ def main():
         f"operation (confirmed against the call graph, not asserted), "
         f"{cov['unpinned']} where a fixed stream would prove nothing new, and "
         f"{cov['owed']} still OWED a pin."
+    )
+    cli_by, cli_sites = _cli_draw_counts()
+    print(
+        f"OK: CLI draw census — the corpus reaches past the suite boundary: "
+        + ", ".join(f"{lang} {cli_sites[lang]}"
+                    for lang in ("c", "go", "python", "java"))
+        + f" raw-entropy site(s) in the four CLIs, {sum(cli_sites.values())} in "
+        f"all, every one claimed by one of {len(CLI_DRAW_COVERAGE)} draw role(s) "
+        f"({cli_by['suite']} delegated to a censused suite consumer, "
+        f"{cli_by['cli_only']} drawn nowhere but the CLI, and {cli_by['owed']} "
+        f"OWED)."
     )
     return 0
 

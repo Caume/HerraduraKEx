@@ -1604,6 +1604,96 @@ spec/                                                — machine-readable protoc
                                                       Python's classical Schnorr NONCE (TODO
                                                       #306), and the four owed pins are TODO
                                                       #307
+                                                      CLI_CORPUS /
+                                                      RANDOMNESS_CLI_CENSUS /
+                                                      CLI_DRAW_COVERAGE (TODO #306) are
+                                                      the FOURTH part of this axis and
+                                                      the one that is not about the
+                                                      census at all -- it is about which
+                                                      code the census READS.
+                                                      PARAM_USE_CORPUS forty lines up in
+                                                      the same file reads suite +
+                                                      walkthrough + CLI + codec and says
+                                                      why; the randomness axis read the
+                                                      SUITE ALONE, with no sentence
+                                                      anywhere about the difference, and
+                                                      that was never a considered scope.
+                                                      59 raw-entropy sites sit in the
+                                                      four CLIs (c 18, go 15, python 15,
+                                                      java 11), every one now claimed by
+                                                      one of 17 named draw ROLES.  A
+                                                      role, not a function: one command
+                                                      holds six draws and one role spans
+                                                      two functions (Java splits the kex
+                                                      responder by algorithm), so a cell
+                                                      is (function, SITE COUNT) and the
+                                                      counts must SUM to what the source
+                                                      holds -- a name set alone would let
+                                                      a seventh draw be added to
+                                                      cmd_genpkey in silence, which is
+                                                      how 52 sites accumulated on the far
+                                                      side of an unstated boundary.
+                                                      THREE STATUSES: `suite` (some port
+                                                      draws this role inside a censused
+                                                      suite consumer instead, and `via`
+                                                      names the REPLAY_COVERAGE row, so
+                                                      the row records WHICH ports inline
+                                                      the draw and which delegate),
+                                                      `cli_only` (no port draws it in a
+                                                      suite, so no pin could ever reach
+                                                      it) and `owed`.  `via` is required
+                                                      by `suite`, FORBIDDEN to `cli_only`
+                                                      -- a delegation contradicts that
+                                                      status -- and allowed to `owed`,
+                                                      because schnorr_nonce is owed in
+                                                      three ports and delegated in the
+                                                      fourth.  WIDENING THE CORPUS FOUND
+                                                      THE PATTERNS WRONG, which is why
+                                                      the filed figure was 52:
+                                                      secrets.token_bytes imported as
+                                                      `_sec` inside its own branch (a
+                                                      sixth spelling; in the suite it
+                                                      sits in `main`, which draws by
+                                                      other means, so the census was
+                                                      right there BY LUCK), and
+                                                      new BigInteger(Herradura.N, RNG) --
+                                                      not a new spelling but the SAME one
+                                                      in a different CASE, since every
+                                                      suite port names the parameter
+                                                      `rng` and the CLI holds a static
+                                                      field `RNG`, which hid two Java CLI
+                                                      functions including the
+                                                      threshold-nonce commit.  Adding
+                                                      both moves NO suite name, and that
+                                                      non-move is what turns "the suite
+                                                      census was right" from a claim into
+                                                      a check.  AND THE FINDING UNDER THE
+                                                      HEADLINE: C's herradura.h exports
+                                                      hpks_sign, it draws its own nonce,
+                                                      KAT/classical_quartet.json pins it,
+                                                      and herradura_cli.c DOES NOT CALL
+                                                      IT -- cmd_sign transcribes the
+                                                      whole Schnorr signer inline and the
+                                                      suite copy is reached only by
+                                                      docs/examples and the FFI shim.  Go
+                                                      and Python never had the operation.
+                                                      So three of four CLIs sign with an
+                                                      unpinned transcription and Java is
+                                                      the one that calls the suite: the
+                                                      pinned function and the shipped
+                                                      path are different code in the port
+                                                      that has both, #295's dead-code
+                                                      limit aimed at a sampler.  That is
+                                                      TODO #308.  KNOWN LIMIT, stated
+                                                      before the table rather than after
+                                                      it: no CLI takes an entropy source
+                                                      as a parameter in any language, so
+                                                      a fixed-stream replay does NOT
+                                                      reach this layer without a new
+                                                      shipped surface, and what was
+                                                      missing was never the replay -- it
+                                                      was knowing which draws exist, in
+                                                      which ports, and what compares them
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,
@@ -2194,6 +2284,42 @@ parameter -- they draw it in the CLI, which this census does not read. 52 raw-en
 sites sit outside the corpus across the four CLIs, and `PARAM_USE_CORPUS` in the same file
 already includes CLIs for #295's stated reason. That is TODO #306, filed rather than folded
 in.
+
+**And which code the census READS, which is prior to everything the census says (TODO
+#306).** #305 asked how much of `RANDOMNESS_CENSUS` is pinned and hit a wall that was not
+about pinning: writing the reason for `hpks_sign` being absent in Go and Python turned up
+that they draw the Schnorr nonce **in the CLI**, which that census does not read. The
+inconsistency was inside one file — `PARAM_USE_CORPUS` forty lines up reads suite +
+walkthrough + CLI + codec and says why ("getting the corpus wrong in the LENIENT direction
+makes the whole check pass vacuously"), while the randomness axis read the suite alone with
+no sentence anywhere about the difference. `CLI_CORPUS`, `RANDOMNESS_CLI_CENSUS` and
+`CLI_DRAW_COVERAGE` close it: **59 raw-entropy draws sit in the four CLIs**, every one
+claimed by one of 17 named roles. Four things to carry forward. (1) **Widening the corpus
+found the PATTERNS wrong**, which is why the filed figure was 52 — `secrets.token_bytes`
+imported as `_sec` inside its own branch (a sixth spelling, and in the suite it sits in
+`main`, which draws by other means, so the census was right there **by luck**), and
+`new BigInteger(Herradura.N, RNG)`, which is not a new spelling at all but the same one in a
+different CASE, because every suite port names the parameter `rng` and the CLI holds a static
+field `RNG`. Two Java CLI functions read as drawing nothing, one of them the threshold-nonce
+commit. Adding both patterns moves NO suite name, and that non-move is the check that the
+suite census was correct rather than the claim that it was. (2) **The accounting is at SITE
+granularity, not function.** A cell is (function, count) and the counts must sum to what the
+source holds, because one command holds six draws and a name set would let a seventh be added
+in silence — which is precisely how 52 sites accumulated on the far side of an unstated
+boundary. (3) **The headline is a Schnorr nonce and the finding under it is worse than its
+absence.** C's `herradura.h` exports `hpks_sign`, it draws its own nonce, and
+`KAT/classical_quartet.json` pins it — and `herradura_cli.c` DOES NOT CALL IT, transcribing
+the whole signer inline instead; the suite copy is reached only by `docs/examples` and the FFI
+shim. Go and Python never had the operation. So three of four CLIs sign with an unpinned
+transcription and Java is the one that calls the suite. The pinned function and the shipped
+path are different code in the port that has both, which is #295's dead-code limit
+(reachability is not liveness) aimed at a sampler instead of a constant. Filed as TODO #308,
+because the fix is not a vector — it is to make the three CLIs call the operation they copy.
+(4) **A fixed-stream replay does not reach this layer and the item does not pretend
+otherwise.** No CLI takes an entropy source as a parameter in any of the four languages, so
+pinning here needs a new shipped surface (an injection env var), which is a change to the
+product and is deliberately not made. What was missing was never the replay; it was knowing
+which draws exist, in which ports, and what compares them.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

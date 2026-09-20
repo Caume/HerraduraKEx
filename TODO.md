@@ -132,44 +132,6 @@ Status: **OPEN**
 ---
 
 
-### #306: the randomness census stops at the suite boundary, and a Schnorr nonce is on the other side
-
-**Found by TODO #305 while answering a different question.**  #305 asked how much of
-`RANDOMNESS_CENSUS` is pinned.  Writing the coverage reasons forced a look at why Go and
-Python are ABSENT from the `hpks_sign` row, and the answer is not that they take the
-nonce as a parameter.  It is that **they draw it in the CLI**, which this census does not
-read at all.
-
-`HerraduraCli/herradura.py`'s `cmd_sign` contains `k = BitArray.random(nbits)` and builds
-the classical Schnorr signature inline.  A Schnorr nonce is the most failure-sensitive
-draw in the classical stack -- reuse or bias recovers the private key from two signatures
--- and it is invisible to the axis built to notice exactly this kind of draw.
-
-**Measured before filing.**  Raw-entropy call sites outside the censused corpus, by the
-census's own per-language patterns: **C 18, Go 15, Python 13, Java 6 -- 52 in all**,
-across the four CLIs.  None is censused, so none can be pinned, and none would fail CI if
-it changed.
-
-**The inconsistency is inside one file.**  `PARAM_USE_CORPUS` (TODO #295) defines the
-shipped path as *suite, walkthrough, CLI, codec* -- deliberately, because "getting the
-corpus wrong in the LENIENT direction makes the whole check pass vacuously".  The
-randomness census, in the same checker, reads the suite alone.  Two corpora, one file, no
-statement anywhere about why they differ.
-
-**What is owed.**  Either extend the corpus to the CLIs and absorb the 52 sites -- with
-`REPLAY_COVERAGE` rows for each, which #305's machinery already supports -- or record a
-reason why a CLI draw is out of scope, which will have to survive the Schnorr nonce being
-one of them.  The first is expected; the second is the honest alternative and must be
-argued rather than assumed.
-
-**Note on what this is NOT.**  No defect is claimed in any of the 52.  #305's scope
-sentence applies unchanged: a census says a draw exists and that someone looked, never
-that it is correct.
-
-Status: **OPEN**
-
----
-
 ### #307: the four pins TODO #305's coverage census left OWED
 
 **TODO #305 built the coverage table and classified every censused raw-entropy consumer
@@ -179,7 +141,12 @@ a prose sentence stand in for the work.
 
 Four rows, in the order their absence is most likely to hide something.
 
-* **`qcmdpc_keygen`** (Go, Python, Java; C takes the PRF as a parameter).  TODO #277
+* **`qcmdpc_keygen`** (Go, Python, Java; C takes the PRF as a parameter -- and TODO #306
+  found where C's seed actually comes from: `herradura_cli.c`'s `cmd_genpkey` draws it
+  and calls `qcprf_init`, so when this row is pinned, three ports supply the stream to
+  the suite function and C supplies it in the CLI.  `CLI_DRAW_COVERAGE`'s
+  `qcmdpc_keygen_prf_seed` row records that, and `qcmdpc_encap_prf_seed` and
+  `hybrid_kem_prf_seed` do the same for the two encapsulation sites).  TODO #277
   found a 3-vs-1 byte-order split inside the PRF this drives, and only a dedicated
   pinned vector -- numbered test [52] -- could catch it.  That pins the PRF; it does not
   pin the DRAW ORDER around it.  #284 pinned KEM artifacts, which are verify-side, and
@@ -212,6 +179,57 @@ choosing `(N_par, M, tau)`.
 pin turned out to be expensive.  #305 separated the two statuses so that cost is argued
 in the open; a reason written after the fact to retire work is #300's third rule -- slack
 wide enough never to fire -- in table form.
+
+Status: **OPEN**
+
+---
+
+### #308: three of four CLIs sign with an unpinned transcription of the Schnorr signer
+
+**Found by TODO #306 while widening the randomness corpus, and it is not a pattern
+problem.**  `herradura.h` exports `hpks_sign`, which draws its own nonce and which
+`KAT/classical_quartet.json` pins four ways.  `HerraduraCli/herradura_cli.c` does not
+call it: `cmd_sign` transcribes the whole signer inline -- `ba_rand`, `gf_pow_ba`,
+`ba_fscx_revolve`, `ba_mul_mod_ord`, `ba_sub_mod_ord` -- and the suite copy is reached
+only by `docs/examples/c/hello_herradura.c` and `bindings/ffi/herradura_shim.c`.  Go and
+Python never had the operation at all; their `REPLAY_COVERAGE` cells are `None` for that
+reason.  Java's CLI is the one that calls the suite
+(`Herradura.hpksSign(msgInt, pk.priv, RNG)`, `HerraduraCli.java:1414`).
+
+**So the pinned function and the shipped path are different code in the only port that
+has both.**  That is #295's recorded dead-code limit -- reachability is not liveness --
+aimed at a sampler rather than at a constant, and it is why #305's `hpks_sign` coverage
+row reads as reassuring while saying nothing about what `sign --algo hpks` runs.
+
+**Why this is `owed` and not `cli_only`.**  `CLI_DRAW_COVERAGE`'s `schnorr_nonce` row is
+the one `owed` entry in that table, and the fix it owes is not a vector.  A fixed stream
+cannot reach a CLI (no port takes an entropy source as a parameter), so pinning the draw
+where it is would need a new shipped surface.  Making the three CLIs CALL the operation
+they copy moves the draw to a suite function the existing replay machinery already
+reaches -- and for C that is a function which is already pinned.
+
+**What is owed.**
+
+* C: replace `cmd_sign`'s inline Schnorr block with a call to `hpks_sign`, and check the
+  signature is byte-identical before and after (it is the same arithmetic; if it is not,
+  that is the finding).
+* Go and Python: the suite has no such operation, so one has to be ADDED -- a new public
+  API surface, hence a MINOR bump, with `PRIMITIVES` manifest entries in all four cells
+  and the `CLI_FLAG_PARITY` `hpks-sign` acknowledgement re-examined, since the asymmetry
+  it records is the one being removed.
+* Then the `hpks_sign` `REPLAY_COVERAGE` row's `go`/`python` cells stop being `None`, and
+  `CLI_DRAW_COVERAGE`'s `schnorr_nonce` row must be DELETED -- which the site-count check
+  forces, because those draws will no longer be in the CLI.
+
+**What must NOT happen.**  Retitling `schnorr_nonce` to `cli_only` on the ground that no
+CLI draw can be pinned.  That is true of the draw's CURRENT LOCATION and is exactly the
+retire-by-reclassification #305 built the status split to prevent; the draw's location is
+what is in question.
+
+**Note on severity.**  No defect is claimed in any of the three transcriptions -- they
+were read side by side and compute the same signature.  The claim is that nothing would
+notice if one stopped doing so, and a Schnorr nonce is the draw where that matters most:
+reuse across two signatures under one key yields the private key by subtraction.
 
 Status: **OPEN**
 
