@@ -580,6 +580,16 @@ DOC_COUNTS = [
      r"and (\d+) whole operation\(s\)",
      r"KAT/operation_replay.json pins (\d+)\s+whole randomised OPERATIONS",
      "check_language_parity.py's operation-replay table, quoted in the same entry"),
+    # TODO #305.  The one of the three counts that erodes in the DANGEROUS
+    # direction: `owed` is work the coverage census refused to let a prose
+    # reason absorb, so a number that quietly grows -- or quietly shrinks
+    # because a row was retitled `unpinned` -- is the failure this status was
+    # invented to prevent.  Held to the tool, on #287's rule.
+    ("replay pins still owed",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"and (\d+) still OWED a pin",
+     r"(\d+) consumers are still OWED a pin",
+     "check_language_parity.py's REPLAY_COVERAGE table, quoted in CLAUDE.md's Testing section"),
 ]
 
 

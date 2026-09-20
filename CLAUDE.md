@@ -1548,7 +1548,62 @@ spec/                                                — machine-readable protoc
                                                       have pinned the agreed constant forever.
                                                       That class -- no test anywhere asserts a
                                                       HIDING property, only completeness and
-                                                      soundness -- is TODO #298
+                                                      soundness -- is TODO #298.
+                                                      REPLAY_COVERAGE (TODO #305) is the
+                                                      THIRD part of this axis and asks what
+                                                      the other two never did: how much of
+                                                      the census the pinning actually
+                                                      REACHES.  10 consumers per language
+                                                      were named by a pinned row and
+                                                      15/15/18/21 were not, so "someone
+                                                      looked" was decaying into "someone
+                                                      looked once" -- #296's own diagnosis
+                                                      of #294, one turn later.  Every
+                                                      censused consumer is now pinned or
+                                                      carries a row, self-invalidating in
+                                                      both directions, and a row's cell
+                                                      naming a function that is ALREADY
+                                                      pinned fails too, so pinning something
+                                                      forces its row out.  THREE statuses,
+                                                      and the third is the point:
+                                                      `transitive` (covered by a pinned
+                                                      operation that calls it), `unpinned`
+                                                      (a fixed stream would prove nothing
+                                                      new) and `owed` (pinning applies and
+                                                      is not done, so it needs an ITEM
+                                                      NUMBER as well as a reason).  `owed`
+                                                      exists because a prose reason is
+                                                      exactly where work gets parked, which
+                                                      is #295's false-reason finding pointed
+                                                      at a table rather than at a constant;
+                                                      the count is printed and is a check-E
+                                                      row.  The `transitive` half is DERIVED,
+                                                      not curated -- the checker walks a
+                                                      per-language CALL GRAPH from the pinned
+                                                      operation and fails a claim no call
+                                                      path supports -- which also touches
+                                                      #295's "closing that needs a call
+                                                      graph" from the other side without
+                                                      closing it, since reachability is not
+                                                      liveness.  Building it found Java
+                                                      OVERLOADS breaking a name-keyed body
+                                                      map (SternRing.sign has two, and the
+                                                      three-line one calls nothing), and it
+                                                      found C's rnl_cbd_poly: a second copy
+                                                      of the CBD sampler, specialised to
+                                                      RNL_N, with its own fread, called by
+                                                      NOTHING -- and not inert, because the
+                                                      rnl-cbd-poly manifest row anchored C's
+                                                      cell on the dead one while the protocol
+                                                      ran the live rnl_cbd_poly_dim.  Deleted
+                                                      in v8.0.6.  What it did NOT fold in is
+                                                      filed: the census corpus is the SUITE
+                                                      ALONE while #295's is suite + CLI, so
+                                                      52 raw-entropy call sites in the four
+                                                      CLIs are uncensused and one of them is
+                                                      Python's classical Schnorr NONCE (TODO
+                                                      #306), and the four owed pins are TODO
+                                                      #307
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,
@@ -2108,6 +2163,37 @@ of ~7e-3 and dropped when the bootstrap refuted the estimate, which is the same 
 the other two got: retuning a gate that measures fine is widening a band under another
 name. **The job's honest rate is 6.4e-5, not 5.4e-5**, and CLAUDE.md's copy of it is now a
 check-E row rather than a hand-copied number -- the same reporting gap one layer out.
+
+**And how much of that pinning actually REACHES the census, which is the question the
+census could not ask of itself (TODO #305).** #300 asked of the findings gates: the SET is
+the tripwire, but how many of them decide a verdict from a fresh sample? `RANDOMNESS_CENSUS`
+has the identical structure -- a name set, derived from source every run, whose whole job is
+to force a question when it changes -- and nobody had put the identical question to it. Its
+own header says what it cannot do ("only that it exists and that someone looked") and then
+hands the remainder to #297 and #303, which pinned six operations between them. **Nothing
+counted what that left: 10 consumers per language were named by a pinned row and 15 / 15 /
+18 / 21 were not.** `REPLAY_COVERAGE` is the answer and **4 consumers are still OWED a pin**
+(TODO #307). Four things to carry forward. (1) **`owed` is a status, not a reason.** A row
+is `transitive`, `unpinned` or `owed`, and the third needs an ITEM NUMBER as well as a
+sentence -- because a prose reason is exactly where work gets parked, which is #295's
+false-reason finding aimed at a table instead of a constant. The count is printed and held
+by a check-E row, so retitling an `owed` row `unpinned` to retire work moves a number
+CLAUDE.md is checked against. (2) **The `transitive` half is DERIVED.** "Covered by the ring
+row" is the same kind of curated sentence #295 found two of six of carrying a false claim,
+so the checker walks a per-language CALL GRAPH from the pinned operation and fails a claim
+no call path supports. That touches #295's recorded "closing that needs a call graph" from
+the other side and does not close it: reachability is not liveness. (3) **It found a
+DUPLICATE, which is worse than dead code.** C's `rnl_cbd_poly` specialised
+`rnl_cbd_poly_dim` to `RNL_N` with its own `fread` and its own loop, and nothing anywhere
+called it -- but it was load-bearing for the wrong thing, because the `rnl-cbd-poly`
+manifest row anchored C's cell on the DEAD copy while the protocol ran the live one. Every
+syntactic checker read the duplicate as the real sampler. Deleted. (4) **The corpus stops at
+the suite boundary and a Schnorr nonce is on the other side.** Writing the reason for
+`hpks_sign` being absent in Go and Python turned up that they do not take the nonce as a
+parameter -- they draw it in the CLI, which this census does not read. 52 raw-entropy call
+sites sit outside the corpus across the four CLIs, and `PARAM_USE_CORPUS` in the same file
+already includes CLIs for #295's stated reason. That is TODO #306, filed rather than folded
+in.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

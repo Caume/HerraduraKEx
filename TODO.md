@@ -130,3 +130,89 @@ figures already published, not as a gate on anything.
 Status: **OPEN**
 
 ---
+
+
+### #306: the randomness census stops at the suite boundary, and a Schnorr nonce is on the other side
+
+**Found by TODO #305 while answering a different question.**  #305 asked how much of
+`RANDOMNESS_CENSUS` is pinned.  Writing the coverage reasons forced a look at why Go and
+Python are ABSENT from the `hpks_sign` row, and the answer is not that they take the
+nonce as a parameter.  It is that **they draw it in the CLI**, which this census does not
+read at all.
+
+`HerraduraCli/herradura.py`'s `cmd_sign` contains `k = BitArray.random(nbits)` and builds
+the classical Schnorr signature inline.  A Schnorr nonce is the most failure-sensitive
+draw in the classical stack -- reuse or bias recovers the private key from two signatures
+-- and it is invisible to the axis built to notice exactly this kind of draw.
+
+**Measured before filing.**  Raw-entropy call sites outside the censused corpus, by the
+census's own per-language patterns: **C 18, Go 15, Python 13, Java 6 -- 52 in all**,
+across the four CLIs.  None is censused, so none can be pinned, and none would fail CI if
+it changed.
+
+**The inconsistency is inside one file.**  `PARAM_USE_CORPUS` (TODO #295) defines the
+shipped path as *suite, walkthrough, CLI, codec* -- deliberately, because "getting the
+corpus wrong in the LENIENT direction makes the whole check pass vacuously".  The
+randomness census, in the same checker, reads the suite alone.  Two corpora, one file, no
+statement anywhere about why they differ.
+
+**What is owed.**  Either extend the corpus to the CLIs and absorb the 52 sites -- with
+`REPLAY_COVERAGE` rows for each, which #305's machinery already supports -- or record a
+reason why a CLI draw is out of scope, which will have to survive the Schnorr nonce being
+one of them.  The first is expected; the second is the honest alternative and must be
+argued rather than assumed.
+
+**Note on what this is NOT.**  No defect is claimed in any of the 52.  #305's scope
+sentence applies unchanged: a census says a draw exists and that someone looked, never
+that it is correct.
+
+Status: **OPEN**
+
+---
+
+### #307: the four pins TODO #305's coverage census left OWED
+
+**TODO #305 built the coverage table and classified every censused raw-entropy consumer
+as `transitive`, `unpinned` or `owed`.  This item is the `owed` column** -- the rows
+where pinning applies, a reason would be an excuse, and #305 deliberately refused to let
+a prose sentence stand in for the work.
+
+Four rows, in the order their absence is most likely to hide something.
+
+* **`qcmdpc_keygen`** (Go, Python, Java; C takes the PRF as a parameter).  TODO #277
+  found a 3-vs-1 byte-order split inside the PRF this drives, and only a dedicated
+  pinned vector -- numbered test [52] -- could catch it.  That pins the PRF; it does not
+  pin the DRAW ORDER around it.  #284 pinned KEM artifacts, which are verify-side, and
+  #303 is the precedent for why that is a different statement: a pinned key says nothing
+  about how it was sampled.  Needs a stream chosen to clear the weak-key screen and the
+  invertibility retry first time, on the `rnl_sigma_sign` row's recorded precedent, and
+  the generator must ASSERT that rather than assume it.
+* **`qcmdpc_encap`** (same three).  The error vector's support is drawn here, by the
+  rejection sampler whose acceptance limit `qcmdpc_parameter_selection.py` computes --
+  and a rejection loop is exactly what #296 found carrying three different consumption
+  orders across four ports, twice.
+* **`zkp_nl_pp_prove`** (all four).  TODO #302 §6 said ZKB++ was "covered twice over".
+  #305 narrowed that: the two halves are the CIRCUIT and the seed LENGTH, and neither is
+  the seed ORDER.  §6 now asserts the absence, so pinning this row FIRES that section
+  and forces its prose to be corrected -- the same self-invalidating handoff #302 left
+  for #303.
+* **`hcred_prove`** (all four).  HCRED's other prover, beside the KKW one #303 pinned:
+  same file, same witness, and #266's transcription bug was in this family.  Python and
+  Java censure the inner round rather than the outer prove, which is the same operation
+  one frame down.
+
+**Cost is the reason this is not folded into #305.**  #303 was ONE operation row and the
+measured cost of adding it -- generator, C header arrays, and a consumer in each of
+`verify_kat_c.c`, `verify_kat.go` and `KatVerify.java` -- was the whole item.  Four rows
+is four times that, and two of them (the QC-MDPC pair at BIKE-128) have a keygen cost
+that has to be measured before a row is written, exactly as #303 measured KKW's before
+choosing `(N_par, M, tau)`.
+
+**What must NOT happen.**  Silently converting an `owed` row to `unpinned` because the
+pin turned out to be expensive.  #305 separated the two statuses so that cost is argued
+in the open; a reason written after the fact to retire work is #300's third rule -- slack
+wide enough never to fire -- in table form.
+
+Status: **OPEN**
+
+---

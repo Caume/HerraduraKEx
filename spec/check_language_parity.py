@@ -1064,7 +1064,7 @@ PRIMITIVES = {
     # Sampling, rounding, lifting and reconciliation. rnl-contributory-kdf below is
     # the entry this whole census was worth writing for -- see its comment.
     "rnl-cbd-poly": {
-        "c": r"static void rnl_cbd_poly\(",
+        "c": r"static void rnl_cbd_poly_dim\(",
         "go": r"^func RnlCBDPoly\(",
         "python": r"^def _rnl_cbd_poly\(",
         "java": r"HerraduraNl.java::public static int\[\] rnlCbdPoly\(",
@@ -3077,6 +3077,287 @@ OPERATION_REPLAY_PINNED = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# TODO #305: how much of the census is actually PINNED.
+#
+# This is TODO #300's question one axis over.  #300 asked of the findings gates:
+# the SET is the tripwire, but how many of them decide a verdict from a fresh
+# sample?  RANDOMNESS_CENSUS has the identical structure and the identical
+# question had never been put to it.  Its own header says what it cannot do --
+# "only that it exists and that someone looked" -- and then hands the remainder
+# to #297 and #303, which pinned six operations between them.  Nothing counted
+# what that left, so "someone looked" was decaying into "someone looked once",
+# which is exactly what #296 found had happened to #294's prescription.
+#
+# MEASURED: 10 consumers per language are named by a pinned row; 15 / 15 / 18 /
+# 21 are not (C / Go / Python / Java).  Every one of those must appear here.
+#
+# THREE STATUSES, and the third is why there are three.
+#
+#   transitive  Covered by a pinned OPERATION that calls it.  `via` names the
+#               row, and the claim is CONFIRMED by walking the call graph in
+#               each language -- see _calls_reach.  It is DERIVED, not curated,
+#               because #295 found two of six curated reasons about how a
+#               constant is USED carrying a FALSE claim, and "covered by the
+#               ring row" is the same kind of sentence.
+#   unpinned    A fixed stream reaches it and pinning would still prove nothing
+#               NEW, or the draw is not a cross-port object at all.  Needs a
+#               reason.
+#   owed        Pinning IS applicable and is not done.  Needs a reason AND an
+#               item number.  This status exists so that work cannot be parked
+#               inside a prose reason: the runner counts `owed` separately, on
+#               #300's precedent of counting derived RATES apart from stated
+#               ARGUMENTS "so the distinction cannot quietly erode".
+#
+# SELF-INVALIDATING IN BOTH DIRECTIONS, like every other curated table here.  A
+# censused consumer that no pinned row names and no row below claims FAILS.  A
+# row whose cells have ALL since been pinned FAILS until it is deleted -- so
+# pinning something forces its row out rather than leaving a stale claim.  And
+# a cell naming a function that is not censused in that language FAILS, which
+# is what cross-checks an ABSENT cell: #278 hit that with `None` cells and had
+# to check them separately, whereas here a wrongly-absent cell simply surfaces
+# as an unclaimed censused name.
+#
+# SCOPE, stated because #302 §6 is what an unchecked scope paragraph becomes.
+# Nothing here asserts that an unpinned consumer is CORRECT, and a pinned row
+# sees DIVERGENCE only.  #298's rule (1) still binds: a cross-port check cannot
+# see a property all four ports get wrong.
+# ---------------------------------------------------------------------------
+REPLAY_COVERAGE = {
+    # --- covered transitively, confirmed by the call graph -----------------
+    "rand_bitarray": {
+        "status": "transitive", "via": "stern_f_keygen",
+        "c": "ba_rand", "go": "NewRandBitArray", "python": "random",
+        "java": None,   # Java inlines rng.nextBytes; it has no such helper
+    },
+    "stern_ring_trit": {
+        "status": "transitive", "via": "hpks_stern_ring_sign",
+        "c": "stern_ring_trit", "go": "sternRingTrit",
+        "python": "_stern_ring_trit", "java": "SternRing.java::ringTrit",
+    },
+    "stern_ring_simulate": {
+        "status": "transitive", "via": "hpks_stern_ring_sign",
+        "c": "stern_ring_simulate", "go": "sternSimulateRound",
+        "python": "_stern_simulate_round",
+        "java": "SternRing.java::simulateRound",
+    },
+    "zkp_nl_random_big": {
+        "status": "transitive", "via": "zkp_nl_prove",
+        "c": None, "go": None, "python": None,
+        "java": "ZkpNl.java::randomBig",
+    },
+
+    # --- owed: pinning applies and is not done -----------------------------
+    "qcmdpc_keygen": {
+        "status": "owed", "item": 307,
+        "reason":
+            "TODO #277 found a 3-vs-1 byte-order split inside the PRF this "
+            "drives, and only a dedicated pinned vector (numbered test [52]) "
+            "could catch it -- but that pins the PRF, not the DRAW ORDER "
+            "around it.  #284 pinned KEM artifacts, which are verify-side: a "
+            "pinned key says nothing about how it was sampled, which is #303's "
+            "distinction exactly.  Needs a stream chosen to clear the weak-key "
+            "screen and the invertibility retry first time, on the "
+            "rnl_sigma_sign row's precedent",
+        "c": None,   # takes a QcMdpcPrf *; the seed is a parameter, not a draw
+        "go": "QcMdpcKeygen", "python": "qcmdpc_keygen",
+        "java": "Stern.java::qcmdpcKeygen",
+    },
+    "qcmdpc_encap": {
+        "status": "owed", "item": 307,
+        "reason":
+            "The error vector's support is drawn here, by the sampler whose "
+            "acceptance limit qcmdpc_parameter_selection.py checks -- so the "
+            "consumption order is exactly what a rejection loop makes "
+            "port-specific, the shape #296 found three times over",
+        "c": None,   # e is drawn by the caller and passed in
+        "go": "QcMdpcEncap", "python": "qcmdpc_encap",
+        "java": "Stern.java::qcmdpcEncap",
+    },
+    "zkp_nl_pp_prove": {
+        "status": "owed", "item": 307,
+        "reason":
+            "This NARROWS a claim TODO #302 §6 makes.  §6 says ZKB++ is "
+            "covered twice over, one half being that the zkp_nl_prove row pins "
+            "its masking term because neither port carries its own circuit.  "
+            "True OF THE CIRCUIT, and it does not extend to this function, "
+            "which reads raw entropy itself: the SEED draw order is its own "
+            "consumption order and no row pins it.  §2 of that file makes the "
+            "seed a security parameter, so the order in which seeds are drawn "
+            "is not formatting",
+        "c": "zkp_nl_pp_prove", "go": "ZkpNlProvepp",
+        "python": "zkp_nl_prove_pp", "java": "ZkpNl.java::provePp",
+    },
+    "hcred_prove": {
+        "status": "owed", "item": 307,
+        "reason":
+            "HCRED's OTHER prover.  TODO #303 pinned the KKW one and this is "
+            "the plain cut-and-choose Sigma prover beside it, same file, same "
+            "witness, unpinned -- and #266's transcription bug was in exactly "
+            "this family.  Python and Java censure the inner round rather than "
+            "the outer prove, which is the same operation one frame down",
+        "c": "hcred_prove", "go": "HcredProve",
+        "python": "_hcred_mpc_round", "java": "Hcred.java::mpcRound",
+    },
+
+    # --- unpinned: a fixed stream would prove nothing new ------------------
+    # The classical quartet's randomised operations.  Each draws ONE ephemeral
+    # scalar and derives everything else from it, so a fixed stream pins a
+    # single read of a known width -- and what the ports could disagree about
+    # (the derivation) is already pinned four ways, byte for byte, by
+    # KAT/classical_quartet.json, which supplies that scalar as an ARGUMENT.
+    # That is the #268 property: when the random input is a parameter the
+    # primitive accepts, pinning it pins the artifact.
+    "hpks_sign": {
+        "status": "unpinned",
+        "reason":
+            "One Schnorr nonce, and the signature it determines is pinned four "
+            "ways by KAT/classical_quartet.json with that nonce as an "
+            "argument.  Go and Python are absent because they build the "
+            "signature inline from gf_pow rather than naming the operation -- "
+            "the asymmetry already filed as CLI_FLAG_PARITY's hpks-sign row.  "
+            "NOTE, and it is TODO #306: their nonce is then drawn in the CLI, "
+            "which this census's corpus does not read at all",
+        "c": "hpks_sign", "go": None, "python": None,
+        "java": "Herradura.java::hpksSign",
+    },
+    "hpke_encrypt": {
+        "status": "unpinned",
+        "reason":
+            "One El Gamal ephemeral r; the ciphertext it determines is pinned "
+            "four ways by KAT/classical_quartet.json with r as an argument",
+        "c": "hpke_encrypt", "go": "HpkeEncrypt", "python": "hpke_encrypt",
+        "java": "Herradura.java::hpkeEncrypt",
+    },
+    "hske_encrypt_masked": {
+        "status": "unpinned",
+        "reason":
+            "One mask, XORed into the plaintext; the masked ciphertext is "
+            "pinned by KAT/classical_quartet.json with the mask as an argument",
+        "c": "hske_encrypt_masked", "go": "HskeEncryptMasked",
+        "python": "hske_encrypt_masked",
+        "java": "Herradura.java::hskeEncryptMasked",
+    },
+    "hske_decrypt_masked": {
+        "status": "unpinned",
+        "reason":
+            "The decrypt half of hske_encrypt_masked; it draws only to keep "
+            "the masked representation, and its output is checked against the "
+            "same vector",
+        "c": "hske_decrypt_masked", "go": "HskeDecryptMasked",
+        "python": "hske_decrypt_masked",
+        "java": "Herradura.java::hskeDecryptMasked",
+    },
+    "hpke_nl_encrypt": {
+        "status": "unpinned",
+        "reason":
+            "The NL counterpart of hpke_encrypt, one ephemeral, pinned by "
+            "KAT/nl_fscx_v3.json's consumers with the ephemeral as an "
+            "argument.  Java alone names the operation; the other three take "
+            "the ephemeral from the caller",
+        "c": None, "go": None, "python": None,
+        "java": "HerraduraNl.java::hpkeNlEncrypt",
+    },
+    "hpke_nl3_encrypt": {
+        "status": "unpinned",
+        "reason": "The v3 counterpart of hpke_nl_encrypt, same argument",
+        "c": None, "go": None, "python": None,
+        "java": "HerraduraNl.java::hpkeNl3Encrypt",
+    },
+    "hpks_nl_sign": {
+        "status": "unpinned",
+        "reason": "The NL counterpart of hpks_sign, same argument",
+        "c": None, "go": None, "python": None,
+        "java": "HerraduraNl.java::hpksNlSign",
+    },
+    "hske_nl_aead_encrypt": {
+        "status": "unpinned",
+        "reason":
+            "One AEAD nonce.  C and Go are absent because they take it as a "
+            "parameter, which is the shape TODO #268 pinned directly: "
+            "CliTest/test_aead.sh is a 4x4 matrix over the resulting "
+            "ciphertext",
+        "c": None, "go": None, "python": "hske_nl_aead_encrypt",
+        "java": "HerraduraNl.java::hskeNlAeadEncrypt",
+    },
+    "duplex_encrypt": {
+        "status": "unpinned",
+        "reason":
+            "One duplex nonce; the sponge output is pinned by "
+            "KAT/nl_fscx_v3.json's hske-duplex3 consumer with the nonce as an "
+            "argument",
+        "c": None, "go": None, "python": "_dplex_encrypt",
+        "java": "Duplex.java::encrypt",
+    },
+    "hfscx256_enc_file": {
+        "status": "unpinned",
+        "reason":
+            "A file-level IV, drawn once and written to the header; the "
+            "round-trip is what CliTest/test_encfile.sh checks and the "
+            "construction under it is pinned by test [19]'s vectors",
+        "c": None, "go": None, "python": None,
+        "java": "Hfscx256.java::encFile",
+    },
+    "oprf_keygen": {
+        "status": "unpinned",
+        "reason":
+            "One uniform scalar in [1, q), by the same rejection loop as "
+            "oprf_blind -- which IS pinned, as a leaf sampler, by "
+            "KAT/sampler_replay.json's oprf_blind_scalar row.  That row's "
+            "stream is the one whose first draw is r = 1 exactly, so the "
+            "rejection branch these two share is covered where it matters",
+        "c": "oprf_keygen", "go": "OprfKeygen", "python": "oprf_keygen",
+        "java": "Oprf.java::keygen",
+    },
+    "hpkst_sign": {
+        "status": "unpinned",
+        "reason":
+            "Threshold signing draws one nonce PER SIGNER and the operation is "
+            "interactive -- a replay would pin a chosen signer ordering, not a "
+            "consumption order, and the aggregate it produces is checked by "
+            "CliTest's threshold matrix",
+        "c": "hpkst_sign", "go": "HpkstSign", "python": "hpkst_sign",
+        "java": "HpksT.java::sign",
+    },
+    "zkp_nl_keygen": {
+        "status": "unpinned",
+        "reason":
+            "Draws a witness, which is a STATEMENT and not a consumption "
+            "order: every row of KAT/operation_replay.json states its witness "
+            "in full rather than deriving it, on #297's own rule that a "
+            "derived statement makes one row's failure cascade",
+        "c": "zkp_nl_keygen", "go": "ZkpNlKeygen", "python": "zkp_nl_keygen",
+        "java": None,
+    },
+    "hpake_register": {
+        "status": "unpinned",
+        "reason":
+            "aPAKE registration draws a salt, which travels to the verifier "
+            "and is therefore an argument the protocol already carries; the "
+            "4x4 aPAKE block of CliTest/test_cross_lang_matrix.sh runs it",
+        "c": "hpake_register", "go": "HpakeRegister",
+        "python": "hpake_register", "java": "Hpake.java::register",
+    },
+    "hpake_login_demo": {
+        "status": "unpinned",
+        "reason":
+            "A DEMO driver, not a primitive -- it draws to stand in for a "
+            "client and is reachable from no shipped CLI path.  #291's rule "
+            "that 'it is only a demo' is not a reason applies to a VERDICT; "
+            "this one computes none",
+        "c": "hpake_login_demo", "go": "HpakeLoginDemo",
+        "python": "hpake_login_demo", "java": "Hpake.java::loginDemo",
+    },
+    "suite_walkthrough": {
+        "status": "unpinned",
+        "reason":
+            "The Python suite's own main(), the walkthrough gated by TODO "
+            "#233's [FAIL] convention.  Not a primitive and reached by no "
+            "caller",
+        "c": None, "go": None, "python": "main", "java": None,
+    },
+}
+
 # Every function in the shipped suite that reads RAW ENTROPY.  Derived from the
 # source on every run and compared against this list; see the header.
 RANDOMNESS_CENSUS = {
@@ -3084,7 +3365,7 @@ RANDOMNESS_CENSUS = {
         "ba_rand", "hcred_prove", "hcred_prove_kkw", "hpake_login_demo",
         "hpake_register", "hpke_encrypt", "hpks_sign", "hpks_stern_f_sign",
         "hpkst_sign", "hske_decrypt_masked", "hske_encrypt_masked", "oprf_blind",
-        "oprf_keygen", "rnl_cbd_poly", "rnl_cbd_poly_dim", "rnl_rand_poly",
+        "oprf_keygen", "rnl_cbd_poly_dim", "rnl_rand_poly",
         "rnl_sigma_sign", "stern_f_keygen", "stern_rand_error", "stern_ring_sign",
         "stern_ring_simulate", "stern_ring_trit", "zkp_nl_keygen",
         "zkp_nl_pp_prove", "zkp_nl_prove",
@@ -3186,37 +3467,123 @@ def _py_bodies(src):
     return out
 
 
+_BODY_CACHE = {}
+
+
+def _suite_bodies(lang):
+    """{name: [body, ...]} for one language's suite, cached.
+
+    A LIST of bodies per name rather than one body, because Java OVERLOADS:
+    SternRing.sign has two, and keying a dict on the bare name silently keeps
+    whichever came last -- which there is a three-line wrapper that calls
+    nothing, so the ring row's transitive coverage read as unreachable.  The
+    census never noticed because it tests each extracted body in turn; the call
+    graph TODO #305 added walks from a name, so it would have.
+    """
+    if lang in _BODY_CACHE:
+        return _BODY_CACHE[lang]
+    out = {}
+
+    def add(name, body):
+        out.setdefault(name, []).append(body)
+
+    if lang == "c":
+        for n, b in _brace_bodies(
+                _slurp(os.path.join(REPO, "herradura.h")),
+                r"^static\s+(?:inline\s+)?[\w \*]+?\b(\w+)\s*\("):
+            add(n, b)
+    elif lang == "go":
+        for n, b in _brace_bodies(
+                _slurp(os.path.join(REPO, "herradura", "herradura.go")),
+                r"^func\s+(?:\([^)]*\)\s*)?(\w+)\s*\("):
+            add(n, b)
+    elif lang == "python":
+        for n, b in _py_bodies(
+                _slurp(os.path.join(REPO, "Herradura cryptographic suite.py"))):
+            add(n, b)
+    else:
+        jdir = os.path.join(REPO, "bindings", "java", "herradurakex")
+        for path in sorted(glob.glob(os.path.join(jdir, "*.java"))):
+            base = os.path.basename(path)
+            if base in JAVA_NON_SUITE:
+                continue
+            for n, b in _brace_bodies(
+                    _slurp(path),
+                    r"^    (?:public |private |protected )?static "
+                    r"[\w\[\]<>., ]*?\b(\w+)\s*\(", r"^    \}"):
+                add(f"{base}::{n}", b)
+    _BODY_CACHE[lang] = out
+    return out
+
+
 def _randomness_consumers():
     """Derive, per language, the set of functions that read raw entropy."""
     found = {}
-
-    src = _slurp(os.path.join(REPO, "herradura.h"))
-    found["c"] = {n for n, b in _brace_bodies(
-        src, r"^static\s+(?:inline\s+)?[\w \*]+?\b(\w+)\s*\(")
-        if re.search(RANDOMNESS_RAW_PATTERNS["c"], b)}
-
-    src = _slurp(os.path.join(REPO, "herradura", "herradura.go"))
-    found["go"] = {n for n, b in _brace_bodies(
-        src, r"^func\s+(?:\([^)]*\)\s*)?(\w+)\s*\(")
-        if re.search(RANDOMNESS_RAW_PATTERNS["go"], b)}
-
-    src = _slurp(os.path.join(REPO, "Herradura cryptographic suite.py"))
-    found["python"] = {n for n, b in _py_bodies(src)
-                       if re.search(RANDOMNESS_RAW_PATTERNS["python"], b)}
-
-    found["java"] = set()
-    jdir = os.path.join(REPO, "bindings", "java", "herradurakex")
-    for path in sorted(glob.glob(os.path.join(jdir, "*.java"))):
-        base = os.path.basename(path)
-        if base in JAVA_NON_SUITE:
-            continue
-        for n, body in _brace_bodies(
-                _slurp(path),
-                r"^    (?:public |private |protected )?static "
-                r"[\w\[\]<>., ]*?\b(\w+)\s*\(", r"^    \}"):
-            if re.search(RANDOMNESS_RAW_PATTERNS["java"], body):
-                found["java"].add(f"{base}::{n}")
+    for lang in ("c", "go", "python", "java"):
+        pat = RANDOMNESS_RAW_PATTERNS[lang]
+        found[lang] = {n for n, bodies in _suite_bodies(lang).items()
+                       if any(re.search(pat, b) for b in bodies)}
     return found
+
+
+_REACH_CACHE = {}
+
+
+def _calls_reach(lang, root):
+    """Every suite function reachable from `root` by static call edges.
+
+    This is what makes a `transitive` coverage claim DERIVED rather than
+    curated, which is the whole design point of TODO #305's table: #295 found
+    two of six curated reasons about how a constant is USED carrying a FALSE
+    claim, and "covered by the ring row" is the same kind of sentence.
+
+    Java resolution prefers the CALLER'S OWN FILE and falls back to another
+    class only when the body qualifies the call (`Stern.foo(`).  Resolving a
+    bare name across every file would over-approximate, and over-approximation
+    here makes a coverage claim easier to pass -- the wrong direction for a
+    check whose failure is what forces someone to look.
+
+    KNOWN LIMIT, and it is #295's: reachability is not liveness.  An edge into
+    a function no live path reaches still counts, so this can confirm that a
+    pinned operation COULD call a consumer, never that the shipped run does.
+    """
+    if (lang, root) in _REACH_CACHE:
+        return _REACH_CACHE[(lang, root)]
+    bodies = _suite_bodies(lang)
+    by_short = {}
+    for key in bodies:
+        by_short.setdefault(key.split("::")[-1], set()).add(key)
+
+    def targets(caller, body):
+        for nm in set(re.findall(r"\b(\w+)\s*\(", body)):
+            cands = by_short.get(nm)
+            if not cands:
+                continue
+            if lang != "java":
+                yield from cands
+                continue
+            same = f"{caller.split('::')[0]}::{nm}"
+            if same in cands:
+                yield same
+                continue
+            for k in cands:
+                cls = k.split("::")[0][:-len(".java")]
+                if re.search(r"\b%s\s*\.\s*%s\s*\(" % (re.escape(cls),
+                                                        re.escape(nm)), body):
+                    yield k
+
+    seen, stack = set(), [root]
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        for body in bodies.get(cur, ()):
+            for nxt in targets(cur, body):
+                if nxt not in seen:
+                    stack.append(nxt)
+    _REACH_CACHE[(lang, root)] = seen
+    return seen
 
 
 def _check_replay_table(errors, path, key, table, table_name, noun):
@@ -3304,7 +3671,115 @@ def check_randomness(errors):
                         "which the raw-entropy census does not find — the pin "
                         "names a function that does not draw, so the replay "
                         "proves nothing")
+    # --- (3) coverage of the census by the two vectors (TODO #305) --------
+    _check_coverage(errors, found)
     return found, vector_names, op_names
+
+
+_COVERAGE_STATUSES = ("transitive", "unpinned", "owed")
+
+
+def _check_coverage(errors, found):
+    """Third part of the eighth axis: what the pinning actually REACHES.
+
+    See REPLAY_COVERAGE's header.  The rules are the ones every curated table
+    here follows, plus one that is not curated at all: a `transitive` claim is
+    CONFIRMED against the call graph rather than believed.
+    """
+    langs = ("c", "go", "python", "java")
+    pinned = {l: {} for l in langs}
+    for table, tname in ((SAMPLER_REPLAY_PINNED, "SAMPLER_REPLAY_PINNED"),
+                         (OPERATION_REPLAY_PINNED, "OPERATION_REPLAY_PINNED")):
+        for row, cells in table.items():
+            for l in langs:
+                if cells.get(l):
+                    pinned[l][cells[l]] = (row, tname)
+
+    claimed = {l: {} for l in langs}
+    for name, row in REPLAY_COVERAGE.items():
+        status = row.get("status")
+        if status not in _COVERAGE_STATUSES:
+            errors.append(
+                f"replay coverage: row '{name}' has status {status!r}, which is "
+                f"not one of {', '.join(_COVERAGE_STATUSES)}")
+            continue
+        if status == "transitive":
+            via = row.get("via")
+            if via not in OPERATION_REPLAY_PINNED:
+                errors.append(
+                    f"replay coverage: row '{name}' is transitive via '{via}', "
+                    "which OPERATION_REPLAY_PINNED does not name — a coverage "
+                    "claim cannot rest on a row that does not exist")
+                continue
+        else:
+            if not row.get("reason"):
+                errors.append(
+                    f"replay coverage: row '{name}' is {status} and carries no "
+                    "reason — the reason is the whole content of the entry")
+            if status == "owed" and not row.get("item"):
+                errors.append(
+                    f"replay coverage: row '{name}' is owed and names no TODO "
+                    "item — 'owed' exists so that work cannot be parked inside "
+                    "a prose reason, which needs somewhere to be parked instead")
+
+        cells = [(l, row.get(l)) for l in langs]
+        if not any(fn for _, fn in cells):
+            errors.append(
+                f"replay coverage: row '{name}' has no function in any "
+                "language — delete it rather than leaving an empty claim")
+        for lang, fn in cells:
+            if not fn:
+                continue
+            if fn in pinned[lang]:
+                prow, tname = pinned[lang][fn]
+                errors.append(
+                    f"replay coverage: row '{name}' claims {lang} function "
+                    f"'{fn}', which {tname} already pins as '{prow}' — drop the "
+                    "cell (and the row, if it empties), because a pinned "
+                    "consumer needs no coverage claim")
+                continue
+            if fn not in found[lang]:
+                errors.append(
+                    f"replay coverage: row '{name}' names {lang} function "
+                    f"'{fn}', which the raw-entropy census does not find — "
+                    "delete the cell rather than leaving a claim about a "
+                    "function that no longer draws")
+                continue
+            if fn in claimed[lang]:
+                errors.append(
+                    f"replay coverage: {lang} function '{fn}' is claimed by "
+                    f"both '{claimed[lang][fn]}' and '{name}' — one consumer, "
+                    "one row, or the count means nothing")
+            claimed[lang][fn] = name
+            if row["status"] == "transitive":
+                op = OPERATION_REPLAY_PINNED[row["via"]].get(lang)
+                if op and fn not in _calls_reach(lang, op):
+                    errors.append(
+                        f"replay coverage: row '{name}' says {lang} '{fn}' is "
+                        f"reached by the '{row['via']}' operation row, but no "
+                        f"call path runs from '{op}' to it — the claim is "
+                        "false, or the call moved")
+
+    # The direction that does not decay: every censused consumer is pinned,
+    # or claimed here.  Adding one to any language fails CI until someone says
+    # which.
+    for lang in langs:
+        for fn in sorted(found[lang] - set(pinned[lang]) - set(claimed[lang])):
+            errors.append(
+                f"replay coverage: {lang} function '{fn}' reads raw entropy, is "
+                "pinned by neither KAT/sampler_replay.json nor "
+                "KAT/operation_replay.json, and no REPLAY_COVERAGE row claims "
+                "it — add a row saying whether a fixed stream reaches it, why "
+                "it need not, or which item owes the pin")
+
+
+def _coverage_counts():
+    """(transitive, unpinned, owed) rows, for the closing report."""
+    out = {k: 0 for k in _COVERAGE_STATUSES}
+    for row in REPLAY_COVERAGE.values():
+        if row.get("status") in out:
+            out[row["status"]] += 1
+    return out
 
 def main():
     errors = []
@@ -3366,6 +3841,14 @@ def main():
         f"{len(replay_rows)} sampler(s) pinned against a fixed stream in all four "
         f"languages by KAT/sampler_replay.json, and {len(op_rows)} whole "
         f"operation(s) by KAT/operation_replay.json."
+    )
+    cov = _coverage_counts()
+    print(
+        f"OK: replay coverage — every censused consumer is pinned or accounted "
+        f"for: {cov['transitive']} row(s) covered transitively by a pinned "
+        f"operation (confirmed against the call graph, not asserted), "
+        f"{cov['unpinned']} where a fixed stream would prove nothing new, and "
+        f"{cov['owed']} still OWED a pin."
     )
     return 0
 

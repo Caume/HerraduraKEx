@@ -1818,7 +1818,7 @@ static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
 
 /* CBD(eta=1): 4 coefficients per byte — bit-pairs (0-1),(2-3),(4-5),(6-7).
    Produces {-1,0,1} with P(-1)=P(1)=1/4, P(0)=1/2; zero mean. */
-/* TODO #295.  BOTH SAMPLERS BELOW IMPLEMENT CBD(1) AND ONLY CBD(1): the
+/* TODO #295.  THE SAMPLER BELOW IMPLEMENTS CBD(1) AND ONLY CBD(1): the
  * bit-pair extraction (two bits per coefficient, four coefficients per byte)
  * IS eta = 1 written out, and there is no path here for any other eta.
  * Python's _rnl_cbd_poly has a general eta > 1 branch; C, Go and Java have the
@@ -1833,9 +1833,17 @@ static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
  * divergence it guards against would arrive in the first place.  This turns a
  * silent divergence into a build failure, and it makes the constant govern the
  * code that implements it -- which is what #295's use census checks. */
+/* TODO #305 deleted a second copy of this sampler, rnl_cbd_poly, which
+ * specialised rnl_cbd_poly_dim to RNL_N with its own fread and its own loop.
+ * NOTHING CALLED IT -- and it was not inert: the raw-entropy census counted it
+ * as an unpinned consumer, and spec/check_language_parity.py's rnl-cbd-poly
+ * manifest row anchored C's cell on it, so the check that asserts C HAS a CBD
+ * sampler was pointing at the dead one.  That is #295's dead-code limit with
+ * the sign flipped: a duplicate is worse than an unused constant, because
+ * every syntactic checker reads it as the live thing. */
 _Static_assert(RNL_ETA == 1,
-               "rnl_cbd_poly implements CBD(1) only; raising RNL_ETA needs a "
-               "general eta path here, in Go and in Java (Python has one)");
+               "rnl_cbd_poly_dim implements CBD(1) only; raising RNL_ETA needs "
+               "a general eta path here, in Go and in Java (Python has one)");
 
 static void rnl_cbd_poly_dim(int32_t *p, FILE *urnd, int n)
 {
@@ -1846,21 +1854,6 @@ static void rnl_cbd_poly_dim(int32_t *p, FILE *urnd, int n)
         fputs("urandom error\n", stderr); exit(1);
     }
     for (i = 0; i < n; i++) {
-        int off = (i & 3) * 2;
-        int a = (buf[i >> 2] >> off) & 1;
-        int b = (buf[i >> 2] >> (off + 1)) & 1;
-        p[i] = (int32_t)((a - b + RNL_Q) % RNL_Q);
-    }
-}
-
-static void rnl_cbd_poly(rnl_poly_t p, FILE *urnd)
-{
-    int i;
-    uint8_t buf[(RNL_N + 3) / 4];
-    if (fread(buf, 1, sizeof(buf), urnd) != sizeof(buf)) {
-        fputs("urandom error\n", stderr); exit(1);
-    }
-    for (i = 0; i < RNL_N; i++) {
         int off = (i & 3) * 2;
         int a = (buf[i >> 2] >> off) & 1;
         int b = (buf[i >> 2] >> (off + 1)) & 1;

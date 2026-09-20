@@ -674,13 +674,32 @@ def section6():
     checks.append(("    hcred_kkw.json still declares itself VERIFY-SIDE",
                    "VERIFY-SIDE" in kkw.get("note", "")))
 
+    # (d) What (a) does NOT say, found by TODO #305 asking the coverage
+    #     question of the whole randomness census rather than of these two
+    #     protocols.  (a) is a claim about the CIRCUIT: neither C nor Go
+    #     carries its own, so ZKBoo's pinned row covers the masking term.  It
+    #     does not extend to the PROVER, which reads raw entropy itself -- the
+    #     order in which the per-round seeds are drawn is its own consumption
+    #     order, and no row pins it.  §2 makes the seed a security parameter,
+    #     so that order is not formatting.
+    #     Asserted as an ABSENCE, the way (c) was before #303 filled it: the
+    #     day #307 pins the prover, this fires and forces the prose below to
+    #     be corrected rather than left overstating the coverage.
+    checks.append(("    ZKB++ prover's SEED ORDER still unpinned (TODO #307)",
+                   "zkp_nl_pp_prove" not in names))
+
     for label, good in checks:
         print(f"  [{'ok' if good else 'XX'}] {label}")
     print()
-    print("  ZKB++ — COVERED: the masking term by operation_replay.json's")
+    print("  ZKB++ — COVERED IN TWO PLACES AND NOT A THIRD, which TODO #305")
+    print("    narrowed.  The masking term is covered by operation_replay.json's")
     print("    zkp_nl_prove row (same evaluator, checked above) and the seed")
-    print("    length by check_language_parity.py's zkpp-seed-bytes row.  So this")
-    print("    file is Python-only for #301's reason, reached differently.")
+    print("    LENGTH by check_language_parity.py's zkpp-seed-bytes row, so this")
+    print("    file is Python-only for #301's reason, reached differently.  But")
+    print("    the seed ORDER is neither: zkp_nl_pp_prove draws its own entropy,")
+    print("    and a shared evaluator says nothing about the sequence of draws")
+    print("    around it.  #305's census put it at `owed`, not covered; until")
+    print("    #307 pins it, this section claims the two halves it can defend.")
     print("  KKW — COVERED SINCE TODO #303, and the two halves are different")
     print("    properties.  hcred_kkw.json is VERIFY-SIDE by construction, so it")
     print("    exercises no port's PROVER, and KKW has no CLI surface in any")
