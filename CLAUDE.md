@@ -1690,10 +1690,12 @@ spec/                                                — machine-readable protoc
                                                       as a parameter in any language, so
                                                       a fixed-stream replay does NOT
                                                       reach this layer without a new
-                                                      shipped surface, and what was
-                                                      missing was never the replay -- it
-                                                      was knowing which draws exist, in
-                                                      which ports, and what compares them
+                                                      shipped surface (TODO #309, which
+                                                      owes the hazard argument before the
+                                                      seam), and what was missing was
+                                                      never the replay -- it was knowing
+                                                      which draws exist, in which ports,
+                                                      and what compares them
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,
@@ -2318,8 +2320,73 @@ because the fix is not a vector — it is to make the three CLIs call the operat
 (4) **A fixed-stream replay does not reach this layer and the item does not pretend
 otherwise.** No CLI takes an entropy source as a parameter in any of the four languages, so
 pinning here needs a new shipped surface (an injection env var), which is a change to the
-product and is deliberately not made. What was missing was never the replay; it was knowing
+product and is deliberately not made — filed as TODO #309, which owes the hazard argument
+before the seam: an env var that replaces the CSPRNG is one accidental export away from a
+deterministic `genpkey` whose output is indistinguishable on disk from a real key. What was missing was never the replay; it was knowing
 which draws exist, in which ports, and what compares them.
+
+**And whether a NUMBERED TEST decides on a fresh sample, which #300 asked only of the
+findings gates (TODO #310).** #299 fixed one gate that failed about one CI run in twenty,
+and #300 censused all 76 of them for the same shape — a verdict decided from a fresh random
+sample against a FIXED threshold. That census stopped at `SecurityProofsCode/`. The numbered
+tests are the other place a verdict is computed, and `[53]` had the defect at **one run in
+16**. `[53]` is #298's universal-forgery guard: build a syndrome-matching witness of the
+WRONG weight from public data, assert the verifier rejects it. `_stern_solve_syndrome`
+leaves free variables at zero, so it returns the solution supported on the PIVOT columns —
+and when all `t` of the true error's positions fall in those columns it returns **the true
+error itself**, weight exactly `t`. The test then asserts the verifier rejects a perfectly
+genuine witness, so **the one branch where it goes red is the branch where HPKS-Stern-F
+behaved correctly**. Four things worth carrying. (1) **The rate is exactly 2^-t and the
+histogram proves it is not a tail**: 191 hits in 3000 trials (6.4% against a predicted
+6.25%) at the harness's n = 64, t = 4, with a clean bulk centred at 16, NOTHING at weights
+5 or 6, and 39 of 39 sampled hits satisfying `e_forged == e_true`. A binomial tail would put
+~0.00003 there. (2) **All four ports carried it and two were merely luckier** — Python and Go
+run `[53]` at n = 64, t = 4, C and Java at n = 256, t = 16, so the same code failed one run
+in 16 in two ports and one in 65536 in the other two; the fix goes into all four, because
+2^-16 is a smaller number and not a different property. (3) **The fix is to CONSTRUCT the
+off-weight witness, not to hope for one**: XOR kernel basis vectors into the solution until
+its weight differs. `H.v^T == 0`, so the syndrome-matches control still holds exactly, and
+the result is deterministic given the key — no threshold, no retry loop, no sample. It makes
+the assertion STRONGER, since the old one tested a wrong-weight witness only when the draw
+happened to supply one. (4) **Retrying until the weight differs was considered and rejected**:
+that is the same sampled gate with the sampling hidden in a loop, and making the assertion
+conditional on `wt != t` is worse still — TODO #234's vacuous pass, passing 6% of runs
+without testing anything. The remaining question this one opens and does not answer is
+whether any OTHER numbered test decides a verdict from a fresh sample against a fixed
+threshold; `[4]`, `[18]` and `[45]` were fixed by #233 and #234 by making the threshold
+follow the statistic, but no census exists.
+
+**And the same hole in the gate that FOUND the forgery (TODO #310, second half).**
+`stern_f_weight_binding.py` builds the same Gaussian-elimination witness and carried the
+same 2^-t defect at 1.5e-5 — and two things made it worse than the harness copy. It scored
+the case as `§1 INCONCLUSIVE` **and returned False**, so a section that could not conclude
+was reported as a finding that stopped reproducing, which is #291's "a section that did not
+run must not be scored" inverted. And `run_findings_gates.py`'s `SAMPLED_GATES` reason
+argued it away: "§1 and §3 are exact: a Gaussian-elimination witness either verifies or does
+not" — true of the VERIFIER, false of the WITNESS. That is #300's own derived-RATE versus
+stated-ARGUMENT split failing on the argued side, the same shape #304 found in all three
+`follows` entries ("the null was a MODEL and nothing had checked the model"). The lesson to
+carry: **a reason that is exact about the wrong object reads exactly like a correct one**,
+and the only thing that separated them here was running the construction 3000 times. Note
+what the fix protects: correcting the reason alone would have moved the job's advertised
+false-failure rate from 6.4e-5 to 7.9e-5, and that figure is a check-E row — fixing the
+script instead makes the published number true.
+
+**And the second one hiding behind it (TODO #310, third part).** Closing the witness-weight
+hole made `[53]` go red again, differently: an off-weight witness the verifier ACCEPTED. The
+verifier binds `wt(e)` only on `b = 0` rounds — that is the shape of #298's own fix, since
+`wt(respA ^ respB)` is checkable only where both responses exist — so a wrong-weight witness
+survives a challenge string containing no `b = 0` round at all: **(2/3)^rounds**, 0.77% at
+`[53]`'s rounds = 12, one run in 130, in all four ports, and 7.4e-6 at
+`stern_f_weight_binding.py` §1's rounds = 32. Measured: 3 acceptances in 400 trials, 3
+no-`b=0` strings, the same 3. The remedy is the one this section already prescribes — **give
+it its own round count** — which is what #234 did to `[45]` at 38.5% and what the standing
+warning about a rounds = 4 Stern-F rejection test is about; `[53]`'s forgery sub-check now
+signs at 64 rounds and the ring half keeps 12, having no soundness error. **The lesson is
+that the two hid each other**: at a combined ~7.0% per run nobody asks which of the two
+coins landed badly, and the second only became visible once the first was gone. When a test
+turns out to be a sampled gate, the question is not "what is its rate" but "how many terms
+does its rate have".
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

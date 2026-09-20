@@ -3937,10 +3937,21 @@ def test_qcprf_seed_expansion():
 # verifier enforces would pass vacuously.
 # ---------------------------------------------------------------------------
 
-def _stern_solve_syndrome(H_rows, syndrome, n):
+def _stern_solve_syndrome(H_rows, syndrome, n, avoid_weight=-1):
     """Any e' with H.e'^T == syndrome, by Gaussian elimination over GF(2).
-    Uses only PUBLIC data.  Free variables are left at zero, which is why the
-    result lands near weight n/4 rather than t."""
+    Uses only PUBLIC data.  Free variables are left at zero, so the result
+    USUALLY lands near weight n/4 rather than t -- and the exception is the
+    whole reason avoid_weight exists (TODO #310).  When all t of the true
+    error's positions happen to fall in pivot columns, the free-variables-zero
+    solution IS the true error: weight exactly t, and a caller asserting "the
+    verifier rejects a wrong-weight witness" would be asserting it of the
+    GENUINE one.  That is not rare -- it is ~2^-t, one run in 16 at the
+    n = 64, t = 4 these tests use, and it went red in CI.
+    avoid_weight XORs KERNEL basis vectors into the solution until its weight
+    differs.  A kernel vector preserves H.e'^T exactly, so the caller's
+    syndrome-matches control still holds, and the off-weight witness is
+    CONSTRUCTED rather than hoped for -- deterministic given the key, with no
+    threshold and no retry."""
     aug = [[H_rows[i], (syndrome >> i) & 1] for i in range(len(H_rows))]
     pivots = []
     row = 0
@@ -3963,6 +3974,22 @@ def _stern_solve_syndrome(H_rows, syndrome, n):
     for col, k in pivots:
         if aug[k][1]:
             e |= 1 << col
+    if avoid_weight >= 0 and bin(e).count('1') == avoid_weight:
+        pivot_cols = {col for col, _ in pivots}
+        for c in range(n):
+            if c in pivot_cols:
+                continue
+            v = 1 << c
+            for col, k in pivots:
+                if (aug[k][0] >> c) & 1:
+                    v |= 1 << col
+            e ^= v          # syndrome-preserving: H.v^T == 0
+            if bin(e).count('1') != avoid_weight:
+                break
+        else:
+            raise AssertionError(
+                "no kernel vector moved the solution off weight "
+                f"{avoid_weight}")
     return e
 
 
@@ -3973,17 +4000,24 @@ def test_stern_witness_binding():
     t = max(2, n // 16)
     rounds = 12
 
-    # (a) accept control, then the linear-algebra forgery
+    # (a) accept control, then the linear-algebra forgery.
+    # ITS OWN ROUND COUNT (TODO #310), for CLAUDE.md's standing reason: the
+    # verifier binds wt(e) only on b = 0 rounds, so a wrong-weight witness
+    # survives whenever the challenge string happens to contain none of them --
+    # (2/3)^rounds, which is 0.77% at the rounds = 12 the ring half uses, i.e.
+    # one run in 130.  Measured: 3 acceptances in 400 trials, and all 3 were
+    # exactly the 3 no-b=0 challenge strings.  At 64 it is 5.5e-11.
+    forge_rounds = 64
     seed, e_int, syn = stern_f_keygen(n)
     H_rows = [_stern_matrix_row(seed.uint, i, n).uint for i in range(n_rows)]
     msg = BitArray.random(n)
-    honest = hpks_stern_f_sign(msg, e_int, seed, syn, n, rounds)
+    honest = hpks_stern_f_sign(msg, e_int, seed, syn, n, forge_rounds)
     honest_ok = hpks_stern_f_verify(msg, honest, seed, syn, n)
 
-    e_forged = _stern_solve_syndrome(H_rows, syn, n)
+    e_forged = _stern_solve_syndrome(H_rows, syn, n, avoid_weight=t)
     solved = _stern_syndrome(seed.uint, e_forged, n, n_rows) == syn
     off_weight = bin(e_forged).count('1') != t
-    forged = hpks_stern_f_sign(msg, e_forged, seed, syn, n, rounds)
+    forged = hpks_stern_f_sign(msg, e_forged, seed, syn, n, forge_rounds)
     forged_ok = hpks_stern_f_verify(msg, forged, seed, syn, n)
 
     # (b) commitment distinctness over one ring signature
@@ -4011,7 +4045,7 @@ def test_stern_witness_binding():
 
     ok = (honest_ok and solved and off_weight and not forged_ok
           and ring_ok and dups == 0)
-    print(f"    n={n} rounds={rounds}  honest={honest_ok}  "
+    print(f"    n={n} rounds={forge_rounds}  honest={honest_ok}  "
           f"forged-witness wt={bin(e_forged).count('1')} (t={t}) "
           f"syndrome-matches={solved}  forgery-accepted={forged_ok}")
     print(f"    ring k={k} verified={ring_ok}  repeated commitments="

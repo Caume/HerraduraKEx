@@ -3673,11 +3673,25 @@ static void test_fstern_range_n32(void)
  * ---------------------------------------------------------------------- */
 
 /* Any e' with H*e'^T == syndr, by Gaussian elimination over GF(2).  PUBLIC
- * data only.  Free variables stay at zero, which is why the result lands near
- * weight KEYBITS/4 rather than SDF_T. */
+ * data only.  Free variables stay at zero, so the result USUALLY lands near
+ * weight KEYBITS/4 rather than SDF_T -- and the exception is the whole reason
+ * avoid_weight exists (TODO #310).  When all SDF_T of the true error's
+ * positions happen to fall in pivot columns, the free-variables-zero solution
+ * IS the true error: weight exactly SDF_T, and a caller asserting "the
+ * verifier rejects a wrong-weight witness" would be asserting it of the
+ * GENUINE one.  The rate is ~2^-SDF_T, which is 1.5e-5 here but one run in 16
+ * in the Go and Python harnesses, where this test runs at n = 64, t = 4 -- it
+ * went red in CI there.  C is not correct, only luckier, so it is fixed the
+ * same way.
+ * avoid_weight XORs KERNEL basis vectors into the solution until its weight
+ * differs.  A kernel vector preserves H*e'^T exactly, so the caller's
+ * syndrome-matches control still holds, and the off-weight witness is
+ * CONSTRUCTED rather than hoped for -- deterministic given the key, with no
+ * threshold and no retry.  Pass -1 to disable. */
 static void stern_solve_syndrome(BitArray *e_out,
                                  const BitArray H_mat[SDF_N_ROWS],
-                                 const uint8_t *syndr)
+                                 const uint8_t *syndr,
+                                 int avoid_weight)
 {
     static BitArray rows[SDF_N_ROWS];
     static uint8_t  rhs[SDF_N_ROWS];
@@ -3713,11 +3727,44 @@ static void stern_solve_syndrome(BitArray *e_out,
         if (rhs[piv_row[i]])
             e_out->b[KEYBYTES - 1 - piv_col[i] / 8] |=
                 (uint8_t)(1u << (piv_col[i] % 8));
+
+    if (avoid_weight >= 0 && ba_popcount(e_out) == avoid_weight) {
+        uint8_t is_piv[KEYBITS];
+        BitArray v;
+        int moved = 0, c;
+
+        memset(is_piv, 0, sizeof is_piv);
+        for (i = 0; i < npiv; i++) is_piv[piv_col[i]] = 1;
+
+        for (c = 0; c < KEYBITS && !moved; c++) {
+            int cbyte = KEYBYTES - 1 - c / 8;
+            uint8_t cmask = (uint8_t)(1u << (c % 8));
+            if (is_piv[c]) continue;
+            memset(v.b, 0, KEYBYTES);
+            v.b[cbyte] |= cmask;
+            for (i = 0; i < npiv; i++)
+                if (rows[piv_row[i]].b[cbyte] & cmask)
+                    v.b[KEYBYTES - 1 - piv_col[i] / 8] |=
+                        (uint8_t)(1u << (piv_col[i] % 8));
+            ba_xor(e_out, e_out, &v);   /* syndrome-preserving: H*v^T == 0 */
+            moved = ba_popcount(e_out) != avoid_weight;
+        }
+        if (!moved) {
+            printf("    stern_solve_syndrome: no kernel vector moved the "
+                   "solution off weight %d  [FAIL]\n", avoid_weight);
+        }
+    }
 }
 
 static void test_stern_witness_binding(void)
 {
-    enum { RK = 3, RND = 12 };
+    /* FRND is the forgery sub-check's OWN round count (TODO #310), for
+     * CLAUDE.md's standing reason: the verifier binds wt(e) only on b = 0
+     * rounds, so a wrong-weight witness survives whenever the challenge
+     * string contains none of them -- (2/3)^RND = 0.77% at RND = 12, one
+     * run in 130.  Measured in the Python port: 3 acceptances in 400
+     * trials, all 3 the no-b=0 strings.  At 64 it is 5.5e-11. */
+    enum { RK = 3, RND = 12, FRND = 64 };
     BitArray seed, e, e_forged, msg, H_mat[SDF_N_ROWS];
     uint8_t  syndr[SDF_SYNBYTES], syn_chk[SDF_SYNBYTES];
     static SternSig sf_sig;
@@ -3731,12 +3778,12 @@ static void test_stern_witness_binding(void)
 
     stern_f_keygen(&seed, &e, syndr, urnd_fp);
     ba_rand(&msg, urnd_fp);
-    stern_sig_alloc(&sf_sig, RND);
+    stern_sig_alloc(&sf_sig, FRND);
     hpks_stern_f_sign(&sf_sig, &msg, &e, &seed, urnd_fp);
     honest_ok = hpks_stern_f_verify(&sf_sig, &msg, &seed, syndr);
 
     stern_build_H(H_mat, &seed);
-    stern_solve_syndrome(&e_forged, H_mat, syndr);
+    stern_solve_syndrome(&e_forged, H_mat, syndr, SDF_T);
     stern_syndrome_H(syn_chk, H_mat, &e_forged);
     solved     = memcmp(syn_chk, syndr, SDF_SYNBYTES) == 0;
     off_weight = ba_popcount(&e_forged) != SDF_T;
@@ -3773,7 +3820,7 @@ static void test_stern_witness_binding(void)
     ok = honest_ok && solved && off_weight && !forged_ok && ring_ok && dups == 0;
     printf("    rounds=%d  honest=%d  forged-witness wt=%d (t=%d) "
            "syndrome-matches=%d  forgery-accepted=%d\n",
-           RND, honest_ok, ba_popcount(&e_forged), SDF_T, solved, forged_ok);
+           FRND, honest_ok, ba_popcount(&e_forged), SDF_T, solved, forged_ok);
     printf("    ring k=%d verified=%d  repeated commitments=%d/%d  [%s]\n\n",
            RK, ring_ok, dups, 3 * RK * RND, ok ? "PASS" : "FAIL");
 }

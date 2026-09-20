@@ -66,12 +66,27 @@ def _uniform(n=N):
 # §1 — witness-weight binding
 # ---------------------------------------------------------------------------
 
-def _solve_syndrome(H_rows, syndrome):
+def _solve_syndrome(H_rows, syndrome, avoid_weight=-1):
     """Any e' with H.e'^T == syndrome, by Gaussian elimination over GF(2).
 
     Uses ONLY public data (the matrix seed and the syndrome).  The free
-    variables are all set to zero, which is why the result has weight ~n/4
-    rather than t -- any other setting would do.
+    variables are all set to zero, so the result USUALLY has weight ~n/4
+    rather than t -- and the exception is why avoid_weight exists (TODO #310).
+    When all t of the true error's positions happen to fall in PIVOT columns,
+    the free-variables-zero solution IS the true error, weight exactly t, and
+    the shipped verifier then ACCEPTS it because accepting a genuine witness is
+    correct.  §1 scored that as "INCONCLUSIVE" and returned False, i.e. as a
+    finding that stopped reproducing -- a false FAILURE at rate 2^-t, which is
+    1.5e-5 at this file's N = 256, t = 16, and 6.25% in the numbered-test
+    harnesses that run the same construction at n = 64, t = 4.  This file's
+    `SAMPLED_GATES` entry called §1 "exact" on the strength of "a
+    Gaussian-elimination witness either verifies or does not"; that is true of
+    the VERIFIER and was not true of the WITNESS.
+
+    avoid_weight XORs KERNEL basis vectors into the solution until its weight
+    differs.  H.v^T == 0, so `same_syn` still holds exactly, and the off-weight
+    witness is CONSTRUCTED rather than drawn -- which is what makes §1 exact
+    rather than merely usually right, and retires the inconclusive branch.
     """
     aug = [[H_rows[i], (syndrome >> i) & 1] for i in range(len(H_rows))]
     pivots = []
@@ -92,6 +107,21 @@ def _solve_syndrome(H_rows, syndrome):
     for col, k in pivots:
         if aug[k][1]:
             e |= 1 << col
+    if avoid_weight >= 0 and bin(e).count("1") == avoid_weight:
+        pivot_cols = {col for col, _ in pivots}
+        for c in range(N):
+            if c in pivot_cols:
+                continue
+            v = 1 << c
+            for col, k in pivots:
+                if (aug[k][0] >> c) & 1:
+                    v |= 1 << col
+            e ^= v          # syndrome-preserving: H.v^T == 0
+            if bin(e).count("1") != avoid_weight:
+                break
+        else:
+            raise AssertionError(
+                f"no kernel vector moved the solution off weight {avoid_weight}")
     return e
 
 
@@ -179,19 +209,30 @@ def _sign_retired(msg, e_int, seed, rounds):
     return (commits, chals, resps)
 
 
-def section1(rounds=32):
+def section1(rounds=64):
+    # rounds = 64, not 32, and that is the SECOND half of TODO #310: the
+    # verifier binds wt(e) only on b = 0 rounds, so the forgery survives
+    # whenever the challenge string contains none -- (2/3)^rounds, which is
+    # 7.4e-6 at 32 and 5.5e-11 at 64.  "§1 is exact" was false at 32 too, just
+    # 200x less often than the witness-weight hole it sat beside.
     print("\n§1  Witness-weight binding — is wt(e) = t bound by the verifier?")
     seed, e, syn = H.stern_f_keygen()
     H_rows = H._stern_build_H(seed.uint, N, NROWS)
 
-    e_forged = _solve_syndrome(H_rows, syn)
+    e_forged = _solve_syndrome(H_rows, syn, avoid_weight=T)
     same_syn = H._stern_syndrome_H(H_rows, e_forged) == syn
     w = bin(e_forged).count("1")
     print(f"  Forged witness : weight {w} (honest key is {T}), "
           f"syndrome matches: {same_syn}")
+    # Unreachable since TODO #310 made the witness CONSTRUCTED off-weight:
+    # avoid_weight=T guarantees w != T, and a kernel addition cannot change the
+    # syndrome.  Kept as an assertion rather than deleted, because it is the
+    # one thing that would make the rest of the section meaningless -- and it
+    # is now a real failure, not a coin landing badly.
     if not same_syn or w == T:
-        print("  §1 INCONCLUSIVE: the linear solve did not produce an "
-              "off-weight preimage")
+        print("  §1 FAIL: the linear solve did not produce an off-weight "
+              "preimage, which TODO #310's construction is supposed to "
+              "guarantee")
         return False
 
     msg = H.BitArray.random(N)

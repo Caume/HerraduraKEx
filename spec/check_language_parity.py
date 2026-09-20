@@ -3485,7 +3485,10 @@ RANDOMNESS_RAW_PATTERNS = {
 # /dev/urandom, Go uses crypto/rand, Python os.urandom, Java a static
 # SecureRandom.  So a fixed-stream replay does NOT reach this layer without a
 # new shipped surface (an injection env var), and that is a change to the
-# product, not to a checker -- deliberately not made here.  What IS available is
+# product, not to a checker -- deliberately not made here, and filed as TODO
+# #309, which has to argue the hazard before it adds the seam: a CSPRNG that an
+# environment variable can replace is a deterministic `genpkey` away from a
+# private key nothing on disk distinguishes from a real one.  What IS available is
 # the accounting, and the accounting is the thing that was missing: which draw,
 # in which ports, and what -- if anything -- compares it across them.
 CLI_CORPUS = {
