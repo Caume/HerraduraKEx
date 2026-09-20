@@ -19494,3 +19494,112 @@ layer out from the one this item closes inside the census.
 
 Status: **DONE v8.0.4** — all three `follows` gates were defective; §3.5 ran at 6.0e-3 per run on a null 1.64x its model, §3.7's claim was false outright, and the census now requires a measured null.  The job's honest rate is 6.4e-5.
 
+### #303: pin KKW's PROVER across the four ports
+
+TODO #302 §6 asked #301's cheap question of both protocols and got two
+different answers.  ZKB++ is covered twice over.  KKW is covered **nowhere**,
+and the two reasons compound:
+
+* `KAT/hcred_kkw.json` is VERIFY-SIDE by construction — `hcred_prove_kkw`
+  draws one `os.urandom` root per emulation, so a proof is not a function of
+  its statement and regenerate-and-diff cannot work.  Every port CONSUMES that
+  vector; none is asked to PRODUCE anything.
+* KKW has no CLI surface in any language, so `test_cross_lang_matrix.sh`'s
+  HCRED block — which covers the sigma variant — never reaches it.
+
+So the four `_hcred_kkw_pre` / `_hcred_kkw_party` implementations have never
+been compared against each other in either direction.  Numbered test [50]
+exercises each port's prover against *its own* verifier, which is exactly the
+shape that let three of the four ports ship a transcription bug under #266.
+
+**The available check is the one #296 and #297 built.**  The entropy is
+injectable — C takes a `FILE *`, Java a `SecureRandom` — so a
+`hcred_prove_kkw` row in `KAT/operation_replay.json` makes the operation
+deterministic and holds the four consumption orders against each other.  No
+new script and no CI wiring; the four consumers follow a third vector as they
+follow the second.
+
+**Two things to settle first, before writing the row.**  (1) HCRED's width is
+a runtime argument in Python and Go but a compile-time constant in C and Java
+(`HCRED_N`, `Hcred.N`), which is why `hcred_kkw.json` ships two sets — so the
+replay row has the same n=256-only constraint, and one n=256 proof costs ~70 s
+in Python.  Decide whether the row is worth that before building it.  (2) What
+the row would pin is the CONSUMPTION ORDER, not the hiding property: a pad
+that is predictable in all four ports passes a cross-port vector by
+construction.  That half is #302 §4-§5's job and stays where it is — this item
+is about divergence, which is a different failure.
+
+**RESULT.**  The row is `hcred_prove_kkw` in `KAT/operation_replay.json`, and
+both questions above were settled with measurements rather than estimates.
+
+(1) COST.  An n=256 prove is **80.1 s** in Python at `hcred_kkw.json`'s
+(N_par, M, tau) = (4, 8, 4) and **40.8 s** at the row's (4, 4, 2).  The row uses
+the smaller triple: `generate_kat.py --check` pays that once per run of
+`CliTest/test_kat_vectors.sh`, and what the reduction costs in coverage is
+ASSERTED rather than assumed -- the generator fails unless M > tau leaves
+emulations unopened and the two opened ones straddle the aux-reveal condition,
+which is the condition the Go port read backwards under #266.  Nothing else
+changes: the width is 256 because `HCRED_N` and `Hcred.N` are compile-time
+constants, not a preference.
+
+The item ASKED about Python's cost and the measurement answered a second
+question nobody had asked.  One n=256 prove at (4, 4, 2), on an aarch64 SBC:
+
+| port   | prove  | verify |
+|--------|--------|--------|
+| C      |  0.7 s |  0.7 s |
+| Java   |  8.6 s |  7.4 s |
+| Go     | 38.5 s | 33.1 s |
+| Python | 40.8 s | 36.4 s |
+
+**Go's KKW is ~55x C's and sits at interpreted-Python speed.**  That is
+pre-existing, out of this item's scope, and not a correctness problem -- but it
+is why `CliTest/test_kat_vectors.sh` spends minutes in its Go step and always
+did: the `hcred_kkw[n256]` block there is an accept plus six tampers, i.e. seven
+n=256 verifications at ~33 s each.  Against that the new row is about a sixth
+more, which is the reason it is affordable rather than an argument that it is
+cheap.  The header of that script now carries the table.
+
+(2) SCOPE.  Carried into the vector and into `zkbpp_kkw_view_hiding.py` §6
+verbatim in substance: the row pins the CONSUMPTION ORDER, not the hiding
+property, and §4-§5 remain the only check of the latter.
+
+**THE FOUR PORTS AGREE**, and that is the result rather than a disappointment.
+Unlike #296 (three of four samplers diverged, with every implementation
+individually correct) and #297 (a constant dummy commitment that broke ring
+anonymity in two ports), C, Go and Java each reproduced Python's proof field for
+field on the first attempt.  `consumed` is exact at M x 32 = 128 bytes in all
+four -- one root per emulation, no rejection anywhere -- where the
+`rnl_sigma_sign` row's is null for #293's buffering reason.  What the row buys
+from here is that they cannot stop agreeing quietly.
+
+**THE CONTROL, BECAUSE A VECTOR THAT CANNOT FAIL IS #234'S VACUOUS PASS.**  The
+class the row is supposed to catch is one that reaches no artifact a verifier
+examines, so "it passes" proves nothing on its own.  Demonstrated in C, where two
+of the three #266 bugs were: reverse each 32-byte root after reading it -- every
+distribution still correct, the proof still self-consistent, not one byte of the
+statement touched -- and then
+
+* numbered test [50] PASSES (the whole C suite closes `*** OK: no check reported
+  [FAIL] ***`), because it runs C's prover against C's own verifier;
+* `hcred_kkw[n256]` PASSES, accept plus all six tampers, because that vector is
+  VERIFY-side and never asks C to produce anything;
+* **`op hcred_prove_kkw` FAILS**, with 16 messages naming the fields --
+  `pre[0] root differs`, `online[1].pbar is 0, vector says 2`,
+  `online[3] reveals aux, vector says it hides`.
+
+That last line is the whole item in one: an aux-reveal divergence, read off the
+vector, in the port where nothing else could see it.
+
+**THREE THINGS THE ITEM PICKED UP ON THE WAY.**  §6 of #302 FIRED, exactly as it
+was written to: its check asserted that no KKW prover row existed so that adding
+one would fail the section until the prose was corrected.  It is now inverted, so
+deleting the row fails §6 rather than quietly restoring the gap.
+`emit_operation_header` gained the guard Go and Java already had -- a vector row
+with no C arrays now FAILS generation, where before the C consumer would simply
+have been silently short of the other three.  And the C emitter and each port's
+JSON reader are now SHARED between `hcred_kkw.json` and the replay row, because a
+second transposition of a KKW proof would be a new place for exactly the
+byte-order disagreements these vectors exist to catch.
+
+Status: **DONE v8.0.5** — KKW's prover is pinned by an `hcred_prove_kkw` row in `KAT/operation_replay.json` at n=256, (4, 4, 2); all four ports reproduce it field for field, `consumed` is exact at 128 bytes, and #302 §6's self-invalidating check fired and is now inverted.

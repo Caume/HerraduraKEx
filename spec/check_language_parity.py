@@ -3064,6 +3064,17 @@ OPERATION_REPLAY_PINNED = {
         "c": "stern_ring_sign", "go": "HpksSternRingSign",
         "python": "hpks_stern_ring_sign", "java": "SternRing.java::sign",
     },
+    # The row TODO #303 added, for the gap TODO #302 §6 found by asking rather
+    # than assuming: KKW's PROVER was covered NOWHERE.  KAT/hcred_kkw.json is
+    # verify-side by construction -- one fresh root per emulation, so a proof is
+    # not a function of its statement -- and KKW has no CLI surface, so the 4x4
+    # interop matrix does not reach it either.  Each port's prover was checked
+    # only against its OWN verifier, which is the shape that let three of the
+    # four ports ship a transcription bug under #266.
+    "hcred_prove_kkw": {
+        "c": "hcred_prove_kkw", "go": "HcredProveKkw",
+        "python": "hcred_prove_kkw", "java": "Hcred.java::proveKkw",
+    },
 }
 
 # Every function in the shipped suite that reads RAW ENTROPY.  Derived from the

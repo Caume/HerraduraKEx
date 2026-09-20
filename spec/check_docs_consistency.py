@@ -565,6 +565,21 @@ DOC_COUNTS = [
      r"false-failure rate of the whole job: ([\d.]+e-\d+) per run",
      r"is the rate of the whole job: \*\*([\d.]+e-\d+) per run\*\*",
      "run_findings_gates.py's flake budget, quoted in CLAUDE.md's Testing section"),
+    # TODO #303.  The replay tables' sizes are the count of what the four ports
+    # are actually held against each other on, and CLAUDE.md wrote both out by
+    # hand -- "four samplers", "five whole OPERATIONS" -- so adding a row left
+    # the file understating its own coverage, which is exactly what #287 found
+    # twice.  Both move whenever a row is added, and the checker prints both.
+    ("pinned leaf samplers",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"(\d+) sampler\(s\) pinned against a fixed stream",
+     r"KAT/sampler_replay.json\s+is the harness kept: (\d+) leaf",
+     "check_language_parity.py's sampler-replay table, quoted in CLAUDE.md's spec/ entry"),
+    ("pinned whole operations",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"and (\d+) whole operation\(s\)",
+     r"KAT/operation_replay.json pins (\d+)\s+whole randomised OPERATIONS",
+     "check_language_parity.py's operation-replay table, quoted in the same entry"),
 ]
 
 

@@ -1358,7 +1358,7 @@ spec/                                                — machine-readable protoc
                                                       #287's withdrawn trust-model sentence
                                                       and #291's 22 discarded verdicts one
                                                       layer out.  KAT/sampler_replay.json
-                                                      is the harness kept: four leaf
+                                                      is the harness kept: 4 leaf
                                                       samplers, each with a fixed stream,
                                                       the value the SHIPPED sampler
                                                       produces, and -- where all four ports
@@ -1462,11 +1462,13 @@ spec/                                                — machine-readable protoc
                                                       OPERATION_REPLAY_PINNED (TODO #297)
                                                       sits BESIDE the sampler table and is
                                                       checked by the same generalised code:
-                                                      KAT/operation_replay.json pins five
+                                                      KAT/operation_replay.json pins 6
                                                       whole randomised OPERATIONS -- Stern-F
                                                       keygen and signing, Stern-F RING
-                                                      signing, the ZKBoo prover and the
-                                                      Ring-LWR Sigma signer -- each against a
+                                                      signing, the ZKBoo prover, the
+                                                      Ring-LWR Sigma signer and, since
+                                                      TODO #303, the HCRED-KKW prover --
+                                                      each against a
                                                       fixed STATEMENT as well as a fixed
                                                       stream.  That is the new part: a leaf
                                                       row is one call with scalar arguments,
@@ -2035,7 +2037,44 @@ length is a `PARAMETERS` row, which §2 promotes from formatting to security). K
 covered nowhere: `hcred_kkw.json` is VERIFY-SIDE by construction so no port's PROVER is
 exercised, and KKW has no CLI surface so the 4x4 interop matrix does not reach it. That
 gap is filed as TODO #303, not folded in here, and §6 self-invalidates -- adding the row
-fails the section until the prose is corrected.
+fails the section until the prose is corrected. It fired: #303 added the row, and §6's
+check is now inverted, so DELETING it fails the section rather than quietly restoring
+the gap.
+
+**And KKW's PROVER, which #302 §6 found covered nowhere (TODO #303).** #302 asked
+#301's cheap question -- what already holds this property across the four ports? -- and
+got two answers. ZKB++ was covered twice; KKW was covered by nothing, because the two
+gaps compound: `KAT/hcred_kkw.json` is VERIFY-SIDE by construction (one fresh root per
+emulation, so a proof is not a function of its statement and regenerate-and-diff cannot
+work) and KKW has no CLI surface, so the 4x4 interop matrix does not reach it either.
+Numbered test [50] runs each port's prover against ITS OWN verifier, which is precisely
+the shape that let three of four ports ship a transcription bug at #266. **A fixed
+stream makes the prover a function again**, so this needed no new mechanism at all --
+`KAT/operation_replay.json` gained a sixth row and the four consumers #296 and #297
+built follow it as they follow the other five. Four things to know. (1) **The width is
+not a choice**: HCRED's `n` is a runtime argument in Python and Go but a compile-time
+constant of 256 in C (`HCRED_N`) and Java (`Hcred.N`), so 256 is the only width all four
+can prove. (2) **`(N_par, M, tau)` IS a choice and was made on measured cost** -- an
+n=256 prove is 80.1 s in Python at `hcred_kkw.json`'s (4, 8, 4) and 40.8 s at this row's
+(4, 4, 2), and `generate_kat.py --check` pays it every run -- with what the smaller
+triple must still exercise ASSERTED in the generator rather than assumed: `M > tau`
+leaves emulations unopened, and the two opened ones must straddle the aux-reveal
+condition, which is the condition the Go port read backwards. (3) **`consumed` is exact
+here**, at `M x 32` = 128 bytes, where the `rnl_sigma_sign` row's is null: all four read
+one 32-byte root per emulation with no rejection anywhere. Measuring that cost answered
+a question nobody had asked: the same prove is **C 0.7 s, Java 8.6 s, Go 38.5 s, Python
+40.8 s**, so **Go's KKW sits at interpreted-Python speed, ~55x C's**. Pre-existing and
+out of #303's scope -- it is also why `CliTest/test_kat_vectors.sh` has always spent
+minutes in its Go step, since the `hcred_kkw[n256]` block there is seven n=256
+verifications at ~33 s each -- and the reason the row is affordable is that it adds
+about a sixth to that, not that it is cheap. (4) **The four ports agree**,
+and that is the result, not a disappointment -- C, Go and Java each reproduced Python's
+proof field for field on the first attempt, where #296 found three of four samplers
+diverging and #297 found an anonymity break. What the row buys is that they cannot stop
+agreeing quietly. Scope, because #302 §6 is what an unchecked scope paragraph becomes:
+the row pins **divergence, not hiding** -- a pad predictable in all four ports passes a
+cross-port vector by construction -- so `zkbpp_kkw_view_hiding.py` §4-§5 stay the only
+check of the hiding property, which is #298's rule (1).
 
 **And what the bar is measured against, which is what "the bar follows the statistic"
 was standing in for (TODO #304).** #300's census gave every sampled gate either a derived

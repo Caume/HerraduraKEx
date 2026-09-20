@@ -650,13 +650,26 @@ def section6():
     checks.append(("    zkpp-seed-bytes is a PARAMETERS row",
                    '"zkpp-seed-bytes"' in par))
 
-    # (c) KKW's prover is pinned NOWHERE, and this must self-invalidate: if a
-    #     replay row is ever added, this fires and the prose above is wrong.
+    # (c) KKW's prover.  When this section was written it was pinned NOWHERE,
+    #     and the check asserted that ABSENCE so it would fire the day a row
+    #     appeared.  It fired: TODO #303 added the row, and the prose below is
+    #     the correction it forced.  The check is kept, inverted -- deleting the
+    #     row now fails the section rather than quietly restoring the gap.
     ops = _json.load(open(os.path.join(_ROOT, "KAT",
                                        "operation_replay.json")))
     names = {o["name"] for o in ops["operations"]}
-    checks.append(("    no KKW prover row in operation_replay.json "
-                   "(self-invalidating)", "hcred_prove_kkw" not in names))
+    checks.append(("    KKW prover row in operation_replay.json (TODO #303)",
+                   "hcred_prove_kkw" in names))
+    #     What that row pins is the CONSUMPTION ORDER, not the hiding property
+    #     §4-§5 measure: a pad predictable in all four ports passes a cross-port
+    #     vector by construction.  So the row is checked for what it IS --
+    #     a fixed stream over a fixed statement -- and §4-§5 stay the only
+    #     check of the other thing, which is #298's rule (1).
+    kkw_row = next(o for o in ops["operations"]
+                   if o["name"] == "hcred_prove_kkw")
+    checks.append(("    ... with a fixed stream over a fixed statement",
+                   bool(kkw_row.get("stream")) and
+                   bool(kkw_row.get("statement", {}).get("s_poly"))))
     kkw = _json.load(open(os.path.join(_ROOT, "KAT", "hcred_kkw.json")))
     checks.append(("    hcred_kkw.json still declares itself VERIFY-SIDE",
                    "VERIFY-SIDE" in kkw.get("note", "")))
@@ -668,12 +681,17 @@ def section6():
     print("    zkp_nl_prove row (same evaluator, checked above) and the seed")
     print("    length by check_language_parity.py's zkpp-seed-bytes row.  So this")
     print("    file is Python-only for #301's reason, reached differently.")
-    print("  KKW — NOT COVERED, and not by oversight: hcred_kkw.json is")
-    print("    VERIFY-SIDE by construction, so it exercises no port's PROVER; and")
-    print("    KKW has no CLI surface in any language, so the 4x4 interop matrix")
-    print("    covering HCRED's sigma variant does not reach it.  §4-§5 are the")
-    print("    only check of this property in the repo, which is #298's rule (1).")
-    print("    Pinning KKW's prover across ports is a replay-vector job, filed.")
+    print("  KKW — COVERED SINCE TODO #303, and the two halves are different")
+    print("    properties.  hcred_kkw.json is VERIFY-SIDE by construction, so it")
+    print("    exercises no port's PROVER, and KKW has no CLI surface in any")
+    print("    language, so the 4x4 interop matrix covering HCRED's sigma variant")
+    print("    does not reach it -- that was the gap, and #303 closed it with an")
+    print("    operation_replay.json row: a fixed stream makes the prover a")
+    print("    function of its statement again, and four ports against one pinned")
+    print("    transcript is four ports against each other.  What that row pins is")
+    print("    DIVERGENCE, not hiding: a pad predictable in all four ports passes")
+    print("    a cross-port vector by construction, so §4-§5 remain the only check")
+    print("    of the property THIS file is about, which is #298's rule (1).")
     ok = all(g for _l, g in checks)
     print(f"  §6               : {'PASS' if ok else 'FAIL'}")
     return ok

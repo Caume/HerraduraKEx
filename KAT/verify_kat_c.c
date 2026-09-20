@@ -423,6 +423,134 @@ static void op_rnl_sigma_sign(void)
     fclose(f);
 }
 
+/* HCRED-KKW proving (TODO #303), and the gap TODO #302 §6 found: KKW's PROVER
+ * was pinned NOWHERE.  KAT/hcred_kkw.json is verify-side by construction -- one
+ * fresh root per emulation, so a proof is not a function of its statement -- and
+ * KKW has no CLI surface in any language, so the 4x4 interop matrix does not
+ * reach it either.  That left each port's prover checked only against its OWN
+ * verifier, which is the shape that let three of the four ports ship a
+ * transcription bug under TODO #266, two of them in this language.  A fixed
+ * stream makes the prover a function again, and then one pinned transcript is
+ * four ports against each other.
+ *
+ * n is 256 because HCRED_N is a compile-time constant here and in Java, not a
+ * choice; (N_par, M, tau) = (4, 4, 2) is a cost choice the generator asserts is
+ * still complete -- in particular the two opened emulations straddle the
+ * aux-reveal condition, which is the condition the Go port read backwards. */
+static void op_hcred_prove_kkw(void)
+{
+    FILE *f = fmemopen((void *)opr_kkw_stream, sizeof opr_kkw_stream, "rb");
+    HcredKkwProof proof;
+    BitArray seed_H;
+    int k, i, rc, before;
+
+    if (!f) { bad("op hcred_prove_kkw (fmemopen)"); return; }
+    memcpy(seed_H.b, opr_kkw_seed_H, KEYBYTES);
+    rc = hcred_prove_kkw(&proof, opr_kkw_s_poly, opr_kkw_m_poly, opr_kkw_c_poly,
+                         &seed_H, opr_kkw_syndrome, OPR_KKW_N_PAR, OPR_KKW_M,
+                         OPR_KKW_TAU, opr_kkw_msg, OPR_KKW_MSG_LEN, f);
+    if (rc != 0) {
+        printf("FAIL op hcred_prove_kkw: prover returned %d\n", rc);
+        failures++;
+        fclose(f);
+        return;
+    }
+    if (ftell(f) != OPR_KKW_CONSUMED) {
+        printf("FAIL op hcred_prove_kkw: consumed %ld stream bytes, vector says "
+               "%d\n", ftell(f), OPR_KKW_CONSUMED);
+        failures++;
+    } else {
+        ok("op hcred_prove_kkw consumed one 32-byte root per emulation");
+    }
+    fclose(f);
+
+    before = failures;
+    if (proof.W != OPR_KKW_W) {
+        printf("FAIL op hcred_prove_kkw: W is %d, vector says %d\n",
+               proof.W, OPR_KKW_W);
+        failures++;
+    }
+    /* The unopened set is the cut-and-choose challenge, derived by Fiat-Shamir
+     * from every emulation's commitments -- so a divergence in ANY of the M
+     * preprocessing emulations, opened or not, moves it. */
+    for (k = 0; k < OPR_KKW_M - OPR_KKW_TAU; k++) {
+        if (proof.pre_e[k] != opr_kkw_pre_e[k]) {
+            printf("FAIL op hcred_prove_kkw: unopened emulation %d is %d, vector "
+                   "says %d\n", k, proof.pre_e[k], opr_kkw_pre_e[k]);
+            failures++;
+        } else if (memcmp(proof.pre_root + (size_t)k * KEYBYTES,
+                          opr_kkw_pre_root[k], KEYBYTES) != 0) {
+            printf("FAIL op hcred_prove_kkw: pre[%d] root differs\n",
+                   proof.pre_e[k]);
+            failures++;
+        }
+    }
+    for (k = 0; k < OPR_KKW_TAU; k++) {
+        const HcredKkwOnline *o = &proof.online[k];
+        int e = proof.online_e[k];
+        if (e != opr_kkw_online_e[k]) {
+            printf("FAIL op hcred_prove_kkw: opened emulation %d is %d, vector "
+                   "says %d\n", k, e, opr_kkw_online_e[k]);
+            failures++;
+            continue;
+        }
+        if (o->pbar != opr_kkw_pbar[k]) {
+            printf("FAIL op hcred_prove_kkw: online[%d].pbar is %d, vector says "
+                   "%d\n", e, o->pbar, opr_kkw_pbar[k]);
+            failures++;
+        }
+        if (o->u != opr_kkw_u[k]) {
+            printf("FAIL op hcred_prove_kkw: online[%d].u is %d, vector says "
+                   "%d\n", e, o->u, opr_kkw_u[k]);
+            failures++;
+        }
+        if (memcmp(o->com_h, opr_kkw_com_h[k], KEYBYTES) != 0) {
+            printf("FAIL op hcred_prove_kkw: online[%d].com_h differs\n", e);
+            failures++;
+        }
+        if (o->path_len != opr_kkw_path_len[k]) {
+            printf("FAIL op hcred_prove_kkw: online[%d].path_len is %d, vector "
+                   "says %d\n", e, o->path_len, opr_kkw_path_len[k]);
+            failures++;
+        } else {
+            for (i = 0; i < o->path_len; i++)
+                if (o->path[i].l != opr_kkw_path_l[k][i] ||
+                    o->path[i].i != opr_kkw_path_i[k][i] ||
+                    memcmp(o->path[i].node, opr_kkw_path_node[k][i], KEYBYTES) != 0) {
+                    printf("FAIL op hcred_prove_kkw: online[%d].path[%d] differs\n",
+                           e, i);
+                    failures++;
+                    break;
+                }
+        }
+        /* aux is revealed exactly when the hidden party is not party N_par-1.
+         * Reading that condition the wrong way round is the bug the Go port
+         * shipped (TODO #266), so presence is compared before content. */
+        if ((o->aux != NULL) != (opr_kkw_has_aux[k] != 0)) {
+            printf("FAIL op hcred_prove_kkw: online[%d] %s aux, vector says it "
+                   "%s\n", e, o->aux ? "reveals" : "hides",
+                   opr_kkw_has_aux[k] ? "reveals" : "hides");
+            failures++;
+        } else if (o->aux != NULL &&
+                   memcmp(o->aux, opr_kkw_aux[k], sizeof(int32_t) * OPR_KKW_G) != 0) {
+            printf("FAIL op hcred_prove_kkw: online[%d].aux differs\n", e);
+            failures++;
+        }
+        if (memcmp(o->zin, opr_kkw_zin[k], sizeof(int32_t) * OPR_KKW_I) != 0) {
+            printf("FAIL op hcred_prove_kkw: online[%d].zin differs\n", e);
+            failures++;
+        }
+        if (memcmp(o->t, opr_kkw_t[k], sizeof(int32_t) * OPR_KKW_G) != 0) {
+            printf("FAIL op hcred_prove_kkw: online[%d].t differs\n", e);
+            failures++;
+        }
+    }
+    if (failures == before)
+        printf("PASS op hcred_prove_kkw (%d emulations opened, %d unopened)\n",
+               OPR_KKW_TAU, OPR_KKW_M - OPR_KKW_TAU);
+    hcred_kkw_proof_free(&proof);
+}
+
 /* The ring row.  Two divergences lived in this operation and neither was
  * visible to any other check: the challenge trit had three schemes across the
  * four ports, and the b = 0 dummy commitment was a CONSTANT in C and Go, which
@@ -566,6 +694,7 @@ int main(void)
     op_zkp_nl_prove();
     op_stern_ring_sign();
     op_rnl_sigma_sign();
+    op_hcred_prove_kkw();
 
     if (failures) {
         printf("*** FAILED: %d check(s) reported [FAIL] ***\n", failures);
