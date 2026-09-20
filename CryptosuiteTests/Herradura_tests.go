@@ -2251,9 +2251,20 @@ var (
 // ---------------------------------------------------------------------------
 
 // sternSolveSyndrome returns any e' with H·e'^T == syndrome, by Gaussian
-// elimination over GF(2).  PUBLIC data only.  Free variables stay at zero,
-// which is why the result lands near weight n/4 rather than t.
-func sternSolveSyndrome(H []*BitArray, syndrome *big.Int, n int) *big.Int {
+// elimination over GF(2).  PUBLIC data only.  Free variables stay at zero, so
+// the result USUALLY lands near weight n/4 rather than t -- and the exception
+// is the whole reason avoidWeight exists (TODO #310).  When all t of the true
+// error's positions happen to fall in pivot columns, the free-variables-zero
+// solution IS the true error: weight exactly t, and a caller asserting "the
+// verifier rejects a wrong-weight witness" would be asserting it of the
+// GENUINE one.  That is not rare -- it is ~2^-t, one run in 16 at the n = 64,
+// t = 4 this test uses, and it went red in CI.
+// avoidWeight XORs KERNEL basis vectors into the solution until its weight
+// differs.  A kernel vector preserves H·e'^T exactly, so the caller's
+// syndrome-matches control still holds, and the off-weight witness is
+// CONSTRUCTED rather than hoped for -- deterministic given the key, with no
+// threshold and no retry.  Pass -1 to disable.
+func sternSolveSyndrome(H []*BitArray, syndrome *big.Int, n, avoidWeight int) *big.Int {
 	rows := make([]*big.Int, len(H))
 	rhs := make([]uint, len(H))
 	for i := range H {
@@ -2291,7 +2302,39 @@ func sternSolveSyndrome(H []*BitArray, syndrome *big.Int, n int) *big.Int {
 			e.SetBit(e, pv.col, 1)
 		}
 	}
+	if avoidWeight >= 0 && popcountBig(e) == avoidWeight {
+		pivotCol := map[int]bool{}
+		for _, pv := range pivots {
+			pivotCol[pv.col] = true
+		}
+		moved := false
+		for c := 0; c < n && !moved; c++ {
+			if pivotCol[c] {
+				continue
+			}
+			v := new(big.Int).SetBit(new(big.Int), c, 1)
+			for _, pv := range pivots {
+				if rows[pv.row].Bit(c) == 1 {
+					v.SetBit(v, pv.col, 1)
+				}
+			}
+			e.Xor(e, v) // syndrome-preserving: H·v^T == 0
+			moved = popcountBig(e) != avoidWeight
+		}
+		if !moved {
+			panic("sternSolveSyndrome: no kernel vector moved the solution off the avoided weight")
+		}
+	}
 	return e
+}
+
+// popcountBig is the Hamming weight of a non-negative big.Int.
+func popcountBig(x *big.Int) int {
+	w := 0
+	for _, word := range x.Bits() {
+		w += bits.OnesCount(uint(word))
+	}
+	return w
 }
 
 func testSternWitnessBinding() {
@@ -2302,17 +2345,25 @@ func testSternWitnessBinding() {
 		t = 2
 	}
 	rounds := 12
+	// ITS OWN ROUND COUNT (TODO #310), for CLAUDE.md's standing reason: the
+	// verifier binds wt(e) only on b = 0 rounds, so a wrong-weight witness
+	// survives whenever the challenge string happens to contain none of them
+	// -- (2/3)^rounds, which is 0.77% at the rounds = 12 the ring half uses,
+	// i.e. one run in 130, and it went red in CI.  Measured: 3 acceptances in
+	// 400 trials, and all 3 were exactly the 3 no-b=0 challenge strings.  At
+	// 64 it is 5.5e-11.
+	forgeRounds := 64
 
 	seed, e, syn := SternFKeygen(n)
 	msg := NewRandBitArray(n)
-	honest := HpksSternFSign(msg, e, seed, rounds)
+	honest := HpksSternFSign(msg, e, seed, forgeRounds)
 	honestOK := HpksSternFVerify(msg, honest, seed, syn)
 
 	H := SternBuildH(seed)
-	eForged := NewBitArray(n, sternSolveSyndrome(H, syn, n))
+	eForged := NewBitArray(n, sternSolveSyndrome(H, syn, n, t))
 	solved := SternSyndrome(seed, eForged).Cmp(syn) == 0
 	offWeight := eForged.Popcount() != t
-	forged := HpksSternFSign(msg, eForged, seed, rounds)
+	forged := HpksSternFSign(msg, eForged, seed, forgeRounds)
 	forgedOK := HpksSternFVerify(msg, forged, seed, syn)
 
 	k := 3
@@ -2348,7 +2399,7 @@ func testSternWitnessBinding() {
 		status = "PASS"
 	}
 	fmt.Printf("    n=%d rounds=%d  honest=%v  forged-witness wt=%d (t=%d) syndrome-matches=%v  forgery-accepted=%v\n",
-		n, rounds, honestOK, eForged.Popcount(), t, solved, forgedOK)
+		n, forgeRounds, honestOK, eForged.Popcount(), t, solved, forgedOK)
 	fmt.Printf("    ring k=%d verified=%v  repeated commitments=%d/%d  [%s]\n\n",
 		k, ringOK, dups, 3*k*rounds, status)
 }

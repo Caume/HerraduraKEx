@@ -1181,21 +1181,29 @@ public final class SelfTest {
         // and a check asserting it here would pass vacuously.
         {
             int rounds = 12;
+            // ITS OWN ROUND COUNT (TODO #310), for CLAUDE.md's standing
+            // reason: the verifier binds wt(e) only on b = 0 rounds, so a
+            // wrong-weight witness survives whenever the challenge string
+            // contains none of them -- (2/3)^rounds, 0.77% at rounds = 12,
+            // one run in 130.  Measured in the Python port: 3 acceptances
+            // in 400 trials, all 3 the no-b=0 strings.  At 64: 5.5e-11.
+            int forgeRounds = 64;
             Stern.SternKeypair kp = Stern.sternFKeygen(rng);
             BigInteger msg = new BigInteger(Herradura.N, rng);
 
             Stern.SternSignature honest =
-                    Stern.hpksSternFSign(msg, kp.e, kp.seed, rounds, rng);
+                    Stern.hpksSternFSign(msg, kp.e, kp.seed, forgeRounds, rng);
             boolean honestOk =
                     Stern.hpksSternFVerify(msg, honest, kp.seed, kp.syndrome);
 
             BigInteger[] hRows = Stern.sternBuildH(kp.seed, Herradura.N / 2);
-            BigInteger eForged = solveSyndrome(hRows, kp.syndrome, Herradura.N);
+            BigInteger eForged =
+                    solveSyndrome(hRows, kp.syndrome, Herradura.N, Stern.SDFT);
             boolean solved = Stern.sternSyndromeH(hRows, eForged)
                     .equals(kp.syndrome);
             boolean offWeight = eForged.bitCount() != Stern.SDFT;
             Stern.SternSignature forged =
-                    Stern.hpksSternFSign(msg, eForged, kp.seed, rounds, rng);
+                    Stern.hpksSternFSign(msg, eForged, kp.seed, forgeRounds, rng);
             boolean forgedOk =
                     Stern.hpksSternFVerify(msg, forged, kp.seed, kp.syndrome);
 
@@ -1244,11 +1252,26 @@ public final class SelfTest {
 
     /**
      * Any e' with H.e'^T == syndrome, by Gaussian elimination over GF(2) —
-     * PUBLIC data only.  Free variables are left at zero, which is why the
-     * result lands near weight n/4 rather than t.  [35]'s forgery witness.
+     * PUBLIC data only.  [35]'s forgery witness.  Free variables are left at
+     * zero, so the result USUALLY lands near weight n/4 rather than t — and
+     * the exception is the whole reason {@code avoidWeight} exists (TODO
+     * #310).  When all t of the true error's positions happen to fall in pivot
+     * columns, the free-variables-zero solution IS the true error: weight
+     * exactly t, and a caller asserting "the verifier rejects a wrong-weight
+     * witness" would be asserting it of the GENUINE one.  The rate is ~2^-t,
+     * which is 1.5e-5 here but one run in 16 in the Go and Python harnesses,
+     * where that test runs at n = 64, t = 4 — it went red in CI there.  Java
+     * is not correct, only luckier, so it is fixed the same way.
+     *
+     * <p>{@code avoidWeight} XORs KERNEL basis vectors into the solution until
+     * its weight differs.  A kernel vector preserves H.e'^T exactly, so the
+     * caller's syndrome-matches control still holds, and the off-weight
+     * witness is CONSTRUCTED rather than hoped for — deterministic given the
+     * key, with no threshold and no retry.  Pass -1 to disable.
      */
     private static BigInteger solveSyndrome(BigInteger[] hRows,
-                                            BigInteger syndrome, int n) {
+                                            BigInteger syndrome, int n,
+                                            int avoidWeight) {
         BigInteger[] rows = new BigInteger[hRows.length];
         int[] rhs = new int[hRows.length];
         for (int i = 0; i < hRows.length; i++) {
@@ -1278,6 +1301,25 @@ public final class SelfTest {
         BigInteger e = BigInteger.ZERO;
         for (int i = 0; i < nPiv; i++) {
             if (rhs[pivRow[i]] == 1) e = e.setBit(pivCol[i]);
+        }
+        if (avoidWeight >= 0 && e.bitCount() == avoidWeight) {
+            boolean[] isPiv = new boolean[n];
+            for (int i = 0; i < nPiv; i++) isPiv[pivCol[i]] = true;
+            boolean moved = false;
+            for (int c = 0; c < n && !moved; c++) {
+                if (isPiv[c]) continue;
+                BigInteger v = BigInteger.ZERO.setBit(c);
+                for (int i = 0; i < nPiv; i++) {
+                    if (rows[pivRow[i]].testBit(c)) v = v.setBit(pivCol[i]);
+                }
+                e = e.xor(v);   // syndrome-preserving: H.v^T == 0
+                moved = e.bitCount() != avoidWeight;
+            }
+            if (!moved) {
+                throw new IllegalStateException(
+                        "solveSyndrome: no kernel vector moved the solution "
+                        + "off weight " + avoidWeight);
+            }
         }
         return e;
     }

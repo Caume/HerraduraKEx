@@ -19804,3 +19804,111 @@ sites, every one claimed by one of 17 roles, two census patterns that were silen
 and three of four CLIs found signing with a transcription of a signer the fourth calls.
 
 ---
+
+### #310: [53]'s "forgery" is sometimes the real key — a sampled gate with a fixed threshold, in the numbered tests
+
+`[53]` (Java: `SelfTest`'s `[35]`) is TODO #298's guard for the universal forgery: build a
+syndrome-matching witness of the WRONG weight by Gaussian elimination on PUBLIC data, and
+assert the verifier rejects it.  It went red in CI on PR #286, in `native-python`, with
+
+```
+n=64 rounds=12  honest=True  forged-witness wt=4 (t=4) syndrome-matches=True  forgery-accepted=True
+```
+
+**The verifier was right and the test was wrong.**  `_stern_solve_syndrome` leaves free
+variables at zero, so it returns the solution supported on the PIVOT columns.  When all `t`
+of the true error's positions happen to fall in those columns, the solver returns the true
+error itself -- weight exactly `t`, a perfectly genuine witness -- and the test asserts the
+verifier rejects it.  Accepting it is correct behaviour.  So the one branch where this test
+goes red is the branch where HPKS-Stern-F behaved perfectly.
+
+**The rate is 2^-t and it is not a tail.**  Measured over 3000 trials at the harness's
+n = 64, t = 4: 191 hits, 6.4% against a predicted 6.25%.  The weight histogram is the proof
+it is not a binomial tail -- a clean bulk centred at 16, NOTHING at weights 5 or 6, and a
+spike of 191 at exactly 4.  In a 600-trial confirmation, 39 of 39 such solutions were
+`e_forged == e_true` exactly.
+
+**All four ports, two of them hot.**  The `popcount != t` shape is identical in
+`Herradura_tests.py`, `Herradura_tests.go`, `Herradura_tests.c` and `SelfTest.java`.
+Python and Go run at n = 64, t = 4 and so fail one run in 16 each; C and Java run at
+n = 256, t = 16 and fail one in 65536.  C and Java are not correct, only luckier -- which
+is why the fix goes into all four rather than into the two that fire.  With `native-python`
+and `native-go` both running per push, a push went red about 12% of the time, and had done
+since `[53]` shipped in v8.0.0.
+
+**This is CLAUDE.md's own documented class, one layer further in.**  A probabilistic
+property asserted as a deterministic one is what TODO #233 fixed in three numbered tests,
+#234 found pointing the other way in the Arduino harness, #299 fixed in a findings gate and
+#300 censused across all 76 of them.  #300's census covered `SecurityProofsCode/`.  Nothing
+had put the same question to the NUMBERED TESTS, which is where this one lived.
+
+**The fix is to CONSTRUCT the off-weight witness, not to hope for one.**  After solving, if
+the weight equals the avoided one, XOR in KERNEL basis vectors until it differs.  A kernel
+vector satisfies `H.v^T == 0`, so the syndrome-matches control still holds exactly, and the
+result is deterministic given the key: no threshold, no retry loop, no sample.  The
+assertion gets STRONGER, not looser -- the previous version tested a wrong-weight witness
+only when the draw happened to supply one.  `avoid_weight` is a parameter rather than a
+hardcoded `t` so the solver stays a general-purpose one, and `-1` disables it.
+
+**AND THE SAME DEFECT IN A FINDINGS GATE, with a false census reason on top.**
+`SecurityProofsCode/stern_f_weight_binding.py` -- #298's own script, the one that FOUND the
+universal forgery -- builds the same Gaussian-elimination witness and has the same 2^-t
+hole, at N = 256, t = 16, so 1.5e-5.  Two things make it worse than the harness copy.  (1)
+It scores the case as **`§1 INCONCLUSIVE` and returns False**, i.e. a section that could not
+conclude is reported as a finding that stopped reproducing -- the inverse of the rule #291
+wrote down ("a section that did not run must not be scored") and the inverse of #234's
+vacuous pass.  (2) `run_findings_gates.py`'s `SAMPLED_GATES` entry for it read "§1 and §3
+are exact: a Gaussian-elimination witness either verifies or does not".  That sentence is
+true of the VERIFIER and false of the WITNESS, and it is #300's own distinction -- a
+derived RATE versus a stated ARGUMENT -- failing in the argued direction, which is exactly
+what #304 found for the three `follows` entries ("the null was a MODEL and nothing had
+checked the model").  Had the reason been corrected without fixing the script, the job's
+advertised false-failure rate would have had to move from 6.4e-5 to 7.9e-5, and that number
+is held by a check-E row in CLAUDE.md.  Fixing it instead makes the 6.4e-5 true, and §1
+exact rather than usually right.
+
+**A SECOND, INDEPENDENT FALSE-FAILURE IN THE SAME TEST, found by the fix for the first.**
+With the witness-weight hole closed, `[53]` still went red in Go -- this time at
+`forged-witness wt=16 (t=4) syndrome-matches=true forgery-accepted=true`, an off-weight
+witness the verifier ACCEPTED.  Not a regression and not a verifier bug: **the verifier
+binds wt(e) only on b = 0 rounds** (that is the shape of #298's fix -- `wt(respA ^ respB)`
+is checkable only where both responses exist), so a wrong-weight witness survives whenever
+the challenge string happens to contain no b = 0 round at all.  That is `(2/3)^rounds`, and
+`[53]` ran at rounds = 12: **0.77%, one run in 130**, in all four ports.  Measured at n = 64,
+400 trials: 3 acceptances, 3 no-b=0 challenge strings, and **the same 3** -- prediction
+3.08, correlation exact.
+
+The fix is the one CLAUDE.md already prescribes for this statistic and this protocol:
+**give it its own round count.**  #234 did exactly this for `[45]`, which failed 38.5% of
+runs at rounds = 8, and the Testing section carries the standing warning that a Stern-F
+rejection test at rounds = 4 would carry a 19.75% soundness error.  `[53]`'s forgery
+sub-check now signs at 64 rounds, where `(2/3)^64` is 5.5e-11, while the ring half keeps
+rounds = 12 -- it asserts commitment distinctness, which has no soundness error.
+
+The two defects are independent and multiply: `[53]` was failing at roughly
+`1 - (1 - 2^-t)(1 - (2/3)^12)`, i.e. **7.0% per run in Python and Go**.  The first hole hid
+the second, because a test that already fails one run in 16 does not invite anyone to ask
+what the other 15 are doing.  `stern_f_weight_binding.py` §1 carried the second term too,
+at rounds = 32 -- 7.4e-6, 200x rarer than its witness-weight term and equally not "exact";
+it now runs at 64 as well.
+
+**What was NOT done, deliberately.**  Retrying with a fresh key until the weight differs
+would work and is wrong: it is still a sampled gate, just one with the sampling hidden in a
+loop, and it would leave the rate depending on `t`.  Making the assertion conditional on
+`wt != t` is worse -- it is TODO #234's vacuous pass, passing 6% of runs without testing
+anything.
+
+**Known limit.**  The statistical verification (2000 trials, 0 hits, 0 syndrome mismatches,
+against 191 in 3000 before) was run on the PYTHON port.  The other three are line-for-line
+translations of the same construction and each was run once end to end, but the four are
+not independently sampled at that depth -- the Go and C suites take 10+ minutes per run.
+The exact `2^-t` rate is what makes one pass meaningful for C and Java; it is the Go port
+that rests on the translation being faithful.
+
+Status: **DONE v8.0.8** -- [53] carried TWO independent false-failure modes that multiplied
+to ~7.0% per run in Python and Go: the forgery witness is now CONSTRUCTED off-weight by
+kernel addition (2^-t), and the forgery sub-check has its own round count of 64
+((2/3)^rounds).  Both fixed in all four ports and in stern_f_weight_binding.py, whose
+SAMPLED_GATES reason had argued both away as "exact".
+
+---

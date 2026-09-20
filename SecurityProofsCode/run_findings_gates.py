@@ -255,9 +255,22 @@ SAMPLED_GATES = {
         "10% of positions scores z = +20.85 in both samples"),
     "stern_f_weight_binding.py": ("replicated", 1e-10,
         "§2's signer-identification rate over k signatures, built on #299's "
-        "pattern from the start (TODO #298).  §1 and §3 are exact: a "
-        "Gaussian-elimination witness either verifies or does not, and the "
-        "negative controls score 20/20 and 32/33"),
+        "pattern from the start (TODO #298).  §1 and §3 are exact, and §1 only "
+        "BECAME so in TODO #310: this reason used to argue it from 'a "
+        "Gaussian-elimination witness either verifies or does not', which is "
+        "true of the VERIFIER and was not true of the WITNESS.  The "
+        "free-variables-zero solve returns the TRUE error whenever all t of "
+        "its positions fall in pivot columns -- rate 2^-t, i.e. 1.5e-5 here -- "
+        "and the shipped verifier then correctly ACCEPTS it, which §1 scored "
+        "as INCONCLUSIVE and returned as a failure.  The witness is now "
+        "CONSTRUCTED off-weight by kernel addition, so the branch is "
+        "unreachable.  §1 carried a SECOND term of the same kind, also argued "
+        "away by that sentence: the verifier binds wt(e) only on b = 0 "
+        "rounds, so the forgery survives a challenge string with none -- "
+        "(2/3)^rounds, 7.4e-6 at the rounds = 32 it used.  Now 64, i.e. "
+        "5.5e-11, so the section is exact to well past this table's "
+        "resolution rather than usually right.  The negative controls "
+        "score 20/20 and 32/33"),
     # ── follows ─────────────────────────────────────────────────────────────
     "hybrid_credential_phi.py": ("follows", 2.2e-7,
         "§5.4 gates a SOUNDNESS ERROR, so the bar follows the statistic: "

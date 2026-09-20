@@ -2,6 +2,67 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.0.8] - 2026-09-20
+
+### Fixed
+- **`[53]`'s "forgery" was sometimes the real private key (TODO #310).**  `[53]` (Java:
+  `SelfTest`'s `[35]`) builds a syndrome-matching witness of the wrong weight from PUBLIC
+  data and asserts the verifier rejects it — TODO #298's guard for the universal forgery.
+  `_stern_solve_syndrome` leaves free variables at zero, so it returns the solution
+  supported on the PIVOT columns; when all `t` of the true error's positions fall in those
+  columns it returns **the true error itself**, weight exactly `t`, and the test asserts
+  rejection of a perfectly genuine witness.  The one branch where the test went red is the
+  branch where HPKS-Stern-F behaved correctly.  The rate is **2^-t**, measured at 6.4%
+  over 3000 trials against a predicted 6.25% at the harness's n = 64, t = 4 — and the
+  weight histogram shows it is not a binomial tail (a bulk centred at 16, nothing at 5 or
+  6, a spike of 191 at exactly 4; 39 of 39 sampled hits had `e_forged == e_true`).
+- **All four ports, two of them hot.**  Python and Go run `[53]` at n = 64, t = 4 and so
+  failed one run in 16 each; C and Java run at n = 256, t = 16 and failed one in 65536.
+  C and Java were not correct, only luckier, so all four are fixed.  With `native-python`
+  and `native-go` both running per push, a push went red about 12% of the time, and had
+  done since `[53]` shipped in v8.0.0.
+- The off-weight witness is now **CONSTRUCTED, not hoped for**: if the solution's weight
+  equals the avoided one, kernel basis vectors are XORed in until it differs.  A kernel
+  vector satisfies `H.v^T == 0`, so the syndrome-matches control holds exactly, and the
+  result is deterministic given the key — no threshold, no retry, no sample.  The
+  assertion gets stronger rather than looser: the previous version tested a wrong-weight
+  witness only when the draw happened to supply one.  Verified at 0 hits in 2000 Python
+  trials with 0 syndrome mismatches.
+
+- **A second, independent false-failure in the same test, found by fixing the first (TODO
+  #310).** With the witness-weight hole closed, `[53]` still went red in Go at
+  `forged-witness wt=16 (t=4) ... forgery-accepted=true` — an off-weight witness the
+  verifier accepted. The verifier binds `wt(e)` only on `b = 0` rounds (that is the shape of
+  #298's fix: `wt(respA ^ respB)` is checkable only where both responses exist), so a
+  wrong-weight witness survives whenever the challenge string contains no `b = 0` round:
+  **(2/3)^rounds**, which at `[53]`'s rounds = 12 is **0.77%, one run in 130**, in all four
+  ports. Measured at n = 64 over 400 trials: 3 acceptances, 3 no-`b=0` challenge strings,
+  and the same 3 — predicted 3.08. The forgery sub-check now has **its own round count of
+  64** (5.5e-11), the remedy CLAUDE.md already prescribes for this statistic and that #234
+  applied to `[45]`; the ring half keeps rounds = 12, having no soundness error. The two
+  defects multiplied to about **7.0% per run**, and the first hid the second — a test that
+  already fails one run in 16 does not invite anyone to ask what the other 15 are doing.
+
+- **The same defect in a findings gate, with a false census reason on top (TODO #310).**
+  `SecurityProofsCode/stern_f_weight_binding.py` — #298's own script, the one that found the
+  universal forgery — builds the same witness and had the same 2^-t hole (1.5e-5 at its
+  N = 256, t = 16). It scored the case as `§1 INCONCLUSIVE` and returned False, reporting a
+  section that could not conclude as a finding that stopped reproducing. And
+  `run_findings_gates.py`'s `SAMPLED_GATES` reason for it read "§1 and §3 are exact: a
+  Gaussian-elimination witness either verifies or does not" — true of the VERIFIER, false of
+  the WITNESS, which is #300's derived-rate/stated-argument distinction failing in the
+  argued direction. Both fixed: the witness is constructed off-weight, the inconclusive
+  branch is unreachable, and the reason now records why. **The job's advertised
+  false-failure rate stays 6.4e-5** — correcting the reason without fixing the script would
+  have moved it to 7.9e-5, and that number is held by a check-E row.
+
+### Notes
+- This is CLAUDE.md's own documented class — a probabilistic property asserted as a
+  deterministic one — one layer further in than it had been looked for.  TODO #233 fixed
+  it in three numbered tests, #234 found it inverted in the Arduino harness, #299 fixed
+  one findings gate and #300 censused all 76.  #300's census covered
+  `SecurityProofsCode/`; nothing had put the same question to the numbered tests.
+
 ## [8.0.7] - 2026-09-20
 
 ### Added
