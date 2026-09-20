@@ -641,7 +641,15 @@ public final class KatVerify {
      * downgrades a rejection test into a second accept test.
      */
     private static Hcred.HcredKkwProof buildKkwProof(Map<String, Object> set, String tamper) {
-        Map<String, Object> pr = obj(set.get("proof"));
+        return buildKkwProofFrom(obj(set.get("proof")), tamper);
+    }
+
+    /** Rebuild a KKW proof from its on-disk object.  ONE reader for both
+     *  vectors: hcred_kkw.json pins a transcript to CONSUME and
+     *  operation_replay.json pins one this port must PRODUCE (TODO #303), and a
+     *  second reader for the second vector would be a second opinion about the
+     *  very byte layout every KKW bug so far has been a disagreement over. */
+    private static Hcred.HcredKkwProof buildKkwProofFrom(Map<String, Object> pr, String tamper) {
         java.util.List<Object> params = arr(pr.get("params"));
         int nPar = jint(params.get(0)), m = jint(params.get(1)), tau = jint(params.get(2));
         int W = jint(pr.get("W"));
@@ -745,6 +753,80 @@ public final class KatVerify {
     // Java needs nothing new here either: every operation below already takes
     // its SecureRandom as a parameter, so FixedRandom above drives the SHIPPED
     // code with no hook and no global.
+
+    /** Report WHICH field of WHICH emulation diverged, rather than one
+     *  serialize-and-diff: saying where two ports disagree is the whole point
+     *  of the row, and every KKW bug found so far has been in one named field
+     *  (an inverted aux-reveal condition, a mis-sized commitment buffer, a
+     *  flipped bit convention). */
+    private static int compareKkwProof(String name, Hcred.HcredKkwProof got,
+                                       Hcred.HcredKkwProof want) {
+        int[] fails = {0};
+        java.util.function.BiConsumer<String, String> bad = (what, detail) -> {
+            System.out.println("FAIL op " + name + ": " + what + " " + detail);
+            fails[0]++;
+        };
+        if (got.W != want.W) bad.accept("W", "is " + got.W + ", vector says " + want.W);
+        if (got.nPar != want.nPar || got.m != want.m || got.tau != want.tau)
+            bad.accept("params", "are (" + got.nPar + "," + got.m + "," + got.tau
+                    + "), vector says (" + want.nPar + "," + want.m + "," + want.tau + ")");
+        // The unopened set is the cut-and-choose challenge, derived by
+        // Fiat-Shamir from every emulation's commitments -- so a divergence in
+        // ANY of the M preprocessing emulations, opened or not, moves it.
+        if (!got.pre.keySet().equals(want.pre.keySet())) {
+            bad.accept("unopened emulations", "are " + got.pre.keySet()
+                    + ", vector says " + want.pre.keySet());
+        } else {
+            for (Map.Entry<Integer, byte[]> e : want.pre.entrySet())
+                if (!java.util.Arrays.equals(got.pre.get(e.getKey()), e.getValue()))
+                    bad.accept("pre[" + e.getKey() + "] root", "differs from the vector");
+        }
+        if (!got.online.keySet().equals(want.online.keySet())) {
+            bad.accept("opened emulations", "are " + got.online.keySet()
+                    + ", vector says " + want.online.keySet());
+            return fails[0];
+        }
+        for (Map.Entry<Integer, Hcred.KkwOnlineProof> e : want.online.entrySet()) {
+            Hcred.KkwOnlineProof w = e.getValue(), g = got.online.get(e.getKey());
+            String pfx = "online[" + e.getKey() + "].";
+            if (g.pbar != w.pbar)
+                bad.accept(pfx + "pbar", "is " + g.pbar + ", vector says " + w.pbar);
+            if (!java.util.Arrays.equals(g.comH, w.comH))
+                bad.accept(pfx + "com_h", "differs from the vector");
+            if (g.path.size() != w.path.size()) {
+                bad.accept(pfx + "path length", "is " + g.path.size()
+                        + ", vector says " + w.path.size());
+            } else {
+                for (int i = 0; i < w.path.size(); i++) {
+                    Hcred.KkwPathEntry pg = g.path.get(i), pw = w.path.get(i);
+                    if (pg.l != pw.l || pg.i != pw.i
+                            || !java.util.Arrays.equals(pg.node, pw.node)) {
+                        bad.accept(pfx + "path[" + i + "]", "differs from the vector");
+                        break;
+                    }
+                }
+            }
+            // aux is revealed exactly when the hidden party is not party
+            // nPar-1.  Reading that condition the wrong way round is the bug
+            // the Go port actually shipped (TODO #266), so nullness is compared
+            // before content.
+            if ((g.aux == null) != (w.aux == null))
+                bad.accept(pfx + "aux revealed", "is " + (g.aux != null)
+                        + ", vector says " + (w.aux != null));
+            else if (g.aux != null && !java.util.Arrays.equals(g.aux, w.aux))
+                bad.accept(pfx + "aux", "differs from the vector");
+            if (!java.util.Arrays.equals(g.zin, w.zin))
+                bad.accept(pfx + "zin", "differs from the vector");
+            if (!java.util.Arrays.equals(g.t, w.t))
+                bad.accept(pfx + "t", "differs from the vector");
+            if (g.u != w.u)
+                bad.accept(pfx + "u", "is " + g.u + ", vector says " + w.u);
+        }
+        if (fails[0] == 0)
+            System.out.println("PASS op " + name + " (" + want.online.size()
+                    + " emulations opened, " + want.pre.size() + " unopened)");
+        return fails[0];
+    }
 
     /** Centered coefficients as 4-byte big-endian two's complement -- the
      *  encoding the vector uses because it is what C's int32_t already holds. */
@@ -987,6 +1069,29 @@ public final class KatVerify {
                 fails += replayCheck("op " + name + " w", i32Hex(pf.w), (String) expect.get("w"));
                 fails += replayCheck("op " + name + " c", i32Hex(pf.c), (String) expect.get("c"));
                 fails += replayCheck("op " + name + " z", i32Hex(pf.z), (String) expect.get("z"));
+
+            } else if ("hcred_prove_kkw".equals(name)) {
+                // The row TODO #303 added, and the gap TODO #302 §6 found: KKW's
+                // PROVER was pinned nowhere.  hcred_kkw.json is verify-side by
+                // construction (one fresh root per emulation, so a proof is not
+                // a function of its statement) and KKW has no CLI surface, so
+                // the 4x4 matrix does not reach it either -- leaving each port's
+                // prover checked only against its OWN verifier, which is the
+                // shape that let three of four ports ship a transcription bug
+                // at TODO #266.  A fixed stream makes the prover a function
+                // again.  `expect` is the same layout hcred_kkw.json's `proof`
+                // uses, so buildKkwProofFrom reads it unchanged.
+                Hcred.HcredKkwProof got = Hcred.proveKkw(
+                        unpackVec((String) stmt.get("s_poly")),
+                        unpackVec((String) stmt.get("m_poly")),
+                        unpackVec((String) stmt.get("c_poly")),
+                        new java.math.BigInteger((String) stmt.get("seed_H"), 16),
+                        new java.math.BigInteger((String) stmt.get("y"), 16),
+                        ((Number) params.get("N_par")).intValue(),
+                        ((Number) params.get("M")).intValue(),
+                        ((Number) params.get("tau")).intValue(),
+                        unhexBytes((String) stmt.get("msg_hex")), rng);
+                fails += compareKkwProof(name, got, buildKkwProofFrom(expect, null));
 
             } else {
                 System.out.println("FAIL operation_replay: unknown operation \"" + name

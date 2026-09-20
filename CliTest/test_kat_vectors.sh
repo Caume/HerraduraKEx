@@ -21,6 +21,19 @@
 # view (KAT/operation_replay_vector.h), same argument -- so again no step of its
 # own.  If you add a THIRD vector of this shape, the thing to check is that all
 # four consumers follow it, not that this script grew a section.
+#
+# TODO #303 adds a ROW rather than a vector -- hcred_prove_kkw, the operation
+# TODO #302 §6 found pinned nowhere -- and it is the first one whose cost is
+# worth knowing before you run this by hand.  One n=256 KKW prove, measured on
+# an aarch64 SBC: C 0.7 s, Java 8.6 s, Go 38.5 s, Python 40.8 s -- the compiled
+# consumers are NOT uniformly cheap, Go's KKW sits at interpreted-Python speed
+# -- so `--check` and the Go cross-check each get about that much slower.  Go
+# was already paying ~33 s per n=256 KKW VERIFY seven times over in the
+# hcred_kkw[n256] block below, so this is about a sixth more of a cost that was
+# already there, not a new order of magnitude.  n=256 is
+# forced (HCRED_N and Hcred.N are compile-time constants) and
+# (N_par, M, tau) = (4, 4, 2) is the cost choice; the generator asserts what
+# that triple must still exercise.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

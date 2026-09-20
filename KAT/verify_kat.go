@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -239,6 +240,26 @@ type kkwFile struct {
 	Sets map[string]kkwSet `json:"sets"`
 }
 
+// kkwProofJSON is the on-disk shape of a KKW proof.  ONE type for both
+// vectors: hcred_kkw.json pins a transcript to CONSUME and
+// operation_replay.json pins one this port must PRODUCE (TODO #303), and a
+// second reader for the second vector would be a second opinion about the very
+// byte layout every KKW bug so far has been a disagreement over.
+type kkwProofJSON struct {
+	W      int               `json:"W"`
+	Params []int             `json:"params"`
+	Pre    map[string]string `json:"pre"`
+	Online map[string]struct {
+		Pbar int             `json:"pbar"`
+		Path [][]interface{} `json:"path"`
+		ComH string          `json:"com_h"`
+		Aux  *string         `json:"aux"`
+		Zin  string          `json:"zin"`
+		T    string          `json:"t"`
+		U    int             `json:"u"`
+	} `json:"online"`
+}
+
 type kkwSet struct {
 	Params struct {
 		N        int `json:"n"`
@@ -255,20 +276,7 @@ type kkwSet struct {
 		Y     string `json:"y"`
 		Msg   string `json:"msg"`
 	} `json:"statement"`
-	Proof struct {
-		W      int            `json:"W"`
-		Params []int          `json:"params"`
-		Pre    map[string]string `json:"pre"`
-		Online map[string]struct {
-			Pbar  int             `json:"pbar"`
-			Path  [][]interface{} `json:"path"`
-			ComH  string          `json:"com_h"`
-			Aux   *string         `json:"aux"`
-			Zin   string          `json:"zin"`
-			T     string          `json:"t"`
-			U     int             `json:"u"`
-		} `json:"online"`
-	} `json:"proof"`
+	Proof  kkwProofJSON `json:"proof"`
 	Tamper []struct {
 		Name  string `json:"name"`
 		Apply string `json:"apply"`
@@ -296,18 +304,18 @@ func unpackVec(s string) []int {
 
 // buildKkwProof rebuilds the Go proof struct from the pinned JSON.  Kept
 // separate from verifyKkw so each tamper case can start from a fresh copy.
-func buildKkwProof(v kkwSet) *HcredKkwProof {
+func buildKkwProof(v kkwProofJSON) *HcredKkwProof {
 	p := &HcredKkwProof{
-		W: v.Proof.W, NPar: v.Proof.Params[0], M: v.Proof.Params[1],
-		Tau: v.Proof.Params[2],
+		W: v.W, NPar: v.Params[0], M: v.Params[1],
+		Tau: v.Params[2],
 		Pre: map[int][]byte{}, Online: map[int]*KkwOnlineProof{},
 	}
-	for e, root := range v.Proof.Pre {
+	for e, root := range v.Pre {
 		var ei int
 		fmt.Sscanf(e, "%d", &ei)
 		p.Pre[ei] = mustHex(root)
 	}
-	for e, od := range v.Proof.Online {
+	for e, od := range v.Online {
 		var ei int
 		fmt.Sscanf(e, "%d", &ei)
 		path := make([]KkwPathEntry, len(od.Path))
@@ -327,6 +335,123 @@ func buildKkwProof(v kkwSet) *HcredKkwProof {
 		}
 	}
 	return p
+}
+
+// buildKkwProofFrom re-reads an already-decoded `expect` object through the
+// SAME kkwProofJSON parser, so operation_replay.json's row and hcred_kkw.json's
+// transcript are understood by one piece of code rather than two.
+func buildKkwProofFrom(expect map[string]interface{}) *HcredKkwProof {
+	raw, err := json.Marshal(expect)
+	if err != nil {
+		panic("cannot re-marshal the KKW expect object: " + err.Error())
+	}
+	var pj kkwProofJSON
+	if err := json.Unmarshal(raw, &pj); err != nil {
+		panic("cannot parse the KKW expect object: " + err.Error())
+	}
+	return buildKkwProof(pj)
+}
+
+// compareKkwProof reports WHICH field of WHICH emulation diverged.  Field by
+// field rather than one serialize-and-diff: the whole point of the row is to
+// say where two ports disagree, and every KKW bug found so far has been in one
+// named field (an inverted aux-reveal condition, a mis-sized commitment buffer,
+// a flipped bit convention).
+func compareKkwProof(name string, got, want *HcredKkwProof) int {
+	fails := 0
+	bad := func(what string, g, w interface{}) {
+		fmt.Printf("FAIL op %s: %s is %v, vector says %v\n", name, what, g, w)
+		fails++
+	}
+	if got.W != want.W {
+		bad("W", got.W, want.W)
+	}
+	if got.NPar != want.NPar || got.M != want.M || got.Tau != want.Tau {
+		bad("params", []int{got.NPar, got.M, got.Tau},
+			[]int{want.NPar, want.M, want.Tau})
+	}
+	// The unopened set is the cut-and-choose challenge, derived by Fiat-Shamir
+	// from every emulation's commitments -- so a divergence in ANY of the M
+	// preprocessing emulations, opened or not, moves it.
+	if len(got.Pre) != len(want.Pre) {
+		bad("unopened emulation count", len(got.Pre), len(want.Pre))
+	} else {
+		for e, root := range want.Pre {
+			g, ok := got.Pre[e]
+			if !ok {
+				bad(fmt.Sprintf("emulation %d unopened", e), "opened", "unopened")
+			} else if !bytes.Equal(g, root) {
+				bad(fmt.Sprintf("pre[%d] root", e), hex.EncodeToString(g),
+					hex.EncodeToString(root))
+			}
+		}
+	}
+	eqInts := func(a, b []int) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
+	}
+	if len(got.Online) != len(want.Online) {
+		bad("opened emulation count", len(got.Online), len(want.Online))
+		return fails
+	}
+	for e, w := range want.Online {
+		g, ok := got.Online[e]
+		if !ok {
+			bad(fmt.Sprintf("emulation %d opened", e), "unopened", "opened")
+			continue
+		}
+		pfx := fmt.Sprintf("online[%d].", e)
+		if g.Pbar != w.Pbar {
+			bad(pfx+"pbar", g.Pbar, w.Pbar)
+		}
+		if !bytes.Equal(g.ComH, w.ComH) {
+			bad(pfx+"com_h", hex.EncodeToString(g.ComH), hex.EncodeToString(w.ComH))
+		}
+		if len(g.Path) != len(w.Path) {
+			bad(pfx+"path length", len(g.Path), len(w.Path))
+		} else {
+			for i := range w.Path {
+				if g.Path[i].L != w.Path[i].L || g.Path[i].I != w.Path[i].I ||
+					!bytes.Equal(g.Path[i].Node, w.Path[i].Node) {
+					bad(fmt.Sprintf("%spath[%d]", pfx, i),
+						fmt.Sprintf("(%d,%d,%s)", g.Path[i].L, g.Path[i].I,
+							hex.EncodeToString(g.Path[i].Node)),
+						fmt.Sprintf("(%d,%d,%s)", w.Path[i].L, w.Path[i].I,
+							hex.EncodeToString(w.Path[i].Node)))
+					break
+				}
+			}
+		}
+		// aux is revealed exactly when the hidden party is not party N_par-1.
+		// Reading that condition the wrong way round is the bug this package
+		// actually shipped (TODO #266), so nil-ness is compared before content.
+		if (g.Aux == nil) != (w.Aux == nil) {
+			bad(pfx+"aux revealed", g.Aux != nil, w.Aux != nil)
+		} else if g.Aux != nil && !eqInts(g.Aux, w.Aux) {
+			bad(pfx+"aux", "differs", "the pinned vector")
+		}
+		if !eqInts(g.Zin, w.Zin) {
+			bad(pfx+"zin", "differs", "the pinned vector")
+		}
+		if !eqInts(g.T, w.T) {
+			bad(pfx+"t", "differs", "the pinned vector")
+		}
+		if g.U != w.U {
+			bad(pfx+"u", g.U, w.U)
+		}
+	}
+	if fails == 0 {
+		fmt.Printf("PASS op %s (%d emulations opened, %d unopened)\n",
+			name, len(want.Online), len(want.Pre))
+	}
+	return fails
 }
 
 // applyKkwTamper mirrors _kkw_apply_tamper in KAT/generate_kat.py.  The two
@@ -386,7 +511,7 @@ func verifyKkwSet(name string, v kkwSet) int {
 	msg := mustHex(v.Statement.Msg)
 
 	fails := 0
-	if !HcredVerifyKkw(m, c, seedH, y, buildKkwProof(v), n, msg) {
+	if !HcredVerifyKkw(m, c, seedH, y, buildKkwProof(v.Proof), n, msg) {
 		fmt.Printf("FAIL %s: Go REJECTS the pinned Python transcript "+
 			"— the two implementations disagree on the wire format\n", name)
 		fails++
@@ -396,7 +521,7 @@ func verifyKkwSet(name string, v kkwSet) int {
 	// The accept above is not self-validating: a verifier that returned true
 	// unconditionally would pass it.  Each tamper case must be rejected.
 	for _, tc := range v.Tamper {
-		tp, tmsg := applyKkwTamper(buildKkwProof(v), msg, tc.Apply)
+		tp, tmsg := applyKkwTamper(buildKkwProof(v.Proof), msg, tc.Apply)
 		if HcredVerifyKkw(m, c, seedH, y, tp, n, tmsg) {
 			fmt.Printf("FAIL %s tamper %q ACCEPTED\n", name, tc.Name)
 			fails++
@@ -784,6 +909,37 @@ func verifyOperationReplay(v map[string]interface{}) int {
 			check("op "+name+" w", i32Hex(w), str(expect, "w"))
 			check("op "+name+" c", i32Hex(c), str(expect, "c"))
 			check("op "+name+" z", i32Hex(z), str(expect, "z"))
+
+		case "hcred_prove_kkw":
+			// The row TODO #303 added, and the gap TODO #302 §6 found: KKW's
+			// PROVER was pinned nowhere.  hcred_kkw.json is verify-side by
+			// construction (one os.urandom root per emulation, so a proof is
+			// not a function of its statement) and KKW has no CLI surface, so
+			// the 4x4 matrix does not reach it either -- leaving each port's
+			// prover checked only against its OWN verifier, which is the shape
+			// that let three of four ports ship a transcription bug at #266.
+			// A fixed stream makes the prover a function again.
+			//
+			// `expect` is the SAME layout hcred_kkw.json's `proof` uses, so
+			// buildKkwProof reads it unchanged: the comparison is against a
+			// proof this file already knows how to parse, not against a second
+			// opinion of the byte layout.
+			n := num(params, "n")
+			sPoly := unpackVec(str(stmt, "s_poly"))
+			mPoly := unpackVec(str(stmt, "m_poly"))
+			cPoly := unpackVec(str(stmt, "c_poly"))
+			seedH := hexToBA(n, str(stmt, "seed_H"))
+			y := hexToBig(str(stmt, "y"))
+			got, err := HcredProveKkw(sPoly, mPoly, cPoly, seedH, y, n,
+				num(params, "N_par"), num(params, "M"), num(params, "tau"),
+				mustHex(str(stmt, "msg_hex")))
+			if err != nil {
+				fmt.Printf("FAIL op %s: %s\n", name, err)
+				fails++
+				continue
+			}
+			want := buildKkwProofFrom(expect)
+			fails += compareKkwProof(name, got, want)
 
 		default:
 			fmt.Printf("FAIL op replay: unknown operation %q -- a row was added "+

@@ -2,6 +2,96 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.0.5] - 2026-09-19
+
+### Added
+- TODO #303: **KKW's PROVER is pinned across the four ports.**  TODO #302 §6
+  asked #301's cheap question -- what already holds this property across C, Go,
+  Python and Java? -- of both protocols and got two different answers.  ZKB++ was
+  covered twice over.  **KKW was covered nowhere**, and the two reasons compound:
+  `KAT/hcred_kkw.json` is VERIFY-SIDE by construction, because `hcred_prove_kkw`
+  draws one fresh 32-byte root per emulation so a proof is not a function of its
+  statement and regenerate-and-diff cannot work; and KKW has no CLI surface in
+  any language, so `test_cross_lang_matrix.sh`'s HCRED block -- which does cover
+  the sigma variant -- never reaches it.  Numbered test [50] runs each port's
+  prover against *its own* verifier, which is exactly the shape that let three
+  of the four ports ship a transcription bug under TODO #266.
+  **A fixed stream makes the prover a function again**, which is the check TODO
+  #296 and #297 built and this item only had to point at a sixth operation:
+  `KAT/operation_replay.json` now carries an `hcred_prove_kkw` row, and four
+  ports against one pinned transcript is four ports against each other.  No new
+  script, no CI wiring and no injection machinery -- C's prover already takes a
+  `FILE *`, Java's a `SecureRandom`, and the Go and Python hooks are #296's.
+  Four things worth knowing.  (1) **The width is not a choice.**  HCRED's `n` is
+  a runtime argument in Python and Go but a compile-time constant of 256 in C
+  (`HCRED_N`) and Java (`Hcred.N`), so 256 is the only width all four can prove
+  -- the same constraint that makes `hcred_kkw.json`'s n256 set the consumable
+  one.  (2) **`(N_par, M, tau)` IS a choice, and it was made on measured cost.**
+  An n=256 prove is 80.1 s in Python at `hcred_kkw.json`'s (4, 8, 4) and 40.8 s
+  at this row's (4, 4, 2), and `generate_kat.py --check` pays it on every run of
+  `CliTest/test_kat_vectors.sh`.  The compiled consumers are NOT uniformly
+  cheap, which is worth recording because nothing here said so.  Measured on an
+  aarch64 SBC, one n=256 prove at this row's triple: **C 0.7 s, Java 8.6 s, Go
+  38.5 s, Python 40.8 s** -- Go's KKW is ~55x C's and sits at interpreted-Python
+  speed.  That gap is pre-existing and out of this item's scope: the same script
+  already pays it seven times over in the `hcred_kkw[n256]` accept-plus-six-
+  tampers block (~33 s per n=256 verify in Go), so the row adds about a sixth to
+  what that consumer already spends there rather than a new order of magnitude.
+  What
+  the smaller triple still has to exercise is ASSERTED rather than assumed: the
+  generator fails unless `M > tau` leaves emulations unopened and the two opened
+  ones land on **both sides of the aux-reveal condition** -- `aux` is revealed
+  exactly when the hidden party is not party `N_par-1`, and reading that
+  condition backwards is the bug the Go port actually shipped.  (3) **`consumed`
+  is exact here**, at `M x 32` = 128 bytes, where the `rnl_sigma_sign` row's is
+  null: all four read one 32-byte root per emulation with no rejection anywhere,
+  so the byte-to-draw mapping is common and a port reading one byte more runs
+  off the end and says so.  (4) **The four ports agree**, and that is the result
+  rather than a disappointment: unlike #296 (three of four samplers diverged) and
+  #297 (a constant dummy commitment that broke ring anonymity), C, Go and Java
+  each reproduced Python's proof field for field on the first attempt.  What the
+  row buys from here is that they cannot stop agreeing quietly.
+  **The control, because a vector that cannot fail is TODO #234's vacuous pass.**
+  Reversing each 32-byte root after reading it in C's `hcred_prove_kkw` -- every
+  distribution still correct, the proof still self-consistent, the statement
+  untouched -- leaves numbered test [50] PASSING (it runs C's prover against C's
+  own verifier) and `hcred_kkw[n256]` PASSING accept-plus-six-tampers (that
+  vector is verify-side and asks C to produce nothing), and fails the new row
+  with 16 field-level messages, among them `online[3] reveals aux, vector says
+  it hides` -- an aux-reveal divergence read straight off the vector, in the
+  port where nothing else could see it.
+  Scope, stated because #302 §6 is what an unchecked scope paragraph becomes:
+  the row pins **divergence, not hiding** -- a pad predictable in all four ports
+  passes a cross-port vector by construction -- so `zkbpp_kkw_view_hiding.py`
+  §4-§5 remain the only check of the hiding property, which is #298's rule (1).
+
+### Changed
+- TODO #303: `zkbpp_kkw_view_hiding.py` §6 **fired, as it was written to.**  Its
+  check (c) asserted that no KKW prover row existed, precisely so that adding one
+  would fail the section until the prose was corrected.  The check is kept and
+  INVERTED -- deleting the row now fails §6 rather than quietly restoring the gap
+  -- and a second clause pins what the row IS (a fixed stream over a fixed
+  statement), so the scope sentence above stays checkable.
+- TODO #303: **one emitter and one reader per port, not two.**  The C arrays for
+  a KKW transcript are now produced by a shared `_c_kkw_arrays` used by both
+  `hcred_kkw_vector.h` and `operation_replay_vector.h`; Go's `kkwProofJSON` and
+  Java's `buildKkwProofFrom` likewise read both vectors.  A second transposition
+  or a second parser would be a new place for the byte-order disagreements these
+  vectors exist to catch -- numbered test [50]'s reason for calling the suite
+  rather than keeping a local copy, one layer out.  The refactor is verified by
+  `hcred_kkw_vector.h` re-emitting byte-identically.
+- TODO #303: `emit_operation_header` now FAILS on a vector row it emits no C
+  arrays for.  The C consumer reads named arrays rather than JSON, so a row added
+  to the vector with no block in the emitter would have left C silently short of
+  the other three -- "nobody got round to it" looking identical to "it passes",
+  which is #291's shape one layer out.  Go and Java already had that guard, as an
+  `unknown operation` failure.
+- TODO #303: two new `check_docs_consistency.py` check-E rows hold CLAUDE.md's
+  **4 pinned leaf samplers** and **6 pinned whole operations** to the counts
+  `check_language_parity.py` prints, instead of to a hand count.  Both had been
+  written out in words and both move whenever a row is added -- the same
+  reporting gap TODO #287 found twice and #304 found once more.
+
 ## [8.0.4] - 2026-09-19
 
 ### Changed

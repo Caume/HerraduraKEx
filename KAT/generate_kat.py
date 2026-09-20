@@ -666,11 +666,17 @@ def _c_bytes(name: str, data: bytes, per_line: int = 16) -> str:
     return "\n".join(out)
 
 
-def emit_kkw_header(vec: dict) -> str:
-    s = vec["sets"]["n256"]
-    p = s["proof"]
-    st = s["statement"]
-    n = s["params"]["n"]
+def _c_kkw_arrays(mp: str, vp: str, st: dict, p: dict, n: int,
+                  syndrome_key: str, msg_key: str) -> list:
+    """The macros, statement and proof arrays of ONE n=256 KKW transcript.
+
+    Shared by emit_kkw_header (KAT/hcred_kkw.json's pinned verify-side
+    transcript) and emit_operation_header (TODO #303's replay row), because the
+    two describe the same object and a second transposition would be a new place
+    for the byte-order disagreements this vector exists to catch -- numbered test
+    [50]'s reason for calling the suite rather than keeping a local copy, one
+    layer out.  `mp`/`vp` are the macro and variable prefixes.
+    """
     n_par, m_cnt, tau = p["params"]
     pre_e = sorted(int(e) for e in p["pre"])
     on_e = sorted(int(e) for e in p["online"])
@@ -678,6 +684,99 @@ def emit_kkw_header(vec: dict) -> str:
     ilen = len(_vec_unhex(ons[0]["zin"]))
     glen = len(_vec_unhex(ons[0]["t"]))
     maxpath = max(len(o["path"]) for o in ons)
+
+    L = [f"#define {mp}N       {n}",
+         f"#define {mp}N_PAR   {n_par}",
+         f"#define {mp}M       {m_cnt}",
+         f"#define {mp}TAU     {tau}",
+         f"#define {mp}I       {ilen}",
+         f"#define {mp}G       {glen}",
+         f"#define {mp}MAXPATH {maxpath}",
+         f"#define {mp}W       {p['W']}",
+         ""]
+
+    L.append(_c_i32_array(vp + "m_poly", _vec_unhex(st["m_poly"])))
+    L.append(_c_i32_array(vp + "c_poly", _vec_unhex(st["c_poly"] if "c_poly" in st
+                                                    else st["C_poly"])))
+    L.append(_c_bytes(vp + "seed_H", bytes.fromhex(st["seed_H"])))
+    # The syndrome is emitted in herradura.h's INTERNAL byte order, which is the
+    # reverse of the big-endian integer Python and Go use: hcred_stmt_hash
+    # reverses it back on the way into the hash (its own comment says so).  The
+    # conversion belongs here, once, rather than in every C consumer -- feeding
+    # it in Python's order makes the statement hash differ and every proof
+    # rejected, with nothing pointing at the byte order.  This is the same class
+    # of bug that TODO #261's C KKW port hit in hcred_kkw_outmap.
+    L.append("/* NOTE: herradura.h's internal syndrome order (reverse of the "
+             "big-endian\n * integer Python/Go use); pass straight to "
+             "hcred_verify_kkw. */")
+    L.append(_c_bytes(vp + "syndrome", bytes.fromhex(st[syndrome_key])[::-1]))
+    L.append(_c_bytes(vp + "msg", bytes.fromhex(st[msg_key])))
+    L.append(f"#define {mp}MSG_LEN {len(bytes.fromhex(st[msg_key]))}")
+    L.append("")
+
+    L.append(_c_i32_array(vp + "pre_e", pre_e))
+    L.append(f"static const uint8_t {vp}pre_root[{len(pre_e)}][32] = {{")
+    for e in pre_e:
+        raw = bytes.fromhex(p["pre"][str(e)])
+        L.append("    { " + " ".join(f"0x{b:02x}," for b in raw) + " },")
+    L.append("};")
+    L.append("")
+
+    L.append(_c_i32_array(vp + "online_e", on_e))
+    L.append(_c_i32_array(vp + "pbar", [o["pbar"] for o in ons]))
+    L.append(_c_i32_array(vp + "u", [o["u"] for o in ons]))
+    L.append(_c_i32_array(vp + "path_len", [len(o["path"]) for o in ons]))
+    L.append(_c_i32_array(vp + "has_aux",
+                          [0 if o["aux"] is None else 1 for o in ons]))
+    L.append("")
+
+    # Path entries: (level, index, node) per online emulation.
+    L.append(f"static const int32_t {vp}path_l[{tau}][{mp}MAXPATH] = {{")
+    for o in ons:
+        vals = [pe[0] for pe in o["path"]] + [0] * (maxpath - len(o["path"]))
+        L.append("    { " + " ".join(f"{v}," for v in vals) + " },")
+    L.append("};")
+    L.append(f"static const int32_t {vp}path_i[{tau}][{mp}MAXPATH] = {{")
+    for o in ons:
+        vals = [pe[1] for pe in o["path"]] + [0] * (maxpath - len(o["path"]))
+        L.append("    { " + " ".join(f"{v}," for v in vals) + " },")
+    L.append("};")
+    L.append(f"static const uint8_t {vp}path_node[{tau}][{mp}MAXPATH][32] = {{")
+    for o in ons:
+        L.append("    {")
+        for k in range(maxpath):
+            raw = bytes.fromhex(o["path"][k][2]) if k < len(o["path"]) else b"\0" * 32
+            L.append("        { " + " ".join(f"0x{b:02x}," for b in raw) + " },")
+        L.append("    },")
+    L.append("};")
+    L.append("")
+
+    L.append(f"static const uint8_t {vp}com_h[{tau}][32] = {{")
+    for o in ons:
+        raw = bytes.fromhex(o["com_h"])
+        L.append("    { " + " ".join(f"0x{b:02x}," for b in raw) + " },")
+    L.append("};")
+    L.append("")
+
+    for label, key, width in (("zin", "zin", ilen), ("t", "t", glen),
+                              ("aux", "aux", glen)):
+        L.append(f"static const int32_t {vp}{label}[{tau}][{width}] = {{")
+        for o in ons:
+            vals = ([0] * width if o[key] is None else _vec_unhex(o[key]))
+            L.append("    {")
+            for i in range(0, width, 12):
+                L.append("        " + " ".join(f"{v}," for v in vals[i:i + 12]))
+            L.append("    },")
+        L.append("};")
+        L.append("")
+    return L
+
+
+def emit_kkw_header(vec: dict) -> str:
+    s = vec["sets"]["n256"]
+    p = s["proof"]
+    st = s["statement"]
+    n = s["params"]["n"]
 
     L = ["/* KAT/hcred_kkw_vector.h — GENERATED, do not edit.",
          " *",
@@ -691,90 +790,8 @@ def emit_kkw_header(vec: dict) -> str:
          " */",
          "#ifndef HCRED_KKW_VECTOR_H",
          "#define HCRED_KKW_VECTOR_H",
-         "",
-         f"#define KKW_KAT_N       {n}",
-         f"#define KKW_KAT_N_PAR   {n_par}",
-         f"#define KKW_KAT_M       {m_cnt}",
-         f"#define KKW_KAT_TAU     {tau}",
-         f"#define KKW_KAT_I       {ilen}",
-         f"#define KKW_KAT_G       {glen}",
-         f"#define KKW_KAT_MAXPATH {maxpath}",
-         f"#define KKW_KAT_W       {p['W']}",
          ""]
-
-    L.append(_c_i32_array("kkw_kat_m_poly", _vec_unhex(st["m_poly"])))
-    L.append(_c_i32_array("kkw_kat_c_poly", _vec_unhex(st["C_poly"])))
-    L.append(_c_bytes("kkw_kat_seed_H", bytes.fromhex(st["seed_H"])))
-    # The syndrome is emitted in herradura.h's INTERNAL byte order, which is the
-    # reverse of the big-endian integer Python and Go use: hcred_stmt_hash
-    # reverses it back on the way into the hash (its own comment says so).  The
-    # conversion belongs here, once, rather than in every C consumer -- feeding
-    # it in Python's order makes the statement hash differ and every proof
-    # rejected, with nothing pointing at the byte order.  This is the same class
-    # of bug that TODO #261's C KKW port hit in hcred_kkw_outmap.
-    L.append("/* NOTE: herradura.h's internal syndrome order (reverse of the "
-             "big-endian\n * integer Python/Go use); pass straight to "
-             "hcred_verify_kkw. */")
-    L.append(_c_bytes("kkw_kat_syndrome", bytes.fromhex(st["y"])[::-1]))
-    L.append(_c_bytes("kkw_kat_msg", bytes.fromhex(st["msg"])))
-    L.append(f"#define KKW_KAT_MSG_LEN {len(bytes.fromhex(st['msg']))}")
-    L.append("")
-
-    L.append(_c_i32_array("kkw_kat_pre_e", pre_e))
-    L.append(f"static const uint8_t kkw_kat_pre_root[{len(pre_e)}][32] = {{")
-    for e in pre_e:
-        raw = bytes.fromhex(p["pre"][str(e)])
-        L.append("    { " + " ".join(f"0x{b:02x}," for b in raw) + " },")
-    L.append("};")
-    L.append("")
-
-    L.append(_c_i32_array("kkw_kat_online_e", on_e))
-    L.append(_c_i32_array("kkw_kat_pbar", [o["pbar"] for o in ons]))
-    L.append(_c_i32_array("kkw_kat_u", [o["u"] for o in ons]))
-    L.append(_c_i32_array("kkw_kat_path_len", [len(o["path"]) for o in ons]))
-    L.append(_c_i32_array("kkw_kat_has_aux",
-                          [0 if o["aux"] is None else 1 for o in ons]))
-    L.append("")
-
-    # Path entries: (level, index, node) per online emulation.
-    L.append(f"static const int32_t kkw_kat_path_l[{tau}][KKW_KAT_MAXPATH] = {{")
-    for o in ons:
-        vals = [pe[0] for pe in o["path"]] + [0] * (maxpath - len(o["path"]))
-        L.append("    { " + " ".join(f"{v}," for v in vals) + " },")
-    L.append("};")
-    L.append(f"static const int32_t kkw_kat_path_i[{tau}][KKW_KAT_MAXPATH] = {{")
-    for o in ons:
-        vals = [pe[1] for pe in o["path"]] + [0] * (maxpath - len(o["path"]))
-        L.append("    { " + " ".join(f"{v}," for v in vals) + " },")
-    L.append("};")
-    L.append(f"static const uint8_t kkw_kat_path_node[{tau}][KKW_KAT_MAXPATH][32] = {{")
-    for o in ons:
-        L.append("    {")
-        for k in range(maxpath):
-            raw = bytes.fromhex(o["path"][k][2]) if k < len(o["path"]) else b"\0" * 32
-            L.append("        { " + " ".join(f"0x{b:02x}," for b in raw) + " },")
-        L.append("    },")
-    L.append("};")
-    L.append("")
-
-    L.append(f"static const uint8_t kkw_kat_com_h[{tau}][32] = {{")
-    for o in ons:
-        raw = bytes.fromhex(o["com_h"])
-        L.append("    { " + " ".join(f"0x{b:02x}," for b in raw) + " },")
-    L.append("};")
-    L.append("")
-
-    for label, key, width in (("zin", "zin", ilen), ("t", "t", glen),
-                              ("aux", "aux", glen)):
-        L.append(f"static const int32_t kkw_kat_{label}[{tau}][{width}] = {{")
-        for o in ons:
-            vals = ([0] * width if o[key] is None else _vec_unhex(o[key]))
-            L.append("    {")
-            for i in range(0, width, 12):
-                L.append("        " + " ".join(f"{v}," for v in vals[i:i + 12]))
-            L.append("    },")
-        L.append("};")
-        L.append("")
+    L += _c_kkw_arrays("KKW_KAT_", "kkw_kat_", st, p, n, "y", "msg")
 
     # The tamper table, so C runs the same six cases as every other consumer
     # rather than a set someone chose independently.
@@ -1369,6 +1386,92 @@ def gen_operation_replay() -> dict:
                           "stream accepts on attempt 1."),
     })
 
+    # --- HCRED-KKW proving: the gap TODO #302 §6 found and #303 closed -------
+    # KKW was covered NOWHERE before this row.  KAT/hcred_kkw.json is
+    # VERIFY-SIDE by construction -- `hcred_prove_kkw` draws one os.urandom root
+    # per emulation, so a proof is not a function of its statement and
+    # regenerate-and-diff cannot work there -- and KKW has no CLI surface in any
+    # language, so the 4x4 interop matrix that covers HCRED's sigma variant does
+    # not reach it either.  Numbered test [50] runs each port's prover against
+    # ITS OWN verifier, which is precisely the shape that let three of the four
+    # ports ship a transcription bug under TODO #266.
+    #
+    # A fixed stream is what makes the prover a function again, and then one
+    # pinned transcript is four ports against each other.  Nothing new is
+    # needed: C's hcred_prove_kkw already takes a `FILE *` and Java's
+    # Hcred.proveKkw a `SecureRandom`, exactly as #297's five rows do.
+    #
+    # WIDTH IS NOT A CHOICE.  HCRED's n is a runtime argument in Python and Go
+    # but a COMPILE-TIME constant of 256 in C (HCRED_N) and Java (Hcred.N), so
+    # 256 is the only width all four can prove -- the same constraint that makes
+    # hcred_kkw.json's n256 set the consumable one.
+    #
+    # (N_par, M, tau) ARE a choice, and they are made on COST.  Production KKW
+    # is (64, 343, 27); hcred_kkw.json demos at (4, 8, 4).  This row runs at
+    # (4, 4, 2), the smallest triple that still exercises everything the item is
+    # about, because an n=256 prove is ~40 s in Python and generate_kat.py
+    # --check pays it on every run of CliTest/test_kat_vectors.sh.  What "still
+    # exercises everything" means is asserted below rather than hoped for:
+    # M > tau so the cut-and-choose leaves unopened emulations, and the two
+    # opened emulations must land on BOTH sides of the aux-reveal condition --
+    # `aux` is revealed exactly when the hidden party is not party N_par-1, and
+    # an inverted reading of that condition is the bug the Go port actually
+    # shipped.
+    kkw_n = 256
+    kkw_npar, kkw_m, kkw_tau = 4, 4, 2
+    kkw_msg = b"HerraduraKEx KKW operation replay (TODO #303)"
+    # The statement is built under its OWN fixed stream and then written out in
+    # full, like the sigma row's: a consumer reads this row and never another,
+    # so a keygen divergence cannot masquerade as a proving one.
+    with _replay(det_bytes(b"op-kkw-stmt", 8192)):
+        kkw_m_poly = suite._rnl_poly_add(suite._rnl_m_poly(kkw_n),
+                                         suite._rnl_rand_poly(kkw_n, RNLQ_),
+                                         RNLQ_)
+        kkw_seed_H = suite.BitArray.random(kkw_n)
+        kkw_s, kkw_C, kkw_e = suite.hcred_user_keygen(kkw_m_poly, kkw_n)
+    kkw_y = suite.hcred_syndrome(kkw_seed_H, kkw_e, kkw_n)
+    kkw_rows, kkw_row_bits, _kkw_wmax = suite._hcred_params(kkw_n)
+    # Exactly M roots of 32 bytes, read one per emulation in all four ports --
+    # no rejection anywhere -- so `consumed` is exact here where the sigma row's
+    # is null, and a port that reads one byte more runs off the end and says so.
+    stream = det_bytes(b"op-kkw-v2", kkw_m * 32)
+    with _replay(stream) as st:
+        kkw_proof = suite.hcred_prove_kkw(
+            kkw_s, kkw_m_poly, kkw_C, kkw_seed_H, kkw_y, kkw_n,
+            N_par=kkw_npar, M=kkw_m, tau=kkw_tau, msg_bytes=kkw_msg)
+    kkw_pbars = [od["pbar"] for _e, od in sorted(kkw_proof["online"].items())]
+    assert any(p == kkw_npar - 1 for p in kkw_pbars) and \
+           any(p != kkw_npar - 1 for p in kkw_pbars), \
+        ("operation replay: the hcred_prove_kkw stream must open emulations on "
+         "BOTH sides of the aux-reveal condition (hidden party == N_par-1 or "
+         "not) -- that condition was inverted in the Go port under TODO #266; "
+         "got pbars %r with N_par = %d" % (kkw_pbars, kkw_npar))
+    assert st.pos == kkw_m * 32, \
+        ("operation replay: hcred_prove_kkw consumed %d bytes, not one 32-byte "
+         "root per emulation (%d)" % (st.pos, kkw_m * 32))
+    assert suite.hcred_verify_kkw(kkw_m_poly, kkw_C, kkw_seed_H, kkw_y,
+                                  kkw_proof, kkw_n, kkw_msg), \
+        "operation replay: the pinned hcred_prove_kkw transcript does not verify"
+    rows.append({
+        "name": "hcred_prove_kkw",
+        "calls": {"c": "hcred_prove_kkw", "go": "HcredProveKkw",
+                  "python": "hcred_prove_kkw", "java": "Hcred.proveKkw"},
+        "params": {"n": kkw_n, "rows": kkw_rows, "row_bits": kkw_row_bits,
+                   "N_par": kkw_npar, "M": kkw_m, "tau": kkw_tau,
+                   "production": {"N_par": 64, "M": 343, "tau": 27}},
+        "statement": {"s_poly": _vec_hex(kkw_s), "m_poly": _vec_hex(kkw_m_poly),
+                      "c_poly": _vec_hex(kkw_C),
+                      "seed_H": f"{kkw_seed_H.uint:0{kkw_n // 4}x}",
+                      "y": f"{kkw_y:0{(kkw_rows + 3) // 4}x}",
+                      "msg_hex": kkw_msg.hex()},
+        "stream": stream.hex(),
+        # The SAME shape hcred_kkw.json uses for a proof, deliberately: every
+        # port already has a reader for it, so the consumer here is a comparison
+        # rather than a second parser with its own opinion of the layout.
+        "expect": _kkw_proof_to_json(kkw_proof),
+        "consumed": st.pos,
+    })
+
     return {
         "description": ("TODO #297: fixed-stream replay of whole randomised "
                         "OPERATIONS, one level above KAT/sampler_replay.json's "
@@ -1416,6 +1519,7 @@ def emit_operation_header(vec: dict) -> str:
     """
     rows = {r["name"]: r for r in vec["operations"]}
     hx = bytes.fromhex
+    emitted = set()
 
     L = ["/* KAT/operation_replay_vector.h — GENERATED, do not edit.",
          " *",
@@ -1449,6 +1553,8 @@ def emit_operation_header(vec: dict) -> str:
                    int(r["expect"]["syndrome"], 16).to_bytes(
                        r["params"]["n_rows"] // 8, "little")), ""]
 
+    emitted.add("stern_f_keygen")
+
     r = rows["hpks_stern_f_sign"]
     e = r["expect"]
     L += ["/* Stern-F signing: per round a weight-t draw, then a permutation seed. */",
@@ -1466,6 +1572,8 @@ def emit_operation_header(vec: dict) -> str:
           _c_int_list("opr_sfs_challenge", e["challenges"]),
           _c_bytes2("opr_sfs_resp_a", [hx(p[0]) for p in e["responses"]]),
           _c_bytes2("opr_sfs_resp_b", [hx(p[1]) for p in e["responses"]]), ""]
+
+    emitted.add("hpks_stern_f_sign")
 
     r = rows["zkp_nl_prove"]
     e = r["expect"]["rounds"]
@@ -1485,6 +1593,8 @@ def emit_operation_header(vec: dict) -> str:
           _c_int_list("opr_zk_e", [x["e"] for x in e]),
           _c_bytes2("opr_zk_view1", [hx(x["view_p1"]) for x in e]),
           _c_bytes2("opr_zk_view2", [hx(x["view_p2"]) for x in e]), ""]
+
+    emitted.add("zkp_nl_prove")
 
     r = rows["hpks_stern_ring_sign"]
     e, st = r["expect"], r["statement"]
@@ -1517,6 +1627,8 @@ def emit_operation_header(vec: dict) -> str:
           _c_bytes2("opr_ring_resp_a", [hx(e["responses"][i][j][0]) for i, j in flat]),
           _c_bytes2("opr_ring_resp_b", [hx(e["responses"][i][j][1]) for i, j in flat]), ""]
 
+    emitted.add("hpks_stern_ring_sign")
+
     r = rows["rnl_sigma_sign"]
     st, e = r["statement"], r["expect"]
     # No OPR_SIGMA_CONSUMED macro: `consumed` is null on this row by design
@@ -1538,6 +1650,37 @@ def emit_operation_header(vec: dict) -> str:
           _c_i32_array("opr_sigma_w", _unhex_i32(e["w"])),
           _c_i32_array("opr_sigma_c", _unhex_i32(e["c"])),
           _c_i32_array("opr_sigma_z", _unhex_i32(e["z"])), ""]
+    emitted.add("rnl_sigma_sign")
+
+    # HCRED-KKW proving (TODO #303).  The proof arrays come from the SAME
+    # emitter hcred_kkw_vector.h uses -- see _c_kkw_arrays on why a second
+    # transposition would be a new place for the byte-order bugs the vector
+    # exists to catch.  Only the statement's witness, the stream and the
+    # consumed count are extra: the rest is the same object in the same layout.
+    r = rows["hcred_prove_kkw"]
+    st = r["statement"]
+    L += ["/* HCRED-KKW proving: M roots of 32 bytes, one per emulation, and",
+          " * nothing else -- so OPR_KKW_CONSUMED is exact where the sigma",
+          " * row's is null.  n is 256 because HCRED_N is a compile-time",
+          " * constant here and in Java, not a choice (TODO #303).",
+          " */",
+          f"#define OPR_KKW_CONSUMED {r['consumed']}"]
+    L += _c_kkw_arrays("OPR_KKW_", "opr_kkw_", st, r["expect"],
+                       r["params"]["n"], "y", "msg_hex")
+    L += [_c_i32_array("opr_kkw_s_poly", _vec_unhex(st["s_poly"])),
+          _c_bytes("opr_kkw_stream", hx(r["stream"])), ""]
+    emitted.add("hcred_prove_kkw")
+
+    # Exhaustive in the direction that decays: a row added to the JSON with no
+    # block here would leave the C consumer silently short of the other three,
+    # which is the shape #291 found 22 times one layer out.
+    missing = sorted(set(rows) - emitted)
+    if missing:
+        raise SystemExit(
+            "operation replay: no C arrays are emitted for %s -- add a block to "
+            "emit_operation_header and a consumer to KAT/verify_kat_c.c, or the "
+            "C port is not following the vector the other three are"
+            % ", ".join(missing))
 
     L += ["#endif /* OPERATION_REPLAY_VECTOR_H */", ""]
     return "\n".join(L)
