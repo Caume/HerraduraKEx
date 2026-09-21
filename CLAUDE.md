@@ -1462,15 +1462,32 @@ spec/                                                — machine-readable protoc
                                                       OPERATION_REPLAY_PINNED (TODO #297)
                                                       sits BESIDE the sampler table and is
                                                       checked by the same generalised code:
-                                                      KAT/operation_replay.json pins 6
+                                                      KAT/operation_replay.json pins 10
                                                       whole randomised OPERATIONS -- Stern-F
                                                       keygen and signing, Stern-F RING
                                                       signing, the ZKBoo prover, the
-                                                      Ring-LWR Sigma signer and, since
-                                                      TODO #303, the HCRED-KKW prover --
-                                                      each against a
+                                                      Ring-LWR Sigma signer, since
+                                                      TODO #303 the HCRED-KKW prover, and
+                                                      since TODO #307 the four #305 had
+                                                      filed as OWED (QC-MDPC keygen and
+                                                      encapsulation, the ZKB++ prover and
+                                                      HCRED's sigma prover) -- each against a
                                                       fixed STATEMENT as well as a fixed
-                                                      stream.  That is the new part: a leaf
+                                                      stream.  A cell may be ABSENT since
+                                                      #307, and only one way: `param_entropy`
+                                                      names the function and says that
+                                                      language takes its entropy as a
+                                                      PARAMETER there.  C's qcmdpc_keygen
+                                                      takes a QcMdpcPrf *, so the seed is
+                                                      drawn in the CLI, and naming the
+                                                      function in the table would fail the
+                                                      rule that a pinned cell must be a
+                                                      CENSUSED consumer.  Cross-checked both
+                                                      ways -- the function must EXIST and
+                                                      must NOT be censused -- so C starting
+                                                      to draw there fails, and the function
+                                                      being renamed fails: PARAMETERS'
+                                                      None-cell treatment one axis over.  That is the new part: a leaf
                                                       row is one call with scalar arguments,
                                                       while an operation is a function of its
                                                       key and message too, so every row states
@@ -1603,7 +1620,11 @@ spec/                                                — machine-readable protoc
                                                       CLIs are uncensused and one of them is
                                                       Python's classical Schnorr NONCE (TODO
                                                       #306), and the four owed pins are TODO
-                                                      #307
+                                                      #307 -- which closed them in v8.2.0,
+                                                      so this table reports 0 OWED and the
+                                                      four rows were DELETED rather than
+                                                      retitled, the pinning forcing the
+                                                      deletion
                                                       CLI_CORPUS /
                                                       RANDOMNESS_CLI_CENSUS /
                                                       CLI_DRAW_COVERAGE (TODO #306) are
@@ -2275,8 +2296,9 @@ to force a question when it changes -- and nobody had put the identical question
 own header says what it cannot do ("only that it exists and that someone looked") and then
 hands the remainder to #297 and #303, which pinned six operations between them. **Nothing
 counted what that left: 10 consumers per language were named by a pinned row and 15 / 15 /
-18 / 21 were not.** `REPLAY_COVERAGE` is the answer and **4 consumers are still OWED a pin**
-(TODO #307). Four things to carry forward. (1) **`owed` is a status, not a reason.** A row
+18 / 21 were not.** `REPLAY_COVERAGE` is the answer, and of the four it filed as owed,
+**0 consumers are still OWED a pin** — TODO #307 pinned all four in v8.2.0, which
+deleted their rows. Four things to carry forward. (1) **`owed` is a status, not a reason.** A row
 is `transitive`, `unpinned` or `owed`, and the third needs an ITEM NUMBER as well as a
 sentence -- because a prose reason is exactly where work gets parked, which is #295's
 false-reason finding aimed at a table instead of a constant. The count is printed and held
@@ -2376,6 +2398,47 @@ doubt. One correction the item earned on the way out: it said the asymmetry was 
 is no such row — `CLI_FLAG_PARITY` is about CLI FLAGS and lives in a different file. The
 acknowledgement was `PRIMITIVES`' `hpks-sign` entry, the right thing to re-examine under
 the wrong name in two places.
+
+**And the four pins that were still OWED, where the item's own prescription was the
+thing that had to be corrected (TODO #307).** #305 built the coverage table, measured
+that 10 consumers per language were pinned and 15 / 15 / 18 / 21 were not, and separated
+`owed` from `unpinned` so that cost would be argued in the open rather than inside a
+prose reason. This is that column: `qcmdpc_keygen`, `qcmdpc_encap`, `zkp_nl_pp_prove` and
+`hcred_prove`, now rows in `KAT/operation_replay.json` consumed by all four ports through
+the drivers #296 and #297 already built — no new script, no CI wiring, no injection
+machinery. The count is **0 owed**, and the four coverage rows were DELETED rather than
+retitled because a row whose cells are all pinned fails until it goes. Four things to
+carry forward. (1) **The item told the next person to do the wrong thing, and measuring
+is what caught it.** It prescribed a QC-MDPC stream "chosen to clear the weak-key screen
+and the invertibility retry first time, on the `rnl_sigma_sign` row's precedent". That
+precedent exists because a retry there desynchronises unbuffered C from the three
+buffered ports (#293) — the attempt boundary falls inside a block. **No such boundary
+exists here**: the CSPRNG is read exactly once for a 32-byte seed and every retry redraws
+from the PRF, which is deterministic and unbuffered in all four. So the shipped stream
+REJECTS ONCE on the screen and then accepts, pinning a branch a random stream reaches
+about one draw in 550 (37 in 20 219, measured), and the generator asserts the rejection
+rather than hoping for it. **A precedent cited by name is not the same as a precedent
+that applies.** (2) **The costs it flagged were backwards, which is the argument for
+measuring them before writing the row rather than after.** The QC-MDPC pair it called
+expensive are the two CHEAPEST here (0.05 s and 0.10 s in Python at BIKE-128 — the
+inversion is one extended Euclid, not a decode); `hcred_prove` at n = 256 is the one that
+costs, ~10.5 s per prove, which is why it runs at `rounds = 2` — the smallest count that
+can still open rounds on both sides of the aux-reveal condition, the condition the Go
+port read backwards at #266. (3) **The four-cell rule was a law only because every row so
+far obeyed it.** C's `qcmdpc_keygen` takes a `QcMdpcPrf *`, so the seed is a PARAMETER
+there and a draw in the other three, and naming the function would fail the standing rule
+that a pinned cell must be a CENSUSED consumer. `param_entropy` is the cell for that, and
+it is cross-checked both ways — the function must EXIST and must NOT be censused — so C
+starting to draw there fails and the function being renamed fails. The C consumer still
+replays the operation: it reads the row's 32 bytes itself and seeds the PRF. (4) **A
+self-invalidating check fired, in the file that wrote it.** `zkbpp_kkw_view_hiding.py` §6
+asserted, as an ABSENCE, that the ZKB++ prover's seed order was unpinned, and said so
+that "the day #307 pins the prover, this fires and forces the prose below to be
+corrected". It did. §6 is inverted now and its "covered in two places and not a third"
+paragraph says three — #302 §6's handoff to #303 happening a second time, same file,
+other protocol. And the result is the one #303 got rather than #296's or #297's: **C,
+Java and Go each reproduced Python's transcript field for field on the first attempt.**
+What the rows buy is that the four cannot stop agreeing quietly.
 
 **And whether a NUMBERED TEST decides on a fresh sample, which #300 asked only of the
 findings gates (TODO #310).** #299 fixed one gate that failed about one CI run in twenty,

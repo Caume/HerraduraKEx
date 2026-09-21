@@ -507,6 +507,33 @@ def _kkw_proof_from_json(j: dict) -> dict:
     }
 
 
+def _hcred_round_to_json(rd: dict) -> dict:
+    """One HCRED sigma proof round, for KAT/operation_replay.json (TODO #307).
+
+    `outs` goes out through the suite's OWN `_hcred_outputs_ser`, the
+    serialisation that feeds the Fiat-Shamir hash: every port already has it,
+    so the consumer compares one hex string rather than four opinions of how a
+    nested output dict should be laid out.  The Z_q vectors use `_vec_hex` for
+    `nl_fscx_v3.json`'s recorded reason -- a coefficient does not survive the
+    float64 a JSON parser defaults to, and the loss is silent.
+
+    The three `aux_*` fields are None on a round where party 2 is not opened,
+    and that nullness is the aux-reveal condition the Go port read backwards
+    under TODO #266, so it travels as null rather than as an empty vector.
+    """
+    return {
+        "coms": [c.hex() for c in rd["coms"]],
+        "outs": suite._hcred_outputs_ser(rd["outs"]).hex(),
+        "seed_c": rd["seed_c"].hex(),
+        "seed_c1": rd["seed_c1"].hex(),
+        "a1": _vec_hex(rd["a1"]), "b1": _vec_hex(rd["b1"]),
+        "g1": _vec_hex(rd["g1"]), "h1": _vec_hex(rd["h1"]),
+        "aux_s": None if rd["aux_s"] is None else _vec_hex(rd["aux_s"]),
+        "aux_B": None if rd["aux_B"] is None else _vec_hex(rd["aux_B"]),
+        "aux_D": None if rd["aux_D"] is None else _vec_hex(rd["aux_D"]),
+    }
+
+
 def _capture_kkw_set(n: int) -> dict:
     """Capture one fresh reference transcript at width n."""
     m = suite._rnl_poly_add(suite._rnl_m_poly(n),
@@ -1472,6 +1499,230 @@ def gen_operation_replay() -> dict:
         "consumed": st.pos,
     })
 
+    # === TODO #307: the four rows TODO #305's coverage census left OWED =====
+    #
+    # #305 classified every censused raw-entropy consumer as `transitive`,
+    # `unpinned` or `owed`, and separated the third status precisely so that
+    # cost could be argued in the open instead of inside a prose reason.  These
+    # are those four.  Nothing below needs new machinery either -- the same
+    # four consumers #296 and #297 built follow these rows as they follow the
+    # first six -- so the item is a vector plus four drivers, as #303 was.
+    #
+    # COST, measured before the rows were written because #307 said it must be:
+    # a Python qcmdpc_keygen is 0.05 s and an encap 0.10 s at BIKE-128 (the
+    # inversion is one big-int extended-Euclid, not a decode), hcred_prove at
+    # n = 256 and rounds = 2 is ~10.5 s, and zkp_nl_pp_prove at n = 16 is
+    # 0.3 s.  So the four together add ~11 s to `--check`, against the KKW
+    # row's ~41 s -- the QC-MDPC pair #307 flagged as the expensive ones are
+    # the two cheapest here, and HCRED's sigma prover is the one that costs.
+
+    # --- QC-MDPC keygen: one 32-byte seed, then an all-PRF rejection loop ---
+    # WHAT IS PINNED, and it is not what a KEM artifact pins.  KAT/pem/'s
+    # kem_priv/kem_pub (TODO #284) are verify-side: a pinned key says nothing
+    # about how it was sampled, which is exactly #303's distinction.  Numbered
+    # test [52] pins the PRF's SEED EXPANSION -- the 3-vs-1 byte-order split
+    # TODO #277 found -- and that is a statement about one call, not about the
+    # DRAW ORDER of the loop around it.  This row pins the loop: seed, then
+    # sup0, then sup1, then the screen's verdict, then the inversion's.
+    #
+    # THE STREAM RETRIES, ON PURPOSE, and #307's own text asked for the
+    # opposite.  Its reason was the rnl_sigma_sign row's recorded precedent --
+    # a retry there desynchronises C from the three buffered ports (TODO #293)
+    # because the attempt boundary falls inside a block.  THAT HAZARD DOES NOT
+    # EXIST HERE: the CSPRNG is read exactly once, for the 32-byte seed, and
+    # every retry redraws from the PRF, which is deterministic and unbuffered
+    # in all four.  So a retrying stream costs nothing and pins strictly more,
+    # namely the weak-key screen's REJECT branch, which is otherwise reached by
+    # about one draw in 550 (37 rejections in 20 219 measured at BIKE-128) and
+    # would never be exercised by a stream chosen at random.
+    qk_stream = det_bytes(b"op-qcmdpc-keygen-1137", 32)
+    with _replay(qk_stream) as st:
+        qk_sup0, qk_sup1, _qk_h0, _qk_h1, qk_hpub = suite.qcmdpc_keygen()
+    qr = suite._QCMDPC_R
+    # The label is CHOSEN, and this is the assertion that makes it a choice
+    # rather than an accident -- #296's chosen-stream rule, carried forward.
+    _qk_prf = suite._QcMdpcPrf(int.from_bytes(qk_stream, "big")
+                               & suite._QCMDPC_MASK)
+    _qk_attempts, _qk_rejected = 0, []
+    while True:
+        _a = _qk_prf.sparse_support(qr, suite._QCMDPC_D)
+        _b = _qk_prf.sparse_support(qr, suite._QCMDPC_D)
+        _qk_attempts += 1
+        if not suite.qcmdpc_key_is_strong(_a, _b):
+            _qk_rejected.append("screen")
+            continue
+        try:
+            suite._qcp_inv(sum(1 << j for j in _a), qr)
+        except ValueError:
+            _qk_rejected.append("inverse")
+            continue
+        break
+    assert _qk_attempts == 2 and _qk_rejected == ["screen"], \
+        ("operation replay: the qcmdpc_keygen stream must REJECT exactly once "
+         "on the weak-key screen and then accept -- a stream that accepts "
+         "first time leaves the reject branch of the loop unpinned in all four "
+         "ports; got %d attempt(s), rejections %r"
+         % (_qk_attempts, _qk_rejected))
+    assert len(qk_sup0) == suite._QCMDPC_D and len(qk_sup1) == suite._QCMDPC_D
+    rows.append({
+        "name": "qcmdpc_keygen",
+        "calls": {"c": "qcmdpc_keygen", "go": "QcMdpcKeygen",
+                  "python": "qcmdpc_keygen", "java": "Stern.qcmdpcKeygen"},
+        "params": {"r": qr, "d": suite._QCMDPC_D, "attempts": _qk_attempts,
+                   "rejected": _qk_rejected},
+        "statement": {},
+        "stream": qk_stream.hex(),
+        "expect": {"sup0": sorted(qk_sup0), "sup1": sorted(qk_sup1),
+                   "h_pub": _nbit_hex(qk_hpub, qr)},
+        # Exact in three ports, which read 32 bytes and no more; C's
+        # qcmdpc_keygen takes the PRF rather than the source, so its consumer
+        # reads the same 32 bytes itself and seeds the PRF with them.  That is
+        # the `param_entropy` cell in OPERATION_REPLAY_PINNED, not a gap.
+        "consumed": st.pos,
+    })
+
+    # --- QC-MDPC encapsulation: one seed, then the weight-t support ---------
+    # The statement is the public key, written out in full like every other row
+    # here rather than read from the row above: a keygen divergence must not be
+    # able to masquerade as an encapsulation one.
+    qe_stream = det_bytes(b"op-qcmdpc-encap", 32)
+    with _replay(qe_stream) as st:
+        qe_syn, qe_k = suite.qcmdpc_encap(qk_hpub)
+    rows.append({
+        "name": "qcmdpc_encap",
+        "calls": {"c": "qcmdpc_encap", "go": "QcMdpcEncap",
+                  "python": "qcmdpc_encap", "java": "Stern.qcmdpcEncap"},
+        "params": {"r": qr, "t": suite._QCMDPC_T},
+        "statement": {"h_pub": _nbit_hex(qk_hpub, qr)},
+        "stream": qe_stream.hex(),
+        # The support is drawn modulo 2r by the REJECTION sampler whose
+        # acceptance limit qcmdpc_parameter_selection.py computes -- a rejection
+        # loop is the shape #296 found carrying three different consumption
+        # orders across four ports, twice -- so the syndrome alone would not say
+        # which draw diverged.  K is the KEM key the whole protocol rests on.
+        "expect": {"syndrome": _nbit_hex(qe_syn, qr),
+                   "k": _nbit_hex(qe_k, KEYBITS)},
+        "consumed": st.pos,
+    })
+
+    # --- ZKB++ proving: three 16-byte seeds per round, and nothing else -----
+    # WHAT THIS NARROWS.  TODO #302 §6 said ZKB++ was "covered twice over", one
+    # half being that the zkp_nl_prove row pins its masking term because neither
+    # port carries its own circuit.  True OF THE CIRCUIT.  It does not extend to
+    # the SEED DRAW ORDER, which is this function's own consumption order and
+    # which no row pinned -- and §2 of that same file makes the 16-byte seed a
+    # security parameter (the slack is 129 - 2n bits, one bit at n = 64), so the
+    # order in which seeds are drawn is not formatting.
+    ppn, pprounds = 16, 4
+    ppA = int.from_bytes(det_bytes(b"op-zkbpp-a", (ppn + 7) // 8), "big") & ((1 << ppn) - 1)
+    ppB = int.from_bytes(det_bytes(b"op-zkbpp-b", (ppn + 7) // 8), "big") & ((1 << ppn) - 1)
+    ppy = suite.nl_fscx_v1(BitArray(ppn, ppA), BitArray(ppn, ppB)).uint
+    ppmsg = b"HerraduraKEx operation replay"
+    # Exact: three seeds per round, no rejection anywhere, so a port that reads
+    # one byte more runs off the end and says so rather than diverging quietly.
+    stream = det_bytes(b"op-zkbpp", pprounds * 3 * suite._ZKPP_SEED_BYTES)
+    with _replay(stream) as st:
+        ppproof = suite.zkp_nl_prove_pp(ppA, ppB, ppy, ppn, pprounds, ppmsg)
+    assert st.pos == pprounds * 3 * suite._ZKPP_SEED_BYTES, \
+        ("operation replay: zkp_nl_prove_pp consumed %d bytes, not three "
+         "%d-byte seeds per round (%d)"
+         % (st.pos, suite._ZKPP_SEED_BYTES, pprounds * 3 * suite._ZKPP_SEED_BYTES))
+    _pp_es = [r["e"] for r in ppproof]
+    # The chosen-stream rule twice over.  All three hidden-party indices must
+    # occur, because `share2` is present for e != 2 and EMPTY for e == 2 -- the
+    # seeded/derived split #302 §2 measures as 2n-1 against n-1 bits of
+    # constraint -- so a stream missing e == 2 leaves the derived regime, and
+    # the variable-length field it produces, unpinned in every port.
+    assert set(_pp_es) == {0, 1, 2}, \
+        ("operation replay: the zkp_nl_pp_prove stream must open all three "
+         "hidden-party indices; got %r" % (sorted(set(_pp_es)),))
+    assert suite.zkp_nl_verify_pp(ppB, ppy, ppn, pprounds, ppmsg, ppproof), \
+        "operation replay: the pinned zkp_nl_pp_prove transcript does not verify"
+    rows.append({
+        "name": "zkp_nl_pp_prove",
+        "calls": {"c": "zkp_nl_pp_prove", "go": "ZkpNlProvepp",
+                  "python": "zkp_nl_prove_pp", "java": "ZkpNl.provePp"},
+        "params": {"n": ppn, "rounds": pprounds, "nb": (ppn + 7) // 8,
+                   "seed_bytes": suite._ZKPP_SEED_BYTES},
+        "statement": {"a": _nbit_hex(ppA, ppn), "b": _nbit_hex(ppB, ppn),
+                      "y": _nbit_hex(ppy, ppn), "msg_hex": ppmsg.hex()},
+        "stream": stream.hex(),
+        "expect": {"rounds": [{"com_e": r["com_e"].hex(),
+                               "e": r["e"],
+                               "out_e": r["out_e"].hex(),
+                               "seed_p1": r["seed_p1"].hex(),
+                               "seed_p2": r["seed_p2"].hex(),
+                               "gates_p2": r["gates_p2"].hex(),
+                               "share2": r["share2"].hex()} for r in ppproof]},
+        "consumed": st.pos,
+    })
+
+    # --- HCRED sigma proving: three 32-byte tape seeds per round -----------
+    # HCRED's OTHER prover, beside the KKW one TODO #303 pinned: same file, same
+    # witness, and #266's transcription bug was in exactly this family -- three
+    # of four ports shipped one, found only because [50] was written.  [50] runs
+    # each port's prover against ITS OWN verifier, which is the shape that lets a
+    # transcription bug pass, and nothing compares the four provers' DRAWS.
+    #
+    # n = 256 IS NOT A CHOICE, for #303's reason exactly: HCRED's width is a
+    # runtime argument in Python and Go and a compile-time constant in C
+    # (HCRED_N) and Java (Hcred.N), so 256 is the only width all four prove.
+    #
+    # rounds = 2 IS a choice, made on cost (~10.5 s in Python, paid on every
+    # --check) and held to a floor: two is the SMALLEST count that can straddle
+    # the aux-reveal condition, `aux` being revealed exactly when party 2 is one
+    # of the two opened -- i.e. for challenge c in {1, 2} and not for c = 0.
+    # That is the condition the Go port read backwards in KKW, and the assertion
+    # below is what makes the straddle a property of the row rather than of the
+    # draw.
+    hc_n = 256
+    hc_rounds = 2
+    hc_msg = b"HerraduraKEx HCRED sigma operation replay (TODO #307)"
+    # Built under its OWN fixed stream and then written out in full, like the
+    # sigma and KKW rows': a consumer reads this row and never another.
+    with _replay(det_bytes(b"op-hcred-stmt", 16384)):
+        hc_m_poly = suite._rnl_poly_add(suite._rnl_m_poly(hc_n),
+                                        suite._rnl_rand_poly(hc_n, RNLQ_),
+                                        RNLQ_)
+        hc_seed_H = suite.BitArray.random(hc_n)
+        hc_s, hc_C, hc_e = suite.hcred_user_keygen(hc_m_poly, hc_n)
+    hc_y = suite.hcred_syndrome(hc_seed_H, hc_e, hc_n)
+    hc_rows_, hc_row_bits, _hc_wmax = suite._hcred_params(hc_n)
+    stream = det_bytes(b"op-hcred-10", hc_rounds * 3 * 32)
+    with _replay(stream) as st:
+        hc_proof = suite.hcred_prove(hc_s, hc_m_poly, hc_C, hc_seed_H, hc_y,
+                                     hc_n, hc_rounds, hc_msg)
+    assert st.pos == hc_rounds * 3 * 32, \
+        ("operation replay: hcred_prove consumed %d bytes, not three 32-byte "
+         "tape seeds per round (%d)" % (st.pos, hc_rounds * 3 * 32))
+    _hc_aux = [rd["aux_s"] is not None for rd in hc_proof["rounds"]]
+    assert set(_hc_aux) == {True, False}, \
+        ("operation replay: the hcred_prove stream must open rounds on BOTH "
+         "sides of the aux-reveal condition (party 2 opened or not) -- that "
+         "condition was inverted in the Go port under TODO #266; got %r"
+         % (_hc_aux,))
+    assert suite.hcred_verify(hc_m_poly, hc_C, hc_seed_H, hc_y, hc_proof,
+                              hc_n, hc_rounds, hc_msg), \
+        "operation replay: the pinned hcred_prove transcript does not verify"
+    rows.append({
+        "name": "hcred_prove",
+        "calls": {"c": "hcred_prove", "go": "HcredProve",
+                  "python": "hcred_prove", "java": "Hcred.prove"},
+        "params": {"n": hc_n, "rows": hc_rows_, "row_bits": hc_row_bits,
+                   "eps_bits": suite._HCRED_EPS_BITS, "rounds": hc_rounds,
+                   "production_rounds": suite._ZKP_NL_PROD_ROUNDS},
+        "statement": {"s_poly": _vec_hex(hc_s), "m_poly": _vec_hex(hc_m_poly),
+                      "c_poly": _vec_hex(hc_C),
+                      "seed_H": f"{hc_seed_H.uint:0{hc_n // 4}x}",
+                      "y": f"{hc_y:0{(hc_rows_ + 3) // 4}x}",
+                      "msg_hex": hc_msg.hex()},
+        "stream": stream.hex(),
+        "expect": {"W": hc_proof["W"],
+                   "rounds": [_hcred_round_to_json(rd)
+                              for rd in hc_proof["rounds"]]},
+        "consumed": st.pos,
+    })
+
     return {
         "description": ("TODO #297: fixed-stream replay of whole randomised "
                         "OPERATIONS, one level above KAT/sampler_replay.json's "
@@ -1670,6 +1921,163 @@ def emit_operation_header(vec: dict) -> str:
     L += [_c_i32_array("opr_kkw_s_poly", _vec_unhex(st["s_poly"])),
           _c_bytes("opr_kkw_stream", hx(r["stream"])), ""]
     emitted.add("hcred_prove_kkw")
+
+    # === TODO #307's four rows ===========================================
+    # QC-MDPC keygen.  C's qcmdpc_keygen takes a `QcMdpcPrf *`, not a
+    # `FILE *` -- the entropy is a PARAMETER here where it is a draw in the
+    # other three -- so the consumer reads these 32 bytes itself and seeds the
+    # PRF with them.  That is the `param_entropy` cell in
+    # OPERATION_REPLAY_PINNED, and it is why this row's C arrays carry the
+    # stream at all.
+    r = rows["qcmdpc_keygen"]
+    L += ["/* QC-MDPC keygen: one 32-byte seed, then an all-PRF rejection",
+          " * loop.  The stream REJECTS ONCE on the weak-key screen and then",
+          " * accepts -- see operation_replay.json -- so the reject branch is",
+          " * pinned too, which a stream chosen at random would reach about",
+          " * one time in 550.",
+          " */",
+          f"#define OPR_QKG_R         {r['params']['r']}",
+          f"#define OPR_QKG_D         {r['params']['d']}",
+          f"#define OPR_QKG_ATTEMPTS  {r['params']['attempts']}",
+          f"#define OPR_QKG_CONSUMED  {r['consumed']}",
+          _c_bytes("opr_qkg_stream", hx(r["stream"])),
+          _c_int_list("opr_qkg_sup0", r["expect"]["sup0"]),
+          _c_int_list("opr_qkg_sup1", r["expect"]["sup1"]),
+          # BYTE ORDER, the same transposition the stern_f_keygen syndrome
+          # gets above: the JSON holds h_pub as a big-endian INTEGER (bit i is
+          # coefficient i), which is what Python, Go and Java compute, while
+          # herradura.h's qcp_to_bytes is canonical LITTLE-endian.  Done here,
+          # once, rather than in the consumer.
+          "/* NOTE: qcp_to_bytes order (little-endian), not the JSON's "
+          "big-endian integer. */",
+          _c_bytes("opr_qkg_h_pub",
+                   int(r["expect"]["h_pub"], 16).to_bytes(
+                       (r["params"]["r"] + 7) // 8, "little")),
+          ""]
+    emitted.add("qcmdpc_keygen")
+
+    r = rows["qcmdpc_encap"]
+    L += ["/* QC-MDPC encapsulation: one 32-byte seed, then the weight-t",
+          " * support drawn modulo 2r by the rejection sampler.",
+          " */",
+          f"#define OPR_QEN_R         {r['params']['r']}",
+          f"#define OPR_QEN_T         {r['params']['t']}",
+          f"#define OPR_QEN_CONSUMED  {r['consumed']}",
+          _c_bytes("opr_qen_stream", hx(r["stream"])),
+          _c_bytes("opr_qen_h_pub",
+                   int(r["statement"]["h_pub"], 16).to_bytes(
+                       (r["params"]["r"] + 7) // 8, "little")),
+          _c_bytes("opr_qen_syndrome",
+                   int(r["expect"]["syndrome"], 16).to_bytes(
+                       (r["params"]["r"] + 7) // 8, "little")),
+          # K is a BitArray in C, whose ba_to_bytes order is the big-endian one
+          # the JSON already holds -- no transposition, unlike the polynomials
+          # two lines up, and the difference is worth the comment.
+          _c_bytes("opr_qen_k", hx(r["expect"]["k"])),
+          ""]
+    emitted.add("qcmdpc_encap")
+
+    # ZKB++ proving.  Narrow, and that is the point: the only thing this
+    # operation draws is three 16-byte seeds per round, in an order no row
+    # pinned -- TODO #302 §6's "covered twice over" is true of the CIRCUIT and
+    # does not extend to the seed order.
+    r = rows["zkp_nl_pp_prove"]
+    pp = r["expect"]["rounds"]
+    L += ["/* ZKB++ proving: three seeds per round and nothing else.  The",
+          " * stream opens all three hidden-party indices, so the e == 2",
+          " * round -- where share2 is EMPTY because party 2's share is",
+          " * derived rather than seeded (TODO #302 section 2) -- is pinned",
+          " * as well as the two seeded ones.",
+          " */",
+          f"#define OPR_ZPP_N         {r['params']['n']}",
+          f"#define OPR_ZPP_ROUNDS    {r['params']['rounds']}",
+          f"#define OPR_ZPP_NB        {r['params']['nb']}",
+          f"#define OPR_ZPP_SEEDLEN   {r['params']['seed_bytes']}",
+          f"#define OPR_ZPP_CONSUMED  {r['consumed']}",
+          f"#define OPR_ZPP_A         0x{r['statement']['a']}ULL",
+          f"#define OPR_ZPP_B         0x{r['statement']['b']}ULL",
+          f"#define OPR_ZPP_Y         0x{r['statement']['y']}ULL",
+          _c_bytes("opr_zpp_msg", hx(r["statement"]["msg_hex"])),
+          f"#define OPR_ZPP_MSG_LEN   {len(hx(r['statement']['msg_hex']))}",
+          _c_bytes("opr_zpp_stream", hx(r["stream"])),
+          _c_int_list("opr_zpp_e", [x["e"] for x in pp]),
+          _c_bytes2("opr_zpp_com_e", [hx(x["com_e"]) for x in pp]),
+          _c_bytes2("opr_zpp_out_e", [hx(x["out_e"]) for x in pp]),
+          _c_bytes2("opr_zpp_seed_p1", [hx(x["seed_p1"]) for x in pp]),
+          _c_bytes2("opr_zpp_seed_p2", [hx(x["seed_p2"]) for x in pp]),
+          _c_bytes2("opr_zpp_gates_p2", [hx(x["gates_p2"]) for x in pp]),
+          # share2 is EMPTY exactly where e == 2, so its length varies by round
+          # and a [rounds][nb] table would have to invent bytes for those.  The
+          # length list is the field: a port that emits share2 on an e == 2
+          # round fails here rather than on its contents.
+          _c_int_list("opr_zpp_share2_len", [len(hx(x["share2"])) for x in pp]),
+          _c_bytes2("opr_zpp_share2",
+                    [hx(x["share2"]).ljust(r["params"]["nb"], b"\x00")
+                     for x in pp]),
+          ""]
+    emitted.add("zkp_nl_pp_prove")
+
+    # HCRED's sigma prover, beside the KKW one above.  Same file, same witness,
+    # and TODO #266's transcription bug was in this family -- three of four
+    # ports shipped one, and numbered test [50] runs each port's prover against
+    # its OWN verifier, which is the shape that lets a transcription bug pass.
+    r = rows["hcred_prove"]
+    p = r["params"]
+    st = r["statement"]
+    hr = r["expect"]["rounds"]
+    nb_ = p["rows"] * p["row_bits"]
+    nd_ = p["n"] * p["eps_bits"]
+    L += ["/* HCRED sigma proving: three 32-byte tape seeds per round.  n is",
+          " * 256 because HCRED_N is a compile-time constant here and in Java",
+          " * (TODO #303's constraint, unchanged); rounds is 2 because that is",
+          " * the SMALLEST count that can open rounds on both sides of the",
+          " * aux-reveal condition -- aux travels only when party 2 is one of",
+          " * the two opened, the condition the Go port read backwards.",
+          " */",
+          f"#define OPR_HCP_N         {p['n']}",
+          f"#define OPR_HCP_ROUNDS    {p['rounds']}",
+          f"#define OPR_HCP_ROWS      {p['rows']}",
+          f"#define OPR_HCP_ROW_BITS  {p['row_bits']}",
+          f"#define OPR_HCP_NB        {nb_}",
+          f"#define OPR_HCP_ND        {nd_}",
+          f"#define OPR_HCP_W         {r['expect']['W']}",
+          f"#define OPR_HCP_CONSUMED  {r['consumed']}",
+          _c_i32_array("opr_hcp_s_poly", _vec_unhex(st["s_poly"])),
+          _c_i32_array("opr_hcp_m_poly", _vec_unhex(st["m_poly"])),
+          _c_i32_array("opr_hcp_c_poly", _vec_unhex(st["c_poly"])),
+          _c_bytes("opr_hcp_seed_H", hx(st["seed_H"])),
+          "/* NOTE: herradura.h's internal syndrome order (reverse of the "
+          "big-endian\n * integer Python/Go use), as the KKW block above. */",
+          _c_bytes("opr_hcp_syndrome", hx(st["y"])[::-1]),
+          _c_bytes("opr_hcp_msg", hx(st["msg_hex"])),
+          f"#define OPR_HCP_MSG_LEN   {len(hx(st['msg_hex']))}",
+          _c_bytes("opr_hcp_stream", hx(r["stream"])),
+          _c_bytes2("opr_hcp_coms", [hx(c) for x in hr for c in x["coms"]]),
+          _c_bytes2("opr_hcp_outs", [hx(x["outs"]) for x in hr]),
+          f"#define OPR_HCP_OUTS_LEN  {len(hx(hr[0]['outs']))}",
+          _c_bytes2("opr_hcp_seed_c", [hx(x["seed_c"]) for x in hr]),
+          _c_bytes2("opr_hcp_seed_c1", [hx(x["seed_c1"]) for x in hr]),
+          _c_i32_array("opr_hcp_a1", [v for x in hr for v in _vec_unhex(x["a1"])]),
+          _c_i32_array("opr_hcp_b1", [v for x in hr for v in _vec_unhex(x["b1"])]),
+          _c_i32_array("opr_hcp_g1", [v for x in hr for v in _vec_unhex(x["g1"])]),
+          _c_i32_array("opr_hcp_h1", [v for x in hr for v in _vec_unhex(x["h1"])]),
+          # aux is NULL on a round where party 2 is not opened, and that
+          # nullness IS the condition under test, so it travels as its own
+          # flag rather than as a zero vector a consumer could mistake for
+          # revealed-and-all-zero.
+          _c_int_list("opr_hcp_aux_present",
+                      [0 if x["aux_s"] is None else 1 for x in hr]),
+          _c_i32_array("opr_hcp_aux_s",
+                       [v for x in hr
+                        for v in (_vec_unhex(x["aux_s"]) if x["aux_s"] else [0] * p["n"])]),
+          _c_i32_array("opr_hcp_aux_B",
+                       [v for x in hr
+                        for v in (_vec_unhex(x["aux_B"]) if x["aux_B"] else [0] * nb_)]),
+          _c_i32_array("opr_hcp_aux_D",
+                       [v for x in hr
+                        for v in (_vec_unhex(x["aux_D"]) if x["aux_D"] else [0] * nd_)]),
+          ""]
+    emitted.add("hcred_prove")
 
     # Exhaustive in the direction that decays: a row added to the JSON with no
     # block here would leave the C consumer silently short of the other three,

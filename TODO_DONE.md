@@ -20022,3 +20022,150 @@ matrix.
 
 
 ---
+
+### #307: the four pins TODO #305's coverage census left OWED
+
+**TODO #305 built the coverage table and classified every censused raw-entropy consumer
+as `transitive`, `unpinned` or `owed`.  This item is the `owed` column** -- the rows
+where pinning applies, a reason would be an excuse, and #305 deliberately refused to let
+a prose sentence stand in for the work.
+
+Four rows, in the order their absence is most likely to hide something.
+
+* **`qcmdpc_keygen`** (Go, Python, Java; C takes the PRF as a parameter -- and TODO #306
+  found where C's seed actually comes from: `herradura_cli.c`'s `cmd_genpkey` draws it
+  and calls `qcprf_init`, so when this row is pinned, three ports supply the stream to
+  the suite function and C supplies it in the CLI.  `CLI_DRAW_COVERAGE`'s
+  `qcmdpc_keygen_prf_seed` row records that, and `qcmdpc_encap_prf_seed` and
+  `hybrid_kem_prf_seed` do the same for the two encapsulation sites).  TODO #277
+  found a 3-vs-1 byte-order split inside the PRF this drives, and only a dedicated
+  pinned vector -- numbered test [52] -- could catch it.  That pins the PRF; it does not
+  pin the DRAW ORDER around it.  #284 pinned KEM artifacts, which are verify-side, and
+  #303 is the precedent for why that is a different statement: a pinned key says nothing
+  about how it was sampled.  Needs a stream chosen to clear the weak-key screen and the
+  invertibility retry first time, on the `rnl_sigma_sign` row's recorded precedent, and
+  the generator must ASSERT that rather than assume it.
+* **`qcmdpc_encap`** (same three).  The error vector's support is drawn here, by the
+  rejection sampler whose acceptance limit `qcmdpc_parameter_selection.py` computes --
+  and a rejection loop is exactly what #296 found carrying three different consumption
+  orders across four ports, twice.
+* **`zkp_nl_pp_prove`** (all four).  TODO #302 §6 said ZKB++ was "covered twice over".
+  #305 narrowed that: the two halves are the CIRCUIT and the seed LENGTH, and neither is
+  the seed ORDER.  §6 now asserts the absence, so pinning this row FIRES that section
+  and forces its prose to be corrected -- the same self-invalidating handoff #302 left
+  for #303.
+* **`hcred_prove`** (all four).  HCRED's other prover, beside the KKW one #303 pinned:
+  same file, same witness, and #266's transcription bug was in this family.  Python and
+  Java censure the inner round rather than the outer prove, which is the same operation
+  one frame down.
+
+**Cost is the reason this is not folded into #305.**  #303 was ONE operation row and the
+measured cost of adding it -- generator, C header arrays, and a consumer in each of
+`verify_kat_c.c`, `verify_kat.go` and `KatVerify.java` -- was the whole item.  Four rows
+is four times that, and two of them (the QC-MDPC pair at BIKE-128) have a keygen cost
+that has to be measured before a row is written, exactly as #303 measured KKW's before
+choosing `(N_par, M, tau)`.
+
+**What must NOT happen.**  Silently converting an `owed` row to `unpinned` because the
+pin turned out to be expensive.  #305 separated the two statuses so that cost is argued
+in the open; a reason written after the fact to retire work is #300's third rule -- slack
+wide enough never to fire -- in table form.
+
+---
+
+**CLOSED v8.2.0.**  All four rows are in `KAT/operation_replay.json`, consumed by all
+four ports through the drivers TODO #296 and #297 built -- no new script, no CI wiring,
+no injection machinery, as #303 predicted for its own row.  `REPLAY_COVERAGE` reports
+**0 owed**, and the four coverage rows are DELETED rather than retitled: a row whose
+cells are all pinned fails until it goes, so the pinning FORCED the deletion instead of
+permitting it.  The raw-entropy census is unchanged at 25 / 27 / 30 / 31 and the CLI
+draw census unchanged at 56 sites over 16 roles, which is the check that this item moved
+no draw.
+
+**THE FOUR PORTS AGREE, AND THAT IS THE RESULT.**  C, Java and Go each reproduced
+Python's transcript field for field on the first attempt -- #303's outcome, not #296's
+(three of four samplers diverging) or #297's (an anonymity break).  What the rows buy is
+that the four cannot stop agreeing quietly, which is the whole claim a cross-port vector
+is entitled to make.
+
+**WHAT THE ITEM GOT WRONG, corrected rather than worked around.**  It prescribed, for
+`qcmdpc_keygen`, "a stream chosen to clear the weak-key screen and the invertibility
+retry first time, on the `rnl_sigma_sign` row's precedent".  That precedent exists
+because a retry there desynchronises unbuffered C from the three buffered ports (TODO
+#293): the attempt boundary falls inside a block, and every attempt after the first
+reads from a different offset.  **The hazard does not exist here.**  The CSPRNG is read
+exactly once, for a 32-byte seed; every retry redraws from the PRF, which is
+deterministic and unbuffered in all four.  So the prescription cost coverage and bought
+nothing, and the shipped stream REJECTS ONCE on the weak-key screen and then accepts --
+pinning the reject branch of the loop, which a stream chosen at random reaches about one
+draw in 550 (37 rejections in 20 219 draws, measured at BIKE-128).  The generator
+asserts the rejection rather than hoping for it, so a regeneration that stopped retrying
+fails rather than quietly losing the branch.
+
+**WHAT IT GOT RIGHT AND IS WORTH KEEPING: measure the cost before writing the row.**  It
+also had the costs the wrong way round, which is why measuring rather than reasoning was
+the right instruction.  At BIKE-128 a Python `qcmdpc_keygen` is 0.05 s and an `encap`
+0.10 s -- the pair the item flagged as the expensive ones are the two CHEAPEST rows
+here, because the inversion is one big-integer extended Euclid and not a decode.
+`zkp_nl_pp_prove` at n = 16 is 0.3 s.  `hcred_prove` at n = 256 is the one that costs,
+~10.5 s per prove in Python, paid on every `generate_kat.py --check`.
+
+**THE ONE PARAMETER THAT IS A CHOICE, and what holds it.**  `hcred_prove` runs at
+`rounds = 2` -- the SMALLEST count that can open rounds on both sides of the aux-reveal
+condition, `aux` travelling exactly when party 2 is one of the two opened.  That is the
+condition the Go port read backwards under TODO #266, so the generator asserts the
+straddle rather than assuming it, on #303's precedent for `(N_par, M, tau)`.  `n = 256`
+is NOT a choice, for #303's reason exactly: HCRED's width is a runtime argument in
+Python and Go and a compile-time constant in C (`HCRED_N`) and Java (`Hcred.N`).
+
+**A NEW CELL SHAPE, and it is a finding rather than a convenience.**  Every one of the
+first six operation rows draws in all four ports, so `_check_replay_table`'s four-cell
+rule read as a law.  The QC-MDPC pair is where it stops being one: C's `qcmdpc_keygen`
+and `qcmdpc_encap` take a `QcMdpcPrf *`, so the seed is a PARAMETER there and a drawn
+value in the other three -- it is drawn by `herradura_cli.c`'s `cmd_genpkey`, which is
+what `CLI_DRAW_COVERAGE`'s `qcmdpc_keygen_prf_seed` row already recorded -- and naming
+C's function in the table would fail the standing rule that a pinned cell must be a
+CENSUSED consumer.  `param_entropy` names the function and is cross-checked in both
+directions: it must EXIST in that language's suite and must NOT be censused.  So C
+starting to draw there fails, and the function being renamed or deleted fails.  That is
+`PARAMETERS`' `None`-cell treatment one axis over, and for its stated reason -- a cell
+the extractor dropped looks identical to one that genuinely does not exist.  The C
+consumer still replays the operation: it reads the row's 32 bytes itself and seeds the
+PRF with them, so the DRAW ORDER inside the loop is held against the other three ports;
+what C does not do is read the CSPRNG there.
+
+**ONE NEW PUBLIC SURFACE, hence MINOR.**  Each row's `outs` field travels as the suite's
+OWN serialisation -- `_hcred_outputs_ser`, the layout that feeds the Fiat-Shamir hash --
+so a consumer compares one string rather than carrying a second opinion of a nested
+seven-field structure, which is `_c_kkw_arrays`' recorded reason one row over.  A
+consumer in Go's `package main` cannot reach an unexported function, so
+`HcredOutputsSer` is exported (TODO #277's `QcMdpcPrfDraw` precedent) and Java's
+`Hcred.outputsSer` becomes package-private.  The `hcred-outputs-ser` `PRIMITIVES` row
+already named the function in all four languages; only its Go and Java markers moved.
+
+**IT FIRED A SELF-INVALIDATING CHECK, which is what those are for.**
+`zkbpp_kkw_view_hiding.py` §6 asserted, as an ABSENCE, that the ZKB++ prover's seed
+order was still unpinned -- "the day #307 pins the prover, this fires and forces the
+prose below to be corrected rather than left overstating the coverage".  It fired.  §6
+is now inverted (deleting the row fails the section) and its "covered in two places and
+not a third" paragraph says three.  That is #302 §6's own handoff to #303 happening a
+second time, in the same file, on the other protocol.
+
+**WHAT THIS DOES NOT DO, stated because #302 §6 is what an unchecked scope paragraph
+becomes.**  A pinned operation sees DIVERGENCE only.  #298's rule (1) still binds -- a
+cross-port check cannot see a property all four ports get wrong -- and nothing here
+asserts that any of the four operations is CORRECT.  In particular the
+`zkp_nl_pp_prove` row pins the order in which seeds are drawn and says nothing about
+whether the expansion hides anything; that is still §2-§3 of
+`zkbpp_kkw_view_hiding.py`, and `hcred_prove`'s row is the same statement for HCRED's
+sigma prover that #303's is for its KKW one.
+
+Status: **DONE v8.2.0** -- the four `owed` pins are rows in
+`KAT/operation_replay.json` (`qcmdpc_keygen`, `qcmdpc_encap`, `zkp_nl_pp_prove`,
+`hcred_prove`), consumed by all four ports; `REPLAY_COVERAGE` is 4 transitive, 16
+unpinned, **0 owed**, the four rows DELETED rather than retitled.  The QC-MDPC stream
+retries ON PURPOSE, correcting the item's own prescription; `param_entropy` is the new
+cell for C's parameter-not-draw case; `HcredOutputsSer` exported, hence MINOR.
+
+---
+

@@ -4351,7 +4351,16 @@ func hcredCommit(j, ri int, stmt, seed []byte, auxS, auxB, auxD, aJ, bJ, gJ, hJ 
 	return Hfscx256(buf, nil)
 }
 
-func hcredOutputsSer(outs *HcredOuts) []byte {
+// HcredOutputsSer serializes all three parties' cleartext output shares,
+// the layout that feeds the Fiat-Shamir hash.  Exported for
+// KAT/verify_kat.go, which compares this port's hcred_prove transcript
+// against KAT/operation_replay.json's pinned `outs` field (TODO #307) --
+// the same reason QcMdpcPrfDraw is exported (TODO #277): a consumer in
+// package main cannot reach an unexported one, and a second
+// transcription in the consumer would pin the consumer's opinion of the
+// layout rather than the suite's.  Named by the hcred-outputs-ser
+// PRIMITIVES row in all four languages.
+func HcredOutputsSer(outs *HcredOuts) []byte {
 	buf := make([]byte, 0, 1024)
 	for j := 0; j < 3; j++ {
 		buf = append(buf, hcredSer(outs.Ter[j])...)
@@ -4492,7 +4501,7 @@ func HcredProve(sPoly, mPoly, cPoly []int, seedH *BitArray, y *big.Int,
 				ex.a[j], ex.b[j], ex.g[j], ex.h[j], &ex.outs)
 			comsSer = append(comsSer, coms[ri][j]...)
 		}
-		outsSer = append(outsSer, hcredOutputsSer(&ex.outs)...)
+		outsSer = append(outsSer, HcredOutputsSer(&ex.outs)...)
 	}
 	chals := hcredChallenges(stmt, comsSer, outsSer, rounds)
 
@@ -4534,7 +4543,7 @@ func HcredVerify(mPoly, cPoly []int, seedH *BitArray, y *big.Int,
 		for j := 0; j < 3; j++ {
 			comsSer = append(comsSer, proof.Rounds[ri].Coms[j]...)
 		}
-		outsSer = append(outsSer, hcredOutputsSer(&proof.Rounds[ri].Outs)...)
+		outsSer = append(outsSer, HcredOutputsSer(&proof.Rounds[ri].Outs)...)
 	}
 	H := SternBuildH(seedH)
 	lift := RnlLift(cPoly, RnlP, q)

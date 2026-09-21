@@ -273,7 +273,12 @@ public final class Hcred {
                        ser(new int[] { o.W[j] }), ser(o.S[j]), ser(o.y[j]), ser(o.rnd[j]));
     }
 
-    private static byte[] outputsSer(Outputs o) {
+    /** All three parties' cleartext output shares, the layout that feeds the
+     *  Fiat-Shamir hash.  Package-private rather than private so KatVerify can
+     *  compare this port's hcred_prove transcript against
+     *  KAT/operation_replay.json's pinned `outs` field (TODO #307); a second
+     *  transcription there would pin the consumer's opinion of the layout. */
+    static byte[] outputsSer(Outputs o) {
         return concat(outsSerOne(o, 0), outsSerOne(o, 1), outsSerOne(o, 2));
     }
 
