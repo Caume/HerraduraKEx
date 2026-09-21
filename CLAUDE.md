@@ -79,6 +79,25 @@ CliTest/                                             — CLI integration + cross
                                                        had never interoperated between
                                                        {C, Go} and Python, and that is
                                                        why it shipped
+  test_narrow_width_matrix.sh                       — the WIDTH axis (TODO #313).  Every
+                                                       other CliTest script feeds `enc`
+                                                       from a DEFAULT-width session key, so
+                                                       a four-way divergence in
+                                                       `hske-nla1` below 256 bits sat under
+                                                       a green 518-assertion
+                                                       test_cross_lang_matrix.sh.  READ ITS
+                                                       HEADER BEFORE EDITING THE TABLE: it
+                                                       PINS A KNOWN DEFECT rather than
+                                                       asserting the contract, because #313
+                                                       is undecided and a script asserting
+                                                       the correct contract would be red
+                                                       today and have to be ignored -- the
+                                                       allow-list the Testing section
+                                                       refuses to have.  16 of its cells
+                                                       exit 0 with the WRONG plaintext, and
+                                                       an independent count check means a
+                                                       PARTIAL fix cannot pass quietly.
+                                                       Claimed by cross-lang-compat
   test_param_bounds.sh                              — the enforcement axis (TODO #278).
                                                        spec/'s PARAMETERS table compares a
                                                        bound's VALUE across the four
@@ -2557,6 +2576,36 @@ a consolidation is the move #313's own "what must NOT happen" names. And **behav
 preservation was measured, not claimed** — pre-change ciphertexts decrypt to identical bytes
 under the post-change build in all three ports at three widths, which is #308's fixed-nonce
 byte-identity standard available more cheaply, since an A1 nonce travels in the ciphertext.
+
+**And the width nobody ever asked at (TODO #313, #314).** #312's consolidation made the
+four ports comparable at a width other than 256 for the first time, and they are not:
+`hske-nla1` produces four different keystreams below 256 bits, and `dec` **exits 0 with the
+wrong plaintext** because A1 is a raw XOR keystream with no tag, so a wrong keystream is
+not a detectable event. `CliTest/test_narrow_width_matrix.sh` is the prerequisite #313
+named, and four things about it are the transferable part. (1) **It pins the DEFECT, not
+the contract.** #313 is undecided between three routes; a script asserting the correct
+contract would be red today and would have to be ignored, which is exactly the allow-list
+the Testing section above refuses to have. Its header states the contract the fix should
+aim at, so the pin is not mistaken for approval, and it says it must be REWRITTEN rather
+than patched cell by cell when the route is chosen. (2) **An accept-control at n = 256
+runs first**, because a CLI that cannot encrypt at all would score every narrow cell as
+`refuse` and read as a clean route-2 fix — #234's vacuous pass wearing the shape of
+success. (3) **Both negative controls were verified to FIRE**, and there is an independent
+count check beside the per-cell table so a PARTIAL fix cannot pass quietly. (4)
+**Measuring changed the item.** The filing said "four ports, four keystreams"; the matrix
+says Java's `enc` already REFUSES a narrow key, C's `genpkey` does not accept `--bits` at
+all, C writes `der_i_n256` into every ciphertext so its artifact is MISLABELLED 256 (which
+is why `c -> go` works and `go -> c` does not — a third defect, distinct from the
+truncation split), and Java's `dec` returns all-zero plaintext with exit 0. Two of the four
+already refuse somewhere on the path, which strengthens route 2 and makes "document it and
+change nothing" untenable. **TODO #314 is the shape underneath**: four ports implement "an
+n-bit unsigned value" four different ways — C a fixed byte array, Go `math/big`, Python the
+embedded int, Java `BigInteger` at a static N = 256 — so three delegate the arithmetic to a
+type this project does not control and two cannot represent a narrow value at all. One
+internally-developed variable-width BitArray, ported unchanged, is what makes "the four
+agree" a property of the code rather than of four people's care at one width; it is also
+what would let Java recover a constant-time property its own header records as abandoned
+*because* of the dependency choice.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

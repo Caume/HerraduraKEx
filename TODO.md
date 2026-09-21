@@ -313,5 +313,159 @@ that the divergence was closed.
 across all four CLIs.  There is none today, which is the reason this shipped, and it should
 land before the fix rather than after it.
 
+**Route 1 is not available today, and TODO #314 is what would make it so.**  Converging on
+one truncation rule cannot be done in C, which is compiled for a single `KEYBITS` and
+cannot represent a 128-bit A1 operation at all — so a convergence now would leave C
+differing while reporting the divergence closed, which is what "what must NOT happen"
+above names.  #314 (one internally-developed variable-width BitArray in all four
+languages) removes that obstacle.  **This item is NOT blocked on it**: the defect is live,
+the path to it is `genpkey --algo hkex-gf --bits 128` -> `kex` -> `enc --algo hske-nla1`,
+and routes 2 and 3 are both available now.
+
+**Evidence gathered for the route choice (v8.3.0, after filing).**  Route 2's cost was
+listed above as "costs the demo rings a mode they may not actually use — check before
+assuming they do".  Checked: **no `CliTest` script anywhere runs `hske-nla1` at a width
+other than 256.**  All 42 invocations feed from default-width session keys; the eleven
+`--bits 64` uses are HKEX-RNL, which since TODO #228 derives a 256-bit session key at
+every ring dimension; the `--bits 32` uses are the Stern matrix dimension `N`; the single
+`--bits 128` is a comment.  Route 2 would therefore break nothing in the test suite.  It
+also has precedent already in the tree: Python and Go refuse `enc --aead` below 256 with
+an explicit message, Java refuses `hske-nla3` below 256, and C is 256-fixed by
+construction — so A1's AUTHENTICATED sibling already does what route 2 proposes, and the
+unauthenticated path is the one that does not.
+
+**Blast radius, corrected.**  It is not only `hske-nla1`.  `encfile` / `decfile` take the
+width from the key and share the seed derivation, so they carry cause (1) too.  The AEAD
+path is protected by its own 256-bit guard.
+
+**THE PREREQUISITE HAS LANDED (v8.3.1): `CliTest/test_narrow_width_matrix.sh`**, claimed by
+`cross-lang-compat`.  It pins the KNOWN DEFECT rather than asserting the contract, because
+this item is undecided and a script asserting the correct contract would be red today and
+would have to be ignored — the allow-list CLAUDE.md's Testing section refuses to have.
+Both negative controls were checked and FIRE: changing one expectation cell fails, and so
+does claiming an encryptor no longer refuses.  It carries an independent count check, so a
+PARTIAL fix cannot pass quietly.
+
+**Measuring it properly changed the picture, in four ways the original filing missed.**
+The matrix is deterministic run to run — the divergence is structural, not key-dependent.
+At n = 128 and n = 64, identically (rows = encryptor, columns = decryptor):
+
+| | py | c | go | java |
+|---|---|---|---|---|
+| **py** | ok | wrong | wrong | wrong |
+| **c** | wrong | ok | **ok** | wrong |
+| **go** | wrong | wrong | ok | wrong |
+| **java** | *enc refuses (exit 1)* | | | |
+
+1. **Java's `enc --algo hske-nla1` already REFUSES a narrow key** (exit 1).  Java does this
+   item's route 2 on the encrypt side today.
+2. **C's `genpkey` does not accept `--bits` at all** — exit 2, "unrecognised flag".  C
+   already fails CLOSED when asked to CREATE a narrow key; it fails OPEN only when
+   IMPORTING one made elsewhere.  So the reachable path needs a second CLI to mint the key,
+   which is exactly what the repro does.
+3. **(c -> go) works while (go -> c) does not**, and the asymmetry names cause (2)
+   precisely: C writes `der_i_n256` into every ciphertext regardless of the key's declared
+   width, so C's artifact is LABELLED 256 and Go — which honours the label — follows it up
+   to 256 and agrees.  Go's own artifact is labelled 128, and C reads it at 256 anyway.
+   The mislabelling is a third defect, distinct from the truncation split.
+4. **Java's `dec` returns ALL-ZERO plaintext with exit 0** on C's ciphertext — wrong in the
+   particularly bad way of looking like a legitimately empty result rather than garbage.
+
+**16 cells across the two widths exit 0 with the wrong plaintext.**  Zero cells refuse at
+`dec` in any port.
+
+**This strengthens route 2 and weakens route 3.**  Two of the four already refuse somewhere
+on the path (Java at `enc`, C at `genpkey`), so route 2 is partly implemented by accident
+rather than being a new policy; and route 3 (document 256-only, change nothing) would be
+documenting that 16 cells silently return wrong plaintext, which is not a documentable
+position.
+
+Status: **OPEN**
+
+
+---
+
+### #314: one internally-developed variable-width BitArray in all four languages, replacing the three embedded bignum types
+
+**TODO #313 is the symptom; this is the shape underneath it.**  #313 found `hske-nla1`
+producing four different keystreams below 256 bits, from a domain constant truncated at
+opposite ends in two ports and a width silently ignored in the other two.  That is not a
+bug in one function.  It is what happens when four ports implement "an n-bit unsigned
+value" four different ways and only ever compare notes at one width.
+
+**The current state, which no document states in one place.**
+
+| port | representation | width | backing |
+|---|---|---|---|
+| C | `uint8_t b[KEYBYTES]`, big-endian | **FIXED at compile time** (`KEYBITS` = 256, with an `#error` if the GF constants do not match) | its own byte array |
+| Go | `BitArray{ Val big.Int; size int }` | variable | **`math/big`** (stdlib) |
+| Python | `BitArray` over a Python `int` + `_size` | variable | **embedded arbitrary-precision int** |
+| Java | bare `BigInteger` against a static `N = 256` | **FIXED at 256** | **`java.math.BigInteger`** (stdlib) |
+
+So three of the four delegate the arithmetic to a type the project does not control, and
+two of the four cannot represent a non-256-bit value at all.  Two are variable-width, two
+are not, and no two of the four share an implementation of a single operation.
+
+**What this item asks for.**  One BitArray library, written here, ported to all four
+languages as the SAME algorithm over the SAME representation (a fixed-radix limb array,
+explicit width, explicit endianness), used for every operation where the four are supposed
+to be doing equivalent work: `xor`, `and`, `rol`/`ror`, shifts, masking, compare, the
+GF(2^n) multiply and power, and the width-taking helpers (`rnl_kdf_seed` and friends).  No
+`math/big`, no `BigInteger`, no reliance on Python's int, in the shipped primitives.
+
+**Three reasons, and the third is the one that is easy to miss.**
+
+1. **Compatibility.**  A shared implementation is the only thing that makes "the four
+   agree" a property of the code rather than of four people's care at one width.  #313's
+   constant-truncation split is exactly the class that cannot survive a common library,
+   because there would be one truncation, in one place.
+2. **Error tracking.**  An embedded bignum reports what IT considers an error, not what
+   the protocol considers one.  A narrow value silently zero-extends, a negative
+   intermediate silently becomes huge, an out-of-range shift is a language-defined result
+   in three different languages.  A library written here can define and REPORT those as
+   protocol errors, identically in four ports.
+3. **Constant time, which is already conceded away in writing.**  `Herradura.java`'s own
+   header says the C branchless tricks were not ported because "java.math.BigInteger gives
+   no constant-time guarantee regardless".  That is a security property abandoned because
+   of a dependency choice, and it is recorded in the source as settled.  A library written
+   here can carry C's discipline into the other three; it does not get that for free, but
+   it becomes possible instead of ruled out.
+
+**Scope, honestly stated.**  This is the largest refactor the repo has had.  It reaches
+every primitive in four languages, `herradura.h`'s fixed-width struct most of all, and C's
+variable-width version has to keep working on AVR, ARM Thumb-2 and i386 where the
+assembly ports use 32-bit operands by design.  The assembly and Arduino targets are
+NOT in scope for variable width and should stay at their current fixed widths — this
+item is about the four MAJOR languages, as named.
+
+**The acceptance oracle already exists, and that is what makes this tractable.**  The
+rewrite must be BEHAVIOUR-PRESERVING at 256 bits, and 256 bits is where everything is
+pinned: `KAT/` (the classical quartet, `hkex_rnl.json`, `pem/`, `nl_fscx_v3.json`,
+`hcred_kkw.json`, `sampler_replay.json`, `operation_replay.json`), the 4x4
+`test_cross_lang_matrix.sh` at 518 assertions, and the numbered tests in all four
+languages.  A port that changes one byte at 256 fails immediately and loudly.  **Do not
+start this without running that whole set first and recording the baseline.**
+
+**Sequencing against #313.**  This item is what makes #313's route 1 (converge on one
+truncation rule) actually available — today it is not, because C cannot represent a
+128-bit A1 operation at all, so "converge" would leave C differing while reporting the
+divergence closed.  **#313 should NOT wait for this.**  #313 is a live defect with a
+reachable path (`genpkey --algo hkex-gf --bits 128` -> `kex` -> `enc --algo hske-nla1`)
+and needs a decision on its own timescale; this item may later make a different decision
+possible, and #313 should say so rather than being blocked on it.
+
+**Versioning.**  Behaviour-preserving at every width the four currently agree on, so in
+principle PATCH/MINOR — but it changes `herradura.h`'s exported `BitArray` type, which is
+a public C API surface that `bindings/ffi` and `docs/examples` use, so it needs a
+`MIGRATING.md` entry and should be treated as **MAJOR** unless the type can be kept
+source-compatible.  Decide that in the item, not in review.
+
+**What must NOT happen.**  A fifth implementation.  The precedent across #294, #296, #297
+and #308 is that an existing correct port is adopted verbatim rather than a new one
+invented; here there is no existing correct port to adopt, because none of the four is
+both variable-width and self-implemented, so the reference has to be WRITTEN and then
+ported unchanged — and the first port to be written should be the one whose tests are
+fastest to run against, not the one that is easiest to write.
+
 Status: **OPEN**
 

@@ -2,6 +2,48 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.3.1] - 2026-09-21
+
+### Added
+- **`CliTest/test_narrow_width_matrix.sh` — TODO #313's prerequisite**, claimed by
+  `cross-lang-compat`.  Nothing in the repo ran `hske-nla1` at a width other than 256,
+  which is why a four-way divergence sat under a green 518-assertion cross-language
+  matrix.  It **pins the KNOWN DEFECT rather than asserting the contract**: #313 is
+  undecided between three routes, and a script asserting the correct contract would be red
+  today and would have to be ignored — the allow-list CLAUDE.md's Testing section refuses
+  to have.  Its header states the contract the fix should aim at (a decryptor must
+  reproduce the plaintext or exit non-zero; exiting 0 with wrong bytes is never
+  acceptable), an accept-control at n = 256 that must pass before any narrow cell is
+  meaningful, and an independent count check so a PARTIAL fix cannot pass quietly.  Both
+  negative controls were verified to FIRE.  Result today: 42 PASS / 0 FAIL, **16 cells
+  exiting 0 with the wrong plaintext**.
+- **`TODO #314` filed: one internally-developed variable-width BitArray in all four
+  languages.**  #313 is the symptom; the shape underneath it is that four ports implement
+  "an n-bit unsigned value" four different ways and only ever compare notes at one width.
+  C is a fixed `uint8_t b[KEYBYTES]` at compile-time `KEYBITS`; Go is `math/big` plus a
+  size; Python is the embedded arbitrary-precision int; Java is bare `BigInteger` against a
+  static `N = 256`.  Three of the four delegate the arithmetic to a type the project does
+  not control, and two cannot represent a non-256-bit value at all.  The item asks for one
+  library written here and ported unchanged, for compatibility, for protocol-level error
+  reporting, and for a constant-time property `Herradura.java`'s own header records as
+  abandoned *because* of the dependency choice ("java.math.BigInteger gives no
+  constant-time guarantee regardless").  The acceptance oracle already exists — everything
+  is pinned at 256 bits — which is what makes it tractable.
+
+### Changed
+- **TODO #313 updated with what measuring it actually showed**, which is materially richer
+  than the original filing and changes the route calculus.  The matrix is deterministic run
+  to run.  Four findings the filing missed: **Java's `enc` already REFUSES a narrow key**
+  (exit 1 — route 2, on the encrypt side, today); **C's `genpkey` does not accept `--bits`
+  at all** (exit 2), so C already fails closed on key *creation* and fails open only on
+  *import*; **(c -> go) works while (go -> c) does not**, because C writes `der_i_n256` into
+  every ciphertext regardless of the key's width, so its artifact is mislabelled 256 and Go
+  follows the label — a third defect distinct from the truncation split; and **Java's `dec`
+  returns all-zero plaintext with exit 0**, wrong in the way that looks like a legitimately
+  empty result.  Two of the four therefore already refuse somewhere on the path, which
+  strengthens route 2 and makes route 3 (document 256-only, change nothing) untenable —
+  it would be documenting that 16 cells silently return wrong plaintext.
+
 ## [8.3.0] - 2026-09-21
 
 ### Added
