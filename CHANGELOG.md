@@ -2,6 +2,68 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.0.0] - 2026-09-21
+
+### Changed (BREAKING — see `MIGRATING.md` §19)
+- **`--algo hske-nla1` refuses any width but 256, in all four CLIs (TODO #313, route 2).**
+  Below 256 bits the four language ports produced **four different keystreams**, and
+  because HSKE-NL-A1 is a raw XOR keystream with **no authentication tag**, a wrong
+  keystream is not a detectable event: `dec` wrote garbage and **exited 0**.  16 of the
+  4 × 4 matrix's cells did exactly that across the two narrow widths tested; Java's `dec`
+  returned an all-zero plaintext with exit 0, wrong in the particularly bad way of looking
+  like a legitimately empty result.  Three independent causes — the KDF domain constant
+  truncated at OPPOSITE ends (Python HIGH bits, Go LOW bits), C dropping the declared
+  width entirely and then stamping `nbits = 256` on everything it wrote, and Java being
+  256-fixed and agreeing with neither.  **At the default 256 bits nothing changes**: every
+  key, ciphertext and `.hkx` container is byte-for-byte unaffected and the four CLIs
+  interoperate exactly as before.
+- **The width is checked wherever it can arrive**, which is three places and not one: on
+  the KEY at `enc`, `dec`, `encfile` and `decfile`, and on the **ciphertext's own declared
+  `nbits` field** at `dec`.  That second check is what catches a foreign artifact whose
+  label disagrees with the key — C's included.  All four ports emit the same message.
+- **MAJOR because it changes what an existing `--algo` ACCEPTS**, which is the surface the
+  2.0.0 tag froze — the same reading that made the v3.0.0 small-ring break a MAJOR.  It
+  breaks no interoperability, because there was none to break: no two ports agreed below
+  256, so no cross-port narrow artifact has ever been readable.  The only loss is a port
+  reading back its own old narrow ciphertexts.
+- **Why refusing rather than converging.** Converging the three causes on one truncation
+  rule is the better end state and is not available: C is compiled for a single `KEYBITS`
+  and cannot represent a 128-bit A1 operation at all, so a convergence today would leave C
+  differing while reporting the divergence closed.  That needs TODO #314's variable-width
+  BitArray.  Refusing makes the divergence **unreachable** rather than resolved, fails
+  closed, and is what two of the four already did somewhere on the path (Java at `enc`,
+  C at `genpkey`, which has never accepted `--bits`).  **Relaxing a refusal later breaks
+  nothing**, so this does not foreclose the convergence.
+
+### Fixed
+- **C's `load_sym_key` stopped discarding the declared key width** — TODO #313's cause
+  (2), fixed at the source rather than guarded around.  It read the key field and threw
+  away the `nbits` field beside it, zero-extending a 128-bit session key into a fixed
+  `KEYBITS` `BitArray`.  The new `load_sym_key_n` returns it, distinguishing the labels:
+  a SESSION KEY PEM's field is a key width, while an RNL/HYBRID RESPONSE's is a RING
+  dimension whose session key has been KEYBITS wide at every ring size since TODO #228 —
+  which is what the other three ports' `_rnl_session_bits()` returns, so the four still
+  agree.
+- **C's `encfile`/`decfile` had no width guard at all.**  Python, Go and Java all refused
+  a narrow key there; C accepted one.  A three-to-one parity gap that no `spec/` table
+  could see, because it is an ENFORCEMENT gap — TODO #278's recorded limit, that
+  `PARAMETERS` reads declarations and cannot tell whether a bound is applied.
+
+### Changed
+- **`CliTest/test_narrow_width_matrix.sh` was REWRITTEN, not patched**, as its own v8.3.1
+  header instructed.  It now ASSERTS THE CONTRACT where it used to PIN THE DEFECT, and the
+  12-cell expectation table is gone — under route 2 there is nothing to tabulate, because
+  no narrow cell is reachable.  48 PASS / 0 FAIL with 28 refusals counted independently of
+  the per-case results.  **Four controls, each verified to fire by breaking the thing it
+  defends**: the n = 256 accept control (without which a CLI that cannot encrypt at all
+  scores every narrow case as `refuse` and reads as a perfect fix); a SCOPE control, since
+  #313 authorised a guard on `hske-nla1` and not on every symmetric algo; the relabel
+  control, since a rewrite that merely corrupted the PEM would make every CLI exit
+  non-zero for the wrong reason; and the refusal count, so one port quietly losing a guard
+  cannot pass.  The ciphertext-width case REWRITES a genuine artifact rather than minting
+  a narrow one, because no CLI will mint one any more — `lib_malformed.sh`'s technique,
+  length-preserving on purpose (DER INTEGER 256 is `02 02 01 00`, 128 is `02 02 00 80`).
+
 ## [8.3.1] - 2026-09-21
 
 ### Added

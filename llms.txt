@@ -148,6 +148,10 @@ which is Python-only (see note below — no C or Go CLI support, TODO #143).
                   hpke,hpke-nl,hpke-nl3,hpke-stern,hpke-stern-kem}
            --key|--pubkey FILE --in FILE --out FILE [--aead] [--ad STR]
     --aead/--ad apply to hske-nla1 (and both duplex variants are inherently AEAD).
+    hske-nla1 is 256-BIT ONLY since v9.0.0 (TODO #313), at enc, dec, encfile and
+    decfile, and the width is checked on the KEY and on the ciphertext's own
+    declared nbits: below 256 the four ports produced four different keystreams
+    and, A1 having no authentication tag, dec wrote garbage and exited 0.
     hske-duplex3 ciphertexts carry format tag 4, hske-duplex's tag 3, so each
     refuses the other's artifact at the parser.  Java ships hske-nla3 and
     hpke-nl3 but no duplex in either version.

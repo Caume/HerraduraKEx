@@ -234,157 +234,6 @@ Status: **OPEN**
 
 ---
 
-### #313: HSKE-NL-A1 interoperates at 256 bits only — four ports, four keystreams, and `dec` exits 0
-
-**Found by TODO #312 while giving the operation a suite home, and it is why that item
-preserved each port's behaviour instead of unifying it.**  `enc --algo hske-nla1` accepts a
-session key of any width the `kex` that produced it was run at (`--bits 32/64/128` are
-supported and used by the demo rings).  At `n = 256` all four CLIs agree.  **At every other
-width all four disagree, and they disagree in four different ways.**
-
-Measured, one 128-bit session key, one Python-produced ciphertext, the four CLIs asked to
-decrypt it — with the `n = 256` control passing 4/4 first:
-
-| port | plaintext recovered at n = 128 |
-|---|---|
-| Python | `41420000…`  (correct — it wrote the ciphertext) |
-| Go | `5928c968…` |
-| C | `9208e37d…` |
-| Java | `9d3c1af7…` |
-
-**Three independent causes, which is why this is one item and not three.**
-
-1. **The KDF domain constant is truncated at opposite ends.**  `_RNL_KDF_DC_256` is defined
-   at 256 bits; below that, Python takes its **HIGH** `n` bits (`DC >> (256 - nbits)`) and
-   Go's `RnlKdfSeed` takes its **LOW** `n` bits (`RnlKdfDC[32-n/8:]`).  At `n = 128` those
-   are `6a09e667…f53a` and `510e527f…cd19` — disjoint halves of the same constant.
-2. **C ignores the declared width entirely.**  `load_sym_key` calls `ba_from_ra` into a
-   fixed `KEYBITS` `BitArray`, so a 128-bit session key is silently zero-extended to 256
-   and the whole construction runs at 256.  This is not a truncation choice; the width
-   never reaches the primitive.  C is compiled for one `KEYBITS`, so it has nowhere to put
-   the answer even if it wanted one.
-3. **Java is 256-fixed too** (`Herradura.rol(base, N / 8)`, full-width `RNL_KDF_DC_256`)
-   and still differs from C, so the two 256-fixed ports do not even agree with each other
-   about how a narrow key becomes a wide one.
-
-**Why nothing caught it.**  `hske-nla1` is a raw XOR keystream with **no authentication
-tag** — that is the whole difference from its AEAD sibling — so a wrong keystream is not a
-detectable event.  `dec` writes garbage and **exits 0**.  This is TODO #235's implicit-
-rejection shape (a silent mismatch rather than an error) arriving by a different route, and
-it defeats every test the repo has: the 4x4 interop matrix, `test_encrypt.sh`,
-`test_c_encrypt.sh` and `test_aead.sh` all run at the default 256 bits, where the four
-genuinely agree.  `KAT/classical_quartet.json` pins `n = 256`.  Nothing anywhere exercises
-`hske-nla1` at another width, so a four-way divergence sat under a green matrix.
-
-**It is not confined to `hske-nla1`.**  `rnl_kdf_seed` is shared: its own comment says
-"wherever an HKEX-RNL KDF or HSKE-NL-A1 seed is required".  Anything that derives a seed at
-a width other than 256 inherits cause (1).  Establishing the full blast radius is part of
-this item and was deliberately not guessed at in #312.
-
-**THE DECISION THIS ITEM OWES, and it is not obviously MAJOR.**  CLAUDE.md reserves MAJOR
-for "a change to what an existing `--algo` value produces or accepts" and for making an
-existing artifact "unreadable by a newer build".  Converging the ports would do the second
-— a Python-written 128-bit A1 ciphertext would stop decrypting — **but it cannot break
-interoperability, because there is none to break at those widths**: today no two ports
-agree, so no cross-port artifact at `n != 256` has ever been readable.  The only thing
-broken is a port reading back its own old narrow ciphertexts.  Weigh that against the
-alternative, which is to keep four incompatible behaviours documented as such.  Three
-routes, and the item must pick one IN THE ITEM:
-
-* **Converge on one rule** (and `MIGRATING.md` regardless of which version component
-  moves, per CLAUDE.md).  Go's LOW-bits truncation is the better-founded one — it is what a
-  fixed-size byte array naturally yields and it is what C's `_RNL_KDF_DC[i]` loop does at
-  256 — but Python's HIGH-bits rule is what the deployed Python CLI has always written.
-  Whichever wins, C cannot follow without a variable-width `BitArray`, which it does not
-  have.
-* **Refuse `n != 256` for `hske-nla1`** in all four CLIs.  Fails closed, is a one-line
-  change per port, makes the divergence unreachable rather than resolved, and costs the
-  demo rings a mode they may not actually use — check before assuming they do.
-* **Document the width as 256-only and leave the code alone.**  The weakest option and the
-  one this repo's own history argues against: #274, #287 and #269 are all the same finding,
-  an unrecognised or out-of-contract input silently taking a weaker branch.
-
-**What must NOT happen.**  Picking the rule that makes the smallest diff.  The three causes
-have different costs — (1) is a constant, (2) is C's whole fixed-width design — and a fix
-that unifies (1) while leaving (2) would make C and Java agree with nobody while reporting
-that the divergence was closed.
-
-**Prerequisite for anything here:** a test that runs `hske-nla1` at a width other than 256
-across all four CLIs.  There is none today, which is the reason this shipped, and it should
-land before the fix rather than after it.
-
-**Route 1 is not available today, and TODO #314 is what would make it so.**  Converging on
-one truncation rule cannot be done in C, which is compiled for a single `KEYBITS` and
-cannot represent a 128-bit A1 operation at all — so a convergence now would leave C
-differing while reporting the divergence closed, which is what "what must NOT happen"
-above names.  #314 (one internally-developed variable-width BitArray in all four
-languages) removes that obstacle.  **This item is NOT blocked on it**: the defect is live,
-the path to it is `genpkey --algo hkex-gf --bits 128` -> `kex` -> `enc --algo hske-nla1`,
-and routes 2 and 3 are both available now.
-
-**Evidence gathered for the route choice (v8.3.0, after filing).**  Route 2's cost was
-listed above as "costs the demo rings a mode they may not actually use — check before
-assuming they do".  Checked: **no `CliTest` script anywhere runs `hske-nla1` at a width
-other than 256.**  All 42 invocations feed from default-width session keys; the eleven
-`--bits 64` uses are HKEX-RNL, which since TODO #228 derives a 256-bit session key at
-every ring dimension; the `--bits 32` uses are the Stern matrix dimension `N`; the single
-`--bits 128` is a comment.  Route 2 would therefore break nothing in the test suite.  It
-also has precedent already in the tree: Python and Go refuse `enc --aead` below 256 with
-an explicit message, Java refuses `hske-nla3` below 256, and C is 256-fixed by
-construction — so A1's AUTHENTICATED sibling already does what route 2 proposes, and the
-unauthenticated path is the one that does not.
-
-**Blast radius, corrected.**  It is not only `hske-nla1`.  `encfile` / `decfile` take the
-width from the key and share the seed derivation, so they carry cause (1) too.  The AEAD
-path is protected by its own 256-bit guard.
-
-**THE PREREQUISITE HAS LANDED (v8.3.1): `CliTest/test_narrow_width_matrix.sh`**, claimed by
-`cross-lang-compat`.  It pins the KNOWN DEFECT rather than asserting the contract, because
-this item is undecided and a script asserting the correct contract would be red today and
-would have to be ignored — the allow-list CLAUDE.md's Testing section refuses to have.
-Both negative controls were checked and FIRE: changing one expectation cell fails, and so
-does claiming an encryptor no longer refuses.  It carries an independent count check, so a
-PARTIAL fix cannot pass quietly.
-
-**Measuring it properly changed the picture, in four ways the original filing missed.**
-The matrix is deterministic run to run — the divergence is structural, not key-dependent.
-At n = 128 and n = 64, identically (rows = encryptor, columns = decryptor):
-
-| | py | c | go | java |
-|---|---|---|---|---|
-| **py** | ok | wrong | wrong | wrong |
-| **c** | wrong | ok | **ok** | wrong |
-| **go** | wrong | wrong | ok | wrong |
-| **java** | *enc refuses (exit 1)* | | | |
-
-1. **Java's `enc --algo hske-nla1` already REFUSES a narrow key** (exit 1).  Java does this
-   item's route 2 on the encrypt side today.
-2. **C's `genpkey` does not accept `--bits` at all** — exit 2, "unrecognised flag".  C
-   already fails CLOSED when asked to CREATE a narrow key; it fails OPEN only when
-   IMPORTING one made elsewhere.  So the reachable path needs a second CLI to mint the key,
-   which is exactly what the repro does.
-3. **(c -> go) works while (go -> c) does not**, and the asymmetry names cause (2)
-   precisely: C writes `der_i_n256` into every ciphertext regardless of the key's declared
-   width, so C's artifact is LABELLED 256 and Go — which honours the label — follows it up
-   to 256 and agrees.  Go's own artifact is labelled 128, and C reads it at 256 anyway.
-   The mislabelling is a third defect, distinct from the truncation split.
-4. **Java's `dec` returns ALL-ZERO plaintext with exit 0** on C's ciphertext — wrong in the
-   particularly bad way of looking like a legitimately empty result rather than garbage.
-
-**16 cells across the two widths exit 0 with the wrong plaintext.**  Zero cells refuse at
-`dec` in any port.
-
-**This strengthens route 2 and weakens route 3.**  Two of the four already refuse somewhere
-on the path (Java at `enc`, C at `genpkey`), so route 2 is partly implemented by accident
-rather than being a new policy; and route 3 (document 256-only, change nothing) would be
-documenting that 16 cells silently return wrong plaintext, which is not a documentable
-position.
-
-Status: **OPEN**
-
-
----
-
 ### #314: one internally-developed variable-width BitArray in all four languages, replacing the three embedded bignum types
 
 **TODO #313 is the symptom; this is the shape underneath it.**  #313 found `hske-nla1`
@@ -459,6 +308,18 @@ principle PATCH/MINOR — but it changes `herradura.h`'s exported `BitArray` typ
 a public C API surface that `bindings/ffi` and `docs/examples` use, so it needs a
 `MIGRATING.md` entry and should be treated as **MAJOR** unless the type can be kept
 source-compatible.  Decide that in the item, not in review.
+
+**WHAT #313 DID, and what it leaves this item (v9.0.0).**  #313 took ROUTE 2: all four
+CLIs now REFUSE `hske-nla1` at any width but 256, so the divergence is unreachable rather
+than resolved.  That changes this item's standing in two ways worth recording.  It is no
+longer holding back a live defect — nothing silently returns wrong plaintext any more —
+so the pressure behind it is capability, not correctness.  And it acquires a concrete,
+testable acceptance case it did not have: when this lands, `MIGRATING.md` §19's refusal is
+what gets RELAXED, and `CliTest/test_narrow_width_matrix.sh` is what gets rewritten a
+second time, from "all four refuse" to "all four agree".  **Relaxing a refusal breaks
+nothing**, which is why route 2 was safe to take first and why this item is not now harder
+to do.  A convergence is only worth doing if all four can be made to agree; C is the
+constraint, and C is what this item is about.
 
 **What must NOT happen.**  A fifth implementation.  The precedent across #294, #296, #297
 and #308 is that an existing correct port is adopted verbatim rather than a new one

@@ -322,7 +322,9 @@ $CLI dec --algo hske --key alice_sk.pem --in ct.pem        --out recovered.bin
 ```
 
 Use `--algo hske-nla1` or `--algo hske-nla2` for the unauthenticated NL/PQC modes
-(see [NL/PQC protocols](#nlpqc-protocols)).
+(see [NL/PQC protocols](#nlpqc-protocols)).  `hske-nla1` requires a **256-bit**
+session key — the default — and refuses any other width in all four CLIs since
+v9.0.0; see `MIGRATING.md` §19 for why.
 
 #### C
 

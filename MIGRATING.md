@@ -32,6 +32,14 @@ function itself, so **five** constructions break together — `hske-nla2`, `hpke
 as in section 8.
 See [section 9](#9-nl-fscx-v2-round-constants-v500).
 
+The nineteenth is the reason the version is **9.0.0**, and it is the narrowest MAJOR on
+this list: it changes only what `--algo hske-nla1` ACCEPTS, and only below 256 bits, where
+no two of the four language ports ever agreed in the first place. Nothing at the default
+width moves by a byte. It gets a MAJOR bump anyway, because changing what an existing
+`--algo` accepts is the 2.0.0 surface — the same reading that made section 5 a 3.0.0. The
+failure it removes was the worst shape on this list: `dec` wrote the wrong plaintext and
+**exited 0**, in 16 of the matrix's cells. See [section 19](#19-hske-nla1-refuses-any-width-but-256-v900).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -65,6 +73,7 @@ trusting any signature made by an earlier build.
 | [`nl-zkboo` and `rnl-sigma` message padding, Python CLI only](#10-nl-zkboo-and-rnl-sigma-message-padding-python-cli-only-v600) | v6.0.0 | `sign --algo nl-zkboo` / `--algo rnl-sigma` signatures produced by the **Python** CLI over a message whose length is not exactly 32 bytes | Re-sign on v6.0.0+. Those signatures never verified under the C or Go CLIs anyway — that was the bug |
 | [HPKE-Stern-KEM moves to BIKE-128 parameters](#17-hpke-stern-kem-moves-to-bike-128-parameters-v700) | v7.0.0 | Every `hpke-stern-kem` key and ciphertext, and every `hybrid-rnl-stern` artifact carrying one | **Regenerate on v7.0.0+.** `r` sizes the wire format, so old artifacts are unreadable — but the row is demo-only and the old parameters were worth ~2^21 operations, so nothing with a security claim is being broken |
 | [HPKS-Stern-F binds the witness weight](#18-hpks-stern-f-binds-the-witness-weight-v800) | v8.0.0 | Every `hpks-stern` signature, and every HPKS-Stern-Ring, HCRED-issuance and `hybrid-rnl-stern` artifact carrying one | **Re-sign on v8.0.0+, and treat every pre-8.0.0 signature as unverified.** Keys are unchanged and still valid; the old verification rule bound nothing, so it accepted forgeries |
+| [`hske-nla1` refuses any width but 256](#19-hske-nla1-refuses-any-width-but-256-v900) | v9.0.0 | `enc`/`dec`/`encfile`/`decfile --algo hske-nla1` with a session key narrower than 256 bits | **Nothing at the default 256 bits.** A narrow-width ciphertext was only ever readable by the port that wrote it — decrypt it with a pre-9.0.0 build of THAT language and re-encrypt at 256 |
 
 ---
 
@@ -949,3 +958,85 @@ rounds fail the weight check. There is no silent-acceptance path in either direc
 (the KEM side never had this rule), the round count, and the soundness-per-round figure of
 `(2/3)^rounds` — production still needs `--rounds 219`. `SDF_ROUNDS` and every parameter in
 `spec/` are untouched.
+
+---
+
+## 19. `hske-nla1` refuses any width but 256 (v9.0.0)
+
+**This is the reason the version is 9.0.0.** It changes what an existing `--algo` value
+accepts, which is exactly the surface the 2.0.0 tag froze, so it gets a MAJOR bump
+regardless of how few artifacts it reaches — the same rule section 5 was decided under.
+
+**Who is affected:** anyone who ran `enc`, `dec`, `encfile` or `decfile` with
+`--algo hske-nla1` against a session key narrower than 256 bits — i.e. one derived from
+`genpkey --algo hkex-gf --bits N` with `N < 256`. **At the default 256 bits nothing
+changes**: every key, every ciphertext and every `.hkx` container is byte-for-byte
+unaffected, and the four CLIs interoperate exactly as before.
+
+**What was wrong, and why "incompatible" understates it.** Below 256 bits the four
+language ports produced **four different keystreams**, from three independent causes:
+
+1. **The KDF domain constant was truncated at opposite ends.** `_RNL_KDF_DC_256` is
+   defined at 256 bits; Python took its **HIGH** `n` bits (`DC >> (256 - nbits)`) and Go's
+   `RnlKdfSeed` took its **LOW** `n` bits (`RnlKdfDC[32-n/8:]`). At `n = 128` those are
+   disjoint halves of the same constant.
+2. **C dropped the declared width entirely.** `load_sym_key` read the key field and
+   ignored the `nbits` field beside it, zero-extending a 128-bit key into a fixed
+   `KEYBITS` `BitArray` so the whole construction ran at 256 — and C then stamped
+   `nbits = 256` into every ciphertext it wrote, whatever the key said. That mislabelling
+   is why `c → go` recovered the plaintext while `go → c` did not.
+3. **Java was 256-fixed too** and still differed from C, so the two fixed-width ports did
+   not agree with each other either.
+
+`hske-nla1` is a raw XOR keystream with **no authentication tag** — that is the whole
+difference from its AEAD sibling — so a wrong keystream is not a detectable event.
+**`dec` wrote garbage and exited 0.** Measured across the two narrow widths tested, 16
+cells of the 4 × 4 matrix did exactly that; Java's `dec` returned an all-zero plaintext
+with exit 0, which is wrong in the particularly bad way of looking like a legitimately
+empty result. See TODO #313 and `CliTest/test_narrow_width_matrix.sh`.
+
+**What changed.** All four CLIs now refuse, with the same message:
+
+```
+enc: hske-nla1 requires a 256-bit key; got 128-bit (TODO #313: below 256 the
+four language ports produce four different keystreams)
+```
+
+The width is checked wherever it can arrive: on the **key** at `enc`, `dec`, `encfile` and
+`decfile`, and on the **ciphertext's own declared `nbits` field** at `dec` — that second
+check is what catches a foreign artifact whose label disagrees with the key, including
+C's mislabelled ones.
+
+| | through v8.3.1 | v9.0.0+ |
+|---|---|---|
+| `enc --algo hske-nla1`, key `n < 256` | Python/C/Go wrote a ciphertext; Java refused | **all four refuse** |
+| `dec --algo hske-nla1`, key `n < 256` | wrote wrong plaintext, **exit 0** | **all four refuse** |
+| `dec`, ciphertext declaring `n < 256` | read at whatever width the port preferred | **all four refuse** |
+| `encfile`/`decfile`, key `n < 256` | Python/Go/Java refused; **C did not** | **all four refuse** |
+| anything at `n = 256` | — | unchanged, byte-for-byte |
+| `--algo hske`, `hske-nla2`, `hske-nla3` | — | unchanged — the guard is scoped to `hske-nla1` |
+
+**What to do.** Almost certainly nothing. A narrow-width `hske-nla1` ciphertext was
+readable only by the one port that wrote it, so any such artifact was already
+single-port data rather than an interoperable one. If you hold one and still want its
+contents, **decrypt it with a pre-9.0.0 build of the same language that wrote it**, then
+re-encrypt at the default 256 bits. No other combination ever worked.
+
+**How the failure presents.** Loudly, and at both ends. There is no silent path left: the
+refusal is a non-zero exit with the message above, which is the point of the change.
+
+**Why refusing rather than converging.** Converging the three causes on one truncation
+rule is the better end state and is not available yet: C is compiled for a single
+`KEYBITS` and cannot represent a 128-bit A1 operation at all, so a convergence today would
+leave C differing from the other three while reporting that the divergence was closed.
+That needs the variable-width `BitArray` of TODO #314, which is open. Refusing makes the
+divergence **unreachable** rather than resolved, fails closed, and is what two of the four
+ports already did somewhere on the path — Java at `enc`, C at `genpkey`, which has never
+accepted `--bits`. If #314 lands and the convergence is done, this refusal is the thing
+that gets relaxed, and relaxing a refusal breaks nothing.
+
+**What this does *not* change.** `kex` still derives session keys at any width — it is
+`hske-nla1` that refuses to consume a narrow one. `hske-nla1 --aead` was already 256-only
+and keeps its own message. HKEX-RNL is unaffected: since TODO #228 it derives a 256-bit
+session key at every ring dimension, which is why the eleven `--bits 64` invocations in
+`CliTest/` are untouched by this. No PEM label, DER layout, flag or parameter changed.
