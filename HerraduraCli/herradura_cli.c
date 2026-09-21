@@ -3740,19 +3740,23 @@ static void cmd_sign(int argc, char **argv)
 
     if (strcmp(algo, "hpks") == 0 || strcmp(algo, "hpks-nl") == 0) {
         if (priv_k.n_items < 1) die("sign: malformed private key");
-        BitArray priv, k_rand, R, e, me, s_ba;
+        BitArray priv, R, e, s_ba;
         ba_from_ra(&priv, priv_k.vals[0], priv_k.vlens[0]);
         pem_key_free(&priv_k);
 
-        ba_rand(&k_rand, urnd);
-        gf_pow_ba(&R, &GF_GEN, &k_rand);
-        if (strcmp(algo, "hpks") == 0)
+        /* TODO #308: call the suite operation rather than transcribing it.
+         * herradura.h's hpks_sign/hpks_nl_sign draw the Schnorr nonce
+         * themselves, so the draw this CLI used to make lands in a function
+         * KAT/classical_quartet.json already pins.  e is recomputed here
+         * because it travels in the signature PEM and the suite operation
+         * returns only (R, s) -- the shape the Java CLI has always used. */
+        if (strcmp(algo, "hpks") == 0) {
+            hpks_sign(&msg, &priv, &R, &s_ba, urnd);
             ba_fscx_revolve(&e, &R, &msg, I_VALUE);
-        else
+        } else {
+            hpks_nl_sign(&msg, &priv, &R, &s_ba, urnd);
             nl_fscx_revolve_v1_ba(&e, &R, &msg, I_VALUE);
-        /* s = (k - priv * e) mod (2^256-1) */
-        ba_mul_mod_ord(&me, &priv, &e);
-        ba_sub_mod_ord(&s_ba, &k_rand, &me);
+        }
 
         uint8_t is[DER_INT_LEN(KEYBYTES)], iR[DER_INT_LEN(KEYBYTES)];
         uint8_t ie[DER_INT_LEN(KEYBYTES)], in[8];

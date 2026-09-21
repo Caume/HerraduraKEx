@@ -2840,6 +2840,7 @@ static void hpke_stern_f_decap_known(BitArray *K_out,
  *   hkex_gf_pubkey / hkex_gf_agree   — HKEX-GF key exchange
  *   hske_encrypt   / hske_decrypt     — HSKE symmetric encryption
  *   hpks_sign      / hpks_verify      — HPKS Schnorr signature
+ *   hpks_nl_sign                      — HPKS-NL Schnorr (NL-FSCX v1 challenge)
  *   hpke_encrypt   / hpke_decrypt     — HPKE El Gamal encryption
  *
  * For PQC-hardened protocols use: hpks_stern_f_sign / hpks_stern_f_verify
@@ -2892,6 +2893,22 @@ static inline void hpks_sign(const BitArray *msg, const BitArray *priv,
     ba_rand(&k, urnd);
     gf_pow_ba(R_out, &GF_GEN, &k);
     ba_fscx_revolve(&e, R_out, msg, I_VALUE);
+    ba_mul_mod_ord(&ae, priv, &e);
+    ba_sub_mod_ord(s_out, &k, &ae);
+}
+
+/* HPKS-NL: sign msg with private key priv, using the NL-FSCX v1 challenge
+ * hash in place of the classical fscx_revolve one.  Same Schnorr arithmetic
+ * as hpks_sign; only the derivation of e differs.  TODO #308 added it so the
+ * `sign --algo hpks-nl` path in herradura_cli.c calls a named suite operation
+ * instead of transcribing the signer (and its nonce draw) inline. */
+static inline void hpks_nl_sign(const BitArray *msg, const BitArray *priv,
+                                  BitArray *R_out, BitArray *s_out, FILE *urnd)
+{
+    BitArray k, e, ae;
+    ba_rand(&k, urnd);
+    gf_pow_ba(R_out, &GF_GEN, &k);
+    nl_fscx_revolve_v1_ba(&e, R_out, msg, I_VALUE);
     ba_mul_mod_ord(&ae, priv, &e);
     ba_sub_mod_ord(s_out, &k, &ae);
 }

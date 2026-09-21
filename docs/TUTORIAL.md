@@ -391,40 +391,34 @@ int ok = hpks_verify(&msg, &alice_pub, &R, &s); /* verify */
 #### Go
 
 ```go
-import "math/big"
-
-ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1)) /* 2^n - 1 */
-
 msg := NewRandBitArray(n)
-kS  := NewRandBitArray(n)                                         /* per-signature nonce */
-RS  := NewBitArray(n, GfPow(g, &kS.Val, poly, n))                /* commitment R = g^k  */
-eS  := FscxRevolve(RS, msg, n/4)                                  /* challenge e         */
-sS  := new(big.Int).Mod(new(big.Int).Sub(&kS.Val,
-           new(big.Int).Mul(&alicePriv.Val, &eS.Val)), ord)       /* response s = k-a·e  */
 
-/* Verify: g^s · C^e == R */
-lhs := GfMul(GfPow(g, sS, poly, n), GfPow(&alicePub.Val, &eS.Val, poly, n), poly, n)
-ok  := lhs.Cmp(&RS.Val) == 0
+RS, sS := HpksSign(msg, alicePriv, poly, n)         /* draws its own nonce */
+ok     := HpksVerify(msg, alicePub, RS, sS, poly, n)
 ```
+
+`HpksSign` returns only `(R, s)`; the challenge `e` is a function of `R` and the message,
+so recompute it with `FscxRevolve(RS, msg, n/4)` if you need it on the wire (the CLI does,
+because it travels in the signature PEM).  `HpksNlSign` is the HPKS-NL counterpart — same
+arithmetic, `NlFscxRevolveV1` as the challenge hash.  Both were added in v8.1.0 (TODO
+#308); before that the Go CLI built the signature inline the way the C example above does
+not have to.
 
 #### Python
 
 ```python
 poly = h.GF_POLY[n]
-ord_ = (1 << n) - 1                              # group order 2^n - 1
+msg  = h.BitArray.random(n)
 
-msg = h.BitArray.random(n)
-k   = h.BitArray.random(n)                       # per-signature nonce
-
-R   = h.BitArray(n, h.gf_pow(h.GF_GEN, k.uint, poly, n))   # R = g^k
-e   = h.fscx_revolve(R, msg, h.I_VALUE)                     # challenge
-s   = (k.uint - alice_priv.uint * e.uint) % ord_            # s = k - a·e
-
-# Verify: g^s · C^e == R
-lhs = h.gf_mul(h.gf_pow(h.GF_GEN, s, poly, n),
-               h.gf_pow(alice_pub.uint, e.uint, poly, n), poly, n)
-assert lhs == R.uint
+R, s = h.hpks_sign(msg, alice_priv.uint, poly, n)     # draws its own nonce
+assert h.hpks_verify(msg, alice_pub.uint, R, s, poly, n)
 ```
+
+`hpks_sign` returns only `(R, s)`; the challenge `e` is a function of `R` and the message,
+so recompute it with `h.fscx_revolve(R, msg, n // 4)` if you need it on the wire (the CLI
+does, because it travels in the signature PEM).  `hpks_nl_sign` is the HPKS-NL counterpart
+— same arithmetic, `nl_fscx_revolve_v1` as the challenge hash.  Both were added in v8.1.0
+(TODO #308).
 
 #### One-time signatures (HPKS-WOTS-F)
 
@@ -2463,6 +2457,7 @@ void hske_decrypt(const BitArray *ct,  const BitArray *key, BitArray *pt);
 
 /* HPKS */
 void hpks_sign  (const BitArray *msg, const BitArray *priv, BitArray *R, BitArray *s, FILE *urnd);
+void hpks_nl_sign(const BitArray *msg, const BitArray *priv, BitArray *R, BitArray *s, FILE *urnd);
 int  hpks_verify(const BitArray *msg, const BitArray *pub,  const BitArray *R, const BitArray *s);
 
 /* HPKE */

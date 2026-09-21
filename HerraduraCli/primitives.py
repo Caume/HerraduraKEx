@@ -63,6 +63,10 @@ rnl_validate_m_blind = _s.rnl_validate_m_blind
 # release later — C and Java had it in the suite, Go and Python only in their CLIs.
 rnl_contributory_kdf = _s.rnl_contributory_kdf
 
+# ── HPKS / HPKS-NL Schnorr signing (TODO #308) ───────────────────────────────
+hpks_sign                 = _s.hpks_sign
+hpks_nl_sign              = _s.hpks_nl_sign
+
 # ── Stern-F (code-based PQC) ─────────────────────────────────────────────────
 stern_f_keygen            = _s.stern_f_keygen
 hpks_stern_f_sign         = _s.hpks_stern_f_sign
