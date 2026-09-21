@@ -2,6 +2,112 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.3.0] - 2026-09-21
+
+### Added
+- **`hske_nla1_encrypt` / `hske_nla1_decrypt` in C, Go and Python — HSKE-NL-A1's plain mode
+  is a suite function in all four ports now (TODO #312).**  Java's
+  `HerraduraNl.hskeNlA1Encrypt` has been one all along and Java's CLI called it; C, Go and
+  Python had no such function and their CLIs transcribed the construction
+  (`base = K ^ nonce; seed = rnl_kdf_seed(base); ks = nl_fscx_revolve_v1(seed, base, n/4);
+  E = P ^ ks`) inline — **twice each, in `enc` AND `dec`** — while calling the suite for its
+  AEAD sibling `hske_nl_aead_encrypt` in the same branch of the same command.  Java's
+  argument order and its its-own-inverse decrypt are adopted verbatim, on the #294 / #296 /
+  #308 precedent that an existing correct port beats a fourth API.  MINOR: new public API
+  surface, nothing existing changed.
+- **`rnl_kdf_seed` in the Python suite.**  C has had `ba_rnl_kdf_seed` and Go `RnlKdfSeed`
+  since v1.8.0; Python had none, and wrote `ROL(base, n/8) XOR _RNL_KDF_DC_256` out
+  **seven** times — four in `HerraduraCli/herradura.py` and **three in the suite file
+  itself**.  That is the second-copy-of-a-derivation class numbered tests [46], [47], [49]
+  and [51] each exist to cross-check, except that here there was no suite function to
+  cross-check against.  `_RNL_KDF_DC_256` is now referenced in exactly one place in the
+  tree, and the CLI no longer imports it.
+
+### Changed
+- **Six CLI transcriptions removed** (`cmd_enc` / `cmd_dec` in each of C, Go and Python),
+  plus the `encfile` / `decfile` seed derivations, which now call `rnl_kdf_seed`.  Those
+  two remain distinct call sites on purpose: they are a multi-block CTR container that
+  already calls the suite's own block functions, so only the seed step was transcribed.
+- **Behaviour-preserving, verified rather than asserted.**  Ciphertexts written by the
+  pre-change build decrypt to identical bytes under the post-change build in all three
+  ports at n = 256, 128 and 64; the Python suite function was additionally checked against
+  the retired inline expression over random (K, nonce, P) at n = 256 / 128 / 64 / 32; the
+  4x4 CLI matrix on `hske-nla1` is 16/16 at n = 256, and `test_encrypt.sh`,
+  `test_encfile.sh`, `test_c_encrypt.sh`, `test_c_encfile.sh`, `test_go_encrypt.sh`,
+  `test_go_encfile.sh` and `test_aead.sh` all pass.
+- The C and Go **demo walkthroughs** still spell the construction out, deliberately: they
+  exist to print the intermediate values, so collapsing the steps into one call would
+  remove what they are for.
+
+### Fixed
+- Nothing in this release changes what any port produces.  See below for what that was a
+  deliberate choice about.
+
+### Security
+- **`TODO #313` filed: HSKE-NL-A1 interoperates at 256 bits only — four ports, four
+  keystreams, and `dec` exits 0.**  Found by #312 while checking the three ports against
+  each other at a width nothing in the repo had ever exercised.  At `n = 256` all four
+  agree; at `n = 128` a single Python-written ciphertext decrypts to four different
+  plaintexts under the four CLIs.  Three independent causes: the KDF domain constant is
+  truncated at **opposite ends** (Python takes its HIGH `n` bits, Go's `RnlKdfSeed` the LOW
+  `n` bits — disjoint halves at n = 128); C's `load_sym_key` **ignores the declared width**
+  and zero-extends a narrow key to `KEYBITS`; and Java is 256-fixed too yet still differs
+  from C.  Nothing caught it because `hske-nla1` is a raw XOR keystream with **no
+  authentication tag**, so a wrong keystream is not a detectable event — `dec` writes
+  garbage and exits 0 — and every test in the repo runs at the default 256 bits, where the
+  four genuinely agree.  **#312 preserved each port's rule rather than unifying it**:
+  converging is a wire-format decision that owes a `MIGRATING.md` entry, and making it
+  silently inside a refactor is precisely what #313's own "what must NOT happen" warns
+  against.  The new suite functions each carry a comment naming the rule they preserve and
+  pointing at #313.
+
+## [8.2.1] - 2026-09-21
+
+### Changed
+- **The nine `cli_only` entropy draws triaged against the TODO #308 move, and TODO #309
+  demoted on the result (TODO #311).**  #309 filed the ordering question against itself —
+  *"if most of them turn out to be #308-shaped … this item is smaller than it looks and
+  possibly unnecessary; that question should be answered before any shipped surface is
+  added"* — and #308 shipped in v8.1.0 with the question still open.  Every `cli_only` row
+  in `spec/check_language_parity.py`'s `CLI_DRAW_COVERAGE` was read against source in all
+  four ports rather than against its own curated reason, which is #295's finding (two of
+  six reasons carried a false claim) applied to the table that came after it.
+  - **They split 7 / 2, adversely to #309.**  Seven — `pem_envelope_salt`,
+    `classical_privkey`, `rnl_kex_nonce_a`, `rnl_kex_nonce_b`, `hybrid_kex_nonce_b`,
+    `hcred_seed_h`, `hash_sig_master_seed` — are a single uniform draw of one fixed width
+    handed straight to a function that already accepts it (`hcred_syndrome`,
+    `hpks_wots_keygen`, `hpks_xmss_keygen`, `rnl_contributory_kdf`, PBKDF2, `gf_pow`), with
+    no loop, no rejection and no second draw.  A fixed stream pins the identity function,
+    so **the seam #309 proposes would teach nothing about any of the seven**.  The
+    classical exponent was checked specifically for #294's rejection-sampling split and
+    has none: every port draws a raw uniform `n`-bit value with no reduction mod `ord(g)`.
+  - **The other two are the two #309 itself nominates as worth pinning** —
+    `hske_nla1_nonce` and `threshold_commit_nonce` — and are also the only two where the
+    CLI transcribes a multi-step operation instead of drawing a parameter.  So the seam's
+    entire remaining target is the case the #308 move reaches more cheaply and without
+    adding a shipped surface.  #309 stays OPEN with nothing withdrawn; it is no longer
+    next, and its hazard analysis is owed in full if it is ever revived.
+  - **`threshold_commit_nonce` was examined and filed as a considered no**, not folded in:
+    the transcription is two steps (draw `k_j`, compute `R_j = g^{k_j}`), the suite's
+    `hpkst_sign` is the AGGREGATE path taking `nonces_in` or drawing its own, and no port
+    has a function to call — inventing one to host two lines would add a public surface to
+    make a table tidier.
+  - **No code moved and no row was retitled.**  #306 filed #308 rather than folding it in
+    and the same split applies: a triage that performs the move it recommends cannot
+    report that the move was the right call.  `hske_nla1_nonce` stays `cli_only` after
+    #312 ships, since the nonce remains a parameter there.
+- **`TODO #312` filed: HSKE-NL-A1's plain mode has no suite function in three of four
+  ports.**  Java's suite carries `HerraduraNl.hskeNlA1Encrypt` / `hskeNlA1Decrypt` and its
+  CLI calls them; C, Go and Python have no such function and transcribe
+  `base = K ^ nonce; seed = rnl_kdf_seed(base); ks = nl_fscx_revolve_v1(seed, base, I);
+  E = P ^ ks` inline, twice each (enc and dec).  The AEAD sibling `hske_nl_aead_encrypt`
+  **is** a suite function in every port and is called by every CLI, so the same branch of
+  the same command runs a primitive with `--aead` and a transcription without it.  Python's
+  copy additionally re-derives the RNL KDF-seed constant inline instead of calling the
+  shipped derivation — the class tests [46], [47], [49] and [51] each exist to cross-check,
+  except that here there is no suite function to cross-check against.  TODO #308 verbatim,
+  one protocol over.
+
 ## [8.2.0] - 2026-09-21
 
 ### Added

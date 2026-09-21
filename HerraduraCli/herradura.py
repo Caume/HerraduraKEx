@@ -64,7 +64,8 @@ from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, nl_v2_key_is_valid, gf_mul, gf_pow,
     nl_fscx_revolve_v3, nl_fscx_revolve_v3_inv, v3_rows,
-    hfscx_256, hfscx_256_ds, hmac_hfscx_256, _HFSCX256_IV_BYTES, _RNL_KDF_DC_256,
+    hfscx_256, hfscx_256_ds, hmac_hfscx_256, _HFSCX256_IV_BYTES,
+    rnl_kdf_seed, hske_nla1_encrypt, hske_nla1_decrypt,
     hske_nl_aead_encrypt, hske_nl_aead_decrypt,
     hske_nl_v2_duplex_encrypt, hske_nl_v2_duplex_decrypt,
     hske_nl_v3_duplex_encrypt, hske_nl_v3_duplex_decrypt,
@@ -1755,10 +1756,7 @@ def cmd_enc(args):
                 return
             if args.ad:
                 sys.exit("enc: --ad requires --aead")
-            base    = BitArray(nbits, K.uint ^ N_nonce.uint)
-            seed    = BitArray(nbits, base.rotated(nbits // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - nbits)))
-            ks      = nl_fscx_revolve_v1(seed, BitArray(nbits, base.uint ^ 0), nbits // 4)
-            E       = BitArray(nbits, P.uint ^ ks.uint)
+            E = hske_nla1_encrypt(P, K, N_nonce)
             _write_file(out_path, _encode_sym_ct('hske-nla1', E.uint, nbits, nonce_int=N_nonce.uint))
 
         elif algo == 'hske-nla2':
@@ -1904,10 +1902,7 @@ def cmd_dec(args):
             if nonce_int is None:
                 sys.exit("hske-nla1 ciphertext missing nonce")
             N_nonce = BitArray(nbits, nonce_int)
-            base    = BitArray(nbits, K.uint ^ N_nonce.uint)
-            seed    = BitArray(nbits, base.rotated(nbits // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - nbits)))
-            ks      = nl_fscx_revolve_v1(seed, BitArray(nbits, base.uint ^ 0), nbits // 4)
-            D       = BitArray(nbits, E.uint ^ ks.uint)
+            D = hske_nla1_decrypt(E, K, N_nonce)
         elif algo == 'hske-nla2':
             if not nl_v2_key_is_valid(K):
                 sys.exit("dec hske-nla2: %s" % _WEAK_V2_KEY_MSG)
@@ -2476,7 +2471,7 @@ def cmd_encfile(args):
     K       = BitArray(n, key_int)
     N_nonce = BitArray.random(n)
     base    = BitArray(n, K.uint ^ N_nonce.uint)
-    seed    = BitArray(n, base.rotated(n // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - n)))
+    seed    = rnl_kdf_seed(base)
 
     # Encrypt: ks_i = nl_fscx_revolve_v1(seed, base XOR i, 64); C_i = P_i XOR ks_i
     n_blocks  = (plaintext_len + blen - 1) // blen   # 0 for empty plaintext
@@ -2546,7 +2541,7 @@ def cmd_decfile(args):
     K       = BitArray(n, key_int)
     N_nonce = BitArray(n, int.from_bytes(nonce_bytes, 'big'))
     base    = BitArray(n, K.uint ^ N_nonce.uint)
-    seed    = BitArray(n, base.rotated(n // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - n)))
+    seed    = rnl_kdf_seed(base)
 
     # Recompute auth tag and compare before decrypting (verify-then-decrypt)
     mac_key = nl_fscx_revolve_v1(seed.rotated(n // 4), base, steps)

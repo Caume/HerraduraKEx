@@ -2503,6 +2503,61 @@ coins landed badly, and the second only became visible once the first was gone. 
 turns out to be a sampled gate, the question is not "what is its rate" but "how many terms
 does its rate have".
 
+**And whether a draw is worth reaching before building something to reach it with (TODO
+#311).** #306 censused 56 CLI entropy draws over 16 roles and #309 proposed a seam to pin
+the 9 that no suite-level pin reaches — an env var that replaces the CSPRNG in a shipped
+binary, which #309's own text calls "the sharpest footgun this repo could add". It also
+filed the prior question against itself and did not answer it: are those 9 draws in the
+right PLACE? #308 had just shown one that was not. **The nine split 7 / 2 and the split is
+adverse to the seam.** Seven are a single uniform draw of one fixed width handed straight
+to a function that already accepts it as an argument, with no loop, no rejection and no
+second draw — so a fixed stream pins the identity function and the seam would teach
+nothing about any of them. The remaining two are `hske_nla1_nonce` and
+`threshold_commit_nonce`, which are exactly the two #309 nominates as worth pinning, and
+are also the only two where the CLI transcribes a multi-step OPERATION rather than drawing
+a parameter. Four things to carry forward. (1) **The cheap question came first and it was
+decisive**, which is #302's discipline (ask what already holds this property) pointed at a
+proposal instead of at a protocol: the triage cost an afternoon of reading and removed the
+need for a new shipped surface. (2) **The curated reason was not evidence.** Three of the
+seven rows already said "a fixed stream would pin the identity function" and four did not;
+all seven were re-read against source in four ports, because #295 found two of six reasons
+carrying a false claim and this table came after it. The classical exponent was checked
+specifically for #294's rejection-sampling split and has none. (3) **A considered no is
+recorded as one.** `threshold_commit_nonce` transcribes two steps, `hpkst_sign` is the
+AGGREGATE path and no port has a function to call, so inventing one to host two lines
+would add a public surface to make a table tidier — written down in #311 so it is not
+re-derived as an oversight. (4) **The triage did not perform the move it recommends**, on
+#306's precedent of filing #308 rather than folding it in: a triage that also does the
+work cannot report that the work was the right call. What it found is TODO #312 — HSKE-NL-
+A1's plain mode is a suite function in Java alone, and C, Go and Python transcribe it
+twice each while calling the suite for its AEAD sibling in the same branch. #309 stays
+OPEN with nothing withdrawn, and is no longer next.
+
+**And what a consolidation finds when it makes four ports comparable (TODO #312, #313).**
+#311's triage said HSKE-NL-A1's plain mode was #308's shape one protocol over: Java's suite
+had `hskeNlA1Encrypt` and Java's CLI called it, while C, Go and Python transcribed the
+four-step construction — twice each, in `enc` AND `dec` — and called the suite for its AEAD
+sibling in the same branch of the same command. #312 moved it. Two things came out of that
+which the triage could not have predicted. (1) **Python's second copy of the KDF-seed
+derivation was seven copies**, four in the CLI and **three in the suite file itself**,
+because Python had no `rnl_kdf_seed` at all where C has had `ba_rnl_kdf_seed` and Go
+`RnlKdfSeed` since v1.8.0 — the class tests [46], [47], [49] and [51] each exist to
+cross-check, except that here there was no suite function to cross-check against. (2) **The
+four ports do not interoperate below 256 bits, and `dec` exits 0** (TODO #313): at n = 128 a
+single Python-written ciphertext decrypts to four different plaintexts, from a domain
+constant truncated at opposite ends (Python HIGH bits, Go LOW bits) and two ports that
+ignore the declared width. Three things to carry forward. **The bug was only visible once
+the ports were asked the same question** — `hske-nla1` has no authentication tag, so a wrong
+keystream is not a detectable event, and every test in the repo runs at the default 256 bits
+where the four genuinely agree; a four-way divergence sat under a green 4x4 matrix because
+nothing had ever run the algorithm at another width. **A refactor must not settle a wire
+question it happens to expose**: #312 preserved each port's rule and filed the convergence
+as its own item with a `MIGRATING.md` decision attached, because unifying it silently inside
+a consolidation is the move #313's own "what must NOT happen" names. And **behaviour
+preservation was measured, not claimed** — pre-change ciphertexts decrypt to identical bytes
+under the post-change build in all three ports at three widths, which is #308's fixed-nonce
+byte-identity standard available more cheaply, since an A1 nonce travels in the ciphertext.
+
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
 surface under the repo's Security tab rather than as a required check.

@@ -211,6 +211,107 @@ closed without actually adding vectors.  The seam is a precondition for pinning,
 pinning -- #296's own diagnosis of #294 was a harness built and then thrown away while the
 documents went on asserting in the present tense that the check existed.
 
+**DEMOTED by TODO #311 (v8.2.1), which answered the ordering question above.**  The nine
+`cli_only` roles split 7 / 2, and the split is adverse to this item.  Seven --
+`pem_envelope_salt`, `classical_privkey`, `rnl_kex_nonce_a`, `rnl_kex_nonce_b`,
+`hybrid_kex_nonce_b`, `hcred_seed_h`, `hash_sig_master_seed` -- are a single uniform draw
+of one fixed width handed straight to a function that already takes it as an argument,
+with no loop, no rejection and no second draw, so **a fixed stream pins the identity
+function and the seam would teach nothing about any of them**.  The remaining two are
+`hske_nla1_nonce` and `threshold_commit_nonce` -- which are exactly the two this item
+nominates above as "the ones worth pinning", and are also the only two where the CLI
+transcribes a multi-step operation rather than drawing a parameter.  One of them
+(`hske_nla1_nonce`) is #308-shaped outright and is now **TODO #312**; the other was
+examined and filed as a considered no.
+
+So the seam's whole remaining target is a case the #308 move reaches more cheaply and
+without adding a shipped surface.  **This item is not closed** -- the hazard analysis it
+owes is owed in full if it is ever revived, and nothing above is withdrawn -- but it is
+not next, and it should not be implemented as posed.  Revisit only if a future `cli_only`
+role appears that is neither parameter-fed nor movable.
+
 Status: **OPEN**
 
 ---
+
+### #313: HSKE-NL-A1 interoperates at 256 bits only — four ports, four keystreams, and `dec` exits 0
+
+**Found by TODO #312 while giving the operation a suite home, and it is why that item
+preserved each port's behaviour instead of unifying it.**  `enc --algo hske-nla1` accepts a
+session key of any width the `kex` that produced it was run at (`--bits 32/64/128` are
+supported and used by the demo rings).  At `n = 256` all four CLIs agree.  **At every other
+width all four disagree, and they disagree in four different ways.**
+
+Measured, one 128-bit session key, one Python-produced ciphertext, the four CLIs asked to
+decrypt it — with the `n = 256` control passing 4/4 first:
+
+| port | plaintext recovered at n = 128 |
+|---|---|
+| Python | `41420000…`  (correct — it wrote the ciphertext) |
+| Go | `5928c968…` |
+| C | `9208e37d…` |
+| Java | `9d3c1af7…` |
+
+**Three independent causes, which is why this is one item and not three.**
+
+1. **The KDF domain constant is truncated at opposite ends.**  `_RNL_KDF_DC_256` is defined
+   at 256 bits; below that, Python takes its **HIGH** `n` bits (`DC >> (256 - nbits)`) and
+   Go's `RnlKdfSeed` takes its **LOW** `n` bits (`RnlKdfDC[32-n/8:]`).  At `n = 128` those
+   are `6a09e667…f53a` and `510e527f…cd19` — disjoint halves of the same constant.
+2. **C ignores the declared width entirely.**  `load_sym_key` calls `ba_from_ra` into a
+   fixed `KEYBITS` `BitArray`, so a 128-bit session key is silently zero-extended to 256
+   and the whole construction runs at 256.  This is not a truncation choice; the width
+   never reaches the primitive.  C is compiled for one `KEYBITS`, so it has nowhere to put
+   the answer even if it wanted one.
+3. **Java is 256-fixed too** (`Herradura.rol(base, N / 8)`, full-width `RNL_KDF_DC_256`)
+   and still differs from C, so the two 256-fixed ports do not even agree with each other
+   about how a narrow key becomes a wide one.
+
+**Why nothing caught it.**  `hske-nla1` is a raw XOR keystream with **no authentication
+tag** — that is the whole difference from its AEAD sibling — so a wrong keystream is not a
+detectable event.  `dec` writes garbage and **exits 0**.  This is TODO #235's implicit-
+rejection shape (a silent mismatch rather than an error) arriving by a different route, and
+it defeats every test the repo has: the 4x4 interop matrix, `test_encrypt.sh`,
+`test_c_encrypt.sh` and `test_aead.sh` all run at the default 256 bits, where the four
+genuinely agree.  `KAT/classical_quartet.json` pins `n = 256`.  Nothing anywhere exercises
+`hske-nla1` at another width, so a four-way divergence sat under a green matrix.
+
+**It is not confined to `hske-nla1`.**  `rnl_kdf_seed` is shared: its own comment says
+"wherever an HKEX-RNL KDF or HSKE-NL-A1 seed is required".  Anything that derives a seed at
+a width other than 256 inherits cause (1).  Establishing the full blast radius is part of
+this item and was deliberately not guessed at in #312.
+
+**THE DECISION THIS ITEM OWES, and it is not obviously MAJOR.**  CLAUDE.md reserves MAJOR
+for "a change to what an existing `--algo` value produces or accepts" and for making an
+existing artifact "unreadable by a newer build".  Converging the ports would do the second
+— a Python-written 128-bit A1 ciphertext would stop decrypting — **but it cannot break
+interoperability, because there is none to break at those widths**: today no two ports
+agree, so no cross-port artifact at `n != 256` has ever been readable.  The only thing
+broken is a port reading back its own old narrow ciphertexts.  Weigh that against the
+alternative, which is to keep four incompatible behaviours documented as such.  Three
+routes, and the item must pick one IN THE ITEM:
+
+* **Converge on one rule** (and `MIGRATING.md` regardless of which version component
+  moves, per CLAUDE.md).  Go's LOW-bits truncation is the better-founded one — it is what a
+  fixed-size byte array naturally yields and it is what C's `_RNL_KDF_DC[i]` loop does at
+  256 — but Python's HIGH-bits rule is what the deployed Python CLI has always written.
+  Whichever wins, C cannot follow without a variable-width `BitArray`, which it does not
+  have.
+* **Refuse `n != 256` for `hske-nla1`** in all four CLIs.  Fails closed, is a one-line
+  change per port, makes the divergence unreachable rather than resolved, and costs the
+  demo rings a mode they may not actually use — check before assuming they do.
+* **Document the width as 256-only and leave the code alone.**  The weakest option and the
+  one this repo's own history argues against: #274, #287 and #269 are all the same finding,
+  an unrecognised or out-of-contract input silently taking a weaker branch.
+
+**What must NOT happen.**  Picking the rule that makes the smallest diff.  The three causes
+have different costs — (1) is a constant, (2) is C's whole fixed-width design — and a fix
+that unifies (1) while leaving (2) would make C and Java agree with nobody while reporting
+that the divergence was closed.
+
+**Prerequisite for anything here:** a test that runs `hske-nla1` at a width other than 256
+across all four CLIs.  There is none today, which is the reason this shipped, and it should
+land before the fix rather than after it.
+
+Status: **OPEN**
+
