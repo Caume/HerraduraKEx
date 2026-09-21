@@ -20231,3 +20231,104 @@ would have been recording an intention rather than a fact.
 
 Status: **DONE v8.2.1** — the nine `cli_only` draws triaged against the #308 move: seven are single parameter-fed draws a seam could teach nothing about, two transcribe an operation, and #309 is demoted rather than implemented.
 
+
+### #312: HSKE-NL-A1's plain mode has no suite function in three of four ports
+
+**TODO #311's triage found this and it is TODO #308 verbatim, one protocol over.**  Java's
+suite carries `HerraduraNl.hskeNlA1Encrypt(pt, key, nonce)` and `hskeNlA1Decrypt`, and
+`HerraduraCli.java` CALLS them (lines 986 and 1107).  C, Go and Python have **no such
+suite function at all** — their CLIs transcribe the four-step construction inline:
+
+```
+base = K XOR nonce;  seed = rnl_kdf_seed(base);
+ks   = nl_fscx_revolve_v1(seed, base, I_VALUE);  E = P XOR ks
+```
+
+`herradura_cli.c` (cmd_enc / cmd_dec), `herradura_cli.go` (cmdEnc / cmdDec) and
+`herradura.py` (cmd_enc / cmd_dec) each carry it TWICE — once per direction, six
+transcriptions of a shipped primitive — plus the `encfile` / `decfile` container path.
+
+**The AEAD sibling is a suite function in every port.**  `hske_nl_aead_encrypt` exists in
+C, Go, Python and Java and is called by all four CLIs.  So `enc --algo hske-nla1 --aead`
+runs a suite primitive and `enc --algo hske-nla1` runs a transcription, in the same branch
+of the same function, three ports out of four.
+
+**Python's transcription is the worst of the three**, and it is the class CLAUDE.md's
+Testing section already names: it does not call the suite's KDF-seed derivation, it
+RE-DERIVES it inline —
+
+```python
+seed = BitArray(nbits, base.rotated(nbits // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - nbits)))
+```
+
+— a second copy of a domain constant with nothing cross-checking it against the shipped
+one.  Numbered tests [46], [47], [49] and [51] all exist because Python's harness
+re-implements a primitive and each one cross-checks the copy against the suite; here there
+is no suite function to cross-check against, so the copy is unguarded.  Go calls the real
+`RnlKdfSeed` and C the real `ba_rnl_kdf_seed`, so the divergence is Python-only and is a
+DERIVATION divergence, not a consumption-order one — invisible to the randomness axis
+(#296), to `PARAM_USE_CORPUS` (#295, which reads whether a constant is read, not which
+copy) and to every round-trip, because all four copies currently agree.
+
+**The fix is #308's fix.**  Adopt Java's shape verbatim in C, Go and Python — a suite
+`hske_nla1_encrypt(pt, key, nonce)` whose decrypt is the same function — on the standing
+precedent (#294, #296, #308) that adopting an existing correct port beats inventing a
+fourth API.  The nonce stays a PARAMETER, as it is in Java and as it is in the AEAD
+sibling, so the CLI keeps the draw and `CLI_DRAW_COVERAGE`'s `hske_nla1_nonce` row stays
+`cli_only` — **this item does not close that row and must not be read as closing it.**
+What it buys is that the OPERATION becomes pinnable by the machinery #296 and #297 built,
+and that Python's second copy of the KDF-seed derivation goes away.
+
+**What #311 measured, so it is not re-litigated here.**  This is one of only two
+`cli_only` roles whose CLI transcribes a multi-step operation; the other seven are a
+single uniform draw consumed immediately as a parameter.  It is the only one of the nine
+where a suite function already exists in a port and is not called by the other three.
+
+**Ordering.**  Ahead of #309, which #311 demoted: the seam #309 would build exists to
+reach draws like this one, and moving the operation is the cheaper half of that.
+
+**DONE.**  `hske_nla1_encrypt` / `hske_nla1_decrypt` now exist in C (`herradura.h`), Go
+(`herradura/herradura.go` as `HskeNlA1Encrypt` / `HskeNlA1Decrypt`) and Python (the suite
+file), with Java's argument order and its its-own-inverse decrypt adopted verbatim, on the
+#294 / #296 / #308 precedent that an existing correct port beats a fourth API.  All six
+CLI transcriptions are gone — `cmd_enc` / `cmd_dec` in each of the three ports.
+
+**Python's second copy of the KDF-seed derivation is gone too, and it was worse than the
+item recorded.**  The expression `ROL(base, n/8) XOR _RNL_KDF_DC_256` was written out
+**seven** times: four in `HerraduraCli/herradura.py` (enc, dec, encfile, decfile) and
+**three in the suite file itself** (`_hske_nl_aead_streams`, `_hpake_rnl_kdf`, and the
+HKEX-RNL A1 path).  C has had `ba_rnl_kdf_seed` and Go `RnlKdfSeed` since v1.8.0; Python
+had no such function at all.  It does now (`rnl_kdf_seed`), and `_RNL_KDF_DC_256` is
+referenced in exactly one place in the tree.  The CLI no longer imports the constant.
+
+**Behaviour-preserving, and verified as such rather than asserted.**  #308's standard was
+byte-identity at a fixed nonce; the same evidence is available here more cheaply, because
+the nonce travels in the ciphertext — ciphertexts written by the PRE-change build decrypt
+to identical bytes under the post-change build, in all three ports, at n = 256, 128 and 64.
+The Python suite function was additionally checked against the retired inline expression
+over random (K, nonce, P) at n = 256 / 128 / 64 / 32.  The 4x4 CLI matrix on `hske-nla1` is
+16/16 at n = 256.
+
+**What it found, and it is bigger than the refactor: TODO #313.**  Checking the three ports
+against each other at a width other than 256 — which nothing in the repo had ever done —
+showed **all four disagreeing, in four different ways**, and `dec` exiting 0 with garbage
+because A1 has no tag.  The causes are a domain constant truncated at opposite ends
+(Python HIGH bits, Go LOW bits) and two ports that ignore the declared width altogether.
+This item therefore **preserved each port's rule rather than unifying it**: converging is a
+wire-format decision with a `MIGRATING.md` entry attached, and making it silently inside a
+refactor is exactly the move #313's own "what must NOT happen" warns against.  The suite
+functions carry a comment saying which rule they preserve and pointing at #313.
+
+**Two things deliberately left alone.**  The `encfile` / `decfile` path transcribes only
+`base` and `seed`, then calls the suite's own block functions — it is a different
+(multi-block CTR) operation, so it now calls `rnl_kdf_seed` and nothing more.  And the C
+and Go **demo walkthroughs** still spell the construction out: they exist to print the
+intermediate values, so replacing the steps with one call would remove the thing they are
+for.
+
+**One asymmetry created and recorded**: Java is now the only port without a named
+KDF-seed helper, inlining the expression inside `hskeNlA1Encrypt`.  Java was the port that
+was already right about the operation, and adding the helper there is cosmetic rather than
+a parity defect — noted so it is a decision, not an oversight.
+
+Status: **DONE v8.3.0** — HSKE-NL-A1's plain mode became a suite function in C, Go and Python; six CLI transcriptions and seven copies of the KDF-seed derivation removed; the width divergence it uncovered filed as #313.

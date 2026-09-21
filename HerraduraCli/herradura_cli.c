@@ -2761,11 +2761,8 @@ static void cmd_enc(int argc, char **argv)
                 return;
             }
 
-            BitArray base, seed, ks, E;
-            ba_xor(&base, &K, &N_nonce);
-            ba_rnl_kdf_seed(&seed, &base);
-            nl_fscx_revolve_v1_ba(&ks, &seed, &base, I_VALUE);
-            ba_xor(&E, &P, &ks);
+            BitArray E;
+            hske_nla1_encrypt(&E, &P, &K, &N_nonce);
             uint8_t it0[8], itn[DER_INT_LEN(KEYBYTES)], itE[DER_INT_LEN(KEYBYTES)], itnb[8];
             size_t l0, ln, lE, lnb;
             der_i_byte(1, it0, &l0);
@@ -3029,14 +3026,11 @@ static void cmd_dec(int argc, char **argv)
                 return;
             }
             if (fmt != 1 || ct.n_items < 4) die("dec: bad hske-nla1 ciphertext");
-            BitArray N_nonce, base, seed, ks;
+            BitArray N_nonce;
             ba_from_ra(&N_nonce, ct.vals[1], ct.vlens[1]);
             ba_from_ra(&E,       ct.vals[2], ct.vlens[2]);
             pem_key_free(&ct);
-            ba_xor(&base, &K, &N_nonce);
-            ba_rnl_kdf_seed(&seed, &base);
-            nl_fscx_revolve_v1_ba(&ks, &seed, &base, I_VALUE);
-            ba_xor(&D, &E, &ks);
+            hske_nla1_decrypt(&D, &E, &K, &N_nonce);
         } else {
             if (ct.n_items < 3) die("dec: bad symmetric ciphertext");
             ba_from_ra(&E, ct.vals[1], ct.vlens[1]);

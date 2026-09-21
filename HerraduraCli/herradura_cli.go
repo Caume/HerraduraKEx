@@ -3321,10 +3321,7 @@ func cmdEnc(args []string) {
 				fmt.Fprintln(os.Stderr, "enc: --ad requires --aead")
 				os.Exit(1)
 			}
-			base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
-			seed  := RnlKdfSeed(base)
-			ks    := NlFscxRevolveV1(seed, base, n/4)
-			E     := NewBitArray(n, new(big.Int).Xor(&P.Val, &ks.Val))
+			E     := HskeNlA1Encrypt(P, K, nonce)
 			pem, err = encodeSymCT("hske-nla1", &E.Val, n, &nonce.Val)
 		case "hske-nla2":
 			if !NlV2KeyIsValid(K) {
@@ -3595,10 +3592,7 @@ func cmdDec(args []string) {
 				os.Exit(1)
 			}
 			nonce := NewBitArray(n, nonceInt)
-			base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
-			seed  := RnlKdfSeed(base)
-			ks    := NlFscxRevolveV1(seed, base, n/4)
-			D      = NewBitArray(n, new(big.Int).Xor(&E.Val, &ks.Val))
+			D      = HskeNlA1Decrypt(E, K, nonce)
 		case "hske-nla2":
 			if !NlV2KeyIsValid(K) {
 				die("dec hske-nla2", errWeakV2Key)

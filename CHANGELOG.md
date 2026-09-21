@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.3.0] - 2026-09-21
+
+### Added
+- **`hske_nla1_encrypt` / `hske_nla1_decrypt` in C, Go and Python — HSKE-NL-A1's plain mode
+  is a suite function in all four ports now (TODO #312).**  Java's
+  `HerraduraNl.hskeNlA1Encrypt` has been one all along and Java's CLI called it; C, Go and
+  Python had no such function and their CLIs transcribed the construction
+  (`base = K ^ nonce; seed = rnl_kdf_seed(base); ks = nl_fscx_revolve_v1(seed, base, n/4);
+  E = P ^ ks`) inline — **twice each, in `enc` AND `dec`** — while calling the suite for its
+  AEAD sibling `hske_nl_aead_encrypt` in the same branch of the same command.  Java's
+  argument order and its its-own-inverse decrypt are adopted verbatim, on the #294 / #296 /
+  #308 precedent that an existing correct port beats a fourth API.  MINOR: new public API
+  surface, nothing existing changed.
+- **`rnl_kdf_seed` in the Python suite.**  C has had `ba_rnl_kdf_seed` and Go `RnlKdfSeed`
+  since v1.8.0; Python had none, and wrote `ROL(base, n/8) XOR _RNL_KDF_DC_256` out
+  **seven** times — four in `HerraduraCli/herradura.py` and **three in the suite file
+  itself**.  That is the second-copy-of-a-derivation class numbered tests [46], [47], [49]
+  and [51] each exist to cross-check, except that here there was no suite function to
+  cross-check against.  `_RNL_KDF_DC_256` is now referenced in exactly one place in the
+  tree, and the CLI no longer imports it.
+
+### Changed
+- **Six CLI transcriptions removed** (`cmd_enc` / `cmd_dec` in each of C, Go and Python),
+  plus the `encfile` / `decfile` seed derivations, which now call `rnl_kdf_seed`.  Those
+  two remain distinct call sites on purpose: they are a multi-block CTR container that
+  already calls the suite's own block functions, so only the seed step was transcribed.
+- **Behaviour-preserving, verified rather than asserted.**  Ciphertexts written by the
+  pre-change build decrypt to identical bytes under the post-change build in all three
+  ports at n = 256, 128 and 64; the Python suite function was additionally checked against
+  the retired inline expression over random (K, nonce, P) at n = 256 / 128 / 64 / 32; the
+  4x4 CLI matrix on `hske-nla1` is 16/16 at n = 256, and `test_encrypt.sh`,
+  `test_encfile.sh`, `test_c_encrypt.sh`, `test_c_encfile.sh`, `test_go_encrypt.sh`,
+  `test_go_encfile.sh` and `test_aead.sh` all pass.
+- The C and Go **demo walkthroughs** still spell the construction out, deliberately: they
+  exist to print the intermediate values, so collapsing the steps into one call would
+  remove what they are for.
+
+### Fixed
+- Nothing in this release changes what any port produces.  See below for what that was a
+  deliberate choice about.
+
+### Security
+- **`TODO #313` filed: HSKE-NL-A1 interoperates at 256 bits only — four ports, four
+  keystreams, and `dec` exits 0.**  Found by #312 while checking the three ports against
+  each other at a width nothing in the repo had ever exercised.  At `n = 256` all four
+  agree; at `n = 128` a single Python-written ciphertext decrypts to four different
+  plaintexts under the four CLIs.  Three independent causes: the KDF domain constant is
+  truncated at **opposite ends** (Python takes its HIGH `n` bits, Go's `RnlKdfSeed` the LOW
+  `n` bits — disjoint halves at n = 128); C's `load_sym_key` **ignores the declared width**
+  and zero-extends a narrow key to `KEYBITS`; and Java is 256-fixed too yet still differs
+  from C.  Nothing caught it because `hske-nla1` is a raw XOR keystream with **no
+  authentication tag**, so a wrong keystream is not a detectable event — `dec` writes
+  garbage and exits 0 — and every test in the repo runs at the default 256 bits, where the
+  four genuinely agree.  **#312 preserved each port's rule rather than unifying it**:
+  converging is a wire-format decision that owes a `MIGRATING.md` entry, and making it
+  silently inside a refactor is precisely what #313's own "what must NOT happen" warns
+  against.  The new suite functions each carry a comment naming the rule they preserve and
+  pointing at #313.
+
 ## [8.2.1] - 2026-09-21
 
 ### Changed

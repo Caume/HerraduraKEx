@@ -2533,6 +2533,31 @@ A1's plain mode is a suite function in Java alone, and C, Go and Python transcri
 twice each while calling the suite for its AEAD sibling in the same branch. #309 stays
 OPEN with nothing withdrawn, and is no longer next.
 
+**And what a consolidation finds when it makes four ports comparable (TODO #312, #313).**
+#311's triage said HSKE-NL-A1's plain mode was #308's shape one protocol over: Java's suite
+had `hskeNlA1Encrypt` and Java's CLI called it, while C, Go and Python transcribed the
+four-step construction — twice each, in `enc` AND `dec` — and called the suite for its AEAD
+sibling in the same branch of the same command. #312 moved it. Two things came out of that
+which the triage could not have predicted. (1) **Python's second copy of the KDF-seed
+derivation was seven copies**, four in the CLI and **three in the suite file itself**,
+because Python had no `rnl_kdf_seed` at all where C has had `ba_rnl_kdf_seed` and Go
+`RnlKdfSeed` since v1.8.0 — the class tests [46], [47], [49] and [51] each exist to
+cross-check, except that here there was no suite function to cross-check against. (2) **The
+four ports do not interoperate below 256 bits, and `dec` exits 0** (TODO #313): at n = 128 a
+single Python-written ciphertext decrypts to four different plaintexts, from a domain
+constant truncated at opposite ends (Python HIGH bits, Go LOW bits) and two ports that
+ignore the declared width. Three things to carry forward. **The bug was only visible once
+the ports were asked the same question** — `hske-nla1` has no authentication tag, so a wrong
+keystream is not a detectable event, and every test in the repo runs at the default 256 bits
+where the four genuinely agree; a four-way divergence sat under a green 4x4 matrix because
+nothing had ever run the algorithm at another width. **A refactor must not settle a wire
+question it happens to expose**: #312 preserved each port's rule and filed the convergence
+as its own item with a `MIGRATING.md` decision attached, because unifying it silently inside
+a consolidation is the move #313's own "what must NOT happen" names. And **behaviour
+preservation was measured, not claimed** — pre-change ciphertexts decrypt to identical bytes
+under the post-change build in all three ports at three widths, which is #308's fixed-nonce
+byte-identity standard available more cheaply, since an A1 nonce travels in the ciphertext.
+
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
 surface under the repo's Security tab rather than as a required check.

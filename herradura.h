@@ -1235,6 +1235,34 @@ static void _hske_nl_aead_xor_ks(const BitArray *seed, const BitArray *base,
     }
 }
 
+/* HSKE-NL-A1's plain (unauthenticated) counter mode:
+ *   base = K XOR nonce;  seed = ba_rnl_kdf_seed(base);
+ *   ks   = nl_fscx_revolve_v1(seed, base, I_VALUE);  E = P XOR ks
+ * Java's HerraduraNl.hskeNlA1Encrypt has always been a suite function; C, Go
+ * and Python transcribed it in their CLIs (enc AND dec) until TODO #312, while
+ * calling the suite for its AEAD sibling in the same branch of the same
+ * command.  Argument order and the its-own-inverse decrypt follow Java.
+ * Caller supplies a fresh random nonce (e.g. via ba_rand); never reuse a
+ * (key, nonce) pair — E = P XOR ks makes a repeat a two-time pad outright.
+ * This build is KEYBITS-wide throughout: see TODO #313 for what the four ports
+ * do below 256 bits, where they do not agree. */
+static void hske_nla1_encrypt(BitArray *ct_out, const BitArray *pt,
+                              const BitArray *key, const BitArray *nonce)
+{
+    BitArray base, seed, ks;
+    ba_xor(&base, key, nonce);
+    ba_rnl_kdf_seed(&seed, &base);
+    nl_fscx_revolve_v1_ba(&ks, &seed, &base, I_VALUE);
+    ba_xor(ct_out, pt, &ks);
+}
+
+/* Inverse of hske_nla1_encrypt — a XOR keystream is its own inverse. */
+static void hske_nla1_decrypt(BitArray *pt_out, const BitArray *ct,
+                              const BitArray *key, const BitArray *nonce)
+{
+    hske_nla1_encrypt(pt_out, ct, key, nonce);
+}
+
 /* AEAD-encrypt pt_len bytes into ct_out (same length) and tag_out (32 bytes).
  * Caller supplies a fresh random 256-bit nonce (e.g. via ba_rand). */
 static void hske_nl_aead_encrypt(const BitArray *key, const BitArray *nonce,

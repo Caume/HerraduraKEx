@@ -4396,6 +4396,51 @@ def drbg_reseed(drbg: HDrbg, entropy: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 38/312 — RNL KDF seed, and HSKE-NL-A1 in counter mode
+#
+# rnl_kdf_seed is the KDF degeneracy guard of TODO #38: seed = ROL(k, n/8) XOR
+# RNL_KDF_DC.  C has had ba_rnl_kdf_seed and Go RnlKdfSeed since v1.8.0; Python
+# wrote the expression out at each use, three times in this file and four in
+# HerraduraCli/herradura.py, which is the second-copy-of-a-derivation class
+# TODO #312 closed.
+#
+# hske_nla1_encrypt is HSKE-NL-A1's plain (unauthenticated) counter mode:
+#   base = K XOR nonce;  seed = rnl_kdf_seed(base)
+#   ks   = nl_fscx_revolve_v1(seed, base, n/4);  E = P XOR ks
+# Java's HerraduraNl.hskeNlA1Encrypt has always been a suite function; C, Go and
+# Python transcribed it in their CLIs (enc AND dec) until TODO #312, while
+# calling the suite for its AEAD sibling in the same branch of the same command.
+# Argument order and the its-own-inverse decrypt follow Java verbatim.
+#
+# WIDTH: the ports DISAGREE below 256 bits and this function preserves Python's
+# rule rather than settling it — see TODO #313.  At n = 256, where every port
+# agrees and every test runs, all four are byte-identical.
+# ---------------------------------------------------------------------------
+
+
+def rnl_kdf_seed(k: BitArray) -> BitArray:
+    """ROL(k, n/8) XOR RNL_KDF_DC, the TODO #38 KDF degeneracy guard.
+
+    The domain constant is defined at 256 bits; at a narrower width Python
+    takes its HIGH n bits (Go's RnlKdfSeed takes the LOW n bits — TODO #313)."""
+    n = k._size
+    return BitArray(n, k.rotated(n // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - n)))
+
+
+def hske_nla1_encrypt(pt: BitArray, key: BitArray, nonce: BitArray) -> BitArray:
+    """HSKE-NL-A1 counter-mode encrypt: E = P XOR nl_fscx_revolve_v1(seed, base, n/4)."""
+    n    = key._size
+    base = BitArray(n, key.uint ^ nonce.uint)
+    ks   = nl_fscx_revolve_v1(rnl_kdf_seed(base), base, n // 4)
+    return BitArray(n, pt.uint ^ ks.uint)
+
+
+def hske_nla1_decrypt(ct: BitArray, key: BitArray, nonce: BitArray) -> BitArray:
+    """Inverse of hske_nla1_encrypt — a XOR keystream is its own inverse."""
+    return hske_nla1_encrypt(ct, key, nonce)
+
+
+# ---------------------------------------------------------------------------
 # 95 — HSKE-NL-AEAD: authenticated encryption with associated data (TODO #95)
 #
 # Encrypt-then-MAC over the HSKE-NL-A1 CTR keystream:
@@ -4420,7 +4465,7 @@ _AEAD_DS = b'HSKE-NL-AEAD-v1'
 def _hske_nl_aead_streams(key: BitArray, nonce: BitArray) -> tuple:
     """Derive (base, seed, mac_iv) for one (key, nonce) pair."""
     base    = BitArray(KEYBITS, key.uint ^ nonce.uint)
-    seed    = BitArray(KEYBITS, base.rotated(KEYBITS // 8).uint ^ _RNL_KDF_DC_256)
+    seed    = rnl_kdf_seed(base)
     mac_key = nl_fscx_revolve_v1(seed.rotated(KEYBITS // 4), base, I_VALUE)
     mac_iv  = BitArray(KEYBITS, mac_key.uint ^ int.from_bytes(_HFSCX256_IV_BYTES, 'big'))
     return base, seed, mac_iv
@@ -4729,7 +4774,7 @@ def _hpake_derive_zkp_witness(pw_oprf_output: bytes) -> int:
 def _hpake_rnl_kdf(K_raw: 'BitArray') -> bytes:
     """HKEX-RNL session KDF (matches suite demo pattern)."""
     sk = nl_fscx_revolve_v1(
-        BitArray(KEYBITS, K_raw.rotated(KEYBITS // 8).uint ^ _RNL_KDF_DC_256),
+        rnl_kdf_seed(K_raw),
         K_raw, KEYBITS // 4)
     return sk.bytes
 
@@ -5006,7 +5051,7 @@ def main():
     N_a1       = BitArray.random(KEYBITS)                         # per-session nonce
     base_a1    = BitArray(KEYBITS, preshared.uint ^ N_a1.uint)   # K XOR N
     ks_a1      = nl_fscx_revolve_v1(
-                    BitArray(KEYBITS, base_a1.rotated(KEYBITS // 8).uint ^ _RNL_KDF_DC_256),
+                    rnl_kdf_seed(base_a1),
                     BitArray(KEYBITS, base_a1.uint ^ counter),
                     KEYBITS // 4)
     E_a1 = BitArray(KEYBITS, plaintext.uint ^ ks_a1.uint)

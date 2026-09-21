@@ -234,62 +234,84 @@ Status: **OPEN**
 
 ---
 
-### #312: HSKE-NL-A1's plain mode has no suite function in three of four ports
+### #313: HSKE-NL-A1 interoperates at 256 bits only — four ports, four keystreams, and `dec` exits 0
 
-**TODO #311's triage found this and it is TODO #308 verbatim, one protocol over.**  Java's
-suite carries `HerraduraNl.hskeNlA1Encrypt(pt, key, nonce)` and `hskeNlA1Decrypt`, and
-`HerraduraCli.java` CALLS them (lines 986 and 1107).  C, Go and Python have **no such
-suite function at all** — their CLIs transcribe the four-step construction inline:
+**Found by TODO #312 while giving the operation a suite home, and it is why that item
+preserved each port's behaviour instead of unifying it.**  `enc --algo hske-nla1` accepts a
+session key of any width the `kex` that produced it was run at (`--bits 32/64/128` are
+supported and used by the demo rings).  At `n = 256` all four CLIs agree.  **At every other
+width all four disagree, and they disagree in four different ways.**
 
-```
-base = K XOR nonce;  seed = rnl_kdf_seed(base);
-ks   = nl_fscx_revolve_v1(seed, base, I_VALUE);  E = P XOR ks
-```
+Measured, one 128-bit session key, one Python-produced ciphertext, the four CLIs asked to
+decrypt it — with the `n = 256` control passing 4/4 first:
 
-`herradura_cli.c` (cmd_enc / cmd_dec), `herradura_cli.go` (cmdEnc / cmdDec) and
-`herradura.py` (cmd_enc / cmd_dec) each carry it TWICE — once per direction, six
-transcriptions of a shipped primitive — plus the `encfile` / `decfile` container path.
+| port | plaintext recovered at n = 128 |
+|---|---|
+| Python | `41420000…`  (correct — it wrote the ciphertext) |
+| Go | `5928c968…` |
+| C | `9208e37d…` |
+| Java | `9d3c1af7…` |
 
-**The AEAD sibling is a suite function in every port.**  `hske_nl_aead_encrypt` exists in
-C, Go, Python and Java and is called by all four CLIs.  So `enc --algo hske-nla1 --aead`
-runs a suite primitive and `enc --algo hske-nla1` runs a transcription, in the same branch
-of the same function, three ports out of four.
+**Three independent causes, which is why this is one item and not three.**
 
-**Python's transcription is the worst of the three**, and it is the class CLAUDE.md's
-Testing section already names: it does not call the suite's KDF-seed derivation, it
-RE-DERIVES it inline —
+1. **The KDF domain constant is truncated at opposite ends.**  `_RNL_KDF_DC_256` is defined
+   at 256 bits; below that, Python takes its **HIGH** `n` bits (`DC >> (256 - nbits)`) and
+   Go's `RnlKdfSeed` takes its **LOW** `n` bits (`RnlKdfDC[32-n/8:]`).  At `n = 128` those
+   are `6a09e667…f53a` and `510e527f…cd19` — disjoint halves of the same constant.
+2. **C ignores the declared width entirely.**  `load_sym_key` calls `ba_from_ra` into a
+   fixed `KEYBITS` `BitArray`, so a 128-bit session key is silently zero-extended to 256
+   and the whole construction runs at 256.  This is not a truncation choice; the width
+   never reaches the primitive.  C is compiled for one `KEYBITS`, so it has nowhere to put
+   the answer even if it wanted one.
+3. **Java is 256-fixed too** (`Herradura.rol(base, N / 8)`, full-width `RNL_KDF_DC_256`)
+   and still differs from C, so the two 256-fixed ports do not even agree with each other
+   about how a narrow key becomes a wide one.
 
-```python
-seed = BitArray(nbits, base.rotated(nbits // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - nbits)))
-```
+**Why nothing caught it.**  `hske-nla1` is a raw XOR keystream with **no authentication
+tag** — that is the whole difference from its AEAD sibling — so a wrong keystream is not a
+detectable event.  `dec` writes garbage and **exits 0**.  This is TODO #235's implicit-
+rejection shape (a silent mismatch rather than an error) arriving by a different route, and
+it defeats every test the repo has: the 4x4 interop matrix, `test_encrypt.sh`,
+`test_c_encrypt.sh` and `test_aead.sh` all run at the default 256 bits, where the four
+genuinely agree.  `KAT/classical_quartet.json` pins `n = 256`.  Nothing anywhere exercises
+`hske-nla1` at another width, so a four-way divergence sat under a green matrix.
 
-— a second copy of a domain constant with nothing cross-checking it against the shipped
-one.  Numbered tests [46], [47], [49] and [51] all exist because Python's harness
-re-implements a primitive and each one cross-checks the copy against the suite; here there
-is no suite function to cross-check against, so the copy is unguarded.  Go calls the real
-`RnlKdfSeed` and C the real `ba_rnl_kdf_seed`, so the divergence is Python-only and is a
-DERIVATION divergence, not a consumption-order one — invisible to the randomness axis
-(#296), to `PARAM_USE_CORPUS` (#295, which reads whether a constant is read, not which
-copy) and to every round-trip, because all four copies currently agree.
+**It is not confined to `hske-nla1`.**  `rnl_kdf_seed` is shared: its own comment says
+"wherever an HKEX-RNL KDF or HSKE-NL-A1 seed is required".  Anything that derives a seed at
+a width other than 256 inherits cause (1).  Establishing the full blast radius is part of
+this item and was deliberately not guessed at in #312.
 
-**The fix is #308's fix.**  Adopt Java's shape verbatim in C, Go and Python — a suite
-`hske_nla1_encrypt(pt, key, nonce)` whose decrypt is the same function — on the standing
-precedent (#294, #296, #308) that adopting an existing correct port beats inventing a
-fourth API.  The nonce stays a PARAMETER, as it is in Java and as it is in the AEAD
-sibling, so the CLI keeps the draw and `CLI_DRAW_COVERAGE`'s `hske_nla1_nonce` row stays
-`cli_only` — **this item does not close that row and must not be read as closing it.**
-What it buys is that the OPERATION becomes pinnable by the machinery #296 and #297 built,
-and that Python's second copy of the KDF-seed derivation goes away.
+**THE DECISION THIS ITEM OWES, and it is not obviously MAJOR.**  CLAUDE.md reserves MAJOR
+for "a change to what an existing `--algo` value produces or accepts" and for making an
+existing artifact "unreadable by a newer build".  Converging the ports would do the second
+— a Python-written 128-bit A1 ciphertext would stop decrypting — **but it cannot break
+interoperability, because there is none to break at those widths**: today no two ports
+agree, so no cross-port artifact at `n != 256` has ever been readable.  The only thing
+broken is a port reading back its own old narrow ciphertexts.  Weigh that against the
+alternative, which is to keep four incompatible behaviours documented as such.  Three
+routes, and the item must pick one IN THE ITEM:
 
-**What #311 measured, so it is not re-litigated here.**  This is one of only two
-`cli_only` roles whose CLI transcribes a multi-step operation; the other seven are a
-single uniform draw consumed immediately as a parameter.  It is the only one of the nine
-where a suite function already exists in a port and is not called by the other three.
+* **Converge on one rule** (and `MIGRATING.md` regardless of which version component
+  moves, per CLAUDE.md).  Go's LOW-bits truncation is the better-founded one — it is what a
+  fixed-size byte array naturally yields and it is what C's `_RNL_KDF_DC[i]` loop does at
+  256 — but Python's HIGH-bits rule is what the deployed Python CLI has always written.
+  Whichever wins, C cannot follow without a variable-width `BitArray`, which it does not
+  have.
+* **Refuse `n != 256` for `hske-nla1`** in all four CLIs.  Fails closed, is a one-line
+  change per port, makes the divergence unreachable rather than resolved, and costs the
+  demo rings a mode they may not actually use — check before assuming they do.
+* **Document the width as 256-only and leave the code alone.**  The weakest option and the
+  one this repo's own history argues against: #274, #287 and #269 are all the same finding,
+  an unrecognised or out-of-contract input silently taking a weaker branch.
 
-**Ordering.**  Ahead of #309, which #311 demoted: the seam #309 would build exists to
-reach draws like this one, and moving the operation is the cheaper half of that.
+**What must NOT happen.**  Picking the rule that makes the smallest diff.  The three causes
+have different costs — (1) is a constant, (2) is C's whole fixed-width design — and a fix
+that unifies (1) while leaving (2) would make C and Java agree with nobody while reporting
+that the divergence was closed.
+
+**Prerequisite for anything here:** a test that runs `hske-nla1` at a width other than 256
+across all four CLIs.  There is none today, which is the reason this shipped, and it should
+land before the fix rather than after it.
 
 Status: **OPEN**
-
----
 

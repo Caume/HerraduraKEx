@@ -955,6 +955,33 @@ func hskeNlAeadTag(macKey, nonce *BitArray, ad, ct []byte) []byte {
 	return Hfscx256(buf, macIV)
 }
 
+// HskeNlA1Encrypt is HSKE-NL-A1's plain (unauthenticated) counter mode:
+//
+//	base = K XOR nonce;  seed = RnlKdfSeed(base)
+//	ks   = NlFscxRevolveV1(seed, base, n/4);  E = P XOR ks
+//
+// Java's HerraduraNl.hskeNlA1Encrypt has always been a suite function; C, Go
+// and Python transcribed it in their CLIs (enc AND dec) until TODO #312, while
+// calling the suite for its AEAD sibling in the same branch of the same
+// command.  Argument order and the its-own-inverse decrypt follow Java.
+//
+// WIDTH: the ports DISAGREE below 256 bits and this preserves Go's rule rather
+// than settling it — RnlKdfSeed takes the LOW n bits of the domain constant
+// where Python takes the HIGH n bits (TODO #313).  At n = 256, where every port
+// agrees and every test runs, all four are byte-identical.
+func HskeNlA1Encrypt(pt, key, nonce *BitArray) *BitArray {
+	n := key.Size()
+	base := NewBitArray(n, new(big.Int).Xor(&key.Val, &nonce.Val))
+	ks := NlFscxRevolveV1(RnlKdfSeed(base), base, n/4)
+	return NewBitArray(n, new(big.Int).Xor(&pt.Val, &ks.Val))
+}
+
+// HskeNlA1Decrypt is the inverse of HskeNlA1Encrypt — a XOR keystream is its
+// own inverse.
+func HskeNlA1Decrypt(ct, key, nonce *BitArray) *BitArray {
+	return HskeNlA1Encrypt(ct, key, nonce)
+}
+
 // HskeNlAeadEncrypt AEAD-encrypts pt under (key, nonce) with associated data
 // ad.  Returns (ct, tag): ct is len(pt) bytes, tag is 32 bytes.  The caller
 // supplies a fresh random 256-bit nonce (e.g. NewRandBitArray(256)).
