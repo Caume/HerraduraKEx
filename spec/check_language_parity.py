@@ -1557,13 +1557,30 @@ PRIMITIVES = {
         "java": r"Herradura.java::public static BigInteger hskeDecrypt\(",
     },
     "hpks-sign": {
-        "acknowledged":
-            "Go and Python build the Schnorr signature inline from gf_pow and "
-            "fscx_revolve; C and Java name the whole operation. Pinned four "
-            "ways by KAT/classical_quartet.json's HPKS vectors",
+        # Four-language parity since TODO #308 (v8.1.0).  This entry carried an
+        # `acknowledged` reason until then -- "Go and Python build the Schnorr
+        # signature inline from gf_pow and fscx_revolve" -- which was true of
+        # the SUITES and hid where those two ports' nonce was actually drawn:
+        # in their CLIs, on the far side of the randomness corpus boundary
+        # #306 found.  Pinned four ways by KAT/classical_quartet.json's HPKS
+        # vectors, with the nonce supplied as an argument.
         "c": r"static inline void hpks_sign\(",
+        "go": r"func HpksSign\(",
+        "python": r"^def hpks_sign\(",
         "java": r"Herradura.java::public static Signature hpksSign\(BigInteger "
                 r"msg, BigInteger priv, BigInteger k",
+    },
+    "hpks-nl-sign": {
+        # The NL counterpart, and the reason it is a SEPARATE entry rather than
+        # a note on the one above: `sign --algo hpks-nl` is its own CLI path,
+        # and in C, Go and Python the two shared ONE inline nonce draw, so
+        # moving only the classical half would have left the draw exactly where
+        # it was.  Java alone had both operations named before TODO #308.
+        "c": r"static inline void hpks_nl_sign\(",
+        "go": r"func HpksNlSign\(",
+        "python": r"^def hpks_nl_sign\(",
+        "java": r"HerraduraNl.java::public static Herradura.Signature "
+                r"hpksNlSign\(BigInteger msg, BigInteger priv, BigInteger k",
     },
     "hkex-gf-pubkey": {
         "acknowledged":
@@ -3213,12 +3230,12 @@ REPLAY_COVERAGE = {
         "reason":
             "One Schnorr nonce, and the signature it determines is pinned four "
             "ways by KAT/classical_quartet.json with that nonce as an "
-            "argument.  Go and Python are absent because they build the "
-            "signature inline from gf_pow rather than naming the operation -- "
-            "the asymmetry already filed as CLI_FLAG_PARITY's hpks-sign row.  "
-            "NOTE, and it is TODO #306: their nonce is then drawn in the CLI, "
-            "which this census's corpus does not read at all",
-        "c": "hpks_sign", "go": None, "python": None,
+            "argument.  Go's and Python's cells were None until TODO #308 "
+            "(v8.1.0), with the note that their nonce was drawn in the CLI -- "
+            "which #306 then read, and #308 moved: all four ports now name the "
+            "operation, so the draw is inside this census rather than beside "
+            "it",
+        "c": "hpks_sign", "go": "HpksSign", "python": "hpks_sign",
         "java": "Herradura.java::hpksSign",
     },
     "hpke_encrypt": {
@@ -3266,8 +3283,12 @@ REPLAY_COVERAGE = {
     },
     "hpks_nl_sign": {
         "status": "unpinned",
-        "reason": "The NL counterpart of hpks_sign, same argument",
-        "c": None, "go": None, "python": None,
+        "reason":
+            "The NL counterpart of hpks_sign, same argument.  C, Go and Python "
+            "gained the operation in TODO #308: `sign --algo hpks-nl` shared "
+            "the classical path's one inline nonce draw in all three, so the "
+            "classical half could not move on its own",
+        "c": "hpks_nl_sign", "go": "HpksNlSign", "python": "hpks_nl_sign",
         "java": "HerraduraNl.java::hpksNlSign",
     },
     "hske_nl_aead_encrypt": {
@@ -3363,32 +3384,35 @@ REPLAY_COVERAGE = {
 RANDOMNESS_CENSUS = {
     "c": [
         "ba_rand", "hcred_prove", "hcred_prove_kkw", "hpake_login_demo",
-        "hpake_register", "hpke_encrypt", "hpks_sign", "hpks_stern_f_sign",
+        "hpake_register", "hpke_encrypt", "hpks_nl_sign", "hpks_sign",
+        "hpks_stern_f_sign",
         "hpkst_sign", "hske_decrypt_masked", "hske_encrypt_masked", "oprf_blind",
         "oprf_keygen", "rnl_cbd_poly_dim", "rnl_rand_poly",
         "rnl_sigma_sign", "stern_f_keygen", "stern_rand_error", "stern_ring_sign",
         "stern_ring_simulate", "stern_ring_trit", "zkp_nl_keygen",
         "zkp_nl_pp_prove", "zkp_nl_prove",
-    ],   # 24
+    ],   # 25
     "go": [
         "HcredProve", "HcredProveKkw", "HpakeLoginDemo", "HpakeRegister",
-        "HpkeEncrypt", "HpksSternFSign", "HpksSternRingSign", "HpkstSign",
+        "HpkeEncrypt", "HpksNlSign", "HpksSign",
+        "HpksSternFSign", "HpksSternRingSign", "HpkstSign",
         "HskeDecryptMasked", "HskeEncryptMasked", "NewRandBitArray", "OprfBlind",
         "OprfKeygen", "QcMdpcEncap", "QcMdpcKeygen", "RnlCBDPoly", "RnlRandPoly",
         "RnlSigmaSign", "SternFKeygen", "SternRandError", "ZkpNlKeygen",
         "ZkpNlProve", "ZkpNlProvepp", "sternRingTrit", "sternSimulateRound",
-    ],   # 25
+    ],   # 27
     "python": [
         "_csprng_weight_t", "_dplex_encrypt", "_hcred_mpc_round", "_rnl_cbd_poly",
         "_rnl_rand_poly", "_stern_ring_trit", "_stern_simulate_round",
         "hcred_prove_kkw",
-        "hpake_login_demo", "hpake_register", "hpke_encrypt", "hpks_stern_f_sign",
+        "hpake_login_demo", "hpake_register", "hpke_encrypt", "hpks_nl_sign",
+        "hpks_sign", "hpks_stern_f_sign",
         "hpks_stern_ring_sign", "hpkst_sign", "hske_decrypt_masked",
         "hske_encrypt_masked", "hske_nl_aead_encrypt", "main", "oprf_blind",
         "oprf_keygen", "qcmdpc_encap", "qcmdpc_keygen", "random",
         "rnl_sigma_sign", "stern_f_keygen", "zkp_nl_keygen", "zkp_nl_prove",
         "zkp_nl_prove_pp",
-    ],   # 27
+    ],   # 30
     "java": [
         "Duplex.java::encrypt", "Hcred.java::mpcRound", "Hcred.java::proveKkw",
         "Herradura.java::hpkeEncrypt", "Herradura.java::hpksSign",
@@ -3448,9 +3472,9 @@ RANDOMNESS_RAW_PATTERNS = {
 # anywhere about why the randomness axis used the narrower one.
 #
 # It was not a considered scope.  TODO #305 found it while writing the reason
-# for hpks_sign being absent in Go and Python -- they do not take the nonce as a
-# parameter, they DRAW IT IN THE CLI -- and measured 52 raw-entropy call sites
-# on the far side of the boundary.  A classical Schnorr nonce is among them, and
+# for hpks_sign being absent in Go and Python -- at the time they did not take
+# the nonce as a parameter, they DREW IT IN THE CLI -- and measured 52
+# raw-entropy call sites on the far side of the boundary.  A classical Schnorr nonce is among them, and
 # nonce reuse or bias recovers the private key from two signatures.
 #
 # WHAT WIDENING THE CORPUS FOUND, before any row was written.  The measured 52
@@ -3468,17 +3492,26 @@ RANDOMNESS_RAW_PATTERNS = {
 #     `rng` and the CLI holds a static field `RNG`.  Two Java CLI functions read
 #     as drawing nothing, and one of them is the threshold-nonce commit.
 #
-# AND THE ONE THAT IS NOT ABOUT PATTERNS.  C's herradura.h DOES export
-# hpks_sign, which draws its own nonce and which KAT/classical_quartet.json
-# pins -- and herradura_cli.c DOES NOT CALL IT.  cmd_sign transcribes the whole
-# Schnorr signer inline, ba_rand through ba_sub_mod_ord, and the suite copy is
+# AND THE ONE THAT IS NOT ABOUT PATTERNS, now FIXED and recorded here because
+# the finding is what the corpus was widened to see.  C's herradura.h exported
+# hpks_sign, which drew its own nonce and which KAT/classical_quartet.json
+# pins -- and herradura_cli.c DID NOT CALL IT.  cmd_sign transcribed the whole
+# Schnorr signer inline, ba_rand through ba_sub_mod_ord, and the suite copy was
 # reached only by docs/examples/c/hello_herradura.c and the FFI shim.  Go and
-# Python never had the operation at all.  So THREE OF FOUR CLIs sign with an
-# unpinned transcription and the fourth, Java, is the one that calls the suite
-# (Herradura.hpksSign at HerraduraCli.java:1414).  #305's hpks_sign coverage row
-# is true of the FUNCTION and was standing in for the shipped path; that is
-# #295's dead-code limit -- reachability is not liveness -- aimed at a sampler
-# instead of at a constant.
+# Python never had the operation at all.  So THREE OF FOUR CLIs signed with an
+# unpinned transcription and the fourth, Java, was the one that called the
+# suite.  #305's hpks_sign coverage row was true of the FUNCTION and was
+# standing in for the shipped path; that is #295's dead-code limit --
+# reachability is not liveness -- aimed at a sampler instead of at a constant.
+#
+# TODO #308 (v8.1.0) closed it by moving the code, not by writing a vector: Go
+# and Python gained HpksSign/hpks_sign, all four gained the NL counterpart --
+# `sign --algo hpks-nl` shared the classical path's ONE inline draw in three
+# ports, so the classical half could not move alone -- and the three CLIs now
+# call what they used to copy.  The `schnorr_nonce` role is GONE from
+# CLI_DRAW_COVERAGE, deleted rather than retitled `cli_only`, and the site
+# counts below are what forced the deletion: those draws are no longer in a
+# CLI.  56 raw-entropy CLI sites remain, down from 59.
 #
 # WHAT THIS AXIS CANNOT DO, stated before the table rather than after it.  A CLI
 # takes no entropy source as a parameter in any of the four languages: C opens
@@ -3518,20 +3551,19 @@ RANDOMNESS_CLI_CENSUS = {
     "c": [
         "herradura_cli.c::cmd_enc", "herradura_cli.c::cmd_encfile",
         "herradura_cli.c::cmd_genpkey", "herradura_cli.c::cmd_kex",
-        "herradura_cli.c::cmd_sign", "herradura_cli.c::cmd_threshold_commit",
+        "herradura_cli.c::cmd_threshold_commit",
         "herradura_cli.c::encrypt_pem_text_to_file",
     ],
     "go": [
         "herradura_cli.go::cmdEnc", "herradura_cli.go::cmdEncfile",
         "herradura_cli.go::cmdGenpkey", "herradura_cli.go::cmdKex",
-        "herradura_cli.go::cmdSign", "herradura_cli.go::cmdThresholdCommit",
+        "herradura_cli.go::cmdThresholdCommit",
         "herradura_cli.go::encryptPEMText",
     ],
     "python": [
         "herradura.py::_encrypt_pem", "herradura.py::cmd_enc",
         "herradura.py::cmd_encfile", "herradura.py::cmd_genpkey",
-        "herradura.py::cmd_kex", "herradura.py::cmd_sign",
-        "herradura.py::cmd_threshold_commit",
+        "herradura.py::cmd_kex", "herradura.py::cmd_threshold_commit",
     ],
     "java": [
         "HerraduraCli.java::cmdEnc", "HerraduraCli.java::cmdGenpkey",
@@ -3571,8 +3603,11 @@ RANDOMNESS_CLI_CENSUS = {
 #
 # `via` is REQUIRED by `suite`, FORBIDDEN to `cli_only` (which asserts no port
 # draws the role in its suite, and a delegation would contradict that) and
-# ALLOWED to `owed` -- schnorr_nonce is owed in three ports and delegated in the
-# fourth, and collapsing that to one status per row would lose which is which.
+# ALLOWED to `owed`, because the two are not exclusive: the `schnorr_nonce` row
+# this rule was written for was owed in three ports and delegated in the fourth,
+# and collapsing that to one status per row would have lost which was which.
+# TODO #308 then closed it and the row is gone, so no `owed` row is left here --
+# which is the intended steady state, not a reason to drop the rule.
 #
 # `absent` is the third branch of the per-language rule -- a port that ships no
 # such draw at all, neither in its CLI nor in its suite.  It ships EMPTY, on
@@ -3770,26 +3805,6 @@ CLI_DRAW_COVERAGE = {
     },
 
     # --- sign --------------------------------------------------------------
-    "schnorr_nonce": {
-        "status": "owed", "item": 308, "via": ["hpks_sign"],
-        "reason":
-            "THE DRAW THIS ITEM WAS FILED FOR.  A classical Schnorr nonce: "
-            "reuse across two signatures under one key yields the private key "
-            "by subtraction, and bias yields it by lattice reduction.  C, Go "
-            "and Python draw it in the CLI and build the signature inline; "
-            "Java alone calls Herradura.hpksSign.  C's herradura.h EXPORTS "
-            "hpks_sign and KAT/classical_quartet.json pins it, and "
-            "herradura_cli.c does not call it -- the suite copy is reached "
-            "only by docs/examples and the FFI shim.  So the pinned function "
-            "and the shipped path are different code in the port that has "
-            "both, which is #295's dead-code limit aimed at a sampler.  This "
-            "is `owed` and not `cli_only` because the fix is not a vector: it "
-            "is to make the three CLIs CALL the operation they transcribe",
-        "c": ("herradura_cli.c::cmd_sign", 1),
-        "go": ("herradura_cli.go::cmdSign", 1),
-        "python": ("herradura.py::cmd_sign", 1),
-        "java": None,
-    },
     "threshold_commit_nonce": {
         "status": "cli_only",
         "reason":

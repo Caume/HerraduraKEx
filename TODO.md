@@ -184,57 +184,6 @@ Status: **OPEN**
 
 ---
 
-### #308: three of four CLIs sign with an unpinned transcription of the Schnorr signer
-
-**Found by TODO #306 while widening the randomness corpus, and it is not a pattern
-problem.**  `herradura.h` exports `hpks_sign`, which draws its own nonce and which
-`KAT/classical_quartet.json` pins four ways.  `HerraduraCli/herradura_cli.c` does not
-call it: `cmd_sign` transcribes the whole signer inline -- `ba_rand`, `gf_pow_ba`,
-`ba_fscx_revolve`, `ba_mul_mod_ord`, `ba_sub_mod_ord` -- and the suite copy is reached
-only by `docs/examples/c/hello_herradura.c` and `bindings/ffi/herradura_shim.c`.  Go and
-Python never had the operation at all; their `REPLAY_COVERAGE` cells are `None` for that
-reason.  Java's CLI is the one that calls the suite
-(`Herradura.hpksSign(msgInt, pk.priv, RNG)`, `HerraduraCli.java:1414`).
-
-**So the pinned function and the shipped path are different code in the only port that
-has both.**  That is #295's recorded dead-code limit -- reachability is not liveness --
-aimed at a sampler rather than at a constant, and it is why #305's `hpks_sign` coverage
-row reads as reassuring while saying nothing about what `sign --algo hpks` runs.
-
-**Why this is `owed` and not `cli_only`.**  `CLI_DRAW_COVERAGE`'s `schnorr_nonce` row is
-the one `owed` entry in that table, and the fix it owes is not a vector.  A fixed stream
-cannot reach a CLI (no port takes an entropy source as a parameter), so pinning the draw
-where it is would need a new shipped surface.  Making the three CLIs CALL the operation
-they copy moves the draw to a suite function the existing replay machinery already
-reaches -- and for C that is a function which is already pinned.
-
-**What is owed.**
-
-* C: replace `cmd_sign`'s inline Schnorr block with a call to `hpks_sign`, and check the
-  signature is byte-identical before and after (it is the same arithmetic; if it is not,
-  that is the finding).
-* Go and Python: the suite has no such operation, so one has to be ADDED -- a new public
-  API surface, hence a MINOR bump, with `PRIMITIVES` manifest entries in all four cells
-  and the `CLI_FLAG_PARITY` `hpks-sign` acknowledgement re-examined, since the asymmetry
-  it records is the one being removed.
-* Then the `hpks_sign` `REPLAY_COVERAGE` row's `go`/`python` cells stop being `None`, and
-  `CLI_DRAW_COVERAGE`'s `schnorr_nonce` row must be DELETED -- which the site-count check
-  forces, because those draws will no longer be in the CLI.
-
-**What must NOT happen.**  Retitling `schnorr_nonce` to `cli_only` on the ground that no
-CLI draw can be pinned.  That is true of the draw's CURRENT LOCATION and is exactly the
-retire-by-reclassification #305 built the status split to prevent; the draw's location is
-what is in question.
-
-**Note on severity.**  No defect is claimed in any of the three transcriptions -- they
-were read side by side and compute the same signature.  The claim is that nothing would
-notice if one stopped doing so, and a Schnorr nonce is the draw where that matters most:
-reuse across two signatures under one key yields the private key by subtraction.
-
-Status: **OPEN**
-
----
-
 ### #309: an entropy-injection seam for the four CLIs — env var and explicit flag
 
 **TODO #306 stated this limit in `CLI_DRAW_COVERAGE`'s header rather than after the fact,

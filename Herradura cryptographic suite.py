@@ -610,6 +610,32 @@ def hpks_verify(msg: 'BitArray', pub: int, R: 'BitArray', s: int,
     return lhs == R.uint
 
 
+def hpks_sign(msg: 'BitArray', priv: int, poly: int, n: int):
+    """Produces an HPKS Schnorr signature on msg under the private key priv,
+    drawing its own nonce k: R = g^k, e = fscx_revolve(R, msg, n//4),
+    s = (k - priv*e) mod (2^n - 1).  Returns (R, s) with R a BitArray and s an
+    int, matching hpks_verify's argument types.
+
+    TODO #308 added this so HerraduraCli's `sign --algo hpks` calls a named
+    suite operation instead of transcribing the signer -- and its nonce draw --
+    inline.  e is not returned: the CLI recomputes it for the signature PEM,
+    which is the shape the Java port has always used."""
+    k = BitArray.random(n).uint
+    R = BitArray(n, gf_pow(GF_GEN, k, poly, n))
+    e = fscx_revolve(R, msg, n // 4)
+    return R, (k - priv * e.uint) % ((1 << n) - 1)
+
+
+def hpks_nl_sign(msg: 'BitArray', priv: int, poly: int, n: int):
+    """NL counterpart of hpks_sign: the challenge hash is nl_fscx_revolve_v1 in
+    place of fscx_revolve, and the Schnorr arithmetic is identical (TODO
+    #308).  Returns (R, s)."""
+    k = BitArray.random(n).uint
+    R = BitArray(n, gf_pow(GF_GEN, k, poly, n))
+    e = nl_fscx_revolve_v1(R, msg, n // 4)
+    return R, (k - priv * e.uint) % ((1 << n) - 1)
+
+
 def hpke_encrypt(pt: 'BitArray', pub: int, poly: int, n: int):
     """Performs HPKE (El Gamal + fscx_revolve) encryption of pt under the
     recipient's public key pub, rejecting a degenerate pub rather than

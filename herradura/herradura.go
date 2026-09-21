@@ -348,6 +348,42 @@ func HkexGfAgree(myPriv, theirPub *BitArray, poly *big.Int, n int) (*BitArray, b
 	return NewBitArray(n, GfPow(&theirPub.Val, &myPriv.Val, poly, n)), true
 }
 
+// HpksSign produces an HPKS Schnorr signature on msg under the private key
+// priv, drawing its own nonce k: R = g^k, e = FscxRevolve(R, msg, n/4),
+// s = (k - priv*e) mod (2^n - 1).  Returns (R, s).
+//
+// TODO #308 added this so HerraduraCli's `sign --algo hpks` calls a named
+// suite operation instead of transcribing the signer -- and its nonce draw --
+// inline.  e is not returned: the CLI recomputes it for the signature PEM,
+// which is the shape the Java port has always used.
+func HpksSign(msg, priv *BitArray, poly *big.Int, n int) (*BitArray, *BitArray) {
+	g := big.NewInt(GfGen)
+	k := NewRandBitArray(n)
+	R := NewBitArray(n, GfPow(g, &k.Val, poly, n))
+	e := FscxRevolve(R, msg, n/4)
+	// s = (k - priv*e) mod (2^n - 1)
+	ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
+	s := new(big.Int).Mod(new(big.Int).Sub(&k.Val, new(big.Int).Mul(&priv.Val, &e.Val)), ord)
+	return R, NewBitArray(n, s)
+}
+
+// HpksNlSign is the NL counterpart of HpksSign: the challenge hash is
+// NlFscxRevolveV1 in place of FscxRevolve, and the Schnorr arithmetic is
+// identical (TODO #308).
+func HpksNlSign(msg, priv *BitArray, poly *big.Int, n int) (*BitArray, *BitArray) {
+	g := big.NewInt(GfGen)
+	k := NewRandBitArray(n)
+	R := NewBitArray(n, GfPow(g, &k.Val, poly, n))
+	e := NlFscxRevolveV1(R, msg, n/4)
+	// s = (k - priv*e) mod (2^n - 1).  Written out rather than shared with
+	// HpksSign through a helper: a suite-internal Go-only function is exactly
+	// what the internal-surface census refuses, and the other three ports
+	// write this line out too.
+	ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
+	s := new(big.Int).Mod(new(big.Int).Sub(&k.Val, new(big.Int).Mul(&priv.Val, &e.Val)), ord)
+	return R, NewBitArray(n, s)
+}
+
 // HpksVerify verifies an HPKS Schnorr signature (R, s) on msg under pub,
 // rejecting a degenerate pub before evaluating the raw Schnorr equation
 // (pub=1 would make pub^e == 1 for any e, letting an attacker-chosen

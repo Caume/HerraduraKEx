@@ -2,6 +2,60 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.1.0] - 2026-09-20
+
+### Added
+- **`hpks_sign` in Go and Python, and `hpks_nl_sign` in C, Go and Python (TODO
+  #308).**  A new public suite API surface in three ports, hence MINOR.  Go gains
+  `HpksSign` / `HpksNlSign` in `herradura/herradura.go`, Python gains `hpks_sign` /
+  `hpks_nl_sign` in the suite (re-exported through `HerraduraCli/primitives.py`), and C
+  gains `hpks_nl_sign` in `herradura.h` beside the `hpks_sign` it already exported.  All
+  three follow the shape Java has always had: the operation draws its own Schnorr nonce
+  and returns `(R, s)`, and the caller recomputes `e` for the signature PEM.
+
+### Changed
+- **Three of four CLIs no longer sign with an unpinned transcription of the Schnorr
+  signer (TODO #308).**  `herradura.h` exported `hpks_sign`, which draws its own nonce
+  and which `KAT/classical_quartet.json` pins four ways — and `herradura_cli.c` did not
+  call it, transcribing the whole signer inline (`ba_rand`, `gf_pow_ba`,
+  `ba_fscx_revolve`, `ba_mul_mod_ord`, `ba_sub_mod_ord`) while the suite copy was reached
+  only by `docs/examples/c/hello_herradura.c` and `bindings/ffi/herradura_shim.c`.  Go and
+  Python never had the operation at all.  So the pinned function and the shipped path were
+  different code in the only port that had both — TODO #295's dead-code limit
+  (reachability is not liveness) aimed at a sampler rather than a constant.  The three CLIs
+  now call what they used to copy, which moves the draw into a censused suite consumer
+  that the existing replay machinery already reaches.  No defect is claimed in any of the
+  three transcriptions; the claim is that nothing would have noticed if one had stopped
+  computing the same signature, and a Schnorr nonce is the draw where that matters most
+  (reuse across two signatures under one key yields the private key by subtraction).
+- **The NL half had to move with it.**  `sign --algo hpks-nl` shared the classical path's
+  single inline nonce draw in C, Go and Python, so moving only `hpks` would have left the
+  draw exactly where it was and the `schnorr_nonce` accounting unchanged.  Java alone
+  already named both operations.
+- **`CLI_DRAW_COVERAGE`'s `schnorr_nonce` row is DELETED**, not retitled `cli_only` — the
+  retire-by-reclassification TODO #305's status split exists to prevent.  The site-count
+  check forces the deletion: those draws are no longer in a CLI.  `CLI_DRAW_COVERAGE` is
+  now 56 sites over 16 roles with **0 owed**, down from 59 over 17, and
+  `RANDOMNESS_CLI_CENSUS` no longer names `cmd_sign` / `cmdSign` in any of the three ports.
+- **`REPLAY_COVERAGE`'s `hpks_sign` row's `go` and `python` cells stop being `None`**, and
+  its `hpks_nl_sign` row gains all three, so the raw-entropy census is 25 / 27 / 30 / 31
+  in C / Go / Python / Java.  `PRIMITIVES`' `hpks-sign` entry loses its `acknowledged`
+  reason (it said Go and Python "build the Schnorr signature inline from `gf_pow` and
+  `fscx_revolve`" — true of the SUITES, and it hid where those two ports' nonce was
+  actually drawn), and a four-cell `hpks-nl-sign` entry joins it.
+
+### Notes
+- **Verified byte-identical, not argued to be.**  At a fixed nonce, the retired inline
+  transcription and the new suite operation produce the same `(R, s, e)` in all three
+  ports: 50 trials × 2 algorithms each, 0 mismatches — C through `fmemopen`, Go through a
+  `crypto/rand.Reader` swap, Python through a `BitArray.random` substitution.
+  `CliTest/test_cross_lang_matrix.sh`'s `hpks` and `hpks-nl` blocks are 32/32 PASS, every
+  (signer, verifier) pair across the four CLIs.
+- **What this does NOT do.**  It does not pin a CLI draw; no CLI takes an entropy source
+  as a parameter in any of the four languages, and that seam is still TODO #309, which
+  owes the hazard argument before it is built.  What changed is *where the draw lives*, so
+  that the pinning which already exists reaches it.
+
 ## [8.0.8] - 2026-09-20
 
 ### Fixed

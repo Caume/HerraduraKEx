@@ -1015,7 +1015,7 @@ spec/                                                — machine-readable protoc
                                                       each of C/Go/Python/Java, set-alignment of
                                                       C/Go/Python's shared [1]-[51] numbering, a
                                                       manifest of suite-internal (non-CLI)
-                                                      primitives -- 199 entries, four cells each --
+                                                      primitives -- 200 entries, four cells each --
                                                       so a primitive with no `--algo` tag can still
                                                       be caught missing in a language, and since
                                                       v6.1.0 an INTERNAL-SURFACE CENSUS that closed
@@ -1618,10 +1618,15 @@ spec/                                                — machine-readable protoc
                                                       SUITE ALONE, with no sentence
                                                       anywhere about the difference, and
                                                       that was never a considered scope.
-                                                      59 raw-entropy sites sit in the
-                                                      four CLIs (c 18, go 15, python 15,
+                                                      56 raw-entropy sites sit in the
+                                                      four CLIs (c 17, go 14, python 14,
                                                       java 11), every one now claimed by
-                                                      one of 17 named draw ROLES.  A
+                                                      one of 16 named draw ROLES -- 59
+                                                      sites and 17 roles until TODO #308
+                                                      moved the Schnorr nonce into the
+                                                      suite and the `schnorr_nonce` row
+                                                      was DELETED, which is the site-count
+                                                      check doing what it was built for.  A
                                                       role, not a function: one command
                                                       holds six draws and one role spans
                                                       two functions (Java splits the kex
@@ -1668,23 +1673,29 @@ spec/                                                — machine-readable protoc
                                                       non-move is what turns "the suite
                                                       census was right" from a claim into
                                                       a check.  AND THE FINDING UNDER THE
-                                                      HEADLINE: C's herradura.h exports
-                                                      hpks_sign, it draws its own nonce,
-                                                      KAT/classical_quartet.json pins it,
-                                                      and herradura_cli.c DOES NOT CALL
-                                                      IT -- cmd_sign transcribes the
+                                                      HEADLINE: C's herradura.h exported
+                                                      hpks_sign, it drew its own nonce,
+                                                      KAT/classical_quartet.json pinned
+                                                      it, and herradura_cli.c DID NOT
+                                                      CALL IT -- cmd_sign transcribed the
                                                       whole Schnorr signer inline and the
-                                                      suite copy is reached only by
+                                                      suite copy was reached only by
                                                       docs/examples and the FFI shim.  Go
                                                       and Python never had the operation.
-                                                      So three of four CLIs sign with an
-                                                      unpinned transcription and Java is
-                                                      the one that calls the suite: the
-                                                      pinned function and the shipped
-                                                      path are different code in the port
-                                                      that has both, #295's dead-code
-                                                      limit aimed at a sampler.  That is
-                                                      TODO #308.  KNOWN LIMIT, stated
+                                                      So three of four CLIs signed with
+                                                      an unpinned transcription and Java
+                                                      was the one that called the suite:
+                                                      the pinned function and the shipped
+                                                      path were different code in the
+                                                      port that had both, #295's
+                                                      dead-code limit aimed at a sampler.
+                                                      TODO #308 (v8.1.0) closed it by
+                                                      moving the code -- the three CLIs
+                                                      now call what they copied, the NL
+                                                      half moved with the classical one
+                                                      because they shared ONE draw, and
+                                                      the schnorr_nonce role was DELETED
+                                                      rather than retitled.  KNOWN LIMIT, stated
                                                       before the table rather than after
                                                       it: no CLI takes an entropy source
                                                       as a parameter in any language, so
@@ -2295,8 +2306,9 @@ inconsistency was inside one file — `PARAM_USE_CORPUS` forty lines up reads su
 walkthrough + CLI + codec and says why ("getting the corpus wrong in the LENIENT direction
 makes the whole check pass vacuously"), while the randomness axis read the suite alone with
 no sentence anywhere about the difference. `CLI_CORPUS`, `RANDOMNESS_CLI_CENSUS` and
-`CLI_DRAW_COVERAGE` close it: **59 raw-entropy draws sit in the four CLIs**, every one
-claimed by one of 17 named roles. Four things to carry forward. (1) **Widening the corpus
+`CLI_DRAW_COVERAGE` close it: **56 raw-entropy draws sit in the four CLIs**, every one
+claimed by one of 16 named roles — 59 and 17 when the item ran, until TODO #308 moved the
+Schnorr nonce into the suite and the `schnorr_nonce` role was deleted. Four things to carry forward. (1) **Widening the corpus
 found the PATTERNS wrong**, which is why the filed figure was 52 — `secrets.token_bytes`
 imported as `_sec` inside its own branch (a sixth spelling, and in the suite it sits in
 `main`, which draws by other means, so the census was right there **by luck**), and
@@ -2324,6 +2336,46 @@ product and is deliberately not made — filed as TODO #309, which owes the haza
 before the seam: an env var that replaces the CSPRNG is one accidental export away from a
 deterministic `genpkey` whose output is indistinguishable on disk from a real key. What was missing was never the replay; it was knowing
 which draws exist, in which ports, and what compares them.
+
+**And moving the draw instead of pinning it, which is what a `cli_only` row would have
+argued was impossible (TODO #308).** #306 censused 59 CLI draws and found one that was not
+a census problem at all: `herradura.h` exported `hpks_sign`, it drew its own nonce,
+`KAT/classical_quartet.json` pinned it four ways — and `herradura_cli.c` did not call it,
+transcribing the whole signer inline while the suite copy was reached only by
+`docs/examples` and the FFI shim. Go and Python never had the operation. **The pinned
+function and the shipped path were different code in the only port that had both**, which
+is #295's dead-code limit (reachability is not liveness) aimed at a sampler instead of a
+constant. Four things to carry forward. (1) **The fix was not a vector, and that is the
+transferable part.** A fixed stream cannot reach a CLI in any of the four languages, so
+pinning the draw WHERE IT WAS needed a new shipped surface — which is #309 and is
+deliberately still unbuilt. Making the three CLIs CALL the operation they copied moves the
+draw to a suite function the existing replay machinery already reaches, and for C that
+function was already pinned. **When a draw cannot be pinned where it is, ask whether it is
+in the right place before building a seam to reach it.** (2) **The NL half could not stay
+behind**, and the site counts are what said so: `sign --algo hpks-nl` shared the classical
+path's ONE inline `ba_rand` / `NewRandBitArray` / `BitArray.random` in C, Go and Python, so
+moving only `hpks` would have left the draw exactly where it was with every table
+unchanged. A cell here is (function, SITE COUNT) for precisely this reason. Java alone had
+named both operations all along, and its shape — the suite draws the nonce and returns
+`(R, s)`, the caller recomputes `e` for the PEM — is what the other three adopted verbatim,
+on #294's and #296's precedent that adopting an existing correct port beats inventing a
+fourth API. (3) **`schnorr_nonce` was DELETED, not retitled `cli_only`**, which the item
+named in advance as the thing that must not happen: `cli_only` is true of a draw's CURRENT
+LOCATION, and the location was the question. The site-count check forced the deletion
+rather than permitting it — 56 sites over 16 roles with **0 owed**, down from 59 over 17 —
+and `RANDOMNESS_CLI_CENSUS` stopped naming `cmd_sign` in three ports because it stopped
+drawing there. (4) **Byte-identity is not what a round-trip shows.** The item asked whether
+the signature was the same before and after, and a randomised nonce makes that
+unanswerable by signing twice; it is answerable at a FIXED nonce, and the retired
+transcription and the suite operation agree on `(R, s, e)` over 50 trials × 2 algorithms in
+each of the three ports — C through `fmemopen`, Go through a `crypto/rand.Reader` swap,
+Python through a `BitArray.random` substitution. The 4×4 CLI matrix (32/32 on `hpks` and
+`hpks-nl`) proves interoperability, which is a weaker statement and was never the one in
+doubt. One correction the item earned on the way out: it said the asymmetry was filed as
+`CLI_FLAG_PARITY`'s `hpks-sign` row, and `REPLAY_COVERAGE`'s own reason said so too. There
+is no such row — `CLI_FLAG_PARITY` is about CLI FLAGS and lives in a different file. The
+acknowledgement was `PRIMITIVES`' `hpks-sign` entry, the right thing to re-examine under
+the wrong name in two places.
 
 **And whether a NUMBERED TEST decides on a fresh sample, which #300 asked only of the
 findings gates (TODO #310).** #299 fixed one gate that failed about one CI run in twenty,

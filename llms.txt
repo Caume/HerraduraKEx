@@ -84,6 +84,7 @@ drbg_, haccum_, ratchet_, fpe_, twk_, qcmdpc_. Key public entry points:
   void hske_encrypt(const BitArray *pt, const BitArray *key, BitArray *ct);
   void hske_decrypt(const BitArray *ct, const BitArray *key, BitArray *pt);
   void hpks_sign(const BitArray *msg, const BitArray *priv, BitArray *R, BitArray *s, FILE *urnd);
+  void hpks_nl_sign(const BitArray *msg, const BitArray *priv, BitArray *R, BitArray *s, FILE *urnd);  /* #308 */
   int  hpks_verify(const BitArray *msg, const BitArray *pub, const BitArray *R, const BitArray *s);
   int  hpke_encrypt(const BitArray *pt, const BitArray *pub, BitArray *R, BitArray *ct, FILE *urnd);
   int  hpke_decrypt(const BitArray *ct, const BitArray *R, const BitArray *priv, BitArray *pt);

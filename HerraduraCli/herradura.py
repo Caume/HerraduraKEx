@@ -72,6 +72,7 @@ from primitives import (
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul, rnl_validate_m_blind as _rnl_validate_m_blind,
     rnl_contributory_kdf as _rnl_contributory_kdf,
+    hpks_sign, hpks_nl_sign,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
     hpks_stern_ring_sign, hpks_stern_ring_verify,
     hpke_stern_f_encap_with_e, hpke_stern_f_decap,
@@ -1999,14 +2000,17 @@ def cmd_sign(args):
         priv_int, pub_int, nbits = our_ints
         poly = GF_POLY.get(nbits, GF_POLY[256])
         msg  = BitArray(nbits, int.from_bytes(in_bytes[:nbits // 8].ljust(nbits // 8, b'\x00'), 'big'))
-        k    = BitArray.random(nbits)
-        R    = BitArray(nbits, gf_pow(GF_GEN, k.uint, poly, nbits))
+        # TODO #308: call the suite operation rather than transcribing it.
+        # hpks_sign/hpks_nl_sign draw the Schnorr nonce themselves, so the draw
+        # this CLI used to make now lands in a censused suite consumer.  e is
+        # recomputed here because it travels in the signature PEM and the suite
+        # operation returns only (R, s).
         if algo == 'hpks':
+            R, s = hpks_sign(msg, priv_int, poly, nbits)
             e = fscx_revolve(R, msg, nbits // 4)
         else:
+            R, s = hpks_nl_sign(msg, priv_int, poly, nbits)
             e = nl_fscx_revolve_v1(R, msg, nbits // 4)
-        ord_n = (1 << nbits) - 1
-        s     = (k.uint - priv_int * e.uint) % ord_n
         _write_file(args.out, _encode_schnorr_sig(s, R.uint, e.uint, nbits))
 
     elif algo == 'hpks-stern':

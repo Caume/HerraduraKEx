@@ -3795,8 +3795,6 @@ func cmdSign(args []string) {
 		die("sign", err)
 	}
 
-	gen := new(big.Int).SetInt64(GfGen)
-
 	switch *algo {
 	case "rnl-sigma":
 		// derive Cp from stored s and m_blind
@@ -3816,29 +3814,31 @@ func cmdSign(args []string) {
 		return
 
 	case "hpks", "hpks-nl":
-		priv := new(big.Int).SetBytes(ourInts[0])
-		n    := bytesToInt(ourInts[2])
+		privInt := new(big.Int).SetBytes(ourInts[0])
+		n       := bytesToInt(ourInts[2])
 		poly := GfPoly[n]
 		if poly == nil {
 			poly = GfPoly[256]
 		}
-		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
-		k   := NewRandBitArray(n)
-		R   := GfPow(gen, &k.Val, poly, n)
+		msg  := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
+		priv := NewBitArray(n, privInt)
 
+		// TODO #308: call the suite operation rather than transcribing it.
+		// HpksSign/HpksNlSign draw the Schnorr nonce themselves, so the draw
+		// this CLI used to make now lands in a censused suite consumer.  e is
+		// recomputed here because it travels in the signature PEM and the
+		// suite operation returns only (R, s).
+		var R *BitArray
+		var sBa *BitArray
 		var e *BitArray
 		if *algo == "hpks" {
-			e = FscxRevolve(NewBitArray(n, R), msg, n/4)
+			R, sBa = HpksSign(msg, priv, poly, n)
+			e = FscxRevolve(R, msg, n/4)
 		} else {
-			e = NlFscxRevolveV1(NewBitArray(n, R), msg, n/4)
+			R, sBa = HpksNlSign(msg, priv, poly, n)
+			e = NlFscxRevolveV1(R, msg, n/4)
 		}
-		// s = (k - priv * e) mod (2^n - 1)
-		ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
-		s   := new(big.Int).Mod(
-			new(big.Int).Sub(&k.Val, new(big.Int).Mul(priv, &e.Val)),
-			ord,
-		)
-		pem, err := encodeSchnorrSig(s, R, &e.Val, n)
+		pem, err := encodeSchnorrSig(&sBa.Val, &R.Val, &e.Val, n)
 		if err != nil {
 			die("sign", err)
 		}

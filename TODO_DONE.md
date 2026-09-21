@@ -19912,3 +19912,113 @@ kernel addition (2^-t), and the forgery sub-check has its own round count of 64
 SAMPLED_GATES reason had argued both away as "exact".
 
 ---
+
+### #308: three of four CLIs sign with an unpinned transcription of the Schnorr signer
+
+**Found by TODO #306 while widening the randomness corpus, and it is not a pattern
+problem.**  `herradura.h` exports `hpks_sign`, which draws its own nonce and which
+`KAT/classical_quartet.json` pins four ways.  `HerraduraCli/herradura_cli.c` does not
+call it: `cmd_sign` transcribes the whole signer inline -- `ba_rand`, `gf_pow_ba`,
+`ba_fscx_revolve`, `ba_mul_mod_ord`, `ba_sub_mod_ord` -- and the suite copy is reached
+only by `docs/examples/c/hello_herradura.c` and `bindings/ffi/herradura_shim.c`.  Go and
+Python never had the operation at all; their `REPLAY_COVERAGE` cells are `None` for that
+reason.  Java's CLI is the one that calls the suite
+(`Herradura.hpksSign(msgInt, pk.priv, RNG)`, `HerraduraCli.java:1414`).
+
+**So the pinned function and the shipped path are different code in the only port that
+has both.**  That is #295's recorded dead-code limit -- reachability is not liveness --
+aimed at a sampler rather than at a constant, and it is why #305's `hpks_sign` coverage
+row reads as reassuring while saying nothing about what `sign --algo hpks` runs.
+
+**Why this is `owed` and not `cli_only`.**  `CLI_DRAW_COVERAGE`'s `schnorr_nonce` row is
+the one `owed` entry in that table, and the fix it owes is not a vector.  A fixed stream
+cannot reach a CLI (no port takes an entropy source as a parameter), so pinning the draw
+where it is would need a new shipped surface.  Making the three CLIs CALL the operation
+they copy moves the draw to a suite function the existing replay machinery already
+reaches -- and for C that is a function which is already pinned.
+
+**What is owed.**
+
+* C: replace `cmd_sign`'s inline Schnorr block with a call to `hpks_sign`, and check the
+  signature is byte-identical before and after (it is the same arithmetic; if it is not,
+  that is the finding).
+* Go and Python: the suite has no such operation, so one has to be ADDED -- a new public
+  API surface, hence a MINOR bump, with `PRIMITIVES` manifest entries in all four cells
+  and the `CLI_FLAG_PARITY` `hpks-sign` acknowledgement re-examined, since the asymmetry
+  it records is the one being removed.
+* Then the `hpks_sign` `REPLAY_COVERAGE` row's `go`/`python` cells stop being `None`, and
+  `CLI_DRAW_COVERAGE`'s `schnorr_nonce` row must be DELETED -- which the site-count check
+  forces, because those draws will no longer be in the CLI.
+
+**What must NOT happen.**  Retitling `schnorr_nonce` to `cli_only` on the ground that no
+CLI draw can be pinned.  That is true of the draw's CURRENT LOCATION and is exactly the
+retire-by-reclassification #305 built the status split to prevent; the draw's location is
+what is in question.
+
+**Note on severity.**  No defect is claimed in any of the three transcriptions -- they
+were read side by side and compute the same signature.  The claim is that nothing would
+notice if one stopped doing so, and a Schnorr nonce is the draw where that matters most:
+reuse across two signatures under one key yields the private key by subtraction.
+
+**DONE (v8.1.0).**  The three CLIs call what they used to copy, and the NL half moved
+with the classical one because it had to: `sign --algo hpks-nl` shared the classical
+path's ONE inline nonce draw in C, Go and Python, so moving only `hpks` would have left
+the draw exactly where it was and `schnorr_nonce`'s site counts unchanged.  Java alone
+already named both operations, and its shape is what the other three adopted verbatim --
+the suite operation draws the nonce and returns `(R, s)`; the caller recomputes `e` for
+the signature PEM.  Adopting the existing port rather than inventing a fourth API is
+#294's and #296's precedent.
+
+**What shipped.**
+
+* C: `herradura.h` gains `hpks_nl_sign` beside the `hpks_sign` it already exported;
+  `cmd_sign` calls both.  `hpks_sign`'s signature is UNCHANGED, because
+  `docs/examples/c/hello_herradura.c` and `bindings/ffi/herradura_shim.c` are external
+  callers -- returning `e` would have been tidier and would have broken them for nothing.
+* Go: `HpksSign` / `HpksNlSign` in `herradura/herradura.go`.  The one piece of arithmetic
+  the two share -- `s = (k - priv*e) mod (2^n - 1)` -- is written out TWICE rather than
+  factored into a helper, and the internal-surface census is why: a Go-only suite-internal
+  function is exactly what it refuses, and it said so on the first run.
+* Python: `hpks_sign` / `hpks_nl_sign` in the suite, re-exported through
+  `HerraduraCli/primitives.py`.
+* Java: unchanged.  It was already the port that called the suite.
+
+**Verified byte-identical, which is what the item asked for and is not what a random
+nonce lets a round-trip show.**  At a FIXED nonce the retired transcription and the suite
+operation produce the same `(R, s, e)`: 50 trials x 2 algorithms in each of the three
+ports, 0 mismatches -- C through `fmemopen`, Go through a `crypto/rand.Reader` swap (the
+#296 hook), Python through a `BitArray.random` substitution.  Separately,
+`CliTest/test_cross_lang_matrix.sh`'s `hpks` and `hpks-nl` blocks are 32/32 PASS: every
+(signer, verifier) pair over the four CLIs.
+
+**The accounting, and what forced each change.**  `CLI_DRAW_COVERAGE`'s `schnorr_nonce`
+row is DELETED -- the site-count check forces it, because those draws are no longer in a
+CLI -- leaving 56 sites over 16 roles with **0 owed**, down from 59 over 17.
+`RANDOMNESS_CLI_CENSUS` no longer names `cmd_sign` / `cmdSign` in any of the three ports.
+`REPLAY_COVERAGE`'s `hpks_sign` row's `go`/`python` cells and its `hpks_nl_sign` row's
+`c`/`go`/`python` cells stop being `None`, so the raw-entropy census reads 25/27/30/31.
+`PRIMITIVES`' `hpks-sign` entry loses its `acknowledged` reason and a four-cell
+`hpks-nl-sign` entry joins it.  Check E then fired on CLAUDE.md's own copies of two of
+these numbers (199 -> 200 manifest entries, 59 -> 56 CLI sites), which is the reporting
+gap #304 closed doing its job here.
+
+**One correction to this item's own text.**  It said the asymmetry was filed as
+`CLI_FLAG_PARITY`'s `hpks-sign` row, and `REPLAY_COVERAGE`'s reason said so too.  There is
+no such row: `CLI_FLAG_PARITY` lives in `spec/generate_spec.py` and is about CLI FLAGS.
+The acknowledgement was `PRIMITIVES`' `hpks-sign` entry in `spec/check_language_parity.py`
+-- the right thing to re-examine, under the wrong name in two places, both now fixed.
+
+**What this does NOT do, stated as the item stated it.**  It pins no CLI draw.  No CLI
+takes an entropy source as a parameter in any of the four languages, so the seam is still
+TODO #309 and still owes its hazard argument first.  What changed is WHERE THE DRAW LIVES,
+so that the pinning which already exists reaches it.
+
+Status: **DONE v8.1.0** -- the Schnorr nonce moved out of three CLIs and into the suite:
+Go and Python gained `hpks_sign`, C/Go/Python gained `hpks_nl_sign` (the NL path shared
+the same inline draw, so it could not stay behind), and `CLI_DRAW_COVERAGE`'s
+`schnorr_nonce` row was DELETED rather than retitled -- 56 CLI sites over 16 roles, 0
+owed.  Byte-identical at a fixed nonce in all three ports; 32/32 on the 4x4 sign/verify
+matrix.
+
+
+---
