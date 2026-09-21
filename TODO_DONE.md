@@ -20169,3 +20169,65 @@ cell for C's parameter-not-draw case; `HcredOutputsSer` exported, hence MINOR.
 
 ---
 
+
+### #311: which of the nine `cli_only` draws are #308-shaped — the question #309 says must be answered before a seam is built
+
+**TODO #309 filed this against itself and did not act on it.**  Its "Ordering against
+#308" paragraph ends: *"If most of them turn out to be #308-shaped (a draw that belongs in
+a suite function the CLI should be calling), this item is smaller than it looks and
+possibly unnecessary; that question should be answered before any shipped surface is
+added."*  #308 shipped in v8.1.0 and the question stayed open, with #309 still describing
+an env var that replaces the CSPRNG in a shipped binary — by its own text "the sharpest
+footgun this repo could add".
+
+**The nine split 7 / 2, and not where the guess put them.**  Every `cli_only` row in
+`CLI_DRAW_COVERAGE` was read against source in all four ports rather than against its own
+curated reason — #295's finding that two of six reasons carried a false claim is what
+makes reading the reason insufficient.
+
+*Class A — one uniform draw, consumed immediately as a parameter (7 roles).*
+`pem_envelope_salt`, `classical_privkey`, `rnl_kex_nonce_a`, `rnl_kex_nonce_b`,
+`hybrid_kex_nonce_b`, `hcred_seed_h`, `hash_sig_master_seed`.  Each is a single `fread` /
+`ba_rand` / `BitArray.random` / `token_bytes` of one fixed width, handed straight to a
+function that already accepts it as an argument — `hcred_syndrome`, `hpks_wots_keygen`,
+`hpks_xmss_keygen`, `rnl_contributory_kdf`, PBKDF2, `gf_pow`.  **No loop, no rejection, no
+second draw, no order.**  A fixed stream pins the identity function, which is what three
+of these rows already said and four did not.  The classical exponent was checked
+specifically for #294's shape — a rejection-sampling split — and there is none: every port
+draws a raw uniform `n`-bit value with no reduction mod `ord(g)`.  **A seam buys nothing
+for any of the seven.**
+
+*Class B — the CLI transcribes a multi-step operation and draws inside it (2 roles).*
+`hske_nla1_nonce` and `threshold_commit_nonce`.  These are the two #309 itself nominates
+as "the ones worth pinning", on the arithmetic that a repeat is catastrophic in both (A1
+is `E = P ^ ks`, so a nonce repeat is a two-time pad; a threshold partial is
+`s_j = k_j - a_j.e`, so a repeat recovers that signer's share).
+
+**So the answer is the one that demotes #309: the only two roles where pinning would buy
+anything are the only two where the #308 move is available or nearly so.**  The seven that
+a seam could reach are seven that a seam would teach nothing about.  #309 is not closed —
+the hazard analysis it owes is still owed if it is ever revived — but it is no longer
+next, and it should not be implemented as posed.
+
+**The two are not equally shaped, and the difference is the item that came out of this.**
+
+* `hske_nla1_nonce` is **#308 verbatim**: Java's suite has `HerraduraNl.hskeNlA1Encrypt` /
+  `hskeNlA1Decrypt` and Java's CLI calls them; C, Go and Python have no such suite
+  function and transcribe the four-step construction, twice each (enc and dec).  Python's
+  transcription additionally re-derives the RNL KDF-seed constant inline instead of
+  calling the shipped derivation.  Filed as **TODO #312**.
+* `threshold_commit_nonce` is thinner and is NOT filed.  The transcription is two steps —
+  draw `k_j`, compute `R_j = g^{k_j}` — and the suite's `hpkst_sign` is the AGGREGATE
+  path, a different operation that takes `nonces_in` or draws its own.  There is no
+  existing suite function in any port to call, and inventing one to host two lines would
+  be adding a public surface to make a table tidier.  Recorded as a considered no.
+
+**What this item deliberately did not do.**  It did not move any code.  #306 filed #308
+rather than folding it in, and the same split applies here: a triage that also performs
+the move it recommends cannot report that the move was the right call.  It also did not
+retitle any `CLI_DRAW_COVERAGE` row — #312 keeps the nonce a parameter, so
+`hske_nla1_nonce` stays `cli_only` after it ships, and a row that changed status here
+would have been recording an intention rather than a fact.
+
+Status: **DONE v8.2.1** — the nine `cli_only` draws triaged against the #308 move: seven are single parameter-fed draws a seam could teach nothing about, two transcribe an operation, and #309 is demoted rather than implemented.
+

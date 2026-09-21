@@ -211,6 +211,85 @@ closed without actually adding vectors.  The seam is a precondition for pinning,
 pinning -- #296's own diagnosis of #294 was a harness built and then thrown away while the
 documents went on asserting in the present tense that the check existed.
 
+**DEMOTED by TODO #311 (v8.2.1), which answered the ordering question above.**  The nine
+`cli_only` roles split 7 / 2, and the split is adverse to this item.  Seven --
+`pem_envelope_salt`, `classical_privkey`, `rnl_kex_nonce_a`, `rnl_kex_nonce_b`,
+`hybrid_kex_nonce_b`, `hcred_seed_h`, `hash_sig_master_seed` -- are a single uniform draw
+of one fixed width handed straight to a function that already takes it as an argument,
+with no loop, no rejection and no second draw, so **a fixed stream pins the identity
+function and the seam would teach nothing about any of them**.  The remaining two are
+`hske_nla1_nonce` and `threshold_commit_nonce` -- which are exactly the two this item
+nominates above as "the ones worth pinning", and are also the only two where the CLI
+transcribes a multi-step operation rather than drawing a parameter.  One of them
+(`hske_nla1_nonce`) is #308-shaped outright and is now **TODO #312**; the other was
+examined and filed as a considered no.
+
+So the seam's whole remaining target is a case the #308 move reaches more cheaply and
+without adding a shipped surface.  **This item is not closed** -- the hazard analysis it
+owes is owed in full if it is ever revived, and nothing above is withdrawn -- but it is
+not next, and it should not be implemented as posed.  Revisit only if a future `cli_only`
+role appears that is neither parameter-fed nor movable.
+
 Status: **OPEN**
 
 ---
+
+### #312: HSKE-NL-A1's plain mode has no suite function in three of four ports
+
+**TODO #311's triage found this and it is TODO #308 verbatim, one protocol over.**  Java's
+suite carries `HerraduraNl.hskeNlA1Encrypt(pt, key, nonce)` and `hskeNlA1Decrypt`, and
+`HerraduraCli.java` CALLS them (lines 986 and 1107).  C, Go and Python have **no such
+suite function at all** — their CLIs transcribe the four-step construction inline:
+
+```
+base = K XOR nonce;  seed = rnl_kdf_seed(base);
+ks   = nl_fscx_revolve_v1(seed, base, I_VALUE);  E = P XOR ks
+```
+
+`herradura_cli.c` (cmd_enc / cmd_dec), `herradura_cli.go` (cmdEnc / cmdDec) and
+`herradura.py` (cmd_enc / cmd_dec) each carry it TWICE — once per direction, six
+transcriptions of a shipped primitive — plus the `encfile` / `decfile` container path.
+
+**The AEAD sibling is a suite function in every port.**  `hske_nl_aead_encrypt` exists in
+C, Go, Python and Java and is called by all four CLIs.  So `enc --algo hske-nla1 --aead`
+runs a suite primitive and `enc --algo hske-nla1` runs a transcription, in the same branch
+of the same function, three ports out of four.
+
+**Python's transcription is the worst of the three**, and it is the class CLAUDE.md's
+Testing section already names: it does not call the suite's KDF-seed derivation, it
+RE-DERIVES it inline —
+
+```python
+seed = BitArray(nbits, base.rotated(nbits // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - nbits)))
+```
+
+— a second copy of a domain constant with nothing cross-checking it against the shipped
+one.  Numbered tests [46], [47], [49] and [51] all exist because Python's harness
+re-implements a primitive and each one cross-checks the copy against the suite; here there
+is no suite function to cross-check against, so the copy is unguarded.  Go calls the real
+`RnlKdfSeed` and C the real `ba_rnl_kdf_seed`, so the divergence is Python-only and is a
+DERIVATION divergence, not a consumption-order one — invisible to the randomness axis
+(#296), to `PARAM_USE_CORPUS` (#295, which reads whether a constant is read, not which
+copy) and to every round-trip, because all four copies currently agree.
+
+**The fix is #308's fix.**  Adopt Java's shape verbatim in C, Go and Python — a suite
+`hske_nla1_encrypt(pt, key, nonce)` whose decrypt is the same function — on the standing
+precedent (#294, #296, #308) that adopting an existing correct port beats inventing a
+fourth API.  The nonce stays a PARAMETER, as it is in Java and as it is in the AEAD
+sibling, so the CLI keeps the draw and `CLI_DRAW_COVERAGE`'s `hske_nla1_nonce` row stays
+`cli_only` — **this item does not close that row and must not be read as closing it.**
+What it buys is that the OPERATION becomes pinnable by the machinery #296 and #297 built,
+and that Python's second copy of the KDF-seed derivation goes away.
+
+**What #311 measured, so it is not re-litigated here.**  This is one of only two
+`cli_only` roles whose CLI transcribes a multi-step operation; the other seven are a
+single uniform draw consumed immediately as a parameter.  It is the only one of the nine
+where a suite function already exists in a port and is not called by the other three.
+
+**Ordering.**  Ahead of #309, which #311 demoted: the seam #309 would build exists to
+reach draws like this one, and moving the operation is the cheaper half of that.
+
+Status: **OPEN**
+
+---
+
