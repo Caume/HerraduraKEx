@@ -132,58 +132,6 @@ Status: **OPEN**
 ---
 
 
-### #307: the four pins TODO #305's coverage census left OWED
-
-**TODO #305 built the coverage table and classified every censused raw-entropy consumer
-as `transitive`, `unpinned` or `owed`.  This item is the `owed` column** -- the rows
-where pinning applies, a reason would be an excuse, and #305 deliberately refused to let
-a prose sentence stand in for the work.
-
-Four rows, in the order their absence is most likely to hide something.
-
-* **`qcmdpc_keygen`** (Go, Python, Java; C takes the PRF as a parameter -- and TODO #306
-  found where C's seed actually comes from: `herradura_cli.c`'s `cmd_genpkey` draws it
-  and calls `qcprf_init`, so when this row is pinned, three ports supply the stream to
-  the suite function and C supplies it in the CLI.  `CLI_DRAW_COVERAGE`'s
-  `qcmdpc_keygen_prf_seed` row records that, and `qcmdpc_encap_prf_seed` and
-  `hybrid_kem_prf_seed` do the same for the two encapsulation sites).  TODO #277
-  found a 3-vs-1 byte-order split inside the PRF this drives, and only a dedicated
-  pinned vector -- numbered test [52] -- could catch it.  That pins the PRF; it does not
-  pin the DRAW ORDER around it.  #284 pinned KEM artifacts, which are verify-side, and
-  #303 is the precedent for why that is a different statement: a pinned key says nothing
-  about how it was sampled.  Needs a stream chosen to clear the weak-key screen and the
-  invertibility retry first time, on the `rnl_sigma_sign` row's recorded precedent, and
-  the generator must ASSERT that rather than assume it.
-* **`qcmdpc_encap`** (same three).  The error vector's support is drawn here, by the
-  rejection sampler whose acceptance limit `qcmdpc_parameter_selection.py` computes --
-  and a rejection loop is exactly what #296 found carrying three different consumption
-  orders across four ports, twice.
-* **`zkp_nl_pp_prove`** (all four).  TODO #302 §6 said ZKB++ was "covered twice over".
-  #305 narrowed that: the two halves are the CIRCUIT and the seed LENGTH, and neither is
-  the seed ORDER.  §6 now asserts the absence, so pinning this row FIRES that section
-  and forces its prose to be corrected -- the same self-invalidating handoff #302 left
-  for #303.
-* **`hcred_prove`** (all four).  HCRED's other prover, beside the KKW one #303 pinned:
-  same file, same witness, and #266's transcription bug was in this family.  Python and
-  Java censure the inner round rather than the outer prove, which is the same operation
-  one frame down.
-
-**Cost is the reason this is not folded into #305.**  #303 was ONE operation row and the
-measured cost of adding it -- generator, C header arrays, and a consumer in each of
-`verify_kat_c.c`, `verify_kat.go` and `KatVerify.java` -- was the whole item.  Four rows
-is four times that, and two of them (the QC-MDPC pair at BIKE-128) have a keygen cost
-that has to be measured before a row is written, exactly as #303 measured KKW's before
-choosing `(N_par, M, tau)`.
-
-**What must NOT happen.**  Silently converting an `owed` row to `unpinned` because the
-pin turned out to be expensive.  #305 separated the two statuses so that cost is argued
-in the open; a reason written after the fact to retire work is #300's third rule -- slack
-wide enough never to fire -- in table form.
-
-Status: **OPEN**
-
----
-
 ### #309: an entropy-injection seam for the four CLIs — env var and explicit flag
 
 **TODO #306 stated this limit in `CLI_DRAW_COVERAGE`'s header rather than after the fact,

@@ -616,9 +616,9 @@ PRIMITIVES = {
     },
     "hcred-outputs-ser": {
         "c": r"static void _hcred_outs_ser\(",
-        "go": r"^func hcredOutputsSer\(",
+        "go": r"^func HcredOutputsSer\(",
         "python": r"^def _hcred_outputs_ser\(",
-        "java": r"Hcred.java::private static byte\[\] outputsSer\(",
+        "java": r"Hcred.java::static byte\[\] outputsSer\(",
     },
     "hcred-ser": {
         "c": r"static void hcred_ser\(",
@@ -3092,6 +3092,63 @@ OPERATION_REPLAY_PINNED = {
         "c": "hcred_prove_kkw", "go": "HcredProveKkw",
         "python": "hcred_prove_kkw", "java": "Hcred.java::proveKkw",
     },
+    # --- TODO #307: the four rows #305's coverage census left OWED ---------
+    #
+    # `param_entropy` is the new cell shape and it is a finding rather than a
+    # convenience.  Every one of the six rows above draws in all four ports, so
+    # the four-cell rule below read as a law; the QC-MDPC pair is where it stops
+    # being one.  C's qcmdpc_keygen and qcmdpc_encap take a `QcMdpcPrf *` --
+    # the SEED is a parameter, drawn by herradura_cli.c's cmd_genpkey, which is
+    # what CLI_DRAW_COVERAGE's qcmdpc_keygen_prf_seed row records -- so C's
+    # cell is genuinely absent rather than missing, and a name there would fail
+    # the rule that a pinned cell must be a CENSUSED consumer.  The cell says
+    # which function it is and is cross-checked in both directions (see
+    # check_randomness): the function must EXIST in that language's suite and
+    # must NOT be censused.  So if C ever starts drawing there, this fails; and
+    # if the function is renamed or deleted, this fails.  That is PARAMETERS'
+    # `None`-cell treatment one axis over, and for its reason -- a cell the
+    # extractor dropped looks identical to one that genuinely does not exist.
+    "qcmdpc_keygen": {
+        "c": None, "go": "QcMdpcKeygen",
+        "python": "qcmdpc_keygen", "java": "Stern.java::qcmdpcKeygen",
+        "param_entropy": {
+            "c": ("qcmdpc_keygen",
+                  "takes a QcMdpcPrf *; the 32-byte seed is drawn by "
+                  "herradura_cli.c's cmd_genpkey and passed in, which is "
+                  "CLI_DRAW_COVERAGE's qcmdpc_keygen_prf_seed row.  The C "
+                  "consumer reads the row's stream itself and seeds the PRF "
+                  "with it, so the draw ORDER inside the loop is pinned in all "
+                  "four; what C does not do is read the CSPRNG here"),
+        },
+    },
+    "qcmdpc_encap": {
+        "c": None, "go": "QcMdpcEncap",
+        "python": "qcmdpc_encap", "java": "Stern.java::qcmdpcEncap",
+        "param_entropy": {
+            "c": ("qcmdpc_encap",
+                  "same shape as qcmdpc_keygen's: the PRF is a parameter and "
+                  "the seed is drawn at the CLI (CLI_DRAW_COVERAGE's "
+                  "qcmdpc_encap_prf_seed and hybrid_kem_prf_seed)"),
+        },
+    },
+    # NARROWS a claim TODO #302 §6 makes.  §6 says ZKB++ is covered twice over,
+    # one half being that the zkp_nl_prove row pins its masking term because
+    # neither port carries its own circuit.  True OF THE CIRCUIT; it does not
+    # extend to the SEED DRAW ORDER, which is this function's own consumption
+    # order -- and §2 of that file makes the 16-byte seed a security parameter,
+    # so the order in which seeds are drawn is not formatting.
+    "zkp_nl_pp_prove": {
+        "c": "zkp_nl_pp_prove", "go": "ZkpNlProvepp",
+        "python": "zkp_nl_prove_pp", "java": "ZkpNl.java::provePp",
+    },
+    # HCRED's OTHER prover, beside the KKW one above.  The cells are not all at
+    # the same FRAME and that is accurate rather than sloppy: Python and Java
+    # draw inside the inner MPC round, C and Go inside the outer prove, so the
+    # censused consumer differs by port while the pinned OPERATION does not.
+    "hcred_prove": {
+        "c": "hcred_prove", "go": "HcredProve",
+        "python": "_hcred_mpc_round", "java": "Hcred.java::mpcRound",
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -3165,57 +3222,15 @@ REPLAY_COVERAGE = {
     },
 
     # --- owed: pinning applies and is not done -----------------------------
-    "qcmdpc_keygen": {
-        "status": "owed", "item": 307,
-        "reason":
-            "TODO #277 found a 3-vs-1 byte-order split inside the PRF this "
-            "drives, and only a dedicated pinned vector (numbered test [52]) "
-            "could catch it -- but that pins the PRF, not the DRAW ORDER "
-            "around it.  #284 pinned KEM artifacts, which are verify-side: a "
-            "pinned key says nothing about how it was sampled, which is #303's "
-            "distinction exactly.  Needs a stream chosen to clear the weak-key "
-            "screen and the invertibility retry first time, on the "
-            "rnl_sigma_sign row's precedent",
-        "c": None,   # takes a QcMdpcPrf *; the seed is a parameter, not a draw
-        "go": "QcMdpcKeygen", "python": "qcmdpc_keygen",
-        "java": "Stern.java::qcmdpcKeygen",
-    },
-    "qcmdpc_encap": {
-        "status": "owed", "item": 307,
-        "reason":
-            "The error vector's support is drawn here, by the sampler whose "
-            "acceptance limit qcmdpc_parameter_selection.py checks -- so the "
-            "consumption order is exactly what a rejection loop makes "
-            "port-specific, the shape #296 found three times over",
-        "c": None,   # e is drawn by the caller and passed in
-        "go": "QcMdpcEncap", "python": "qcmdpc_encap",
-        "java": "Stern.java::qcmdpcEncap",
-    },
-    "zkp_nl_pp_prove": {
-        "status": "owed", "item": 307,
-        "reason":
-            "This NARROWS a claim TODO #302 §6 makes.  §6 says ZKB++ is "
-            "covered twice over, one half being that the zkp_nl_prove row pins "
-            "its masking term because neither port carries its own circuit.  "
-            "True OF THE CIRCUIT, and it does not extend to this function, "
-            "which reads raw entropy itself: the SEED draw order is its own "
-            "consumption order and no row pins it.  §2 of that file makes the "
-            "seed a security parameter, so the order in which seeds are drawn "
-            "is not formatting",
-        "c": "zkp_nl_pp_prove", "go": "ZkpNlProvepp",
-        "python": "zkp_nl_prove_pp", "java": "ZkpNl.java::provePp",
-    },
-    "hcred_prove": {
-        "status": "owed", "item": 307,
-        "reason":
-            "HCRED's OTHER prover.  TODO #303 pinned the KKW one and this is "
-            "the plain cut-and-choose Sigma prover beside it, same file, same "
-            "witness, unpinned -- and #266's transcription bug was in exactly "
-            "this family.  Python and Java censure the inner round rather than "
-            "the outer prove, which is the same operation one frame down",
-        "c": "hcred_prove", "go": "HcredProve",
-        "python": "_hcred_mpc_round", "java": "Hcred.java::mpcRound",
-    },
+    # EMPTY, and the emptiness is the shipped state of TODO #307 rather than a
+    # table nobody filled in.  #305 measured four -- qcmdpc_keygen,
+    # qcmdpc_encap, zkp_nl_pp_prove and hcred_prove -- and separated this
+    # status from `unpinned` precisely so their cost would be argued in the
+    # open instead of inside a prose reason.  All four are now rows in
+    # KAT/operation_replay.json, which DELETED their entries here rather than
+    # permitting the deletion: a row whose cells are all pinned fails until it
+    # goes.  A future entry therefore means a new consumer arrived and its pin
+    # was deferred with an item number, not that this check was switched off.
 
     # --- unpinned: a fixed stream would prove nothing new ------------------
     # The classical quartet's randomised operations.  Each draws ONE ephemeral
@@ -4212,12 +4227,29 @@ def _check_replay_table(errors, path, key, table, table_name, noun):
                 f"{noun} replay: {table_name} names '{name}' but {rel} has no such "
                 "row — delete the entry, or regenerate the vector "
                 "(python3 KAT/generate_kat.py)")
-        missing = [l for l in ("c", "go", "python", "java") if not cells.get(l)]
+        # A cell may be absent ONLY where that language takes its entropy as a
+        # parameter, named and cross-checked in `param_entropy` (TODO #307) --
+        # see OPERATION_REPLAY_PINNED's header.  Silence is still the split
+        # this rule exists to catch.
+        param = cells.get("param_entropy") or {}
+        missing = [l for l in ("c", "go", "python", "java")
+                   if not cells.get(l) and l not in param]
         if missing:
             errors.append(
                 f"{noun} replay: '{name}' has no pinned function for "
                 f"{', '.join(missing)} — a {noun} pinned in three languages is "
                 "exactly the split this axis exists to catch")
+        for lang, spec in sorted(param.items()):
+            if cells.get(lang):
+                errors.append(
+                    f"{noun} replay: '{name}' names a {lang} function AND "
+                    "declares its entropy a parameter — the row cannot claim "
+                    "both, so delete whichever is stale")
+            if not (isinstance(spec, tuple) and len(spec) == 2 and all(spec)):
+                errors.append(
+                    f"{noun} replay: '{name}' has a param_entropy cell for "
+                    f"{lang} that is not a (function, reason) pair — the reason "
+                    "is what a later reader has instead of the measurement")
     return names
 
 
@@ -4266,6 +4298,28 @@ def check_randomness(errors):
                         "which the raw-entropy census does not find — the pin "
                         "names a function that does not draw, so the replay "
                         "proves nothing")
+                # The other direction, and it is what makes an ABSENT cell a
+                # claim rather than a hole (TODO #307).  A `param_entropy` cell
+                # says "this language takes the source as a parameter here", so
+                # the function must EXIST and must NOT be censused.  Both
+                # halves fail loudly: if the port starts drawing, the pin is
+                # owed after all; if the name goes, the excuse outlived what it
+                # was about, which is #295's false-reason finding in miniature.
+                pe = (cells.get("param_entropy") or {}).get(lang)
+                if pe:
+                    pfn = pe[0]
+                    if pfn in got:
+                        errors.append(
+                            f"{noun} replay: '{sname}' says {lang} takes its "
+                            f"entropy as a parameter in '{pfn}', but the census "
+                            "finds that function reading raw entropy — the cell "
+                            "is a pin that is now owed, not an exemption")
+                    elif pfn not in _suite_bodies(lang):
+                        errors.append(
+                            f"{noun} replay: '{sname}' names {lang} function "
+                            f"'{pfn}' as taking its entropy as a parameter, and "
+                            "no such function exists in that suite — the "
+                            "exemption has outlived the code it describes")
     # --- (3) coverage of the census by the two vectors (TODO #305) --------
     _check_coverage(errors, found)
     # --- (4) the corpus past the suite boundary (TODO #306) ---------------

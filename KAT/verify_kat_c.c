@@ -556,6 +556,232 @@ static void op_hcred_prove_kkw(void)
  * four ports, and the b = 0 dummy commitment was a CONSTANT in C and Go, which
  * identified the real signer from the public signature.  See
  * stern_ring_simulate in herradura.h. */
+/* The inverse of herradura.h's qcp_to_bytes.  It lives here rather than in the
+ * header because the SHIPPED code never needs it -- a public key arrives
+ * through the PEM codec, not as a raw QcPoly -- and adding a suite function
+ * for a consumer's benefit is what the internal-surface census exists to
+ * catch.  The direction under test is still the shipped one: h_pub is compared
+ * through qcp_to_bytes. */
+static void qcp_from_bytes(QcPoly *p, const uint8_t in[QCMDPC_RBYTES])
+{
+    int i, k;
+    memset(p->w, 0, sizeof p->w);
+    for (i = 0; i < QCMDPC_RWORDS; i++)
+        for (k = 0; k < 8 && i * 8 + k < QCMDPC_RBYTES; k++)
+            p->w[i] |= (uint64_t)in[i * 8 + k] << (k * 8);
+}
+
+/* === TODO #307: the four rows #305's coverage census left OWED ==========
+ *
+ * QC-MDPC keygen is the one row here whose C cell in OPERATION_REPLAY_PINNED
+ * is ABSENT rather than named, and the reason is visible in this function:
+ * qcmdpc_keygen takes a QcMdpcPrf *, not a FILE *, so the 32-byte seed is a
+ * PARAMETER in C where it is a draw in the other three -- it is drawn by
+ * herradura_cli.c's cmd_genpkey, which is CLI_DRAW_COVERAGE's
+ * qcmdpc_keygen_prf_seed row.  The consumer therefore reads the stream itself
+ * and seeds the PRF with it, so the DRAW ORDER inside the loop is still held
+ * against the other three ports; what C does not do is read the CSPRNG here.
+ *
+ * What is pinned is the LOOP.  Numbered test [52] pins the PRF's seed
+ * expansion (TODO #277's 3-vs-1 byte-order split) and KAT/pem/'s kem_priv is
+ * verify-side, so neither says anything about the order
+ * seed -> sup0 -> sup1 -> screen -> inversion.  The stream REJECTS ONCE on the
+ * weak-key screen and then accepts, so the reject branch is pinned too -- a
+ * branch about one draw in 550 reaches.
+ */
+static int cmp_sup(const uint16_t *got, const int *want, int d, const char *what)
+{
+    int i, j, tmp;
+    int sorted[QCMDPC_D];
+    for (i = 0; i < d; i++) sorted[i] = (int)got[i];
+    for (i = 1; i < d; i++) {          /* insertion sort: a support is a SET */
+        tmp = sorted[i];
+        for (j = i; j > 0 && sorted[j-1] > tmp; j--) sorted[j] = sorted[j-1];
+        sorted[j] = tmp;
+    }
+    for (i = 0; i < d; i++)
+        if (sorted[i] != want[i]) { bad(what); return 0; }
+    return 1;
+}
+
+static void op_qcmdpc_keygen(void)
+{
+    QcMdpcPrf prf;
+    QcMdpcPriv priv;
+    QcMdpcPub pub;
+    uint8_t hp[QCMDPC_RBYTES];
+
+    qcprf_init(&prf, opr_qkg_stream);
+    qcmdpc_keygen(&priv, &pub, &prf);
+    if (cmp_sup(priv.sup0, opr_qkg_sup0, QCMDPC_D, "op qcmdpc_keygen sup0"))
+        ok("op qcmdpc_keygen sup0");
+    if (cmp_sup(priv.sup1, opr_qkg_sup1, QCMDPC_D, "op qcmdpc_keygen sup1"))
+        ok("op qcmdpc_keygen sup1");
+    /* Already in qcp_to_bytes order in the header -- see opr_qkg_h_pub. */
+    qcp_to_bytes(hp, &pub.h_pub);
+    if (memcmp(hp, opr_qkg_h_pub, QCMDPC_RBYTES) != 0)
+        bad("op qcmdpc_keygen h_pub");
+    else
+        ok("op qcmdpc_keygen h_pub");
+}
+
+static void op_qcmdpc_encap(void)
+{
+    QcMdpcPrf prf;
+    QcMdpcPub pub;
+    QcPoly syn;
+    BitArray K;
+    uint8_t buf[QCMDPC_RBYTES];
+
+    qcp_from_bytes(&pub.h_pub, opr_qen_h_pub);
+    qcprf_init(&prf, opr_qen_stream);
+    qcmdpc_encap(&syn, &K, &pub, &prf);
+    qcp_to_bytes(buf, &syn);
+    if (memcmp(buf, opr_qen_syndrome, QCMDPC_RBYTES) != 0)
+        bad("op qcmdpc_encap syndrome");
+    else
+        ok("op qcmdpc_encap syndrome");
+    /* K is a BitArray, whose byte order is the vector's big-endian one --
+     * unlike the polynomials above.  See opr_qen_k. */
+    if (cmp_ba(&K, opr_qen_k, "op qcmdpc_encap k"))
+        ok("op qcmdpc_encap k");
+}
+
+/* ZKB++ proving.  NARROWS a claim TODO #302 section 6 makes: its "covered
+ * twice over" is true of the CIRCUIT, which neither port carries its own copy
+ * of, and does not extend to the SEED DRAW ORDER -- this function's own
+ * consumption order, which no row pinned.  Section 2 of that file makes the
+ * 16-byte seed a security parameter, so the order is not formatting. */
+static void op_zkp_nl_pp_prove(void)
+{
+    FILE *f = fmemopen((void *)opr_zpp_stream, sizeof opr_zpp_stream, "rb");
+    ZkpNlPpRound *pp;
+    int j, nb = OPR_ZPP_NB, bad_at = -1;
+    const char *bad_field = "";
+
+    if (!f) { bad("op zkp_nl_pp_prove (fmemopen)"); return; }
+    pp = zkp_nl_pp_prove(OPR_ZPP_A, OPR_ZPP_B, OPR_ZPP_Y, OPR_ZPP_N,
+                         OPR_ZPP_ROUNDS, opr_zpp_msg, OPR_ZPP_MSG_LEN, f);
+    if (!pp) { bad("op zkp_nl_pp_prove (alloc)"); fclose(f); return; }
+    for (j = 0; j < OPR_ZPP_ROUNDS && bad_at < 0; j++) {
+        /* share2 is EMPTY exactly when e == 2, party 2's share being DERIVED
+         * rather than seeded (TODO #302 section 2), so the empty case is a
+         * field value and not a gap: has_share2 carries it here and a
+         * zero-length string carries it in the JSON. */
+        int want_len = opr_zpp_share2_len[j];
+        if (pp[j].e != opr_zpp_e[j])                              bad_field = "e";
+        else if (memcmp(pp[j].com_e, opr_zpp_com_e[j], 32))       bad_field = "com_e";
+        else if (memcmp(pp[j].out_e, opr_zpp_out_e[j], (size_t)nb)) bad_field = "out_e";
+        else if (memcmp(pp[j].seed_p1, opr_zpp_seed_p1[j], ZKPP_SEED_BYTES))
+                                                                  bad_field = "seed_p1";
+        else if (memcmp(pp[j].seed_p2, opr_zpp_seed_p2[j], ZKPP_SEED_BYTES))
+                                                                  bad_field = "seed_p2";
+        else if (memcmp(pp[j].gates_p2, opr_zpp_gates_p2[j], pp[j].gates_len))
+                                                                  bad_field = "gates_p2";
+        else if ((pp[j].has_share2 ? nb : 0) != want_len)         bad_field = "share2 length";
+        else if (want_len && memcmp(pp[j].share2, opr_zpp_share2[j], (size_t)want_len))
+                                                                  bad_field = "share2";
+        else continue;
+        bad_at = j;
+    }
+    if (bad_at >= 0) {
+        printf("FAIL op zkp_nl_pp_prove: round %d differs at %s\n", bad_at, bad_field);
+        failures++;
+    } else {
+        ok("op zkp_nl_pp_prove rounds");
+    }
+    if (ftell(f) != OPR_ZPP_CONSUMED) {
+        printf("FAIL op zkp_nl_pp_prove: consumed %ld bytes, vector says %d\n",
+               ftell(f), OPR_ZPP_CONSUMED);
+        failures++;
+    }
+    for (j = 0; j < OPR_ZPP_ROUNDS; j++) free(pp[j].gates_p2);
+    free(pp);
+    fclose(f);
+}
+
+/* HCRED's OTHER prover, beside the KKW one above: same file, same witness, and
+ * TODO #266's transcription bug was in this family -- three of four ports
+ * shipped one.  Numbered test [50] runs each port's prover against ITS OWN
+ * verifier, which is precisely the shape that lets a transcription bug pass. */
+static int cmp_i32(const int32_t *got, const int32_t *want, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) if (got[i] != want[i]) return 0;
+    return 1;
+}
+
+static void op_hcred_prove(void)
+{
+    FILE *f = fmemopen((void *)opr_hcp_stream, sizeof opr_hcp_stream, "rb");
+    HcredProof proof;
+    BitArray seed_H;
+    uint8_t outs_buf[HCRED_ROUND_OUTS_SER];
+    int j, p, bad_at = -1;
+    const char *bad_field = "";
+
+    if (!f) { bad("op hcred_prove (fmemopen)"); return; }
+    memcpy(seed_H.b, opr_hcp_seed_H, KEYBYTES);
+    if (hcred_prove(&proof, opr_hcp_s_poly, opr_hcp_m_poly, opr_hcp_c_poly,
+                    &seed_H, opr_hcp_syndrome, OPR_HCP_ROUNDS,
+                    opr_hcp_msg, OPR_HCP_MSG_LEN, f) != 0) {
+        bad("op hcred_prove (prove failed)");
+        fclose(f);
+        return;
+    }
+    if (proof.W != OPR_HCP_W) bad("op hcred_prove W"); else ok("op hcred_prove W");
+    for (j = 0; j < OPR_HCP_ROUNDS && bad_at < 0; j++) {
+        const HcredRound *rd = &proof.rd[j];
+        for (p = 0; p < 3; p++)
+            if (memcmp(rd->coms[p], opr_hcp_coms[3*j + p], KEYBYTES)) {
+                bad_field = "coms"; bad_at = j; break;
+            }
+        if (bad_at >= 0) break;
+        /* `outs` travels as the suite's OWN serialisation, the one that feeds
+         * the FS hash, so this compares one buffer rather than four opinions
+         * of a nested layout. */
+        _hcred_outs_ser(outs_buf, &rd->outs);
+        if (memcmp(outs_buf, opr_hcp_outs[j], OPR_HCP_OUTS_LEN))      bad_field = "outs";
+        else if (memcmp(rd->seed_c,  opr_hcp_seed_c[j],  KEYBYTES))   bad_field = "seed_c";
+        else if (memcmp(rd->seed_c1, opr_hcp_seed_c1[j], KEYBYTES))   bad_field = "seed_c1";
+        else if (!cmp_i32(rd->a1, opr_hcp_a1 + (size_t)j*HCRED_N,  HCRED_N))  bad_field = "a1";
+        else if (!cmp_i32(rd->b1, opr_hcp_b1 + (size_t)j*HCRED_N,  HCRED_N))  bad_field = "b1";
+        else if (!cmp_i32(rd->g1, opr_hcp_g1 + (size_t)j*HCRED_NB, HCRED_NB)) bad_field = "g1";
+        else if (!cmp_i32(rd->h1, opr_hcp_h1 + (size_t)j*HCRED_ND, HCRED_ND)) bad_field = "h1";
+        /* has_aux is the aux-reveal condition -- revealed exactly when party 2
+         * is one of the two opened -- and it is the condition the Go port read
+         * backwards at TODO #266, so it is compared before the vectors are. */
+        else if (rd->has_aux != opr_hcp_aux_present[j])          bad_field = "aux reveal condition";
+        else if (rd->has_aux &&
+                 !cmp_i32(rd->aux_s, opr_hcp_aux_s + (size_t)j*HCRED_N,  HCRED_N))  bad_field = "aux_s";
+        else if (rd->has_aux &&
+                 !cmp_i32(rd->aux_b, opr_hcp_aux_B + (size_t)j*HCRED_NB, HCRED_NB)) bad_field = "aux_B";
+        else if (rd->has_aux &&
+                 !cmp_i32(rd->aux_d, opr_hcp_aux_D + (size_t)j*HCRED_ND, HCRED_ND)) bad_field = "aux_D";
+        else continue;
+        bad_at = j;
+    }
+    if (bad_at >= 0) {
+        printf("FAIL op hcred_prove: round %d differs at %s\n", bad_at, bad_field);
+        failures++;
+    } else {
+        ok("op hcred_prove rounds");
+    }
+    if (ftell(f) != OPR_HCP_CONSUMED) {
+        printf("FAIL op hcred_prove: consumed %ld bytes, vector says %d\n",
+               ftell(f), OPR_HCP_CONSUMED);
+        failures++;
+    }
+    if (!hcred_verify(opr_hcp_m_poly, opr_hcp_c_poly, &seed_H,
+                      opr_hcp_syndrome, &proof, OPR_HCP_ROUNDS,
+                      opr_hcp_msg, OPR_HCP_MSG_LEN))
+        bad("op hcred_prove verifies");
+    else
+        ok("op hcred_prove verifies");
+    hcred_proof_free(&proof);
+    fclose(f);
+}
+
 static void op_stern_ring_sign(void)
 {
     FILE *f = fmemopen((void *)opr_ring_stream, sizeof opr_ring_stream, "rb");
@@ -695,6 +921,11 @@ int main(void)
     op_stern_ring_sign();
     op_rnl_sigma_sign();
     op_hcred_prove_kkw();
+    /* TODO #307's four, in the order #305's census listed them. */
+    op_qcmdpc_keygen();
+    op_qcmdpc_encap();
+    op_zkp_nl_pp_prove();
+    op_hcred_prove();
 
     if (failures) {
         printf("*** FAILED: %d check(s) reported [FAIL] ***\n", failures);

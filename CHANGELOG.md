@@ -2,6 +2,70 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [8.2.0] - 2026-09-21
+
+### Added
+- **Four new rows in `KAT/operation_replay.json` — the pins TODO #305's coverage census
+  left OWED (TODO #307).**  `qcmdpc_keygen`, `qcmdpc_encap`, `zkp_nl_pp_prove` and
+  `hcred_prove`, each against a fixed statement and a fixed stream, consumed by all four
+  ports through the drivers TODO #296 and #297 already built — no new script, no CI
+  wiring, no injection machinery.  `REPLAY_COVERAGE` now reports **0 owed**, and the four
+  rows it carried are DELETED rather than retitled: a coverage row whose cells are all
+  pinned fails until it goes, so pinning forced the deletion instead of permitting it.
+- **`HcredOutputsSer` is exported from the Go `herradura` package**, and Java's
+  `Hcred.outputsSer` becomes package-private.  A new public API surface in one port,
+  hence MINOR.  Each row's `outs` field travels as the suite's OWN serialisation — the
+  one that feeds the Fiat-Shamir hash — so a consumer compares one string rather than
+  carrying a second opinion of a nested layout; a consumer in Go's `package main` cannot
+  reach an unexported function.  Same reason `QcMdpcPrfDraw` is exported (TODO #277).
+  The `hcred-outputs-ser` `PRIMITIVES` row already named the function in all four
+  languages and its Go and Java markers move with it.
+- **`param_entropy`, a new cell shape in `OPERATION_REPLAY_PINNED`.**  Every one of the
+  first six rows draws in all four ports, so the four-cell rule read as a law; the
+  QC-MDPC pair is where it stops being one.  C's `qcmdpc_keygen` and `qcmdpc_encap` take
+  a `QcMdpcPrf *`, so the seed is a PARAMETER there and a drawn value in the other three
+  — and naming C's function would fail the standing rule that a pinned cell must be a
+  CENSUSED consumer.  The cell says which function it is and is cross-checked in both
+  directions: the function must exist in that language's suite and must NOT be censused,
+  so C starting to draw there fails, and the function being renamed or deleted fails.
+  That is `PARAMETERS`' `None`-cell treatment one axis over, for its reason.
+
+### Changed
+- **The QC-MDPC keygen stream RETRIES on purpose, and TODO #307's own text asked for the
+  opposite.**  Its prescription — "a stream chosen to clear the weak-key screen and the
+  invertibility retry first time" — came from the `rnl_sigma_sign` row's recorded
+  precedent, where a retry desynchronises unbuffered C from the three buffered ports
+  (TODO #293) because the attempt boundary falls inside a block.  **That hazard does not
+  exist here**: the CSPRNG is read exactly once for the 32-byte seed and every retry
+  redraws from the PRF, which is deterministic and unbuffered in all four.  So a
+  retrying stream costs nothing and pins strictly more — the weak-key screen's REJECT
+  branch, which a stream chosen at random reaches about one draw in 550 (37 rejections
+  in 20 219 measured at BIKE-128).
+- **`zkp_nl_pp_prove` narrows a claim TODO #302 §6 makes.**  §6 says ZKB++ is "covered
+  twice over", one half being that the `zkp_nl_prove` row pins its masking term because
+  neither port carries its own circuit.  True *of the circuit*; it does not extend to the
+  SEED DRAW ORDER, which is this function's own consumption order and which nothing
+  pinned.  §2 of that same file makes the 16-byte seed a security parameter, so the order
+  in which seeds are drawn is not formatting.  §6 self-invalidates by design — it asserts
+  the absence — so it has been corrected rather than left standing.
+
+### Notes
+- **The four ports agree, and that is the result.**  C, Java and Go each reproduced
+  Python's transcript field for field on the first attempt, as #303 found for KKW, where
+  #296 found three of four samplers diverging and #297 found an anonymity break.  What
+  the rows buy is that the four cannot stop agreeing quietly.
+- **Cost, measured before the rows were written because the item said it must be.**  At
+  BIKE-128 a Python `qcmdpc_keygen` is 0.05 s and an `encap` 0.10 s — the pair TODO #307
+  flagged as the expensive ones are the two cheapest here, because the inversion is one
+  big-integer extended Euclid and not a decode.  `zkp_nl_pp_prove` at n = 16 is 0.3 s.
+  `hcred_prove` at n = 256 is the one that costs, ~10.5 s per prove in Python, which is
+  why `rounds` is 2 — the smallest count that can still open rounds on both sides of the
+  aux-reveal condition, the condition the Go port read backwards at TODO #266.  n = 256
+  is not a choice: HCRED's width is a compile-time constant in C and Java.
+- **What this does NOT do.**  A pinned operation sees DIVERGENCE only.  #298's rule (1)
+  still binds — a cross-port check cannot see a property all four ports get wrong — and
+  nothing here asserts that any of the four operations is CORRECT.
+
 ## [8.1.0] - 2026-09-20
 
 ### Added

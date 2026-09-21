@@ -17,6 +17,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"sort"
 	"strings"
 
 	. "herradurakex/herradura"
@@ -300,6 +301,38 @@ func unpackVec(s string) []int {
 		out[i] = int(b[3*i])<<16 | int(b[3*i+1])<<8 | int(b[3*i+2])
 	}
 	return out
+}
+
+// packVec is unpackVec's inverse: the protocol's own 3-bytes-per-coefficient
+// encoding (_hcred_ser), which is how every Z_q vector travels in the vectors.
+func packVec(v []int) string {
+	b := make([]byte, 3*len(v))
+	for i, c := range v {
+		b[3*i], b[3*i+1], b[3*i+2] = byte(c>>16), byte(c>>8), byte(c)
+	}
+	return hex.EncodeToString(b)
+}
+
+// intListStr renders a support (or any int list) for comparison against the
+// vector's JSON array, sorted -- a support is a SET in Python and a slice
+// here, so the order is the port's, not the protocol's.
+func intListStr(v []int) string {
+	c := append([]int(nil), v...)
+	sort.Ints(c)
+	parts := make([]string, len(c))
+	for i, x := range c {
+		parts[i] = fmt.Sprintf("%d", x)
+	}
+	return strings.Join(parts, ",")
+}
+
+func jsonIntListStr(x interface{}) string {
+	l := x.([]interface{})
+	v := make([]int, len(l))
+	for i, e := range l {
+		v[i] = int(e.(float64))
+	}
+	return intListStr(v)
 }
 
 // buildKkwProof rebuilds the Go proof struct from the pinned JSON.  Kept
@@ -940,6 +973,177 @@ func verifyOperationReplay(v map[string]interface{}) int {
 			}
 			want := buildKkwProofFrom(expect)
 			fails += compareKkwProof(name, got, want)
+
+		// === TODO #307: the four rows #305's coverage census left OWED ====
+		case "qcmdpc_keygen":
+			// What is pinned is the LOOP, not the PRF: numbered test [52]
+			// pins the seed expansion (TODO #277's 3-vs-1 byte-order split)
+			// and KAT/pem/'s kem_priv is verify-side, so neither says
+			// anything about the order seed -> sup0 -> sup1 -> screen ->
+			// inversion.  The stream REJECTS ONCE on the weak-key screen and
+			// then accepts, which pins the reject branch too -- a branch
+			// about one draw in 550 reaches.
+			r := num(params, "r")
+			sup0, sup1, _, _, hPub := QcMdpcKeygen(nil)
+			check("op "+name+" sup0", intListStr(sup0), jsonIntListStr(expect["sup0"]))
+			check("op "+name+" sup1", intListStr(sup1), jsonIntListStr(expect["sup1"]))
+			check("op "+name+" h_pub", fmt.Sprintf("%0*x", (r+3)/4, hPub),
+				str(expect, "h_pub"))
+
+		case "qcmdpc_encap":
+			r := num(params, "r")
+			hPub := hexToBig(str(stmt, "h_pub"))
+			syn, K := QcMdpcEncap(hPub, nil)
+			check("op "+name+" syndrome", fmt.Sprintf("%0*x", (r+3)/4, syn),
+				str(expect, "syndrome"))
+			check("op "+name+" k", hex.EncodeToString(K), str(expect, "k"))
+
+		case "zkp_nl_pp_prove":
+			// NARROWS TODO #302 §6: that section's "covered twice over" is
+			// true of the CIRCUIT, which neither port carries its own copy
+			// of, and does not extend to the SEED DRAW ORDER -- this
+			// function's own consumption order, which no row pinned.  §2 of
+			// the same file makes the 16-byte seed a security parameter.
+			n, rounds := num(params, "n"), num(params, "rounds")
+			pp, err := ZkpNlProvepp(hexToBig(str(stmt, "a")).Uint64(),
+				hexToBig(str(stmt, "b")).Uint64(),
+				hexToBig(str(stmt, "y")).Uint64(),
+				n, rounds, mustHex(str(stmt, "msg_hex")))
+			if err != nil {
+				fmt.Printf("FAIL op %s: %s\n", name, err)
+				fails++
+				continue
+			}
+			want := strList(expect["rounds"])
+			if len(pp) != len(want) {
+				fmt.Printf("FAIL op %s: %d rounds, vector says %d\n",
+					name, len(pp), len(want))
+				fails++
+				continue
+			}
+			bad := -1
+			for j := range pp {
+				w := want[j].(map[string]interface{})
+				// share2 is EMPTY exactly when E == 2, because party 2's
+				// share is DERIVED rather than seeded (TODO #302 §2) -- so
+				// the empty case is a field value, not a missing field.
+				if pp[j].E != num(w, "e") ||
+					hex.EncodeToString(pp[j].ComE[:]) != str(w, "com_e") ||
+					hex.EncodeToString(pp[j].OutE) != str(w, "out_e") ||
+					hex.EncodeToString(pp[j].SeedP1[:]) != str(w, "seed_p1") ||
+					hex.EncodeToString(pp[j].SeedP2[:]) != str(w, "seed_p2") ||
+					hex.EncodeToString(pp[j].GatesP2) != str(w, "gates_p2") ||
+					hex.EncodeToString(pp[j].Share2) != str(w, "share2") {
+					bad = j
+					break
+				}
+			}
+			if bad >= 0 {
+				fmt.Printf("FAIL op %s: round %d differs (e=%d)\n",
+					name, bad, pp[bad].E)
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " rounds")
+			}
+
+		case "hcred_prove":
+			// HCRED's OTHER prover, beside the KKW one above: same file,
+			// same witness, and TODO #266's transcription bug was in this
+			// family.  Numbered test [50] runs each port's prover against
+			// ITS OWN verifier, which is precisely the shape that lets a
+			// transcription bug pass in three of four ports.
+			n, rounds := num(params, "n"), num(params, "rounds")
+			pf, err := HcredProve(unpackVec(str(stmt, "s_poly")),
+				unpackVec(str(stmt, "m_poly")), unpackVec(str(stmt, "c_poly")),
+				hexToBA(n, str(stmt, "seed_H")), hexToBig(str(stmt, "y")),
+				n, rounds, mustHex(str(stmt, "msg_hex")))
+			if err != nil {
+				fmt.Printf("FAIL op %s: %s\n", name, err)
+				fails++
+				continue
+			}
+			check("op "+name+" W", fmt.Sprintf("%d", pf.W),
+				fmt.Sprintf("%d", num(expect, "W")))
+			want := strList(expect["rounds"])
+			if len(pf.Rounds) != len(want) {
+				fmt.Printf("FAIL op %s: %d rounds, vector says %d\n",
+					name, len(pf.Rounds), len(want))
+				fails++
+				continue
+			}
+			bad, badField := -1, ""
+			for j := range pf.Rounds {
+				w := want[j].(map[string]interface{})
+				rd := &pf.Rounds[j]
+				cw := strList(w["coms"])
+				for p := 0; p < 3 && bad < 0; p++ {
+					if hex.EncodeToString(rd.Coms[p]) != cw[p].(string) {
+						bad, badField = j, fmt.Sprintf("coms[%d]", p)
+					}
+				}
+				if bad >= 0 {
+					break
+				}
+				// `outs` travels as the suite's OWN serialisation, the one
+				// that feeds the FS hash, so this compares one hex string
+				// rather than four opinions of a nested layout.
+				for _, f := range []struct {
+					key string
+					got string
+				}{
+					{"outs", hex.EncodeToString(HcredOutputsSer(&rd.Outs))},
+					{"seed_c", hex.EncodeToString(rd.SeedC)},
+					{"seed_c1", hex.EncodeToString(rd.SeedC1)},
+					{"a1", packVec(rd.A1)}, {"b1", packVec(rd.B1)},
+					{"g1", packVec(rd.G1)}, {"h1", packVec(rd.H1)},
+				} {
+					if f.got != str(w, f.key) {
+						bad, badField = j, f.key
+						break
+					}
+				}
+				if bad >= 0 {
+					break
+				}
+				// aux is NULL on a round where party 2 is not opened, and
+				// that nullness IS the aux-reveal condition the Go port read
+				// backwards at TODO #266 -- so a nil where the vector has a
+				// vector (or the reverse) is the failure, not a skip.
+				for _, f := range []struct {
+					key string
+					got []int
+				}{
+					{"aux_s", rd.AuxS}, {"aux_B", rd.AuxB}, {"aux_D", rd.AuxD},
+				} {
+					wv, present := w[f.key]
+					if (f.got == nil) != (wv == nil) || !present {
+						bad, badField = j, f.key+" (reveal condition)"
+						break
+					}
+					if f.got != nil && packVec(f.got) != wv.(string) {
+						bad, badField = j, f.key
+						break
+					}
+				}
+				if bad >= 0 {
+					break
+				}
+			}
+			if bad >= 0 {
+				fmt.Printf("FAIL op %s: round %d differs at %s\n", name, bad, badField)
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " rounds")
+			}
+			if !HcredVerify(unpackVec(str(stmt, "m_poly")),
+				unpackVec(str(stmt, "c_poly")), hexToBA(n, str(stmt, "seed_H")),
+				hexToBig(str(stmt, "y")), pf, n, rounds,
+				mustHex(str(stmt, "msg_hex"))) {
+				fmt.Println("FAIL op " + name + " verifies")
+				fails++
+			} else {
+				fmt.Println("PASS op " + name + " verifies")
+			}
 
 		default:
 			fmt.Printf("FAIL op replay: unknown operation %q -- a row was added "+

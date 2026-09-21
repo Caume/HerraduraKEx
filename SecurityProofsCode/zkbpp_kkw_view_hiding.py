@@ -682,24 +682,39 @@ def section6():
     #     order in which the per-round seeds are drawn is its own consumption
     #     order, and no row pins it.  §2 makes the seed a security parameter,
     #     so that order is not formatting.
-    #     Asserted as an ABSENCE, the way (c) was before #303 filled it: the
-    #     day #307 pins the prover, this fires and forces the prose below to
-    #     be corrected rather than left overstating the coverage.
-    checks.append(("    ZKB++ prover's SEED ORDER still unpinned (TODO #307)",
-                   "zkp_nl_pp_prove" not in names))
+    #     It was asserted as an ABSENCE, the way (c) was before #303 filled
+    #     it, so that it would fire the day the prover was pinned.  IT FIRED:
+    #     TODO #307 added the row, and the prose below is the correction that
+    #     forced.  Kept, inverted -- deleting the row now fails the section
+    #     rather than quietly restoring the gap.
+    checks.append(("    ZKB++ prover SEED ORDER row (TODO #307)",
+                   "zkp_nl_pp_prove" in names))
+    #     And checked for what it IS, as (c) is: a fixed stream over a fixed
+    #     statement.  What it pins is the DRAW ORDER, not the hiding property
+    #     §2-§3 measure -- an expansion predictable in all four ports passes a
+    #     cross-port vector by construction, which is #298's rule (1) again.
+    pp_row = next(o for o in ops["operations"]
+                  if o["name"] == "zkp_nl_pp_prove")
+    checks.append(("    ... with a fixed stream over a fixed statement",
+                   bool(pp_row.get("stream")) and
+                   bool(pp_row.get("statement", {}).get("a"))))
 
     for label, good in checks:
         print(f"  [{'ok' if good else 'XX'}] {label}")
     print()
-    print("  ZKB++ — COVERED IN TWO PLACES AND NOT A THIRD, which TODO #305")
-    print("    narrowed.  The masking term is covered by operation_replay.json's")
-    print("    zkp_nl_prove row (same evaluator, checked above) and the seed")
-    print("    LENGTH by check_language_parity.py's zkpp-seed-bytes row, so this")
-    print("    file is Python-only for #301's reason, reached differently.  But")
-    print("    the seed ORDER is neither: zkp_nl_pp_prove draws its own entropy,")
-    print("    and a shared evaluator says nothing about the sequence of draws")
-    print("    around it.  #305's census put it at `owed`, not covered; until")
-    print("    #307 pins it, this section claims the two halves it can defend.")
+    print("  ZKB++ — COVERED IN THREE PLACES SINCE TODO #307, and the third")
+    print("    is the one #305 had to narrow this paragraph to admit.  The")
+    print("    masking term is covered by operation_replay.json's zkp_nl_prove")
+    print("    row (same evaluator, checked above) and the seed LENGTH by")
+    print("    check_language_parity.py's zkpp-seed-bytes row, so this file is")
+    print("    Python-only for #301's reason, reached differently.  The seed")
+    print("    ORDER was neither -- zkp_nl_pp_prove draws its own entropy, and")
+    print("    a shared evaluator says nothing about the sequence of draws")
+    print("    around it -- so #305's census filed it `owed` rather than")
+    print("    covered, and #307 pinned it with a row of its own.  What that")
+    print("    row pins is DIVERGENCE: the four ports draw their seeds in the")
+    print("    same order.  It is not a hiding statement, and §2-§3 remain the")
+    print("    only check of that, which is #298's rule (1).")
     print("  KKW — COVERED SINCE TODO #303, and the two halves are different")
     print("    properties.  hcred_kkw.json is VERIFY-SIDE by construction, so it")
     print("    exercises no port's PROVER, and KKW has no CLI surface in any")

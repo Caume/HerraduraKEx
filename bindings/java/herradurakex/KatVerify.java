@@ -830,6 +830,36 @@ public final class KatVerify {
 
     /** Centered coefficients as 4-byte big-endian two's complement -- the
      *  encoding the vector uses because it is what C's int32_t already holds. */
+    /** unpackVec's inverse: the protocol's own 3-bytes-per-coefficient
+     *  encoding (Hcred.ser), which is how every Z_q vector travels here. */
+    private static String packVec(int[] v) {
+        StringBuilder sb = new StringBuilder();
+        for (int c : v) sb.append(String.format("%06x", c & 0xFFFFFF));
+        return sb.toString();
+    }
+
+    /** A support (or any int list) rendered for comparison against the
+     *  vector's JSON array, SORTED -- a support is a set in Python and an
+     *  array here, so the order is the port's and not the protocol's. */
+    private static String intListStr(int[] v) {
+        int[] c = v.clone();
+        java.util.Arrays.sort(c);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < c.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(c[i]);
+        }
+        return sb.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String jsonIntListStr(Object o) {
+        List<Object> l = (List<Object>) o;
+        int[] v = new int[l.size()];
+        for (int i = 0; i < v.length; i++) v[i] = ((Number) l.get(i)).intValue();
+        return intListStr(v);
+    }
+
     private static String i32Hex(int[] vals) {
         StringBuilder sb = new StringBuilder();
         for (int v : vals) sb.append(String.format("%08x", v));
@@ -1092,6 +1122,163 @@ public final class KatVerify {
                         ((Number) params.get("tau")).intValue(),
                         unhexBytes((String) stmt.get("msg_hex")), rng);
                 fails += compareKkwProof(name, got, buildKkwProofFrom(expect, null));
+
+            } else if ("qcmdpc_keygen".equals(name)) {
+                // What is pinned is the LOOP, not the PRF: numbered test [34]
+                // pins the seed expansion (TODO #277's 3-vs-1 byte-order
+                // split) and KAT/pem/'s kem_priv is verify-side, so neither
+                // says anything about the order seed -> sup0 -> sup1 ->
+                // screen -> inversion.  This stream REJECTS ONCE on the
+                // weak-key screen and then accepts, so the reject branch is
+                // pinned too -- a branch about one draw in 550 reaches.
+                int qr = ((Number) params.get("r")).intValue();
+                Stern.QcMdpcKeypair kp = Stern.qcmdpcKeygen(rng);
+                fails += replayCheck("op " + name + " sup0", intListStr(kp.sup0),
+                        jsonIntListStr(expect.get("sup0")));
+                fails += replayCheck("op " + name + " sup1", intListStr(kp.sup1),
+                        jsonIntListStr(expect.get("sup1")));
+                fails += replayCheck("op " + name + " h_pub",
+                        String.format("%0" + ((qr + 3) / 4) + "x", kp.hPub),
+                        (String) expect.get("h_pub"));
+
+            } else if ("qcmdpc_encap".equals(name)) {
+                int qr = ((Number) params.get("r")).intValue();
+                Stern.QcMdpcEncapResult er = Stern.qcmdpcEncap(
+                        new BigInteger((String) stmt.get("h_pub"), 16), rng);
+                fails += replayCheck("op " + name + " syndrome",
+                        String.format("%0" + ((qr + 3) / 4) + "x", er.syn),
+                        (String) expect.get("syndrome"));
+                fails += replayCheck("op " + name + " k",
+                        String.format("%064x", er.k), (String) expect.get("k"));
+
+            } else if ("zkp_nl_pp_prove".equals(name)) {
+                // NARROWS TODO #302 section 6: its "covered twice over" is
+                // true of the CIRCUIT, which neither port carries its own
+                // copy of, and does not extend to the SEED DRAW ORDER --
+                // this function's own consumption order, which no row
+                // pinned.  Section 2 of the same file makes the 16-byte seed
+                // a security parameter.
+                int n = ((Number) params.get("n")).intValue();
+                int rounds = ((Number) params.get("rounds")).intValue();
+                List<ZkpNl.PpRound> pp = ZkpNl.provePp(
+                        new BigInteger((String) stmt.get("a"), 16),
+                        new BigInteger((String) stmt.get("b"), 16),
+                        new BigInteger((String) stmt.get("y"), 16),
+                        n, rounds, unhexBytes((String) stmt.get("msg_hex")), rng);
+                List<Object> want = (List<Object>) expect.get("rounds");
+                int bad = -1;
+                if (pp.size() != want.size()) {
+                    System.out.println("FAIL op " + name + ": " + pp.size()
+                            + " rounds, vector says " + want.size());
+                    fails++;
+                } else {
+                    for (int j = 0; j < pp.size() && bad < 0; j++) {
+                        Map<String, Object> w = (Map<String, Object>) want.get(j);
+                        ZkpNl.PpRound g = pp.get(j);
+                        // share2 is EMPTY exactly when e == 2, party 2's share
+                        // being DERIVED rather than seeded (TODO #302 s2), so
+                        // the empty case is a field value and not a gap.
+                        if (g.e != ((Number) w.get("e")).intValue()
+                                || !hexOf(g.comE).equals(w.get("com_e"))
+                                || !hexOf(g.outE).equals(w.get("out_e"))
+                                || !hexOf(g.seedP1).equals(w.get("seed_p1"))
+                                || !hexOf(g.seedP2).equals(w.get("seed_p2"))
+                                || !hexOf(g.gatesP2).equals(w.get("gates_p2"))
+                                || !hexOf(g.share2).equals(w.get("share2"))) {
+                            bad = j;
+                        }
+                    }
+                    if (bad >= 0) {
+                        System.out.println("FAIL op " + name + ": round " + bad
+                                + " differs (e=" + pp.get(bad).e + ")");
+                        fails++;
+                    } else {
+                        System.out.println("PASS op " + name + " rounds");
+                    }
+                }
+
+            } else if ("hcred_prove".equals(name)) {
+                // HCRED's OTHER prover, beside the KKW one above: same file,
+                // same witness, and TODO #266's transcription bug was in this
+                // family.  SelfTest's [31] runs this port's prover against
+                // ITS OWN verifier, which is precisely the shape that lets a
+                // transcription bug pass in three of four ports.
+                int n = ((Number) params.get("n")).intValue();
+                int rounds = ((Number) params.get("rounds")).intValue();
+                int[] mPoly = unpackVec((String) stmt.get("m_poly"));
+                int[] cPoly = unpackVec((String) stmt.get("c_poly"));
+                BigInteger seedH = new BigInteger((String) stmt.get("seed_H"), 16);
+                BigInteger ySynd = new BigInteger((String) stmt.get("y"), 16);
+                byte[] hmsg = unhexBytes((String) stmt.get("msg_hex"));
+                Hcred.Proof pf = Hcred.prove(unpackVec((String) stmt.get("s_poly")),
+                        mPoly, cPoly, seedH, ySynd, rounds, hmsg, rng);
+                fails += replayCheck("op " + name + " W", Integer.toString(pf.W),
+                        Integer.toString(((Number) expect.get("W")).intValue()));
+                List<Object> want = (List<Object>) expect.get("rounds");
+                int bad = -1;
+                String badField = "";
+                if (pf.rounds.size() != want.size()) {
+                    System.out.println("FAIL op " + name + ": " + pf.rounds.size()
+                            + " rounds, vector says " + want.size());
+                    fails++;
+                } else {
+                    for (int j = 0; j < pf.rounds.size() && bad < 0; j++) {
+                        Map<String, Object> w = (Map<String, Object>) want.get(j);
+                        Hcred.ProofRound rd = pf.rounds.get(j);
+                        List<Object> cw = (List<Object>) w.get("coms");
+                        for (int p = 0; p < 3 && bad < 0; p++) {
+                            if (!hexOf(rd.coms[p]).equals(cw.get(p))) {
+                                bad = j; badField = "coms[" + p + "]";
+                            }
+                        }
+                        if (bad >= 0) break;
+                        // `outs` travels as the suite's OWN serialisation, the
+                        // one that feeds the FS hash, so this compares one hex
+                        // string rather than four opinions of a nested layout.
+                        String[][] pairs = {
+                            {"outs", hexOf(Hcred.outputsSer(rd.outs))},
+                            {"seed_c", hexOf(rd.seedC)},
+                            {"seed_c1", hexOf(rd.seedC1)},
+                            {"a1", packVec(rd.a1)}, {"b1", packVec(rd.b1)},
+                            {"g1", packVec(rd.g1)}, {"h1", packVec(rd.h1)},
+                        };
+                        for (String[] pr : pairs) {
+                            if (!pr[1].equals(w.get(pr[0]))) {
+                                bad = j; badField = pr[0]; break;
+                            }
+                        }
+                        if (bad >= 0) break;
+                        // aux is NULL on a round where party 2 is not opened,
+                        // and that nullness IS the aux-reveal condition the Go
+                        // port read backwards at TODO #266 -- so a null where
+                        // the vector has a vector (or the reverse) is the
+                        // failure, not a skip.
+                        String[] auxKeys = {"aux_s", "aux_B", "aux_D"};
+                        int[][] auxVals = {rd.auxS, rd.auxB, rd.auxD};
+                        for (int k = 0; k < 3; k++) {
+                            Object wv = w.get(auxKeys[k]);
+                            if ((auxVals[k] == null) != (wv == null)) {
+                                bad = j; badField = auxKeys[k] + " (reveal condition)"; break;
+                            }
+                            if (auxVals[k] != null && !packVec(auxVals[k]).equals(wv)) {
+                                bad = j; badField = auxKeys[k]; break;
+                            }
+                        }
+                    }
+                    if (bad >= 0) {
+                        System.out.println("FAIL op " + name + ": round " + bad
+                                + " differs at " + badField);
+                        fails++;
+                    } else {
+                        System.out.println("PASS op " + name + " rounds");
+                    }
+                }
+                if (!Hcred.verify(mPoly, cPoly, seedH, ySynd, pf, rounds, hmsg)) {
+                    System.out.println("FAIL op " + name + " verifies");
+                    fails++;
+                } else {
+                    System.out.println("PASS op " + name + " verifies");
+                }
 
             } else {
                 System.out.println("FAIL operation_replay: unknown operation \"" + name
