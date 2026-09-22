@@ -30,8 +30,7 @@ func nativeBA(b []byte) *herradura.BitArray {
 }
 
 func TestFFIMatchesNativeGo(t *testing.T) {
-	poly := herradura.GfPoly[keyBits]
-	g := big.NewInt(herradura.GfGen)
+	g := herradura.GfGenBA(keyBits)
 
 	aPriv, _ := RandomBytes()
 	bPriv, _ := RandomBytes()
@@ -40,14 +39,14 @@ func TestFFIMatchesNativeGo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aPubNative := toBytes(herradura.GfPow(g, toBig(aPriv), poly, keyBits))
+	aPubNative := toBytes(herradura.GfPow(g, nativeBA(aPriv)).BigInt())
 	if !bytes.Equal(aPubFFI, aPubNative) {
 		t.Fatalf("hkex_gf_pubkey mismatch: ffi=%x native=%x", aPubFFI, aPubNative)
 	}
 
 	bPubFFI, _ := HkexGfPubkey(bPriv)
 	sharedFFI, _ := HkexGfAgree(aPriv, bPubFFI)
-	sharedNative := toBytes(herradura.GfPow(toBig(bPubFFI), toBig(aPriv), poly, keyBits))
+	sharedNative := toBytes(herradura.GfPow(nativeBA(bPubFFI), nativeBA(aPriv)).BigInt())
 	if !bytes.Equal(sharedFFI, sharedNative) {
 		t.Fatalf("hkex_gf_agree mismatch: ffi=%x native=%x", sharedFFI, sharedNative)
 	}
@@ -55,12 +54,12 @@ func TestFFIMatchesNativeGo(t *testing.T) {
 	pt, _ := RandomBytes()
 	key, _ := RandomBytes()
 	ctFFI, _ := HskeEncrypt(pt, key)
-	ctNative := herradura.FscxRevolve(nativeBA(pt), nativeBA(key), ivalue).Val.FillBytes(make([]byte, KeyBytes))
+	ctNative := herradura.FscxRevolve(nativeBA(pt), nativeBA(key), ivalue).Bytes()
 	if !bytes.Equal(ctFFI, ctNative) {
 		t.Fatalf("hske_encrypt mismatch: ffi=%x native=%x", ctFFI, ctNative)
 	}
 	ptBackFFI, _ := HskeDecrypt(ctFFI, key)
-	ptBackNative := herradura.FscxRevolve(nativeBA(ctFFI), nativeBA(key), rvalue).Val.FillBytes(make([]byte, KeyBytes))
+	ptBackNative := herradura.FscxRevolve(nativeBA(ctFFI), nativeBA(key), rvalue).Bytes()
 	if !bytes.Equal(ptBackFFI, ptBackNative) || !bytes.Equal(ptBackFFI, pt) {
 		t.Fatalf("hske_decrypt mismatch: ffi=%x native=%x pt=%x", ptBackFFI, ptBackNative, pt)
 	}
@@ -70,18 +69,17 @@ func TestFFIMatchesNativeGo(t *testing.T) {
 	R, s, _ := HpksSign(msg, aPriv)
 	e := herradura.FscxRevolve(nativeBA(R), nativeBA(msg), ivalue)
 	lhs := herradura.GfMul(
-		herradura.GfPow(g, toBig(s), poly, keyBits),
-		herradura.GfPow(toBig(aPubFFI), &e.Val, poly, keyBits),
-		poly, keyBits)
-	if lhs.Cmp(toBig(R)) != 0 {
+		herradura.GfPow(g, nativeBA(s)),
+		herradura.GfPow(nativeBA(aPubFFI), e))
+	if lhs.BigInt().Cmp(toBig(R)) != 0 {
 		t.Fatalf("native verify of FFI-produced HPKS signature failed")
 	}
 
 	// HPKE: encrypt natively with a known r, decrypt via FFI.
 	r, _ := RandomBytes()
-	RNative := toBytes(herradura.GfPow(g, toBig(r), poly, keyBits))
-	encKey := nativeBA(toBytes(herradura.GfPow(toBig(aPubFFI), toBig(r), poly, keyBits)))
-	ctHpkeNative := herradura.FscxRevolve(nativeBA(pt), encKey, ivalue).Val.FillBytes(make([]byte, KeyBytes))
+	RNative := toBytes(herradura.GfPow(g, nativeBA(r)).BigInt())
+	encKey := nativeBA(toBytes(herradura.GfPow(nativeBA(aPubFFI), nativeBA(r)).BigInt()))
+	ctHpkeNative := herradura.FscxRevolve(nativeBA(pt), encKey, ivalue).Bytes()
 	decFFI, err := HpkeDecrypt(ctHpkeNative, RNative, aPriv)
 	if err != nil || !bytes.Equal(decFFI, pt) {
 		t.Fatalf("hpke_decrypt(native ct) mismatch: got=%x want=%x err=%v", decFFI, pt, err)

@@ -244,6 +244,10 @@ value" four different ways and only ever compare notes at one width.
 
 **The current state, which no document states in one place.**
 
+*(As filed, at v8.3.1.  C's row was closed by pass 2 and Go's by pass 3; both are kept
+as filed, because the table is the argument and a table edited into agreement with the
+fix no longer makes it.)*
+
 | port | representation | width | backing |
 |---|---|---|---|
 | C | `uint8_t b[KEYBYTES]`, big-endian | **FIXED at compile time** (`KEYBITS` = 256, with an `#error` if the GF constants do not match) | its own byte array |
@@ -465,6 +469,79 @@ things carry forward.
    `CliTest/test_kat_vectors.sh` say so rather than letting 376/376 read as more than it
    is.  Both controls were verified to fire: a one-field edit to the generated header
    fails `--check`, and flipping C's truncation to the low octets fails 11 of the 376.
+
+**THIRD PASS DONE IN v9.2.0 — Go, the port whose silent wrong answer is this item's
+argument, converted and IN THE GATING SET.**  `herradura/herradura.go`'s `BitArray` is
+now `{ nbits int; b []byte }` — big-endian octets, both fields UNEXPORTED — implements
+the whole of `BITARRAY.md` §4, and passes `KAT/bitarray.json` **376/376** through
+`KAT/verify_bitarray_go.go`.  `math/big` no longer implements the type.  Six things
+carry forward.
+
+1. **THE UNEXPORTED FIELD IS GO'S POISONED BUILD, and that is the transferable part.**
+   Pass 2's `-ftrivial-auto-var-init=pattern` has no Go equivalent, and it did not need
+   one: `Val` was an exported `big.Int` reached into from 237 sites across six files, and
+   making it private turned every one of them into a COMPILE ERROR the toolchain
+   enumerates.  Same property as the poisoned build — the tool finds the sites, not the
+   author — reached by a different mechanism, and it is the reason the conversion could
+   be done in one pass instead of by grepping for `.Val`.  **When a type's representation
+   changes, take away the access the old representation gave; the compiler will produce
+   the worklist.**
+2. **THE EXISTING ORACLES CAUGHT EVERYTHING; THE NEW ONE CAUGHT THE VECTOR.**  Behaviour
+   preservation at 256 was proved first, on pass 2's standing instruction: a 30-operation
+   probe (xor / rol / ror / fscx / fscx_revolve / MInv / NL v1 / v2 / v2-inv / v3 /
+   rnl_kdf_seed / HFSCX-256 / HSKE-NL-A1 / GF / HKEX-GF agree / Stern hash and syndrome)
+   is **byte-identical** before and after, and `KAT/verify_kat.go` — the classical
+   quartet, HKEX-RNL, NL-FSCX v3, HCRED-KKW, and both replay vectors — passes unchanged.
+   What the NEW consumer found was a defect in `KAT/bitarray.json`'s FORMAT, not in a
+   port: two cases carry integers above 2^53 (`to_uint`'s 7025791060798414911 at n = 64,
+   `from_uint`'s 2^32 boundary), and Go is the first consumer to read that JSON at all —
+   C consumes the transposed header, where they are C literals.  A default float64 decode
+   rounds the first to `...414848`.  It is **not silent**: the pinned answer disagrees and
+   the case fails, which is the hazard `CLAUDE.md` records for `nl_fscx_v3.json` meeting
+   a vector that can see it, so the fix is an exact decode (`json.Number`) and not a
+   change to the file.
+3. **TODO #313's TRUNCATION SPLIT IS NOW CLOSED IN THE CODE, at one site.**  `RnlKdfSeed`
+   took `RnlKdfDC[32-n/8:]`, the LOW octets — the outlier `BITARRAY.md` §4.4 settles
+   against, and the rule #313 had to MEASURE because no Go source states it.  It is now
+   `dc.Truncate(n)`, the HIGH bits, the big-endian prefix, through the one specified
+   truncation.  At n = 256 the truncation is the identity, so nothing that ships moves;
+   below 256 this is the convergence.  `HskeNlA1Encrypt` did not have to change at all,
+   which is the point of there being exactly one truncation.  **The refusal stays**:
+   `hske-nla1` is still refused below 256 in all four CLIs and stays refused until Python
+   and Java land, because two ports agreeing with the reference is not four ports
+   agreeing with each other.
+4. **THE GO API CHANGED AND C's DID NOT, and the asymmetry was measured rather than
+   assumed.**  `BITARRAY.md` §9 established that C's change was source-compatible
+   because the FFI ABI never names `BitArray` and `herradura.h` is header-only.  Go has
+   no such shelter: `Val` was exported, and `GfMul`/`GfPow`/`GfPoly` took a
+   `poly *big.Int` and a width that the type now carries, so all three lost parameters
+   they no longer need.  Every consumer is in this tree — the CLI, the test harness, the
+   suite walkthrough, `KAT/verify_kat.go`, `docs/examples/go`, and `bindings/ffi/go`'s
+   native cross-check — and all six move in this commit.  It is a Go PACKAGE API change,
+   not a CLI/PEM/wire one, so it is MINOR under `CLAUDE.md`'s rule: no `--algo` changes
+   what it produces or accepts and no stored artifact becomes unreadable.
+5. **`math/big` DOES NOT LEAVE THE GO TREE, AND WAS NEVER GOING TO — what changed is that
+   the boundary has a name.**  It stops implementing the BitArray and keeps representing
+   the objects `BITARRAY.md` does not govern: QC-MDPC dense polynomials at r = 12323 bits
+   (past this port's capacity and not a protocol-width bit string), Stern and HCRED
+   syndromes, HCRED's Z_q coefficients, the OPRF and threshold scalars, and the PEM/DER
+   codec's INTEGERs.  Those cross at `NewBitArray` / `BitArray.BigInt`, two named
+   functions, where before there were 237 reach-ins.  A boundary you can count is a
+   different thing from a boundary you cannot, and converting the DER codec to octets is
+   a separate question this pass deliberately does not settle (#312's rule).
+6. **THREE THINGS FELL OUT OF DOING IT.**  (a) The Go CLI's five classical read paths
+   carried `poly := GfPoly[n]; if poly == nil { poly = GfPoly[256] }` — keep the wire's
+   width, do the arithmetic under the 256-bit polynomial, produce garbage in silence.
+   Unreachable from any artifact this tree writes (`genpkey` normalises an unlisted
+   `--bits` to 256), so it is a malformed-input path, and it now REFUSES with a named
+   width bound the way TODO #239/#240 refuse every other wire field that sizes a
+   computation.  (b) `Bytes()` returns a COPY: the previous implementation handed back a
+   fresh slice anyway, but nothing said so, and the octets are now the canonical form.
+   (c) Nine `FillBytes` call sites in the CLI became `fillBA`, a RIGHT-ALIGNED write —
+   `copy(dst, ba.Bytes())` is left-aligned and silently different when the lengths
+   differ, which is the class of near-miss this whole item is about.  Both conformance
+   controls were verified to fire: flipping Go's truncation to the low octets fails 14 of
+   the 376, and deleting the mixed-width rule takes the consumer red.
 
 Status: **OPEN**
 

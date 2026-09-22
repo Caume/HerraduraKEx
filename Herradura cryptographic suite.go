@@ -118,9 +118,7 @@ func main() {
 	iValue := n / 4
 	rValue := 3 * n / 4
 
-	poly := GfPoly[n]
-	g := big.NewInt(GfGen)
-	ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), n), big.NewInt(1))
+	g := GfGenBA(n)
 
 	a         := NewRandBitArray(n)
 	b         := NewRandBitArray(n)
@@ -129,10 +127,10 @@ func main() {
 	decoy     := NewRandBitArray(n)
 
 	// HKEX-GF key exchange
-	C     := NewBitArray(n, GfPow(g, &a.Val, poly, n))
-	C2    := NewBitArray(n, GfPow(g, &b.Val, poly, n))
-	sk, okSk := HkexGfAgree(a, C2, poly, n)
-	skBob, okSkBob := HkexGfAgree(b, C, poly, n)
+	C     := GfPow(g, a)
+	C2    := GfPow(g, b)
+	sk, okSk := HkexGfAgree(a, C2)
+	skBob, okSkBob := HkexGfAgree(b, C)
 	if !okSk || !okSkBob {
 		fmt.Println("[FAIL] HKEX-GF agreement refused a degenerate peer public key!")
 	}
@@ -172,14 +170,14 @@ func main() {
 	fmt.Println("\n--- HPKS [CLASSICAL — not PQC; DLP + linear challenge]")
 	fmt.Println("    (Schnorr-like with FscxRevolve challenge)")
 	kS := NewRandBitArray(n)
-	RS := NewBitArray(n, GfPow(g, &kS.Val, poly, n))
+	RS := GfPow(g, kS)
 	eS := FscxRevolve(RS, plaintext, iValue)
-	sS := NewBitArray(n, new(big.Int).Mod(new(big.Int).Sub(&kS.Val, new(big.Int).Mul(&a.Val, &eS.Val)), ord))
-	verified := HpksVerify(plaintext, C, RS, sS, poly, n)
+	sS := kS.SubModOrd(a.MulModOrd(eS))
+	verified := HpksVerify(plaintext, C, RS, sS)
 	fmt.Printf("P (msg)        : %x\n", plaintext)
 	fmt.Printf("R [Alice,sign] : %x\n", RS)
 	fmt.Printf("e [Alice,sign] : %x\n", eS)
-	fmt.Printf("s [Alice,sign] : %0*x\n", n/4, &sS.Val)
+	fmt.Printf("s [Alice,sign] : %x\n", sS)
 	if verified {
 		fmt.Println("  [Bob,verify] : + Schnorr verified: g^s · C^e == R")
 	} else {
@@ -188,8 +186,8 @@ func main() {
 
 	fmt.Println("\n--- HPKE [CLASSICAL — not PQC; DLP + linear HSKE sub-protocol]")
 	fmt.Println("    (El Gamal + FscxRevolve)")
-	RHpke, eHpke, okEnc := HpkeEncrypt(plaintext, C, poly, n)
-	dHpke, okDec := HpkeDecrypt(eHpke, RHpke, a, poly, n)
+	RHpke, eHpke, okEnc := HpkeEncrypt(plaintext, C)
+	dHpke, okDec := HpkeDecrypt(eHpke, RHpke, a)
 	fmt.Printf("P (plain) : %x\n", plaintext)
 	fmt.Printf("E (Bob)   : %x\n", eHpke)
 	fmt.Printf("D (Alice) : %x\n", dHpke)
@@ -202,12 +200,12 @@ func main() {
 	// ── PQC-HARDENED protocols ───────────────────────────────────────────────
 	fmt.Println("\n--- HSKE-NL-A1 [PQC-HARDENED — counter-mode with NL-FSCX v1]")
 	nA1    := NewRandBitArray(n)
-	baseA1 := NewBitArray(n, new(big.Int).Xor(&preshared.Val, &nA1.Val))
+	baseA1 := preshared.Xor(nA1)
 	counter := 0
-	bA1  := NewBitArray(n, new(big.Int).Xor(&baseA1.Val, big.NewInt(int64(counter))))
+	bA1  := baseA1.XorUint(uint64(counter))
 	ksA1 := NlFscxRevolveV1(RnlKdfSeed(baseA1), bA1, n/4)
-	eA1  := NewBitArray(n, new(big.Int).Xor(&plaintext.Val, &ksA1.Val))
-	dA1  := NewBitArray(n, new(big.Int).Xor(&eA1.Val, &ksA1.Val))
+	eA1  := plaintext.Xor(ksA1)
+	dA1  := eA1.Xor(ksA1)
 	fmt.Printf("N (nonce) : %x\n", nA1)
 	fmt.Printf("P (plain) : %x\n", plaintext)
 	fmt.Printf("E (Alice) : %x\n", eA1)
@@ -254,25 +252,25 @@ func main() {
 	if skRnlA.Equal(skRnlB) {
 		fmt.Println("+ contributory KDF session keys agree!")
 	} else {
-		diffBits := new(big.Int).Xor(&skRnlA.Val, &skRnlB.Val)
+		diffBits := skRnlA.Xor(skRnlB)
 		fmt.Printf("- session key disagrees (%d bit(s)) — reconciliation failed!\n",
-			CountBits(diffBits))
+			diffBits.Popcount())
 	}
 
 	fmt.Println("\n--- HPKS-NL [NL-hardened Schnorr — NL-FSCX v1 challenge]")
 	fmt.Println("    (GF DLP still present; NL hardens linear challenge preimage)")
 	kNl   := NewRandBitArray(n)
-	RNl   := NewBitArray(n, GfPow(g, &kNl.Val, poly, n))
+	RNl   := GfPow(g, kNl)
 	eNl   := NlFscxRevolveV1(RNl, plaintext, iValue)
-	sNl   := new(big.Int).Mod(new(big.Int).Sub(&kNl.Val, new(big.Int).Mul(&a.Val, &eNl.Val)), ord)
+	sNl   := kNl.SubModOrd(a.MulModOrd(eNl))
 	eNlV  := NlFscxRevolveV1(RNl, plaintext, iValue)
-	lhsNl := GfMul(GfPow(g, sNl, poly, n), GfPow(&C.Val, &eNlV.Val, poly, n), poly, n)
+	lhsNl := GfMul(GfPow(g, sNl), GfPow(C, eNlV))
 	fmt.Printf("P (msg)        : %x\n", plaintext)
 	fmt.Printf("R [Alice,sign] : %x\n", RNl)
 	fmt.Printf("e [Alice,sign] : %x\n", eNl)
 	fmt.Printf("s [Alice,sign] : %0*x\n", n/4, sNl)
 	fmt.Printf("  [Bob,verify] : g^s·C^e = %0*x\n", n/4, lhsNl)
-	if lhsNl.Cmp(&RNl.Val) == 0 {
+	if lhsNl.Equal(RNl) {
 		fmt.Println("  [Bob,verify] : + HPKS-NL verified: g^s · C^e == R")
 	} else {
 		fmt.Println("  [Bob,verify] : [FAIL] HPKS-NL verification failed!")
@@ -281,10 +279,10 @@ func main() {
 	fmt.Println("\n--- HPKE-NL [NL-hardened El Gamal — NL-FSCX v2 encryption]")
 	fmt.Println("    (GF DLP still present; NL hardens linear HSKE sub-protocol)")
 	rNl     := NewRandBitArray(n)
-	RNl2    := NewBitArray(n, GfPow(g, &rNl.Val, poly, n))
-	encNl   := NewBitArray(n, GfPow(&C.Val, &rNl.Val, poly, n))
+	RNl2    := GfPow(g, rNl)
+	encNl   := GfPow(C, rNl)
 	eHpkeNl := NlFscxRevolveV2(plaintext, encNl, iValue)
-	decNl   := NewBitArray(n, GfPow(&RNl2.Val, &a.Val, poly, n))
+	decNl   := GfPow(RNl2, a)
 	dHpkeNl := NlFscxRevolveV2Inv(eHpkeNl, decNl, iValue)
 	fmt.Printf("P (plain) : %x\n", plaintext)
 	fmt.Printf("E (Bob)   : %x\n", eHpkeNl)
@@ -514,14 +512,14 @@ func main() {
 	{
 		tN     := 3
 		gGen   := big.NewInt(3)
-		poly256 := GfPoly[n]
+
 		tSecrets := make([]*big.Int, tN)
 		tPubkeys := make([]*big.Int, tN)
 		for j := 0; j < tN; j++ {
 			kb := make([]byte, 32)
 			rand.Read(kb)
 			tSecrets[j] = new(big.Int).SetBytes(kb)
-			tPubkeys[j] = GfPow(gGen, tSecrets[j], poly256, n)
+			tPubkeys[j] = GfPow(NewBitArray(n, gGen), NewBitArray(n, tSecrets[j])).BigInt()
 		}
 		tMsg  := []byte("HPKS-T threshold signature test")
 		tCAgg, tR, tS := HpkstSign(tSecrets, tPubkeys, tMsg)
@@ -595,18 +593,18 @@ func main() {
 	fmt.Println("\n\n*** EVE bypass TESTS")
 
 	fmt.Println("*** HPKS-NL — Eve cannot forge Schnorr without knowing private key a")
-	REve   := NewBitArray(n, GfPow(g, &NewRandBitArray(n).Val, poly, n))
+	REve   := GfPow(g, NewRandBitArray(n))
 	eEve   := NlFscxRevolveV1(REve, decoy, iValue)
-	sEve   := &NewRandBitArray(n).Val
-	lhsEve := GfMul(GfPow(g, sEve, poly, n), GfPow(&C.Val, &eEve.Val, poly, n), poly, n)
-	if lhsEve.Cmp(&REve.Val) == 0 {
+	sEve   := NewRandBitArray(n)
+	lhsEve := GfMul(GfPow(g, sEve), GfPow(C, eEve))
+	if lhsEve.Equal(REve) {
 		fmt.Println("[FAIL] Eve forged HPKS-NL signature (Eve wins)!")
 	} else {
 		fmt.Println("- Eve could not forge: g^s_eve · C^e_eve ≠ R_eve  (DLP protection)")
 	}
 
 	fmt.Println("*** HPKE-NL — Eve cannot decrypt without Alice's private key")
-	eveKey := NewBitArray(n, new(big.Int).Xor(&C.Val, &RNl2.Val))
+	eveKey := C.Xor(RNl2)
 	dEve   := NlFscxRevolveV2Inv(eHpkeNl, eveKey, iValue)
 	if dEve.Equal(plaintext) {
 		fmt.Println("[FAIL] Eve decrypted plaintext (Eve wins)!")

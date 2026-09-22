@@ -124,11 +124,11 @@ func fmtRate(ops int, elapsed time.Duration) string {
 
 // SOpBA computes S_op(delta, r) = XOR_{i=0}^{r} Fscx^i(delta, 0).
 func SOpBA(delta *BitArray, r int) *BitArray {
-	acc  := NewBitArray(delta.Size(), new(big.Int))
+	acc  := NewZero(delta.Size())
 	cur  := delta.Copy()
-	zero := NewBitArray(delta.Size(), new(big.Int))
+	zero := NewZero(delta.Size())
 	for i := 0; i <= r; i++ {
-		acc.Val.Xor(&acc.Val, &cur.Val)
+		acc = acc.Xor(cur)
 		cur = Fscx(cur, zero)
 	}
 	return acc
@@ -139,8 +139,8 @@ func hpkeSternFBruteForce32(seed *BitArray, ct *big.Int) (*BitArray, bool) {
 	for i := 0; i < 32; i++ {
 		for j := i + 1; j < 32; j++ {
 			e := NewBitArray(32, new(big.Int))
-			e.Val.SetBit(&e.Val, i, 1)
-			e.Val.SetBit(&e.Val, j, 1)
+			e.SetBit(i, 1)
+			e.SetBit(j, 1)
 			if SternSyndrome(seed, e).Cmp(ct) == 0 {
 				return e, true
 			}
@@ -163,16 +163,15 @@ const sdfBenchRounds = 8
 func testHkexGFCorrectness() {
 	fmt.Println("[1] HKEX-GF correctness: g^{ab} == g^{ba} in GF(2^n)*  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g := big.NewInt(GfGen)
+		g := GfGenBA(size)
 		ok, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
 			b := randBA(size)
-			C := GfPow(g, &a.Val, poly, size)
-			C2 := GfPow(g, &b.Val, poly, size)
-			if GfPow(C2, &a.Val, poly, size).Cmp(GfPow(C, &b.Val, poly, size)) == 0 {
+			C := GfPow(g, a)
+			C2 := GfPow(g, b)
+			if GfPow(C2, a).Cmp(GfPow(C, b)) == 0 {
 				ok++
 			}
 			if i&7 == 7 && timeExceeded(t0) { N = i + 1; break }
@@ -254,7 +253,7 @@ func testBitFrequency() {
 			b := randBA(size)
 			out := Fscx(a, b)
 			for bit := 0; bit < size; bit++ {
-				if out.Val.Bit(bit) == 1 { counts[bit]++ }
+				if out.Bit(bit) == 1 { counts[bit]++ }
 			}
 			if trial&255 == 255 && timeExceeded(t0) { break }
 		}
@@ -298,19 +297,18 @@ func testBitFrequency() {
 func testHkexGFKeySensitivity() {
 	fmt.Println("[5] HKEX-GF key sensitivity: flip 1 bit of a, measure HD of sk change  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g := big.NewInt(GfGen)
+		g := GfGenBA(size)
 		total := 0.0
 		N := testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
 			b := randBA(size)
-			C2 := GfPow(g, &b.Val, poly, size)
-			sk1 := GfPow(C2, &a.Val, poly, size)
+			C2 := GfPow(g, b)
+			sk1 := GfPow(C2, a)
 			af := a.FlipBit(0)
-			sk2 := GfPow(C2, &af.Val, poly, size)
-			diff := NewBitArray(size, new(big.Int).Xor(sk1, sk2))
+			sk2 := GfPow(C2, af)
+			diff := sk1.Xor(sk2)
 			total += float64(diff.Popcount())
 			if i&7 == 7 && timeExceeded(t0) { N = i + 1; break }
 		}
@@ -327,17 +325,16 @@ func testHkexGFEveResistance() {
 	N := testRounds(1000)
 	fmt.Printf("[6] HKEX-GF Eve resistance: S_op(C XOR C2, r) != sk for %d trials  [CLASSICAL]\n", N)
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g := big.NewInt(GfGen)
+		g := GfGenBA(size)
 		rv := rVal(size)
 		successes := 0
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
 			b := randBA(size)
-			C := newBA(size, GfPow(g, &a.Val, poly, size))
-			C2 := newBA(size, GfPow(g, &b.Val, poly, size))
-			realSk := newBA(size, GfPow(&C2.Val, &a.Val, poly, size))
+			C := GfPow(g, a)
+			C2 := GfPow(g, b)
+			realSk := GfPow(C2, a)
 			delta := C.Xor(C2)
 			eveGuess := SOpBA(delta, rv)
 			if eveGuess.Equal(realSk) { successes++ }
@@ -353,23 +350,21 @@ func testHkexGFEveResistance() {
 func testHpksSchnorrCorrectness() {
 	fmt.Println("[7] HPKS Schnorr correctness: g^s · C^e == R  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g := big.NewInt(GfGen)
+		g := GfGenBA(size)
 		iv := iVal(size)
-		ord := gfOrd(size)
 		ok, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
-			cVal := GfPow(g, &a.Val, poly, size)
+			cVal := GfPow(g, a)
 			pt := randBA(size)
 			k := randBA(size)
-			rInt := GfPow(g, &k.Val, poly, size)
-			rB := newBA(size, rInt)
+			rInt := GfPow(g, k)
+			rB := rInt
 			e := FscxRevolve(rB, pt, iv)
-			s := new(big.Int).Mod(new(big.Int).Sub(&k.Val, new(big.Int).Mul(&a.Val, &e.Val)), ord)
-			lhs := GfMul(GfPow(g, s, poly, size), GfPow(cVal, &e.Val, poly, size), poly, size)
-			if lhs.Cmp(rInt) == 0 { ok++ }
+			s := k.SubModOrd(a.MulModOrd(e))
+			lhs := GfMul(GfPow(g, s), GfPow(cVal, e))
+			if lhs.Equal(rInt) { ok++ }
 			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
 		}
 		status := "PASS"
@@ -382,20 +377,19 @@ func testHpksSchnorrCorrectness() {
 func testHpksSchnorrEveResistance() {
 	fmt.Println("[8] HPKS Schnorr Eve resistance: random forgery attempts fail  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g := big.NewInt(GfGen)
+		g := GfGenBA(size)
 		iv := iVal(size)
 		wins, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
-			cVal := GfPow(g, &a.Val, poly, size)
+			cVal := GfPow(g, a)
 			decoy := randBA(size)
-			rEve := newBA(size, GfPow(g, &randBA(size).Val, poly, size))
+			rEve := GfPow(g, randBA(size))
 			eEve := FscxRevolve(rEve, decoy, iv)
-			sEve := new(big.Int).Set(&randBA(size).Val)
-			lhs := GfMul(GfPow(g, sEve, poly, size), GfPow(cVal, &eEve.Val, poly, size), poly, size)
-			if lhs.Cmp(&rEve.Val) == 0 { wins++ }
+			sEve := randBA(size)
+			lhs := GfMul(GfPow(g, sEve), GfPow(cVal, eEve))
+			if lhs.Equal(rEve) { wins++ }
 			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
 		}
 		status := "PASS"
@@ -408,8 +402,7 @@ func testHpksSchnorrEveResistance() {
 func testHpkeRoundTrip() {
 	fmt.Println("[9] HPKE encrypt+decrypt correctness (El Gamal + FscxRevolve)  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g := big.NewInt(GfGen)
+		g := GfGenBA(size)
 		iv := iVal(size)
 		rv := rVal(size)
 		ok, N := 0, testRounds(1000)
@@ -417,12 +410,12 @@ func testHpkeRoundTrip() {
 		for i := 0; i < N; i++ {
 			a := randBA(size)
 			pt := randBA(size)
-			cVal := GfPow(g, &a.Val, poly, size)
+			cVal := GfPow(g, a)
 			r := randBA(size)
-			rVal2 := GfPow(g, &r.Val, poly, size)
-			encKey := newBA(size, GfPow(cVal, &r.Val, poly, size))
+			rVal2 := GfPow(g, r)
+			encKey := GfPow(cVal, r)
 			E := FscxRevolve(pt, encKey, iv)
-			decKey := newBA(size, GfPow(rVal2, &a.Val, poly, size))
+			decKey := GfPow(rVal2, a)
 			D := FscxRevolve(E, decKey, rv)
 			if D.Equal(pt) { ok++ }
 			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
@@ -486,9 +479,9 @@ func testNlFscxV2BijectiveInverse() {
 			if size < 8 { samples = 1 << uint(size) }
 			for j := 0; j < samples; j++ {
 				A := randBA(size)
-				out := NlFscxV2(A, B).Val.Text(16)
-				if prev, ok := seen[out]; ok && prev != A.Val.Uint64() { nonBij++; break }
-				seen[out] = A.Val.Uint64()
+				out := NlFscxV2(A, B).Hex()
+				if prev, ok := seen[out]; ok && prev != A.LowUint64() { nonBij++; break }
+				seen[out] = A.LowUint64()
 			}
 			if i&63 == 63 && timeExceeded(t0) { N1 = i + 1; break }
 		}
@@ -524,12 +517,12 @@ func testHskeNlA1Correctness() {
 		t0 := time.Now()
 		for trial := 0; trial < N; trial++ {
 			K := randBA(size); nonce := randBA(size); P := randBA(size)
-			base := newBA(size, new(big.Int).Xor(&K.Val, &nonce.Val))
+			base := K.Xor(nonce)
 			ctr := int64(trial % (1 << 16))
-			bCtr := newBA(size, new(big.Int).Xor(&base.Val, big.NewInt(ctr)))
+			bCtr := base.XorUint(uint64(ctr))
 			ks := NlFscxRevolveV1(RnlKdfSeed(base), bCtr, iv)
-			C := newBA(size, new(big.Int).Xor(&P.Val, &ks.Val))
-			D := newBA(size, new(big.Int).Xor(&C.Val, &ks.Val))
+			C := P.Xor(ks)
+			D := C.Xor(ks)
 			if D.Equal(P) { ok++ }
 			if trial&63 == 63 && timeExceeded(t0) { N = trial + 1; break }
 		}
@@ -592,23 +585,21 @@ func testHkexRnlCorrectness() {
 func testHpksNlCorrectness() {
 	fmt.Println("[15] HPKS-NL correctness: g^s · C^e == R (NL-FSCX v1 challenge)  [PQC-EXT]")
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g := big.NewInt(GfGen)
+		g := GfGenBA(size)
 		iv := iVal(size)
-		ord := gfOrd(size)
 		ok, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
-			cVal := GfPow(g, &a.Val, poly, size)
+			cVal := GfPow(g, a)
 			pt := randBA(size)
 			k := randBA(size)
-			rInt := GfPow(g, &k.Val, poly, size)
-			rB := newBA(size, rInt)
+			rInt := GfPow(g, k)
+			rB := rInt
 			e := NlFscxRevolveV1(rB, pt, iv)
-			s := new(big.Int).Mod(new(big.Int).Sub(&k.Val, new(big.Int).Mul(&a.Val, &e.Val)), ord)
-			lhs := GfMul(GfPow(g, s, poly, size), GfPow(cVal, &e.Val, poly, size), poly, size)
-			if lhs.Cmp(rInt) == 0 { ok++ }
+			s := k.SubModOrd(a.MulModOrd(e))
+			lhs := GfMul(GfPow(g, s), GfPow(cVal, e))
+			if lhs.Equal(rInt) { ok++ }
 			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
 		}
 		status := "PASS"
@@ -621,19 +612,18 @@ func testHpksNlCorrectness() {
 func testHpkeNlCorrectness() {
 	fmt.Println("[16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt)  [PQC-EXT]")
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g := big.NewInt(GfGen)
+		g := GfGenBA(size)
 		iv := iVal(size)
 		ok, N := 0, testRounds(200)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size); pt := randBA(size)
-			cVal := GfPow(g, &a.Val, poly, size)
+			cVal := GfPow(g, a)
 			r := randBA(size)
-			rInt := GfPow(g, &r.Val, poly, size)
-			encKey := newBA(size, GfPow(cVal, &r.Val, poly, size))
+			rInt := GfPow(g, r)
+			encKey := GfPow(cVal, r)
 			E := NlFscxRevolveV2(pt, encKey, iv)
-			decKey := newBA(size, GfPow(rInt, &a.Val, poly, size))
+			decKey := GfPow(rInt, a)
 			D := NlFscxRevolveV2Inv(E, decKey, iv)
 			if D.Equal(pt) { ok++ }
 			if i&31 == 31 && timeExceeded(t0) { N = i + 1; break }
@@ -806,11 +796,10 @@ func benchFscx() {
 func benchHkexGFPow() {
 	fmt.Println("[33] HKEX-GF gf_pow throughput  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g := big.NewInt(GfGen)
+		g := GfGenBA(size)
 		a := randBA(size)
 		ops, elapsed := bench("", func() {
-			GfPow(g, &a.Val, poly, size)
+			GfPow(g, a)
 		})
 		fmt.Printf("    bits=%3d  gf_pow(g, a)             : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
@@ -821,15 +810,14 @@ func benchHkexGFPow() {
 func benchHkexHandshake() {
 	fmt.Println("[34] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g := big.NewInt(GfGen)
+		g := GfGenBA(size)
 		ops, elapsed := bench("", func() {
 			a := randBA(size)
 			b := randBA(size)
-			C  := GfPow(g, &a.Val, poly, size)
-			C2 := GfPow(g, &b.Val, poly, size)
-			_ = GfPow(C2, &a.Val, poly, size)
-			_ = GfPow(C, &b.Val, poly, size)
+			C  := GfPow(g, a)
+			C2 := GfPow(g, b)
+			_ = GfPow(C2, a)
+			_ = GfPow(C, b)
 		})
 		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
@@ -859,20 +847,19 @@ func benchHskeRoundTrip() {
 func benchHpkeRoundTrip() {
 	fmt.Println("[36] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := GfPoly[size]
-		g    := big.NewInt(GfGen)
+		g    := GfGenBA(size)
 		iv   := iVal(size)
 		rv   := rVal(size)
 		sink := randBA(size)
 		ops, elapsed := bench("", func() {
 			a      := randBA(size)
 			pt     := randBA(size)
-			cVal   := GfPow(g, &a.Val, poly, size)
+			cVal   := GfPow(g, a)
 			r      := randBA(size)
-			rVal2  := GfPow(g, &r.Val, poly, size)
-			encKey := newBA(size, GfPow(cVal, &r.Val, poly, size))
+			rVal2  := GfPow(g, r)
+			encKey := GfPow(cVal, r)
 			E      := FscxRevolve(pt, encKey, iv)
-			decKey := newBA(size, GfPow(rVal2, &a.Val, poly, size))
+			decKey := GfPow(rVal2, a)
 			D      := FscxRevolve(E, decKey, rv)
 			sink = sink.Xor(D)
 		})
@@ -917,11 +904,11 @@ func benchHskeNlA1RoundTrip() {
 		ops, elapsed := bench("", func() {
 			K     := randBA(size)
 			nonce := randBA(size)
-			base  := newBA(size, new(big.Int).Xor(&K.Val, &nonce.Val))
+			base  := K.Xor(nonce)
 			P     := randBA(size)
-			bCtr  := newBA(size, new(big.Int).Set(&base.Val))
+			bCtr  := base.Copy()
 			ks    := NlFscxRevolveV1(RnlKdfSeed(base), bCtr, iv)
-			sink = sink.Xor(newBA(size, new(big.Int).Xor(&P.Val, &ks.Val)))
+			sink = sink.Xor(P.Xor(ks))
 		})
 		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
@@ -1315,8 +1302,8 @@ func testHskeNlAead() {
 		}
 		badCt := append([]byte{ct[0] ^ 1}, ct[1:]...)
 		badTag := append([]byte{tag[0] ^ 1}, tag[1:]...)
-		badNonce := NewBitArray(256, new(big.Int).Xor(&nonce.Val, big.NewInt(1)))
-		badKey := NewBitArray(256, new(big.Int).Xor(&key.Val, big.NewInt(1)))
+		badNonce := nonce.XorUint(1)
+		badKey := key.XorUint(1)
 		_, r1 := HskeNlAeadDecrypt(key, nonce, ad, badCt, tag)
 		_, r2 := HskeNlAeadDecrypt(key, nonce, ad, ct, badTag)
 		_, r3 := HskeNlAeadDecrypt(key, nonce, append(append([]byte{}, ad...), 'x'), ct, tag)
@@ -1456,12 +1443,11 @@ func testHpkst() {
 		secrets := make([]*big.Int, tN)
 		pubkeys := make([]*big.Int, tN)
 		gGen    := big.NewInt(3)
-		poly    := GfPoly[256]
 		for j := 0; j < tN; j++ {
 			kb := make([]byte, 32)
 			for k := range kb { kb[k] = byte(mrand.Intn(256)) }
 			secrets[j] = new(big.Int).SetBytes(kb)
-			pubkeys[j] = GfPow(gGen, secrets[j], poly, 256)
+			pubkeys[j] = GfPow(NewBitArray(256, gGen), NewBitArray(256, secrets[j])).BigInt()
 		}
 		cAgg, R, s := HpkstSign(secrets, pubkeys, msg)
 		if HpkstVerify(cAgg, R, s, msg) {
@@ -1830,30 +1816,30 @@ func testNlFscxV3() {
 		K := NewRandBitArray(256)
 		// (a) chi against a per-row reference
 		C := NlChiV3(P)
-		ref := new(big.Int)
+		ref := NewZero(256)
 		off := 0
 		for _, L := range rows {
 			for j := 0; j < L; j++ {
-				bi := P.Val.Bit(off + j)
-				b1 := P.Val.Bit(off + (j+1)%L)
-				b2 := P.Val.Bit(off + (j+2)%L)
-				ref.SetBit(ref, off+j, bi^((1-b1)&b2))
+				bi := P.Bit(off + j)
+				b1 := P.Bit(off + (j+1)%L)
+				b2 := P.Bit(off + (j+2)%L)
+				ref.SetBit(off+j, bi^((1-b1)&b2))
 			}
 			off += L
 		}
-		if ref.Cmp(&C.Val) != 0 {
+		if !ref.Equal(C) {
 			badRef++
 		}
 		// (b) invertibility
-		if NlChiV3Inv(C).Val.Cmp(&P.Val) != 0 {
+		if !NlChiV3Inv(C).Equal(P) {
 			badInv++
 		}
 		Y := NlFscxRevolveV3(P, K, R3Value)
-		if NlFscxRevolveV3Inv(Y, K, R3Value).Val.Cmp(&P.Val) != 0 {
+		if !NlFscxRevolveV3Inv(Y, K, R3Value).Equal(P) {
 			badRT++
 		}
 		// (d) v3 != v2
-		if NlFscxRevolveV2(P, K, R3Value).Val.Cmp(&Y.Val) == 0 {
+		if NlFscxRevolveV2(P, K, R3Value).Equal(Y) {
 			sameAsV2++
 		}
 		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
@@ -1905,10 +1891,10 @@ func testNlFscxV3Consumers() {
 
 		// hske-nla3
 		E3 := NlFscxRevolveV3(P, K, R3Value)
-		if NlFscxRevolveV3Inv(E3, K, R3Value).Val.Cmp(&P.Val) != 0 {
+		if !NlFscxRevolveV3Inv(E3, K, R3Value).Equal(P) {
 			badRT++
 		}
-		if NlFscxRevolveV2(P, K, 3*256/4).Val.Cmp(&E3.Val) == 0 {
+		if NlFscxRevolveV2(P, K, 3*256/4).Equal(E3) {
 			sameAsV2++
 		}
 
@@ -1929,20 +1915,20 @@ func testNlFscxV3Consumers() {
 		// fpe --v3 / twk --v3, and the 12-byte-context collision (c)
 		keyB := K.Bytes()
 		F3 := FpeV3Encrypt(P, keyB, tw12)
-		if FpeV3Decrypt(F3, keyB, tw12).Val.Cmp(&P.Val) != 0 {
+		if !FpeV3Decrypt(F3, keyB, tw12).Equal(P) {
 			badRT++
 		}
-		if FpeEncrypt(P, keyB, tw12).Val.Cmp(&F3.Val) == 0 {
+		if FpeEncrypt(P, keyB, tw12).Equal(F3) {
 			sameAsV2++
 		}
 		T3 := TwkV3Encrypt(P, keyB, sector, bidx)
-		if TwkV3Decrypt(T3, keyB, sector, bidx).Val.Cmp(&P.Val) != 0 {
+		if !TwkV3Decrypt(T3, keyB, sector, bidx).Equal(P) {
 			badRT++
 		}
-		if TwkEncrypt(P, keyB, sector, bidx).Val.Cmp(&T3.Val) == 0 {
+		if TwkEncrypt(P, keyB, sector, bidx).Equal(T3) {
 			sameAsV2++
 		}
-		if F3.Val.Cmp(&T3.Val) == 0 {
+		if F3.Equal(T3) {
 			fpeEqTwk++
 		}
 
@@ -2268,7 +2254,7 @@ func sternSolveSyndrome(H []*BitArray, syndrome *big.Int, n, avoidWeight int) *b
 	rows := make([]*big.Int, len(H))
 	rhs := make([]uint, len(H))
 	for i := range H {
-		rows[i] = new(big.Int).Set(&H[i].Val)
+		rows[i] = new(big.Int).Set(H[i].BigInt())
 		rhs[i] = syndrome.Bit(i)
 	}
 	type piv struct{ col, row int }
@@ -2384,7 +2370,7 @@ func testSternWitnessBinding() {
 		for r := 0; r < rounds; r++ {
 			rd := rsig.Members[i].Rounds[r]
 			for _, c := range []*BitArray{rd.C0, rd.C1, rd.C2} {
-				key := c.Val.Text(16)
+				key := c.Hex()
 				if seen[key] {
 					dups++
 				}
@@ -2576,7 +2562,6 @@ func testWeakKeyRejection() {
 	fmt.Println("[45] Weak-key & malformed-input rejection (identity pubkey, " +
 		"zero/degenerate elements, tampered syndrome/AEAD)  [SECURITY]")
 	size := 256
-	poly := GfPoly[size]
 	sternN := 32
 	N := testRounds(10)
 	okHkex, okHpks, okHpke, okHpkeDec := 0, 0, 0, 0
@@ -2621,8 +2606,8 @@ func testWeakKeyRejection() {
 		// before agreement -- either collapses the shared secret to a
 		// constant independent of the caller's own private key.
 		myPriv := randBA(size)
-		if _, ok0 := HkexGfAgree(myPriv, zero, poly, size); !ok0 {
-			if _, ok1 := HkexGfAgree(myPriv, one, poly, size); !ok1 {
+		if _, ok0 := HkexGfAgree(myPriv, zero); !ok0 {
+			if _, ok1 := HkexGfAgree(myPriv, one); !ok1 {
 				okHkex++
 			}
 		}
@@ -2631,18 +2616,18 @@ func testWeakKeyRejection() {
 		// any (msg, pub=identity) triple satisfy the raw Schnorr equation.
 		// The hardened verifier must reject pub in {0, 1} regardless.
 		sForged := randBA(size)
-		g := big.NewInt(GfGen)
-		rForged := newBA(size, GfPow(g, &sForged.Val, poly, size))
+		g := GfGenBA(size)
+		rForged := GfPow(g, sForged)
 		msg := randBA(size)
-		if !HpksVerify(msg, zero, rForged, sForged, poly, size) &&
-			!HpksVerify(msg, one, rForged, sForged, poly, size) {
+		if !HpksVerify(msg, zero, rForged, sForged) &&
+			!HpksVerify(msg, one, rForged, sForged) {
 			okHpks++
 		}
 
 		// HPKE: encrypt must refuse an identity/zero recipient pubkey.
 		pt := randBA(size)
-		if _, _, ok0 := HpkeEncrypt(pt, zero, poly, size); !ok0 {
-			if _, _, ok1 := HpkeEncrypt(pt, one, poly, size); !ok1 {
+		if _, _, ok0 := HpkeEncrypt(pt, zero); !ok0 {
+			if _, _, ok1 := HpkeEncrypt(pt, one); !ok1 {
 				okHpke++
 			}
 		}
@@ -2650,12 +2635,12 @@ func testWeakKeyRejection() {
 		// HPKE decrypt: an honestly-encrypted ct must still decrypt (sanity),
 		// and decrypt must refuse a degenerate ephemeral R.
 		priv := randBA(size)
-		pub := newBA(size, GfPow(g, &priv.Val, poly, size))
-		Rhonest, ct, _ := HpkeEncrypt(pt, pub, poly, size)
-		dec, okDec := HpkeDecrypt(ct, Rhonest, priv, poly, size)
-		_, okDecZero := HpkeDecrypt(ct, zero, priv, poly, size)
-		_, okDecOne := HpkeDecrypt(ct, one, priv, poly, size)
-		if okDec && dec.Val.Cmp(&pt.Val) == 0 && !okDecZero && !okDecOne {
+		pub := GfPow(g, priv)
+		Rhonest, ct, _ := HpkeEncrypt(pt, pub)
+		dec, okDec := HpkeDecrypt(ct, Rhonest, priv)
+		_, okDecZero := HpkeDecrypt(ct, zero, priv)
+		_, okDecOne := HpkeDecrypt(ct, one, priv)
+		if okDec && dec.Equal(pt) && !okDecZero && !okDecOne {
 			okHpkeDec++
 		}
 
@@ -2689,7 +2674,7 @@ func testWeakKeyRejection() {
 		weak130 := NewBitArray(256, new(big.Int).Lsh(big.NewInt(1), 130))
 		weak96 := NewBitArray(256, new(big.Int).Lsh(big.NewInt(1), 96))
 		weakZero := NewBitArray(256, big.NewInt(0))
-		goodKey := NewBitArray(256, new(big.Int).Or(&NewRandBitArray(256).Val, big.NewInt(1)))
+		goodKey := NewBitArray(256, new(big.Int).Or(NewRandBitArray(256).BigInt(), big.NewInt(1)))
 		if !NlV2KeyIsValid(weak129) && !NlV2KeyIsValid(weak130) &&
 			!NlV2KeyIsValid(weak96) && !NlV2KeyIsValid(weakZero) &&
 			NlV2KeyIsValid(goodKey) {

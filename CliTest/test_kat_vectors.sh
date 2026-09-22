@@ -45,14 +45,15 @@ python3 KAT/generate_kat.py --check
 # TODO #314: the BitArray conformance vectors.  --check verifies BOTH that
 # bitarray.json is current AND that the generated C header transposed from it
 # still matches -- the two cannot drift, on KAT/hcred_kkw_vector.h's precedent
-# (TODO #266).  C is pass 2 and the FIRST port in the gating set; Go, Python and
+# (TODO #266).  C (pass 2) and Go (pass 3) are in the gating set; Python and
 # Java join one per release (BITARRAY.md 8), each adding its consumer here.
-# Until the second port lands this is ONE implementation against ONE pinned
-# answer, which is more than currency and less than the cross-implementation
-# check BITARRAY.md 7 describes; said out loud rather than left to look like
-# more than it is.  The per-port conformance REPORT is deliberately not a gate:
-# an unconverted port is expected to diverge, and CLAUDE.md's Testing section
-# allows no failing test.
+# WITH THE SECOND PORT THIS STOPS BEING A CURRENCY CHECK: two INDEPENDENT
+# implementations against ONE pinned answer is the cross-implementation check
+# BITARRAY.md 7 describes, and it is what no round-trip or interop test can
+# supply, because those compare a port against another port's OPINION.  The
+# per-port conformance REPORT is deliberately not a gate: an unconverted port
+# is expected to diverge, and CLAUDE.md's Testing section allows no failing
+# test.
 echo "=== KAT/generate_bitarray_kat.py --check (TODO #314) ==="
 python3 KAT/generate_bitarray_kat.py --check
 
@@ -64,6 +65,16 @@ if ! cc -O2 -o KAT/verify_bitarray_c KAT/verify_bitarray_c.c 2>/tmp/hkx_ba_cc.lo
 fi
 KAT/verify_bitarray_c
 rm -f KAT/verify_bitarray_c
+
+# The Go consumer reads KAT/bitarray.json DIRECTLY -- encoding/json is in the
+# standard library, so the generated C view exists for the dependency-free C
+# tree alone and Go has no reason to consume a transposition of a file it can
+# read.  It decodes with UseNumber: two cases carry integers above 2^53 and a
+# float64 decode rounds one of them, which is the hazard CLAUDE.md records for
+# nl_fscx_v3.json met for the first time here, and it FAILS rather than passing
+# quietly (the consumer's own header says why).
+echo "=== KAT/verify_bitarray_go.go (Go conformance, TODO #314 pass 3) ==="
+go run KAT/verify_bitarray_go.go
 
 echo "=== KAT/verify_kat.go (Go cross-check) ==="
 go run KAT/verify_kat.go

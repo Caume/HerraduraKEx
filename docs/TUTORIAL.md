@@ -264,23 +264,21 @@ int main(void) {
 ```go
 import (
     "fmt"
-    "math/big"
     . "herradurakex/herradura"
 )
 
 func main() {
     const n = 256
-    poly := GfPoly[n]
-    g    := big.NewInt(GfGen)
+    g := GfGenBA(n)          /* the generator as an n-bit BitArray */
 
     alicePriv := NewRandBitArray(n)
     bobPriv   := NewRandBitArray(n)
 
-    alicePub := NewBitArray(n, GfPow(g, &alicePriv.Val, poly, n))
-    bobPub   := NewBitArray(n, GfPow(g, &bobPriv.Val,   poly, n))
+    alicePub := GfPow(g, alicePriv)
+    bobPub   := GfPow(g, bobPriv)
 
-    aliceShared := NewBitArray(n, GfPow(&bobPub.Val,   &alicePriv.Val, poly, n))
-    bobShared   := NewBitArray(n, GfPow(&alicePub.Val, &bobPriv.Val,   poly, n))
+    aliceShared := GfPow(bobPub, alicePriv)
+    bobShared   := GfPow(alicePub, bobPriv)
     /* aliceShared.Equal(bobShared) */
 }
 ```
@@ -395,8 +393,8 @@ int ok = hpks_verify(&msg, &alice_pub, &R, &s); /* verify */
 ```go
 msg := NewRandBitArray(n)
 
-RS, sS := HpksSign(msg, alicePriv, poly, n)         /* draws its own nonce */
-ok     := HpksVerify(msg, alicePub, RS, sS, poly, n)
+RS, sS := HpksSign(msg, alicePriv)         /* draws its own nonce */
+ok     := HpksVerify(msg, alicePub, RS, sS)
 ```
 
 `HpksSign` returns only `(R, s)`; the challenge `e` is a function of `R` and the message,
@@ -493,11 +491,11 @@ hpke_decrypt(&ciphertext, &R_ephem, &alice_priv, &recovered);
 
 ```go
 rHpke  := NewRandBitArray(n)                                         /* ephemeral scalar   */
-RHpke  := NewBitArray(n, GfPow(g, &rHpke.Val, poly, n))             /* ephemeral pubkey   */
-encKey := NewBitArray(n, GfPow(&alicePub.Val, &rHpke.Val, poly, n)) /* enc key = C^r      */
-ct     := FscxRevolve(plaintext, encKey, n/4)                        /* ciphertext         */
+RHpke  := GfPow(g, rHpke)                       /* ephemeral pubkey   */
+encKey := GfPow(alicePub, rHpke)                /* enc key = C^r      */
+ct     := FscxRevolve(plaintext, encKey, n/4)   /* ciphertext         */
 
-decKey := NewBitArray(n, GfPow(&RHpke.Val, &alicePriv.Val, poly, n)) /* dec key = R^a     */
+decKey := GfPow(RHpke, alicePriv)               /* dec key = R^a      */
 dec    := FscxRevolve(ct, decKey, 3*n/4)                              /* recovered = P      */
 /* dec.Equal(plaintext) */
 /* Transmit RHpke alongside ct; Alice decrypts with her private key. */
@@ -563,15 +561,14 @@ explicit_bzero(&ae_nl, sizeof(ae_nl));
 msgNl := NewRandBitArray(n)
 kNl   := NewRandBitArray(n)                                          /* per-signature nonce */
 
-RNl  := NewBitArray(n, GfPow(g, &kNl.Val, poly, n))                 /* R = g^k             */
-eNl  := NlFscxRevolveV1(RNl, msgNl, n/4)                            /* NL challenge e      */
-sNl  := new(big.Int).Mod(new(big.Int).Sub(&kNl.Val,
-            new(big.Int).Mul(&alicePriv.Val, &eNl.Val)), ord)        /* s = k - a·e         */
+RNl  := GfPow(g, kNl)                             /* R = g^k             */
+eNl  := NlFscxRevolveV1(RNl, msgNl, n/4)          /* NL challenge e      */
+sNl  := kNl.SubModOrd(alicePriv.MulModOrd(eNl))   /* s = k - a·e mod 2^n-1 */
 
 /* Verify: g^s · C^e == R */
 eV  := NlFscxRevolveV1(RNl, msgNl, n/4)
-lhs := GfMul(GfPow(g, sNl, poly, n), GfPow(&alicePub.Val, &eV.Val, poly, n), poly, n)
-okNl := lhs.Cmp(&RNl.Val) == 0
+lhs := GfMul(GfPow(g, sNl), GfPow(alicePub, eV))
+okNl := lhs.Equal(RNl)
 ```
 
 #### Python
@@ -623,11 +620,11 @@ explicit_bzero(&dec_nl, sizeof(dec_nl));
 
 ```go
 rNl    := NewRandBitArray(n)
-RNl2   := NewBitArray(n, GfPow(g, &rNl.Val, poly, n))               /* ephemeral R = g^r  */
-encNl  := NewBitArray(n, GfPow(&alicePub.Val, &rNl.Val, poly, n))   /* enc key = C^r      */
-ctNl   := NlFscxRevolveV2(plaintext, encNl, n/4)                     /* encrypt            */
+RNl2   := GfPow(g, rNl)                          /* ephemeral R = g^r  */
+encNl  := GfPow(alicePub, rNl)                   /* enc key = C^r      */
+ctNl   := NlFscxRevolveV2(plaintext, encNl, n/4) /* encrypt            */
 
-decNl  := NewBitArray(n, GfPow(&RNl2.Val, &alicePriv.Val, poly, n)) /* dec key = R^a      */
+decNl  := GfPow(RNl2, alicePriv)                 /* dec key = R^a      */
 ptNl   := NlFscxRevolveV2Inv(ctNl, decNl, n/4)                      /* decrypt            */
 /* ptNl.Equal(plaintext) */
 /* Transmit RNl2 alongside ctNl; Alice decrypts with her private key. */
@@ -690,11 +687,11 @@ key       := NewRandBitArray(n)
 plaintext := NewRandBitArray(n)
 
 nA1    := NewRandBitArray(n)
-baseA1 := NewBitArray(n, new(big.Int).Xor(&key.Val, &nA1.Val))
-bA1    := NewBitArray(n, new(big.Int).Xor(&baseA1.Val, big.NewInt(0))) /* counter = 0 */
+baseA1 := key.Xor(nA1)
+bA1    := baseA1.XorUint(0)                             /* counter = 0 */
 ks     := NlFscxRevolveV1(RnlKdfSeed(baseA1), bA1, n/4)
-ct     := NewBitArray(n, new(big.Int).Xor(&plaintext.Val, &ks.Val))
-dec    := NewBitArray(n, new(big.Int).Xor(&ct.Val, &ks.Val))
+ct     := plaintext.Xor(ks)
+dec    := ct.Xor(ks)
 /* dec.Equal(plaintext) */
 /* Transmit nA1 alongside ct so the recipient can reproduce the keystream. */
 ```
@@ -2049,16 +2046,17 @@ import (
     h "herradurakex/herradura"
 )
 
-n   := 3
-g   := big.NewInt(h.GfGen)
-poly := h.GfPoly[256]
+n := 3
+g := h.GfGenBA(256)
 
+/* HPKS-T's scalars are *big.Int by the protocol's own definition, so they
+   cross the BitArray boundary at NewBitArray / BigInt (BITARRAY.md §8.1). */
 secrets := make([]*big.Int, n)
 pubkeys := make([]*big.Int, n)
 for j := range secrets {
     k := h.NewRandBitArray(256)
-    secrets[j] = &k.Val
-    pubkeys[j]  = h.GfPow(g, secrets[j], poly, 256)
+    secrets[j] = k.BigInt()
+    pubkeys[j]  = h.GfPow(g, k).BigInt()
 }
 
 msg := h.NewRandBitArray(256)

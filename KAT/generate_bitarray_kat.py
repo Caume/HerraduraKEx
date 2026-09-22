@@ -557,7 +557,10 @@ def _load_python_suite():
 def report() -> int:
     """Per-operation conformance of the shipped ports.  A REPORT, never a gate."""
     print("BitArray conformance report (TODO #314) — BITARRAY.md is the contract.")
-    print("No port is converted yet, so divergence here is EXPECTED, not a failure.\n")
+    print("C (pass 2) and Go (pass 3) are CONVERTED and are gated by their own")
+    print("consumers — KAT/verify_bitarray_c.c and KAT/verify_bitarray_go.go, both run")
+    print("by CliTest/test_kat_vectors.sh.  The rows below are the ports that are NOT")
+    print("yet converted, where divergence is EXPECTED and is not a failure.\n")
 
     suite = _load_python_suite()
     PyBA = suite.BitArray
@@ -616,7 +619,7 @@ def report() -> int:
 
     div = sum(1 for _, v, _ in rows if v == "DIVERGES")
     print(f"\n  {len(rows)} checked, {div} diverging, {len(rows) - div} conforming.")
-    print("  Go/C/Java consumers land with their ports (BITARRAY.md 8).")
+    print("  Python and Java join the gating set at passes 4 and 5 (BITARRAY.md 8).")
     return 0
 
 

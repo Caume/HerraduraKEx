@@ -15,7 +15,6 @@ package main
 
 import (
 	"fmt"
-	"math/big"
 
 	. "herradurakex/herradura"
 )
@@ -24,20 +23,19 @@ func main() {
 	const n = 256
 	iValue := n / 4
 	rValue := 3 * n / 4
-	poly := GfPoly[n]
 
 	// ── HKEX-GF: Diffie-Hellman over GF(2^256)* ─────────────────────────────
 	fmt.Println("=== HKEX-GF key exchange ===")
 
 	alicePriv := NewRandBitArray(n)
 	bobPriv   := NewRandBitArray(n)
-	g         := big.NewInt(GfGen)
+	g         := GfGenBA(n)
 
-	alicePub := NewBitArray(n, GfPow(g, &alicePriv.Val, poly, n))
-	bobPub   := NewBitArray(n, GfPow(g, &bobPriv.Val,  poly, n))
+	alicePub := GfPow(g, alicePriv)
+	bobPub   := GfPow(g, bobPriv)
 
-	aliceShared := NewBitArray(n, GfPow(&bobPub.Val,   &alicePriv.Val, poly, n))
-	bobShared   := NewBitArray(n, GfPow(&alicePub.Val, &bobPriv.Val,   poly, n))
+	aliceShared := GfPow(bobPub, alicePriv)
+	bobShared   := GfPow(alicePub, bobPriv)
 
 	fmt.Printf("Alice shared: %x\n", aliceShared)
 	fmt.Printf("Bob   shared: %x\n", bobShared)

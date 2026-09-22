@@ -1517,11 +1517,19 @@ PRIMITIVES = {
     },
     "nl-fscx-v1-general": {
         "acknowledged":
-            "the width-parameterised v1 step used by ZKBoo and aPAKE at n=32, "
-            "where the suite default is 256. C (zkp_nl_f1) and Java "
-            "(ZkpNl.nlFscxV1General) name it; Go and Python pass the width to "
-            "nl-fscx-v1 itself",
+            "the width-parameterised v1 step used by ZKBoo and aPAKE, where the "
+            "suite default is 256. C (zkp_nl_f1), Go (zkpNlF1) and Java "
+            "(ZkpNl.nlFscxV1General) name it; Python passes the width to "
+            "nl-fscx-v1 itself. Go's cell is new in TODO #314 pass 3 and the "
+            "reason is the item: ZKP-NL's default width is 8, BITARRAY.md 2 puts "
+            "the BitArray's floor at 16 because fscx degenerates below two "
+            "octets, and KAT/bitarray.json PINS nbits = 8 as E_WIDTH -- so the "
+            "8-bit BitArray this port used to build here is exactly what the "
+            "contract forbids, and the machine-word form C has always had is "
+            "what replaces it. Python keeps its cell because its BitArray has no "
+            "such floor",
         "c": r"static uint64_t zkp_nl_f1\(",
+        "go": r"^func zkpNlF1\(",
         "java": r"ZkpNl.java::public static BigInteger nlFscxV1General\(",
     },
     # ── hash, DRBG and classical entry points (TODO #261, v6.1.0) ─────────
@@ -2012,10 +2020,14 @@ DECL_PATTERNS = {
 # it instead of quietly covering the next thing that matches.
 CENSUS_EXEMPT = {
     "c": [
-        (r"^_?ba(33)?_", "BitArray limb plumbing (shift/compare/popcount/print/rand "
-                         "over the fixed 256-bit array). C alone needs it: Go and "
-                         "Python carry big integers with these as built-ins, and Java "
-                         "has BigInteger. Not a protocol step in any language"),
+        (r"^_?ba(33)?_", "BitArray octet plumbing (shift/compare/popcount/print/rand, "
+                         "the width check, and the fallible ba_try_* surface). NOT a "
+                         "protocol step in any language. Until TODO #314 pass 3 the "
+                         "reason read 'C alone needs it: Go and Python carry big "
+                         "integers with these as built-ins' -- that is now false for "
+                         "Go, which implements BITARRAY.md over octets and has its own "
+                         "counterparts under the go rules below, and it stays true of "
+                         "Python and Java only until passes 4 and 5"),
         (r"_(alloc|free)$", "manual allocation/release of a proof or signature struct. "
                             "Go, Python and Java are garbage-collected and have no "
                             "counterpart by construction"),
@@ -2059,6 +2071,25 @@ CENSUS_EXEMPT = {
          "the exempted ba_ and qcp_ families and Python's are built in.  zkpNlMask "
          "is the low-n-bit mask ZKP-NL applies: C writes (1ULL << n) - 1 inline, "
          "Python (1 << n) - 1, and Java factors it out as the exempted maskOf"),
+        (r"^(TryZero|TryFromBytes|TryFromUint|TryFromHex|MustFromHex|BaCode|"
+         r"BaGfPoly|GfGenBA|baCheckWidth|baSameWidth|baErr|baFail|baHexVal)$",
+         "the BitArray construction, width-check and error surface (TODO #314 pass "
+         "3) -- the Go half of the family C's exempted ba_ rule covers. Not a "
+         "protocol step in any language: BITARRAY.md specifies a TYPE, and these "
+         "are how one port spells its constructors and its status codes"),
+        (r"^Try(Fscx|GfMul|GfPow)$",
+         "the FALLIBLE twin of a function the manifest names by its stem, the same "
+         "split as C's exempted _ex$ and _dim$ rules. It exists because "
+         "KAT/bitarray.json pins a mixed width and an unlisted width as error "
+         "CODES, so a conformance consumer must be able to OBSERVE the failure "
+         "where protocol code wants the panic; C's ba_try_* twins are exempted by "
+         "the ba_ rule above, and Python and Java raise from the stem itself"),
+        (r"^(gfMulBig|gfPowBig)$",
+         "the math/big boundary for the OPRF and threshold layers, whose scalars "
+         "are *big.Int by their own protocol definitions (TODO #314 pass 3). They "
+         "route those layers through the ONE GF implementation rather than a "
+         "second one; the other three ports have no boundary to cross because "
+         "their scalar type and their bit-string type are already the same"),
         (r"^(oprfOrd|rnlTwGet)$",
          "accessors for a value the other three keep as a constant or recompute: "
          "the OPRF group order, and one twiddle from the table C's exempted "
@@ -2372,17 +2403,25 @@ PARAMETERS = {
                              "step count below which the O(log i) closed form is not "
                              "worth taking (TODO #213); C alone ships the closed form"),
     # ── BitArray capacity (TODO #314 pass 2) ──
-    "ba-max-bits": (["BA_MAX_BITS", None, None, None], "local",
+    "ba-max-bits": (["BA_MAX_BITS", "BAMaxBits", None, None], "local",
                     "the BitArray's per-port CAPACITY, not a width (BITARRAY.md 2/9).  "
-                    "C-only for now because C is the only converted port: passes 3-5 add "
-                    "Go, Python and Java, and each will need its cell here.  LOCAL, and "
+                    "C and Go are the converted ports (passes 2 and 3); passes 4-5 add "
+                    "Python and Java, and each will need its cell here.  Go could have "
+                    "had NO capacity at all -- it allocates exactly nbits/8 octets -- "
+                    "and carries one anyway so that all four ports answer E_WIDTH to the "
+                    "same inputs, which is what KAT/bitarray.json pins.  LOCAL, and "
                     "the distinction is the point -- capacity is NOT observable, since "
                     "every operation's result depends on nbits and the active octets "
                     "only, so a port with more room cannot diverge by having it.  The "
                     "reference generator is held to the same 256 for exactly that reason, "
                     "which keeps every case in KAT/bitarray.json capacity-independent"),
     "ba-max-bytes": (["BA_MAX_BYTES", None, None, None], "local",
-                     "BA_MAX_BITS/8, the capacity buffer's length (TODO #314)"),
+                     "BA_MAX_BITS/8, the capacity buffer's length (TODO #314).  Go's "
+                     "cell is None and stays None: that constant is the length of C's "
+                     "FIXED capacity buffer, and Go allocates exactly nbits/8 octets, "
+                     "so there is nothing for it to name.  Declared anyway it would be "
+                     "a constant no code reads -- the defect TODO #295's use census "
+                     "exists to catch, and it fired here on the first draft of pass 3"),
     # ── NL-FSCX v3 (TODO #255) ──
     "nl-v3-i-steps": (["I3_VALUE", "I3Value", "I3_VALUE", "Duplex.I3_VALUE"], "wire",
                       "5n/16, the v3 duplex step count"),

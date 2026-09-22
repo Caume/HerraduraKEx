@@ -71,15 +71,43 @@ func bounded(v, lo, hi int, what, where string) int {
 	return v
 }
 
-// boundedN bounds a wire-supplied bit width: a multiple of 8, no wider than the
-// suite's own key width.
+// boundedN bounds a wire-supplied bit width: a multiple of 8, at least 16, no
+// wider than the suite's own key width.
+//
+// The floor was 8 until TODO #314 pass 3 and is now BITARRAY.md §2's: fscx
+// reads the octet on both sides of every position and degenerates below two
+// octets, so a one-octet BitArray is not representable in any converted port
+// and KAT/bitarray.json pins nbits = 8 as E_WIDTH.  No writer here emits a
+// narrower Stern instance either -- sternT(8) is 0, a degenerate error weight --
+// so this refuses an artifact that was never valid, rather than carrying it
+// into a width the type cannot hold.
 func boundedN(v int, where string) int {
-	v = bounded(v, 8, sternMaxN, "n", where)
+	v = bounded(v, 16, sternMaxN, "n", where)
 	if v%8 != 0 {
 		fmt.Fprintf(os.Stderr, "%s: n is %d (expected a multiple of 8)\n", where, v)
 		os.Exit(1)
 	}
 	return v
+}
+
+// gfWidth bounds a wire-supplied width for the classical GF(2^n) algorithms:
+// it must be one of the widths BITARRAY.md §4.6 lists a primitive polynomial
+// for.  Before TODO #314 pass 3 every one of these call sites read
+// `poly := GfPoly[n]; if poly == nil { poly = GfPoly[256] }`, i.e. it kept the
+// wire's width and did the arithmetic under the 256-bit polynomial — garbage,
+// silently, on an artifact no writer here can produce (genpkey normalises an
+// unlisted --bits to 256, so every legitimate classical key is 32, 64, 128 or
+// 256).  The width now selects the polynomial, so an unlisted one is E_NO_POLY
+// and this refuses it the way TODO #239/#240 refuse every other wire field that
+// sizes a computation.
+func gfWidth(v int, where string) int {
+	switch v {
+	case 32, 64, 128, 256:
+		return v
+	}
+	fmt.Fprintf(os.Stderr, "%s: n is %d (expected 32, 64, 128 or 256)\n", where, v)
+	os.Exit(1)
+	return 0
 }
 
 // wireInt decodes a DER INTEGER's value bytes as a non-negative int, refusing
@@ -447,6 +475,16 @@ func derIntSmall(n int) ([]byte, error) {
 	return DerIntEnc(b)
 }
 
+// fillBA writes ba's octets RIGHT-ALIGNED into dst, which is what the
+// *big.Int FillBytes calls this file used to make did.  A plain
+// copy(dst, ba.Bytes()) is left-aligned and is NOT the same when the two
+// lengths differ, so the alignment is spelled out rather than assumed equal
+// (TODO #314 pass 3).
+func fillBA(dst []byte, ba *BitArray) {
+	b := ba.Bytes()
+	copy(dst[len(dst)-len(b):], b)
+}
+
 func bytesToInt(b []byte) int {
 	return int(new(big.Int).SetBytes(b).Int64())
 }
@@ -584,11 +622,11 @@ func encodeRNLPub(C, mBlind []int, n int, nA []byte) (string, error) {
 }
 
 func encodeSternPriv(e, seed *BitArray, n int, algo string) (string, error) {
-	a, err := derIntBig(&e.Val, n/8)
+	a, err := derIntBig(e.BigInt(), n/8)
 	if err != nil {
 		return "", err
 	}
-	b, err := derIntBig(&seed.Val, n/8)
+	b, err := derIntBig(seed.BigInt(), n/8)
 	if err != nil {
 		return "", err
 	}
@@ -608,7 +646,7 @@ func encodeSternPub(syn *big.Int, seed *BitArray, n int, algo string) (string, e
 	if err != nil {
 		return "", err
 	}
-	b, err := derIntBig(&seed.Val, n/8)
+	b, err := derIntBig(seed.BigInt(), n/8)
 	if err != nil {
 		return "", err
 	}
@@ -625,11 +663,11 @@ func encodeSternPub(syn *big.Int, seed *BitArray, n int, algo string) (string, e
 
 func encodeSessionKey(key *BitArray, nbits int) (string, error) {
 	// Minimum byte width matching Python: max(1, (bit_length+7)//8)
-	nb := (key.Val.BitLen() + 7) / 8
+	nb := (key.BigInt().BitLen() + 7) / 8
 	if nb < 1 {
 		nb = 1
 	}
-	a, err := derIntBig(&key.Val, nb)
+	a, err := derIntBig(key.BigInt(), nb)
 	if err != nil {
 		return "", err
 	}
@@ -650,11 +688,11 @@ func encodeSessionKey(key *BitArray, nbits int) (string, error) {
 // nB is Bob's 32-byte contributory nonce; pass nil to omit (old format).
 func encodeRNLResponse(K_B *BitArray, C_B []int, hint []byte, n int, nB []byte) (string, error) {
 	// K_B: minimum-width big-endian encoding
-	nb := (K_B.Val.BitLen() + 7) / 8
+	nb := (K_B.BigInt().BitLen() + 7) / 8
 	if nb < 1 {
 		nb = 1
 	}
-	kDer, err := derIntBig(&K_B.Val, nb)
+	kDer, err := derIntBig(K_B.BigInt(), nb)
 	if err != nil {
 		return "", err
 	}
@@ -935,7 +973,7 @@ func wotsWriteIdx(keyPath string, val int) {
 func wotsBlobPack(vals [WotsL]*BitArray) []byte {
 	blob := make([]byte, WotsL*32)
 	for i := 0; i < WotsL; i++ {
-		vals[i].Val.FillBytes(blob[i*32 : (i+1)*32])
+		fillBA(blob[i*32 : (i+1)*32], vals[i])
 	}
 	return blob
 }
@@ -1040,7 +1078,7 @@ func encodeRingSig(sig *SternRingSig, n int) string {
 	blob := make([]byte, 0, sig.K*sig.Rounds*(5*nb+1))
 	put := func(ba *BitArray) {
 		b := make([]byte, nb)
-		ba.Val.FillBytes(b)
+		fillBA(b, ba)
 		blob = append(blob, b...)
 	}
 	for i := 0; i < sig.K; i++ {
@@ -1138,21 +1176,20 @@ func cmdGenpkey(args []string) {
 	}
 
 	n := *bits
-	gen := new(big.Int).SetInt64(GfGen)
 
 	var pem string
 	var err error
 
 	switch {
 	case classicalAlgos[*algo]:
-		poly := GfPoly[n]
-		if poly == nil {
-			poly = GfPoly[256]
+		// An unlisted --bits normalises to 256, as it always has: the width
+		// selects the GF polynomial and there is one only for 32/64/128/256.
+		if _, perr := BaGfPoly(n); perr != nil {
 			n = 256
 		}
 		a := NewRandBitArray(n)
-		C := GfPow(gen, &a.Val, poly, n)
-		pem, err = encodeClassicalPriv(&a.Val, C, n, *algo)
+		C := GfPow(GfGenBA(n), a)
+		pem, err = encodeClassicalPriv(a.BigInt(), C.BigInt(), n, *algo)
 
 	case *algo == "hkex-rnl":
 		// Ring dimension is independent of the key width (TODO #223); --bits
@@ -1577,16 +1614,11 @@ func cmdKex(args []string) {
 			die("kex", err)
 		}
 
-		n    := bytesToInt(ourInts[2])
-		priv := new(big.Int).SetBytes(ourInts[0])
-		pub  := new(big.Int).SetBytes(theirInts[0])
-		poly := GfPoly[n]
-		if poly == nil {
-			poly = GfPoly[256]
-		}
+		n    := gfWidth(bytesToInt(ourInts[2]), "kex")
+		priv := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
+		pub  := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
 
-		sk   := GfPow(pub, priv, poly, n)
-		skBA := applyKDF(NewBitArray(n, sk), n)
+		skBA := applyKDF(GfPow(pub, priv), n)
 		pem, err := encodeSessionKey(skBA, n)
 		if err != nil {
 			die("kex", err)
@@ -1761,7 +1793,7 @@ func cmdKex(args []string) {
 			syn, K2 := QcMdpcEncap(hPub, nil)
 
 			hintUsed := rnlHintToBytes(hint, n)
-			K := hybridRnlSternCombine(&K1_ba.Val, K2, C_A, m_A, C_B, hintUsed, hPub, syn, n, rQC)
+			K := hybridRnlSternCombine(K1_ba.BigInt(), K2, C_A, m_A, C_B, hintUsed, hPub, syn, n, rQC)
 
 			pem, err := encodeHybridResponse(K, C_B, n/2, hint, n, n_B, syn, rQC)
 			if err != nil {
@@ -1823,7 +1855,7 @@ func cmdKex(args []string) {
 			K2 := QcMdpcDecapBgf(syn, sup0, sup1)
 
 			hintUsed := rnlHintToBytes(hintPacked, n)
-			K := hybridRnlSternCombine(&K1_ba.Val, K2, C_A, m_A, C_B, hintUsed, hPub, syn, n, rQC)
+			K := hybridRnlSternCombine(K1_ba.BigInt(), K2, C_A, m_A, C_B, hintUsed, hPub, syn, n, rQC)
 
 			pem, err := encodeSessionKey(NewBitArray(256, K), rnlSessionBits(n))
 			if err != nil {
@@ -2140,11 +2172,11 @@ func encodeSternCT(ctSyn *big.Int, ePrime, K *BitArray, E *big.Int, n int) (stri
 	if err != nil {
 		return "", err
 	}
-	ea, err := derIntBig(&ePrime.Val, nb)
+	ea, err := derIntBig(ePrime.BigInt(), nb)
 	if err != nil {
 		return "", err
 	}
-	ka, err := derIntBig(&K.Val, nb)
+	ka, err := derIntBig(K.BigInt(), nb)
 	if err != nil {
 		return "", err
 	}
@@ -2335,9 +2367,9 @@ func packSternSigLabel(sig *SternSig, n int, label string) (string, error) {
 	commitsBuf := make([]byte, 3*rounds*nb)
 	for i, r := range sig.Rounds {
 		off := i * 3 * nb
-		r.C0.Val.FillBytes(commitsBuf[off : off+nb])
-		r.C1.Val.FillBytes(commitsBuf[off+nb : off+2*nb])
-		r.C2.Val.FillBytes(commitsBuf[off+2*nb : off+3*nb])
+		fillBA(commitsBuf[off : off+nb], r.C0)
+		fillBA(commitsBuf[off+nb : off+2*nb], r.C1)
+		fillBA(commitsBuf[off+2*nb : off+3*nb], r.C2)
 	}
 
 	// Challenges: 2 bits per round, packed LSB-first within each byte
@@ -2351,8 +2383,8 @@ func packSternSigLabel(sig *SternSig, n int, label string) (string, error) {
 	respBuf := make([]byte, 2*rounds*nb)
 	for i, r := range sig.Rounds {
 		off := i * 2 * nb
-		r.RespA.Val.FillBytes(respBuf[off : off+nb])
-		r.RespB.Val.FillBytes(respBuf[off+nb : off+2*nb])
+		fillBA(respBuf[off : off+nb], r.RespA)
+		fillBA(respBuf[off+nb : off+2*nb], r.RespB)
 	}
 
 	nDer, err := derIntSmall(n)
@@ -2861,7 +2893,7 @@ func encodeHcredPriv(sPoly, cPoly, mPoly []int, seedH *BitArray, syndr *big.Int,
 	buf = append(buf, hcredSer2(cPoly)...)
 	buf = append(buf, hcredSer3(mPoly)...)
 	seedBuf := make([]byte, seedNb)
-	seedH.Val.FillBytes(seedBuf)
+	fillBA(seedBuf, seedH)
 	buf = append(buf, seedBuf...)
 	buf = append(buf, hcredLE(syndr, syndrNb)...)
 	return PemWrap(lblHcredPriv, buf)
@@ -2904,7 +2936,7 @@ func encodeHcredPub(cPoly, mPoly []int, seedH *BitArray, syndr *big.Int, n int) 
 	buf = append(buf, hcredSer2(cPoly)...)
 	buf = append(buf, hcredSer3(mPoly)...)
 	seedBuf := make([]byte, seedNb)
-	seedH.Val.FillBytes(seedBuf)
+	fillBA(seedBuf, seedH)
 	buf = append(buf, seedBuf...)
 	buf = append(buf, hcredLE(syndr, syndrNb)...)
 	return PemWrap(lblHcredPub, buf)
@@ -3274,7 +3306,6 @@ func cmdEnc(args []string) {
 		die("enc", err)
 	}
 
-	gen := new(big.Int).SetInt64(GfGen)
 
 	switch *algo {
 	case "hske-duplex", "hske-duplex3":
@@ -3300,7 +3331,7 @@ func cmdEnc(args []string) {
 		} else {
 			ct, authTag = HskeNlV2DuplexEncrypt(K, nonce, []byte(*ad), inBytes)
 		}
-		pem, err := encodeDuplexCT(&nonce.Val, ct, new(big.Int).SetBytes(authTag), n, dplexV3)
+		pem, err := encodeDuplexCT(nonce.BigInt(), ct, new(big.Int).SetBytes(authTag), n, dplexV3)
 		if err != nil {
 			die("enc", err)
 		}
@@ -3325,7 +3356,7 @@ func cmdEnc(args []string) {
 		switch *algo {
 		case "hske":
 			E := FscxRevolve(P, K, n/4)
-			pem, err = encodeSymCT("hske", &E.Val, n, nil)
+			pem, err = encodeSymCT("hske", E.BigInt(), n, nil)
 		case "hske-nla1":
 			nonce := NewRandBitArray(n)
 			if *aead {
@@ -3336,7 +3367,7 @@ func cmdEnc(args []string) {
 				}
 				ct, authTag := HskeNlAeadEncrypt(K, nonce, []byte(*ad), msgPad(inBytes, nb))
 				pem, err = encodeSymCTTag("hske-nla1", new(big.Int).SetBytes(ct), n,
-					&nonce.Val, new(big.Int).SetBytes(authTag))
+					nonce.BigInt(), new(big.Int).SetBytes(authTag))
 				break
 			}
 			if *ad != "" {
@@ -3345,17 +3376,17 @@ func cmdEnc(args []string) {
 			}
 			nla1WidthOK(n, "enc", "key")
 			E     := HskeNlA1Encrypt(P, K, nonce)
-			pem, err = encodeSymCT("hske-nla1", &E.Val, n, &nonce.Val)
+			pem, err = encodeSymCT("hske-nla1", E.BigInt(), n, nonce.BigInt())
 		case "hske-nla2":
 			if !NlV2KeyIsValid(K) {
 				die("enc hske-nla2", errWeakV2Key)
 			}
 			E := NlFscxRevolveV2(P, K, 3*n/4)
-			pem, err = encodeSymCT("hske-nla2", &E.Val, n, nil)
+			pem, err = encodeSymCT("hske-nla2", E.BigInt(), n, nil)
 		case "hske-nla3":
 			// no key check: v3 has no weak class (TODO #255)
 			E := NlFscxRevolveV3(P, K, 5*n/8)
-			pem, err = encodeSymCT("hske-nla3", &E.Val, n, nil)
+			pem, err = encodeSymCT("hske-nla3", E.BigInt(), n, nil)
 		}
 		if err != nil {
 			die("enc", err)
@@ -3373,23 +3404,19 @@ func cmdEnc(args []string) {
 		if err != nil {
 			die("enc", err)
 		}
-		pubInt := new(big.Int).SetBytes(theirInts[0])
-		n := bytesToInt(theirInts[1])
-		poly := GfPoly[n]
-		if poly == nil {
-			poly = GfPoly[256]
-		}
+		n := gfWidth(bytesToInt(theirInts[1]), "enc")
+		pubBA := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
 		nb := n / 8
 		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
 		// r is ours to choose, so for hpke-nl resample past the ~2^-129 affine
 		// weak-key class (TODO #168) rather than failing an honest encryption.
 		var r *BitArray
-		var R *big.Int
+		var Rba *BitArray
 		var encKey *BitArray
 		for i := 0; i < 64; i++ {
 			r = NewRandBitArray(n)
-			R = GfPow(gen, &r.Val, poly, n)
-			encKey = NewBitArray(n, GfPow(pubInt, &r.Val, poly, n))
+			Rba = GfPow(GfGenBA(n), r)
+			encKey = GfPow(pubBA, r)
 			// hpke-nl3 has no affine-degenerate key class to sample past
 			// (SecurityProofs-8.md 11.34.4), so it takes the first draw.
 			if *algo != "hpke-nl" || NlV2KeyIsValid(encKey) {
@@ -3405,13 +3432,13 @@ func cmdEnc(args []string) {
 		switch *algo {
 		case "hpke":
 			E := FscxRevolve(P, encKey, n/4)
-			pem, err = encodeAsymCT(R, &E.Val, n)
+			pem, err = encodeAsymCT(Rba.BigInt(), E.BigInt(), n)
 		case "hpke-nl3":
 			E := NlFscxRevolveV3(P, encKey, 5*n/8)
-			pem, err = encodeAsymCT(R, &E.Val, n)
+			pem, err = encodeAsymCT(Rba.BigInt(), E.BigInt(), n)
 		default:
 			E := NlFscxRevolveV2(P, encKey, n/4)
-			pem, err = encodeAsymCT(R, &E.Val, n)
+			pem, err = encodeAsymCT(Rba.BigInt(), E.BigInt(), n)
 		}
 		if err != nil {
 			die("enc", err)
@@ -3436,7 +3463,7 @@ func cmdEnc(args []string) {
 		P    := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
 		K, ctSyn, ePrime := HpkeSternFEncap(seed, n)
 		E := FscxRevolve(P, K, n/4)
-		pem, err := encodeSternCT(ctSyn, ePrime, K, &E.Val, n)
+		pem, err := encodeSternCT(ctSyn, ePrime, K, E.BigInt(), n)
 		if err != nil {
 			die("enc", err)
 		}
@@ -3458,7 +3485,7 @@ func cmdEnc(args []string) {
 		syn, K := QcMdpcEncap(hPub, nil)
 		Kba := NewBitArray(256, new(big.Int).SetBytes(K))
 		E := FscxRevolve(P, Kba, 64)
-		pem, err := encodeKemCT(syn, &E.Val)
+		pem, err := encodeKemCT(syn, E.BigInt())
 		if err != nil {
 			die("enc", err)
 		}
@@ -3644,15 +3671,11 @@ func cmdDec(args []string) {
 		if err != nil {
 			die("dec", err)
 		}
-		priv := new(big.Int).SetBytes(ourInts[0])
-		n    := bytesToInt(ourInts[2])
-		poly := GfPoly[n]
-		if poly == nil {
-			poly = GfPoly[256]
-		}
-		R    := new(big.Int).SetBytes(ctInts[0])
+		n    := gfWidth(bytesToInt(ourInts[2]), "dec")
+		priv := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
+		R    := NewBitArray(n, new(big.Int).SetBytes(ctInts[0]))
 		EInt := new(big.Int).SetBytes(ctInts[1])
-		decKey := NewBitArray(n, GfPow(R, priv, poly, n))
+		decKey := GfPow(R, priv)
 		E      := NewBitArray(n, EInt)
 
 		var D *BitArray
@@ -3834,11 +3857,7 @@ func cmdSign(args []string) {
 
 	case "hpks", "hpks-nl":
 		privInt := new(big.Int).SetBytes(ourInts[0])
-		n       := bytesToInt(ourInts[2])
-		poly := GfPoly[n]
-		if poly == nil {
-			poly = GfPoly[256]
-		}
+		n       := gfWidth(bytesToInt(ourInts[2]), "sign")
 		msg  := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
 		priv := NewBitArray(n, privInt)
 
@@ -3851,13 +3870,13 @@ func cmdSign(args []string) {
 		var sBa *BitArray
 		var e *BitArray
 		if *algo == "hpks" {
-			R, sBa = HpksSign(msg, priv, poly, n)
+			R, sBa = HpksSign(msg, priv)
 			e = FscxRevolve(R, msg, n/4)
 		} else {
-			R, sBa = HpksNlSign(msg, priv, poly, n)
+			R, sBa = HpksNlSign(msg, priv)
 			e = NlFscxRevolveV1(R, msg, n/4)
 		}
-		pem, err := encodeSchnorrSig(&sBa.Val, &R.Val, &e.Val, n)
+		pem, err := encodeSchnorrSig(sBa.BigInt(), R.BigInt(), e.BigInt(), n)
 		if err != nil {
 			die("sign", err)
 		}
@@ -3896,7 +3915,7 @@ func cmdSign(args []string) {
 		}
 		j := -1
 		for idx := range ringKeys {
-			if ringKeys[idx].Seed.Val.Cmp(signerSeed) == 0 {
+			if ringKeys[idx].Seed.BigInt().Cmp(signerSeed) == 0 {
 				j = idx
 				break
 			}
@@ -4140,8 +4159,6 @@ func cmdVerify(args []string) {
 		die("verify", err)
 	}
 
-	gen := new(big.Int).SetInt64(GfGen)
-
 	switch *algo {
 	case "rnl-sigma":
 		// HKEX-RNL public key: theirInts[0]=C (2B/coeff), theirInts[1]=mBlind (4B/coeff), theirInts[2]=n
@@ -4172,12 +4189,8 @@ func cmdVerify(args []string) {
 		}
 
 	case "hpks", "hpks-nl":
-		pub := new(big.Int).SetBytes(theirInts[0])
-		n   := bytesToInt(theirInts[1])
-		poly := GfPoly[n]
-		if poly == nil {
-			poly = GfPoly[256]
-		}
+		n   := gfWidth(bytesToInt(theirInts[1]), "verify")
+		pub := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
 		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
 
 		_, sigInts, err := readPEMInts(*sig)
@@ -4196,12 +4209,8 @@ func cmdVerify(args []string) {
 			eV = NlFscxRevolveV1(NewBitArray(n, R), msg, n/4)
 		}
 		// Verify: g^s * pub^(e_recomputed) == R  (matches Python verify)
-		lhs := GfMul(
-			GfPow(gen, sInt, poly, n),
-			GfPow(pub, &eV.Val, poly, n),
-			poly, n,
-		)
-		if lhs.Cmp(R) == 0 {
+		lhs := GfMul(GfPow(GfGenBA(n), NewBitArray(n, sInt)), GfPow(pub, eV))
+		if lhs.BigInt().Cmp(R) == 0 {
 			fmt.Println("Signature OK")
 			os.Exit(0)
 		} else {
@@ -4338,7 +4347,7 @@ func cmdEncfile(args []string) {
 
 	K     := NewBitArray(n, keyInt)
 	nonce := NewRandBitArray(n)
-	base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
+	base  := NewBitArray(n, new(big.Int).Xor(K.BigInt(), nonce.BigInt()))
 	seed  := RnlKdfSeed(base) // ROL(base, n/8) XOR DC
 
 	// Encrypt in hkxBlock-byte blocks (last block zero-padded if needed)
@@ -4360,7 +4369,7 @@ func cmdEncfile(args []string) {
 	// MAC key (domain-separated from encryption by inner RotateLeft(64))
 	macKey := HskeNla1MacKey(seed, base)
 	ivConst := new(big.Int).SetBytes(Hfscx256IV[:])
-	macIV  := NewBitArray(n, new(big.Int).Xor(&macKey.Val, ivConst))
+	macIV  := NewBitArray(n, new(big.Int).Xor(macKey.BigInt(), ivConst))
 
 	// Auth tag: HFSCX-256-MAC over nonce || plaintext_len || ciphertext
 	nonceBytes := nonce.Bytes()
@@ -4447,13 +4456,13 @@ func cmdDecfile(args []string) {
 	n := 256
 	K     := NewBitArray(n, keyInt)
 	nonce := NewBitArray(n, new(big.Int).SetBytes(nonceBuf))
-	base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
+	base  := NewBitArray(n, new(big.Int).Xor(K.BigInt(), nonce.BigInt()))
 	seed  := RnlKdfSeed(base) // ROL(base, n/8) XOR DC
 
 	// Recompute MAC and verify before decrypting (verify-then-decrypt)
 	macKey  := HskeNla1MacKey(seed, base)
 	ivConst := new(big.Int).SetBytes(Hfscx256IV[:])
-	macIV   := NewBitArray(n, new(big.Int).Xor(&macKey.Val, ivConst))
+	macIV   := NewBitArray(n, new(big.Int).Xor(macKey.BigInt(), ivConst))
 	lenBuf  := make([]byte, 8)
 	binary.BigEndian.PutUint64(lenBuf, uint64(ptLen))
 	macData := make([]byte, 0, len(nonceBuf)+8+len(ctBytes))
@@ -5033,14 +5042,12 @@ func cmdThresholdCommit(args []string) {
 	}
 	_, pub, n := loadHpksPrivForThreshold(*key)
 	kj        := NewRandBitArray(n)
-	gGen      := new(big.Int).SetInt64(GfGen)
-	poly      := GfPoly[n]
-	if poly == nil { poly = GfPoly[256] }
-	Rj        := GfPow(gGen, &kj.Val, poly, n)
+	n = gfWidth(n, "threshold-commit")
+	Rj        := GfPow(GfGenBA(n), kj).BigInt()
 
 	commitPEM, err := encodeHpkstCommit(Rj, pub, n)
 	if err != nil { die("threshold-commit", err) }
-	noncePEM, err  := encodeHpkstNonce(&kj.Val, n)
+	noncePEM, err  := encodeHpkstNonce(kj.BigInt(), n)
 	if err != nil { die("threshold-commit", err) }
 	if err := writeString(*commitOut, commitPEM); err != nil { die("threshold-commit", err) }
 	if err := writeString(*nonceOut, noncePEM); err != nil { die("threshold-commit", err) }
@@ -5065,7 +5072,6 @@ func cmdThresholdAggregate(args []string) {
 	if *digest == "hfscx-256" { inBytes = Hfscx256(inBytes, nil) }
 
 	n     := 256
-	poly  := GfPoly[n]
 	R     := big.NewInt(1)
 	pubs  := make([]*big.Int, len(commitPaths))
 	for i, cp := range commitPaths {
@@ -5076,7 +5082,7 @@ func cmdThresholdAggregate(args []string) {
 			os.Exit(1)
 		}
 		Rj := new(big.Int).SetBytes(ints[0])
-		R   = GfMul(R, Rj, poly, n)
+		R   = GfMul(NewBitArray(n, R), NewBitArray(n, Rj)).BigInt()
 		pubs[i] = new(big.Int).SetBytes(ints[1])
 	}
 

@@ -1040,3 +1040,70 @@ that gets relaxed, and relaxing a refusal breaks nothing.
 and keeps its own message. HKEX-RNL is unaffected: since TODO #228 it derives a 256-bit
 session key at every ring dimension, which is why the eleven `--bits 64` invocations in
 `CliTest/` are untouched by this. No PEM label, DER layout, flag or parameter changed.
+
+---
+
+## 20. The Go `herradura` package's BitArray API (v9.2.0)
+
+**This is not a MAJOR bump and does not change the CLI, PEM or wire format.** Nothing an
+`--algo` produces or accepts moves, no stored key, ciphertext or signature becomes
+unreadable, and the four CLIs interoperate exactly as before — the 518-assertion
+`CliTest/test_cross_lang_matrix.sh` passes unchanged. It is recorded here because it
+**does** break Go source that imports `herradurakex/herradura`, and `CLAUDE.md`'s
+versioning rule says to err toward documenting in this file regardless of which version
+component changes.
+
+**Who is affected:** Go code importing the `herradura` package directly. Nobody using the
+CLI, the PEM artifacts, the C header, the Python suite or the Java port.
+
+**What changed.** TODO #314 pass 3 replaced the type's representation:
+
+```go
+type BitArray struct { Val big.Int; size int }   // before
+type BitArray struct { nbits int; b []byte }     // after — unexported, big-endian octets
+```
+
+The fields are unexported on purpose: `BITARRAY.md` §3 requires that every binary
+operation reject a width mismatch, and a type whose value can be reached around cannot
+enforce that. Before this change a mixed-width `Xor` returned **eight zero octets** with
+no error and no panic (`BITARRAY.md` §6.1).
+
+| before | after |
+|---|---|
+| `ba.Val` (read) | `ba.BigInt()`, or `ba.Bytes()` / `ba.Hex()` for the canonical octets |
+| `ba.Val.Bit(i)` | `ba.Bit(i)` |
+| `ba.Val.SetBit(&ba.Val, i, v)` | `ba.SetBit(i, v)` |
+| `ba.Val.Uint64()` | `ba.LowUint64()` (explicit low 64 bits) or `ba.TryToUint()` (`E_RANGE` above 64 bits) |
+| `x.Val.FillBytes(buf)` | `copy(buf[len(buf)-len(b):], ba.Bytes())` — the octets are **right-aligned**; a plain `copy` is not the same |
+| `&BitArray{size: n}` | `NewZero(n)` |
+| `GfPoly[n]` | `BaGfPoly(n)`, which returns `E_NO_POLY` for an unlisted width |
+| `GfMul(a, b, poly, n)` | `GfMul(a, b)` — both `*BitArray`, width taken from the operands |
+| `GfPow(base, exp, poly, n)` | `GfPow(base, exp)` — both `*BitArray`; `GfGenBA(n)` is the generator |
+| `HkexGfAgree(priv, pub, poly, n)` | `HkexGfAgree(priv, pub)` |
+| `HpksSign(msg, priv, poly, n)`, `HpksNlSign` | `HpksSign(msg, priv)`, `HpksNlSign(msg, priv)` |
+| `HpksVerify(msg, pub, R, s, poly, n)` | `HpksVerify(msg, pub, R, s)` |
+| `HpkeEncrypt(pt, pub, poly, n)` / `HpkeDecrypt(ct, R, priv, poly, n)` | `HpkeEncrypt(pt, pub)` / `HpkeDecrypt(ct, R, priv)` |
+| `new(big.Int).Mod(new(big.Int).Sub(k, new(big.Int).Mul(a, e)), ord)` | `k.SubModOrd(a.MulModOrd(e))` |
+
+**Two new widths are refused where they used to be tolerated**, and both are the contract
+rather than a policy choice. A BitArray's width must be a multiple of 8 in **16..256**
+(`BITARRAY.md` §2 — `fscx` reads the octet on both sides of every position and degenerates
+below two octets), so an 8-bit BitArray is now `E_WIDTH`; and GF(2^n) is defined only at
+32, 64, 128 and 256, so any other width is `E_NO_POLY` instead of silently running under
+the 256-bit polynomial.
+
+**Errors.** The fallible surface is `Try*` — `TryXor`, `TryFromHex`, `TryTruncate`,
+`TryGfMul` and the rest — returning an `error` whose code `BaCode(err)` reports as one of
+`BITARRAY.md` §5's eight. The plain names (`Xor`, `Truncate`, `GfMul`) keep their existing
+signatures and **panic** on a width error, because at the protocol layer a mixed width is
+a bug and not an input: that is the same two-layer split `herradura.h` uses with
+`ba_try_*` and `BA_FAIL`.
+
+**Behaviour at 256 bits is byte-identical**, measured rather than asserted: a
+30-operation probe over `xor`/`rol`/`ror`/`fscx`/`fscx_revolve`/`MInv`/NL v1/v2/v2-inv/v3/
+`rnl_kdf_seed`/HFSCX-256/HSKE-NL-A1/GF/HKEX-GF-agree/Stern produces the same octets before
+and after, and every `KAT/` vector passes unchanged. Below 256, one thing did move on
+purpose: `RnlKdfSeed` now truncates the KDF domain constant to its **HIGH** bits, where
+this port took the low octets — `BITARRAY.md` §4.4, the rule section 19 was waiting on.
+That width is still unreachable from the CLI, because section 19's refusal stays until all
+four ports are converted.
