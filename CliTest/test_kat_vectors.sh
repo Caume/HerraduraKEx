@@ -42,16 +42,28 @@ cd "$ROOT"
 echo "=== KAT/generate_kat.py --check ==="
 python3 KAT/generate_kat.py --check
 
-# TODO #314 pass 1: the BitArray conformance vectors.  NO PORT CONSUMES THESE
-# YET -- BITARRAY.md is the contract and the four ports are converted one per
-# release (BITARRAY.md 8), each adding its consumer here as it lands.  Until the
-# first port, this checks currency only, which proves that nobody edited the
-# file and nothing else; that is said out loud in BITARRAY.md 7 rather than left
-# to look like coverage.  The per-port conformance REPORT is deliberately not
-# run as a gate: an unconverted port is expected to diverge, and CLAUDE.md's
-# Testing section allows no failing test.
+# TODO #314: the BitArray conformance vectors.  --check verifies BOTH that
+# bitarray.json is current AND that the generated C header transposed from it
+# still matches -- the two cannot drift, on KAT/hcred_kkw_vector.h's precedent
+# (TODO #266).  C is pass 2 and the FIRST port in the gating set; Go, Python and
+# Java join one per release (BITARRAY.md 8), each adding its consumer here.
+# Until the second port lands this is ONE implementation against ONE pinned
+# answer, which is more than currency and less than the cross-implementation
+# check BITARRAY.md 7 describes; said out loud rather than left to look like
+# more than it is.  The per-port conformance REPORT is deliberately not a gate:
+# an unconverted port is expected to diverge, and CLAUDE.md's Testing section
+# allows no failing test.
 echo "=== KAT/generate_bitarray_kat.py --check (TODO #314) ==="
 python3 KAT/generate_bitarray_kat.py --check
+
+echo "=== KAT/verify_bitarray_c.c (C conformance, TODO #314 pass 2) ==="
+if ! cc -O2 -o KAT/verify_bitarray_c KAT/verify_bitarray_c.c 2>/tmp/hkx_ba_cc.log; then
+    echo "FAIL: could not compile KAT/verify_bitarray_c.c"
+    cat /tmp/hkx_ba_cc.log
+    exit 1
+fi
+KAT/verify_bitarray_c
+rm -f KAT/verify_bitarray_c
 
 echo "=== KAT/verify_kat.go (Go cross-check) ==="
 go run KAT/verify_kat.go

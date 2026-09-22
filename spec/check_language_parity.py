@@ -2371,6 +2371,18 @@ PARAMETERS = {
     "fscx-closed-form-min": (["FSCX_CLOSED_FORM_MIN_STEPS", None, None, None], "local",
                              "step count below which the O(log i) closed form is not "
                              "worth taking (TODO #213); C alone ships the closed form"),
+    # ── BitArray capacity (TODO #314 pass 2) ──
+    "ba-max-bits": (["BA_MAX_BITS", None, None, None], "local",
+                    "the BitArray's per-port CAPACITY, not a width (BITARRAY.md 2/9).  "
+                    "C-only for now because C is the only converted port: passes 3-5 add "
+                    "Go, Python and Java, and each will need its cell here.  LOCAL, and "
+                    "the distinction is the point -- capacity is NOT observable, since "
+                    "every operation's result depends on nbits and the active octets "
+                    "only, so a port with more room cannot diverge by having it.  The "
+                    "reference generator is held to the same 256 for exactly that reason, "
+                    "which keeps every case in KAT/bitarray.json capacity-independent"),
+    "ba-max-bytes": (["BA_MAX_BYTES", None, None, None], "local",
+                     "BA_MAX_BITS/8, the capacity buffer's length (TODO #314)"),
     # ── NL-FSCX v3 (TODO #255) ──
     "nl-v3-i-steps": (["I3_VALUE", "I3Value", "I3_VALUE", "Duplex.I3_VALUE"], "wire",
                       "5n/16, the v3 duplex step count"),

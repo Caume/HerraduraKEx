@@ -271,21 +271,24 @@ KAT/                                                 — fixed Known-Answer-Test
                                drifted still fails
   generate_pem_kat.py        — generator for pem/; --check verifies currency
   bitarray.json              — the BitArray conformance vectors (TODO #314 pass 1),
-                               378 cases at widths 32/64/128/256 against BITARRAY.md.
-                               NO PORT CONSUMES THEM YET and the file says so: the
-                               four ports are converted one per release (BITARRAY.md
-                               8) and each adds its consumer as it lands, so today
-                               --check proves that nobody edited the file and NOTHING
-                               ELSE.  That is stated in BITARRAY.md 7 and in
-                               test_kat_vectors.sh rather than left to look like
-                               coverage -- #234's vacuous pass is exactly what a
-                               regenerate-and-diff of a deterministic function against
-                               itself becomes if nobody says what it does not prove.
-                               It is load-bearing at the FIRST port and decisive at the
-                               SECOND, because two independent implementations against
-                               one pinned answer is what no round-trip or interop test
-                               can supply -- those compare a port against another
-                               port's OPINION.  Error cases pin an expected error CODE,
+                               376 cases at widths 32/64/128/256 against BITARRAY.md.
+                               C CONSUMES THEM (pass 2, v9.1.0, 376/376 via
+                               KAT/verify_bitarray_c.c) and Go/Python/Java do not
+                               yet -- the ports are converted one per release
+                               (BITARRAY.md 8) and each adds its consumer as it
+                               lands.  SO THIS IS ONE IMPLEMENTATION AGAINST ONE
+                               PINNED ANSWER: more than currency, less than the
+                               cross-implementation check BITARRAY.md 7 describes,
+                               which arrives at pass 3.  Both BITARRAY.md 7 and
+                               test_kat_vectors.sh say that out loud rather than
+                               letting 376/376 read as more than it is -- #234's
+                               vacuous pass is what a regenerate-and-diff of a
+                               deterministic function against itself becomes if
+                               nobody says what it does not prove.  It is decisive
+                               at the SECOND port, because two independent
+                               implementations against one pinned answer is what no
+                               round-trip or interop test can supply -- those
+                               compare a port against another port's OPINION.  Error cases pin an expected error CODE,
                                not a value (BITARRAY.md 5 makes the set closed and
                                identical in every port), so a port failing for the right
                                reason is distinguishable from one failing for the wrong
@@ -314,6 +317,19 @@ KAT/                                                 — fixed Known-Answer-Test
                                bitarray.json makes --check exit 1, and flipping the
                                reference's truncation to LOW bits flips the report's
                                rnl_kdf_seed row from conforms to DIVERGES
+  bitarray_vector.h          — GENERATED: bitarray.json transposed into C arrays, so
+                               the dependency-free C tree needs no JSON parser
+                               (hcred_kkw_vector.h's precedent, TODO #266).  A pure
+                               deterministic transform, so --check verifies the header
+                               and the JSON agree -- editing one without re-emitting
+                               the other FAILS rather than drifting
+  verify_bitarray_c.c        — the C conformance consumer for bitarray.json (TODO
+                               #314 pass 2), compiled on demand by
+                               CliTest/test_kat_vectors.sh.  Scores every case as pass
+                               or fail and FAILS if the two do not sum to the case
+                               count -- a case with no handler must not read as a pass
+                               (#291's "a section that did not run must not be
+                               scored", applied to a vector consumer)
   verify_kat.go               — independent cross-check against the Go herradura package
                                (bindings/java KatVerify does the same for Java)
   verify_kat_c.c              — the C consumer for hcred_kkw.json[n256] (TODO #266),
@@ -1283,7 +1299,7 @@ spec/                                                — machine-readable protoc
                                                       PARAMETERS / PARAM_DIVERGENCE (TODO #278),
                                                       in check_language_parity.py, are the SIXTH
                                                       axis and the first to compare a numeric
-                                                      parameter's VALUE: 82 rows, four cells each,
+                                                      parameter's VALUE: 84 rows, four cells each,
                                                       naming the CONSTANT and never its number, so
                                                       the checker reads and evaluates it from each
                                                       language's source and the table cannot go
@@ -1848,9 +1864,9 @@ BITARRAY.md                                          — the NORMATIVE BitArray 
                                                       narrow constants already say — Go's
                                                       low-octet slice is the outlier, and its
                                                       rule was MEASURED rather than read.
-                                                      Status is NORMATIVE and UNIMPLEMENTED:
-                                                      no port satisfies it yet, 8 tabulates
-                                                      the six passes, and 9 records the C
+                                                      Status: C CONFORMS (pass 2, v9.1.0)
+                                                      and Go/Python/Java do not yet, 8
+                                                      tabulates the six passes, and 9 records the C
                                                       type decision the item demanded be made
                                                       in the item rather than in review — it
                                                       is source-compatible, because the FFI
@@ -2787,6 +2803,47 @@ because the alternative is #234's vacuous pass arriving by default rather than b
 The gate/report split follows from the same rule the Testing section already states — there
 is no allow-list, so an unconverted port's expected divergence CANNOT be a failing test, and
 a port joins the gating set only when it is converted.
+
+**And converting the port that could not pose the question, where the hard part was not
+the type (TODO #314, second pass v9.1.0).** Pass 1 wrote the contract; pass 2 made C
+satisfy it. `herradura.h`'s `BitArray` now carries `uint16_t nbits` beside its octets,
+implements all of `BITARRAY.md` §4, and passes `KAT/bitarray.json` 376/376 — the port that
+"cannot represent a narrow value at all" now spans 16 to 256 bits and agrees with the
+reference at 32, 64, 128 and 256. Six things carry forward. (1) **A POISONED BUILD FOUND
+THE SITES A GREP COULD NOT.** Adding a field is easy; finding every place that creates a
+`BitArray` without setting a width is not — 122 declarations, ~50 arrays, 6 struct types,
+24 heap allocations, and four shapes that defeat a regex outright: a declaration sharing
+its line with a statement, one sharing its line with its opening brace, a `static` whose
+zero-initialisation IS an invalid width, and a `memset(&x, 0, sizeof x)` that erases the
+width it was just given. Compiling with `-ftrivial-auto-var-init=pattern` turns every
+uninitialised local into a deterministic `0xFEFE` width that `ba_check_width` rejects and
+`BA_FAIL` aborts on, with a backtrace naming the call site. Nine aborts, nine fixes, then
+the harness ran clean. **A grep tells you where you looked; a poisoned build tells you
+where you did not.** (2) **THE SPECIFICATION WAS CORRECTED BY ITS FIRST PORT, which is
+what a first port is for.** §4.1 specified `to_uint` at every width — which the Python
+reference satisfies *trivially because its integers are arbitrary-precision*, and that is
+the dependency this whole item removes. Demanding a 256-bit integer return would force
+`math/big` / `BigInteger` back in. The integer conversions are now bounded to `n <= 64`,
+and the reference keeps a PRIVATE `_int()` for its own arithmetic so rotation, shifts,
+compare and GF stay specified at every width: **the bound belongs on the public operation,
+not on how the reference computes.** A reference written in the most capable language will
+over-specify unless a port pushes back. (3) **THE EXISTING ORACLE CAUGHT THE NEW CODE
+BEFORE THE NEW ORACLE DID.** A first `ba_try_gf_mul` walked the multiplier's bits the
+wrong way and disagreed at every width *including 256* — caught by the 256-bit
+behaviour-preservation probe, not by the conformance vectors. Write the behaviour-
+preserving check first and it pays for itself immediately. (4) **C's compile-time GF
+restriction is gone**: `#error "GF polynomial constants are only defined for KEYBITS=256"`
+became a width-indexed table and a run-time `BA_E_NO_POLY`. (5) **Two small defects fell
+out of doing it** — `ba_is_zero` had a data-dependent early exit in a file whose
+neighbouring comparisons are all marked SA-08/SA-09 constant-time, and the CLI's
+`ba_from_ra` now STATES the width it produces where TODO #313 had recorded its
+zero-extension as known and unmeasured (behaviour unchanged on purpose: #312's rule that a
+refactor must not settle a question it happens to expose). (6) **PASS 6 NEEDS ALL FOUR
+PORTS, NOT THREE.** C agreeing with the reference is not the four agreeing with each
+other, so #313's refusal stays. Until pass 3 this is ONE implementation against ONE pinned
+answer — more than currency, less than a cross-implementation check — and both
+`BITARRAY.md` §7 and `test_kat_vectors.sh` say so rather than letting 376/376 read as more
+than it is.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

@@ -15,6 +15,11 @@
 - docs/TUTORIAL.md — API usage guide per protocol and language, with worked examples
 - docs/INTRODUCTION.md — lay-audience primer
 - SecurityProofs.md (+ -1 through -7.md) — formal security analysis
+- BITARRAY.md — the NORMATIVE BitArray specification (TODO #314).  One variable-width
+  bit-string type, big-endian octets with the width carried WITH the value, replacing the
+  embedded bignum types.  C conforms since v9.1.0; Go, Python and Java do not yet.  Read
+  §3 before touching width-taking code: a binary operation REQUIRES equal widths and a
+  mismatch is E_MIXED_WIDTH, never a coercion
 - docs/examples/{python,c,go}/hello_herradura.* — minimal integration samples
 
 ## Protocol identifiers (used as --algo values across all 3 CLIs; also the naming

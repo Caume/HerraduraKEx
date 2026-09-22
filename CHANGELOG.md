@@ -2,6 +2,69 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.1.0] - 2026-09-21
+
+### Changed
+- **C's `BitArray` carries its own width (TODO #314 pass 2).**  `herradura.h`'s type is now
+  `uint16_t nbits` plus a `BA_MAX_BYTES` capacity buffer (`BA_MAX_BITS = 256`), implements
+  the whole of `BITARRAY.md` §4, and passes `KAT/bitarray.json` **376/376** through the new
+  `KAT/verify_bitarray_c.c`.  The port that could not represent a narrow value at all now
+  represents 16 to 256 bits and agrees with the reference at 32, 64, 128 and 256.
+  **Behaviour is preserved at 256 and it is the same octets** — a probe over
+  xor / rol / ror / fscx / fscx_revolve / gf_mul / rnl_kdf_seed / popcount is byte-identical
+  to the pre-change build, and the suite harness, the four CLI matrices and the whole `KAT/`
+  set are unchanged.  Source-compatible on the public C surface, for the reason
+  `BITARRAY.md` §9 measures: the FFI ABI is flat `uint8_t[KEYBYTES]` buffers that never name
+  `BitArray`, `docs/examples` calls `ba_*` only, and `herradura.h` is header-only so no ABI
+  boundary for the type exists.
+- **C's compile-time GF restriction is gone.**  `#if KEYBITS != 256 / #error "GF polynomial
+  constants are only defined for KEYBITS=256 in this build"` is replaced by a width-indexed
+  primitive-polynomial table and a run-time `BA_E_NO_POLY` for an unlisted width.  C now does
+  GF(2^n) multiply and power at 32, 64, 128 and 256.
+- **`BITARRAY.md` §4.1: the integer conversions are bounded to `n <= 64`** — a correction to
+  the specification made by its first port.  The original text specified `to_uint` at every
+  width, which the Python reference satisfies trivially *because* its integers are
+  arbitrary-precision, and that is the dependency this work removes.  The octet string stays
+  the canonical form; wider is `E_RANGE` rather than a silent truncation.
+
+### Added
+- `KAT/verify_bitarray_c.c` — the C conformance consumer, run by
+  `CliTest/test_kat_vectors.sh`.  **C is the first port in the gating set.**
+- `KAT/bitarray_vector.h` — GENERATED: `bitarray.json` transposed into C arrays, so the
+  dependency-free C tree needs no JSON parser (`KAT/hcred_kkw_vector.h`'s precedent, TODO
+  #266).  `--check` verifies the header and the JSON agree, so the two cannot drift.
+
+### Fixed
+- **`ba_is_zero` was not constant-time**: it had a data-dependent early exit
+  (`if (a->b[i]) return 0;`) in a file whose neighbouring comparisons are all marked
+  SA-08/SA-09 constant-time.  The surviving definition accumulates over every octet.
+- The CLI's `ba_from_ra` now **states** the width it produces.  Its zero-extension of a
+  narrower DER INTEGER — the asymmetry TODO #313 recorded as known and unmeasured — is
+  unchanged on purpose; what changed is that the width is carried rather than assumed by
+  every reader.
+
+### Notes
+- **The conversion was driven by a poisoned build, not by grep**, and that is the
+  transferable part.  Adding a width to a struct is easy; finding every site that creates a
+  `BitArray` without setting one is not — 122 declarations, ~50 arrays, 6 struct types, 24
+  heap allocations, plus the shapes that defeat a regex: a declaration sharing its line with
+  a statement, one sharing its line with its opening brace, a `static` that zero-initialises
+  to an invalid width, and a `memset(&x, 0, sizeof x)` that erases the width it was just
+  given.  Building the suite with `-ftrivial-auto-var-init=pattern` makes every
+  uninitialised local a deterministic `0xFEFE` width, which `ba_check_width` rejects and
+  `BA_FAIL` aborts on with a backtrace.  Nine aborts, nine fixes, then the whole harness ran
+  clean.  A grep tells you where you looked; a poisoned build tells you where you did not.
+- **A first draft of `ba_try_gf_mul` walked the multiplier's bits the wrong way**, disagreed
+  at every width *including 256*, and was caught by the existing 256-bit behaviour oracle
+  before the new vectors were ever consulted.  It now reuses `gf_mul_ba`'s exact schedule.
+- **Pass 6 needs all four ports, not three.**  C agreeing with the reference is not the four
+  agreeing with each other, so TODO #313's refusal stays until every port conforms.  Until
+  pass 3 this is one implementation against one pinned answer — more than currency, less
+  than a cross-implementation check — and `BITARRAY.md` §7 and
+  `CliTest/test_kat_vectors.sh` both say so rather than letting 376/376 read as more than it
+  is.  Both controls verified to fire: a one-field edit to the generated header fails
+  `--check`, and flipping C's truncation to the low octets fails 11 of the 376.
+
 ## [9.0.1] - 2026-09-21
 
 ### Added

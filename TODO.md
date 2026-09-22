@@ -406,5 +406,65 @@ instruction was to record the baseline before starting, and it is recorded — 5
 cross-language, 252/0 malformed-PEM, 48/0 narrow-width, 21/0 param-bounds, both KAT
 generators current, all four `spec/` checkers OK, at v9.0.0.
 
+**SECOND PASS DONE IN v9.1.0 — C, the constraint, converted and IN THE GATING SET.**
+`herradura.h`'s `BitArray` now carries its own width (`uint16_t nbits` + a
+`BA_MAX_BYTES` capacity buffer, `BA_MAX_BITS = 256`), implements the whole of
+`BITARRAY.md` §4, and passes `KAT/bitarray.json` **376/376** through
+`KAT/verify_bitarray_c.c`.  The port that "cannot represent a narrow value at all" now
+represents 16 to 256 bits and agrees with the reference at 32, 64, 128 and 256.  Six
+things carry forward.
+
+1. **THE CONVERSION WAS DRIVEN BY A POISONED BUILD, NOT BY GREP, and that is the
+   transferable part.**  Adding a width to a struct is easy; finding every site that
+   creates a `BitArray` without setting one is not — 122 declarations, ~50 arrays, 6
+   struct types, 24 heap allocations, and the shapes that defeat a regex (a declaration
+   sharing its line with a statement, one sharing its line with its opening brace, a
+   `static` that zero-initialises to an invalid width, a `memset(&x, 0, sizeof x)` that
+   erases the width it was just given).  Compiling the suite with
+   `-ftrivial-auto-var-init=pattern` makes every uninitialised local a **deterministic**
+   `0xFEFE` width, which `ba_check_width` rejects and `BA_FAIL` aborts on with a
+   backtrace.  Nine aborts, nine fixes, then the whole harness ran clean.  **A grep tells
+   you where you looked; a poisoned build tells you where you did not.**
+2. **THE SPECIFICATION WAS CORRECTED BY ITS FIRST PORT, which is what a first port is
+   for.**  §4.1 originally specified `to_uint` at every width.  Python satisfies that
+   trivially — its integers are arbitrary-precision — and that is exactly the property
+   this item exists to stop depending on.  C cannot return a 256-bit integer, and
+   demanding it would force back the `math/big` / `BigInteger` / Python-`int` dependency
+   §1.1 removes.  The integer conversions are now **defined for `n <= 64` only**, wider is
+   `E_RANGE`, and the octet string remains the canonical form.  The reference kept a
+   PRIVATE `_int()` for its own arithmetic so `rot`/`shl`/`shr`/`compare`/`gf_mul` stay
+   specified at every width — the bound belongs on the public operation, not on how the
+   reference computes.  **A reference written in the most capable language will
+   over-specify unless a port pushes back.**
+3. **C's compile-time GF restriction is gone.**  `#if KEYBITS != 256 / #error "GF
+   polynomial constants are only defined for KEYBITS=256 in this build"` is replaced by a
+   width-indexed table and a run-time `BA_E_NO_POLY` for an unlisted width, so C now does
+   GF(2^n) multiply and power at 32, 64, 128 and 256 and matches the reference at all
+   four.  `ba_try_gf_mul` deliberately reuses `gf_mul_ba`'s exact schedule (consume the
+   multiplier from the LSB up while doubling, both constant-time); a first draft walked
+   the bits the other way, disagreed at **every** width including 256, and was caught by
+   the existing 256-bit behaviour oracle before the vectors were ever consulted.
+4. **BEHAVIOUR IS PRESERVED AT 256, MEASURED, AND IT IS THE SAME OCTETS.**  A standalone
+   probe over xor / rol / ror / fscx / fscx_revolve / gf_mul / rnl_kdf_seed / popcount
+   produces output byte-identical to the pre-change build, and the full suite harness, the
+   four CLI matrices and the whole `KAT/` set are unchanged.  The type grew a field; no
+   protocol moved.
+5. **TWO SMALL DEFECTS FELL OUT OF DOING IT.**  `ba_is_zero` had a data-dependent early
+   exit (`if (a->b[i]) return 0;`) in a file whose neighbouring comparisons are all marked
+   SA-08/SA-09 constant-time; the surviving definition accumulates over every octet.  And
+   the CLI's `ba_from_ra` — the DER decoder TODO #313 recorded as zero-extending, a known
+   unmeasured asymmetry — now STATES the width it produces instead of leaving every reader
+   to assume it.  The behaviour is unchanged on purpose (#312's rule: a refactor must not
+   settle a question it happens to expose); what changed is that the width is carried
+   rather than assumed.
+6. **PASS 6 NEEDS ALL FOUR PORTS, NOT THREE, and it is worth writing down now.**  C
+   agreeing with the reference is not the four agreeing with each other, and TODO #313's
+   refusal may only be relaxed when every port conforms.  Until pass 3 the vector is ONE
+   implementation against ONE pinned answer — more than currency, less than the
+   cross-implementation check `BITARRAY.md` §7 describes — and both `BITARRAY.md` and
+   `CliTest/test_kat_vectors.sh` say so rather than letting 376/376 read as more than it
+   is.  Both controls were verified to fire: a one-field edit to the generated header
+   fails `--check`, and flipping C's truncation to the low octets fails 11 of the 376.
+
 Status: **OPEN**
 

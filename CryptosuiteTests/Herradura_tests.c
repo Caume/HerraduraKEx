@@ -1565,7 +1565,7 @@ static void test_hkex_gf_correctness(void)
     static const int sizes[] = {32, 64, 128, 256};
     int si, i, ok, N, size;
     struct timespec t0;
-    BitArray a256, b256, C256, C2_256, skA256, skB256;
+    BitArray a256 = BA_INIT, b256 = BA_INIT, C256 = BA_INIT, C2_256 = BA_INIT, skA256 = BA_INIT, skB256 = BA_INIT;
     __uint128_t a128, b128, C128, C2_128, skA128, skB128;
     uint64_t a64, b64, C64, C2_64, skA64, skB64;
     uint32_t a32, b32, C32a, C2_32a, skA32, skB32;
@@ -1621,7 +1621,7 @@ static void test_avalanche(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (trial = 0; trial < N; trial++) {
             if (size == 256) {
-                BitArray a, b, base_out, ap, flip_out, diff;
+                BitArray a = BA_INIT, b = BA_INIT, base_out = BA_INIT, ap = BA_INIT, flip_out = BA_INIT, diff = BA_INIT;
                 int bit;
                 ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
                 ba_fscx(&base_out, &a, &b);
@@ -1683,7 +1683,7 @@ static void test_orbit_period(void)
         for (trial = 0; trial < N; trial++) {
             int period = 1, cap = 2 * size;
             if (size == 256) {
-                BitArray a, b, cur, tmp;
+                BitArray a = BA_INIT, b = BA_INIT, cur = BA_INIT, tmp = BA_INIT;
                 ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
                 ba_fscx(&cur, &a, &b);
                 while (!ba_equal(&cur, &a) && period < cap) {
@@ -1724,7 +1724,7 @@ static void test_bit_frequency(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (trial = 0; trial < N; trial++) {
             if (size == 256) {
-                BitArray a, b, out;
+                BitArray a = BA_INIT, b = BA_INIT, out = BA_INIT;
                 ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp); ba_fscx(&out, &a, &b);
                 for (bit = 0; bit < 256; bit++)
                     if (ba_get_bit(&out, bit)) counts[bit]++;
@@ -1776,7 +1776,7 @@ static void test_hkex_gf_key_sensitivity(void)
     int si, i, N, size;
     struct timespec t0;
     double total, mean;
-    BitArray a256, b256, C2_256, sk1_256, sk2_256, aflip256, diff256;
+    BitArray a256 = BA_INIT, b256 = BA_INIT, C2_256 = BA_INIT, sk1_256 = BA_INIT, sk2_256 = BA_INIT, aflip256 = BA_INIT, diff256 = BA_INIT;
     __uint128_t a128ks, b128ks, C2_128ks, sk1_128ks, sk2_128ks;
     uint64_t a64, b64, C2_64, sk1_64, sk2_64;
     uint32_t a32, b32, C2_32b, sk1_32, sk2_32;
@@ -1829,8 +1829,8 @@ static void test_eve_attack_resistance(void)
     static const int sizes[] = {32, 64, 128, 256};
     int si, i, hits, N, size;
     struct timespec t0;
-    BitArray a256, b256, C256, C2_256, sk256, evsk256;
-    BitArray delta256, cur256, zero256, acc256, nxt256;
+    BitArray a256 = BA_INIT, b256 = BA_INIT, C256 = BA_INIT, C2_256 = BA_INIT, sk256 = BA_INIT, evsk256 = BA_INIT;
+    BitArray delta256 = BA_INIT, cur256 = BA_INIT, zero256 = BA_INIT, acc256 = BA_INIT, nxt256 = BA_INIT;
     __uint128_t a128ev, b128ev, C128ev, C2_128ev, sk128ev, evsk128ev;
     uint64_t a64, b64, C64e, C2_64e, sk64, evsk64;
     uint32_t a32e, b32e, C32e, C2_32e, sk32, evsk32;
@@ -1968,7 +1968,7 @@ static void test_hpke_el_gamal(void)
     uint32_t a32g, r32g, C32g, R32g, enc32, E32g, dec32, D32g;
     uint64_t a64g, r64g, C64g, R64g, enc64, E64g, dec64, D64g;
     __uint128_t a128g, r128g, C128g, R128g, enc128g, E128g, dec128g, D128g;
-    BitArray a256g, r256g, C256g, R256g, enc256g, E256g, dec256g, D256g, pt256g;
+    BitArray a256g = BA_INIT, r256g = BA_INIT, C256g = BA_INIT, R256g = BA_INIT, enc256g = BA_INIT, E256g = BA_INIT, dec256g = BA_INIT, D256g = BA_INIT, pt256g = BA_INIT;
     printf("[9] HPKE encrypt+decrypt correctness (El Gamal + fscx_revolve)  [CLASSICAL]\n");
     for (si = 0; si < 4; si++) {
         size = sizes[si]; ok = 0; N = TEST_ROUNDS(100);
@@ -2053,8 +2053,8 @@ static void test_nl_fscx_v1_nonlinearity(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N1; i++) {
             if (size == 256) {
-                BitArray A, B, fA0, fB0, lin_pred, nl;
-                static const BitArray ZERO = {{0}};
+                BitArray A = BA_INIT, B = BA_INIT, fA0 = BA_INIT, fB0 = BA_INIT, lin_pred = BA_INIT, nl = BA_INIT;
+                static const BitArray ZERO = { KEYBITS, {0} };
                 ba_rand(&A, urnd_fp); ba_rand(&B, urnd_fp);
                 nl_fscx_v1_ba(&fA0, &A, &ZERO);
                 nl_fscx_v1_ba(&fB0, &ZERO, &B);
@@ -2077,7 +2077,7 @@ static void test_nl_fscx_v1_nonlinearity(void)
         for (i = 0; i < N2; i++) {
             int found = 0, step;
             if (size == 256) {
-                BitArray A, B, cur;
+                BitArray A = BA_INIT, B = BA_INIT, cur = BA_INIT;
                 ba_rand(&A, urnd_fp); ba_rand(&B, urnd_fp);
                 nl_fscx_v1_ba(&cur, &A, &B);
                 for (step = 1; step < cap; step++) {
@@ -2128,7 +2128,7 @@ static void test_nl_fscx_v2_bijective_inverse(void)
         for (i = 0; i < N1; i++) {
             int found = 0;
             if (size == 256) {
-                BitArray A_arr[BIJ_SAMPLES], out_arr[BIJ_SAMPLES], B;
+                BitArray A_arr[BIJ_SAMPLES], out_arr[BIJ_SAMPLES], B = BA_INIT; ba_init_array(A_arr, BIJ_SAMPLES); ba_init_array(out_arr, BIJ_SAMPLES);
                 ba_rand(&B, urnd_fp);
                 for (j = 0; j < BIJ_SAMPLES; j++) {
                     ba_rand(&A_arr[j], urnd_fp);
@@ -2168,7 +2168,7 @@ static void test_nl_fscx_v2_bijective_inverse(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N2; i++) {
             if (size == 256) {
-                BitArray A, B, enc, dec;
+                BitArray A = BA_INIT, B = BA_INIT, enc = BA_INIT, dec = BA_INIT;
                 ba_rand(&A, urnd_fp); ba_rand(&B, urnd_fp);
                 nl_fscx_v2_ba(&enc, &A, &B);
                 nl_fscx_v2_inv_ba(&dec, &enc, &B);
@@ -2186,8 +2186,8 @@ static void test_nl_fscx_v2_bijective_inverse(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N3; i++) {
             if (size == 256) {
-                static const BitArray ZERO = {{0}};
-                BitArray A, B, fA0, fB0, lin_pred, nl;
+                static const BitArray ZERO = { KEYBITS, {0} };
+                BitArray A = BA_INIT, B = BA_INIT, fA0 = BA_INIT, fB0 = BA_INIT, lin_pred = BA_INIT, nl = BA_INIT;
                 ba_rand(&A, urnd_fp); ba_rand(&B, urnd_fp);
                 nl_fscx_v2_ba(&fA0, &A, &ZERO);
                 nl_fscx_v2_ba(&fB0, &ZERO, &B);
@@ -2225,8 +2225,8 @@ static void test_hske_nl_a1_correctness(void)
         for (i = 0; i < N; i++) {
             if (size == 256) {
                 /* KDF seed: ROL(base, n/8) XOR DC */
-                static const BitArray ZERO = {{0}};
-                BitArray K, nonce, P, base, seed, ctr_ba, ctr_xor, ks;
+                static const BitArray ZERO = { KEYBITS, {0} };
+                BitArray K = BA_INIT, nonce = BA_INIT, P = BA_INIT, base = BA_INIT, seed = BA_INIT, ctr_ba = BA_INIT, ctr_xor = BA_INIT, ks = BA_INIT;
                 uint32_t ctr_val = (uint32_t)i & 0xFFFF;
                 ba_rand(&K, urnd_fp); ba_rand(&nonce, urnd_fp); ba_rand(&P, urnd_fp);
                 ba_xor(&base, &K, &nonce);
@@ -2240,7 +2240,7 @@ static void test_hske_nl_a1_correctness(void)
                 ba_xor(&ctr_xor, &base, &ctr_ba);
                 nl_fscx_revolve_v1_ba(&ks, &seed, &ctr_xor, iv);
                 /* E = P ^ ks; D = E ^ ks = P */
-                { BitArray E, D; ba_xor(&E, &P, &ks); ba_xor(&D, &E, &ks);
+                { BitArray E = BA_INIT, D = BA_INIT; ba_xor(&E, &P, &ks); ba_xor(&D, &E, &ks);
                   if (ba_equal(&D, &P)) ok++; }
             } else if (size == 128) {
                 __uint128_t K = rand128(), nonce = rand128(), P = rand128();
@@ -2279,7 +2279,7 @@ static void test_hske_nl_a2_correctness(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
             if (size == 256) {
-                BitArray K, P, E, D;
+                BitArray K = BA_INIT, P = BA_INIT, E = BA_INIT, D = BA_INIT;
                 ba_rand(&K, urnd_fp); ba_rand(&P, urnd_fp);
                 nl_fscx_revolve_v2_ba(&E, &P, &K, rv);
                 nl_fscx_revolve_v2_inv_ba(&D, &E, &K, rv);
@@ -2377,7 +2377,7 @@ static void test_hkex_rnl_correctness(void)
             rnl_m_poly_n(m_base256, 256);
             for (i = 0; i < N; i++) {
                 int32_t s_A256[256], c_A256[256], s_B256[256], c_B256[256];
-                BitArray K_A256, K_B256, hint_A256, sk_A256, sk_B256, seed_A, seed_B;
+                BitArray K_A256 = BA_INIT, K_B256 = BA_INIT, hint_A256 = BA_INIT, sk_A256 = BA_INIT, sk_B256 = BA_INIT, seed_A = BA_INIT, seed_B = BA_INIT;
                 rnl_rand_poly_n(a_rand256, 256);
                 rnl_poly_add_n(m_blind256, m_base256, a_rand256, 256);
                 rnl_keygen_n(s_A256, c_A256, m_blind256, 256);
@@ -2445,7 +2445,7 @@ static void test_hpke_nl_correctness(void)
     uint32_t a32h, r32h, C32h, R32h, enc32h, E32h, dec32h, D32h;
     uint64_t a64h, r64h, C64h, R64h, enc64h, E64h, dec64h, D64h;
     __uint128_t a128h, r128h, C128h, R128h, enc128h, E128h, dec128h, D128h;
-    BitArray a256h, r256h, C256h, R256h, enc256h, E256h, dec256h, D256h, pt256h;
+    BitArray a256h = BA_INIT, r256h = BA_INIT, C256h = BA_INIT, R256h = BA_INIT, enc256h = BA_INIT, E256h = BA_INIT, dec256h = BA_INIT, D256h = BA_INIT, pt256h = BA_INIT;
     printf("[16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt)  [PQC-EXT]\n");
     for (si = 0; si < 4; si++) {
         size = sizes[si]; ok = 0; N = TEST_ROUNDS(100);
@@ -2507,11 +2507,11 @@ static void test_hpke_nl_correctness(void)
  * ds: domain-separation tag (0=challenge, 1=c0, 2=c1, 3=c2, 4=KEM) (TODO #36, v1.6.1). */
 static void stern_hash_ba(BitArray *out, const BitArray *items, int n_items, unsigned ds)
 {
-    BitArray h = {{0}};
+    BitArray h = { KEYBITS, {0} };
     h.b[KEYBYTES - 1] = (uint8_t)(ds & 0xFF);
     int i;
     for (i = 0; i < n_items; i++) {
-        BitArray hxv, rotv;
+        BitArray hxv = BA_INIT, rotv = BA_INIT;
         ba_xor(&hxv, &h, &items[i]);
         ba_rol_k(&rotv, &items[i], KEYBITS / 8);
         nl_fscx_revolve_v1_ba(&h, &hxv, &rotv, I_VALUE);
@@ -2543,7 +2543,7 @@ static void stern_syndrome_ba(uint8_t *syndr, const BitArray *seed,
     int i;
     memset(syndr, 0, SDF_SYNBYTES);
     for (i = 0; i < SDF_N_ROWS; i++) {
-        BitArray row;
+        BitArray row = BA_INIT;
         int pc = 0, k;
         stern_matrix_row_ba(&row, seed, i);
         for (k = 0; k < KEYBYTES; k++)
@@ -2561,7 +2561,7 @@ static void syndr_to_ba_t(BitArray *out, const uint8_t *syndr)
 
 static void stern_gen_perm_ba(uint8_t *perm, const BitArray *pi_seed, int N)
 {
-    BitArray key, st;
+    BitArray key = BA_INIT, st = BA_INIT;
     int i;
     for (i = 0; i < N; i++) perm[i] = (uint8_t)i;
     ba_rol_k(&key, pi_seed, KEYBITS / 8);
@@ -2628,10 +2628,10 @@ static void stern_fs_challenges_t(int *chals, int rounds,
                                    const BitArray *c1,
                                    const BitArray *c2)
 {
-    BitArray ch_st = {{0}};
+    BitArray ch_st = { KEYBITS, {0} };
     int i;
 #define _SFS_T(item) do { \
-    BitArray _hxv, _rotv; \
+    BitArray _hxv = BA_INIT, _rotv = BA_INIT; \
     ba_xor(&_hxv, &ch_st, &(item)); \
     ba_rol_k(&_rotv, &(item), KEYBITS / 8); \
     nl_fscx_revolve_v1_ba(&ch_st, &_hxv, &_rotv, I_VALUE); \
@@ -2640,7 +2640,7 @@ static void stern_fs_challenges_t(int *chals, int rounds,
     for (i = 0; i < rounds; i++) { _SFS_T(c0[i]); _SFS_T(c1[i]); _SFS_T(c2[i]); }
 #undef _SFS_T
     for (i = 0; i < rounds; i++) {
-        BitArray idx_ba = {{0}};
+        BitArray idx_ba = { KEYBITS, {0} };
         uint32_t v;
         idx_ba.b[KEYBYTES - 1] = (uint8_t)(i & 0xFF);
         nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
@@ -2660,14 +2660,21 @@ typedef struct {
 static void hpks_stern_f_sign_t(SternSigT *sig, const BitArray *msg,
                                   const BitArray *e, const BitArray *seed)
 {
-    BitArray r[SDF_TEST_ROUNDS], y[SDF_TEST_ROUNDS], pi[SDF_TEST_ROUNDS];
-    BitArray sr[SDF_TEST_ROUNDS], sy[SDF_TEST_ROUNDS];
+    /* TODO #314: the struct's BitArray members are born at the default width
+       here, where the signer takes ownership of them. */
+    ba_init_array(sig->c0, SDF_TEST_ROUNDS);
+    ba_init_array(sig->c1, SDF_TEST_ROUNDS);
+    ba_init_array(sig->c2, SDF_TEST_ROUNDS);
+    ba_init_array(sig->resp_a, SDF_TEST_ROUNDS);
+    ba_init_array(sig->resp_b, SDF_TEST_ROUNDS);
+    BitArray r[SDF_TEST_ROUNDS], y[SDF_TEST_ROUNDS], pi[SDF_TEST_ROUNDS]; ba_init_array(r, SDF_TEST_ROUNDS); ba_init_array(y, SDF_TEST_ROUNDS); ba_init_array(pi, SDF_TEST_ROUNDS);
+    BitArray sr[SDF_TEST_ROUNDS], sy[SDF_TEST_ROUNDS]; ba_init_array(sr, SDF_TEST_ROUNDS); ba_init_array(sy, SDF_TEST_ROUNDS);
     uint8_t Hr[SDF_TEST_ROUNDS][SDF_SYNBYTES];
     uint8_t perm[KEYBITS];
     int i;
 
     for (i = 0; i < SDF_TEST_ROUNDS; i++) {
-        BitArray items[2];
+        BitArray items[2]; ba_init_array(items, 2);
         /* UNIFORM blinding since v8.0.0 (TODO #298): the verifier's weight
          * check moved onto resp_a ^ resp_b, which is wt(e). */
         ba_rand(&r[i], urnd_fp);
@@ -2706,19 +2713,19 @@ static int hpks_stern_f_verify_t(const SternSigT *sig, const BitArray *msg,
 
     for (i = 0; i < SDF_TEST_ROUNDS; i++) {
         int bv = sig->b[i];
-        BitArray tmp;
+        BitArray tmp = BA_INIT;
         if (bv == 0) {
             stern_hash_ba(&tmp, &sig->resp_a[i], 1, 2);
             if (!ba_equal(&tmp, &sig->c1[i])) return 0;
             stern_hash_ba(&tmp, &sig->resp_b[i], 1, 3);
             if (!ba_equal(&tmp, &sig->c2[i])) return 0;
-            {   BitArray _xr;
+            {   BitArray _xr = BA_INIT;
                 ba_xor(&_xr, &sig->resp_a[i], &sig->resp_b[i]);
                 if (ba_popcount(&_xr) != SDF_T) return 0;   /* wt(e), #298 */
             }
         } else if (bv == 1) {
             uint8_t Hr[SDF_SYNBYTES];
-            BitArray items[2], sr2;
+            BitArray items[2], sr2 = BA_INIT; ba_init_array(items, 2);
             /* no wt(r) check: r is uniform since v8.0.0 (TODO #298) */
             stern_syndrome_ba(Hr, seed, &sig->resp_b[i]);
             items[0] = sig->resp_a[i]; syndr_to_ba_t(&items[1], Hr);
@@ -2730,7 +2737,7 @@ static int hpks_stern_f_verify_t(const SternSigT *sig, const BitArray *msg,
             if (!ba_equal(&tmp, &sig->c1[i])) return 0;
         } else {
             uint8_t Hy[SDF_SYNBYTES], Hys[SDF_SYNBYTES];
-            BitArray items[2], sy2;
+            BitArray items[2], sy2 = BA_INIT; ba_init_array(items, 2);
             int k;
             stern_syndrome_ba(Hy, seed, &sig->resp_b[i]);
             for (k = 0; k < SDF_SYNBYTES; k++) Hys[k] = Hy[k] ^ syndr[k];
@@ -3469,7 +3476,7 @@ static void test_hpks_stern_f_correctness(void)
         } else {
             static SternSigT sf_sig;
             for (i = 0; i < N; i++) {
-                BitArray seed, e, msg;
+                BitArray seed = BA_INIT, e = BA_INIT, msg = BA_INIT;
                 uint8_t syndr[SDF_SYNBYTES];
                 ba_rand(&seed, urnd_fp);
                 stern_rand_error_ba(&e);
@@ -3730,7 +3737,7 @@ static void stern_solve_syndrome(BitArray *e_out,
 
     if (avoid_weight >= 0 && ba_popcount(e_out) == avoid_weight) {
         uint8_t is_piv[KEYBITS];
-        BitArray v;
+        BitArray v = BA_INIT;
         int moved = 0, c;
 
         memset(is_piv, 0, sizeof is_piv);
@@ -3765,10 +3772,10 @@ static void test_stern_witness_binding(void)
      * run in 130.  Measured in the Python port: 3 acceptances in 400
      * trials, all 3 the no-b=0 strings.  At 64 it is 5.5e-11. */
     enum { RK = 3, RND = 12, FRND = 64 };
-    BitArray seed, e, e_forged, msg, H_mat[SDF_N_ROWS];
+    BitArray seed = BA_INIT, e = BA_INIT, e_forged = BA_INIT, msg = BA_INIT, H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
     uint8_t  syndr[SDF_SYNBYTES], syn_chk[SDF_SYNBYTES];
     static SternSig sf_sig;
-    BitArray ring_seeds[RK], ring_e[RK], rmsg;
+    BitArray ring_seeds[RK], ring_e[RK], rmsg = BA_INIT; ba_init_array(ring_seeds, RK); ba_init_array(ring_e, RK);
     uint8_t  ring_syndrs[RK * SDF_SYNBYTES];
     SternRingSig rsig;
     int honest_ok, forged_ok, solved, off_weight, ring_ok, dups = 0;
@@ -3836,9 +3843,9 @@ static void test_hpks_stern_ring_correctness(void)
     N = TEST_ROUNDS(3);
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
-        BitArray ring_seeds[RING_K];
+        BitArray ring_seeds[RING_K]; ba_init_array(ring_seeds, RING_K);
         uint8_t  ring_syndrs[RING_K * SDF_SYNBYTES];
-        BitArray ring_e[RING_K], msg;
+        BitArray ring_e[RING_K], msg = BA_INIT; ba_init_array(ring_e, RING_K);
         SternRingSig rsig;
         int ki, j;
 
@@ -3927,7 +3934,7 @@ static void bench_hpks_stern_f(void)
       print_rate(ops, secs); putchar('\n'); }
     /* N=256 */
     { static SternSigT bsig;
-      BitArray seed, e, msg;
+      BitArray seed = BA_INIT, e = BA_INIT, msg = BA_INIT;
       uint8_t syndr[SDF_SYNBYTES];
       ba_rand(&seed, urnd_fp); stern_rand_error_ba(&e);
       stern_syndrome_ba(syndr, &seed, &e); ba_rand(&msg, urnd_fp);
@@ -4204,7 +4211,7 @@ static void test_fpe_correctness(void)
     printf("[23] FPE (78.A) encrypt->decrypt round-trip  [NEW]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
-        BitArray P, C, D;
+        BitArray P = BA_INIT, C = BA_INIT, D = BA_INIT;
         ba_rand(&P, urnd_fp);
         (void)fread(key_bytes, 1, KEYBYTES, urnd_fp);
         (void)fread(ctx, 1, sizeof(ctx), urnd_fp);
@@ -4226,7 +4233,7 @@ static void test_twk_correctness(void)
     printf("[24] Tweakable wide-block cipher (78.B) encrypt->decrypt round-trip  [NEW]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
-        BitArray P, C, D;
+        BitArray P = BA_INIT, C = BA_INIT, D = BA_INIT;
         uint64_t sector; uint32_t bidx;
         ba_rand(&P, urnd_fp);
         (void)fread(key_bytes, 1, KEYBYTES, urnd_fp);
@@ -4293,7 +4300,7 @@ static void test_masked_hske(void)
     printf("[26] Masked HSKE (78.H) — GF(2)-linearity masking  [NEW]\n");
     N = TEST_ROUNDS(200);
     for (n = 0; n < N; n++) {
-        BitArray pt, key, mask, ct, rec;
+        BitArray pt = BA_INIT, key = BA_INIT, mask = BA_INIT, ct = BA_INIT, rec = BA_INIT;
         ba_rand(&pt, urnd); ba_rand(&key, urnd); ba_rand(&mask, urnd);
         hske_encrypt_masked(&pt, &key, &ct,  &mask, urnd);
         hske_decrypt_masked(&ct, &key, &rec, &mask, urnd);
@@ -4301,7 +4308,7 @@ static void test_masked_hske(void)
     }
     /* linearity: F(A^r, B, n) ^ F(r, 0, n) == F(A, B, n) */
     for (n = 0; n < 100; n++) {
-        BitArray A, B, r, zero, direct, am, fm, fz, masked;
+        BitArray A = BA_INIT, B = BA_INIT, r = BA_INIT, zero = BA_INIT, direct = BA_INIT, am = BA_INIT, fm = BA_INIT, fz = BA_INIT, masked = BA_INIT;
         ba_rand(&A, urnd); ba_rand(&B, urnd); ba_rand(&r, urnd);
         memset(zero.b, 0, KEYBYTES);
         ba_fscx_revolve(&direct, &A, &B, I_VALUE);
@@ -4326,7 +4333,7 @@ static void test_ratchet_forward_secrecy(void)
     int steps = TEST_ROUNDS(10); if (steps > 10) steps = 10;
     printf("[27] Ratchet (78.C) — forward secrecy & key uniqueness  [NEW]\n");
     {
-        BitArray state, next;
+        BitArray state = BA_INIT, next = BA_INIT;
         uint8_t mk0[KEYBYTES], mk[KEYBYTES];
         ratchet_init((uint8_t *)"test-seed-0", 11, &state);
         for (i = 0; i < steps; i++) {
@@ -4339,7 +4346,7 @@ static void test_ratchet_forward_secrecy(void)
         ratchet_erase(&state);
     }
     {
-        BitArray s1, s2, n1, n2;
+        BitArray s1 = BA_INIT, s2 = BA_INIT, n1 = BA_INIT, n2 = BA_INIT;
         uint8_t mk[KEYBYTES];
         ratchet_init((uint8_t *)"seed-alice", 10, &s1);
         ratchet_init((uint8_t *)"seed-bob",   9, &s2);
@@ -4373,7 +4380,7 @@ static void test_hske_nl_aead(void)
         0x6e,0xc6,0x87,0x2e,0xb7,0x10,0xd0,0x22
     };
     FILE *urnd = fopen("/dev/urandom", "rb");
-    BitArray key, nonce, bad_key, bad_nonce;
+    BitArray key = BA_INIT, nonce = BA_INIT, bad_key = BA_INIT, bad_nonce = BA_INIT;
     uint8_t ct[128], tag[32], rec[128], pt[128], ad[17], bad[128];
     int t, trials, ok_kat, ok_rt = 0, ok_tamper = 0, i;
 
@@ -4542,16 +4549,16 @@ static void test_hpkst(void)
     int N = TEST_ROUNDS(3), i, ok_sign = 0, ok_tamper = 0;
     struct timespec t0;
     static const uint8_t t_msg[32] = "HPKS-T threshold security test!";
-    BitArray msg_ba; memcpy(msg_ba.b, t_msg, 32);
+    BitArray msg_ba = BA_INIT; memcpy(msg_ba.b, t_msg, 32);
     printf("[31] HPKS-T  n-of-n threshold Schnorr over GF(2^n)*  [CLASSICAL]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
-        BitArray secrets[T_N], pubkeys[T_N];
+        BitArray secrets[T_N], pubkeys[T_N]; ba_init_array(secrets, T_N); ba_init_array(pubkeys, T_N);
         for (int j = 0; j < T_N; j++) {
             ba_rand(&secrets[j], urnd_fp);
             gf_pow_ba(&pubkeys[j], &GF_GEN, &secrets[j]);
         }
-        BitArray cagg, R, s;
+        BitArray cagg = BA_INIT, R = BA_INIT, s = BA_INIT;
         hpkst_sign(secrets, pubkeys, T_N, &msg_ba, NULL, &cagg, &R, &s, urnd_fp);
         if (hpkst_verify(&cagg, &R, &s, &msg_ba))
             ok_sign++;
@@ -4603,7 +4610,7 @@ static void bench_fscx_throughput(void)
       } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
       printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
     /* 256-bit */
-    { BitArray a, b, tmp;
+    { BitArray a = BA_INIT, b = BA_INIT, tmp = BA_INIT;
       ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
       for (i = 0; i < 10; i++) { ba_fscx(&tmp, &a, &b); a = tmp; }
       ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -4647,7 +4654,7 @@ static void bench_gf_pow_throughput(void)
       } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
       printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
     /* 256-bit */
-    { BitArray base, exp;
+    { BitArray base = BA_INIT, exp = BA_INIT;
       ba_rand(&base, urnd_fp); base.b[KEYBYTES-1] |= 1;
       ba_rand(&exp,  urnd_fp); exp.b[KEYBYTES-1]  |= 1;
       for (i = 0; i < 2; i++) { gf_pow_ba(&base, &base, &exp); base.b[KEYBYTES-1] |= 1; }
@@ -4708,7 +4715,7 @@ static void bench_hkex_gf_handshake(void)
       } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
       printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
     /* 256-bit */
-    { BitArray a, b, C, C2, skA, skB;
+    { BitArray a = BA_INIT, b = BA_INIT, C = BA_INIT, C2 = BA_INIT, skA = BA_INIT, skB = BA_INIT;
       ba_rand(&a, urnd_fp); a.b[KEYBYTES-1]|=1;
       ba_rand(&b, urnd_fp); b.b[KEYBYTES-1]|=1;
       for (i = 0; i < 1; i++) {
@@ -4776,7 +4783,7 @@ static void bench_hske_roundtrip(void)
       } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
       (void)sink; printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
     /* 256-bit */
-    { BitArray pt, key, enc, dec;
+    { BitArray pt = BA_INIT, key = BA_INIT, enc = BA_INIT, dec = BA_INIT;
       for (i = 0; i < 5; i++) {
           ba_rand(&pt, urnd_fp); ba_rand(&key, urnd_fp);
           ba_fscx_revolve(&enc, &pt,  &key, I_VALUE);
@@ -4850,7 +4857,7 @@ static void bench_hpke_el_gamal_roundtrip(void)
       } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
       printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
     /* 256-bit */
-    { BitArray a, r_ba, pt_ba, C, R, ek, E, dk;
+    { BitArray a = BA_INIT, r_ba = BA_INIT, pt_ba = BA_INIT, C = BA_INIT, R = BA_INIT, ek = BA_INIT, E = BA_INIT, dk = BA_INIT;
       ba_rand(&a, urnd_fp); a.b[KEYBYTES-1]|=1;
       ba_rand(&r_ba, urnd_fp); r_ba.b[KEYBYTES-1]|=1;
       ba_rand(&pt_ba, urnd_fp);
@@ -4910,7 +4917,7 @@ static void bench_nl_fscx_revolve(void)
       } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
       printf("    bits=128  v1 n/4 steps  "); print_rate(ops, secs); putchar('\n'); }
     /* 256-bit */
-    { BitArray a, b;
+    { BitArray a = BA_INIT, b = BA_INIT;
       ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
       for (i = 0; i < 5; i++) nl_fscx_revolve_v1_ba(&a, &a, &b, NL_I256);
       ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -4957,7 +4964,7 @@ static void bench_nl_fscx_revolve(void)
       } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
       printf("    bits=128  v2 enc+dec    "); print_rate(ops, secs); putchar('\n'); }
     /* 256-bit */
-    { BitArray a, b, E;
+    { BitArray a = BA_INIT, b = BA_INIT, E = BA_INIT;
       ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
       for (i = 0; i < 2; i++) {
           nl_fscx_revolve_v2_ba(&E, &a, &b, NL_R256);
@@ -5036,8 +5043,8 @@ static void bench_hske_nl_a1_roundtrip(void)
       } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
       (void)sink; printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
     /* 256-bit */
-    { BitArray K, P, nonce, base, seed, ks, sink;
-      memset(&sink, 0, sizeof(sink));
+    { BitArray K = BA_INIT, P = BA_INIT, nonce = BA_INIT, base = BA_INIT, seed = BA_INIT, ks = BA_INIT, sink = BA_INIT;
+      ba_zero_w(&sink, KEYBITS);
       ba_rand(&K, urnd_fp); ba_rand(&P, urnd_fp);
       for (i = 0; i < 5; i++) {
           ba_rand(&nonce, urnd_fp); ba_xor(&base, &K, &nonce);
@@ -5104,7 +5111,7 @@ static void bench_hske_nl_a2_roundtrip(void)
       } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
       (void)sink; printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
     /* 256-bit */
-    { BitArray K, P, E, D;
+    { BitArray K = BA_INIT, P = BA_INIT, E = BA_INIT, D = BA_INIT;
       ba_rand(&K, urnd_fp); ba_rand(&P, urnd_fp);
       for (i = 0; i < 2; i++) {
           nl_fscx_revolve_v2_ba(&E, &P, &K, NL_R256);
@@ -5191,7 +5198,7 @@ static void bench_hkex_rnl_handshake(void)
     /* n=256 (BitArray hint) */
     { int32_t m_base[256], a_rand[256], m_blind[256];
       int32_t s_A[256], c_A[256], s_B[256], c_B[256];
-      BitArray K_A, K_B, hint_A;
+      BitArray K_A = BA_INIT, K_B = BA_INIT, hint_A = BA_INIT;
       rnl_m_poly_n(m_base, 256);
       for (i = 0; i < 1; i++) {
           rnl_rand_poly_n(a_rand, 256); rnl_poly_add_n(m_blind, m_base, a_rand, 256);
@@ -5344,9 +5351,9 @@ int main(int argc, char *argv[])
             int32_t m_base[RNL_N], a_rand[RNL_N], m_b[RNL_N];
             int32_t s[RNL_N], c_poly[RNL_N];
             int32_t s2[RNL_N], c2_poly[RNL_N];
-            BitArray seed_H, e_ba, e2_ba;
+            BitArray seed_H = BA_INIT, e_ba = BA_INIT, e2_ba = BA_INIT;
             uint8_t syndr[SDF_SYNBYTES], syndr_bad[SDF_SYNBYTES];
-            BitArray iseed, ie_ba;
+            BitArray iseed = BA_INIT, ie_ba = BA_INIT;
             uint8_t isyndr[SDF_SYNBYTES];
             HcredProof proof, proof2;
             SternSig cred_sig;
@@ -5454,7 +5461,7 @@ int main(int argc, char *argv[])
          * time.  All three now use the same fixed trial count so the three
          * output lines stay comparable. */
         for (t = 0; t < STERN_TRIALS; t++) {
-            BitArray seed, e_ba, smsg;
+            BitArray seed = BA_INIT, e_ba = BA_INIT, smsg = BA_INIT;
             uint8_t syndr[SDF_SYNBYTES], syndr_bad[SDF_SYNBYTES];
             SternSig sig;
             ba_rand(&smsg, urnd_fp);
@@ -5478,12 +5485,12 @@ int main(int argc, char *argv[])
         clock_gettime(CLOCK_MONOTONIC, &ts0);
 
         for (i = 0; i < N; i++) {
-            BitArray priv, pub, id, zero, shared, honest_shared;
-            BitArray R, s, msg;
-            BitArray pt, ct, R_hpke, dec;
+            BitArray priv = BA_INIT, pub = BA_INIT, id = BA_INIT, zero = BA_INIT, shared = BA_INIT, honest_shared = BA_INIT;
+            BitArray R = BA_INIT, s = BA_INIT, msg = BA_INIT;
+            BitArray pt = BA_INIT, ct = BA_INIT, R_hpke = BA_INIT, dec = BA_INIT;
 
-            memset(&id, 0, sizeof(id));   id.b[KEYBYTES - 1] = 1;  /* g^0 = 1 */
-            memset(&zero, 0, sizeof(zero));                        /* not in GF(2^n)* */
+            ba_zero_w(&id, KEYBITS);   id.b[KEYBYTES - 1] = 1;  /* g^0 = 1 */
+            ba_zero_w(&zero, KEYBITS);                        /* not in GF(2^n)* */
 
             /* HKEX-GF: agreement against a peer's identity/zero "public key"
              * must be rejected outright (their_pub=1 would make the shared
@@ -5498,13 +5505,13 @@ int main(int argc, char *argv[])
              * would otherwise satisfy g^s * pub^e == R when pub^e == 1. */
             ba_rand(&s, urnd_fp);
             gf_pow_ba(&R, &GF_GEN, &s);
-            memset(&msg, 0, sizeof(msg)); msg.b[0] = (uint8_t)(i + 1);
+            ba_zero_w(&msg, KEYBITS); msg.b[0] = (uint8_t)(i + 1);
             if (!hpks_verify(&msg, &id, &R, &s) && !hpks_verify(&msg, &zero, &R, &s))
                 ok_hpks_id++;
 
             /* HPKE: encrypt must refuse an identity/zero recipient pubkey
              * rather than silently producing a trivially-decryptable ct. */
-            memset(&pt, 0, sizeof(pt)); pt.b[0] = (uint8_t)(i + 1);
+            ba_zero_w(&pt, KEYBITS); pt.b[0] = (uint8_t)(i + 1);
             if (!hpke_encrypt(&pt, &id, &R_hpke, &ct, urnd_fp) &&
                 !hpke_encrypt(&pt, &zero, &R_hpke, &ct, urnd_fp))
                 ok_hpke_enc++;
@@ -5530,7 +5537,7 @@ int main(int argc, char *argv[])
              * (i.e. the primitive is not silently "safe" under reuse —
              * documents the TUTORIAL/API warning against nonce reuse). */
             {
-                BitArray key, nonce;
+                BitArray key = BA_INIT, nonce = BA_INIT;
                 uint8_t pt_bytes[KEYBYTES], pt2_bytes[KEYBYTES];
                 uint8_t ct_buf[KEYBYTES], ct2_buf[KEYBYTES];
                 uint8_t tag[32], tag2[32], out[KEYBYTES];
@@ -5560,7 +5567,7 @@ int main(int argc, char *argv[])
              * pi_K GF(2)-affine, collapsing HSKE-NL-A2/HPKE-NL to a linear map.
              * At n=256 that is every K divisible by 2^129, plus e.g. K=2^96. */
             {
-                BitArray w129, w130, w96, wzero, good;
+                BitArray w129 = BA_INIT, w130 = BA_INIT, w96 = BA_INIT, wzero = BA_INIT, good = BA_INIT;
                 memset(w129.b,  0, KEYBYTES); w129.b[KEYBYTES - 1 - 16] = 0x02; /* 2^129 */
                 memset(w130.b,  0, KEYBYTES); w130.b[KEYBYTES - 1 - 16] = 0x04; /* 2^130 */
                 memset(w96.b,   0, KEYBYTES); w96.b[KEYBYTES - 1 - 12] = 0x01;  /* 2^96  */
@@ -5606,7 +5613,7 @@ int main(int argc, char *argv[])
         printf("[46] fpe/twk domain separation + no cross-primitive collision"
                "  [SECURITY]\n");
         for (i = 0; i < N; i++) {
-            BitArray P, Cf, Ct, Ca, Cb;
+            BitArray P = BA_INIT, Cf = BA_INIT, Ct = BA_INIT, Ca = BA_INIT, Cb = BA_INIT;
             uint64_t sector; uint32_t bidx; int k;
             ba_rand(&P, urnd_fp);
             (void)fread(key_bytes, 1, KEYBYTES, urnd_fp);
@@ -5659,7 +5666,7 @@ int main(int argc, char *argv[])
             rowsum += L;
         }
         for (i = 0; i < N; i++) {
-            BitArray P, K, C, Ci, Y, Z, V2, ref;
+            BitArray P = BA_INIT, K = BA_INIT, C = BA_INIT, Ci = BA_INIT, Y = BA_INIT, Z = BA_INIT, V2 = BA_INIT, ref = BA_INIT;
             uint8_t b[KEYBITS], o[KEYBITS];
             int k, off, j, L;
             ba_rand(&P, urnd_fp);
@@ -5724,7 +5731,7 @@ int main(int argc, char *argv[])
         printf("[48] NL-FSCX v3 consumers: round-trip, v2 separation, AEAD"
                "  [SECURITY]\n");
         for (i = 0; i < N; i++) {
-            BitArray P, K, Nc, E3, D3, E2, F3, F2, T3, T2;
+            BitArray P = BA_INIT, K = BA_INIT, Nc = BA_INIT, E3 = BA_INIT, D3 = BA_INIT, E2 = BA_INIT, F3 = BA_INIT, F2 = BA_INIT, T3 = BA_INIT, T2 = BA_INIT;
             uint8_t pt[40], ct[40], out[40], tag[32];
             uint8_t tw12[12];
             uint64_t sector = 0x0123456789ABCDEFULL;
@@ -5885,7 +5892,7 @@ int main(int argc, char *argv[])
             static rnl_poly_t kk_m, kk_rand;
             static int32_t kk_s[RNL_N], kk_c[RNL_N];
             uint8_t kk_syndr[SDF_SYNBYTES];
-            BitArray kk_seed_H, kk_e;
+            BitArray kk_seed_H = BA_INIT, kk_e = BA_INIT;
             HcredKkwProof kp;
             int j, e0, r0, saved;
             n_run++;

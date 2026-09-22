@@ -36,7 +36,11 @@ RNL_KDF_DC_256 = 0x6A09E667BB67AE853C6EF372A54FF53A510E527F9B05688C1F83D9AB5BE0C
 # BITARRAY.md 4.6.  A width with no entry is E_NO_POLY, never a default.
 GF_POLY = {32: 0x00400007, 64: 0x0000001B, 128: 0x00000087, 256: 0x00000425}
 
-BA_MAX_BITS = 1024      # the reference's own capacity; ports set their own, >= 256
+BA_MAX_BITS = 256       # BITARRAY.md 2/9: the per-port capacity, 256 for passes 2-5.
+                        # Keeping the reference AT the minimum keeps every vector case
+                        # capacity-independent, so a port cannot 'diverge' merely by
+                        # having more room.  Widening it is a later decision that
+                        # regenerates this file.
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +106,8 @@ class Ref:
     @staticmethod
     def from_uint(v: int, n: int) -> "Ref":
         _check_width(n)
+        if n > 64:
+            raise BaError("E_RANGE", "integer conversions are defined for n <= 64")
         if v < 0:
             raise BaError("E_RANGE", "negative value")
         if v >= (1 << n):
@@ -126,8 +132,24 @@ class Ref:
     def to_hex(self) -> str:
         return self.b.hex()
 
-    def to_uint(self) -> int:
+    def _int(self) -> int:
+        """The reference's own arithmetic, at any width.
+
+        PRIVATE on purpose.  The reference may use Python's arbitrary-precision
+        integers to COMPUTE a result; the public to_uint may not RETURN one
+        above 64 bits, because that is the bignum dependency BITARRAY.md 1.1
+        removes.  Keeping the two apart is what lets rot/shl/shr stay specified
+        at every width while to_uint is bounded.
+        """
         return int.from_bytes(self.b, "big")
+
+    def to_uint(self) -> int:
+        # BITARRAY.md 4.1: defined for n <= 64 only.  Specifying it at every
+        # width would require an arbitrary-precision integer in every port,
+        # which is the dependency this type exists to remove.
+        if self.nbits > 64:
+            raise BaError("E_RANGE", "integer conversions are defined for n <= 64")
+        return self._int()
 
     def copy(self) -> "Ref":
         return Ref(self.nbits, self.b)
@@ -158,7 +180,7 @@ class Ref:
         s %= n                      # Python's % is already the mathematical one;
         if s == 0:                  # a port whose % can go negative must correct it.
             return self.copy()
-        v = self.to_uint()
+        v = self._int()
         return Ref(n, (((v << s) | (v >> (n - s))) & ((1 << n) - 1)).to_bytes(n // 8, "big"))
 
     def rot_right(self, s: int) -> "Ref":
@@ -170,7 +192,7 @@ class Ref:
         n = self.nbits
         if k >= n:                  # stated, not assumed: this expression is UB in C,
             return Ref.zero(n)      # a panic in Go, 0 in Python and a rotation in Java.
-        return Ref(n, ((self.to_uint() << k) & ((1 << n) - 1)).to_bytes(n // 8, "big"))
+        return Ref(n, ((self._int() << k) & ((1 << n) - 1)).to_bytes(n // 8, "big"))
 
     def shr(self, k: int) -> "Ref":
         if k < 0:
@@ -178,7 +200,7 @@ class Ref:
         n = self.nbits
         if k >= n:
             return Ref.zero(n)
-        return Ref(n, (self.to_uint() >> k).to_bytes(n // 8, "big"))
+        return Ref(n, (self._int() >> k).to_bytes(n // 8, "big"))
 
     # -- width change (BITARRAY.md 4.4) ------------------------------------
     def truncate(self, m: int) -> "Ref":
@@ -210,7 +232,7 @@ class Ref:
 
     def compare(self, other: "Ref") -> int:
         self._same(other)
-        a, b = self.to_uint(), other.to_uint()
+        a, b = self._int(), other._int()
         return -1 if a < b else (1 if a > b else 0)
 
     def is_zero(self) -> bool:
@@ -245,7 +267,7 @@ class Ref:
         if n not in GF_POLY:
             raise BaError("E_NO_POLY", f"no primitive polynomial for {n} bits")
         poly, mask = GF_POLY[n], (1 << n) - 1
-        a, b, r = self.to_uint(), other.to_uint(), 0
+        a, b, r = self._int(), other._int(), 0
         for _ in range(n):
             if b & 1:
                 r ^= a
@@ -254,7 +276,7 @@ class Ref:
             a = (a << 1) & mask
             if hi:
                 a ^= poly
-        return Ref.from_uint(r, n)
+        return Ref(n, r.to_bytes(n // 8, "big"))
 
     def gf_pow(self, e: int) -> "Ref":
         if e < 0:
@@ -262,7 +284,7 @@ class Ref:
         n = self.nbits
         if n not in GF_POLY:
             raise BaError("E_NO_POLY", f"no primitive polynomial for {n} bits")
-        r, base = Ref.from_uint(1, n), self
+        r, base = Ref(n, (1).to_bytes(n // 8, "big")), self
         while e:
             if e & 1:
                 r = r.gf_mul(base)
@@ -273,7 +295,7 @@ class Ref:
     def rnl_kdf_seed(self) -> "Ref":
         """ROL(k, n/8) XOR truncate(RNL_KDF_DC_256, n).  The TODO #313 site."""
         n = self.nbits
-        dc = Ref.from_uint(RNL_KDF_DC_256, 256).truncate(n)
+        dc = Ref(256, RNL_KDF_DC_256.to_bytes(32, "big")).truncate(n)
         return self.rot_left(n // 8).xor(dc)
 
 
@@ -442,6 +464,85 @@ def build_vectors() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# --emit-c-header: bitarray.json transposed into C arrays
+#
+# The C tree is dependency-free and has no JSON parser, so the C consumer reads
+# a GENERATED header instead -- KAT/hcred_kkw_vector.h's precedent (TODO #266).
+# A pure deterministic transform of the JSON, so unlike the JSON it IS
+# regenerate-and-diff checked: editing one without re-emitting the other fails
+# rather than drifting.
+# ---------------------------------------------------------------------------
+
+C_HEADER = os.path.join(HERE, "bitarray_vector.h")
+
+_INT_KEYS = ("s", "k", "m", "i", "e", "uint")
+
+
+def _c_case(c: dict) -> str:
+    args = c.get("args", {})
+    a = args.get("a") or args.get("hex")
+    b = args.get("b")
+    ival, has_i = 0, 0
+    for key in _INT_KEYS:
+        if key in args:
+            ival, has_i = int(args[key]), 1
+            break
+    exp = c["expect"]
+    err = exp.get("error")
+    def q(x):
+        return "NULL" if x is None else '"%s"' % x
+    if err:
+        res = 'BA_R_ERROR, %s, 0, NULL, 0, 0' % ('"%s"' % err)
+    elif "hex" in exp:
+        res = 'BA_R_BITS, NULL, %d, %s, 0, 0' % (exp["nbits"], q(exp["hex"]))
+    elif "bool" in exp:
+        res = 'BA_R_BOOL, NULL, 0, NULL, %d, 0' % (1 if exp["bool"] else 0)
+    else:
+        res = 'BA_R_INT, NULL, 0, NULL, 0, %d' % int(exp["int"])
+    return '    { "%s", %d, %d, %s, %s, %d, %d, %s },' % (
+        c["op"], c["nbits"], c.get("mixed_with", 0), q(a), q(b), ival, has_i, res)
+
+
+def emit_c_header(vectors: dict) -> str:
+    out = []
+    out.append("/*  KAT/bitarray_vector.h -- GENERATED by KAT/generate_bitarray_kat.py.")
+    out.append("    DO NOT EDIT: regenerate with --emit-c-header (or plain generation,")
+    out.append("    which emits both).  BITARRAY.md is the specification;")
+    out.append("    KAT/bitarray.json is the source this is transposed from, and")
+    out.append("    --check verifies the two agree. */")
+    out.append("#ifndef HERRADURA_BITARRAY_VECTOR_H")
+    out.append("#define HERRADURA_BITARRAY_VECTOR_H")
+    out.append("")
+    out.append("typedef enum { BA_R_BITS, BA_R_INT, BA_R_BOOL, BA_R_ERROR } BaResultKind;")
+    out.append("")
+    out.append("typedef struct {")
+    out.append("    const char  *op;")
+    out.append("    int          nbits;")
+    out.append("    int          mixed_with;   /* 0 when the case is single-width */")
+    out.append("    const char  *a;            /* hex, or NULL */")
+    out.append("    const char  *b;            /* hex, or NULL */")
+    out.append("    long long    iarg;")
+    out.append("    int          has_iarg;")
+    out.append("    BaResultKind kind;")
+    out.append("    const char  *want_error;   /* BA_R_ERROR only */")
+    out.append("    int          want_nbits;   /* BA_R_BITS only */")
+    out.append("    const char  *want_hex;     /* BA_R_BITS only */")
+    out.append("    int          want_bool;    /* BA_R_BOOL only */")
+    out.append("    long long    want_int;     /* BA_R_INT only */")
+    out.append("} BaCase;")
+    out.append("")
+    out.append("#define BA_VECTOR_CASES %d" % vectors["case_count"])
+    out.append("")
+    out.append("static const BaCase ba_vector_cases[BA_VECTOR_CASES] = {")
+    for c in vectors["cases"]:
+        out.append(_c_case(c))
+    out.append("};")
+    out.append("")
+    out.append("#endif /* HERRADURA_BITARRAY_VECTOR_H */")
+    return "\n".join(out) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # --report: what the CURRENT shipped ports do
 # ---------------------------------------------------------------------------
 
@@ -528,6 +629,8 @@ def main() -> int:
                     help="verify KAT/bitarray.json is current (gating)")
     ap.add_argument("--report", action="store_true",
                     help="per-port conformance of the shipped ports (not a gate)")
+    ap.add_argument("--emit-c-header", action="store_true",
+                    help="rebuild KAT/bitarray_vector.h alone")
     args = ap.parse_args()
 
     if args.report:
@@ -535,6 +638,13 @@ def main() -> int:
 
     vectors = build_vectors()
     text = json.dumps(vectors, indent=2, sort_keys=False) + "\n"
+    header = emit_c_header(vectors)
+
+    if args.emit_c_header:
+        with open(C_HEADER, "w", encoding="utf-8") as f:
+            f.write(header)
+        print(f"wrote {os.path.relpath(C_HEADER, ROOT)}")
+        return 0
 
     if args.check:
         if not os.path.exists(OUT):
@@ -546,14 +656,27 @@ def main() -> int:
             print(f"FAIL: {os.path.relpath(OUT, ROOT)} is STALE "
                   f"(regenerate: python3 KAT/generate_bitarray_kat.py)")
             return 1
+        if not os.path.exists(C_HEADER):
+            print(f"FAIL: {C_HEADER} does not exist; regenerate.")
+            return 1
+        with open(C_HEADER, "r", encoding="utf-8") as f:
+            have_h = f.read()
+        if have_h != header:
+            print(f"FAIL: {os.path.relpath(C_HEADER, ROOT)} does NOT match "
+                  f"bitarray.json (regenerate: python3 KAT/generate_bitarray_kat.py)")
+            return 1
         print(f"bitarray.json is up to date ({vectors['case_count']} cases, "
               f"widths {', '.join(map(str, WIDTHS))}).")
+        print("bitarray_vector.h matches bitarray.json.")
         return 0
 
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(text)
+    with open(C_HEADER, "w", encoding="utf-8") as f:
+        f.write(header)
     print(f"wrote {os.path.relpath(OUT, ROOT)} "
           f"({vectors['case_count']} cases, widths {', '.join(map(str, WIDTHS))})")
+    print(f"wrote {os.path.relpath(C_HEADER, ROOT)}")
     return 0
 
 

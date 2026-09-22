@@ -26,7 +26,7 @@
     "256": "0x00000425"
   },
   "truncation_rule": "HIGH bits -- the big-endian PREFIX (BITARRAY.md 4.4).  This settles the TODO #313 split: Python and C's declared narrow constants already say high bits; Go's RnlKdfDC[32-n/8:] is the outlier.",
-  "case_count": 378,
+  "case_count": 376,
   "cases": [
     {
       "op": "zero",
@@ -2035,7 +2035,7 @@
         "hex": "61809fbedd01203f5e7d9cbbdaf91d3c"
       },
       "expect": {
-        "int": 129602969613904704314960712595639180604
+        "error": "E_RANGE"
       }
     },
     {
@@ -3024,7 +3024,7 @@
         "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736"
       },
       "expect": {
-        "int": 44101605260201958979345067466213964708542786347653196109944625211555953448758
+        "error": "E_RANGE"
       }
     },
     {
@@ -3691,8 +3691,7 @@
         "m": 512
       },
       "expect": {
-        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f317360000000000000000000000000000000000000000000000000000000000000000",
-        "nbits": 512
+        "error": "E_WIDTH"
       }
     },
     {
@@ -3703,8 +3702,7 @@
         "m": 512
       },
       "expect": {
-        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f317360000000000000000000000000000000000000000000000000000000000000000",
-        "nbits": 512
+        "error": "E_WIDTH"
       }
     },
     {
@@ -4280,7 +4278,7 @@
     },
     {
       "op": "zero",
-      "nbits": 1032,
+      "nbits": 264,
       "args": {},
       "expect": {
         "error": "E_WIDTH"
@@ -4371,28 +4369,6 @@
       "nbits": 24,
       "args": {
         "a": "61809f",
-        "e": 3
-      },
-      "expect": {
-        "error": "E_NO_POLY"
-      }
-    },
-    {
-      "op": "gf_mul",
-      "nbits": 512,
-      "args": {
-        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736557493b2d1f01433527190afceed11304f6e8daccbea0e2d4c6b8aa9c8e70b2a",
-        "b": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736557493b2d1f01433527190afceed11304f6e8daccbea0e2d4c6b8aa9c8e70b2a"
-      },
-      "expect": {
-        "error": "E_NO_POLY"
-      }
-    },
-    {
-      "op": "gf_pow",
-      "nbits": 512,
-      "args": {
-        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736557493b2d1f01433527190afceed11304f6e8daccbea0e2d4c6b8aa9c8e70b2a",
         "e": 3
       },
       "expect": {
