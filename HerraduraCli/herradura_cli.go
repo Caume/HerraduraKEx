@@ -2416,6 +2416,28 @@ func unpackSternSig(ints [][]byte) (*SternSig, int, error) {
 	return sig, n, nil
 }
 
+// nla1Width is the ONLY width HSKE-NL-A1's plain (unauthenticated) mode accepts
+// (TODO #313).  Below 256 the four language ports produce four different
+// keystreams: the KDF domain constant is truncated at opposite ends (Go takes
+// its LOW bits, Python its HIGH bits), C and Java are 256-fixed and ignore the
+// declared width, and C stamps every ciphertext nbits = 256 whatever the key
+// says.  A1 is a raw XOR keystream with NO authentication tag, so a wrong
+// keystream is not a detectable event and dec used to write garbage and exit 0.
+// This guard makes the divergence unreachable rather than resolved; converging
+// the four rules is route 1 and needs TODO #314.
+const nla1Width = 256
+
+// nla1WidthOK exits unless n is nla1Width.  what names what carried the width.
+func nla1WidthOK(n int, ctx, what string) {
+	if n != nla1Width {
+		fmt.Fprintf(os.Stderr,
+			"%s: hske-nla1 requires a %d-bit %s; got %d-bit "+
+				"(TODO #313: below %d the four language ports produce "+
+				"four different keystreams)\n", ctx, nla1Width, what, n, nla1Width)
+		os.Exit(1)
+	}
+}
+
 // msgPad returns inBytes truncated/zero-padded to exactly nbytes.
 func msgPad(inBytes []byte, nbytes int) []byte {
 	out := make([]byte, nbytes)
@@ -3321,6 +3343,7 @@ func cmdEnc(args []string) {
 				fmt.Fprintln(os.Stderr, "enc: --ad requires --aead")
 				os.Exit(1)
 			}
+			nla1WidthOK(n, "enc", "key")
 			E     := HskeNlA1Encrypt(P, K, nonce)
 			pem, err = encodeSymCT("hske-nla1", &E.Val, n, &nonce.Val)
 		case "hske-nla2":
@@ -3536,7 +3559,7 @@ func cmdDec(args []string) {
 			fmt.Fprintf(os.Stderr, "dec: --key required for %s\n", *algo)
 			os.Exit(1)
 		}
-		keyInt, _, err := loadKey(*key)
+		keyInt, keyBits, err := loadKey(*key)
 		if err != nil {
 			die("dec", err)
 		}
@@ -3591,6 +3614,8 @@ func cmdDec(args []string) {
 				fmt.Fprintln(os.Stderr, "dec: hske-nla1 ciphertext missing nonce")
 				os.Exit(1)
 			}
+			nla1WidthOK(keyBits, "dec", "key")
+			nla1WidthOK(n, "dec", "ciphertext")
 			nonce := NewBitArray(n, nonceInt)
 			D      = HskeNlA1Decrypt(E, K, nonce)
 		case "hske-nla2":

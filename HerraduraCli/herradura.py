@@ -361,6 +361,25 @@ def _v3_width_ok(nbits, ctx):
         sys.exit(f"{ctx}: {e}")
 
 
+# HSKE-NL-A1's plain (unauthenticated) mode is 256-BIT ONLY (TODO #313).  Below
+# 256 the four language ports produce four different keystreams — the KDF domain
+# constant is truncated at opposite ends (Python HIGH bits, Go LOW bits), C and
+# Java are 256-fixed and ignore the declared width, and C stamps every ciphertext
+# `nbits = 256` whatever the key says.  A1 is a raw XOR keystream with NO
+# authentication tag, so a wrong keystream is not a detectable event and `dec`
+# used to write garbage and exit 0.  This guard makes the divergence unreachable
+# rather than resolved; converging the four rules is route 1 and needs TODO #314.
+_NLA1_WIDTH = 256
+
+
+def _nla1_width_ok(nbits, ctx, what='key'):
+    """sys.exit unless *nbits* is 256 — HSKE-NL-A1 plain mode's only width."""
+    if nbits != _NLA1_WIDTH:
+        sys.exit(f"{ctx}: hske-nla1 requires a {_NLA1_WIDTH}-bit {what}; "
+                 f"got {nbits}-bit (TODO #313: below {_NLA1_WIDTH} the four "
+                 f"language ports produce four different keystreams)")
+
+
 def _r3(nbits):
     """NL-FSCX v3's round count at width *nbits* (5n/8; 160 at n=256)."""
     return 5 * nbits // 8
@@ -1756,6 +1775,7 @@ def cmd_enc(args):
                 return
             if args.ad:
                 sys.exit("enc: --ad requires --aead")
+            _nla1_width_ok(nbits, 'enc')
             E = hske_nla1_encrypt(P, K, N_nonce)
             _write_file(out_path, _encode_sym_ct('hske-nla1', E.uint, nbits, nonce_int=N_nonce.uint))
 
@@ -1881,7 +1901,7 @@ def cmd_dec(args):
         key_int, nbits = _load_key(key_path)
         K = BitArray(nbits, key_int)
 
-        E_int, _nbits, nonce_int, tag_int = _decode_sym_ct(getattr(args, 'in'))
+        E_int, ct_nbits, nonce_int, tag_int = _decode_sym_ct(getattr(args, 'in'))
         E = BitArray(nbits, E_int)
 
         if algo == 'hske-nla1' and tag_int is not None:
@@ -1901,6 +1921,8 @@ def cmd_dec(args):
         elif algo == 'hske-nla1':
             if nonce_int is None:
                 sys.exit("hske-nla1 ciphertext missing nonce")
+            _nla1_width_ok(nbits, 'dec')
+            _nla1_width_ok(ct_nbits, 'dec', what='ciphertext')
             N_nonce = BitArray(nbits, nonce_int)
             D = hske_nla1_decrypt(E, K, N_nonce)
         elif algo == 'hske-nla2':

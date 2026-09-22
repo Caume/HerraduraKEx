@@ -376,6 +376,14 @@ Two independent constructions, both requiring a pre-shared `n`-bit key
   authenticated construction (HFSCX-256-based MAC over ciphertext +
   associated data) — HSKE-NL-A1 without `--aead` provides confidentiality
   only, MUST NOT be used without separate authentication.
+  **`n` MUST be 256.** The construction is defined at any `n`, but the
+  seed derivation truncates a 256-bit domain constant and conforming
+  implementations disagreed about which end to truncate, producing
+  different keystreams below 256 bits; since v9.0.0 every CLI REFUSES
+  any other width, on the key and on the ciphertext's declared `nbits`
+  alike. Because A1 without `--aead` has no tag, a divergence here is
+  not detectable by the recipient — which is why this is a MUST and not
+  a SHOULD. See `MIGRATING.md` §19.
 - **HSKE-NL-A2 (revolve mode).** `E = NL_FSCX_REVOLVE_v2(P, K, r)`
   (§8.2, `r = 3n/4`); decryption is `D = NL_FSCX_REVOLVE_v2_inv(E, K, r)
   = P` by the invertibility property of NL-FSCX v2 (§8.2), not by

@@ -79,6 +79,54 @@ CliTest/                                             — CLI integration + cross
                                                        had never interoperated between
                                                        {C, Go} and Python, and that is
                                                        why it shipped
+  test_narrow_width_matrix.sh                       — the WIDTH axis (TODO #313).  Every
+                                                       other CliTest script feeds `enc`
+                                                       from a DEFAULT-width session key, so
+                                                       a four-way divergence in
+                                                       `hske-nla1` below 256 bits sat under
+                                                       a green 518-assertion
+                                                       test_cross_lang_matrix.sh.  It PINNED
+                                                       THE DEFECT at v8.3.1, while #313 was
+                                                       undecided, and was REWRITTEN at
+                                                       v9.0.0 to ASSERT THE CONTRACT once
+                                                       route 2 shipped -- as its own header
+                                                       had instructed, and the 12-cell
+                                                       expectation table went with it, since
+                                                       under route 2 no narrow cell is
+                                                       reachable and there is nothing to
+                                                       tabulate.  Now: all four CLIs must
+                                                       refuse `hske-nla1` at any width but
+                                                       256, on the KEY at enc/dec/encfile/
+                                                       decfile and on the CIPHERTEXT's own
+                                                       declared nbits at dec.  FOUR
+                                                       CONTROLS, each verified to fire by
+                                                       breaking what it defends: the n=256
+                                                       accept control (a CLI that cannot
+                                                       encrypt refuses every narrow case too
+                                                       and reads as a perfect fix -- #234's
+                                                       vacuous pass wearing the shape of
+                                                       success); a SCOPE control, because
+                                                       #313 authorised a guard on hske-nla1
+                                                       and NOT on every symmetric algo, and
+                                                       a guard that widened by accident
+                                                       would pass every other assertion
+                                                       here; the relabel control, since the
+                                                       ciphertext-width case REWRITES a
+                                                       genuine artifact (no CLI will mint a
+                                                       narrow one any more) and a rewrite
+                                                       that merely corrupted the PEM would
+                                                       make every CLI exit non-zero for the
+                                                       wrong reason; and an independent
+                                                       refusal COUNT, so one port quietly
+                                                       losing a guard cannot pass.  The
+                                                       rewrite is length-preserving on
+                                                       purpose -- DER INTEGER 256 is
+                                                       02 02 01 00 and 128 is 02 02 00 80 --
+                                                       so no SEQUENCE length moves and the
+                                                       artifact stays well-formed: the point
+                                                       is to change what it CLAIMS, not to
+                                                       corrupt it.  Claimed by
+                                                       cross-lang-compat
   test_param_bounds.sh                              — the enforcement axis (TODO #278).
                                                        spec/'s PARAMETERS table compares a
                                                        bound's VALUE across the four
@@ -2557,6 +2605,71 @@ a consolidation is the move #313's own "what must NOT happen" names. And **behav
 preservation was measured, not claimed** — pre-change ciphertexts decrypt to identical bytes
 under the post-change build in all three ports at three widths, which is #308's fixed-nonce
 byte-identity standard available more cheaply, since an A1 nonce travels in the ciphertext.
+
+**And the width nobody ever asked at (TODO #313, #314).** #312's consolidation made the
+four ports comparable at a width other than 256 for the first time, and they are not:
+`hske-nla1` produces four different keystreams below 256 bits, and `dec` **exits 0 with the
+wrong plaintext** because A1 is a raw XOR keystream with no tag, so a wrong keystream is
+not a detectable event. `CliTest/test_narrow_width_matrix.sh` is the prerequisite #313
+named, and four things about it are the transferable part. (1) **It pins the DEFECT, not
+the contract.** #313 is undecided between three routes; a script asserting the correct
+contract would be red today and would have to be ignored, which is exactly the allow-list
+the Testing section above refuses to have. Its header states the contract the fix should
+aim at, so the pin is not mistaken for approval, and it says it must be REWRITTEN rather
+than patched cell by cell when the route is chosen. (2) **An accept-control at n = 256
+runs first**, because a CLI that cannot encrypt at all would score every narrow cell as
+`refuse` and read as a clean route-2 fix — #234's vacuous pass wearing the shape of
+success. (3) **Both negative controls were verified to FIRE**, and there is an independent
+count check beside the per-cell table so a PARTIAL fix cannot pass quietly. (4)
+**Measuring changed the item.** The filing said "four ports, four keystreams"; the matrix
+says Java's `enc` already REFUSES a narrow key, C's `genpkey` does not accept `--bits` at
+all, C writes `der_i_n256` into every ciphertext so its artifact is MISLABELLED 256 (which
+is why `c -> go` works and `go -> c` does not — a third defect, distinct from the
+truncation split), and Java's `dec` returns all-zero plaintext with exit 0. Two of the four
+already refuse somewhere on the path, which strengthens route 2 and makes "document it and
+change nothing" untenable. **TODO #314 is the shape underneath**: four ports implement "an
+n-bit unsigned value" four different ways — C a fixed byte array, Go `math/big`, Python the
+embedded int, Java `BigInteger` at a static N = 256 — so three delegate the arithmetic to a
+type this project does not control and two cannot represent a narrow value at all. One
+internally-developed variable-width BitArray, ported unchanged, is what makes "the four
+agree" a property of the code rather than of four people's care at one width; it is also
+what would let Java recover a constant-time property its own header records as abandoned
+*because* of the dependency choice.
+
+**And choosing the route, where the cheapest option was the one that does not foreclose
+the others (TODO #313, closed v9.0.0).** #313 owed a decision between three routes and
+picked ROUTE 2: refuse `n != 256` for `hske-nla1` in all four CLIs. Five things carry
+forward. (1) **Route 1 was not available, and saying so is the load-bearing part.**
+Converging the four truncation rules is the better end state, and C cannot follow it — it
+is compiled for a single `KEYBITS` and cannot represent a 128-bit A1 operation at all — so
+a convergence today would leave C differing from the other three *while reporting that the
+divergence was closed*, which is precisely what #313's own "what must NOT happen" names.
+Route 3 would have meant publishing that 16 cells return the wrong plaintext at exit 0.
+**Relaxing a refusal later breaks nothing**, so route 2 is the state route 1 gets relaxed
+out of once #314 lands, not a competitor to it. (2) **The width arrives in two places and
+guarding one leaves the defect live.** It can come on the KEY or on the CIPHERTEXT's own
+declared `nbits`, and the second is what catches a foreign artifact whose label disagrees
+with the key — C's included, since C stamps `der_i_n256` on everything it writes whatever
+the key says. Four paths, two carriers, all four ports, one message. (3) **The fix went to
+the source in C rather than around it.** `load_sym_key` READ the declared width and threw
+it away; `load_sym_key_n` returns it, and the labels are distinguished, because a SESSION
+KEY PEM's field is a key width while an RNL/HYBRID RESPONSE's is a RING dimension — reading
+a field that does not mean what the caller is about to ask is how this class starts. On the
+way, C turned out to have **no width guard on `encfile`/`decfile` at all** where the other
+three had one: a three-to-one parity gap invisible to every `spec/` table, because it is an
+ENFORCEMENT gap and #278's recorded limit is that `PARAMETERS` reads declarations. (4) **A
+guard needs a scope control, not just a negative control.** #313 authorised a guard on
+`hske-nla1`; widening it to every symmetric algo would be a separate MAJOR with its own
+unmeasured blast radius, and a widened guard passes every assertion about `hske-nla1`
+perfectly. The test therefore asserts that `--algo hske` at a narrow width is still
+accepted, and that control was verified to fire. C's `load_sym_key` still zero-extends for
+the other symmetric algos: recorded as a known unmeasured asymmetry rather than fixed in
+passing, because a refactor must not settle a question it happens to expose — #312's rule
+one item on. (5) **MAJOR on the letter of the rule, and the reasoning is written down.** It
+changes what an existing `--algo` ACCEPTS, so it is MAJOR and gets `MIGRATING.md` §19 —
+even though it breaks no interoperability, because there was none to break: no two ports
+agreed below 256, so no cross-port narrow artifact has ever been readable. The only loss is
+a port reading back its own old narrow ciphertexts.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

@@ -284,6 +284,7 @@ jobs:
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_kdf_matrix.sh) continue ;; esac         # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_param_bounds.sh) continue ;; esac       # claimed by cross-lang-compat (TODO #278)
+            case "$f" in test_narrow_width_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #313)
             case "$f" in lib_*.sh) continue ;; esac                   # sourced helpers, not runnable tests (TODO #221)
             claimed=0
             for pattern in $declared; do
@@ -488,6 +489,20 @@ jobs:
       # script that actually runs the four CLIs.
       - name: parameter-bound enforcement matrix
         run: bash CliTest/test_param_bounds.sh
+
+      # TODO #313: what the four CLIs do with an HSKE-NL-A1 key NARROWER than
+      # 256 bits. They do four different things, and 16 of the cells exit 0
+      # with the wrong plaintext -- A1 is a raw XOR keystream with no tag, so a
+      # wrong keystream is not a detectable event. It shipped because nothing
+      # anywhere ran the algorithm at a width other than 256: every CliTest
+      # invocation feeds from a default-width session key, so a four-way
+      # divergence sat under a green 518-assertion cross-language matrix.
+      # This script PINS THE KNOWN DEFECT rather than asserting the contract --
+      # #313 is still undecided between three routes, and a script asserting
+      # the correct contract would be red today and would have to be ignored.
+      # Read its header before touching the expectation table.
+      - name: narrow-width (n != 256) A1 matrix
+        run: bash CliTest/test_narrow_width_matrix.sh
 
   arm-i386:
     name: ARM Thumb-2 / NASM i386 (build + tests)

@@ -2180,14 +2180,60 @@ static void write_binary_file(const char *path, const uint8_t *buf, size_t len)
     if (f != stdout) fclose(f);
 }
 
-/* Load session key (SESSION KEY or RNL RESPONSE, first field) into K. */
-static void load_sym_key(BitArray *K, const char *path)
+/* Load session key (SESSION KEY or RNL RESPONSE, first field) into K.
+ *
+ * *nbits_out (may be NULL) receives the width the PEM DECLARES.  Reading it is
+ * TODO #313's cause (2): this function used to drop the field entirely, so a
+ * 128-bit session key minted by another CLI was zero-extended into a KEYBITS
+ * BitArray and the whole construction silently ran at 256.  An RNL/HYBRID
+ * RESPONSE carries a RING dimension rather than a key width in its later
+ * fields, and since TODO #228 that session key is KEYBITS wide at every ring
+ * size — which is what the other three CLIs' _rnl_session_bits() returns — so
+ * those labels report KEYBITS here rather than a field that does not mean
+ * what the caller is about to ask. */
+static void load_sym_key_n(BitArray *K, const char *path, uint64_t *nbits_out)
 {
     PemKey sk;
     pem_key_load(&sk, path);
     if (sk.n_items < 1) die("key: malformed session key PEM");
     ba_from_ra(K, sk.vals[0], sk.vlens[0]);
+    if (nbits_out) {
+        uint64_t got = (uint64_t)KEYBITS;
+        if (strcmp(sk.label, PEM_SESSION_KEY) == 0 && sk.n_items >= 2) {
+            size_t i;
+            got = 0;
+            for (i = 0; i < sk.vlens[1] && i < 8; i++)
+                got = (got << 8) | sk.vals[1][i];
+        }
+        *nbits_out = got;
+    }
     pem_key_free(&sk);
+}
+
+static void load_sym_key(BitArray *K, const char *path)
+{
+    load_sym_key_n(K, path, NULL);
+}
+
+/* HSKE-NL-A1's plain (unauthenticated) mode is 256-BIT ONLY (TODO #313).  Below
+ * 256 the four language ports produce four different keystreams: the KDF domain
+ * constant is truncated at opposite ends (Python takes its HIGH bits, Go its
+ * LOW bits), C and Java are compiled/fixed at 256 and ignore the declared
+ * width, and C stamps der_i_n256 into every ciphertext whatever the key says.
+ * A1 is a raw XOR keystream with NO authentication tag, so a wrong keystream is
+ * not a detectable event and `dec` used to write garbage and exit 0.  This
+ * guard makes the divergence unreachable rather than resolved; converging the
+ * four truncation rules is route 1, and C cannot follow it without the
+ * variable-width BitArray of TODO #314.  Same shape as stern_require_n above. */
+static void nla1_require_n(uint64_t got, const char *what, const char *carrier)
+{
+    if (got != (uint64_t)KEYBITS) {
+        fprintf(stderr, "%s: hske-nla1 requires a %d-bit %s; got %llu-bit "
+                        "(TODO #313: below %d the four language ports produce "
+                        "four different keystreams)\n",
+                what, KEYBITS, carrier, (unsigned long long)got, KEYBITS);
+        exit(1);
+    }
 }
 
 /* DER INTEGER for a 1-byte value (format tags 0, 1, rounds=32, etc.). */
@@ -2719,7 +2765,8 @@ static void cmd_enc(int argc, char **argv)
         strcmp(algo, "hske-nla2") == 0 || strcmp(algo, "hske-nla3") == 0) {
         if (!key_path) dief("enc: --key required for %s", algo);
         BitArray K;
-        load_sym_key(&K, key_path);
+        uint64_t key_nbits;
+        load_sym_key_n(&K, key_path, &key_nbits);
 
         if (strcmp(algo, "hske") == 0) {
             BitArray E;
@@ -2761,6 +2808,7 @@ static void cmd_enc(int argc, char **argv)
                 return;
             }
 
+            nla1_require_n(key_nbits, "enc", "key");
             BitArray E;
             hske_nla1_encrypt(&E, &P, &K, &N_nonce);
             uint8_t it0[8], itn[DER_INT_LEN(KEYBYTES)], itE[DER_INT_LEN(KEYBYTES)], itnb[8];
@@ -3000,7 +3048,8 @@ static void cmd_dec(int argc, char **argv)
         strcmp(algo, "hske-nla2") == 0 || strcmp(algo, "hske-nla3") == 0) {
         if (!key_path) dief("dec: --key required for %s", algo);
         BitArray K;
-        load_sym_key(&K, key_path);
+        uint64_t key_nbits;
+        load_sym_key_n(&K, key_path, &key_nbits);
 
         /* fmt_tag is vals[0][0]; E follows; for nla1 nonce is between them. */
         int fmt = (ct.vlens[0] >= 1) ? ct.vals[0][0] : 0;
@@ -3026,6 +3075,13 @@ static void cmd_dec(int argc, char **argv)
                 return;
             }
             if (fmt != 1 || ct.n_items < 4) die("dec: bad hske-nla1 ciphertext");
+            nla1_require_n(key_nbits, "dec", "key");
+            {   /* The ciphertext's own declared width, item[3] of format tag 1. */
+                uint64_t ct_nbits = 0; size_t i;
+                for (i = 0; i < ct.vlens[3] && i < 8; i++)
+                    ct_nbits = (ct_nbits << 8) | ct.vals[3][i];
+                nla1_require_n(ct_nbits, "dec", "ciphertext");
+            }
             BitArray N_nonce;
             ba_from_ra(&N_nonce, ct.vals[1], ct.vlens[1]);
             ba_from_ra(&E,       ct.vals[2], ct.vlens[2]);
@@ -4188,7 +4244,9 @@ static void cmd_encfile(int argc, char **argv)
         dief("encfile: unsupported algorithm %s", algo);
 
     BitArray K;
-    load_sym_key(&K, key_path);
+    uint64_t key_nbits;
+    load_sym_key_n(&K, key_path, &key_nbits);
+    nla1_require_n(key_nbits, "encfile", "key");
 
     size_t plaintext_len;
     uint8_t *plaintext = read_binary_file(in_path, &plaintext_len);
@@ -4274,7 +4332,9 @@ static void cmd_decfile(int argc, char **argv)
         dief("decfile: unsupported algorithm %s", algo);
 
     BitArray K;
-    load_sym_key(&K, key_path);
+    uint64_t key_nbits;
+    load_sym_key_n(&K, key_path, &key_nbits);
+    nla1_require_n(key_nbits, "decfile", "key");
 
     size_t raw_len;
     uint8_t *raw = read_binary_file(in_path, &raw_len);

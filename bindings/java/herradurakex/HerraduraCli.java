@@ -875,6 +875,30 @@ public final class HerraduraCli {
 
     /** Returns {E, nbits, nonce_or_null, authTag_or_null} for format tags
      * 0, 1 and 2 (TODO #273 added 2). */
+    /** HSKE-NL-A1's plain (unauthenticated) mode is 256-BIT ONLY (TODO #313).
+     * Below 256 the four language ports produce four different keystreams: the
+     * KDF domain constant is truncated at opposite ends (Python takes its HIGH
+     * bits, Go its LOW bits), C and this port are fixed at 256 and ignore the
+     * declared width, and C stamps nbits = 256 into every ciphertext whatever
+     * the key says.  A1 is a raw XOR keystream with NO authentication tag, so a
+     * wrong keystream is not a detectable event: before this guard this port's
+     * {@code enc} happened to refuse a narrow key while its {@code dec}
+     * returned an ALL-ZERO plaintext and exited 0, which is wrong in the
+     * particularly bad way of looking like a legitimately empty result.  The
+     * guard makes the divergence unreachable rather than resolved; converging
+     * the four truncation rules is route 1 and needs TODO #314. */
+    private static final int NLA1_WIDTH = 256;
+
+    /** Throws unless {@code nbits} is {@link #NLA1_WIDTH}. */
+    private static void nla1WidthOK(int nbits, String ctx, String carrier) {
+        if (nbits != NLA1_WIDTH) {
+            throw new CliError(ctx + ": hske-nla1 requires a " + NLA1_WIDTH
+                + "-bit " + carrier + "; got " + nbits + "-bit (TODO #313: below "
+                + NLA1_WIDTH + " the four language ports produce four different "
+                + "keystreams)");
+        }
+    }
+
     private static BigInteger[] decodeSymCt(String pem) {
         Codec.PemBlock b = Codec.pemUnwrap(pem);
         if (!b.label.equals(Codec.PEM_CIPHERTEXT)) {
@@ -982,6 +1006,7 @@ public final class HerraduraCli {
                 if (opt.containsKey("ad")) {
                     throw new CliError("enc hske-nla1: --ad requires --aead");
                 }
+                nla1WidthOK(nbits, "enc", "key");
                 BigInteger p = new BigInteger(1, block);
                 BigInteger e = HerraduraNl.hskeNlA1Encrypt(p, key[0], nonce);
                 writeString(out, encodeSymCtNonce(e, nonce, nbits));
@@ -1104,6 +1129,8 @@ public final class HerraduraCli {
             } else {
                 // No --aead on dec, in any of the four CLIs: the format tag is
                 // what the artifact IS, so decryption never needs telling.
+                nla1WidthOK(nbits, "dec", "key");
+                nla1WidthOK(ct[1].intValueExact(), "dec", "ciphertext");
                 BigInteger d = HerraduraNl.hskeNlA1Decrypt(ct[0], key[0], ct[2]);
                 writeBytes(out, toFixedBytes(d, nbits / 8));
             }
