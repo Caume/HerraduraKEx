@@ -42,6 +42,17 @@ cd "$ROOT"
 echo "=== KAT/generate_kat.py --check ==="
 python3 KAT/generate_kat.py --check
 
+# TODO #314 pass 1: the BitArray conformance vectors.  NO PORT CONSUMES THESE
+# YET -- BITARRAY.md is the contract and the four ports are converted one per
+# release (BITARRAY.md 8), each adding its consumer here as it lands.  Until the
+# first port, this checks currency only, which proves that nobody edited the
+# file and nothing else; that is said out loud in BITARRAY.md 7 rather than left
+# to look like coverage.  The per-port conformance REPORT is deliberately not
+# run as a gate: an unconverted port is expected to diverge, and CLAUDE.md's
+# Testing section allows no failing test.
+echo "=== KAT/generate_bitarray_kat.py --check (TODO #314) ==="
+python3 KAT/generate_bitarray_kat.py --check
+
 echo "=== KAT/verify_kat.go (Go cross-check) ==="
 go run KAT/verify_kat.go
 

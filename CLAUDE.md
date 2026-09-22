@@ -270,6 +270,50 @@ KAT/                                                 — fixed Known-Answer-Test
                                is stronger — a byte-identical file whose verifier has
                                drifted still fails
   generate_pem_kat.py        — generator for pem/; --check verifies currency
+  bitarray.json              — the BitArray conformance vectors (TODO #314 pass 1),
+                               378 cases at widths 32/64/128/256 against BITARRAY.md.
+                               NO PORT CONSUMES THEM YET and the file says so: the
+                               four ports are converted one per release (BITARRAY.md
+                               8) and each adds its consumer as it lands, so today
+                               --check proves that nobody edited the file and NOTHING
+                               ELSE.  That is stated in BITARRAY.md 7 and in
+                               test_kat_vectors.sh rather than left to look like
+                               coverage -- #234's vacuous pass is exactly what a
+                               regenerate-and-diff of a deterministic function against
+                               itself becomes if nobody says what it does not prove.
+                               It is load-bearing at the FIRST port and decisive at the
+                               SECOND, because two independent implementations against
+                               one pinned answer is what no round-trip or interop test
+                               can supply -- those compare a port against another
+                               port's OPINION.  Error cases pin an expected error CODE,
+                               not a value (BITARRAY.md 5 makes the set closed and
+                               identical in every port), so a port failing for the right
+                               reason is distinguishable from one failing for the wrong
+                               one.  Operands are STRUCTURED, not pseudo-random: a
+                               rotation or a truncation that loses an octet is invisible
+                               against a uniform operand and obvious against a patterned
+                               one
+  generate_bitarray_kat.py   — the reference implementation of BITARRAY.md, and the
+                               generator for bitarray.json.  The reference lives in a
+                               GENERATOR and not in a fifth shipped library on purpose:
+                               #314's "what must NOT happen" is a fifth implementation
+                               standing beside the four, and a generator is not shipped
+                               and is linked by nothing -- the same standing
+                               generate_kat.py already has.  Verified BEHAVIOUR-
+                               PRESERVING before anything was built on it: it reproduces
+                               the shipped C suite at n=256, the shipped Go package at
+                               n=256, and the shipped Python suite at 32/64/128/256, on
+                               xor/rol/ror/fscx/fscx_revolve/gf_mul/rnl_kdf_seed/
+                               popcount, with zero mismatches -- so the contract is the
+                               existing agreed behaviour with the width rules made
+                               explicit, not a redesign.  --check (currency) GATES;
+                               --report (per-port conformance) deliberately does NOT,
+                               because an unconverted port is expected to diverge and
+                               the Testing section below allows no failing test.  Both
+                               controls verified to FIRE: a one-field edit to
+                               bitarray.json makes --check exit 1, and flipping the
+                               reference's truncation to LOW bits flips the report's
+                               rnl_kdf_seed row from conforms to DIVERGES
   verify_kat.go               — independent cross-check against the Go herradura package
                                (bindings/java KatVerify does the same for Java)
   verify_kat_c.c              — the C consumer for hcred_kkw.json[n256] (TODO #266),
@@ -1778,6 +1822,44 @@ spec/                                                — machine-readable protoc
                                                       and what compares them
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
+BITARRAY.md                                          — the NORMATIVE BitArray specification
+                                                      (TODO #314).  One variable-width
+                                                      bit-string type — big-endian octet
+                                                      string with the width carried WITH the
+                                                      value — to replace the three embedded
+                                                      bignum types (math/big, Python int,
+                                                      java.math.BigInteger) three of the four
+                                                      ports delegate to.  READ 3 FIRST if you
+                                                      touch any width-taking code: every
+                                                      binary operation REQUIRES equal widths
+                                                      and a mismatch is E_MIXED_WIDTH, never
+                                                      a coercion.  That clause is the one all
+                                                      four ports get wrong today, and in four
+                                                      different ways — Go silently returns
+                                                      ALL ZEROS (Xor does not mask, so an
+                                                      over-wide Val makes Bytes() copy
+                                                      nothing), Python silently DISCARDS the
+                                                      other operand, and C and Java cannot
+                                                      pose the question at all.  4.4 settles
+                                                      TODO #313's split: truncation takes the
+                                                      HIGH bits, the big-endian PREFIX, which
+                                                      is the representation-natural rule and
+                                                      is what Python and C's own declared
+                                                      narrow constants already say — Go's
+                                                      low-octet slice is the outlier, and its
+                                                      rule was MEASURED rather than read.
+                                                      Status is NORMATIVE and UNIMPLEMENTED:
+                                                      no port satisfies it yet, 8 tabulates
+                                                      the six passes, and 9 records the C
+                                                      type decision the item demanded be made
+                                                      in the item rather than in review — it
+                                                      is source-compatible, because the FFI
+                                                      ABI is flat byte buffers that never
+                                                      name BitArray and herradura.h is
+                                                      header-only, so no ABI boundary for the
+                                                      type exists.  Assembly and Arduino are
+                                                      OUT OF SCOPE by design and stay fixed-
+                                                      width
 SECURITY.md                                          — security policy: protocol maturity levels,
                                                       vulnerability reporting process
 Dockerfile / docker-entrypoint.sh                    — quickstart image building/smoke-testing the
@@ -2670,6 +2752,41 @@ changes what an existing `--algo` ACCEPTS, so it is MAJOR and gets `MIGRATING.md
 even though it breaks no interoperability, because there was none to break: no two ports
 agreed below 256, so no cross-port narrow artifact has ever been readable. The only loss is
 a port reading back its own old narrow ciphertexts.
+
+**And writing the contract before writing any of it, where measuring the thing everyone
+assumed was the whole first pass (TODO #314, first pass v9.0.1).** #313 refused
+`hske-nla1` at any width but 256 and said the convergence needed one BitArray library
+written here and ported unchanged. `BITARRAY.md` is that contract, `KAT/bitarray.json` its
+378 pinned cases, and **no shipped port was touched** — the suite, the four CLIs and every
+existing test are byte-for-byte unchanged. Five things carry forward. (1) **The versioning
+question the item demanded be settled in the item was settled by MEASUREMENT, and the
+answer inverted the item's own expectation.** #314 assumed MAJOR because `bindings/ffi` and
+`docs/examples` use `BitArray`. They do not: `herradura_shim.h` names the type **zero
+times** — the FFI ABI is flat `uint8_t[KEYBYTES]` buffers by the shim's own design — and
+`hello_herradura.c` calls `ba_*` only, so it compiles unchanged. `herradura.h` being
+header-only means every consumer recompiles from one header and no ABI boundary for the
+type exists at all. **An API-breakage worry is worth ten minutes of grep before it is worth
+a version number.** (2) **The reference had to be proved behaviour-preserving BEFORE
+anything rested on it**, or every later port would be chasing a new opinion instead of the
+existing agreed one: it reproduces shipped C at n=256, shipped Go at n=256, and shipped
+Python at 32/64/128/256 on eight operations, zero mismatches. (3) **The truncation rule is
+decided by argument and the outlier identified by measurement, not by reading four
+sources.** HIGH bits, the big-endian prefix — a slice rather than arithmetic, and arithmetic
+is where the ports diverged. Python and C's declared narrow constants already say high
+bits; Go's rule was CONFIRMED as `ROL(k,n/8) XOR (DC_256 & (2^n - 1))` by reproducing its
+output at n=32, 64 and 128, which is a stronger statement than "Go slices the low octets".
+(4) **Reason 2 stopped being an argument.** The item said an embedded bignum reports what
+IT considers an error; the measurement is worse — one mixed-width XOR returns **two
+different silent wrong answers**, Go's `Bytes()` rendering an over-wide value as eight ZERO
+octets because it copies nothing, Python's mask discarding the other operand entirely. That
+is #313's four-keystream shape one layer down, and it is why §3 is the clause to read first.
+(5) **A currency check is not coverage and must say so in the file, not in a commit
+message.** A vector generated by the reference and checked only by the reference proves
+nobody edited it; `BITARRAY.md` §7 and the `test_kat_vectors.sh` block both state that,
+because the alternative is #234's vacuous pass arriving by default rather than by mistake.
+The gate/report split follows from the same rule the Testing section already states — there
+is no allow-list, so an unconverted port's expected divergence CANNOT be a failing test, and
+a port joins the gating set only when it is converted.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
