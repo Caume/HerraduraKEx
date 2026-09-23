@@ -1518,18 +1518,23 @@ PRIMITIVES = {
     "nl-fscx-v1-general": {
         "acknowledged":
             "the width-parameterised v1 step used by ZKBoo and aPAKE, where the "
-            "suite default is 256. C (zkp_nl_f1), Go (zkpNlF1) and Java "
-            "(ZkpNl.nlFscxV1General) name it; Python passes the width to "
-            "nl-fscx-v1 itself. Go's cell is new in TODO #314 pass 3 and the "
-            "reason is the item: ZKP-NL's default width is 8, BITARRAY.md 2 puts "
-            "the BitArray's floor at 16 because fscx degenerates below two "
-            "octets, and KAT/bitarray.json PINS nbits = 8 as E_WIDTH -- so the "
-            "8-bit BitArray this port used to build here is exactly what the "
+            "suite default is 256. ALL FOUR name it now: C (zkp_nl_f1), Go "
+            "(zkpNlF1, TODO #314 pass 3), Python (zkp_nl_f1, pass 4) and Java "
+            "(ZkpNl.nlFscxV1General). The reason is the item, and it arrived "
+            "twice: ZKP-NL's default width is 8, BITARRAY.md 2 puts the "
+            "BitArray's floor at 16 because fscx reads the octet on both sides "
+            "of every position and degenerates below two octets, and "
+            "KAT/bitarray.json PINS nbits = 8 as E_WIDTH -- so the 8-bit "
+            "BitArray Go and Python each used to build here is exactly what the "
             "contract forbids, and the machine-word form C has always had is "
-            "what replaces it. Python keeps its cell because its BitArray has no "
-            "such floor",
+            "what replaces it. Pass 3's version of this reason said Python kept "
+            "passing the width to nl-fscx-v1 'because its BitArray has no such "
+            "floor'; pass 4 gave it one, so the sentence was corrected rather "
+            "than left standing -- a curated reason is only as good as the pass "
+            "that last read it",
         "c": r"static uint64_t zkp_nl_f1\(",
         "go": r"^func zkpNlF1\(",
+        "python": r"^def zkp_nl_f1\(",
         "java": r"ZkpNl.java::public static BigInteger nlFscxV1General\(",
     },
     # ── hash, DRBG and classical entry points (TODO #261, v6.1.0) ─────────
@@ -2096,6 +2101,16 @@ CENSUS_EXEMPT = {
          "rnl_twiddle_ family builds"),
     ],
     "python": [
+        (r"^(_ba_check_width|ba_gf_poly|ba_gf_mul|ba_gf_pow)$",
+         "the BitArray width check and the BitArray-level GF pair (TODO #314 "
+         "pass 4) -- the Python half of the family C's exempted ba_ rule covers "
+         "and Go's Try/Ba rules cover.  ba_gf_mul and ba_gf_pow are the "
+         "BitArray-level twins of gf-mul and gf-pow, which the manifest names "
+         "by their stem: this port's OPRF, threshold and Stern layers work on "
+         "plain ints by their own protocol definitions, so both spellings "
+         "exist and wrap ONE implementation rather than adding a second.  The "
+         "width selects the polynomial, which is what BITARRAY.md 4.6 requires "
+         "and what a `poly` parameter cannot enforce"),
         (r"^_qcmdpc_(counters|mask_ge)$",
          "the bitplane representation inside qcmdpc-bgf-decode (TODO #276): "
          "counters for all r positions carried as bit-sliced big integers, and "
@@ -2403,12 +2418,12 @@ PARAMETERS = {
                              "step count below which the O(log i) closed form is not "
                              "worth taking (TODO #213); C alone ships the closed form"),
     # ── BitArray capacity (TODO #314 pass 2) ──
-    "ba-max-bits": (["BA_MAX_BITS", "BAMaxBits", None, None], "local",
+    "ba-max-bits": (["BA_MAX_BITS", "BAMaxBits", "BA_MAX_BITS", None], "local",
                     "the BitArray's per-port CAPACITY, not a width (BITARRAY.md 2/9).  "
-                    "C and Go are the converted ports (passes 2 and 3); passes 4-5 add "
-                    "Python and Java, and each will need its cell here.  Go could have "
-                    "had NO capacity at all -- it allocates exactly nbits/8 octets -- "
-                    "and carries one anyway so that all four ports answer E_WIDTH to the "
+                    "C, Go and Python are the converted ports (passes 2-4); pass 5 adds "
+                    "Java, which will need its cell here.  Neither Go nor Python needed "
+                    "a capacity at all -- both allocate exactly nbits/8 octets -- and "
+                    "both carry one anyway so that all four ports answer E_WIDTH to the "
                     "same inputs, which is what KAT/bitarray.json pins.  LOCAL, and "
                     "the distinction is the point -- capacity is NOT observable, since "
                     "every operation's result depends on nbits and the active octets "

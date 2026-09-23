@@ -1107,3 +1107,56 @@ purpose: `RnlKdfSeed` now truncates the KDF domain constant to its **HIGH** bits
 this port took the low octets — `BITARRAY.md` §4.4, the rule section 19 was waiting on.
 That width is still unreachable from the CLI, because section 19's refusal stays until all
 four ports are converted.
+
+---
+
+## 21. The Python suite's BitArray API (v9.3.0)
+
+**This is not a MAJOR bump and does not change the CLI, PEM or wire format**, and unlike
+section 20 it barely moves the published surface either. `.uint`, `.bytes`, `.hex`,
+`.copy()`, `.rotated()`, `^`, `==` and `BitArray(size, value)` all keep their exact
+meaning, which is why the twenty `SecurityProofsCode/` scripts that load the suite through
+`importlib` needed no edit at all. It is recorded because three things did change, and one
+of them can raise where nothing raised before.
+
+**Who is affected:** Python code importing `Herradura cryptographic suite.py` that reached
+past the public accessors, or that relied on a mixed-width operation being coerced.
+
+**1. A mixed-width binary operation now raises.** `BITARRAY.md` §3 requires it, and this
+port's `__xor__` previously returned `BitArray(self._size, self._val ^ other._val)` with
+the constructor masking — so `BitArray(64, x) ^ BitArray(256, y)` returned the 64-bit
+operand **unchanged**, the other having been masked away entirely (§6.2). It now raises
+`BaError(E_MIXED_WIDTH)`. If you were relying on that coercion you were relying on a
+silent wrong answer; widen or narrow explicitly with `extend`, `truncate` or
+`resize_exact`.
+
+**2. The private attributes are gone.** `_val`, `_size` and `_mask` were the stored
+fields; the type now stores `_nbits` and `_b`.
+
+| before | after |
+|---|---|
+| `ba._val` | `ba.uint` |
+| `ba._size` | `ba.size` (or `ba.nbits`, the name `BITARRAY.md` uses) |
+| `ba._mask` | `ba._mask` — still there, now a derived property, never stored |
+
+**3. `uint` and `to_uint()` are different operations, deliberately.** `to_uint()` is
+`BITARRAY.md` §4.1's and raises `E_RANGE` above 64 bits. `uint` is unbounded and is this
+port's named crossing to the objects the specification does not govern — Z_q coefficients,
+QC-MDPC polynomials, syndromes, OPRF and threshold scalars, DER INTEGERs. Use `uint`
+for those; use `to_uint()` when you mean "this value fits in a machine word". Likewise
+`BitArray(size, value)` MASKS, where `BitArray.from_uint(value, size)` raises `E_RANGE` —
+masking is how an out-of-range intermediate becomes a plausible in-range value with
+nothing recording that it happened.
+
+**New:** `BaError` plus the eight codes of §5, and §4's surface — `zero`, `from_bytes`,
+`from_uint`, `from_hex`, `to_uint`, `to_bytes`, `to_hex`, `truncate`, `extend`,
+`resize_exact`, `compare`, `bit`, `shl`, `shr`, `is_zero`, `popcount`, `rot_left`,
+`rot_right`, `&`, `|`, `~` — and the BitArray-level `ba_gf_poly` / `ba_gf_mul` /
+`ba_gf_pow`, where the WIDTH selects the polynomial and an unlisted width is `E_NO_POLY`.
+The int-level `gf_mul` / `gf_pow` are unchanged and still take `poly` and `n`.
+
+**Behaviour at 256 bits is byte-identical**, measured rather than asserted: a
+30-operation probe produces the same octets before and after, and it agrees value for
+value with the Go port's probe. Below 256, `rnl_kdf_seed` is unchanged in RESULT — this
+port already truncated the domain constant to its high bits — but now does it through the
+one named `truncate` instead of an open-coded `>> (256 - n)`.

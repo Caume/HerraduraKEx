@@ -272,19 +272,25 @@ KAT/                                                 — fixed Known-Answer-Test
   generate_pem_kat.py        — generator for pem/; --check verifies currency
   bitarray.json              — the BitArray conformance vectors (TODO #314 pass 1),
                                376 cases at widths 32/64/128/256 against BITARRAY.md.
-                               C (pass 2, v9.1.0) and GO (pass 3, v9.2.0) CONSUME
-                               THEM, 376/376 each via KAT/verify_bitarray_c.c and
-                               KAT/verify_bitarray_go.go; Python and Java do not yet
-                               -- the ports are converted one per release
+                               C (pass 2, v9.1.0), GO (pass 3, v9.2.0) and PYTHON
+                               (pass 4, v9.3.0) CONSUME THEM, 376/376 each via
+                               KAT/verify_bitarray_{c.c,go.go,py.py}; Java does not
+                               yet -- the ports are converted one per release
                                (BITARRAY.md 8) and each adds its consumer as it
-                               lands.  WITH THE SECOND PORT THIS IS NO LONGER A
-                               CURRENCY CHECK: two INDEPENDENT implementations
-                               against ONE pinned answer is the cross-implementation
-                               check BITARRAY.md 7 describes, and it is what no
-                               round-trip or interop test can supply -- those compare
-                               a port against another port's OPINION.  C reads the
-                               generated header and Go reads the JSON, so the two
-                               consumers do not even share an input file.  While it
+                               lands.  THIS IS NO LONGER A CURRENCY CHECK: three
+                               INDEPENDENT implementations against ONE pinned answer
+                               is the cross-implementation check BITARRAY.md 7
+                               describes, and it is what no round-trip or interop
+                               test can supply -- those compare a port against
+                               another port's OPINION.  C reads the generated header
+                               while Go and Python read the JSON, so the three do not
+                               share one input file; and the Python consumer's header
+                               answers the obvious objection -- a Python consumer
+                               checking a Python-generated vector is not circular,
+                               because the reference is a SEPARATE class in the
+                               generator written against the document, and the
+                               consumer loads the SHIPPED suite through importlib and
+                               never touches it.  While it
                                was one port, both BITARRAY.md 7 and
                                test_kat_vectors.sh said so out loud rather than
                                letting 376/376 read as more than it was -- #234's
@@ -347,6 +353,13 @@ KAT/                                                 — fixed Known-Answer-Test
                                generated C view exists for the dependency-free C tree
                                alone -- with json.Number, for the >2^53 reason above.
                                Same not-scored-is-not-passed rule as the C consumer
+  verify_bitarray_py.py      — the Python conformance consumer (TODO #314 pass 4),
+                               the THIRD.  Loads the SHIPPED suite through importlib
+                               as the SecurityProofsCode scripts do and never touches
+                               the generator's reference class, which is why it is
+                               not circular -- its header says so, because that is
+                               the first thing to ask of it.  Same
+                               not-scored-is-not-passed rule as the other two
   verify_kat.go               — independent cross-check against the Go herradura package
                                (bindings/java KatVerify does the same for Java)
   verify_kat_c.c              — the C consumer for hcred_kkw.json[n256] (TODO #266),
@@ -1885,11 +1898,13 @@ BITARRAY.md                                          — the NORMATIVE BitArray 
                                                       narrow constants already say — Go's
                                                       low-octet slice is the outlier, and its
                                                       rule was MEASURED rather than read.
-                                                      Status: C CONFORMS (pass 2, v9.1.0)
-                                                      and GO CONFORMS (pass 3, v9.2.0);
-                                                      Python and Java do not yet.  8
-                                                      tabulates the six passes and 8.1 records
-                                                      what pass 3 cost OUTSIDE the type; 9
+                                                      Status: C (pass 2, v9.1.0), GO
+                                                      (pass 3, v9.2.0) and PYTHON (pass 4,
+                                                      v9.3.0) CONFORM; Java does not yet.  8
+                                                      tabulates the six passes, 8.1 records
+                                                      what pass 3 cost OUTSIDE the type and
+                                                      8.2 what pass 4 measured that the
+                                                      others could not; 9
                                                       records the C
                                                       type decision the item demanded be made
                                                       in the item rather than in review — it
@@ -2926,6 +2941,42 @@ you looked" one level out — Go allocates exactly `nbits/8` octets, so a capaci
 nothing to name there, and the constant was DELETED rather than exempted.  C's own `ba_`
 exemption reason had to be rewritten in the same pass: it said "C alone needs it: Go and
 Python carry big integers with these as built-ins", which pass 3 makes false.
+
+**And the port whose integers made the over-specification invisible (TODO #314, fourth
+pass v9.3.0).**  Pass 4 is Python — `BITARRAY.md` §6.2's other silent answer, where a
+mixed-width `__xor__` returned the LEFT operand with the right one masked away entirely.
+The type now stores `_nbits` plus `_b: bytes` and passes `KAT/bitarray.json` **376/376**
+through `KAT/verify_bitarray_py.py`, so **three of the four ports gate**.  Six things carry
+forward.  (1) **THE REPRESENTATION WAS CHOSEN BY MEASUREMENT.**  `BITARRAY.md` §1 leaves
+the limb implementation-private, so the question was real: a pure byte-loop rotation at
+n = 256 costs **7.60 µs against 0.35 µs** for the int form, 21x, in a suite that already
+runs half an hour.  What makes octet STORAGE free is where the conversion sits —
+`fscx_revolve(256, 64)` measures **100.9 µs either way** when the composite converts once
+at its boundary, and +32% per step.  So: octets stored (§1.1's reason), the interpreter's
+int as the private limb (§1's permission), conversions at the composite boundary.  **A
+specification that leaves a choice open is asking for a measurement, not a preference.**
+(2) **THE PUBLIC SURFACE DID NOT MOVE, and that is the whole difference in cost from pass
+3.**  `.uint`, `.bytes`, `.hex`, `.rotated()`, `^`, `==` and the constructor all keep
+their meaning, so the blast radius was **89 private reach-ins** in two files, not the
+~380 `.uint` sites a grep suggests — and the twenty `SecurityProofsCode/` scripts that
+load the suite through `importlib`, most of which GATE a finding, needed **no edit at
+all**.  Go's `Val` was exported; Python's equivalents were private by name.  **What a
+representation change costs is decided by what the old representation published.**  (3)
+**`uint` is the bignum boundary and `to_uint` is the specified operation**, spelled
+differently on purpose — and `to_uint`'s `n <= 64` bound exists because THIS port
+satisfies the unbounded version trivially, which is the dependency the item removes.  (4)
+**#313's site closes for the third port, and this one was already right**: Python took the
+HIGH bits, but as an open-coded `>> (256 - n)` at the call site, and now goes through the
+one named `truncate` — the rule moves into the TYPE, which is why Go could get it wrong at
+all.  (5) **The harness keeps its own BitArray**, converted independently, because [46],
+[47], [49] and [51] cross-check local copies against the shipped suite and a harness that
+imported what it tests could not; a blind private-name rewrite produced a property whose
+getter returned itself, and the harness failing to import is what caught it.  (6)
+**`--report` has run out of ports to measure and says so** rather than printing rows that
+duplicate a gate, and `_load_python_suite()` was DELETED rather than left unreferenced
+beside the check — TODO #305's dead-code shape.  Both controls fire: low-octet truncation
+fails **the same 14 of 376 Go's control failed**, which is two consumers demonstrably
+exercising the same cases.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

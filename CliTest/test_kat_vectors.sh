@@ -45,15 +45,16 @@ python3 KAT/generate_kat.py --check
 # TODO #314: the BitArray conformance vectors.  --check verifies BOTH that
 # bitarray.json is current AND that the generated C header transposed from it
 # still matches -- the two cannot drift, on KAT/hcred_kkw_vector.h's precedent
-# (TODO #266).  C (pass 2) and Go (pass 3) are in the gating set; Python and
-# Java join one per release (BITARRAY.md 8), each adding its consumer here.
-# WITH THE SECOND PORT THIS STOPS BEING A CURRENCY CHECK: two INDEPENDENT
-# implementations against ONE pinned answer is the cross-implementation check
-# BITARRAY.md 7 describes, and it is what no round-trip or interop test can
-# supply, because those compare a port against another port's OPINION.  The
-# per-port conformance REPORT is deliberately not a gate: an unconverted port
-# is expected to diverge, and CLAUDE.md's Testing section allows no failing
-# test.
+# (TODO #266).  C (pass 2), Go (pass 3) and Python (pass 4) are in the gating
+# set; Java joins at pass 5 (BITARRAY.md 8) and adds its consumer here.
+# THIS IS NOT A CURRENCY CHECK: three INDEPENDENT implementations against ONE
+# pinned answer is the cross-implementation check BITARRAY.md 7 describes, and
+# it is what no round-trip or interop test can supply, because those compare a
+# port against another port's OPINION.  The three do not even share an input
+# file -- C reads the generated header, Go and Python read the JSON -- and the
+# Python consumer's header says why checking a Python-generated vector from
+# Python is not circular: the reference is a separate class in the generator,
+# written against the document and sharing no code with the suite.
 echo "=== KAT/generate_bitarray_kat.py --check (TODO #314) ==="
 python3 KAT/generate_bitarray_kat.py --check
 
@@ -75,6 +76,9 @@ rm -f KAT/verify_bitarray_c
 # quietly (the consumer's own header says why).
 echo "=== KAT/verify_bitarray_go.go (Go conformance, TODO #314 pass 3) ==="
 go run KAT/verify_bitarray_go.go
+
+echo "=== KAT/verify_bitarray_py.py (Python conformance, TODO #314 pass 4) ==="
+python3 KAT/verify_bitarray_py.py
 
 echo "=== KAT/verify_kat.go (Go cross-check) ==="
 go run KAT/verify_kat.go

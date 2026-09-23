@@ -338,90 +338,387 @@ _ZKP_NL_PROD_ROUNDS = 219  # ⌈128 / log₂(3/2)⌉ — required for 128-bit so
 
 
 # ---------------------------------------------------------------------------
-# BitArray class
+# BitArray — variable width, big-endian octets (TODO #314 pass 4)
+#
+# BITARRAY.md is the normative specification; this is its Python port, and
+# KAT/bitarray.json is the conformance oracle all three converted ports are
+# held to (C pass 2, Go pass 3, Python pass 4).
+#
+# The width is carried WITH the value and is never passed alongside it.  That
+# is the whole point of the type: TODO #313's four-way divergence begins with
+# two ports that were handed a declared width and ignored it, which is only
+# possible when the width and the value can be separated.
+#
+# THE STORED FORM IS OCTETS (§1), and the reason is §1.1: an integer normalises
+# away leading zero octets — precisely the information nbits exists to carry —
+# and then needs a re-widening step on the way out, which is where Go's
+# Bytes() went wrong before pass 3.  A bytes object has no normalisation step
+# to get wrong, so `bytes` is a slice and not a reconstruction.
+#
+# PYTHON'S LIMB IS THE INTERPRETER'S INT, which §1 explicitly allows: "A port
+# MAY operate on 32- or 64-bit limbs internally for speed, provided it
+# reproduces KAT/bitarray.json octet for octet."  Python's limb simply has no
+# fixed width.  That choice was MEASURED, not assumed: a pure byte-loop
+# rotation at n = 256 costs 7.60 us against 0.35 us for the int form, 21x, and
+# this suite already runs for half an hour.  Storing octets costs NOTHING when
+# a composite primitive converts once at its boundary and iterates in the limb
+# domain — fscx_revolve(256, 64) measures 100.9 us either way — and 32% when
+# converted per step, which is why the revolve loops below convert once.
 # ---------------------------------------------------------------------------
 
-class BitArray:
-    """Fixed-width bit string backed by a Python int.
-    Supports XOR, rotation, equality, and hex/bytes/uint I/O.
-    Size must be a positive multiple of 8.
+BA_MAX_BITS = 256          # this port's capacity (BITARRAY.md §2: at least 256)
+
+# BITARRAY.md §5 — a closed set, spelled identically in every port.
+BA_OK            = 'BA_OK'
+BA_E_WIDTH       = 'E_WIDTH'
+BA_E_MIXED_WIDTH = 'E_MIXED_WIDTH'
+BA_E_LENGTH      = 'E_LENGTH'
+BA_E_RANGE       = 'E_RANGE'
+BA_E_LOSSY       = 'E_LOSSY'
+BA_E_HEXDIGIT    = 'E_HEXDIGIT'
+BA_E_NO_POLY     = 'E_NO_POLY'
+BA_E_ENTROPY     = 'E_ENTROPY'
+
+
+class BaError(Exception):
+    """One of BITARRAY.md §5's eight codes, plus the operation that raised it.
+
+    Python reports by exception where C returns a status and Go returns an
+    error; the SET is what has to match, not the mechanism.
     """
 
-    __slots__ = ('_val', '_size', '_mask')
+    __slots__ = ('code', 'op')
+
+    def __init__(self, code: str, op: str):
+        super().__init__(f'{code} in {op}')
+        self.code = code
+        self.op = op
+
+
+def _ba_check_width(n: int, op: str) -> None:
+    """BITARRAY.md §2: a positive multiple of 8, at least 16, at most capacity.
+
+    The floor is not arbitrary: fscx reads the octet on both sides of every
+    position and degenerates below two octets, which is why C has carried
+    `#if KEYBYTES < 2 / #error` since v1.3.
+    """
+    if not isinstance(n, int) or n <= 0 or n % 8 or n < 16 or n > BA_MAX_BITS:
+        raise BaError(BA_E_WIDTH, op)
+
+
+class BitArray:
+    """Variable-width bit string: nbits/8 big-endian octets, b[0] most significant.
+
+    The octet string is the canonical form and is also the suite's wire
+    encoding, so no endianness conversion happens at any I/O boundary.
+    """
+
+    __slots__ = ('_nbits', '_b')
 
     def __init__(self, size: int, value: int = 0):
-        self._size = size
-        self._mask = (1 << size) - 1
-        self._val = int(value) & self._mask
+        """Build a `size`-bit array from an integer, MASKED to the width.
+
+        The masking is deliberate and is this port's half of the bignum
+        boundary — the counterpart of Go's NewBitArray, which masks for the
+        same reason.  `BitArray.from_uint` is the SPECIFIED constructor and
+        REJECTS an out-of-range value with E_RANGE (BITARRAY.md §4.1); the two
+        are spelled differently so that "take the low bits of this integer" and
+        "this value fits" cannot be the same call.
+        """
+        _ba_check_width(size, 'zero')
+        self._nbits = size
+        self._b = (int(value) & ((1 << size) - 1)).to_bytes(size // 8, 'big')
+
+    # ── identity and the width ─────────────────────────────────────────────
+
+    @property
+    def size(self) -> int:
+        """The width in bits, carried with the value."""
+        return self._nbits
+
+    # `nbits` is the name BITARRAY.md uses; `size` is the name this port has
+    # used since v1.3.  Both are kept, one spelling of one field.
+    nbits = size
+
+    @property
+    def nbytes(self) -> int:
+        return self._nbits // 8
+
+    @property
+    def _mask(self) -> int:
+        """The limb mask.  Derived, never stored: a stored mask is a second
+        copy of the width and so a second thing that can disagree with it."""
+        return (1 << self._nbits) - 1
+
+    # ── construction and conversion (BITARRAY.md §4.1) ─────────────────────
+
+    @classmethod
+    def zero(cls, n: int) -> 'BitArray':
+        return cls(n, 0)
+
+    @classmethod
+    def from_bytes(cls, data: bytes, n: int) -> 'BitArray':
+        """Requires len(data) == n/8 EXACTLY: a length that does not match the
+        declared width is E_LENGTH, not a re-interpretation."""
+        _ba_check_width(n, 'from_bytes')
+        if len(data) != n // 8:
+            raise BaError(BA_E_LENGTH, 'from_bytes')
+        ba = cls.__new__(cls)
+        ba._nbits = n
+        ba._b = bytes(data)
+        return ba
+
+    @classmethod
+    def from_uint(cls, v: int, n: int) -> 'BitArray':
+        """Rejects v >= 2^n rather than masking (BITARRAY.md §4.1): masking is
+        how an out-of-range intermediate becomes a plausible in-range value
+        with nothing recording that it happened."""
+        _ba_check_width(n, 'from_uint')
+        if not isinstance(v, int) or v < 0 or v >= (1 << n):
+            raise BaError(BA_E_RANGE, 'from_uint')
+        return cls.from_bytes(v.to_bytes(n // 8, 'big'), n)
+
+    @classmethod
+    def from_hex(cls, s: str, n: int) -> 'BitArray':
+        _ba_check_width(n, 'from_hex')
+        if len(s) != n // 4:
+            raise BaError(BA_E_LENGTH, 'from_hex')
+        try:
+            raw = bytes.fromhex(s)
+        except ValueError:
+            raise BaError(BA_E_HEXDIGIT, 'from_hex') from None
+        return cls.from_bytes(raw, n)
+
+    def to_uint(self) -> int:
+        """BITARRAY.md §4.1: defined for n <= 64 ONLY.
+
+        That bound was found by pass 2 and is a correction to the
+        specification, not a concession to C.  An earlier draft specified it at
+        every width, which THIS port satisfies trivially because its integers
+        are arbitrary-precision — and that is exactly the property the type
+        exists to stop depending on.  `uint` below is the unbounded accessor
+        and is named differently on purpose.
+        """
+        if self._nbits > 64:
+            raise BaError(BA_E_RANGE, 'to_uint')
+        return int.from_bytes(self._b, 'big')
+
+    def to_bytes(self) -> bytes:
+        return self._b
+
+    def to_hex(self) -> str:
+        return self._b.hex()
+
+    def copy(self) -> 'BitArray':
+        return BitArray.from_bytes(self._b, self._nbits)
+
+    @classmethod
+    def random(cls, size: int) -> 'BitArray':
+        """`size` bits from os.urandom.  A short read raises rather than
+        proceeding with partial entropy (BITARRAY.md §4.1)."""
+        _ba_check_width(size, 'random')
+        raw = os.urandom(size // 8)
+        if len(raw) != size // 8:
+            raise BaError(BA_E_ENTROPY, 'random')
+        return cls.from_bytes(raw, size)
+
+    # ── the bignum boundary ────────────────────────────────────────────────
+    #
+    # `uint` is NOT BITARRAY.md's to_uint.  It is this port's named crossing
+    # between the octet string and the objects the specification does not
+    # govern — Z_q coefficients, QC-MDPC dense polynomials, Stern and HCRED
+    # syndromes, OPRF and threshold scalars, DER INTEGERs — which Python
+    # represents as plain ints, as Go represents them as *big.Int and crosses
+    # at NewBitArray / BigInt.  Keeping the two spellings apart is what makes
+    # "the value fits in a machine word" and "give me the integer" different
+    # questions.
 
     @property
     def uint(self) -> int:
-        return self._val
+        return int.from_bytes(self._b, 'big')
 
     @uint.setter
-    def uint(self, value: int):
-        self._val = int(value) & self._mask
+    def uint(self, value: int) -> None:
+        self._b = (int(value) & self._mask).to_bytes(self.nbytes, 'big')
 
     @property
     def bytes(self) -> bytes:
-        return self._val.to_bytes(self._size // 8, 'big')
+        """The canonical octets.  A slice, not a reconstruction (§1.1)."""
+        return self._b
 
     @bytes.setter
-    def bytes(self, data: bytes):
-        self._val = int.from_bytes(data, 'big') & self._mask
+    def bytes(self, data: bytes) -> None:
+        if len(data) != self.nbytes:
+            raise BaError(BA_E_LENGTH, 'bytes')
+        self._b = bytes(data)
 
     @property
     def hex(self) -> str:
-        return f'{self._val:0{self._size // 4}x}'
+        return self._b.hex()
 
-    def copy(self) -> 'BitArray':
-        return BitArray(self._size, self._val)
+    # ── bitwise (BITARRAY.md §4.2) ─────────────────────────────────────────
 
-    def rotated(self, n: int) -> 'BitArray':
-        """Return a new BitArray rotated left by n bits (right if n < 0)."""
-        n %= self._size
-        if n == 0:
-            return BitArray(self._size, self._val)
-        return BitArray(self._size,
-                        ((self._val << n) | (self._val >> (self._size - n))) & self._mask)
+    def _same_width(self, other: 'BitArray', op: str) -> None:
+        """BITARRAY.md §3: a binary operation REQUIRES equal widths.  A
+        mismatch is E_MIXED_WIDTH and is NEVER coerced.
 
-    def rol(self, n: int) -> None:
-        """Rotate left in-place by n bits."""
-        n %= self._size
-        if n:
-            self._val = ((self._val << n) | (self._val >> (self._size - n))) & self._mask
+        This is the clause this port got wrong: `__xor__` returned
+        `BitArray(self._size, self._val ^ other._val)` and the constructor
+        masked to `self._size`, so the expression silently returned the LEFT
+        operand with the right one discarded entirely (BITARRAY.md §6.2).
+        """
+        if not isinstance(other, BitArray):
+            raise BaError(BA_E_WIDTH, op)
+        if self._nbits != other._nbits:
+            raise BaError(BA_E_MIXED_WIDTH, op)
 
-    def ror(self, n: int) -> None:
-        """Rotate right in-place by n bits."""
-        n %= self._size
-        if n:
-            self._val = ((self._val >> n) | (self._val << (self._size - n))) & self._mask
+    def _binop(self, other: 'BitArray', op: str, f) -> 'BitArray':
+        self._same_width(other, op)
+        return BitArray.from_bytes(
+            f(self.uint, other.uint).to_bytes(self.nbytes, 'big'), self._nbits)
 
     def __xor__(self, other: 'BitArray') -> 'BitArray':
-        return BitArray(self._size, self._val ^ other._val)
+        return self._binop(other, 'xor', lambda x, y: x ^ y)
+
+    def __and__(self, other: 'BitArray') -> 'BitArray':
+        return self._binop(other, 'and', lambda x, y: x & y)
+
+    def __or__(self, other: 'BitArray') -> 'BitArray':
+        return self._binop(other, 'or', lambda x, y: x | y)
+
+    def __invert__(self) -> 'BitArray':
+        return BitArray(self._nbits, ~self.uint & self._mask)
 
     def __ixor__(self, other: 'BitArray') -> 'BitArray':
-        self._val ^= other._val
+        self._same_width(other, 'xor')
+        self._b = bytes(x ^ y for x, y in zip(self._b, other._b))
         return self
 
+    # ── rotation and shift (BITARRAY.md §4.3) ──────────────────────────────
+
+    def rotated(self, n: int) -> 'BitArray':
+        """Rotate left by n bits, right if n < 0.  n is reduced modulo the
+        width MATHEMATICALLY; Python's % already returns a non-negative
+        remainder, which is the behaviour the specification requires and which
+        C and Go have to correct for by hand."""
+        s = n % self._nbits
+        if s == 0:
+            return self.copy()
+        v = self.uint
+        return BitArray(self._nbits, (v << s) | (v >> (self._nbits - s)))
+
+    def rot_left(self, n: int) -> 'BitArray':
+        return self.rotated(n)
+
+    def rot_right(self, n: int) -> 'BitArray':
+        return self.rotated(-n)
+
+    def rol(self, n: int) -> None:
+        """Rotate left in place."""
+        self._b = self.rotated(n)._b
+
+    def ror(self, n: int) -> None:
+        """Rotate right in place."""
+        self._b = self.rotated(-n)._b
+
+    def shl(self, k: int) -> 'BitArray':
+        """Numeric left shift within the width: bits past the top are
+        DISCARDED, vacated positions are ZERO, and k >= n yields zero.  That
+        last clause is stated rather than assumed because the expression is
+        undefined behaviour in C, a panic in Go, 0 here and a ROTATION in Java
+        (`<<` uses k & 63)."""
+        if not isinstance(k, int) or k < 0:
+            raise BaError(BA_E_RANGE, 'shl')
+        if k >= self._nbits:
+            return BitArray(self._nbits, 0)
+        return BitArray(self._nbits, (self.uint << k) & self._mask)
+
+    def shr(self, k: int) -> 'BitArray':
+        if not isinstance(k, int) or k < 0:
+            raise BaError(BA_E_RANGE, 'shr')
+        if k >= self._nbits:
+            return BitArray(self._nbits, 0)
+        return BitArray(self._nbits, self.uint >> k)
+
+    # ── width change (BITARRAY.md §4.4) ────────────────────────────────────
+
+    def truncate(self, m: int) -> 'BitArray':
+        """Keep the HIGH m bits — the big-endian PREFIX.
+
+        A SLICE, which is the whole argument for the rule: truncating a
+        big-endian octet string is slicing, where low-bit truncation is
+        arithmetic, and arithmetic is where the four ports diverged (TODO
+        #313).  This port already took the high bits, by `DC >> (256 - n)`;
+        what changes is that it is now one named operation instead of an
+        expression written at the call site.
+        """
+        _ba_check_width(m, 'truncate')
+        if m > self._nbits:
+            raise BaError(BA_E_WIDTH, 'truncate')
+        return BitArray.from_bytes(self._b[:m // 8], m)
+
+    def extend(self, m: int) -> 'BitArray':
+        """Append (m - n)/8 zero octets on the LOW side."""
+        _ba_check_width(m, 'extend')
+        if m < self._nbits:
+            raise BaError(BA_E_WIDTH, 'extend')
+        return BitArray.from_bytes(self._b + bytes((m - self._nbits) // 8), m)
+
+    def resize_exact(self, m: int) -> 'BitArray':
+        """The operation protocol code should reach for: a narrowing that would
+        discard a set bit is E_LOSSY, not a result."""
+        _ba_check_width(m, 'resize_exact')
+        if m >= self._nbits:
+            return self.extend(m)
+        if any(self._b[m // 8:]):
+            raise BaError(BA_E_LOSSY, 'resize_exact')
+        return self.truncate(m)
+
+    # ── comparison and inspection (BITARRAY.md §4.5) ───────────────────────
+
     def __eq__(self, other: object) -> bool:
+        """Width AND value.  A width mismatch is False rather than an error: an
+        equality test is a question, not an operation on a shared width."""
         if isinstance(other, BitArray):
-            return self._size == other._size and self._val == other._val
+            return self._nbits == other._nbits and self._b == other._b
         return NotImplemented
+
+    def __hash__(self):
+        return hash((self._nbits, self._b))
+
+    def compare(self, other: 'BitArray') -> int:
+        """-1 / 0 / +1, unsigned big-endian lexicographic."""
+        self._same_width(other, 'compare')
+        a, b = self.uint, other.uint
+        return (a > b) - (a < b)
+
+    # CONSTANT TIME, and what it does and does not mean here.  BITARRAY.md §4
+    # marks equal / compare / is_zero / popcount / bit CT, meaning branch-free
+    # in the operands' VALUES.  C and Go implement that literally (accumulate
+    # every octet, no early exit).  Python cannot: its arbitrary-precision int
+    # is not constant-time and neither is `bytes.__eq__`, which short-circuits.
+    # That is why the suite reaches for hmac.compare_digest at the places where
+    # constant time is load-bearing — the AEAD tag check — rather than relying
+    # on this type, and the marking is kept here as a statement about the
+    # SPECIFIED operation rather than a claim about this port.
+
+    def is_zero(self) -> bool:
+        return not any(self._b)
+
+    def popcount(self) -> int:
+        return bin(int.from_bytes(self._b, 'big')).count('1')
+
+    def bit(self, i: int) -> int:
+        """Bit i counted from the LSB: i = 0 is the low bit of the last octet."""
+        if not isinstance(i, int) or i < 0 or i >= self._nbits:
+            raise BaError(BA_E_RANGE, 'bit')
+        return (self._b[self.nbytes - 1 - i // 8] >> (i % 8)) & 1
 
     def __str__(self) -> str:
         return f'0x{self.hex}'
 
     def __repr__(self) -> str:
-        return f'BitArray({self._size}, 0x{self.hex})'
-
-    @classmethod
-    def random(cls, size: int) -> 'BitArray':
-        """Return a random BitArray of *size* bits using os.urandom."""
-        ba = cls(size)
-        ba.bytes = os.urandom(size // 8)
-        return ba
-
+        return f'BitArray({self._nbits}, 0x{self.hex})'
 
 # ---------------------------------------------------------------------------
 # FSCX functions (classical — linear map M = I + ROL + ROR over GF(2))
@@ -429,8 +726,20 @@ class BitArray:
 
 def fscx(A: BitArray, B: BitArray) -> BitArray:
     """Full Surroundings Cyclic XOR: A ^ B ^ ROL(A) ^ ROL(B) ^ ROR(A) ^ ROR(B).
-    Uses rotated() — does not mutate its inputs."""
-    return A ^ B ^ A.rotated(1) ^ B.rotated(1) ^ A.rotated(-1) ^ B.rotated(-1)
+
+    Does not mutate its inputs.  Written over the limb rather than as six
+    BitArray operations: the octet form is canonical (BITARRAY.md §1) but a
+    COMPOSITE primitive converts once at its boundary and iterates in the limb
+    domain, which is what makes storing octets cost nothing — measured at
+    fscx_revolve(256, 64), 100.9 us either way, against +32% when the
+    conversion is paid per step.  A width mismatch is E_MIXED_WIDTH (§3).
+    """
+    A._same_width(B, 'fscx')
+    n    = A.size
+    mask = (1 << n) - 1
+    a, b = A.uint, B.uint
+    rot  = lambda v, s: ((v << s) | (v >> (n - s))) & mask
+    return BitArray(n, a ^ b ^ rot(a, 1) ^ rot(b, 1) ^ rot(a, n - 1) ^ rot(b, n - 1))
 
 
 # --- Closed-form FSCX_REVOLVE (TODO #213) -----------------------------------
@@ -507,7 +816,7 @@ def fscx_revolve(A: BitArray, B: BitArray, steps: int, verbose: bool = False) ->
     if steps <= 0:
         return A.copy()
 
-    n = A._size
+    n = A.size
     mask = (1 << n) - 1
 
     # M^steps * A, and the stride table 2^u mod n built by doubling alongside
@@ -569,6 +878,45 @@ def gf_pow(base: int, exp: int, poly: int, n: int) -> int:
         base = gf_mul(base, base, poly, n)
         exp >>= 1
     return result
+
+
+# --- BitArray-level GF (BITARRAY.md §4.6, TODO #314 pass 4) -----------------
+#
+# The width SELECTS the polynomial, so a caller cannot hand in one that does
+# not match the operands — which is what `poly` as a parameter allows, and what
+# the Go CLI was doing silently at five read paths until pass 3.  A width with
+# no entry is E_NO_POLY, never a default.  The int-level gf_mul/gf_pow above
+# stay: this port's OPRF, threshold and Stern layers work on plain ints by
+# their own protocol definitions, and these wrap the same one implementation
+# rather than adding a second.
+
+def ba_gf_poly(n: int) -> BitArray:
+    """The primitive polynomial for width n, or E_NO_POLY."""
+    if n not in GF_POLY:
+        raise BaError(BA_E_NO_POLY, 'gf_poly')
+    return BitArray.from_uint(GF_POLY[n], n)
+
+
+def ba_gf_mul(a: BitArray, b: BitArray) -> BitArray:
+    """a·b in GF(2^n) at the operands' common width."""
+    a._same_width(b, 'gf_mul')
+    n = a.size
+    return BitArray(n, gf_mul(a.uint, b.uint, ba_gf_poly(n).uint, n))
+
+
+def ba_gf_pow(base: BitArray, e: int) -> BitArray:
+    """base^e in GF(2^n) for a machine-word exponent (BITARRAY.md §4.6)."""
+    n = base.size
+    poly = ba_gf_poly(n).uint
+    if not isinstance(e, int) or e < 0:
+        raise BaError(BA_E_RANGE, 'gf_pow')
+    r, bb = 1, base.uint
+    while e:
+        if e & 1:
+            r = gf_mul(r, bb, poly, n)
+        bb = gf_mul(bb, bb, poly, n)
+        e >>= 1
+    return BitArray(n, r)
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +1020,7 @@ _m_inv_rotations: dict[int, tuple[int, ...]] = {}
 def _m_inv(X: BitArray) -> BitArray:
     """M^{-1}(X): apply precomputed rotation table for M^{n/2-1}.
     Table is bootstrapped once from fscx_revolve(1, 0, n/2-1) and cached per bit-size."""
-    n = X._size
+    n = X.size
     if n not in _m_inv_rotations:
         unit = BitArray(n, 1)
         zero = BitArray(n, 0)
@@ -692,7 +1040,7 @@ def nl_fscx_v1(A: BitArray, B: BitArray) -> BitArray:
     Properties: non-linear over GF(2); NOT bijective in A (collisions exist).
     Use for: HSKE counter-mode keystream, HKEX-RNL KDF, HPKS-NL challenge hash.
     """
-    n   = A._size
+    n   = A.size
     mix = BitArray(n, (A.uint + B.uint) & A._mask)
     return fscx(A, B) ^ mix.rotated(n // 4)
 
@@ -714,7 +1062,7 @@ def nl_fscx_v2(A: BitArray, B: BitArray) -> BitArray:
     Properties: non-linear over GF(2); bijective in A for all B; exact inverse.
     Use for: HSKE revolve-mode encryption/decryption, HPKE-NL encryption.
     """
-    n     = A._size
+    n     = A.size
     mask  = A._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     return BitArray(n, (fscx(A, B).uint + delta.uint) & mask)
@@ -726,7 +1074,7 @@ def nl_fscx_v2_inv(Y: BitArray, B: BitArray) -> BitArray:
     Derivation: Y = M(A XOR B) + delta(B)  =>  A XOR B = M^{-1}(Y - delta(B))
     Applying M^{-1} = M^{n/2-1} recovers A XOR B, then XOR with B gives A.
     """
-    n     = Y._size
+    n     = Y.size
     mask  = Y._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     Z     = BitArray(n, (Y.uint - delta.uint) & mask)
@@ -740,7 +1088,7 @@ def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
     the inner step body becomes one fscx + one integer add. Saves one bigint
     multiply and one rotation per iteration vs. calling nl_fscx_v2 in the loop.
     """
-    n     = A._size
+    n     = A.size
     mask  = A._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     result = A.copy()
@@ -792,7 +1140,7 @@ def nl_v2_key_is_valid(B: BitArray) -> bool:
     SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py and
     SecurityProofsCode/nl_fscx_v2_fixed_key.py (TODO #159, #168, #253).
     """
-    n     = B._size
+    n     = B.size
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & B._mask).rotated(n // 4).uint
     return delta not in (0, 1 << (n - 1))
 
@@ -800,7 +1148,7 @@ def nl_v2_key_is_valid(B: BitArray) -> bool:
 def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
     """Invert nl_fscx_revolve_v2: apply nl_fscx_v2_inv *steps* times.
     delta(B) is precomputed once — B is constant throughout the revolve."""
-    n     = Y._size
+    n     = Y.size
     mask  = Y._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     result = Y.copy()
@@ -912,7 +1260,7 @@ _CHI_INV = {5: _chi_row_inv_table(5), 7: _chi_row_inv_table(7)}
 
 def nl_chi_v3(X: BitArray) -> BitArray:
     """Apply the chi layer to a BitArray, row by row."""
-    n = X._size
+    n = X.size
     x = X.uint
     out = 0
     off = 0
@@ -924,7 +1272,7 @@ def nl_chi_v3(X: BitArray) -> BitArray:
 
 def nl_chi_v3_inv(Y: BitArray) -> BitArray:
     """Invert the chi layer."""
-    n = Y._size
+    n = Y.size
     y = Y.uint
     out = 0
     off = 0
@@ -950,7 +1298,7 @@ def nl_fscx_revolve_v3(A: BitArray, B: BitArray, steps: int) -> BitArray:
 
     The round constant is v2's, unchanged: an XOR constant leaves xdp+ exactly
     invariant (TODO #245), and chi does not interact with that argument."""
-    n     = A._size
+    n     = A.size
     mask  = A._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     rows  = v3_rows(n)
@@ -967,7 +1315,7 @@ def nl_fscx_revolve_v3(A: BitArray, B: BitArray, steps: int) -> BitArray:
 
 def nl_fscx_revolve_v3_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
     """Invert nl_fscx_revolve_v3: apply nl_fscx_v3_inv *steps* times."""
-    n     = Y._size
+    n     = Y.size
     mask  = Y._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     rows  = v3_rows(n)
@@ -1422,7 +1770,7 @@ def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
     S11.11). Relative modulo bias is < range/2^32, negligible at range <=
     KEYBITS. Must stay bit-identical with the C and Go implementations.
     """
-    n       = pi_seed._size
+    n       = pi_seed.size
     nb      = n // 8
     key     = pi_seed.rotated(n // 8)
     perm    = list(range(N))
@@ -2550,6 +2898,26 @@ def _zkp_nl_evaluate_circuit(shares, tapes, B, n):
     return out_shares, gate_views
 
 
+def zkp_nl_f1(A: int, B: int, n: int) -> int:
+    """nl_fscx_v1 at an arbitrary width n <= 64, over a machine word.
+
+    The counterpart of herradura.h's zkp_nl_f1, Go's zkpNlF1 and Java's
+    ZkpNl.nlFscxV1General, and new here in TODO #314 pass 4 for the reason Go
+    needed its at pass 3: ZKP-NL's default width is 8, BITARRAY.md §2 puts the
+    BitArray's floor at 16 — fscx reads the octet on both sides of every
+    position and degenerates below two octets — and KAT/bitarray.json PINS
+    nbits = 8 as E_WIDTH.  Building an 8-bit BitArray here is what the old
+    representation allowed and the contract does not.
+
+    At n >= 16 this and nl_fscx_v1 are the same function; below it, only this
+    one is defined.
+    """
+    mask = (1 << n) - 1
+    rot  = lambda v, s: ((v << s) | (v >> (n - s))) & mask
+    lin  = (A ^ B ^ rot(A, 1) ^ rot(B, 1) ^ rot(A, n - 1) ^ rot(B, n - 1)) & mask
+    return (lin ^ rot((A + B) & mask, n // 4)) & mask
+
+
 def zkp_nl_keygen(n=_ZKP_NL_DEFAULT_N):
     """Generate ZKP-NL keypair: (A private, B public, y = nl_fscx_v1(A,B) public).
 
@@ -2559,7 +2927,7 @@ def zkp_nl_keygen(n=_ZKP_NL_DEFAULT_N):
     nb   = (n + 7) // 8
     A = int.from_bytes(os.urandom(nb), 'big') & mask
     B = int.from_bytes(os.urandom(nb), 'big') & mask
-    y = nl_fscx_v1(BitArray(n, A), BitArray(n, B)).uint
+    y = zkp_nl_f1(A, B, n)
     return A, B, y
 
 
@@ -4003,7 +4371,7 @@ _XMSS_H    = 10           # default tree height (1024 leaves)
 
 def _wots_h(x: BitArray) -> BitArray:
     """Single WOTS-F hash chain step: h(x) = nl_fscx_revolve_v1(ROL(x,n/8), x, n/4)."""
-    n = x._size
+    n = x.size
     return nl_fscx_revolve_v1(x.rotated(n // 8), x, n // 4)
 
 
@@ -4419,17 +4787,23 @@ def drbg_reseed(drbg: HDrbg, entropy: bytes) -> None:
 
 
 def rnl_kdf_seed(k: BitArray) -> BitArray:
-    """ROL(k, n/8) XOR RNL_KDF_DC, the TODO #38 KDF degeneracy guard.
+    """ROL(k, n/8) XOR truncate(RNL_KDF_DC_256, n), the TODO #38 KDF guard.
 
-    The domain constant is defined at 256 bits; at a narrower width Python
-    takes its HIGH n bits (Go's RnlKdfSeed takes the LOW n bits — TODO #313)."""
-    n = k._size
-    return BitArray(n, k.rotated(n // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - n)))
+    The domain constant is defined at 256 bits and the truncation is
+    BITARRAY.md §4.4's — the HIGH bits, the big-endian PREFIX.  This port
+    already took the high bits, by the expression `_RNL_KDF_DC_256 >> (256 - n)`
+    written here at the call site; TODO #314 pass 4 routes it through the ONE
+    named truncation instead, so the rule lives in the type rather than in an
+    arithmetic idiom repeated per port.  That is #314's reason 1 realised: Go
+    took the LOW octets until pass 3 and the two now agree by construction.
+    """
+    dc = BitArray.from_uint(_RNL_KDF_DC_256, 256).truncate(k.size)
+    return k.rotated(k.size // 8) ^ dc
 
 
 def hske_nla1_encrypt(pt: BitArray, key: BitArray, nonce: BitArray) -> BitArray:
     """HSKE-NL-A1 counter-mode encrypt: E = P XOR nl_fscx_revolve_v1(seed, base, n/4)."""
-    n    = key._size
+    n    = key.size
     base = BitArray(n, key.uint ^ nonce.uint)
     ks   = nl_fscx_revolve_v1(rnl_kdf_seed(base), base, n // 4)
     return BitArray(n, pt.uint ^ ks.uint)

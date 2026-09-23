@@ -2,6 +2,73 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.3.0] - 2026-09-22
+
+### Changed
+- **Python's `BitArray` stores octets and carries its own width (TODO #314 pass 4).**
+  `Herradura cryptographic suite.py`'s type is now `_nbits` plus `_b: bytes` — big-endian,
+  the octet string canonical — implements the whole of `BITARRAY.md` §4, and passes
+  `KAT/bitarray.json` **376/376** through the new `KAT/verify_bitarray_py.py`.  **Three
+  ports are now in the gating set**, which is the cross-implementation check
+  `BITARRAY.md` §7 describes: C reads the generated header, Go and Python read the JSON,
+  and no round-trip or interop test can supply what they do, because those compare a port
+  against another port's opinion.
+- **Python's mixed-width XOR reports instead of discarding the other operand.**
+  `BITARRAY.md` §6.2's measured defect — `__xor__` built `BitArray(self._size, ...)` and
+  the constructor masked, so the expression returned the LEFT operand unchanged with the
+  right one masked away entirely — is fixed: `_same_width` raises
+  `BaError(E_MIXED_WIDTH)` before either operand is read.
+- **TODO #313's truncation split is closed in the code for C, Go and Python.**  This port
+  already took the HIGH bits, but by the open-coded expression
+  `_RNL_KDF_DC_256 >> (256 - n)` written at the call site; `rnl_kdf_seed` now goes through
+  the one named `truncate`, so the rule lives in the type instead of in an arithmetic
+  idiom repeated per port.  **The refusal stays**: `hske-nla1` is still refused below 256
+  bits in all four CLIs until Java lands.
+- **GF(2^n) gains a BitArray-level pair where the WIDTH selects the polynomial.**
+  `ba_gf_poly`, `ba_gf_mul` and `ba_gf_pow` wrap the existing int-level `gf_mul`/`gf_pow`
+  rather than adding a second implementation; an unlisted width is `E_NO_POLY`, never a
+  default.  A `poly` parameter is what lets a caller hand in one that does not match the
+  operands, which is exactly what the Go CLI was doing silently until v9.2.0.
+- **`--report` in `KAT/generate_bitarray_kat.py` has run out of ports to measure**, and
+  now says so instead of printing rows that duplicate a gate.  It measured the shipped
+  Python suite while Python was unconverted and its divergences could not be a failing
+  test; Python now has a consumer that gates, and re-measuring here would assert nothing
+  the gate does not — #234's vacuous pass arriving by way of a report.  Java is the only
+  port left and is a separate toolchain, so it gets a consumer at pass 5, not a row.
+  `_load_python_suite()` is **deleted** rather than left unreferenced beside the check,
+  which is the shape TODO #305 removed from the Go port.
+
+### Added
+- **`zkp_nl_f1`, the machine-word NL-FSCX v1 step, in Python** — and with it **all four
+  ports now name it**.  ZKP-NL's default width is 8, which `BITARRAY.md` §2's floor of 16
+  forbids and `KAT/bitarray.json` pins as `E_WIDTH`, so `zkp_nl_keygen` could no longer
+  build an 8-bit BitArray.  This is the SAME defect in the SAME function Go hit at pass 3;
+  C (`zkp_nl_f1`) and Java (`nlFscxV1General`) have had the machine-word form all along.
+  The `nl-fscx-v1-general` manifest row gains a Python cell, and pass 3's reason — which
+  said Python kept passing the width to `nl-fscx-v1` "because its BitArray has no such
+  floor" — is **corrected rather than left standing**: pass 4 gave it one.
+- **`KAT/verify_bitarray_py.py`** — the Python conformance consumer, run by
+  `CliTest/test_kat_vectors.sh`.  Its header answers the obvious objection: a Python
+  consumer checking a Python-generated vector is not circular, because the reference is a
+  separate class in the generator written against the document, and the consumer loads the
+  SHIPPED suite through `importlib` and never touches it.
+- **The `BaError` exception and `BITARRAY.md` §5's eight codes in Python**, so that a port
+  failing for the right reason is distinguishable from one failing for the wrong one — the
+  same closed set C returns as a status and Go returns as an error.
+- **`BitArray.from_uint`, `from_bytes`, `from_hex`, `to_uint`, `truncate`, `extend`,
+  `resize_exact`, `compare`, `bit`, `shl`, `shr`, `is_zero`, `popcount`** — §4's surface.
+  `from_uint` REJECTS an out-of-range value where the constructor masks, and the two are
+  spelled differently on purpose: masking is how an out-of-range intermediate becomes a
+  plausible in-range value with nothing recording that it happened.
+
+### Performance
+- **Storing octets costs nothing, measured.**  A pure byte-loop rotation at n = 256 is
+  7.60 µs against 0.35 µs for the int form — 21x, in a suite that already runs for half an
+  hour — so the pure-byte route was rejected on measurement, not taste.  Python's private
+  limb is the interpreter's int, which `BITARRAY.md` §1 explicitly permits, and with the
+  conversion at the COMPOSITE boundary `fscx_revolve(256, 64)` measures 100.9 µs either
+  way; paid per step it is +32%.  That is why `fscx` and the revolve loops convert once.
+
 ## [9.2.0] - 2026-09-22
 
 ### Changed

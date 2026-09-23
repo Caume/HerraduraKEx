@@ -12,7 +12,7 @@ is not shipped and is not linked by anything — it is the same standing as
 `generate_kat.py`, which is the deterministic reference for three other vector files.
 
   --check    verify KAT/bitarray.json is current (gating)
-  --report   per-port, per-operation conformance for the CURRENT shipped ports.
+  --report   which ports are converted and which consumer gates each.
              A REPORT, not a gate: a port not yet converted is expected to differ, and
              CLAUDE.md's Testing section allows no failing test.
 """
@@ -20,7 +20,6 @@ is not shipped and is not linked by anything — it is the same standing as
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import sys
@@ -543,83 +542,49 @@ def emit_c_header(vectors: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# --report: what the CURRENT shipped ports do
+# --report: which ports are converted, and which gate
+#
+# _load_python_suite() lived here and is DELETED rather than left: with Python
+# converted the report measures nothing in-process, so the loader had no
+# caller, and an unreferenced helper beside a check is the shape TODO #305
+# deleted from the Go port (a dead rnl_cbd_poly that a manifest row was
+# anchored on).
 # ---------------------------------------------------------------------------
 
-def _load_python_suite():
-    path = os.path.join(ROOT, "Herradura cryptographic suite.py")
-    spec = importlib.util.spec_from_file_location("_suite", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
 def report() -> int:
-    """Per-operation conformance of the shipped ports.  A REPORT, never a gate."""
-    print("BitArray conformance report (TODO #314) — BITARRAY.md is the contract.")
-    print("C (pass 2) and Go (pass 3) are CONVERTED and are gated by their own")
-    print("consumers — KAT/verify_bitarray_c.c and KAT/verify_bitarray_go.go, both run")
-    print("by CliTest/test_kat_vectors.sh.  The rows below are the ports that are NOT")
-    print("yet converted, where divergence is EXPECTED and is not a failure.\n")
+    """Per-port conformance status.  A REPORT, never a gate.
 
-    suite = _load_python_suite()
-    PyBA = suite.BitArray
-    rows: list[tuple[str, str, str]] = []
+    THIS FLAG HAS RUN OUT OF PORTS TO MEASURE, and saying so is better than
+    letting it print rows that duplicate a gate.  Until TODO #314 pass 4 it
+    loaded the shipped Python suite and measured it against the contract,
+    because Python was unconverted and its divergences were expected and so
+    could not be a failing test (CLAUDE.md's Testing section allows none).
+    Python is converted now, and its conformance is checked the way C's and
+    Go's are: by a consumer that GATES.  Re-measuring it here would assert
+    nothing the gate does not already assert, which is #234's vacuous pass
+    arriving by way of a report.
 
-    def check(name: str, ok: bool, detail: str) -> None:
-        rows.append((name, "conforms" if ok else "DIVERGES", detail))
-
-    # width carried with the value?
-    check("python: width carried", hasattr(PyBA(32, 0), "_size"),
-          "BitArray._size exists")
-
-    # mixed-width xor must be E_MIXED_WIDTH (BITARRAY.md 3)
-    narrow, wide = PyBA(64, 0x0102030405060708), PyBA(256, 1 << 200)
-    try:
-        got = (narrow ^ wide).bytes.hex()
-        check("python: mixed-width xor", False,
-              f"returned {got} instead of raising E_MIXED_WIDTH")
-    except Exception as e:                                   # noqa: BLE001
-        check("python: mixed-width xor", True, f"raised {type(e).__name__}")
-
-    # from_uint out of range must be E_RANGE, not a silent mask
-    v = PyBA(32, 1 << 32)
-    check("python: from_uint range", False,
-          f"masked 2^32 to {v.uint} instead of raising E_RANGE")
-
-    # truncation rule at the rnl_kdf_seed site
-    k = PyBA(64, 0x0102030405060708)
-    want = Ref.from_hex(f"{0x0102030405060708:016x}", 64).rnl_kdf_seed().to_hex()
-    got = f"{suite.rnl_kdf_seed(k).uint:016x}"
-    check("python: rnl_kdf_seed@64", got == want, f"got {got}, reference {want}")
-
-    # equal() across widths must be False (BITARRAY.md 4.5): not an error, not True
-    same_val_diff_width = PyBA(32, 5) == PyBA(64, 5)
-    check("python: equal across widths", same_val_diff_width is False,
-          f"BA(32,5) == BA(64,5) is {same_val_diff_width}")
-
-    # shifts past the width: BITARRAY.md 4.3 says zero, never UB/panic/rotation
-    try:
-        shifted = PyBA(32, 0xDEADBEEF)
-        shifted.rol(0)
-        wide = PyBA(32, (0xDEADBEEF << 40) & 0xFFFFFFFF)
-        check("python: shl past width", wide.uint == 0,
-              f"0xDEADBEEF << 40 masked to {wide.uint:#x}")
-    except Exception as e:                                   # noqa: BLE001
-        check("python: shl past width", False, f"raised {type(e).__name__}")
-
-    # rot by a negative distance must equal the opposite rotation (4.3)
-    r = PyBA(32, 0xDEADBEEF)
-    check("python: rot_left(-s)", r.rotated(-7).uint == r.rotated(32 - 7).uint,
-          "rotated(-7) vs rotated(25)")
-
-    w = max(len(r[0]) for r in rows)
-    for name, verdict, detail in rows:
-        print(f"  {name:<{w}}  {verdict:<9}  {detail}")
-
-    div = sum(1 for _, v, _ in rows if v == "DIVERGES")
-    print(f"\n  {len(rows)} checked, {div} diverging, {len(rows) - div} conforming.")
-    print("  Python and Java join the gating set at passes 4 and 5 (BITARRAY.md 8).")
+    Java is the only port left and this generator cannot introspect it: it is
+    a separate toolchain, and running it is what KAT/verify_bitarray_java
+    will do when pass 5 lands.  So this prints the gating set and stops.
+    """
+    print("BitArray conformance status (TODO #314) — BITARRAY.md is the contract.")
+    print()
+    print("  CONVERTED and GATED, 376/376 each, by their own consumers:")
+    print("    c       pass 2, v9.1.0   KAT/verify_bitarray_c.c")
+    print("    go      pass 3, v9.2.0   KAT/verify_bitarray_go.go")
+    print("    python  pass 4, v9.3.0   KAT/verify_bitarray_py.py")
+    print("  All three are run by CliTest/test_kat_vectors.sh.")
+    print()
+    print("  NOT YET CONVERTED:")
+    print("    java    pass 5           BITARRAY.md §8")
+    print()
+    print("  Three independent implementations against one pinned answer is the")
+    print("  cross-implementation check BITARRAY.md §7 describes.  This flag made")
+    print("  measurements while an unconverted port could be loaded in-process;")
+    print("  Python was the last one, so there is nothing left here to measure and")
+    print("  the rows are gone rather than restated.  Java is a separate toolchain")
+    print("  and gets a consumer, not a row, at pass 5.")
     return 0
 
 
