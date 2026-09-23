@@ -2,6 +2,68 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.4.0] - 2026-09-23
+
+### Changed
+- **Java gets a `BitArray`, and ALL FOUR PORTS NOW CONFORM (TODO #314 pass 5).**
+  `bindings/java/herradurakex/BitArray.java` is `int nbits` plus `byte[] b` — big-endian
+  octets, immutable, both fields private — implements the whole of `BITARRAY.md` §4, and
+  passes `KAT/bitarray.json` **376/376** through the new `VerifyBitArray`.  This port had
+  no such type at all: it carried bare `BigInteger` values against a static
+  `Herradura.N = 256`, so a width was not a property of a value but of the whole port and
+  the mixed-width question could not be posed.  **`BITARRAY.md` §8's pass 6 — relaxing
+  TODO #313's refusal — is now available for the first time.**
+- **The constant-time concession this port wrote down is retired.**  `Herradura.java`'s
+  header said it mirrored the Python source "rather than herradura.h's constant-time C
+  implementation: java.math.BigInteger gives no constant-time guarantee regardless, so
+  there is nothing to gain from porting the C branchless tricks".  That is TODO #314's
+  reason 3 stated by the port itself — a security property conceded because of a
+  dependency choice.  Over a `byte[]` there is something to gain, so `equals`, `compare`,
+  `isZero`, `popcount` and the bitwise operations now touch every octet and fold with
+  masks rather than branches, the same structure C and Go use.  **A branch-free structure,
+  not a claim about what a JIT emits**; the suite still uses `MessageDigest.isEqual` where
+  constant time is load-bearing.
+- **`rnlKdfSeed` exists, and there is now exactly one truncation.**  This port had no such
+  function: the derivation was transcribed at **six** call sites — two in `Hfscx256`, two
+  in `HerraduraNl`, one in `Hpake`, one in `KatVerify` — each against the 256-bit constant
+  with a comment explaining that the shift is zero at n = 256.  That is TODO #312's finding
+  in a fourth port, and it is why "exactly one truncation, in one place" was unavailable
+  here however carefully each copy was written.
+- **The Java CLI's `loadKey` returns a `BitArray`.**  It returned
+  `BigInteger[] { value, nbits }` — the width as a separate array element, read back as
+  `key[1]` at nineteen sites.  That is TODO #313's defect shape stated in a type; the
+  separation is no longer expressible.
+- **`Json.java`** — the dependency-free JSON reader — is extracted from `KatVerify` so the
+  second consumer can share it rather than copy it.  Its numbers decode as `Long`, exactly,
+  which is why Java never met the >2^53 hazard the Go consumer had to ask for
+  `json.Number` to avoid.
+
+### Added
+- **`herradurakex.VerifyBitArray`**, run by `CliTest/test_java_bindings.sh` — where the
+  Java toolchain is already built, the other three consumers running in
+  `CliTest/test_kat_vectors.sh`.  **Four independent implementations against one pinned
+  answer.**
+- **`BaException` and `BITARRAY.md` §5's eight codes in Java**, unchecked on purpose: at
+  the protocol layer a mixed or invalid width is a bug, not an input, which is the position
+  C takes with `BA_FAIL` and Go with a panic.
+- **Octet arithmetic** — `addMod2n`, `subMod2n`, `mulMod2n`, `addUint`, `xorUint` — the
+  counterparts of `herradura.h`'s `ba_add256`/`ba_sub256`/`ba_mul256` and Go's, ported
+  rather than re-derived, so NL-FSCX v1/v2's integer addition no longer round-trips
+  through a bignum.
+
+- **`MIGRATING.md` §22** records the Java package API change, on sections 20 and 21's
+  grounds: not MAJOR, but it breaks Java source that imports `herradurakex`.
+
+### Fixed
+- **Four silently-wrong comparisons introduced by the conversion itself, every one caught
+  by an existing oracle.**  Java's `equals(Object)` returns **false** for a different type
+  rather than failing to compile, so a `BitArray` compared against a `BigInteger` is a
+  round-trip check that always fails or a difference check that always passes.  Three
+  successive audits each missed some — locals, then fields, then method-call arguments —
+  and `SelfTest` (the A3 round-trip), `Demo` (masked HSKE), `CodecTest` (the key
+  round-trips) and `KatVerify` (three vector sets) each found one.  **A conversion that
+  changes a type cannot lean on the compiler where the language's equality is untyped.**
+
 ## [9.3.0] - 2026-09-22
 
 ### Changed

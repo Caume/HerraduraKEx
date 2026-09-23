@@ -272,12 +272,15 @@ KAT/                                                 — fixed Known-Answer-Test
   generate_pem_kat.py        — generator for pem/; --check verifies currency
   bitarray.json              — the BitArray conformance vectors (TODO #314 pass 1),
                                376 cases at widths 32/64/128/256 against BITARRAY.md.
-                               C (pass 2, v9.1.0), GO (pass 3, v9.2.0) and PYTHON
-                               (pass 4, v9.3.0) CONSUME THEM, 376/376 each via
-                               KAT/verify_bitarray_{c.c,go.go,py.py}; Java does not
-                               yet -- the ports are converted one per release
-                               (BITARRAY.md 8) and each adds its consumer as it
-                               lands.  THIS IS NO LONGER A CURRENCY CHECK: three
+                               ALL FOUR PORTS CONSUME THEM, 376/376 each: C
+                               (pass 2, v9.1.0), Go (pass 3), Python (pass 4) and
+                               JAVA (pass 5, v9.4.0), via
+                               KAT/verify_bitarray_{c.c,go.go,py.py} and
+                               herradurakex.VerifyBitArray -- the first three run
+                               by CliTest/test_kat_vectors.sh, the fourth by
+                               CliTest/test_java_bindings.sh, where the Java
+                               toolchain is already built.  THIS IS NO LONGER A
+                               CURRENCY CHECK: four
                                INDEPENDENT implementations against ONE pinned answer
                                is the cross-implementation check BITARRAY.md 7
                                describes, and it is what no round-trip or interop
@@ -1898,13 +1901,16 @@ BITARRAY.md                                          — the NORMATIVE BitArray 
                                                       narrow constants already say — Go's
                                                       low-octet slice is the outlier, and its
                                                       rule was MEASURED rather than read.
-                                                      Status: C (pass 2, v9.1.0), GO
-                                                      (pass 3, v9.2.0) and PYTHON (pass 4,
-                                                      v9.3.0) CONFORM; Java does not yet.  8
+                                                      Status: ALL FOUR PORTS CONFORM --
+                                                      C (pass 2, v9.1.0), Go (pass 3), Python
+                                                      (pass 4) and Java (pass 5, v9.4.0), so
+                                                      PASS 6 -- relaxing TODO #313's refusal
+                                                      -- is available for the first time.  8
                                                       tabulates the six passes, 8.1 records
-                                                      what pass 3 cost OUTSIDE the type and
-                                                      8.2 what pass 4 measured that the
-                                                      others could not; 9
+                                                      what pass 3 cost OUTSIDE the type, 8.2
+                                                      what pass 4 measured that the others
+                                                      could not and 8.3 what pass 5 bought
+                                                      that they could not; 9
                                                       records the C
                                                       type decision the item demanded be made
                                                       in the item rather than in review — it
@@ -2977,6 +2983,40 @@ duplicate a gate, and `_load_python_suite()` was DELETED rather than left unrefe
 beside the check — TODO #305's dead-code shape.  Both controls fire: low-octet truncation
 fails **the same 14 of 376 Go's control failed**, which is two consumers demonstrably
 exercising the same cases.
+
+**And the port the third reason was written for, which had said so itself (TODO #314,
+fifth pass v9.4.0).**  Java had no BitArray at all — bare `BigInteger` against a static
+`Herradura.N = 256`, so a width was a property of the whole port rather than of a value
+and the mixed-width question could not be posed.  It has one now, `int nbits` plus
+`byte[] b`, immutable, passing `KAT/bitarray.json` **376/376**, and **all four ports
+conform**, so `BITARRAY.md` §8's pass 6 is available for the first time.  Seven things
+carry forward.  (1) **THE PORT WROTE DOWN REASON 3 ITSELF.**  `Herradura.java`'s header
+said it mirrored Python "rather than herradura.h's constant-time C implementation:
+java.math.BigInteger gives no constant-time guarantee regardless, **so there is nothing to
+gain from porting the C branchless tricks**" — a security property conceded *because of a
+dependency choice*, by the person who made it.  Over a `byte[]` there is something to
+gain, so the CT-marked operations now touch every octet and fold with masks; that buys a
+branch-free STRUCTURE, not a claim about what a JIT emits, and the header says so now.
+(2) **IT HAD NO `rnl_kdf_seed` AND THE COPIES NUMBERED SIX** — two in `Hfscx256`, two in
+`HerraduraNl`, one in `Hpake`, one in `KatVerify`, TODO #312's finding in a fourth port
+and the concrete reason "exactly one truncation" was unavailable here.  (3) **ITS CLI
+PASSED THE WIDTH BESIDE THE VALUE**: `loadKey` returned `BigInteger[] { value, nbits }`,
+read as `key[1]` at nineteen sites — #313's defect shape stated in a type.  (4) **THE
+CONVERSION'S OWN HAZARD IS THIS ITEM'S SUBJECT.**  Java's `equals(Object)` returns false
+for a different type rather than failing to compile, so a `BitArray` compared with a
+`BigInteger` is a round-trip check that always fails or a difference check that always
+passes; **four instances survived three successive audits** and **every one was caught by
+an existing oracle** — SelfTest, Demo, CodecTest and KatVerify each found one.  A
+conversion that changes a type cannot lean on the compiler where equality is untyped.
+(5) **THE CENSUS CAUGHT THE PASS THREE TIMES**: 32 manifest markers anchored on Java
+signatures (TODO #299's shape), eleven suite functions that stopped drawing because
+`BitArray.random` is a **seventh spelling** of "read the CSPRNG" (#306's blind spot, met
+again), and a REPLAY_COVERAGE transitivity claim the call-graph check refused because
+Java's `Stern.sternFKeygen` still draws its own seed.  (6) **ONE ROW WAS WAITING FOR IT** —
+`rand_bitarray`'s `"java": None,  # Java inlines rng.nextBytes; it has no such helper`,
+true when written and false the moment Java grew the type.  (7) **BEHAVIOUR IS PRESERVED
+AT 256 AND IT IS THE SAME OCTETS**, agreeing value for value with the other three probes:
+what #314 said was true "by four people's care" is now true by construction.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

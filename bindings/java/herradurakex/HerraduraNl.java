@@ -44,22 +44,20 @@ public final class HerraduraNl {
     // Bijective in A; exact inverse via M^{-1}.
     // -----------------------------------------------------------------
 
-    private static BigInteger delta(BigInteger b) {
+    private static BitArray delta(BitArray b) {
         // Matches "Herradura cryptographic suite.py"'s literal nl_fscx_v2 delta:
         // B * ((B+1) >> 1) mod 2^n — NOT (B*(B+1))>>1 (they differ when B is even).
-        BigInteger bb = b.and(MASK);
-        BigInteger t = bb.multiply(bb.add(BigInteger.ONE).shiftRight(1)).and(MASK);
-        return Herradura.rol(t, N / 4);
+        // (B+1) >> 1 is a NUMERIC shift, so the bit the add vacates is zero and
+        // the whole expression stays inside the width.
+        return b.mulMod2n(b.addUint(1).shr(1)).rotLeft(N / 4);
     }
 
-    public static BigInteger nlFscxV2(BigInteger a, BigInteger b) {
-        return Herradura.fscx(a, b).add(delta(b)).and(MASK);
+    public static BitArray nlFscxV2(BitArray a, BitArray b) {
+        return Herradura.fscx(a, b).addMod2n(delta(b));
     }
 
-    public static BigInteger nlFscxV2Inv(BigInteger y, BigInteger b) {
-        BigInteger d = delta(b);
-        BigInteger z = y.subtract(d).and(MASK);
-        return b.xor(mInv(z));
+    public static BitArray nlFscxV2Inv(BitArray y, BitArray b) {
+        return b.xor(mInv(y.subMod2n(delta(b))));
     }
 
     /** Round constant (TODO #245): the 1-based round index is XORed into the
@@ -68,21 +66,20 @@ public final class HerraduraNl {
      * SecurityProofs-7.md §11.25/§11.26 found against. An XOR constant leaves
      * xdp+ exactly invariant, so TODO #214's trail bounds carry over verbatim.
      * Wire-format breaking; see MIGRATING.md §9. */
-    public static BigInteger nlFscxRevolveV2(BigInteger a, BigInteger b, int steps) {
-        BigInteger d = delta(b);
-        BigInteger result = a.and(MASK);
+    public static BitArray nlFscxRevolveV2(BitArray a, BitArray b, int steps) {
+        BitArray d = delta(b);
+        BitArray result = a;
         for (int i = 1; i <= steps; i++) {
-            result = Herradura.fscx(result.xor(BigInteger.valueOf(i)), b).add(d).and(MASK);
+            result = Herradura.fscx(result.xorUint(i), b).addMod2n(d);
         }
         return result;
     }
 
-    public static BigInteger nlFscxRevolveV2Inv(BigInteger y, BigInteger b, int steps) {
-        BigInteger d = delta(b);
-        BigInteger result = y.and(MASK);
+    public static BitArray nlFscxRevolveV2Inv(BitArray y, BitArray b, int steps) {
+        BitArray d = delta(b);
+        BitArray result = y;
         for (int i = steps; i >= 1; i--) {
-            BigInteger z = result.subtract(d).and(MASK);
-            result = b.xor(mInv(z)).xor(BigInteger.valueOf(i));   // undo the round constant
+            result = b.xor(mInv(result.subMod2n(d))).xorUint(i);   // undo the round constant
         }
         return result;
     }
@@ -98,9 +95,11 @@ public final class HerraduraNl {
      * about tz/2 of 192 rounds with probability ~2^-tz, so a random key loses
      * at most 3 rounds with probability 1/16.  See SecurityProofs-7.md
      * §11.28.3-§11.28.4. */
-    public static boolean nlV2KeyIsValid(BigInteger b) {
-        BigInteger d = delta(b);
-        return !d.equals(BigInteger.ZERO) && !d.equals(BigInteger.ONE.shiftLeft(N - 1));
+    public static boolean nlV2KeyIsValid(BitArray b) {
+        BitArray d = delta(b);
+        // 2^(n-1): the one set bit is the top one, i.e. the high bit of octet 0.
+        BitArray msb = BitArray.zero(N).not().shr(N - 1).rotLeft(N - 1);
+        return !d.isZero() && !d.equals(msb);
     }
 
     // -----------------------------------------------------------------
@@ -209,8 +208,8 @@ public final class HerraduraNl {
     }
 
     /** Apply the chi layer to a 256-bit value, row by row. */
-    public static BigInteger nlChiV3(BigInteger x) {
-        BigInteger v = x.and(MASK);
+    public static BitArray nlChiV3(BitArray x) {
+        BigInteger v = x.toBigInteger();
         BigInteger out = BigInteger.ZERO;
         int off = 0;
         for (int L : v3Rows(N)) {
@@ -218,12 +217,12 @@ public final class HerraduraNl {
             out = out.or(BigInteger.valueOf(chiRow(row, L)).shiftLeft(off));
             off += L;
         }
-        return out;
+        return BitArray.fromBigInteger(out, x.size());
     }
 
     /** Invert the chi layer. */
-    public static BigInteger nlChiV3Inv(BigInteger y) {
-        BigInteger v = y.and(MASK);
+    public static BitArray nlChiV3Inv(BitArray y) {
+        BigInteger v = y.toBigInteger();
         BigInteger out = BigInteger.ZERO;
         int off = 0;
         for (int L : v3Rows(N)) {
@@ -231,39 +230,37 @@ public final class HerraduraNl {
             out = out.or(BigInteger.valueOf(chiInvFor(L)[row]).shiftLeft(off));
             off += L;
         }
-        return out;
+        return BitArray.fromBigInteger(out, y.size());
     }
 
     /** NL-FSCX v3: chi(nlFscxV2(a, b)).  Bijective in a for all b. */
-    public static BigInteger nlFscxV3(BigInteger a, BigInteger b) {
+    public static BitArray nlFscxV3(BitArray a, BitArray b) {
         return nlChiV3(nlFscxV2(a, b));
     }
 
     /** Exact inverse of one nlFscxV3 step. */
-    public static BigInteger nlFscxV3Inv(BigInteger y, BigInteger b) {
+    public static BitArray nlFscxV3Inv(BitArray y, BitArray b) {
         return nlFscxV2Inv(nlChiV3Inv(y), b);
     }
 
     /** Iterate nlFscxV3 {@code steps} times (b held constant).  The round
      * constant is v2's, unchanged: an XOR constant leaves xdp+ exactly
      * invariant (TODO #245), and chi does not interact with that argument. */
-    public static BigInteger nlFscxRevolveV3(BigInteger a, BigInteger b, int steps) {
-        BigInteger d = delta(b);
-        BigInteger result = a.and(MASK);
+    public static BitArray nlFscxRevolveV3(BitArray a, BitArray b, int steps) {
+        BitArray d = delta(b);
+        BitArray result = a;
         for (int i = 1; i <= steps; i++) {
-            result = nlChiV3(Herradura.fscx(result.xor(BigInteger.valueOf(i)), b)
-                             .add(d).and(MASK));
+            result = nlChiV3(Herradura.fscx(result.xorUint(i), b).addMod2n(d));
         }
         return result;
     }
 
     /** Invert nlFscxRevolveV3. */
-    public static BigInteger nlFscxRevolveV3Inv(BigInteger y, BigInteger b, int steps) {
-        BigInteger d = delta(b);
-        BigInteger result = y.and(MASK);
+    public static BitArray nlFscxRevolveV3Inv(BitArray y, BitArray b, int steps) {
+        BitArray d = delta(b);
+        BitArray result = y;
         for (int i = steps; i >= 1; i--) {
-            BigInteger z = nlChiV3Inv(result).subtract(d).and(MASK);
-            result = b.xor(mInv(z)).xor(BigInteger.valueOf(i));  // undo the round constant
+            result = b.xor(mInv(nlChiV3Inv(result).subMod2n(d))).xorUint(i);
         }
         return result;
     }
@@ -274,22 +271,22 @@ public final class HerraduraNl {
 
     private static synchronized int[] mInvRotationsTable() {
         if (mInvRotations == null) {
-            BigInteger v = Herradura.fscxRevolve(BigInteger.ONE, BigInteger.ZERO, N / 2 - 1);
-            int count = v.bitCount();
-            int[] table = new int[count];
+            BitArray v = Herradura.fscxRevolve(
+                BitArray.fromUint(1, N), BitArray.zero(N), N / 2 - 1);
+            int[] table = new int[v.popcount()];
             int idx = 0;
             for (int k = 0; k < N; k++) {
-                if (v.testBit(k)) table[idx++] = k;
+                if (v.bit(k) == 1) table[idx++] = k;
             }
             mInvRotations = table;
         }
         return mInvRotations;
     }
 
-    private static BigInteger mInv(BigInteger x) {
-        BigInteger result = BigInteger.ZERO;
+    private static BitArray mInv(BitArray x) {
+        BitArray result = BitArray.zero(x.size());
         for (int k : mInvRotationsTable()) {
-            result = result.xor(Herradura.rol(x, k));
+            result = result.xor(x.rotLeft(k));
         }
         return result;
     }
@@ -583,14 +580,14 @@ public final class HerraduraNl {
     // ks = nl_fscx_revolve_v1(seed, base, n/4); E = P ^ ks.
     // -----------------------------------------------------------------
 
-    public static BigInteger hskeNlA1Encrypt(BigInteger pt, BigInteger key, BigInteger nonce) {
-        BigInteger base = key.xor(nonce).and(MASK);
-        BigInteger seed = Herradura.rol(base, N / 8).xor(Hfscx256.RNL_KDF_DC_256).and(MASK);
-        BigInteger ks = Hfscx256.nlFscxRevolveV1(seed, base, N / 4);
-        return pt.xor(ks).and(MASK);
+    public static BitArray hskeNlA1Encrypt(BitArray pt, BitArray key, BitArray nonce) {
+        BitArray base = key.xor(nonce);
+        // The ONE truncation (BITARRAY.md §4.4), through the one named function.
+        BitArray seed = BitArray.rnlKdfSeed(base);
+        return pt.xor(Hfscx256.nlFscxRevolveV1(seed, base, base.size() / 4));
     }
 
-    public static BigInteger hskeNlA1Decrypt(BigInteger ct, BigInteger key, BigInteger nonce) {
+    public static BitArray hskeNlA1Decrypt(BitArray ct, BitArray key, BitArray nonce) {
         return hskeNlA1Encrypt(ct, key, nonce); // XOR keystream is its own inverse
     }
 
@@ -617,22 +614,21 @@ public final class HerraduraNl {
     private static final int AEAD_BLOCK = N / 8;   // 32
 
     /** (base, seed, mac_iv) for one (key, nonce) pair. */
-    static BigInteger[] hskeNlAeadStreams(BigInteger key, BigInteger nonce) {
-        BigInteger base = key.xor(nonce).and(MASK);
-        BigInteger seed = Herradura.rol(base, N / 8).xor(Hfscx256.RNL_KDF_DC_256).and(MASK);
-        BigInteger macKey = Hfscx256.nlFscxRevolveV1(Herradura.rol(seed, N / 4), base, N / 4);
-        BigInteger macIv = macKey.xor(Hfscx256.IV_CONST).and(MASK);
-        return new BigInteger[] { base, seed, macIv };
+    static BitArray[] hskeNlAeadStreams(BitArray key, BitArray nonce) {
+        BitArray base = key.xor(nonce);
+        BitArray seed = BitArray.rnlKdfSeed(base);      // the one truncation
+        BitArray macKey = Hfscx256.nlFscxRevolveV1(seed.rotLeft(N / 4), base, N / 4);
+        BitArray macIv = macKey.xor(Hfscx256.IV_CONST);
+        return new BitArray[] { base, seed, macIv };
     }
 
     /** XOR data with the A1 counter keystream, truncated to data.length. */
-    static byte[] hskeNlAeadXorKs(BigInteger seed, BigInteger base, byte[] data) {
+    static byte[] hskeNlAeadXorKs(BitArray seed, BitArray base, byte[] data) {
         byte[] out = new byte[data.length];
         int nBlocks = (data.length + AEAD_BLOCK - 1) / AEAD_BLOCK;
         for (int i = 0; i < nBlocks; i++) {
-            BigInteger ks = Hfscx256.nlFscxRevolveV1(
-                seed, base.xor(BigInteger.valueOf(i)).and(MASK), N / 4);
-            byte[] ksBytes = Hfscx256.toFixedBytes(ks, AEAD_BLOCK);
+            byte[] ksBytes = Hfscx256.nlFscxRevolveV1(
+                seed, base.xorUint(i), N / 4).toBytes();
             int off = i * AEAD_BLOCK;
             int len = Math.min(AEAD_BLOCK, data.length - off);
             for (int j = 0; j < len; j++) {
@@ -643,8 +639,8 @@ public final class HerraduraNl {
     }
 
     /** Auth tag over DS || nonce || len(ad) || ad || len(ct) || ct. */
-    static byte[] hskeNlAeadTag(BigInteger macIv, BigInteger nonce, byte[] ad, byte[] ct) {
-        byte[] nonceBytes = Hfscx256.toFixedBytes(nonce, AEAD_BLOCK);
+    static byte[] hskeNlAeadTag(BitArray macIv, BitArray nonce, byte[] ad, byte[] ct) {
+        byte[] nonceBytes = nonce.toBytes();
         byte[] buf = new byte[AEAD_DS.length + nonceBytes.length + 8 + ad.length + 8 + ct.length];
         int off = 0;
         System.arraycopy(AEAD_DS, 0, buf, off, AEAD_DS.length);       off += AEAD_DS.length;
@@ -665,36 +661,36 @@ public final class HerraduraNl {
     /** One AEAD ciphertext: the nonce it was produced under, the ciphertext
      *  (exactly plaintext-length) and the 32-byte tag. */
     public static final class AeadCt {
-        public final BigInteger nonce;
+        public final BitArray nonce;
         public final byte[] ct;
         public final byte[] tag;
-        AeadCt(BigInteger nonce, byte[] ct, byte[] tag) {
+        AeadCt(BitArray nonce, byte[] ct, byte[] tag) {
             this.nonce = nonce; this.ct = ct; this.tag = tag;
         }
     }
 
     /** AEAD-encrypt under a caller-supplied nonce.  Never reuse (key, nonce). */
-    public static AeadCt hskeNlAeadEncrypt(BigInteger key, BigInteger nonce,
+    public static AeadCt hskeNlAeadEncrypt(BitArray key, BitArray nonce,
                                            byte[] ad, byte[] pt) {
-        BigInteger[] st = hskeNlAeadStreams(key.and(MASK), nonce.and(MASK));
+        BitArray[] st = hskeNlAeadStreams(key, nonce);
         byte[] ct = hskeNlAeadXorKs(st[1], st[0], pt);
-        byte[] tag = hskeNlAeadTag(st[2], nonce.and(MASK), ad, ct);
-        return new AeadCt(nonce.and(MASK), ct, tag);
+        byte[] tag = hskeNlAeadTag(st[2], nonce, ad, ct);
+        return new AeadCt(nonce, ct, tag);
     }
 
     /** AEAD-encrypt under a fresh random nonce. */
-    public static AeadCt hskeNlAeadEncrypt(BigInteger key, byte[] ad, byte[] pt,
+    public static AeadCt hskeNlAeadEncrypt(BitArray key, byte[] ad, byte[] pt,
                                            SecureRandom rng) {
-        return hskeNlAeadEncrypt(key, new BigInteger(N, rng).and(MASK), ad, pt);
+        return hskeNlAeadEncrypt(key, BitArray.random(N, rng), ad, pt);
     }
 
     /** Verify-then-decrypt.  Returns null if the tag does not authenticate
      *  (ct, ad) under (key, nonce) -- never partial or unverified plaintext.
      *  The comparison is constant-time. */
-    public static byte[] hskeNlAeadDecrypt(BigInteger key, BigInteger nonce,
+    public static byte[] hskeNlAeadDecrypt(BitArray key, BitArray nonce,
                                            byte[] ad, byte[] ct, byte[] tag) {
-        BigInteger[] st = hskeNlAeadStreams(key.and(MASK), nonce.and(MASK));
-        byte[] expected = hskeNlAeadTag(st[2], nonce.and(MASK), ad, ct);
+        BitArray[] st = hskeNlAeadStreams(key, nonce);
+        byte[] expected = hskeNlAeadTag(st[2], nonce, ad, ct);
         if (!java.security.MessageDigest.isEqual(expected, tag)) {
             return null;
         }
@@ -705,11 +701,11 @@ public final class HerraduraNl {
     // HSKE-NL-A2: revolve-mode, bijective NL-FSCX v2.
     // -----------------------------------------------------------------
 
-    public static BigInteger hskeNlA2Encrypt(BigInteger pt, BigInteger key) {
+    public static BitArray hskeNlA2Encrypt(BitArray pt, BitArray key) {
         return nlFscxRevolveV2(pt, key, 3 * N / 4);
     }
 
-    public static BigInteger hskeNlA2Decrypt(BigInteger ct, BigInteger key) {
+    public static BitArray hskeNlA2Decrypt(BitArray ct, BitArray key) {
         return nlFscxRevolveV2Inv(ct, key, 3 * N / 4);
     }
 
@@ -718,23 +714,26 @@ public final class HerraduraNl {
     // classical HPKS, only e = nl_fscx_revolve_v1(R, msg, n/4).
     // -----------------------------------------------------------------
 
-    public static Herradura.Signature hpksNlSign(BigInteger msg, BigInteger priv, BigInteger k) {
-        BigInteger r = Herradura.gfPow(Herradura.GF_GEN, k);
-        BigInteger e = Hfscx256.nlFscxRevolveV1(r, msg, N / 4);
-        BigInteger s = k.subtract(priv.multiply(e)).mod(Herradura.GROUP_ORDER);
-        return new Herradura.Signature(r, s);
+    public static Herradura.Signature hpksNlSign(BitArray msg, BitArray priv, BitArray k) {
+        BitArray r = Herradura.gfPow(Herradura.GF_GEN, k);
+        BitArray e = Hfscx256.nlFscxRevolveV1(r, msg, N / 4);
+        // The Schnorr scalar is an integer by the protocol's own definition and
+        // crosses at the named boundary (BitArray.toBigInteger/fromBigInteger).
+        BigInteger s = k.toBigInteger()
+                        .subtract(priv.toBigInteger().multiply(e.toBigInteger()))
+                        .mod(Herradura.GROUP_ORDER);
+        return new Herradura.Signature(r, BitArray.fromBigInteger(s, N));
     }
 
-    public static Herradura.Signature hpksNlSign(BigInteger msg, BigInteger priv, SecureRandom rng) {
-        BigInteger k = new BigInteger(N, rng).and(MASK);
-        return hpksNlSign(msg, priv, k);
+    public static Herradura.Signature hpksNlSign(BitArray msg, BitArray priv, SecureRandom rng) {
+        return hpksNlSign(msg, priv, BitArray.random(N, rng));
     }
 
-    public static boolean hpksNlVerify(BigInteger msg, BigInteger pub, BigInteger r, BigInteger s) {
+    public static boolean hpksNlVerify(BitArray msg, BitArray pub, BitArray r, BitArray s) {
         if (!Herradura.gfPubIsValid(pub)) return false;
-        BigInteger e = Hfscx256.nlFscxRevolveV1(r, msg, N / 4);
-        BigInteger lhs = Herradura.gfMul(Herradura.gfPow(Herradura.GF_GEN, s), Herradura.gfPow(pub, e));
-        return lhs.equals(r.and(MASK));
+        BitArray e = Hfscx256.nlFscxRevolveV1(r, msg, N / 4);
+        BitArray lhs = Herradura.gfMul(Herradura.gfPow(Herradura.GF_GEN, s), Herradura.gfPow(pub, e));
+        return lhs.equals(r);
     }
 
     // -----------------------------------------------------------------
@@ -742,34 +741,34 @@ public final class HerraduraNl {
     // classical HPKE, but the FSCX-revolve step is replaced by NL-FSCX v2.
     // -----------------------------------------------------------------
 
-    public static Herradura.Ciphertext hpkeNlEncrypt(BigInteger pt, BigInteger pub, BigInteger r) {
+    public static Herradura.Ciphertext hpkeNlEncrypt(BitArray pt, BitArray pub, BitArray r) {
         if (!Herradura.gfPubIsValid(pub)) return null;
-        BigInteger bigR = Herradura.gfPow(Herradura.GF_GEN, r);
-        BigInteger encKey = Herradura.gfPow(pub, r);
-        BigInteger ct = nlFscxRevolveV2(pt, encKey, N / 4);
+        BitArray bigR = Herradura.gfPow(Herradura.GF_GEN, r);
+        BitArray encKey = Herradura.gfPow(pub, r);
+        BitArray ct = nlFscxRevolveV2(pt, encKey, N / 4);
         return new Herradura.Ciphertext(bigR, ct);
     }
 
     /** Samples ephemeral scalars until the derived encryption key is a valid
      * (non-affine-degenerate) NL-FSCX v2 key, matching the CLI's resampling
      * loop (TODO #168) — returns null after 64 failed attempts. */
-    public static Herradura.Ciphertext hpkeNlEncrypt(BigInteger pt, BigInteger pub, SecureRandom rng) {
+    public static Herradura.Ciphertext hpkeNlEncrypt(BitArray pt, BitArray pub, SecureRandom rng) {
         if (!Herradura.gfPubIsValid(pub)) return null;
         for (int i = 0; i < 64; i++) {
-            BigInteger r = new BigInteger(N, rng).and(MASK);
-            BigInteger bigR = Herradura.gfPow(Herradura.GF_GEN, r);
-            BigInteger encKey = Herradura.gfPow(pub, r);
+            BitArray r = BitArray.random(N, rng);
+            BitArray bigR = Herradura.gfPow(Herradura.GF_GEN, r);
+            BitArray encKey = Herradura.gfPow(pub, r);
             if (nlV2KeyIsValid(encKey)) {
-                BigInteger ct = nlFscxRevolveV2(pt, encKey, N / 4);
+                BitArray ct = nlFscxRevolveV2(pt, encKey, N / 4);
                 return new Herradura.Ciphertext(bigR, ct);
             }
         }
         return null;
     }
 
-    public static BigInteger hpkeNlDecrypt(BigInteger ct, BigInteger r, BigInteger priv) {
+    public static BitArray hpkeNlDecrypt(BitArray ct, BitArray r, BitArray priv) {
         if (!Herradura.gfPubIsValid(r)) return null;
-        BigInteger decKey = Herradura.gfPow(r, priv);
+        BitArray decKey = Herradura.gfPow(r, priv);
         if (!nlV2KeyIsValid(decKey)) return null;
         return nlFscxRevolveV2Inv(ct, decKey, N / 4);
     }
@@ -782,33 +781,32 @@ public final class HerraduraNl {
     // (SecurityProofs-8.md 11.34.4).
     // -----------------------------------------------------------------
 
-    public static BigInteger hskeNlA3Encrypt(BigInteger pt, BigInteger key) {
+    public static BitArray hskeNlA3Encrypt(BitArray pt, BitArray key) {
         return nlFscxRevolveV3(pt, key, R3_VALUE);
     }
 
-    public static BigInteger hskeNlA3Decrypt(BigInteger ct, BigInteger key) {
+    public static BitArray hskeNlA3Decrypt(BitArray ct, BitArray key) {
         return nlFscxRevolveV3Inv(ct, key, R3_VALUE);
     }
 
     /** No resampling loop, unlike hpkeNlEncrypt: v3 has no affine-degenerate
      * key class to sample past, so the first draw is always usable.  Returns
      * null only if the recipient public key itself is degenerate. */
-    public static Herradura.Ciphertext hpkeNl3Encrypt(BigInteger pt, BigInteger pub,
+    public static Herradura.Ciphertext hpkeNl3Encrypt(BitArray pt, BitArray pub,
                                                       SecureRandom rng) {
         if (!Herradura.gfPubIsValid(pub)) return null;
-        BigInteger r = new BigInteger(N, rng).and(MASK);
-        return hpkeNl3Encrypt(pt, pub, r);
+        return hpkeNl3Encrypt(pt, pub, BitArray.random(N, rng));
     }
 
-    public static Herradura.Ciphertext hpkeNl3Encrypt(BigInteger pt, BigInteger pub,
-                                                      BigInteger r) {
+    public static Herradura.Ciphertext hpkeNl3Encrypt(BitArray pt, BitArray pub,
+                                                      BitArray r) {
         if (!Herradura.gfPubIsValid(pub)) return null;
-        BigInteger bigR = Herradura.gfPow(Herradura.GF_GEN, r);
-        BigInteger encKey = Herradura.gfPow(pub, r);
+        BitArray bigR = Herradura.gfPow(Herradura.GF_GEN, r);
+        BitArray encKey = Herradura.gfPow(pub, r);
         return new Herradura.Ciphertext(bigR, nlFscxRevolveV3(pt, encKey, R3_VALUE));
     }
 
-    public static BigInteger hpkeNl3Decrypt(BigInteger ct, BigInteger r, BigInteger priv) {
+    public static BitArray hpkeNl3Decrypt(BitArray ct, BitArray r, BitArray priv) {
         if (!Herradura.gfPubIsValid(r)) return null;
         return nlFscxRevolveV3Inv(ct, Herradura.gfPow(r, priv), R3_VALUE);
     }

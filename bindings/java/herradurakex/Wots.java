@@ -36,7 +36,8 @@ public final class Wots {
 
     /** Single WOTS-F hash chain step: h(x) = nl_fscx_revolve_v1(ROL(x,n/8), x, n/4). */
     static BigInteger h(BigInteger x) {
-        return Hfscx256.nlFscxRevolveV1(Herradura.rol(x, N / 8), x, N / 4);
+        BitArray b = BitArray.fromBigInteger(x, N);
+        return Hfscx256.nlFscxRevolveV1(b.rotLeft(N / 8), b, N / 4).toBigInteger();
     }
 
     static BigInteger chain(BigInteger x, int steps) {

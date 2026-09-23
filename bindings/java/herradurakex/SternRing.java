@@ -166,13 +166,13 @@ public final class SternRing {
      * {@code ch_st = nl_fscx_v1(ch_st, r)} from the Fiat-Shamir seed —
      * matches Python's {@code hpks_stern_ring_sign}/{@code _verify}
      * shared derivation loop. */
-    private static int[] jointChallenges(BigInteger seed, int rounds) {
-        BigInteger chSt = seed;
+    private static int[] jointChallenges(BitArray seed, int rounds) {
+        BitArray chSt = seed;
         BigInteger word32 = BigInteger.valueOf(0xFFFFFFFFL);
         int[] joint = new int[rounds];
         for (int r = 0; r < rounds; r++) {
-            chSt = Hfscx256.nlFscxV1(chSt, BigInteger.valueOf(r));
-            joint[r] = chSt.and(word32).mod(BigInteger.valueOf(3)).intValueExact();
+            chSt = Hfscx256.nlFscxV1(chSt, BitArray.fromUint(r, chSt.size()));
+            joint[r] = chSt.toBigInteger().and(word32).mod(BigInteger.valueOf(3)).intValueExact();
         }
         return joint;
     }
@@ -235,7 +235,7 @@ public final class SternRing {
         BigInteger seed = fiatShamirSeed(msg, c0, c1, c2);
 
         // Step 4 — assign the real signer's per-round challenge via challenge splitting.
-        int[] joint = jointChallenges(seed, rounds);
+        int[] joint = jointChallenges(BitArray.fromBigInteger(seed, Herradura.N), rounds);
         for (int r = 0; r < rounds; r++) {
             int simSum = 0;
             for (int i = 0; i < k; i++) if (i != j) simSum += challenges[i][r];
@@ -270,7 +270,7 @@ public final class SternRing {
         if (k != sig.ringSize()) return false;
 
         BigInteger seed = fiatShamirSeed(msg, sig.c0, sig.c1, sig.c2);
-        int[] joint = jointChallenges(seed, rounds);
+        int[] joint = jointChallenges(BitArray.fromBigInteger(seed, Herradura.N), rounds);
         for (int r = 0; r < rounds; r++) {
             int sum = 0;
             for (int i = 0; i < k; i++) sum += sig.challenges[i][r];

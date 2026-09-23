@@ -92,23 +92,25 @@ public final class Stern {
      * (0=challenge/default, 1=c0, 2=c1, 3=c2, 4=KEM-key), finalized with
      * HFSCX-256-DM. Matches Python's {@code _stern_hash}. */
     static BigInteger sternHash(int ds, BigInteger... items) {
-        BigInteger h = BigInteger.valueOf(ds).and(MASK);
+        // Stern's syndromes and error vectors are INTEGER objects by the
+        // protocol's own definition — as they are in Go (*big.Int) and Python
+        // (int) — so this layer keeps its BigInteger surface and crosses at the
+        // named boundary for the bit-string work (TODO #314 pass 5).
+        BitArray h = BitArray.fromUint(ds, N);
         for (BigInteger item : items) {
-            BigInteger v = item.and(MASK);
-            h = Hfscx256.nlFscxRevolveV1(h.xor(v), Herradura.rol(v, N / 8), N / 4);
+            BitArray v = BitArray.fromBigInteger(item, N);
+            h = Hfscx256.nlFscxRevolveV1(h.xor(v), v.rotLeft(N / 8), N / 4);
         }
-        byte[] digest = Hfscx256.hash(toFixedBytes(h, N / 8));
-        return new BigInteger(1, digest); // n == 256, so no truncating shift needed
+        return new BigInteger(1, Hfscx256.hash(h.toBytes()));
     }
 
     /** Row `row` of the public parity-check matrix H, via NL-FSCX v1 PRF
      * finalized with HFSCX-256. Matches Python's {@code _stern_matrix_row}. */
     static BigInteger sternMatrixRow(BigInteger seedInt, int row) {
-        BigInteger seed = seedInt.and(MASK);
-        BigInteger a0 = Herradura.rol(seed.xor(BigInteger.valueOf(row)).and(MASK), N / 8);
-        BigInteger raw = Hfscx256.nlFscxRevolveV1(a0, seed, N / 4);
-        byte[] digest = Hfscx256.hash(toFixedBytes(raw, N / 8));
-        return new BigInteger(1, digest);
+        BitArray seed = BitArray.fromBigInteger(seedInt, N);
+        BitArray a0 = seed.xorUint(row).rotLeft(N / 8);
+        BitArray raw = Hfscx256.nlFscxRevolveV1(a0, seed, N / 4);
+        return new BigInteger(1, Hfscx256.hash(raw.toBytes()));
     }
 
     static BigInteger[] sternBuildH(BigInteger seedInt, int nRows) {
@@ -135,10 +137,10 @@ public final class Stern {
      * 32-bit big-endian draw per swap position (Lemire multiply-shift),
      * matching Python's {@code _stern_gen_perm}. */
     static int[] sternGenPerm(BigInteger piSeed) {
-        BigInteger key = Herradura.rol(piSeed.and(MASK), N / 8);
+        BitArray key = BitArray.fromBigInteger(piSeed, N).rotLeft(N / 8);
         int[] perm = new int[N];
         for (int i = 0; i < N; i++) perm[i] = i;
-        BigInteger st = piSeed.and(MASK);
+        BitArray st = BitArray.fromBigInteger(piSeed, N);
         int nb = N / 8;
         byte[] buf = new byte[nb];
         int cursor = nb; // force state advance on first draw
@@ -146,7 +148,7 @@ public final class Stern {
             int range = i + 1;
             if (cursor + 4 > nb) {
                 st = Hfscx256.nlFscxV1(st, key);
-                buf = toFixedBytes(st, nb);
+                buf = st.toBytes();
                 cursor = 0;
             }
             long v = ((long) (buf[cursor] & 0xff) << 24) | ((buf[cursor + 1] & 0xff) << 16)
@@ -273,12 +275,12 @@ public final class Stern {
             flat[2 + 3 * i] = c1[i];
             flat[3 + 3 * i] = c2[i];
         }
-        BigInteger chSt = sternHash(0, flat);
+        BitArray chSt = BitArray.fromBigInteger(sternHash(0, flat), N);
         int[] challenges = new int[rounds];
         BigInteger word32 = BigInteger.valueOf(0xFFFFFFFFL);
         for (int i = 0; i < rounds; i++) {
-            chSt = Hfscx256.nlFscxV1(chSt, BigInteger.valueOf(i));
-            challenges[i] = chSt.and(word32).mod(BigInteger.valueOf(3)).intValueExact();
+            chSt = Hfscx256.nlFscxV1(chSt, BitArray.fromUint(i, N));
+            challenges[i] = chSt.toBigInteger().and(word32).mod(BigInteger.valueOf(3)).intValueExact();
         }
         return challenges;
     }
@@ -421,14 +423,10 @@ public final class Stern {
         QcMdpcPrf(BigInteger seedInt) { this.seed = seedInt.and(MASK); }
 
         private static byte[] refill(BigInteger seedInt, long ctr) {
-            BigInteger x = seedInt.xor(BigInteger.valueOf(ctr)).and(MASK);
-            BigInteger rolx = Herradura.rol(x, N / 8);
-            BigInteger block = Hfscx256.nlFscxRevolveV1(rolx, x, N / 4);
-            byte[] out = new byte[N / 8];
-            byte[] be = block.toByteArray();           // may carry a sign byte
-            int copy = Math.min(be.length, out.length);
-            System.arraycopy(be, be.length - copy, out, out.length - copy, copy);
-            return out;
+            BitArray x = BitArray.fromBigInteger(seedInt, N).xorUint(ctr);
+            // The sign-byte/right-align dance this used to need is gone:
+            // BitArray.toBytes() is a copy of the stored octets (BITARRAY.md §1.1).
+            return Hfscx256.nlFscxRevolveV1(x.rotLeft(N / 8), x, N / 4).toBytes();
         }
 
         /** The next nbytes of keystream, big-endian.  A block that cannot serve

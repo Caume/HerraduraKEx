@@ -17,8 +17,8 @@
 - SecurityProofs.md (+ -1 through -7.md) — formal security analysis
 - BITARRAY.md — the NORMATIVE BitArray specification (TODO #314).  One variable-width
   bit-string type, big-endian octets with the width carried WITH the value, replacing the
-  embedded bignum types.  C conforms since v9.1.0, Go since v9.2.0 and Python since
-  v9.3.0; Java does not yet.  Read
+  embedded bignum types.  ALL FOUR PORTS CONFORM — C since v9.1.0, Go v9.2.0, Python
+  v9.3.0, Java v9.4.0.  Read
   §3 before touching width-taking code: a binary operation REQUIRES equal widths and a
   mismatch is E_MIXED_WIDTH, never a coercion
 - docs/examples/{python,c,go}/hello_herradura.* — minimal integration samples

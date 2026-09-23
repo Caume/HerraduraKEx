@@ -32,27 +32,27 @@ public final class Ratchet {
     /** "NL-FSCX-RATCHET-V1\0NL-FSCX-RATCHET-V", truncated to N/8 bytes —
      * byte-for-byte the same domain constant as "Herradura cryptographic
      * suite.{c,go,py}"'s RATCHET_DOMAIN / _RATCHET_DOMAIN / ratchetDomain. */
-    private static final BigInteger RATCHET_DOMAIN =
-        new BigInteger("4E4C2D465343582D524154434845542D5631004E4C2D465343582D5241544348", 16);
+    private static final BitArray RATCHET_DOMAIN = BitArray.fromHex(
+        "4e4c2d465343582d524154434845542d5631004e4c2d465343582d5241544348", Herradura.N);
 
     /** Derives the initial ratchet state from a seed via
      * {@code hfscx_256(seed || 0x02)}. */
-    public static BigInteger init(byte[] seed) {
+    public static BitArray init(byte[] seed) {
         byte[] buf = java.util.Arrays.copyOf(seed, seed.length + 1);
         buf[seed.length] = 0x02;
-        return new BigInteger(1, Hfscx256.hash(buf, null)).and(MASK);
+        return BitArray.fromBytes(Hfscx256.hash(buf, null), Herradura.N);
     }
 
     /** One step. Returns {@code {nextState, msgKey}} — index 1 in the
      * returned array is the raw 32 message-key bytes, index 0 is the
-     * BigInteger successor state. Caller MUST discard/drop the reference to
+     * BitArray successor state. Caller MUST discard/drop the reference to
      * the previous state immediately. */
-    public static Object[] advance(BigInteger state) {
-        byte[] stateBytes = Hfscx256.toFixedBytes(state.and(MASK), N / 8);
+    public static Object[] advance(BitArray state) {
+        byte[] stateBytes = state.toBytes();
         byte[] buf = java.util.Arrays.copyOf(stateBytes, stateBytes.length + 1);
         buf[stateBytes.length] = 0x01;
         byte[] msgKey = Hfscx256.hash(buf, null);
-        BigInteger nextState = Hfscx256.nlFscxRevolveV1(state, RATCHET_DOMAIN, 1);
+        BitArray nextState = Hfscx256.nlFscxRevolveV1(state, RATCHET_DOMAIN, 1);
         return new Object[] { nextState, msgKey };
     }
 }

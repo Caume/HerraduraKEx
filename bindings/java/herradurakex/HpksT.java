@@ -30,7 +30,12 @@ public final class HpksT {
     private static final int N = Herradura.N;               // 256
     private static final int I_STEPS = Herradura.I_STEPS;    // 64
     private static final BigInteger ORD = Herradura.GROUP_ORDER; // 2^256 - 1
-    private static final BigInteger GEN = Herradura.GF_GEN;
+    private static final BigInteger GEN = Herradura.GF_GEN_INT;
+
+    /** HPKS-T's aggregate keys and scalars are integers by the protocol's own
+     * definition, so this layer keeps BigInteger and crosses at the named
+     * boundary for the GF and NL work (TODO #314 pass 5). */
+    private static BitArray ba(BigInteger v) { return BitArray.fromBigInteger(v, Herradura.N); }
 
     /** mu_j = HFSCX-256(L || C_j_bytes) mod ord, remapped to 1 if that is 0
      * (an unbiasable-by-attacker-choice-of-key degenerate coefficient). */
@@ -77,7 +82,7 @@ public final class HpksT {
         for (int j = 0; j < pubkeys.size(); j++) {
             BigInteger pk = pubkeys.get(j);
             coeffs[j] = muCoeff(lBytes, pk);
-            agg = Herradura.gfMul(agg, Herradura.gfPow(pk, coeffs[j]));
+            agg = Herradura.gfMul(ba(agg), Herradura.gfPow(ba(pk), ba(coeffs[j]))).toBigInteger();
         }
         return new Aggregate(agg, coeffs);
     }
@@ -107,11 +112,11 @@ public final class HpksT {
         BigInteger rVal = BigInteger.ONE;
         for (int j = 0; j < n; j++) {
             nonces[j] = new BigInteger(N, rng).and(Herradura.MASK);
-            BigInteger rj = Herradura.gfPow(GEN, nonces[j]);
-            rVal = Herradura.gfMul(rVal, rj);
+            BigInteger rj = Herradura.gfPow(ba(GEN), ba(nonces[j])).toBigInteger();
+            rVal = Herradura.gfMul(ba(rVal), ba(rj)).toBigInteger();
         }
 
-        BigInteger e = Hfscx256.nlFscxRevolveV1(rVal, msg, I_STEPS);
+        BigInteger e = Hfscx256.nlFscxRevolveV1(ba(rVal), ba(msg), I_STEPS).toBigInteger();
 
         BigInteger sAcc = BigInteger.ZERO;
         for (int j = 0; j < n; j++) {
@@ -126,8 +131,9 @@ public final class HpksT {
     /** Verify: g^s * C_agg^e == R, e = nl_fscx_revolve_v1(R, msg, n/4) —
      * structurally identical to single-party HPKS-NL verify. */
     public static boolean verify(BigInteger cAgg, BigInteger r, BigInteger s, BigInteger msg) {
-        BigInteger e = Hfscx256.nlFscxRevolveV1(r, msg, I_STEPS);
-        BigInteger lhs = Herradura.gfMul(Herradura.gfPow(GEN, s), Herradura.gfPow(cAgg, e));
+        BigInteger e = Hfscx256.nlFscxRevolveV1(ba(r), ba(msg), I_STEPS).toBigInteger();
+        BigInteger lhs = Herradura.gfMul(Herradura.gfPow(ba(GEN), ba(s)),
+                                         Herradura.gfPow(ba(cAgg), ba(e))).toBigInteger();
         return lhs.equals(r);
     }
 }

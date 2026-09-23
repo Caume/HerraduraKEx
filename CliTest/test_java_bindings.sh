@@ -14,6 +14,15 @@ fi
 echo "=== bindings/java/build.sh ==="
 bash bindings/java/build.sh
 
+# TODO #314 pass 5: the Java BitArray conformance consumer.  It lives here
+# rather than in test_kat_vectors.sh because this is where the Java toolchain is
+# already built and on the path; the other three consumers run there.  ALL FOUR
+# ports are now held to KAT/bitarray.json, which is what BITARRAY.md §8's pass 6
+# was waiting for -- "the four agree" stops being a property of four people's
+# care at one width and becomes a property of the code.
+echo "=== herradurakex.VerifyBitArray (Java conformance, TODO #314 pass 5) ==="
+java -cp bindings/java herradurakex.VerifyBitArray KAT/bitarray.json
+
 echo "=== herradurakex.KatVerify ==="
 java -cp bindings/java herradurakex.KatVerify KAT/classical_quartet.json
 

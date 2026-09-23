@@ -74,20 +74,21 @@ public final class CodecTest {
 
         // Key round-trip (priv + derived pub).
         {
-            BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger pub = Herradura.hkexGfPubkey(priv);
-            String pem = Codec.encodePrivKey(Codec.PEM_HKEX_GF_PRIV, priv, pub);
+            BitArray priv = BitArray.random(Herradura.N, rng);
+            BitArray pub = Herradura.hkexGfPubkey(priv);
+            String pem = Codec.encodePrivKey(Codec.PEM_HKEX_GF_PRIV, priv.toBigInteger(), pub.toBigInteger());
             Codec.PrivKey decoded = Codec.decodePrivKey(pem, Codec.PEM_HKEX_GF_PRIV);
-            if (!decoded.priv.equals(priv) || !decoded.pub.equals(pub) || decoded.nbits != Herradura.N) {
+            if (!decoded.priv.equals(priv.toBigInteger()) || !decoded.pub.equals(pub.toBigInteger())
+                    || decoded.nbits != Herradura.N) {
                 System.out.println("FAIL privkey round-trip");
                 fails++;
             } else {
                 System.out.println("PASS privkey round-trip");
             }
 
-            String pubPem = Codec.encodePubKey(Codec.PEM_HKEX_GF_PUB, pub);
+            String pubPem = Codec.encodePubKey(Codec.PEM_HKEX_GF_PUB, pub.toBigInteger());
             Codec.PubKey decodedPub = Codec.decodePubKey(pubPem, Codec.PEM_HKEX_GF_PUB);
-            if (!decodedPub.pub.equals(pub) || decodedPub.nbits != Herradura.N) {
+            if (!decodedPub.pub.equals(pub.toBigInteger()) || decodedPub.nbits != Herradura.N) {
                 System.out.println("FAIL pubkey round-trip");
                 fails++;
             } else {
@@ -97,13 +98,14 @@ public final class CodecTest {
 
         // HPKE ciphertext round-trip.
         {
-            BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger pub = Herradura.hkexGfPubkey(priv);
-            BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            BitArray priv = BitArray.random(Herradura.N, rng);
+            BitArray pub = Herradura.hkexGfPubkey(priv);
+            BitArray pt = BitArray.random(Herradura.N, rng);
             Herradura.Ciphertext enc = Herradura.hpkeEncrypt(pt, pub, rng);
-            String pem = Codec.encodeAsymCt(enc.r, enc.ct, Herradura.N);
+            String pem = Codec.encodeAsymCt(enc.r.toBigInteger(), enc.ct.toBigInteger(), Herradura.N);
             Codec.AsymCt decoded = Codec.decodeAsymCt(pem);
-            BigInteger recovered = Herradura.hpkeDecrypt(decoded.e, decoded.r, priv);
+            BitArray recovered = Herradura.hpkeDecrypt(BitArray.fromBigInteger(decoded.e, Herradura.N),
+                                                       BitArray.fromBigInteger(decoded.r, Herradura.N), priv);
             if (!recovered.equals(pt)) {
                 System.out.println("FAIL ciphertext round-trip");
                 fails++;
@@ -114,13 +116,15 @@ public final class CodecTest {
 
         // HPKS signature round-trip.
         {
-            BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger pub = Herradura.hkexGfPubkey(priv);
-            BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            BitArray priv = BitArray.random(Herradura.N, rng);
+            BitArray pub = Herradura.hkexGfPubkey(priv);
+            BitArray msg = BitArray.random(Herradura.N, rng);
             Herradura.Signature sig = Herradura.hpksSign(msg, priv, rng);
-            String pem = Codec.encodeSchnorrSig(sig.s, sig.r, Herradura.fscxRevolve(sig.r, msg, Herradura.I_STEPS), Herradura.N);
+            String pem = Codec.encodeSchnorrSig(sig.s.toBigInteger(), sig.r.toBigInteger(),
+                    Herradura.fscxRevolve(sig.r, msg, Herradura.I_STEPS).toBigInteger(), Herradura.N);
             Codec.SchnorrSig decoded = Codec.decodeSchnorrSig(pem);
-            boolean ok = Herradura.hpksVerify(msg, pub, decoded.r, decoded.s);
+            boolean ok = Herradura.hpksVerify(msg, pub, BitArray.fromBigInteger(decoded.r, Herradura.N),
+                                              BitArray.fromBigInteger(decoded.s, Herradura.N));
             if (!ok) {
                 System.out.println("FAIL signature round-trip (verify failed)");
                 fails++;

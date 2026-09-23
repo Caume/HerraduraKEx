@@ -543,5 +543,123 @@ carry forward.
    controls were verified to fire: flipping Go's truncation to the low octets fails 14 of
    the 376, and deleting the mixed-width rule takes the consumer red.
 
+**FOURTH PASS DONE IN v9.3.0 — Python, the other silent answer, converted and IN THE
+GATING SET.**  `Herradura cryptographic suite.py`'s `BitArray` now stores `_nbits` plus
+`_b: bytes` — big-endian octets, canonical — implements the whole of `BITARRAY.md` §4, and
+passes `KAT/bitarray.json` **376/376** through `KAT/verify_bitarray_py.py`.  Seven things
+carry forward.
+
+1. **THE REPRESENTATION WAS CHOSEN BY MEASUREMENT, AND ONE CANDIDATE WAS 21x SLOWER.**
+   BITARRAY.md §1 leaves the limb implementation-private, so the question was real rather
+   than stylistic: storing octets and rotating them with a byte loop costs **7.60 µs** at
+   n = 256 against **0.35 µs** for the int form, in a suite that already runs half an hour.
+   What makes octet STORAGE free is where the conversion sits — `fscx_revolve(256, 64)`
+   measures **100.9 µs either way** when the composite converts ONCE at its boundary, and
+   **+32%** when it converts per step.  So the port stores octets (§1.1's reason) and
+   computes in the interpreter's int (§1's explicit permission), with `fscx` and the
+   revolve loops converting once.  **A specification that leaves a choice open is asking
+   for a measurement, not a preference.**
+2. **THE PUBLIC SURFACE DID NOT MOVE, AND THAT IS THE WHOLE DIFFERENCE IN COST FROM PASS
+   3.**  `.uint`, `.bytes`, `.hex`, `.copy()`, `.rotated()`, `^`, `==` and
+   `BitArray(size, value)` keep their meaning, so the blast radius was **89 private
+   reach-ins** in two files rather than the ~380 `.uint` sites a raw grep suggests — and
+   the twenty `SecurityProofsCode/` scripts that load the suite through `importlib`,
+   sixteen of which touch `BitArray` and most of which GATE a finding, needed **no edit at
+   all**.  Go's `Val` was exported and its six consumers all moved; Python's equivalents
+   were private by name.  **What a representation change costs is decided by what the old
+   representation published.**
+3. **`uint` IS THE BOUNDARY AND `to_uint` IS THE OPERATION, spelled differently on
+   purpose.**  `to_uint` carries §4.1's `n <= 64` bound — the bound pass 2 found precisely
+   because THIS port satisfies the unbounded version trivially, its integers being
+   arbitrary-precision, which is the dependency the item exists to remove.  `uint` has no
+   bound because Python's Z_q coefficients, QC-MDPC polynomials, syndromes, OPRF and
+   threshold scalars and DER INTEGERs are integers by their own definitions, exactly as
+   they are in Go where the crossing is `NewBitArray` / `BigInt`.
+4. **TODO #313's SITE CLOSES FOR THE THIRD PORT, and this one was already CORRECT.**
+   `rnl_kdf_seed` took the HIGH bits — it is the port §4.4 cites as already saying so — but
+   by the open-coded `_RNL_KDF_DC_256 >> (256 - n)` written at the call site.  It now goes
+   through the one named `truncate`.  Nothing moves at any width; what changes is that the
+   rule lives in the TYPE instead of an arithmetic idiom each port re-derives.
+5. **THE TEST HARNESS HAS ITS OWN BitArray AND KEEPS IT.**  `CryptosuiteTests/
+   Herradura_tests.py` carries a self-contained copy by design — [46], [47], [49] and [51]
+   each cross-check a local implementation against the shipped suite, and a harness that
+   imported the thing it tests could not.  It was converted to the same contract
+   INDEPENDENTLY.  A first attempt applied the private-name rewrite blindly and produced a
+   property whose getter returned itself; the harness failing to import on the next run is
+   what caught it.
+6. **`--report` HAS RUN OUT OF PORTS AND SAYS SO.**  It measured the shipped Python suite
+   while Python was unconverted, because an unconverted port's divergence is expected and
+   CLAUDE.md's Testing section allows no failing test.  Python now has a consumer that
+   GATES, so re-measuring there would assert nothing the gate does not — #234's vacuous
+   pass by way of a report.  `_load_python_suite()` was **deleted** rather than left
+   unreferenced beside the check, which is TODO #305's dead-code shape.  Both controls
+   fire: low-octet truncation fails **the same 14 of 376 Go's control failed**, which is
+   two consumers demonstrably exercising the same cases.
+7. **THE SAME DEFECT IN THE SAME FUNCTION AS PASS 3, and a reason I had written one pass
+   earlier was already false.**  `zkp_nl_keygen` built an 8-bit BitArray — ZKP-NL's default
+   width is 8, and §2's floor is 16 — exactly as Go's `ZkpNlKeygen` did, so Python gets
+   `zkp_nl_f1` and **all four ports now name it**.  At pass 3 I wrote that Python kept its
+   manifest cell "because its BitArray has no such floor", true when written and false one
+   release later.  The row was corrected, not left — **a curated reason is only as good as
+   the pass that last read it**, which is #295's false-reason finding pointed at my own
+   prose.
+
+**FIFTH PASS DONE IN v9.4.0 — Java, and ALL FOUR PORTS NOW CONFORM.**
+`bindings/java/herradurakex/BitArray.java` is `int nbits` plus `byte[] b` — big-endian
+octets, immutable, both fields private — implements the whole of `BITARRAY.md` §4, and
+passes `KAT/bitarray.json` **376/376** through the new `VerifyBitArray`.  This port had no
+such type at all, so pass 5 CREATED one rather than converting one.  **Pass 6 is now
+available for the first time.**  Seven things carry forward.
+
+1. **THIS IS THE PORT REASON 3 WAS WRITTEN FOR, AND IT SAID SO ITSELF.**  `Herradura.java`'s
+   header read: it mirrors the Python source "rather than herradura.h's constant-time C
+   implementation: java.math.BigInteger gives no constant-time guarantee regardless, **so
+   there is nothing to gain from porting the C branchless tricks**".  That is a security
+   property conceded *because of a dependency choice*, written down by the person who made
+   it — #314's reason 3, in the port's own words, long before the item existed.  Over a
+   `byte[]` there IS something to gain, so the CT-marked operations now touch every octet
+   and fold with masks, the same structure C and Go use.  **What that buys is a branch-free
+   STRUCTURE, not a claim about what a JIT emits** — the distinction §4 draws — and the
+   header now says so instead of asserting a decision that no longer holds.
+2. **IT HAD NO `rnl_kdf_seed`, AND THE COPIES NUMBERED SIX.**  Two in `Hfscx256`, two in
+   `HerraduraNl`, one in `Hpake`, one in `KatVerify` — each transcribing
+   `ROL(base, n/8) XOR RNL_KDF_DC_256`, several with a comment explaining that the shift is
+   zero at n = 256.  That is TODO #312's finding in a fourth port, and the concrete reason
+   "exactly one truncation, in one place" was unavailable here however careful each copy
+   was.  **A rule that lives in six places is not a rule; it is six opportunities.**
+3. **ITS CLI PASSED THE WIDTH BESIDE THE VALUE, in a type.**  `loadKey` returned
+   `BigInteger[] { value, nbits }`, read back as `key[1]` at nineteen sites.  §1 says the
+   divergence "is only possible when the width and the value can be separated"; here they
+   were separated by an array index.  It returns a `BitArray` now.
+4. **THE CONVERSION'S OWN HAZARD IS THIS ITEM'S SUBJECT, which is worth sitting with.**
+   Java's `equals(Object)` returns **false** for a different type rather than failing to
+   compile, so every place the conversion left a `BitArray` compared against a `BigInteger`
+   became a silent wrong answer — a round-trip check that always fails, a difference check
+   that always passes.  **Four instances survived three successive audits** (locals, then
+   fields, then method-call arguments), and **every one was caught by an existing oracle**:
+   `SelfTest` (A3 round-trip), `Demo` (masked HSKE), `CodecTest` (key round-trips),
+   `KatVerify` (three vector sets).  A conversion that changes a type cannot lean on the
+   compiler where the language's equality is untyped — an argument for having the tests,
+   not a reason to distrust the method.
+5. **THE CENSUS CAUGHT THE PASS THREE TIMES, each correctly.**  The manifest markers are
+   anchored on Java SIGNATURES, so changing `BigInteger` to `BitArray` broke 32 of them —
+   TODO #299's "a source check anchored on a literal spelling" firing as designed.  The
+   randomness census then found eleven suite functions that had stopped drawing, because
+   their inline `new BigInteger(N, rng)` had become `BitArray.random`: **a SEVENTH spelling
+   of "read the CSPRNG"**, which had to be added to `RANDOMNESS_RAW_PATTERNS` or those
+   eleven would have read as drawing nothing — #306's blind spot, met again and caught the
+   same way, by the census refusing to balance.  And the REPLAY_COVERAGE call-graph check
+   refused a transitivity claim for `BitArray.random` via `stern_f_keygen`, because Java's
+   `Stern.sternFKeygen` still draws its own seed — so it got its own `unpinned` row with
+   TODO #311's reason, true verbatim here.
+6. **ONE ROW WAS WAITING FOR THIS PASS.**  `REPLAY_COVERAGE`'s `rand_bitarray` carried
+   `"java": None,  # Java inlines rng.nextBytes; it has no such helper` — true when written
+   and false the moment Java grew a BitArray.  It now carries a comment explaining why the
+   cell STAYS None rather than a stale claim.
+7. **BEHAVIOUR IS PRESERVED AT 256 AND IT IS THE SAME OCTETS.**  A 22-operation probe is
+   byte-identical before and after, and agrees value for value with the C, Go and Python
+   probes — the four were already equal at 256, which is exactly what #314 said was true
+   "by four people's care" rather than by construction.  Now it is by construction.
+
 Status: **OPEN**
 

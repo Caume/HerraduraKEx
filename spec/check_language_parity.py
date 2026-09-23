@@ -182,6 +182,10 @@ JAVA_NON_SUITE = {
     "Demo.java",           # suite walkthrough
     "CodecTest.java",      # test driver
     "KatVerify.java",      # KAT consumer, the Java counterpart of KAT/verify_kat.go
+    "VerifyBitArray.java", # KAT/bitarray.json consumer (TODO #314 pass 5), the
+                           # Java counterpart of KAT/verify_bitarray_{c.c,go.go,py.py}
+    "Json.java",           # the dependency-free JSON reader those two share;
+                           # extracted from KatVerify when a second one needed it
 }
 
 SUITE_FILES = {
@@ -425,7 +429,7 @@ PRIMITIVES = {
         "c": r"static inline void fscx_revolve_masked\(",
         "go": r"func FscxRevolveMasked\(",
         "python": r"^def fscx_revolve_masked\(",
-        "java": r"public static BigInteger fscxRevolveMasked\(",
+        "java": r"public static BitArray fscxRevolveMasked\(",
     },
     "hske-encrypt-masked": {
         "c": r"static inline void hske_encrypt_masked\(",
@@ -1219,7 +1223,7 @@ PRIMITIVES = {
         "c": r"static void m_inv_ba\(",
         "go": r"^func MInv\(",
         "python": r"^def _m_inv\(",
-        "java": r"HerraduraNl.java::private static BigInteger mInv\(",
+        "java": r"HerraduraNl.java::private static BitArray mInv\(",
     },
     "m-pow2-mul": {
         "acknowledged":
@@ -1299,13 +1303,13 @@ PRIMITIVES = {
         "c": r"static inline void fpe_twk_derive_b\(",
         "go": r"^func fpeTwkDeriveB\(",
         "python": r"^def _fpe_twk_derive_b\(",
-        "java": r"FpeTwk.java::private static BigInteger deriveB\(",
+        "java": r"FpeTwk.java::private static BitArray deriveB\(",
     },
     "fpe-twk-v3-derive-b": {
         "c": r"static inline void fpe_twk_v3_derive_b\(",
         "go": r"^func fpeTwkV3DeriveB\(",
         "python": r"^def _fpe_twk_v3_derive_b\(",
-        "java": r"FpeTwk.java::private static BigInteger deriveBv3\(",
+        "java": r"FpeTwk.java::private static BitArray deriveBv3\(",
     },
     "twk-tweak": {
         "acknowledged":
@@ -1325,7 +1329,7 @@ PRIMITIVES = {
         "c": r"static inline int hkex_gf_agree\(",
         "go": r"^func HkexGfAgree\(",
         "python": r"^def hkex_gf_agree\(",
-        "java": r"Herradura.java::public static BigInteger hkexGfAgree\(",
+        "java": r"Herradura.java::public static BitArray hkexGfAgree\(",
     },
     "hpks-verify": {
         "c": r"static inline int hpks_verify\(",
@@ -1338,13 +1342,13 @@ PRIMITIVES = {
         "go": r"^func HpkeEncrypt\(",
         "python": r"^def hpke_encrypt\(",
         "java": r"Herradura.java::public static Ciphertext "
-                r"hpkeEncrypt\(BigInteger pt, BigInteger pub, BigInteger r",
+                r"hpkeEncrypt\(BitArray pt, BitArray pub, BitArray r",
     },
     "hpke-decrypt": {
         "c": r"static inline int hpke_decrypt\(",
         "go": r"^func HpkeDecrypt\(",
         "python": r"^def hpke_decrypt\(",
-        "java": r"Herradura.java::public static BigInteger hpkeDecrypt\(",
+        "java": r"Herradura.java::public static BitArray hpkeDecrypt\(",
     },
     # ── threshold, OPRF, ratchet and hash internals (TODO #261, v6.1.0) ────
     # The remaining internal-derivation surface: MuSig2-style aggregation, the
@@ -1381,7 +1385,7 @@ PRIMITIVES = {
         "c": r"static inline void ratchet_init\(",
         "go": r"^func RatchetInit\(",
         "python": r"^def ratchet_init\(",
-        "java": r"Ratchet.java::public static BigInteger init\(",
+        "java": r"Ratchet.java::public static BitArray init\(",
     },
     "hmac-hfscx-256": {
         "c": r"static void hmac_hfscx_256\(",
@@ -1398,86 +1402,86 @@ PRIMITIVES = {
         "c": r"static void ba_fscx\(",
         "go": r"^func Fscx\(",
         "python": r"^def fscx\(",
-        "java": r"Herradura.java::public static BigInteger fscx\(",
+        "java": r"Herradura.java::public static BitArray fscx\(",
     },
     "fscx-revolve": {
         "c": r"static void ba_fscx_revolve\(",
         "go": r"^func FscxRevolve\(",
         "python": r"^def fscx_revolve\(",
-        "java": r"Herradura.java::public static BigInteger fscxRevolve\(",
+        "java": r"Herradura.java::public static BitArray fscxRevolve\(",
     },
     "nl-fscx-v1": {
         "c": r"static void nl_fscx_v1_ba\(",
         "go": r"^func NlFscxV1\(",
         "python": r"^def nl_fscx_v1\(",
-        "java": r"Hfscx256.java::public static BigInteger nlFscxV1\(",
+        "java": r"Hfscx256.java::public static BitArray nlFscxV1\(",
     },
     "nl-fscx-v2": {
         "c": r"static void nl_fscx_v2_ba\(",
         "go": r"^func NlFscxV2\(",
         "python": r"^def nl_fscx_v2\(",
-        "java": r"HerraduraNl.java::public static BigInteger nlFscxV2\(",
+        "java": r"HerraduraNl.java::public static BitArray nlFscxV2\(",
     },
     "nl-fscx-v2-inv": {
         "c": r"static void nl_fscx_v2_inv_ba\(",
         "go": r"^func NlFscxV2Inv\(",
         "python": r"^def nl_fscx_v2_inv\(",
-        "java": r"HerraduraNl.java::public static BigInteger nlFscxV2Inv\(",
+        "java": r"HerraduraNl.java::public static BitArray nlFscxV2Inv\(",
     },
     "nl-fscx-v3": {
         "c": r"static void nl_fscx_v3_ba\(",
         "go": r"^func NlFscxV3\(",
         "python": r"^def nl_fscx_v3\(",
-        "java": r"HerraduraNl.java::public static BigInteger nlFscxV3\(",
+        "java": r"HerraduraNl.java::public static BitArray nlFscxV3\(",
     },
     "nl-fscx-v3-inv": {
         "c": r"static void nl_fscx_v3_inv_ba\(",
         "go": r"^func NlFscxV3Inv\(",
         "python": r"^def nl_fscx_v3_inv\(",
-        "java": r"HerraduraNl.java::public static BigInteger nlFscxV3Inv\(",
+        "java": r"HerraduraNl.java::public static BitArray nlFscxV3Inv\(",
     },
     "nl-chi-v3": {
         "c": r"static void nl_chi_v3_ba\(",
         "go": r"^func NlChiV3\(",
         "python": r"^def nl_chi_v3\(",
-        "java": r"HerraduraNl.java::public static BigInteger nlChiV3\(",
+        "java": r"HerraduraNl.java::public static BitArray nlChiV3\(",
     },
     "nl-chi-v3-inv": {
         "c": r"static void nl_chi_v3_inv_ba\(",
         "go": r"^func NlChiV3Inv\(",
         "python": r"^def nl_chi_v3_inv\(",
-        "java": r"HerraduraNl.java::public static BigInteger nlChiV3Inv\(",
+        "java": r"HerraduraNl.java::public static BitArray nlChiV3Inv\(",
     },
     "nl-fscx-revolve-v1": {
         "c": r"static void nl_fscx_revolve_v1_ba\(",
         "go": r"^func NlFscxRevolveV1\(",
         "python": r"^def nl_fscx_revolve_v1\(",
-        "java": r"Hfscx256.java::public static BigInteger nlFscxRevolveV1\(",
+        "java": r"Hfscx256.java::public static BitArray nlFscxRevolveV1\(",
     },
     "nl-fscx-revolve-v2": {
         "c": r"static void nl_fscx_revolve_v2_ba\(",
         "go": r"^func NlFscxRevolveV2\(",
         "python": r"^def nl_fscx_revolve_v2\(",
-        "java": r"HerraduraNl.java::public static BigInteger nlFscxRevolveV2\(",
+        "java": r"HerraduraNl.java::public static BitArray nlFscxRevolveV2\(",
     },
     "nl-fscx-revolve-v2-inv": {
         "c": r"static void nl_fscx_revolve_v2_inv_ba\(",
         "go": r"^func NlFscxRevolveV2Inv\(",
         "python": r"^def nl_fscx_revolve_v2_inv\(",
-        "java": r"HerraduraNl.java::public static BigInteger "
+        "java": r"HerraduraNl.java::public static BitArray "
                 r"nlFscxRevolveV2Inv\(",
     },
     "nl-fscx-revolve-v3": {
         "c": r"static void nl_fscx_revolve_v3_ba\(",
         "go": r"^func NlFscxRevolveV3\(",
         "python": r"^def nl_fscx_revolve_v3\(",
-        "java": r"HerraduraNl.java::public static BigInteger nlFscxRevolveV3\(",
+        "java": r"HerraduraNl.java::public static BitArray nlFscxRevolveV3\(",
     },
     "nl-fscx-revolve-v3-inv": {
         "c": r"static void nl_fscx_revolve_v3_inv_ba\(",
         "go": r"^func NlFscxRevolveV3Inv\(",
         "python": r"^def nl_fscx_revolve_v3_inv\(",
-        "java": r"HerraduraNl.java::public static BigInteger "
+        "java": r"HerraduraNl.java::public static BitArray "
                 r"nlFscxRevolveV3Inv\(",
     },
     "nl-fscx-delta-v2": {
@@ -1561,13 +1565,13 @@ PRIMITIVES = {
             "rather than wrapping it. C and Java name the wrapper. The "
             "construction is pinned four ways by KAT/classical_quartet.json",
         "c": r"static inline void hske_encrypt\(",
-        "java": r"Herradura.java::public static BigInteger hskeEncrypt\(",
+        "java": r"Herradura.java::public static BitArray hskeEncrypt\(",
     },
     "hske-decrypt": {
         "acknowledged":
             "see hske-encrypt: the inverse direction, same argument",
         "c": r"static inline void hske_decrypt\(",
-        "java": r"Herradura.java::public static BigInteger hskeDecrypt\(",
+        "java": r"Herradura.java::public static BitArray hskeDecrypt\(",
     },
     "hpks-sign": {
         # Four-language parity since TODO #308 (v8.1.0).  This entry carried an
@@ -1580,8 +1584,8 @@ PRIMITIVES = {
         "c": r"static inline void hpks_sign\(",
         "go": r"func HpksSign\(",
         "python": r"^def hpks_sign\(",
-        "java": r"Herradura.java::public static Signature hpksSign\(BigInteger "
-                r"msg, BigInteger priv, BigInteger k",
+        "java": r"Herradura.java::public static Signature hpksSign\(BitArray "
+                r"msg, BitArray priv, BitArray k",
     },
     "hpks-nl-sign": {
         # The NL counterpart, and the reason it is a SEPARATE entry rather than
@@ -1593,7 +1597,7 @@ PRIMITIVES = {
         "go": r"func HpksNlSign\(",
         "python": r"^def hpks_nl_sign\(",
         "java": r"HerraduraNl.java::public static Herradura.Signature "
-                r"hpksNlSign\(BigInteger msg, BigInteger priv, BigInteger k",
+                r"hpksNlSign\(BitArray msg, BitArray priv, BitArray k",
     },
     "hkex-gf-pubkey": {
         "acknowledged":
@@ -1601,7 +1605,7 @@ PRIMITIVES = {
             "site. Note the asymmetry runs the other way from hkex-gf-agree, "
             "which all four name",
         "c": r"static inline void hkex_gf_pubkey\(",
-        "java": r"Herradura.java::public static BigInteger hkexGfPubkey\(",
+        "java": r"Herradura.java::public static BitArray hkexGfPubkey\(",
     },
     # ── fpe / twk block operations (TODO #261, v6.1.0) ────────────────────
     # The eight enc/dec entry points across {fpe, twk} x {v2, v3}, and the three
@@ -1611,49 +1615,49 @@ PRIMITIVES = {
         "c": r"static inline void fpe_encrypt\(",
         "go": r"^func FpeEncrypt\(",
         "python": r"^def fpe_encrypt\(",
-        "java": r"FpeTwk.java::public static BigInteger fpeEncrypt\(",
+        "java": r"FpeTwk.java::public static BitArray fpeEncrypt\(",
     },
     "fpe-decrypt": {
         "c": r"static inline void fpe_decrypt\(",
         "go": r"^func FpeDecrypt\(",
         "python": r"^def fpe_decrypt\(",
-        "java": r"FpeTwk.java::public static BigInteger fpeDecrypt\(",
+        "java": r"FpeTwk.java::public static BitArray fpeDecrypt\(",
     },
     "fpe-v3-encrypt": {
         "c": r"static inline void fpe_v3_encrypt\(",
         "go": r"^func FpeV3Encrypt\(",
         "python": r"^def fpe_v3_encrypt\(",
-        "java": r"FpeTwk.java::public static BigInteger fpeV3Encrypt\(",
+        "java": r"FpeTwk.java::public static BitArray fpeV3Encrypt\(",
     },
     "fpe-v3-decrypt": {
         "c": r"static inline void fpe_v3_decrypt\(",
         "go": r"^func FpeV3Decrypt\(",
         "python": r"^def fpe_v3_decrypt\(",
-        "java": r"FpeTwk.java::public static BigInteger fpeV3Decrypt\(",
+        "java": r"FpeTwk.java::public static BitArray fpeV3Decrypt\(",
     },
     "twk-encrypt": {
         "c": r"static inline void twk_encrypt\(",
         "go": r"^func TwkEncrypt\(",
         "python": r"^def twk_encrypt\(",
-        "java": r"FpeTwk.java::public static BigInteger twkEncrypt\(",
+        "java": r"FpeTwk.java::public static BitArray twkEncrypt\(",
     },
     "twk-decrypt": {
         "c": r"static inline void twk_decrypt\(",
         "go": r"^func TwkDecrypt\(",
         "python": r"^def twk_decrypt\(",
-        "java": r"FpeTwk.java::public static BigInteger twkDecrypt\(",
+        "java": r"FpeTwk.java::public static BitArray twkDecrypt\(",
     },
     "twk-v3-encrypt": {
         "c": r"static inline void twk_v3_encrypt\(",
         "go": r"^func TwkV3Encrypt\(",
         "python": r"^def twk_v3_encrypt\(",
-        "java": r"FpeTwk.java::public static BigInteger twkV3Encrypt\(",
+        "java": r"FpeTwk.java::public static BitArray twkV3Encrypt\(",
     },
     "twk-v3-decrypt": {
         "c": r"static inline void twk_v3_decrypt\(",
         "go": r"^func TwkV3Decrypt\(",
         "python": r"^def twk_v3_decrypt\(",
-        "java": r"FpeTwk.java::public static BigInteger twkV3Decrypt\(",
+        "java": r"FpeTwk.java::public static BitArray twkV3Decrypt\(",
     },
     "fpe-domain-derive-b": {
         "acknowledged":
@@ -2121,6 +2125,22 @@ CENSUS_EXEMPT = {
          "is manifest-named as qcmdpc-bgf-decode"),
     ],
     "java": [
+        (r"^(checkWidth|hexVal|zero|fromHex|fromUint|gfPoly|rnlKdfSeed|fscx)$",
+         "the BitArray width check, constructors, hex decoder and the "
+         "BitArray-level statics (TODO #314 pass 5) -- the Java half of the "
+         "family C's exempted ba_ rule covers, Go's Try/Ba rules cover and "
+         "Python's _ba_check_width rule covers. BITARRAY.md specifies a TYPE; "
+         "these are how one port spells its constructors. fscx here is the "
+         "static on BitArray that Herradura.fscx -- which the manifest DOES "
+         "name -- delegates to, so the cross-language cell is carried by the "
+         "stem"),
+        (r"^ba$",
+         "the one-line BigInteger->BitArray adapter inside the threshold signer "
+         "(TODO #314 pass 5). HPKS-T's aggregate keys and scalars are integers "
+         "by the protocol's own definition, so that layer keeps BigInteger and "
+         "crosses the boundary in one place rather than at twenty call sites; "
+         "the other three ports have no boundary to cross because their scalar "
+         "type and their bit-string type were never different"),
         (r"^(be2|be4|be8|be16|be32|rd4|readBe32|putS32|concat|concatAll|cat|slice|sub|"
          r"join|fixed|fixedBytes|toFixedBytes|toFixedBytesLE|fromLE|leReverseToInt|"
          r"writeBe64|readBe64|ascii|be4i|chunkToInts|bounded|boundedN)$",
@@ -2418,13 +2438,14 @@ PARAMETERS = {
                              "step count below which the O(log i) closed form is not "
                              "worth taking (TODO #213); C alone ships the closed form"),
     # ── BitArray capacity (TODO #314 pass 2) ──
-    "ba-max-bits": (["BA_MAX_BITS", "BAMaxBits", "BA_MAX_BITS", None], "local",
+    "ba-max-bits": (["BA_MAX_BITS", "BAMaxBits", "BA_MAX_BITS", "BitArray.BA_MAX_BITS"],
+                    "local",
                     "the BitArray's per-port CAPACITY, not a width (BITARRAY.md 2/9).  "
-                    "C, Go and Python are the converted ports (passes 2-4); pass 5 adds "
-                    "Java, which will need its cell here.  Neither Go nor Python needed "
-                    "a capacity at all -- both allocate exactly nbits/8 octets -- and "
-                    "both carry one anyway so that all four ports answer E_WIDTH to the "
-                    "same inputs, which is what KAT/bitarray.json pins.  LOCAL, and "
+                    "ALL FOUR PORTS ARE CONVERTED (passes 2-5) and all four carry it.  "
+                    "Only C needs one -- its buffer is fixed -- while Go, Python and "
+                    "Java allocate exactly nbits/8 octets and carry it anyway so that "
+                    "all four answer E_WIDTH to the same inputs, which is what "
+                    "KAT/bitarray.json pins.  LOCAL, and "
                     "the distinction is the point -- capacity is NOT observable, since "
                     "every operation's result depends on nbits and the active octets "
                     "only, so a port with more room cannot diverge by having it.  The "
@@ -3281,6 +3302,26 @@ REPLAY_COVERAGE = {
         "python": "_stern_simulate_round",
         "java": "SternRing.java::simulateRound",
     },
+    "java_bitarray_random": {
+        # TODO #314 pass 5.  Java's BitArray.random is where eleven inline
+        # `new BigInteger(N, rng)` draws went when the type landed.  It is NOT
+        # reached by any pinned operation in this port: its callers are the
+        # classical and NL encrypt/sign entry points, none of which
+        # KAT/operation_replay.json pins for Java.  UNPINNED rather than owed,
+        # and the reason is TODO #311's, measured there and true verbatim here:
+        # a single uniform draw of one fixed width handed straight back, with no
+        # loop, no rejection and no second draw, so a fixed stream would pin the
+        # identity function.  C and Go reach their equivalent helper through
+        # stern_f_keygen and are covered by the rand_bitarray row; Java's
+        # Stern.sternFKeygen still draws its own seed, which is why this is a
+        # row of its own rather than a fourth cell there.
+        "status": "unpinned",
+        "reason": "a single uniform draw of one fixed width, returned unchanged "
+                  "to the caller -- a fixed stream would pin the identity "
+                  "function (TODO #311's finding, same shape)",
+        "c": None, "go": None, "python": None,
+        "java": "BitArray.java::random",
+    },
     "zkp_nl_random_big": {
         "status": "transitive", "via": "zkp_nl_prove",
         "c": None, "go": None, "python": None,
@@ -3495,6 +3536,7 @@ RANDOMNESS_CENSUS = {
         "zkp_nl_prove_pp",
     ],   # 30
     "java": [
+        "BitArray.java::random",
         "Duplex.java::encrypt", "Hcred.java::mpcRound", "Hcred.java::proveKkw",
         "Herradura.java::hpkeEncrypt", "Herradura.java::hpksSign",
         "Herradura.java::hskeDecryptMasked", "Herradura.java::hskeEncryptMasked",
@@ -3509,7 +3551,7 @@ RANDOMNESS_CENSUS = {
         "Stern.java::sternFKeygen", "SternRing.java::ringTrit",
         "SternRing.java::sign", "SternRing.java::simulateRound", "ZkpNl.java::prove",
         "ZkpNl.java::provePp", "ZkpNl.java::randomBig",
-    ],   # 31
+    ],   # 32
 }
 
 # Per-language raw-entropy spellings.  A new way to reach the CSPRNG must be
@@ -3540,7 +3582,13 @@ RANDOMNESS_RAW_PATTERNS = {
     # censused as drawing nothing once the corpus reached them.  Not a fifth
     # spelling: the SAME spelling in a different case, which is the harder
     # blind spot to predict.
-    "java": r"\.nextBytes\s*\(|new\s+BigInteger\s*\(\s*[\w.]+\s*,\s*(?i:rng)\s*\)",
+    "java": r"\.nextBytes\s*\(|new\s+BigInteger\s*\(\s*[\w.]+\s*,\s*(?i:rng)\s*\)"
+            r"|\bBitArray\.random\s*\(",   # TODO #314 pass 5: the SEVENTH spelling.
+            # Eleven suite functions moved from an inline `new BigInteger(N, rng)`
+            # to BitArray.random; without this alternative every one of them would
+            # read as drawing nothing -- the blind spot the header above warns
+            # about, met again and caught the same way: by the census refusing to
+            # balance, not by anyone re-reading the source.
 }
 
 # ---------------------------------------------------------------------------

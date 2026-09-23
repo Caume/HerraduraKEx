@@ -1160,3 +1160,67 @@ The int-level `gf_mul` / `gf_pow` are unchanged and still take `poly` and `n`.
 value with the Go port's probe. Below 256, `rnl_kdf_seed` is unchanged in RESULT — this
 port already truncated the domain constant to its high bits — but now does it through the
 one named `truncate` instead of an open-coded `>> (256 - n)`.
+
+---
+
+## 22. The Java `herradurakex` package's BitArray API (v9.4.0)
+
+**This is not a MAJOR bump and does not change the CLI, PEM or wire format.** Nothing an
+`--algo` produces or accepts moves, no stored key, ciphertext or signature becomes
+unreadable, and the four CLIs interoperate exactly as before — the 518-assertion
+`CliTest/test_cross_lang_matrix.sh` passes unchanged, as do all nine
+`CliTest/test_java_*.sh` scripts. It is recorded because it changes the Java package's
+public API, on the same grounds as sections 20 and 21.
+
+**Who is affected:** Java code importing `herradurakex` directly. Nobody using the CLI,
+the PEM artifacts, the C header, the Go package or the Python suite.
+
+**What changed.** TODO #314 pass 5 gave the port the `BitArray` the other three already
+had. Before it, values were bare `BigInteger` against a static `Herradura.N = 256`, so a
+width was a property of the whole port rather than of a value — and the mixed-width rule
+`BITARRAY.md` §3 requires could not be stated, let alone enforced.
+
+The bit-string layer — `Herradura`, `Hfscx256`, `HerraduraNl`, `Duplex`, `FpeTwk`,
+`Ratchet`, `Hdrbg` — now takes and returns `BitArray`:
+
+| before | after |
+|---|---|
+| `Herradura.fscx(BigInteger, BigInteger)` | `Herradura.fscx(BitArray, BitArray)` |
+| `Herradura.rol(x, s)` / `ror(x, s)` | `x.rotLeft(s)` / `x.rotRight(s)` (the statics still exist, BitArray-typed) |
+| `Herradura.gfMul/gfPow(BigInteger, …)` | `Herradura.gfMul/gfPow(BitArray, …)`; `Herradura.GF_GEN` is now a `BitArray`, `GF_GEN_INT` the old value |
+| `hkexGfAgree`, `hskeEncrypt/Decrypt`, `hpksSign/Verify`, `hpkeEncrypt/Decrypt` | same names, `BitArray` parameters and results; `Signature.r/.s` and `Ciphertext.r/.ct` are `BitArray` |
+| `HerraduraNl.nlFscx*`, `hskeNlA1/A2/A3*`, `hskeNlAead*`, `hpkeNl*`, `hpksNl*` | same names, `BitArray` |
+| `Hfscx256.hash(data, BigInteger iv)` | `Hfscx256.hash(data, BitArray iv)`; `IV_CONST` and `RNL_KDF_DC_256` are `BitArray` |
+| the KDF-seed expression, written out at six call sites | `BitArray.rnlKdfSeed(base)` — one named truncation (§4.4) |
+| `Ratchet.init` / `advance` on `BigInteger` state | on `BitArray`; `advance()[0]` is a `BitArray` |
+| `Hdrbg.resume(BigInteger, long)` / `stateValue()` | `BitArray` |
+
+`Codec`, `Stern`, `SternRing`, `Hcred`, `Oprf`, `HpksT` and `ZkpNl` **keep BigInteger**:
+DER INTEGERs, syndromes, Z_q coefficients and group scalars are integers by their own
+protocol definitions, which `BITARRAY.md` does not govern. `BitArray.fromBigInteger(v, n)`
+and `BitArray.toBigInteger()` are the named crossing, as `NewBitArray`/`BigInt` are in Go
+and `uint` is in Python.
+
+**THE ONE THING TO CHECK IN YOUR OWN CODE.** `equals(Object)` returns **false** for a
+different type rather than failing to compile, so any comparison left mixing the two is a
+silent wrong answer — a round-trip check that always fails, or a difference check that
+always passes. This bit the conversion itself four times, in code that compiled cleanly,
+and each was caught by a test rather than by the compiler. Grep for `.equals(` across the
+boundary; compare `BitArray` to `BitArray` (which checks the width too) or unwrap one side
+with `.toBigInteger()`.
+
+**New:** `BaException` with `BITARRAY.md` §5's eight codes, unchecked because at the
+protocol layer a mixed or invalid width is a bug and not an input; §4's full surface
+(`zero`, `fromBytes`, `fromUint`, `fromHex`, `toUint`, `truncate`, `extend`,
+`resizeExact`, `compare`, `bit`, `shl`, `shr`, `isZero`, `popcount`, `rotLeft`,
+`rotRight`, `and`, `or`, `not`); the octet arithmetic `addMod2n`/`subMod2n`/`mulMod2n`;
+and `Json.java`, the dependency-free reader extracted from `KatVerify` so a second
+consumer could share it.
+
+**Constant time.** The operations §4 marks CT are now branch-free over the octets, which
+is what the previous header said was not worth doing *because* `BigInteger` could not
+offer it. That is a structural property, not a claim about what a JIT emits; the suite
+still uses `MessageDigest.isEqual` where constant time is load-bearing.
+
+**Behaviour at 256 bits is byte-identical**, measured: a 22-operation probe produces the
+same octets before and after and agrees value for value with the C, Go and Python probes.
