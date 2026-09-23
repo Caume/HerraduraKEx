@@ -876,27 +876,36 @@ public final class HerraduraCli {
 
     /** Returns {E, nbits, nonce_or_null, authTag_or_null} for format tags
      * 0, 1 and 2 (TODO #273 added 2). */
-    /** HSKE-NL-A1's plain (unauthenticated) mode is 256-BIT ONLY (TODO #313).
-     * Below 256 the four language ports produce four different keystreams: the
-     * KDF domain constant is truncated at opposite ends (Python takes its HIGH
-     * bits, Go its LOW bits), C and this port are fixed at 256 and ignore the
-     * declared width, and C stamps nbits = 256 into every ciphertext whatever
-     * the key says.  A1 is a raw XOR keystream with NO authentication tag, so a
-     * wrong keystream is not a detectable event: before this guard this port's
-     * {@code enc} happened to refuse a narrow key while its {@code dec}
-     * returned an ALL-ZERO plaintext and exited 0, which is wrong in the
-     * particularly bad way of looking like a legitimately empty result.  The
-     * guard makes the divergence unreachable rather than resolved; converging
-     * the four truncation rules is route 1 and needs TODO #314. */
-    private static final int NLA1_WIDTH = 256;
+    /** HSKE-NL-A1's plain mode ran at any width but 256 only by accident until
+     * TODO #314: below 256 the four ports produced four different keystreams,
+     * so #313 refused every width but 256 in all four CLIs.  Pass 6 RELAXED
+     * that refusal — C, Go, Python and this port now agree octet for octet at
+     * 32, 64, 128 and 256 — and what is left is the width's own validity
+     * (BITARRAY.md §2) plus the rule that a width is never coerced (§3).  The
+     * refusal is not merely deleted: a width that is not a legal BitArray
+     * width was never representable, and a ciphertext whose declared width
+     * disagrees with the key is a MIXED WIDTH, which §3 makes an error rather
+     * than something to resolve by preferring one of the two.  This port is
+     * the one whose {@code dec} used to return an ALL-ZERO plaintext and exit
+     * 0 at a narrow width.  See MIGRATING.md §23. */
+    private static final int NLA1_MIN_WIDTH = 16;
+    private static final int NLA1_MAX_WIDTH = BitArray.BA_MAX_BITS;
 
-    /** Throws unless {@code nbits} is {@link #NLA1_WIDTH}. */
+    /** Throws unless {@code nbits} is a legal BitArray width (BITARRAY.md §2). */
     private static void nla1WidthOK(int nbits, String ctx, String carrier) {
-        if (nbits != NLA1_WIDTH) {
-            throw new CliError(ctx + ": hske-nla1 requires a " + NLA1_WIDTH
-                + "-bit " + carrier + "; got " + nbits + "-bit (TODO #313: below "
-                + NLA1_WIDTH + " the four language ports produce four different "
-                + "keystreams)");
+        if (nbits % 8 != 0 || nbits < NLA1_MIN_WIDTH || nbits > NLA1_MAX_WIDTH) {
+            throw new CliError(ctx + ": hske-nla1 " + carrier + " width must be a "
+                + "multiple of 8 between " + NLA1_MIN_WIDTH + " and " + NLA1_MAX_WIDTH
+                + "; got " + nbits + "-bit (BITARRAY.md §2)");
+        }
+    }
+
+    /** Throws unless the ciphertext's declared width matches the key's. */
+    private static void nla1SameWidth(int keyN, int ctN, String ctx) {
+        if (keyN != ctN) {
+            throw new CliError(ctx + ": hske-nla1 ciphertext declares " + ctN
+                + "-bit, key is " + keyN + "-bit (BITARRAY.md §3: a mixed width "
+                + "is never coerced)");
         }
     }
 
@@ -1133,6 +1142,7 @@ public final class HerraduraCli {
                 // what the artifact IS, so decryption never needs telling.
                 nla1WidthOK(nbits, "dec", "key");
                 nla1WidthOK(ct[1].intValueExact(), "dec", "ciphertext");
+                nla1SameWidth(nbits, ct[1].intValueExact(), "dec");
                 BitArray d = HerraduraNl.hskeNlA1Decrypt(
                     BitArray.fromBytes(toFixedBytes(ct[0], nbits / 8), nbits), key,
                     BitArray.fromBytes(toFixedBytes(ct[2], nbits / 8), nbits));

@@ -1,8 +1,12 @@
 # BitArray — the reference specification
 
-**Status: NORMATIVE for TODO #314.  ALL FOUR PORTS CONFORM — C (pass 2, v9.1.0), Go
-(pass 3, v9.2.0), Python (pass 4, v9.3.0) and Java (pass 5, v9.4.0).  Pass 6, the
-relaxation of TODO #313's refusal, is now available.**
+**Status: NORMATIVE for TODO #314.  ALL SIX PASSES ARE DONE — C (pass 2, v9.1.0), Go
+(pass 3, v9.2.0), Python (pass 4, v9.3.0), Java (pass 5, v9.4.0), and pass 6 (v9.5.0),
+which relaxed TODO #313's refusal: `hske-nla1` is accepted at every width §2 permits and
+all four CLIs agree octet for octet at 32, 64, 128 and 256 bits.  §8.4 records what pass 6
+found — two ports that passed the 376-case vector and still produced the wrong keystream
+below 256, because conforming to the type is not the same as consuming it at the value's
+width.**
 
 This document specifies one variable-width bit-string type, to be implemented as the
 *same algorithm over the same representation* in C, Go, Python and Java, replacing the
@@ -356,15 +360,13 @@ fix was an exact decode rather than a change to the file.
 | 3 | Go — the port whose silent mixed-width answer (§6.1) is this document's argument, and the outlier §4.4 settles against | **done, v9.2.0** |
 | 4 | Python — the other silent answer (§6.2), and the port whose integers make over-specification easy to miss | **done, v9.3.0** |
 | 5 | Java — the last, and the one whose own header conceded constant-time away *because of* `BigInteger` | **done, v9.4.0** |
-| 6 | relax TODO #313's refusal: `MIGRATING.md` §19 and `CliTest/test_narrow_width_matrix.sh` go from "all four refuse" to "all four agree" | open |
+| 6 | relax TODO #313's refusal: `MIGRATING.md` §19 and `CliTest/test_narrow_width_matrix.sh` go from "all four refuse" to "all four agree" | **done, v9.5.0** |
 
-Pass 6 needs **all four** ports, not three: a refusal may only be relaxed once every port
+Pass 6 needed **all four** ports, not three: a refusal may only be relaxed once every port
 agrees, and two of four agreeing with the reference is not the four agreeing with each
-other.  Note what passes 3 and 4 changed and what they did not: the truncation split TODO
-#313 found is CLOSED IN THE CODE for C, Go and Python — Go moved to the HIGH octets and
-Python, which already took the high bits, now does it through the one named `truncate`
-rather than an open-coded `>> (256 - n)` — but `hske-nla1` is still refused below 256 bits
-in all four CLIs, and stays refused until Java lands.
+other.  It is done: `hske-nla1` is accepted at every width §2 permits, in all four CLIs,
+and `CliTest/test_narrow_width_matrix.sh` measures the full 4 × 4 matrix at 256, 128, 64
+and 32 bits — 48 narrow cells, all agreeing.
 
 Every pass MUST be behaviour-preserving at 256 bits, and 256 is where everything is
 pinned — `KAT/` entire, the 518-assertion `test_cross_lang_matrix.sh`, and the numbered
@@ -477,6 +479,49 @@ round-trip), `Demo` (masked HSKE), `CodecTest` (the key round-trips) and `KatVer
 (three vector sets).  A conversion that changes a type cannot rely on the compiler where
 the language's equality is untyped; it has to rely on the tests, which is an argument for
 having them rather than a reason to be uneasy about the method.
+
+### 8.4 What pass 6 found, which is the reason a conformance vector is not enough
+
+Pass 6 is the payoff and it was not a paperwork exercise.  Every port passed
+`KAT/bitarray.json` 376/376 before it started, and **two of the four still produced the
+wrong `hske-nla1` keystream below 256 bits** — because conforming to the type is not the
+same as *consuming it at the value's width*.
+
+**Java's NL-FSCX v1 round rotated by a static `N / 4`.**  `Hfscx256.NL_V1_SHIFT` was
+`Herradura.N / 4` = 64, correct at 256 and at no other width, sitting one line below a
+`BitArray` that carries its width faithfully.  The measurement is what found it: the
+four-port probe agreed on `rnl_kdf_seed` at 32, 64, 128 and 256 — the site TODO #313 was
+*about* — and disagreed on the keystream in Java alone.  A conformance vector pins the
+TYPE's operations; a constant in a consumer of the type is invisible to it.
+
+**C's A1 path ran at `I_VALUE` and on fixed-`KEYBYTES` arithmetic.**  `ba_add256`,
+`ba_sub256`, `ba_mul256` and `ba_rol64_256` looped `KEYBYTES` and rotated a fixed eight
+octets; they are `ba_add_mod2n`, `ba_sub_mod2n`, `ba_mul_mod2n` and `ba_rol_quarter` now,
+and **the names were the tell** — a function whose name contains its width is a function
+that cannot take another one.  `hske_nla1_encrypt` takes `base.nbits / 4` steps.
+
+**The result, measured rather than argued.**  The shipped suites of all four ports now
+produce byte-identical A1 ciphertext at 32, 64, 128 and 256 bits from identical inputs,
+and all 16 (writer × reader) CLI pairs round-trip at each of those widths.  Both fixes
+were verified by reverting them: each one alone turns the matrix from 85/0 to 19 failures.
+
+**What was NOT relaxed, and why the distinction matters.**  `encfile`/`decfile` still
+refuse a narrow key.  The `.hkx` container has no width field — a 32-octet nonce, 32-octet
+blocks, a 256-bit HFSCX-256 MAC — so that refusal is about a FORMAT that cannot describe
+another width, not about ports that disagree, and Python, Go and Java enforced it long
+before TODO #313 existed.  Two refusals also remain at `dec` and they are the specification
+speaking: a declared width that is not a legal BitArray width is §2, and a ciphertext whose
+declared width disagrees with the key's is §3's **mixed width, never coerced**.  That last
+one is load-bearing rather than tidy: this CLI layer used to resolve the disagreement by
+preferring one side — Go built the key at the *ciphertext's* width, C stamped 256 on
+everything it wrote — and a reader that silently prefers either would pass the whole matrix
+above and mis-decrypt a foreign artifact.
+
+**The standing lesson, restated because pass 6 is where it paid.**  TODO #313's divergence
+survived a green 518-assertion cross-language matrix because nothing in the repo ever ran
+the algorithm at a second width.  Neither did a 376-case conformance vector for the type
+underneath it.  What found both defects was one probe asking four shipped suites the same
+question at four widths, which is the cheapest test in this item and the last one written.
 
 ## 9. The C type, and why this is not a MAJOR change
 

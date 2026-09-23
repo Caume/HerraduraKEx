@@ -320,9 +320,12 @@ $CLI dec --algo hske --key alice_sk.pem --in ct.pem        --out recovered.bin
 ```
 
 Use `--algo hske-nla1` or `--algo hske-nla2` for the unauthenticated NL/PQC modes
-(see [NL/PQC protocols](#nlpqc-protocols)).  `hske-nla1` requires a **256-bit**
-session key — the default — and refuses any other width in all four CLIs since
-v9.0.0; see `MIGRATING.md` §19 for why.
+(see [NL/PQC protocols](#nlpqc-protocols)).  `hske-nla1` accepts **any legal
+BitArray width** — a multiple of 8 from 16 to 256 — and all four CLIs produce
+the same keystream at each of them.  It was 256-bit only from v9.0.0 to v9.4.0,
+because the four ports disagreed below 256; `MIGRATING.md` §19 records the
+divergence and §23 the relaxation.  `encfile`/`decfile` are still 256-bit: the
+`.hkx` container has no width field.
 
 #### C
 

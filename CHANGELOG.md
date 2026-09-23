@@ -2,6 +2,61 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.0] - 2026-09-23
+
+### Changed
+- **`hske-nla1` is accepted at every legal width again, and all four CLIs agree
+  (TODO #314 pass 6 — the last pass, and the one the item existed for).**  TODO #313
+  refused `--algo hske-nla1` at any width but 256 in all four CLIs, because below 256 the
+  four ports produced four different keystreams and A1 has no authentication tag, so
+  `dec` wrote garbage and exited 0.  Passes 2–5 gave every port one variable-width
+  `BitArray`; this pass converged the code ON TOP of it and lifted the refusal.
+  `hske-nla1` now accepts every width `BITARRAY.md` §2 permits — a multiple of 8 from 16
+  to 256 — and `CliTest/test_narrow_width_matrix.sh` measures the full 4 × 4
+  (writer × reader) matrix at 256, 128, 64 and 32 bits: **48 narrow cells, all agreeing**.
+  At 256 bits nothing moves, byte for byte.  `MIGRATING.md` §23; §19 is marked superseded.
+- **Two ports passed `KAT/bitarray.json` 376/376 and still produced the wrong keystream
+  below 256 — that is pass 6's finding, and it is why a conformance vector is not
+  enough.**  Conforming to the TYPE is not the same as CONSUMING it at the value's width.
+  Java's NL-FSCX v1 round rotated by a static `Hfscx256.NL_V1_SHIFT = Herradura.N / 4`,
+  correct at 256 and at no other width, one line below a `BitArray` that carries its width
+  faithfully.  C's HSKE-NL-A1 path took `I_VALUE` steps over fixed-`KEYBYTES` arithmetic:
+  `ba_add256`, `ba_sub256`, `ba_mul256` and `ba_rol64_256` are now `ba_add_mod2n`,
+  `ba_sub_mod2n`, `ba_mul_mod2n` and `ba_rol_quarter`, width-aware and mixed-width-checked,
+  and **the names were the tell** — a function whose name contains its width cannot take
+  another one.  Found by the cheapest test in the whole item and the last one written: one
+  probe asking four shipped suites the same question at four widths.  Both fixes verified
+  by reverting them; each alone turns the matrix from 85/0 to 19 failures.
+- **C's HSKE-NL-A1 artifact finally states its own width.**  `enc` writes the key's
+  declared `nbits` instead of `der_i_n256`'s fixed 256 — TODO #313's third cause, the one
+  that made `c → go` work and `go → c` fail — and `dec` carries the key's width end to
+  end through a new `ba_from_ra_n` rather than zero-extending to `KEYBITS`.  The
+  zero-extension is untouched for every other algo (#312's rule: a refactor must not
+  settle a question it happens to expose).
+- **`dec` refuses a MIXED WIDTH, and that is not tidying.**  A ciphertext whose declared
+  width disagrees with the key's is `BITARRAY.md` §3's error, never a coercion.  This
+  layer used to resolve it by preferring one side — Go built the key at the CIPHERTEXT's
+  width, C stamped 256 on everything it wrote — and a reader that silently prefers either
+  side passes the entire matrix above and mis-decrypts a foreign artifact.  A declared
+  width that no `BitArray` can have (§2) is refused too.
+- **`encfile`/`decfile` still refuse a narrow key, for a reason about the FORMAT.**  The
+  `.hkx` container has no width field at all: a 32-octet nonce, 32-octet blocks, a
+  256-bit HFSCX-256 MAC.  Python, Go and Java refused there long before TODO #313; C's
+  check is kept and re-justified rather than relaxed with the rest.
+- `CliTest/test_narrow_width_matrix.sh` **rewritten a second time**, from "all four
+  refuse" to "all four agree", as both previous headers instructed.  85 assertions.  The
+  accept-control is now the matrix itself, so it acquires the control that lets it FAIL: a
+  genuine artifact decrypted under a DIFFERENT key must not recover the plaintext, or an
+  `hske-nla1` that ignored its key entirely would score 64/64.  The scope control survives
+  and points the other way — `--algo hske` at a narrow width must still behave as it did,
+  since a relaxation that quietly widened is as much a scope error as a guard that did.
+- `spec/check_language_parity.py`: the `fscx-i-steps` Java alias `Hfscx256.NL_V1_SHIFT` is
+  **deleted, not re-pointed** — the constant is gone because a per-class re-declaration
+  that can only be right at one width is the defect this pass removed.  The checker caught
+  the deletion, which is the axis working as designed.
+- `BITARRAY.md` §8 marks pass 6 done and adds §8.4 (what pass 6 found).  `MIGRATING.md`
+  §23.
+
 ## [9.4.0] - 2026-09-23
 
 ### Changed

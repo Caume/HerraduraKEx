@@ -2667,8 +2667,12 @@ PARAMETERS = {
 PARAM_JAVA_ALIASES = {
     "keybits": ["Duplex.N", "FpeTwk.N", "Hdrbg.N", "HerraduraNl.N", "Hfscx256.N",
                 "Ratchet.N", "Stern.N", "SternRing.N", "Wots.N"],
-    "fscx-i-steps": ["Duplex.I_VALUE", "Hdrbg.I_VALUE", "Hfscx256.NL_V1_SHIFT",
-                     "HpksT.I_STEPS"],
+    # Hfscx256.NL_V1_SHIFT was here until TODO #314 pass 6 DELETED it: the
+    # NL-FSCX v1 round's rotation is n/4 at the OPERAND's width, not a static
+    # copy of N/4, and a re-declaration that can only be right at one width is
+    # what kept Java's hske-nla1 keystream disagreeing with the other three
+    # below 256.  The alias going away IS the fix; do not re-add it.
+    "fscx-i-steps": ["Duplex.I_VALUE", "Hdrbg.I_VALUE", "HpksT.I_STEPS"],
     "fscx-r-steps": ["FpeTwk.R_VALUE"],
     "block-bytes": ["Duplex.BLOCK", "Hdrbg.BLOCK", "Hfscx256.HKX_BLOCK",
                     "HerraduraNl.AEAD_BLOCK"],
@@ -3889,7 +3893,10 @@ CLI_DRAW_COVERAGE = {
             "CLI, and this is the row where that is most load-bearing: A1 is "
             "ks = nl_fscx_revolve_v1(K, K^ctr, i) with E = P ^ ks, so a "
             "repeated nonce under one key is a two-time pad outright.  Nothing "
-            "compares the four draws",
+            "compares the four draws.  Since TODO #314 pass 6 the draw is at "
+            "the KEY's width rather than a fixed 256 in every port, so the "
+            "four now consume the same number of entropy bytes for the same "
+            "operation -- C drew 32 and kept a prefix until that pass",
         "c": ("herradura_cli.c::cmd_enc", 1),
         "go": ("herradura_cli.go::cmdEnc", 1),
         "python": ("herradura.py::cmd_enc", 1),

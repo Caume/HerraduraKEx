@@ -1,63 +1,70 @@
 #!/usr/bin/env bash
-# CliTest/test_narrow_width_matrix.sh — TODO #313: HSKE-NL-A1 is 256-BIT ONLY,
-# in all four CLIs, on every path that reaches its keystream.
+# CliTest/test_narrow_width_matrix.sh — the WIDTH axis for HSKE-NL-A1.
 #
-# THIS SCRIPT ASSERTS THE CONTRACT.  Its previous version did not: it PINNED THE
-# DEFECT, because #313 was undecided between three routes and a script asserting
-# the correct contract would have been red and would have had to be ignored —
-# the allow-list CLAUDE.md's Testing section refuses to have.  #313 chose ROUTE
-# 2 (refuse n != 256 rather than converge the four truncation rules), the four
-# CLIs now do it, and this file was REWRITTEN rather than patched cell by cell,
-# exactly as its own header instructed.  The 12-cell expectation table is gone:
-# under route 2 there is nothing to tabulate, because no narrow cell is
-# reachable.
+# THIRD VERSION, and each rewrite was instructed by the one before it.  v8.3.1
+# PINNED THE DEFECT, because TODO #313 was undecided between three routes and a
+# script asserting the correct contract would have been red and would have had
+# to be ignored — the allow-list CLAUDE.md's Testing section refuses to have.
+# v9.0.0 asserted ROUTE 2, "all four CLIs REFUSE every width but 256", once
+# #313 chose it.  This version asserts what route 2 was always a placeholder
+# for: ALL FOUR AGREE.  TODO #314 gave every port one variable-width BitArray,
+# and pass 6 relaxed the refusal — so the file is REWRITTEN rather than patched
+# cell by cell, exactly as both previous headers instructed.
 #
-# THE CONTRACT, stated so a regression has something to fail against: for
-# `hske-nla1`, every CLI must refuse — non-zero exit — any width other than 256,
-# whether the width arrives on the KEY or on the CIPHERTEXT's own declared
-# `nbits` field, at `enc`, `dec`, `encfile` and `decfile` alike.  Exiting 0 with
-# the wrong bytes is the one outcome that is never acceptable, and it was the
-# outcome in 16 of the reachable cells before v9.0.0: `hske-nla1` is a raw XOR
-# keystream with NO authentication tag, so a wrong keystream is not a detectable
-# event and `dec` wrote garbage and reported success.
+# THE CONTRACT, stated so a regression has something to fail against.  For
+# `hske-nla1`, at EVERY legal BitArray width (BITARRAY.md §2: a multiple of 8
+# from 16 to 256), a ciphertext written by any of the four CLIs must decrypt to
+# the same plaintext under all four — the full (writer × reader) matrix, not
+# each port against Python.  Two things are still refused, and they are refused
+# for reasons about the FORMAT rather than about ports disagreeing: a width that
+# is not a legal BitArray width (§2), and a ciphertext whose declared width
+# disagrees with the key's (§3 — a mixed width is never coerced).
 #
-# WHY REFUSING IS THE FIX AND NOT A WORKAROUND.  Three independent causes made
-# the four ports disagree (see TODO #313): the KDF domain constant is truncated
-# at OPPOSITE ENDS (Python HIGH bits, Go LOW bits); C's `load_sym_key` dropped
-# the declared width entirely and C stamps `nbits = 256` into every ciphertext
-# regardless; and Java is 256-fixed and agrees with neither. Converging them is
-# route 1, and C cannot follow it — it is compiled for a single KEYBITS and
-# cannot represent a 128-bit A1 operation at all, so a convergence today would
-# leave C differing while reporting the divergence closed.  That needs TODO
-# #314's variable-width BitArray.  Route 2 is available now and two of the four
-# already did it somewhere on the path (Java at `enc`, C at `genpkey`).
+# WHAT WAS WRONG, which is what the matrix below now measures rather than
+# asserts.  Three independent causes made the four ports produce four different
+# keystreams below 256 (TODO #313): the KDF domain constant was truncated at
+# OPPOSITE ENDS (Python HIGH bits, Go LOW bits); C's `load_sym_key` dropped the
+# declared width and C stamped `nbits = 256` into every ciphertext whatever the
+# key said; and Java was 256-fixed and agreed with neither.  All three are
+# closed in the code: one `truncate` (§4.4) in one place per port, C's A1 path
+# carries the key's own width end to end and STATES it in the artifact, and
+# Java's NL-FSCX v1 round takes its rotation from the operand instead of from a
+# static `N / 4`.
 #
-# WHY IT SHIPPED, which is the whole reason this file exists: nothing in the
-# repo ran `hske-nla1` at a width other than 256.  All 42 CliTest invocations
-# feed from default-width session keys; the eleven `--bits 64` uses are
-# HKEX-RNL, which since TODO #228 derives a 256-bit session key at every ring
-# dimension; the `--bits 32` uses are the Stern matrix dimension N.  A four-way
-# divergence sat under a green 518-assertion cross-language matrix because the
-# matrix only ever asked one width.
+# WHY IT SHIPPED, which is why this file exists at all: nothing in the repo ran
+# `hske-nla1` at a width other than 256.  A four-way divergence sat under a
+# green 518-assertion cross-language matrix because the matrix only ever asked
+# one width.  That is the standing lesson, and it is why this script sweeps
+# widths rather than adding one more 256-bit assertion.
 #
-# FOUR THINGS ABOUT THE SHAPE, before editing anything below.
-#   1. The n=256 ACCEPT CONTROL runs first and is not optional.  A CLI that
-#      cannot encrypt at all refuses every narrow case too and would read as a
-#      perfect route-2 implementation — TODO #234's vacuous pass wearing the
-#      shape of success.  If the control fails, the refusals below prove nothing.
-#   2. The ciphertext-width case REWRITES a genuine artifact's `nbits` field
-#      rather than minting a narrow one, because no CLI will mint one any more.
-#      The rewrite is length-preserving (DER INTEGER 256 is `02 02 01 00` and
-#      128 is `02 02 00 80` — both four bytes, so no SEQUENCE length moves) and
-#      it has its OWN control: the un-rewritten artifact must still decrypt, or
-#      a rewrite that merely corrupted the PEM would score as a refusal for the
-#      wrong reason.  That is lib_malformed.sh's discipline.
-#   3. There is a SCOPE control.  #313 authorised a guard on `hske-nla1`, not on
-#      every symmetric algo, so `enc --algo hske` at a narrow width must still
-#      be accepted where it was before.  A guard that quietly widened would
-#      otherwise pass every assertion in this file.
-#   4. The refusal COUNT is asserted independently of the per-case results, so
-#      one port silently losing its guard cannot pass quietly.
+# SIX THINGS ABOUT THE SHAPE, before editing anything below.
+#   1. THE MATRIX IS ITS OWN ACCEPT CONTROL, but only if it can fail.  A
+#      comparison against a fixed plaintext passes trivially if every reader
+#      writes the same bytes for any reason at all, so case 0 decrypts a
+#      genuine artifact under the WRONG key and requires the result to DIFFER.
+#      Without it, an `hske-nla1` that ignored the key entirely would score
+#      64/64 — TODO #234's vacuous pass, inverted.
+#   2. n = 256 IS IN THE SWEEP, not beside it.  It is the width everything else
+#      in the repo pins, so a regression there must show up here too rather
+#      than being someone else's problem.
+#   3. THE REFUSALS THAT REMAIN ARE FORMAT REFUSALS, and both are length-
+#      preserving REWRITES of a genuine artifact (DER INTEGER 256 is
+#      `02 02 01 00`, 128 is `02 02 00 80`, 260 is `02 02 01 04` — all four
+#      bytes, so no SEQUENCE length moves).  Each has its own control: the
+#      un-rewritten artifact must still decrypt, or a rewrite that merely
+#      corrupted the PEM would score as a refusal for the wrong reason.
+#   4. encfile / decfile STILL REFUSE a narrow key, and that is not a leftover.
+#      The `.hkx` container has no width field at all: its nonce is 32 octets,
+#      its blocks are 32 octets and its tag is a 256-bit HFSCX-256 MAC.  Python,
+#      Go and Java refused there long before #313.  A relaxation that reached
+#      this path would be writing a container that cannot describe itself.
+#   5. THE SCOPE CONTROL SURVIVES THE RELAXATION and is now pointing the other
+#      way.  #313's guard was scoped to `hske-nla1`; `--algo hske` at a narrow
+#      width was never in scope and must still behave as it did.  A relaxation
+#      that quietly widened is as much a scope error as a guard that did.
+#   6. BOTH COUNTS ARE ASSERTED INDEPENDENTLY of the per-case results — the
+#      narrow round-trips and the refusals — so a loop that silently stopped
+#      iterating, or one port quietly losing a check, cannot pass.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -92,123 +99,128 @@ for l in c go; do
 done
 [ -n "${CLI[java]:-}" ] || echo "NOTE: java CLI absent — javac is not installed"
 
-NARROW_WIDTHS="128 64"
+# 32 is the narrowest width this sweep uses; BITARRAY.md §2's floor is 16, and
+# the floor is exercised by KAT/bitarray.json rather than by four CLI processes.
+NARROW_WIDTHS="128 64 32"
+ALL_WIDTHS="256 $NARROW_WIDTHS"
 REFUSALS=0
-refused() { REFUSALS=$((REFUSALS+1)); }
+NARROW_TRIPS=0
+refused()  { REFUSALS=$((REFUSALS+1)); }
 
 MSG="$TMP/m.bin"; printf 'ABCD' > "$MSG"
 hx() { od -An -tx1 "$1" 2>/dev/null | tr -d ' \n'; }
-REF="$(hx "$MSG")"
+
+# The A1 block is the KEY's width, so at n = 32 the recoverable prefix is the
+# first 4 octets and at larger widths it is all of them, zero-padded.  Compare
+# only the prefix that is actually carried.
+expect_hex() {
+    local bits="$1" nb=$((bits / 8)) want
+    want="$(printf 'ABCD' | head -c "$nb" | od -An -tx1 | tr -d ' \n')"
+    echo "$want"
+}
 
 # make_key <bits> — a session key of the given width, always via the Python CLI
 # so the fixture itself is cross-language (test_malformed_pem_matrix.sh's rule).
-# C cannot originate one: its genpkey has no --bits.  `kex` is unaffected by
-# this item and still produces narrow session keys; it is `hske-nla1` that
-# refuses to consume them.
+# C cannot originate one: its genpkey has no --bits.
 make_key() {
-    local b="$1" p="${CLI[py]}"
+    local b="$1" p="${CLI[py]}" tag="${2:-sk}"
     # shellcheck disable=SC2086
-    $p genpkey --algo hkex-gf --bits "$b" --out "$TMP/a$b.pem"  >/dev/null 2>&1
+    $p genpkey --algo hkex-gf --bits "$b" --out "$TMP/${tag}a$b.pem"  >/dev/null 2>&1
     # shellcheck disable=SC2086
-    $p genpkey --algo hkex-gf --bits "$b" --out "$TMP/b$b.pem"  >/dev/null 2>&1
+    $p genpkey --algo hkex-gf --bits "$b" --out "$TMP/${tag}b$b.pem"  >/dev/null 2>&1
     # shellcheck disable=SC2086
-    $p pkey --in "$TMP/b$b.pem" --pubout --out "$TMP/bp$b.pem"  >/dev/null 2>&1
+    $p pkey --in "$TMP/${tag}b$b.pem" --pubout --out "$TMP/${tag}bp$b.pem" >/dev/null 2>&1
     # shellcheck disable=SC2086
-    $p kex --algo hkex-gf --our "$TMP/a$b.pem" --their "$TMP/bp$b.pem" \
-           --out "$TMP/sk$b.pem" >/dev/null 2>&1
+    $p kex --algo hkex-gf --our "$TMP/${tag}a$b.pem" --their "$TMP/${tag}bp$b.pem" \
+           --out "$TMP/$tag$b.pem" >/dev/null 2>&1
 }
 
-for b in 256 $NARROW_WIDTHS; do make_key "$b"; done
+for b in $ALL_WIDTHS; do make_key "$b"; done
+make_key 256 other          # an independent 256-bit key, for case 0
 
-# ── 0. ACCEPT CONTROL: at 256 bits every pair must still round-trip ──────────
+# ── 0. THE CONTROL THAT LETS THE MATRIX FAIL ─────────────────────────────────
+# Decrypting a genuine artifact under a DIFFERENT key must not reproduce the
+# plaintext.  If it does, every cell below is comparing something that does not
+# depend on the key and the matrix proves nothing.
 echo ""
-echo "=== control: n = 256, every pair must round-trip ==="
-for e in "${LANGS[@]}"; do
-    # shellcheck disable=SC2086
-    if ! ${CLI[$e]} enc --algo hske-nla1 --key "$TMP/sk256.pem" \
-                        --in "$MSG" --out "$TMP/ct_$e.pem" >/dev/null 2>&1; then
-        fail "control n=256: $e could not encrypt"
-        continue
-    fi
-    for d in "${LANGS[@]}"; do
-        rm -f "$TMP/o.bin"
+echo "=== control: the matrix can fail (wrong key must not recover) ==="
+# shellcheck disable=SC2086
+${CLI[${LANGS[0]}]} enc --algo hske-nla1 --key "$TMP/sk256.pem" \
+                        --in "$MSG" --out "$TMP/ct_ctl.pem" >/dev/null 2>&1 \
+    || fail "control: ${LANGS[0]} could not produce a 256-bit artifact"
+rm -f "$TMP/o.bin"
+# shellcheck disable=SC2086
+if ${CLI[${LANGS[0]}]} dec --algo hske-nla1 --key "$TMP/other256.pem" \
+                           --in "$TMP/ct_ctl.pem" --out "$TMP/o.bin" >/dev/null 2>&1 \
+   && [ "$(hx "$TMP/o.bin" | cut -c1-8)" = "$(expect_hex 256)" ]; then
+    fail "control: a DIFFERENT key recovered the plaintext — the matrix is vacuous"
+else
+    pass "control: a different key does not recover the plaintext"
+fi
+
+# ── 1. THE MATRIX: every (writer × reader) pair, at every width ──────────────
+echo ""
+echo "=== the matrix: every writer x reader pair, at 256 / 128 / 64 / 32 ==="
+for bits in $ALL_WIDTHS; do
+    want="$(expect_hex "$bits")"
+    for e in "${LANGS[@]}"; do
         # shellcheck disable=SC2086
-        if ${CLI[$d]} dec --algo hske-nla1 --key "$TMP/sk256.pem" \
-                          --in "$TMP/ct_$e.pem" --out "$TMP/o.bin" >/dev/null 2>&1 \
-           && [ "$(hx "$TMP/o.bin" | cut -c1-${#REF})" = "$REF" ]; then
-            pass "control n=256: $e -> $d"
-        else
-            fail "control n=256: $e -> $d did not round-trip"
+        if ! ${CLI[$e]} enc --algo hske-nla1 --key "$TMP/sk$bits.pem" \
+                            --in "$MSG" --out "$TMP/ct_${bits}_$e.pem" >/dev/null 2>&1; then
+            fail "n=$bits: $e could not encrypt"
+            continue
         fi
+        for d in "${LANGS[@]}"; do
+            rm -f "$TMP/o.bin"
+            # shellcheck disable=SC2086
+            if ${CLI[$d]} dec --algo hske-nla1 --key "$TMP/sk$bits.pem" \
+                              --in "$TMP/ct_${bits}_$e.pem" --out "$TMP/o.bin" \
+                              >/dev/null 2>&1 \
+               && [ "$(hx "$TMP/o.bin" | cut -c1-${#want})" = "$want" ]; then
+                pass "n=$bits: $e -> $d"
+                [ "$bits" != 256 ] && NARROW_TRIPS=$((NARROW_TRIPS+1))
+            else
+                fail "n=$bits: $e -> $d did not round-trip (got $(hx "$TMP/o.bin" | cut -c1-16))"
+            fi
+        done
     done
 done
 
-# ── 1. enc refuses a narrow KEY ──────────────────────────────────────────────
-echo ""
-echo "=== enc: a narrow session key must be refused ==="
-for bits in $NARROW_WIDTHS; do
-    for l in "${LANGS[@]}"; do
-        # shellcheck disable=SC2086
-        if ${CLI[$l]} enc --algo hske-nla1 --key "$TMP/sk$bits.pem" \
-                          --in "$MSG" --out "$TMP/x.pem" >/dev/null 2>&1; then
-            fail "n=$bits: $l enc ACCEPTED a narrow key — TODO #313 route 2 lost"
-        else
-            pass "n=$bits: $l enc refuses a narrow key"; refused
-        fi
-    done
-done
-
-# ── 2. dec refuses a narrow KEY ──────────────────────────────────────────────
-# Against a GENUINE 256-bit ciphertext, so the only thing wrong is the key.
-echo ""
-echo "=== dec: a narrow session key must be refused ==="
-for bits in $NARROW_WIDTHS; do
-    for l in "${LANGS[@]}"; do
-        rm -f "$TMP/o.bin"
-        # shellcheck disable=SC2086
-        if ${CLI[$l]} dec --algo hske-nla1 --key "$TMP/sk$bits.pem" \
-                          --in "$TMP/ct_${LANGS[0]}.pem" --out "$TMP/o.bin" \
-                          >/dev/null 2>&1; then
-            fail "n=$bits: $l dec ACCEPTED a narrow key — it wrote $(hx "$TMP/o.bin" | cut -c1-16)…"
-        else
-            pass "n=$bits: $l dec refuses a narrow key"; refused
-        fi
-    done
-done
-
-# ── 3. dec refuses a narrow CIPHERTEXT-DECLARED width ────────────────────────
+# ── 2. A MIXED WIDTH IS NEVER COERCED (BITARRAY.md §3) ───────────────────────
 # The key is a genuine 256-bit one; only the artifact's own nbits field says
-# otherwise.  This is the half that catches C's mislabelling from the other
-# side: C stamps nbits=256 on everything, so a port that trusted only the key
-# would still read a foreign narrow artifact at the wrong width.
-echo ""
-echo "=== dec: a ciphertext declaring a narrow width must be refused ==="
-python3 - "$TMP/ct_${LANGS[0]}.pem" "$TMP/ct_relabelled.pem" <<'PY'
+# otherwise.  Before v9.0.0 this was the half that caught C's mislabelling; it
+# is now the half that keeps the relaxation from becoming a coercion — a reader
+# that simply believed the key, or simply believed the artifact, would pass the
+# whole matrix above and silently mis-decrypt here.
+relabel() {   # relabel <src> <dst> <4-byte DER replacement, hex>
+    python3 - "$1" "$2" "$3" <<'PY'
 import sys, base64
-src, dst = sys.argv[1], sys.argv[2]
+src, dst, repl = sys.argv[1], sys.argv[2], bytes.fromhex(sys.argv[3])
 lines = open(src).read().strip().split('\n')
 der = base64.b64decode(''.join(lines[1:-1]))
-# DER INTEGER 256 = 02 02 01 00; 128 = 02 02 00 80.  Same length, so no
-# SEQUENCE length header moves and the artifact stays well-formed DER —
-# the point is to change what it CLAIMS, not to corrupt it.
-i = der.rfind(b'\x02\x02\x01\x00')
+i = der.rfind(b'\x02\x02\x01\x00')       # DER INTEGER 256, the trailing nbits
 if i < 0:
     sys.exit("no nbits=256 DER INTEGER found in the ciphertext")
-der = der[:i] + b'\x02\x02\x00\x80' + der[i + 4:]
+assert len(repl) == 4, "the rewrite must be length-preserving"
+der = der[:i] + repl + der[i + 4:]
 b64 = base64.b64encode(der).decode()
 body = '\n'.join(b64[j:j + 64] for j in range(0, len(b64), 64))
 open(dst, 'w').write(lines[0] + '\n' + body + '\n' + lines[-1] + '\n')
 PY
+}
 
-# CONTROL for the rewrite: the un-rewritten artifact must still decrypt.  A
-# rewrite that merely corrupted the PEM would make every CLI below exit
-# non-zero for the wrong reason and score as a clean pass.
+echo ""
+echo "=== §3: a ciphertext declaring a width the key does not have ==="
+relabel "$TMP/ct_256_${LANGS[0]}.pem" "$TMP/ct_mixed.pem" 02020080     # 128
+
+# CONTROL for the rewrite: the un-rewritten artifact must still decrypt.
 rm -f "$TMP/o.bin"
+want256="$(expect_hex 256)"
 # shellcheck disable=SC2086
 if ${CLI[${LANGS[0]}]} dec --algo hske-nla1 --key "$TMP/sk256.pem" \
-                           --in "$TMP/ct_${LANGS[0]}.pem" --out "$TMP/o.bin" \
+                           --in "$TMP/ct_256_${LANGS[0]}.pem" --out "$TMP/o.bin" \
                            >/dev/null 2>&1 \
-   && [ "$(hx "$TMP/o.bin" | cut -c1-${#REF})" = "$REF" ]; then
+   && [ "$(hx "$TMP/o.bin" | cut -c1-${#want256})" = "$want256" ]; then
     pass "relabel control: the un-rewritten artifact still decrypts"
 else
     fail "relabel control: the source artifact does not decrypt — the cases below prove nothing"
@@ -218,19 +230,31 @@ for l in "${LANGS[@]}"; do
     rm -f "$TMP/o.bin"
     # shellcheck disable=SC2086
     if ${CLI[$l]} dec --algo hske-nla1 --key "$TMP/sk256.pem" \
-                      --in "$TMP/ct_relabelled.pem" --out "$TMP/o.bin" \
-                      >/dev/null 2>&1; then
-        fail "$l dec ACCEPTED a ciphertext declaring nbits=128"
+                      --in "$TMP/ct_mixed.pem" --out "$TMP/o.bin" >/dev/null 2>&1; then
+        fail "$l dec COERCED a 128-bit-labelled ciphertext to a 256-bit key"
     else
-        pass "$l dec refuses a ciphertext declaring nbits=128"; refused
+        pass "$l dec refuses a mixed width (ct 128, key 256)"; refused
     fi
 done
 
-# ── 4. encfile / decfile refuse a narrow KEY ─────────────────────────────────
-# Same seed derivation, same defect — and until v9.0.0 the C CLI was the one
-# port that did not guard these two at all.
+# ── 3. A WIDTH THAT IS NOT A LEGAL BitArray WIDTH (BITARRAY.md §2) ───────────
 echo ""
-echo "=== encfile / decfile: a narrow session key must be refused ==="
+echo "=== §2: a ciphertext declaring a width no BitArray can have ==="
+relabel "$TMP/ct_256_${LANGS[0]}.pem" "$TMP/ct_badwidth.pem" 02020104   # 260
+for l in "${LANGS[@]}"; do
+    rm -f "$TMP/o.bin"
+    # shellcheck disable=SC2086
+    if ${CLI[$l]} dec --algo hske-nla1 --key "$TMP/sk256.pem" \
+                      --in "$TMP/ct_badwidth.pem" --out "$TMP/o.bin" >/dev/null 2>&1; then
+        fail "$l dec ACCEPTED a ciphertext declaring nbits=260"
+    else
+        pass "$l dec refuses an illegal width (260)"; refused
+    fi
+done
+
+# ── 4. encfile / decfile: the .hkx container is 256-bit BY FORMAT ────────────
+echo ""
+echo "=== encfile / decfile: the container has no width field, so 256 only ==="
 # shellcheck disable=SC2086
 ${CLI[${LANGS[0]}]} encfile --algo hske-nla1 --key "$TMP/sk256.pem" \
                             --in "$MSG" --out "$TMP/genuine.hkx" >/dev/null 2>&1 \
@@ -240,7 +264,7 @@ for l in "${LANGS[@]}"; do
     # shellcheck disable=SC2086
     if ${CLI[$l]} encfile --algo hske-nla1 --key "$TMP/sk128.pem" \
                           --in "$MSG" --out "$TMP/f.hkx" >/dev/null 2>&1; then
-        fail "$l encfile ACCEPTED a narrow key"
+        fail "$l encfile ACCEPTED a narrow key — the .hkx container cannot describe it"
     else
         pass "$l encfile refuses a narrow key"; refused
     fi
@@ -254,12 +278,11 @@ for l in "${LANGS[@]}"; do
     fi
 done
 
-# ── 5. SCOPE CONTROL: the guard is `hske-nla1`'s, not every algo's ───────────
-# #313 authorised refusing narrow widths for hske-nla1.  It did NOT authorise
-# refusing them for `hske`, whose narrow-width behaviour is unmeasured and out
-# of this item's scope.  Java is excluded because it was ALREADY 256-fixed for
-# `hske` before this item — that is a pre-existing per-language scope decision,
-# not something v9.0.0 did.
+# ── 5. SCOPE CONTROL: the relaxation is `hske-nla1`'s, not every algo's ──────
+# #313's guard was scoped to hske-nla1 and so is its relaxation.  `--algo hske`
+# at a narrow width was never in scope: it must behave exactly as it did.  Java
+# is excluded because it was ALREADY 256-fixed for `hske` before either item —
+# a pre-existing per-language scope decision.
 echo ""
 echo "=== scope control: --algo hske at a narrow width is unaffected ==="
 for l in "${LANGS[@]}"; do
@@ -269,22 +292,27 @@ for l in "${LANGS[@]}"; do
                       --in "$MSG" --out "$TMP/h.pem" >/dev/null 2>&1; then
         pass "scope: $l enc --algo hske still accepts a narrow key"
     else
-        fail "scope: $l enc --algo hske now REFUSES a narrow key — the #313 guard widened"
-        echo "     #313 is scoped to hske-nla1.  Widening it to every symmetric algo is a" >&2
-        echo "     separate decision with its own MAJOR cost; it must not happen by accident." >&2
+        fail "scope: $l enc --algo hske now REFUSES a narrow key — the scope moved"
     fi
 done
 
-# ── 6. The refusal count, asserted independently ─────────────────────────────
-# 4 CLIs x (2 widths enc + 2 widths dec-key + 1 relabelled ct + encfile + decfile)
-# = 4 x 7 = 28.  A per-case loop that silently stopped iterating, or one port
-# quietly losing its guard, changes this number.
+# ── 6. The two counts, asserted independently ────────────────────────────────
+# Narrow round-trips: 3 widths x 4 writers x 4 readers = 48.
+# Refusals: 4 CLIs x (mixed width + illegal width + encfile + decfile) = 16.
 echo ""
-echo "Narrow-width refusals observed: $REFUSALS"
-if [ "${#LANGS[@]}" -eq 4 ] && [ "$REFUSALS" -ne 28 ]; then
-    fail "expected 28 refusals with all four CLIs, saw $REFUSALS"
-    echo "     FEWER means a port lost its guard on some path; MORE means the guard" >&2
-    echo "     reaches somewhere this script does not describe.  Re-read the header." >&2
+echo "Narrow-width round-trips observed: $NARROW_TRIPS"
+echo "Format refusals observed: $REFUSALS"
+if [ "${#LANGS[@]}" -eq 4 ]; then
+    [ "$NARROW_TRIPS" -eq 48 ] || {
+        fail "expected 48 narrow round-trips with all four CLIs, saw $NARROW_TRIPS"
+        echo "     FEWER means a cell stopped agreeing; MORE means a width was added" >&2
+        echo "     without updating this count.  Re-read the header." >&2
+    }
+    [ "$REFUSALS" -eq 16 ] || {
+        fail "expected 16 format refusals with all four CLIs, saw $REFUSALS"
+        echo "     FEWER means a port lost a §2/§3 check or the .hkx guard; MORE means" >&2
+        echo "     a refusal reaches somewhere this script does not describe." >&2
+    }
 fi
 
 echo ""

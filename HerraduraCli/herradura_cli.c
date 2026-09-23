@@ -206,6 +206,24 @@ static void ba_from_ra(BitArray *ba, const uint8_t *src, size_t src_len)
     memcpy(ba->b + KEYBYTES - cp, src, cp);
 }
 
+/* ba_from_ra at a STATED width (TODO #314 pass 6).  ba_from_ra above
+   zero-extends to KEYBITS, which is what every algo still fixed at 256 wants;
+   hske-nla1's plain mode is the one path that now runs at the key's OWN
+   declared width, so it needs the value placed in nbits/8 octets rather than
+   in 32.  A DER INTEGER may carry a leading 0x00 sign octet, so the LOW nb
+   octets are the value. */
+static void ba_from_ra_n(BitArray *ba, const uint8_t *src, size_t src_len, int nbits)
+{
+    int nb;
+    ba_set_width(ba, nbits);
+    nb = ba_nbytes(ba);
+    memset(ba->b, 0, sizeof ba->b);
+    {
+        size_t cp = (src_len < (size_t)nb) ? src_len : (size_t)nb;
+        memcpy(ba->b + nb - cp, src + (src_len - cp), cp);
+    }
+}
+
 /* Pack n Z_q polynomial coefficients into bpc-bytes-per-coeff big-endian blob.
  * bpc=4 for s and m (Z_q, q=65537 ≤ 17 bits); bpc=2 for C (Z_p, p=4096 ≤ 12 bits). */
 static void poly_pack(uint8_t *out, const rnl_poly_t p, int bpc)
@@ -2221,23 +2239,50 @@ static void load_sym_key(BitArray *K, const char *path)
     load_sym_key_n(K, path, NULL);
 }
 
-/* HSKE-NL-A1's plain (unauthenticated) mode is 256-BIT ONLY (TODO #313).  Below
- * 256 the four language ports produce four different keystreams: the KDF domain
- * constant is truncated at opposite ends (Python takes its HIGH bits, Go its
- * LOW bits), C and Java are compiled/fixed at 256 and ignore the declared
- * width, and C stamps der_i_n256 into every ciphertext whatever the key says.
- * A1 is a raw XOR keystream with NO authentication tag, so a wrong keystream is
- * not a detectable event and `dec` used to write garbage and exit 0.  This
- * guard makes the divergence unreachable rather than resolved; converging the
- * four truncation rules is route 1, and C cannot follow it without the
- * variable-width BitArray of TODO #314.  Same shape as stern_require_n above. */
-static void nla1_require_n(uint64_t got, const char *what, const char *carrier)
+/* HSKE-NL-A1's plain mode ran at ANY width but 256 only by accident until TODO
+ * #314: below 256 the four ports produced four different keystreams, so #313
+ * refused every width but 256 in all four CLIs.  Pass 6 RELAXED that refusal —
+ * C, Go, Python and Java now agree octet for octet at 32, 64, 128 and 256 —
+ * and what is left is the width's own validity (BITARRAY.md §2) plus the rule
+ * that a width is never coerced (§3).  The refusal is not merely deleted: a
+ * width that is not a legal BitArray width was never representable, and a
+ * ciphertext whose declared width disagrees with the key is a MIXED WIDTH,
+ * which §3 makes an error rather than something to resolve by preferring one
+ * of the two.  See MIGRATING.md §23. */
+static void nla1_width_ok(uint64_t got, const char *what, const char *carrier)
+{
+    if (got < 16 || got > (uint64_t)BA_MAX_BITS || (got % 8) != 0) {
+        fprintf(stderr, "%s: hske-nla1 %s width must be a multiple of 8 between "
+                        "16 and %d; got %llu-bit (BITARRAY.md §2)\n",
+                what, carrier, BA_MAX_BITS, (unsigned long long)got);
+        exit(1);
+    }
+}
+
+/* The ciphertext's declared width and the key's must MATCH (BITARRAY.md §3). */
+static void nla1_same_width(uint64_t key_n, uint64_t ct_n, const char *what)
+{
+    if (key_n != ct_n) {
+        fprintf(stderr, "%s: hske-nla1 ciphertext declares %llu-bit, key is "
+                        "%llu-bit (BITARRAY.md §3: a mixed width is never "
+                        "coerced)\n",
+                what, (unsigned long long)ct_n, (unsigned long long)key_n);
+        exit(1);
+    }
+}
+
+/* The .hkx container of encfile/decfile is 256-BIT BY FORMAT and always was:
+ * its nonce is 32 octets, its blocks are 32 octets, its tag is a 256-bit
+ * HFSCX-256 MAC, and it carries no width field at all.  Python, Go and Java
+ * have refused a narrow key here since long before TODO #313; C acquired the
+ * check with #313 and KEEPS it at pass 6, because this refusal is about a
+ * container that cannot express another width, not about ports that disagree. */
+static void hkx_require_n(uint64_t got, const char *what)
 {
     if (got != (uint64_t)KEYBITS) {
-        fprintf(stderr, "%s: hske-nla1 requires a %d-bit %s; got %llu-bit "
-                        "(TODO #313: below %d the four language ports produce "
-                        "four different keystreams)\n",
-                what, KEYBITS, carrier, (unsigned long long)got, KEYBITS);
+        fprintf(stderr, "%s: key must be %d-bit; got %llu-bit (the .hkx "
+                        "container has no width field)\n",
+                what, KEYBITS, (unsigned long long)got);
         exit(1);
     }
 }
@@ -2786,12 +2831,23 @@ static void cmd_enc(int argc, char **argv)
         } else if (strcmp(algo, "hske-nla1") == 0) {
             int aead = has_flag(argc, argv, "--aead");
             const char *ad = get_arg(argc, argv, "--ad");
-            FILE *urnd = fopen("/dev/urandom", "rb");
-            if (!urnd) die("cannot open /dev/urandom");
-            BitArray N_nonce = BA_INIT;
-            ba_rand(&N_nonce, urnd);
-            fclose(urnd);
             if (ad && !aead) die("enc: --ad requires --aead");
+            /* The nonce is drawn AT THE WIDTH IT WILL BE USED AT, which is
+               why the width is validated before the draw: the AEAD branch is
+               256-only and plain A1 is the key's own width since TODO #314
+               pass 6.  Drawing 32 octets and keeping a prefix would make this
+               CLI consume a different number of entropy bytes from the other
+               three for the same operation (CLI_DRAW_COVERAGE's
+               hske_nla1_nonce role). */
+            if (!aead) nla1_width_ok(key_nbits, "enc", "key");
+            BitArray N_nonce = BA_INIT;
+            ba_zero_w(&N_nonce, aead ? KEYBITS : (int)key_nbits);
+            {
+                FILE *urnd = fopen("/dev/urandom", "rb");
+                if (!urnd) die("cannot open /dev/urandom");
+                ba_rand(&N_nonce, urnd);
+                fclose(urnd);
+            }
 
             if (aead) {
                 /* AEAD format tag 2: SEQ(2, nonce, E, tag, nbits) — TODO #95 */
@@ -2814,18 +2870,32 @@ static void cmd_enc(int argc, char **argv)
                 return;
             }
 
-            nla1_require_n(key_nbits, "enc", "key");
-            BitArray E = BA_INIT;
-            hske_nla1_encrypt(&E, &P, &K, &N_nonce);
-            uint8_t it0[8], itn[DER_INT_LEN(KEYBYTES)], itE[DER_INT_LEN(KEYBYTES)], itnb[8];
-            size_t l0, ln, lE, lnb;
-            der_i_byte(1, it0, &l0);
-            der_i32(N_nonce.b, itn, &ln);
-            der_i32(E.b, itE, &lE);
-            der_i_n256(itnb, &lnb);
-            const uint8_t *it[4] = {it0, itn, itE, itnb};
-            size_t il[4] = {l0, ln, lE, lnb};
-            seq_and_write(it, il, 4, PEM_CIPHERTEXT, out_path);
+            /* Variable width since TODO #314 pass 6.  Everything below runs
+               at the KEY's own declared width: the plaintext block is its
+               first n/8 octets (as Python's in_bytes[:nbytes] has always
+               been), the nonce is n bits, and the ciphertext's nbits field
+               STATES that width instead of der_i_n256's fixed 256 -- the
+               mislabelling MIGRATING.md §19 records as #313's third cause. */
+            {
+                int n = (int)key_nbits, nb = n / 8;
+                BitArray Kn = BA_INIT, Pn = BA_INIT, E = BA_INIT;
+                ba_zero_w(&Kn, n); ba_zero_w(&Pn, n);
+                memcpy(Kn.b, K.b + KEYBYTES - nb, nb);   /* K was zero-extended */
+                memcpy(Pn.b, P.b, nb);                   /* P is left-aligned   */
+                hske_nla1_encrypt(&E, &Pn, &Kn, &N_nonce);
+                {
+                    uint8_t it0[8], itn[DER_INT_LEN(KEYBYTES)];
+                    uint8_t itE[DER_INT_LEN(KEYBYTES)], itnb[8];
+                    size_t l0, ln, lE, lnb;
+                    der_i_byte(1, it0, &l0);
+                    der_int_enc(N_nonce.b, (size_t)nb, itn, &ln);
+                    der_int_enc(E.b,       (size_t)nb, itE, &lE);
+                    der_i_uint(key_nbits, itnb, &lnb);
+                    const uint8_t *it[4] = {it0, itn, itE, itnb};
+                    size_t il[4] = {l0, ln, lE, lnb};
+                    seq_and_write(it, il, 4, PEM_CIPHERTEXT, out_path);
+                }
+            }
 
         } else if (strcmp(algo, "hske-nla2") == 0) {
             BitArray E = BA_INIT;
@@ -3081,18 +3151,28 @@ static void cmd_dec(int argc, char **argv)
                 return;
             }
             if (fmt != 1 || ct.n_items < 4) die("dec: bad hske-nla1 ciphertext");
-            nla1_require_n(key_nbits, "dec", "key");
-            {   /* The ciphertext's own declared width, item[3] of format tag 1. */
+            nla1_width_ok(key_nbits, "dec", "key");
+            {   /* The ciphertext's own declared width, item[3] of format tag 1.
+                   Checked against the KEY's rather than against 256 since TODO
+                   #314 pass 6: both are legal widths now, and disagreeing ones
+                   are BITARRAY.md §3's mixed width, never a coercion. */
                 uint64_t ct_nbits = 0; size_t i;
+                int n, nb;
+                BitArray Kn = BA_INIT, Nn = BA_INIT;
                 for (i = 0; i < ct.vlens[3] && i < 8; i++)
                     ct_nbits = (ct_nbits << 8) | ct.vals[3][i];
-                nla1_require_n(ct_nbits, "dec", "ciphertext");
+                nla1_width_ok(ct_nbits, "dec", "ciphertext");
+                nla1_same_width(key_nbits, ct_nbits, "dec");
+                n = (int)key_nbits; nb = n / 8;
+                ba_zero_w(&Kn, n);
+                memcpy(Kn.b, K.b + KEYBYTES - nb, nb);
+                ba_from_ra_n(&Nn, ct.vals[1], ct.vlens[1], n);
+                ba_from_ra_n(&E,  ct.vals[2], ct.vlens[2], n);
+                pem_key_free(&ct);
+                hske_nla1_decrypt(&D, &E, &Kn, &Nn);
+                write_binary_file(out_path, D.b, (size_t)nb);
+                return;
             }
-            BitArray N_nonce = BA_INIT;
-            ba_from_ra(&N_nonce, ct.vals[1], ct.vlens[1]);
-            ba_from_ra(&E,       ct.vals[2], ct.vlens[2]);
-            pem_key_free(&ct);
-            hske_nla1_decrypt(&D, &E, &K, &N_nonce);
         } else {
             if (ct.n_items < 3) die("dec: bad symmetric ciphertext");
             ba_from_ra(&E, ct.vals[1], ct.vlens[1]);
@@ -4252,7 +4332,7 @@ static void cmd_encfile(int argc, char **argv)
     BitArray K = BA_INIT;
     uint64_t key_nbits;
     load_sym_key_n(&K, key_path, &key_nbits);
-    nla1_require_n(key_nbits, "encfile", "key");
+    hkx_require_n(key_nbits, "encfile");
 
     size_t plaintext_len;
     uint8_t *plaintext = read_binary_file(in_path, &plaintext_len);
@@ -4340,7 +4420,7 @@ static void cmd_decfile(int argc, char **argv)
     BitArray K = BA_INIT;
     uint64_t key_nbits;
     load_sym_key_n(&K, key_path, &key_nbits);
-    nla1_require_n(key_nbits, "decfile", "key");
+    hkx_require_n(key_nbits, "decfile");
 
     size_t raw_len;
     uint8_t *raw = read_binary_file(in_path, &raw_len);

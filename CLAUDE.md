@@ -79,54 +79,64 @@ CliTest/                                             — CLI integration + cross
                                                        had never interoperated between
                                                        {C, Go} and Python, and that is
                                                        why it shipped
-  test_narrow_width_matrix.sh                       — the WIDTH axis (TODO #313).  Every
-                                                       other CliTest script feeds `enc`
-                                                       from a DEFAULT-width session key, so
-                                                       a four-way divergence in
-                                                       `hske-nla1` below 256 bits sat under
-                                                       a green 518-assertion
-                                                       test_cross_lang_matrix.sh.  It PINNED
-                                                       THE DEFECT at v8.3.1, while #313 was
-                                                       undecided, and was REWRITTEN at
-                                                       v9.0.0 to ASSERT THE CONTRACT once
-                                                       route 2 shipped -- as its own header
-                                                       had instructed, and the 12-cell
-                                                       expectation table went with it, since
-                                                       under route 2 no narrow cell is
-                                                       reachable and there is nothing to
-                                                       tabulate.  Now: all four CLIs must
-                                                       refuse `hske-nla1` at any width but
-                                                       256, on the KEY at enc/dec/encfile/
-                                                       decfile and on the CIPHERTEXT's own
-                                                       declared nbits at dec.  FOUR
-                                                       CONTROLS, each verified to fire by
-                                                       breaking what it defends: the n=256
-                                                       accept control (a CLI that cannot
-                                                       encrypt refuses every narrow case too
-                                                       and reads as a perfect fix -- #234's
-                                                       vacuous pass wearing the shape of
-                                                       success); a SCOPE control, because
-                                                       #313 authorised a guard on hske-nla1
-                                                       and NOT on every symmetric algo, and
-                                                       a guard that widened by accident
-                                                       would pass every other assertion
-                                                       here; the relabel control, since the
-                                                       ciphertext-width case REWRITES a
-                                                       genuine artifact (no CLI will mint a
-                                                       narrow one any more) and a rewrite
-                                                       that merely corrupted the PEM would
-                                                       make every CLI exit non-zero for the
-                                                       wrong reason; and an independent
-                                                       refusal COUNT, so one port quietly
-                                                       losing a guard cannot pass.  The
-                                                       rewrite is length-preserving on
-                                                       purpose -- DER INTEGER 256 is
-                                                       02 02 01 00 and 128 is 02 02 00 80 --
-                                                       so no SEQUENCE length moves and the
-                                                       artifact stays well-formed: the point
-                                                       is to change what it CLAIMS, not to
-                                                       corrupt it.  Claimed by
-                                                       cross-lang-compat
+  test_narrow_width_matrix.sh                       — the WIDTH axis (TODO #313, #314).
+                                                       Every other CliTest script feeds
+                                                       `enc` from a DEFAULT-width session
+                                                       key, so a four-way divergence in
+                                                       `hske-nla1` below 256 bits sat under a
+                                                       green 518-assertion
+                                                       test_cross_lang_matrix.sh.  REWRITTEN
+                                                       TWICE, each time on the previous
+                                                       header's own instruction: it PINNED
+                                                       THE DEFECT at v8.3.1 while #313 was
+                                                       undecided, asserted route 2's "all
+                                                       four REFUSE" at v9.0.0, and asserts
+                                                       "ALL FOUR AGREE" since v9.5.0, when
+                                                       TODO #314 pass 6 converged the ports
+                                                       and lifted the refusal.  Now: the full
+                                                       4x4 (writer x reader) matrix at 256,
+                                                       128, 64 and 32 bits -- 48 narrow cells
+                                                       -- plus the refusals that remain,
+                                                       which are about FORMATS rather than
+                                                       about ports disagreeing: a declared
+                                                       width no BitArray can have
+                                                       (BITARRAY.md 2), a ciphertext whose
+                                                       declared width disagrees with the
+                                                       key's (3, a mixed width is never
+                                                       coerced -- and this layer used to
+                                                       RESOLVE that by preferring one side,
+                                                       Go the ciphertext's width and C the
+                                                       fixed 256 it stamped on everything),
+                                                       and encfile/decfile, whose .hkx
+                                                       container has no width field at all.
+                                                       FOUR CONTROLS.  The matrix is now its
+                                                       own accept-control, so it acquires the
+                                                       one that lets it FAIL: a genuine
+                                                       artifact decrypted under a DIFFERENT
+                                                       key must NOT recover the plaintext, or
+                                                       an hske-nla1 that ignored its key
+                                                       entirely would score 64/64 -- #234's
+                                                       vacuous pass inverted.  The two
+                                                       length-preserving relabel cases each
+                                                       have their own un-rewritten control
+                                                       (DER INTEGER 256 is 02 02 01 00, 128
+                                                       is 02 02 00 80 and 260 is 02 02 01 04,
+                                                       all four bytes, so no SEQUENCE length
+                                                       moves and the artifact stays
+                                                       well-formed: the point is to change
+                                                       what it CLAIMS).  The SCOPE control
+                                                       survives the relaxation and points the
+                                                       other way -- #313 scoped its guard to
+                                                       hske-nla1, so `--algo hske` at a
+                                                       narrow width must still behave as it
+                                                       did, a relaxation that quietly widened
+                                                       being as much a scope error as a guard
+                                                       that did.  And BOTH COUNTS are
+                                                       asserted independently, narrow
+                                                       round-trips and refusals, so a loop
+                                                       that stopped iterating or one port
+                                                       losing a check cannot pass quietly.
+                                                       Claimed by cross-lang-compat
   test_param_bounds.sh                              — the enforcement axis (TODO #278).
                                                        spec/'s PARAMETERS table compares a
                                                        bound's VALUE across the four
@@ -1901,16 +1911,24 @@ BITARRAY.md                                          — the NORMATIVE BitArray 
                                                       narrow constants already say — Go's
                                                       low-octet slice is the outlier, and its
                                                       rule was MEASURED rather than read.
-                                                      Status: ALL FOUR PORTS CONFORM --
+                                                      Status: ALL SIX PASSES ARE DONE --
                                                       C (pass 2, v9.1.0), Go (pass 3), Python
-                                                      (pass 4) and Java (pass 5, v9.4.0), so
-                                                      PASS 6 -- relaxing TODO #313's refusal
-                                                      -- is available for the first time.  8
+                                                      (pass 4), Java (pass 5, v9.4.0), and
+                                                      PASS 6 (v9.5.0), which RELAXED TODO
+                                                      #313's refusal: `hske-nla1` is accepted
+                                                      at every width 2 permits and all four
+                                                      CLIs agree octet for octet at 32, 64,
+                                                      128 and 256.  8
                                                       tabulates the six passes, 8.1 records
                                                       what pass 3 cost OUTSIDE the type, 8.2
                                                       what pass 4 measured that the others
-                                                      could not and 8.3 what pass 5 bought
-                                                      that they could not; 9
+                                                      could not, 8.3 what pass 5 bought
+                                                      that they could not and 8.4 WHAT PASS 6
+                                                      FOUND -- two ports that passed the
+                                                      376-case vector and still produced the
+                                                      wrong keystream below 256, because
+                                                      conforming to the TYPE is not the same
+                                                      as CONSUMING it at the value's width; 9
                                                       records the C
                                                       type decision the item demanded be made
                                                       in the item rather than in review — it
@@ -3017,6 +3035,51 @@ Java's `Stern.sternFKeygen` still draws its own seed.  (6) **ONE ROW WAS WAITING
 true when written and false the moment Java grew the type.  (7) **BEHAVIOUR IS PRESERVED
 AT 256 AND IT IS THE SAME OCTETS**, agreeing value for value with the other three probes:
 what #314 said was true "by four people's care" is now true by construction.
+
+**And the pass the whole item existed for, where a 376-case conformance vector was not
+enough (TODO #314, sixth and last pass v9.5.0).**  TODO #313's refusal is LIFTED:
+`hske-nla1` is accepted at every width `BITARRAY.md` §2 permits — a multiple of 8 from 16
+to 256 — in all four CLIs, and `CliTest/test_narrow_width_matrix.sh`, rewritten a second
+time from "all four refuse" to "all four agree", measures the full 4 × 4 (writer × reader)
+matrix at 256, 128, 64 and 32 bits: **85 PASS / 0 FAIL, 48 narrow cells**.  Six things
+carry forward.  (1) **TWO PORTS PASSED `KAT/bitarray.json` 376/376 AND STILL PRODUCED THE
+WRONG KEYSTREAM BELOW 256.**  Conforming to the TYPE is not the same as CONSUMING it at
+the value's width, and nothing in passes 1–5 could see the difference: Java's NL-FSCX v1
+round rotated by a static `Hfscx256.NL_V1_SHIFT = Herradura.N / 4`, correct at 256 and at
+no other width, sitting one line below a `BitArray` that carries its width faithfully; C's
+A1 path took `I_VALUE` steps over fixed-`KEYBYTES` arithmetic.  **What found both was the
+cheapest test in the item and the last one written** — one probe asking the four SHIPPED
+suites the same question at four widths, which agreed on `rnl_kdf_seed`, the site #313 was
+*about*, and disagreed on the keystream.  (2) **THE NAMES WERE THE TELL.**  `ba_add256`,
+`ba_sub256`, `ba_mul256` and `ba_rol64_256` are now `ba_add_mod2n`, `ba_sub_mod2n`,
+`ba_mul_mod2n` and `ba_rol_quarter`, width-aware and mixed-width-checked.  A function whose
+name contains its width cannot take another one; `ba_rol64_256` was the sharpest case,
+since both its callers wanted n/4 and 64 is n/4 at exactly one width.  (3) **THE REFUSALS
+THAT REMAIN ARE ABOUT FORMATS, NOT ABOUT PORTS DISAGREEING.**  A declared width no
+`BitArray` can have is §2; a ciphertext whose declared width disagrees with the key's is
+§3's mixed width, **never coerced** — and that one is load-bearing, because this layer used
+to RESOLVE the disagreement by preferring one side (Go built the key at the CIPHERTEXT's
+width, C stamped 256 on everything it wrote), so a reader that silently prefers either
+passes the whole matrix and mis-decrypts a foreign artifact.  `encfile`/`decfile` keep
+their 256-bit requirement because the `.hkx` container has **no width field** at all.
+(4) **MINOR, NOT MAJOR, AND THE ASYMMETRY WITH #313 IS THE POINT.**  #313 was MAJOR because
+a working invocation started failing; this only GROWS the accepted set, so nothing becomes
+unreadable and 256 is byte-for-byte untouched.  `MIGRATING.md` §23 exists anyway, because
+there is a migration to describe — a pre-9.0.0 narrow ciphertext is readable now if and
+only if PYTHON wrote it, Python's rule being the one the other three converged on — and §19
+is marked superseded rather than edited.  (5) **THE MATRIX NEEDED A CONTROL THAT LETS IT
+FAIL**, since it is now its own accept-control: case 0 decrypts a genuine artifact under a
+DIFFERENT key and requires the result to DIFFER, or an `hske-nla1` that ignored its key
+entirely scores 64/64.  Both real fixes were verified by REVERTING them; each alone turns
+85/0 into 19 failures.  (6) **THE SCOPE CONTROL SURVIVED AND POINTS THE OTHER WAY** — a
+relaxation that quietly widened is as much a scope error as a guard that did, so
+`--algo hske` at a narrow width must still behave exactly as it did, and C's
+`load_sym_key` still zero-extends for every other symmetric algo, unmeasured and untouched.
+**The standing lesson, and where it paid**: #313's divergence survived a green 518-assertion
+cross-language matrix because nothing ever ran the algorithm at a second width, and then it
+survived a 376-case conformance vector for the type underneath it, in two ports, for the
+same reason one level up.  A test that only ever asks one question cannot tell you about
+the others, however many assertions it makes.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

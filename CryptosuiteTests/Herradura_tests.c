@@ -32,7 +32,7 @@
     v1.5.25: herradura.h shared library + HFSCX-256 KAV test [19]; benchmarks renumbered.
     v1.5.23: HerraduraCli OpenSSL-style CLI (TODO #25); CliTest shell test suite.
     v1.5.20: 256-bit NL-FSCX v2 BitArray functions; tests expanded to full multi-size:
-            Batch 2 — tests [10]–[13] loop {64,128,256}; adds ba_sub256, ba_mul256,
+            Batch 2 — tests [10]–[13] loop {64,128,256}; adds ba_sub_mod2n, ba_mul_mod2n,
             m_inv_ba, nl_fscx_v2_ba/inv_ba, nl_fscx_revolve_v2_ba/inv_ba.
             Batch 3 — GF(2^128) arithmetic (gf_mul_128, gf_pow_128, mul128_mod_ord128);
             [1],[5],[6] loop {32,64,128,256}; [9],[16] loop {32,64,128,256}.

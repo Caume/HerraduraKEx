@@ -26,7 +26,6 @@ public final class Hfscx256 {
     private Hfscx256() { }
 
     private static final int N = Herradura.N;               // 256
-    private static final int NL_V1_SHIFT = N / 4;            // 64
     private static final BigInteger MASK = Herradura.MASK;
 
     /** "HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0" as an integer, matching
@@ -43,8 +42,14 @@ public final class Hfscx256 {
     // NL-FSCX v1: fscx(A,B) XOR ROL((A+B) mod 2^n, n/4)
     // -----------------------------------------------------------------
 
+    /** The rotation is n/4 at the OPERAND's width.  It was a static
+     * {@code NL_V1_SHIFT = N / 4} — correct at 256 and at no other width — and
+     * that constant is what kept this port's HSKE-NL-A1 keystream disagreeing
+     * with C, Go and Python below 256 bits AFTER the BitArray itself conformed
+     * (TODO #314 pass 6).  Conforming to the type is not the same as consuming
+     * it at the value's width. */
     public static BitArray nlFscxV1(BitArray a, BitArray b) {
-        return Herradura.fscx(a, b).xor(a.addMod2n(b).rotLeft(NL_V1_SHIFT));
+        return Herradura.fscx(a, b).xor(a.addMod2n(b).rotLeft(a.size() / 4));
     }
 
     public static BitArray nlFscxRevolveV1(BitArray a, BitArray b, int steps) {

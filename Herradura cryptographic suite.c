@@ -42,7 +42,7 @@
     = K XOR N (transmitted alongside ciphertext).  Eliminates keystream reuse when
     the same long-term key K is used across sessions.
     nl_fscx_revolve_v2_inv_ba precomputes delta(B) once before the loop.
-    Loop body: ba_sub256(z, buf, delta); m_inv_ba(mz, z); ba_xor(buf, b, mz).
+    Loop body: ba_sub_mod2n(z, buf, delta); m_inv_ba(mz, z); ba_xor(buf, b, mz).
     Eliminates one nl_fscx_delta_v2 call (arbitrary-precision mul+rol) per step.
 
     --- v1.5.7: precomputed M^{-1} for nl_fscx_v2_inv_ba ---

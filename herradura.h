@@ -641,20 +641,22 @@ static const BitArray GF_GEN = { KEYBITS, {
 /* Shift big-endian BitArray left by 1 bit.  Returns the MSB shifted out. */
 static int ba_shl1(BitArray *a)
 {
+    int nb = ba_nbytes(a);
     int carry = (a->b[0] >> 7) & 1;
     int i;
-    for (i = 0; i < KEYBYTES - 1; i++)
+    for (i = 0; i < nb - 1; i++)
         a->b[i] = (uint8_t)((a->b[i] << 1) | (a->b[i + 1] >> 7));
-    a->b[KEYBYTES - 1] <<= 1;
+    a->b[nb - 1] <<= 1;
     return carry;
 }
 
 /* Shift big-endian BitArray right by 1 bit (in-place).  Returns the LSB shifted out. */
 static int ba_shr1(BitArray *a)
 {
-    int carry = a->b[KEYBYTES - 1] & 1;
+    int nb = ba_nbytes(a);
+    int carry = a->b[nb - 1] & 1;
     int i;
-    for (i = KEYBYTES - 1; i > 0; i--)
+    for (i = nb - 1; i > 0; i--)
         a->b[i] = (uint8_t)((a->b[i] >> 1) | (a->b[i - 1] << 7));
     a->b[0] >>= 1;
     return carry;
@@ -733,22 +735,35 @@ static int gf_pub_is_valid(const BitArray *pub)
  * 256-bit integer helpers (needed for NL-FSCX v2 and Schnorr arithmetic)
  * ───────────────────────────────────────────────────────────────────────────── */
 
-static void ba_add256(BitArray *dst, const BitArray *a, const BitArray *b)
+/* BITARRAY.md 4.6: dst = (a + b) mod 2^n at the common width.  Named for what
+   it computes since TODO #314 pass 6 -- it was ba_add256 and looped KEYBYTES,
+   which is the shape that kept the NL-FSCX v1 round 256-only in C while Go,
+   Python and Java derived the width from the operand.  Go's is AddMod2n. */
+static void ba_add_mod2n(BitArray *dst, const BitArray *a, const BitArray *b)
 {
     uint16_t carry = 0;
-    int i;
-    for (i = KEYBYTES - 1; i >= 0; i--) {
+    int i, nb;
+    BaStatus st = ba_same_width(a, b);
+    if (st != BA_OK) BA_FAIL(st, "ba_add_mod2n");
+    nb = ba_nbytes(a);
+    dst->nbits = a->nbits;
+    for (i = nb - 1; i >= 0; i--) {
         uint16_t s = (uint16_t)a->b[i] + b->b[i] + carry;
         dst->b[i] = (uint8_t)s;
         carry = s >> 8;
     }
 }
 
-static void ba_sub256(BitArray *dst, const BitArray *a, const BitArray *b)
+/* dst = (a - b) mod 2^n at the common width (was ba_sub256). */
+static void ba_sub_mod2n(BitArray *dst, const BitArray *a, const BitArray *b)
 {
     int16_t borrow = 0;
-    int i;
-    for (i = KEYBYTES - 1; i >= 0; i--) {
+    int i, nb;
+    BaStatus st = ba_same_width(a, b);
+    if (st != BA_OK) BA_FAIL(st, "ba_sub_mod2n");
+    nb = ba_nbytes(a);
+    dst->nbits = a->nbits;
+    for (i = nb - 1; i >= 0; i--) {
         int16_t s = (int16_t)a->b[i] - (int16_t)b->b[i] - borrow;
         dst->b[i] = (uint8_t)(s & 0xFF);
         borrow = (s < 0) ? 1 : 0;
@@ -758,19 +773,11 @@ static void ba_sub256(BitArray *dst, const BitArray *a, const BitArray *b)
 /* shr1 of big-endian BitArray (right shift by 1 bit, non-destructive) */
 static void ba_shr1_copy(BitArray *dst, const BitArray *src)
 {
-    int i;
-    for (i = KEYBYTES - 1; i > 0; i--)
+    int i, nb = ba_nbytes(src);
+    dst->nbits = src->nbits;
+    for (i = nb - 1; i > 0; i--)
         dst->b[i] = (uint8_t)((src->b[i] >> 1) | (src->b[i - 1] << 7));
     dst->b[0] = src->b[0] >> 1;
-}
-
-/* ROL by 64 bits on 256-bit big-endian array */
-static void ba_rol64_256(BitArray *dst, const BitArray *src)
-{
-    uint8_t tmp[8];
-    memcpy(tmp, src->b, 8);
-    memcpy(dst->b, src->b + 8, KEYBYTES - 8);
-    memcpy(dst->b + KEYBYTES - 8, tmp, 8);
 }
 
 /* Cyclic left-rotation by k bits on KEYBYTES big-endian array.
@@ -793,20 +800,34 @@ static void ba_rol_k(BitArray *dst, const BitArray *src, int k)
     }
 }
 
-/* Low 256-bit schoolbook multiply: dst = a*b mod 2^256 */
-static void ba_mul256(BitArray *dst, const BitArray *a, const BitArray *b)
+/* ROL by n/4 bits -- the rotation the NL-FSCX v1 round and delta(B) both take.
+   It was ba_rol64_256, a memcpy of a fixed 8 octets, and 64 is n/4 only at
+   n = 256: that constant is what TODO #314 pass 6 had to make a function of the
+   operand's width, since the other three ports already wrote it as n/4. */
+static void ba_rol_quarter(BitArray *dst, const BitArray *src)
 {
-    uint64_t acc[KEYBYTES];
-    int i, j;
+    ba_rol_k(dst, src, src->nbits / 4);
+}
+
+/* Low schoolbook multiply: dst = a*b mod 2^n at the common width (was
+   ba_mul256).  BITARRAY.md 4.6; Go's is MulMod2n. */
+static void ba_mul_mod2n(BitArray *dst, const BitArray *a, const BitArray *b)
+{
+    uint64_t acc[BA_MAX_BYTES];
+    int i, j, nb;
+    BaStatus st = ba_same_width(a, b);
+    if (st != BA_OK) BA_FAIL(st, "ba_mul_mod2n");
+    nb = ba_nbytes(a);
     memset(acc, 0, sizeof(acc));
-    for (i = 0; i < KEYBYTES; i++)
-        for (j = 0; j < KEYBYTES - i; j++) {
-            int ridx = KEYBYTES - 1 - i - j;
-            acc[ridx] += (uint64_t)a->b[KEYBYTES - 1 - i] * b->b[KEYBYTES - 1 - j];
+    for (i = 0; i < nb; i++)
+        for (j = 0; j < nb - i; j++) {
+            int ridx = nb - 1 - i - j;
+            acc[ridx] += (uint64_t)a->b[nb - 1 - i] * b->b[nb - 1 - j];
         }
+    dst->nbits = a->nbits;
     {
         uint64_t carry = 0;
-        for (i = KEYBYTES - 1; i >= 0; i--) {
+        for (i = nb - 1; i >= 0; i--) {
             uint64_t s = acc[i] + carry;
             dst->b[i] = (uint8_t)s;
             carry = s >> 8;
@@ -934,8 +955,8 @@ static void nl_fscx_v1_ba(BitArray *result, const BitArray *a, const BitArray *b
 {
     BitArray f = BA_INIT, s = BA_INIT, m = BA_INIT;
     ba_fscx(&f, a, b);
-    ba_add256(&s, a, b);
-    ba_rol64_256(&m, &s);
+    ba_add_mod2n(&s, a, b);
+    ba_rol_quarter(&m, &s);
     ba_xor(result, &f, &m);
 }
 
@@ -956,10 +977,10 @@ static void nl_fscx_revolve_v1_ba(BitArray *result, const BitArray *a,
 static void nl_fscx_delta_v2_ba(BitArray *delta, const BitArray *b)
 {
     BitArray b1 = BA_INIT, half = BA_INIT, prod = BA_INIT;
-    ba_add256(&b1, b, &ONE_BA);
+    ba_add_mod2n(&b1, b, &ONE_BA);
     half = b1; ba_shr1(&half);
-    ba_mul256(&prod, b, &half);
-    ba_rol64_256(delta, &prod);
+    ba_mul_mod2n(&prod, b, &half);
+    ba_rol_quarter(delta, &prod);
 }
 
 /* Rejects NL-FSCX v2 keys for which the permutation degenerates to affine.
@@ -1006,7 +1027,7 @@ static void nl_fscx_v2_ba(BitArray *result, const BitArray *a, const BitArray *b
     BitArray f = BA_INIT, d = BA_INIT;
     ba_fscx(&f, a, b);
     nl_fscx_delta_v2_ba(&d, b);
-    ba_add256(result, &f, &d);
+    ba_add_mod2n(result, &f, &d);
 }
 
 /* NL-FSCX v2 inverse: A = B XOR M^{-1}((Y - delta(B)) mod 2^n) */
@@ -1014,7 +1035,7 @@ static void nl_fscx_v2_inv_ba(BitArray *result, const BitArray *y, const BitArra
 {
     BitArray d = BA_INIT, z = BA_INIT, mz = BA_INIT;
     nl_fscx_delta_v2_ba(&d, b);
-    ba_sub256(&z, y, &d);
+    ba_sub_mod2n(&z, y, &d);
     m_inv_ba(&mz, &z);
     ba_xor(result, b, &mz);
 }
@@ -1055,7 +1076,7 @@ static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
     buf[0] = *y;
     for (i = steps; i >= 1; i--) {
         BitArray z = BA_INIT, mz = BA_INIT;
-        ba_sub256(&z, &buf[idx], &delta);
+        ba_sub_mod2n(&z, &buf[idx], &delta);
         m_inv_ba(&mz, &z);
         ba_xor(&buf[1 - idx], b, &mz);
         nl_fscx_v2_rc_ba(&buf[1 - idx], i);   /* undo the round constant */
@@ -1739,15 +1760,21 @@ static void _hske_nl_aead_xor_ks(const BitArray *seed, const BitArray *base,
  * command.  Argument order and the its-own-inverse decrypt follow Java.
  * Caller supplies a fresh random nonce (e.g. via ba_rand); never reuse a
  * (key, nonce) pair — E = P XOR ks makes a repeat a two-time pad outright.
- * This build is KEYBITS-wide throughout: see TODO #313 for what the four ports
- * do below 256 bits, where they do not agree. */
+ * WIDTH: variable since TODO #314 pass 6.  Every step below is taken at the
+ * key's OWN width — the KDF truncation (BITARRAY.md §4.4), the v1 round's n/4
+ * rotation and its n/4 step count — so C now agrees with Go, Python and Java
+ * octet for octet at 32, 64, 128 and 256 bits.  That is what relaxed TODO
+ * #313's refusal; this build was KEYBITS-wide throughout until it did. */
 static void hske_nla1_encrypt(BitArray *ct_out, const BitArray *pt,
                               const BitArray *key, const BitArray *nonce)
 {
     BitArray base = BA_INIT, seed = BA_INIT, ks = BA_INIT;
     ba_xor(&base, key, nonce);
     ba_rnl_kdf_seed(&seed, &base);
-    nl_fscx_revolve_v1_ba(&ks, &seed, &base, I_VALUE);
+    /* n/4 steps at the operand's OWN width, not the build's I_VALUE: Go,
+       Python and Java have always written n/4 here, and the constant is what
+       made this path 256-only in C (TODO #314 pass 6). */
+    nl_fscx_revolve_v1_ba(&ks, &seed, &base, base.nbits / 4);
     ba_xor(ct_out, pt, &ks);
 }
 

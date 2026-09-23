@@ -963,6 +963,11 @@ rounds fail the weight check. There is no silent-acceptance path in either direc
 
 ## 19. `hske-nla1` refuses any width but 256 (v9.0.0)
 
+> **SUPERSEDED BY SECTION 23 (v9.5.0).**  TODO #314 landed, the four ports converged,
+> and this refusal was relaxed: `hske-nla1` accepts every width `BITARRAY.md` §2 permits
+> again.  The section is kept as written — it is the record of what the divergence was,
+> and section 23's migration table is unreadable without it.
+
 **This is the reason the version is 9.0.0.** It changes what an existing `--algo` value
 accepts, which is exactly the surface the 2.0.0 tag froze, so it gets a MAJOR bump
 regardless of how few artifacts it reaches — the same rule section 5 was decided under.
@@ -1034,6 +1039,10 @@ divergence **unreachable** rather than resolved, fails closed, and is what two o
 ports already did somewhere on the path — Java at `enc`, C at `genpkey`, which has never
 accepted `--bits`. If #314 lands and the convergence is done, this refusal is the thing
 that gets relaxed, and relaxing a refusal breaks nothing.
+
+*(It landed in v9.4.0 and the refusal was relaxed in v9.5.0 — section 23. The prediction
+in the paragraph above held: nothing broke, and the version bump is MINOR rather than
+MAJOR for exactly that reason.)*
 
 **What this does *not* change.** `kex` still derives session keys at any width — it is
 `hske-nla1` that refuses to consume a narrow one. `hske-nla1 --aead` was already 256-only
@@ -1224,3 +1233,72 @@ still uses `MessageDigest.isEqual` where constant time is load-bearing.
 
 **Behaviour at 256 bits is byte-identical**, measured: a 22-operation probe produces the
 same octets before and after and agrees value for value with the C, Go and Python probes.
+
+---
+
+## 23. `hske-nla1` is accepted at every legal width again (v9.5.0)
+
+**This relaxes section 19.** TODO #313 refused `--algo hske-nla1` at any width but 256 in
+all four CLIs, because below 256 the four ports produced four different keystreams and A1
+has no authentication tag, so `dec` wrote garbage and exited 0. TODO #314 gave every port
+one variable-width `BitArray`, pass 6 converged the consumers on top of it, and the
+refusal is gone: **`hske-nla1` now accepts every width `BITARRAY.md` §2 permits — a
+multiple of 8 from 16 to 256 — and all four CLIs agree octet for octet.**
+
+**Who is affected.** Almost nobody, and that is the point of relaxing rather than
+changing. **At 256 bits nothing moves**: every key, ciphertext and `.hkx` container is
+byte-for-byte unaffected, and the four CLIs interoperate exactly as before. What changes
+is that a command which *exited non-zero* since v9.0.0 now succeeds.
+
+**Why this is MINOR where section 19 was MAJOR, since the two touch the same surface.**
+The MAJOR rule exists for changes that BREAK the frozen CLI/PEM/wire surface. Section 19
+broke callers: a working invocation started failing. This one breaks none — the accepted
+set only grows, no artifact becomes unreadable, and no output at any previously accepted
+width changes by a byte. It is new capability on an existing `--algo`, which is the MINOR
+case. The entry exists anyway because there is a migration to describe, which is what this
+file is for.
+
+**What to do with an old narrow ciphertext.** If you hold one written before v9.0.0:
+
+| written by | readable now? |
+|---|---|
+| Python | **yes** — Python's rule (the domain constant's HIGH bits) is the one all four converged on, and it never moved |
+| Go | no — Go took the constant's LOW bits until v9.2.0; that rule is gone |
+| C | no — C ran the whole construction at 256 and stamped `nbits = 256` on the artifact whatever the key said, so it is not even labelled with its own width |
+| Java | no — Java was 256-fixed |
+
+None of those were interoperable when they were written: a narrow A1 ciphertext was
+readable only by the port that wrote it. Decrypt a Go/C/Java one with a pre-9.0.0 build of
+that same language and re-encrypt; a Python one needs nothing.
+
+**What is still refused, and why each refusal is about a format rather than a
+disagreement.**
+
+| case | outcome | reason |
+|---|---|---|
+| a width that is not a multiple of 8, or outside 16–256 | refused | `BITARRAY.md` §2 — no `BitArray` can have it |
+| a ciphertext whose declared `nbits` differs from the key's | refused | `BITARRAY.md` §3 — a mixed width is never coerced |
+| `encfile` / `decfile` with a narrow key | refused | the `.hkx` container has **no width field**: a 32-octet nonce, 32-octet blocks and a 256-bit HFSCX-256 MAC. Python, Go and Java refused here long before TODO #313 |
+| `--algo hske`, `hske-nla2`, `hske-nla3` | unchanged | the relaxation is scoped to `hske-nla1`, exactly as the guard was |
+| `hske-nla1 --aead` | unchanged | already 256-only, with its own message |
+
+The mixed-width refusal is the one to know about. Before v9.0.0 this layer *resolved* the
+disagreement by preferring one side — Go built the key at the **ciphertext's** declared
+width, C stamped 256 on everything it wrote — and a reader that silently prefers either
+side passes every round-trip and mis-decrypts a foreign artifact. It is an error now.
+
+**How the failure presents.** Loudly, at both ends, with the same message in all four
+CLIs:
+
+```
+dec: hske-nla1 ciphertext declares 128-bit, key is 256-bit (BITARRAY.md §3: a
+mixed width is never coerced)
+```
+
+**What was actually fixed to make this possible**, recorded because two of the four ports
+passed `KAT/bitarray.json` 376/376 and were still wrong here: Java's NL-FSCX v1 round
+rotated by a static `Herradura.N / 4`, and C's A1 path ran at `I_VALUE` over
+fixed-`KEYBYTES` arithmetic (`ba_add256`, `ba_rol64_256` and friends, now
+`ba_add_mod2n`/`ba_rol_quarter`). See `BITARRAY.md` §8.4 and
+`CliTest/test_narrow_width_matrix.sh`, which measures the full 4 × 4 matrix at 256, 128,
+64 and 32 bits.

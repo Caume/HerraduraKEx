@@ -2448,24 +2448,38 @@ func unpackSternSig(ints [][]byte) (*SternSig, int, error) {
 	return sig, n, nil
 }
 
-// nla1Width is the ONLY width HSKE-NL-A1's plain (unauthenticated) mode accepts
-// (TODO #313).  Below 256 the four language ports produce four different
-// keystreams: the KDF domain constant is truncated at opposite ends (Go takes
-// its LOW bits, Python its HIGH bits), C and Java are 256-fixed and ignore the
-// declared width, and C stamps every ciphertext nbits = 256 whatever the key
-// says.  A1 is a raw XOR keystream with NO authentication tag, so a wrong
-// keystream is not a detectable event and dec used to write garbage and exit 0.
-// This guard makes the divergence unreachable rather than resolved; converging
-// the four rules is route 1 and needs TODO #314.
-const nla1Width = 256
+// HSKE-NL-A1's plain mode ran at any width but 256 only by accident until TODO
+// #314: below 256 the four ports produced four different keystreams, so #313
+// refused every width but 256 in all four CLIs.  Pass 6 RELAXED that refusal —
+// C, Go, Python and Java now agree octet for octet at 32, 64, 128 and 256 —
+// and what is left is the width's own validity (BITARRAY.md §2) plus the rule
+// that a width is never coerced (§3).  The refusal is not merely deleted: a
+// width that is not a legal BitArray width was never representable, and a
+// ciphertext whose declared width disagrees with the key is a MIXED WIDTH,
+// which §3 makes an error rather than something to resolve by preferring one
+// of the two — and preferring one is exactly what this CLI used to do, since
+// dec built the key at the CIPHERTEXT's width.  See MIGRATING.md §23.
+const (
+	nla1MinWidth = 16
+	nla1MaxWidth = BAMaxBits
+)
 
-// nla1WidthOK exits unless n is nla1Width.  what names what carried the width.
+// nla1WidthOK exits unless n is a legal BitArray width.  what names the carrier.
 func nla1WidthOK(n int, ctx, what string) {
-	if n != nla1Width {
+	if n%8 != 0 || n < nla1MinWidth || n > nla1MaxWidth {
 		fmt.Fprintf(os.Stderr,
-			"%s: hske-nla1 requires a %d-bit %s; got %d-bit "+
-				"(TODO #313: below %d the four language ports produce "+
-				"four different keystreams)\n", ctx, nla1Width, what, n, nla1Width)
+			"%s: hske-nla1 %s width must be a multiple of 8 between %d and %d; "+
+				"got %d-bit (BITARRAY.md §2)\n", ctx, what, nla1MinWidth, nla1MaxWidth, n)
+		os.Exit(1)
+	}
+}
+
+// nla1SameWidth exits unless the ciphertext's declared width matches the key's.
+func nla1SameWidth(keyN, ctN int, ctx string) {
+	if keyN != ctN {
+		fmt.Fprintf(os.Stderr,
+			"%s: hske-nla1 ciphertext declares %d-bit, key is %d-bit "+
+				"(BITARRAY.md §3: a mixed width is never coerced)\n", ctx, ctN, keyN)
 		os.Exit(1)
 	}
 }
@@ -3643,6 +3657,7 @@ func cmdDec(args []string) {
 			}
 			nla1WidthOK(keyBits, "dec", "key")
 			nla1WidthOK(n, "dec", "ciphertext")
+			nla1SameWidth(keyBits, n, "dec")
 			nonce := NewBitArray(n, nonceInt)
 			D      = HskeNlA1Decrypt(E, K, nonce)
 		case "hske-nla2":
