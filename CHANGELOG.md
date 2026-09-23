@@ -2,6 +2,41 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.1] - 2026-09-23
+
+### Fixed
+- **The C suite demo aborted at `E_WIDTH in ba_rand` on CI and not here (TODO #315).**
+  `Herradura cryptographic suite.c` cast a `uint8_t[KEYBYTES]` to a `BitArray *` for the
+  two HKEX-RNL contributory nonces.  That was correct while a `BitArray` WAS a byte array;
+  since TODO #314 pass 2 the type carries a `uint16_t nbits` ahead of its octets, so the
+  cast read an unset width AND wrote `sizeof(BitArray)` bytes into a `KEYBYTES` buffer.
+  It is a `BitArray` now.  **Pass 2's poisoned build is what should have found it**: a
+  `-ftrivial-auto-var-init=pattern` build enumerates the sites you point it at, and pass 2
+  pointed it at four files while grepping for DECLARATIONS — a cast is not one.  The whole
+  C tree is now poison-built and run (suite, tests, CLI, both KAT consumers, the dudect
+  audit, the deployed-ring benchmark); these two casts were the only ones.
+- **Two findings gates had not run since v9.3.0 (TODO #315).**  Pass 4's claim that the
+  twenty `SecurityProofsCode/` scripts loading the suite through `importlib` "needed no
+  edit at all" was read, not measured.  `BITARRAY.md` §2 makes a width a multiple of 8
+  from 16 to 256, and `fscx_revolve_closed_form.py` §4 builds `BitArray(8, ...)` and
+  `BitArray(512, ...)` while `nl_fscx_v2_kex.py` §1 sweeps n = 8…40 in steps of 4.  Both
+  raised `E_WIDTH` on their first call; both are gates; and the job that runs them is the
+  one job on probation, where a red run is indistinguishable from nobody having looked.
+
+### Changed
+- **`fscx_revolve_closed_form.py` §4 loses pair-exhaustiveness, and says so.**  It swept
+  all 2^16 (A, B) pairs at n = 8; 16 is the narrowest legal width and its pair space is
+  2^32, so the property is gone rather than relocated.  What replaces it is exhaustiveness
+  in EACH OPERAND SEPARATELY at n = 16 against four structured values of the other —
+  3 145 728 cases against the retired 2 686 976 — plus randomised widths with 512 replaced
+  by 200.  The section's RESULTS block states that this is the weaker statement, and the
+  sweep was verified to FAIL against a one-step-off closed form (2 621 360 mismatches).
+- **`nl_fscx_v2_kex.py` §1 sweeps n = 16…40 in steps of 8.**  Its ALL-SHORT orbit anomaly
+  lived at n = 8 and n = 12, which the shipped `BitArray` cannot represent; §1 and §5 now
+  report that no legal width shows it rather than dropping the row.  The anomaly is not
+  withdrawn — it stands on `nl_fscx_v2_orbit.py`, whose primitives are integer-only and
+  under no width rule.  §2 and §3, the two gated findings, are at n = 32 and unaffected.
+
 ## [9.5.0] - 2026-09-23
 
 ### Changed

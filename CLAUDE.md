@@ -2984,7 +2984,13 @@ specification that leaves a choice open is asking for a measurement, not a prefe
 their meaning, so the blast radius was **89 private reach-ins** in two files, not the
 ~380 `.uint` sites a grep suggests — and the twenty `SecurityProofsCode/` scripts that
 load the suite through `importlib`, most of which GATE a finding, needed **no edit at
-all**.  Go's `Val` was exported; Python's equivalents were private by name.  **What a
+all** — except for two, and that exception was CORRECTED BY CI rather than measured here
+(TODO #315): the accessor surface did not move, but §2's WIDTH RULE is new, and
+`fscx_revolve_closed_form.py` (n = 8, n = 512) and `nl_fscx_v2_kex.py` (n = 8…40 step 4)
+both build a `BitArray` at a width the type no longer admits.  Both are gates and both
+raised `E_WIDTH` on their first call, unseen for two releases because the job that runs
+them is the one job on probation.  Go's `Val` was exported; Python's equivalents were
+private by name.  **What a
 representation change costs is decided by what the old representation published.**  (3)
 **`uint` is the bignum boundary and `to_uint` is the specified operation**, spelled
 differently on purpose — and `to_uint`'s `n <= 64` bound exists because THIS port
@@ -3080,6 +3086,38 @@ cross-language matrix because nothing ever ran the algorithm at a second width, 
 survived a 376-case conformance vector for the type underneath it, in two ports, for the
 same reason one level up.  A test that only ever asks one question cannot tell you about
 the others, however many assertions it makes.
+
+**And the two things a green local sweep did not run (TODO #315).**  #314 shipped six
+passes with every local check green, and CI went red in two jobs on the same push — both
+of them pass-2 and pass-4 defects, failing in opposite directions.  (1) **A CAST IS NOT A
+DECLARATION.**  `Herradura cryptographic suite.c` cast a `uint8_t[KEYBYTES]` to a
+`BitArray *` for the two HKEX-RNL contributory nonces, correct while a `BitArray` WAS a
+byte array and, since pass 2, a read of an unset width AND a `sizeof(BitArray)`-byte write
+into a `KEYBYTES` buffer.  It ran here because those locals sit deep in `main`'s frame and
+this host's stack happened to hold a legal width.  Pass 2's poisoned build is the tool
+that finds this, and pass 3 had already recorded why it did not: **a tool that enumerates
+sites enumerates the sites you point it at**, and pass 2 pointed it at four files while
+checking them by a grep for `BitArray` declarations.  The whole C tree is poison-built and
+RUN now — suite, tests, CLI, both KAT consumers, the dudect audit, the deployed-ring
+benchmark — and these two casts were the only ones.  (2) **A CONTRACT CHANGE COSTS WHAT
+THE OLD IMPLEMENTATION HAPPENED TO ACCEPT, which is a separate bill from what its
+representation published.**  Pass 4's "the twenty `SecurityProofsCode/` scripts needed no
+edit at all" was true of the ACCESSOR surface and read rather than measured; `BITARRAY.md`
+§2's width rule is new, and `fscx_revolve_closed_form.py` (n = 8, n = 512) and
+`nl_fscx_v2_kex.py` (n = 8…40 step 4) both raised `E_WIDTH` on their first call.  Both are
+GATES, and they ran red for two releases because the job that runs them is the one job on
+probation — #289's own premise, inverted: a `continue-on-error` job's red is
+indistinguishable from nobody having looked.  (3) **THE FIX COSTS A PROPERTY AND THE
+SCRIPT SAYS WHICH.**  §4 of the closed-form script was PAIR-EXHAUSTIVE at n = 8; the
+narrowest legal width is 16, whose pair space is 2^32, so pair-exhaustiveness is gone
+permanently rather than relocated.  What replaces it is exhaustiveness in each operand
+SEPARATELY (3 145 728 cases against 2 686 976), its RESULTS block states that this is the
+weaker statement, and the sweep was verified to FAIL against a one-step-off closed form.
+`nl_fscx_v2_kex.py` §1's ALL-SHORT orbit anomaly lived at n = 8 and n = 12 and no legal
+width shows it — reported as such rather than dropped, with the anomaly left standing on
+`nl_fscx_v2_orbit.py`, whose primitives are integer-only and under no width rule.  **A
+normative width rule narrows what the analysis layer can ask, and the honest response is
+to name the question that was lost.**
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts

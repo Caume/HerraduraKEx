@@ -448,9 +448,14 @@ int main(void)
         rnl_rand_poly(a_rand_poly, urnd);
         rnl_poly_add(m_blind, m_base, a_rand_poly);
         /* Contributory nonces: Alice generates n_A, Bob generates n_B */
-        uint8_t rnl_n_A[KEYBYTES], rnl_n_B[KEYBYTES];
-        ba_rand((BitArray *)rnl_n_A, urnd);
-        ba_rand((BitArray *)rnl_n_B, urnd);
+        /* BitArray, not a bare uint8_t[KEYBYTES] cast to one: since TODO #314
+           pass 2 the type carries a width AHEAD of its octets, so the old cast
+           both read an unset width and wrote sizeof(BitArray) bytes into a
+           KEYBYTES buffer.  It survived local runs because the stack happened
+           to hold a legal width; CI's did not. */
+        BitArray rnl_n_A = BA_INIT, rnl_n_B = BA_INIT;
+        ba_rand(&rnl_n_A, urnd);
+        ba_rand(&rnl_n_B, urnd);
         uint8_t hint_A[RNL_N / 8];
         rnl_keygen(s_A_poly, C_A, m_blind, urnd);
         rnl_keygen(s_B_poly, C_B, m_blind, urnd);
@@ -458,8 +463,8 @@ int main(void)
         rnl_agree(&KB, s_B_poly, C_A, hint_A, NULL);   /* Bob: receiver */
         /* Apply contributory KDF: final_key = HFSCX-256(K_raw || n_A || n_B) */
         uint8_t kdfA[KEYBYTES], kdfB[KEYBYTES];
-        rnl_contributory_kdf(kdfA, KA.b, rnl_n_A, rnl_n_B);
-        rnl_contributory_kdf(kdfB, KB.b, rnl_n_A, rnl_n_B);
+        rnl_contributory_kdf(kdfA, KA.b, rnl_n_A.b, rnl_n_B.b);
+        rnl_contributory_kdf(kdfB, KB.b, rnl_n_A.b, rnl_n_B.b);
         memcpy(skA_nl.b, kdfA, KEYBYTES);
         memcpy(skB_nl.b, kdfB, KEYBYTES);
         explicit_bzero(kdfA, KEYBYTES); explicit_bzero(kdfB, KEYBYTES);
@@ -478,8 +483,8 @@ int main(void)
         sk_rnl_A_saved = skA_nl;
         explicit_bzero(&KA, sizeof(KA));
         explicit_bzero(&KB, sizeof(KB));
-        explicit_bzero(rnl_n_A, KEYBYTES);
-        explicit_bzero(rnl_n_B, KEYBYTES);
+        explicit_bzero(rnl_n_A.b, KEYBYTES);
+        explicit_bzero(rnl_n_B.b, KEYBYTES);
     }
 
     /* --- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge] */

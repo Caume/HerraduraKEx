@@ -21062,3 +21062,49 @@ up.  **A test that only ever asks one question cannot tell you about the others,
 many assertions it makes.**
 
 Status: **DONE v9.5.0** — all six passes complete: one internally-developed variable-width BitArray in C, Go, Python and Java, and `hske-nla1` agrees across all four at every width.
+
+### 315. The two things a green local run did not run (TODO #314 fallout)
+
+TODO #314 shipped in six passes, every local sweep green, and CI went red in two jobs on
+the same push.  Both failures are pass-2-and-pass-4 defects that a local run could not see,
+and they fail in opposite directions.
+
+1. **`Herradura cryptographic suite.c` cast a `uint8_t[KEYBYTES]` to a `BitArray *`.**
+   `ba_rand((BitArray *)rnl_n_A, urnd)` was correct while a `BitArray` WAS a byte array.
+   Since pass 2 the type carries a `uint16_t nbits` ahead of its octets, so that cast read
+   an unset width and wrote `sizeof(BitArray)` bytes into a `KEYBYTES` buffer — a live
+   out-of-bounds write, not only a width error.  It survived because the two locals sit
+   deep in `main`'s frame and the stack happened to hold a legal width on this host; CI's
+   did not, and `ba_check_width` aborted the demo binary at `E_WIDTH in ba_rand`.
+   **Pass 2's poisoned build is what should have caught it, and the reason it did not is
+   pass 3's own recorded limit one turn later**: `-ftrivial-auto-var-init=pattern`
+   enumerates the sites you point it at, and pass 2 pointed it at four files while
+   checking them by a grep for `BitArray` DECLARATIONS.  A cast is not a declaration.  The
+   whole C tree is now poison-built and run — suite, tests, CLI, both KAT consumers, the
+   dudect audit and the deployed-ring benchmark — and the two casts were the only ones.
+
+2. **Pass 4's "the twenty `SecurityProofsCode/` scripts needed no edit at all" was not
+   measured, and was false for two of them.**  `BITARRAY.md` §2 makes a width a multiple
+   of 8 from 16 to 256; pass 4 enforced it in Python's constructor, and
+   `fscx_revolve_closed_form.py` §4 builds `BitArray(8, ...)` and `BitArray(512, ...)`
+   while `nl_fscx_v2_kex.py` §1 sweeps n = 8…40 in steps of 4.  Both raised `E_WIDTH` on
+   the first call and both are GATES.  The claim was checked by reading — the scripts that
+   were run all use 32 or 64 — and the job that runs them all is the one job on probation
+   (`continue-on-error: true`), which is exactly the shape #289 was written about: a
+   non-blocking job's red is indistinguishable from nobody having looked.
+
+**What the fix costs, and why it is not hidden.**  The illegal widths were not decoration.
+`fscx_revolve_closed_form.py` §4 was PAIR-EXHAUSTIVE at n = 8 (all 2^16 pairs), and 16 is
+the narrowest width the shipped type admits, where the pair space is 2^32 — so
+pair-exhaustiveness is GONE, permanently, not relocated.  What replaces it is
+exhaustiveness in EACH OPERAND SEPARATELY at n = 16 against four structured values of the
+other, 3 145 728 cases against the retired sweep's 2 686 976, and the section's own
+RESULTS block says it is the weaker statement.  `nl_fscx_v2_kex.py` §1's ALL-SHORT orbit
+anomaly lived at n = 8 and n = 12, and no legal width shows it: the sweep reports that
+rather than dropping the row, and the anomaly stands on `nl_fscx_v2_orbit.py`, whose
+primitives are integer-only and under no width rule.  **A normative width rule narrows what
+the analysis layer can ask, and the honest response is to say which question was lost.**
+The new §4 was verified to FAIL against a one-step-off closed form (2 621 360 mismatches),
+so it is not a sweep that cannot fire.
+
+Status: **DONE v9.5.1** — the cast is a `BitArray`, the two analysis gates run at legal widths, and the whole C tree is poison-built rather than grepped.

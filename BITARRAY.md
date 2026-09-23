@@ -431,7 +431,15 @@ and not 380.**  `.uint`, `.bytes`, `.hex`, `.copy()`, `.rotated()`, `^`, `==` an
 `BitArray(size, value)` all keep their meaning, so the twenty `SecurityProofsCode/`
 scripts that load the suite through `importlib` — sixteen of which touch `BitArray`, and
 most of which gate a finding — needed no edit at all.  Only `._size`, `._val` and
-`._mask`, which are private by name, had to move.  A representation change that leaves
+`._mask`, which are private by name, had to move.  **Two needed one anyway, and this
+sentence was written before anything measured that (TODO #315).**  The accessor surface
+did not move, but §2's width rule is new: `fscx_revolve_closed_form.py` builds a
+`BitArray` at n = 8 and n = 512 and `nl_fscx_v2_kex.py` sweeps n = 8…40 in steps of 4,
+and neither width is one this type admits.  Both are findings gates, both raised
+`E_WIDTH` on their first call, and both ran red for two releases inside the one CI job
+that is `continue-on-error`.  A representation change costs what the old representation
+published; a CONTRACT change costs what the old implementation happened to accept, and
+that is a separate bill.  A representation change that leaves
 the published surface alone is a different-sized job from one that does not: Go's `Val`
 was exported, and that is the whole difference between §8.1 and this section.
 
