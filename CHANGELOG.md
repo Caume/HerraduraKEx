@@ -2,6 +2,447 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.1] - 2026-09-23
+
+### Fixed
+- **The C suite demo aborted at `E_WIDTH in ba_rand` on CI and not here (TODO #315).**
+  `Herradura cryptographic suite.c` cast a `uint8_t[KEYBYTES]` to a `BitArray *` for the
+  two HKEX-RNL contributory nonces.  That was correct while a `BitArray` WAS a byte array;
+  since TODO #314 pass 2 the type carries a `uint16_t nbits` ahead of its octets, so the
+  cast read an unset width AND wrote `sizeof(BitArray)` bytes into a `KEYBYTES` buffer.
+  It is a `BitArray` now.  **Pass 2's poisoned build is what should have found it**: a
+  `-ftrivial-auto-var-init=pattern` build enumerates the sites you point it at, and pass 2
+  pointed it at four files while grepping for DECLARATIONS — a cast is not one.  The whole
+  C tree is now poison-built and run (suite, tests, CLI, both KAT consumers, the dudect
+  audit, the deployed-ring benchmark); these two casts were the only ones.
+- **Two findings gates had not run since v9.3.0 (TODO #315).**  Pass 4's claim that the
+  twenty `SecurityProofsCode/` scripts loading the suite through `importlib` "needed no
+  edit at all" was read, not measured.  `BITARRAY.md` §2 makes a width a multiple of 8
+  from 16 to 256, and `fscx_revolve_closed_form.py` §4 builds `BitArray(8, ...)` and
+  `BitArray(512, ...)` while `nl_fscx_v2_kex.py` §1 sweeps n = 8…40 in steps of 4.  Both
+  raised `E_WIDTH` on their first call; both are gates; and the job that runs them is the
+  one job on probation, where a red run is indistinguishable from nobody having looked.
+
+### Changed
+- **`fscx_revolve_closed_form.py` §4 loses pair-exhaustiveness, and says so.**  It swept
+  all 2^16 (A, B) pairs at n = 8; 16 is the narrowest legal width and its pair space is
+  2^32, so the property is gone rather than relocated.  What replaces it is exhaustiveness
+  in EACH OPERAND SEPARATELY at n = 16 against four structured values of the other —
+  3 145 728 cases against the retired 2 686 976 — plus randomised widths with 512 replaced
+  by 200.  The section's RESULTS block states that this is the weaker statement, and the
+  sweep was verified to FAIL against a one-step-off closed form (2 621 360 mismatches).
+- **`nl_fscx_v2_kex.py` §1 sweeps n = 16…40 in steps of 8.**  Its ALL-SHORT orbit anomaly
+  lived at n = 8 and n = 12, which the shipped `BitArray` cannot represent; §1 and §5 now
+  report that no legal width shows it rather than dropping the row.  The anomaly is not
+  withdrawn — it stands on `nl_fscx_v2_orbit.py`, whose primitives are integer-only and
+  under no width rule.  §2 and §3, the two gated findings, are at n = 32 and unaffected.
+
+## [9.5.0] - 2026-09-23
+
+### Changed
+- **`hske-nla1` is accepted at every legal width again, and all four CLIs agree
+  (TODO #314 pass 6 — the last pass, and the one the item existed for).**  TODO #313
+  refused `--algo hske-nla1` at any width but 256 in all four CLIs, because below 256 the
+  four ports produced four different keystreams and A1 has no authentication tag, so
+  `dec` wrote garbage and exited 0.  Passes 2–5 gave every port one variable-width
+  `BitArray`; this pass converged the code ON TOP of it and lifted the refusal.
+  `hske-nla1` now accepts every width `BITARRAY.md` §2 permits — a multiple of 8 from 16
+  to 256 — and `CliTest/test_narrow_width_matrix.sh` measures the full 4 × 4
+  (writer × reader) matrix at 256, 128, 64 and 32 bits: **48 narrow cells, all agreeing**.
+  At 256 bits nothing moves, byte for byte.  `MIGRATING.md` §23; §19 is marked superseded.
+- **Two ports passed `KAT/bitarray.json` 376/376 and still produced the wrong keystream
+  below 256 — that is pass 6's finding, and it is why a conformance vector is not
+  enough.**  Conforming to the TYPE is not the same as CONSUMING it at the value's width.
+  Java's NL-FSCX v1 round rotated by a static `Hfscx256.NL_V1_SHIFT = Herradura.N / 4`,
+  correct at 256 and at no other width, one line below a `BitArray` that carries its width
+  faithfully.  C's HSKE-NL-A1 path took `I_VALUE` steps over fixed-`KEYBYTES` arithmetic:
+  `ba_add256`, `ba_sub256`, `ba_mul256` and `ba_rol64_256` are now `ba_add_mod2n`,
+  `ba_sub_mod2n`, `ba_mul_mod2n` and `ba_rol_quarter`, width-aware and mixed-width-checked,
+  and **the names were the tell** — a function whose name contains its width cannot take
+  another one.  Found by the cheapest test in the whole item and the last one written: one
+  probe asking four shipped suites the same question at four widths.  Both fixes verified
+  by reverting them; each alone turns the matrix from 85/0 to 19 failures.
+- **C's HSKE-NL-A1 artifact finally states its own width.**  `enc` writes the key's
+  declared `nbits` instead of `der_i_n256`'s fixed 256 — TODO #313's third cause, the one
+  that made `c → go` work and `go → c` fail — and `dec` carries the key's width end to
+  end through a new `ba_from_ra_n` rather than zero-extending to `KEYBITS`.  The
+  zero-extension is untouched for every other algo (#312's rule: a refactor must not
+  settle a question it happens to expose).
+- **`dec` refuses a MIXED WIDTH, and that is not tidying.**  A ciphertext whose declared
+  width disagrees with the key's is `BITARRAY.md` §3's error, never a coercion.  This
+  layer used to resolve it by preferring one side — Go built the key at the CIPHERTEXT's
+  width, C stamped 256 on everything it wrote — and a reader that silently prefers either
+  side passes the entire matrix above and mis-decrypts a foreign artifact.  A declared
+  width that no `BitArray` can have (§2) is refused too.
+- **`encfile`/`decfile` still refuse a narrow key, for a reason about the FORMAT.**  The
+  `.hkx` container has no width field at all: a 32-octet nonce, 32-octet blocks, a
+  256-bit HFSCX-256 MAC.  Python, Go and Java refused there long before TODO #313; C's
+  check is kept and re-justified rather than relaxed with the rest.
+- `CliTest/test_narrow_width_matrix.sh` **rewritten a second time**, from "all four
+  refuse" to "all four agree", as both previous headers instructed.  85 assertions.  The
+  accept-control is now the matrix itself, so it acquires the control that lets it FAIL: a
+  genuine artifact decrypted under a DIFFERENT key must not recover the plaintext, or an
+  `hske-nla1` that ignored its key entirely would score 64/64.  The scope control survives
+  and points the other way — `--algo hske` at a narrow width must still behave as it did,
+  since a relaxation that quietly widened is as much a scope error as a guard that did.
+- `spec/check_language_parity.py`: the `fscx-i-steps` Java alias `Hfscx256.NL_V1_SHIFT` is
+  **deleted, not re-pointed** — the constant is gone because a per-class re-declaration
+  that can only be right at one width is the defect this pass removed.  The checker caught
+  the deletion, which is the axis working as designed.
+- `BITARRAY.md` §8 marks pass 6 done and adds §8.4 (what pass 6 found).  `MIGRATING.md`
+  §23.
+
+## [9.4.0] - 2026-09-23
+
+### Changed
+- **Java gets a `BitArray`, and ALL FOUR PORTS NOW CONFORM (TODO #314 pass 5).**
+  `bindings/java/herradurakex/BitArray.java` is `int nbits` plus `byte[] b` — big-endian
+  octets, immutable, both fields private — implements the whole of `BITARRAY.md` §4, and
+  passes `KAT/bitarray.json` **376/376** through the new `VerifyBitArray`.  This port had
+  no such type at all: it carried bare `BigInteger` values against a static
+  `Herradura.N = 256`, so a width was not a property of a value but of the whole port and
+  the mixed-width question could not be posed.  **`BITARRAY.md` §8's pass 6 — relaxing
+  TODO #313's refusal — is now available for the first time.**
+- **The constant-time concession this port wrote down is retired.**  `Herradura.java`'s
+  header said it mirrored the Python source "rather than herradura.h's constant-time C
+  implementation: java.math.BigInteger gives no constant-time guarantee regardless, so
+  there is nothing to gain from porting the C branchless tricks".  That is TODO #314's
+  reason 3 stated by the port itself — a security property conceded because of a
+  dependency choice.  Over a `byte[]` there is something to gain, so `equals`, `compare`,
+  `isZero`, `popcount` and the bitwise operations now touch every octet and fold with
+  masks rather than branches, the same structure C and Go use.  **A branch-free structure,
+  not a claim about what a JIT emits**; the suite still uses `MessageDigest.isEqual` where
+  constant time is load-bearing.
+- **`rnlKdfSeed` exists, and there is now exactly one truncation.**  This port had no such
+  function: the derivation was transcribed at **six** call sites — two in `Hfscx256`, two
+  in `HerraduraNl`, one in `Hpake`, one in `KatVerify` — each against the 256-bit constant
+  with a comment explaining that the shift is zero at n = 256.  That is TODO #312's finding
+  in a fourth port, and it is why "exactly one truncation, in one place" was unavailable
+  here however carefully each copy was written.
+- **The Java CLI's `loadKey` returns a `BitArray`.**  It returned
+  `BigInteger[] { value, nbits }` — the width as a separate array element, read back as
+  `key[1]` at nineteen sites.  That is TODO #313's defect shape stated in a type; the
+  separation is no longer expressible.
+- **`Json.java`** — the dependency-free JSON reader — is extracted from `KatVerify` so the
+  second consumer can share it rather than copy it.  Its numbers decode as `Long`, exactly,
+  which is why Java never met the >2^53 hazard the Go consumer had to ask for
+  `json.Number` to avoid.
+
+### Added
+- **`herradurakex.VerifyBitArray`**, run by `CliTest/test_java_bindings.sh` — where the
+  Java toolchain is already built, the other three consumers running in
+  `CliTest/test_kat_vectors.sh`.  **Four independent implementations against one pinned
+  answer.**
+- **`BaException` and `BITARRAY.md` §5's eight codes in Java**, unchecked on purpose: at
+  the protocol layer a mixed or invalid width is a bug, not an input, which is the position
+  C takes with `BA_FAIL` and Go with a panic.
+- **Octet arithmetic** — `addMod2n`, `subMod2n`, `mulMod2n`, `addUint`, `xorUint` — the
+  counterparts of `herradura.h`'s `ba_add256`/`ba_sub256`/`ba_mul256` and Go's, ported
+  rather than re-derived, so NL-FSCX v1/v2's integer addition no longer round-trips
+  through a bignum.
+
+- **`MIGRATING.md` §22** records the Java package API change, on sections 20 and 21's
+  grounds: not MAJOR, but it breaks Java source that imports `herradurakex`.
+
+### Fixed
+- **Four silently-wrong comparisons introduced by the conversion itself, every one caught
+  by an existing oracle.**  Java's `equals(Object)` returns **false** for a different type
+  rather than failing to compile, so a `BitArray` compared against a `BigInteger` is a
+  round-trip check that always fails or a difference check that always passes.  Three
+  successive audits each missed some — locals, then fields, then method-call arguments —
+  and `SelfTest` (the A3 round-trip), `Demo` (masked HSKE), `CodecTest` (the key
+  round-trips) and `KatVerify` (three vector sets) each found one.  **A conversion that
+  changes a type cannot lean on the compiler where the language's equality is untyped.**
+
+## [9.3.0] - 2026-09-22
+
+### Changed
+- **Python's `BitArray` stores octets and carries its own width (TODO #314 pass 4).**
+  `Herradura cryptographic suite.py`'s type is now `_nbits` plus `_b: bytes` — big-endian,
+  the octet string canonical — implements the whole of `BITARRAY.md` §4, and passes
+  `KAT/bitarray.json` **376/376** through the new `KAT/verify_bitarray_py.py`.  **Three
+  ports are now in the gating set**, which is the cross-implementation check
+  `BITARRAY.md` §7 describes: C reads the generated header, Go and Python read the JSON,
+  and no round-trip or interop test can supply what they do, because those compare a port
+  against another port's opinion.
+- **Python's mixed-width XOR reports instead of discarding the other operand.**
+  `BITARRAY.md` §6.2's measured defect — `__xor__` built `BitArray(self._size, ...)` and
+  the constructor masked, so the expression returned the LEFT operand unchanged with the
+  right one masked away entirely — is fixed: `_same_width` raises
+  `BaError(E_MIXED_WIDTH)` before either operand is read.
+- **TODO #313's truncation split is closed in the code for C, Go and Python.**  This port
+  already took the HIGH bits, but by the open-coded expression
+  `_RNL_KDF_DC_256 >> (256 - n)` written at the call site; `rnl_kdf_seed` now goes through
+  the one named `truncate`, so the rule lives in the type instead of in an arithmetic
+  idiom repeated per port.  **The refusal stays**: `hske-nla1` is still refused below 256
+  bits in all four CLIs until Java lands.
+- **GF(2^n) gains a BitArray-level pair where the WIDTH selects the polynomial.**
+  `ba_gf_poly`, `ba_gf_mul` and `ba_gf_pow` wrap the existing int-level `gf_mul`/`gf_pow`
+  rather than adding a second implementation; an unlisted width is `E_NO_POLY`, never a
+  default.  A `poly` parameter is what lets a caller hand in one that does not match the
+  operands, which is exactly what the Go CLI was doing silently until v9.2.0.
+- **`--report` in `KAT/generate_bitarray_kat.py` has run out of ports to measure**, and
+  now says so instead of printing rows that duplicate a gate.  It measured the shipped
+  Python suite while Python was unconverted and its divergences could not be a failing
+  test; Python now has a consumer that gates, and re-measuring here would assert nothing
+  the gate does not — #234's vacuous pass arriving by way of a report.  Java is the only
+  port left and is a separate toolchain, so it gets a consumer at pass 5, not a row.
+  `_load_python_suite()` is **deleted** rather than left unreferenced beside the check,
+  which is the shape TODO #305 removed from the Go port.
+
+### Added
+- **`zkp_nl_f1`, the machine-word NL-FSCX v1 step, in Python** — and with it **all four
+  ports now name it**.  ZKP-NL's default width is 8, which `BITARRAY.md` §2's floor of 16
+  forbids and `KAT/bitarray.json` pins as `E_WIDTH`, so `zkp_nl_keygen` could no longer
+  build an 8-bit BitArray.  This is the SAME defect in the SAME function Go hit at pass 3;
+  C (`zkp_nl_f1`) and Java (`nlFscxV1General`) have had the machine-word form all along.
+  The `nl-fscx-v1-general` manifest row gains a Python cell, and pass 3's reason — which
+  said Python kept passing the width to `nl-fscx-v1` "because its BitArray has no such
+  floor" — is **corrected rather than left standing**: pass 4 gave it one.
+- **`KAT/verify_bitarray_py.py`** — the Python conformance consumer, run by
+  `CliTest/test_kat_vectors.sh`.  Its header answers the obvious objection: a Python
+  consumer checking a Python-generated vector is not circular, because the reference is a
+  separate class in the generator written against the document, and the consumer loads the
+  SHIPPED suite through `importlib` and never touches it.
+- **The `BaError` exception and `BITARRAY.md` §5's eight codes in Python**, so that a port
+  failing for the right reason is distinguishable from one failing for the wrong one — the
+  same closed set C returns as a status and Go returns as an error.
+- **`BitArray.from_uint`, `from_bytes`, `from_hex`, `to_uint`, `truncate`, `extend`,
+  `resize_exact`, `compare`, `bit`, `shl`, `shr`, `is_zero`, `popcount`** — §4's surface.
+  `from_uint` REJECTS an out-of-range value where the constructor masks, and the two are
+  spelled differently on purpose: masking is how an out-of-range intermediate becomes a
+  plausible in-range value with nothing recording that it happened.
+
+### Performance
+- **Storing octets costs nothing, measured.**  A pure byte-loop rotation at n = 256 is
+  7.60 µs against 0.35 µs for the int form — 21x, in a suite that already runs for half an
+  hour — so the pure-byte route was rejected on measurement, not taste.  Python's private
+  limb is the interpreter's int, which `BITARRAY.md` §1 explicitly permits, and with the
+  conversion at the COMPOSITE boundary `fscx_revolve(256, 64)` measures 100.9 µs either
+  way; paid per step it is +32%.  That is why `fscx` and the revolve loops convert once.
+
+## [9.2.0] - 2026-09-22
+
+### Changed
+- **Go's `BitArray` carries its own width (TODO #314 pass 3).**  `herradura/herradura.go`'s
+  type is now `{ nbits int; b []byte }` — big-endian octets, both fields UNEXPORTED —
+  implements the whole of `BITARRAY.md` §4, and passes `KAT/bitarray.json` **376/376**
+  through the new `KAT/verify_bitarray_go.go`.  `math/big` no longer implements the type.
+  **Behaviour is preserved at 256 and it is the same octets** — a 30-operation probe
+  (xor / rol / ror / fscx / fscx_revolve / MInv / NL v1 / v2 / v2-inv / v3 /
+  rnl_kdf_seed / HFSCX-256 / HSKE-NL-A1 / GF / HKEX-GF agree / Stern hash and syndrome)
+  is byte-identical before and after, and `KAT/verify_kat.go` passes unchanged.
+- **Go's mixed-width XOR reports instead of returning zeros.**  `BITARRAY.md` §6.1's
+  measured defect — `Xor` did not mask, so an over-wide value made `Bytes()` copy nothing
+  and read back as eight zero octets, with no error and no panic — is fixed: `TryXor`
+  returns `E_MIXED_WIDTH` and `Xor` panics on it.  Every binary operation now requires
+  equal widths and never coerces (§3).
+- **TODO #313's truncation split is closed in the code for C and Go.**  `RnlKdfSeed` took
+  `RnlKdfDC[32-n/8:]`, the LOW octets — the outlier `BITARRAY.md` §4.4 settles against —
+  and now takes the HIGH bits through the one specified truncation.  At n = 256 the
+  truncation is the identity, so nothing that ships moves.  **The refusal stays**:
+  `hske-nla1` is still refused below 256 bits in all four CLIs until Python and Java land
+  (`BITARRAY.md` §8), because two ports agreeing with the reference is not four ports
+  agreeing with each other.
+- **Go package API (not the CLI, PEM or wire format).**  `Val` was an exported field and
+  `GfMul`/`GfPow`/`GfPoly` took a `poly *big.Int` and a width the type now carries, so all
+  three lose parameters they no longer need and `GfPoly` becomes the width-indexed
+  `BaGfPoly` with `E_NO_POLY` for an unlisted width.  Every consumer is in this tree and
+  all six move with it: the CLI, the test harness, the suite walkthrough,
+  `KAT/verify_kat.go`, `docs/examples/go` and `bindings/ffi/go`'s native cross-check —
+  plus `docs/TUTORIAL.md`'s Go snippets, which are the API's published face and would
+  otherwise document a package that no longer compiles.
+  MINOR rather than MAJOR under `CLAUDE.md`'s rule — no `--algo` changes what it produces
+  or accepts, and no stored artifact becomes unreadable — but it does break Go source that
+  imports the package, so it carries a `MIGRATING.md` §20 entry with the full before/after
+  table anyway.
+- **The Go CLI refuses a classical width with no GF polynomial.**  Five read paths carried
+  `poly := GfPoly[n]; if poly == nil { poly = GfPoly[256] }` — keep the wire's width, do
+  the arithmetic under the 256-bit polynomial, produce garbage in silence.  Unreachable
+  from any artifact this tree writes (`genpkey` normalises an unlisted `--bits` to 256),
+  so it is a malformed-input path, and it now refuses with a named bound the way TODO
+  #239/#240 refuse every other wire field that sizes a computation.
+- **The Go CLI's wire width floor is 16, not 8.**  `boundedN` guards the two Stern
+  signature readers, and `BITARRAY.md` §2 puts the BitArray's floor at 16 because `fscx`
+  reads the octet on both sides of every position and degenerates below two octets —
+  which is why C has carried `#if KEYBYTES < 2 / #error` since v1.3 and why
+  `KAT/bitarray.json` pins `nbits = 8` as `E_WIDTH`.  No writer here emits a narrower
+  Stern instance either (`sternT(8)` is a degenerate error weight of 0), so this refuses
+  an artifact that was never valid.
+- **`zkpNlF1`, the machine-word NL-FSCX v1 step, in Go.**  ZKP-NL's default width is 8,
+  which the BitArray floor above forbids, and this port built an 8-bit BitArray there.
+  C has had `zkp_nl_f1` and Java `ZkpNl.nlFscxV1General` all along; Go's cell in the
+  `nl-fscx-v1-general` manifest row is new and Python keeps passing the width to
+  `nl-fscx-v1` itself, its BitArray having no such floor.
+
+### Performance
+- **Measured, not assumed, and it goes both ways.**  Octets replace `big.Int` words, so
+  `FscxRevolve(256, 64)` costs 0.0289 ms against 0.0133 ms — 2.2x — where a rotation is
+  now a byte loop rather than a word shift.  The NL paths are unchanged
+  (`NlFscxRevolveV1(256, 64)` 0.2844 vs 0.2649 ms, `NlFscxRevolveV2(256, 192)` 1.009 vs
+  0.984), because their cost is the integer addition either way.  And **HFSCX-256 got
+  faster** — 9.67 ms per KB against 12.41, 1.28x — since hashing a block was a
+  `SetBytes` plus a masked `Xor` plus a re-widening `Bytes()` per block, and is now a
+  direct octet XOR.  Host-specific figures from an aarch64 SBC; the shape is what
+  matters, and nothing in the suite is dominated by the one operation that slowed down.
+
+### Added
+- **`KAT/verify_bitarray_go.go`** — the Go conformance consumer, run by
+  `CliTest/test_kat_vectors.sh`.  **With the second port the vector stops being a currency
+  check**: two independent implementations against one pinned answer is the
+  cross-implementation check `BITARRAY.md` §7 describes, and it is what no round-trip or
+  interop test can supply, because those compare a port against another port's opinion.
+  C reads the generated header and Go reads the JSON, so the two consumers do not share an
+  input file.
+- **Go's BitArray arithmetic over octets** — `AddMod2n`, `SubMod2n`, `MulMod2n`,
+  `MulModOrd`, `SubModOrd`: the counterparts of `herradura.h`'s `ba_add256` / `ba_sub256` /
+  `ba_mul256` / `ba_mul_mod_ord` / `ba_sub_mod_ord`, ported rather than re-derived, so
+  NL-FSCX v1/v2's integer addition and HPKS's Schnorr arithmetic no longer round-trip
+  through a bignum.
+
+### Fixed
+- **`KAT/verify_kat_c` was ABORTING on `devtest`, and had been since v9.1.0.**
+  `E_WIDTH in ba_fscx`, reached through `stern_build_H` from `hcred_verify_kkw`: the
+  consumer declared `BitArray seed_H;` with no initialiser and only `memcpy`d its octets,
+  so its width was whatever the stack held.  TODO #314 pass 2's poisoned build covered
+  `herradura.h`, the CLI, the test harness and the suite walkthrough — **not the C files
+  outside those four**, which is why it passed when pass 2 ran it and aborts now: an
+  uninitialised width is valid garbage or invalid garbage depending on the binary, so the
+  defect is real whenever the test is green.  Nine sites in `KAT/verify_kat_c.c`, ten in
+  `SecurityProofsCode/dudect_timing_audit.c` and one in
+  `benchmarks/rnl_deployed_ring_cost.c` now carry `BA_INIT` or `ba_init_array`.  Found by
+  running the gate pass 3 had to extend, which is the argument for running the whole
+  script rather than the step you changed.
+- **A latent hazard in `KAT/bitarray.json`, found by its first JSON consumer.**  Two cases
+  carry integers above 2^53 (`to_uint`'s 7025791060798414911 at n = 64, `from_uint`'s 2^32
+  boundary) and a default float64 decode rounds the first.  C consumes the transposed C
+  header, where they are literals, so Go is the first consumer that could meet the hazard
+  `CLAUDE.md` records for `nl_fscx_v3.json`.  It is **not** silent — the pinned answer
+  disagrees and the case fails — so the fix is an exact decode (`json.Number`) in the
+  consumer rather than a change to the file.
+- **Nine `FillBytes` call sites in the Go CLI** became `fillBA`, a RIGHT-ALIGNED write.
+  `copy(dst, ba.Bytes())` is left-aligned and silently different when the lengths differ,
+  which is the class of near-miss this item exists to remove.
+
+## [9.1.0] - 2026-09-21
+
+### Changed
+- **C's `BitArray` carries its own width (TODO #314 pass 2).**  `herradura.h`'s type is now
+  `uint16_t nbits` plus a `BA_MAX_BYTES` capacity buffer (`BA_MAX_BITS = 256`), implements
+  the whole of `BITARRAY.md` §4, and passes `KAT/bitarray.json` **376/376** through the new
+  `KAT/verify_bitarray_c.c`.  The port that could not represent a narrow value at all now
+  represents 16 to 256 bits and agrees with the reference at 32, 64, 128 and 256.
+  **Behaviour is preserved at 256 and it is the same octets** — a probe over
+  xor / rol / ror / fscx / fscx_revolve / gf_mul / rnl_kdf_seed / popcount is byte-identical
+  to the pre-change build, and the suite harness, the four CLI matrices and the whole `KAT/`
+  set are unchanged.  Source-compatible on the public C surface, for the reason
+  `BITARRAY.md` §9 measures: the FFI ABI is flat `uint8_t[KEYBYTES]` buffers that never name
+  `BitArray`, `docs/examples` calls `ba_*` only, and `herradura.h` is header-only so no ABI
+  boundary for the type exists.
+- **C's compile-time GF restriction is gone.**  `#if KEYBITS != 256 / #error "GF polynomial
+  constants are only defined for KEYBITS=256 in this build"` is replaced by a width-indexed
+  primitive-polynomial table and a run-time `BA_E_NO_POLY` for an unlisted width.  C now does
+  GF(2^n) multiply and power at 32, 64, 128 and 256.
+- **`BITARRAY.md` §4.1: the integer conversions are bounded to `n <= 64`** — a correction to
+  the specification made by its first port.  The original text specified `to_uint` at every
+  width, which the Python reference satisfies trivially *because* its integers are
+  arbitrary-precision, and that is the dependency this work removes.  The octet string stays
+  the canonical form; wider is `E_RANGE` rather than a silent truncation.
+
+### Added
+- `KAT/verify_bitarray_c.c` — the C conformance consumer, run by
+  `CliTest/test_kat_vectors.sh`.  **C is the first port in the gating set.**
+- `KAT/bitarray_vector.h` — GENERATED: `bitarray.json` transposed into C arrays, so the
+  dependency-free C tree needs no JSON parser (`KAT/hcred_kkw_vector.h`'s precedent, TODO
+  #266).  `--check` verifies the header and the JSON agree, so the two cannot drift.
+
+### Fixed
+- **`ba_is_zero` was not constant-time**: it had a data-dependent early exit
+  (`if (a->b[i]) return 0;`) in a file whose neighbouring comparisons are all marked
+  SA-08/SA-09 constant-time.  The surviving definition accumulates over every octet.
+- The CLI's `ba_from_ra` now **states** the width it produces.  Its zero-extension of a
+  narrower DER INTEGER — the asymmetry TODO #313 recorded as known and unmeasured — is
+  unchanged on purpose; what changed is that the width is carried rather than assumed by
+  every reader.
+
+### Notes
+- **The conversion was driven by a poisoned build, not by grep**, and that is the
+  transferable part.  Adding a width to a struct is easy; finding every site that creates a
+  `BitArray` without setting one is not — 122 declarations, ~50 arrays, 6 struct types, 24
+  heap allocations, plus the shapes that defeat a regex: a declaration sharing its line with
+  a statement, one sharing its line with its opening brace, a `static` that zero-initialises
+  to an invalid width, and a `memset(&x, 0, sizeof x)` that erases the width it was just
+  given.  Building the suite with `-ftrivial-auto-var-init=pattern` makes every
+  uninitialised local a deterministic `0xFEFE` width, which `ba_check_width` rejects and
+  `BA_FAIL` aborts on with a backtrace.  Nine aborts, nine fixes, then the whole harness ran
+  clean.  A grep tells you where you looked; a poisoned build tells you where you did not.
+- **A first draft of `ba_try_gf_mul` walked the multiplier's bits the wrong way**, disagreed
+  at every width *including 256*, and was caught by the existing 256-bit behaviour oracle
+  before the new vectors were ever consulted.  It now reuses `gf_mul_ba`'s exact schedule.
+- **Pass 6 needs all four ports, not three.**  C agreeing with the reference is not the four
+  agreeing with each other, so TODO #313's refusal stays until every port conforms.  Until
+  pass 3 this is one implementation against one pinned answer — more than currency, less
+  than a cross-implementation check — and `BITARRAY.md` §7 and
+  `CliTest/test_kat_vectors.sh` both say so rather than letting 376/376 read as more than it
+  is.  Both controls verified to fire: a one-field edit to the generated header fails
+  `--check`, and flipping C's truncation to the low octets fails 11 of the 376.
+
+## [9.0.1] - 2026-09-21
+
+### Added
+- **`BITARRAY.md` — the normative BitArray specification, and `KAT/bitarray.json`, its
+  conformance oracle (TODO #314, first pass).**  One variable-width bit-string type, to be
+  implemented as the same algorithm over the same representation in C, Go, Python and
+  Java, replacing the three embedded bignum types (`math/big`, Python `int`,
+  `java.math.BigInteger`) the suite currently delegates to.  Big-endian octet string with
+  the width carried **with** the value — never passed alongside it, which is what makes
+  TODO #313's "two ports ignored the declared width" unrepresentable rather than merely
+  discouraged.  378 pinned cases at widths 32/64/128/256 covering every operation in §4
+  plus the mixed-width, invalid-width and no-polynomial cases; error cases pin an expected
+  **error code**, not a value, so a port that fails for the right reason is
+  distinguishable from one that fails for the wrong one.
+- `KAT/generate_bitarray_kat.py` — the reference implementation and vector generator.
+  `--check` (currency) is gating and runs in `CliTest/test_kat_vectors.sh`; `--report`
+  (per-port conformance) deliberately is **not** a gate, because an unconverted port is
+  expected to diverge and there is no allow-list.
+
+### Fixed
+- Nothing.  **No shipped port was touched**: the suite, the four CLIs and every existing
+  test are byte-for-byte unchanged.  Passes 2-6 (`BITARRAY.md` §8) convert one port per
+  release; the defects below are recorded, not yet repaired.
+
+### Changed
+- **The truncation rule is decided — HIGH bits, the big-endian prefix** (`BITARRAY.md`
+  §4.4), settling the split TODO #313 could only refuse around.  Python's `rnl_kdf_seed`
+  and C's declared narrow constants (`_RNL_KDF_DC_32`, `_RNL_KDF_DC_64`) already say high
+  bits; Go's rule was **measured**, not read — `ROL(k, n/8) XOR (DC_256 & (2^n - 1))`
+  reproduces Go's output exactly at n = 32, 64 and 128.  One truncation, in one place.
+- **TODO #314's versioning question is settled and the answer is not MAJOR.**
+  `bindings/ffi/herradura_shim.h` mentions `BitArray` **zero times** (the FFI ABI is flat
+  `uint8_t[KEYBYTES]` buffers by design), `docs/examples/c/hello_herradura.c` calls `ba_*`
+  only and compiles unchanged, and `herradura.h` is header-only so no ABI boundary for the
+  type exists.  Passes 2-5 are MINOR at most.
+
+### Notes
+- **Two variable-width ports, one XOR, two different silent wrong answers** — measured,
+  and the concrete form of TODO #314's reason 2.  A 64-bit array XORed with a 256-bit one
+  yields, in Go, a value declaring `size = 64` whose `Val` is 201 bits, which `Bytes()`
+  renders as **eight zero octets**: it copies nothing when the value overflows the declared
+  width, so an over-wide intermediate reads back as zero with no error and no panic.  The
+  same expression in Python masks to the left operand and **discards the right one
+  entirely**.  C and Java cannot pose the question.  `BITARRAY.md` §3 makes both
+  `E_MIXED_WIDTH`.
+- **The reference is behaviour-preserving, across three ports.**  It reproduces the shipped
+  C suite at n = 256, the shipped Go package at n = 256, and the shipped Python suite at
+  32/64/128/256, on xor / rol / ror / fscx / fscx_revolve / gf_mul / rnl_kdf_seed /
+  popcount — zero mismatches.  The contract is the existing agreed behaviour with the width
+  rules made explicit, not a redesign.
+- **Currency is not coverage, and the file says so.**  A vector generated by the reference
+  and checked only by the reference proves that nobody edited it and nothing more; it
+  becomes load-bearing at the first port and decisive at the second.  Both controls were
+  verified to fire: a one-field edit makes `--check` exit 1, and flipping the reference's
+  truncation to low bits flips the report's `rnl_kdf_seed` row to `DIVERGES`.
+
 ## [9.0.0] - 2026-09-21
 
 ### Changed (BREAKING — see `MIGRATING.md` §19)

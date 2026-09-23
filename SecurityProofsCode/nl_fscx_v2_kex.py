@@ -6,10 +6,18 @@ Five-section analysis of a key exchange built on the bijection family
   pi_K : A → nl_fscx_v2(A, K)
 which forms a non-abelian permutation group (Theorem 15).
 
-  §1  Extended orbit sweep  n = 8 … 40
+  §1  Extended orbit sweep  n = 16 … 40
        Maps the orbit-length anomaly identified in nl_fscx_v2_orbit.py across
        a wider range of n values.  Identifies which n are "safe" (long orbits)
        vs. "degenerate" (short orbits → small-subgroup attack possible).
+       The sweep ran n = 8 … 40 in steps of 4 until v9.3.0.  BITARRAY.md 2 makes
+       a width a multiple of 8 from 16 to 256, so 8, 12, 20, 28 and 36 are widths
+       the shipped BitArray cannot represent and this script cannot ask it about
+       -- and the ALL-SHORT anomaly this section exists to map lived at exactly
+       those widths.  What it reports now is that no LEGAL width below 40 shows
+       it; the anomaly itself is not withdrawn, it is out of reach here and
+       stands on nl_fscx_v2_orbit.py, whose primitives are integer-only and
+       self-contained, so no width rule constrains it.
 
   §2  Non-abelianness confirmation
        Empirically verifies that the group G = <{pi_K}> is non-abelian by
@@ -67,14 +75,14 @@ def brent_orbit(x0, K, n, cap):
 
 # ── §1  Extended orbit sweep ──────────────────────────────────────────────────
 def section1():
-    print("\n§1  Extended orbit sweep  n = 8 … 40")
+    print("\n§1  Extended orbit sweep  n = 16 … 40")
     print("-" * 64)
     print(f"  {'n':>4}  {'cap':>6}  {'pairs':>5}  {'short≤100':>9}  {'≤cap':>5}  {'>cap':>5}  verdict")
 
     PAIRS = 20
     ROWS  = []
 
-    for n in range(8, 44, 4):
+    for n in range(16, 44, 8):   # BITARRAY.md 2: multiple of 8, >= 16
         cap  = 1 << min(12, n - 1)   # cap at min(2^12, half state space)
         mask = (1 << n) - 1
         short = med = long_ = 0
@@ -285,8 +293,17 @@ def section5(n, anomalies, safe, nonabelian, commuting_example):
     print(f"    Anomalous n (short orbits): {anomalies}")
     print(f"    n=32 confirmed safe (cap=16384); n=256 production remains untested")
     print(f"    (infeasible to run Brent's at full 2^256 scale).")
-    print(f"    Pattern: anomaly appears at specific n values — needs number-theoretic")
-    print(f"    explanation.  Whether n=256 is safe is an OPEN QUESTION.")
+    if anomalies:
+        print(f"    Pattern: anomaly appears at specific n values — needs number-theoretic")
+        print(f"    explanation.  Whether n=256 is safe is an OPEN QUESTION.")
+    else:
+        print(f"    No anomalous width among those BITARRAY.md 2 permits (16..40 here);")
+        print(f"    the ALL-SHORT rows this section used to report were n=8 and n=12,")
+        print(f"    which the shipped BitArray cannot represent — see §1's note.")
+        print(f"    The anomaly is not withdrawn: it stands on nl_fscx_v2_orbit.py,")
+        print(f"    whose primitives are integer-only and under no width rule, and it")
+        print(f"    still needs a number-theoretic explanation.  Whether n=256 is safe")
+        print(f"    is an OPEN QUESTION.")
     print()
 
     print("  Obstacle 3 — Formal reduction to studied CSP:")
@@ -303,7 +320,9 @@ def section5(n, anomalies, safe, nonabelian, commuting_example):
     print()
 
     print("  Summary for TODO #78.E:")
-    print("    DONE (§1): Orbit anomaly mapped across n=8..40.  Safe n values identified.")
+    print("    DONE (§1): Orbit lengths mapped across the legal widths n=16..40.")
+    print("               No anomaly at a width the shipped BitArray can represent;")
+    print("               the n=8/12 ALL-SHORT rows are out of reach since v9.3.0.")
     print("    DONE (§2): Non-abelianness empirically confirmed at n=32.")
     print("    DONE (§3): Commuting-pair density measured — Ko-Lee viability assessed.")
     print("    DONE (§4): Same-key revolve KEX works (abelian); cross-key fails without")

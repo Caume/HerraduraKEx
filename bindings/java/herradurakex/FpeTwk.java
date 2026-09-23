@@ -76,21 +76,21 @@ public final class FpeTwk {
      * makes the ~2^-129 affine-degenerate class practically unreachable —
      * an attacker cannot steer a hash output without the key — so the
      * rejection loop is defence in depth, effectively never taken. */
-    private static BigInteger deriveB(int ds, byte[] key, byte[] tweak) {
+    private static BitArray deriveB(int ds, byte[] key, byte[] tweak) {
         byte[] h = Hfscx256.hashDs(ds, concat(be8(key.length), key, tweak));
-        BigInteger b = new BigInteger(1, h).and(MASK);
+        BitArray b = BitArray.fromBytes(h, Herradura.N);
         while (!HerraduraNl.nlV2KeyIsValid(b)) {
             h = Hfscx256.hashDs(ds, h);
-            b = new BigInteger(1, h).and(MASK);
+            b = BitArray.fromBytes(h, Herradura.N);
         }
         return b;
     }
 
     /** Same derivation, no rejection loop: NL-FSCX v3 has no affine-degenerate
      * subkey class to screen for (SecurityProofs-8.md §11.34.4). */
-    private static BigInteger deriveBv3(int ds, byte[] key, byte[] tweak) {
+    private static BitArray deriveBv3(int ds, byte[] key, byte[] tweak) {
         byte[] h = Hfscx256.hashDs(ds, concat(be8(key.length), key, tweak));
-        return new BigInteger(1, h).and(MASK);
+        return BitArray.fromBytes(h, Herradura.N);
     }
 
     // -----------------------------------------------------------------
@@ -101,11 +101,11 @@ public final class FpeTwk {
     // per-record nonce in ctx.
     // -----------------------------------------------------------------
 
-    public static BigInteger fpeEncrypt(BigInteger pt, byte[] key, byte[] ctx) {
+    public static BitArray fpeEncrypt(BitArray pt, byte[] key, byte[] ctx) {
         return HerraduraNl.nlFscxRevolveV2(pt, deriveB(FPE_DS, key, ctx), R_VALUE);
     }
 
-    public static BigInteger fpeDecrypt(BigInteger ct, byte[] key, byte[] ctx) {
+    public static BitArray fpeDecrypt(BitArray ct, byte[] key, byte[] ctx) {
         return HerraduraNl.nlFscxRevolveV2Inv(ct, deriveB(FPE_DS, key, ctx), R_VALUE);
     }
 
@@ -114,13 +114,13 @@ public final class FpeTwk {
     // a unique tweak, resolving HSKE-NL-A2's determinism limitation.
     // -----------------------------------------------------------------
 
-    public static BigInteger twkEncrypt(BigInteger block, byte[] key, long sector, int bidx) {
-        BigInteger b = deriveB(TWK_DS, key, twkTweak(sector, bidx));
+    public static BitArray twkEncrypt(BitArray block, byte[] key, long sector, int bidx) {
+        BitArray b = deriveB(TWK_DS, key, twkTweak(sector, bidx));
         return HerraduraNl.nlFscxRevolveV2(block, b, R_VALUE);
     }
 
-    public static BigInteger twkDecrypt(BigInteger ct, byte[] key, long sector, int bidx) {
-        BigInteger b = deriveB(TWK_DS, key, twkTweak(sector, bidx));
+    public static BitArray twkDecrypt(BitArray ct, byte[] key, long sector, int bidx) {
+        BitArray b = deriveB(TWK_DS, key, twkTweak(sector, bidx));
         return HerraduraNl.nlFscxRevolveV2Inv(ct, b, R_VALUE);
     }
 
@@ -131,21 +131,21 @@ public final class FpeTwk {
     // variants.
     // -----------------------------------------------------------------
 
-    public static BigInteger fpeV3Encrypt(BigInteger pt, byte[] key, byte[] ctx) {
+    public static BitArray fpeV3Encrypt(BitArray pt, byte[] key, byte[] ctx) {
         return HerraduraNl.nlFscxRevolveV3(pt, deriveBv3(FPE_V3_DS, key, ctx), HerraduraNl.R3_VALUE);
     }
 
-    public static BigInteger fpeV3Decrypt(BigInteger ct, byte[] key, byte[] ctx) {
+    public static BitArray fpeV3Decrypt(BitArray ct, byte[] key, byte[] ctx) {
         return HerraduraNl.nlFscxRevolveV3Inv(ct, deriveBv3(FPE_V3_DS, key, ctx), HerraduraNl.R3_VALUE);
     }
 
-    public static BigInteger twkV3Encrypt(BigInteger block, byte[] key, long sector, int bidx) {
-        BigInteger b = deriveBv3(TWK_V3_DS, key, twkTweak(sector, bidx));
+    public static BitArray twkV3Encrypt(BitArray block, byte[] key, long sector, int bidx) {
+        BitArray b = deriveBv3(TWK_V3_DS, key, twkTweak(sector, bidx));
         return HerraduraNl.nlFscxRevolveV3(block, b, HerraduraNl.R3_VALUE);
     }
 
-    public static BigInteger twkV3Decrypt(BigInteger ct, byte[] key, long sector, int bidx) {
-        BigInteger b = deriveBv3(TWK_V3_DS, key, twkTweak(sector, bidx));
+    public static BitArray twkV3Decrypt(BitArray ct, byte[] key, long sector, int bidx) {
+        BitArray b = deriveBv3(TWK_V3_DS, key, twkTweak(sector, bidx));
         return HerraduraNl.nlFscxRevolveV3Inv(ct, b, HerraduraNl.R3_VALUE);
     }
 }

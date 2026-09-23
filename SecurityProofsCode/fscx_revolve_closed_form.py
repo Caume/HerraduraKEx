@@ -20,7 +20,8 @@ which uses the same decomposition to measure what T_i fails to cover.
   §1  The telescoping identity, checked against the loop
   §2  Why no dense polynomial multiplication is needed (the Frobenius argument)
   §3  Computing S_i in O(log i) sparse steps
-  §4  Bit-exactness: exhaustive at n=8, randomised at the deployed widths
+  §4  Bit-exactness: exhaustive in each operand at n=16, randomised at the
+      deployed widths
   §5  Operation counts and measured speedup
   §6  Why this does not extend to the NL-FSCX variants
 
@@ -33,10 +34,14 @@ RESULTS
     which is what makes the closed form win rather than merely change the
     asymptotics.
 
-§4  Bit-exact in 2 686 976 exhaustive cases at n=8 and every randomised case at
-    n in {24, 40, 64, 96, 128, 256, 512}, steps 0..70 plus the deployed and
-    boundary counts.  Non-power-of-two widths included: the identity needs only
-    characteristic 2, not n a power of two.
+§4  Bit-exact in all 3 145 728 cases of an exhaustive per-operand sweep at n=16
+    and in every randomised case at n in {24, 40, 64, 96, 128, 200, 256}, steps
+    0..70 plus the deployed and boundary counts.  Non-power-of-two widths
+    included: the identity needs only characteristic 2, not n a power of two.
+    The n=8 pair-exhaustive sweep this section ran until v9.3.0 is not narrowed
+    but UNAVAILABLE -- BITARRAY.md §2 puts the narrowest representable width at
+    16, where the pair space is 2^32 -- so what is exhausted now is each operand
+    separately, which is the weaker statement.
 
 §5  At n=256 the deployed step counts cost 10 sparse steps (i = n/4 = 64,
     encrypt) and 13 (r = 3n/4 = 192, decrypt), against 64 and 192 FSCX rounds.
@@ -154,22 +159,40 @@ def section2(n=256):
 def section4():
     print("§4  Bit-exactness of the shipped closed form against the loop")
 
+    # This section swept the WHOLE (A, B) pair space at n = 8 until v9.3.0.
+    # BITARRAY.md 2 makes 16 the narrowest width the shipped BitArray can hold,
+    # and 2^16 x 2^16 pairs is not exhaustible, so pair-exhaustiveness is gone
+    # for good rather than merely moved.  What replaces it is exhaustiveness in
+    # EACH OPERAND SEPARATELY at n = 16 -- every A against a structured B, then
+    # every B against a structured A -- which still visits every value the type
+    # admits on both sides, at about the old case count.  It is a weaker
+    # statement than the one it replaces, and saying so is the point.
+    N0 = 16
+    FIXED = (0, (1 << N0) - 1, 0xAAAA, 0x1234)   # zero, all-ones, alternating, arbitrary
+    # Powers of two are the strides the S_i recurrence actually multiplies by;
+    # 17 is odd and above n, so it reaches the stride-0 early return that 5
+    # measures.  The case count is held near the retired sweep's 2.7 million.
+    STEPS = (0, 1, 2, 4, 8, 17)
     bad = 0
     total = 0
-    for A in range(256):                        # exhaustive at n=8
-        a = BitArray(8, A)
-        for B in range(256):
-            b = BitArray(8, B)
-            for i in range(41):
-                total += 1
-                bad += (loop_revolve(a, b, i).uint
-                        != suite.fscx_revolve(a, b, i).uint)
-    print(f"    exhaustive n=8, steps 0..40: {total} cases, {bad} mismatches")
+    for fixed in FIXED:
+        f = BitArray(N0, fixed)
+        for V in range(1 << N0):                # exhaustive in one operand
+            v = BitArray(N0, V)
+            for i in STEPS:
+                total += 2
+                bad += (loop_revolve(v, f, i).uint
+                        != suite.fscx_revolve(v, f, i).uint)
+                bad += (loop_revolve(f, v, i).uint
+                        != suite.fscx_revolve(f, v, i).uint)
+    print(f"    exhaustive in each operand at n={N0}: {total} cases, {bad} mismatches")
 
     rng = random.Random(4)
     rbad = 0
     rtotal = 0
-    for n in (24, 40, 64, 96, 128, 256, 512):   # non-powers of two included
+    # 512 was in this list until v9.3.0 and is above BA_MAX_BITS; 200 replaces
+    # it, keeping a non-power-of-two width at the top of the legal range.
+    for n in (24, 40, 64, 96, 128, 200, 256):   # non-powers of two included
         for _ in range(6):
             a = BitArray(n, rng.getrandbits(n))
             b = BitArray(n, rng.getrandbits(n))
@@ -178,7 +201,7 @@ def section4():
                 rtotal += 1
                 rbad += (loop_revolve(a, b, i).uint
                          != suite.fscx_revolve(a, b, i).uint)
-    print(f"    randomised, n in {{24,40,64,96,128,256,512}}: {rtotal} cases,"
+    print(f"    randomised, n in {{24,40,64,96,128,200,256}}: {rtotal} cases,"
           f" {rbad} mismatches")
     print(f"    -> {'bit-exact' if bad == 0 and rbad == 0 else 'NOT BIT-EXACT'}\n")
     return bad == 0 and rbad == 0

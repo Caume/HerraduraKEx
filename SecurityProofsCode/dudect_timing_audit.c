@@ -56,7 +56,7 @@ static double run_test(const char *name, int rounds, setup_fn setup_fixed,
 {
     double *fixed_t = malloc(sizeof(double) * rounds);
     double *rand_t  = malloc(sizeof(double) * rounds);
-    BitArray fixed_secret, rand_secret, pub;
+    BitArray fixed_secret = BA_INIT, rand_secret = BA_INIT, pub = BA_INIT;
     int i;
     double t, ma, mb;
 
@@ -68,7 +68,7 @@ static double run_test(const char *name, int rounds, setup_fn setup_fixed,
     for (i = 0; i < rounds; i++) {
         uint64_t t0, t1;
         int fixed_first = (i & 1);
-        BitArray rs;
+        BitArray rs = BA_INIT;
         setup_random(&rs, urnd);
 
         if (fixed_first) {
@@ -105,16 +105,16 @@ static void setup_pattern(BitArray *a, FILE *urnd)
 { (void)urnd; memset(a->b, 0xA5, KEYBYTES); }
 
 static void op_gf_mul(const BitArray *secret, const BitArray *pub)
-{ BitArray d; gf_mul_ba(&d, secret, pub); }
+{ BitArray d = BA_INIT; gf_mul_ba(&d, secret, pub); }
 
 static void op_gf_pow(const BitArray *secret, const BitArray *pub)
-{ BitArray d; gf_pow_ba(&d, pub, secret); }
+{ BitArray d = BA_INIT; gf_pow_ba(&d, pub, secret); }
 
 static void op_mul_mod_ord(const BitArray *secret, const BitArray *pub)
-{ BitArray d; ba_mul_mod_ord(&d, secret, pub); }
+{ BitArray d = BA_INIT; ba_mul_mod_ord(&d, secret, pub); }
 
 static void op_fscx_revolve(const BitArray *secret, const BitArray *pub)
-{ BitArray d; ba_fscx_revolve(&d, pub, secret, I_VALUE); }
+{ BitArray d = BA_INIT; ba_fscx_revolve(&d, pub, secret, I_VALUE); }
 
 /* Batch 2 (TODO #129): Stern-F permutation generation/application and
  * WOTS-F signing. stern_gen_perm's Fisher-Yates draws are rejection-sampled
@@ -131,7 +131,7 @@ static void op_stern_gen_perm(const BitArray *secret, const BitArray *pub)
 static void op_stern_apply_perm(const BitArray *secret, const BitArray *pub)
 {
     uint8_t perm[KEYBITS];
-    BitArray out;
+    BitArray out = BA_INIT;
     stern_gen_perm(perm, secret, KEYBITS);
     stern_apply_perm(&out, perm, pub, KEYBITS);
 }
@@ -140,6 +140,7 @@ static void op_wots_sign(const BitArray *secret, const BitArray *pub)
 {
     BitArray sig[WOTS_L];
     static const uint8_t msg[] = "TODO #129 dudect fixed message";
+    ba_init_array(sig, WOTS_L);
     hpks_wots_sign(sig, msg, sizeof msg, secret->b, pub->b[0]);
 }
 
@@ -180,14 +181,14 @@ static void op_rnl_hint(const rnl_poly_t secret)
 { uint8_t hint[RNL_N / 8]; rnl_hint(hint, secret); }
 
 static void op_rnl_reconcile_bits(const rnl_poly_t secret)
-{ BitArray out; rnl_reconcile_bits(&out, secret, g_hint); }
+{ BitArray out = BA_INIT; rnl_reconcile_bits(&out, secret, g_hint); }
 
 /* Exercises rnl_agree's reconciler path end to end (rnl_lift + rnl_poly_mul +
  * rnl_hint + rnl_reconcile_bits together); secret is the private polynomial
  * s, g_c_other stands in for the other party's received (public) c. */
 static void op_rnl_agree(const rnl_poly_t secret)
 {
-    BitArray out;
+    BitArray out = BA_INIT;
     uint8_t hint_out[RNL_N / 8];
     rnl_agree(&out, secret, g_c_other, NULL, hint_out);
 }

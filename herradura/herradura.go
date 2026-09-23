@@ -32,116 +32,782 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// BitArray
+// BitArray — variable width, big-endian octets (TODO #314 pass 3)
+//
+// BITARRAY.md is the normative specification; this is its Go port, and
+// KAT/bitarray.json is the conformance oracle both are held to.  The C port
+// (pass 2, v9.1.0) is the other member of the gating set.
+//
+// The width is carried WITH the value and is never passed alongside it.  That
+// is the whole point of the type: TODO #313's four-way divergence begins with
+// two ports that were handed a declared width and ignored it, which is only
+// possible when the width and the value can be separated.
+//
+// Before this pass the Go BitArray was `struct { Val big.Int; size int }`, and
+// BITARRAY.md §6.1 records what that cost: Xor did not mask, so a mixed-width
+// XOR left Val wider than size claimed and Bytes() then copied NOTHING and read
+// back as all zeros — no error, no panic.  math/big is gone from this type.  It
+// remains in this package only for objects that are NOT BitArrays (QC-MDPC
+// dense polynomials, HCRED's Z_q coefficients, OPRF and threshold scalars),
+// which BITARRAY.md does not govern.
+//
+// The fields are UNEXPORTED on purpose.  Go has no equivalent of pass 2's
+// poisoned build, but it has something better for this particular job: making
+// Val private turns every one of the 237 sites that reached inside a BitArray
+// into a compile error, so the compiler enumerates them rather than a grep.
 // ---------------------------------------------------------------------------
 
-// BitArray is a fixed-width bit string backed by big.Int.
-// Val is the integer value; size is the bit width.
-type BitArray struct {
-	Val  big.Int
-	size int
+// There is deliberately no BAMaxBytes here where herradura.h has BA_MAX_BYTES:
+// that constant is the length of C's FIXED capacity buffer, and this port
+// allocates exactly nbits/8 octets, so a capacity in bytes has nothing to name.
+// Declared anyway it would be a constant no code reads, which is the defect
+// TODO #295's parameter-use census exists to catch — and which it caught, on
+// the first draft of this pass.
+
+// BAMaxBits is this port's capacity (BITARRAY.md §2: at least 256).  Go could
+// allocate exactly nbits/8 octets with no upper bound at all; the cap is kept
+// so that all four ports answer E_WIDTH to the same inputs, which is what
+// KAT/bitarray.json pins.
+const BAMaxBits = 256
+
+// BaStatus is BITARRAY.md §5's closed error set, spelled identically in every
+// port.  BaOK is the zero value and never travels inside an error.
+type BaStatus string
+
+const (
+	BaOK           BaStatus = "BA_OK"
+	BaEWidth       BaStatus = "E_WIDTH"
+	BaEMixedWidth  BaStatus = "E_MIXED_WIDTH"
+	BaELength      BaStatus = "E_LENGTH"
+	BaERange       BaStatus = "E_RANGE"
+	BaELossy       BaStatus = "E_LOSSY"
+	BaEHexDigit    BaStatus = "E_HEXDIGIT"
+	BaENoPoly      BaStatus = "E_NO_POLY"
+	// BaEEntropy completes §5's set and is never returned here: a short read
+	// from the CSPRNG is fatal in this port as it is in C's ba_rand, because
+	// NewRandBitArray has no error return and proceeding with partial entropy
+	// is the one outcome §4.1 forbids.  The name exists so the set is the
+	// same eight in every port, which is what makes a code comparable.
+	BaEEntropy     BaStatus = "E_ENTROPY"
+)
+
+// BaError carries one of the eight codes plus the operation that raised it.
+type BaError struct {
+	Code BaStatus
+	Op   string
 }
+
+func (e *BaError) Error() string { return string(e.Code) + " in " + e.Op }
+
+func baErr(code BaStatus, op string) error { return &BaError{Code: code, Op: op} }
+
+// BaCode reports err's status code, or BaOK for a nil error.  A conformance
+// consumer compares this against the vector's expected code; it is also what
+// makes "failed for the right reason" distinguishable from "failed".
+func BaCode(err error) BaStatus {
+	if err == nil {
+		return BaOK
+	}
+	if be, ok := err.(*BaError); ok {
+		return be.Code
+	}
+	return "E_UNKNOWN"
+}
+
+// baFail is this port's BA_FAIL: at the protocol layer a width error is a BUG,
+// not an input to be handled, and the suite has no error plumbing to thread a
+// status through.  The fallible surface is Try*, which returns an error and
+// never panics — that is what KAT/verify_bitarray_go.go exercises, since a
+// conformance vector pins the error CODE and must be able to observe it.
+func baFail(err error) {
+	if err != nil {
+		panic("herradura: " + err.Error())
+	}
+}
+
+// BitArray is a variable-width bit string: nbits/8 big-endian octets, b[0] the
+// most significant.  The octet string is the canonical form and is also the
+// suite's wire encoding, so no endianness conversion happens at any I/O
+// boundary (BITARRAY.md §1).
+type BitArray struct {
+	nbits int
+	b     []byte
+}
+
+// baCheckWidth enforces BITARRAY.md §2: a positive multiple of 8, at least 16
+// (fscx reads the octet on both sides of every position), at most the capacity.
+func baCheckWidth(n int) BaStatus {
+	if n <= 0 || n%8 != 0 {
+		return BaEWidth
+	}
+	if n < 16 {
+		return BaEWidth
+	}
+	if n > BAMaxBits {
+		return BaEWidth
+	}
+	return BaOK
+}
+
+// baSameWidth is BITARRAY.md §3: a binary operation REQUIRES equal widths.
+// A mismatch is E_MIXED_WIDTH and is never coerced.
+func baSameWidth(a, b *BitArray, op string) error {
+	if st := baCheckWidth(a.nbits); st != BaOK {
+		return baErr(st, op)
+	}
+	if st := baCheckWidth(b.nbits); st != BaOK {
+		return baErr(st, op)
+	}
+	if a.nbits != b.nbits {
+		return baErr(BaEMixedWidth, op)
+	}
+	return nil
+}
+
+// Size returns the bit width.
+func (ba *BitArray) Size() int { return ba.nbits }
+
+// nbytes is the one place a width becomes a loop bound.
+func (ba *BitArray) nbytes() int { return ba.nbits / 8 }
+
+// TryZero returns an all-zero BitArray of width n (BITARRAY.md §4.1).
+func TryZero(n int) (*BitArray, error) {
+	if st := baCheckWidth(n); st != BaOK {
+		return nil, baErr(st, "zero")
+	}
+	return &BitArray{nbits: n, b: make([]byte, n/8)}, nil
+}
+
+// NewZero is TryZero for a width the caller knows is valid.
+func NewZero(n int) *BitArray {
+	ba, err := TryZero(n)
+	baFail(err)
+	return ba
+}
+
+// TryFromBytes requires len(data) == n/8 EXACTLY (BITARRAY.md §4.1): a length
+// that does not match the declared width is E_LENGTH, not a re-interpretation.
+func TryFromBytes(data []byte, n int) (*BitArray, error) {
+	if st := baCheckWidth(n); st != BaOK {
+		return nil, baErr(st, "from_bytes")
+	}
+	if len(data) != n/8 {
+		return nil, baErr(BaELength, "from_bytes")
+	}
+	ba := &BitArray{nbits: n, b: make([]byte, n/8)}
+	copy(ba.b, data)
+	return ba, nil
+}
+
+// NewFromBytes interprets the first size/8 bytes of data as a big-endian value
+// of that width.  The middle parameter is unused and is kept so the call sites
+// this port has carried since v1.3 do not all move in the same commit as the
+// representation change; prefer TryFromBytes in new code.
+func NewFromBytes(data []byte, _ int, size int) *BitArray {
+	ba, err := TryFromBytes(data[:size/8], size)
+	baFail(err)
+	return ba
+}
+
+// TryFromUint rejects v >= 2^n rather than masking (BITARRAY.md §4.1): masking
+// is how an out-of-range intermediate becomes a plausible in-range value with
+// nothing recording that it happened.
+func TryFromUint(v uint64, n int) (*BitArray, error) {
+	if st := baCheckWidth(n); st != BaOK {
+		return nil, baErr(st, "from_uint")
+	}
+	if n < 64 && v >= uint64(1)<<uint(n) {
+		return nil, baErr(BaERange, "from_uint")
+	}
+	nb := n / 8
+	ba := &BitArray{nbits: n, b: make([]byte, nb)}
+	for i := 0; i < 8 && i < nb; i++ {
+		ba.b[nb-1-i] = byte(v >> uint(8*i))
+	}
+	return ba, nil
+}
+
+// NewFromUint is TryFromUint for a value the caller knows is in range.
+func NewFromUint(v uint64, n int) *BitArray {
+	ba, err := TryFromUint(v, n)
+	baFail(err)
+	return ba
+}
+
+// TryToUint is defined for n <= 64 only (BITARRAY.md §4.1).  That bound was
+// found by pass 2 and is a correction to the specification rather than a
+// concession to C: a port with no bignum cannot return a 256-bit integer, and
+// requiring it would force back in the dependency this type exists to remove.
+func (ba *BitArray) TryToUint() (uint64, error) {
+	if st := baCheckWidth(ba.nbits); st != BaOK {
+		return 0, baErr(st, "to_uint")
+	}
+	nb := ba.nbytes()
+	i := 0
+	if nb > 8 {
+		for ; i < nb-8; i++ {
+			if ba.b[i] != 0 {
+				return 0, baErr(BaERange, "to_uint")
+			}
+		}
+	}
+	var v uint64
+	for ; i < nb; i++ {
+		v = v<<8 | uint64(ba.b[i])
+	}
+	return v, nil
+}
+
+// LowUint64 returns the LOW 64 bits, discarding anything above them.  This is
+// NOT BITARRAY.md's to_uint and is deliberately named so: to_uint reports
+// E_RANGE above 64 bits, while several protocol sites want an explicit
+// truncation to a machine word.  Spelling the two differently is what keeps
+// "the value fits" and "take the low word" from being the same call.
+func (ba *BitArray) LowUint64() uint64 {
+	nb := ba.nbytes()
+	first := nb - 8
+	if first < 0 {
+		first = 0
+	}
+	var v uint64
+	for i := first; i < nb; i++ {
+		v = v<<8 | uint64(ba.b[i])
+	}
+	return v
+}
+
+func baHexVal(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	}
+	return -1
+}
+
+// TryFromHex requires exactly n/4 hex digits (BITARRAY.md §4.1).
+func TryFromHex(s string, n int) (*BitArray, error) {
+	if st := baCheckWidth(n); st != BaOK {
+		return nil, baErr(st, "from_hex")
+	}
+	if len(s) != n/4 {
+		return nil, baErr(BaELength, "from_hex")
+	}
+	nb := n / 8
+	ba := &BitArray{nbits: n, b: make([]byte, nb)}
+	for i := 0; i < nb; i++ {
+		hi, lo := baHexVal(s[2*i]), baHexVal(s[2*i+1])
+		if hi < 0 || lo < 0 {
+			return nil, baErr(BaEHexDigit, "from_hex")
+		}
+		ba.b[i] = byte(hi<<4 | lo)
+	}
+	return ba, nil
+}
+
+// MustFromHex is TryFromHex for a literal the caller knows is well formed.
+func MustFromHex(s string, n int) *BitArray {
+	ba, err := TryFromHex(s, n)
+	baFail(err)
+	return ba
+}
+
+// Hex returns exactly size/4 lowercase zero-padded hex digits.
+func (ba *BitArray) Hex() string {
+	const digits = "0123456789abcdef"
+	out := make([]byte, 2*ba.nbytes())
+	for i, v := range ba.b[:ba.nbytes()] {
+		out[2*i] = digits[v>>4]
+		out[2*i+1] = digits[v&0xF]
+	}
+	return string(out)
+}
+
+// Bytes returns the value as a big-endian byte slice of exactly size/8 bytes.
+// It is a COPY: the octet string is the canonical form, and handing out the
+// backing array would make every caller a potential mutator of it.
+func (ba *BitArray) Bytes() []byte {
+	out := make([]byte, ba.nbytes())
+	copy(out, ba.b)
+	return out
+}
+
+// Copy returns a value-distinct equal BitArray.
+func (ba *BitArray) Copy() *BitArray {
+	out := &BitArray{nbits: ba.nbits, b: make([]byte, len(ba.b))}
+	copy(out.b, ba.b)
+	return out
+}
+
+// NewRandBitArray generates a cryptographically random bit string.  A short
+// read is fatal rather than partial entropy (BITARRAY.md §4.1).
+func NewRandBitArray(bitlength int) *BitArray {
+	ba := NewZero(bitlength)
+	if _, err := rand.Read(ba.b); err != nil {
+		log.Fatalf("ERROR while generating random string: %s", err)
+	}
+	return ba
+}
+
+// ── bitwise (BITARRAY.md §4.2) ─────────────────────────────────────────────
+
+func (ba *BitArray) binop(other *BitArray, op string, f func(x, y byte) byte) (*BitArray, error) {
+	if err := baSameWidth(ba, other, op); err != nil {
+		return nil, err
+	}
+	out := &BitArray{nbits: ba.nbits, b: make([]byte, ba.nbytes())}
+	for i := range out.b {
+		out.b[i] = f(ba.b[i], other.b[i])
+	}
+	return out, nil
+}
+
+// TryXor returns ba XOR other, or E_MIXED_WIDTH.
+func (ba *BitArray) TryXor(other *BitArray) (*BitArray, error) {
+	return ba.binop(other, "xor", func(x, y byte) byte { return x ^ y })
+}
+
+// TryAnd returns ba AND other, or E_MIXED_WIDTH.
+func (ba *BitArray) TryAnd(other *BitArray) (*BitArray, error) {
+	return ba.binop(other, "and", func(x, y byte) byte { return x & y })
+}
+
+// TryOr returns ba OR other, or E_MIXED_WIDTH.
+func (ba *BitArray) TryOr(other *BitArray) (*BitArray, error) {
+	return ba.binop(other, "or", func(x, y byte) byte { return x | y })
+}
+
+// Xor returns ba XOR other.  A width mismatch is a bug and panics; before this
+// pass it returned all zeros in silence (BITARRAY.md §6.1).
+func (ba *BitArray) Xor(other *BitArray) *BitArray {
+	out, err := ba.TryXor(other)
+	baFail(err)
+	return out
+}
+
+// And returns ba AND other.
+func (ba *BitArray) And(other *BitArray) *BitArray {
+	out, err := ba.TryAnd(other)
+	baFail(err)
+	return out
+}
+
+// Or returns ba OR other.
+func (ba *BitArray) Or(other *BitArray) *BitArray {
+	out, err := ba.TryOr(other)
+	baFail(err)
+	return out
+}
+
+// TryNot returns the octetwise complement over all size/8 octets.
+func (ba *BitArray) TryNot() (*BitArray, error) {
+	if st := baCheckWidth(ba.nbits); st != BaOK {
+		return nil, baErr(st, "not")
+	}
+	out := &BitArray{nbits: ba.nbits, b: make([]byte, ba.nbytes())}
+	for i := range out.b {
+		out.b[i] = ^ba.b[i]
+	}
+	return out, nil
+}
+
+// Not returns the octetwise complement.
+func (ba *BitArray) Not() *BitArray {
+	out, err := ba.TryNot()
+	baFail(err)
+	return out
+}
+
+// ── rotation and shift (BITARRAY.md §4.3) ──────────────────────────────────
+
+// RotateLeft rotates ba left by n positions; negative n rotates right.  n is
+// reduced modulo the width MATHEMATICALLY — Go's % can return a negative
+// remainder and must be corrected, which the specification says out loud
+// because a port that does not is a silent divergence.
+func (ba *BitArray) RotateLeft(n int) *BitArray {
+	if st := baCheckWidth(ba.nbits); st != BaOK {
+		baFail(baErr(st, "rot_left"))
+	}
+	size := ba.nbits
+	s := ((n % size) + size) % size
+	nb := ba.nbytes()
+	out := &BitArray{nbits: size, b: make([]byte, nb)}
+	byteShift, bitShift := s>>3, s&7
+	if bitShift == 0 {
+		for i := 0; i < nb; i++ {
+			out.b[i] = ba.b[(i+byteShift)%nb]
+		}
+		return out
+	}
+	rsh := uint(8 - bitShift)
+	for i := 0; i < nb; i++ {
+		hi := ba.b[(i+byteShift)%nb]
+		lo := ba.b[(i+byteShift+1)%nb]
+		out.b[i] = byte(hi<<uint(bitShift)) | byte(lo>>rsh)
+	}
+	return out
+}
+
+// RotateRight rotates ba right by n positions (BITARRAY.md §4.3: the opposite
+// rotation, so RotateRight(s) == RotateLeft(-s) exactly).
+func (ba *BitArray) RotateRight(n int) *BitArray { return ba.RotateLeft(-n) }
+
+// TryShl is a NUMERIC left shift within the width: bits past the top are
+// DISCARDED, vacated positions are ZERO, and k >= size yields zero.  That last
+// clause is stated rather than assumed because the expression is undefined
+// behaviour in C, a panic in Go, 0 in Python and a rotation in Java.
+func (ba *BitArray) TryShl(k int) (*BitArray, error) {
+	if st := baCheckWidth(ba.nbits); st != BaOK {
+		return nil, baErr(st, "shl")
+	}
+	if k < 0 {
+		return nil, baErr(BaERange, "shl")
+	}
+	nb := ba.nbytes()
+	out := &BitArray{nbits: ba.nbits, b: make([]byte, nb)}
+	if k >= ba.nbits {
+		return out, nil
+	}
+	byteShift, bitShift := k/8, k%8
+	if bitShift == 0 {
+		copy(out.b[:nb-byteShift], ba.b[byteShift:])
+		return out, nil
+	}
+	for i := 0; i < nb-byteShift-1; i++ {
+		out.b[i] = byte(ba.b[i+byteShift]<<uint(bitShift)) |
+			byte(ba.b[i+byteShift+1]>>uint(8-bitShift))
+	}
+	out.b[nb-byteShift-1] = byte(ba.b[nb-1] << uint(bitShift))
+	return out, nil
+}
+
+// TryShr is a NUMERIC right shift within the width; see TryShl.
+func (ba *BitArray) TryShr(k int) (*BitArray, error) {
+	if st := baCheckWidth(ba.nbits); st != BaOK {
+		return nil, baErr(st, "shr")
+	}
+	if k < 0 {
+		return nil, baErr(BaERange, "shr")
+	}
+	nb := ba.nbytes()
+	out := &BitArray{nbits: ba.nbits, b: make([]byte, nb)}
+	if k >= ba.nbits {
+		return out, nil
+	}
+	byteShift, bitShift := k/8, k%8
+	if bitShift == 0 {
+		copy(out.b[byteShift:], ba.b[:nb-byteShift])
+		return out, nil
+	}
+	for i := nb - 1; i > byteShift; i-- {
+		out.b[i] = byte(ba.b[i-byteShift]>>uint(bitShift)) |
+			byte(ba.b[i-byteShift-1]<<uint(8-bitShift))
+	}
+	out.b[byteShift] = byte(ba.b[0] >> uint(bitShift))
+	return out, nil
+}
+
+// Shl is TryShl for a distance the caller knows is non-negative.
+func (ba *BitArray) Shl(k int) *BitArray {
+	out, err := ba.TryShl(k)
+	baFail(err)
+	return out
+}
+
+// Shr is TryShr for a distance the caller knows is non-negative.
+func (ba *BitArray) Shr(k int) *BitArray {
+	out, err := ba.TryShr(k)
+	baFail(err)
+	return out
+}
+
+// ── width change (BITARRAY.md §4.4) ────────────────────────────────────────
+
+// TryTruncate keeps the HIGH m bits — the big-endian PREFIX.  That rule settles
+// TODO #313's split, and Go was the outlier it settles against: this port's
+// RnlKdfSeed took RnlKdfDC[32-n/8:], the LOW octets.  It is the
+// representation-natural rule, because truncating a big-endian octet string is
+// a SLICE where low-bit truncation is arithmetic, and arithmetic is where the
+// four ports diverged.
+func (ba *BitArray) TryTruncate(m int) (*BitArray, error) {
+	if st := baCheckWidth(m); st != BaOK {
+		return nil, baErr(st, "truncate")
+	}
+	if st := baCheckWidth(ba.nbits); st != BaOK {
+		return nil, baErr(st, "truncate")
+	}
+	if m > ba.nbits {
+		return nil, baErr(BaEWidth, "truncate")
+	}
+	out := &BitArray{nbits: m, b: make([]byte, m/8)}
+	copy(out.b, ba.b[:m/8])
+	return out, nil
+}
+
+// TryExtend appends (m-size)/8 zero octets on the LOW side.
+func (ba *BitArray) TryExtend(m int) (*BitArray, error) {
+	if st := baCheckWidth(m); st != BaOK {
+		return nil, baErr(st, "extend")
+	}
+	if st := baCheckWidth(ba.nbits); st != BaOK {
+		return nil, baErr(st, "extend")
+	}
+	if m < ba.nbits {
+		return nil, baErr(BaEWidth, "extend")
+	}
+	out := &BitArray{nbits: m, b: make([]byte, m/8)}
+	copy(out.b, ba.b[:ba.nbytes()])
+	return out, nil
+}
+
+// TryResizeExact is the operation protocol code should reach for: a narrowing
+// that would discard a set bit is E_LOSSY, not a result.
+func (ba *BitArray) TryResizeExact(m int) (*BitArray, error) {
+	if st := baCheckWidth(m); st != BaOK {
+		return nil, baErr(st, "resize_exact")
+	}
+	if st := baCheckWidth(ba.nbits); st != BaOK {
+		return nil, baErr(st, "resize_exact")
+	}
+	if m >= ba.nbits {
+		return ba.TryExtend(m)
+	}
+	for i := m / 8; i < ba.nbytes(); i++ {
+		if ba.b[i] != 0 {
+			return nil, baErr(BaELossy, "resize_exact")
+		}
+	}
+	return ba.TryTruncate(m)
+}
+
+// Truncate is TryTruncate for a width the caller knows is valid.
+func (ba *BitArray) Truncate(m int) *BitArray {
+	out, err := ba.TryTruncate(m)
+	baFail(err)
+	return out
+}
+
+// Extend is TryExtend for a width the caller knows is valid.
+func (ba *BitArray) Extend(m int) *BitArray {
+	out, err := ba.TryExtend(m)
+	baFail(err)
+	return out
+}
+
+// ── comparison and inspection (BITARRAY.md §4.5) ───────────────────────────
+
+// Equal reports whether ba and other have the same size AND value.  A width
+// mismatch is false rather than an error: an equality test is a question, not
+// an operation on a shared width.  Constant-time in the values — every octet is
+// accumulated, with no early exit.
+func (ba *BitArray) Equal(other *BitArray) bool {
+	if ba.nbits != other.nbits {
+		return false
+	}
+	var diff byte
+	for i := 0; i < ba.nbytes(); i++ {
+		diff |= ba.b[i] ^ other.b[i]
+	}
+	return diff == 0
+}
+
+// TryCompare returns -1/0/+1, unsigned big-endian lexicographic.  Constant-time
+// in the values: it scans every octet and folds, with no early exit.
+func (ba *BitArray) TryCompare(other *BitArray) (int, error) {
+	if err := baSameWidth(ba, other, "compare"); err != nil {
+		return 0, err
+	}
+	res := 0
+	for i := 0; i < ba.nbytes(); i++ {
+		gt, lt := 0, 0
+		if ba.b[i] > other.b[i] {
+			gt = 1
+		}
+		if ba.b[i] < other.b[i] {
+			lt = 1
+		}
+		undecided := 0
+		if res == 0 {
+			undecided = 1
+		}
+		res += undecided * (gt - lt)
+	}
+	return res, nil
+}
+
+// Cmp is TryCompare for operands the caller knows share a width.
+func (ba *BitArray) Cmp(other *BitArray) int {
+	v, err := ba.TryCompare(other)
+	baFail(err)
+	return v
+}
+
+// IsZero reports whether every active octet is zero, without an early exit.
+func (ba *BitArray) IsZero() bool {
+	var acc byte
+	for i := 0; i < ba.nbytes(); i++ {
+		acc |= ba.b[i]
+	}
+	return acc == 0
+}
+
+// Popcount returns the number of set bits over all size/8 octets.
+func (ba *BitArray) Popcount() int {
+	cnt := 0
+	for i := 0; i < ba.nbytes(); i++ {
+		cnt += bits.OnesCount8(ba.b[i])
+	}
+	return cnt
+}
+
+// TryBit returns bit i counted from the LSB: i = 0 is the low bit of the last
+// octet.  An index at or above the width is E_RANGE.
+func (ba *BitArray) TryBit(i int) (int, error) {
+	if st := baCheckWidth(ba.nbits); st != BaOK {
+		return 0, baErr(st, "bit")
+	}
+	if i < 0 || i >= ba.nbits {
+		return 0, baErr(BaERange, "bit")
+	}
+	return int(ba.b[ba.nbytes()-1-i/8]>>uint(i%8)) & 1, nil
+}
+
+// Bit is TryBit for an index the caller knows is in range.
+func (ba *BitArray) Bit(i int) int {
+	v, err := ba.TryBit(i)
+	baFail(err)
+	return v
+}
+
+// SetBit sets bit i (LSB-indexed) to v IN PLACE.  The mutating form exists
+// because the permutation and syndrome loops build a value bit by bit, and a
+// copy per bit is n allocations for one result.
+func (ba *BitArray) SetBit(i, v int) {
+	if i < 0 || i >= ba.nbits {
+		baFail(baErr(BaERange, "set_bit"))
+	}
+	idx, off := ba.nbytes()-1-i/8, uint(i%8)
+	ba.b[idx] = ba.b[idx]&^(1<<off) | byte(v&1)<<off
+}
+
+// FlipBit returns a copy with bit pos toggled.
+func (ba *BitArray) FlipBit(pos int) *BitArray {
+	out := ba.Copy()
+	out.SetBit(pos, out.Bit(pos)^1)
+	return out
+}
+
+// Format implements fmt.Formatter for zero-padded hex output (%x).  The verb is
+// ignored, as it was before TODO #314 pass 3: a BitArray has one rendering, and
+// it is exactly size/4 lowercase hex digits.
+func (ba *BitArray) Format(f fmt.State, verb rune) {
+	_ = verb
+	fmt.Fprint(f, ba.Hex())
+}
+
+// ── integer arithmetic within the width ────────────────────────────────────
+//
+// NOT part of BITARRAY.md, which specifies a BIT-STRING type: these are the Go
+// counterparts of herradura.h's ba_add256 / ba_sub256 / ba_mul256, and they
+// exist for the same reason those do — NL-FSCX v1/v2 carry integer addition
+// into the round function, and HPKS needs Schnorr arithmetic modulo 2^n - 1.
+// Keeping them here rather than converting to math/big at each site is the
+// whole point of the pass: a round trip through a bignum is where a width gets
+// lost.  All are mod 2^n at the operands' common width.
+
+// AddMod2n returns (ba + other) mod 2^size.
+func (ba *BitArray) AddMod2n(other *BitArray) *BitArray {
+	baFail(baSameWidth(ba, other, "add"))
+	nb := ba.nbytes()
+	out := &BitArray{nbits: ba.nbits, b: make([]byte, nb)}
+	carry := uint16(0)
+	for i := nb - 1; i >= 0; i-- {
+		s := uint16(ba.b[i]) + uint16(other.b[i]) + carry
+		out.b[i] = byte(s)
+		carry = s >> 8
+	}
+	return out
+}
+
+// SubMod2n returns (ba - other) mod 2^size.
+func (ba *BitArray) SubMod2n(other *BitArray) *BitArray {
+	baFail(baSameWidth(ba, other, "sub"))
+	nb := ba.nbytes()
+	out := &BitArray{nbits: ba.nbits, b: make([]byte, nb)}
+	borrow := int16(0)
+	for i := nb - 1; i >= 0; i-- {
+		s := int16(ba.b[i]) - int16(other.b[i]) - borrow
+		out.b[i] = byte(s & 0xFF)
+		if s < 0 {
+			borrow = 1
+		} else {
+			borrow = 0
+		}
+	}
+	return out
+}
+
+// MulMod2n returns (ba * other) mod 2^size.
+func (ba *BitArray) MulMod2n(other *BitArray) *BitArray {
+	baFail(baSameWidth(ba, other, "mul"))
+	nb := ba.nbytes()
+	acc := make([]uint64, nb)
+	for i := 0; i < nb; i++ {
+		for j := 0; j < nb-i; j++ {
+			acc[nb-1-i-j] += uint64(ba.b[nb-1-i]) * uint64(other.b[nb-1-j])
+		}
+	}
+	out := &BitArray{nbits: ba.nbits, b: make([]byte, nb)}
+	carry := uint64(0)
+	for i := nb - 1; i >= 0; i-- {
+		s := acc[i] + carry
+		out.b[i] = byte(s)
+		carry = s >> 8
+	}
+	return out
+}
+
+// AddUint returns (ba + v) mod 2^size for a small non-negative v.
+func (ba *BitArray) AddUint(v uint64) *BitArray {
+	return ba.AddMod2n(NewFromUint(v, ba.nbits))
+}
+
+// XorUint returns ba XOR v, with v taken as a value of ba's own width.
+func (ba *BitArray) XorUint(v uint64) *BitArray {
+	return ba.Xor(NewFromUint(v, ba.nbits))
+}
+
+// ── the math/big boundary ──────────────────────────────────────────────────
+//
+// math/big no longer implements the BitArray, but it still REPRESENTS objects
+// BITARRAY.md does not govern: QC-MDPC dense polynomials (r = 12323 bits, far
+// past this port's capacity and not a bit-string of a protocol width), Stern
+// and HCRED syndromes, HCRED's Z_q coefficients, and the OPRF and threshold
+// scalars.  These two functions are the ONLY door between the two worlds, and
+// they are named so the boundary can be counted: `grep -c NewBitArray\|BigInt`
+// is the size of the remaining bignum surface, which was 237 reach-ins before
+// this pass and is a door afterwards.
 
 func bitArrayMask(size int) *big.Int {
 	mask := new(big.Int).Lsh(big.NewInt(1), uint(size))
 	return mask.Sub(mask, big.NewInt(1))
 }
 
-// Size returns the bit width.
-func (ba *BitArray) Size() int { return ba.size }
-
-// Bytes returns the value as a big-endian byte slice of exactly size/8 bytes.
-func (ba *BitArray) Bytes() []byte {
-	b := ba.Val.Bytes()
-	out := make([]byte, ba.size/8)
-	if len(b) <= len(out) {
-		copy(out[len(out)-len(b):], b)
-	}
-	return out
-}
-
-// NewFromBytes interprets the first size/8 bytes of data as a big-endian integer.
-func NewFromBytes(data []byte, _ int, size int) *BitArray {
-	ba := &BitArray{size: size}
-	ba.Val.SetBytes(data[:size/8])
-	return ba
-}
-
-// NewRandBitArray generates a cryptographically random bit string.
-func NewRandBitArray(bitlength int) *BitArray {
-	buf := make([]byte, bitlength/8)
-	if _, err := rand.Read(buf); err != nil {
-		log.Fatalf("ERROR while generating random string: %s", err)
-	}
-	return NewFromBytes(buf, 0, bitlength)
-}
-
-// NewBitArray creates a BitArray from a *big.Int, masked to the correct width.
+// NewBitArray creates a BitArray of the given width from a *big.Int, masking to
+// that width.  See the boundary note above.
 func NewBitArray(size int, val *big.Int) *BitArray {
-	ba := &BitArray{size: size}
-	ba.Val.And(val, bitArrayMask(size))
+	ba := NewZero(size)
+	v := new(big.Int).And(val, bitArrayMask(size))
+	v.FillBytes(ba.b)
 	return ba
 }
 
-// Copy returns a deep copy.
-func (ba *BitArray) Copy() *BitArray {
-	result := &BitArray{size: ba.size}
-	result.Val.Set(&ba.Val)
-	return result
-}
-
-// Xor returns ba XOR other.
-func (ba *BitArray) Xor(other *BitArray) *BitArray {
-	result := &BitArray{size: ba.size}
-	result.Val.Xor(&ba.Val, &other.Val)
-	return result
-}
-
-// RotateLeft rotates ba left by n positions; negative n rotates right.
-func (ba *BitArray) RotateLeft(n int) *BitArray {
-	size := ba.size
-	n = ((n % size) + size) % size
-	result := &BitArray{size: size}
-	if n == 0 {
-		result.Val.Set(&ba.Val)
-		return result
-	}
-	left := new(big.Int).Lsh(&ba.Val, uint(n))
-	right := new(big.Int).Rsh(&ba.Val, uint(size-n))
-	result.Val.Or(left, right)
-	result.Val.And(&result.Val, bitArrayMask(size))
-	return result
-}
-
-// Equal reports whether ba and other have the same size and value.
-func (ba *BitArray) Equal(other *BitArray) bool {
-	return ba.size == other.size && ba.Val.Cmp(&other.Val) == 0
-}
-
-// Format implements fmt.Formatter for zero-padded hex output (%x).
-func (ba *BitArray) Format(f fmt.State, verb rune) {
-	hexDigits := ba.size / 4
-	s := ba.Val.Text(16)
-	for i := len(s); i < hexDigits; i++ {
-		f.Write([]byte{'0'})
-	}
-	fmt.Fprint(f, s)
-}
-
-// Popcount returns the number of set bits.
-func (ba *BitArray) Popcount() int {
-	cnt := 0
-	for _, b := range ba.Val.Bytes() {
-		cnt += bits.OnesCount8(b)
-	}
-	return cnt
-}
-
-// FlipBit returns a copy with bit pos toggled.
-func (ba *BitArray) FlipBit(pos int) *BitArray {
-	result := ba.Copy()
-	result.Val.SetBit(&result.Val, pos, result.Val.Bit(pos)^1)
-	return result
+// BigInt returns the value as a *big.Int.  See the boundary note above.
+func (ba *BitArray) BigInt() *big.Int {
+	return new(big.Int).SetBytes(ba.b[:ba.nbytes()])
 }
 
 // CountBits counts set bits in a *big.Int.
@@ -159,6 +825,17 @@ func CountBits(x *big.Int) int {
 // ---------------------------------------------------------------------------
 // FSCX (classical — linear map M = I+ROL+ROR over GF(2))
 // ---------------------------------------------------------------------------
+
+// TryFscx computes one step of the Full Surroundings Cyclic XOR at the
+// operands' common width, or E_MIXED_WIDTH (BITARRAY.md §4.6).  The fallible
+// form exists because KAT/bitarray.json pins the mixed-width case as an error
+// CODE and a conformance consumer must be able to observe it.
+func TryFscx(a, b *BitArray) (*BitArray, error) {
+	if err := baSameWidth(a, b, "fscx"); err != nil {
+		return nil, err
+	}
+	return Fscx(a, b), nil
+}
 
 // Fscx computes one step of the Full Surroundings Cyclic XOR.
 func Fscx(a, b *BitArray) *BitArray {
@@ -209,7 +886,7 @@ func mPow2Mul(v *BitArray, s int) *BitArray {
 // s == 0 makes the factor 1 + 1 = 0.
 func onePlusMPow2Mul(v *BitArray, s int) *BitArray {
 	if s == 0 {
-		return &BitArray{size: v.size}
+		return NewZero(v.Size())
 	}
 	return v.RotateLeft(s).Xor(v.RotateLeft(-s))
 }
@@ -230,7 +907,7 @@ func FscxRevolve(a, b *BitArray, steps int) *BitArray {
 		}
 		return r
 	}
-	n := a.size
+	n := a.Size()
 
 	// M^steps * A, building the stride table 2^u mod n by doubling as we go so
 	// nothing overflows for a large step count.
@@ -252,7 +929,7 @@ func FscxRevolve(a, b *BitArray, steps int) *BitArray {
 	// walked from the deepest level up. With Y = M^(2^u) at level u both
 	// multipliers are sparse, and k at level u is just steps >> u. sAcc carries
 	// S_k(Y) * B; q carries the correction term (Y^2)^(k/2) * B.
-	sAcc, q := &BitArray{size: n}, b.Copy() // S_0 = 0 ; M^0 * B = B
+	sAcc, q := NewZero(n), b.Copy() // S_0 = 0 ; M^0 * B = B
 	for u := len(strides) - 1; u >= 0; u-- {
 		sAcc = onePlusMPow2Mul(sAcc, strides[u])
 		if (steps>>uint(u))&1 == 1 {
@@ -269,57 +946,130 @@ func FscxRevolve(a, b *BitArray, steps int) *BitArray {
 // GF(2^n) field arithmetic
 // ---------------------------------------------------------------------------
 
-// GfPoly maps supported bit sizes to their irreducible polynomial (low bits).
-var GfPoly = map[int]*big.Int{
-	32:  new(big.Int).SetUint64(0x00400007),
-	64:  new(big.Int).SetUint64(0x0000001B),
-	128: new(big.Int).SetUint64(0x00000087),
-	256: new(big.Int).SetUint64(0x00000425),
+// GfPoly is the primitive polynomial for each supported width (BITARRAY.md
+// §4.6).  A width with no entry is E_NO_POLY — never a default.  Before this
+// pass the same table was a map[int]*big.Int threaded through every GF call as
+// a `poly` parameter; the width now selects it, which is one fewer thing a
+// caller can get wrong and the reason the parameter is gone.
+var gfPolyTable = map[int]uint64{
+	32:  0x00400007,
+	64:  0x0000001B,
+	128: 0x00000087,
+	256: 0x00000425,
+}
+
+// BaGfPoly returns the primitive polynomial for width n, or E_NO_POLY.
+func BaGfPoly(n int) (*BitArray, error) {
+	v, ok := gfPolyTable[n]
+	if !ok {
+		return nil, baErr(BaENoPoly, "gf_poly")
+	}
+	return TryFromUint(v, n)
 }
 
 // GfGen is the generator element g=3 of GF(2^n)*.
 const GfGen = 3
 
-// GfMul computes a·b in GF(2^n) (carryless multiply mod poly).
-// The inner branch is on bits of b (the base, a public value when called from
-// GfPow); it does not directly expose private key bits in that path.
-func GfMul(a, b, poly *big.Int, n int) *big.Int {
-	result := new(big.Int)
-	aCopy := new(big.Int).Set(a)
-	bCopy := new(big.Int).Set(b)
-	mask := bitArrayMask(n)
-	one := big.NewInt(1)
-	for i := 0; i < n; i++ {
-		if new(big.Int).And(bCopy, one).Sign() != 0 {
-			result.Xor(result, aCopy)
-		}
-		carry := new(big.Int).And(new(big.Int).Rsh(aCopy, uint(n-1)), one).Sign() != 0
-		aCopy.And(new(big.Int).Lsh(aCopy, 1), mask)
-		if carry {
-			aCopy.Xor(aCopy, poly)
-		}
-		bCopy.Rsh(bCopy, 1)
+// GfGenBA is GfGen as a BitArray of width n.
+func GfGenBA(n int) *BitArray { return NewFromUint(GfGen, n) }
+
+// TryGfMul computes a·b in GF(2^n) (carryless multiply mod the width's
+// primitive polynomial).  BITARRAY.md §4.6; the schedule consumes b from the
+// LSB up while doubling a, both constant-time in the operands.
+func TryGfMul(a, b *BitArray) (*BitArray, error) {
+	if err := baSameWidth(a, b, "gf_mul"); err != nil {
+		return nil, err
 	}
-	return result
+	n, nb := a.Size(), a.nbytes()
+	poly, err := BaGfPoly(n)
+	if err != nil {
+		return nil, err
+	}
+	r := NewZero(n)
+	aa, bb := a.Copy(), b.Copy()
+	for i := 0; i < n; i++ {
+		bitMask := byte(0) - (bb.b[nb-1] & 1)
+		for k := 0; k < nb; k++ {
+			r.b[k] ^= aa.b[k] & bitMask
+		}
+		carryMask := byte(0) - (aa.b[0] >> 7)
+		aa = aa.Shl(1)
+		for k := 0; k < nb; k++ {
+			aa.b[k] ^= poly.b[k] & carryMask
+		}
+		bb = bb.Shr(1)
+	}
+	return r, nil
 }
 
-// GfPow computes base^exp in GF(2^n) using square-and-multiply.
-// SA-02/05: iterates exactly n times — no early exit on leading zero bits of
-// exp, so loop count no longer leaks exp's bit-length. Residual: the per-bit
-// conditional call still leaks individual exp bits; big.Int has no CT select.
-func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
-	result := big.NewInt(1)
-	bCopy := new(big.Int).Set(base)
-	eCopy := new(big.Int).Set(exp)
-	one := big.NewInt(1)
-	for i := 0; i < n; i++ { // fixed n iterations — no early exit
-		if new(big.Int).And(eCopy, one).Sign() != 0 {
-			result = GfMul(result, bCopy, poly, n)
-		}
-		bCopy = GfMul(bCopy, bCopy, poly, n)
-		eCopy.Rsh(eCopy, 1)
+// TryGfPow computes base^e in GF(2^n) for a machine-word exponent
+// (BITARRAY.md §4.6).  GfPowBA is the protocol form, whose exponent is a
+// full-width BitArray.
+func TryGfPow(base *BitArray, e uint64) (*BitArray, error) {
+	n := base.Size()
+	if st := baCheckWidth(n); st != BaOK {
+		return nil, baErr(st, "gf_pow")
 	}
-	return result
+	if _, err := BaGfPoly(n); err != nil {
+		return nil, err
+	}
+	r, err := TryFromUint(1, n)
+	if err != nil {
+		return nil, err
+	}
+	bb := base.Copy()
+	for e != 0 {
+		if e&1 == 1 {
+			if r, err = TryGfMul(r, bb); err != nil {
+				return nil, err
+			}
+		}
+		if bb, err = TryGfMul(bb, bb); err != nil {
+			return nil, err
+		}
+		e >>= 1
+	}
+	return r, nil
+}
+
+// gfMulBig and gfPowBig are the math/big boundary for the OPRF and threshold
+// layers, whose scalars are *big.Int by their own protocol definitions (an
+// OPRF blinding factor is a group exponent, not a protocol-width bit string).
+// They exist so those layers reach GF(2^n) through the ONE implementation
+// rather than keeping a second one: BITARRAY.md's "what must not happen" is a
+// fifth implementation standing beside the four, and the same rule applies
+// within a port.
+func gfMulBig(a, b *big.Int, n int) *big.Int {
+	return GfMul(NewBitArray(n, a), NewBitArray(n, b)).BigInt()
+}
+
+func gfPowBig(base, exp *big.Int, n int) *big.Int {
+	return GfPow(NewBitArray(n, base), NewBitArray(n, exp)).BigInt()
+}
+
+// GfMul computes a·b in GF(2^n) at the operands' common width.
+func GfMul(a, b *BitArray) *BitArray {
+	out, err := TryGfMul(a, b)
+	baFail(err)
+	return out
+}
+
+// GfPow computes base^exp in GF(2^n) using square-and-multiply, with the
+// exponent a full-width BitArray (herradura.h's gf_pow_ba).
+// SA-02/05: iterates exactly n times — no early exit on leading zero bits of
+// exp, so the loop count does not leak exp's bit-length.  Residual: the per-bit
+// conditional multiply still leaks individual exp bits.
+func GfPow(base, exp *BitArray) *BitArray {
+	n := base.Size()
+	r := NewFromUint(1, n)
+	bb := base.Copy()
+	for i := 0; i < n; i++ { // fixed n iterations — no early exit
+		if exp.Bit(i) == 1 {
+			r = GfMul(r, bb)
+		}
+		bb = GfMul(bb, bb)
+	}
+	return r
 }
 
 // ---------------------------------------------------------------------------
@@ -332,20 +1082,119 @@ func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
 // signatures or decrypt/exchange keys.
 // ---------------------------------------------------------------------------
 
+// ── Schnorr arithmetic modulo 2^n - 1 ──────────────────────────────────────
+//
+// The Go counterparts of herradura.h's ba_mul_mod_ord / ba_sub_mod_ord, ported
+// rather than re-derived.  Before this pass these three lines were
+// `new(big.Int).Mod(new(big.Int).Sub(...), ord)` — correct, and a dependency on
+// a bignum whose reduction schedule this project does not control.  2^n - 1 is
+// the modulus, so folding the high half into the low one and mapping the
+// all-ones residue to zero is the whole reduction.
+
+// MulModOrd returns (ba * other) mod (2^size - 1).
+// SA-04: no early exit anywhere — the loops and the carry propagation are
+// unconditional so execution time does not leak zero bytes of a private scalar.
+func (ba *BitArray) MulModOrd(other *BitArray) *BitArray {
+	baFail(baSameWidth(ba, other, "mul_mod_ord"))
+	nb := ba.nbytes()
+	fb := make([]byte, 2*nb) // little-endian 2n-bit product
+	for i := 0; i < nb; i++ {
+		ai := ba.b[nb-1-i]
+		carry := uint16(0)
+		for j := 0; j < nb; j++ {
+			prod := uint16(ai)*uint16(other.b[nb-1-j]) + uint16(fb[i+j]) + carry
+			fb[i+j] = byte(prod)
+			carry = prod >> 8
+		}
+		for k := i + nb; k < 2*nb; k++ {
+			s := uint16(fb[k]) + carry
+			fb[k] = byte(s)
+			carry = s >> 8
+		}
+	}
+	lo := make([]byte, nb)
+	carry := uint16(0)
+	for i := 0; i < nb; i++ {
+		s := uint16(fb[i]) + uint16(fb[nb+i]) + carry
+		lo[i] = byte(s)
+		carry = s >> 8
+	}
+	if carry != 0 {
+		carry = 1
+		for i := 0; i < nb; i++ {
+			s := uint16(lo[i]) + carry
+			lo[i] = byte(s)
+			carry = s >> 8
+		}
+		if carry != 0 {
+			for i := range lo {
+				lo[i] = 0
+			}
+			lo[0] = 1
+		}
+	} else {
+		allFF := true
+		for i := 0; i < nb; i++ {
+			allFF = allFF && lo[i] == 0xFF
+		}
+		if allFF {
+			for i := range lo {
+				lo[i] = 0
+			}
+		}
+	}
+	out := NewZero(ba.Size())
+	for i := 0; i < nb; i++ {
+		out.b[nb-1-i] = lo[i]
+	}
+	return out
+}
+
+// SubModOrd returns (ba - other) mod (2^size - 1).
+func (ba *BitArray) SubModOrd(other *BitArray) *BitArray {
+	baFail(baSameWidth(ba, other, "sub_mod_ord"))
+	nb := ba.nbytes()
+	out := NewZero(ba.Size())
+	borrow := int16(0)
+	for i := nb - 1; i >= 0; i-- {
+		d := int16(ba.b[i]) - int16(other.b[i]) + borrow
+		out.b[i] = byte(d)
+		borrow = d >> 8
+	}
+	if borrow != 0 {
+		sub1 := uint16(1)
+		for i := nb - 1; i >= 0; i-- {
+			d := uint16(out.b[i]) - sub1
+			out.b[i] = byte(d)
+			sub1 = (d >> 8) & 1
+		}
+	}
+	allFF := true
+	for i := 0; i < nb; i++ {
+		allFF = allFF && out.b[i] == 0xFF
+	}
+	if allFF {
+		for i := range out.b {
+			out.b[i] = 0
+		}
+	}
+	return out
+}
+
 // GfPubIsValid rejects the additive zero and the multiplicative identity
 // (g^0=1): a degenerate GF(2^n)* public element that collapses
 // HKEX-GF/HPKS/HPKE to trivially forgeable/decryptable cases.
-func GfPubIsValid(pub *big.Int) bool {
-	return pub.Sign() != 0 && pub.Cmp(big.NewInt(1)) != 0
+func GfPubIsValid(pub *BitArray) bool {
+	return !pub.IsZero() && !pub.Equal(NewFromUint(1, pub.Size()))
 }
 
 // HkexGfAgree computes the HKEX-GF shared secret theirPub^myPriv, rejecting
 // a degenerate peer public key before agreement. Returns (shared, ok).
-func HkexGfAgree(myPriv, theirPub *BitArray, poly *big.Int, n int) (*BitArray, bool) {
-	if !GfPubIsValid(&theirPub.Val) {
+func HkexGfAgree(myPriv, theirPub *BitArray) (*BitArray, bool) {
+	if !GfPubIsValid(theirPub) {
 		return nil, false
 	}
-	return NewBitArray(n, GfPow(&theirPub.Val, &myPriv.Val, poly, n)), true
+	return GfPow(theirPub, myPriv), true
 }
 
 // HpksSign produces an HPKS Schnorr signature on msg under the private key
@@ -356,60 +1205,56 @@ func HkexGfAgree(myPriv, theirPub *BitArray, poly *big.Int, n int) (*BitArray, b
 // suite operation instead of transcribing the signer -- and its nonce draw --
 // inline.  e is not returned: the CLI recomputes it for the signature PEM,
 // which is the shape the Java port has always used.
-func HpksSign(msg, priv *BitArray, poly *big.Int, n int) (*BitArray, *BitArray) {
-	g := big.NewInt(GfGen)
+func HpksSign(msg, priv *BitArray) (*BitArray, *BitArray) {
+	n := priv.Size()
 	k := NewRandBitArray(n)
-	R := NewBitArray(n, GfPow(g, &k.Val, poly, n))
+	R := GfPow(GfGenBA(n), k)
 	e := FscxRevolve(R, msg, n/4)
 	// s = (k - priv*e) mod (2^n - 1)
-	ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
-	s := new(big.Int).Mod(new(big.Int).Sub(&k.Val, new(big.Int).Mul(&priv.Val, &e.Val)), ord)
-	return R, NewBitArray(n, s)
+	return R, k.SubModOrd(priv.MulModOrd(e))
 }
 
 // HpksNlSign is the NL counterpart of HpksSign: the challenge hash is
 // NlFscxRevolveV1 in place of FscxRevolve, and the Schnorr arithmetic is
 // identical (TODO #308).
-func HpksNlSign(msg, priv *BitArray, poly *big.Int, n int) (*BitArray, *BitArray) {
-	g := big.NewInt(GfGen)
+func HpksNlSign(msg, priv *BitArray) (*BitArray, *BitArray) {
+	n := priv.Size()
 	k := NewRandBitArray(n)
-	R := NewBitArray(n, GfPow(g, &k.Val, poly, n))
+	R := GfPow(GfGenBA(n), k)
 	e := NlFscxRevolveV1(R, msg, n/4)
 	// s = (k - priv*e) mod (2^n - 1).  Written out rather than shared with
 	// HpksSign through a helper: a suite-internal Go-only function is exactly
 	// what the internal-surface census refuses, and the other three ports
 	// write this line out too.
-	ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
-	s := new(big.Int).Mod(new(big.Int).Sub(&k.Val, new(big.Int).Mul(&priv.Val, &e.Val)), ord)
-	return R, NewBitArray(n, s)
+	return R, k.SubModOrd(priv.MulModOrd(e))
 }
 
 // HpksVerify verifies an HPKS Schnorr signature (R, s) on msg under pub,
 // rejecting a degenerate pub before evaluating the raw Schnorr equation
 // (pub=1 would make pub^e == 1 for any e, letting an attacker-chosen
 // (s, R=g^s) pair verify trivially against any message).
-func HpksVerify(msg, pub, R, s *BitArray, poly *big.Int, n int) bool {
-	if !GfPubIsValid(&pub.Val) {
+func HpksVerify(msg, pub, R, s *BitArray) bool {
+	if !GfPubIsValid(pub) {
 		return false
 	}
-	g := big.NewInt(GfGen)
+	n := pub.Size()
 	e := FscxRevolve(R, msg, n/4)
-	lhs := GfMul(GfPow(g, &s.Val, poly, n), GfPow(&pub.Val, &e.Val, poly, n), poly, n)
-	return lhs.Cmp(&R.Val) == 0
+	lhs := GfMul(GfPow(GfGenBA(n), s), GfPow(pub, e))
+	return lhs.Equal(R)
 }
 
 // HpkeEncrypt performs HPKE (El Gamal + FscxRevolve) encryption of pt under
 // the recipient's public key pub, rejecting a degenerate pub rather than
 // silently producing ciphertext whose encKey = pub^r would be a constant
 // independent of r. Returns (R, ct, ok).
-func HpkeEncrypt(pt, pub *BitArray, poly *big.Int, n int) (*BitArray, *BitArray, bool) {
-	if !GfPubIsValid(&pub.Val) {
+func HpkeEncrypt(pt, pub *BitArray) (*BitArray, *BitArray, bool) {
+	if !GfPubIsValid(pub) {
 		return nil, nil, false
 	}
-	g := big.NewInt(GfGen)
+	n := pub.Size()
 	r := NewRandBitArray(n)
-	R := NewBitArray(n, GfPow(g, &r.Val, poly, n))
-	encKey := NewBitArray(n, GfPow(&pub.Val, &r.Val, poly, n))
+	R := GfPow(GfGenBA(n), r)
+	encKey := GfPow(pub, r)
 	ct := FscxRevolve(pt, encKey, n/4)
 	return R, ct, true
 }
@@ -417,14 +1262,16 @@ func HpkeEncrypt(pt, pub *BitArray, poly *big.Int, n int) (*BitArray, *BitArray,
 // HpkeDecrypt performs HPKE decryption of ct using the ephemeral R and the
 // recipient's private key priv, rejecting a degenerate R rather than
 // deriving a decKey = R^priv that is a constant independent of priv.
-func HpkeDecrypt(ct, R, priv *BitArray, poly *big.Int, n int) (*BitArray, bool) {
-	if !GfPubIsValid(&R.Val) {
+func HpkeDecrypt(ct, R, priv *BitArray) (*BitArray, bool) {
+	if !GfPubIsValid(R) {
 		return nil, false
 	}
-	decKey := NewBitArray(n, GfPow(&R.Val, &priv.Val, poly, n))
+	n := priv.Size()
+	decKey := GfPow(R, priv)
 	pt := FscxRevolve(ct, decKey, 3*n/4)
 	return pt, true
 }
+
 
 // ---------------------------------------------------------------------------
 // NL-FSCX primitives (v1.5.0 — non-linear)
@@ -433,13 +1280,12 @@ func HpkeDecrypt(ct, R, priv *BitArray, poly *big.Int, n int) (*BitArray, bool) 
 var mInvCache sync.Map // map[int][]int
 
 func computeMInvRotations(n int) []int {
-	unit := &BitArray{size: n}
-	unit.Val.SetInt64(1)
-	zero := &BitArray{size: n}
+	unit := NewFromUint(1, n)
+	zero := NewZero(n)
 	v := FscxRevolve(unit, zero, n/2-1)
 	var rotations []int
 	for k := 0; k < n; k++ {
-		if v.Val.Bit(k) == 1 {
+		if v.Bit(k) == 1 {
 			rotations = append(rotations, k)
 		}
 	}
@@ -448,14 +1294,14 @@ func computeMInvRotations(n int) []int {
 
 // MInv applies M^{-1}(X) via a precomputed rotation table (cached per bit-size).
 func MInv(x *BitArray) *BitArray {
-	n := x.size
+	n := x.Size()
 	val, ok := mInvCache.Load(n)
 	if !ok {
 		rotations := computeMInvRotations(n)
 		val, _ = mInvCache.LoadOrStore(n, rotations)
 	}
 	rotations := val.([]int)
-	result := &BitArray{size: n}
+	result := NewZero(n)
 	for _, k := range rotations {
 		result = result.Xor(x.RotateLeft(k))
 	}
@@ -465,13 +1311,9 @@ func MInv(x *BitArray) *BitArray {
 // NlFscxV1 computes Fscx(A,B) XOR ROL((A+B) mod 2^n, n/4).
 // Injects integer-carry non-linearity. NOT bijective in A.
 func NlFscxV1(a, b *BitArray) *BitArray {
-	n := a.size
-	mask := bitArrayMask(n)
-	sum := new(big.Int).Add(&a.Val, &b.Val)
-	sum.And(sum, mask)
-	mixBA := &BitArray{size: n}
-	mixBA.Val.Set(sum)
-	return Fscx(a, b).Xor(mixBA.RotateLeft(n / 4))
+	n := a.Size()
+	mix := a.AddMod2n(b)
+	return Fscx(a, b).Xor(mix.RotateLeft(n / 4))
 }
 
 // NlFscxRevolveV1 iterates NlFscxV1 steps times (B held constant).
@@ -484,16 +1326,12 @@ func NlFscxRevolveV1(a, b *BitArray, steps int) *BitArray {
 }
 
 func nlFscxDeltaV2(b *BitArray) *BitArray {
-	n := b.size
-	mask := bitArrayMask(n)
-	one := big.NewInt(1)
-	bPlus1 := new(big.Int).Add(&b.Val, one)
-	half := new(big.Int).Rsh(bPlus1, 1)
-	prod := new(big.Int).Mul(&b.Val, half)
-	prod.And(prod, mask)
-	deltaBA := &BitArray{size: n}
-	deltaBA.Val.Set(prod)
-	return deltaBA.RotateLeft(n / 4)
+	n := b.Size()
+	// delta(B) = B * ((B + 1) >> 1) mod 2^n, then ROL by n/4.  (B+1)>>1 is a
+	// NUMERIC shift, so the top bit vacated by the add is zero and the whole
+	// expression stays inside the width.
+	half := b.AddUint(1).Shr(1)
+	return b.MulMod2n(half).RotateLeft(n / 4)
 }
 
 // NlV2KeyIsValid rejects NL-FSCX v2 keys for which the permutation degenerates
@@ -524,37 +1362,26 @@ func nlFscxDeltaV2(b *BitArray) *BitArray {
 // See SecurityProofs-7.md 11.19.2 and 11.28 (TODO #159, #168, #253).
 func NlV2KeyIsValid(b *BitArray) bool {
 	d := nlFscxDeltaV2(b)
-	if d.Val.Sign() == 0 {
+	if d.IsZero() {
 		return false
 	}
-	msb := new(big.Int).Lsh(big.NewInt(1), uint(b.size-1))
-	return d.Val.Cmp(msb) != 0
+	// 2^(n-1): the one set bit is the top one, i.e. the high bit of octet 0.
+	msb := NewZero(b.Size())
+	msb.SetBit(b.Size()-1, 1)
+	return !d.Equal(msb)
 }
 
 // NlFscxV2 computes (Fscx(A,B) + delta(B)) mod 2^n.
 // Bijective in A; exact inverse via NlFscxV2Inv.
 func NlFscxV2(a, b *BitArray) *BitArray {
-	n := a.size
-	mask := bitArrayMask(n)
 	delta := nlFscxDeltaV2(b)
-	fscxOut := Fscx(a, b)
-	sum := new(big.Int).Add(&fscxOut.Val, &delta.Val)
-	sum.And(sum, mask)
-	result := &BitArray{size: n}
-	result.Val.Set(sum)
-	return result
+	return Fscx(a, b).AddMod2n(delta)
 }
 
 // NlFscxV2Inv inverts one NlFscxV2 step: A = B XOR M^{-1}((Y - delta(B)) mod 2^n).
 func NlFscxV2Inv(y, b *BitArray) *BitArray {
-	n := y.size
-	mask := bitArrayMask(n)
 	delta := nlFscxDeltaV2(b)
-	diff := new(big.Int).Sub(&y.Val, &delta.Val)
-	diff.And(diff, mask)
-	zBA := &BitArray{size: n}
-	zBA.Val.Set(diff)
-	return b.Xor(MInv(zBA))
+	return b.Xor(MInv(y.SubMod2n(delta)))
 }
 
 // NlFscxRevolveV2 iterates NlFscxV2 steps times (B held constant).
@@ -564,9 +1391,7 @@ func NlFscxV2Inv(y, b *BitArray) *BitArray {
 // against. An XOR constant leaves xdp+ exactly invariant, so TODO #214's trail
 // bounds carry over verbatim. Wire-format breaking; see MIGRATING.md §9.
 func nlFscxV2RC(st *BitArray, i int) *BitArray {
-	out := &BitArray{size: st.size}
-	out.Val.Xor(&st.Val, big.NewInt(int64(i)))
-	return out
+	return st.XorUint(uint64(i))
 }
 
 func NlFscxRevolveV2(a, b *BitArray, steps int) *BitArray {
@@ -579,16 +1404,10 @@ func NlFscxRevolveV2(a, b *BitArray, steps int) *BitArray {
 
 // NlFscxRevolveV2Inv inverts NlFscxRevolveV2; delta(B) is precomputed once.
 func NlFscxRevolveV2Inv(y, b *BitArray, steps int) *BitArray {
-	n := y.size
-	mask := bitArrayMask(n)
 	delta := nlFscxDeltaV2(b)
 	result := y.Copy()
 	for i := steps; i >= 1; i-- {
-		diff := new(big.Int).Sub(&result.Val, &delta.Val)
-		diff.And(diff, mask)
-		zBA := &BitArray{size: n}
-		zBA.Val.Set(diff)
-		result = nlFscxV2RC(b.Xor(MInv(zBA)), i) // undo the round constant
+		result = nlFscxV2RC(b.Xor(MInv(result.SubMod2n(delta))), i) // undo the round constant
 	}
 	return result
 }
@@ -712,32 +1531,32 @@ var chiInv7 = chiRowInvTable(7)
 
 // NlChiV3 applies the chi layer to a BitArray, row by row.
 func NlChiV3(x *BitArray) *BitArray {
-	rows := V3Rows(x.size)
-	out := new(big.Int)
+	rows := V3Rows(x.Size())
+	out := NewZero(x.Size())
 	off := 0
 	for _, L := range rows {
 		var v uint
 		for j := 0; j < L; j++ {
-			v |= uint(x.Val.Bit(off+j)) << uint(j)
+			v |= uint(x.Bit(off+j)) << uint(j)
 		}
 		u := chiRow(v, L)
 		for j := 0; j < L; j++ {
-			out.SetBit(out, off+j, (u>>uint(j))&1)
+			out.SetBit(off+j, int((u>>uint(j))&1))
 		}
 		off += L
 	}
-	return NewBitArray(x.size, out)
+	return out
 }
 
 // NlChiV3Inv inverts the chi layer.
 func NlChiV3Inv(y *BitArray) *BitArray {
-	rows := V3Rows(y.size)
-	out := new(big.Int)
+	rows := V3Rows(y.Size())
+	out := NewZero(y.Size())
 	off := 0
 	for _, L := range rows {
 		var v uint
 		for j := 0; j < L; j++ {
-			v |= uint(y.Val.Bit(off+j)) << uint(j)
+			v |= uint(y.Bit(off+j)) << uint(j)
 		}
 		var u uint
 		switch L {
@@ -749,11 +1568,11 @@ func NlChiV3Inv(y *BitArray) *BitArray {
 			u = chiRowInvTable(L)[v]
 		}
 		for j := 0; j < L; j++ {
-			out.SetBit(out, off+j, (u>>uint(j))&1)
+			out.SetBit(off+j, int((u>>uint(j))&1))
 		}
 		off += L
 	}
-	return NewBitArray(y.size, out)
+	return out
 }
 
 // NlFscxV3 computes chi(NlFscxV2(A, B)). Bijective in A.
@@ -803,16 +1622,22 @@ var RnlKdfDC = [32]byte{
 	0x1F, 0x83, 0xD9, 0xAB, 0x5B, 0xE0, 0xCD, 0x19,
 }
 
-// RnlKdfSeed returns ROL(k, n/8) XOR RnlKdfDC for the given n-bit key.
-// Use this instead of k.RotateLeft(n/8) wherever an HKEX-RNL KDF or
+// RnlKdfSeed returns ROL(k, n/8) XOR truncate(RnlKdfDC, n) for the given n-bit
+// key.  Use this instead of k.RotateLeft(n/8) wherever an HKEX-RNL KDF or
 // HSKE-NL-A1 seed is required (TODO #38, v1.8.0).
+//
+// THIS IS TODO #313's SITE, and pass 3 is where Go stops being the outlier.
+// The truncation is BITARRAY.md §4.4's — the HIGH bits, the big-endian PREFIX,
+// so the constant's FIRST n/8 octets.  This port took RnlKdfDC[32-n/8:], the
+// LOW octets, which is the rule #313 measured rather than read and which
+// BITARRAY.md §4.4 settles against.  At n = 256 the truncation is the identity,
+// so nothing the suite ships moves; below 256 this is the convergence, and it
+// is reachable only once TODO #313's refusal is relaxed at pass 6.
 func RnlKdfSeed(k *BitArray) *BitArray {
-	n := k.size
-	rotated := k.RotateLeft(n / 8)
-	dc := new(big.Int)
-	dcBytes := RnlKdfDC[32-n/8:]
-	dc.SetBytes(dcBytes)
-	return NewBitArray(n, new(big.Int).Xor(&rotated.Val, dc))
+	n := k.Size()
+	dc, err := TryFromBytes(RnlKdfDC[:], 256)
+	baFail(err)
+	return k.RotateLeft(n / 8).Xor(dc.Truncate(n))
 }
 
 // Hfscx256 computes the HFSCX-256-DM hash of data (Davies-Meyer compression).
@@ -825,8 +1650,7 @@ func Hfscx256(data []byte, iv []byte) []byte {
 		init_ = iv
 	}
 
-	state := &BitArray{size: 256}
-	state.Val.SetBytes(init_)
+	state := NewFromBytes(init_, 0, 256)
 
 	// ISO 7816-4 padding: data || 0x80 || zeros to 32-byte boundary
 	padded := make([]byte, len(data)+1)
@@ -851,10 +1675,9 @@ func Hfscx256(data []byte, iv []byte) []byte {
 	// Chain each 32-byte block: C_DM(s,m) = F_1^{64}(s,m) ⊕ s (Davies-Meyer)
 	for off := 0; off < len(padded); off += 32 {
 		prev := state.Copy()
-		block := &BitArray{size: 256}
-		block.Val.SetBytes(padded[off : off+32])
+		block := NewFromBytes(padded[off:off+32], 0, 256)
 		state = NlFscxRevolveV1(state, block, 64)
-		state = NewBitArray(256, new(big.Int).Xor(&state.Val, &prev.Val))
+		state = state.Xor(prev)
 	}
 
 	return state.Bytes()
@@ -896,9 +1719,7 @@ func HmacHfscx256(key, data []byte) []byte {
 // HskeNla1KsBlock returns the 32-byte keystream block for counter i.
 // Caller must set: base = K XOR nonce; seed = rnlKdfSeed(base)  [ROL(base,n/8) XOR DC].
 func HskeNla1KsBlock(seed, base *BitArray, i uint32) *BitArray {
-	baseI := base.Copy()
-	iBI := new(big.Int).SetUint64(uint64(i))
-	baseI.Val.Xor(&baseI.Val, iBI)
+	baseI := base.XorUint(uint64(i))
 	return NlFscxRevolveV1(seed, baseI, 64) // 64 = 256/4 = I_VALUE
 }
 
@@ -965,15 +1786,16 @@ func hskeNlAeadTag(macKey, nonce *BitArray, ad, ct []byte) []byte {
 // calling the suite for its AEAD sibling in the same branch of the same
 // command.  Argument order and the its-own-inverse decrypt follow Java.
 //
-// WIDTH: the ports DISAGREE below 256 bits and this preserves Go's rule rather
-// than settling it — RnlKdfSeed takes the LOW n bits of the domain constant
-// where Python takes the HIGH n bits (TODO #313).  At n = 256, where every port
-// agrees and every test runs, all four are byte-identical.
+// WIDTH: this port's rule was the LOW n bits of the domain constant where
+// Python takes the HIGH n bits (TODO #313).  TODO #314 pass 3 converges it on
+// BITARRAY.md §4.4's HIGH bits inside RnlKdfSeed, so this function did not have
+// to change and the divergence has exactly one site.  At n = 256, where every
+// port agrees and every test runs, all four remain byte-identical.
 func HskeNlA1Encrypt(pt, key, nonce *BitArray) *BitArray {
 	n := key.Size()
-	base := NewBitArray(n, new(big.Int).Xor(&key.Val, &nonce.Val))
+	base := key.Xor(nonce)
 	ks := NlFscxRevolveV1(RnlKdfSeed(base), base, n/4)
-	return NewBitArray(n, new(big.Int).Xor(&pt.Val, &ks.Val))
+	return pt.Xor(ks)
 }
 
 // HskeNlA1Decrypt is the inverse of HskeNlA1Encrypt — a XOR keystream is its
@@ -986,7 +1808,7 @@ func HskeNlA1Decrypt(ct, key, nonce *BitArray) *BitArray {
 // ad.  Returns (ct, tag): ct is len(pt) bytes, tag is 32 bytes.  The caller
 // supplies a fresh random 256-bit nonce (e.g. NewRandBitArray(256)).
 func HskeNlAeadEncrypt(key, nonce *BitArray, ad, pt []byte) ([]byte, []byte) {
-	base := NewBitArray(key.Size(), new(big.Int).Xor(&key.Val, &nonce.Val))
+	base := key.Xor(nonce)
 	seed := RnlKdfSeed(base)
 	ct := hskeNlAeadXorKs(seed, base, pt)
 	tag := hskeNlAeadTag(HskeNla1MacKey(seed, base), nonce, ad, ct)
@@ -997,7 +1819,7 @@ func HskeNlAeadEncrypt(key, nonce *BitArray, ad, pt []byte) ([]byte, []byte) {
 // (nil, false) if the tag does not authenticate (ct, ad) under (key, nonce).
 // The tag comparison is constant-time.
 func HskeNlAeadDecrypt(key, nonce *BitArray, ad, ct, tag []byte) ([]byte, bool) {
-	base := NewBitArray(key.Size(), new(big.Int).Xor(&key.Val, &nonce.Val))
+	base := key.Xor(nonce)
 	seed := RnlKdfSeed(base)
 	expected := hskeNlAeadTag(HskeNla1MacKey(seed, base), nonce, ad, ct)
 	if subtle.ConstantTimeCompare(tag, expected) != 1 {
@@ -1038,27 +1860,20 @@ var (
 
 func v2dplexPerm(state []byte, tw *BitArray, v3 bool) []byte {
 	n := tw.Size()
-	sa := NewBitArray(n, new(big.Int).SetBytes(state))
+	sa := NewFromBytes(state, 0, n)
 	var r *BitArray
 	if v3 {
 		r = NlFscxRevolveV3(sa, tw, nlV3ISteps(n))
 	} else {
 		r = NlFscxRevolveV2(sa, tw, n/4)
 	}
-	b := r.Val.Bytes()
-	out := make([]byte, n/8)
-	copy(out[n/8-len(b):], b)
-	return out
+	return r.Bytes()
 }
 
 func v2dplexInit(key, nonce *BitArray, v3 bool) ([]byte, *BitArray) {
 	n := key.Size()
-	keyb := make([]byte, n/8)
-	kb := key.Val.Bytes()
-	copy(keyb[n/8-len(kb):], kb)
-	nb := make([]byte, n/8)
-	nbb := nonce.Val.Bytes()
-	copy(nb[n/8-len(nbb):], nbb)
+	keyb := key.Bytes()
+	nb := nonce.Bytes()
 
 	dsInit, dsTweak := v2dplexDSInit, v2dplexDSTweak
 	if v3 {
@@ -1606,14 +2421,12 @@ func RnlCBDPoly(n, q int) []int {
 // RnlBitsToBitArray extracts key bits: coefficient >= pp/2 → bit 1.
 func RnlBitsToBitArray(poly []int, pp, size int) *BitArray {
 	threshold := pp / 2
-	val := new(big.Int)
+	ba := NewZero(size)
 	for i := 0; i < size && i < len(poly); i++ {
 		if poly[i] >= threshold {
-			val.SetBit(val, i, 1)
+			ba.SetBit(i, 1)
 		}
 	}
-	ba := &BitArray{size: size}
-	ba.Val.Set(val)
 	return ba
 }
 
@@ -1640,15 +2453,14 @@ func RnlHint(kPoly []int, q int) []byte {
 // RnlReconcileBits extracts keyBits key bits using the 2-bit Peikert hint (keyBits/2 coefficients).
 func RnlReconcileBits(kPoly []int, hint []byte, q, pp, keyBits int) *BitArray {
 	qq := q / 4
-	val := new(big.Int)
+	ba := NewZero(keyBits)
 	for i := 0; i < keyBits/2 && i < len(kPoly); i++ {
 		c := kPoly[i]
 		h := int((hint[i/4] >> uint((i%4)*2)) & 3)
 		b := (4*c + (2*h+1)*qq) / q % pp // pp=4 → b ∈ {0,1,2,3}
-		val.Or(val, new(big.Int).Lsh(big.NewInt(int64(b)), uint(2*i)))
+		ba.SetBit(2*i, b&1)
+		ba.SetBit(2*i+1, (b>>1)&1)
 	}
-	ba := &BitArray{size: keyBits}
-	ba.Val.Set(val)
 	return ba
 }
 
@@ -1691,7 +2503,7 @@ const (
 //
 // TODO #295.  Go's Stern is width-parametric -- n is an argument, where C
 // compiles for a single KEYBITS -- so every call site used to write the RATIO
-// as a literal (`n / 16`, `seed.size / 2`) and SdfT and SdfNRows above were
+// as a literal (`n / 16`, `seed.Size() / 2`) and SdfT and SdfNRows above were
 // read by NOTHING but two banner Printf calls.  That is worse than an unused
 // constant: the banner printed SdfT while the code derived its own weight, so
 // retuning the constant would have moved the printed parameter and left the
@@ -1712,35 +2524,30 @@ func sternNRows(n int) int { return n * SdfNRows / 256 }
 func SternHash(ds int, items ...*BitArray) *BitArray {
 	n := 256
 	if len(items) > 0 {
-		n = items[0].size
+		n = items[0].Size()
 	}
-	h := &BitArray{size: n}
-	h.Val.SetInt64(int64(ds))
+	h := NewFromUint(uint64(ds), n)
 	for _, v := range items {
 		h = NlFscxRevolveV1(h.Xor(v), v.RotateLeft(n/8), n/4)
 	}
 	digest := Hfscx256(h.Bytes(), nil)
-	result := &BitArray{size: n}
-	result.Val.SetBytes(digest[:n/8])
-	return result
+	return NewFromBytes(digest[:n/8], 0, n)
 }
 
 // SternMatrixRow generates row i of the parity-check matrix, finalized with
 // HFSCX-256 to remove range compression (TODO #88, v1.9.35).
 func SternMatrixRow(seed *BitArray, row int) *BitArray {
-	n := seed.size
+	n := seed.Size()
 	sxr := seed.Xor(NewBitArray(n, big.NewInt(int64(row&0xFF))))
 	raw := NlFscxRevolveV1(sxr.RotateLeft(n/8), seed, n/4)
 	digest := Hfscx256(raw.Bytes(), nil)
-	result := &BitArray{size: n}
-	result.Val.SetBytes(digest[:n/8])
-	return result
+	return NewFromBytes(digest[:n/8], 0, n)
 }
 
 // SternBuildH precomputes all n/2 rows of the parity-check matrix.
 // Hot paths (sign/verify) call this once and reuse H via sternSyndromeH.
 func SternBuildH(seed *BitArray) []*BitArray {
-	nRows := sternNRows(seed.size)
+	nRows := sternNRows(seed.Size())
 	H := make([]*BitArray, nRows)
 	for i := range H {
 		H[i] = SternMatrixRow(seed, i)
@@ -1752,8 +2559,7 @@ func SternBuildH(seed *BitArray) []*BitArray {
 func sternSyndromeH(H []*BitArray, e *BitArray) *big.Int {
 	syn := new(big.Int)
 	for i, row := range H {
-		dot := new(big.Int).And(&row.Val, &e.Val)
-		if CountBits(dot)%2 == 1 {
+		if row.And(e).Popcount()%2 == 1 {
 			syn.SetBit(syn, i, 1)
 		}
 	}
@@ -1766,11 +2572,11 @@ func SternSyndrome(seed, e *BitArray) *big.Int {
 	return sternSyndromeH(SternBuildH(seed), e)
 }
 
-// SyndrToBA stores a syndrome *big.Int in the low bits of a BitArray.
+// SyndrToBA stores a syndrome *big.Int in the low bits of a BitArray.  One of
+// the two named crossings of the math/big boundary (see NewBitArray): a Stern
+// syndrome is an n/2-bit value this port still carries as a *big.Int.
 func SyndrToBA(n int, syn *big.Int) *BitArray {
-	ba := &BitArray{size: n}
-	ba.Val.Set(syn)
-	return ba
+	return NewBitArray(n, syn)
 }
 
 // SternGenPerm derives a Fisher-Yates permutation deterministically from piSeed.
@@ -1784,7 +2590,7 @@ func SyndrToBA(n int, syn *big.Int) *BitArray {
 // SS11.11). Relative modulo bias is < range/2^32, negligible at range <=
 // KEYBITS. Must stay bit-identical with the C and Python implementations.
 func SternGenPerm(piSeed *BitArray, N int) []int {
-	n := piSeed.size
+	n := piSeed.Size()
 	nb := n / 8
 	key := piSeed.RotateLeft(n / 8)
 	st := piSeed.Copy()
@@ -1813,10 +2619,10 @@ func SternGenPerm(piSeed *BitArray, N int) []int {
 // SternApplyPerm applies permutation perm: out[perm[i]] = v[i].
 // Branchless: SetBit is called unconditionally with Bit(i) (0 or 1).
 func SternApplyPerm(perm []int, v *BitArray) *BitArray {
-	N := v.size
-	out := &BitArray{size: N}
+	N := v.Size()
+	out := NewZero(N)
 	for i := 0; i < N; i++ {
-		out.Val.SetBit(&out.Val, perm[i], v.Val.Bit(i))
+		out.SetBit(perm[i], v.Bit(i))
 	}
 	return out
 }
@@ -1842,7 +2648,7 @@ func SternApplyPerm(perm []int, v *BitArray) *BitArray {
 func SternRandError(n, t int) *BitArray {
 	const span = uint64(1) << 32
 	threshold := span - span%uint64(n)
-	e := &BitArray{size: n}
+	e := NewZero(n)
 	buf := make([]byte, 4)
 	for count := 0; count < t; {
 		if _, err := rand.Read(buf); err != nil {
@@ -1853,10 +2659,10 @@ func SternRandError(n, t int) *BitArray {
 			continue
 		}
 		pos := int(v % uint64(n))
-		if e.Val.Bit(pos) == 1 {
+		if e.Bit(pos) == 1 {
 			continue // already chosen
 		}
-		e.Val.SetBit(&e.Val, pos, 1)
+		e.SetBit(pos, 1)
 		count++
 	}
 	return e
@@ -1870,8 +2676,8 @@ func SternFKeygen(n int) (*BitArray, *BitArray, *big.Int) {
 }
 
 func sternFsChallenges(rounds int, msg *BitArray, c0, c1, c2 []*BitArray) []int {
-	n := msg.size
-	chSt := &BitArray{size: n}
+	n := msg.Size()
+	chSt := NewZero(n)
 	sfs := func(item *BitArray) {
 		chSt = NlFscxRevolveV1(chSt.Xor(item), item.RotateLeft(n/8), n/4)
 	}
@@ -1882,13 +2688,12 @@ func sternFsChallenges(rounds int, msg *BitArray, c0, c1, c2 []*BitArray) []int 
 		sfs(c2[i])
 	}
 	digest := Hfscx256(chSt.Bytes(), nil)
-	chSt = &BitArray{size: n}
-	chSt.Val.SetBytes(digest[:n/8])
+	chSt = NewFromBytes(digest[:n/8], 0, n)
 	chals := make([]int, rounds)
 	for i := 0; i < rounds; i++ {
 		idxBA := NewBitArray(n, big.NewInt(int64(i&0xFF)))
 		chSt = NlFscxV1(chSt, idxBA)
-		chals[i] = int(uint32(chSt.Val.Uint64()) % 3)
+		chals[i] = int(uint32(chSt.LowUint64()) % 3)
 	}
 	return chals
 }
@@ -1911,7 +2716,7 @@ func HpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
 		log.Printf("WARNING: HpksSternFSign called with rounds=%d < SdfProductionRounds=%d; "+
 			"Stern signatures have sub-128-bit soundness (demo only)", rounds, SdfProductionRounds)
 	}
-	n := msg.size
+	n := msg.Size()
 	H := SternBuildH(seed)
 	sig := &SternSig{Rounds: make([]SternRound, rounds)}
 	type rtmp struct{ r, y, pi, sr, sy *BitArray }
@@ -1964,7 +2769,7 @@ func HpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
 // HpksSternFVerify verifies a Stern-F signature. Returns true iff valid.
 func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *big.Int) bool {
 	rounds := len(sig.Rounds)
-	n := msg.size
+	n := msg.Size()
 	t := sternT(n)
 	H := SternBuildH(seed)
 	c0s := make([]*BitArray, rounds)
@@ -1992,9 +2797,9 @@ func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *bi
 			}
 			// wt(sigma(r) XOR sigma(y)) = wt(sigma(e)) = wt(e).  THIS is the
 			// check that binds the witness to weight t; until v8.0.0 it read
-			// CountBits(&r.RespA.Val), i.e. wt(sigma(r)), which binds only the
+			// r.RespA.Popcount(), i.e. wt(sigma(r)), which binds only the
 			// prover's own blinding value (TODO #298).
-			if CountBits(new(big.Int).Xor(&r.RespA.Val, &r.RespB.Val)) != t {
+			if r.RespA.Xor(r.RespB).Popcount() != t {
 				return false
 			}
 		case 1:
@@ -2064,8 +2869,8 @@ type RingKeypair struct {
 func sternRingChallenges(rounds, k int, msg *BitArray,
 	members []SternSig) []int {
 
-	n := msg.size
-	chSt := &BitArray{size: n}
+	n := msg.Size()
+	chSt := NewZero(n)
 	sfs := func(item *BitArray) {
 		chSt = NlFscxRevolveV1(chSt.Xor(item), item.RotateLeft(n/8), n/4)
 	}
@@ -2079,13 +2884,12 @@ func sternRingChallenges(rounds, k int, msg *BitArray,
 		}
 	}
 	digest := Hfscx256(chSt.Bytes(), nil)
-	chSt = &BitArray{size: n}
-	chSt.Val.SetBytes(digest[:n/8])
+	chSt = NewFromBytes(digest[:n/8], 0, n)
 	joint := make([]int, rounds)
 	for r := 0; r < rounds; r++ {
 		idxBA := NewBitArray(n, big.NewInt(int64(r&0xFF)))
 		chSt = NlFscxV1(chSt, idxBA)
-		joint[r] = int(uint32(chSt.Val.Uint64()) % 3)
+		joint[r] = int(uint32(chSt.LowUint64()) % 3)
 	}
 	return joint
 }
@@ -2193,7 +2997,7 @@ func sternRingTrit() int {
 // key at index j among the ring_keys without revealing j.
 func HpksSternRingSign(msg, e *BitArray, j int, ring []RingKeypair, rounds int) *SternRingSig {
 	k := len(ring)
-	n := msg.size
+	n := msg.Size()
 
 	sig := &SternRingSig{
 		K:       k,
@@ -2270,7 +3074,7 @@ func HpksSternRingSign(msg, e *BitArray, j int, ring []RingKeypair, rounds int) 
 func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) bool {
 	k := sig.K
 	rounds := sig.Rounds
-	n := msg.size
+	n := msg.Size()
 	t := sternT(n)
 
 	// Re-derive joint challenges
@@ -2302,7 +3106,7 @@ func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) b
 					return false
 				}
 				// binds wt(e) -- see HpksSternFVerify (TODO #298)
-				if CountBits(new(big.Int).Xor(&rnd.RespA.Val, &rnd.RespB.Val)) != t {
+				if rnd.RespA.Xor(rnd.RespB).Popcount() != t {
 					return false
 				}
 			case 1:
@@ -2740,6 +3544,25 @@ func zkpNlUnpackView(buf []byte, n, nb int) (share uint64, tape []byte, outShare
 	return
 }
 
+// zkpNlF1 is nl_fscx_v1 at an arbitrary width n <= 64, over a machine word:
+// the Go counterpart of herradura.h's zkp_nl_f1 and Java's
+// ZkpNl.nlFscxV1General, ported rather than re-derived.
+//
+// It exists because ZKP-NL's default width is 8 and BITARRAY.md §2 puts the
+// BitArray's floor at 16 — fscx reads the octet on both sides of every
+// position and degenerates below two octets, which is why C has carried
+// `#if KEYBYTES < 2 / #error` since v1.3 and why KAT/bitarray.json PINS
+// nbits = 8 as E_WIDTH.  Before TODO #314 pass 3 this port built an 8-bit
+// BitArray here, which the old representation allowed and the contract does
+// not.  At n >= 16 this and NlFscxV1 are the same function; below it, only
+// this one is defined.
+func zkpNlF1(A, B uint64, n int) uint64 {
+	mask := zkpNlMask(n)
+	lin := (A ^ B ^ zkpNlRol(A, 1, n) ^ zkpNlRol(B, 1, n) ^
+		zkpNlRol(A, n-1, n) ^ zkpNlRol(B, n-1, n)) & mask
+	return (lin ^ zkpNlRol((A+B)&mask, n/4, n)) & mask
+}
+
 // ZkpNlKeygen generates (A private, B public, y = nl_fscx_v1(A,B) public).
 func ZkpNlKeygen(n int) (A, B, y uint64, err error) {
 	nb := (n + 7) / 8
@@ -2758,11 +3581,7 @@ func ZkpNlKeygen(n int) (A, B, y uint64, err error) {
 		B = (B << 8) | uint64(buf[nb+i])
 	}
 	B &= mask
-	// nl_fscx_v1(A, B) as uint64
-	aBA := NewBitArray(n, new(big.Int).SetUint64(A))
-	bBA := NewBitArray(n, new(big.Int).SetUint64(B))
-	yBA := NlFscxV1(aBA, bBA)
-	y = yBA.Val.Uint64() & mask
+	y = zkpNlF1(A, B, n)
 	return
 }
 
@@ -3628,7 +4447,7 @@ func HpksWotsRecoverPk(msg []byte, sig [WotsL]*BitArray) [WotsL]*BitArray {
 func HpksWotsVerify(msg []byte, sig, pk [WotsL]*BitArray) bool {
 	recovered := HpksWotsRecoverPk(msg, sig)
 	for i := 0; i < WotsL; i++ {
-		if recovered[i].Val.Cmp(&pk[i].Val) != 0 {
+		if !recovered[i].Equal(pk[i]) {
 			return false
 		}
 	}
@@ -3798,7 +4617,6 @@ func OprfKeygen(n int) (*big.Int, error) {
 // Returns (r, alpha) where alpha = H(x)^r.
 func OprfBlind(x []byte, n int) (r, alpha *big.Int, err error) {
 	ord := oprfOrd(n)
-	poly := GfPoly[n]
 	hx := oprfHashToField(x, n)
 	// TODO #296: n/8 raw big-endian bytes masked with ord, matching Python's
 	// oprf_blind and Java's Oprf.blind; was rand.Int(rand.Reader, ord).  The
@@ -3820,14 +4638,14 @@ func OprfBlind(x []byte, n int) (r, alpha *big.Int, err error) {
 			continue // gcd(r, ord) != 1
 		}
 		r = rCand
-		alpha = GfPow(hx, r, poly, n)
+		alpha = gfPowBig(hx, r, n)
 		return r, alpha, nil
 	}
 }
 
 // OprfEval computes beta = alpha^k in GF(2^n)*.
 func OprfEval(alpha, k *big.Int, n int) *big.Int {
-	return GfPow(alpha, k, GfPoly[n], n)
+	return gfPowBig(alpha, k, n)
 }
 
 // OprfUnblind recovers F(k, x) = beta^{r^{-1} mod ord}.
@@ -3837,13 +4655,13 @@ func OprfUnblind(beta, r *big.Int, n int) *big.Int {
 	if rInv == nil {
 		return big.NewInt(0) // should not happen if r came from OprfBlind
 	}
-	return GfPow(beta, rInv, GfPoly[n], n)
+	return gfPowBig(beta, rInv, n)
 }
 
 // OprfDirect computes F(k, x) = H(x)^k directly (server-only, not oblivious).
 func OprfDirect(x []byte, k *big.Int, n int) *big.Int {
 	hx := oprfHashToField(x, n)
-	return GfPow(hx, k, GfPoly[n], n)
+	return gfPowBig(hx, k, n)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3876,7 +4694,7 @@ func hpakeDeriveZkpWitness(oprfOut []byte) uint64 {
 // hpakeRnlKdf applies the HKEX-RNL session KDF to K_raw.
 func hpakeRnlKdf(kRaw *BitArray) []byte {
 	seed := RnlKdfSeed(kRaw)
-	return NlFscxRevolveV1(seed, kRaw, kRaw.size/4).Bytes()
+	return NlFscxRevolveV1(seed, kRaw, kRaw.Size()/4).Bytes()
 }
 
 // hpakeContributoryKdf binds K_raw to per-session nonces contributed by both
@@ -3911,7 +4729,7 @@ func HpakeRegister(password []byte, oprfKey *big.Int) (*HpakeRecord, error) {
 	bBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(B))
 	mask := zkpNlMask(HpakeZkpN)
 	rec.B = B
-	rec.Y = NlFscxV1(aBA, bBA).Val.Uint64() & mask
+	rec.Y = NlFscxV1(aBA, bBA).LowUint64() & mask
 	return rec, nil
 }
 
@@ -3925,7 +4743,7 @@ func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int) ([]byte
 	mask := zkpNlMask(HpakeZkpN)
 	aBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(zkpA))
 	bBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(rec.B))
-	if NlFscxV1(aBA, bBA).Val.Uint64()&mask != rec.Y {
+	if NlFscxV1(aBA, bBA).LowUint64()&mask != rec.Y {
 		return nil, nil // wrong password
 	}
 
@@ -3998,7 +4816,6 @@ func RatchetAdvance(state *BitArray) (*BitArray, []byte) {
 // ---------------------------------------------------------------------------
 
 var hpkstOrd = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1)) // 2^256-1
-var hpkstPoly = GfPoly[256]
 
 const hpkstN = 256
 
@@ -4044,8 +4861,8 @@ func HpkstAggregatePublickeys(pubkeys []*big.Int) (*big.Int, []*big.Int) {
 	}
 	agg := big.NewInt(1)
 	for i, pk := range pubkeys {
-		pkMu := GfPow(pk, coeffs[i], hpkstPoly, hpkstN)
-		agg = GfMul(agg, pkMu, hpkstPoly, hpkstN)
+		pkMu := gfPowBig(pk, coeffs[i], hpkstN)
+		agg = gfMulBig(agg, pkMu, hpkstN)
 	}
 	return agg, coeffs
 }
@@ -4068,8 +4885,8 @@ func HpkstSign(secrets, pubkeys []*big.Int, msg []byte) (*big.Int, *big.Int, *bi
 	// R = Π g^{k_j}
 	R := big.NewInt(1)
 	for j := 0; j < n; j++ {
-		Rj := GfPow(gGen, nonces[j], hpkstPoly, hpkstN)
-		R = GfMul(R, Rj, hpkstPoly, hpkstN)
+		Rj := gfPowBig(gGen, nonces[j], hpkstN)
+		R = gfMulBig(R, Rj, hpkstN)
 	}
 
 	// e = NlFscxRevolveV1(R_ba, msg_ba, 64)
@@ -4103,9 +4920,9 @@ func HpkstVerify(cAgg, R, s *big.Int, msg []byte) bool {
 	msgBa := NewBitArray(256, new(big.Int).SetBytes(msg))
 	eBa := NlFscxRevolveV1(RBa, msgBa, 64)
 	eBig := new(big.Int).SetBytes(eBa.Bytes())
-	gs := GfPow(gGen, s, hpkstPoly, hpkstN)
-	Ce := GfPow(cAgg, eBig, hpkstPoly, hpkstN)
-	lhs := GfMul(gs, Ce, hpkstPoly, hpkstN)
+	gs := gfPowBig(gGen, s, hpkstN)
+	Ce := gfPowBig(cAgg, eBig, hpkstN)
+	lhs := gfMulBig(gs, Ce, hpkstN)
 	return lhs.Cmp(R) == 0
 }
 
@@ -4157,8 +4974,7 @@ func HcredUserKeygen(mPoly []int, n int) ([]int, []int, *big.Int) {
 
 // HcredSyndrome computes the credential code syndrome y = H·e^T mod 2.
 func HcredSyndrome(seedH *BitArray, e *big.Int, n int) *big.Int {
-	eBA := &BitArray{size: n}
-	eBA.Val.Set(e)
+	eBA := NewBitArray(n, e)
 	return sternSyndromeH(SternBuildH(seedH), eBA)
 }
 
@@ -4240,8 +5056,7 @@ func hcredWitness(sPoly, mPoly, cPoly []int, H []*BitArray, y *big.Int,
 	}
 	beta := make([]int, 0, rows*rowBits)
 	for r := 0; r < rows; r++ {
-		dot := new(big.Int).And(&H[r].Val, e)
-		sr := CountBits(dot)
+		sr := CountBits(new(big.Int).And(H[r].BigInt(), e))
 		if uint(sr&1) != y.Bit(r) {
 			return 0, nil, nil, fmt.Errorf("hcred witness does not match syndrome y")
 		}
@@ -4322,7 +5137,7 @@ func hcredOutputs(shS, shB, shD, a, b, g, h [3][]int, mPoly []int,
 		for r := 0; r < rows; r++ {
 			acc := 0
 			for i := 0; i < n; i++ {
-				if H[r].Val.Bit(i) == 1 {
+				if H[r].Bit(i) == 1 {
 					acc = (acc + eJ[i]) % q
 				}
 			}
@@ -4693,7 +5508,7 @@ func HcredVerify(mPoly, cPoly []int, seedH *BitArray, y *big.Int,
 			for r := 0; r < rows; r++ {
 				acc := 0
 				for i := 0; i < n; i++ {
-					if H[r].Val.Bit(i) == 1 {
+					if H[r].Bit(i) == 1 {
 						acc = (acc + eJ[i]) % q
 					}
 				}
@@ -4995,7 +5810,7 @@ func hcredKkwOutmap(vecIn, vecZ, mPoly []int, HRows []*BitArray,
 	for r := 0; r < rows; r++ {
 		acc := 0
 		for i := 0; i < n; i++ {
-			if HRows[r].Val.Bit(i) == 1 {
+			if HRows[r].Bit(i) == 1 {
 				acc += (aArr[i] + sArr[i]) * inv2
 			}
 		}
@@ -5612,14 +6427,14 @@ func HcredBindMsg(mPoly, cPoly []int, seedH *BitArray, y *big.Int,
 // HcredIssue signs the credential pair (m, C, seed_H, y) with HPKS-Stern-F.
 func HcredIssue(mPoly, cPoly []int, seedH *BitArray, y *big.Int, n int,
 	issuerE, issuerSeed *BitArray, rounds int) *SternSig {
-	msg := HcredBindMsg(mPoly, cPoly, seedH, y, n, issuerSeed.size)
+	msg := HcredBindMsg(mPoly, cPoly, seedH, y, n, issuerSeed.Size())
 	return HpksSternFSign(msg, issuerE, issuerSeed, rounds)
 }
 
 // HcredCredVerify checks the issuer's signature over (m, C, seed_H, y).
 func HcredCredVerify(mPoly, cPoly []int, seedH *BitArray, y *big.Int, n int,
 	credSig *SternSig, issuerSeed *BitArray, issuerSyn *big.Int) bool {
-	msg := HcredBindMsg(mPoly, cPoly, seedH, y, n, issuerSeed.size)
+	msg := HcredBindMsg(mPoly, cPoly, seedH, y, n, issuerSeed.Size())
 	return HpksSternFVerify(msg, credSig, issuerSeed, issuerSyn)
 }
 
@@ -5681,7 +6496,7 @@ func (p *qcMdpcPrf) word(nbytes int) uint64 {
 		x := NewBitArray(256, new(big.Int).Xor(p.seed, new(big.Int).SetUint64(p.ctr)))
 		rolx := x.RotateLeft(256 / 8)            // 32
 		block := NlFscxRevolveV1(rolx, x, 256/4) // 64
-		p.buf = block.Val.FillBytes(make([]byte, 32))
+		p.buf = block.Bytes()
 		p.pos = 0
 		p.ctr++
 	}

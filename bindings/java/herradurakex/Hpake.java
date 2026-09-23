@@ -68,10 +68,11 @@ public final class Hpake {
 
     /** HKEX-RNL session KDF: nl_fscx_revolve_v1(ROL(K,n/8) XOR RNL_KDF_DC_256, K, n/4). */
     static byte[] rnlKdf(BigInteger kRaw) {
-        BigInteger k = kRaw.and(Herradura.MASK);
-        BigInteger state0 = Herradura.rol(k, Herradura.N / 8).xor(Hfscx256.RNL_KDF_DC_256).and(Herradura.MASK);
-        BigInteger sk = Hfscx256.nlFscxRevolveV1(state0, k, Herradura.N / 4);
-        return toFixedBytes(sk, Herradura.N / 8);
+        BitArray k = BitArray.fromBigInteger(kRaw, Herradura.N);
+        // The ONE truncation, through the one named function (TODO #314 pass 5).
+        // This was the fifth transcribed copy of the derivation in this port.
+        BitArray sk = Hfscx256.nlFscxRevolveV1(BitArray.rnlKdfSeed(k), k, Herradura.N / 4);
+        return sk.toBytes();
     }
 
     public static final class Record {

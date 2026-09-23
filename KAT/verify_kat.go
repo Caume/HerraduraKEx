@@ -103,15 +103,15 @@ func verifyRnl(name string, v map[string]interface{}) bool {
 	kBob, hint := RnlAgree(sB, cA, q, p, pp, n, keyBits, nil)
 	kAlice, _ := RnlAgree(sA, cB, q, p, pp, n, keyBits, hint)
 	gotHint := hex.EncodeToString(hint[:(used+3)/4])
-	gotK := fmt.Sprintf("%0*x", keyBits/4, &kAlice.Val)
+	gotK := kAlice.Hex()
 
 	ok := gotCA == str(v, "alice_C") && gotCB == str(v, "bob_C") &&
 		gotHint == str(v, "hint") && gotK == str(v, "k_raw") &&
-		kAlice.Val.Cmp(&kBob.Val) == 0
+		kAlice.Equal(kBob)
 
 	// The session KDF only applies where the derived key is the full width.
 	if sk, present := v["session_key"].(string); present {
-		got := fmt.Sprintf("%0*x", keyBits/4, &NlFscxRevolveV1(RnlKdfSeed(kAlice), kAlice, keyBits/4).Val)
+		got := NlFscxRevolveV1(RnlKdfSeed(kAlice), kAlice, keyBits/4).Hex()
 		if got != sk {
 			fmt.Printf("FAIL %s: session_key got=%s want=%s\n", name, got, sk)
 			return false
@@ -121,7 +121,7 @@ func verifyRnl(name string, v map[string]interface{}) bool {
 		fmt.Printf("FAIL %s: C_A match=%v C_B match=%v hint match=%v k_raw match=%v agree=%v\n",
 			name, gotCA == str(v, "alice_C"), gotCB == str(v, "bob_C"),
 			gotHint == str(v, "hint"), gotK == str(v, "k_raw"),
-			kAlice.Val.Cmp(&kBob.Val) == 0)
+			kAlice.Equal(kBob))
 		return false
 	}
 	fmt.Printf("PASS %s (n=%d, key_bits=%d)\n", name, n, keyBits)
@@ -142,7 +142,7 @@ func verifyV3(v v3File) int {
 			fmt.Println("PASS " + name)
 		}
 	}
-	hx := func(b *BitArray) string { return fmt.Sprintf("%0*x", n/4, &b.Val) }
+	hx := func(b *BitArray) string { return b.Hex() }
 
 	// The primitive: chi, one round, the full revolve, and its inverse.
 	{
@@ -176,15 +176,14 @@ func verifyV3(v v3File) int {
 	// HPKE-NL3: rederive the shared encryption key from both sides, then encrypt.
 	{
 		e := v.HpkeNl3
-		poly := GfPoly[n]
-		priv := hexToBig(str(e, "priv"))
-		r := hexToBig(str(e, "ephemeral_r"))
-		pub := GfPow(big.NewInt(GfGen), priv, poly, n)
-		bigR := GfPow(big.NewInt(GfGen), r, poly, n)
-		encKey := NewBitArray(n, GfPow(pub, r, poly, n))
-		decKey := NewBitArray(n, GfPow(bigR, priv, poly, n))
-		check("hpke_nl3 pub", fmt.Sprintf("%0*x", n/4, pub), str(e, "pub"))
-		check("hpke_nl3 R", fmt.Sprintf("%0*x", n/4, bigR), str(e, "R"))
+		priv := hexToBA(n, str(e, "priv"))
+		r := hexToBA(n, str(e, "ephemeral_r"))
+		pub := GfPow(GfGenBA(n), priv)
+		bigR := GfPow(GfGenBA(n), r)
+		encKey := GfPow(pub, r)
+		decKey := GfPow(bigR, priv)
+		check("hpke_nl3 pub", pub.Hex(), str(e, "pub"))
+		check("hpke_nl3 R", bigR.Hex(), str(e, "R"))
 		check("hpke_nl3 enc_key", hx(encKey), str(e, "enc_key"))
 		check("hpke_nl3 dec_key agrees", hx(decKey), str(e, "enc_key"))
 		ct := NlFscxRevolveV3(hexToBA(n, str(e, "plaintext")), encKey, num(e, "r3_steps"))
@@ -631,7 +630,7 @@ func verifySamplerReplay(v map[string]interface{}) int {
 		case "stern_weight_t":
 			n := num(params, "n")
 			e := SternRandError(n, num(params, "t"))
-			check("replay "+name, fmt.Sprintf("%0*x", n/4, &e.Val), str(r, "expect_value"))
+			check("replay "+name, e.Hex(), str(r, "expect_value"))
 		case "oprf_blind_scalar":
 			n := num(params, "bits")
 			rr, alpha, err := OprfBlind(mustHex(str(params, "input_hex")), n)
@@ -692,7 +691,7 @@ func verifyOperationReplay(v map[string]interface{}) int {
 			fmt.Println("PASS " + name)
 		}
 	}
-	baHex := func(ba *BitArray, n int) string { return fmt.Sprintf("%0*x", n/4, &ba.Val) }
+	baHex := func(ba *BitArray, n int) string { return ba.Hex() }
 	// Centered coefficients as 4-byte big-endian two's complement, which is
 	// what the vector holds because it is what C's int32_t already holds.
 	i32Hex := func(vals []int) string {
@@ -1181,21 +1180,20 @@ func main() {
 	}
 
 	n := 256
-	poly := GfPoly[n]
 	fails := 0
 
 	// HKEX-GF
 	{
-		a := hexToBig(str(v.HkexGf, "alice_priv"))
-		b := hexToBig(str(v.HkexGf, "bob_priv"))
-		C := GfPow(big.NewInt(GfGen), a, poly, n)
-		C2 := GfPow(big.NewInt(GfGen), b, poly, n)
-		sk := GfPow(C2, a, poly, n)
-		skOther := GfPow(C, b, poly, n)
+		a := hexToBA(n, str(v.HkexGf, "alice_priv"))
+		b := hexToBA(n, str(v.HkexGf, "bob_priv"))
+		C := GfPow(GfGenBA(n), a)
+		C2 := GfPow(GfGenBA(n), b)
+		sk := GfPow(C2, a)
+		skOther := GfPow(C, b)
 		want := str(v.HkexGf, "shared_secret")
-		got := fmt.Sprintf("%0*x", n/4, sk)
-		if got != want || sk.Cmp(skOther) != 0 {
-			fmt.Printf("FAIL hkex_gf: got %s want %s (C^b agree=%v)\n", got, want, sk.Cmp(skOther) == 0)
+		got := sk.Hex()
+		if got != want || !sk.Equal(skOther) {
+			fmt.Printf("FAIL hkex_gf: got %s want %s (C^b agree=%v)\n", got, want, sk.Equal(skOther))
 			fails++
 		} else {
 			fmt.Println("PASS hkex_gf")
@@ -1209,7 +1207,7 @@ func main() {
 		iSteps := int(v.Hske["i_steps"].(float64))
 		ct := FscxRevolve(pt, key, iSteps)
 		want := str(v.Hske, "ciphertext")
-		got := fmt.Sprintf("%0*x", n/4, &ct.Val)
+		got := ct.Hex()
 		if got != want {
 			fmt.Printf("FAIL hske: got %s want %s\n", got, want)
 			fails++
@@ -1224,7 +1222,7 @@ func main() {
 		R := hexToBA(n, str(v.Hpks, "R"))
 		s := hexToBA(n, str(v.Hpks, "s"))
 		msg := hexToBA(n, str(v.Hpks, "message"))
-		ok := HpksVerify(msg, pub, R, s, poly, n)
+		ok := HpksVerify(msg, pub, R, s)
 		if !ok {
 			fmt.Println("FAIL hpks: verify returned false")
 			fails++
@@ -1235,24 +1233,23 @@ func main() {
 
 	// HPKE
 	{
-		privA := hexToBig(str(v.Hpke, "recipient_priv"))
-		ephR := hexToBig(str(v.Hpke, "ephemeral_r"))
+		privA := hexToBA(n, str(v.Hpke, "recipient_priv"))
+		ephR := hexToBA(n, str(v.Hpke, "ephemeral_r"))
 		pub := hexToBA(n, str(v.Hpke, "recipient_pub"))
 		pt := hexToBA(n, str(v.Hpke, "plaintext"))
 
 		// Recompute R and enc_key directly (HpkeEncrypt draws r randomly),
 		// then confirm ciphertext + full decrypt round-trip match.
-		Rbig := GfPow(big.NewInt(GfGen), ephR, poly, n)
-		encKey := GfPow(&pub.Val, ephR, poly, n)
-		ct := FscxRevolve(pt, NewBitArray(n, encKey), n/4)
-		gotCt := fmt.Sprintf("%0*x", n/4, &ct.Val)
+		Rba := GfPow(GfGenBA(n), ephR)
+		encKey := GfPow(pub, ephR)
+		ct := FscxRevolve(pt, encKey, n/4)
+		gotCt := ct.Hex()
 		wantCt := str(v.Hpke, "ciphertext")
-		gotR := fmt.Sprintf("%0*x", n/4, Rbig)
+		gotR := Rba.Hex()
 		wantR := str(v.Hpke, "R")
 
-		Rba := NewBitArray(n, Rbig)
-		dec, ok := HpkeDecrypt(ct, Rba, NewBitArray(n, privA), poly, n)
-		decOk := ok && dec.Val.Cmp(&pt.Val) == 0
+		dec, ok := HpkeDecrypt(ct, Rba, privA)
+		decOk := ok && dec.Equal(pt)
 
 		if gotCt != wantCt || gotR != wantR || !decOk {
 			fmt.Printf("FAIL hpke: ct(got=%s want=%s) R(got=%s want=%s) decrypt_roundtrip=%v\n",

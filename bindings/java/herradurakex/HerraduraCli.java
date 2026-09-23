@@ -457,9 +457,9 @@ public final class HerraduraCli {
         }
 
         String label = privLabel(algo); // validates algo as a side effect
-        BigInteger priv = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
-        BigInteger pub = Herradura.hkexGfPubkey(priv); // same keypair shape for hkex-gf/hpks(-nl)/hpke(-nl)
-        String pem = Codec.encodePrivKey(label, priv, pub);
+        BitArray priv = BitArray.random(Herradura.N, RNG);
+        BitArray pub = Herradura.hkexGfPubkey(priv); // same keypair shape for hkex-gf/hpks(-nl)/hpke(-nl)
+        String pem = Codec.encodePrivKey(label, priv.toBigInteger(), pub.toBigInteger());
         writeString(out, pem);
     }
 
@@ -662,12 +662,13 @@ public final class HerraduraCli {
         if (our.nbits != their.nbits) {
             throw new CliError("kex: bit-size mismatch (ours=" + our.nbits + ", theirs=" + their.nbits + ")");
         }
-        BigInteger sk = Herradura.hkexGfAgree(our.priv, their.pub);
+        BitArray sk = Herradura.hkexGfAgree(BitArray.fromBigInteger(our.priv, our.nbits),
+                                            BitArray.fromBigInteger(their.pub, their.nbits));
         if (sk == null) {
             throw new CliError("kex: peer public key is degenerate (identity or zero)");
         }
-        sk = applyKdf(sk, our.nbits, kdfOn);
-        String pem = Codec.encodeSessionKey(sk, our.nbits);
+        BigInteger skInt = applyKdf(sk.toBigInteger(), our.nbits, kdfOn);
+        String pem = Codec.encodeSessionKey(skInt, our.nbits);
         writeString(out, pem);
     }
 
@@ -875,27 +876,36 @@ public final class HerraduraCli {
 
     /** Returns {E, nbits, nonce_or_null, authTag_or_null} for format tags
      * 0, 1 and 2 (TODO #273 added 2). */
-    /** HSKE-NL-A1's plain (unauthenticated) mode is 256-BIT ONLY (TODO #313).
-     * Below 256 the four language ports produce four different keystreams: the
-     * KDF domain constant is truncated at opposite ends (Python takes its HIGH
-     * bits, Go its LOW bits), C and this port are fixed at 256 and ignore the
-     * declared width, and C stamps nbits = 256 into every ciphertext whatever
-     * the key says.  A1 is a raw XOR keystream with NO authentication tag, so a
-     * wrong keystream is not a detectable event: before this guard this port's
-     * {@code enc} happened to refuse a narrow key while its {@code dec}
-     * returned an ALL-ZERO plaintext and exited 0, which is wrong in the
-     * particularly bad way of looking like a legitimately empty result.  The
-     * guard makes the divergence unreachable rather than resolved; converging
-     * the four truncation rules is route 1 and needs TODO #314. */
-    private static final int NLA1_WIDTH = 256;
+    /** HSKE-NL-A1's plain mode ran at any width but 256 only by accident until
+     * TODO #314: below 256 the four ports produced four different keystreams,
+     * so #313 refused every width but 256 in all four CLIs.  Pass 6 RELAXED
+     * that refusal — C, Go, Python and this port now agree octet for octet at
+     * 32, 64, 128 and 256 — and what is left is the width's own validity
+     * (BITARRAY.md §2) plus the rule that a width is never coerced (§3).  The
+     * refusal is not merely deleted: a width that is not a legal BitArray
+     * width was never representable, and a ciphertext whose declared width
+     * disagrees with the key is a MIXED WIDTH, which §3 makes an error rather
+     * than something to resolve by preferring one of the two.  This port is
+     * the one whose {@code dec} used to return an ALL-ZERO plaintext and exit
+     * 0 at a narrow width.  See MIGRATING.md §23. */
+    private static final int NLA1_MIN_WIDTH = 16;
+    private static final int NLA1_MAX_WIDTH = BitArray.BA_MAX_BITS;
 
-    /** Throws unless {@code nbits} is {@link #NLA1_WIDTH}. */
+    /** Throws unless {@code nbits} is a legal BitArray width (BITARRAY.md §2). */
     private static void nla1WidthOK(int nbits, String ctx, String carrier) {
-        if (nbits != NLA1_WIDTH) {
-            throw new CliError(ctx + ": hske-nla1 requires a " + NLA1_WIDTH
-                + "-bit " + carrier + "; got " + nbits + "-bit (TODO #313: below "
-                + NLA1_WIDTH + " the four language ports produce four different "
-                + "keystreams)");
+        if (nbits % 8 != 0 || nbits < NLA1_MIN_WIDTH || nbits > NLA1_MAX_WIDTH) {
+            throw new CliError(ctx + ": hske-nla1 " + carrier + " width must be a "
+                + "multiple of 8 between " + NLA1_MIN_WIDTH + " and " + NLA1_MAX_WIDTH
+                + "; got " + nbits + "-bit (BITARRAY.md §2)");
+        }
+    }
+
+    /** Throws unless the ciphertext's declared width matches the key's. */
+    private static void nla1SameWidth(int keyN, int ctN, String ctx) {
+        if (keyN != ctN) {
+            throw new CliError(ctx + ": hske-nla1 ciphertext declares " + ctN
+                + "-bit, key is " + keyN + "-bit (BITARRAY.md §3: a mixed width "
+                + "is never coerced)");
         }
     }
 
@@ -973,91 +983,91 @@ public final class HerraduraCli {
 
         if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
             boolean v3 = algo.equals("hske-duplex3");
-            BigInteger[] key = loadKey(req(opt, "key", "enc"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "enc"));
+            int nbits = key.size();
             if (nbits != Herradura.N) throw new CliError("enc " + algo + ": requires a " + Herradura.N + "-bit key");
             byte[] ad = opt.getOrDefault("ad", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             Duplex.EncResult r = v3
-                ? Duplex.v3Encrypt(key[0], inBytes, ad, RNG)
-                : Duplex.v2Encrypt(key[0], inBytes, ad, RNG);
-            writeString(out, encodeDuplexCt(r.nonce, r.ct, r.tag, nbits, v3));
+                ? Duplex.v3Encrypt(key, inBytes, ad, RNG)
+                : Duplex.v2Encrypt(key, inBytes, ad, RNG);
+            writeString(out, encodeDuplexCt(r.nonce.toBigInteger(), r.ct, r.tag, nbits, v3));
         } else if (algo.equals("hske")) {
-            BigInteger[] key = loadKey(req(opt, "key", "enc"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "enc"));
+            int nbits = key.size();
             int nbytes = nbits / 8;
-            BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
-            BigInteger e = Herradura.hskeEncrypt(p, key[0]);
-            writeString(out, encodeSymCt(e, nbits));
+            BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), nbits);
+            BitArray e = Herradura.hskeEncrypt(p, key);
+            writeString(out, encodeSymCt(e.toBigInteger(), nbits));
         } else if (algo.equals("hske-nla1")) {
-            BigInteger[] key = loadKey(req(opt, "key", "enc"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "enc"));
+            int nbits = key.size();
             int nbytes = nbits / 8;
             byte[] block = padTrunc(inBytes, nbytes);
-            BigInteger nonce = new BigInteger(nbits, RNG).and(Herradura.MASK);
+            BitArray nonce = BitArray.random(nbits, RNG);
             if (opt.containsKey("aead")) {
                 // TODO #273.  --ad is only meaningful with --aead: format tag 1
                 // has nowhere to put associated data, so accepting it there
                 // would silently drop it.
                 byte[] ad = opt.getOrDefault("ad", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-                HerraduraNl.AeadCt c = HerraduraNl.hskeNlAeadEncrypt(key[0], nonce, ad, block);
-                writeString(out, encodeSymCtAead(new BigInteger(1, c.ct), nonce,
+                HerraduraNl.AeadCt c = HerraduraNl.hskeNlAeadEncrypt(key, nonce, ad, block);
+                writeString(out, encodeSymCtAead(new BigInteger(1, c.ct), nonce.toBigInteger(),
                                                  new BigInteger(1, c.tag), nbits));
             } else {
                 if (opt.containsKey("ad")) {
                     throw new CliError("enc hske-nla1: --ad requires --aead");
                 }
                 nla1WidthOK(nbits, "enc", "key");
-                BigInteger p = new BigInteger(1, block);
-                BigInteger e = HerraduraNl.hskeNlA1Encrypt(p, key[0], nonce);
-                writeString(out, encodeSymCtNonce(e, nonce, nbits));
+                BitArray p = BitArray.fromBytes(block, nbits);
+                BitArray e = HerraduraNl.hskeNlA1Encrypt(p, key, nonce);
+                writeString(out, encodeSymCtNonce(e.toBigInteger(), nonce.toBigInteger(), nbits));
             }
         } else if (algo.equals("hske-nla2")) {
-            BigInteger[] key = loadKey(req(opt, "key", "enc"));
-            int nbits = key[1].intValueExact();
-            if (nbits != Herradura.N || !HerraduraNl.nlV2KeyIsValid(key[0])) {
+            BitArray key = loadKey(req(opt, "key", "enc"));
+            int nbits = key.size();
+            if (nbits != Herradura.N || !HerraduraNl.nlV2KeyIsValid(key)) {
                 throw new CliError("enc hske-nla2: key is degenerate for NL-FSCX v2 (affine-weak class)");
             }
             int nbytes = nbits / 8;
-            BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
-            BigInteger e = HerraduraNl.hskeNlA2Encrypt(p, key[0]);
-            writeString(out, encodeSymCt(e, nbits));
+            BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), nbits);
+            BitArray e = HerraduraNl.hskeNlA2Encrypt(p, key);
+            writeString(out, encodeSymCt(e.toBigInteger(), nbits));
         } else if (algo.equals("hske-nla3")) {
             // No key check: v3 has no weak class (TODO #255).
-            BigInteger[] key = loadKey(req(opt, "key", "enc"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "enc"));
+            int nbits = key.size();
             if (nbits != Herradura.N) {
                 throw new CliError("enc hske-nla3: requires a 256-bit key");
             }
-            BigInteger p = new BigInteger(1, padTrunc(inBytes, nbits / 8));
-            writeString(out, encodeSymCt(HerraduraNl.hskeNlA3Encrypt(p, key[0]), nbits));
+            BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbits / 8), nbits);
+            writeString(out, encodeSymCt(HerraduraNl.hskeNlA3Encrypt(p, key).toBigInteger(), nbits));
         } else if (algo.equals("hpke")) {
             String pubPath = req(opt, "pubkey", "enc");
             String pubPem = readString(pubPath);
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             int nbytes = pub.nbits / 8;
-            BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
-            Herradura.Ciphertext ct = Herradura.hpkeEncrypt(p, pub.pub, RNG);
+            BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), pub.nbits);
+            Herradura.Ciphertext ct = Herradura.hpkeEncrypt(p, BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
             if (ct == null) throw new CliError("enc: recipient public key is degenerate");
-            writeString(out, Codec.encodeAsymCt(ct.r, ct.ct, pub.nbits));
+            writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
         } else if (algo.equals("hpke-nl")) {
             String pubPath = req(opt, "pubkey", "enc");
             String pubPem = readString(pubPath);
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             int nbytes = pub.nbits / 8;
-            BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
-            Herradura.Ciphertext ct = HerraduraNl.hpkeNlEncrypt(p, pub.pub, RNG);
+            BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), pub.nbits);
+            Herradura.Ciphertext ct = HerraduraNl.hpkeNlEncrypt(p, BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
             if (ct == null) throw new CliError("enc: could not sample a non-degenerate ephemeral key");
-            writeString(out, Codec.encodeAsymCt(ct.r, ct.ct, pub.nbits));
+            writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
         } else if (algo.equals("hpke-nl3")) {
             String pubPem = readString(req(opt, "pubkey", "enc"));
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
-            Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(p, pub.pub, RNG);
+            Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(BitArray.fromBytes(padTrunc(inBytes, pub.nbits / 8), pub.nbits), BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
             if (ct == null) throw new CliError("enc: recipient public key is degenerate");
-            writeString(out, Codec.encodeAsymCt(ct.r, ct.ct, pub.nbits));
+            writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
         } else if (algo.equals("hpke-stern")) {
             sternDemoWarning();
             String pubPem = readString(req(opt, "pubkey", "enc"));
@@ -1065,8 +1075,8 @@ public final class HerraduraCli {
             Codec.SternPubKey pub = Codec.decodeSternPubKey(pubPem, pubBlock.label);
             BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
             Stern.SternEncapResult enc = Stern.hpkeSternFEncapWithE(pub.seed, RNG);
-            BigInteger e = Herradura.fscxRevolve(p, enc.k, Herradura.I_STEPS);
-            writeString(out, Codec.encodeSternCt(enc.ct, enc.eP, enc.k, e));
+            BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, Herradura.N), BitArray.fromBigInteger(enc.k, Herradura.N), Herradura.I_STEPS);
+            writeString(out, Codec.encodeSternCt(enc.ct, enc.eP, enc.k, e.toBigInteger()));
         } else if (algo.equals("hpke-stern-kem")) {
             String pubPem = readString(req(opt, "pubkey", "enc"));
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
@@ -1076,8 +1086,8 @@ public final class HerraduraCli {
             Codec.KemPubKey pub = Codec.decodeKemPubKey(pubPem);
             BigInteger p = new BigInteger(1, padTrunc(inBytes, Herradura.N / 8));
             Stern.QcMdpcEncapResult enc = Stern.qcmdpcEncap(pub.hPub, RNG);
-            BigInteger e = Herradura.fscxRevolve(p, enc.k, Herradura.I_STEPS);
-            writeString(out, Codec.encodeKemCt(enc.syn, e));
+            BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, Herradura.N), BitArray.fromBigInteger(enc.k, Herradura.N), Herradura.I_STEPS);
+            writeString(out, Codec.encodeKemCt(enc.syn, e.toBigInteger()));
         } else {
             throw new CliError("enc: unsupported --algo " + algo
                 + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
@@ -1090,27 +1100,27 @@ public final class HerraduraCli {
 
         if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
             boolean v3 = algo.equals("hske-duplex3");
-            BigInteger[] key = loadKey(req(opt, "key", "dec"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "dec"));
+            int nbits = key.size();
             if (nbits != Herradura.N) throw new CliError("dec " + algo + ": requires a " + Herradura.N + "-bit key");
             DuplexCt ct = decodeDuplexCt(readString(req(opt, "in", "dec")), v3);
             byte[] ad = opt.getOrDefault("ad", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             byte[] pt = v3
-                ? Duplex.v3Decrypt(key[0], ct.nonce, ct.ct, ct.tag, ad)
-                : Duplex.v2Decrypt(key[0], ct.nonce, ct.ct, ct.tag, ad);
+                ? Duplex.v3Decrypt(key, BitArray.fromBigInteger(ct.nonce, nbits), ct.ct, ct.tag, ad)
+                : Duplex.v2Decrypt(key, BitArray.fromBigInteger(ct.nonce, nbits), ct.ct, ct.tag, ad);
             if (pt == null) {
                 throw new CliError("dec: authentication tag mismatch — ciphertext corrupt, wrong key, or wrong --ad");
             }
             writeBytes(out, pt);
         } else if (algo.equals("hske")) {
-            BigInteger[] key = loadKey(req(opt, "key", "dec"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "dec"));
+            int nbits = key.size();
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
-            BigInteger d = Herradura.hskeDecrypt(ct[0], key[0]);
-            writeBytes(out, toFixedBytes(d, nbits / 8));
+            BitArray d = Herradura.hskeDecrypt(BitArray.fromBytes(toFixedBytes(ct[0], nbits / 8), nbits), key);
+            writeBytes(out, d.toBytes());
         } else if (algo.equals("hske-nla1")) {
-            BigInteger[] key = loadKey(req(opt, "key", "dec"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "dec"));
+            int nbits = key.size();
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
             if (ct[2] == null) throw new CliError("hske-nla1 ciphertext missing nonce");
             if (ct[3] != null) {
@@ -1119,7 +1129,8 @@ public final class HerraduraCli {
                 // tag is what the artifact IS, and verifying is never optional.
                 byte[] ad = opt.getOrDefault("ad", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
                 byte[] pt = HerraduraNl.hskeNlAeadDecrypt(
-                    key[0], ct[2], ad, toFixedBytes(ct[0], nbits / 8),
+                    key, BitArray.fromBytes(toFixedBytes(ct[2], nbits / 8), nbits),
+                    ad, toFixedBytes(ct[0], nbits / 8),
                     toFixedBytes(ct[3], 32));
                 if (pt == null) {
                     throw new CliError("dec hske-nla1: authentication tag mismatch — "
@@ -1131,49 +1142,53 @@ public final class HerraduraCli {
                 // what the artifact IS, so decryption never needs telling.
                 nla1WidthOK(nbits, "dec", "key");
                 nla1WidthOK(ct[1].intValueExact(), "dec", "ciphertext");
-                BigInteger d = HerraduraNl.hskeNlA1Decrypt(ct[0], key[0], ct[2]);
-                writeBytes(out, toFixedBytes(d, nbits / 8));
+                nla1SameWidth(nbits, ct[1].intValueExact(), "dec");
+                BitArray d = HerraduraNl.hskeNlA1Decrypt(
+                    BitArray.fromBytes(toFixedBytes(ct[0], nbits / 8), nbits), key,
+                    BitArray.fromBytes(toFixedBytes(ct[2], nbits / 8), nbits));
+                writeBytes(out, d.toBytes());
             }
         } else if (algo.equals("hske-nla2")) {
-            BigInteger[] key = loadKey(req(opt, "key", "dec"));
-            int nbits = key[1].intValueExact();
-            if (nbits != Herradura.N || !HerraduraNl.nlV2KeyIsValid(key[0])) {
+            BitArray key = loadKey(req(opt, "key", "dec"));
+            int nbits = key.size();
+            if (nbits != Herradura.N || !HerraduraNl.nlV2KeyIsValid(key)) {
                 throw new CliError("dec hske-nla2: key is degenerate for NL-FSCX v2 (affine-weak class)");
             }
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
-            BigInteger d = HerraduraNl.hskeNlA2Decrypt(ct[0], key[0]);
-            writeBytes(out, toFixedBytes(d, nbits / 8));
+            BitArray d = HerraduraNl.hskeNlA2Decrypt(BitArray.fromBytes(toFixedBytes(ct[0], nbits / 8), nbits), key);
+            writeBytes(out, d.toBytes());
         } else if (algo.equals("hske-nla3")) {
             // No key check: v3 has no weak class (TODO #255).
-            BigInteger[] key = loadKey(req(opt, "key", "dec"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "dec"));
+            int nbits = key.size();
             if (nbits != Herradura.N) {
                 throw new CliError("dec hske-nla3: requires a 256-bit key");
             }
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
             writeBytes(out, toFixedBytes(
-                HerraduraNl.hskeNlA3Decrypt(ct[0], key[0]), nbits / 8));
+                HerraduraNl.hskeNlA3Decrypt(
+                    BitArray.fromBytes(toFixedBytes(ct[0], nbits / 8), nbits), key).toBigInteger(), nbits / 8));
         } else if (algo.equals("hpke")) {
-            BigInteger[] key = loadKey(req(opt, "key", "dec"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "dec"));
+            int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
-            BigInteger d = Herradura.hpkeDecrypt(ct.e, ct.r, key[0]);
+            BitArray d = Herradura.hpkeDecrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
             if (d == null) throw new CliError("dec: ephemeral public value is degenerate");
-            writeBytes(out, toFixedBytes(d, nbits / 8));
+            writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-nl")) {
-            BigInteger[] key = loadKey(req(opt, "key", "dec"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "dec"));
+            int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
-            BigInteger d = HerraduraNl.hpkeNlDecrypt(ct.e, ct.r, key[0]);
+            BitArray d = HerraduraNl.hpkeNlDecrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
             if (d == null) throw new CliError("dec: ephemeral public value is degenerate or key is affine-weak");
-            writeBytes(out, toFixedBytes(d, nbits / 8));
+            writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-nl3")) {
-            BigInteger[] key = loadKey(req(opt, "key", "dec"));
-            int nbits = key[1].intValueExact();
+            BitArray key = loadKey(req(opt, "key", "dec"));
+            int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
-            BigInteger d = HerraduraNl.hpkeNl3Decrypt(ct.e, ct.r, key[0]);
+            BitArray d = HerraduraNl.hpkeNl3Decrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
             if (d == null) throw new CliError("dec: ephemeral public value is degenerate");
-            writeBytes(out, toFixedBytes(d, nbits / 8));
+            writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-stern")) {
             sternDemoWarning();
             String pem = readString(req(opt, "key", "dec"));
@@ -1181,8 +1196,8 @@ public final class HerraduraCli {
             Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
             Codec.SternCt ct = Codec.decodeSternCt(readString(req(opt, "in", "dec")));
             BigInteger k = Stern.hpkeSternFDecap(ct.eP, pk.seed);
-            BigInteger d = Herradura.fscxRevolve(ct.e, k, Herradura.R_STEPS);
-            writeBytes(out, toFixedBytes(d, pk.nbits / 8));
+            BitArray d = Herradura.fscxRevolve(BitArray.fromBigInteger(ct.e, Herradura.N), BitArray.fromBigInteger(k, Herradura.N), Herradura.R_STEPS);
+            writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-stern-kem")) {
             String pem = readString(req(opt, "key", "dec"));
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1195,8 +1210,8 @@ public final class HerraduraCli {
             // or a corrupt ciphertext decrypts to garbage rather than
             // reporting.
             BigInteger k = Stern.qcmdpcDecapBgf(ct.syn, pk.sup0, pk.sup1);
-            BigInteger d = Herradura.fscxRevolve(ct.e, k, Herradura.R_STEPS);
-            writeBytes(out, toFixedBytes(d, Herradura.N / 8));
+            BitArray d = Herradura.fscxRevolve(BitArray.fromBigInteger(ct.e, Herradura.N), BitArray.fromBigInteger(k, Herradura.N), Herradura.R_STEPS);
+            writeBytes(out, d.toBytes());
         } else {
             throw new CliError("dec: unsupported --algo " + algo
                 + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
@@ -1204,7 +1219,19 @@ public final class HerraduraCli {
     }
 
     /** Loads a private key PEM and returns {priv, BigInteger(nbits)}. */
-    private static BigInteger[] loadKey(String path) throws IOException {
+    /**
+     * Loads a symmetric/session key as a BitArray (TODO #314 pass 5).
+     *
+     * <p>This returned {@code BigInteger[] { value, nbits }} until pass 5 — the
+     * width as a SEPARATE array element, travelling alongside the value rather
+     * than with it.  That is TODO #313's defect shape exactly: "two ports that
+     * were handed a declared width and ignored it, which is only possible when
+     * the width and the value can be separated" (BITARRAY.md §1).  A BitArray
+     * cannot be separated from its width, so the class of bug is gone rather
+     * than avoided by care at each of the nineteen call sites that read
+     * {@code key[1]}.
+     */
+    private static BitArray loadKey(String path) throws IOException {
         String pem = readString(path);
         Codec.PemBlock block = Codec.pemUnwrap(pem);
         // FAIL CLOSED (TODO #268), as cmdPkey does: an envelope parses as a
@@ -1217,7 +1244,7 @@ public final class HerraduraCli {
         // distinct from PubKey's shape (value, nbits) — reuse it.
         if (block.label.equals(Codec.PEM_SESSION_KEY)) {
             Codec.PubKey sk = Codec.decodeSessionKey(pem);
-            return new BigInteger[] { sk.pub, BigInteger.valueOf(sk.nbits) };
+            return BitArray.fromBigInteger(sk.pub, sk.nbits);
         }
         // A two-round kex leaves the RESPONDER holding a RESPONSE PEM, not a
         // SESSION KEY PEM: Bob's derived key K is the response's first field,
@@ -1239,14 +1266,14 @@ public final class HerraduraCli {
         // are in fact equal.
         if (block.label.equals(Codec.PEM_RNL_RESPONSE)) {
             Codec.RnlResponse r = Codec.decodeRnlResponse(pem);
-            return new BigInteger[] { r.k, BigInteger.valueOf(rnlSessionBits(r.n)) };
+            return BitArray.fromBigInteger(r.k, rnlSessionBits(r.n));
         }
         if (block.label.equals(Codec.PEM_HYBRID_RESPONSE)) {
             Codec.HybridResponse r = Codec.decodeHybridResponse(pem);
-            return new BigInteger[] { r.k, BigInteger.valueOf(rnlSessionBits(r.n)) };
+            return BitArray.fromBigInteger(r.k, rnlSessionBits(r.n));
         }
         Codec.PrivKey pk = Codec.decodePrivKey(pem, block.label);
-        return new BigInteger[] { pk.priv, BigInteger.valueOf(pk.nbits) };
+        return BitArray.fromBigInteger(pk.priv, pk.nbits);
     }
 
     // -----------------------------------------------------------------
@@ -1438,13 +1465,13 @@ public final class HerraduraCli {
         Codec.PrivKey pk = Codec.decodePrivKey(pem, block.label);
         BigInteger msgInt = new BigInteger(1, padTrunc(msg, pk.nbits / 8));
         if (algo.equals("hpks")) {
-            Herradura.Signature sig = Herradura.hpksSign(msgInt, pk.priv, RNG);
-            writeString(out, Codec.encodeSchnorrSig(sig.s, sig.r,
-                Herradura.fscxRevolve(sig.r, msgInt, Herradura.I_STEPS), pk.nbits));
+            Herradura.Signature sig = Herradura.hpksSign(BitArray.fromBigInteger(msgInt, pk.nbits), BitArray.fromBigInteger(pk.priv, pk.nbits), RNG);
+            writeString(out, Codec.encodeSchnorrSig(sig.s.toBigInteger(), sig.r.toBigInteger(),
+                Herradura.fscxRevolve(sig.r, BitArray.fromBigInteger(msgInt, pk.nbits), Herradura.I_STEPS).toBigInteger(), pk.nbits));
         } else {
-            Herradura.Signature sig = HerraduraNl.hpksNlSign(msgInt, pk.priv, RNG);
-            writeString(out, Codec.encodeSchnorrSig(sig.s, sig.r,
-                Hfscx256.nlFscxRevolveV1(sig.r, msgInt, Herradura.I_STEPS), pk.nbits));
+            Herradura.Signature sig = HerraduraNl.hpksNlSign(BitArray.fromBigInteger(msgInt, pk.nbits), BitArray.fromBigInteger(pk.priv, pk.nbits), RNG);
+            writeString(out, Codec.encodeSchnorrSig(sig.s.toBigInteger(), sig.r.toBigInteger(),
+                Hfscx256.nlFscxRevolveV1(sig.r, BitArray.fromBigInteger(msgInt, pk.nbits), Herradura.I_STEPS).toBigInteger(), pk.nbits));
         }
     }
 
@@ -1596,8 +1623,12 @@ public final class HerraduraCli {
         BigInteger msgInt = new BigInteger(1, padTrunc(msg, pub.nbits / 8));
 
         boolean ok = algo.equals("hpks")
-            ? Herradura.hpksVerify(msgInt, pub.pub, sig.r, sig.s)
-            : HerraduraNl.hpksNlVerify(msgInt, pub.pub, sig.r, sig.s);
+            ? Herradura.hpksVerify(BitArray.fromBigInteger(msgInt, pub.nbits),
+                                   BitArray.fromBigInteger(pub.pub, pub.nbits),
+                                   BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sig.s, pub.nbits))
+            : HerraduraNl.hpksNlVerify(BitArray.fromBigInteger(msgInt, pub.nbits),
+                                   BitArray.fromBigInteger(pub.pub, pub.nbits),
+                                   BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sig.s, pub.nbits));
         if (ok) {
             System.out.println("Signature OK");
         } else {
@@ -1670,7 +1701,7 @@ public final class HerraduraCli {
             drbg = Hdrbg.seed(readBytes(seedPath), pers);
         } else if (statePath != null) {
             Codec.HdrbgState st = Codec.decodeHdrbgState(readString(statePath));
-            drbg = Hdrbg.resume(st.state, st.blocks);
+            drbg = Hdrbg.resume(BitArray.fromBigInteger(st.state, Herradura.N), st.blocks);
         } else {
             throw new CliError("rand: one of --seed or --state is required");
         }
@@ -1705,7 +1736,7 @@ public final class HerraduraCli {
         }
 
         if (statePath != null) {
-            writeString(statePath, Codec.encodeHdrbgState(drbg.stateValue(), drbg.blocksGenerated()));
+            writeString(statePath, Codec.encodeHdrbgState(drbg.stateValue().toBigInteger(), drbg.blocksGenerated()));
         }
     }
 
@@ -1714,12 +1745,12 @@ public final class HerraduraCli {
         if (!algo.equals("hske-nla1")) {
             throw new CliError("encfile: unsupported --algo " + algo + " (only hske-nla1 is supported)");
         }
-        BigInteger[] key = loadKey(req(opt, "key", "encfile"));
-        if (key[1].intValueExact() != 256) {
-            throw new CliError("encfile: key must be 256-bit; got " + key[1] + "-bit");
+        BitArray key = loadKey(req(opt, "key", "encfile"));
+        if (key.size() != 256) {
+            throw new CliError("encfile: key must be 256-bit; got " + key.size() + "-bit");
         }
         byte[] pt = readBytes(req(opt, "in", "encfile"));
-        byte[] out = Hfscx256.encFile(key[0], pt, RNG);
+        byte[] out = Hfscx256.encFile(key, pt, RNG);
         writeBytes(req(opt, "out", "encfile"), out);
     }
 
@@ -1728,14 +1759,14 @@ public final class HerraduraCli {
         if (!algo.equals("hske-nla1")) {
             throw new CliError("decfile: unsupported --algo " + algo + " (only hske-nla1 is supported)");
         }
-        BigInteger[] key = loadKey(req(opt, "key", "decfile"));
-        if (key[1].intValueExact() != 256) {
-            throw new CliError("decfile: key must be 256-bit; got " + key[1] + "-bit");
+        BitArray key = loadKey(req(opt, "key", "decfile"));
+        if (key.size() != 256) {
+            throw new CliError("decfile: key must be 256-bit; got " + key.size() + "-bit");
         }
         byte[] raw = readBytes(req(opt, "in", "decfile"));
         byte[] pt;
         try {
-            pt = Hfscx256.decFile(key[0], raw);
+            pt = Hfscx256.decFile(key, raw);
         } catch (IllegalArgumentException e) {
             throw new CliError("decfile: " + e.getMessage());
         }
@@ -1770,7 +1801,7 @@ public final class HerraduraCli {
             throw new CliError("threshold-commit: HPKS-T requires a " + Herradura.N + "-bit key; got " + pk.nbits + "-bit");
         }
         BigInteger kJ = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
-        BigInteger rJ = Herradura.gfPow(Herradura.GF_GEN, kJ);
+        BigInteger rJ = Herradura.gfPow(Herradura.GF_GEN, BitArray.fromBigInteger(kJ, Herradura.N)).toBigInteger();
         writeString(req(opt, "commit-out", "threshold-commit"), Codec.encodeHpkstCommit(rJ, pk.pub, pk.nbits));
         writeString(req(opt, "nonce-out", "threshold-commit"), Codec.encodeHpkstNonce(kJ, pk.nbits));
     }
@@ -1794,10 +1825,12 @@ public final class HerraduraCli {
         BigInteger rVal = BigInteger.ONE;
         List<BigInteger> pubkeys = new java.util.ArrayList<>();
         for (Codec.HpkstCommit c : commits) {
-            rVal = Herradura.gfMul(rVal, c.rJ);
+            rVal = Herradura.gfMul(BitArray.fromBigInteger(rVal, Herradura.N),
+                                   BitArray.fromBigInteger(c.rJ, Herradura.N)).toBigInteger();
             pubkeys.add(c.cJ);
         }
-        BigInteger e = Hfscx256.nlFscxRevolveV1(rVal, msg, Herradura.I_STEPS);
+        BigInteger e = Hfscx256.nlFscxRevolveV1(BitArray.fromBigInteger(rVal, Herradura.N),
+                BitArray.fromBigInteger(msg, Herradura.N), Herradura.I_STEPS).toBigInteger();
         HpksT.Aggregate agg = HpksT.aggregatePublicKeys(pubkeys);
         writeString(req(opt, "out", "threshold-aggregate"), Codec.encodeHpkstAggregate(rVal, agg.cAgg, e, nbits));
     }
@@ -1854,33 +1887,35 @@ public final class HerraduraCli {
         boolean doEnc = opt.containsKey("encrypt");
         boolean doDec = opt.containsKey("decrypt");
         if (doEnc == doDec) throw new CliError("fpe: exactly one of --encrypt or --decrypt required");
-        BigInteger[] key = loadKey(req(opt, "key", "fpe"));
-        byte[] keyBytes = toFixedBytes(key[0], key[1].intValueExact() / 8);
+        BitArray key = loadKey(req(opt, "key", "fpe"));
+        byte[] keyBytes = key.toBytes();
         byte[] ctx = opt.getOrDefault("context", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
         byte[] inBytes = readBytes(req(opt, "in", "fpe"));
         BigInteger p = new BigInteger(1, padBlock(inBytes));
         boolean v3 = opt.containsKey("v3");
-        BigInteger r = doEnc
-            ? (v3 ? FpeTwk.fpeV3Encrypt(p, keyBytes, ctx) : FpeTwk.fpeEncrypt(p, keyBytes, ctx))
-            : (v3 ? FpeTwk.fpeV3Decrypt(p, keyBytes, ctx) : FpeTwk.fpeDecrypt(p, keyBytes, ctx));
-        writeBytes(opt.getOrDefault("out", "-"), toFixedBytes(r, Herradura.N / 8));
+        BitArray pBa = BitArray.fromBytes(padBlock(inBytes), Herradura.N);
+          BitArray r = doEnc
+            ? (v3 ? FpeTwk.fpeV3Encrypt(pBa, keyBytes, ctx) : FpeTwk.fpeEncrypt(pBa, keyBytes, ctx))
+            : (v3 ? FpeTwk.fpeV3Decrypt(pBa, keyBytes, ctx) : FpeTwk.fpeDecrypt(pBa, keyBytes, ctx));
+        writeBytes(opt.getOrDefault("out", "-"), r.toBytes());
     }
 
     private static void cmdTwk(Map<String, String> opt) throws IOException {
         boolean doEnc = opt.containsKey("encrypt");
         boolean doDec = opt.containsKey("decrypt");
         if (doEnc == doDec) throw new CliError("twk: exactly one of --encrypt or --decrypt required");
-        BigInteger[] key = loadKey(req(opt, "key", "twk"));
-        byte[] keyBytes = toFixedBytes(key[0], key[1].intValueExact() / 8);
+        BitArray key = loadKey(req(opt, "key", "twk"));
+        byte[] keyBytes = key.toBytes();
         long sector = opt.containsKey("sector") ? Long.parseLong(opt.get("sector")) : 0L;
         int bidx = opt.containsKey("bidx") ? Integer.parseInt(opt.get("bidx")) : 0;
         byte[] inBytes = readBytes(req(opt, "in", "twk"));
         BigInteger p = new BigInteger(1, padBlock(inBytes));
         boolean v3 = opt.containsKey("v3");
-        BigInteger r = doEnc
-            ? (v3 ? FpeTwk.twkV3Encrypt(p, keyBytes, sector, bidx) : FpeTwk.twkEncrypt(p, keyBytes, sector, bidx))
-            : (v3 ? FpeTwk.twkV3Decrypt(p, keyBytes, sector, bidx) : FpeTwk.twkDecrypt(p, keyBytes, sector, bidx));
-        writeBytes(opt.getOrDefault("out", "-"), toFixedBytes(r, Herradura.N / 8));
+        BitArray pBa = BitArray.fromBytes(padBlock(inBytes), Herradura.N);
+          BitArray r = doEnc
+            ? (v3 ? FpeTwk.twkV3Encrypt(pBa, keyBytes, sector, bidx) : FpeTwk.twkEncrypt(pBa, keyBytes, sector, bidx))
+            : (v3 ? FpeTwk.twkV3Decrypt(pBa, keyBytes, sector, bidx) : FpeTwk.twkDecrypt(pBa, keyBytes, sector, bidx));
+        writeBytes(opt.getOrDefault("out", "-"), r.toBytes());
     }
 
     /** Right-pads (zero-fills) to a 32-byte block and truncates to it,
@@ -2161,16 +2196,16 @@ public final class HerraduraCli {
     private static String encryptPemText(String pemText, String passphrase, int iterations) {
         byte[] salt = new byte[PBKDF2_SALT_BYTES];
         RNG.nextBytes(salt);
-        BigInteger nonce = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
-        BigInteger key = new BigInteger(1, pbkdf2Hfscx256(
+        BitArray nonce = BitArray.random(Herradura.N, RNG);
+        BitArray key = BitArray.fromBytes(pbkdf2Hfscx256(
                 passphrase.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                salt, iterations)).and(Herradura.MASK);
+                salt, iterations), Herradura.N);
         byte[] pt = pemText.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
         HerraduraNl.AeadCt c = HerraduraNl.hskeNlAeadEncrypt(key, nonce, new byte[0], pt);
         byte[] der = Codec.derSeq(
                 Codec.derInt(new BigInteger(1, salt), PBKDF2_SALT_BYTES),
                 Codec.derInt(BigInteger.valueOf(iterations), -1),
-                Codec.derInt(nonce, Herradura.N / 8),
+                Codec.derInt(nonce.toBigInteger(), Herradura.N / 8),
                 Codec.derInt(new BigInteger(1, c.ct), c.ct.length),
                 Codec.derInt(new BigInteger(1, c.tag), 32),
                 Codec.derInt(BigInteger.valueOf(pt.length), -1));
@@ -2212,10 +2247,11 @@ public final class HerraduraCli {
         BigInteger nonce = it.get(2);
         byte[] ct = toFixedBytes(it.get(3), ptLen);
         byte[] tag = toFixedBytes(it.get(4), 32);
-        BigInteger key = new BigInteger(1, pbkdf2Hfscx256(
+        BitArray key = BitArray.fromBytes(pbkdf2Hfscx256(
                 passphrase.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                salt, iterations)).and(Herradura.MASK);
-        byte[] pt = HerraduraNl.hskeNlAeadDecrypt(key, nonce, new byte[0], ct, tag);
+                salt, iterations), Herradura.N);
+        byte[] pt = HerraduraNl.hskeNlAeadDecrypt(
+                key, BitArray.fromBigInteger(nonce, Herradura.N), new byte[0], ct, tag);
         if (pt == null) {
             throw new CliError("pkey --decrypt: wrong passphrase or corrupted/tampered file");
         }

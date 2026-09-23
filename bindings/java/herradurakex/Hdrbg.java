@@ -21,7 +21,7 @@ import java.math.BigInteger;
  * 78.C ratchet ({@link Ratchet}, Theorem 16, SecurityProofs-5.md §11.8.3):
  * erasing {@code state_i} makes {@code output_i} unrecoverable from
  * {@code state_{i+1}}.  Java, like Python, cannot guarantee erasure of an
- * immutable {@link BigInteger} — for a hard erasure guarantee use the C
+ * immutable {@link BitArray} — for a hard erasure guarantee use the C
  * implementation.
  *
  * State-walk collision risk (NL-FSCX v1 is non-bijective) is characterised
@@ -45,13 +45,13 @@ public final class Hdrbg {
     /** "NL-FSCX-DRBG-V1\0", zero-padded to 32 bytes — byte-for-byte the same
      * domain constant as "Herradura cryptographic suite.{c,go,py}"'s
      * DRBG_DOMAIN / _DRBG_DOMAIN / drbgDomain. */
-    private static final BigInteger DRBG_DOMAIN =
-        new BigInteger("4E4C2D465343582D445242472D56310000000000000000000000000000000000", 16);
+    private static final BitArray DRBG_DOMAIN = BitArray.fromHex(
+        "4e4c2d465343582d445242472d56310000000000000000000000000000000000", Herradura.N);
 
-    private BigInteger state;
+    private BitArray state;
     private long blocks;
 
-    private Hdrbg(BigInteger state) {
+    private Hdrbg(BitArray state) {
         this.state = state;
         this.blocks = 0;
     }
@@ -61,7 +61,7 @@ public final class Hdrbg {
         byte[] buf = concat("DRBG-INIT".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
             be8(entropy.length), entropy, personalization);
         byte[] h = Hfscx256.hash(buf, null);
-        return new Hdrbg(new BigInteger(1, h).and(MASK));
+        return new Hdrbg(BitArray.fromBytes(h, Herradura.N));
     }
 
     public static Hdrbg seed(byte[] entropy) {
@@ -80,7 +80,7 @@ public final class Hdrbg {
         byte[] out = new byte[(int) (nBlocks * BLOCK)];
         int off = 0;
         while (off < out.length) {
-            byte[] stateBytes = Hfscx256.toFixedBytes(state, BLOCK);
+            byte[] stateBytes = state.toBytes();
             byte[] buf = concat(stateBytes, be8(blocks), "DRBG-OUT".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             byte[] block = Hfscx256.hash(buf, null);
             System.arraycopy(block, 0, out, off, BLOCK);
@@ -93,11 +93,11 @@ public final class Hdrbg {
 
     /** Mixes fresh entropy into the state and resets the output-block counter. */
     public void reseed(byte[] entropy) {
-        byte[] stateBytes = Hfscx256.toFixedBytes(state, BLOCK);
+        byte[] stateBytes = state.toBytes();
         byte[] buf = concat("DRBG-RESEED".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
             stateBytes, be8(entropy.length), entropy);
         byte[] h = Hfscx256.hash(buf, null);
-        state = new BigInteger(1, h).and(MASK);
+        state = BitArray.fromBytes(h, Herradura.N);
         blocks = 0;
     }
 
@@ -108,22 +108,22 @@ public final class Hdrbg {
      * {@code blocks} is carried, not reset: it is what makes DRBG_MAX_BLOCKS an
      * accounting over the whole life of a seed rather than per invocation, so a
      * resume that dropped it would silently hand back an unlimited generator. */
-    public static Hdrbg resume(BigInteger state, long blocks) {
-        if (state == null || state.signum() < 0) {
-            throw new IllegalArgumentException("Hdrbg.resume: state must be non-negative");
+    public static Hdrbg resume(BitArray state, long blocks) {
+        if (state == null) {
+            throw new IllegalArgumentException("Hdrbg.resume: state must not be null");
         }
         if (blocks < 0 || blocks > DRBG_MAX_BLOCKS) {
             throw new IllegalArgumentException(
                 "Hdrbg.resume: blocks out of range [0, " + DRBG_MAX_BLOCKS + "]: " + blocks);
         }
-        Hdrbg d = new Hdrbg(state.and(MASK));
+        Hdrbg d = new Hdrbg(state);
         d.blocks = blocks;
         return d;
     }
 
     /** The raw internal state, for checkpointing/inspection/testing — not
      * needed for ordinary use. */
-    public BigInteger stateValue() {
+    public BitArray stateValue() {
         return state;
     }
 

@@ -361,23 +361,33 @@ def _v3_width_ok(nbits, ctx):
         sys.exit(f"{ctx}: {e}")
 
 
-# HSKE-NL-A1's plain (unauthenticated) mode is 256-BIT ONLY (TODO #313).  Below
-# 256 the four language ports produce four different keystreams — the KDF domain
-# constant is truncated at opposite ends (Python HIGH bits, Go LOW bits), C and
-# Java are 256-fixed and ignore the declared width, and C stamps every ciphertext
-# `nbits = 256` whatever the key says.  A1 is a raw XOR keystream with NO
-# authentication tag, so a wrong keystream is not a detectable event and `dec`
-# used to write garbage and exit 0.  This guard makes the divergence unreachable
-# rather than resolved; converging the four rules is route 1 and needs TODO #314.
-_NLA1_WIDTH = 256
+# HSKE-NL-A1's plain mode ran at any width but 256 only by accident until TODO
+# #314: below 256 the four ports produced four different keystreams, so #313
+# refused every width but 256 in all four CLIs.  Pass 6 RELAXED that refusal —
+# C, Go, Python and Java now agree octet for octet at 32, 64, 128 and 256 —
+# and what is left is the width's own validity (BITARRAY.md §2) plus the rule
+# that a width is never coerced (§3).  The refusal is not merely deleted: a
+# width that is not a legal BitArray width was never representable, and a
+# ciphertext whose declared width disagrees with the key is a MIXED WIDTH,
+# which §3 makes an error rather than something to resolve by preferring one of
+# the two.  See MIGRATING.md §23.
+_NLA1_MIN_WIDTH = 16
+_NLA1_MAX_WIDTH = _suite_mod.BA_MAX_BITS   # read, not copied: one capacity
 
 
 def _nla1_width_ok(nbits, ctx, what='key'):
-    """sys.exit unless *nbits* is 256 — HSKE-NL-A1 plain mode's only width."""
-    if nbits != _NLA1_WIDTH:
-        sys.exit(f"{ctx}: hske-nla1 requires a {_NLA1_WIDTH}-bit {what}; "
-                 f"got {nbits}-bit (TODO #313: below {_NLA1_WIDTH} the four "
-                 f"language ports produce four different keystreams)")
+    """sys.exit unless *nbits* is a legal BitArray width (BITARRAY.md §2)."""
+    if (nbits % 8) or not (_NLA1_MIN_WIDTH <= nbits <= _NLA1_MAX_WIDTH):
+        sys.exit(f"{ctx}: hske-nla1 {what} width must be a multiple of 8 "
+                 f"between {_NLA1_MIN_WIDTH} and {_NLA1_MAX_WIDTH}; "
+                 f"got {nbits}-bit (BITARRAY.md §2)")
+
+
+def _nla1_same_width(key_n, ct_n, ctx):
+    """sys.exit unless the ciphertext's declared width matches the key's."""
+    if key_n != ct_n:
+        sys.exit(f"{ctx}: hske-nla1 ciphertext declares {ct_n}-bit, key is "
+                 f"{key_n}-bit (BITARRAY.md §3: a mixed width is never coerced)")
 
 
 def _r3(nbits):
@@ -1923,6 +1933,7 @@ def cmd_dec(args):
                 sys.exit("hske-nla1 ciphertext missing nonce")
             _nla1_width_ok(nbits, 'dec')
             _nla1_width_ok(ct_nbits, 'dec', what='ciphertext')
+            _nla1_same_width(nbits, ct_nbits, 'dec')
             N_nonce = BitArray(nbits, nonce_int)
             D = hske_nla1_decrypt(E, K, N_nonce)
         elif algo == 'hske-nla2':

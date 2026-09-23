@@ -187,7 +187,7 @@ static void replay_rand_poly(void)
 static void replay_weight_t(void)
 {
     FILE *f = fmemopen((void *)rpl_wt_stream, sizeof rpl_wt_stream, "rb");
-    BitArray e;
+    BitArray e = BA_INIT;
     int i, w = 0;
 
     if (!f) { bad("replay stern_rand_error (fmemopen)"); return; }
@@ -216,7 +216,7 @@ static void replay_weight_t(void)
 static void replay_oprf(void)
 {
     FILE *f = fmemopen((void *)rpl_oprf_stream, sizeof rpl_oprf_stream, "rb");
-    BitArray r, alpha;
+    BitArray r = BA_INIT, alpha = BA_INIT;
 
     if (!f) { bad("replay oprf_blind (fmemopen)"); return; }
     oprf_blind(rpl_oprf_input, sizeof rpl_oprf_input, &r, &alpha, f);
@@ -260,7 +260,7 @@ static int cmp_ba(const BitArray *got, const uint8_t *want, const char *what)
 static void op_stern_keygen(void)
 {
     FILE *f = fmemopen((void *)opr_sfk_stream, sizeof opr_sfk_stream, "rb");
-    BitArray seed, e;
+    BitArray seed = BA_INIT, e = BA_INIT;
     uint8_t syndr[SDF_SYNBYTES];
 
     if (!f) { bad("op stern_f_keygen (fmemopen)"); return; }
@@ -287,7 +287,7 @@ static void op_stern_sign(void)
 {
     FILE *f = fmemopen((void *)opr_sfs_stream, sizeof opr_sfs_stream, "rb");
     SternSig sig;
-    BitArray msg, e, seed;
+    BitArray msg = BA_INIT, e = BA_INIT, seed = BA_INIT;
     int i, bad_at = -1;
 
     if (!f) { bad("op hpks_stern_f_sign (fmemopen)"); return; }
@@ -441,7 +441,7 @@ static void op_hcred_prove_kkw(void)
 {
     FILE *f = fmemopen((void *)opr_kkw_stream, sizeof opr_kkw_stream, "rb");
     HcredKkwProof proof;
-    BitArray seed_H;
+    BitArray seed_H = BA_INIT;
     int k, i, rc, before;
 
     if (!f) { bad("op hcred_prove_kkw (fmemopen)"); return; }
@@ -630,7 +630,7 @@ static void op_qcmdpc_encap(void)
     QcMdpcPrf prf;
     QcMdpcPub pub;
     QcPoly syn;
-    BitArray K;
+    BitArray K = BA_INIT;
     uint8_t buf[QCMDPC_RBYTES];
 
     qcp_from_bytes(&pub.h_pub, opr_qen_h_pub);
@@ -715,7 +715,7 @@ static void op_hcred_prove(void)
 {
     FILE *f = fmemopen((void *)opr_hcp_stream, sizeof opr_hcp_stream, "rb");
     HcredProof proof;
-    BitArray seed_H;
+    BitArray seed_H = BA_INIT;
     uint8_t outs_buf[HCRED_ROUND_OUTS_SER];
     int j, p, bad_at = -1;
     const char *bad_field = "";
@@ -786,7 +786,8 @@ static void op_stern_ring_sign(void)
 {
     FILE *f = fmemopen((void *)opr_ring_stream, sizeof opr_ring_stream, "rb");
     SternRingSig sig;
-    BitArray msg, e, seeds[OPR_RING_K];
+    BitArray msg = BA_INIT, e = BA_INIT, seeds[OPR_RING_K];
+    ba_init_array(seeds, OPR_RING_K);
     uint8_t syndrs[OPR_RING_K][SDF_SYNBYTES];
     int i, n = OPR_RING_K * OPR_RING_ROUNDS, bad_at = -1;
 
@@ -857,7 +858,7 @@ static void op_stern_ring_sign(void)
 int main(void)
 {
     HcredKkwProof proof;
-    BitArray seed_H;
+    BitArray seed_H = BA_INIT;
     const uint8_t *msg;
     size_t msg_len;
     int i;

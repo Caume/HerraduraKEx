@@ -963,6 +963,11 @@ rounds fail the weight check. There is no silent-acceptance path in either direc
 
 ## 19. `hske-nla1` refuses any width but 256 (v9.0.0)
 
+> **SUPERSEDED BY SECTION 23 (v9.5.0).**  TODO #314 landed, the four ports converged,
+> and this refusal was relaxed: `hske-nla1` accepts every width `BITARRAY.md` §2 permits
+> again.  The section is kept as written — it is the record of what the divergence was,
+> and section 23's migration table is unreadable without it.
+
 **This is the reason the version is 9.0.0.** It changes what an existing `--algo` value
 accepts, which is exactly the surface the 2.0.0 tag froze, so it gets a MAJOR bump
 regardless of how few artifacts it reaches — the same rule section 5 was decided under.
@@ -1035,8 +1040,265 @@ ports already did somewhere on the path — Java at `enc`, C at `genpkey`, which
 accepted `--bits`. If #314 lands and the convergence is done, this refusal is the thing
 that gets relaxed, and relaxing a refusal breaks nothing.
 
+*(It landed in v9.4.0 and the refusal was relaxed in v9.5.0 — section 23. The prediction
+in the paragraph above held: nothing broke, and the version bump is MINOR rather than
+MAJOR for exactly that reason.)*
+
 **What this does *not* change.** `kex` still derives session keys at any width — it is
 `hske-nla1` that refuses to consume a narrow one. `hske-nla1 --aead` was already 256-only
 and keeps its own message. HKEX-RNL is unaffected: since TODO #228 it derives a 256-bit
 session key at every ring dimension, which is why the eleven `--bits 64` invocations in
 `CliTest/` are untouched by this. No PEM label, DER layout, flag or parameter changed.
+
+---
+
+## 20. The Go `herradura` package's BitArray API (v9.2.0)
+
+**This is not a MAJOR bump and does not change the CLI, PEM or wire format.** Nothing an
+`--algo` produces or accepts moves, no stored key, ciphertext or signature becomes
+unreadable, and the four CLIs interoperate exactly as before — the 518-assertion
+`CliTest/test_cross_lang_matrix.sh` passes unchanged. It is recorded here because it
+**does** break Go source that imports `herradurakex/herradura`, and `CLAUDE.md`'s
+versioning rule says to err toward documenting in this file regardless of which version
+component changes.
+
+**Who is affected:** Go code importing the `herradura` package directly. Nobody using the
+CLI, the PEM artifacts, the C header, the Python suite or the Java port.
+
+**What changed.** TODO #314 pass 3 replaced the type's representation:
+
+```go
+type BitArray struct { Val big.Int; size int }   // before
+type BitArray struct { nbits int; b []byte }     // after — unexported, big-endian octets
+```
+
+The fields are unexported on purpose: `BITARRAY.md` §3 requires that every binary
+operation reject a width mismatch, and a type whose value can be reached around cannot
+enforce that. Before this change a mixed-width `Xor` returned **eight zero octets** with
+no error and no panic (`BITARRAY.md` §6.1).
+
+| before | after |
+|---|---|
+| `ba.Val` (read) | `ba.BigInt()`, or `ba.Bytes()` / `ba.Hex()` for the canonical octets |
+| `ba.Val.Bit(i)` | `ba.Bit(i)` |
+| `ba.Val.SetBit(&ba.Val, i, v)` | `ba.SetBit(i, v)` |
+| `ba.Val.Uint64()` | `ba.LowUint64()` (explicit low 64 bits) or `ba.TryToUint()` (`E_RANGE` above 64 bits) |
+| `x.Val.FillBytes(buf)` | `copy(buf[len(buf)-len(b):], ba.Bytes())` — the octets are **right-aligned**; a plain `copy` is not the same |
+| `&BitArray{size: n}` | `NewZero(n)` |
+| `GfPoly[n]` | `BaGfPoly(n)`, which returns `E_NO_POLY` for an unlisted width |
+| `GfMul(a, b, poly, n)` | `GfMul(a, b)` — both `*BitArray`, width taken from the operands |
+| `GfPow(base, exp, poly, n)` | `GfPow(base, exp)` — both `*BitArray`; `GfGenBA(n)` is the generator |
+| `HkexGfAgree(priv, pub, poly, n)` | `HkexGfAgree(priv, pub)` |
+| `HpksSign(msg, priv, poly, n)`, `HpksNlSign` | `HpksSign(msg, priv)`, `HpksNlSign(msg, priv)` |
+| `HpksVerify(msg, pub, R, s, poly, n)` | `HpksVerify(msg, pub, R, s)` |
+| `HpkeEncrypt(pt, pub, poly, n)` / `HpkeDecrypt(ct, R, priv, poly, n)` | `HpkeEncrypt(pt, pub)` / `HpkeDecrypt(ct, R, priv)` |
+| `new(big.Int).Mod(new(big.Int).Sub(k, new(big.Int).Mul(a, e)), ord)` | `k.SubModOrd(a.MulModOrd(e))` |
+
+**Two new widths are refused where they used to be tolerated**, and both are the contract
+rather than a policy choice. A BitArray's width must be a multiple of 8 in **16..256**
+(`BITARRAY.md` §2 — `fscx` reads the octet on both sides of every position and degenerates
+below two octets), so an 8-bit BitArray is now `E_WIDTH`; and GF(2^n) is defined only at
+32, 64, 128 and 256, so any other width is `E_NO_POLY` instead of silently running under
+the 256-bit polynomial.
+
+**Errors.** The fallible surface is `Try*` — `TryXor`, `TryFromHex`, `TryTruncate`,
+`TryGfMul` and the rest — returning an `error` whose code `BaCode(err)` reports as one of
+`BITARRAY.md` §5's eight. The plain names (`Xor`, `Truncate`, `GfMul`) keep their existing
+signatures and **panic** on a width error, because at the protocol layer a mixed width is
+a bug and not an input: that is the same two-layer split `herradura.h` uses with
+`ba_try_*` and `BA_FAIL`.
+
+**Behaviour at 256 bits is byte-identical**, measured rather than asserted: a
+30-operation probe over `xor`/`rol`/`ror`/`fscx`/`fscx_revolve`/`MInv`/NL v1/v2/v2-inv/v3/
+`rnl_kdf_seed`/HFSCX-256/HSKE-NL-A1/GF/HKEX-GF-agree/Stern produces the same octets before
+and after, and every `KAT/` vector passes unchanged. Below 256, one thing did move on
+purpose: `RnlKdfSeed` now truncates the KDF domain constant to its **HIGH** bits, where
+this port took the low octets — `BITARRAY.md` §4.4, the rule section 19 was waiting on.
+That width is still unreachable from the CLI, because section 19's refusal stays until all
+four ports are converted.
+
+---
+
+## 21. The Python suite's BitArray API (v9.3.0)
+
+**This is not a MAJOR bump and does not change the CLI, PEM or wire format**, and unlike
+section 20 it barely moves the published surface either. `.uint`, `.bytes`, `.hex`,
+`.copy()`, `.rotated()`, `^`, `==` and `BitArray(size, value)` all keep their exact
+meaning, which is why the twenty `SecurityProofsCode/` scripts that load the suite through
+`importlib` needed no edit at all. It is recorded because three things did change, and one
+of them can raise where nothing raised before.
+
+**Who is affected:** Python code importing `Herradura cryptographic suite.py` that reached
+past the public accessors, or that relied on a mixed-width operation being coerced.
+
+**1. A mixed-width binary operation now raises.** `BITARRAY.md` §3 requires it, and this
+port's `__xor__` previously returned `BitArray(self._size, self._val ^ other._val)` with
+the constructor masking — so `BitArray(64, x) ^ BitArray(256, y)` returned the 64-bit
+operand **unchanged**, the other having been masked away entirely (§6.2). It now raises
+`BaError(E_MIXED_WIDTH)`. If you were relying on that coercion you were relying on a
+silent wrong answer; widen or narrow explicitly with `extend`, `truncate` or
+`resize_exact`.
+
+**2. The private attributes are gone.** `_val`, `_size` and `_mask` were the stored
+fields; the type now stores `_nbits` and `_b`.
+
+| before | after |
+|---|---|
+| `ba._val` | `ba.uint` |
+| `ba._size` | `ba.size` (or `ba.nbits`, the name `BITARRAY.md` uses) |
+| `ba._mask` | `ba._mask` — still there, now a derived property, never stored |
+
+**3. `uint` and `to_uint()` are different operations, deliberately.** `to_uint()` is
+`BITARRAY.md` §4.1's and raises `E_RANGE` above 64 bits. `uint` is unbounded and is this
+port's named crossing to the objects the specification does not govern — Z_q coefficients,
+QC-MDPC polynomials, syndromes, OPRF and threshold scalars, DER INTEGERs. Use `uint`
+for those; use `to_uint()` when you mean "this value fits in a machine word". Likewise
+`BitArray(size, value)` MASKS, where `BitArray.from_uint(value, size)` raises `E_RANGE` —
+masking is how an out-of-range intermediate becomes a plausible in-range value with
+nothing recording that it happened.
+
+**New:** `BaError` plus the eight codes of §5, and §4's surface — `zero`, `from_bytes`,
+`from_uint`, `from_hex`, `to_uint`, `to_bytes`, `to_hex`, `truncate`, `extend`,
+`resize_exact`, `compare`, `bit`, `shl`, `shr`, `is_zero`, `popcount`, `rot_left`,
+`rot_right`, `&`, `|`, `~` — and the BitArray-level `ba_gf_poly` / `ba_gf_mul` /
+`ba_gf_pow`, where the WIDTH selects the polynomial and an unlisted width is `E_NO_POLY`.
+The int-level `gf_mul` / `gf_pow` are unchanged and still take `poly` and `n`.
+
+**Behaviour at 256 bits is byte-identical**, measured rather than asserted: a
+30-operation probe produces the same octets before and after, and it agrees value for
+value with the Go port's probe. Below 256, `rnl_kdf_seed` is unchanged in RESULT — this
+port already truncated the domain constant to its high bits — but now does it through the
+one named `truncate` instead of an open-coded `>> (256 - n)`.
+
+---
+
+## 22. The Java `herradurakex` package's BitArray API (v9.4.0)
+
+**This is not a MAJOR bump and does not change the CLI, PEM or wire format.** Nothing an
+`--algo` produces or accepts moves, no stored key, ciphertext or signature becomes
+unreadable, and the four CLIs interoperate exactly as before — the 518-assertion
+`CliTest/test_cross_lang_matrix.sh` passes unchanged, as do all nine
+`CliTest/test_java_*.sh` scripts. It is recorded because it changes the Java package's
+public API, on the same grounds as sections 20 and 21.
+
+**Who is affected:** Java code importing `herradurakex` directly. Nobody using the CLI,
+the PEM artifacts, the C header, the Go package or the Python suite.
+
+**What changed.** TODO #314 pass 5 gave the port the `BitArray` the other three already
+had. Before it, values were bare `BigInteger` against a static `Herradura.N = 256`, so a
+width was a property of the whole port rather than of a value — and the mixed-width rule
+`BITARRAY.md` §3 requires could not be stated, let alone enforced.
+
+The bit-string layer — `Herradura`, `Hfscx256`, `HerraduraNl`, `Duplex`, `FpeTwk`,
+`Ratchet`, `Hdrbg` — now takes and returns `BitArray`:
+
+| before | after |
+|---|---|
+| `Herradura.fscx(BigInteger, BigInteger)` | `Herradura.fscx(BitArray, BitArray)` |
+| `Herradura.rol(x, s)` / `ror(x, s)` | `x.rotLeft(s)` / `x.rotRight(s)` (the statics still exist, BitArray-typed) |
+| `Herradura.gfMul/gfPow(BigInteger, …)` | `Herradura.gfMul/gfPow(BitArray, …)`; `Herradura.GF_GEN` is now a `BitArray`, `GF_GEN_INT` the old value |
+| `hkexGfAgree`, `hskeEncrypt/Decrypt`, `hpksSign/Verify`, `hpkeEncrypt/Decrypt` | same names, `BitArray` parameters and results; `Signature.r/.s` and `Ciphertext.r/.ct` are `BitArray` |
+| `HerraduraNl.nlFscx*`, `hskeNlA1/A2/A3*`, `hskeNlAead*`, `hpkeNl*`, `hpksNl*` | same names, `BitArray` |
+| `Hfscx256.hash(data, BigInteger iv)` | `Hfscx256.hash(data, BitArray iv)`; `IV_CONST` and `RNL_KDF_DC_256` are `BitArray` |
+| the KDF-seed expression, written out at six call sites | `BitArray.rnlKdfSeed(base)` — one named truncation (§4.4) |
+| `Ratchet.init` / `advance` on `BigInteger` state | on `BitArray`; `advance()[0]` is a `BitArray` |
+| `Hdrbg.resume(BigInteger, long)` / `stateValue()` | `BitArray` |
+
+`Codec`, `Stern`, `SternRing`, `Hcred`, `Oprf`, `HpksT` and `ZkpNl` **keep BigInteger**:
+DER INTEGERs, syndromes, Z_q coefficients and group scalars are integers by their own
+protocol definitions, which `BITARRAY.md` does not govern. `BitArray.fromBigInteger(v, n)`
+and `BitArray.toBigInteger()` are the named crossing, as `NewBitArray`/`BigInt` are in Go
+and `uint` is in Python.
+
+**THE ONE THING TO CHECK IN YOUR OWN CODE.** `equals(Object)` returns **false** for a
+different type rather than failing to compile, so any comparison left mixing the two is a
+silent wrong answer — a round-trip check that always fails, or a difference check that
+always passes. This bit the conversion itself four times, in code that compiled cleanly,
+and each was caught by a test rather than by the compiler. Grep for `.equals(` across the
+boundary; compare `BitArray` to `BitArray` (which checks the width too) or unwrap one side
+with `.toBigInteger()`.
+
+**New:** `BaException` with `BITARRAY.md` §5's eight codes, unchecked because at the
+protocol layer a mixed or invalid width is a bug and not an input; §4's full surface
+(`zero`, `fromBytes`, `fromUint`, `fromHex`, `toUint`, `truncate`, `extend`,
+`resizeExact`, `compare`, `bit`, `shl`, `shr`, `isZero`, `popcount`, `rotLeft`,
+`rotRight`, `and`, `or`, `not`); the octet arithmetic `addMod2n`/`subMod2n`/`mulMod2n`;
+and `Json.java`, the dependency-free reader extracted from `KatVerify` so a second
+consumer could share it.
+
+**Constant time.** The operations §4 marks CT are now branch-free over the octets, which
+is what the previous header said was not worth doing *because* `BigInteger` could not
+offer it. That is a structural property, not a claim about what a JIT emits; the suite
+still uses `MessageDigest.isEqual` where constant time is load-bearing.
+
+**Behaviour at 256 bits is byte-identical**, measured: a 22-operation probe produces the
+same octets before and after and agrees value for value with the C, Go and Python probes.
+
+---
+
+## 23. `hske-nla1` is accepted at every legal width again (v9.5.0)
+
+**This relaxes section 19.** TODO #313 refused `--algo hske-nla1` at any width but 256 in
+all four CLIs, because below 256 the four ports produced four different keystreams and A1
+has no authentication tag, so `dec` wrote garbage and exited 0. TODO #314 gave every port
+one variable-width `BitArray`, pass 6 converged the consumers on top of it, and the
+refusal is gone: **`hske-nla1` now accepts every width `BITARRAY.md` §2 permits — a
+multiple of 8 from 16 to 256 — and all four CLIs agree octet for octet.**
+
+**Who is affected.** Almost nobody, and that is the point of relaxing rather than
+changing. **At 256 bits nothing moves**: every key, ciphertext and `.hkx` container is
+byte-for-byte unaffected, and the four CLIs interoperate exactly as before. What changes
+is that a command which *exited non-zero* since v9.0.0 now succeeds.
+
+**Why this is MINOR where section 19 was MAJOR, since the two touch the same surface.**
+The MAJOR rule exists for changes that BREAK the frozen CLI/PEM/wire surface. Section 19
+broke callers: a working invocation started failing. This one breaks none — the accepted
+set only grows, no artifact becomes unreadable, and no output at any previously accepted
+width changes by a byte. It is new capability on an existing `--algo`, which is the MINOR
+case. The entry exists anyway because there is a migration to describe, which is what this
+file is for.
+
+**What to do with an old narrow ciphertext.** If you hold one written before v9.0.0:
+
+| written by | readable now? |
+|---|---|
+| Python | **yes** — Python's rule (the domain constant's HIGH bits) is the one all four converged on, and it never moved |
+| Go | no — Go took the constant's LOW bits until v9.2.0; that rule is gone |
+| C | no — C ran the whole construction at 256 and stamped `nbits = 256` on the artifact whatever the key said, so it is not even labelled with its own width |
+| Java | no — Java was 256-fixed |
+
+None of those were interoperable when they were written: a narrow A1 ciphertext was
+readable only by the port that wrote it. Decrypt a Go/C/Java one with a pre-9.0.0 build of
+that same language and re-encrypt; a Python one needs nothing.
+
+**What is still refused, and why each refusal is about a format rather than a
+disagreement.**
+
+| case | outcome | reason |
+|---|---|---|
+| a width that is not a multiple of 8, or outside 16–256 | refused | `BITARRAY.md` §2 — no `BitArray` can have it |
+| a ciphertext whose declared `nbits` differs from the key's | refused | `BITARRAY.md` §3 — a mixed width is never coerced |
+| `encfile` / `decfile` with a narrow key | refused | the `.hkx` container has **no width field**: a 32-octet nonce, 32-octet blocks and a 256-bit HFSCX-256 MAC. Python, Go and Java refused here long before TODO #313 |
+| `--algo hske`, `hske-nla2`, `hske-nla3` | unchanged | the relaxation is scoped to `hske-nla1`, exactly as the guard was |
+| `hske-nla1 --aead` | unchanged | already 256-only, with its own message |
+
+The mixed-width refusal is the one to know about. Before v9.0.0 this layer *resolved* the
+disagreement by preferring one side — Go built the key at the **ciphertext's** declared
+width, C stamped 256 on everything it wrote — and a reader that silently prefers either
+side passes every round-trip and mis-decrypts a foreign artifact. It is an error now.
+
+**How the failure presents.** Loudly, at both ends, with the same message in all four
+CLIs:
+
+```
+dec: hske-nla1 ciphertext declares 128-bit, key is 256-bit (BITARRAY.md §3: a
+mixed width is never coerced)
+```
+
+**What was actually fixed to make this possible**, recorded because two of the four ports
+passed `KAT/bitarray.json` 376/376 and were still wrong here: Java's NL-FSCX v1 round
+rotated by a static `Herradura.N / 4`, and C's A1 path ran at `I_VALUE` over
+fixed-`KEYBYTES` arithmetic (`ba_add256`, `ba_rol64_256` and friends, now
+`ba_add_mod2n`/`ba_rol_quarter`). See `BITARRAY.md` §8.4 and
+`CliTest/test_narrow_width_matrix.sh`, which measures the full 4 × 4 matrix at 256, 128,
+64 and 32 bits.

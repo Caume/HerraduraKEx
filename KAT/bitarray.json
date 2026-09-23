@@ -1,0 +1,4379 @@
+{
+  "$schema": "HerraduraKEx BitArray conformance vectors (TODO #314)",
+  "specification": "BITARRAY.md",
+  "note": "Pins BITARRAY.md's operation set at widths 32/64/128/256, plus the mixed-width, invalid-width and no-polynomial cases.  Error cases pin an expected ERROR CODE, not a value: BITARRAY.md 5 makes the code set closed and identical in every port, so a port that fails for the right reason is distinguishable from one that fails for the wrong one.  Operands are structured rather than pseudo-random -- a rotation or a truncation that loses an octet is invisible against a uniform operand.  NO PORT IMPLEMENTS THIS YET: see BITARRAY.md 7 and 8 for how ports join the gating set.",
+  "widths": [
+    32,
+    64,
+    128,
+    256
+  ],
+  "error_codes": [
+    "E_WIDTH",
+    "E_MIXED_WIDTH",
+    "E_LENGTH",
+    "E_RANGE",
+    "E_LOSSY",
+    "E_HEXDIGIT",
+    "E_NO_POLY",
+    "E_ENTROPY"
+  ],
+  "rnl_kdf_dc_256": "6a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19",
+  "gf_poly": {
+    "32": "0x00400007",
+    "64": "0x0000001b",
+    "128": "0x00000087",
+    "256": "0x00000425"
+  },
+  "truncation_rule": "HIGH bits -- the big-endian PREFIX (BITARRAY.md 4.4).  This settles the TODO #313 split: Python and C's declared narrow constants already say high bits; Go's RnlKdfDC[32-n/8:] is the outlier.",
+  "case_count": 376,
+  "cases": [
+    {
+      "op": "zero",
+      "nbits": 32,
+      "args": {},
+      "expect": {
+        "hex": "00000000",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "from_hex",
+      "nbits": 32,
+      "args": {
+        "hex": "61809fbe"
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "to_uint",
+      "nbits": 32,
+      "args": {
+        "hex": "61809fbe"
+      },
+      "expect": {
+        "int": 1635819454
+      }
+    },
+    {
+      "op": "popcount",
+      "nbits": 32,
+      "args": {
+        "hex": "61809fbe"
+      },
+      "expect": {
+        "int": 16
+      }
+    },
+    {
+      "op": "is_zero",
+      "nbits": 32,
+      "args": {
+        "hex": "61809fbe"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "is_zero",
+      "nbits": 32,
+      "args": {
+        "hex": "00000000"
+      },
+      "expect": {
+        "bool": true
+      }
+    },
+    {
+      "op": "xor",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524"
+      },
+      "expect": {
+        "hex": "a3619a9a",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "and",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524"
+      },
+      "expect": {
+        "hex": "40800524",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "or",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524"
+      },
+      "expect": {
+        "hex": "e3e19fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "not",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe"
+      },
+      "expect": {
+        "hex": "9e7f6041",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 0
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 1
+      },
+      "expect": {
+        "hex": "c3013f7c",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 7
+      },
+      "expect": {
+        "hex": "c04fdf30",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 8
+      },
+      "expect": {
+        "hex": "809fbe61",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 9
+      },
+      "expect": {
+        "hex": "013f7cc3",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 4
+      },
+      "expect": {
+        "hex": "1809fbe6",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 16
+      },
+      "expect": {
+        "hex": "9fbe6180",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 31
+      },
+      "expect": {
+        "hex": "30c04fdf",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 33
+      },
+      "expect": {
+        "hex": "c3013f7c",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": -1
+      },
+      "expect": {
+        "hex": "30c04fdf",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": -8
+      },
+      "expect": {
+        "hex": "be61809f",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 1
+      },
+      "expect": {
+        "hex": "30c04fdf",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 7
+      },
+      "expect": {
+        "hex": "7cc3013f",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 8
+      },
+      "expect": {
+        "hex": "be61809f",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "s": 8
+      },
+      "expect": {
+        "hex": "be61809f",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 0
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 0
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 1
+      },
+      "expect": {
+        "hex": "c3013f7c",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 1
+      },
+      "expect": {
+        "hex": "30c04fdf",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 7
+      },
+      "expect": {
+        "hex": "c04fdf00",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 7
+      },
+      "expect": {
+        "hex": "00c3013f",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 8
+      },
+      "expect": {
+        "hex": "809fbe00",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 8
+      },
+      "expect": {
+        "hex": "0061809f",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 9
+      },
+      "expect": {
+        "hex": "013f7c00",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 9
+      },
+      "expect": {
+        "hex": "0030c04f",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 31
+      },
+      "expect": {
+        "hex": "00000000",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 31
+      },
+      "expect": {
+        "hex": "00000000",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 32
+      },
+      "expect": {
+        "hex": "00000000",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 32
+      },
+      "expect": {
+        "hex": "00000000",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 33
+      },
+      "expect": {
+        "hex": "00000000",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 33
+      },
+      "expect": {
+        "hex": "00000000",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 64
+      },
+      "expect": {
+        "hex": "00000000",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": 64
+      },
+      "expect": {
+        "hex": "00000000",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": -1
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "k": -1
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 16
+      },
+      "expect": {
+        "hex": "6180",
+        "nbits": 16
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 16
+      },
+      "expect": {
+        "hex": "6180",
+        "nbits": 16
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 64
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 64
+      },
+      "expect": {
+        "hex": "61809fbe00000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "m": 64
+      },
+      "expect": {
+        "hex": "61809fbe00000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 32,
+      "args": {
+        "a": "0000abcd",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "61809fbe"
+      },
+      "expect": {
+        "bool": true
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524"
+      },
+      "expect": {
+        "int": -1
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 32,
+      "args": {
+        "a": "c2e10524",
+        "b": "61809fbe"
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "61809fbe"
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "i": 0
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "i": 1
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "i": 7
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "i": 8
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "i": 31
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "i": 32
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "fscx",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524"
+      },
+      "expect": {
+        "hex": "b41262e2",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524",
+        "i": 0
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524",
+        "i": 1
+      },
+      "expect": {
+        "hex": "b41262e2",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524",
+        "i": 4
+      },
+      "expect": {
+        "hex": "9649aee4",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524",
+        "i": 8
+      },
+      "expect": {
+        "hex": "b26f1904",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "gf_mul",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524"
+      },
+      "expect": {
+        "hex": "d6ee784c",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "e": 0
+      },
+      "expect": {
+        "hex": "00000001",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "e": 1
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "e": 2
+      },
+      "expect": {
+        "hex": "69488224",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "e": 3
+      },
+      "expect": {
+        "hex": "a6e80ae2",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe",
+        "e": 255
+      },
+      "expect": {
+        "hex": "fb1705a7",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "rnl_kdf_seed",
+      "nbits": 32,
+      "args": {
+        "a": "61809fbe"
+      },
+      "expect": {
+        "hex": "72001d81",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "zero",
+      "nbits": 64,
+      "args": {},
+      "expect": {
+        "hex": "0000000000000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "from_hex",
+      "nbits": 64,
+      "args": {
+        "hex": "61809fbedd01203f"
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "to_uint",
+      "nbits": 64,
+      "args": {
+        "hex": "61809fbedd01203f"
+      },
+      "expect": {
+        "int": 7025791060798414911
+      }
+    },
+    {
+      "op": "popcount",
+      "nbits": 64,
+      "args": {
+        "hex": "61809fbedd01203f"
+      },
+      "expect": {
+        "int": 30
+      }
+    },
+    {
+      "op": "is_zero",
+      "nbits": 64,
+      "args": {
+        "hex": "61809fbedd01203f"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "is_zero",
+      "nbits": 64,
+      "args": {
+        "hex": "0000000000000000"
+      },
+      "expect": {
+        "bool": true
+      }
+    },
+    {
+      "op": "xor",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "hex": "a3619a9a9e63a19f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "and",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "hex": "4080052441000020",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "or",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "hex": "e3e19fbedf63a1bf",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "not",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f"
+      },
+      "expect": {
+        "hex": "9e7f604122fedfc0",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 1
+      },
+      "expect": {
+        "hex": "c3013f7dba02407e",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 7
+      },
+      "expect": {
+        "hex": "c04fdf6e80901fb0",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 8
+      },
+      "expect": {
+        "hex": "809fbedd01203f61",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 9
+      },
+      "expect": {
+        "hex": "013f7dba02407ec3",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 8
+      },
+      "expect": {
+        "hex": "809fbedd01203f61",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 32
+      },
+      "expect": {
+        "hex": "dd01203f61809fbe",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 63
+      },
+      "expect": {
+        "hex": "b0c04fdf6e80901f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 64
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 65
+      },
+      "expect": {
+        "hex": "c3013f7dba02407e",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": -1
+      },
+      "expect": {
+        "hex": "b0c04fdf6e80901f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": -16
+      },
+      "expect": {
+        "hex": "203f61809fbedd01",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 1
+      },
+      "expect": {
+        "hex": "b0c04fdf6e80901f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 7
+      },
+      "expect": {
+        "hex": "7ec3013f7dba0240",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 8
+      },
+      "expect": {
+        "hex": "3f61809fbedd0120",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "s": 16
+      },
+      "expect": {
+        "hex": "203f61809fbedd01",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 1
+      },
+      "expect": {
+        "hex": "c3013f7dba02407e",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 1
+      },
+      "expect": {
+        "hex": "30c04fdf6e80901f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 7
+      },
+      "expect": {
+        "hex": "c04fdf6e80901f80",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 7
+      },
+      "expect": {
+        "hex": "00c3013f7dba0240",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 8
+      },
+      "expect": {
+        "hex": "809fbedd01203f00",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 8
+      },
+      "expect": {
+        "hex": "0061809fbedd0120",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 9
+      },
+      "expect": {
+        "hex": "013f7dba02407e00",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 9
+      },
+      "expect": {
+        "hex": "0030c04fdf6e8090",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 63
+      },
+      "expect": {
+        "hex": "8000000000000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 63
+      },
+      "expect": {
+        "hex": "0000000000000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 64
+      },
+      "expect": {
+        "hex": "0000000000000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 64
+      },
+      "expect": {
+        "hex": "0000000000000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 65
+      },
+      "expect": {
+        "hex": "0000000000000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 65
+      },
+      "expect": {
+        "hex": "0000000000000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 128
+      },
+      "expect": {
+        "hex": "0000000000000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": 128
+      },
+      "expect": {
+        "hex": "0000000000000000",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": -1
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "k": -1
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 16
+      },
+      "expect": {
+        "hex": "6180",
+        "nbits": 16
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 32
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 32
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 32
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 32
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 64
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 64
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 64
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 128
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 128
+      },
+      "expect": {
+        "hex": "61809fbedd01203f0000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "m": 128
+      },
+      "expect": {
+        "hex": "61809fbedd01203f0000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 64,
+      "args": {
+        "a": "000000000000abcd",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "61809fbedd01203f"
+      },
+      "expect": {
+        "bool": true
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "int": -1
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 64,
+      "args": {
+        "a": "c2e10524436281a0",
+        "b": "61809fbedd01203f"
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "61809fbedd01203f"
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "i": 0
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "i": 1
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "i": 7
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "i": 8
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "i": 63
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "i": 64
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "fscx",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "hex": "341262e2ed95326f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0",
+        "i": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0",
+        "i": 1
+      },
+      "expect": {
+        "hex": "341262e2ed95326f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0",
+        "i": 4
+      },
+      "expect": {
+        "hex": "4649aee2a6d11d7f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0",
+        "i": 16
+      },
+      "expect": {
+        "hex": "5878a242b1ac4896",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "gf_mul",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "hex": "0ab85fcd80fbce20",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "e": 0
+      },
+      "expect": {
+        "hex": "0000000000000001",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "e": 1
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "e": 2
+      },
+      "expect": {
+        "hex": "8d4cc007d801b552",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "e": 3
+      },
+      "expect": {
+        "hex": "2b437b37157cd9f4",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f",
+        "e": 255
+      },
+      "expect": {
+        "hex": "3e501a3436eae80d",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "rnl_kdf_seed",
+      "nbits": 64,
+      "args": {
+        "a": "61809fbedd01203f"
+      },
+      "expect": {
+        "hex": "ea9658baba4791e4",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "zero",
+      "nbits": 128,
+      "args": {},
+      "expect": {
+        "hex": "00000000000000000000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "from_hex",
+      "nbits": 128,
+      "args": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c"
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "to_uint",
+      "nbits": 128,
+      "args": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c"
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "popcount",
+      "nbits": 128,
+      "args": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c"
+      },
+      "expect": {
+        "int": 70
+      }
+    },
+    {
+      "op": "is_zero",
+      "nbits": 128,
+      "args": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "is_zero",
+      "nbits": 128,
+      "args": {
+        "hex": "00000000000000000000000000000000"
+      },
+      "expect": {
+        "bool": true
+      }
+    },
+    {
+      "op": "xor",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "hex": "a3619a9a9e63a19fe1a39e9a9aa663a1",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "and",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "hex": "40800524410000201e5c002140591c1c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "or",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "hex": "e3e19fbedf63a1bfffff9ebbdaff7fbd",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "not",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c"
+      },
+      "expect": {
+        "hex": "9e7f604122fedfc0a18263442506e2c3",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 1
+      },
+      "expect": {
+        "hex": "c3013f7dba02407ebcfb3977b5f23a78",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 7
+      },
+      "expect": {
+        "hex": "c04fdf6e80901faf3ece5ded7c8e9e30",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 8
+      },
+      "expect": {
+        "hex": "809fbedd01203f5e7d9cbbdaf91d3c61",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 9
+      },
+      "expect": {
+        "hex": "013f7dba02407ebcfb3977b5f23a78c3",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 16
+      },
+      "expect": {
+        "hex": "9fbedd01203f5e7d9cbbdaf91d3c6180",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 64
+      },
+      "expect": {
+        "hex": "5e7d9cbbdaf91d3c61809fbedd01203f",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 127
+      },
+      "expect": {
+        "hex": "30c04fdf6e80901faf3ece5ded7c8e9e",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 128
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 129
+      },
+      "expect": {
+        "hex": "c3013f7dba02407ebcfb3977b5f23a78",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": -1
+      },
+      "expect": {
+        "hex": "30c04fdf6e80901faf3ece5ded7c8e9e",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": -32
+      },
+      "expect": {
+        "hex": "daf91d3c61809fbedd01203f5e7d9cbb",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 1
+      },
+      "expect": {
+        "hex": "30c04fdf6e80901faf3ece5ded7c8e9e",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 7
+      },
+      "expect": {
+        "hex": "78c3013f7dba02407ebcfb3977b5f23a",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 8
+      },
+      "expect": {
+        "hex": "3c61809fbedd01203f5e7d9cbbdaf91d",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "s": 32
+      },
+      "expect": {
+        "hex": "daf91d3c61809fbedd01203f5e7d9cbb",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 1
+      },
+      "expect": {
+        "hex": "c3013f7dba02407ebcfb3977b5f23a78",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 1
+      },
+      "expect": {
+        "hex": "30c04fdf6e80901faf3ece5ded7c8e9e",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 7
+      },
+      "expect": {
+        "hex": "c04fdf6e80901faf3ece5ded7c8e9e00",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 7
+      },
+      "expect": {
+        "hex": "00c3013f7dba02407ebcfb3977b5f23a",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 8
+      },
+      "expect": {
+        "hex": "809fbedd01203f5e7d9cbbdaf91d3c00",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 8
+      },
+      "expect": {
+        "hex": "0061809fbedd01203f5e7d9cbbdaf91d",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 9
+      },
+      "expect": {
+        "hex": "013f7dba02407ebcfb3977b5f23a7800",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 9
+      },
+      "expect": {
+        "hex": "0030c04fdf6e80901faf3ece5ded7c8e",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 127
+      },
+      "expect": {
+        "hex": "00000000000000000000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 127
+      },
+      "expect": {
+        "hex": "00000000000000000000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 128
+      },
+      "expect": {
+        "hex": "00000000000000000000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 128
+      },
+      "expect": {
+        "hex": "00000000000000000000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 129
+      },
+      "expect": {
+        "hex": "00000000000000000000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 129
+      },
+      "expect": {
+        "hex": "00000000000000000000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 256
+      },
+      "expect": {
+        "hex": "00000000000000000000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": 256
+      },
+      "expect": {
+        "hex": "00000000000000000000000000000000",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": -1
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "k": -1
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 16
+      },
+      "expect": {
+        "hex": "6180",
+        "nbits": 16
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 32
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 32
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 64
+      },
+      "expect": {
+        "hex": "61809fbedd01203f",
+        "nbits": 64
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 64
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 64
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 128
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 128
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 128
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 256
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 256
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c00000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "m": 256
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c00000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 128,
+      "args": {
+        "a": "0000000000000000000000000000abcd",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "61809fbedd01203f5e7d9cbbdaf91d3c"
+      },
+      "expect": {
+        "bool": true
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "int": -1
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 128,
+      "args": {
+        "a": "c2e10524436281a0bfde0221405f7e9d",
+        "b": "61809fbedd01203f5e7d9cbbdaf91d3c"
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "61809fbedd01203f5e7d9cbbdaf91d3c"
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "i": 0
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "i": 1
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "i": 7
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "i": 8
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "i": 127
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "i": 128
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "fscx",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "hex": "341262e2ed95326fd2356ce2e2b99532",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d",
+        "i": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d",
+        "i": 1
+      },
+      "expect": {
+        "hex": "341262e2ed95326fd2356ce2e2b99532",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d",
+        "i": 4
+      },
+      "expect": {
+        "hex": "8649aee2a6d11d78730698e7d3541854",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d",
+        "i": 32
+      },
+      "expect": {
+        "hex": "ce08c467f88f8dc2a4a09237aa22e594",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "gf_mul",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "hex": "eb3b203970d5555c73ddfaaea357f6ea",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "e": 0
+      },
+      "expect": {
+        "hex": "00000000000000000000000000000001",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "e": 1
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "e": 2
+      },
+      "expect": {
+        "hex": "7df2d5702d5835c04f7355c41d53b04d",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "e": 3
+      },
+      "expect": {
+        "hex": "5f0e85ef76a014a8cf40e1b528b1e13f",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "e": 255
+      },
+      "expect": {
+        "hex": "b1a69fc5179ba37fa1cb4472d96065cc",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "rnl_kdf_seed",
+      "nbits": 128,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c"
+      },
+      "expect": {
+        "hex": "f5b73b669b58f0f8a0d5298bb87394ba",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "zero",
+      "nbits": 256,
+      "args": {},
+      "expect": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "from_hex",
+      "nbits": 256,
+      "args": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736"
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "to_uint",
+      "nbits": 256,
+      "args": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736"
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "popcount",
+      "nbits": 256,
+      "args": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736"
+      },
+      "expect": {
+        "int": 143
+      }
+    },
+    {
+      "op": "is_zero",
+      "nbits": 256,
+      "args": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "is_zero",
+      "nbits": 256,
+      "args": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "bool": true
+      }
+    },
+    {
+      "op": "xor",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "hex": "a3619a9a9e63a19fe1a39e9a9aa663a1e7a163a6eaaa61a3e1af61aeeeaa6fa1",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "and",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "hex": "40800524410000201e5c002140591c1c185a981815541a181850961110511016",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "or",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "hex": "e3e19fbedf63a1bfffff9ebbdaff7fbdfffbfbbefffe7bbbf9fff7bffefb7fb7",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "not",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736"
+      },
+      "expect": {
+        "hex": "9e7f604122fedfc0a18263442506e2c3a48566472809e5c6a788694a2b0ce8c9",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 1
+      },
+      "expect": {
+        "hex": "c3013f7dba02407ebcfb3977b5f23a78b6f53371afec3472b0ef2d6ba9e62e6c",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 7
+      },
+      "expect": {
+        "hex": "c04fdf6e80901faf3ece5ded7c8e9e2dbd4cdc6bfb0d1cac3bcb5aea798b9b30",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 8
+      },
+      "expect": {
+        "hex": "809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f3173661",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 9
+      },
+      "expect": {
+        "hex": "013f7dba02407ebcfb3977b5f23a78b6f53371afec3472b0ef2d6ba9e62e6cc3",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 32
+      },
+      "expect": {
+        "hex": "dd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f3173661809fbe",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 128
+      },
+      "expect": {
+        "hex": "5b7a99b8d7f61a39587796b5d4f3173661809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 255
+      },
+      "expect": {
+        "hex": "30c04fdf6e80901faf3ece5ded7c8e9e2dbd4cdc6bfb0d1cac3bcb5aea798b9b",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 256
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 257
+      },
+      "expect": {
+        "hex": "c3013f7dba02407ebcfb3977b5f23a78b6f53371afec3472b0ef2d6ba9e62e6c",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": -1
+      },
+      "expect": {
+        "hex": "30c04fdf6e80901faf3ece5ded7c8e9e2dbd4cdc6bfb0d1cac3bcb5aea798b9b",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_left",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": -64
+      },
+      "expect": {
+        "hex": "587796b5d4f3173661809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 1
+      },
+      "expect": {
+        "hex": "30c04fdf6e80901faf3ece5ded7c8e9e2dbd4cdc6bfb0d1cac3bcb5aea798b9b",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 7
+      },
+      "expect": {
+        "hex": "6cc3013f7dba02407ebcfb3977b5f23a78b6f53371afec3472b0ef2d6ba9e62e",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 8
+      },
+      "expect": {
+        "hex": "3661809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f317",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rot_right",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "s": 64
+      },
+      "expect": {
+        "hex": "587796b5d4f3173661809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 1
+      },
+      "expect": {
+        "hex": "c3013f7dba02407ebcfb3977b5f23a78b6f53371afec3472b0ef2d6ba9e62e6c",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 1
+      },
+      "expect": {
+        "hex": "30c04fdf6e80901faf3ece5ded7c8e9e2dbd4cdc6bfb0d1cac3bcb5aea798b9b",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 7
+      },
+      "expect": {
+        "hex": "c04fdf6e80901faf3ece5ded7c8e9e2dbd4cdc6bfb0d1cac3bcb5aea798b9b00",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 7
+      },
+      "expect": {
+        "hex": "00c3013f7dba02407ebcfb3977b5f23a78b6f53371afec3472b0ef2d6ba9e62e",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 8
+      },
+      "expect": {
+        "hex": "809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f3173600",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 8
+      },
+      "expect": {
+        "hex": "0061809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f317",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 9
+      },
+      "expect": {
+        "hex": "013f7dba02407ebcfb3977b5f23a78b6f53371afec3472b0ef2d6ba9e62e6c00",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 9
+      },
+      "expect": {
+        "hex": "0030c04fdf6e80901faf3ece5ded7c8e9e2dbd4cdc6bfb0d1cac3bcb5aea798b",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 255
+      },
+      "expect": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 255
+      },
+      "expect": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 256
+      },
+      "expect": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 256
+      },
+      "expect": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 257
+      },
+      "expect": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 257
+      },
+      "expect": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 512
+      },
+      "expect": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": 512
+      },
+      "expect": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "shl",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": -1
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "shr",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "k": -1
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 16
+      },
+      "expect": {
+        "hex": "6180",
+        "nbits": 16
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 32
+      },
+      "expect": {
+        "hex": "61809fbe",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 32
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 32
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 128
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c",
+        "nbits": 128
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 128
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 128
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 256
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 256
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 256
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "truncate",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 512
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "extend",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 512
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "m": 512
+      },
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "resize_exact",
+      "nbits": 256,
+      "args": {
+        "a": "000000000000000000000000000000000000000000000000000000000000abcd",
+        "m": 16
+      },
+      "expect": {
+        "error": "E_LOSSY"
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736"
+      },
+      "expect": {
+        "bool": true
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "int": -1
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 256,
+      "args": {
+        "a": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897",
+        "b": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736"
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736"
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "i": 0
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "i": 1
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "i": 7
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "i": 8
+      },
+      "expect": {
+        "int": 1
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "i": 255
+      },
+      "expect": {
+        "int": 0
+      }
+    },
+    {
+      "op": "bit",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "i": 256
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "fscx",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "hex": "341262e2ed95326fd2356ce2e2b99532db3315384aab9235d226122444ab8732",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897",
+        "i": 0
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897",
+        "i": 1
+      },
+      "expect": {
+        "hex": "341262e2ed95326fd2356ce2e2b99532db3315384aab9235d226122444ab8732",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897",
+        "i": 4
+      },
+      "expect": {
+        "hex": "c649aee2a6d11d78730698e7d3541853c988136d5aa43f43ca3a49c08ca1ed1e",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "fscx_revolve",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897",
+        "i": 64
+      },
+      "expect": {
+        "hex": "9d8ffd6e985b856e7c0c56c9377cb91ba775fb6892acbf687a065cc73976b311",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "gf_mul",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "hex": "a673be42dc2f51cbb32df677b38ad3b06ed412799ab2afc96c9c37346aaab439",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "e": 0
+      },
+      "expect": {
+        "hex": "0000000000000000000000000000000000000000000000000000000000000001",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "e": 1
+      },
+      "expect": {
+        "hex": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "e": 2
+      },
+      "expect": {
+        "hex": "d06954487afcee8a2b2051219551eba73f93ba2c6e18a8ae7c9af9656b34bc5e",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "e": 3
+      },
+      "expect": {
+        "hex": "35c9e7405a1cdaa68740c360fa98bcf13a75eca8d4d753698a1e034c23aebee3",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "e": 255
+      },
+      "expect": {
+        "hex": "94a02220c29e1533f151c49e1df7dfc749b24f233f54abe250b704e239c217f1",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "rnl_kdf_seed",
+      "nbits": 256,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736"
+      },
+      "expect": {
+        "hex": "b708c658e51a323ee697ee4efe356c8286f84846c372fe39cb70ce9d3a6052a7",
+        "nbits": 256
+      }
+    },
+    {
+      "op": "xor",
+      "nbits": 64,
+      "mixed_with": 256,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "and",
+      "nbits": 64,
+      "mixed_with": 256,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "or",
+      "nbits": 64,
+      "mixed_with": 256,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 64,
+      "mixed_with": 256,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "fscx",
+      "nbits": 64,
+      "mixed_with": 256,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "gf_mul",
+      "nbits": 64,
+      "mixed_with": 256,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 64,
+      "mixed_with": 256,
+      "args": {
+        "a": "61809fbedd01203f",
+        "b": "c2e10524436281a0bfde0221405f7e9dbcdbfa1e3d5c7b9ab9d8f71b3a597897"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "xor",
+      "nbits": 256,
+      "mixed_with": 64,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "and",
+      "nbits": 256,
+      "mixed_with": 64,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "or",
+      "nbits": 256,
+      "mixed_with": 64,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 256,
+      "mixed_with": 64,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "fscx",
+      "nbits": 256,
+      "mixed_with": 64,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "gf_mul",
+      "nbits": 256,
+      "mixed_with": 64,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 256,
+      "mixed_with": 64,
+      "args": {
+        "a": "61809fbedd01203f5e7d9cbbdaf91d3c5b7a99b8d7f61a39587796b5d4f31736",
+        "b": "c2e10524436281a0"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "xor",
+      "nbits": 32,
+      "mixed_with": 128,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "and",
+      "nbits": 32,
+      "mixed_with": 128,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "or",
+      "nbits": 32,
+      "mixed_with": 128,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "compare",
+      "nbits": 32,
+      "mixed_with": 128,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "fscx",
+      "nbits": 32,
+      "mixed_with": 128,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "gf_mul",
+      "nbits": 32,
+      "mixed_with": 128,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "error": "E_MIXED_WIDTH"
+      }
+    },
+    {
+      "op": "equal",
+      "nbits": 32,
+      "mixed_with": 128,
+      "args": {
+        "a": "61809fbe",
+        "b": "c2e10524436281a0bfde0221405f7e9d"
+      },
+      "expect": {
+        "bool": false
+      }
+    },
+    {
+      "op": "zero",
+      "nbits": 0,
+      "args": {},
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "zero",
+      "nbits": 7,
+      "args": {},
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "zero",
+      "nbits": 8,
+      "args": {},
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "zero",
+      "nbits": 12,
+      "args": {},
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "zero",
+      "nbits": 255,
+      "args": {},
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "zero",
+      "nbits": 264,
+      "args": {},
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "zero",
+      "nbits": -8,
+      "args": {},
+      "expect": {
+        "error": "E_WIDTH"
+      }
+    },
+    {
+      "op": "from_uint",
+      "nbits": 32,
+      "args": {
+        "uint": 4294967296
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "from_uint",
+      "nbits": 32,
+      "args": {
+        "uint": 4294967295
+      },
+      "expect": {
+        "hex": "ffffffff",
+        "nbits": 32
+      }
+    },
+    {
+      "op": "from_uint",
+      "nbits": 32,
+      "args": {
+        "uint": -1
+      },
+      "expect": {
+        "error": "E_RANGE"
+      }
+    },
+    {
+      "op": "from_hex",
+      "nbits": 32,
+      "args": {
+        "hex": "0011223"
+      },
+      "expect": {
+        "error": "E_LENGTH"
+      }
+    },
+    {
+      "op": "from_hex",
+      "nbits": 32,
+      "args": {
+        "hex": "001122zz"
+      },
+      "expect": {
+        "error": "E_HEXDIGIT"
+      }
+    },
+    {
+      "op": "from_bytes",
+      "nbits": 32,
+      "args": {
+        "hex": "001122"
+      },
+      "expect": {
+        "error": "E_LENGTH"
+      }
+    },
+    {
+      "op": "gf_mul",
+      "nbits": 24,
+      "args": {
+        "a": "61809f",
+        "b": "61809f"
+      },
+      "expect": {
+        "error": "E_NO_POLY"
+      }
+    },
+    {
+      "op": "gf_pow",
+      "nbits": 24,
+      "args": {
+        "a": "61809f",
+        "e": 3
+      },
+      "expect": {
+        "error": "E_NO_POLY"
+      }
+    }
+  ]
+}

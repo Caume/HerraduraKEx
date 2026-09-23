@@ -15,6 +15,12 @@
 - docs/TUTORIAL.md — API usage guide per protocol and language, with worked examples
 - docs/INTRODUCTION.md — lay-audience primer
 - SecurityProofs.md (+ -1 through -7.md) — formal security analysis
+- BITARRAY.md — the NORMATIVE BitArray specification (TODO #314).  One variable-width
+  bit-string type, big-endian octets with the width carried WITH the value, replacing the
+  embedded bignum types.  ALL FOUR PORTS CONFORM — C since v9.1.0, Go v9.2.0, Python
+  v9.3.0, Java v9.4.0.  Read
+  §3 before touching width-taking code: a binary operation REQUIRES equal widths and a
+  mismatch is E_MIXED_WIDTH, never a coercion
 - docs/examples/{python,c,go}/hello_herradura.* — minimal integration samples
 
 ## Protocol identifiers (used as --algo values across all 3 CLIs; also the naming
@@ -148,10 +154,15 @@ which is Python-only (see note below — no C or Go CLI support, TODO #143).
                   hpke,hpke-nl,hpke-nl3,hpke-stern,hpke-stern-kem}
            --key|--pubkey FILE --in FILE --out FILE [--aead] [--ad STR]
     --aead/--ad apply to hske-nla1 (and both duplex variants are inherently AEAD).
-    hske-nla1 is 256-BIT ONLY since v9.0.0 (TODO #313), at enc, dec, encfile and
-    decfile, and the width is checked on the KEY and on the ciphertext's own
-    declared nbits: below 256 the four ports produced four different keystreams
-    and, A1 having no authentication tag, dec wrote garbage and exited 0.
+    hske-nla1 was 256-BIT ONLY from v9.0.0 (TODO #313) to v9.4.0: below 256 the
+    four ports produced four different keystreams and, A1 having no
+    authentication tag, dec wrote garbage and exited 0.  Since v9.5.0 (TODO #314
+    pass 6) the four agree octet for octet and enc/dec accept EVERY legal
+    BitArray width -- a multiple of 8 from 16 to 256 (BITARRAY.md 2).  Two
+    refusals remain at dec, both about the format: a declared width no BitArray
+    can have, and a ciphertext whose declared nbits disagrees with the key's
+    (BITARRAY.md 3 -- a mixed width is never coerced).  encfile/decfile stay
+    256-bit: the .hkx container has no width field.  See MIGRATING.md 23.
     hske-duplex3 ciphertexts carry format tag 4, hske-duplex's tag 3, so each
     refuses the other's artifact at the parser.  Java ships hske-nla3 and
     hpke-nl3 but no duplex in either version.

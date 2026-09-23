@@ -139,72 +139,103 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 class BitArray:
-    """Fixed-width bit string backed by a Python int."""
+    """Variable-width bit string: nbits/8 big-endian octets (TODO #314 pass 4).
 
-    __slots__ = ('_val', '_size', '_mask')
+    SELF-CONTAINED ON PURPOSE, like the rest of this harness: [46], [47], [49]
+    and [51] each cross-check a local copy against the shipped suite, and a
+    harness that imported the thing it is testing could not.  This is the same
+    contract (BITARRAY.md §1-§5) written independently, which is why the width
+    check, the mixed-width rule and the octet storage are all here rather than
+    borrowed.
+    """
+
+    __slots__ = ('_nbits', '_b')
 
     def __init__(self, size: int, value: int = 0):
-        self._size = size
-        self._mask = (1 << size) - 1
-        self._val = int(value) & self._mask
+        if size <= 0 or size % 8 or size < 16 or size > 256:
+            raise ValueError(f'E_WIDTH: {size}')
+        self._nbits = size
+        self._b = (int(value) & ((1 << size) - 1)).to_bytes(size // 8, 'big')
+
+    @property
+    def size(self) -> int:
+        return self._nbits
+
+    @property
+    def _mask(self) -> int:
+        return (1 << self._nbits) - 1
 
     @property
     def uint(self) -> int:
-        return self._val
+        return int.from_bytes(self._b, 'big')
 
     @uint.setter
     def uint(self, value: int):
-        self._val = int(value) & self._mask
+        self._b = (int(value) & self._mask).to_bytes(self._nbits // 8, 'big')
 
     @property
     def bytes(self) -> bytes:
-        return self._val.to_bytes(self._size // 8, 'big')
+        return self._b
 
     @bytes.setter
     def bytes(self, data: bytes):
-        self._val = int.from_bytes(data, 'big') & self._mask
+        if len(data) != self._nbits // 8:
+            raise ValueError('E_LENGTH')
+        self._b = bytes(data)
 
     @property
     def hex(self) -> str:
-        return f'{self._val:0{self._size // 4}x}'
+        return self._b.hex()
 
     def copy(self) -> 'BitArray':
-        return BitArray(self._size, self._val)
+        return BitArray(self._nbits, self.uint)
 
     def rotated(self, n: int) -> 'BitArray':
-        n %= self._size
+        n %= self._nbits
         if n == 0:
-            return BitArray(self._size, self._val)
-        return BitArray(self._size,
-                        ((self._val << n) | (self._val >> (self._size - n))) & self._mask)
+            return self.copy()
+        v = self.uint
+        return BitArray(self._nbits, (v << n) | (v >> (self._nbits - n)))
 
     def rol(self, n: int) -> None:
-        n %= self._size
-        if n:
-            self._val = ((self._val << n) | (self._val >> (self._size - n))) & self._mask
+        self._b = self.rotated(n)._b
 
     def ror(self, n: int) -> None:
-        n %= self._size
-        if n:
-            self._val = ((self._val >> n) | (self._val << (self._size - n))) & self._mask
+        self._b = self.rotated(-n)._b
+
+    def truncate(self, m: int) -> 'BitArray':
+        """The HIGH m bits — the big-endian prefix (BITARRAY.md §4.4)."""
+        if m <= 0 or m % 8 or m < 16 or m > self._nbits:
+            raise ValueError(f'E_WIDTH: {m}')
+        return BitArray(m, int.from_bytes(self._b[:m // 8], 'big'))
+
+    def _same_width(self, other: 'BitArray') -> None:
+        """BITARRAY.md §3: equal widths REQUIRED, never coerced."""
+        if not isinstance(other, BitArray) or self._nbits != other._nbits:
+            raise ValueError('E_MIXED_WIDTH')
 
     def __xor__(self, other: 'BitArray') -> 'BitArray':
-        return BitArray(self._size, self._val ^ other._val)
+        self._same_width(other)
+        return BitArray(self._nbits, self.uint ^ other.uint)
 
     def __ixor__(self, other: 'BitArray') -> 'BitArray':
-        self._val ^= other._val
+        self._same_width(other)
+        self._b = bytes(x ^ y for x, y in zip(self._b, other._b))
         return self
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, BitArray):
-            return self._size == other._size and self._val == other._val
+            return self._nbits == other._nbits and self._b == other._b
         return NotImplemented
+
+    def __hash__(self):
+        return hash((self._nbits, self._b))
 
     def __str__(self) -> str:
         return f'0x{self.hex}'
 
     def __repr__(self) -> str:
-        return f'BitArray({self._size}, 0x{self.hex})'
+        return f'BitArray({self._nbits}, 0x{self.hex})'
 
     @classmethod
     def random(cls, size: int) -> 'BitArray':
@@ -213,10 +244,10 @@ class BitArray:
         return ba
 
     def flip_bit(self, pos: int) -> 'BitArray':
-        return BitArray(self._size, self._val ^ (1 << pos))
+        return BitArray(self._nbits, self.uint ^ (1 << pos))
 
     def popcount(self) -> int:
-        return bin(self._val).count('1')
+        return bin(self.uint).count('1')
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +299,7 @@ _m_inv_rotations: dict[int, tuple[int, ...]] = {}
 
 def _m_inv(X: BitArray) -> BitArray:
     """M^{-1}(X) via precomputed rotation table, cached per bit-size."""
-    n = X._size
+    n = X.size
     if n not in _m_inv_rotations:
         unit = BitArray(n, 1)
         zero = BitArray(n, 0)
@@ -283,7 +314,7 @@ def _m_inv(X: BitArray) -> BitArray:
 def nl_fscx_v1(A: BitArray, B: BitArray) -> BitArray:
     """NL-FSCX v1: fscx(A,B) XOR ROL((A+B) mod 2^n, n/4).
     Non-linear over GF(2) via integer carry.  NOT bijective in A."""
-    n   = A._size
+    n   = A.size
     mix = BitArray(n, (A.uint + B.uint) & A._mask)
     return fscx(A, B) ^ mix.rotated(n // 4)
 
@@ -298,7 +329,7 @@ def nl_fscx_revolve_v1(A: BitArray, B: BitArray, steps: int) -> BitArray:
 def nl_fscx_v2(A: BitArray, B: BitArray) -> BitArray:
     """NL-FSCX v2: (fscx(A,B) + delta(B)) mod 2^n.
     delta(B) = ROL(B*(B+1)//2 mod 2^n, n/4).  Bijective in A; exact inverse."""
-    n     = A._size
+    n     = A.size
     mask  = A._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     return BitArray(n, (fscx(A, B).uint + delta.uint) & mask)
@@ -306,7 +337,7 @@ def nl_fscx_v2(A: BitArray, B: BitArray) -> BitArray:
 
 def nl_fscx_v2_inv(Y: BitArray, B: BitArray) -> BitArray:
     """Exact inverse of one nl_fscx_v2 step: A = B XOR M^{-1}((Y-delta(B)) mod 2^n)."""
-    n     = Y._size
+    n     = Y.size
     mask  = Y._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     Z     = BitArray(n, (Y.uint - delta.uint) & mask)
@@ -318,7 +349,7 @@ def nl_fscx_v2_inv(Y: BitArray, B: BitArray) -> BitArray:
 # This harness is standalone by design; test [46] cross-checks its copy against
 # the shipped suite, which is what catches drift here.
 def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
-    n = A._size
+    n = A.size
     result = A.copy()
     for i in range(1, steps + 1):
         result = nl_fscx_v2(BitArray(n, result.uint ^ i), B)
@@ -326,7 +357,7 @@ def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
 
 
 def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
-    n     = Y._size
+    n     = Y.size
     mask  = Y._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     result = Y.copy()
@@ -376,7 +407,7 @@ _CHI_INV_T = {5: _chi_inv_table(5), 7: _chi_inv_table(7)}
 
 
 def nl_chi_v3(X: BitArray) -> BitArray:
-    n, x, out, off = X._size, X.uint, 0, 0
+    n, x, out, off = X.size, X.uint, 0, 0
     for L in _v3_rows(n):
         out |= _chi_row((x >> off) & ((1 << L) - 1), L) << off
         off += L
@@ -384,7 +415,7 @@ def nl_chi_v3(X: BitArray) -> BitArray:
 
 
 def nl_chi_v3_inv(Y: BitArray) -> BitArray:
-    n, y, out, off = Y._size, Y.uint, 0, 0
+    n, y, out, off = Y.size, Y.uint, 0, 0
     for L in _v3_rows(n):
         out |= _CHI_INV_T[L][(y >> off) & ((1 << L) - 1)] << off
         off += L
@@ -392,7 +423,7 @@ def nl_chi_v3_inv(Y: BitArray) -> BitArray:
 
 
 def nl_fscx_revolve_v3(A: BitArray, B: BitArray, steps: int) -> BitArray:
-    n = A._size
+    n = A.size
     result = A.copy()
     for i in range(1, steps + 1):
         result = nl_chi_v3(nl_fscx_v2(BitArray(n, result.uint ^ i), B))
@@ -400,7 +431,7 @@ def nl_fscx_revolve_v3(A: BitArray, B: BitArray, steps: int) -> BitArray:
 
 
 def nl_fscx_revolve_v3_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
-    n = Y._size
+    n = Y.size
     result = Y.copy()
     for i in range(steps, 0, -1):
         result = BitArray(n, nl_fscx_v2_inv(nl_chi_v3_inv(result), B).uint ^ i)
@@ -614,7 +645,7 @@ def _stern_syndrome(seed_int: int, e_int: int, n: int, n_rows: int) -> int:
     return s
 
 def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
-    n    = pi_seed._size
+    n    = pi_seed.size
     key  = pi_seed.rotated(n // 8)
     perm = list(range(N))
     st   = pi_seed.copy()
@@ -792,7 +823,7 @@ def _ring_stern_simulate_round(b, seed_int, syndrome, n):
 
 def _ring_stern_challenges(rounds, k, msg, all_commits):
     """Fiat-Shamir: derive joint challenges from msg + all k*rounds commits."""
-    n = msg._size
+    n = msg.size
     flat = [msg]
     for i in range(k):
         for r in range(rounds):
@@ -1357,7 +1388,7 @@ def _trange(n: int):
 # ---------------------------------------------------------------------------
 
 def s_op(delta: BitArray, r: int) -> BitArray:
-    size = delta._size
+    size = delta.size
     zero = BitArray(size, 0)
     acc  = BitArray(size, 0)
     cur  = delta.copy()
@@ -2324,7 +2355,7 @@ _WOTS_L2    = 3
 _WOTS_L     = _WOTS_L1 + _WOTS_L2      # 67
 
 def _wots_h_t(x: BitArray) -> BitArray:
-    n = x._size
+    n = x.size
     return nl_fscx_revolve_v1(x.rotated(n // 8), x, n // 4)
 
 def _wots_chain_t(x: BitArray, steps: int) -> BitArray:
@@ -2434,7 +2465,7 @@ def _hpkst_sign_t(secrets: list[int], pubkeys: list[int], msg: bytes) -> tuple[i
         R = gf_mul(R, gf_pow(GF_GEN, k, _poly, _KEYBITS), _poly, _KEYBITS)
     msg_ba = BitArray(_KEYBITS, int.from_bytes(msg[:_KEYBITS//8].ljust(_KEYBITS//8, b'\x00'), 'big'))
     e = nl_fscx_revolve_v1(BitArray(_KEYBITS, R), msg_ba, _KEYBITS // 4)
-    e_val = e._val
+    e_val = e.uint
     s = 0
     for a_j, k_j, mu_j in zip(secrets, nonces, coeffs):
         s_j = (k_j - a_j * mu_j * e_val) % _ord
@@ -2445,7 +2476,7 @@ def _hpkst_verify_t(cagg: int, R: int, s: int, msg: bytes) -> bool:
     _poly = GF_POLY[_KEYBITS]
     msg_ba = BitArray(_KEYBITS, int.from_bytes(msg[:_KEYBITS//8].ljust(_KEYBITS//8, b'\x00'), 'big'))
     e = nl_fscx_revolve_v1(BitArray(_KEYBITS, R), msg_ba, _KEYBITS // 4)
-    e_val = e._val
+    e_val = e.uint
     lhs = gf_mul(gf_pow(GF_GEN, s, _poly, _KEYBITS),
                  gf_pow(cagg, e_val, _poly, _KEYBITS), _poly, _KEYBITS)
     return lhs == R

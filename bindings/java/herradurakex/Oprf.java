@@ -57,23 +57,23 @@ public final class Oprf {
             r = new BigInteger(Herradura.N, rng).and(ORD);
             if (r.compareTo(BigInteger.ONE) > 0 && r.gcd(ORD).equals(BigInteger.ONE)) break;
         }
-        BigInteger alpha = Herradura.gfPow(hashToField(x), r);
+        BigInteger alpha = Herradura.gfPow(BitArray.fromBigInteger(hashToField(x), Herradura.N), BitArray.fromBigInteger(r, Herradura.N)).toBigInteger();
         return new Blinded(r, alpha);
     }
 
     /** Server: evaluate alpha^k in GF(2^256)*. */
     public static BigInteger eval(BigInteger alpha, BigInteger k) {
-        return Herradura.gfPow(alpha.and(ORD), k.and(ORD));
+        return Herradura.gfPow(BitArray.fromBigInteger(alpha.and(ORD), Herradura.N), BitArray.fromBigInteger(k.and(ORD), Herradura.N)).toBigInteger();
     }
 
     /** Client: recover F(k, x) = H(x)^k from beta = H(x)^(kr). */
     public static BigInteger unblind(BigInteger beta, BigInteger r) {
         BigInteger rInv = r.modInverse(ORD);
-        return Herradura.gfPow(beta.and(ORD), rInv);
+        return Herradura.gfPow(BitArray.fromBigInteger(beta.and(ORD), Herradura.N), BitArray.fromBigInteger(rInv, Herradura.N)).toBigInteger();
     }
 
     /** Direct (non-oblivious) evaluation F(k, x) = H(x)^k — server-side use only. */
     public static BigInteger direct(byte[] x, BigInteger k) {
-        return Herradura.gfPow(hashToField(x), k.and(ORD));
+        return Herradura.gfPow(BitArray.fromBigInteger(hashToField(x), Herradura.N), BitArray.fromBigInteger(k.and(ORD), Herradura.N)).toBigInteger();
     }
 }

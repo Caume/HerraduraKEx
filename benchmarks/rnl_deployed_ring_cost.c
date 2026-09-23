@@ -139,7 +139,7 @@ int main(void)
     rnl_poly_t m_base, a_rand, m_blind, scratch;
     static int32_t s_A[RNL_N], c_A[RNL_N], s_B[RNL_N], c_B[RNL_N];
     uint8_t hint[RNL_N / 8];
-    BitArray K_A, K_B;
+    BitArray K_A = BA_INIT, K_B = BA_INIT;
     struct timespec t0, t1;
     long long ops;
     double secs;

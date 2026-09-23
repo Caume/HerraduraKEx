@@ -60,10 +60,10 @@ public final class SelfTest {
         {
             BigInteger alicePriv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
             BigInteger bobPriv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger alicePub = Herradura.hkexGfPubkey(alicePriv);
-            BigInteger bobPub = Herradura.hkexGfPubkey(bobPriv);
-            BigInteger skAlice = Herradura.hkexGfAgree(alicePriv, bobPub);
-            BigInteger skBob = Herradura.hkexGfAgree(bobPriv, alicePub);
+            BigInteger alicePub = Herradura.hkexGfPubkey(BitArray.fromBigInteger(alicePriv, Herradura.N)).toBigInteger();
+            BigInteger bobPub = Herradura.hkexGfPubkey(BitArray.fromBigInteger(bobPriv, Herradura.N)).toBigInteger();
+            BigInteger skAlice = Herradura.hkexGfAgree(BitArray.fromBigInteger(alicePriv, Herradura.N), BitArray.fromBigInteger(bobPub, Herradura.N)).toBigInteger();
+            BigInteger skBob = Herradura.hkexGfAgree(BitArray.fromBigInteger(bobPriv, Herradura.N), BitArray.fromBigInteger(alicePub, Herradura.N)).toBigInteger();
             if (!skAlice.equals(skBob)) {
                 System.out.println("FAIL [1] hkex_gf round-trip: shared secrets differ");
                 fails++;
@@ -76,8 +76,8 @@ public final class SelfTest {
         {
             BigInteger key = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
             BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger ct = Herradura.hskeEncrypt(pt, key);
-            BigInteger recovered = Herradura.hskeDecrypt(ct, key);
+            BigInteger ct = Herradura.hskeEncrypt(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(key, Herradura.N)).toBigInteger();
+            BigInteger recovered = Herradura.hskeDecrypt(BitArray.fromBigInteger(ct, Herradura.N), BitArray.fromBigInteger(key, Herradura.N)).toBigInteger();
             if (!recovered.equals(pt)) {
                 System.out.println("FAIL [2] hske round-trip");
                 fails++;
@@ -89,11 +89,11 @@ public final class SelfTest {
         // HPKS: sign/verify, plus a tampered-message rejection check.
         {
             BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger pub = Herradura.hkexGfPubkey(priv);
+            BigInteger pub = Herradura.hkexGfPubkey(BitArray.fromBigInteger(priv, Herradura.N)).toBigInteger();
             BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            Herradura.Signature sig = Herradura.hpksSign(msg, priv, rng);
-            boolean ok = Herradura.hpksVerify(msg, pub, sig.r, sig.s);
-            boolean rejectsTamper = !Herradura.hpksVerify(msg.xor(BigInteger.ONE), pub, sig.r, sig.s);
+            Herradura.Signature sig = Herradura.hpksSign(BitArray.fromBigInteger(msg, Herradura.N), BitArray.fromBigInteger(priv, Herradura.N), rng);
+            boolean ok = Herradura.hpksVerify(BitArray.fromBigInteger(msg, Herradura.N), BitArray.fromBigInteger(pub, Herradura.N), sig.r, sig.s);
+            boolean rejectsTamper = !Herradura.hpksVerify(BitArray.fromBigInteger(msg.xor(BigInteger.ONE), Herradura.N), BitArray.fromBigInteger(pub, Herradura.N), sig.r, sig.s);
             if (!ok || !rejectsTamper) {
                 System.out.println("FAIL [3] hpks round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
                 fails++;
@@ -105,10 +105,10 @@ public final class SelfTest {
         // HPKE: decrypt(encrypt(pt)) == pt.
         {
             BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger pub = Herradura.hkexGfPubkey(priv);
+            BigInteger pub = Herradura.hkexGfPubkey(BitArray.fromBigInteger(priv, Herradura.N)).toBigInteger();
             BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            Herradura.Ciphertext enc = Herradura.hpkeEncrypt(pt, pub, rng);
-            BigInteger recovered = Herradura.hpkeDecrypt(enc.ct, enc.r, priv);
+            Herradura.Ciphertext enc = Herradura.hpkeEncrypt(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(pub, Herradura.N), rng);
+            BigInteger recovered = Herradura.hpkeDecrypt(enc.ct, enc.r, BitArray.fromBigInteger(priv, Herradura.N)).toBigInteger();
             if (!recovered.equals(pt)) {
                 System.out.println("FAIL [4] hpke round-trip");
                 fails++;
@@ -148,8 +148,8 @@ public final class SelfTest {
             BigInteger key = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
             BigInteger nonce = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
             BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger ct = HerraduraNl.hskeNlA1Encrypt(pt, key, nonce);
-            BigInteger recovered = HerraduraNl.hskeNlA1Decrypt(ct, key, nonce);
+            BigInteger ct = HerraduraNl.hskeNlA1Encrypt(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(key, Herradura.N), BitArray.fromBigInteger(nonce, Herradura.N)).toBigInteger();
+            BigInteger recovered = HerraduraNl.hskeNlA1Decrypt(BitArray.fromBigInteger(ct, Herradura.N), BitArray.fromBigInteger(key, Herradura.N), BitArray.fromBigInteger(nonce, Herradura.N)).toBigInteger();
             if (!recovered.equals(pt)) {
                 System.out.println("FAIL [6] hske_nl_a1 round-trip");
                 fails++;
@@ -163,10 +163,10 @@ public final class SelfTest {
             BigInteger key;
             do {
                 key = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            } while (!HerraduraNl.nlV2KeyIsValid(key));
+            } while (!HerraduraNl.nlV2KeyIsValid(BitArray.fromBigInteger(key, Herradura.N)));
             BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger ct = HerraduraNl.hskeNlA2Encrypt(pt, key);
-            BigInteger recovered = HerraduraNl.hskeNlA2Decrypt(ct, key);
+            BigInteger ct = HerraduraNl.hskeNlA2Encrypt(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(key, Herradura.N)).toBigInteger();
+            BigInteger recovered = HerraduraNl.hskeNlA2Decrypt(BitArray.fromBigInteger(ct, Herradura.N), BitArray.fromBigInteger(key, Herradura.N)).toBigInteger();
             if (!recovered.equals(pt)) {
                 System.out.println("FAIL [7] hske_nl_a2 round-trip");
                 fails++;
@@ -183,10 +183,13 @@ public final class SelfTest {
         {
             BigInteger key = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
             BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger ct = HerraduraNl.hskeNlA3Encrypt(pt, key);
-            boolean rt = HerraduraNl.hskeNlA3Decrypt(ct, key).equals(pt);
-            boolean differsFromV2 =
-                    !ct.equals(HerraduraNl.nlFscxRevolveV2(pt, key, HerraduraNl.R3_VALUE));
+            BigInteger ct = HerraduraNl.hskeNlA3Encrypt(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(key, Herradura.N)).toBigInteger();
+            boolean rt = HerraduraNl.hskeNlA3Decrypt(BitArray.fromBigInteger(ct, Herradura.N),
+                    BitArray.fromBigInteger(key, Herradura.N)).equals(BitArray.fromBigInteger(pt, Herradura.N));
+            boolean differsFromV2 = !BitArray.fromBigInteger(ct, Herradura.N).equals(
+                    HerraduraNl.nlFscxRevolveV2(BitArray.fromBigInteger(pt, Herradura.N),
+                                                BitArray.fromBigInteger(key, Herradura.N),
+                                                HerraduraNl.R3_VALUE));
             if (!rt || !differsFromV2) {
                 System.out.println("FAIL [8] hske_nl_a3 round-trip (rt=" + rt
                         + " differs_from_v2=" + differsFromV2 + ")");
@@ -196,10 +199,10 @@ public final class SelfTest {
             }
 
             BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger pub = Herradura.hkexGfPubkey(priv);
-            Herradura.Ciphertext enc3 = HerraduraNl.hpkeNl3Encrypt(pt, pub, rng);
+            BigInteger pub = Herradura.hkexGfPubkey(BitArray.fromBigInteger(priv, Herradura.N)).toBigInteger();
+            Herradura.Ciphertext enc3 = HerraduraNl.hpkeNl3Encrypt(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(pub, Herradura.N), rng);
             BigInteger rec3 = enc3 == null ? null
-                    : HerraduraNl.hpkeNl3Decrypt(enc3.ct, enc3.r, priv);
+                    : HerraduraNl.hpkeNl3Decrypt(enc3.ct, enc3.r, BitArray.fromBigInteger(priv, Herradura.N)).toBigInteger();
             if (enc3 == null || !pt.equals(rec3)) {
                 System.out.println("FAIL [9] hpke_nl3 round-trip");
                 fails++;
@@ -211,11 +214,11 @@ public final class SelfTest {
         // HPKS-NL: sign/verify, plus a tampered-message rejection check.
         {
             BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger pub = Herradura.hkexGfPubkey(priv);
+            BigInteger pub = Herradura.hkexGfPubkey(BitArray.fromBigInteger(priv, Herradura.N)).toBigInteger();
             BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            Herradura.Signature sig = HerraduraNl.hpksNlSign(msg, priv, rng);
-            boolean ok = HerraduraNl.hpksNlVerify(msg, pub, sig.r, sig.s);
-            boolean rejectsTamper = !HerraduraNl.hpksNlVerify(msg.xor(BigInteger.ONE), pub, sig.r, sig.s);
+            Herradura.Signature sig = HerraduraNl.hpksNlSign(BitArray.fromBigInteger(msg, Herradura.N), BitArray.fromBigInteger(priv, Herradura.N), rng);
+            boolean ok = HerraduraNl.hpksNlVerify(BitArray.fromBigInteger(msg, Herradura.N), BitArray.fromBigInteger(pub, Herradura.N), sig.r, sig.s);
+            boolean rejectsTamper = !HerraduraNl.hpksNlVerify(BitArray.fromBigInteger(msg.xor(BigInteger.ONE), Herradura.N), BitArray.fromBigInteger(pub, Herradura.N), sig.r, sig.s);
             if (!ok || !rejectsTamper) {
                 System.out.println("FAIL [10] hpks_nl round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
                 fails++;
@@ -227,10 +230,10 @@ public final class SelfTest {
         // HPKE-NL: decrypt(encrypt(pt)) == pt.
         {
             BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            BigInteger pub = Herradura.hkexGfPubkey(priv);
+            BigInteger pub = Herradura.hkexGfPubkey(BitArray.fromBigInteger(priv, Herradura.N)).toBigInteger();
             BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            Herradura.Ciphertext enc = HerraduraNl.hpkeNlEncrypt(pt, pub, rng);
-            BigInteger recovered = HerraduraNl.hpkeNlDecrypt(enc.ct, enc.r, priv);
+            Herradura.Ciphertext enc = HerraduraNl.hpkeNlEncrypt(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(pub, Herradura.N), rng);
+            BigInteger recovered = HerraduraNl.hpkeNlDecrypt(enc.ct, enc.r, BitArray.fromBigInteger(priv, Herradura.N)).toBigInteger();
             if (enc == null || !pt.equals(recovered)) {
                 System.out.println("FAIL [11] hpke_nl round-trip");
                 fails++;
@@ -451,21 +454,21 @@ public final class SelfTest {
         // Ratchet (78.C): forward secrecy & message-key uniqueness across
         // steps, and state divergence between two independently-seeded chains.
         {
-            BigInteger state = Ratchet.init("self-test-ratchet-seed".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            BitArray state = Ratchet.init("self-test-ratchet-seed".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             java.util.Set<String> msgKeys = new java.util.HashSet<>();
             for (int i = 0; i < 5; i++) {
                 Object[] r = Ratchet.advance(state);
-                state = (BigInteger) r[0];
+                state = (BitArray) r[0];
                 byte[] mk = (byte[]) r[1];
                 msgKeys.add(new BigInteger(1, mk).toString(16));
             }
             boolean allDistinct = msgKeys.size() == 5;
 
-            BigInteger s1 = Ratchet.init("seed-alice".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-            BigInteger s2 = Ratchet.init("seed-bob".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            BitArray s1 = Ratchet.init("seed-alice".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            BitArray s2 = Ratchet.init("seed-bob".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             for (int i = 0; i < 3; i++) {
-                s1 = (BigInteger) Ratchet.advance(s1)[0];
-                s2 = (BigInteger) Ratchet.advance(s2)[0];
+                s1 = (BitArray) Ratchet.advance(s1)[0];
+                s2 = (BitArray) Ratchet.advance(s2)[0];
             }
             boolean chainsDiverge = !s1.equals(s2);
 
@@ -553,7 +556,7 @@ public final class SelfTest {
             for (int i = 0; i < n; i++) {
                 BigInteger sk = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
                 secrets.add(sk);
-                pubkeys.add(Herradura.gfPow(Herradura.GF_GEN, sk));
+                pubkeys.add(Herradura.gfPow(Herradura.GF_GEN, BitArray.fromBigInteger(sk, Herradura.N)).toBigInteger());
             }
             BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
             HpksT.Signature sig = HpksT.sign(secrets, pubkeys, msg, rng);
@@ -576,22 +579,23 @@ public final class SelfTest {
             byte[] ctx = "self-test12b".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
 
-            BigInteger fpeCt = FpeTwk.fpeEncrypt(pt, key, ctx);
-            boolean fpeRt = FpeTwk.fpeDecrypt(fpeCt, key, ctx).equals(pt);
+            BitArray fpeCt = FpeTwk.fpeEncrypt(BitArray.fromBigInteger(pt, Herradura.N), key, ctx);
+            boolean fpeRt = FpeTwk.fpeDecrypt(fpeCt, key, ctx).equals(BitArray.fromBigInteger(pt, Herradura.N));
 
             long sector = 0x0102030405060708L;
             int bidx = 0x090A0B0C;
-            BigInteger twkCt = FpeTwk.twkEncrypt(pt, key, sector, bidx);
-            boolean twkRt = FpeTwk.twkDecrypt(twkCt, key, sector, bidx).equals(pt);
+            BitArray twkCt = FpeTwk.twkEncrypt(BitArray.fromBigInteger(pt, Herradura.N), key, sector, bidx);
+            boolean twkRt = FpeTwk.twkDecrypt(twkCt, key, sector, bidx).equals(BitArray.fromBigInteger(pt, Herradura.N));
 
-            BigInteger fpeCtV3 = FpeTwk.fpeV3Encrypt(pt, key, ctx);
-            boolean fpeV3Rt = FpeTwk.fpeV3Decrypt(fpeCtV3, key, ctx).equals(pt);
-            BigInteger twkCtV3 = FpeTwk.twkV3Encrypt(pt, key, sector, bidx);
-            boolean twkV3Rt = FpeTwk.twkV3Decrypt(twkCtV3, key, sector, bidx).equals(pt);
+            BitArray fpeCtV3 = FpeTwk.fpeV3Encrypt(BitArray.fromBigInteger(pt, Herradura.N), key, ctx);
+            boolean fpeV3Rt = FpeTwk.fpeV3Decrypt(fpeCtV3, key, ctx).equals(BitArray.fromBigInteger(pt, Herradura.N));
+            BitArray twkCtV3 = FpeTwk.twkV3Encrypt(BitArray.fromBigInteger(pt, Herradura.N), key, sector, bidx);
+            boolean twkV3Rt = FpeTwk.twkV3Decrypt(twkCtV3, key, sector, bidx).equals(BitArray.fromBigInteger(pt, Herradura.N));
 
             java.nio.ByteBuffer tweakBuf = java.nio.ByteBuffer.allocate(12);
             tweakBuf.putLong(sector).putInt(bidx);
-            BigInteger fpeCtWithTwkTweakAsCtx = FpeTwk.fpeEncrypt(pt, key, tweakBuf.array());
+            BitArray fpeCtWithTwkTweakAsCtx = FpeTwk.fpeEncrypt(
+                    BitArray.fromBigInteger(pt, Herradura.N), key, tweakBuf.array());
             boolean domainSeparated = !fpeCtWithTwkTweakAsCtx.equals(twkCt);
             boolean v2v3Separated = !fpeCt.equals(fpeCtV3) && !twkCt.equals(twkCtV3);
 
@@ -603,8 +607,8 @@ public final class SelfTest {
             byte[] ctxC = java.util.Arrays.copyOfRange(key, 2, 3);
             byte[] keyA = java.util.Arrays.copyOfRange(key, 0, 1);
             byte[] ctxBC = java.util.Arrays.copyOfRange(key, 1, 3);
-            BigInteger split1 = FpeTwk.fpeEncrypt(pt, keyAB, ctxC);
-            BigInteger split2 = FpeTwk.fpeEncrypt(pt, keyA, ctxBC);
+            BitArray split1 = FpeTwk.fpeEncrypt(BitArray.fromBigInteger(pt, Herradura.N), keyAB, ctxC);
+            BitArray split2 = FpeTwk.fpeEncrypt(BitArray.fromBigInteger(pt, Herradura.N), keyA, ctxBC);
             boolean keyBoundarySeparated = !split1.equals(split2);
 
             if (!fpeRt || !twkRt || !fpeV3Rt || !twkV3Rt || !domainSeparated || !v2v3Separated || !keyBoundarySeparated) {
@@ -625,21 +629,21 @@ public final class SelfTest {
             byte[] pt = "self-test duplex plaintext, several blocks long".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             byte[] ad = "self-test-duplex-ad".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
 
-            Duplex.EncResult r2 = Duplex.v2Encrypt(key, pt, ad, rng);
-            byte[] dec2 = Duplex.v2Decrypt(key, r2.nonce, r2.ct, r2.tag, ad);
+            Duplex.EncResult r2 = Duplex.v2Encrypt(BitArray.fromBigInteger(key, Herradura.N), pt, ad, rng);
+            byte[] dec2 = Duplex.v2Decrypt(BitArray.fromBigInteger(key, Herradura.N), r2.nonce, r2.ct, r2.tag, ad);
             byte[] ct2Tampered = r2.ct.clone();
             ct2Tampered[0] ^= 1;
-            boolean v2RejectsCt = Duplex.v2Decrypt(key, r2.nonce, ct2Tampered, r2.tag, ad) == null;
-            boolean v2RejectsAd = Duplex.v2Decrypt(key, r2.nonce, r2.ct, r2.tag,
+            boolean v2RejectsCt = Duplex.v2Decrypt(BitArray.fromBigInteger(key, Herradura.N), r2.nonce, ct2Tampered, r2.tag, ad) == null;
+            boolean v2RejectsAd = Duplex.v2Decrypt(BitArray.fromBigInteger(key, Herradura.N), r2.nonce, r2.ct, r2.tag,
                 "self-test-duplex-ad-2".getBytes(java.nio.charset.StandardCharsets.US_ASCII)) == null;
             boolean v2Ok = java.util.Arrays.equals(dec2, pt);
 
-            Duplex.EncResult r3 = Duplex.v3Encrypt(key, pt, ad, rng);
-            byte[] dec3 = Duplex.v3Decrypt(key, r3.nonce, r3.ct, r3.tag, ad);
+            Duplex.EncResult r3 = Duplex.v3Encrypt(BitArray.fromBigInteger(key, Herradura.N), pt, ad, rng);
+            byte[] dec3 = Duplex.v3Decrypt(BitArray.fromBigInteger(key, Herradura.N), r3.nonce, r3.ct, r3.tag, ad);
             byte[] ct3Tampered = r3.ct.clone();
             ct3Tampered[0] ^= 1;
-            boolean v3RejectsCt = Duplex.v3Decrypt(key, r3.nonce, ct3Tampered, r3.tag, ad) == null;
-            boolean v3RejectsAd = Duplex.v3Decrypt(key, r3.nonce, r3.ct, r3.tag,
+            boolean v3RejectsCt = Duplex.v3Decrypt(BitArray.fromBigInteger(key, Herradura.N), r3.nonce, ct3Tampered, r3.tag, ad) == null;
+            boolean v3RejectsAd = Duplex.v3Decrypt(BitArray.fromBigInteger(key, Herradura.N), r3.nonce, r3.ct, r3.tag,
                 "self-test-duplex-ad-2".getBytes(java.nio.charset.StandardCharsets.US_ASCII)) == null;
             boolean v3Ok = java.util.Arrays.equals(dec3, pt);
 
@@ -1032,19 +1036,19 @@ public final class SelfTest {
                 byte[] pt = new byte[40 + i];   // spans two 32-byte keystream blocks
                 rng.nextBytes(pt);
 
-                HerraduraNl.AeadCt c = HerraduraNl.hskeNlAeadEncrypt(key, nonce, ad, pt);
+                HerraduraNl.AeadCt c = HerraduraNl.hskeNlAeadEncrypt(BitArray.fromBigInteger(key, Herradura.N), BitArray.fromBigInteger(nonce, Herradura.N), ad, pt);
                 if (c.ct.length != pt.length) continue;    // ct must not be block-padded
-                byte[] back = HerraduraNl.hskeNlAeadDecrypt(key, nonce, ad, c.ct, c.tag);
+                byte[] back = HerraduraNl.hskeNlAeadDecrypt(BitArray.fromBigInteger(key, Herradura.N), BitArray.fromBigInteger(nonce, Herradura.N), ad, c.ct, c.tag);
                 if (back != null && java.util.Arrays.equals(back, pt)) okRt++;
 
                 byte[] badTag = c.tag.clone(); badTag[i % badTag.length] ^= 1;
-                if (HerraduraNl.hskeNlAeadDecrypt(key, nonce, ad, c.ct, badTag) == null) okTag++;
+                if (HerraduraNl.hskeNlAeadDecrypt(BitArray.fromBigInteger(key, Herradura.N), BitArray.fromBigInteger(nonce, Herradura.N), ad, c.ct, badTag) == null) okTag++;
 
                 byte[] badCt = c.ct.clone(); badCt[i % badCt.length] ^= 1;
-                if (HerraduraNl.hskeNlAeadDecrypt(key, nonce, ad, badCt, c.tag) == null) okCt++;
+                if (HerraduraNl.hskeNlAeadDecrypt(BitArray.fromBigInteger(key, Herradura.N), BitArray.fromBigInteger(nonce, Herradura.N), ad, badCt, c.tag) == null) okCt++;
 
                 byte[] badAd = ("ad-" + i + "!").getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                if (HerraduraNl.hskeNlAeadDecrypt(key, nonce, badAd, c.ct, c.tag) == null) okAd++;
+                if (HerraduraNl.hskeNlAeadDecrypt(BitArray.fromBigInteger(key, Herradura.N), BitArray.fromBigInteger(nonce, Herradura.N), badAd, c.ct, c.tag) == null) okAd++;
             }
             if (okRt != trials || okTag != trials || okCt != trials || okAd != trials) {
                 System.out.println("FAIL [33] hske_nl_aead (roundtrip=" + okRt

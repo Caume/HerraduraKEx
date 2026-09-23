@@ -70,12 +70,12 @@ public final class Duplex {
     }
 
     /** One permutation call: nl_fscx_revolve_v{2,3}(state, tweak, I_{,3}_VALUE). */
-    private static byte[] perm(byte[] stateB, BigInteger tweak, boolean v3) {
-        BigInteger sa = new BigInteger(1, stateB);
-        BigInteger r = v3
+    private static byte[] perm(byte[] stateB, BitArray tweak, boolean v3) {
+        BitArray sa = BitArray.fromBytes(stateB, 8 * BLOCK);
+        BitArray r = v3
             ? HerraduraNl.nlFscxRevolveV3(sa, tweak, I3_VALUE)
             : HerraduraNl.nlFscxRevolveV2(sa, tweak, I_VALUE);
-        return Hfscx256.toFixedBytes(r, BLOCK);
+        return r.toBytes();
     }
 
     /** {@code {state (32 bytes), tweak}}. */
@@ -84,7 +84,7 @@ public final class Duplex {
         byte[] dsTweak = v3 ? V3_DS_TWEAK : V2_DS_TWEAK;
         byte[] state = Hfscx256.hash(concat(dsInit, keyBytes, nonceBytes), null);
         byte[] tweakBytes = Hfscx256.hash(concat(dsTweak, keyBytes, nonceBytes), null);
-        BigInteger tweak = new BigInteger(1, tweakBytes);
+        BitArray tweak = BitArray.fromBytes(tweakBytes, N);
         state = perm(state, tweak, v3);
         state = perm(state, tweak, v3);
         return new Object[] { state, tweak };
@@ -92,7 +92,7 @@ public final class Duplex {
 
     /** Absorb associated data (length-prefixed, 0x80-then-zero padded to a
      * multiple of RATE) plus a domain separator marking the end of AD. */
-    private static byte[] absorbAd(byte[] state, BigInteger tweak, byte[] ad, boolean v3) {
+    private static byte[] absorbAd(byte[] state, BitArray tweak, byte[] ad, boolean v3) {
         byte[] adPrefixed0 = concat(be8(ad.length), ad);
         int rem = adPrefixed0.length % RATE;
         byte[] pad = (rem != 0)
@@ -109,7 +109,7 @@ public final class Duplex {
     }
 
     /** {@code {ct (byte[]), state (32 bytes)}}. */
-    private static Object[] duplexEncrypt(byte[] state, BigInteger tweak, byte[] pt, boolean v3) {
+    private static Object[] duplexEncrypt(byte[] state, BitArray tweak, byte[] pt, boolean v3) {
         if (pt.length == 0) {
             state = perm(state, tweak, v3);
             return new Object[] { new byte[0], state };
@@ -129,7 +129,7 @@ public final class Duplex {
     }
 
     /** {@code {pt (byte[]), state (32 bytes)}}. */
-    private static Object[] duplexDecrypt(byte[] state, BigInteger tweak, byte[] ct, boolean v3) {
+    private static Object[] duplexDecrypt(byte[] state, BitArray tweak, byte[] ct, boolean v3) {
         if (ct.length == 0) {
             state = perm(state, tweak, v3);
             return new Object[] { new byte[0], state };
@@ -149,7 +149,7 @@ public final class Duplex {
 
     /** Apply the end-of-plaintext domain separator, a final permutation,
      * and squeeze a 32-byte tag. */
-    private static byte[] finalizeTag(byte[] state, BigInteger tweak, boolean v3) {
+    private static byte[] finalizeTag(byte[] state, BitArray tweak, boolean v3) {
         state[RATE] ^= 0x02;
         state = perm(state, tweak, v3);
         byte[] dsTag = v3 ? V3_DS_TAG : V2_DS_TAG;
@@ -158,23 +158,23 @@ public final class Duplex {
 
     /** Result of an encrypt call: nonce, ciphertext, tag. */
     public static final class EncResult {
-        public final BigInteger nonce;
+        public final BitArray nonce;
         public final byte[] ct;
         public final byte[] tag;
-        EncResult(BigInteger nonce, byte[] ct, byte[] tag) {
+        EncResult(BitArray nonce, byte[] ct, byte[] tag) {
             this.nonce = nonce;
             this.ct = ct;
             this.tag = tag;
         }
     }
 
-    private static EncResult encrypt(BigInteger key, byte[] pt, byte[] ad, BigInteger nonce, boolean v3, SecureRandom rng) {
-        if (nonce == null) nonce = new BigInteger(N, rng).and(Herradura.MASK);
-        byte[] keyBytes = Hfscx256.toFixedBytes(key.and(Herradura.MASK), BLOCK);
-        byte[] nonceBytes = Hfscx256.toFixedBytes(nonce, BLOCK);
+    private static EncResult encrypt(BitArray key, byte[] pt, byte[] ad, BitArray nonce, boolean v3, SecureRandom rng) {
+        if (nonce == null) nonce = BitArray.random(N, rng);
+        byte[] keyBytes = key.toBytes();
+        byte[] nonceBytes = nonce.toBytes();
         Object[] initRes = init(keyBytes, nonceBytes, v3);
         byte[] state = (byte[]) initRes[0];
-        BigInteger tweak = (BigInteger) initRes[1];
+        BitArray tweak = (BitArray) initRes[1];
         state = absorbAd(state, tweak, ad, v3);
         Object[] encRes = duplexEncrypt(state, tweak, pt, v3);
         byte[] ct = (byte[]) encRes[0];
@@ -184,12 +184,12 @@ public final class Duplex {
     }
 
     /** Returns null (authentication failure) or the recovered plaintext. */
-    private static byte[] decrypt(BigInteger key, BigInteger nonce, byte[] ct, byte[] tag, byte[] ad, boolean v3) {
-        byte[] keyBytes = Hfscx256.toFixedBytes(key.and(Herradura.MASK), BLOCK);
-        byte[] nonceBytes = Hfscx256.toFixedBytes(nonce, BLOCK);
+    private static byte[] decrypt(BitArray key, BitArray nonce, byte[] ct, byte[] tag, byte[] ad, boolean v3) {
+        byte[] keyBytes = key.toBytes();
+        byte[] nonceBytes = nonce.toBytes();
         Object[] initRes = init(keyBytes, nonceBytes, v3);
         byte[] state = (byte[]) initRes[0];
-        BigInteger tweak = (BigInteger) initRes[1];
+        BitArray tweak = (BitArray) initRes[1];
         state = absorbAd(state, tweak, ad, v3);
         Object[] decRes = duplexDecrypt(state, tweak, ct, v3);
         byte[] pt = (byte[]) decRes[0];
@@ -203,15 +203,15 @@ public final class Duplex {
     // HSKE-NL-V2-Duplex (RESEARCH CONSTRUCTION). Never reuse (key, nonce).
     // -----------------------------------------------------------------
 
-    public static EncResult v2Encrypt(BigInteger key, byte[] pt, byte[] ad, BigInteger nonce, SecureRandom rng) {
+    public static EncResult v2Encrypt(BitArray key, byte[] pt, byte[] ad, BitArray nonce, SecureRandom rng) {
         return encrypt(key, pt, ad, nonce, false, rng);
     }
 
-    public static EncResult v2Encrypt(BigInteger key, byte[] pt, byte[] ad, SecureRandom rng) {
+    public static EncResult v2Encrypt(BitArray key, byte[] pt, byte[] ad, SecureRandom rng) {
         return encrypt(key, pt, ad, null, false, rng);
     }
 
-    public static byte[] v2Decrypt(BigInteger key, BigInteger nonce, byte[] ct, byte[] tag, byte[] ad) {
+    public static byte[] v2Decrypt(BitArray key, BitArray nonce, byte[] ct, byte[] tag, byte[] ad) {
         return decrypt(key, nonce, ct, tag, ad, false);
     }
 
@@ -221,15 +221,15 @@ public final class Duplex {
     // own domain-separation strings. Never reuse (key, nonce).
     // -----------------------------------------------------------------
 
-    public static EncResult v3Encrypt(BigInteger key, byte[] pt, byte[] ad, BigInteger nonce, SecureRandom rng) {
+    public static EncResult v3Encrypt(BitArray key, byte[] pt, byte[] ad, BitArray nonce, SecureRandom rng) {
         return encrypt(key, pt, ad, nonce, true, rng);
     }
 
-    public static EncResult v3Encrypt(BigInteger key, byte[] pt, byte[] ad, SecureRandom rng) {
+    public static EncResult v3Encrypt(BitArray key, byte[] pt, byte[] ad, SecureRandom rng) {
         return encrypt(key, pt, ad, null, true, rng);
     }
 
-    public static byte[] v3Decrypt(BigInteger key, BigInteger nonce, byte[] ct, byte[] tag, byte[] ad) {
+    public static byte[] v3Decrypt(BitArray key, BitArray nonce, byte[] ct, byte[] tag, byte[] ad) {
         return decrypt(key, nonce, ct, tag, ad, true);
     }
 }

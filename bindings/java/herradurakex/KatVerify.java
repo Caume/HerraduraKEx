@@ -140,9 +140,11 @@ public final class KatVerify {
         // the small-ring vector records session_key as null and is skipped.
         String wantSk = v.get("session_key");
         if (ok && wantSk != null) {
-            BigInteger seed = Herradura.rol(kAlice, keyBits / 8)
-                    .xor(Hfscx256.RNL_KDF_DC_256);
-            BigInteger sk = Hfscx256.nlFscxRevolveV1(seed, kAlice, keyBits / 4);
+            // TODO #314 pass 5: the SIXTH transcribed copy of this derivation in
+            // this port, now the one named truncation (BITARRAY.md §4.4).
+            BitArray kA = BitArray.fromBigInteger(kAlice, keyBits);
+            BigInteger sk = Hfscx256.nlFscxRevolveV1(
+                    BitArray.rnlKdfSeed(kA), kA, keyBits / 4).toBigInteger();
             if (!sk.equals(new BigInteger(wantSk, 16))) {
                 System.out.println("FAIL " + name + ": session_key got "
                         + sk.toString(16) + " want " + wantSk);
@@ -175,24 +177,29 @@ public final class KatVerify {
             fails++;
         }
         BigInteger key = hex(p, "key"), pt = hex(p, "plaintext");
-        BigInteger revolve = HerraduraNl.nlFscxRevolveV3(pt, key, r3);
-        if (!HerraduraNl.nlChiV3(pt).equals(hex(p, "chi_of_plaintext"))
-                || !HerraduraNl.nlFscxV3(pt, key).equals(hex(p, "one_round"))
-                || !revolve.equals(hex(p, "revolve"))
-                || !HerraduraNl.nlFscxRevolveV3Inv(revolve, key, r3).equals(pt)) {
+        BitArray revolve = HerraduraNl.nlFscxRevolveV3(
+                BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(key, Herradura.N), r3);
+        if (!HerraduraNl.nlChiV3(BitArray.fromBigInteger(pt, Herradura.N)).toBigInteger().equals(hex(p, "chi_of_plaintext"))
+                || !HerraduraNl.nlFscxV3(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(key, Herradura.N)).toBigInteger().equals(hex(p, "one_round"))
+                || !revolve.toBigInteger().equals(hex(p, "revolve"))
+                || !HerraduraNl.nlFscxRevolveV3Inv(revolve, BitArray.fromBigInteger(key, Herradura.N), r3)
+                        .equals(BitArray.fromBigInteger(pt, Herradura.N))) {
             System.out.println("FAIL nl_fscx_v3: chi="
-                    + HerraduraNl.nlChiV3(pt).equals(hex(p, "chi_of_plaintext"))
-                    + " round=" + HerraduraNl.nlFscxV3(pt, key).equals(hex(p, "one_round"))
-                    + " revolve=" + revolve.equals(hex(p, "revolve"))
+                    + HerraduraNl.nlChiV3(BitArray.fromBigInteger(pt, Herradura.N)).toBigInteger().equals(hex(p, "chi_of_plaintext"))
+                    + " round=" + HerraduraNl.nlFscxV3(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(key, Herradura.N)).toBigInteger().equals(hex(p, "one_round"))
+                    + " revolve=" + revolve.toBigInteger().equals(hex(p, "revolve"))
                     + " revolve_inv="
-                    + HerraduraNl.nlFscxRevolveV3Inv(revolve, key, r3).equals(pt));
+                    + HerraduraNl.nlFscxRevolveV3Inv(revolve, BitArray.fromBigInteger(key, Herradura.N), r3)
+                        .equals(BitArray.fromBigInteger(pt, Herradura.N)));
             fails++;
         } else {
             System.out.println("PASS nl_fscx_v3");
         }
 
         Map<String, String> a = v3.get("hske_nla3");
-        BigInteger got = HerraduraNl.hskeNlA3Encrypt(hex(a, "plaintext"), hex(a, "key"));
+        BigInteger got = HerraduraNl.hskeNlA3Encrypt(
+                BitArray.fromBigInteger(hex(a, "plaintext"), Herradura.N),
+                BitArray.fromBigInteger(hex(a, "key"), Herradura.N)).toBigInteger();
         if (!got.equals(hex(a, "ciphertext"))) {
             System.out.println("FAIL hske_nla3: got " + got.toString(16)
                     + " want " + a.get("ciphertext"));
@@ -203,15 +210,18 @@ public final class KatVerify {
 
         Map<String, String> e = v3.get("hpke_nl3");
         Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(
-                hex(e, "plaintext"), hex(e, "pub"), hex(e, "ephemeral_r"));
-        BigInteger dec = ct == null ? null
-                : HerraduraNl.hpkeNl3Decrypt(ct.ct, ct.r, hex(e, "priv"));
-        if (ct == null || !ct.r.equals(hex(e, "R")) || !ct.ct.equals(hex(e, "ciphertext"))
-                || dec == null || !dec.equals(hex(e, "plaintext"))) {
+                BitArray.fromBigInteger(hex(e, "plaintext"), Herradura.N),
+                BitArray.fromBigInteger(hex(e, "pub"), Herradura.N),
+                BitArray.fromBigInteger(hex(e, "ephemeral_r"), Herradura.N));
+        BitArray dec = ct == null ? null
+                : HerraduraNl.hpkeNl3Decrypt(ct.ct, ct.r,
+                        BitArray.fromBigInteger(hex(e, "priv"), Herradura.N));
+        if (ct == null || !ct.r.toBigInteger().equals(hex(e, "R")) || !ct.ct.toBigInteger().equals(hex(e, "ciphertext"))
+                || dec == null || !dec.toBigInteger().equals(hex(e, "plaintext"))) {
             System.out.println("FAIL hpke_nl3: R="
-                    + (ct != null && ct.r.equals(hex(e, "R")))
-                    + " ct=" + (ct != null && ct.ct.equals(hex(e, "ciphertext")))
-                    + " decrypt_roundtrip=" + (dec != null && dec.equals(hex(e, "plaintext"))));
+                    + (ct != null && ct.r.toBigInteger().equals(hex(e, "R")))
+                    + " ct=" + (ct != null && ct.ct.toBigInteger().equals(hex(e, "ciphertext")))
+                    + " decrypt_roundtrip=" + (dec != null && dec.toBigInteger().equals(hex(e, "plaintext"))));
             fails++;
         } else {
             System.out.println("PASS hpke_nl3");
@@ -236,12 +246,14 @@ public final class KatVerify {
         {
             Map<String, String> v = objects.get("hkex_gf");
             BigInteger a = hex(v, "alice_priv"), b = hex(v, "bob_priv");
-            BigInteger C = Herradura.hkexGfPubkey(a), C2 = Herradura.hkexGfPubkey(b);
-            BigInteger sk = Herradura.hkexGfAgree(a, C2);
-            BigInteger skOther = Herradura.hkexGfAgree(b, C);
+            BitArray aBa = BitArray.fromBigInteger(a, Herradura.N);
+            BitArray bBa = BitArray.fromBigInteger(b, Herradura.N);
+            BitArray C = Herradura.hkexGfPubkey(aBa), C2 = Herradura.hkexGfPubkey(bBa);
+            BitArray sk = Herradura.hkexGfAgree(aBa, C2);
+            BitArray skOther = Herradura.hkexGfAgree(bBa, C);
             BigInteger want = hex(v, "shared_secret");
-            if (!sk.equals(want) || !sk.equals(skOther)) {
-                System.out.println("FAIL hkex_gf: got " + sk.toString(16) + " want " + want.toString(16));
+            if (!sk.toBigInteger().equals(want) || !sk.equals(skOther)) {
+                System.out.println("FAIL hkex_gf: got " + sk.toHex() + " want " + want.toString(16));
                 fails++;
             } else {
                 System.out.println("PASS hkex_gf");
@@ -252,11 +264,11 @@ public final class KatVerify {
         {
             Map<String, String> v = objects.get("hske");
             BigInteger key = hex(v, "key"), pt = hex(v, "plaintext");
-            BigInteger ct = Herradura.hskeEncrypt(pt, key);
+            BitArray ct = Herradura.hskeEncrypt(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(key, Herradura.N));
             BigInteger want = hex(v, "ciphertext");
-            BigInteger roundTrip = Herradura.hskeDecrypt(ct, key);
-            if (!ct.equals(want) || !roundTrip.equals(pt)) {
-                System.out.println("FAIL hske: got " + ct.toString(16) + " want " + want.toString(16));
+            BitArray roundTrip = Herradura.hskeDecrypt(ct, BitArray.fromBigInteger(key, Herradura.N));
+            if (!ct.toBigInteger().equals(want) || !roundTrip.toBigInteger().equals(pt)) {
+                System.out.println("FAIL hske: got " + ct.toHex() + " want " + want.toString(16));
                 fails++;
             } else {
                 System.out.println("PASS hske");
@@ -267,7 +279,7 @@ public final class KatVerify {
         {
             Map<String, String> v = objects.get("hpks");
             BigInteger pub = hex(v, "pub"), r = hex(v, "R"), s = hex(v, "s"), msg = hex(v, "message");
-            boolean ok = Herradura.hpksVerify(msg, pub, r, s);
+            boolean ok = Herradura.hpksVerify(BitArray.fromBigInteger(msg, Herradura.N), BitArray.fromBigInteger(pub, Herradura.N), BitArray.fromBigInteger(r, Herradura.N), BitArray.fromBigInteger(s, Herradura.N));
             if (!ok) {
                 System.out.println("FAIL hpks: verify returned false");
                 fails++;
@@ -281,13 +293,13 @@ public final class KatVerify {
             Map<String, String> v = objects.get("hpke");
             BigInteger priv = hex(v, "recipient_priv"), ephR = hex(v, "ephemeral_r");
             BigInteger pub = hex(v, "recipient_pub"), pt = hex(v, "plaintext");
-            Herradura.Ciphertext enc = Herradura.hpkeEncrypt(pt, pub, ephR);
+            Herradura.Ciphertext enc = Herradura.hpkeEncrypt(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(pub, Herradura.N), BitArray.fromBigInteger(ephR, Herradura.N));
             BigInteger wantR = hex(v, "R"), wantCt = hex(v, "ciphertext");
-            BigInteger dec = Herradura.hpkeDecrypt(enc.ct, enc.r, priv);
-            if (!enc.r.equals(wantR) || !enc.ct.equals(wantCt) || !dec.equals(pt)) {
-                System.out.println("FAIL hpke: R(got=" + enc.r.toString(16) + " want=" + wantR.toString(16)
-                        + ") ct(got=" + enc.ct.toString(16) + " want=" + wantCt.toString(16)
-                        + ") decrypt_roundtrip=" + dec.equals(pt));
+            BitArray dec = Herradura.hpkeDecrypt(enc.ct, enc.r, BitArray.fromBigInteger(priv, Herradura.N));
+            if (!enc.r.toBigInteger().equals(wantR) || !enc.ct.toBigInteger().equals(wantCt) || !dec.toBigInteger().equals(pt)) {
+                System.out.println("FAIL hpke: R(got=" + enc.r.toHex() + " want=" + wantR.toString(16)
+                        + ") ct(got=" + enc.ct.toHex() + " want=" + wantCt.toString(16)
+                        + ") decrypt_roundtrip=" + dec.toBigInteger().equals(pt));
                 fails++;
             } else {
                 System.out.println("PASS hpke");
@@ -507,103 +519,12 @@ public final class KatVerify {
     // statement size.
     //
     // The flat regex parser above cannot read this file: it is nested (the
-    // online proofs carry an array of path arrays), so this section brings a
-    // minimal recursive-descent JSON reader rather than a dependency.
+    // online proofs carry an array of path arrays), so this section uses the
+    // minimal recursive-descent reader in Json.java rather than a dependency.
+    // It lived here as a private nested class until TODO #314 pass 5 gave
+    // KAT/bitarray.json a second Java consumer that needed the same reader.
 
     /** Minimal recursive-descent JSON reader: enough for this file's shapes. */
-    private static final class Json {
-        private final String s;
-        private int p;
-        private Json(String s) { this.s = s; }
-
-        static Object parse(String text) {
-            Json j = new Json(text);
-            j.ws();
-            Object v = j.value();
-            j.ws();
-            if (j.p != text.length()) throw new IllegalStateException("trailing JSON at " + j.p);
-            return v;
-        }
-
-        private void ws() { while (p < s.length() && Character.isWhitespace(s.charAt(p))) p++; }
-
-        private Object value() {
-            char c = s.charAt(p);
-            switch (c) {
-                case '{': return object();
-                case '[': return array();
-                case '"': return string();
-                case 't': p += 4; return Boolean.TRUE;
-                case 'f': p += 5; return Boolean.FALSE;
-                case 'n': p += 4; return null;
-                default:  return number();
-            }
-        }
-
-        private Map<String, Object> object() {
-            Map<String, Object> m = new java.util.LinkedHashMap<>();
-            p++; ws();
-            if (s.charAt(p) == '}') { p++; return m; }
-            while (true) {
-                ws();
-                String k = string();
-                ws();
-                p++;              // ':'
-                ws();
-                m.put(k, value());
-                ws();
-                char c = s.charAt(p++);
-                if (c == '}') return m;
-                if (c != ',') throw new IllegalStateException("expected , or } at " + p);
-            }
-        }
-
-        private java.util.List<Object> array() {
-            java.util.List<Object> l = new java.util.ArrayList<>();
-            p++; ws();
-            if (s.charAt(p) == ']') { p++; return l; }
-            while (true) {
-                ws();
-                l.add(value());
-                ws();
-                char c = s.charAt(p++);
-                if (c == ']') return l;
-                if (c != ',') throw new IllegalStateException("expected , or ] at " + p);
-            }
-        }
-
-        private String string() {
-            StringBuilder b = new StringBuilder();
-            p++;                                  // opening quote
-            while (true) {
-                char c = s.charAt(p++);
-                if (c == '"') return b.toString();
-                if (c != '\\') { b.append(c); continue; }
-                char e = s.charAt(p++);
-                switch (e) {
-                    case 'n': b.append('\n'); break;
-                    case 't': b.append('\t'); break;
-                    case 'r': b.append('\r'); break;
-                    case 'b': b.append('\b'); break;
-                    case 'f': b.append('\f'); break;
-                    case 'u':
-                        b.append((char) Integer.parseInt(s.substring(p, p + 4), 16));
-                        p += 4;
-                        break;
-                    default:  b.append(e);        // \" \\ \/
-                }
-            }
-        }
-
-        private Object number() {
-            int st = p;
-            while (p < s.length() && "-+.eE0123456789".indexOf(s.charAt(p)) >= 0) p++;
-            String tok = s.substring(st, p);
-            if (tok.indexOf('.') < 0 && tok.indexOf('e') < 0 && tok.indexOf('E') < 0)
-                return Long.valueOf(tok);
-            return Double.valueOf(tok);
-        }
-    }
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> obj(Object o) { return (Map<String, Object>) o; }

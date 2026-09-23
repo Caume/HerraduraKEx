@@ -26,29 +26,34 @@ public final class Hfscx256 {
     private Hfscx256() { }
 
     private static final int N = Herradura.N;               // 256
-    private static final int NL_V1_SHIFT = N / 4;            // 64
     private static final BigInteger MASK = Herradura.MASK;
 
     /** "HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0" as an integer, matching
      * Python's {@code _HFSCX256_IV_BYTES}. */
-    public static final BigInteger IV_CONST =
-        new BigInteger(1, "HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0".getBytes(StandardCharsets.US_ASCII));
+    public static final BitArray IV_CONST = BitArray.fromBytes(
+        "HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0".getBytes(StandardCharsets.US_ASCII), N);
 
-    /** Matches Python's {@code _RNL_KDF_DC_256} domain constant. */
-    public static final BigInteger RNL_KDF_DC_256 =
-        new BigInteger("6A09E667BB67AE853C6EF372A54FF53A510E527F9B05688C1F83D9AB5BE0CD19", 16);
+    /** Matches Python's {@code _RNL_KDF_DC_256} domain constant.  The value
+     * now lives in {@link BitArray#RNL_KDF_DC_256}, with the ONE truncation
+     * (BITARRAY.md §4.4) beside it; this alias is kept for callers. */
+    public static final BitArray RNL_KDF_DC_256 = BitArray.RNL_KDF_DC_256;
 
     // -----------------------------------------------------------------
     // NL-FSCX v1: fscx(A,B) XOR ROL((A+B) mod 2^n, n/4)
     // -----------------------------------------------------------------
 
-    public static BigInteger nlFscxV1(BigInteger a, BigInteger b) {
-        BigInteger sum = a.add(b).and(MASK);
-        return Herradura.fscx(a, b).xor(Herradura.rol(sum, NL_V1_SHIFT));
+    /** The rotation is n/4 at the OPERAND's width.  It was a static
+     * {@code NL_V1_SHIFT = N / 4} — correct at 256 and at no other width — and
+     * that constant is what kept this port's HSKE-NL-A1 keystream disagreeing
+     * with C, Go and Python below 256 bits AFTER the BitArray itself conformed
+     * (TODO #314 pass 6).  Conforming to the type is not the same as consuming
+     * it at the value's width. */
+    public static BitArray nlFscxV1(BitArray a, BitArray b) {
+        return Herradura.fscx(a, b).xor(a.addMod2n(b).rotLeft(a.size() / 4));
     }
 
-    public static BigInteger nlFscxRevolveV1(BigInteger a, BigInteger b, int steps) {
-        BigInteger result = a.and(MASK);
+    public static BitArray nlFscxRevolveV1(BitArray a, BitArray b, int steps) {
+        BitArray result = a;
         for (int i = 0; i < steps; i++) {
             result = nlFscxV1(result, b);
         }
@@ -65,9 +70,9 @@ public final class Hfscx256 {
     /** Bare hash (iv == null) or keyed MAC (iv = key XOR IV_CONST, per the
      * suite's convention — see "Herradura cryptographic suite.py"'s hfscx_256
      * docstring). Returns 32 bytes. */
-    public static byte[] hash(byte[] data, BigInteger iv) {
-        BigInteger initState = (iv == null) ? IV_CONST : iv.and(MASK);
-        BigInteger state = initState;
+    public static byte[] hash(byte[] data, BitArray iv) {
+        BitArray initState = (iv == null) ? IV_CONST : iv;
+        BitArray state = initState;
 
         // Padding: 0x80, then zero-fill to a multiple of 32 bytes.
         int padLen = data.length + 1;
@@ -79,26 +84,20 @@ public final class Hfscx256 {
         // (rest already zero-initialized by `new byte[]`)
 
         // MD-strengthening length block, XORed with the initial state.
-        BigInteger bitLen = BigInteger.valueOf((long) data.length * 8);
+        long bitLen = (long) data.length * 8;
         byte[] lenBlock = new byte[BLOCK];
-        byte[] bitLenBytes = bitLen.toByteArray();
-        // Right-align bitLenBytes (up to 8 bytes) into the low 8 bytes of lenBlock.
-        int copyLen = Math.min(8, bitLenBytes.length);
-        System.arraycopy(bitLenBytes, bitLenBytes.length - copyLen, lenBlock, BLOCK - copyLen, copyLen);
-        BigInteger lenRaw = new BigInteger(1, lenBlock);
-        BigInteger lenXored = lenRaw.xor(initState).and(MASK);
-        byte[] lenXoredBytes = toFixedBytes(lenXored, BLOCK);
-        System.arraycopy(lenXoredBytes, 0, padded, padLen, BLOCK);
+        for (int i = 0; i < 8; i++) lenBlock[BLOCK - 1 - i] = (byte) (bitLen >>> (8 * i));
+        BitArray lenXored = BitArray.fromBytes(lenBlock, N).xor(initState);
+        System.arraycopy(lenXored.toBytes(), 0, padded, padLen, BLOCK);
 
         int steps = N / 4; // 64
         for (int off = 0; off < padded.length; off += BLOCK) {
-            BigInteger prev = state;
-            byte[] chunk = Arrays.copyOfRange(padded, off, off + BLOCK);
-            BigInteger block = new BigInteger(1, chunk);
+            BitArray prev = state;
+            BitArray block = BitArray.fromBytes(Arrays.copyOfRange(padded, off, off + BLOCK), N);
             state = nlFscxRevolveV1(state, block, steps);
-            state = state.xor(prev).and(MASK);
+            state = state.xor(prev);
         }
-        return toFixedBytes(state, BLOCK);
+        return state.toBytes();
     }
 
     public static byte[] hash(byte[] data) {
@@ -149,6 +148,17 @@ public final class Hfscx256 {
         return hash(outer);
     }
 
+    /**
+     * Right-align a BigInteger into a fixed-width buffer.
+     *
+     * <p>THIS IS THE RE-WIDENING STEP BITARRAY.md §1.1 WARNS ABOUT, written out
+     * by hand: {@code toByteArray()} normalises leading zero octets away — the
+     * very information a width carries — so every value that leaves an integer
+     * has to be re-padded, and every site that forgets is a silent bug.  It
+     * survives for the BigInteger values the specification does not govern
+     * (DER INTEGERs, syndromes, scalars).  A BitArray needs none of it:
+     * {@link BitArray#toBytes()} is a copy of the stored octets.
+     */
     static byte[] toFixedBytes(BigInteger v, int nbytes) {
         byte[] raw = v.and(MASK).toByteArray();
         byte[] out = new byte[nbytes];
@@ -170,19 +180,22 @@ public final class Hfscx256 {
     /** Encrypts plaintext into the .hkx container format (magic, algo byte,
      * length, nonce, ciphertext blocks, 32-byte auth tag). key must be a
      * 256-bit value (already masked or not — masked internally). */
-    public static byte[] encFile(BigInteger key, byte[] plaintext, SecureRandom rng) {
-        BigInteger K = key.and(MASK);
-        BigInteger nonce = new BigInteger(N, rng).and(MASK);
+    public static byte[] encFile(BitArray key, byte[] plaintext, SecureRandom rng) {
+        BitArray K = key;
+        BitArray nonce = BitArray.random(N, rng);
         return encFile(K, nonce, plaintext);
     }
 
     /** Deterministic form (explicit nonce) for KAT/test use. */
-    static byte[] encFile(BigInteger key, BigInteger nonce, byte[] plaintext) {
+    static byte[] encFile(BitArray key, BitArray nonce, byte[] plaintext) {
         int steps = N / 4;
-        BigInteger base = key.xor(nonce).and(MASK);
-        // seed = rol(base, n/8) XOR (RNL_KDF_DC_256 >> (256 - n)); n == 256 here so the
-        // shift is 0 and RNL_KDF_DC_256 is used as-is.
-        BigInteger seed = Herradura.rol(base, N / 8).xor(RNL_KDF_DC_256).and(MASK);
+        BitArray base = key.xor(nonce);
+        // TODO #314 pass 5: ONE named truncation, in one place.  This site used
+        // to transcribe `rol(base, n/8) XOR RNL_KDF_DC_256` with a comment
+        // explaining that the shift is 0 at n = 256 — the shape TODO #312 found
+        // in Python, and the reason this port could not have "exactly one
+        // truncation" however carefully each copy was written.
+        BitArray seed = BitArray.rnlKdfSeed(base);
 
         int plaintextLen = plaintext.length;
         int nBlocks = (plaintextLen + HKX_BLOCK - 1) / HKX_BLOCK;
@@ -190,17 +203,16 @@ public final class Hfscx256 {
         for (int i = 0; i < nBlocks; i++) {
             int off = i * HKX_BLOCK;
             int len = Math.min(HKX_BLOCK, plaintextLen - off);
-            BigInteger ks = nlFscxRevolveV1(seed, base.xor(BigInteger.valueOf(i)).and(MASK), steps);
-            byte[] ksBytes = toFixedBytes(ks, HKX_BLOCK);
+            byte[] ksBytes = nlFscxRevolveV1(seed, base.xorUint(i), steps).toBytes();
             for (int j = 0; j < HKX_BLOCK; j++) {
                 byte p = (j < len) ? plaintext[off + j] : 0;
                 ctBlocks[off + j] = (byte) (p ^ ksBytes[j]);
             }
         }
 
-        BigInteger macKey = nlFscxRevolveV1(Herradura.rol(seed, N / 4), base, steps);
-        BigInteger macIv = macKey.xor(IV_CONST).and(MASK);
-        byte[] nonceBytes = toFixedBytes(nonce, HKX_BLOCK);
+        BitArray macKey = nlFscxRevolveV1(seed.rotLeft(N / 4), base, steps);
+        BitArray macIv = macKey.xor(IV_CONST);
+        byte[] nonceBytes = nonce.toBytes();
         byte[] macData = new byte[nonceBytes.length + 8 + ctBlocks.length];
         System.arraycopy(nonceBytes, 0, macData, 0, nonceBytes.length);
         writeBe64(macData, nonceBytes.length, plaintextLen);
@@ -220,7 +232,7 @@ public final class Hfscx256 {
 
     /** Decrypts a .hkx container produced by {@link #encFile}. Throws
      * IllegalArgumentException on any structural or authentication failure. */
-    public static byte[] decFile(BigInteger key, byte[] raw) {
+    public static byte[] decFile(BitArray key, byte[] raw) {
         if (raw.length < 77) {
             throw new IllegalArgumentException("decfile: file too short to be a valid .hkx container");
         }
@@ -243,14 +255,14 @@ public final class Hfscx256 {
         byte[] ctBytes = Arrays.copyOfRange(raw, 45, ctEnd);
         byte[] tagStored = Arrays.copyOfRange(raw, ctEnd, ctEnd + 32);
 
-        BigInteger K = key.and(MASK);
-        BigInteger nonce = new BigInteger(1, nonceBytes);
-        BigInteger base = K.xor(nonce).and(MASK);
-        BigInteger seed = Herradura.rol(base, N / 8).xor(RNL_KDF_DC_256).and(MASK);
+        BitArray K = key;
+        BitArray nonce = BitArray.fromBytes(nonceBytes, N);
+        BitArray base = K.xor(nonce);
+        BitArray seed = BitArray.rnlKdfSeed(base);      // the one truncation
 
         int steps = N / 4;
-        BigInteger macKey = nlFscxRevolveV1(Herradura.rol(seed, N / 4), base, steps);
-        BigInteger macIv = macKey.xor(IV_CONST).and(MASK);
+        BitArray macKey = nlFscxRevolveV1(seed.rotLeft(N / 4), base, steps);
+        BitArray macIv = macKey.xor(IV_CONST);
         byte[] macData = new byte[nonceBytes.length + 8 + ctBytes.length];
         System.arraycopy(nonceBytes, 0, macData, 0, nonceBytes.length);
         writeBe64(macData, nonceBytes.length, plaintextLen);
@@ -264,8 +276,7 @@ public final class Hfscx256 {
         byte[] plaintext = new byte[(int) plaintextLen];
         for (int i = 0; i < nBlocks; i++) {
             int off = i * HKX_BLOCK;
-            BigInteger ks = nlFscxRevolveV1(seed, base.xor(BigInteger.valueOf(i)).and(MASK), steps);
-            byte[] ksBytes = toFixedBytes(ks, HKX_BLOCK);
+            byte[] ksBytes = nlFscxRevolveV1(seed, base.xorUint(i), steps).toBytes();
             int len = Math.min(HKX_BLOCK, plaintext.length - off);
             for (int j = 0; j < len; j++) {
                 plaintext[off + j] = (byte) (ctBytes[off + j] ^ ksBytes[j]);

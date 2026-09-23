@@ -92,8 +92,8 @@ public final class Demo {
         BigInteger plaintext = rand(rng);
         BigInteger decoy = rand(rng);     // Eve's random value
 
-        BigInteger C = Herradura.hkexGfPubkey(a);
-        BigInteger C2 = Herradura.hkexGfPubkey(b);
+        BigInteger C = Herradura.hkexGfPubkey(BitArray.fromBigInteger(a, Herradura.N)).toBigInteger();
+        BigInteger C2 = Herradura.hkexGfPubkey(BitArray.fromBigInteger(b, Herradura.N)).toBigInteger();
 
         System.out.println("a         : " + hex(a, n / 8));
         System.out.println("b         : " + hex(b, n / 8));
@@ -106,18 +106,18 @@ public final class Demo {
         // ── CLASSICAL protocols ──────────────────────────────────────────
         out("\n--- HKEX-GF [CLASSICAL — not PQC; Shor's algorithm breaks DLP]");
         System.out.println("    (DH over GF(2^" + n + ")*)");
-        BigInteger sk = Herradura.hkexGfAgree(a, C2);
-        BigInteger skBob = Herradura.hkexGfAgree(b, C);
+        BigInteger sk = Herradura.hkexGfAgree(BitArray.fromBigInteger(a, Herradura.N), BitArray.fromBigInteger(C2, Herradura.N)).toBigInteger();
+        BigInteger skBob = Herradura.hkexGfAgree(BitArray.fromBigInteger(b, Herradura.N), BitArray.fromBigInteger(C, Herradura.N)).toBigInteger();
         System.out.println("sk (Alice): " + hex(sk, n / 8));
         System.out.println("sk (Bob)  : " + hex(skBob, n / 8));
         out(sk.equals(skBob) ? "+ session keys agree!" : "[FAIL] session keys differ!");
 
         out("\n--- HSKE [CLASSICAL — not PQC; linear key recovery from 1 KPT pair]");
         System.out.println("    (fscx_revolve symmetric encryption)");
-        BigInteger eHske = Herradura.fscxRevolve(plaintext, preshared, Herradura.I_STEPS);
+        BigInteger eHske = Herradura.fscxRevolve(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(preshared, Herradura.N), Herradura.I_STEPS).toBigInteger();
         System.out.println("P (plain) : " + hex(plaintext, n / 8));
         System.out.println("E (Alice) : " + hex(eHske, n / 8));
-        BigInteger dHske = Herradura.fscxRevolve(eHske, preshared, Herradura.R_STEPS);
+        BigInteger dHske = Herradura.fscxRevolve(BitArray.fromBigInteger(eHske, Herradura.N), BitArray.fromBigInteger(preshared, Herradura.N), Herradura.R_STEPS).toBigInteger();
         System.out.println("D (Bob)   : " + hex(dHske, n / 8));
         out(dHske.equals(plaintext) ? "+ plaintext correctly decrypted" : "[FAIL] decryption failed!");
 
@@ -125,9 +125,10 @@ public final class Demo {
         System.out.println("    (fscx_revolve_masked: no secret bits of the input exposed in any");
         System.out.println("     intermediate value, via M^steps(A^r) == M^steps(A)^M^steps(r))");
         {
-            Herradura.Masked mCt = Herradura.hskeEncryptMasked(plaintext, preshared, rng);
-            Herradura.Masked mPt = Herradura.hskeDecryptMasked(mCt.result, preshared, rng);
-            out(mPt.result.equals(plaintext) && mCt.result.equals(eHske)
+            Herradura.Masked mCt = Herradura.hskeEncryptMasked(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(preshared, Herradura.N), rng);
+            Herradura.Masked mPt = Herradura.hskeDecryptMasked(mCt.result, BitArray.fromBigInteger(preshared, Herradura.N), rng);
+            out(mPt.result.toBigInteger().equals(plaintext)
+                    && mCt.result.toBigInteger().equals(eHske)
                     ? "+ masked encrypt/decrypt correct and matches unmasked fscx_revolve"
                     : "[FAIL] masked HSKE encrypt/decrypt failed!");
         }
@@ -135,13 +136,13 @@ public final class Demo {
         out("\n--- HPKS [CLASSICAL — not PQC; DLP + linear challenge]");
         System.out.println("    (Schnorr-like with fscx_revolve challenge)");
         {
-            Herradura.Signature sig = Herradura.hpksSign(plaintext, a, rng);
-            BigInteger e = Herradura.fscxRevolve(sig.r, plaintext, Herradura.I_STEPS);
-            boolean verified = Herradura.hpksVerify(plaintext, C, sig.r, sig.s);
+            Herradura.Signature sig = Herradura.hpksSign(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(a, Herradura.N), rng);
+            BitArray e = Herradura.fscxRevolve(sig.r, BitArray.fromBigInteger(plaintext, Herradura.N), Herradura.I_STEPS);
+            boolean verified = Herradura.hpksVerify(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(C, Herradura.N), sig.r, sig.s);
             System.out.println("P (msg)        : " + hex(plaintext, n / 8));
-            System.out.println("R [Alice,sign] : " + hex(sig.r, n / 8));
-            System.out.println("e [Alice,sign] : " + hex(e, n / 8));
-            System.out.println("s [Alice,sign] : " + hex(sig.s, n / 8));
+            System.out.println("R [Alice,sign] : " + hex(sig.r.toBigInteger(), n / 8));
+            System.out.println("e [Alice,sign] : " + hex(e.toBigInteger(), n / 8));
+            System.out.println("s [Alice,sign] : " + hex(sig.s.toBigInteger(), n / 8));
             out(verified ? "  [Bob,verify] : + Schnorr verified: g^s . C^e == R"
                           : "  [Bob,verify] : [FAIL] Schnorr verification failed!");
         }
@@ -149,12 +150,12 @@ public final class Demo {
         out("\n--- HPKE [CLASSICAL — not PQC; DLP + linear HSKE sub-protocol]");
         System.out.println("    (El Gamal + fscx_revolve)");
         {
-            Herradura.Ciphertext enc = Herradura.hpkeEncrypt(plaintext, C, rng);
-            BigInteger dec = enc == null ? null : Herradura.hpkeDecrypt(enc.ct, enc.r, a);
+            Herradura.Ciphertext enc = Herradura.hpkeEncrypt(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(C, Herradura.N), rng);
+            BitArray dec = enc == null ? null : Herradura.hpkeDecrypt(enc.ct, enc.r, BitArray.fromBigInteger(a, Herradura.N));
             System.out.println("P (plain) : " + hex(plaintext, n / 8));
-            System.out.println("E (Bob)   : " + (enc == null ? "N/A" : hex(enc.ct, n / 8)));
-            System.out.println("D (Alice) : " + (dec == null ? "N/A" : hex(dec, n / 8)));
-            out(enc != null && plaintext.equals(dec) ? "+ plaintext correctly decrypted"
+            System.out.println("E (Bob)   : " + (enc == null ? "N/A" : hex(enc.ct.toBigInteger(), n / 8)));
+            System.out.println("D (Alice) : " + (dec == null ? "N/A" : hex(dec.toBigInteger(), n / 8)));
+            out(enc != null && dec.equals(BitArray.fromBigInteger(plaintext, Herradura.N)) ? "+ plaintext correctly decrypted"
                                                        : "[FAIL] decryption failed!");
         }
 
@@ -162,8 +163,8 @@ public final class Demo {
         out("\n--- HSKE-NL-A1 [PQC-HARDENED — counter-mode with NL-FSCX v1]");
         {
             BigInteger nonce = rand(rng);
-            BigInteger e = HerraduraNl.hskeNlA1Encrypt(plaintext, preshared, nonce);
-            BigInteger d = HerraduraNl.hskeNlA1Decrypt(e, preshared, nonce);
+            BigInteger e = HerraduraNl.hskeNlA1Encrypt(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(preshared, Herradura.N), BitArray.fromBigInteger(nonce, Herradura.N)).toBigInteger();
+            BigInteger d = HerraduraNl.hskeNlA1Decrypt(BitArray.fromBigInteger(e, Herradura.N), BitArray.fromBigInteger(preshared, Herradura.N), BitArray.fromBigInteger(nonce, Herradura.N)).toBigInteger();
             System.out.println("N (nonce) : " + hex(nonce, n / 8));
             System.out.println("P (plain) : " + hex(plaintext, n / 8));
             System.out.println("E (Alice) : " + hex(e, n / 8));
@@ -173,10 +174,10 @@ public final class Demo {
 
         out("\n--- HSKE-NL-A2 [PQC-HARDENED — revolve-mode with NL-FSCX v2]");
         BigInteger a2Key = preshared;
-        while (!HerraduraNl.nlV2KeyIsValid(a2Key)) a2Key = rand(rng);
+        while (!HerraduraNl.nlV2KeyIsValid(BitArray.fromBigInteger(a2Key, Herradura.N))) a2Key = rand(rng);
         {
-            BigInteger e = HerraduraNl.hskeNlA2Encrypt(plaintext, a2Key);
-            BigInteger d = HerraduraNl.hskeNlA2Decrypt(e, a2Key);
+            BigInteger e = HerraduraNl.hskeNlA2Encrypt(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(a2Key, Herradura.N)).toBigInteger();
+            BigInteger d = HerraduraNl.hskeNlA2Decrypt(BitArray.fromBigInteger(e, Herradura.N), BitArray.fromBigInteger(a2Key, Herradura.N)).toBigInteger();
             System.out.println("P (plain) : " + hex(plaintext, n / 8));
             System.out.println("E (Alice) : " + hex(e, n / 8));
             System.out.println("D (Bob)   : " + hex(d, n / 8));
@@ -186,8 +187,8 @@ public final class Demo {
         out("\n--- HSKE-NL-A3 [PQC-HARDENED — NL-FSCX v3, TODO #255]");
         System.out.println("    (v3's chi layer has no affine-degenerate weak-key class -- no key filter)");
         {
-            BigInteger e = HerraduraNl.hskeNlA3Encrypt(plaintext, preshared);
-            BigInteger d = HerraduraNl.hskeNlA3Decrypt(e, preshared);
+            BigInteger e = HerraduraNl.hskeNlA3Encrypt(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(preshared, Herradura.N)).toBigInteger();
+            BigInteger d = HerraduraNl.hskeNlA3Decrypt(BitArray.fromBigInteger(e, Herradura.N), BitArray.fromBigInteger(preshared, Herradura.N)).toBigInteger();
             System.out.println("P (plain) : " + hex(plaintext, n / 8));
             System.out.println("E (Alice) : " + hex(e, n / 8));
             System.out.println("D (Bob)   : " + hex(d, n / 8));
@@ -225,13 +226,13 @@ public final class Demo {
         System.out.println("    (GF DLP still present; NL hardens linear challenge preimage)");
         BigInteger RNl2 = null; // captured for the HPKE-NL Eve section below
         {
-            Herradura.Signature sig = HerraduraNl.hpksNlSign(plaintext, a, rng);
-            BigInteger e = Hfscx256.nlFscxRevolveV1(sig.r, plaintext, Herradura.I_STEPS);
-            boolean verified = HerraduraNl.hpksNlVerify(plaintext, C, sig.r, sig.s);
+            Herradura.Signature sig = HerraduraNl.hpksNlSign(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(a, Herradura.N), rng);
+            BitArray e = Hfscx256.nlFscxRevolveV1(sig.r, BitArray.fromBigInteger(plaintext, Herradura.N), Herradura.I_STEPS);
+            boolean verified = HerraduraNl.hpksNlVerify(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(C, Herradura.N), sig.r, sig.s);
             System.out.println("P (msg)        : " + hex(plaintext, n / 8));
-            System.out.println("R [Alice,sign] : " + hex(sig.r, n / 8));
-            System.out.println("e [Alice,sign] : " + hex(e, n / 8));
-            System.out.println("s [Alice,sign] : " + hex(sig.s, n / 8));
+            System.out.println("R [Alice,sign] : " + hex(sig.r.toBigInteger(), n / 8));
+            System.out.println("e [Alice,sign] : " + hex(e.toBigInteger(), n / 8));
+            System.out.println("s [Alice,sign] : " + hex(sig.s.toBigInteger(), n / 8));
             out(verified ? "  [Bob,verify] : + HPKS-NL verified: g^s . C^e == R"
                           : "  [Bob,verify] : [FAIL] HPKS-NL verification failed!");
         }
@@ -240,24 +241,24 @@ public final class Demo {
         System.out.println("    (GF DLP still present; NL hardens linear HSKE sub-protocol)");
         BigInteger eHpkeNl = null;
         {
-            Herradura.Ciphertext enc = HerraduraNl.hpkeNlEncrypt(plaintext, C, rng);
-            BigInteger dec = enc == null ? null : HerraduraNl.hpkeNlDecrypt(enc.ct, enc.r, a);
-            if (enc != null) { eHpkeNl = enc.ct; RNl2 = enc.r; }
+            Herradura.Ciphertext enc = HerraduraNl.hpkeNlEncrypt(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(C, Herradura.N), rng);
+            BitArray dec = enc == null ? null : HerraduraNl.hpkeNlDecrypt(enc.ct, enc.r, BitArray.fromBigInteger(a, Herradura.N));
+            if (enc != null) { eHpkeNl = enc.ct.toBigInteger(); RNl2 = enc.r.toBigInteger(); }
             System.out.println("P (plain) : " + hex(plaintext, n / 8));
-            System.out.println("E (Bob)   : " + (enc == null ? "N/A" : hex(enc.ct, n / 8)));
-            System.out.println("D (Alice) : " + (dec == null ? "N/A" : hex(dec, n / 8)));
-            out(enc != null && plaintext.equals(dec) ? "+ plaintext correctly decrypted"
+            System.out.println("E (Bob)   : " + (enc == null ? "N/A" : hex(enc.ct.toBigInteger(), n / 8)));
+            System.out.println("D (Alice) : " + (dec == null ? "N/A" : hex(dec.toBigInteger(), n / 8)));
+            out(enc != null && dec.equals(BitArray.fromBigInteger(plaintext, Herradura.N)) ? "+ plaintext correctly decrypted"
                                                        : "[FAIL] decryption failed!");
         }
 
         out("\n--- HPKE-NL3 [NL-hardened El Gamal — NL-FSCX v3, TODO #255]");
         {
-            Herradura.Ciphertext enc = HerraduraNl.hpkeNl3Encrypt(plaintext, C, rng);
-            BigInteger dec = enc == null ? null : HerraduraNl.hpkeNl3Decrypt(enc.ct, enc.r, a);
+            Herradura.Ciphertext enc = HerraduraNl.hpkeNl3Encrypt(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(C, Herradura.N), rng);
+            BitArray dec = enc == null ? null : HerraduraNl.hpkeNl3Decrypt(enc.ct, enc.r, BitArray.fromBigInteger(a, Herradura.N));
             System.out.println("P (plain) : " + hex(plaintext, n / 8));
-            System.out.println("E (Bob)   : " + (enc == null ? "N/A" : hex(enc.ct, n / 8)));
-            System.out.println("D (Alice) : " + (dec == null ? "N/A" : hex(dec, n / 8)));
-            out(enc != null && plaintext.equals(dec) ? "+ plaintext correctly decrypted"
+            System.out.println("E (Bob)   : " + (enc == null ? "N/A" : hex(enc.ct.toBigInteger(), n / 8)));
+            System.out.println("D (Alice) : " + (dec == null ? "N/A" : hex(dec.toBigInteger(), n / 8)));
+            out(enc != null && dec.equals(BitArray.fromBigInteger(plaintext, Herradura.N)) ? "+ plaintext correctly decrypted"
                                                        : "[FAIL] decryption failed!");
         }
 
@@ -324,9 +325,9 @@ public final class Demo {
             byte[] bareOut = Hfscx256.hash(tv, null);
             byte[] presBytes = Hfscx256.toFixedBytes(preshared, n / 8);
             byte[] macIv = new byte[32];
-            byte[] ivConstBytes = Hfscx256.toFixedBytes(Hfscx256.IV_CONST, 32);
+            byte[] ivConstBytes = Hfscx256.IV_CONST.toBytes();
             for (int i = 0; i < 32; i++) macIv[i] = (byte) (presBytes[i] ^ ivConstBytes[i]);
-            byte[] keyedOut = Hfscx256.hash(tv, new BigInteger(1, macIv));
+            byte[] keyedOut = Hfscx256.hash(tv, BitArray.fromBytes(macIv, Herradura.N));
             System.out.println("digest (bare)  : " + hex(bareOut));
             System.out.println("digest (keyed) : " + hex(keyedOut));
             out(bareOut.length == 32 ? "+ hash length correct (" + bareOut.length + " bytes)"
@@ -433,7 +434,7 @@ public final class Demo {
             for (int i = 0; i < tN; i++) {
                 BigInteger sk2 = rand(rng);
                 secrets.add(sk2);
-                pubkeys.add(Herradura.gfPow(Herradura.GF_GEN, sk2));
+                pubkeys.add(Herradura.gfPow(Herradura.GF_GEN, BitArray.fromBigInteger(sk2, Herradura.N)).toBigInteger());
             }
             BigInteger msg = rand(rng);
             HpksT.Signature sig = HpksT.sign(secrets, pubkeys, msg, rng);
@@ -464,29 +465,29 @@ public final class Demo {
         {
             byte[] fpeKey = "herradura-fpe-key-256bit-example".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             byte[] fpeCtx = "record:42".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-            BigInteger ct2 = FpeTwk.fpeEncrypt(plaintext, fpeKey, fpeCtx);
-            BigInteger rt2 = FpeTwk.fpeDecrypt(ct2, fpeKey, fpeCtx);
-            BigInteger ct3 = FpeTwk.fpeV3Encrypt(plaintext, fpeKey, fpeCtx);
-            BigInteger rt3 = FpeTwk.fpeV3Decrypt(ct3, fpeKey, fpeCtx);
+            BitArray ct2 = FpeTwk.fpeEncrypt(BitArray.fromBigInteger(plaintext, Herradura.N), fpeKey, fpeCtx);
+            BitArray rt2 = FpeTwk.fpeDecrypt(ct2, fpeKey, fpeCtx);
+            BitArray ct3 = FpeTwk.fpeV3Encrypt(BitArray.fromBigInteger(plaintext, Herradura.N), fpeKey, fpeCtx);
+            BitArray rt3 = FpeTwk.fpeV3Decrypt(ct3, fpeKey, fpeCtx);
             boolean v2v3Differ = !ct2.equals(ct3);
-            out(rt2.equals(plaintext) && rt3.equals(plaintext) && v2v3Differ
+            out(rt2.equals(BitArray.fromBigInteger(plaintext, Herradura.N)) && rt3.equals(BitArray.fromBigInteger(plaintext, Herradura.N)) && v2v3Differ
                 ? "+ fpe v2/v3 round-trip correct, v2 != v3 output"
-                : "[FAIL] fpe round-trip failed (v2_rt=" + rt2.equals(plaintext)
-                    + " v3_rt=" + rt3.equals(plaintext) + " v2v3_differ=" + v2v3Differ + ")");
+                : "[FAIL] fpe round-trip failed (v2_rt=" + rt2.equals(BitArray.fromBigInteger(plaintext, Herradura.N))
+                    + " v3_rt=" + rt3.equals(BitArray.fromBigInteger(plaintext, Herradura.N)) + " v2v3_differ=" + v2v3Differ + ")");
         }
 
         out("\n--- twk (78.B) [TWEAKABLE WIDE-BLOCK CIPHER — sector/block-index tweak, v2 and v3]");
         {
             byte[] twkKey = "herradura-twk-key-256bit-example".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-            BigInteger ct2 = FpeTwk.twkEncrypt(plaintext, twkKey, 7, 3);
-            BigInteger rt2 = FpeTwk.twkDecrypt(ct2, twkKey, 7, 3);
-            BigInteger ct3 = FpeTwk.twkV3Encrypt(plaintext, twkKey, 7, 3);
-            BigInteger rt3 = FpeTwk.twkV3Decrypt(ct3, twkKey, 7, 3);
+            BitArray ct2 = FpeTwk.twkEncrypt(BitArray.fromBigInteger(plaintext, Herradura.N), twkKey, 7, 3);
+            BitArray rt2 = FpeTwk.twkDecrypt(ct2, twkKey, 7, 3);
+            BitArray ct3 = FpeTwk.twkV3Encrypt(BitArray.fromBigInteger(plaintext, Herradura.N), twkKey, 7, 3);
+            BitArray rt3 = FpeTwk.twkV3Decrypt(ct3, twkKey, 7, 3);
             boolean v2v3Differ = !ct2.equals(ct3);
-            out(rt2.equals(plaintext) && rt3.equals(plaintext) && v2v3Differ
+            out(rt2.equals(BitArray.fromBigInteger(plaintext, Herradura.N)) && rt3.equals(BitArray.fromBigInteger(plaintext, Herradura.N)) && v2v3Differ
                 ? "+ twk v2/v3 round-trip correct, v2 != v3 output"
-                : "[FAIL] twk round-trip failed (v2_rt=" + rt2.equals(plaintext)
-                    + " v3_rt=" + rt3.equals(plaintext) + " v2v3_differ=" + v2v3Differ + ")");
+                : "[FAIL] twk round-trip failed (v2_rt=" + rt2.equals(BitArray.fromBigInteger(plaintext, Herradura.N))
+                    + " v3_rt=" + rt3.equals(BitArray.fromBigInteger(plaintext, Herradura.N)) + " v2v3_differ=" + v2v3Differ + ")");
         }
 
         out("\n--- HSKE-NL-V2-Duplex [AEAD — MonkeyDuplex, nl_fscx_revolve_v2 sponge] [RESEARCH]");
@@ -494,12 +495,12 @@ public final class Demo {
             BigInteger dpKey = rand(rng);
             byte[] dpPt = "HSKE-NL-V2-Duplex demo plaintext (47 B)".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             byte[] dpAd = "duplex-header-v1".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-            Duplex.EncResult r = Duplex.v2Encrypt(dpKey, dpPt, dpAd, rng);
-            byte[] dpDec = Duplex.v2Decrypt(dpKey, r.nonce, r.ct, r.tag, dpAd);
+            Duplex.EncResult r = Duplex.v2Encrypt(BitArray.fromBigInteger(dpKey, Herradura.N), dpPt, dpAd, rng);
+            byte[] dpDec = Duplex.v2Decrypt(BitArray.fromBigInteger(dpKey, Herradura.N), r.nonce, r.ct, r.tag, dpAd);
             byte[] badCt = r.ct.clone();
             if (badCt.length > 0) badCt[0] ^= 1;
-            byte[] badCtDec = Duplex.v2Decrypt(dpKey, r.nonce, badCt, r.tag, dpAd);
-            byte[] badAdDec = Duplex.v2Decrypt(dpKey, r.nonce, r.ct, r.tag,
+            byte[] badCtDec = Duplex.v2Decrypt(BitArray.fromBigInteger(dpKey, Herradura.N), r.nonce, badCt, r.tag, dpAd);
+            byte[] badAdDec = Duplex.v2Decrypt(BitArray.fromBigInteger(dpKey, Herradura.N), r.nonce, r.ct, r.tag,
                 "duplex-header-v2".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             boolean ok = java.util.Arrays.equals(dpDec, dpPt) && badCtDec == null && badAdDec == null;
             out(ok ? "+ HSKE-NL-V2-Duplex round-trip + tamper/AD rejection correct [RESEARCH]"
@@ -511,12 +512,12 @@ public final class Demo {
             BigInteger dpKey = rand(rng);
             byte[] dpPt = "HSKE-NL-V3-Duplex demo plaintext (47 B)".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             byte[] dpAd = "duplex-header-v1".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-            Duplex.EncResult r = Duplex.v3Encrypt(dpKey, dpPt, dpAd, rng);
-            byte[] dpDec = Duplex.v3Decrypt(dpKey, r.nonce, r.ct, r.tag, dpAd);
+            Duplex.EncResult r = Duplex.v3Encrypt(BitArray.fromBigInteger(dpKey, Herradura.N), dpPt, dpAd, rng);
+            byte[] dpDec = Duplex.v3Decrypt(BitArray.fromBigInteger(dpKey, Herradura.N), r.nonce, r.ct, r.tag, dpAd);
             byte[] badCt = r.ct.clone();
             if (badCt.length > 0) badCt[0] ^= 1;
-            byte[] badCtDec = Duplex.v3Decrypt(dpKey, r.nonce, badCt, r.tag, dpAd);
-            byte[] badAdDec = Duplex.v3Decrypt(dpKey, r.nonce, r.ct, r.tag,
+            byte[] badCtDec = Duplex.v3Decrypt(BitArray.fromBigInteger(dpKey, Herradura.N), r.nonce, badCt, r.tag, dpAd);
+            byte[] badAdDec = Duplex.v3Decrypt(BitArray.fromBigInteger(dpKey, Herradura.N), r.nonce, r.ct, r.tag,
                 "duplex-header-v2".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             boolean ok = java.util.Arrays.equals(dpDec, dpPt) && badCtDec == null && badAdDec == null;
             out(ok ? "+ HSKE-NL-V3-Duplex round-trip + tamper/AD rejection correct [RESEARCH]"
@@ -525,11 +526,11 @@ public final class Demo {
 
         out("\n--- Forward-secret ratchet (78.C) [KDF CHAIN — NL-FSCX v1 advance]");
         {
-            BigInteger state = Ratchet.init("demo-seed-78c".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            BitArray state = Ratchet.init("demo-seed-78c".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             java.util.Set<String> keys = new java.util.HashSet<>();
             for (int i = 0; i < 5; i++) {
                 Object[] r = Ratchet.advance(state);
-                state = (BigInteger) r[0];
+                state = (BitArray) r[0];
                 keys.add(new BigInteger(1, (byte[]) r[1]).toString(16));
             }
             out(keys.size() == 5 ? "+ Ratchet: 5 distinct message keys"
@@ -567,10 +568,10 @@ public final class Demo {
 
         out("*** HPKS-NL — Eve cannot forge Schnorr without knowing private key a");
         {
-            BigInteger rEve = Herradura.gfPow(Herradura.GF_GEN, rand(rng));
-            BigInteger eEve = Hfscx256.nlFscxRevolveV1(rEve, decoy, Herradura.I_STEPS);
+            BigInteger rEve = Herradura.gfPow(Herradura.GF_GEN, BitArray.fromBigInteger(rand(rng), Herradura.N)).toBigInteger();
+            BigInteger eEve = Hfscx256.nlFscxRevolveV1(BitArray.fromBigInteger(rEve, Herradura.N), BitArray.fromBigInteger(decoy, Herradura.N), Herradura.I_STEPS).toBigInteger();
             BigInteger sEve = rand(rng);
-            BigInteger lhs = Herradura.gfMul(Herradura.gfPow(Herradura.GF_GEN, sEve), Herradura.gfPow(C, eEve));
+            BigInteger lhs = Herradura.gfMul(Herradura.gfPow(Herradura.GF_GEN, BitArray.fromBigInteger(sEve, Herradura.N)), Herradura.gfPow(BitArray.fromBigInteger(C, Herradura.N), BitArray.fromBigInteger(eEve, Herradura.N))).toBigInteger();
             out(lhs.equals(rEve) ? "[FAIL] Eve forged HPKS-NL signature (Eve wins)!"
                 : "- Eve could not forge: g^s_eve . C^e_eve != R_eve  (DLP protection)");
         }
@@ -578,7 +579,7 @@ public final class Demo {
         out("*** HPKE-NL — Eve cannot decrypt without Alice's private key");
         if (eHpkeNl != null && RNl2 != null) {
             BigInteger eveKey = C.xor(RNl2);
-            BigInteger dEve = HerraduraNl.nlFscxRevolveV2Inv(eHpkeNl, eveKey, Herradura.I_STEPS);
+            BigInteger dEve = HerraduraNl.nlFscxRevolveV2Inv(BitArray.fromBigInteger(eHpkeNl, Herradura.N), BitArray.fromBigInteger(eveKey, Herradura.N), Herradura.I_STEPS).toBigInteger();
             out(dEve.equals(plaintext) ? "[FAIL] Eve decrypted plaintext (Eve wins)!"
                 : "- Eve could not decrypt without Alice's private key (CDH + NL protection)");
         }

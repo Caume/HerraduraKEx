@@ -42,7 +42,7 @@
     = K XOR N (transmitted alongside ciphertext).  Eliminates keystream reuse when
     the same long-term key K is used across sessions.
     nl_fscx_revolve_v2_inv_ba precomputes delta(B) once before the loop.
-    Loop body: ba_sub256(z, buf, delta); m_inv_ba(mz, z); ba_xor(buf, b, mz).
+    Loop body: ba_sub_mod2n(z, buf, delta); m_inv_ba(mz, z); ba_xor(buf, b, mz).
     Eliminates one nl_fscx_delta_v2 call (arbitrary-precision mul+rol) per step.
 
     --- v1.5.7: precomputed M^{-1} for nl_fscx_v2_inv_ba ---
@@ -279,11 +279,11 @@ static uint32_t stern32_first_preimage(uint32_t seed, uint16_t ct)
 int main(void)
 {
     FILE *urnd;
-    BitArray a, b, preshared, plaintext, decoy;
-    BitArray C, C2;
+    BitArray a = BA_INIT, b = BA_INIT, preshared = BA_INIT, plaintext = BA_INIT, decoy = BA_INIT;
+    BitArray C = BA_INIT, C2 = BA_INIT;
     /* saved for Eve tests */
-    BitArray E_nl_saved, R_nl2_saved, sk_rnl_A_saved;
-    BitArray sf_seed_saved, sf_K_enc_saved;
+    BitArray E_nl_saved = BA_INIT, R_nl2_saved = BA_INIT, sk_rnl_A_saved = BA_INIT;
+    BitArray sf_seed_saved = BA_INIT, sf_K_enc_saved = BA_INIT;
     uint8_t  sf_syn_saved[SDF_SYNBYTES];
 
     urnd = fopen("/dev/urandom", "rb");
@@ -314,7 +314,7 @@ int main(void)
     printf("\n--- HKEX-GF [CLASSICAL \xe2\x80\x94 not PQC; Shor's algorithm breaks DLP]\n");
     printf("    (DH over GF(2^%d)*)\n", KEYBITS);
     {
-        BitArray skA, skB;
+        BitArray skA = BA_INIT, skB = BA_INIT;
         gf_pow_ba(&skA, &C2, &a);
         gf_pow_ba(&skB, &C,  &b);
         ba_print_hex("sk (Alice): ", &skA);
@@ -331,7 +331,7 @@ int main(void)
     printf("\n--- HSKE [CLASSICAL \xe2\x80\x94 not PQC; linear key recovery from 1 KPT pair]\n");
     puts("    (fscx_revolve symmetric encryption)");
     {
-        BitArray E_hske, D_hske;
+        BitArray E_hske = BA_INIT, D_hske = BA_INIT;
         ba_print_hex("P (plain) : ", &plaintext);
         ba_fscx_revolve(&E_hske, &plaintext, &preshared, I_VALUE);
         ba_print_hex("E (Alice) : ", &E_hske);
@@ -347,7 +347,7 @@ int main(void)
     printf("\n--- HPKS [CLASSICAL \xe2\x80\x94 not PQC; DLP + linear challenge]\n");
     puts("    (Schnorr-like with fscx_revolve challenge)");
     {
-        BitArray k_s, R_s, e_s, ae_s, s_s, gs, Ce, lhs;
+        BitArray k_s = BA_INIT, R_s = BA_INIT, e_s = BA_INIT, ae_s = BA_INIT, s_s = BA_INIT, gs = BA_INIT, Ce = BA_INIT, lhs = BA_INIT;
         ba_rand(&k_s, urnd);
         gf_pow_ba(&R_s, &GF_GEN, &k_s);
         ba_fscx_revolve(&e_s, &R_s, &plaintext, I_VALUE);
@@ -376,7 +376,7 @@ int main(void)
     printf("\n--- HPKE [CLASSICAL \xe2\x80\x94 not PQC; DLP + linear HSKE sub-protocol]\n");
     puts("    (El Gamal + fscx_revolve)");
     {
-        BitArray r_hpke, R_hpke, enc_key, E_hpke, dec_key, D_hpke;
+        BitArray r_hpke = BA_INIT, R_hpke = BA_INIT, enc_key = BA_INIT, E_hpke = BA_INIT, dec_key = BA_INIT, D_hpke = BA_INIT;
         ba_rand(&r_hpke, urnd);
         gf_pow_ba(&R_hpke,  &GF_GEN, &r_hpke);
         gf_pow_ba(&enc_key, &C,      &r_hpke);
@@ -398,10 +398,10 @@ int main(void)
     /* --- HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1] */
     printf("\n--- HSKE-NL-A1 [PQC-HARDENED \xe2\x80\x94 counter-mode with NL-FSCX v1]\n");
     {
-        BitArray N_a1, base_a1, ks_nl1, E_nl1, D_nl1;
+        BitArray N_a1 = BA_INIT, base_a1 = BA_INIT, ks_nl1 = BA_INIT, E_nl1 = BA_INIT, D_nl1 = BA_INIT;
         ba_rand(&N_a1, urnd);                         /* per-session nonce          */
         ba_xor(&base_a1, &preshared, &N_a1);          /* base = K XOR N             */
-        BitArray seed_a1;
+        BitArray seed_a1 = BA_INIT;
         ba_rnl_kdf_seed(&seed_a1, &base_a1);           /* seed = ROL(base,n/8)^DC    */
         nl_fscx_revolve_v1_ba(&ks_nl1, &seed_a1, &base_a1, I_VALUE); /* counter=0  */
         ba_xor(&E_nl1, &plaintext, &ks_nl1);
@@ -421,7 +421,7 @@ int main(void)
     /* --- HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2] */
     printf("\n--- HSKE-NL-A2 [PQC-HARDENED \xe2\x80\x94 revolve-mode with NL-FSCX v2]\n");
     {
-        BitArray E_nl2, D_nl2;
+        BitArray E_nl2 = BA_INIT, D_nl2 = BA_INIT;
         nl_fscx_revolve_v2_ba(&E_nl2, &plaintext, &preshared, R_VALUE);
         nl_fscx_revolve_v2_inv_ba(&D_nl2, &E_nl2, &preshared, R_VALUE);
         ba_print_hex("P (plain) : ", &plaintext);
@@ -440,17 +440,22 @@ int main(void)
         rnl_poly_t m_base, a_rand_poly, m_blind;
         rnl_poly_t s_A_poly, s_B_poly;
         int32_t C_A[RNL_N], C_B[RNL_N];
-        BitArray KA, KB, skA_nl, skB_nl;
+        BitArray KA = BA_INIT, KB = BA_INIT, skA_nl = BA_INIT, skB_nl = BA_INIT;
         int i, bits_diff;
-        BitArray diff_ba;
+        BitArray diff_ba = BA_INIT;
 
         rnl_m_poly(m_base);
         rnl_rand_poly(a_rand_poly, urnd);
         rnl_poly_add(m_blind, m_base, a_rand_poly);
         /* Contributory nonces: Alice generates n_A, Bob generates n_B */
-        uint8_t rnl_n_A[KEYBYTES], rnl_n_B[KEYBYTES];
-        ba_rand((BitArray *)rnl_n_A, urnd);
-        ba_rand((BitArray *)rnl_n_B, urnd);
+        /* BitArray, not a bare uint8_t[KEYBYTES] cast to one: since TODO #314
+           pass 2 the type carries a width AHEAD of its octets, so the old cast
+           both read an unset width and wrote sizeof(BitArray) bytes into a
+           KEYBYTES buffer.  It survived local runs because the stack happened
+           to hold a legal width; CI's did not. */
+        BitArray rnl_n_A = BA_INIT, rnl_n_B = BA_INIT;
+        ba_rand(&rnl_n_A, urnd);
+        ba_rand(&rnl_n_B, urnd);
         uint8_t hint_A[RNL_N / 8];
         rnl_keygen(s_A_poly, C_A, m_blind, urnd);
         rnl_keygen(s_B_poly, C_B, m_blind, urnd);
@@ -458,8 +463,8 @@ int main(void)
         rnl_agree(&KB, s_B_poly, C_A, hint_A, NULL);   /* Bob: receiver */
         /* Apply contributory KDF: final_key = HFSCX-256(K_raw || n_A || n_B) */
         uint8_t kdfA[KEYBYTES], kdfB[KEYBYTES];
-        rnl_contributory_kdf(kdfA, KA.b, rnl_n_A, rnl_n_B);
-        rnl_contributory_kdf(kdfB, KB.b, rnl_n_A, rnl_n_B);
+        rnl_contributory_kdf(kdfA, KA.b, rnl_n_A.b, rnl_n_B.b);
+        rnl_contributory_kdf(kdfB, KB.b, rnl_n_A.b, rnl_n_B.b);
         memcpy(skA_nl.b, kdfA, KEYBYTES);
         memcpy(skB_nl.b, kdfB, KEYBYTES);
         explicit_bzero(kdfA, KEYBYTES); explicit_bzero(kdfB, KEYBYTES);
@@ -478,15 +483,15 @@ int main(void)
         sk_rnl_A_saved = skA_nl;
         explicit_bzero(&KA, sizeof(KA));
         explicit_bzero(&KB, sizeof(KB));
-        explicit_bzero(rnl_n_A, KEYBYTES);
-        explicit_bzero(rnl_n_B, KEYBYTES);
+        explicit_bzero(rnl_n_A.b, KEYBYTES);
+        explicit_bzero(rnl_n_B.b, KEYBYTES);
     }
 
     /* --- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge] */
     printf("\n--- HPKS-NL [NL-hardened Schnorr \xe2\x80\x94 NL-FSCX v1 challenge]\n");
     puts("    (GF DLP still present; NL hardens linear challenge preimage)");
     {
-        BitArray k_nl, R_nl, e_nl, ae_nl, s_nl, gs_nl, Ce_nl, lhs_nl;
+        BitArray k_nl = BA_INIT, R_nl = BA_INIT, e_nl = BA_INIT, ae_nl = BA_INIT, s_nl = BA_INIT, gs_nl = BA_INIT, Ce_nl = BA_INIT, lhs_nl = BA_INIT;
         ba_rand(&k_nl, urnd);
         gf_pow_ba(&R_nl, &GF_GEN, &k_nl);
         nl_fscx_revolve_v1_ba(&e_nl, &R_nl, &plaintext, I_VALUE);
@@ -515,7 +520,7 @@ int main(void)
     printf("\n--- HPKE-NL [NL-hardened El Gamal \xe2\x80\x94 NL-FSCX v2 encryption]\n");
     puts("    (GF DLP still present; NL hardens linear HSKE sub-protocol)");
     {
-        BitArray r_nl, R_nl2, enc_nl, E_nl, dec_nl, D_nl;
+        BitArray r_nl = BA_INIT, R_nl2 = BA_INIT, enc_nl = BA_INIT, E_nl = BA_INIT, dec_nl = BA_INIT, D_nl = BA_INIT;
         ba_rand(&r_nl, urnd);
         gf_pow_ba(&R_nl2,  &GF_GEN, &r_nl);
         gf_pow_ba(&enc_nl, &C,      &r_nl);
@@ -543,7 +548,7 @@ int main(void)
            KEYBITS, SDF_T, SDF_ROUNDS, SDF_ROUNDS);
     {
         static SternSig sf_sig;
-        BitArray sf_e;
+        BitArray sf_e = BA_INIT;
         stern_sig_alloc(&sf_sig, SDF_ROUNDS);
         stern_f_keygen(&sf_seed_saved, &sf_e, sf_syn_saved, urnd);
         ba_print_hex("seed     : ", &sf_seed_saved);
@@ -598,7 +603,7 @@ int main(void)
     printf("\n--- HPKE-Stern-F [CODE-BASED PQC \xe2\x80\x94 Niederreiter KEM, N=%d]\n", KEYBITS);
     puts("    (brute-force decap infeasible at N=256; demo uses known e')");
     {
-        BitArray sf_e_p, K_dec;
+        BitArray sf_e_p = BA_INIT, K_dec = BA_INIT;
         uint8_t sf_ct[SDF_SYNBYTES];
         hpke_stern_f_encap(&sf_K_enc_saved, sf_ct, &sf_e_p, &sf_seed_saved, urnd);
         hpke_stern_f_decap_known(&K_dec, &sf_e_p, &sf_seed_saved);
@@ -614,7 +619,7 @@ int main(void)
     /* --- HSKE-NL-V2-Duplex [AEAD -- MonkeyDuplex-style, nl_fscx_revolve_v2 sponge] */
     printf("\n--- HSKE-NL-V2-Duplex [AEAD \xe2\x80\x94 MonkeyDuplex, nl_fscx_revolve_v2 sponge] [RESEARCH]\n");
     {
-        BitArray dplex_key, dplex_nonce;
+        BitArray dplex_key = BA_INIT, dplex_nonce = BA_INIT;
         static const uint8_t dplex_pt[]  = "HSKE-NL-V2-Duplex demo plaintext (47 B)";
         static const uint8_t dplex_ad[]  = "duplex-header-v1";
         uint8_t dplex_ct[sizeof(dplex_pt) - 1];
@@ -725,9 +730,9 @@ int main(void)
     {
         int32_t hc_m[RNL_N], hc_rand[RNL_N];
         int32_t hc_s[RNL_N], hc_c[RNL_N];
-        BitArray hc_seed_H, hc_e_ba;
+        BitArray hc_seed_H = BA_INIT, hc_e_ba = BA_INIT;
         uint8_t  hc_syndr[SDF_SYNBYTES];
-        BitArray hc_isd, hc_ie;
+        BitArray hc_isd = BA_INIT, hc_ie = BA_INIT;
         uint8_t  hc_isyndr[SDF_SYNBYTES];
         SternSig hc_cred;
         HcredProof hc_proof;
@@ -848,15 +853,15 @@ int main(void)
     puts("\n*** HPKS-T \xe2\x80\x94 n-of-n threshold aggregate Schnorr over GF(2^n)*");
     {
         enum { T_N = 3 };
-        BitArray t_secrets[T_N], t_pubkeys[T_N];
+        BitArray t_secrets[T_N], t_pubkeys[T_N]; ba_init_array(t_secrets, T_N); ba_init_array(t_pubkeys, T_N);
         for (int j = 0; j < T_N; j++) {
             ba_rand(&t_secrets[j], urnd);
             gf_pow_ba(&t_pubkeys[j], &GF_GEN, &t_secrets[j]);
         }
-        BitArray t_cagg, t_R, t_s;
+        BitArray t_cagg = BA_INIT, t_R = BA_INIT, t_s = BA_INIT;
         hpkst_sign(t_secrets, t_pubkeys, T_N, &plaintext, NULL, &t_cagg, &t_R, &t_s, urnd);
         int t_ok  = hpkst_verify(&t_cagg, &t_R, &t_s, &plaintext);
-        BitArray t_s_bad;
+        BitArray t_s_bad = BA_INIT;
         memcpy(t_s_bad.b, t_s.b, KEYBYTES);
         t_s_bad.b[KEYBYTES-1] ^= 1;
         int t_bad = hpkst_verify(&t_cagg, &t_R, &t_s_bad, &plaintext);
@@ -871,7 +876,7 @@ int main(void)
 
     puts("*** HPKS-NL \xe2\x80\x94 Eve cannot forge Schnorr without knowing private key a");
     {
-        BitArray rand_exp, R_eve, e_eve, s_eve, gs_eve, Ce_eve, lhs_eve;
+        BitArray rand_exp = BA_INIT, R_eve = BA_INIT, e_eve = BA_INIT, s_eve = BA_INIT, gs_eve = BA_INIT, Ce_eve = BA_INIT, lhs_eve = BA_INIT;
         ba_rand(&rand_exp, urnd);
         gf_pow_ba(&R_eve, &GF_GEN, &rand_exp);
         nl_fscx_revolve_v1_ba(&e_eve, &R_eve, &decoy, I_VALUE);
@@ -887,7 +892,7 @@ int main(void)
 
     puts("*** HPKE-NL \xe2\x80\x94 Eve cannot decrypt without Alice's private key");
     {
-        BitArray eve_key, D_eve;
+        BitArray eve_key = BA_INIT, D_eve = BA_INIT;
         /* Eve's wrong key: C XOR R_nl2 (should be C^r = GF product) */
         ba_xor(&eve_key, &C, &R_nl2_saved);
         nl_fscx_revolve_v2_inv_ba(&D_eve, &E_nl_saved, &eve_key, I_VALUE);
@@ -899,7 +904,7 @@ int main(void)
 
     puts("*** HKEX-RNL \xe2\x80\x94 Eve cannot derive shared key from public ring polynomials");
     {
-        BitArray eve_rnl_guess;
+        BitArray eve_rnl_guess = BA_INIT;
         ba_rand(&eve_rnl_guess, urnd);
         if (ba_equal(&eve_rnl_guess, &sk_rnl_A_saved))
             printf("[FAIL] Eve guessed HKEX-RNL shared key (astronomically unlikely)!\n");
@@ -929,7 +934,7 @@ int main(void)
 
     puts("*** HPKE-Stern-F \xe2\x80\x94 Eve cannot derive session key from syndrome ciphertext");
     {
-        BitArray eve_K_guess;
+        BitArray eve_K_guess = BA_INIT;
         ba_rand(&eve_K_guess, urnd);
         if (ba_equal(&eve_K_guess, &sf_K_enc_saved))
             printf("[FAIL] Eve guessed HPKE-Stern-F session key (astronomically unlikely)!\n");
@@ -939,7 +944,7 @@ int main(void)
 
     puts("*** FPE (78.A) — format-preserving encrypt/decrypt round-trip");
     {
-        BitArray fpe_plain, fpe_ct, fpe_rec;
+        BitArray fpe_plain = BA_INIT, fpe_ct = BA_INIT, fpe_rec = BA_INIT;
         const uint8_t fpe_key[] = "herradura-fpe-key-256bit-example";
         const uint8_t fpe_ctx[] = "record:42";
         ba_rand(&fpe_plain, urnd);
@@ -955,7 +960,7 @@ int main(void)
 
     puts("*** Tweakable cipher (78.B) — sector-block encrypt/decrypt");
     {
-        BitArray twk_plain, twk_ct, twk_rec;
+        BitArray twk_plain = BA_INIT, twk_ct = BA_INIT, twk_rec = BA_INIT;
         const uint8_t twk_key[] = "herradura-twk-key-256bit-example";
         ba_rand(&twk_plain, urnd);
         twk_encrypt(&twk_plain, twk_key, sizeof(twk_key)-1, 7, 3, &twk_ct);
@@ -995,7 +1000,7 @@ int main(void)
 
     /* 78.H — Masked HSKE demo */
     {
-        BitArray hske_plain, hske_key, hske_ct, hske_rec, mask;
+        BitArray hske_plain = BA_INIT, hske_key = BA_INIT, hske_ct = BA_INIT, hske_rec = BA_INIT, mask = BA_INIT;
         ba_rand(&hske_plain, urnd); ba_rand(&hske_key, urnd);
         hske_encrypt_masked(&hske_plain, &hske_key, &hske_ct, &mask, urnd);
         hske_decrypt_masked(&hske_ct,   &hske_key, &hske_rec, &mask, urnd);
@@ -1008,7 +1013,7 @@ int main(void)
 
     /* 78.C — Ratchet demo (5 steps) */
     {
-        BitArray state, next;
+        BitArray state = BA_INIT, next = BA_INIT;
         uint8_t mk[KEYBYTES];
         uint8_t seen[5][KEYBYTES];
         int i, unique = 1;
@@ -1029,8 +1034,8 @@ int main(void)
     /* 78.I — Ring signature demo (k=3, sign as member 1) */
     {
 #define RING_K 3
-        BitArray  ring_seeds[RING_K];
-        BitArray  ring_e[RING_K];
+        BitArray ring_seeds[RING_K]; ba_init_array(ring_seeds, RING_K);
+        BitArray ring_e[RING_K]; ba_init_array(ring_e, RING_K);
         uint8_t   ring_syndrs[RING_K * SDF_SYNBYTES];
         SternRingSig rsig;
         int ring_j = 1, i;
@@ -1055,7 +1060,7 @@ int main(void)
     /* 80 — OPRF demo (blind / eval / unblind round-trip) */
     puts("*** OPRF (80) — 2HashDH over GF(2^256)*");
     {
-        BitArray oprf_k, oprf_r, oprf_alpha, oprf_beta, oprf_F, oprf_check;
+        BitArray oprf_k = BA_INIT, oprf_r = BA_INIT, oprf_alpha = BA_INIT, oprf_beta = BA_INIT, oprf_F = BA_INIT, oprf_check = BA_INIT;
         const char *oprf_msg = "oprf-demo-input";
         oprf_keygen(&oprf_k, urnd);
         oprf_blind((const uint8_t*)oprf_msg, strlen(oprf_msg), &oprf_r, &oprf_alpha, urnd);
@@ -1075,7 +1080,7 @@ int main(void)
     {
         const char *pake_pw      = "s3cr3t-pw";
         const char *pake_pw_bad  = "wrong-pw";
-        BitArray   pake_oprf_k;
+        BitArray pake_oprf_k = BA_INIT;
         HpakeRecord pake_rec;
         uint8_t    pake_sk[KEYBYTES];
         oprf_keygen(&pake_oprf_k, urnd);
