@@ -1805,7 +1805,19 @@ def test_hpks_stern_f_correctness():
     fake_c2 = _stern_hash(size, BitArray(size, 0))
     fake_commits = [(fake_c0, fake_c1, fake_c2)] * SDF_ROUNDS
     fake_chal = [0] * SDF_ROUNDS
-    fake_resp  = [(BitArray(size, fake_r), fake_r)] * SDF_ROUNDS
+    # WELL-TYPED on purpose (TODO #316).  A real b = 0 response is a pair of
+    # ints, and this pair carried a BitArray in its first slot until v9.5.2 --
+    # harmless while the verifier rejected at the CHALLENGE check, which it
+    # does unless every recomputed challenge is 0, i.e. (1/3)^SDF_ROUNDS =
+    # 1.5e-5 of runs.  On that branch `BitArray(n, sr)` raised TypeError and
+    # took the whole harness down, so the assertion was a sampled gate whose
+    # failure mode was a crash rather than a [FAIL] line.  Typed correctly the
+    # verifier RUNS the b = 0 branch and rejects on the merits -- c1 was built
+    # without ds=2, and #298's wt(respA ^ respB) == t binding fails at weight 0
+    # -- so the check is deterministic and strictly stronger: it now exercises
+    # the branch it used to crash through.  Measured: 0 accepted and 0 raised
+    # in 6000 forgeries at rounds = 1, where that branch is reached ~2000 times.
+    fake_resp  = [(fake_r, fake_r)] * SDF_ROUNDS
     eve_sig = (fake_commits, fake_chal, fake_resp)
     eve_ok = hpks_stern_f_verify(decoy, eve_sig, sf_seed, sf_syn, size)
     print(f"    Eve forge attempt: {'PASS (rejected)' if not eve_ok else 'FAIL (accepted!)'}")

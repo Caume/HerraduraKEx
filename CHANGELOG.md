@@ -2,6 +2,37 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.2] - 2026-09-23
+
+### Fixed
+- **`[17]`'s Eve-forge sub-check was a sampled gate whose failure mode was a CRASH (TODO
+  #316, first pass).**  The forged signature claims `fake_chal = [0] * SDF_ROUNDS`;
+  `hpks_stern_f_verify` recomputes the Fiat-Shamir challenge and rejects at the first
+  round that disagrees, so the `b = 0` branch is entered only when every recomputed
+  challenge is 0 — `(1/3)^8` = 1.5e-5 of runs.  On that branch the response pair carried
+  a `BitArray` where a real one carries an int, and `BitArray(n, sr)` raised an uncaught
+  `TypeError` that aborted the whole Python harness, in a REQUIRED job, rather than
+  printing a `[FAIL]` line.  Measured against the prediction at rounds = 1 / 2 / 4 / 8:
+  0.342 / 0.118 / 0.0130 / 0.0000 of 2000 attempts against `(1/3)^R` = 0.3333 / 0.1111 /
+  0.01235 / 0.000152.  Python-only — C, Go and Java assert completeness only in `[17]`.
+
+### Changed
+- **The fix REMOVES the sampling rather than lowering its rate**, on TODO #310's rule
+  that an off-weight witness is CONSTRUCTED and not hoped for.  Typed correctly the
+  verifier runs the `b = 0` branch and rejects on the merits — `c1` was built without
+  `ds=2`, and TODO #298's `wt(respA ^ respB) == t` binding fails at weight 0 — so the
+  check is deterministic and strictly stronger: it now exercises the branch it used to
+  crash through.  Measured: 0 accepted and 0 raised in 6000 forgeries at rounds = 1,
+  where that branch is reached about 2000 times.  Giving the sub-check its own round
+  count was considered and rejected: it would push a crash from 1.5e-5 to 1e-9 and leave
+  the `b = 0` path still unexercised.
+- **TODO #316 filed and its first pass recorded**, covering the Python harness's 54
+  numbered assertions.  TODO #310 found `[53]` failing about one run in 16 and closed by
+  noting that no census existed of whether any other numbered test decides a verdict from
+  a fresh sample against a fixed threshold; that sentence was in `CLAUDE.md`'s Testing
+  section and was nobody's item.  The item stays **OPEN**: `[21]` and `[46]`-`[52]` remain
+  on the Python side, and C (60), Go (54) and Java (42) are untouched.
+
 ## [9.5.1] - 2026-09-23
 
 ### Fixed

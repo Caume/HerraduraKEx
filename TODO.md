@@ -233,3 +233,148 @@ role appears that is neither parameter-fed nor movable.
 Status: **OPEN**
 
 ---
+
+### #316: which NUMBERED TESTS decide a verdict from a fresh sample against a fixed threshold
+
+**TODO #310's closing question, filed.**  That item found `[53]` failing about **one run
+in 16** in two of four ports, from two independent false-failure terms that multiplied to
+~7.0% per run and hid each other — at a combined rate that high, nobody asks which of the
+two coins landed badly, and the second only became visible once the first was gone.  It
+then said what it had not done: `[4]`, `[18]` and `[45]` were fixed by #233 and #234 by
+making the threshold follow the statistic, each found by somebody tripping over it, and
+**no census exists** of whether any other numbered test has the same shape.  That sentence
+is `CLAUDE.md`'s Testing section today and it is nobody's item.  This is it.
+
+**The precedent is built and it found things.**  TODO #300 asked exactly this question of
+the 76 findings gates, and `SAMPLED_GATES` in `run_findings_gates.py` is the answer: every
+sampled gate carries a verdict code (`exact` / `negligible` / `replicated` / `follows`) and
+either a DERIVED RATE or a STATED ARGUMENT, with the two counted separately in the runner's
+banner so the distinction cannot quietly erode.  It turned up three defects, and the third
+is the one to remember — `qcmdpc_bgf_failure_rate.py` had a single `return 0`, so it was
+discovered, run every CI run, and could not go red.  A gate that cannot fail is not a gate.
+
+**Why the numbered tests are the more expensive place to have this.**  The findings gates
+live in `analysis-findings`, which is `continue-on-error`.  The numbered tests live in
+`native-c`, `native-go`, `native-python` and `native-java`, which are REQUIRED, so a flake
+there is a red required check on an unrelated PR — and TODO #233's whole point is that
+those harnesses now fail the build.
+
+**What is owed.**
+
+1. **The census itself**, in `spec/check_language_parity.py` rather than in a new file:
+   that checker already reads all four harnesses, already parses numbered `[N]` markers for
+   its contiguity and set-alignment checks, and is already run by `native-python`.  The
+   corpus is 54 / 60 / 54 / 42 numbered assertions in Python / C / Go / Java.
+2. **A rate is per (test, PORT), not per test.**  This is #310's finding stated as a design
+   constraint: the same `[53]` code failed one run in 16 in Python and Go and one run in
+   65536 in C and Java, because the two pairs run it at different `(N, t)`.  A single cell
+   per row would have recorded the lucky number and called the class closed.
+3. **Ask how many TERMS a rate has, not what the rate is.**  #310's own lesson, and the
+   reason `[53]`'s second term survived the first fix.
+4. **Self-invalidating in both directions**, like every other curated table in that file:
+   an entry naming a test that no longer exists fails, and so does a numbered test that
+   draws fresh entropy and is named by no entry.
+
+**Known hazard, from #310's own known limit.**  Verifying a rate STATISTICALLY costs a
+harness run per sample, and the C and Go suites take 10+ minutes each — so a measured null
+is affordable in Python and is not affordable four times over.  Where a rate is exact
+arithmetic (`2^-t`, `(2/3)^rounds`) one reading of the construction carries to all four;
+where it is not, say which port was measured, as #310 did.
+
+**FIRST PASS (Python harness, 54 numbered assertions) — one defect found, and it is
+not the shape #310 predicted.**
+
+* **`[17]`'s Eve-forge sub-check is a sampled gate at `(1/3)^SDF_ROUNDS` = 1.5e-5 per
+  run, and its failure mode is an UNCAUGHT `TypeError` that takes the whole harness
+  down** rather than a `[FAIL]` line — in a REQUIRED job.  The forgery claims
+  `fake_chal = [0] * SDF_ROUNDS`; `hpks_stern_f_verify` RECOMPUTES the Fiat-Shamir
+  challenge and rejects on the first round that disagrees, so the `b = 0` branch is
+  reached only when every recomputed challenge is 0.  On that branch the response pair
+  carried a `BitArray` where a real one carries an int, and `BitArray(n, sr)` raises.
+  **Measured, and it is exactly the predicted geometric:** TypeError in 0.342 / 0.118 /
+  0.0130 / 0.0000 of 2000 attempts at rounds = 1 / 2 / 4 / 8 against `(1/3)^R` =
+  0.3333 / 0.1111 / 0.01235 / 0.000152.
+* **The fix is #310's — CONSTRUCT, do not hope — and it makes the assertion stronger.**
+  Typing the pair correctly does not lower the rate, it removes the sampling: the
+  verifier then RUNS the `b = 0` branch and rejects on the merits, because `c1` was
+  built without `ds=2` and #298's `wt(respA ^ respB) == t` binding fails at weight 0.
+  Measured: 0 accepted and 0 raised in 6000 forgeries at rounds = 1, where that branch
+  is reached about 2000 times — i.e. the branch the check used to crash through is now
+  the branch it tests.  Giving it its own round count was considered and is the WRONG
+  fix here: it would push a crash from 1.5e-5 to 1e-9 and leave the b = 0 path still
+  unexercised.
+* **It is PYTHON-ONLY, which is #310's per-port rule paying off in the other direction.**
+  #310's `[53]` was the same code at two parameter sets; this sub-check does not exist in
+  C, Go or Java at all — their `[17]` asserts completeness only — so the cell is
+  (Python 1.5e-5, C/Go/Java absent), and a table with one cell per test would have
+  recorded "absent" and closed the row.
+
+**What the first pass classified as sound, with the reason, because a census that only
+reports defects cannot be checked.**
+
+* `[2]` (`2.9 <= mean <= 3.1`) is EXACT despite looking like the worst row in the file:
+  FSCX is linear, so flipping one input bit moves the output by `M . e_j` of weight
+  exactly 3 at every `n >= 3`.  The statistic has zero variance and the window is legacy
+  slack.
+* `[11]`'s 98% non-linearity threshold has a **genuinely nonzero null** — 4 coincidences
+  in 20 000 at n = 32, i.e. 2.0e-4, not the 2^-32 a reader would assume — so the slack
+  is load-bearing rather than generous, and the derived rate is `P(Binom(500, 2e-4) >=
+  11)` ~ 1e-14.  `[10]`'s 95% no-period threshold measured 4000/4000 at n = 32 and 64.
+  Neither is #234-vacuous: a v2 that became linear scores `nl_ok` ~ 0 and a v1 that lost
+  aperiodicity scores `no_period` ~ 0, so both gates still fire on the regression they
+  defend.
+* `[18]` is the REFERENCE ROW and should be read before any other: #233 separated the
+  ambiguous-syndrome branch from the failure branch and scores only `bad`, which is how a
+  probabilistic subject gets an exact verdict without slack.
+* `[20]` runs the ring at rounds = 4 — the count this repo's Testing section warns
+  about — and is exact because it asserts COMPLETENESS ONLY.  Adding a rejection case
+  there would carry a 19.75% soundness error, which is the warning stated as a live
+  constraint rather than as history.
+* `[50]`'s six tamper axes pick `e0`/`r0` from the proof's OWN opened lists, so the poked
+  field is always one the verifier checks: exact, not lucky.
+* `[14]` rests on an ARGUMENT (Peikert reconciliation eliminates agreement failures), and
+  under #310's rule that is the row to distrust, not the row to wave through — a reason
+  exact about the wrong object reads exactly like a correct one.  Measured here: 0
+  disagreements in 20 000 at n = 32, which bounds the per-trial rate at 1.5e-4 (95%) and
+  is NOT tight enough to derive a run-level rate from, so the row cites
+  `hkex_rnl_failure_rate.py` §5/§7 rather than re-deriving.  Note RNL_SIZES includes 32
+  while the test's own comment says the error probability is negligible "at n >= 64".
+* `[19]`'s collision and boundary checks are birthday terms against a 256-bit digest
+  (~4e-75) and `[5]`'s `mean >= size // 4` sits `sqrt(size * N) / 2` sigma from its null.
+  Both `negligible` with the rate stated, per #300's rule that a stated rate beats a
+  generous-looking threshold.
+
+* `[22]` is `[17]`'S TERM AT A SAFE ROUND COUNT, and the pair is the most useful thing in
+  this pass.  `_zkp_nl_verify` hashes ALL commitments into `ch_seed` and checks every
+  round's claimed challenge against the recomputed one, so flipping a bit of round 0's
+  `com_1` is missed only if all 16 recomputed challenges still match the claimed ones:
+  `(1/3)^16` = 2.3e-8 per trial, 2.3e-7 per run over the 10 trials it trials.  Identical
+  MECHANISM to `[17]`'s defect -- Fiat-Shamir challenge recomputation is what rejects --
+  and the only difference is 16 rounds against 8.  **So the round count is the whole
+  distance between 2.3e-7 and 1.5e-5**, and a reviewer comparing the two by eye sees two
+  tamper checks that look equally safe.  `[22]` also has no crash mode: past the challenge
+  check it meets stale responses and returns False.  (Sampling it directly is not
+  affordable -- ZKBoo at n = 32, 16 rounds costs ~7 s per trial, so 12 trials in 85 s;
+  the rate is derived from the mechanism, and the 12 trials only confirm the sign.)
+* **Two rows draw NOTHING and are out of scope, one of them interestingly so.**  `[27]`
+  seeds from the literals `test-seed-{i}` / `seed-alice`, and `[29]`'s DRBG is seeded from
+  `bytes(range(32))` and `b'ent-monobit'` throughout -- so `[29]`'s `0.48 <= frac <= 0.52`
+  monobit window is applied to a CONSTANT.  It cannot flake, and it is the inverse
+  fragility rather than a defect: the die is rolled once per change to the DRBG, not once
+  per run, so a future construction change either always passes it or always fails it.
+  Worth a sentence in the census and no code change.
+
+**Still owed on the Python side**: `[21]`, `[46]`-`[52]`.  Then C (60), Go (54) and Java
+(42), where the per-port parameters differ and #310's two-pair split is the thing to look
+for -- with `[17]`'s Python-only Eve forge already showing the split running the other
+way, to a sub-check three ports do not have at all.
+
+**Not in scope.**  The `CliTest/*.sh` scripts, which decide verdicts from fresh keys too
+but whose retry policy is already `lib_dfr.sh`'s subject (TODO #221, #235), and the
+assembly/Arduino harnesses, whose `[1]`–`[18]` are a subset run at parameters the Testing
+section already warns about separately.  Both are a different axis and folding them in
+converges on completeness again — #298's rule.
+
+Status: **OPEN**
+
+---
