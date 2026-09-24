@@ -2023,7 +2023,19 @@ def test_zkp_rnl_correctness():
             z_t = list(z); z_t[0] += 1
             if not _rnl_sigma_verify(m_blind, C, n, ZKP_MSG, w, c, z_t):
                 ok_ztamper += 1
-        all_ok = (ok_verify == n_run and ok_tamper == n_run and
+        # n_run > 0 is load-bearing (TODO #316).  _rnl_sigma_sign raises
+        # RuntimeError when rejection sampling exhausts its 1000 attempts, and
+        # this loop correctly decrements n_run and continues -- so if EVERY
+        # trial exhausted, all five counters and n_run would be 0 and the five
+        # comparisons below would all hold, printing 0/0 [PASS].  That is
+        # TODO #291's rule (a section that did not run must not be scored) in
+        # the shape TODO #300 found in qcmdpc_bgf_failure_rate.py: a gate that
+        # cannot fail.  Not reachable at these parameters -- 0 exhaustions in
+        # 1166 signs at n=32 and 136 at n=256 -- but _sigma_params' own comment
+        # records 72% exhaustion at t=64, so the margin is a parameter choice
+        # rather than a property.
+        all_ok = (n_run > 0 and
+                  ok_verify == n_run and ok_tamper == n_run and
                   ok_wrongkey == n_run and ok_wtamper == n_run and
                   ok_ztamper == n_run)
         status = "PASS" if all_ok else "FAIL"

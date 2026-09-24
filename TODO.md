@@ -364,10 +364,75 @@ reports defects cannot be checked.**
   per run, so a future construction change either always passes it or always fails it.
   Worth a sentence in the census and no code change.
 
-**Still owed on the Python side**: `[21]`, `[46]`-`[52]`.  Then C (60), Go (54) and Java
-(42), where the per-port parameters differ and #310's two-pair split is the thing to look
-for -- with `[17]`'s Python-only Eve forge already showing the split running the other
-way, to a sub-check three ports do not have at all.
+**SECOND FINDING, and it is the four-port split this item was filed to look for —
+`[21]`/`[30]` disagrees with itself in all four languages about what an exhausted
+rejection limit MEANS.**  `rnl_sigma_sign` draws its ZK mask `y` by rejection sampling
+and gives up after 1000 attempts; that is a legitimate outcome of the signer, not a wrong
+answer, and every port scores it differently and none of them correctly:
+
+| port | on exhaustion | consequence |
+|---|---|---|
+| Python | `n_run -= 1; continue` | if EVERY trial exhausted, all five counters and `n_run` are 0, the five comparisons hold, and it prints `0/0 [PASS]` |
+| C | `N = i + 1; break` | leaves `ok_verify == i` against `N == i + 1`, so ANY exhaustion is a FAILING build |
+| Go | `N = i + 1; break` | same as C |
+| Java | `fails++` | fails the build, **and its own comment says the opposite** |
+
+Java's is the one to keep in mind: the comment reads "Rejection sampling can legitimately
+fail, so a null proof is reported rather than counted as a verify failure", directly above
+`fails++`.  That is TODO #295's false-reason finding — a curated reason wrong about its own
+code — aimed at a TEST instead of at a constant, and no checker in this repo can see it.
+
+**Fixed in all four, to the same rule** (#291: a section that did not run must not be
+scored).  C and Go exclude the trial from the denominator (`N = i`) instead of counting it
+against them; Python and both of them now guard `N > 0`, so a run that completed no trial
+FAILS rather than passing vacuously; Java retries the sign up to 8 times, each call
+redrawing `y`, and fails only if every attempt exhausts.  Verified: Python 5/5 at n = 32
+and 256, C 3/3 at both, Java `PASS [30]`, Go pending.
+
+**Measured exhaustion rate: 0 in 1166 signs at n = 32 and 0 in 136 at n = 256**, so no
+port is failing today — but `_sigma_params`' own comment records that the retired
+`max(4, n // 16)` gave `t = 64` at n = 1024, where acceptance collapses to ~3e-4 and the
+signer exhausts about **72%** of the time.  The margin is a parameter choice, not a
+property, which is exactly why the row belongs in a census rather than in a reviewer's
+memory.
+
+**The Python side is now COMPLETE — all 54 assertions classified.**  `[46]`, `[48]`'s
+`same_as_v2` / `fpe_eq_twk` and `[19]`'s collision checks are all 2^-256 coincidence terms
+(`negligible`, rate stated).  `[47]`'s chi identities and `[48]`'s round-trips are
+algebraic and hold for every input, so the draws change which instance is tested and not
+the outcome (`exact`).  `[49]`'s accept-control is the one with a derived rate worth
+writing down: the guard rejects a peer `m_blind` whose nonzero count is below `n/4` or
+whose coefficient RANGE is below `q/4`, and a genuine uniform draw trips the second at
+about `n * (1/4)^(n-1)` = 1.5e-17 at n = 32 — negligible, but it is a real term rather
+than an impossibility, and the accept-control is there precisely because a guard that
+rejected everything would pass the four rejection cases perfectly.  `[51]` and `[52]`
+draw NOTHING (pinned supports, pinned PRF vectors), so they are out of scope in the same
+way `[27]` and `[29]` are.  `[50]` is exact for the reason recorded above.
+
+**C AND GO, first pass.**  Their numbered sets are IDENTICAL to Python's `[1]`-`[53]`
+(the `[64]`/`[4096]` hits a naive scan reports are array sizes, not test numbers), so the
+per-port question is not which tests exist but what PARAMETERS they run at — which is
+#310's finding stated as a method.  Three things it found.
+
+* **Go runs `[17]`/`[20]` at `sdfTestRounds = 4` where C and Python use 8.**  It is safe
+  only because Go has no Eve-forge sub-check at all; had it carried Python's, the term
+  would be `(1/3)^4` = 1.2%, one run in 81 — 81x Python's.  The same code at two
+  parameter sets is `[53]`'s shape, and this is the near-miss that shows the census has
+  to record the NUMBER, not the presence.
+* **The already-fixed rows check out and carry their rates in the source**: `[45]`'s bad
+  syndrome is caught only on a `b = 0` round, `(2/3)^32` = 2.4e-6 over 2 trials (#233,
+  after the same check at rounds = 8 made all of `[45]` fail 38.5% of runs); `[53]` runs
+  its forgery sub-check at `FRND = 64` and its ring half at 12 (#310); `[18]`'s ambiguous
+  syndromes are counted separately from failures in C exactly as in Python.
+* **The rest mirror Python row for row** — `[2]`'s 2.9/3.1, `[4]`'s `tol`, `[5]`'s
+  `size/4`, `[10]`'s 95% and `[11]`'s 98% are the same expressions with the same nulls,
+  and `[46]`/`[49]`/`[51]`/`[52]` are the same coincidence, guard-range, pinned-support
+  and pinned-vector rows.
+
+**Still owed**: Java's 42 (its own numbering; its `[30]` is fixed above), and the census
+TABLE itself — everything above is findings, and item (1) is to put them in
+`spec/check_language_parity.py` as a self-invalidating table with a cell per (test, port),
+so a numbered test that draws fresh entropy and is named by no entry FAILS.
 
 **Not in scope.**  The `CliTest/*.sh` scripts, which decide verdicts from fresh keys too
 but whose retry policy is already `lib_dfr.sh`'s subject (TODO #221, #235), and the

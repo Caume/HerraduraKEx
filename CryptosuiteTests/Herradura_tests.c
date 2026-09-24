@@ -4120,7 +4120,16 @@ static void test_zkp_rnl_correctness(void)
                                       w, c_poly, z))
                     ok_tamper++;
             } else {
-                N = i + 1; break;
+                /* An exhausted rejection limit is a legitimate outcome of the
+                   signer, not a wrong answer, so the trial is EXCLUDED from the
+                   denominator rather than counted against it (TODO #316).  This
+                   was `N = i + 1`, which left ok_verify == i against N == i + 1
+                   and scored any exhaustion as a FAILING build -- the inverse of
+                   Python's defect in the same test, which decremented its
+                   denominator and could reach 0/0 [PASS].  N == 0 is guarded at
+                   the verdict below: a run that completed no trial asserted
+                   nothing and must not pass (TODO #291). */
+                N = i; break;
             }
             /* Structured cheats (TODO #94 item 2 — C/Go parity):           */
             /* (a) wrong-key witness: honest signer run with a fresh s' != s */
@@ -4154,7 +4163,7 @@ static void test_zkp_rnl_correctness(void)
                "  wrongkey_reject=%d/%d  w_tamper=%d/%d  z_tamper=%d/%d  [%s]\n",
                n, ok_verify, N, ok_tamper, N,
                ok_wrongkey, N, ok_wtamper, N, ok_ztamper, N,
-               (ok_verify == N && ok_tamper == N && ok_wrongkey == N &&
+               (N > 0 && ok_verify == N && ok_tamper == N && ok_wrongkey == N &&
                 ok_wtamper == N && ok_ztamper == N) ? "PASS" : "FAIL");
     }
     putchar('\n');

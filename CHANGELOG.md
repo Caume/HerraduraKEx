@@ -2,6 +2,41 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.3] - 2026-09-23
+
+### Fixed
+- **`[21]`/`[30]` disagreed with itself in all four languages about what an exhausted
+  rejection limit MEANS (TODO #316, second pass).**  `rnl_sigma_sign` draws its ZK mask
+  `y` by rejection sampling and gives up after 1000 attempts — a legitimate outcome of
+  the signer, not a wrong answer — and every port scored it differently and none
+  correctly.  Python did `n_run -= 1; continue`, so a run in which EVERY trial exhausted
+  would leave all five counters and `n_run` at 0, satisfy all five comparisons and print
+  `0/0 [PASS]`.  C and Go did `N = i + 1; break`, leaving `ok_verify == i` against
+  `N == i + 1`, so ANY exhaustion was a FAILING build.  Java did `fails++` **directly
+  below a comment saying a null proof "is reported rather than counted as a verify
+  failure"** — TODO #295's false-reason finding aimed at a test instead of a constant,
+  which no checker in this repo can see.
+- All four now follow one rule (TODO #291: a section that did not run must not be
+  scored).  C and Go EXCLUDE the trial from the denominator (`N = i`); Python, C and Go
+  guard `N > 0`, so a run that completed no trial fails rather than passing vacuously;
+  Java retries the sign up to 8 times, each call redrawing `y`, and fails only if every
+  attempt exhausts.  Measured exhaustion rate 0 in 1166 signs at n = 32 and 0 in 136 at
+  n = 256, so no port was failing today — but `_sigma_params`' own comment records ~72%
+  exhaustion at the retired `t = 64`, so the margin is a parameter choice, not a
+  property.
+
+### Changed
+- **TODO #316's census completed for Python (54 assertions) and first-passed for C and
+  Go (same `[1]`-`[53]` numbering).**  Findings recorded in the item: `[22]` is `[17]`'s
+  defect mechanism at 16 rounds instead of 8, so the round count is the whole distance
+  between 2.3e-7 and 1.5e-5; Go runs `[17]`/`[20]` at `sdfTestRounds = 4` and is safe
+  only because it has no forge sub-check, which is the near-miss showing the census must
+  record the NUMBER and not the presence; `[49]`'s accept-control carries a real
+  1.5e-17 term from the guard's coefficient-range condition; and `[27]`, `[29]`, `[51]`
+  and `[52]` draw no fresh entropy at all, with `[29]`'s monobit window applied to a
+  constant.  The item stays **OPEN**: Java's 42 and the self-invalidating census table in
+  `spec/check_language_parity.py` remain.
+
 ## [9.5.2] - 2026-09-23
 
 ### Fixed

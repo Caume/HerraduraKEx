@@ -808,10 +808,24 @@ public final class SelfTest {
             byte[] other = msg.clone();
             other[0] ^= 0x01;
 
-            HerraduraNl.SigmaProof pr =
-                HerraduraNl.rnlSigmaSign(kp.s, m, kp.c, n, msg, rng);
+            // BOUNDED RETRY, and the comment above used to describe it (TODO
+            // #316).  It said a null proof "is reported rather than counted as
+            // a verify failure" and the code then did fails++ -- a curated
+            // reason that was wrong about its own code, which is TODO #295's
+            // false-reason finding aimed at a test instead of a constant.  An
+            // exhausted rejection limit is a legitimate signer outcome, so it
+            // is RETRIED (each call redraws y) rather than scored; only an
+            // exhaustion in every attempt is a failure, which no longer looks
+            // like a broken verifier.  8 attempts because the measured
+            // exhaustion rate is 0 in 1302 signs, so this is headroom for a
+            // parameter change, not a rate somebody tuned against.
+            HerraduraNl.SigmaProof pr = null;
+            for (int attempt = 0; attempt < 8 && pr == null; attempt++) {
+                pr = HerraduraNl.rnlSigmaSign(kp.s, m, kp.c, n, msg, rng);
+            }
             if (pr == null) {
-                System.out.println("FAIL [30] rnl_sigma sign/verify (rejection limit reached)");
+                System.out.println("FAIL [30] rnl_sigma sign/verify "
+                    + "(rejection limit reached on all 8 attempts)");
                 fails++;
             } else {
                 boolean ok = HerraduraNl.rnlSigmaVerify(m, kp.c, n, msg, pr.w, pr.c, pr.z);

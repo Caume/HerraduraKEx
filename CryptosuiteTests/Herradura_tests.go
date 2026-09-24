@@ -988,7 +988,13 @@ func testZkpRnlCorrectness() {
 			mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
 			s, C   := RnlKeygen(mBlind, n, RnlQ, RnlP)
 			w, c, z, err := RnlSigmaSign(s, mBlind, C, n, zkpMsg)
-			if err != nil { N = i + 1; break }
+			// An exhausted rejection limit is a legitimate signer outcome, not
+			// a wrong answer, so the trial is EXCLUDED from the denominator
+			// rather than counted against it (TODO #316).  This was N = i + 1,
+			// which left okVerify == i against N == i + 1 and scored any
+			// exhaustion as a FAILING build.  N == 0 is guarded at the verdict:
+			// a run that completed no trial asserted nothing (TODO #291).
+			if err != nil { N = i; break }
 			if RnlSigmaVerify(mBlind, C, n, zkpMsg, w, c, z) {
 				okVerify++
 			}
@@ -1021,7 +1027,7 @@ func testZkpRnlCorrectness() {
 			if timeExceeded(t0) { N = i + 1; break }
 		}
 		status := "PASS"
-		if okVerify != N || okTamper != N || okWrongkey != N ||
+		if N <= 0 || okVerify != N || okTamper != N || okWrongkey != N ||
 			okWtamper != N || okZtamper != N { status = "FAIL" }
 		fmt.Printf("    n=%3d  verify=%d/%d  tamper_reject=%d/%d"+
 			"  wrongkey_reject=%d/%d  w_tamper=%d/%d  z_tamper=%d/%d  [%s]\n",
