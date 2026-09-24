@@ -632,17 +632,41 @@ jobs:
   analysis-findings:
     name: SecurityProofsCode findings gates (TODO #289)
     runs-on: ubuntu-latest
-    # NON-BLOCKING ON PURPOSE, and only for now. TODO #185 promoted the
-    # `arduino` job this same way, after a pass history confirmed it. The
-    # specific risk being watched here is not build flakiness but SAMPLING:
-    # several of these scripts draw keys and errors from os.urandom through
-    # the suite's own keygen, and a statistical gate that is tight enough to
-    # be useful can fail on a rare draw. Finding that out on a REQUIRED check
-    # is the wrong way round. Promote by deleting this line once a run
-    # history exists; if a gate does flake, the fix is that gate's threshold
-    # (the class CLAUDE.md's Testing section already describes -- a
-    # probabilistic property asserted as a deterministic one), not this flag.
-    continue-on-error: true
+    # BLOCKING since TODO #317 (v9.5.6). This job ran `continue-on-error: true`
+    # from TODO #289 until then, on TODO #185's route for the `arduino` job:
+    # promote once a pass history exists. Three things had to be true first,
+    # and the last of them is why it took until now.
+    #
+    # (1) THE HISTORY. Seven consecutive green runs (v9.5.1 through v9.5.5 and
+    #     both PR runs). The only two failures in that window are the v9.5.0
+    #     runs, which were a REAL defect -- two analysis gates raising E_WIDTH
+    #     on their first call after TODO #314's pass 4 changed the BitArray
+    #     width contract -- found and fixed by TODO #315.
+    #
+    # (2) THE SAMPLING RISK THIS FLAG NAMED IS NOW MEASURED, not hoped about.
+    #     The old comment here said the risk being watched was not build
+    #     flakiness but SAMPLING, and that finding it out on a required check
+    #     would be the wrong way round. That was right, and it is now answered:
+    #     TODO #300 censused all 76 gates and put the job's nominal
+    #     false-failure rate at 6.4e-5 per run, every sampled gate carrying a
+    #     verdict code and a derived RATE or a stated ARGUMENT, with the two
+    #     counted separately in the runner's banner. TODO #304 then audited the
+    #     three `follows` entries and found all three defective, which is how
+    #     the figure became 6.4e-5 rather than the 5.4e-5 it had advertised.
+    #
+    # (3) WHAT LEAVING IT COST, which is the argument for acting rather than
+    #     waiting longer. TODO #315 found two gates that had been RED FOR TWO
+    #     RELEASES, and the reason nobody noticed is this flag: a
+    #     continue-on-error job's red is indistinguishable from nobody having
+    #     looked -- TODO #289's own premise, inverted. A job that collects exit
+    #     statuses nobody reads collects nothing.
+    #
+    # If a gate does flake from here, the fix is that gate's threshold and not
+    # this flag -- the class CLAUDE.md's Testing section describes, a
+    # probabilistic property asserted as a deterministic one -- and TODO #299's
+    # replication is the pattern: confirm an exceedance against a second
+    # independent sample before failing. Re-adding `continue-on-error` to get a
+    # red run to pass is the move this comment exists to refuse.
     # Raised from 180 by TODO #291, which took the discovered set from 35
     # scripts to 73: measured 73.4 min before and about 120 min after, on an
     # aarch64 SBC that is an upper bound on a runner. The headroom is for the
