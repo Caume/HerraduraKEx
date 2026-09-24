@@ -429,10 +429,49 @@ per-port question is not which tests exist but what PARAMETERS they run at — w
   and `[46]`/`[49]`/`[51]`/`[52]` are the same coincidence, guard-range, pinned-support
   and pinned-vector rows.
 
-**Still owed**: Java's 42 (its own numbering; its `[30]` is fixed above), and the census
-TABLE itself — everything above is findings, and item (1) is to put them in
-`spec/check_language_parity.py` as a self-invalidating table with a cell per (test, port),
-so a numbered test that draws fresh entropy and is named by no entry FAILS.
+**JAVA, complete (35 numbered checks, its own numbering).**  Nothing of `[17]`'s kind:
+its verdicts are boolean conjunctions of round-trips and tamper rejections, and every
+probabilistic one is already at a safe count with the rate IN THE SOURCE — `[12]` signs
+at `Stern.SDFR = 32` with a comment deriving why 8 would flake (the corrupt-syndrome
+check needs a `b = 2` round, `(2/3)^32` = 2.4e-6); `[26]` at `demoRounds = 32` after
+TODO #260 caught it flaking at 8; `[35]` at `forgeRounds = 64` after #310.  `[14]` is the
+interesting shape and is CORRECT: QC-MDPC decapsulation has a real DFR, and under #235's
+implicit rejection a DFR event is an output mismatch, so it fails only if all 20 trials
+miss — `DFR^20`.  `[21]` and `[22]` seed from literals and draw nothing, so Java carries
+`[29]`'s constant-monobit shape too.
+
+**One correction made on the way out**: `[14]`'s comment quoted "~0.225% measured" for
+the DFR in the present tense.  That is the RETIRED (r=523, d=15, t=18) set; TODO #276
+adopted BIKE-128, where #285 §2 found the rate is not observable at any trial count.  The
+verdict is unaffected (`DFR^20`, and a smaller DFR is safer), so the figure was stale
+rather than wrong — but a parameter claim in the present tense is exactly what check B''
+exists to catch, and **B'''s corpus stops at `SecurityProofsCode/`**, so no checker in
+this repo could see it.  That is a second corpus-boundary finding of #306's kind, one
+axis over.
+
+**THE TABLE: design settled, and the design is a finding.**  The plan was a cell per
+(test, port) with a reason each.  Measuring first killed that: **about 50 of the 53
+numbered tests in each language draw fresh entropy**, so a four-cell table is ~200 rows
+whose overwhelming majority would say "exact: a round-trip, every trial must succeed".
+TODO #296 met this exact problem and its answer is the precedent to follow — "there are
+109, and a hundred prose reasons rot", so `RANDOMNESS_CENSUS` is a NAME SET derived from
+source every run, with reasons only where something departs from the default.  So:
+a derived SET of the (lang, test) pairs that draw, compared every run so that adding,
+removing or renaming a numbered test forces the question; and curated entries ONLY where
+the verdict rests on a threshold or a probabilistic outcome, each carrying #300's verdict
+code plus a rate or an argument.
+
+**And the detector has to be validated before it is trusted, which measuring also
+showed.**  A first Go pattern matching `randBA` and `crypto/rand` found 32 of 53 tests
+drawing; adding `NewRandBitArray`, `mrand.` and `mrand.Read` took it to **49** — seventeen
+tests invisible, including all of `[23]`-`[31]`.  An under-matching detector makes the
+completeness rule pass VACUOUSLY, which is #295's recorded rule that getting the corpus
+wrong in the LENIENT direction is the dangerous direction, and #306's sixth-spelling
+hazard for the fourth time.  Note `mrand` is `math/rand`, not a CSPRNG: auto-seeded since
+Go 1.20, so it is still a fresh sample every run and still counts for flake purposes even
+though it would not count for #296's randomness census.
+
+**Still owed**: implementing that table in `spec/check_language_parity.py`.
 
 **Not in scope.**  The `CliTest/*.sh` scripts, which decide verdicts from fresh keys too
 but whose retry policy is already `lib_dfr.sh`'s subject (TODO #221, #235), and the

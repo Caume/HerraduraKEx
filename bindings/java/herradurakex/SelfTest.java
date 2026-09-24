@@ -293,8 +293,16 @@ public final class SelfTest {
                 BigInteger recovered = Stern.qcmdpcDecapBgf(enc.syn, kp.sup0, kp.sup1);
                 // Under implicit rejection (TODO #235) decapsulation always
                 // returns a key, so a DFR event is a mismatch rather than a
-                // null — still a legitimate outcome (~0.225% measured, TODO
-                // #195), so only flag it if every one of a small batch misses.
+                // null -- a legitimate outcome, so only flag it if every one
+                // of a small batch misses.  The ~0.225% this comment used to
+                // quote as "measured" is the RETIRED (r=523, d=15, t=18) set
+                // (TODO #195/#218); TODO #276 adopted BIKE-128, where the rate
+                // is not observable at any trial count (#285 §2 reports a
+                // bound and inherits BIKE's 2^-128).  The gate is DFR^trials
+                // either way and a smaller DFR only makes it safer, so the
+                // figure was stale rather than wrong -- but a parameter claim
+                // in the present tense is what check B'' exists to catch, and
+                // its corpus stops at SecurityProofsCode/ (TODO #316).
                 if (recovered.equals(enc.k)) { anyMismatch = false; break; }
                 anyMismatch = true;
             }

@@ -2,6 +2,39 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.4] - 2026-09-23
+
+### Changed
+- **TODO #316's census covers all four ports now (third pass).**  Java's 35 numbered
+  checks carry nothing of `[17]`'s kind: every probabilistic one is already at a safe
+  count with its rate derived IN THE SOURCE — `[12]` at `Stern.SDFR = 32` (the
+  corrupt-syndrome check needs a `b = 2` round, so 8 would flake at 3.9%), `[26]` at
+  `demoRounds = 32` after TODO #260 caught it flaking at 8, `[35]` at `forgeRounds = 64`
+  after TODO #310 — and `[14]` correctly fails only if all 20 KEM trials miss, since
+  under TODO #235's implicit rejection a DFR event is an output mismatch.
+- **THE TABLE'S DESIGN WAS SETTLED BY MEASURING, and the measurement changed it.**  A
+  cell per (test, port) was the plan; about 50 of each language's 53 numbered tests draw
+  fresh entropy, so that is ~200 rows whose great majority would read "exact: a
+  round-trip, every trial must succeed".  TODO #296 hit the same wall and its answer is
+  the precedent — a derived NAME SET compared every run, with prose only where something
+  departs from the default, because "a hundred prose reasons rot".
+
+### Fixed
+- **A stale parameter claim in `SelfTest.java` `[14]`**, which quoted "~0.225% measured"
+  for the QC-MDPC DFR in the present tense.  That is the RETIRED (r=523, d=15, t=18)
+  set; TODO #276 adopted BIKE-128, where TODO #285 §2 found the rate is not observable at
+  any trial count.  The verdict is unaffected (`DFR^20`, and a smaller DFR is safer), so
+  the figure was stale rather than wrong — but a parameter claim in the present tense is
+  what check B'' exists to catch, and **B'''s corpus stops at `SecurityProofsCode/`**, so
+  no checker here could see it.  A corpus-boundary finding of TODO #306's kind, one axis
+  over.
+- **The completeness detector was validated before being trusted, and needed it.**  A Go
+  pattern matching `randBA` and `crypto/rand` found 32 of 53 numbered tests drawing;
+  adding `NewRandBitArray`, `mrand.` and `mrand.Read` took it to 49 — seventeen invisible,
+  including all of `[23]`-`[31]`.  An under-matching detector makes the completeness rule
+  pass VACUOUSLY, which is TODO #295's rule that the LENIENT direction is the dangerous
+  one, and TODO #306's sixth-spelling hazard for the fourth time.
+
 ## [9.5.3] - 2026-09-23
 
 ### Fixed
