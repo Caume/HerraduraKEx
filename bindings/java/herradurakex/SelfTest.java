@@ -293,8 +293,16 @@ public final class SelfTest {
                 BigInteger recovered = Stern.qcmdpcDecapBgf(enc.syn, kp.sup0, kp.sup1);
                 // Under implicit rejection (TODO #235) decapsulation always
                 // returns a key, so a DFR event is a mismatch rather than a
-                // null — still a legitimate outcome (~0.225% measured, TODO
-                // #195), so only flag it if every one of a small batch misses.
+                // null -- a legitimate outcome, so only flag it if every one
+                // of a small batch misses.  The ~0.225% this comment used to
+                // quote as "measured" is the RETIRED (r=523, d=15, t=18) set
+                // (TODO #195/#218); TODO #276 adopted BIKE-128, where the rate
+                // is not observable at any trial count (#285 §2 reports a
+                // bound and inherits BIKE's 2^-128).  The gate is DFR^trials
+                // either way and a smaller DFR only makes it safer, so the
+                // figure was stale rather than wrong -- but a parameter claim
+                // in the present tense is what check B'' exists to catch, and
+                // its corpus stops at SecurityProofsCode/ (TODO #316).
                 if (recovered.equals(enc.k)) { anyMismatch = false; break; }
                 anyMismatch = true;
             }
@@ -808,10 +816,24 @@ public final class SelfTest {
             byte[] other = msg.clone();
             other[0] ^= 0x01;
 
-            HerraduraNl.SigmaProof pr =
-                HerraduraNl.rnlSigmaSign(kp.s, m, kp.c, n, msg, rng);
+            // BOUNDED RETRY, and the comment above used to describe it (TODO
+            // #316).  It said a null proof "is reported rather than counted as
+            // a verify failure" and the code then did fails++ -- a curated
+            // reason that was wrong about its own code, which is TODO #295's
+            // false-reason finding aimed at a test instead of a constant.  An
+            // exhausted rejection limit is a legitimate signer outcome, so it
+            // is RETRIED (each call redraws y) rather than scored; only an
+            // exhaustion in every attempt is a failure, which no longer looks
+            // like a broken verifier.  8 attempts because the measured
+            // exhaustion rate is 0 in 1302 signs, so this is headroom for a
+            // parameter change, not a rate somebody tuned against.
+            HerraduraNl.SigmaProof pr = null;
+            for (int attempt = 0; attempt < 8 && pr == null; attempt++) {
+                pr = HerraduraNl.rnlSigmaSign(kp.s, m, kp.c, n, msg, rng);
+            }
             if (pr == null) {
-                System.out.println("FAIL [30] rnl_sigma sign/verify (rejection limit reached)");
+                System.out.println("FAIL [30] rnl_sigma sign/verify "
+                    + "(rejection limit reached on all 8 attempts)");
                 fails++;
             } else {
                 boolean ok = HerraduraNl.rnlSigmaVerify(m, kp.c, n, msg, pr.w, pr.c, pr.z);

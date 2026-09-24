@@ -2,6 +2,141 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.5] - 2026-09-23
+
+### Added
+- **The sampled-test census, the NINTH axis in `spec/check_language_parity.py` (TODO
+  #316, closed).**  TODO #300 asked of the 76 findings gates whether each decides a
+  verdict from a fresh sample against a fixed threshold; TODO #310 found `[53]` failing
+  about one run in 16 and recorded that nobody had asked it of the NUMBERED TESTS — which
+  matters more, because those live in the four REQUIRED `native-*` jobs.  **181 numbered
+  tests across the four languages decide a verdict from a fresh sample** (c 49, go 50,
+  python 50, java 32), all recorded in `_TEST_DRAWS`; 20 carry a curated verdict code with
+  a rate or an argument, 9 are declared to draw nothing that reaches a verdict, and the
+  summed false-failure rate is **1.0e-5 against a JOB-level budget of 1e-4** — job-level
+  because #300's own first draft picked a per-gate 1e-6 and then flagged three gates at
+  1.2e-6, a defect only against an arbitrary line.
+- **Four negative controls, all verified to fire**: a drawing test dropped from
+  `_TEST_DRAWS`; a detector that matches nothing (TODO #296's guard — an empty census is
+  an error, not a clean bill); an `exact` row carrying a rate; and the budget exceeded,
+  which names the largest contributor and says to replicate it rather than raise the
+  number.
+
+### Fixed
+- **Building the table corrected three things the hand census had got wrong, every one in
+  the LENIENT direction TODO #295 warns about.**  `[51]` was recorded as drawing nothing
+  and calls `qcmdpc_keygen`.  The first body-slicing took `[previous marker, next
+  marker]`, overlapping both neighbours, and reported the pinned-vector `[52]` as drawing
+  by bleed from `[51]`.  And **the marker is not in the same place in all four**: C, Go
+  and Python print their header first, but Java's is the TRAILING `println("PASS [N]")`,
+  so slicing Java forward reported `[35]` as drawing nothing with
+  `Stern.sternFKeygen(rng)` inside it.  C's spellings were ENUMERATED from source after
+  `bn_rand_n` sat two lines under `[15]`'s header and read as no draw at all.
+
+### Changed
+- `CLAUDE.md`'s Testing section no longer says "no census exists" — TODO #316 is it — and
+  carries the item's narrative.  `TODO_DONE.md`'s `### 315.` heading is normalised to the
+  `### #315:` form every other entry uses.
+
+## [9.5.4] - 2026-09-23
+
+### Changed
+- **TODO #316's census covers all four ports now (third pass).**  Java's 35 numbered
+  checks carry nothing of `[17]`'s kind: every probabilistic one is already at a safe
+  count with its rate derived IN THE SOURCE — `[12]` at `Stern.SDFR = 32` (the
+  corrupt-syndrome check needs a `b = 2` round, so 8 would flake at 3.9%), `[26]` at
+  `demoRounds = 32` after TODO #260 caught it flaking at 8, `[35]` at `forgeRounds = 64`
+  after TODO #310 — and `[14]` correctly fails only if all 20 KEM trials miss, since
+  under TODO #235's implicit rejection a DFR event is an output mismatch.
+- **THE TABLE'S DESIGN WAS SETTLED BY MEASURING, and the measurement changed it.**  A
+  cell per (test, port) was the plan; about 50 of each language's 53 numbered tests draw
+  fresh entropy, so that is ~200 rows whose great majority would read "exact: a
+  round-trip, every trial must succeed".  TODO #296 hit the same wall and its answer is
+  the precedent — a derived NAME SET compared every run, with prose only where something
+  departs from the default, because "a hundred prose reasons rot".
+
+### Fixed
+- **A stale parameter claim in `SelfTest.java` `[14]`**, which quoted "~0.225% measured"
+  for the QC-MDPC DFR in the present tense.  That is the RETIRED (r=523, d=15, t=18)
+  set; TODO #276 adopted BIKE-128, where TODO #285 §2 found the rate is not observable at
+  any trial count.  The verdict is unaffected (`DFR^20`, and a smaller DFR is safer), so
+  the figure was stale rather than wrong — but a parameter claim in the present tense is
+  what check B'' exists to catch, and **B'''s corpus stops at `SecurityProofsCode/`**, so
+  no checker here could see it.  A corpus-boundary finding of TODO #306's kind, one axis
+  over.
+- **The completeness detector was validated before being trusted, and needed it.**  A Go
+  pattern matching `randBA` and `crypto/rand` found 32 of 53 numbered tests drawing;
+  adding `NewRandBitArray`, `mrand.` and `mrand.Read` took it to 49 — seventeen invisible,
+  including all of `[23]`-`[31]`.  An under-matching detector makes the completeness rule
+  pass VACUOUSLY, which is TODO #295's rule that the LENIENT direction is the dangerous
+  one, and TODO #306's sixth-spelling hazard for the fourth time.
+
+## [9.5.3] - 2026-09-23
+
+### Fixed
+- **`[21]`/`[30]` disagreed with itself in all four languages about what an exhausted
+  rejection limit MEANS (TODO #316, second pass).**  `rnl_sigma_sign` draws its ZK mask
+  `y` by rejection sampling and gives up after 1000 attempts — a legitimate outcome of
+  the signer, not a wrong answer — and every port scored it differently and none
+  correctly.  Python did `n_run -= 1; continue`, so a run in which EVERY trial exhausted
+  would leave all five counters and `n_run` at 0, satisfy all five comparisons and print
+  `0/0 [PASS]`.  C and Go did `N = i + 1; break`, leaving `ok_verify == i` against
+  `N == i + 1`, so ANY exhaustion was a FAILING build.  Java did `fails++` **directly
+  below a comment saying a null proof "is reported rather than counted as a verify
+  failure"** — TODO #295's false-reason finding aimed at a test instead of a constant,
+  which no checker in this repo can see.
+- All four now follow one rule (TODO #291: a section that did not run must not be
+  scored).  C and Go EXCLUDE the trial from the denominator (`N = i`); Python, C and Go
+  guard `N > 0`, so a run that completed no trial fails rather than passing vacuously;
+  Java retries the sign up to 8 times, each call redrawing `y`, and fails only if every
+  attempt exhausts.  Measured exhaustion rate 0 in 1166 signs at n = 32 and 0 in 136 at
+  n = 256, so no port was failing today — but `_sigma_params`' own comment records ~72%
+  exhaustion at the retired `t = 64`, so the margin is a parameter choice, not a
+  property.
+
+### Changed
+- **TODO #316's census completed for Python (54 assertions) and first-passed for C and
+  Go (same `[1]`-`[53]` numbering).**  Findings recorded in the item: `[22]` is `[17]`'s
+  defect mechanism at 16 rounds instead of 8, so the round count is the whole distance
+  between 2.3e-7 and 1.5e-5; Go runs `[17]`/`[20]` at `sdfTestRounds = 4` and is safe
+  only because it has no forge sub-check, which is the near-miss showing the census must
+  record the NUMBER and not the presence; `[49]`'s accept-control carries a real
+  1.5e-17 term from the guard's coefficient-range condition; and `[27]`, `[29]`, `[51]`
+  and `[52]` draw no fresh entropy at all, with `[29]`'s monobit window applied to a
+  constant.  The item stays **OPEN**: Java's 42 and the self-invalidating census table in
+  `spec/check_language_parity.py` remain.
+
+## [9.5.2] - 2026-09-23
+
+### Fixed
+- **`[17]`'s Eve-forge sub-check was a sampled gate whose failure mode was a CRASH (TODO
+  #316, first pass).**  The forged signature claims `fake_chal = [0] * SDF_ROUNDS`;
+  `hpks_stern_f_verify` recomputes the Fiat-Shamir challenge and rejects at the first
+  round that disagrees, so the `b = 0` branch is entered only when every recomputed
+  challenge is 0 — `(1/3)^8` = 1.5e-5 of runs.  On that branch the response pair carried
+  a `BitArray` where a real one carries an int, and `BitArray(n, sr)` raised an uncaught
+  `TypeError` that aborted the whole Python harness, in a REQUIRED job, rather than
+  printing a `[FAIL]` line.  Measured against the prediction at rounds = 1 / 2 / 4 / 8:
+  0.342 / 0.118 / 0.0130 / 0.0000 of 2000 attempts against `(1/3)^R` = 0.3333 / 0.1111 /
+  0.01235 / 0.000152.  Python-only — C, Go and Java assert completeness only in `[17]`.
+
+### Changed
+- **The fix REMOVES the sampling rather than lowering its rate**, on TODO #310's rule
+  that an off-weight witness is CONSTRUCTED and not hoped for.  Typed correctly the
+  verifier runs the `b = 0` branch and rejects on the merits — `c1` was built without
+  `ds=2`, and TODO #298's `wt(respA ^ respB) == t` binding fails at weight 0 — so the
+  check is deterministic and strictly stronger: it now exercises the branch it used to
+  crash through.  Measured: 0 accepted and 0 raised in 6000 forgeries at rounds = 1,
+  where that branch is reached about 2000 times.  Giving the sub-check its own round
+  count was considered and rejected: it would push a crash from 1.5e-5 to 1e-9 and leave
+  the `b = 0` path still unexercised.
+- **TODO #316 filed and its first pass recorded**, covering the Python harness's 54
+  numbered assertions.  TODO #310 found `[53]` failing about one run in 16 and closed by
+  noting that no census existed of whether any other numbered test decides a verdict from
+  a fresh sample against a fixed threshold; that sentence was in `CLAUDE.md`'s Testing
+  section and was nobody's item.  The item stays **OPEN**: `[21]` and `[46]`-`[52]` remain
+  on the Python side, and C (60), Go (54) and Java (42) are untouched.
+
 ## [9.5.1] - 2026-09-23
 
 ### Fixed
