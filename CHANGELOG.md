@@ -2,6 +2,42 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.5] - 2026-09-23
+
+### Added
+- **The sampled-test census, the NINTH axis in `spec/check_language_parity.py` (TODO
+  #316, closed).**  TODO #300 asked of the 76 findings gates whether each decides a
+  verdict from a fresh sample against a fixed threshold; TODO #310 found `[53]` failing
+  about one run in 16 and recorded that nobody had asked it of the NUMBERED TESTS — which
+  matters more, because those live in the four REQUIRED `native-*` jobs.  **181 numbered
+  tests across the four languages decide a verdict from a fresh sample** (c 49, go 50,
+  python 50, java 32), all recorded in `_TEST_DRAWS`; 20 carry a curated verdict code with
+  a rate or an argument, 9 are declared to draw nothing that reaches a verdict, and the
+  summed false-failure rate is **1.0e-5 against a JOB-level budget of 1e-4** — job-level
+  because #300's own first draft picked a per-gate 1e-6 and then flagged three gates at
+  1.2e-6, a defect only against an arbitrary line.
+- **Four negative controls, all verified to fire**: a drawing test dropped from
+  `_TEST_DRAWS`; a detector that matches nothing (TODO #296's guard — an empty census is
+  an error, not a clean bill); an `exact` row carrying a rate; and the budget exceeded,
+  which names the largest contributor and says to replicate it rather than raise the
+  number.
+
+### Fixed
+- **Building the table corrected three things the hand census had got wrong, every one in
+  the LENIENT direction TODO #295 warns about.**  `[51]` was recorded as drawing nothing
+  and calls `qcmdpc_keygen`.  The first body-slicing took `[previous marker, next
+  marker]`, overlapping both neighbours, and reported the pinned-vector `[52]` as drawing
+  by bleed from `[51]`.  And **the marker is not in the same place in all four**: C, Go
+  and Python print their header first, but Java's is the TRAILING `println("PASS [N]")`,
+  so slicing Java forward reported `[35]` as drawing nothing with
+  `Stern.sternFKeygen(rng)` inside it.  C's spellings were ENUMERATED from source after
+  `bn_rand_n` sat two lines under `[15]`'s header and read as no draw at all.
+
+### Changed
+- `CLAUDE.md`'s Testing section no longer says "no census exists" — TODO #316 is it — and
+  carries the item's narrative.  `TODO_DONE.md`'s `### 315.` heading is normalised to the
+  `### #315:` form every other entry uses.
+
 ## [9.5.4] - 2026-09-23
 
 ### Changed

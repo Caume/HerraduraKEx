@@ -2684,7 +2684,7 @@ conditional on `wt != t` is worse still — TODO #234's vacuous pass, passing 6%
 without testing anything. The remaining question this one opens and does not answer is
 whether any OTHER numbered test decides a verdict from a fresh sample against a fixed
 threshold; `[4]`, `[18]` and `[45]` were fixed by #233 and #234 by making the threshold
-follow the statistic, but no census exists.
+follow the statistic, and no census existed — TODO #316 is that census.
 
 **And the same hole in the gate that FOUND the forgery (TODO #310, second half).**
 `stern_f_weight_binding.py` builds the same Gaussian-elimination witness and carried the
@@ -2717,6 +2717,52 @@ that the two hid each other**: at a combined ~7.0% per run nobody asks which of 
 coins landed badly, and the second only became visible once the first was gone. When a test
 turns out to be a sampled gate, the question is not "what is its rate" but "how many terms
 does its rate have".
+
+**And which NUMBERED TESTS decide a verdict from a fresh sample, which #310 asked and
+left open (TODO #316).** #300 put that question to the 76 findings gates and found three
+defects; #310 found `[53]` failing about one run in 16, fixed it, and recorded that nobody
+had asked it of the numbered tests — which matters more, because these live in the four
+REQUIRED `native-*` jobs where a flake is a red check on somebody else's PR. **181
+numbered tests across the four languages decide a verdict from a fresh sample**, all of
+them now recorded in `spec/check_language_parity.py`'s `_TEST_DRAWS`, with 20 carrying a
+curated verdict code and a rate or an argument, 9 declared to draw nothing that reaches a
+verdict, and a summed false-failure rate of 1.0e-5 against a JOB-level budget of 1e-4 —
+job-level because #300's own first draft picked a per-gate 1e-6 and then flagged three
+gates at 1.2e-6, a defect only against an arbitrary line. Five things carry forward. (1)
+**THE DEFECT WAS A CRASH, NOT A `[FAIL]`.** Python's `[17]` Eve-forge claimed
+`fake_chal = [0]*8`; the verifier recomputes the Fiat-Shamir challenge and rejects at the
+first round that disagrees, so the `b = 0` branch was reached at `(1/3)^8` = 1.5e-5 — and
+there it unpacked a `BitArray` where a real response carries an int and raised an uncaught
+`TypeError` that aborted the whole harness. Measured 0.342 / 0.118 / 0.0130 / 0.0000 of
+2000 attempts at rounds 1/2/4/8 against `(1/3)^R`. The fix REMOVES the sampling instead of
+shrinking it (#310's rule: construct, do not hope) — typed correctly the verifier runs that
+branch and rejects on the merits, so the check now exercises what it used to crash through.
+`[22]` is the SAME mechanism at 16 rounds, i.e. 2.3e-7, so **the round count is the whole
+distance between the two** and by eye they look equally safe. (2) **ONE TEST, FOUR PORTS,
+FOUR DIFFERENT ANSWERS, none right.** `rnl_sigma_sign` gives up after 1000
+rejection-sampling attempts — a legitimate signer outcome — and `[21]`/`[30]` scored it as:
+Python, decrement the denominator (so an all-exhausted run prints `0/0 [PASS]`); C and Go,
+`N = i + 1` (so ANY exhaustion FAILS the build); Java, `fails++` **directly below a comment
+saying a null proof "is reported rather than counted as a verify failure"** — #295's
+false-reason finding aimed at a test instead of a constant, which no checker here can see.
+All four now follow #291's rule that a section which did not run must not be scored. (3)
+**THE DETECTOR HAD TO BE VALIDATED AND FAILED THREE TIMES, always leniently.** A Go pattern
+matching `randBA` and `crypto/rand` saw 32 of 53 tests drawing; adding `NewRandBitArray`,
+`mrand.` and `mrand.Read` made it 49. C's spellings had to be ENUMERATED from source after
+`bn_rand_n` sat two lines under `[15]`'s header and read as no draw. And **the marker is
+not in the same place in all four** — C, Go and Python print their header first, but Java's
+is the TRAILING `println("PASS [N]")`, so slicing Java forward reported `[35]` as drawing
+nothing with `Stern.sternFKeygen(rng)` inside it. An under-matching detector makes the
+completeness rule pass vacuously, which is #295's rule that the LENIENT direction is the
+dangerous one. (4) **THE TABLE'S SHAPE WAS DECIDED BY MEASURING, not designed.** A cell per
+(test, port) was the plan; ~50 of each language's 53 tests draw, so that is ~200 rows whose
+majority would read "exact: a round-trip". #296 met this exact wall — "there are 109, and a
+hundred prose reasons rot" — so the completeness half is a DERIVED SET and prose is spent
+only where a verdict departs from the default. (5) **`[18]` IS THE ROW TO COPY.** A weight-2
+code of length 32 is not uniquely decodable and that line reported `[FAIL]` on 7.4% of runs
+until #233 SEPARATED the ambiguous-syndrome branch from the failure branch and scored only
+the latter. That is how a probabilistic subject gets an exact verdict — prefer it to
+widening a threshold, which is #234's vacuous pass waiting to happen.
 
 **And whether a draw is worth reaching before building something to reach it with (TODO
 #311).** #306 censused 56 CLI entropy draws over 16 roles and #309 proposed a seam to pin

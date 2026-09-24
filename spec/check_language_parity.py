@@ -135,6 +135,421 @@ def check_numbered_tests(errors):
     return numbers
 
 
+# ── Part 1/3: the numbered tests that decide a verdict from a FRESH SAMPLE ──
+#
+# TODO #316, the ninth axis, and the one that asks of the NUMBERED TESTS what
+# TODO #300 asked of the findings gates: does this check decide a verdict from
+# a fresh random sample against a FIXED threshold?  #310 found [53] doing it at
+# about one run in 16 in two of four ports, fixed it, and closed by recording
+# that no census existed of whether any other numbered test had the shape.
+#
+# WHY IT MATTERS MORE HERE THAN IT DID THERE.  The findings gates live in
+# `analysis-findings`, which is continue-on-error.  These live in native-c,
+# native-go, native-python and native-java, which are REQUIRED -- and since
+# TODO #233 a [FAIL] marker fails the build -- so a flake here is a red
+# required check on somebody else's unrelated PR.
+#
+# THE SHAPE OF THIS TABLE IS TODO #296's, AND THAT WAS DECIDED BY MEASURING.
+# A cell per (test, port) with a reason each was the plan; about 50 of each
+# language's 53 numbered tests draw fresh entropy, so that is ~200 rows whose
+# great majority would read "exact: a round-trip, every trial must succeed".
+# #296 met this and said why it does not work -- "there are 109, and a hundred
+# prose reasons rot".  So the completeness half is a DERIVED SET, compared
+# every run, and prose is spent only where a verdict departs from the default.
+#
+# Two things to know before extending it.
+#
+# (1) THE DETECTOR MUST BE VALIDATED, and it needed it.  A first Go pattern
+#     matching randBA and crypto/rand found 32 of 53 tests drawing; adding
+#     NewRandBitArray, mrand. and mrand.Read took it to 49 -- seventeen
+#     invisible, including all of [23]-[31].  An under-matching detector makes
+#     the completeness rule pass VACUOUSLY, which is #295's recorded rule that
+#     getting the corpus wrong in the LENIENT direction is the dangerous one.
+#     The guard is that an EMPTY per-language draw set is an error (#296's own
+#     guard, and #306's sixth-spelling hazard is why both exist).
+#     NB mrand is math/rand, not a CSPRNG.  It is auto-seeded since Go 1.20,
+#     so it is a fresh sample every run and counts HERE even though it would
+#     not count for #296's randomness census -- the two axes ask different
+#     questions of the same word.
+#
+# (2) THE BUDGET IS A JOB-LEVEL NUMBER, NOT A PER-TEST ONE.  That is #300's
+#     explicit position, arrived at after its own first draft picked 1e-6 per
+#     gate and then flagged three gates at 1.2e-6 -- one run in 860 000, a
+#     defect only against an arbitrary line.  So no entry carries a per-row
+#     bar; each carries a RATE or an ARGUMENT, the two are counted separately
+#     so the distinction cannot erode, and the SUM is checked against the
+#     budget below.  If it is ever approached, replicate the largest
+#     contributor (#299's pattern); raising the number is how the premise rots.
+_SAMPLED_TEST_BUDGET = 1e-4
+
+# How each language spells "read fresh randomness", inside a numbered test.
+# WHERE THE MARKER SITS relative to the body, which is not the same in all
+# four.  C, Go and Python print their header FIRST, so a test's body runs from
+# its marker to the next one.  Java's marker is the TRAILING println("PASS
+# [N]") of an if/else, so its body runs from the PREVIOUS marker to this one --
+# slicing Java the other way reported [35] as drawing nothing while
+# Stern.sternFKeygen(rng) sat inside it.
+_TRAILING_MARKER_LANGS = ("java",)
+
+# A test draws if it reads the CSPRNG itself OR calls a keygen that does --
+# the second half matters: [22] reaches its entropy only through
+# _zkp_nl_keygen, and a direct-read-only pattern reported it as drawing
+# NOTHING while its verdict plainly turns on a fresh instance.  That is the
+# under-matching hazard again, one level in: the first version of this table
+# was rejected by its own curated row.
+_TEST_DRAW_PATTERNS = {
+    # C's spellings were enumerated from source, not guessed: ba_rand, rand32,
+    # rand64, rand128, bn_rand_n, rnl_rand_poly_n, rnl_rand_coeff and three
+    # stern_rand_error_* variants.  Guessing twice is how [15] read as drawing
+    # nothing while bn_rand_n sat two lines under its header.
+    "c":      re.compile(r'\burnd_fp\b|\w*rand\w*\s*\(|\w*keygen\s*\('),
+    "go":     re.compile(r'\brandBA\s*\(|\bNewRandBitArray\s*\(|\bmrand\.|'
+                         r'\brand\.Read\b|crypto/rand|\w*[Kk]eygen\s*\('),
+    "python": re.compile(r'os\.urandom|BitArray\.random|random\.getrandbits|'
+                         r'random\.randrange|random\.randint|_csprng|'
+                         r'\w*keygen\s*\('),
+    "java":   re.compile(r'\brng\b|\w*[Kk]eygen\s*\('),
+}
+
+# The DERIVED half, recorded so a change forces the question (#296's name set).
+# A numbered test that starts or stops drawing fresh entropy moves a number
+# here and fails until somebody says which it is and why.
+_TEST_DRAWS = {
+    "c":      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+               20, 21, 22, 23, 24, 25, 26, 28, 30, 31, 32, 33, 34, 35, 36, 37,
+               38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53],
+    "go":     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+               20, 21, 22, 23, 24, 25, 26, 28, 30, 31, 32, 33, 34, 35, 36, 37,
+               38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53],
+    "python": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+               19, 20, 21, 22, 23, 24, 25, 26, 28, 30, 31, 32, 33, 34, 35, 36,
+               37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53],
+    "java":   [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+               19, 20, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35],
+}
+
+# The CURATED half.  An entry only where a verdict rests on a THRESHOLD or on
+# a PROBABILISTIC outcome -- the other ~40 per language are all-trials-must-
+# succeed conjunctions of round-trips, where a fresh sample changes WHICH
+# instance is tested and not the outcome.
+#
+#   (lang, test) -> (code, rate-or-None, reason)
+#
+# Codes are #300's, with the same meanings:
+#   exact       holds with probability 1 for correct code
+#   negligible  a sampled statistic against a fixed threshold, rate STATED
+#   replicated  an exceedance is confirmed against a second sample first
+#   follows     the threshold is computed from the statistic's own null
+#
+# "python" entries cover C and Go too where the three share an expression;
+# a per-port row exists where they DIVERGE, which is #310's lesson stated as
+# a schema -- [53] was the same code at two parameter sets, failing one run in
+# 16 in Python and Go and one in 65536 in C and Java.
+_SAMPLED_TESTS = {
+    ("shared", 2): ("exact", None,
+        "'2.9 <= mean <= 3.1' looks like the worst row in the file and is the "
+        "safest: FSCX is LINEAR, so flipping one input bit moves the output by "
+        "M . e_j, of weight exactly 3 at every n >= 3.  The statistic has zero "
+        "variance and the window is legacy slack, not tolerance"),
+    ("shared", 4): ("negligible", 1e-6,
+        "bit-frequency, and the row TODO #233 fixed by making the bar follow "
+        "the statistic: tol = 6 * 50/sqrt(n_run), i.e. 6 sigma of the "
+        "Binomial(n_run, 1/2) per-bit percentage, reproducing the historical "
+        "+/-3.00 at N=10000 and staying sound below it.  Union bound over "
+        "256+128+64 bits puts the run-level rate near 1e-6"),
+    ("shared", 5): ("negligible", 1e-30,
+        "'mean HD >= size//4' against a null of size/2.  The per-trial HD is "
+        "Binomial(size, 1/2), so the mean over N trials sits sqrt(size*N)/2 "
+        "sigma from the bar -- 28 sigma at the smallest cell (size=32, "
+        "N=GF_TRIALS=100).  Recorded as a bound, not a measurement"),
+    ("shared", 10): ("negligible", 1e-30,
+        "NL-FSCX v1 aperiodicity, 'no_period >= 95% of n2_run'.  MEASURED null "
+        "4000/4000 at n=32 and n=64: a period inside 4n steps needs cur == A, "
+        "about 4n * 2^-n = 3e-8 at n=32, and the gate needs 5% of 200 trials "
+        "to find one.  NOT #234-vacuous despite the slack: a v1 that lost its "
+        "aperiodicity scores no_period ~ 0, so the gate still fires on the "
+        "regression it defends"),
+    ("shared", 11): ("negligible", 1e-14,
+        "NL-FSCX v2 non-linearity, 'nl_ok >= 98% of n3_run', and the null is "
+        "GENUINELY NONZERO -- 4 coincidences in 20 000 at n=32 (2.0e-4), not "
+        "the 2^-32 a reader assumes, so the 2% slack is load-bearing rather "
+        "than generous.  P(Binom(500, 2e-4) >= 11) ~ 1e-14.  Its sibling "
+        "'non_bij == 0' is EXACT: two distinct A cannot share an image of a "
+        "bijection, so a collision is the defect and never the draw"),
+    ("shared", 18): ("exact", None,
+        "THE REFERENCE ROW.  A weight-2 code of length 32 with a 16-bit "
+        "syndrome is not uniquely decodable, and this line reported [FAIL] on "
+        "7.4% of runs until TODO #233 SEPARATED the ambiguous-syndrome branch "
+        "from the failure branch and scored only `bad`.  That is how a "
+        "probabilistic subject gets an exact verdict without slack -- prefer "
+        "it to widening a threshold"),
+    ("python", 19): ("negligible", 4e-75,
+        "HFSCX-256 collision sanity over 500 fresh pairs, plus 6 block-boundary "
+        "pairs, against a 256-bit digest"),
+    ("shared", 21): ("exact", None,
+        "ZKP-RNL, and the row TODO #316 FIXED.  rnl_sigma_sign gives up after "
+        "1000 rejection-sampling attempts -- a legitimate signer outcome -- and "
+        "all four ports scored it differently and none correctly: Python "
+        "decremented its denominator and could print 0/0 [PASS]; C and Go left "
+        "ok_verify == i against N == i+1, so ANY exhaustion FAILED the build; "
+        "Java did fails++ directly below a comment saying it did not (#295's "
+        "false-reason finding, aimed at a test).  Now one rule (#291: a section "
+        "that did not run must not be scored) -- the trial leaves the "
+        "denominator, N > 0 is guarded, Java retries 8 times.  Exhaustion "
+        "measured at 0 in 1166 signs at n=32 and 0 in 136 at n=256, but "
+        "_sigma_params records ~72% at the retired t=64, so the margin is a "
+        "parameter choice and not a property"),
+    ("shared", 22): ("negligible", 2.3e-7,
+        "ZKP-NL tamper rejection, and the pair that makes [17] legible: the "
+        "verifier hashes ALL commitments into ch_seed and checks every round's "
+        "claimed challenge, so flipping a bit of round 0's com_1 is missed only "
+        "if all 16 recomputed challenges still match -- (1/3)^16 per trial over "
+        "10 trials.  IDENTICAL MECHANISM to [17]'s defect at 16 rounds instead "
+        "of 8, so the round count is the whole distance between 2.3e-7 and "
+        "1.5e-5.  No crash mode: past the challenge check it meets stale "
+        "responses and returns False"),
+    ("shared", 20): ("exact", None,
+        "Stern ring COMPLETENESS ONLY, at rounds=4 in Python and "
+        "sdfTestRounds=4 in Go -- the count CLAUDE.md's Testing section warns "
+        "about.  Exact because it asserts no rejection: adding one here would "
+        "carry a (2/3)^4 = 19.75% soundness error, which is that warning as a "
+        "live constraint rather than as history"),
+    ("shared", 45): ("negligible", 4.8e-6,
+        "THE LARGEST CONTRIBUTOR, and it is already the fixed version.  A "
+        "corrupted syndrome is caught only on a b = 0 round, so an honest "
+        "signature verifies against it with probability (2/3)^SDF_ROUNDS -- "
+        "2.4e-6 at 32, over STERN_TRIALS=2.  At the rounds=8 this ran at "
+        "before TODO #234 it was 3.90%, which made the whole of [45] fail "
+        "38.5% of runs.  If this table's budget is ever approached, this is "
+        "the row to replicate"),
+    ("shared", 46): ("negligible", 1e-70,
+        "fpe/twk domain separation: two fresh 256-bit ciphertexts must differ, "
+        "and its key-boundary sibling likewise.  Coincidence terms"),
+    ("shared", 49): ("negligible", 1.5e-17,
+        "HKEX-RNL m_blind guard.  The ACCEPT-CONTROL is the sampled half -- a "
+        "genuine uniform draw must pass -- and the guard rejects a coefficient "
+        "RANGE below q/4, which n uniform draws fall inside with about "
+        "n*(1/4)^(n-1) = 1.5e-17 at n=32.  Its sparsity clause is unreachable "
+        "at q=65537.  The control exists because a guard that rejected "
+        "everything would pass the four rejection cases perfectly"),
+    ("shared", 14): ("exact", None,
+        "HKEX-RNL agreement, and THE ROW TO DISTRUST -- it rests on an "
+        "ARGUMENT (Peikert 1-bit reconciliation eliminates agreement failures) "
+        "rather than on a derived rate, and #310's lesson is that a reason "
+        "exact about the wrong object reads exactly like a correct one.  "
+        "Measured here: 0 disagreements in 20 000 at n=32, which bounds the "
+        "per-trial rate at 1.5e-4 (95%) and is NOT tight enough to derive a "
+        "run-level number from, so it defers to "
+        "SecurityProofsCode/hkex_rnl_failure_rate.py 5 and 7.  Note "
+        "RNL_SIZES includes 32 while this test's own comment says the error "
+        "probability is negligible 'at n >= 64'"),
+    ("shared", 53): ("negligible", 5.5e-11,
+        "Stern witness binding.  TODO #310's row: the forgery sub-check has "
+        "its OWN round count (64 in all four) because the verifier binds wt(e) "
+        "only on b = 0 rounds, and the witness is CONSTRUCTED off-weight by "
+        "kernel addition rather than hoped for, which removed a 2^-t term "
+        "entirely.  The ring half keeps 12 and has no soundness error"),
+    ("python", 17): ("exact", None,
+        "PYTHON ONLY -- C, Go and Java assert completeness only in [17], which "
+        "is #310's per-port rule running the other way: a table with one cell "
+        "per test would have read 'absent' and closed the row.  Until TODO "
+        "#316 this was a sampled gate at (1/3)^SDF_ROUNDS = 1.5e-5 whose "
+        "failure mode was an uncaught TypeError that ABORTED THE HARNESS, in a "
+        "required job: the forgery claims fake_chal = [0]*8, the verifier "
+        "recomputes the Fiat-Shamir challenge and rejects at the first round "
+        "that disagrees, and the b = 0 branch it reached otherwise unpacked a "
+        "BitArray where a real response carries an int.  Measured 0.342 / "
+        "0.118 / 0.0130 / 0.0000 of 2000 attempts at rounds 1/2/4/8 against "
+        "(1/3)^R.  Typed correctly the verifier RUNS that branch and rejects "
+        "on the merits (c1 carries no ds=2; #298's wt(respA ^ respB) == t "
+        "fails at weight 0), so the sampling is gone rather than reduced and "
+        "the check now exercises the branch it used to crash through"),
+    ("java", 12): ("negligible", 2.4e-6,
+        "Java's Stern-F corrupt-syndrome rejection, signed at Stern.SDFR = 32. "
+        "Its own comment derives why a smaller count would flake: only a b = 2 "
+        "round references the syndrome, so 8 rounds skip it ~3.9% of the time"),
+    ("java", 26): ("negligible", 2e-6,
+        "Java's Stern ring forgery rejection at demoRounds = 32.  TODO #260 "
+        "caught this flaking at 8 rounds ((2/3)^8 = 3.9%) -- CLAUDE.md's "
+        "Testing class found by somebody tripping over it, which is the "
+        "history this whole axis exists to stop repeating"),
+    ("java", 14): ("negligible", 1e-50,
+        "HPKE-Stern-KEM, the only row whose subject has a DESIGNED failure "
+        "rate: QC-MDPC decoding has a real DFR and TODO #235's implicit "
+        "rejection makes a DFR event an output MISMATCH rather than an error, "
+        "so it fails only if all 20 trials miss.  DFR^20, and at the deployed "
+        "BIKE-128 the DFR is not observable at any trial count (#285 2), so "
+        "the exponent is doing far less work than the base"),
+    ("java", 35): ("negligible", 5.5e-11,
+        "Java's copy of [53], fixed by TODO #310 in the same pass: "
+        "forgeRounds = 64, off-weight witness constructed by kernel addition"),
+}
+
+# Tests that DRAW but are out of scope because what they draw does not reach
+# the verdict.  Self-invalidating like every other table here: an entry naming
+# a test that has started deciding on its sample FAILS.
+_SAMPLED_TEST_CONSTANT = {
+    ("shared", 27): "ratchet: seeds are the literals test-seed-{i} / seed-alice "
+                    "/ seed-bob, so nothing in the verdict varies run to run",
+    ("shared", 29): "HDRBG: every seed is a literal (bytes(range(32)), "
+                    "b'ent-monobit'), so the '0.48 <= frac <= 0.52' monobit "
+                    "window is applied to a CONSTANT.  It cannot flake, and "
+                    "that is the INVERSE fragility rather than a defect -- the "
+                    "die is rolled once per change to the DRBG, not once per "
+                    "run, so a future construction change either always passes "
+                    "it or always fails it.  Java's [22] is the same shape",
+    ("java", 21):   "Java's ratchet, same literal seeds as the shared [27]",
+    ("java", 22):   "Java's HDRBG, same constant monobit window as [29]",
+    ("java", 34):   "Java's QC-MDPC PRF seed expansion: pinned four-way vectors "
+                    "(TODO #277), no draw anywhere in the verdict",
+    ("c", 19):      "C's HFSCX-256 runs the pinned KAT vectors and deterministic "
+                    "block-boundary inputs; only PYTHON's [19] adds the fresh "
+                    "500-pair collision sanity, which is why that row is scoped "
+                    "to python rather than shared",
+    ("go", 19):     "Go's HFSCX-256, same as C's",
+    ("c", 52):      "C's QC-MDPC PRF seed expansion: pinned vectors (TODO #277)",
+    ("python", 52): "Python's, same as C's -- Go's [52] DOES draw, which is why "
+                    "there is no shared row here",
+}
+
+
+def _numbered_test_bodies(lang):
+    """{test number: source slice}, from each [N] marker to the next.
+
+    Every one of these harnesses prints its own header as the FIRST statement
+    of the test, so a slice starting at the marker holds the whole body.  A
+    first version sliced [previous marker, next marker], which overlaps its
+    neighbours in both directions and reported [52] -- a pinned-vector test
+    that draws nothing -- as drawing, by bleed from [51]'s qcmdpc_keygen.
+    Over-wide slicing is the LENIENT direction again (#295): it hides a test
+    that stopped drawing behind a neighbour that did not.
+    """
+    path, marker = NUMBERED_TEST_FILES[lang]
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    marks = sorted((m.start(), int(m.group(1))) for m in marker.finditer(text))
+    bodies = {}
+    trailing = lang in _TRAILING_MARKER_LANGS
+    for i, (pos, num) in enumerate(marks):
+        if trailing:
+            start = marks[i - 1][0] if i else 0
+            end = pos
+        else:
+            start = pos
+            end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
+        bodies.setdefault(num, "")
+        bodies[num] += text[start:end]
+    return bodies
+
+
+def check_sampled_tests(errors, numbers):
+    """TODO #316: which numbered tests decide a verdict from a fresh sample."""
+    drawn = {}
+    for lang in NUMBERED_TEST_FILES:
+        pattern = _TEST_DRAW_PATTERNS[lang]
+        bodies = _numbered_test_bodies(lang)
+        found = sorted(n for n, body in bodies.items() if pattern.search(body))
+        # #296's guard, and #306's hazard: an empty census is an error, not a
+        # clean bill.  A detector that matches nothing looks exactly like a
+        # harness that draws nothing.
+        if not found:
+            errors.append(
+                f"sampled-tests: {lang} — no numbered test matched "
+                f"_TEST_DRAW_PATTERNS, so either the pattern is stale or the "
+                f"harness stopped drawing entropy.  An under-matching detector "
+                f"makes this whole check pass vacuously (TODO #295's lenient "
+                f"direction), so it fails rather than reporting zero"
+            )
+            drawn[lang] = []
+            continue
+        recorded = _TEST_DRAWS.get(lang, [])
+        started = sorted(set(found) - set(recorded))
+        stopped = sorted(set(recorded) - set(found))
+        if started:
+            errors.append(
+                f"sampled-tests: {lang} — test(s) {started} now draw fresh "
+                f"entropy and are not in _TEST_DRAWS.  Say what their verdict "
+                f"rests on: add a _SAMPLED_TESTS entry if it turns on a "
+                f"threshold or a probabilistic outcome, or record the number "
+                f"here if every trial must succeed"
+            )
+        if stopped:
+            errors.append(
+                f"sampled-tests: {lang} — test(s) {stopped} are in _TEST_DRAWS "
+                f"but no longer draw fresh entropy.  Delete them (or check the "
+                f"detector still matches how they read the CSPRNG)"
+            )
+        drawn[lang] = found
+
+    # Curated rows must name a test that exists, in a language that has it,
+    # and that actually draws -- a row for a test deciding on nothing is stale.
+    for (scope, num), (code, rate, reason) in sorted(_SAMPLED_TESTS.items()):
+        langs = SHARED_NUMBERING_LANGS if scope == "shared" else (scope,)
+        if scope != "shared" and scope not in NUMBERED_TEST_FILES:
+            errors.append(f"sampled-tests: _SAMPLED_TESTS key names unknown "
+                          f"scope {scope!r}")
+            continue
+        for lang in langs:
+            if num not in numbers.get(lang, []):
+                errors.append(
+                    f"sampled-tests: _SAMPLED_TESTS[{scope!r}, {num}] names a "
+                    f"test {lang} does not have — the row is stale, or the "
+                    f"scope should be one language rather than 'shared'"
+                )
+            elif num not in drawn.get(lang, []):
+                errors.append(
+                    f"sampled-tests: _SAMPLED_TESTS[{scope!r}, {num}] is "
+                    f"curated as sampled, but {lang}'s [{num}] draws no fresh "
+                    f"entropy — delete the row, or the detector has gone stale"
+                )
+        if code not in ("exact", "negligible", "replicated", "follows"):
+            errors.append(f"sampled-tests: [{num}] has unknown verdict code "
+                          f"{code!r}")
+        if code == "exact" and rate is not None:
+            errors.append(
+                f"sampled-tests: [{num}] is 'exact' and carries a rate — an "
+                f"exact verdict holds with probability 1, so a rate means it "
+                f"is really one of the other three"
+            )
+        if code != "exact" and rate is None:
+            errors.append(
+                f"sampled-tests: [{num}] is {code!r} with no rate.  Every "
+                f"non-exact entry owes a DERIVED rate or, if the rate is not "
+                f"the binding consideration, an argument recorded as one"
+            )
+        if not reason or len(reason) < 40:
+            errors.append(f"sampled-tests: [{num}] needs a reason saying what "
+                          f"its verdict rests on")
+
+    # The out-of-scope rows invalidate the same way.
+    for (scope, num), reason in sorted(_SAMPLED_TEST_CONSTANT.items()):
+        langs = SHARED_NUMBERING_LANGS if scope == "shared" else (scope,)
+        for lang in langs:
+            if num not in numbers.get(lang, []):
+                errors.append(
+                    f"sampled-tests: _SAMPLED_TEST_CONSTANT[{scope!r}, {num}] "
+                    f"names a test {lang} does not have"
+                )
+        if (scope, num) in _SAMPLED_TESTS:
+            errors.append(
+                f"sampled-tests: [{num}] is in BOTH _SAMPLED_TESTS and "
+                f"_SAMPLED_TEST_CONSTANT — it cannot both decide on a sample "
+                f"and draw nothing that reaches its verdict"
+            )
+
+    rated = [r for _c, r, _x in _SAMPLED_TESTS.values() if r is not None]
+    total = sum(rated)
+    if total > _SAMPLED_TEST_BUDGET:
+        worst = max(((k, r) for k, (_c, r, _x) in _SAMPLED_TESTS.items()
+                     if r is not None), key=lambda kv: kv[1])
+        errors.append(
+            f"sampled-tests: the summed false-failure rate is {total:.2e} per "
+            f"run, over the budget of {_SAMPLED_TEST_BUDGET:.0e}.  Replicate "
+            f"the largest contributor ({worst[0]} at {worst[1]:.1e}) on TODO "
+            f"#299's pattern rather than raising the budget"
+        )
+    return drawn, total, len(rated)
+
 def check_shared_numbering(errors, numbers):
     langs = [l for l in SHARED_NUMBERING_LANGS if numbers.get(l)]
     if len(langs) < 2:
@@ -4557,6 +4972,7 @@ def main():
     errors = []
     numbers = check_numbered_tests(errors)
     check_shared_numbering(errors, numbers)
+    sampled_drawn, sampled_rate, sampled_rated = check_sampled_tests(errors, numbers)
     checked = check_primitives(errors)
     census = check_census(errors)
     param_counts, _param_values = check_parameters(errors)
@@ -4577,6 +4993,18 @@ def main():
         f"identical across all three; Java's own [1]-[{numbers['java'][-1]}] is internally "
         f"consistent; {checked} language-markers across {len(PRIMITIVES)} suite-internal "
         f"primitive(s) are present where required."
+    )
+    n_exact = sum(1 for c, _r, _x in _SAMPLED_TESTS.values() if c == "exact")
+    print(
+        f"OK: sampled-test census — {sum(len(v) for v in sampled_drawn.values())} "
+        f"numbered test(s) across the four languages decide a verdict from a "
+        f"FRESH sample (c {len(sampled_drawn['c'])}, go {len(sampled_drawn['go'])}, "
+        f"python {len(sampled_drawn['python'])}, java {len(sampled_drawn['java'])}), "
+        f"every one recorded; {len(_SAMPLED_TESTS)} carry a curated verdict "
+        f"({n_exact} exact, {sampled_rated} with a derived rate) and "
+        f"{len(_SAMPLED_TEST_CONSTANT)} draw nothing that reaches a verdict.  "
+        f"Summed false-failure rate {sampled_rate:.1e} per run against a budget "
+        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316)."
     )
     print(
         "OK: internal-surface census — "
