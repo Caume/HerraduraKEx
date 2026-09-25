@@ -21452,3 +21452,66 @@ comment exists to refuse.
 Status: **DONE v9.5.6** — the flag is deleted, all twelve CI jobs are required/blocking,
 and the promotion rests on a measured 6.4e-5 job rate (TODO #300, #304) plus seven
 consecutive green runs whose only two failures were a real defect that TODO #315 fixed.
+
+---
+
+### #318: a test that changes HOW it decides — the hole in TODO #316's own table
+
+TODO #316 censused which numbered tests draw fresh entropy, and closed. It catches a test
+that starts **drawing**; nothing caught a test that starts **deciding on a threshold**.
+`_TEST_DRAWS` records which tests draw and `_SAMPLED_TESTS` is curated, so adding
+`if mean > 0.9:` to any of the ~160 already-drawing tests carrying no curated row left
+every check green. Verified before building anything: the checker read no verdict
+expression anywhere.
+
+That is the standing shape of this whole lineage — #300 censused the gates and #310 asked
+the same of the numbered tests; #305 measured what the randomness pinning reached and #306
+asked which code the census READS — arriving this time at a table written one item earlier.
+
+**A THRESHOLD DETECTOR WAS THE OBVIOUS DESIGN AND IS THE WEAKER ONE.** Two reasons, both
+found by trying it. (1) It cannot see the cases that matter most: `[17]`'s defect was a
+`(1/3)^rounds` soundness term with **no numeric literal anywhere in its verdict**, and so
+are `[45]`'s `(2/3)^32` and `[22]`'s `(1/3)^16` — the three largest terms in #316's whole
+budget would all have been invisible to it. (2) It needs to know every spelling of "this
+line decides the verdict", and that enumeration went wrong **three times running** in this
+item alone: Go's `verdict := "PASS"` and `status := "FAIL"`, and C's `[19]`, which decides
+with `puts("  FAIL: empty"); pass = 0`. #306's sixth-spelling hazard, met yet again, and
+#316's own detector had already needed four corrections for the same reason.
+
+**WHAT SHIPPED INSTEAD.** `_VERDICT_FINGERPRINTS` pins how each of the 194 numbered tests
+DECIDES: a SHA-256 prefix over every line of the test's body carrying a PASS or FAIL
+marker, comments excluded and whitespace collapsed. So an edit to a test's WORK does not
+fire and an edit to its VERDICT does. It needs no threshold theory at all — any change to
+how a test decides fails until somebody looks, which is what the hole actually needs, and
+it covers the non-syntactic terms a detector could not.
+
+**`"none"` IS A PINNED VALUE, not an absence.** 36 rows have no verdict line — the
+benchmarks `[32]`-`[43]`, plus Go's `[52]`, whose verdict lives in a helper — and pinning
+that means a benchmark which GROWS a verdict fires. That direction is not hypothetical:
+TODO #300 found `qcmdpc_bgf_failure_rate.py` with a single `return 0`, discovered and run
+every CI run for eleven items and unable to go red.
+
+**WHEN IT FIRES**, the question is not whether the hash is stale but whether the test now
+decides from a fresh sample against a fixed threshold — if it does, it owes a
+`_SAMPLED_TESTS` row and the job budget owes its rate; if not, re-generate with
+`--update-verdicts`, which prints the table and **writes nothing**, so the update stays a
+decision rather than a reflex.
+
+**Four negative controls, all verified.** The motivating case — a `0.97 * n_run` threshold
+added to `[23]`, a drawing test with no curated row — fires, naming the test and asking the
+right question. A benchmark growing a verdict fires (`none -> 33500c59e4`). A row naming a
+test that does not exist fires. And the false-positive control **does not** fire: editing a
+comment that mentions FAIL changes nothing, which is the property that keeps the check from
+rotting into noise.
+
+**Known limit, stated rather than implied.** This pins the verdict REGION, so it sees that
+a decision changed and never what the new decision means. It cannot tell a tightened
+threshold from a loosened one, and it cannot see a rate that moved because a round count
+moved elsewhere — `[45]` at `SDF_ROUNDS = 32` is a `(2/3)^32` term whose fingerprint does
+not contain the 32. A change to `SDF_ROUNDS` moves the job's real rate and fires nothing
+here. That is `PARAMETERS`' axis, not this one, and folding it in would converge on
+completeness again (#298's rule).
+
+Status: **DONE v9.5.7** — how all 194 numbered tests decide is pinned, with four verified
+controls including a false-positive control, and `--update-verdicts` regenerates the table
+without writing it.

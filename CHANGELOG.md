@@ -2,6 +2,42 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.7] - 2026-09-25
+
+### Added
+- **`_VERDICT_FINGERPRINTS`: how each of the 194 numbered tests DECIDES is now pinned
+  (TODO #318), closing a hole in TODO #316's own table.**  #316 catches a test that starts
+  DRAWING fresh entropy; nothing caught one that starts DECIDING on a threshold, so
+  `if mean > 0.9:` added to any of the ~160 already-drawing tests with no curated row left
+  every check green — verified before building anything, since the checker read no verdict
+  expression at all.  The fingerprint is a SHA-256 prefix over every PASS/FAIL-bearing line
+  of a test's body, comments excluded and whitespace collapsed, so an edit to a test's WORK
+  does not fire and an edit to its VERDICT does.
+- **`--update-verdicts`** prints the regenerated table and writes nothing, so updating it
+  stays a decision rather than a reflex.
+
+### Changed
+- **A threshold detector was the obvious design and is the weaker one**, and both reasons
+  came from trying it.  It cannot see the cases that matter most — `[17]`'s defect was a
+  `(1/3)^rounds` term with no numeric literal in its verdict, and so are `[45]`'s
+  `(2/3)^32` and `[22]`'s `(1/3)^16`, i.e. the three largest terms in #316's budget.  And it
+  needs every spelling of "this line decides the verdict", an enumeration that went wrong
+  three times in this item alone (Go's `verdict := "PASS"` and `status := "FAIL"`, C's
+  `[19]` deciding via `puts("  FAIL: empty"); pass = 0`) — TODO #306's sixth-spelling
+  hazard again.
+- **`"none"` is a pinned value, not an absence**: 36 rows have no verdict line (the
+  benchmarks `[32]`-`[43]`, plus Go's `[52]`, whose verdict lives in a helper), so a
+  benchmark that GROWS a verdict fires — the direction TODO #300 found
+  `qcmdpc_bgf_failure_rate.py` in, run every CI run for eleven items and unable to go red.
+- **Four negative controls verified, one of them a FALSE-POSITIVE control.**  A threshold
+  added to `[23]` fires; a benchmark growing a verdict fires (`none -> 33500c59e4`); a row
+  naming a nonexistent test fires; and editing a comment that mentions FAIL does NOT fire,
+  which is what keeps the check from rotting into noise.
+- Known limit, recorded rather than implied: this sees that a decision CHANGED, never what
+  the new decision means.  `[45]`'s rate lives in `SDF_ROUNDS`, which the fingerprint does
+  not contain, so a change there moves the real rate and fires nothing here — that is
+  `PARAMETERS`' axis (TODO #278), and folding it in would converge on completeness again.
+
 ## [9.5.6] - 2026-09-24
 
 ### Changed
