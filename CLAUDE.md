@@ -2206,8 +2206,8 @@ other way in the Arduino harness: [7] passed at 80% agreement and never asserted
 all (DFR ≤ 3e-6 at 95%), so the slack was masking a silent check, not absorbing noise.
 
 `.github/workflows/ci.yml` runs twelve
-jobs on every push/PR, eleven of them required/blocking (the twelfth,
-`analysis-findings`, is on probation — see below): `native-c`, `native-go`, `native-python`
+jobs on every push/PR, **all twelve required/blocking** since TODO #317 promoted
+`analysis-findings` (the last one on probation — see below): `native-c`, `native-go`, `native-python`
 (one job per language — build/no-build + suite tests + that language's own `CliTest/*.sh`
 scripts, split from a single combined `native` job in TODO #205), `native-interop`
 (the `CliTest/*.sh` scripts that exercise two or more CLIs at once — builds both C and Go —
@@ -2234,9 +2234,9 @@ promoted it after confirming 100% pass history since its one known failure mode,
 overflow, was fixed in TODO #155), `fuzz-smoke` (30s/target libFuzzer/go-fuzz/Hypothesis/
 CLI-argv run, TODO #187), `sanitizers` (C suite/tests/CLI under ASan+UBSan plus a
 bounded valgrind memcheck pass, TODO #188), and `analysis-findings` (TODO #289 — every
-findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; `continue-on-
-error: true` for now, on the `arduino` job's TODO #185 route). Locally, run the same
-scripts by hand as described below.
+findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; ran
+`continue-on-error: true` on the `arduino` job's TODO #185 route until TODO #317
+promoted it). Locally, run the same scripts by hand as described below.
 
 **The findings gates, and why they are a job rather than a step (TODO #289).** 76
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
@@ -2764,6 +2764,31 @@ until #233 SEPARATED the ambiguous-syndrome branch from the failure branch and s
 the latter. That is how a probabilistic subject gets an exact verdict — prefer it to
 widening a threshold, which is #234's vacuous pass waiting to happen.
 
+**And promoting the job that collects all of it, which every one of those items was
+the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
+from TODO #289 until v9.5.6 — twelve jobs, eleven blocking — on the `arduino` job's #185
+route: promote once a pass history exists. It is BLOCKING now, and the three things that
+had to be true first are worth keeping, because they are the shape of the argument for
+promoting any advisory check. (1) **THE HISTORY**: seven consecutive green runs, and the
+only two failures in that window were a REAL defect — two gates raising `E_WIDTH` on
+their first call after #314's pass 4 moved the BitArray width contract — found and fixed
+by #315. A clean history is only evidence if a dirty one would have been visible, and
+here it was. (2) **THE RISK THE FLAG NAMED IS NOW MEASURED.** The old comment said the
+thing being watched was not build flakiness but SAMPLING, and that finding it out on a
+required check would be the wrong way round. That was correct and it is now answered:
+#300 censused all 76 gates at a nominal **6.4e-5 per run**, each carrying a verdict code
+and a derived rate or a stated argument, and #304 audited the three `follows` entries and
+found all three defective — which is how the number became 6.4e-5 rather than the 5.4e-5
+it had been advertising. A rate somebody derived is a different object from a rate
+somebody hopes is small. (3) **WHAT LEAVING IT COST**, which is the argument for acting
+rather than waiting longer: #315 found two gates that had been **red for two releases**,
+and the reason nobody noticed is the flag itself — a `continue-on-error` job's red is
+indistinguishable from nobody having looked, which is #289's own premise inverted. A job
+that collects exit statuses nobody reads collects nothing. The standing rule from here:
+if a gate flakes, the fix is that gate's threshold (#299's replication — confirm an
+exceedance against a second independent sample before failing), never re-adding the flag
+to make a red run pass.
+
 **And whether a draw is worth reaching before building something to reach it with (TODO
 #311).** #306 censused 56 CLI entropy draws over 16 roles and #309 proposed a seam to pin
 the 9 that no suite-level pin reaches — an env var that replaces the CSPRNG in a shipped
@@ -3035,7 +3060,7 @@ all** — except for two, and that exception was CORRECTED BY CI rather than mea
 `fscx_revolve_closed_form.py` (n = 8, n = 512) and `nl_fscx_v2_kex.py` (n = 8…40 step 4)
 both build a `BitArray` at a width the type no longer admits.  Both are gates and both
 raised `E_WIDTH` on their first call, unseen for two releases because the job that runs
-them is the one job on probation.  Go's `Val` was exported; Python's equivalents were
+them was, until TODO #317, the one job on probation.  Go's `Val` was exported; Python's equivalents were
 private by name.  **What a
 representation change costs is decided by what the old representation published.**  (3)
 **`uint` is the bignum boundary and `to_uint` is the specified operation**, spelled
@@ -3152,7 +3177,8 @@ edit at all" was true of the ACCESSOR surface and read rather than measured; `BI
 §2's width rule is new, and `fscx_revolve_closed_form.py` (n = 8, n = 512) and
 `nl_fscx_v2_kex.py` (n = 8…40 step 4) both raised `E_WIDTH` on their first call.  Both are
 GATES, and they ran red for two releases because the job that runs them is the one job on
-probation — #289's own premise, inverted: a `continue-on-error` job's red is
+probation (TODO #317 has since promoted it) — #289's own premise, inverted: a
+`continue-on-error` job's red is
 indistinguishable from nobody having looked.  (3) **THE FIX COSTS A PROPERTY AND THE
 SCRIPT SAYS WHICH.**  §4 of the closed-form script was PAIR-EXHAUSTIVE at n = 8; the
 narrowest legal width is 16, whose pair space is 2^32, so pair-exhaustiveness is gone

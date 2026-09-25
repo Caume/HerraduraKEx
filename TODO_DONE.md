@@ -21400,3 +21400,55 @@ whose failure mode was an uncaught TypeError that aborted the harness, `[21]`/`[
 scored an exhausted rejection limit four different ways in four ports, and the census
 table plus its four verified negative controls live in `spec/check_language_parity.py`.
 
+---
+
+### #317: promote `analysis-findings` to a required check
+
+`.github/workflows/ci.yml`'s `analysis-findings` job has run `continue-on-error: true`
+since TODO #289 created it — twelve jobs on every push, eleven of them blocking — on the
+route TODO #185 used for `arduino`: promote once a pass history confirms it. The job's own
+comment stated the condition ("Promote by deleting this line once a run history exists")
+and named the risk it was waiting on. Both are now settled.
+
+**(1) The history.** Seven consecutive green runs of the job: v9.5.1, the #314 PR run,
+v9.5.2, v9.5.3, v9.5.4, v9.5.5 and the #316 PR run. The only two failures in that window
+are the v9.5.0 runs, and they were a REAL defect rather than a flake — `fscx_revolve_
+closed_form.py` and `nl_fscx_v2_kex.py` both raised `E_WIDTH` on their first call once
+TODO #314's pass 4 made `BITARRAY.md` §2's width rule normative — found and fixed by TODO
+#315. That matters more than the seven greens: a clean history is evidence only if a dirty
+one would have been visible, and here it was.
+
+**(2) The risk the flag named is now MEASURED, not hoped about.** The old comment said the
+thing being watched "is not build flakiness but SAMPLING", and that finding it out on a
+required check would be the wrong way round. Correct, and answered: TODO #300 censused all
+76 gates and put the job's nominal false-failure rate at **6.4e-5 per run**, with every
+sampled gate carrying a verdict code (`exact` / `negligible` / `replicated` / `follows`)
+and either a derived RATE or a stated ARGUMENT, counted separately in the runner's banner
+so the distinction cannot erode. TODO #304 then audited the three `follows` entries and
+found **all three defective** — one running at 6.0e-3, 111x what the job then advertised —
+which is how the figure became 6.4e-5 rather than 5.4e-5. A rate somebody derived is a
+different object from a rate somebody hopes is small, and that difference is the whole
+content of this item's readiness.
+
+**(3) What leaving it on cost, which is why this is worth doing rather than deferring
+again.** TODO #315 found two gates that had been **red for two releases**. Nobody noticed,
+and the reason is the flag: a `continue-on-error` job's red is indistinguishable from
+nobody having looked — TODO #289's own premise, inverted. A job that collects exit statuses
+nobody reads collects nothing, which is the defect #289 was created to fix and which the
+flag quietly reintroduced one level up.
+
+**Not folded in, deliberately.** The two QC-MDPC scripts stay in `native-python` as well.
+That duplication existed because this job was not required; now that it is, removing them
+is defensible and is a separate change with its own runtime argument — and a promotion that
+also deletes coverage cannot report that the promotion was safe. TODO #312's rule.
+
+**The standing rule from here**, recorded in the workflow comment as well as here: if a
+gate flakes, the fix is that gate's threshold — the class CLAUDE.md's Testing section
+describes, a probabilistic property asserted as a deterministic one — and TODO #299's
+replication is the pattern, confirming an exceedance against a second independent sample
+before failing. Re-adding `continue-on-error` to make a red run pass is the move the
+comment exists to refuse.
+
+Status: **DONE v9.5.6** — the flag is deleted, all twelve CI jobs are required/blocking,
+and the promotion rests on a measured 6.4e-5 job rate (TODO #300, #304) plus seven
+consecutive green runs whose only two failures were a real defect that TODO #315 fixed.

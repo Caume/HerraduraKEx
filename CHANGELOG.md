@@ -2,6 +2,30 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.6] - 2026-09-24
+
+### Changed
+- **`analysis-findings` is a REQUIRED check (TODO #317).**  It has run
+  `continue-on-error: true` since TODO #289 created it — twelve CI jobs, eleven of them
+  blocking — on the route TODO #185 used for `arduino`.  All twelve block now.  The job's
+  own comment stated the promotion condition and named the risk it was waiting on, and
+  both are settled: **seven consecutive green runs** (v9.5.1 through v9.5.5 and both PR
+  runs), whose only two failures in that window were a REAL defect — two gates raising
+  `E_WIDTH` on their first call after TODO #314's pass 4 made `BITARRAY.md` §2's width
+  rule normative, found and fixed by TODO #315.
+- **The sampling risk the flag named is now measured rather than hoped about.**  TODO
+  #300 censused all 76 gates at a nominal **6.4e-5 false-failure rate per run**, each
+  carrying a verdict code and a derived RATE or a stated ARGUMENT; TODO #304 then audited
+  the three `follows` entries, found all three defective — one running at 6.0e-3, 111x
+  what the job then advertised — and that correction is why the figure is 6.4e-5 rather
+  than 5.4e-5.
+- **And what leaving it on cost:** TODO #315 found two gates that had been red for two
+  releases, unnoticed because a `continue-on-error` job's red is indistinguishable from
+  nobody having looked — TODO #289's own premise, inverted.
+- The two QC-MDPC scripts stay in `native-python` as well, deliberately: removing that
+  duplication is a separate change with its own runtime argument, and a promotion that
+  also deletes coverage cannot report that the promotion was safe (TODO #312's rule).
+
 ## [9.5.5] - 2026-09-23
 
 ### Added
