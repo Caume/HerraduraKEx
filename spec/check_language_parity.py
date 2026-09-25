@@ -64,6 +64,7 @@ import glob
 import json
 import math
 import os
+import hashlib
 import re
 import sys
 from collections import Counter
@@ -411,6 +412,217 @@ _SAMPLED_TEST_CONSTANT = {
     ("python", 52): "Python's, same as C's -- Go's [52] DOES draw, which is why "
                     "there is no shared row here",
 }
+
+
+
+# ── Part 3/3: the VERDICT of each numbered test, pinned ──────────────────
+#
+# TODO #318, and it closes a hole in TODO #316's own table.  That census
+# catches a test which starts DRAWING fresh entropy; nothing caught a test
+# which starts DECIDING on a threshold.  `_TEST_DRAWS` records which tests
+# draw and `_SAMPLED_TESTS` is curated, so adding `if mean > 0.9:` to any of
+# the ~160 already-drawing tests that carry no curated row left every check
+# green.  That is the standing shape of this whole lineage -- #300 censused
+# the gates and #310 asked the same of the numbered tests; #305 measured what
+# the randomness pinning reached and #306 asked which code the census READS --
+# arriving this time at a table I had just written.
+#
+# WHY A FINGERPRINT RATHER THAN A THRESHOLD DETECTOR.  A syntactic detector
+# was the obvious design and is the weaker one, for two reasons found by
+# trying it.  It cannot see the cases that matter most: [17]'s defect was a
+# (1/3)^rounds soundness term with no numeric literal anywhere in its verdict,
+# and so was [45]'s (2/3)^32 and [22]'s (1/3)^16.  And it needs to know every
+# spelling of "this line decides the verdict", which is the enumeration this
+# item's own detector got wrong three times running (Go's `verdict := "PASS"`
+# and `status := "FAIL"`, C's [19] `puts("  FAIL: ..."); pass = 0`) -- #306's
+# sixth-spelling hazard, met yet again.  Pinning the verdict REGION instead
+# needs no threshold theory: any change to how a test decides fails until
+# someone looks, which is what the hole actually needs.
+#
+# WHAT IS FINGERPRINTED is every line of a numbered test's body that carries
+# a PASS or FAIL marker, comments excluded, whitespace collapsed.  So an edit
+# to a test's WORK does not fire and an edit to its VERDICT does.  "none"
+# means the test has no verdict line at all -- the 36 benchmark rows [32]-[43]
+# and Go's [52], whose verdict lives in a helper -- and pinning that is not
+# redundant: a benchmark that GROWS a verdict fires here, which is the
+# direction TODO #300 found `qcmdpc_bgf_failure_rate.py` in (a gate that could
+# not fail, discovered and run every CI run for eleven items).
+#
+# WHEN IT FIRES the question is not "is the fingerprint stale" but "does this
+# test now decide on a fresh sample against a fixed threshold" -- if it does,
+# it owes a `_SAMPLED_TESTS` row and the job budget owes its rate; if it does
+# not, update the hash.  Re-generate with
+# `python3 spec/check_language_parity.py --update-verdicts`, which prints the
+# table and changes nothing on disk, so the update stays a decision.
+
+_VERDICT_FINGERPRINTS = {
+    # c
+    ("c", 1): "158d13ae58", ("c", 2): "e3b7cb92dd",
+    ("c", 3): "6a23f67290", ("c", 4): "44607f63e8",
+    ("c", 5): "d5271af77f", ("c", 6): "d58cc9fa6c",
+    ("c", 7): "158d13ae58", ("c", 8): "d58cc9fa6c",
+    ("c", 9): "158d13ae58", ("c", 10): "c3f46734fb",
+    ("c", 11): "71bbd22568", ("c", 12): "158d13ae58",
+    ("c", 13): "158d13ae58", ("c", 14): "42037b4080",
+    ("c", 15): "158d13ae58", ("c", 16): "158d13ae58",
+    ("c", 17): "8965f8a720", ("c", 18): "c4ffefcf1b",
+    ("c", 19): "c0593494da", ("c", 20): "83b3091774",
+    ("c", 21): "756337bffa", ("c", 22): "e38188098b",
+    ("c", 23): "6e34b5a147", ("c", 24): "6e34b5a147",
+    ("c", 25): "49b930b7b4", ("c", 26): "5f0407f2d7",
+    ("c", 27): "0bab6bce5d", ("c", 28): "cb3001321a",
+    ("c", 29): "db48464b01", ("c", 30): "8d105328b3",
+    ("c", 31): "4c02076d1c", ("c", 32): "none",
+    ("c", 33): "none", ("c", 34): "none",
+    ("c", 35): "none", ("c", 36): "none",
+    ("c", 37): "none", ("c", 38): "none",
+    ("c", 39): "none", ("c", 40): "none",
+    ("c", 41): "none", ("c", 42): "none",
+    ("c", 43): "none", ("c", 44): "f9063f18a0",
+    ("c", 45): "f9063f18a0", ("c", 46): "9809bcaf57",
+    ("c", 47): "3bed54b9b9", ("c", 48): "41b6f1ab99",
+    ("c", 49): "60f6315c3a", ("c", 50): "22c2f7bba4",
+    ("c", 51): "1de8b648fe", ("c", 52): "71897dda69",
+    ("c", 53): "d9072fd977",
+    # go
+    ("go", 1): "10a9b5fc23", ("go", 2): "4ce634b424",
+    ("go", 3): "f64d30ce54", ("go", 4): "48457c0dad",
+    ("go", 5): "6df4ca9740", ("go", 6): "fe62e3e8a9",
+    ("go", 7): "10a9b5fc23", ("go", 8): "408609c424",
+    ("go", 9): "10a9b5fc23", ("go", 10): "f2cf35c1e8",
+    ("go", 11): "73b0c3ad3c", ("go", 12): "10a9b5fc23",
+    ("go", 13): "10a9b5fc23", ("go", 14): "4eddb7c1ac",
+    ("go", 15): "10a9b5fc23", ("go", 16): "10a9b5fc23",
+    ("go", 17): "10a9b5fc23", ("go", 18): "a72dd44d29",
+    ("go", 19): "72cc1ae9d3", ("go", 20): "10a9b5fc23",
+    ("go", 21): "3e2043f939", ("go", 22): "c8665d6d66",
+    ("go", 23): "10a9b5fc23", ("go", 24): "10a9b5fc23",
+    ("go", 25): "2ce2ccb1e5", ("go", 26): "5902fad95c",
+    ("go", 27): "664c3c41ef", ("go", 28): "11cf42adb4",
+    ("go", 29): "07513faf5c", ("go", 30): "001d15a01c",
+    ("go", 31): "19ed03977c", ("go", 32): "none",
+    ("go", 33): "none", ("go", 34): "none",
+    ("go", 35): "none", ("go", 36): "none",
+    ("go", 37): "none", ("go", 38): "none",
+    ("go", 39): "none", ("go", 40): "none",
+    ("go", 41): "none", ("go", 42): "none",
+    ("go", 43): "none", ("go", 44): "48457c0dad",
+    ("go", 45): "48457c0dad", ("go", 46): "48457c0dad",
+    ("go", 47): "48457c0dad", ("go", 48): "48457c0dad",
+    ("go", 49): "01eca4540f", ("go", 50): "785c8baf28",
+    ("go", 51): "01eca4540f", ("go", 52): "none",
+    ("go", 53): "6c1ccbfd37",
+    # python
+    ("python", 1): "db6ea492b7", ("python", 2): "8d558e9edf",
+    ("python", 3): "4659f77207", ("python", 4): "e9725e3831",
+    ("python", 5): "f679789172", ("python", 6): "a5647ecd30",
+    ("python", 7): "db6ea492b7", ("python", 8): "7593ea3e82",
+    ("python", 9): "db6ea492b7", ("python", 10): "4589e4143e",
+    ("python", 11): "529a85a529", ("python", 12): "db6ea492b7",
+    ("python", 13): "db6ea492b7", ("python", 14): "d0396ab8e6",
+    ("python", 15): "db6ea492b7", ("python", 16): "db6ea492b7",
+    ("python", 17): "c5f298f1d9", ("python", 18): "8be0a29714",
+    ("python", 19): "63a190de9f", ("python", 20): "db6ea492b7",
+    ("python", 21): "d6fad1add7", ("python", 22): "d7c00b291a",
+    ("python", 23): "db6ea492b7", ("python", 24): "db6ea492b7",
+    ("python", 25): "e3a6e8b264", ("python", 26): "d7997e3a5d",
+    ("python", 27): "16542ad09f", ("python", 28): "32e12d56dd",
+    ("python", 29): "ab6e9487b2", ("python", 30): "54f1e989e6",
+    ("python", 31): "fac40a296a", ("python", 32): "none",
+    ("python", 33): "none", ("python", 34): "none",
+    ("python", 35): "none", ("python", 36): "none",
+    ("python", 37): "none", ("python", 38): "none",
+    ("python", 39): "none", ("python", 40): "none",
+    ("python", 41): "none", ("python", 42): "none",
+    ("python", 43): "e241c66aee", ("python", 44): "8d82a4b834",
+    ("python", 45): "661a73d2f2", ("python", 46): "a945af0b0a",
+    ("python", 47): "a9d13b319a", ("python", 48): "9ee4fb2c2e",
+    ("python", 49): "a9d13b319a", ("python", 50): "4f6ccba4ce",
+    ("python", 51): "9ee4fb2c2e", ("python", 52): "dfe56e60f6",
+    ("python", 53): "01a1a93925",
+    # java
+    ("java", 1): "41d245afc5", ("java", 2): "2755b3f41c",
+    ("java", 3): "1d765f8693", ("java", 4): "d21830647b",
+    ("java", 5): "c42cc8d201", ("java", 6): "2bb016ca62",
+    ("java", 7): "40932ed6ff", ("java", 8): "0cdd893ca8",
+    ("java", 9): "58be83bc77", ("java", 10): "6080dac6bd",
+    ("java", 11): "1a3c42a1a2", ("java", 12): "210c79f102",
+    ("java", 13): "939693a3b4", ("java", 14): "9e690571c1",
+    ("java", 15): "7992177842", ("java", 16): "d09b9190b4",
+    ("java", 17): "2b5815300d", ("java", 18): "b149525596",
+    ("java", 19): "e4fe0b33ab", ("java", 20): "55d3f2c8f3",
+    ("java", 21): "5e8c9c92fb", ("java", 22): "b8f73f5742",
+    ("java", 23): "cc0cbaee4b", ("java", 24): "1949de6ec3",
+    ("java", 25): "d0414cd564", ("java", 26): "8f84a198e0",
+    ("java", 27): "75ddafebf7", ("java", 28): "4ccb48453f",
+    ("java", 29): "f64b2ee4ae", ("java", 30): "06382cbade",
+    ("java", 31): "04dd85e615", ("java", 32): "b3eefc3e48",
+    ("java", 33): "80c2726ac4", ("java", 34): "f548811911",
+    ("java", 35): "ff38ed8c50",
+}
+
+
+# Comment openers per language, so an edit to a comment mentioning FAIL does
+# not read as a change to how the test decides.
+_VERDICT_COMMENT_PREFIXES = {
+    "c": ("//", "/*", "*"),
+    "go": ("//",),
+    "python": ("#",),
+    "java": ("//", "/*", "*"),
+}
+
+
+def _verdict_lines(lang, body):
+    """The PASS/FAIL-bearing lines of one numbered test, normalised."""
+    out = []
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(_VERDICT_COMMENT_PREFIXES[lang]):
+            continue
+        if "PASS" in stripped or "FAIL" in stripped:
+            out.append(re.sub(r"\s+", " ", stripped))
+    return out
+
+
+def _verdict_fingerprint(lang, body):
+    lines = _verdict_lines(lang, body)
+    if not lines:
+        return "none"
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()[:10]
+
+
+def check_verdict_fingerprints(errors):
+    """TODO #318: a test that changes HOW it decides must be re-examined."""
+    seen = set()
+    for lang in NUMBERED_TEST_FILES:
+        for num, body in sorted(_numbered_test_bodies(lang).items()):
+            key = (lang, num)
+            seen.add(key)
+            actual = _verdict_fingerprint(lang, body)
+            expected = _VERDICT_FINGERPRINTS.get(key)
+            if expected is None:
+                errors.append(
+                    f"verdicts: {lang} [{num}] has no _VERDICT_FINGERPRINTS "
+                    f"entry (actual {actual}).  A new numbered test owes one: "
+                    f"say whether it decides on a fresh sample against a fixed "
+                    f"threshold, and give it a _SAMPLED_TESTS row if it does"
+                )
+            elif expected != actual:
+                errors.append(
+                    f"verdicts: {lang} [{num}] decides differently than when "
+                    f"it was pinned ({expected} -> {actual}).  The question is "
+                    f"NOT whether the hash is stale: does this test now decide "
+                    f"from a FRESH SAMPLE against a FIXED THRESHOLD?  If so it "
+                    f"owes a _SAMPLED_TESTS row and the job budget owes its "
+                    f"rate (TODO #316); if not, re-generate with "
+                    f"--update-verdicts"
+                )
+    for key in sorted(set(_VERDICT_FINGERPRINTS) - seen):
+        errors.append(
+            f"verdicts: _VERDICT_FINGERPRINTS names {key[0]} [{key[1]}], which "
+            f"no longer exists — delete the row"
+        )
+    return len(seen)
 
 
 def _numbered_test_bodies(lang):
@@ -4968,11 +5180,27 @@ def _coverage_counts():
             out[row["status"]] += 1
     return out
 
+def _print_verdict_table():
+    """--update-verdicts: print the table, change nothing on disk."""
+    print("_VERDICT_FINGERPRINTS = {")
+    for lang in ("c", "go", "python", "java"):
+        print(f"    # {lang}")
+        row = [f'("{lang}", {num}): "{_verdict_fingerprint(lang, body)}",'
+               for num, body in sorted(_numbered_test_bodies(lang).items())]
+        for i in range(0, len(row), 2):
+            print("    " + " ".join(row[i:i + 2]))
+    print("}")
+
+
 def main():
+    if "--update-verdicts" in sys.argv:
+        _print_verdict_table()
+        return 0
     errors = []
     numbers = check_numbered_tests(errors)
     check_shared_numbering(errors, numbers)
     sampled_drawn, sampled_rate, sampled_rated = check_sampled_tests(errors, numbers)
+    verdicts_pinned = check_verdict_fingerprints(errors)
     checked = check_primitives(errors)
     census = check_census(errors)
     param_counts, _param_values = check_parameters(errors)
@@ -5005,6 +5233,14 @@ def main():
         f"{len(_SAMPLED_TEST_CONSTANT)} draw nothing that reaches a verdict.  "
         f"Summed false-failure rate {sampled_rate:.1e} per run against a budget "
         f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316)."
+    )
+    n_none = sum(1 for v in _VERDICT_FINGERPRINTS.values() if v == "none")
+    print(
+        f"OK: verdict fingerprints — how all {verdicts_pinned} numbered test(s) "
+        f"DECIDE is pinned, so a test that changes its verdict fails until "
+        f"someone says whether it now rests on a fresh sample against a fixed "
+        f"threshold; {n_none} carry no verdict line at all (the benchmarks), "
+        f"which is pinned too so one that GROWS a verdict fires (TODO #318)."
     )
     print(
         "OK: internal-surface census — "

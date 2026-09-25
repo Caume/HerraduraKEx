@@ -2764,6 +2764,33 @@ until #233 SEPARATED the ambiguous-syndrome branch from the failure branch and s
 the latter. That is how a probabilistic subject gets an exact verdict — prefer it to
 widening a threshold, which is #234's vacuous pass waiting to happen.
 
+**And a test that changes HOW it decides, which is the hole #316's own table left (TODO
+#318).** #316 catches a numbered test that starts DRAWING fresh entropy. Nothing caught one
+that starts DECIDING on a threshold: `_TEST_DRAWS` records which tests draw and
+`_SAMPLED_TESTS` is curated, so `if mean > 0.9:` added to any of the ~160 already-drawing
+tests with no curated row left every check green — verified before building anything, since
+the checker read no verdict expression at all. Four things carry forward. (1) **THE OBVIOUS
+DESIGN WAS THE WEAKER ONE.** A threshold detector cannot see the cases that matter most:
+`[17]`'s defect was a `(1/3)^rounds` term with no numeric literal in its verdict, and so are
+`[45]`'s `(2/3)^32` and `[22]`'s `(1/3)^16` — the three largest terms in #316's budget, all
+invisible to it. And it needs every spelling of "this line decides", an enumeration that
+went wrong THREE times in this item alone (Go's `verdict := "PASS"` and `status := "FAIL"`,
+C's `[19]` deciding via `puts("  FAIL: empty"); pass = 0`). #306's sixth-spelling hazard,
+met yet again. (2) **SO THE VERDICT REGION IS PINNED INSTEAD** — a hash over every
+PASS/FAIL-bearing line of each of the 194 tests, comments excluded — which needs no
+threshold theory and covers the non-syntactic terms: an edit to a test's WORK does not fire,
+an edit to its VERDICT does. (3) **`"none"` IS A PINNED VALUE, not an absence.** 36 rows have
+no verdict line (the benchmarks, plus Go's `[52]`, whose verdict is in a helper), so a
+benchmark that GROWS a verdict fires — the direction #300 found
+`qcmdpc_bgf_failure_rate.py` in, discovered and run every CI run for eleven items and unable
+to go red. (4) **THE FALSE-POSITIVE CONTROL IS AS LOAD-BEARING AS THE THREE THAT FIRE.**
+Editing a comment that mentions FAIL changes nothing, which is what keeps this from rotting
+into the noise that trains people to re-generate without reading. **Known limit, stated**: it
+sees that a decision changed, never what the new decision means — `[45]`'s rate lives in
+`SDF_ROUNDS`, which the fingerprint does not contain, so a change there moves the real rate
+and fires nothing here. That is `PARAMETERS`' axis, and folding it in would converge on
+completeness again.
+
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
 from TODO #289 until v9.5.6 — twelve jobs, eleven blocking — on the `arduino` job's #185
