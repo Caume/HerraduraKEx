@@ -585,6 +585,17 @@ DOC_COUNTS = [
      r"which (\d+) are EVALUATED FROM SOURCE",
      r"\*\*(\d+) of the \d+ rated rows are evaluated from source every run\*\*",
      "check_language_parity.py's derived-rate table, quoted in CLAUDE.md's Testing section"),
+    # TODO #320.  And how many of those DERIVED rates are held to a measured
+    # mechanism, which is the number that says whether the formulas were ever
+    # checked against the code rather than only against their inputs.  #304's
+    # precedent is the reason it is a row at all: a category that contributes
+    # nothing to an advertised number is where the erosion happens, and a hand
+    # count in CLAUDE.md is the same gap one layer out.
+    ("rate mechanisms measured",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"with (\d+) of those held to a MEASURED mechanism",
+     r"\*\*(\d+) of the \d+ derived rows carry a MEASURED mechanism\*\*",
+     "check_language_parity.py's _RATE_MECHANISMS, quoted in CLAUDE.md's Testing section"),
     # TODO #303.  The replay tables' sizes are the count of what the four ports
     # are actually held against each other on, and CLAUDE.md wrote both out by
     # hand -- "four samplers", "five whole OPERATIONS" -- so adding a row left

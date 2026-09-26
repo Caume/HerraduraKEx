@@ -21628,3 +21628,122 @@ and two new check-E rows so CLAUDE.md's copy of the budget is held to the tool. 
 corrected a published rate that was 10x too large in all four ports.
 
 ---
+
+---
+
+### #320: validating the FORMULA, not just its inputs — the derivation half of #319
+
+TODO #319 made a sampled numbered test's false-failure rate an EXPRESSION over constants
+read out of the source per port, so the rate's INPUTS can no longer move unseen.  It stated
+its own limit in the same breath, and the limit stopped being theoretical within the hour:
+
+> this closes "the rate's INPUTS moved" and not "the rate's DERIVATION was wrong".  A
+> formula that is the wrong function of the right constants still evaluates, and the only
+> checks on it are that it reproduces a measured rate (#304's `MEASURED` token) or that
+> someone re-derives it.
+
+**This is #304's item one layer down, and #304 is the precedent that says it matters.**
+That item found all three `follows` entries in `run_findings_gates.py` defective and
+required the token `MEASURED` alongside the number, because *"requiring the number alone
+would have certified §3.5 at 3.0e-4 while it ran at 6.0e-3 -- the arithmetic is only as
+good as the null it is done against."*  `_SAMPLED_TESTS` has **14 rated rows and not one of
+them is held to a measurement.**
+
+**THE EVIDENCE THAT THIS IS LIVE, found while closing #319 and not by looking for it.**
+The four ports state CONTRADICTORY MECHANISMS for `[45]`'s rate:
+
+- C, Go, Python: "a bad syndrome is caught only in the **b=0** round"
+- Java: "only **b=2** references the syndrome"
+
+Java is right, and the verifier settles it rather than an argument doing so.  In
+`hpks_stern_f_verify` the public syndrome appears in exactly one branch --
+`_stern_hash(n, pi_seed, BitArray(n, Hy ^ syndrome), ds=1) != c0` under `b == 2` -- while
+`b == 0` checks `wt(sr ^ sy) == t` and two commitment hashes and `b == 1` checks `Hr`.
+Neither touches it.  Confirmed identically in C, where `Hys[k] = Hy[k] ^ syndr[k]` occurs
+only in the final branch.
+
+Three things about that finding are the reason for this item.
+
+**(1) THE NUMBER WAS RIGHT AND THE DERIVATION WAS WRONG, which is the combination no check
+can see.**  It is `(2/3)^rounds` either way, because either way exactly one of three
+challenge values is the detecting one.  So #319's new machinery evaluates it correctly,
+`PARAMETERS` agrees, the fingerprint is unmoved, the budget is unchanged -- and the stated
+mechanism is false in three of four ports.  A rate that is right for the wrong reason
+survives every axis this repo has.
+
+**(2) IT PROPAGATED INTO THE FIX.**  #319's own `_SAMPLED_TEST_RATES` reason for `[45]`
+repeats the b = 0 claim, copied from the harness comment while writing the table that was
+supposed to make rates trustworthy.  That is #310's lesson -- *a reason exact about the
+wrong object reads exactly like a correct one* -- landing on the item that restated it, and
+it is the argument for a mechanism that does not depend on the next person reading four
+verifiers side by side.
+
+**(3) THE LIKELY ROOT IS A CONFLATION WITH A TRUE STATEMENT.**  For `[53]` the b = 0 claim
+IS correct: the verifier binds `wt(e)` only on b = 0 rounds, which is #298's fix and #310's
+second term.  So "b = 0 only" is true of the witness-weight property and false of the
+syndrome-corruption property, the two live in adjacent tests, and the wrong one was written
+down three times.  A checker cannot catch that; a MEASUREMENT of the mechanism can.
+
+**What to build.**  The precedent exists and has been used twice, ad hoc, and thrown away
+both times -- which is #296's diagnosis of #294 arriving again.  #316 validated `[17]`'s
+`(1/3)^R` by measuring **0.342 / 0.118 / 0.0130 / 0.0000** of 2000 attempts at rounds
+1 / 2 / 4 / 8, and #310 validated `[53]`'s `(2/3)^rounds` at **3 acceptances in 400
+trials, all 3 the no-b=0 challenge strings**.  Generalise that: for each derived formula,
+run its test at a REDUCED parameter where the predicted rate is large enough to measure,
+and check the observed frequency against the prediction.  `[45]` at `rounds = 4` is 19.75%,
+so a few hundred trials settles it; that is the round count CLAUDE.md's Testing section
+already warns about, used deliberately here as an instrument rather than shipped.
+
+**Five things it has to get right.**
+
+- **THE VALIDATION IS NOT A CI GATE, and saying so up front is the point.**  Measuring a
+  19.75% rate to a useful precision costs hundreds of trials per row, which is #289's
+  runtime problem in miniature; and a validation that fails once in twenty because it is
+  itself a sampled decision is #299's defect re-introduced one level up.  It belongs where
+  the other measured claims live, with the token recorded and the recipe reproducible --
+  on #304's model, which required the token and did NOT require the runner to re-measure.
+- **A ROW WHOSE MECHANISM CANNOT BE MEASURED MUST SAY SO, not be exempted quietly.**  That
+  is #300's derived-versus-argued split, and #304 is what happens when a category
+  contributes nothing to the advertised number: the two must be counted separately.
+- **THE MEASUREMENT HAS TO DISCRIMINATE, which is the hard part and is where the b=0/b=2
+  case is instructive.**  Both mechanisms predict `(2/3)^rounds`, so a frequency check
+  alone CANNOT tell them apart -- it would have passed on the wrong reason.  What separates
+  them is the #310 shape: record WHICH challenge strings the failures carried.  A
+  syndrome-corruption failure should occur exactly on strings with no b = 2 round, and
+  #310's own measurement of `[53]` did precisely this ("all 3 were exactly the 3 no-b=0
+  challenge strings").  **A rate check validates the arithmetic; only a witness check
+  validates the mechanism.**
+- **The three wrong comments and #319's copied reason are part of this item** -- they are
+  small and separable, but correcting them without the mechanism is the fix #294 made and
+  #296 found undone.
+- **The reduced parameter must not reach the shipped default.**  #310's remedy for `[53]`
+  was to give the sub-check its OWN round count; an instrument that lowers a round count
+  must be local to the measurement, or it becomes the very regression #234 spent 38.5% of
+  runs on.
+
+**Known limit, stated.**  A measurement validates a formula against the implementation as
+it is, so a property ALL FOUR PORTS get wrong is invisible here as it is everywhere -- the
+standing blind spot of #277, #294, #296 and #297, whose only exit is an assertion about one
+implementation.  What this closes is narrower and is the case that actually occurred: a
+formula whose stated mechanism disagrees with the verifier, where the arithmetic happens to
+come out the same.
+
+Status: **DONE v9.5.9** — all 5 derived rows carry a MEASURED mechanism over 3 validated
+formulas, 0 declared unmeasurable, each recording a per-trial WITNESS predicate and the
+ALTERNATIVE a frequency check could not exclude.  The b=2 correction landed with the
+witness exact at 900/900 while the b=0 predicate it displaces tracked the outcome in
+527/900 — refuted, not merely unconfirmed — and the DEMONSTRATION is the instrument run
+carrying the false predicate: it reports the RATE as perfectly consistent (0.450 against
+0.444) and FAILS on the witness, which is this item's premise executed rather than argued.
+Two further defects, neither predicted at filing: **[22]'s formula was wrong by 3x**, with
+one term where it needs two (the poke reseeds Fiat-Shamir over the whole commitment block
+AND round 0's challenge must leave the poked `com_1` unopened), conservative again, so
+again invisible to every check and every flake; and **`_SAMPLED_TEST_RATE_LITERAL[("java",
+26)]`'s reason named the wrong test** — `[26]` is the Stern ring round-trip and `[28]` is
+the ZKBoo one — which is #295's false-reason class aimed at this table instead of at a
+constant.  The instrument is `spec/measure_sampled_rates.py` and is deliberately NOT a CI
+gate, on #304's model; what CI checks is that the record cannot drift from the expression.
+Eight static controls verified, the load-bearing one being the ladder raised INTO the
+shipped round count (it fires in all three ports, naming each shipped value), plus a
+false-positive control that changes nothing.  The three wrong b=0 comments in
+`Herradura_tests.{c,go,py}` are corrected; Java's was right all along and is untouched.

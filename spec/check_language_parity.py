@@ -136,7 +136,7 @@ def check_numbered_tests(errors):
     return numbers
 
 
-# ── Part 1/3: the numbered tests that decide a verdict from a FRESH SAMPLE ──
+# ── Part 1/4: the numbered tests that decide a verdict from a FRESH SAMPLE ──
 #
 # TODO #316, the ninth axis, and the one that asks of the NUMBERED TESTS what
 # TODO #300 asked of the findings gates: does this check decide a verdict from
@@ -317,8 +317,10 @@ _SAMPLED_TESTS = {
         "live constraint rather than as history"),
     ("shared", 45): ("negligible", "derived",
         "THE LARGEST CONTRIBUTOR, and it is already the fixed version.  A "
-        "corrupted syndrome is caught only on a b = 0 round, so an honest "
-        "signature verifies against it with probability (2/3)^SDF_ROUNDS -- "
+        "corrupted syndrome is caught only on a b = 2 round -- the ONLY branch "
+        "that reads the syndrome, and this line said b = 0 until TODO #320 "
+        "measured it -- so an honest signature verifies against a corrupted "
+        "one with probability (2/3)^SDF_ROUNDS -- "
         "2.4e-6 at 32, over STERN_TRIALS=2.  At the rounds=8 this ran at "
         "before TODO #234 it was 3.90%, which made the whole of [45] fail "
         "38.5% of runs.  If this table's budget is ever approached, this is "
@@ -414,7 +416,7 @@ _SAMPLED_TEST_CONSTANT = {
 }
 
 
-# ── Part 2/3: where each rate COMES FROM ─────────────────────────────────
+# ── Part 2/4: where each rate COMES FROM ─────────────────────────────────
 #
 # TODO #319.  A rate above is a LITERAL and its formula is prose, so the
 # arithmetic is checked by nobody and its inputs are checked by nobody.  Lower
@@ -501,16 +503,22 @@ _SAMPLED_TEST_RATES = {
          "trials": {"c":      ("local", r"enum\s*\{\s*STERN_TRIALS\s*=\s*(\d+)", "scope"),
                     "go":     ("local", r"sternRounds,\s*sternTrials\s*=\s*\d+\s*,\s*(\d+)"),
                     "python": ("local", r"STERN_ROUNDS,\s*STERN_TRIALS\s*=\s*\d+\s*,\s*(\d+)")}},
-        "A corrupted syndrome is caught only on a b = 0 round, so an honest "
-        "signature verifies against it with probability (2/3)^rounds, once per "
-        "trial.  THE ROUND COUNT IS THE SPLIT: C reads the suite's SDF_ROUNDS "
+        "A corrupted syndrome is caught only on a b = 2 round -- the only "
+        "branch of the verifier that reads the syndrome at all -- so an honest "
+        "signature verifies against a corrupted one with probability "
+        "(2/3)^rounds, once per trial.  THIS REASON SAID b = 0, copied from "
+        "the harness comment while writing the table meant to make rates "
+        "trustworthy, and TODO #320 is what corrected it: see "
+        "_RATE_MECHANISMS['corrupted-syndrome'], whose witness measurement is "
+        "the only thing here that could tell the two apart, both predicting "
+        "(2/3)^rounds.  THE ROUND COUNT IS THE SPLIT: C reads the suite's SDF_ROUNDS "
         "(so a -DSDF_ROUNDS=219 build lowers C's rate alone) while Go and "
         "Python carry their own literal, and the row's prose said SDF_ROUNDS "
         "for all three.  The trial count is harness-local in all three and is "
         "NOT the -r-capped iteration count -- #233 gave this check its own "
         "fixed budget precisely so the two could not be confused"),
     ("shared", 22): (
-        "widths * iters * (1/3) ** rounds",
+        "widths * iters * (1/3) ** (rounds + 1)",
         {"rounds": {"c":      ("local", r"zkp_nl_rounds\s*=\s*(\d+)", "scope"),
                     "go":     ("local", r"zkpNlRounds\s*:=\s*(\d+)"),
                     "python": ("local", r"zkp_nl_rounds\s*=\s*(\d+)")},
@@ -520,13 +528,19 @@ _SAMPLED_TEST_RATES = {
          "iters":  {"c":      ("local", r"g_rounds > 0 \? g_rounds : (\d+)"),
                     "go":     ("local", r"testRounds\((\d+)\)"),
                     "python": ("local", r"_iters\((\d+)\)")}},
-        "ZKBoo tamper-rejection: a poked commitment is caught unless every "
-        "recomputed challenge misses the round that opens it, (1/3)^rounds, "
-        "and the check runs once per width per iteration.  The 10x the stated "
-        "2.3e-7 carried over the bare (1/3)^16 was those two multipliers, "
-        "named in no comment in any of the three ports.  `iters` is the "
-        "DEFAULT iteration count and -r can only lower it, so the derived rate "
-        "is an upper bound rather than the rate of a particular run"),
+        "ZKBoo tamper-rejection, and TWO TERMS rather than one -- which TODO "
+        "#320 found by measuring and #319 got wrong: the poke reseeds "
+        "Fiat-Shamir over the WHOLE commitment block, so all `rounds` stored "
+        "challenges must coincidentally re-match, (1/3)^rounds, AND round 0's "
+        "challenge must leave the poked com_1 unopened, a further 1/3 since "
+        "com_1 is opened for e in {0, 2}.  #319's bare (1/3)^rounds overstated "
+        "it 3x -- conservatively, hence invisible to every check and every "
+        "flake, which is the second time that direction hid an error on this "
+        "axis.  The check runs once per width per iteration, and those two "
+        "multipliers were the 10x named in no comment in any of the three "
+        "ports.  `iters` is the DEFAULT iteration count and -r can only lower "
+        "it, so the derived rate is an upper bound rather than the rate of a "
+        "particular run.  See _RATE_MECHANISMS['zkboo-poke']"),
     ("shared", 53): (
         "(2/3) ** rounds",
         {"rounds": {"c":      ("local", r"FRND\s*=\s*(\d+)", "scope"),
@@ -594,17 +608,250 @@ _SAMPLED_TEST_RATE_LITERAL = {
                     "BIKE-128's DFR rather than derived here -- #285's finding "
                     "that no trial count reaches that rate is precisely why "
                     "there is no expression to write",
-    ("java", 26):   "Java's ZKBoo tamper-rejection at its own literal rounds, "
-                    "the one row where the shared [22] multipliers do not "
-                    "apply: SelfTest runs it once per width with no iteration "
-                    "loop, so it is a bare (1/3)^rounds and is kept as a "
-                    "literal only because a one-term formula over one port "
-                    "buys no tripwire the fingerprint does not already give",
+    ("java", 26):   "THIS REASON NAMED THE WRONG TEST until TODO #320 -- it "
+                    "said 'Java's ZKBoo tamper-rejection', which is [28]; "
+                    "[26] is the Stern RING round-trip, whose sampled half is "
+                    "a forged-member rejection at demoRounds = 32, and the "
+                    "_SAMPLED_TESTS row two hundred lines up says so "
+                    "correctly.  #295's false-reason finding aimed at this "
+                    "table rather than at a constant, and the direction it "
+                    "arrived from is the one that matters: a reason is prose, "
+                    "so nothing cross-checks WHICH test it describes.  Kept a "
+                    "literal because its mechanism is the ring verifier's "
+                    "per-member weight binding rather than one challenge "
+                    "value, so a formula would owe its own measurement under "
+                    "_RATE_MECHANISMS and buy no tripwire the verdict "
+                    "fingerprint does not already give",
 }
 
 
 
-# ── Part 3/3: the VERDICT of each numbered test, pinned ──────────────────
+# ── Part 3/4: whether the FORMULA is the right function ──────────────────
+#
+# TODO #320, and it is the limit #319 stated on itself in the same breath as
+# its own result: "this closes 'the rate's INPUTS moved' and not 'the rate's
+# DERIVATION was wrong' -- a formula that is the wrong function of the right
+# constants still evaluates".  The limit stopped being theoretical within the
+# hour.  The four ports stated CONTRADICTORY MECHANISMS for [45]'s rate:
+#
+#     C, Go, Python    "a bad syndrome is caught only in the b=0 round"
+#     Java             "only b=2 references the syndrome"
+#
+# Java is right, and the VERIFIER settles it rather than an argument doing so:
+# the public syndrome appears in exactly one branch, H(pi_seed, Hy ^ syndrome)
+# under b == 2, while b == 0 checks wt(sr ^ sy) and two commitment hashes and
+# b == 1 checks Hr.  Neither touches it.
+#
+# THE NUMBER WAS RIGHT AND THE DERIVATION WAS WRONG, which is the combination
+# no other axis here can see.  It is (2/3)^rounds either way, because either
+# way exactly one of three challenge values is the detecting one -- so #319's
+# machinery evaluates it correctly, PARAMETERS agrees, #318's fingerprint is
+# unmoved, the budget is unchanged, and the stated mechanism is false in three
+# of four ports.  A rate that is right for the wrong reason survives every axis
+# this repo has.  And it PROPAGATED: #319's own reason for [45] repeats the
+# b = 0 claim, copied from the harness comment while writing the table that was
+# supposed to make rates trustworthy -- #310's lesson ("a reason exact about
+# the wrong object reads exactly like a correct one") landing on the item that
+# restated it.
+#
+# So this table is #304's move at one more level of depth.  That item required
+# a `follows` gate to carry a rate AND the token MEASURED, because "requiring
+# the number alone would have certified §3.5 at 3.0e-4 while it ran at 6.0e-3
+# -- the arithmetic is only as good as the null it is done against".  Here the
+# arithmetic is only as good as the MECHANISM it is done over, and #319 shipped
+# 14 rated rows with not one of them held to a measurement.
+#
+# WHY A FREQUENCY CHECK IS NOT THE CHECK, which is the hard part.  Both
+# mechanisms predict (2/3)^rounds, so measuring the acceptance rate alone would
+# have CONFIRMED the wrong one.  What separates them is #310's shape -- record
+# WHICH challenge strings the failures carried -- so every entry below states
+# the DETECTING event as a per-trial predicate and the ALTERNATIVE it has to
+# exclude, and the instrument reports both.  A rate check validates the
+# arithmetic; only a witness check validates the mechanism.
+#
+# WHAT THE MEASUREMENT FOUND, beyond confirming the b = 2 correction: [22]'s
+# formula was ALSO wrong, by a factor of 3, and in the same conservative
+# direction as #319's 10x -- so again invisible to every check and every flake.
+# The stated mechanism was the poked commitment failing to be opened; the real
+# one is BOTH terms, because the poke reseeds Fiat-Shamir over the whole
+# commitment block (so all `rounds` stored challenges must coincidentally
+# re-match, (1/3)^rounds) AND round 0's challenge must leave the poked com_1
+# unopened (a further 1/3, since com_1 is opened for e in {0, 2}).  The single
+# predicate matched 4 trials in 5 and the conjunction matches every one.
+#
+# FIVE PROPERTIES OF THIS TABLE.
+#
+# (1) IT IS A RECORD, NOT A CI GATE, and that is stated up front rather than
+#     discovered.  Measuring a 19.75% rate usefully costs hundreds of trials
+#     per rung -- ~25 minutes here -- which is #289's runtime problem in
+#     miniature, and a validation that itself decides on a fresh sample is
+#     #299's defect re-introduced one level up.  #304's model again: the token
+#     and the numbers are recorded, the checker holds the record to the
+#     expression it validates, and the runner does not re-measure.  The
+#     instrument is spec/measure_sampled_rates.py and is deliberately NOT in
+#     SecurityProofsCode/, so run_findings_gates.py cannot discover it and no
+#     NON_GATING entry has to argue it away.
+#
+# (2) THE RECORD IS HELD TO THE EXPRESSION IT VALIDATES, in five ways that all
+#     fail rather than drift: `term` must be a SUBSTRING of every covered row's
+#     formula (check E's anchor rule, so renaming the formula fails until
+#     somebody re-measures), `var` must be one of its variables, each rung's
+#     recorded prediction must EQUAL the term evaluated at that rung, each
+#     rung's accept count must sit inside a 6-sigma band of its own prediction,
+#     and `note` must carry the token MEASURED.
+#
+# (3) THE INSTRUMENT MUST NOT REACH A SHIPPED DEFAULT.  [45] at rounds = 4 is
+#     the 19.75% CLAUDE.md's Testing section warns about by name, used here as
+#     an instrument; #310's remedy for [53] was to give the sub-check its own
+#     round count, and the inverse obligation is that the reduced count stays
+#     local.  Checked, not asserted: the SHIPPED value of the same variable is
+#     read out of every port through #319's own readers and must be strictly
+#     greater than the top of the ladder.  It compares the VARIABLE and not the
+#     rate, because [45] carries a `trials` multiplier and comparing rates
+#     would have compared 2 * (2/3)^4 against (2/3)^4 and passed.
+#
+# (4) A ROW WHOSE MECHANISM CANNOT BE MEASURED SAYS SO, in
+#     _RATE_MECHANISM_UNMEASURED, exhaustive in both directions like every
+#     other curated table here -- and it ships EMPTY, on PARAM_USE_EXEMPT's
+#     precedent (#295): all five derived rows are measured, so a future entry
+#     means a formula was argued for rather than that the check was switched
+#     off.  #300's derived-versus-argued split is what that category exists for
+#     and #304 is what happens when one of them contributes nothing to the
+#     advertised number.
+#
+# (5) SCOPE, stated because #302 §6 is what an unchecked scope paragraph
+#     becomes.  This validates the five rows that HAVE a formula.  The nine in
+#     _SAMPLED_TEST_RATE_LITERAL have no formula to be the wrong function of --
+#     their numbers are coincidence and union terms over a width, plus [4],
+#     whose input is a run-time flag -- so they are out of scope by
+#     construction rather than by exemption.  And a property ALL FOUR PORTS get
+#     wrong is invisible here as it is everywhere: the measurement runs
+#     Python's copy, and the exit from that blind spot is an assertion about
+#     one implementation (#298's rule 1), which is what the witness predicate
+#     is.
+#
+#   name -> {rows, term, var, detects, excludes, ladder, witness, note}
+#
+#     rows      the _SAMPLED_TEST_RATES keys this mechanism's term carries
+#     term      the substring of their formula this measurement validates
+#     var       the formula variable the ladder reduces
+#     detects   the per-trial predicate: the outcome must equal it, exactly
+#     excludes  the alternative predicate a frequency check could not rule out
+#     ladder    {var value: (trials, accepts, predicted)} as measured
+#     witness   the predicate's agreement, pooled, and the alternative's
+#     note      prose, carrying the token MEASURED (#304's rule)
+_RATE_MECHANISMS = {
+    "corrupted-syndrome": {
+        "rows": [("shared", 45), ("java", 12)],
+        "term": "(2/3) ** rounds",
+        "var":  "rounds",
+        "detects":  "a round whose challenge is b = 2 -- the only branch of "
+                    "hpks_stern_f_verify that reads the syndrome at all",
+        "excludes": "b = 0, which C, Go and Python all stated in prose and "
+                    "which predicts the SAME (2/3)^rounds, so the frequency "
+                    "cannot separate the two and the witness is the check",
+        "ladder": {2: (300, 138, 0.444444),
+                   4: (300,  61, 0.197531),
+                   6: (300,  26, 0.087791)},
+        "witness":  "900/900 trials had accept == (no b = 2 round), exactly; "
+                    "the b = 0 predicate matched 527/900, so the alternative "
+                    "is not merely unconfirmed, it is refuted",
+        "note":     "MEASURED at rounds = 2/4/6 over 900 trials at the n = 32 "
+                    "[45] runs its Stern block at, with the honest "
+                    "verification as an accept control on every trial (900/900 "
+                    "-- a signer producing nothing verifiable would score every "
+                    "trial a rejection and read as a perfect result, #234's "
+                    "vacuous pass).  The rate reproduces (138/61/26 against "
+                    "133.3/59.3/26.3 predicted) and the WITNESS is what settles "
+                    "the mechanism: every accepting trial carried a challenge "
+                    "string with no b = 2 round and every rejecting one carried "
+                    "at least one, while the b = 0 predicate tracked the outcome "
+                    "in 527 of 900.  Java's [12] is covered by the same "
+                    "measurement on the same reading that found the defect: "
+                    "hpksSternFVerify reads the syndrome in its b = 2 branch "
+                    "only, as do C's Hys[k] = Hy[k] ^ syndr[k] and Go's default "
+                    "case, so the four verifiers have one shape and the formula "
+                    "is one formula -- which is also the limit (5) states, since "
+                    "a property all four got wrong would be invisible here",
+    },
+    "offweight-witness": {
+        "rows": [("shared", 53), ("java", 35)],
+        "term": "(2/3) ** rounds",
+        "var":  "rounds",
+        "detects":  "a round whose challenge is b = 0 -- the only branch that "
+                    "binds wt(respA ^ respB) = t, which is #298's fix and so "
+                    "the only place an off-weight witness can be caught",
+        "excludes": "b = 2, the MIRROR IMAGE of the row above, and the pair is "
+                    "the point: the two adjacent tests have OPPOSITE detecting "
+                    "rounds, which is how the true b = 0 claim came to be "
+                    "written on the test where it is false",
+        "ladder": {2: (150,  79, 0.444444),
+                   4: (150,  36, 0.197531),
+                   6: (150,  13, 0.087791)},
+        "witness":  "450/450 trials had accept == (no b = 0 round), exactly; "
+                    "the b = 2 predicate -- the OTHER row's detector -- matched "
+                    "255/450, so the two mechanisms are measurably distinct "
+                    "rather than two descriptions of one thing",
+        "note":     "MEASURED at rounds = 2/4/6 over 450 trials at [53]'s "
+                    "n = 64, each with the honest signature verified first as "
+                    "an accept control (450/450).  Acceptance 79/36/13 against "
+                    "66.7/29.6/13.2 predicted.  #310 measured this same "
+                    "mechanism once, ad hoc -- 3 acceptances in 400 trials, all "
+                    "3 the no-b=0 challenge strings -- and threw the harness "
+                    "away, which is #296's diagnosis of #294 and the reason "
+                    "this table exists rather than a second one-off.  The "
+                    "PAIRING with the row above is what earns its keep: the "
+                    "witness for each is the ALTERNATIVE for the other, so a "
+                    "reader who conflates them (which is how the true b = 0 "
+                    "claim came to be written on [45]) is contradicted by both "
+                    "measurements at once",
+    },
+    "zkboo-poke": {
+        "rows": [("shared", 22)],
+        "term": "(1/3) ** (rounds + 1)",
+        "var":  "rounds",
+        "detects":  "the conjunction, and finding that it was one is this "
+                    "item's second result: every one of the `rounds` stored "
+                    "challenges must re-match the recomputation over the "
+                    "TAMPERED commitment block, AND round 0's challenge must "
+                    "leave the poked com_1 unopened (e == 1, since com_1 is "
+                    "opened for e in {0, 2})",
+        "excludes": "either term alone.  The opening term alone is flat at 1/3 "
+                    "whatever the round count, so the LADDER separates it by "
+                    "shape; the Fiat-Shamir term alone is #316's [17] "
+                    "mechanism and is what the row's prose said, and it "
+                    "overstates the rate 3x -- conservatively, hence invisible",
+        "ladder": {1: (300,  29, 0.111111),
+                   2: (300,  13, 0.037037),
+                   3: (300,   2, 0.012346)},
+        "witness":  "900/900 trials had accept == (Fiat-Shamir re-matches AND "
+                    "com_1 unopened), exactly.  The Fiat-Shamir term ALONE "
+                    "matched 808/900 and the opening term alone 658/900 -- both "
+                    "high enough to look like an answer and neither exact, "
+                    "which is what a conjunction looks like from either side",
+        "note":     "MEASURED at rounds = 1/2/3 over 900 trials at n = 32, the "
+                    "narrower of the two widths [22] sweeps, with the untampered "
+                    "proof verified on every trial as an accept control "
+                    "(900/900).  Acceptance 29/13/2 against 33.3/11.1/3.7 "
+                    "predicted by the CORRECTED two-term formula; #319's "
+                    "one-term version predicted 100/33/11 and the measurement "
+                    "is what found it.  The ladder does more work here than a "
+                    "single rung could: the opening term alone is FLAT at 1/3 "
+                    "whatever the round count, so its shape separates it from "
+                    "the exponential without needing the witness at all -- and "
+                    "the witness then settles it exactly",
+    },
+}
+
+# The other direction, and it ships EMPTY -- see (4) above.  An entry here is a
+# derived row whose MECHANISM cannot be measured, with the reason; it is not a
+# way to postpone measuring one.
+#
+#   row key -> reason
+_RATE_MECHANISM_UNMEASURED = {}
+
+
+# ── Part 4/4: the VERDICT of each numbered test, pinned ──────────────────
 #
 # TODO #318, and it closes a hole in TODO #316's own table.  That census
 # catches a test which starts DRAWING fresh entropy; nothing caught a test
@@ -941,15 +1188,22 @@ def _rate_var_value(spec, lang, slices, ptables, errors, where):
 
 
 def _derive_sampled_rates(errors):
-    """{row key: {lang: rate}} for every row in _SAMPLED_TEST_RATES.
+    """({row key: {lang: rate}}, {(row key, lang): {var: value}}).
 
     Per port, because the C/Java-vs-Go/Python split in the header means one
     number cannot describe four ports; the caller takes the worst.
+
+    The second return is TODO #320's: a mechanism measured at a REDUCED
+    parameter has to be held against the SHIPPED one, and the value that must
+    not be reached is a VARIABLE of the formula rather than the rate it
+    produces -- [45] carries a `trials` multiplier, so comparing rates would
+    have compared 2 * (2/3)^4 against (2/3)^4 and passed a build that had
+    lowered SDF_ROUNDS to the instrument's own round count.
     """
     ptables = _param_tables()
     bodies = {l: _numbered_test_bodies(l) for l in NUMBERED_TEST_FILES}
     scopes = {l: _numbered_test_scopes(l) for l in NUMBERED_TEST_FILES}
-    out = {}
+    out, envs = {}, {}
     for (scope, num), (formula, variables, reason) in sorted(
             _SAMPLED_TEST_RATES.items(), key=lambda kv: str(kv[0])):
         if not reason or len(reason) < 40:
@@ -990,6 +1244,7 @@ def _derive_sampled_rates(errors):
                               f"which is not a probability")
                 continue
             per_lang[lang] = rate
+            envs[((scope, num), lang)] = dict(env)
         # A variable spelled for a port the row does not cover is dead weight
         # that will rot, so it fails rather than being ignored.
         for var, by_lang in sorted(variables.items()):
@@ -1001,7 +1256,179 @@ def _derive_sampled_rates(errors):
                 )
         if per_lang:
             out[(scope, num)] = per_lang
-    return out
+    return out, envs
+
+
+_RATE_MECHANISM_INSTRUMENT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          "measure_sampled_rates.py")
+
+
+def check_rate_mechanisms(errors, envs):
+    """TODO #320: hold each derived formula's recorded MEASUREMENT to the
+    formula it validates.  Static -- the measurement is not re-run here, for
+    the reason the table's (1) states; what is checked is that the record and
+    the expression cannot drift apart in silence.
+
+    Returns (mechanisms, rows measured)."""
+    try:
+        with open(_RATE_MECHANISM_INSTRUMENT, encoding="utf-8") as f:
+            instrument = f.read()
+    except OSError:
+        instrument = None
+        errors.append(
+            "rate-mechanisms: spec/measure_sampled_rates.py is missing — the "
+            "recorded measurements name a recipe that no longer exists, which "
+            "is #296's thrown-away harness exactly"
+        )
+
+    covered = {}
+    for name, m in sorted(_RATE_MECHANISMS.items()):
+        for field in ("rows", "term", "var", "detects", "excludes", "ladder",
+                      "witness", "note"):
+            if field not in m:
+                errors.append(f"rate-mechanisms: {name!r} has no {field!r}")
+        if set(m) - {"rows", "term", "var", "detects", "excludes", "ladder",
+                     "witness", "note"}:
+            errors.append(f"rate-mechanisms: {name!r} carries unknown field(s) "
+                          f"{sorted(set(m) - {'rows', 'term', 'var', 'detects', 'excludes', 'ladder', 'witness', 'note'})}")
+            continue
+        if instrument is not None and f'"{name}":' not in instrument:
+            errors.append(
+                f"rate-mechanisms: {name!r} has no measurer in "
+                f"spec/measure_sampled_rates.py — a recorded measurement whose "
+                f"recipe cannot be re-run is a claim, not a record"
+            )
+        # #304's token.  Requiring the numbers alone would have certified a
+        # gate at 3.0e-4 while it ran at 6.0e-3.
+        if "MEASURED" not in m.get("note", ""):
+            errors.append(
+                f"rate-mechanisms: {name!r} does not carry the token MEASURED — "
+                f"TODO #304's rule, because a rate and an argument that it is "
+                f"small read identically once written down"
+            )
+        for field in ("detects", "excludes", "witness", "note"):
+            if len(m.get(field, "")) < 40:
+                errors.append(f"rate-mechanisms: {name!r} needs a substantive "
+                              f"{field!r}")
+        if not m.get("ladder"):
+            errors.append(f"rate-mechanisms: {name!r} records no measurement")
+            continue
+
+        for key in m["rows"]:
+            key = tuple(key)
+            if key in covered:
+                errors.append(
+                    f"rate-mechanisms: {list(key)} is claimed by both "
+                    f"{covered[key]!r} and {name!r} — one row, one mechanism"
+                )
+            covered[key] = name
+            row = _SAMPLED_TEST_RATES.get(key)
+            if row is None:
+                errors.append(
+                    f"rate-mechanisms: {name!r} names {list(key)}, which has no "
+                    f"_SAMPLED_TEST_RATES formula — the row was deleted or its "
+                    f"rate went back to a literal, and the measurement is stale"
+                )
+                continue
+            formula, variables, _reason = row
+            # The anchor rule, as check E uses it: the validated term must still
+            # be IN the formula, so renaming the formula fails here rather than
+            # leaving a measurement attached to an expression it never saw.
+            if m["term"] not in formula:
+                errors.append(
+                    f"rate-mechanisms: {name!r} validates the term "
+                    f"{m['term']!r}, which is no longer part of {list(key)}'s "
+                    f"formula {formula!r} — re-measure rather than re-anchor"
+                )
+            if m["var"] not in variables:
+                errors.append(
+                    f"rate-mechanisms: {name!r} reduces {m['var']!r}, which is "
+                    f"not a variable of {list(key)}'s formula"
+                )
+                continue
+            # (3): the instrument's parameter must stay BELOW every port's
+            # shipped value.  The variable, not the rate -- [45] carries a
+            # trials multiplier.
+            worst = max(m["ladder"])
+            for (k, lang), env in sorted(envs.items(), key=str):
+                if k != key or m["var"] not in env:
+                    continue
+                if env[m["var"]] <= worst:
+                    errors.append(
+                        f"rate-mechanisms: {name!r} measures at {m['var']} = "
+                        f"{worst} and {lang}'s {list(key)} SHIPS "
+                        f"{m['var']} = {env[m['var']]}.  The reduced parameter "
+                        f"is an instrument and has reached a default: either "
+                        f"the port regressed to the round count CLAUDE.md's "
+                        f"Testing section warns about, or the ladder was raised "
+                        f"into it"
+                    )
+
+        for rounds in sorted(m["ladder"]):
+            rung = m["ladder"][rounds]
+            if not (isinstance(rung, tuple) and len(rung) == 3):
+                errors.append(f"rate-mechanisms: {name!r} rung {rounds} is not "
+                              f"(trials, accepts, predicted)")
+                continue
+            trials, accepts, predicted = rung
+            try:
+                expect = eval(m["term"], {"__builtins__": {}},
+                              {m["var"]: rounds})
+            except Exception as exc:
+                errors.append(f"rate-mechanisms: {name!r} term {m['term']!r} "
+                              f"does not evaluate at {m['var']}={rounds} ({exc})")
+                continue
+            # 1e-4 relative: the recorded predictions are rounded to six
+            # decimals, and a term that is the WRONG function is out by a
+            # factor, never by a rounding (the two found here were 3x and 10x).
+            if abs(expect - predicted) > 1e-4 * max(expect, 1e-12):
+                errors.append(
+                    f"rate-mechanisms: {name!r} records a prediction of "
+                    f"{predicted:g} at {m['var']}={rounds} where its own term "
+                    f"gives {expect:g} — the record and the expression have "
+                    f"drifted, which is what this table exists to prevent"
+                )
+                continue
+            if not 0 < trials or not 0 <= accepts <= trials:
+                errors.append(f"rate-mechanisms: {name!r} rung {rounds} has "
+                              f"{accepts} of {trials} trials")
+                continue
+            sd = math.sqrt(trials * predicted * (1 - predicted))
+            if abs(accepts - trials * predicted) > 6 * sd:
+                errors.append(
+                    f"rate-mechanisms: {name!r} at {m['var']}={rounds} records "
+                    f"{accepts}/{trials} against a prediction of "
+                    f"{trials * predicted:.1f} — outside 6 sigma ({sd:.1f}), so "
+                    f"the recorded measurement contradicts the recorded formula"
+                )
+
+    # Exhaustive in both directions, and the unmeasured half ships empty.
+    for key in sorted(_SAMPLED_TEST_RATES, key=str):
+        if key in covered and key in _RATE_MECHANISM_UNMEASURED:
+            errors.append(
+                f"rate-mechanisms: {list(key)} is both measured and declared "
+                f"unmeasurable — measuring one is what forces its entry out"
+            )
+        elif key not in covered and key not in _RATE_MECHANISM_UNMEASURED:
+            errors.append(
+                f"rate-mechanisms: {list(key)} has a formula and neither a "
+                f"measured mechanism nor a recorded reason it cannot have one.  "
+                f"A formula that is the wrong function of the right constants "
+                f"still evaluates (TODO #319's stated limit)"
+            )
+    for key, reason in sorted(_RATE_MECHANISM_UNMEASURED.items(), key=str):
+        if key not in _SAMPLED_TEST_RATES:
+            errors.append(
+                f"rate-mechanisms: _RATE_MECHANISM_UNMEASURED{list(key)} names "
+                f"a row that has no formula to validate"
+            )
+        if len(reason) < 60:
+            errors.append(
+                f"rate-mechanisms: {list(key)} needs a reason its mechanism "
+                f"cannot be measured — #300's argued half, which #304 showed "
+                f"decays first"
+            )
+    return len(_RATE_MECHANISMS), len(covered)
 
 
 def check_sampled_tests(errors, numbers):
@@ -1109,7 +1536,7 @@ def check_sampled_tests(errors, numbers):
     # either derived or named in _SAMPLED_TEST_RATE_LITERAL with a reason -- so
     # expressing a rate FORCES its literal entry out rather than leaving a stale
     # claim beside a live formula.
-    derived = _derive_sampled_rates(errors)
+    derived, envs = _derive_sampled_rates(errors)
     for key in sorted(_SAMPLED_TEST_RATES, key=str):
         if key not in _SAMPLED_TESTS:
             errors.append(
@@ -1174,6 +1601,8 @@ def check_sampled_tests(errors, numbers):
             rated.append((key, per_lang[worst_lang], worst_lang))
         elif r is not None:
             rated.append((key, r, None))
+    # TODO #320: the formula's MECHANISM, not just its inputs.
+    mechs, mech_rows = check_rate_mechanisms(errors, envs)
     total = sum(r for _k, r, _l in rated)
     if total > _SAMPLED_TEST_BUDGET:
         # Resolved values only -- reading the raw table here compared the
@@ -1187,7 +1616,7 @@ def check_sampled_tests(errors, numbers):
             f"the largest contributor ({where} at {rate:.1e}) on TODO #299's "
             f"pattern rather than raising the budget"
         )
-    return drawn, total, len(rated)
+    return drawn, total, len(rated), mechs, mech_rows
 
 def check_shared_numbering(errors, numbers):
     langs = [l for l in SHARED_NUMBERING_LANGS if numbers.get(l)]
@@ -5628,7 +6057,7 @@ def _print_sampled_rates():
     C/Java-vs-Go/Python split is the finding and one column would hide it.
     """
     errors = []
-    derived = _derive_sampled_rates(errors)
+    derived, _envs = _derive_sampled_rates(errors)
     ptables = _param_tables()
     bodies = {l: _numbered_test_bodies(l) for l in NUMBERED_TEST_FILES}
     scopes = {l: _numbered_test_scopes(l) for l in NUMBERED_TEST_FILES}
@@ -5640,6 +6069,21 @@ def _print_sampled_rates():
         worst = max(per.values()) if per else float("nan")
         total += worst if per else 0.0
         print(f"[{num}] ({scope})  {formula}   worst {worst:.3e}")
+        # TODO #320: which MECHANISM the formula rests on, and how it was
+        # settled.  A reader of this report was previously shown the arithmetic
+        # and its inputs and nothing about whether the arithmetic is the right
+        # function -- which is how a b = 0 claim survived in three ports.
+        mech = next((n for n, m in sorted(_RATE_MECHANISMS.items())
+                     if (scope, num) in [tuple(k) for k in m["rows"]]), None)
+        if mech:
+            m = _RATE_MECHANISMS[mech]
+            rungs = ", ".join(f"{m['var']}={r}: {m['ladder'][r][1]}/{m['ladder'][r][0]}"
+                              for r in sorted(m["ladder"]))
+            print(f"      mechanism {mech}: detects {m['detects']}")
+            print(f"      MEASURED   {rungs}   witness {m['witness']}")
+        else:
+            print(f"      mechanism UNMEASURED: "
+                  f"{_RATE_MECHANISM_UNMEASURED.get((scope, num), '???')}")
         for lang in langs:
             cells = []
             for var, by_lang in sorted(variables.items()):
@@ -5682,7 +6126,8 @@ def main():
     errors = []
     numbers = check_numbered_tests(errors)
     check_shared_numbering(errors, numbers)
-    sampled_drawn, sampled_rate, sampled_rated = check_sampled_tests(errors, numbers)
+    (sampled_drawn, sampled_rate, sampled_rated,
+     sampled_mechs, sampled_mech_rows) = check_sampled_tests(errors, numbers)
     verdicts_pinned = check_verdict_fingerprints(errors)
     checked = check_primitives(errors)
     census = check_census(errors)
@@ -5714,12 +6159,15 @@ def main():
         f"every one recorded; {len(_SAMPLED_TESTS)} carry a curated verdict "
         f"({n_exact} exact, {sampled_rated} with a rate — of which "
         f"{len(_SAMPLED_TEST_RATES)} are EVALUATED FROM SOURCE every run over "
-        f"{_rate_var_count()} constant(s) read per port, and "
+        f"{_rate_var_count()} constant(s) read per port, with "
+        f"{sampled_mech_rows} of those held to a MEASURED mechanism over "
+        f"{sampled_mechs} validated formula(s) and "
+        f"{len(_RATE_MECHANISM_UNMEASURED)} declared unmeasurable, and "
         f"{len(_SAMPLED_TEST_RATE_LITERAL)} are hand-computed with a recorded "
         f"reason they cannot be) and "
         f"{len(_SAMPLED_TEST_CONSTANT)} draw nothing that reaches a verdict.  "
         f"Summed false-failure rate {sampled_rate:.1e} per run against a budget "
-        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316, #319)."
+        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316, #319, #320)."
     )
     n_none = sum(1 for v in _VERDICT_FINGERPRINTS.values() if v == "none")
     print(

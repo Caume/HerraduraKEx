@@ -2,6 +2,79 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.9] - 2026-09-25
+
+### Added
+- **`_RATE_MECHANISMS`: a derived false-failure rate's MECHANISM is now measured, not just
+  its inputs (TODO #320).**  TODO #319 made every rate in `_SAMPLED_TEST_RATES` an
+  expression over constants read out of the four ports' source, and stated its own limit in
+  the same breath -- "a formula that is the wrong function of the right constants still
+  evaluates".  The limit stopped being theoretical within the hour: the four ports state
+  CONTRADICTORY mechanisms for `[45]`'s rate.  C, Go and Python say a corrupted syndrome is
+  "caught only in the b=0 round"; Java says "only b=2 references the syndrome"; and the
+  verifier settles it -- the syndrome appears in exactly one branch,
+  `H(pi_seed, Hy ^ syndrome)` under `b == 2`, identically in all four ports, while `b == 0`
+  binds `wt(respA ^ respB)` and `b == 1` checks `Hr`.  **The number was right and the
+  derivation was wrong**, which is the combination no other axis here can see: it is
+  `(2/3)^rounds` either way, so #319's machinery evaluated it correctly, `PARAMETERS`
+  agreed, #318's fingerprint was unmoved and the budget was unchanged.  `_RATE_MECHANISMS`
+  is TODO #304's move one level down -- that item required a `follows` gate to carry a rate
+  AND the token `MEASURED`, because "the arithmetic is only as good as the null it is done
+  against"; here the arithmetic is only as good as the MECHANISM, and #319 shipped 14 rated
+  rows with not one of them held to a measurement.  **All 5 derived rows now carry a
+  MEASURED mechanism over 3 validated formulas, 0 declared unmeasurable.**
+- **`spec/measure_sampled_rates.py`, the instrument, and it is deliberately NOT a CI gate.**
+  Measuring a 19.75% rate usefully costs hundreds of trials per rung (~25 min here), which
+  is #289's runtime problem in miniature, and a validation that itself decides on a fresh
+  sample is #299's defect re-introduced one level up.  #304's model is followed instead: the
+  token and the numbers are recorded in the table, `check_language_parity.py` holds the
+  record to the expression it validates, and the runner does not re-measure.  It is not in
+  `SecurityProofsCode/`, so `run_findings_gates.py` cannot discover it and no `NON_GATING`
+  entry has to argue it away.  Its own exit status rests on the WITNESS, which is exact, so
+  the instrument cannot flake on its own account.
+
+### Fixed
+- **A FREQUENCY CHECK ALONE WOULD HAVE CONFIRMED THE WRONG MECHANISM, which is why every
+  entry records a witness (TODO #320).**  Both the b=0 and the b=2 story predict
+  `(2/3)^rounds`, so measuring the acceptance rate would have passed on the false one.  What
+  separates them is TODO #310's shape -- record WHICH challenge strings the failures carried.
+  Measured at the reduced `rounds = 2/4/6`: acceptance tracked `(2/3)^rounds` and **every
+  accepting trial carried a challenge string with no b=2 round and every rejecting one
+  carried at least one, 900/900 exactly**, while the b=0 predicate tracked the outcome in
+  527/900.  The alternative is not merely unconfirmed, it is refuted.  A rate check
+  validates the arithmetic; only a witness check validates the mechanism.
+- **A SECOND FORMULA WAS WRONG BY 3x, found by the measurement (TODO #320).**  `[22]`'s
+  rate had one term and needs two: the poked commitment reseeds Fiat-Shamir over the whole
+  commitment block, so all `rounds` stored challenges must coincidentally re-match
+  (`(1/3)^rounds`), AND round 0's challenge must leave the poked `com_1` unopened (a further
+  `1/3`, since `com_1` is opened for `e` in {0, 2}).  Either term alone matched about four
+  trials in five; the conjunction matches every one.  Wrong in the CONSERVATIVE direction
+  again -- the second time that direction has hidden an error on this axis, after #319's 10x
+  -- so no check and no flake could have caught it.  `widths * iters * (1/3) ** (rounds + 1)`
+  now, and the derived total is 1.0e-05 against the same 1e-04 budget.
+- **A THIRD DEFECTIVE REASON, and it named the WRONG TEST (TODO #320).**
+  `_SAMPLED_TEST_RATE_LITERAL[("java", 26)]` read "Java's ZKBoo tamper-rejection at its own
+  literal rounds"; `[26]` is the Stern RING round-trip and `[28]` is the ZKBoo one, and the
+  `_SAMPLED_TESTS` row for the same test says so correctly two hundred lines up.  #295's
+  false-reason finding aimed at this table instead of at a constant: a reason is prose, so
+  nothing cross-checks which test it describes.
+- **The three wrong comments in the harnesses**, which is the half of this item that is
+  small and separable and was not left for later: `Herradura_tests.{c,go,py}` each said a
+  corrupted syndrome is caught on a b=0 round.  Corrected to b=2 with the measurement cited,
+  and Java's, which was right all along, is left alone.  Correcting them WITHOUT the
+  mechanism is the fix #294 made and #296 found undone.
+
+### Changed
+- `spec/check_docs_consistency.py` gains a check-E row (a row, not a seventh check): how
+  many derived rows carry a measured mechanism, held to the tool that prints it rather than
+  to a hand count in `CLAUDE.md`.
+- `spec/check_language_parity.py`'s banner reports the measured-mechanism count beside the
+  derived-rate count, and `_derive_sampled_rates` now returns its per-port variable values
+  so the instrument's reduced parameter can be checked against every port's SHIPPED one --
+  the variable and not the rate, because `[45]` carries a `trials` multiplier and comparing
+  rates would have compared `2 * (2/3)^4` against `(2/3)^4` and passed a build that had
+  lowered `SDF_ROUNDS` to the instrument's own round count.
+
 ## [9.5.8] - 2026-09-25
 
 ### Added
