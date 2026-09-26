@@ -565,6 +565,26 @@ DOC_COUNTS = [
      r"false-failure rate of the whole job: ([\d.]+e-\d+) per run",
      r"is the rate of the whole job: \*\*([\d.]+e-\d+) per run\*\*",
      "run_findings_gates.py's flake budget, quoted in CLAUDE.md's Testing section"),
+    # TODO #319.  The numbered tests' own flake budget, which #316 published and
+    # CLAUDE.md quoted by hand -- the same gap #304 closed one layer up for the
+    # findings gates, and it matters more now that the number is DERIVED from
+    # constants read out of the harnesses: it moves whenever any of them moves,
+    # which is the whole point of the axis, so a hand-copied figure would go
+    # stale on exactly the change the check exists to catch.
+    ("numbered-test flake budget",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"Summed false-failure rate ([\d.]+e-\d+) per run",
+     r"printing ([\d.]+e-\d+) against a\s+true rate",
+     "check_language_parity.py's sampled-test budget, quoted in CLAUDE.md's Testing section"),
+    # And how many of those rates are evaluated rather than asserted, which is
+    # the number that says whether the axis is doing anything.  A rate reverted
+    # to a literal already fails the table's own cross-invalidation; this holds
+    # the DOCUMENT to the same count, so the prose cannot overstate the reach.
+    ("rates evaluated from source",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"which (\d+) are EVALUATED FROM SOURCE",
+     r"\*\*(\d+) of the \d+ rated rows are evaluated from source every run\*\*",
+     "check_language_parity.py's derived-rate table, quoted in CLAUDE.md's Testing section"),
     # TODO #303.  The replay tables' sizes are the count of what the four ports
     # are actually held against each other on, and CLAUDE.md wrote both out by
     # hand -- "four samplers", "five whole OPERATIONS" -- so adding a row left

@@ -300,7 +300,7 @@ _SAMPLED_TESTS = {
         "measured at 0 in 1166 signs at n=32 and 0 in 136 at n=256, but "
         "_sigma_params records ~72% at the retired t=64, so the margin is a "
         "parameter choice and not a property"),
-    ("shared", 22): ("negligible", 2.3e-7,
+    ("shared", 22): ("negligible", "derived",
         "ZKP-NL tamper rejection, and the pair that makes [17] legible: the "
         "verifier hashes ALL commitments into ch_seed and checks every round's "
         "claimed challenge, so flipping a bit of round 0's com_1 is missed only "
@@ -315,7 +315,7 @@ _SAMPLED_TESTS = {
         "about.  Exact because it asserts no rejection: adding one here would "
         "carry a (2/3)^4 = 19.75% soundness error, which is that warning as a "
         "live constraint rather than as history"),
-    ("shared", 45): ("negligible", 4.8e-6,
+    ("shared", 45): ("negligible", "derived",
         "THE LARGEST CONTRIBUTOR, and it is already the fixed version.  A "
         "corrupted syndrome is caught only on a b = 0 round, so an honest "
         "signature verifies against it with probability (2/3)^SDF_ROUNDS -- "
@@ -344,7 +344,7 @@ _SAMPLED_TESTS = {
         "SecurityProofsCode/hkex_rnl_failure_rate.py 5 and 7.  Note "
         "RNL_SIZES includes 32 while this test's own comment says the error "
         "probability is negligible 'at n >= 64'"),
-    ("shared", 53): ("negligible", 5.5e-11,
+    ("shared", 53): ("negligible", "derived",
         "Stern witness binding.  TODO #310's row: the forgery sub-check has "
         "its OWN round count (64 in all four) because the verifier binds wt(e) "
         "only on b = 0 rounds, and the witness is CONSTRUCTED off-weight by "
@@ -365,7 +365,7 @@ _SAMPLED_TESTS = {
         "on the merits (c1 carries no ds=2; #298's wt(respA ^ respB) == t "
         "fails at weight 0), so the sampling is gone rather than reduced and "
         "the check now exercises the branch it used to crash through"),
-    ("java", 12): ("negligible", 2.4e-6,
+    ("java", 12): ("negligible", "derived",
         "Java's Stern-F corrupt-syndrome rejection, signed at Stern.SDFR = 32. "
         "Its own comment derives why a smaller count would flake: only a b = 2 "
         "round references the syndrome, so 8 rounds skip it ~3.9% of the time"),
@@ -381,7 +381,7 @@ _SAMPLED_TESTS = {
         "so it fails only if all 20 trials miss.  DFR^20, and at the deployed "
         "BIKE-128 the DFR is not observable at any trial count (#285 2), so "
         "the exponent is doing far less work than the base"),
-    ("java", 35): ("negligible", 5.5e-11,
+    ("java", 35): ("negligible", "derived",
         "Java's copy of [53], fixed by TODO #310 in the same pass: "
         "forgeRounds = 64, off-weight witness constructed by kernel addition"),
 }
@@ -411,6 +411,195 @@ _SAMPLED_TEST_CONSTANT = {
     ("c", 52):      "C's QC-MDPC PRF seed expansion: pinned vectors (TODO #277)",
     ("python", 52): "Python's, same as C's -- Go's [52] DOES draw, which is why "
                     "there is no shared row here",
+}
+
+
+# ── Part 2/3: where each rate COMES FROM ─────────────────────────────────
+#
+# TODO #319.  A rate above is a LITERAL and its formula is prose, so the
+# arithmetic is checked by nobody and its inputs are checked by nobody.  Lower
+# [45]'s round count and every check in this repo stays green: PARAMETERS
+# compares that constant's VALUE across four languages and they all moved
+# together, _VERDICT_FINGERPRINTS is a hash of the verdict LINES and not of
+# what they read, and _TEST_DRAWS still sees the same draw.  The banner goes on
+# printing the old sum while the true rate is 7.8% -- the pre-#234 figure that
+# made [45] fail 38.5% of runs.  That is #278's recorded limit ("this axis
+# reads DECLARATIONS, so it cannot see whether the bound is APPLIED") met from
+# the other end: the value is read, it agrees, and it is CONSUMED BY AN
+# ARITHMETIC NOBODY EVALUATES.  #318 named this as its own limit.
+#
+# So a rate in this table is DERIVED: the row below states the formula, each
+# variable is read out of the source per port, and the result is what enters
+# the budget.  The literal stops being a second source of truth rather than
+# being cross-checked against one -- #304's move, which turned CLAUDE.md's
+# hand-copied 6.4e-5 into a checked row for the same reason.
+#
+# THE CONSTANT IS NOT WHERE THE PROSE SAYS IT IS, AND IN TWO PORTS IT IS NOT A
+# SUITE CONSTANT AT ALL.  This item was recommended as "move sdf-rounds-demo
+# and nothing fires", which is true of two ports and false of two:
+#
+#     C       SDF_ROUNDS      herradura.h -- a PARAMETERS row, and
+#                             -DSDF_ROUNDS=219 moves it from the command line
+#     Java    Stern.SDFR      the suite -- the same PARAMETERS row
+#     Python  STERN_ROUNDS    a FUNCTION-LOCAL in the harness
+#     Go      sternRounds     a FUNCTION-LOCAL in the harness
+#
+# One rate, one test, two ports tracked and two untracked, and no table
+# anywhere recorded the split.  That is #293's read-pattern split and #294's
+# distribution split one axis over, with a FLAKE RATE as the object.  Hence two
+# kinds of variable source, and hence the per-port derivation: one number
+# cannot describe four ports, so a row takes its WORST one -- the budget is
+# about a red check on somebody's PR, and any of the four native-* jobs going
+# red counts.  VERIFIED, and it is the control that matters: lowering the
+# constant in all four languages at once leaves PARAMETERS silent (they agree)
+# and #318's fingerprints silent (the constant is in no verdict line), and this
+# check alone fires, at 1.17e-1.
+#
+# AND ONE PUBLISHED RATE WAS ALREADY WRONG BY 10x.  [53] signs its forgery
+# sub-check at forge_rounds = 64 in ONE trial, so its rate is (2/3)^64 =
+# 5.4e-12; the row said 5.5e-11, and so did the comment in the test body, and
+# so did Java's [35].  It is wrong in the CONSERVATIVE direction -- it
+# overstates the flake rate tenfold and eats ten times its share of the budget
+# -- which is exactly why nothing could catch it: a hand-computed bound that is
+# too LARGE fails no check and triggers no flake.  #304 found the same shape on
+# the findings-gate side ("the arithmetic is only as good as the null it is
+# done against") and answered it by requiring a token; the answer here is to
+# stop hand-computing.  The other two reproduced: [45] at 2 * (2/3)^32 against
+# a stated 4.8e-6, and [22] at 10 * (1/3)^16 against a stated 2.3e-7, where the
+# factor 10 is five iterations over the two widths and was NOWHERE in the prose.
+#
+# A variable is read per port as one of:
+#
+#     ("param", row)          the value of a PARAMETERS row in that language,
+#                             through _param_eval -- so a suite constant is
+#                             read exactly the way axis six reads it, with the
+#                             two corrections that axis earned (non-integral
+#                             results survive; an (int) cast is APPLIED)
+#     ("local", rx[, slice])  capture group 1 of `rx`, searched in THAT TEST's
+#                             source.  `slice` is "body" (the default, #316's
+#                             forward slice) or "scope" (widened to the
+#                             previous marker) -- see _numbered_test_scopes
+#     ("count", rx[, slice])  capture group 1 is a comma-separated list; the
+#                             value is how many items it holds.  [22]'s rate is
+#                             proportional to the number of WIDTHS it sweeps,
+#                             a property of a literal list and not of a constant
+#
+# A local/count pattern must match EXACTLY ONCE, never merely occur -- #261's
+# rule for the manifest markers, for its reason: `forgeRounds` appears three
+# times in Java's [35] and only one of them declares it.  A variable that
+# resolves in NO port is an error and not a skip: four ports spell one constant
+# four ways and C's [53] spells it a fifth (`enum { RK = 3, RND = 12, FRND = 64 }`),
+# so this is #306's sixth-spelling hazard again, and an under-matching reader
+# makes the whole check pass vacuously in #295's lenient direction.  #316 got
+# its own detector wrong three times, every time leniently.
+_SAMPLED_TEST_RATES = {
+    ("shared", 45): (
+        "trials * (2/3) ** rounds",
+        {"rounds": {"c":      ("param", "sdf-rounds-demo"),
+                    "go":     ("local", r"sternRounds,\s*sternTrials\s*=\s*(\d+)"),
+                    "python": ("local", r"STERN_ROUNDS,\s*STERN_TRIALS\s*=\s*(\d+)")},
+         "trials": {"c":      ("local", r"enum\s*\{\s*STERN_TRIALS\s*=\s*(\d+)", "scope"),
+                    "go":     ("local", r"sternRounds,\s*sternTrials\s*=\s*\d+\s*,\s*(\d+)"),
+                    "python": ("local", r"STERN_ROUNDS,\s*STERN_TRIALS\s*=\s*\d+\s*,\s*(\d+)")}},
+        "A corrupted syndrome is caught only on a b = 0 round, so an honest "
+        "signature verifies against it with probability (2/3)^rounds, once per "
+        "trial.  THE ROUND COUNT IS THE SPLIT: C reads the suite's SDF_ROUNDS "
+        "(so a -DSDF_ROUNDS=219 build lowers C's rate alone) while Go and "
+        "Python carry their own literal, and the row's prose said SDF_ROUNDS "
+        "for all three.  The trial count is harness-local in all three and is "
+        "NOT the -r-capped iteration count -- #233 gave this check its own "
+        "fixed budget precisely so the two could not be confused"),
+    ("shared", 22): (
+        "widths * iters * (1/3) ** rounds",
+        {"rounds": {"c":      ("local", r"zkp_nl_rounds\s*=\s*(\d+)", "scope"),
+                    "go":     ("local", r"zkpNlRounds\s*:=\s*(\d+)"),
+                    "python": ("local", r"zkp_nl_rounds\s*=\s*(\d+)")},
+         "widths": {"c":      ("count", r"zkp_nl_sizes\[\]\s*=\s*\{([^}]*)\}", "scope"),
+                    "go":     ("count", r"zkpNlSizes\s*:=\s*\[\]int\{([^}]*)\}"),
+                    "python": ("count", r"for n in \[([^\]]*)\]")},
+         "iters":  {"c":      ("local", r"g_rounds > 0 \? g_rounds : (\d+)"),
+                    "go":     ("local", r"testRounds\((\d+)\)"),
+                    "python": ("local", r"_iters\((\d+)\)")}},
+        "ZKBoo tamper-rejection: a poked commitment is caught unless every "
+        "recomputed challenge misses the round that opens it, (1/3)^rounds, "
+        "and the check runs once per width per iteration.  The 10x the stated "
+        "2.3e-7 carried over the bare (1/3)^16 was those two multipliers, "
+        "named in no comment in any of the three ports.  `iters` is the "
+        "DEFAULT iteration count and -r can only lower it, so the derived rate "
+        "is an upper bound rather than the rate of a particular run"),
+    ("shared", 53): (
+        "(2/3) ** rounds",
+        {"rounds": {"c":      ("local", r"FRND\s*=\s*(\d+)", "scope"),
+                    "go":     ("local", r"forgeRounds\s*:=\s*(\d+)"),
+                    "python": ("local", r"forge_rounds\s*=\s*(\d+)")}},
+        "TODO #310's second term: the verifier binds wt(e) only on b = 0 "
+        "rounds, so a constructed off-weight witness is accepted whenever the "
+        "challenge string contains none -- which is why the forgery sub-check "
+        "carries its OWN round count, 64, where the ring half keeps 12 and has "
+        "no soundness error.  ONE TRIAL, so there is no multiplier: this is "
+        "the row whose hand-computed 5.5e-11 was (2/3)^64 = 5.4e-12 all along"),
+    ("java", 12): (
+        "(2/3) ** rounds",
+        {"rounds": {"java": ("param", "sdf-rounds-demo")}},
+        "Java's counterpart to the shared [45] corrupted-syndrome check, and "
+        "the other half of the split: it signs at the SUITE's Stern.SDFR "
+        "rather than at a harness literal, so this rate moves with a "
+        "PARAMETERS row where Go's and Python's do not.  One trial"),
+    ("java", 35): (
+        "(2/3) ** rounds",
+        {"rounds": {"java": ("local", r"int forgeRounds\s*=\s*(\d+)")}},
+        "Java's counterpart to [53], carrying the same 10x arithmetic slip "
+        "from the same hand computation -- which is the argument for deriving "
+        "it rather than copying it between ports"),
+}
+
+# The other direction, and the table is exhaustive in both like every other
+# curated table here: a rated row is EITHER derived above or named below with a
+# reason it cannot be.  Adding a formula for one of these fails until its entry
+# is deleted, so expressing a rate FORCES the row out rather than leaving a
+# stale claim beside a live formula -- REPLAY_COVERAGE's rule (#305) one axis
+# over.
+#
+# What these have in common is that none of them is a function of a round count
+# or a trial budget: they are coincidence and union terms over a WIDTH, whose
+# derivation would restate the same 2^-n in Python and buy no tripwire, since
+# the width is already PARAMETERS' object and a numbered test that changed it
+# would move its verdict fingerprint (#318) as well.  The one that is NOT of
+# that shape is [4], and it is the recorded limit of this axis.
+_SAMPLED_TEST_RATE_LITERAL = {
+    ("shared", 4):  "THE LIMIT OF THIS AXIS, and it is a real one: the bar is "
+                    "tol = 6 * 50/sqrt(n_run), so the rate is a function of "
+                    "the ITERATION COUNT, which -r moves at run time.  No "
+                    "static read can pin a number the command line supplies; "
+                    "what makes it safe is that the bar FOLLOWS the statistic "
+                    "(#233), so the rate is ~1e-6 at every n_run rather than "
+                    "at one of them",
+    ("shared", 5):  "mean Hamming distance against a null of size/2 over "
+                    "GF_TRIALS: a 2^-n coincidence term at the widths swept, "
+                    "not a soundness error, so there is no round count in it",
+    ("shared", 10): "FSCX orbit coincidence: a union of 2^-n terms over the "
+                    "widths, measured rather than parameterised",
+    ("shared", 11): "the same shape as [10], on a genuinely nonzero exact "
+                    "quantity",
+    ("shared", 46): "fpe/twk domain separation: two fresh 256-bit ciphertexts "
+                    "must differ.  Pure coincidence at 2^-256, and a formula "
+                    "would restate the block width PARAMETERS already holds",
+    ("shared", 49): "HKEX-RNL m_blind accept-control: n * (1/4)^(n-1) at the "
+                    "ring dimension the test sweeps.  Parameterised by a "
+                    "WIDTH, not by a round count, and the sparsity clause is "
+                    "unreachable at q = 65537",
+    ("python", 19): "HFSCX-256 collision sanity over 500 fresh pairs: a "
+                    "birthday term at the digest width, 4e-75",
+    ("java", 14):   "Java's QC-MDPC decapsulation mismatch, inherited from "
+                    "BIKE-128's DFR rather than derived here -- #285's finding "
+                    "that no trial count reaches that rate is precisely why "
+                    "there is no expression to write",
+    ("java", 26):   "Java's ZKBoo tamper-rejection at its own literal rounds, "
+                    "the one row where the shared [22] multipliers do not "
+                    "apply: SelfTest runs it once per width with no iteration "
+                    "loop, so it is a bare (1/3)^rounds and is kept as a "
+                    "literal only because a one-term formula over one port "
+                    "buys no tripwire the fingerprint does not already give",
 }
 
 
@@ -654,6 +843,167 @@ def _numbered_test_bodies(lang):
     return bodies
 
 
+def _rate_var_count():
+    """Per-port variable cells across every derived rate -- counted, not stated,
+    on check E's rule that a tool-emitted number belongs to the tool."""
+    return sum(len(by_lang) for _f, variables, _r in _SAMPLED_TEST_RATES.values()
+               for by_lang in variables.values())
+
+
+def _numbered_test_scopes(lang):
+    """{test number: source slice}, WIDENED to [previous marker, next marker).
+
+    A rate variable is a DECLARATION, and #316's slice cannot hold one in every
+    port: C declares `static const int zkp_nl_rounds = 16`, `enum { STERN_TRIALS
+    = 2 }` and `enum { RK = 3, RND = 12, FRND = 64 }` ABOVE the printf that
+    carries its own [N] marker, where Go and Python declare theirs below.  So
+    the boundary that is right for a DRAW -- which always happens after the
+    header -- is wrong for the constant the draw is measured against.  #316 met
+    the same asymmetry from the other side in Java's TRAILING marker.
+
+    This is the overlapping slice #316 explicitly rejected, and it is safe HERE
+    for a reason that does not transfer back: over-wide slicing is the lenient
+    direction only when a match means "pass".  Every consumer requires EXACTLY
+    ONE match, so bleed from a neighbour makes the count 2 and fails loudly,
+    where in the draw census it made a silent test look busy.  Which is why it
+    is opt-in PER VARIABLE rather than global: widening all of them turned
+    [22]'s three readable variables into three ambiguous ones, in all three
+    ports at once, because the neighbouring test spells its iteration count
+    identically.
+    """
+    path, marker = NUMBERED_TEST_FILES[lang]
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    marks = sorted((m.start(), int(m.group(1))) for m in marker.finditer(text))
+    scopes = {}
+    for i, (pos, num) in enumerate(marks):
+        start = marks[i - 1][0] if i else 0
+        end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
+        scopes.setdefault(num, "")
+        scopes[num] += text[start:end]
+    return scopes
+
+
+def _rate_var_value(spec, lang, slices, ptables, errors, where):
+    """One variable of a derived rate, read from source.  See the header above
+    _SAMPLED_TEST_RATES for the three source kinds; every failure path here
+    returns None and records an error, because a variable that cannot be read
+    is the LENIENT direction -- a skipped term silently shrinks the rate."""
+    kind, arg = spec[0], spec[1]
+    if kind == "param":
+        row = PARAMETERS.get(arg)
+        if row is None:
+            errors.append(f"sampled-rates: {where} reads PARAMETERS row {arg!r}, "
+                          f"which does not exist")
+            return None
+        name = dict(zip(PARAM_LANGS, row[0])).get(lang)
+        if name is None:
+            errors.append(f"sampled-rates: {where} reads PARAMETERS row {arg!r} "
+                          f"for {lang}, which that row records as absent there")
+            return None
+        table = ptables[lang]
+        if name not in table:
+            errors.append(f"sampled-rates: {where} — {lang}'s {name!r} is no "
+                          f"longer a declaration in that language's suite source")
+            return None
+        v = _param_eval(table[name], table, lang, cls=_java_cls(lang, name))
+        if v is None:
+            errors.append(f"sampled-rates: {where} — {lang}'s {name!r} does not "
+                          f"evaluate to a number")
+        return v
+    if kind in ("local", "count"):
+        which = spec[2] if len(spec) > 2 else "body"
+        if which not in ("body", "scope"):
+            errors.append(f"sampled-rates: {where} — unknown slice {which!r}")
+            return None
+        hits = re.findall(arg, slices[which])
+        # #261's rule: EXACTLY once, never merely present.  `forgeRounds` occurs
+        # three times in Java's [35] and one of them declares it, so a pattern
+        # that merely matches is one that might match the wrong occurrence next
+        # release.
+        if len(hits) != 1:
+            errors.append(
+                f"sampled-rates: {where} — pattern {arg!r} matched "
+                f"{len(hits)} times in {lang}'s test source ({which} slice), "
+                f"not exactly once.  Re-anchor it: a rate variable read from "
+                f"the wrong occurrence is indistinguishable from one read right"
+            )
+            return None
+        if kind == "count":
+            return len([x for x in hits[0].split(",") if x.strip()])
+        try:
+            return int(hits[0])
+        except ValueError:
+            errors.append(f"sampled-rates: {where} — {hits[0]!r} is not an integer")
+            return None
+    errors.append(f"sampled-rates: {where} — unknown source kind {kind!r}")
+    return None
+
+
+def _derive_sampled_rates(errors):
+    """{row key: {lang: rate}} for every row in _SAMPLED_TEST_RATES.
+
+    Per port, because the C/Java-vs-Go/Python split in the header means one
+    number cannot describe four ports; the caller takes the worst.
+    """
+    ptables = _param_tables()
+    bodies = {l: _numbered_test_bodies(l) for l in NUMBERED_TEST_FILES}
+    scopes = {l: _numbered_test_scopes(l) for l in NUMBERED_TEST_FILES}
+    out = {}
+    for (scope, num), (formula, variables, reason) in sorted(
+            _SAMPLED_TEST_RATES.items(), key=lambda kv: str(kv[0])):
+        if not reason or len(reason) < 40:
+            errors.append(f"sampled-rates: [{num}] needs a reason saying where "
+                          f"its formula comes from")
+        langs = SHARED_NUMBERING_LANGS if scope == "shared" else (scope,)
+        where0 = f"[{num}] ({scope})"
+        per_lang = {}
+        for lang in langs:
+            body = bodies.get(lang, {}).get(num)
+            if body is None:
+                errors.append(f"sampled-rates: {where0} has no {lang} test body "
+                              f"to read its variables from")
+                continue
+            sl = {"body": body, "scope": scopes.get(lang, {}).get(num, body)}
+            env = {}
+            for var, by_lang in sorted(variables.items()):
+                if lang not in by_lang:
+                    errors.append(
+                        f"sampled-rates: {where0} — variable {var!r} has no "
+                        f"source for {lang}, which the row's scope includes"
+                    )
+                    continue
+                v = _rate_var_value(by_lang[lang], lang, sl, ptables, errors,
+                                    f"{where0} {var}")
+                if v is not None:
+                    env[var] = v
+            if len(env) != len(variables):
+                continue
+            try:
+                rate = eval(formula, {"__builtins__": {}}, dict(env))
+            except Exception as exc:
+                errors.append(f"sampled-rates: {where0} — formula {formula!r} "
+                              f"does not evaluate ({exc})")
+                continue
+            if not isinstance(rate, (int, float)) or not 0 <= rate <= 1:
+                errors.append(f"sampled-rates: {where0} — formula gave {rate!r}, "
+                              f"which is not a probability")
+                continue
+            per_lang[lang] = rate
+        # A variable spelled for a port the row does not cover is dead weight
+        # that will rot, so it fails rather than being ignored.
+        for var, by_lang in sorted(variables.items()):
+            extra = sorted(set(by_lang) - set(langs))
+            if extra:
+                errors.append(
+                    f"sampled-rates: [{num}] variable {var!r} names "
+                    f"{', '.join(extra)}, which this row's scope does not cover"
+                )
+        if per_lang:
+            out[(scope, num)] = per_lang
+    return out
+
+
 def check_sampled_tests(errors, numbers):
     """TODO #316: which numbered tests decide a verdict from a fresh sample."""
     drawn = {}
@@ -717,6 +1067,11 @@ def check_sampled_tests(errors, numbers):
         if code not in ("exact", "negligible", "replicated", "follows"):
             errors.append(f"sampled-tests: [{num}] has unknown verdict code "
                           f"{code!r}")
+        if rate is not None and not isinstance(rate, float) and rate != "derived":
+            errors.append(
+                f"sampled-tests: [{num}] has rate {rate!r} — a rate is a float "
+                f"or the string 'derived' (TODO #319), never anything else"
+            )
         if code == "exact" and rate is not None:
             errors.append(
                 f"sampled-tests: [{num}] is 'exact' and carries a rate — an "
@@ -749,16 +1104,88 @@ def check_sampled_tests(errors, numbers):
                 f"and draw nothing that reaches its verdict"
             )
 
-    rated = [r for _c, r, _x in _SAMPLED_TESTS.values() if r is not None]
-    total = sum(rated)
+    # TODO #319: a row that has a formula has its rate DERIVED here, per port,
+    # and takes its WORST port.  Exhaustive in both directions -- a rated row is
+    # either derived or named in _SAMPLED_TEST_RATE_LITERAL with a reason -- so
+    # expressing a rate FORCES its literal entry out rather than leaving a stale
+    # claim beside a live formula.
+    derived = _derive_sampled_rates(errors)
+    for key in sorted(_SAMPLED_TEST_RATES, key=str):
+        if key not in _SAMPLED_TESTS:
+            errors.append(
+                f"sampled-rates: _SAMPLED_TEST_RATES{list(key)} names a row "
+                f"that _SAMPLED_TESTS does not have — the census row was "
+                f"deleted and its formula left behind"
+            )
+        elif _SAMPLED_TESTS[key][1] != "derived":
+            errors.append(
+                f"sampled-rates: {list(key)} has a formula but its "
+                f"_SAMPLED_TESTS rate is still the literal "
+                f"{_SAMPLED_TESTS[key][1]!r} — a derived rate and a curated one "
+                f"are two sources of truth, which is the defect this closes"
+            )
+        if key in _SAMPLED_TEST_RATE_LITERAL:
+            errors.append(
+                f"sampled-rates: {list(key)} is BOTH derived and declared "
+                f"un-derivable — delete the _SAMPLED_TEST_RATE_LITERAL entry, "
+                f"which is what expressing the rate is supposed to force"
+            )
+    for key, (_c, r, _x) in sorted(_SAMPLED_TESTS.items(), key=str):
+        if r is None or key in _SAMPLED_TEST_RATES:
+            continue
+        if key not in _SAMPLED_TEST_RATE_LITERAL:
+            errors.append(
+                f"sampled-rates: {list(key)} carries a rate with neither a "
+                f"formula nor a recorded reason it cannot have one.  Add a "
+                f"_SAMPLED_TEST_RATES entry, or say in "
+                f"_SAMPLED_TEST_RATE_LITERAL why the number is hand-computed"
+            )
+        elif len(_SAMPLED_TEST_RATE_LITERAL[key]) < 40:
+            errors.append(f"sampled-rates: {list(key)} needs a reason its rate "
+                          f"cannot be derived")
+    for key in sorted(_SAMPLED_TEST_RATE_LITERAL, key=str):
+        if key not in _SAMPLED_TESTS:
+            errors.append(
+                f"sampled-rates: _SAMPLED_TEST_RATE_LITERAL{list(key)} names a "
+                f"row _SAMPLED_TESTS does not have"
+            )
+        elif _SAMPLED_TESTS[key][1] is None:
+            errors.append(
+                f"sampled-rates: _SAMPLED_TEST_RATE_LITERAL{list(key)} names a "
+                f"row that carries NO rate — an argued row has no number to "
+                f"derive, so the entry is stale"
+            )
+
+    rated = []
+    for key, (_c, r, _x) in sorted(_SAMPLED_TESTS.items(), key=str):
+        if r == "derived":
+            per_lang = derived.get(key)
+            if not per_lang:
+                errors.append(
+                    f"sampled-tests: {list(key)} declares its rate derived and "
+                    f"nothing could be derived — its formula did not resolve, "
+                    f"so the budget below is missing a term"
+                )
+                continue
+            # The worst PORT, not the mean: any of the four native-* jobs going
+            # red is a red check, so a rate that is safe in three ports and 7.8%
+            # in the fourth is a 7.8% rate.
+            worst_lang = max(per_lang, key=per_lang.get)
+            rated.append((key, per_lang[worst_lang], worst_lang))
+        elif r is not None:
+            rated.append((key, r, None))
+    total = sum(r for _k, r, _l in rated)
     if total > _SAMPLED_TEST_BUDGET:
-        worst = max(((k, r) for k, (_c, r, _x) in _SAMPLED_TESTS.items()
-                     if r is not None), key=lambda kv: kv[1])
+        # Resolved values only -- reading the raw table here compared the
+        # 'derived' sentinel against floats and RAISED instead of reporting,
+        # which the over-budget control found on its first run.
+        key, rate, lang = max(rated, key=lambda kv: kv[1])
+        where = f"{list(key)}" + (f" in {lang}" if lang else "")
         errors.append(
             f"sampled-tests: the summed false-failure rate is {total:.2e} per "
             f"run, over the budget of {_SAMPLED_TEST_BUDGET:.0e}.  Replicate "
-            f"the largest contributor ({worst[0]} at {worst[1]:.1e}) on TODO "
-            f"#299's pattern rather than raising the budget"
+            f"the largest contributor ({where} at {rate:.1e}) on TODO #299's "
+            f"pattern rather than raising the budget"
         )
     return drawn, total, len(rated)
 
@@ -5192,10 +5619,66 @@ def _print_verdict_table():
     print("}")
 
 
+def _print_sampled_rates():
+    """TODO #319: every derived rate, per port, with the constants behind it.
+
+    The table no longer carries the numbers -- that is the point of deriving
+    them -- so this is where a reader sees what the budget is made of, and it
+    prints the PER-PORT spread rather than only the worst, because the
+    C/Java-vs-Go/Python split is the finding and one column would hide it.
+    """
+    errors = []
+    derived = _derive_sampled_rates(errors)
+    ptables = _param_tables()
+    bodies = {l: _numbered_test_bodies(l) for l in NUMBERED_TEST_FILES}
+    scopes = {l: _numbered_test_scopes(l) for l in NUMBERED_TEST_FILES}
+    total = 0.0
+    for (scope, num), (formula, variables, _r) in sorted(
+            _SAMPLED_TEST_RATES.items(), key=lambda kv: str(kv[0])):
+        langs = SHARED_NUMBERING_LANGS if scope == "shared" else (scope,)
+        per = derived.get((scope, num), {})
+        worst = max(per.values()) if per else float("nan")
+        total += worst if per else 0.0
+        print(f"[{num}] ({scope})  {formula}   worst {worst:.3e}")
+        for lang in langs:
+            cells = []
+            for var, by_lang in sorted(variables.items()):
+                spec = by_lang.get(lang)
+                if spec is None:
+                    cells.append(f"{var}=?")
+                    continue
+                v = _rate_var_value(
+                    spec, lang,
+                    {"body": bodies.get(lang, {}).get(num, ""),
+                     "scope": scopes.get(lang, {}).get(num, "")},
+                    ptables, [], f"[{num}] {var}")
+                origin = ("suite " + spec[1] if spec[0] == "param"
+                          else "harness-local")
+                cells.append(f"{var}={v} ({origin})")
+            got = per.get(lang)
+            shown = f"{got:.3e}" if got is not None else "UNRESOLVED"
+            print(f"    {lang:7} {shown}   " + ", ".join(cells))
+    print()
+    lit = 0.0
+    for key in sorted(_SAMPLED_TEST_RATE_LITERAL, key=str):
+        r = _SAMPLED_TESTS[key][1]
+        lit += r
+        print(f"{str(list(key)):16} {r:.1e}  hand-computed (reason recorded)")
+    print(f"\nderived {total:.3e} + hand-computed {lit:.3e} = {total + lit:.3e} "
+          f"against a budget of {_SAMPLED_TEST_BUDGET:.0e}")
+    if errors:
+        print("\nERRORS:")
+        for e in errors:
+            print(f"  - {e}")
+    return 1 if errors else 0
+
+
 def main():
     if "--update-verdicts" in sys.argv:
         _print_verdict_table()
         return 0
+    if "--sampled-rates" in sys.argv:
+        return _print_sampled_rates()
     errors = []
     numbers = check_numbered_tests(errors)
     check_shared_numbering(errors, numbers)
@@ -5229,10 +5712,14 @@ def main():
         f"FRESH sample (c {len(sampled_drawn['c'])}, go {len(sampled_drawn['go'])}, "
         f"python {len(sampled_drawn['python'])}, java {len(sampled_drawn['java'])}), "
         f"every one recorded; {len(_SAMPLED_TESTS)} carry a curated verdict "
-        f"({n_exact} exact, {sampled_rated} with a derived rate) and "
+        f"({n_exact} exact, {sampled_rated} with a rate — of which "
+        f"{len(_SAMPLED_TEST_RATES)} are EVALUATED FROM SOURCE every run over "
+        f"{_rate_var_count()} constant(s) read per port, and "
+        f"{len(_SAMPLED_TEST_RATE_LITERAL)} are hand-computed with a recorded "
+        f"reason they cannot be) and "
         f"{len(_SAMPLED_TEST_CONSTANT)} draw nothing that reaches a verdict.  "
         f"Summed false-failure rate {sampled_rate:.1e} per run against a budget "
-        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316)."
+        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316, #319)."
     )
     n_none = sum(1 for v in _VERDICT_FINGERPRINTS.values() if v == "none")
     print(

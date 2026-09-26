@@ -2343,7 +2343,8 @@ func testSternWitnessBinding() {
 	// -- (2/3)^rounds, which is 0.77% at the rounds = 12 the ring half uses,
 	// i.e. one run in 130, and it went red in CI.  Measured: 3 acceptances in
 	// 400 trials, and all 3 were exactly the 3 no-b=0 challenge strings.  At
-	// 64 it is 5.5e-11.
+	// 64 it is 5.4e-12 ((2/3)^64 -- a hand-computed 5.5e-11 stood here and in
+	// the other three ports until TODO #319 derived it from source).
 	forgeRounds := 64
 
 	seed, e, syn := SternFKeygen(n)

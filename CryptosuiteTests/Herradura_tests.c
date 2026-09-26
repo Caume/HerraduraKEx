@@ -3770,7 +3770,9 @@ static void test_stern_witness_binding(void)
      * rounds, so a wrong-weight witness survives whenever the challenge
      * string contains none of them -- (2/3)^RND = 0.77% at RND = 12, one
      * run in 130.  Measured in the Python port: 3 acceptances in 400
-     * trials, all 3 the no-b=0 strings.  At 64 it is 5.5e-11. */
+     * trials, all 3 the no-b=0 strings.  At 64 it is 5.4e-12 ((2/3)^64 -- a
+     * hand-computed 5.5e-11 stood here and in the other three ports until
+     * TODO #319 derived it from source). */
     enum { RK = 3, RND = 12, FRND = 64 };
     BitArray seed = BA_INIT, e = BA_INIT, e_forged = BA_INIT, msg = BA_INIT, H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
     uint8_t  syndr[SDF_SYNBYTES], syn_chk[SDF_SYNBYTES];
