@@ -1878,7 +1878,46 @@ spec/                                                — machine-readable protoc
                                                       seam), and what was missing was
                                                       never the replay -- it was knowing
                                                       which draws exist, in which ports,
-                                                      and what compares them
+                                                      and what compares them.
+                                                           measure_sampled_rates.py is the
+                                                      INSTRUMENT for the ninth axis's
+                                                      derived rates (TODO #320), and the
+                                                      one file here that CI does NOT run.
+                                                      check_language_parity.py's
+                                                      _RATE_MECHANISMS records, per derived
+                                                      formula, the MECHANISM it rests on as
+                                                      a per-trial witness predicate plus the
+                                                      ALTERNATIVE a frequency check could
+                                                      not exclude, and the measurement that
+                                                      settled it; this script re-runs that
+                                                      measurement.  It is separate and
+                                                      unwired on purpose: hundreds of trials
+                                                      per rung is #289's runtime problem in
+                                                      miniature, and a validation that
+                                                      itself decides on a fresh sample is
+                                                      #299's defect one level up -- so
+                                                      #304's model applies, the token and
+                                                      the numbers recorded and the runner
+                                                      not re-measuring.  It is NOT in
+                                                      SecurityProofsCode/, so
+                                                      run_findings_gates.py cannot discover
+                                                      it and no NON_GATING entry has to
+                                                      argue it away.  Its own exit status
+                                                      rests on the WITNESS, which is exact,
+                                                      so it cannot flake on its own account;
+                                                      the frequency is corroboration, banded
+                                                      at 6 sigma.  What the checker enforces
+                                                      statically is that the record and the
+                                                      expression cannot drift apart: the
+                                                      validated term must still be a
+                                                      SUBSTRING of every covered row's
+                                                      formula, each rung's prediction must
+                                                      EQUAL that term evaluated there, and
+                                                      the reduced parameter must stay
+                                                      STRICTLY BELOW every port's shipped
+                                                      value of the same variable -- the
+                                                      variable and not the rate, since [45]
+                                                      carries a trials multiplier
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 BITARRAY.md                                          — the NORMATIVE BitArray specification
@@ -2843,7 +2882,78 @@ lenient direction. **Known limit, stated**: this closes "the rate's INPUTS moved
 "the rate's DERIVATION was wrong" — a formula that is the wrong function of the right
 constants still evaluates. And it cannot reach a rate whose input is not a constant:
 `[4]`'s bar is `6 * 50/sqrt(n_run)`, a function of an iteration count `-r` supplies at run
-time, so it stays hand-computed and its entry says why.
+time, so it stays hand-computed and its entry says why. **TODO #320 closed the first half
+of that limit**, and found two wrong derivations doing it — one of them in #319's own
+table.
+
+**And validating the FORMULA, not just its inputs, which is the limit #319 stated on
+itself (TODO #320).** #319 made every rate in `_SAMPLED_TEST_RATES` an EXPRESSION over
+constants read out of the four ports' source, and said in the same breath what that does
+not cover: *a formula that is the wrong function of the right constants still evaluates.*
+The limit stopped being theoretical within the hour. The four ports state CONTRADICTORY
+MECHANISMS for `[45]`'s rate — C, Go and Python "a bad syndrome is caught only in the b=0
+round", Java "only b=2 references the syndrome" — and the VERIFIER settles it rather than
+an argument doing so: the syndrome appears in exactly one branch,
+`H(pi_seed, Hy ^ syndrome)` under `b == 2`, **identically in all four ports**, while
+`b == 0` binds `wt(respA ^ respB)` and `b == 1` checks `Hr`. Neither touches it. **THE
+NUMBER WAS RIGHT AND THE DERIVATION WAS WRONG**, which is the combination no other axis
+here can see: it is `(2/3)^rounds` either way, because either way exactly one challenge
+value in three is the detecting one, so #319's machinery evaluated it correctly,
+`PARAMETERS` agreed, #318's fingerprint was unmoved and the budget was unchanged. It also
+PROPAGATED — #319's own reason for `[45]` repeats the b=0 claim, copied from the harness
+comment while writing the table meant to make rates trustworthy, which is #310's lesson
+(*a reason exact about the wrong object reads exactly like a correct one*) landing on the
+item that restated it. `_RATE_MECHANISMS` is #304's move one level down: that item required
+a `follows` gate to carry a rate AND the token `MEASURED` because "the arithmetic is only
+as good as the null it is done against", and here the arithmetic is only as good as the
+MECHANISM, where #319 shipped 14 rated rows with **not one of them held to a measurement**.
+**5 of the 5 derived rows carry a MEASURED mechanism**, over 3 validated formulas, with 0
+declared unmeasurable. Five things carry forward. (1) **A FREQUENCY CHECK WOULD HAVE
+CONFIRMED THE WRONG MECHANISM, and excluding that is the whole design.** Both stories
+predict `(2/3)^rounds`, so the rate cannot separate them; what does is #310's shape —
+record WHICH challenge strings the failures carried. Measured at `rounds = 2/4/6`:
+acceptance tracked the prediction, and **every accepting trial carried a challenge string
+with no b=2 round while every rejecting one carried at least one, 900/900 exactly**, where
+the b=0 predicate tracked the outcome in 527/900. The alternative is not merely
+unconfirmed, it is REFUTED. **A rate check validates the arithmetic; only a witness check
+validates the mechanism** — and because the witness is EXACT, the instrument cannot flake
+on its own account, which is #299 answered one level up rather than re-introduced. (2) **IT
+FOUND A SECOND WRONG FORMULA, 3x, AND CONSERVATIVE AGAIN.** `[22]`'s rate had one term and
+needs two: the poke reseeds Fiat-Shamir over the WHOLE commitment block, so all `rounds`
+stored challenges must coincidentally re-match, AND round 0's challenge must leave the
+poked `com_1` unopened — a further `1/3`, since `com_1` is opened for `e` in {0, 2}. Either
+term alone tracked about four trials in five; the conjunction tracks every one, 900/900
+over `rounds = 1/2/3`. It overstated the rate, exactly as #319's 10x did, so **the
+direction this axis keeps failing in is the one where nothing red ever happens** — a bound
+that is too large fails no check and triggers no flake. (3) **A THIRD DEFECTIVE REASON, AND
+IT NAMED THE WRONG TEST.** `_SAMPLED_TEST_RATE_LITERAL[("java", 26)]` read "Java's ZKBoo
+tamper-rejection at its own literal rounds"; `[26]` is the Stern RING round-trip and `[28]`
+is the ZKBoo one, and the `_SAMPLED_TESTS` row for the same test two hundred lines up says
+so correctly. That is #295's false-reason finding aimed at this table instead of at a
+constant: a reason is prose, so nothing cross-checks WHICH test it describes. (4) **IT IS A
+RECORD, NOT A CI GATE, and that is stated up front rather than discovered.** ~25 minutes
+for a full run is #289's runtime problem in miniature, and a validation that itself decides
+on a fresh sample is #299's defect one level up — so #304's model: the token and the
+numbers are recorded, the checker holds the record to the expression (the `term` must be a
+SUBSTRING of every covered row's formula, each rung's recorded prediction must EQUAL the
+term evaluated at that rung, each rung's count must sit inside a 6σ band of its own
+prediction, `note` must carry `MEASURED`), and the runner does not re-measure. The
+instrument is `spec/measure_sampled_rates.py`, deliberately NOT in `SecurityProofsCode/`,
+so `run_findings_gates.py` cannot discover it and no `NON_GATING` entry has to argue it
+away. (5) **THE INSTRUMENT MUST NOT REACH A SHIPPED DEFAULT, checked rather than
+asserted.** `[45]` at `rounds = 4` is the 19.75% the Testing section warns about by name,
+used here as an instrument; #310's remedy for `[53]` was to give the sub-check its own
+round count, and the inverse obligation is that a reduced count stays local. The SHIPPED
+value of the same variable is read out of every port through #319's own readers and must be
+strictly greater than the top of the ladder — the VARIABLE and not the rate, because `[45]`
+carries a `trials` multiplier and comparing rates would have compared `2 * (2/3)^4` against
+`(2/3)^4` and passed a build that had lowered `SDF_ROUNDS` to the instrument's own round
+count. **Known limit, stated.** A measurement validates a formula against the
+implementation as it is, so a property ALL FOUR PORTS get wrong is invisible here as it is
+everywhere — the standing blind spot of #277, #294, #296 and #297, whose only exit is an
+assertion about ONE implementation. What this closes is narrower and is the case that
+actually occurred: a formula whose stated mechanism disagrees with the verifier, where the
+arithmetic happens to come out the same.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`

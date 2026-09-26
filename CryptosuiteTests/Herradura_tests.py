@@ -3598,8 +3598,19 @@ def test_weak_key_rejection():
     # verified against a corrupted (flipped-bit) syndrome.  This one runs on
     # its own fixed budget rather than N times, because it is the only check
     # here whose outcome is probabilistic (TODO #233): a bad syndrome is
-    # caught only in the b=0 round, so a forgery slips through with
-    # probability (2/3)^rounds per trial.  At the old rounds=8 that is 3.90%
+    # caught only on a b=2 round -- b=2 is the ONLY branch of the verifier
+    # that references the syndrome at all -- so a forgery slips through with
+    # probability (2/3)^rounds per trial.  THIS LINE SAID "the b=0 round"
+    # until TODO #320, as did the C and Go copies; Java's said b=2 and was
+    # right, and the verifier settles it (b=0 checks wt(sr^sy) and two
+    # commitment hashes, b=1 checks Hr, neither touches the syndrome).  The
+    # NUMBER is (2/3)^rounds either way -- exactly one challenge value in
+    # three detects -- which is why no check and no flake could ever have
+    # caught it.  MEASURED at the instrument's reduced rounds=2/4/6:
+    # acceptance tracked (2/3)^rounds and every accepting trial was exactly a
+    # challenge string with NO b=2 round, 900/900, where the b=0 predicate
+    # matched 527/900.  See spec/measure_sampled_rates.py.
+    # At the old rounds=8 that is 3.90%
     # -- measured 6/200 -- which made the whole of [45] fail 38.5% of the
     # time at N=10.  STERN_ROUNDS=32 (matching the C harness's compile-time
     # SDF_ROUNDS) drops it to (2/3)^32 = 2.4e-6 -- ~8000x less likely to

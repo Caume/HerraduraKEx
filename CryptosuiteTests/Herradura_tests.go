@@ -2581,8 +2581,14 @@ func testWeakKeyRejection() {
 	// verified against a corrupted (flipped-bit) syndrome.  This one runs on
 	// its own fixed budget rather than N times, because it is the only check
 	// here whose outcome is probabilistic (TODO #233): a bad syndrome is
-	// caught only in the b=0 round, so a forgery slips through with
-	// probability (2/3)^rounds per trial.  At the old rounds=8 that is 3.90%
+	// caught only on a b=2 round -- b=2 is the ONLY branch of the verifier
+	// that references the syndrome at all -- so a forgery slips through with
+	// probability (2/3)^rounds per trial.  THIS LINE SAID "the b=0 round"
+	// until TODO #320, as did the C and Python copies; Java's said b=2 and
+	// was right, and the verifier settles it.  The NUMBER is (2/3)^rounds
+	// either way, which is why no check and no flake could ever have caught
+	// it; MEASURED witness-exact at a reduced round count in
+	// spec/measure_sampled_rates.py.  At the old rounds=8 that is 3.90%
 	// -- measured 6/200 -- which made the whole of [45] fail 38.5% of the
 	// time at N=10.  sternRounds=32 (matching the C harness's compile-time
 	// SDF_ROUNDS) drops it to (2/3)^32 = 2.4e-6 -- ~8000x less likely to flake,

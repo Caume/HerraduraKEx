@@ -5464,8 +5464,16 @@ int main(int argc, char *argv[])
          * verified against a corrupted (flipped-bit) syndrome.  This one runs
          * on its own fixed budget rather than N times, because it is the only
          * check here whose outcome is probabilistic (TODO #233): a bad
-         * syndrome is caught only in the b=0 round, so a forgery slips
-         * through with probability (2/3)^SDF_ROUNDS per trial.  At
+         * syndrome is caught only on a b=2 round -- b=2 is the ONLY branch
+         * of the verifier that references the syndrome at all (here
+         * Hys[k] = Hy[k] ^ syndr[k] occurs in the final branch and nowhere
+         * else) -- so a forgery slips through with probability
+         * (2/3)^SDF_ROUNDS per trial.  THIS LINE SAID "the b=0 round" until
+         * TODO #320, as did the Go and Python copies; Java's said b=2 and
+         * was right.  The NUMBER is (2/3)^rounds either way, which is why no
+         * check and no flake could ever have caught it; MEASURED
+         * witness-exact at a reduced round count in
+         * spec/measure_sampled_rates.py.  At
          * SDF_ROUNDS=32 that is 2.4e-6 (and less still for a -DSDF_ROUNDS=219
          * build), but the Python and Go harnesses used to run this check at
          * rounds=8 -- 3.90%, which made the whole of [45] fail 38.5% of the
