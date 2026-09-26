@@ -1212,7 +1212,9 @@ public final class SelfTest {
             // wrong-weight witness survives whenever the challenge string
             // contains none of them -- (2/3)^rounds, 0.77% at rounds = 12,
             // one run in 130.  Measured in the Python port: 3 acceptances
-            // in 400 trials, all 3 the no-b=0 strings.  At 64: 5.5e-11.
+            // in 400 trials, all 3 the no-b=0 strings.  At 64: 5.4e-12
+            // ((2/3)^64 -- a hand-computed 5.5e-11 stood in all four ports
+            // until TODO #319 derived it from source).
             int forgeRounds = 64;
             Stern.SternKeypair kp = Stern.sternFKeygen(rng);
             BigInteger msg = new BigInteger(Herradura.N, rng);

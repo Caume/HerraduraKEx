@@ -21515,3 +21515,116 @@ completeness again (#298's rule).
 Status: **DONE v9.5.7** — how all 194 numbered tests decide is pinned, with four verified
 controls including a false-positive control, and `--update-verdicts` regenerates the table
 without writing it.
+
+### #319: the rate that moves when a parameter moves — deriving #316's budget
+
+TODO #316 censused which numbered tests decide a verdict from a fresh random sample and
+recorded, for each, either a verdict code with a DERIVED RATE or a stated ARGUMENT — 20
+curated rows, 12 of them carrying a number, summing to 1.0e-5 against a job-level budget
+of 1e-4.  TODO #318 then pinned each test's VERDICT REGION by fingerprint, so a test that
+changes HOW it decides fires.  Neither closes the case where **the decision is unchanged
+and the rate underneath it moves**, and #318 stated that limit on itself: "`[45]`'s rate
+lives in `SDF_ROUNDS`, which the fingerprint does not contain, so a change there moves the
+real rate and fires nothing here."
+
+**The hole, verified before designing anything.**  A rate is a LITERAL and its formula is
+prose.  `_SAMPLED_TESTS[("shared", 45)]` reads
+
+    ("negligible", 4.8e-6, "... verifies against it with probability (2/3)^SDF_ROUNDS --
+     2.4e-6 at 32, over STERN_TRIALS=2 ...")
+
+Lower that round count and every check in the repo stays green: `PARAMETERS` compares the
+constant's VALUE across four languages and they all moved together; `_VERDICT_FINGERPRINTS`
+excludes it, being a hash of the verdict LINES and not of what they read; `_TEST_DRAWS`
+still sees the same draw.  The banner goes on printing 1.0e-5 while `[45]`'s true rate is
+7.8% — the pre-#234 figure that made that test fail 38.5% of runs.  This is #278's recorded
+limit ("this axis reads DECLARATIONS, so it cannot see whether the bound is APPLIED") met
+from the other end: the value is read, agrees, and is CONSUMED BY AN ARITHMETIC NOBODY
+EVALUATES.
+
+**Three things the survey found, all of which change the item from what was recommended.**
+
+**(1) THE CONSTANT IS NOT WHERE THE ROW SAYS IT IS, AND IN TWO PORTS IT IS NOT A SUITE
+CONSTANT AT ALL.**  The recommendation was "move `sdf-rounds-demo` and nothing fires".
+That is true of two ports and false of two, which is worse:
+
+| port | `[45]`/`[12]` round count | lives in |
+|---|---|---|
+| C | `SDF_ROUNDS` | `herradura.h` — a `PARAMETERS` row, and `-DSDF_ROUNDS=219` moves it from the command line |
+| Java | `Stern.SDFR` | the suite — the same `PARAMETERS` row |
+| Python | `STERN_ROUNDS, STERN_TRIALS = 32, 2` | a FUNCTION-LOCAL in the harness |
+| Go | `const sternRounds, sternTrials = 32, 2` | a FUNCTION-LOCAL in the harness |
+
+So the same rate in the same numbered test depends on a tracked suite constant in two ports
+and on an untracked harness literal in the other two, and **no table anywhere records the
+split**.  A 2–2 divergence that every check passes is #293's read-pattern split and #294's
+distribution split one axis over; the object here is a FLAKE RATE.  The row's own prose
+names `SDF_ROUNDS` where Python's code says `STERN_ROUNDS` and Go's says `sternRounds` —
+#310's lesson verbatim, a reason exact about the wrong object reading exactly like a
+correct one.
+
+**(2) ONE PUBLISHED RATE IS ALREADY WRONG, BY 10x, AND THE ERROR IS UNFALSIFIABLE.**
+`[53]` signs its forgery sub-check at `forge_rounds = 64` in one trial, so its rate is
+`(2/3)^64` = **5.4e-12**.  The row says **5.5e-11**, and so does the comment in the test
+body, and so does Java's `[35]`.  It is wrong in the CONSERVATIVE direction — it overstates
+the flake rate tenfold and consumes ten times its share of the budget — which is exactly
+why nothing could ever catch it: a hand-computed bound that is too LARGE fails no check and
+triggers no flake.  #304 found the same shape on the findings-gate side ("the arithmetic is
+only as good as the null it is done against") and answered it by requiring the token
+`MEASURED`; the answer here is to stop hand-computing.  Two rates were checked against
+source and both were reproducible: `[45]` at `2 * (2/3)^32` = 4.6e-6 against a stated 4.8e-6
+(honest rounding), and `[22]` at `10 * (1/3)^16` = 2.3e-7 against a stated 2.3e-7, where the
+factor 10 is `_iters(5)` iterations over the two widths `[32, 64]` and is NOT in the prose.
+
+**(3) THE MACHINERY EXISTS AND SHOULD NOT BE REBUILT.**  `_param_eval` already resolves a
+constant transitively from each language's source, with the two corrections that axis
+earned — non-integral results survive (coercing to int read `QCMDPC_TH_SLOPE` as 0 in all
+four languages, an equality no drift could break) and a `(int)` cast is APPLIED rather than
+removed.  `_numbered_test_bodies()` from #316 already slices each test's body per port,
+which is the scope a function-local has to be read in.
+
+**What to build.**  A rate becomes an EXPRESSION over named constants, read from source in
+each port that has the test, and the derived value is what enters the budget — so the
+literal stops being a second source of truth rather than being cross-checked against one.
+Per port, because the table above means one number cannot describe four; the row takes the
+WORST port, since the budget is about a red check on somebody's PR and any of the four
+`native-*` jobs going red counts.
+
+**Five things it has to get right.**
+
+- **Only some rows have a formula, and the split must stay visible.**  `[14]` rests on an
+  argument, `[20]` on "adding a rejection here would carry a (2/3)^4 soundness error", and
+  `[2]` on FSCX being linear.  Those stay prose and stay counted separately, because #300's
+  own rule is that the derived/argued distinction must not quietly erode — and #304 is what
+  happens when a category contributes nothing to the advertised sum.
+- **A variable that resolves in NO port is an error, not a skip.**  Four ports spell one
+  constant four ways (`forge_rounds` / `forgeRounds` / `forgeRounds` / and C's `[53]`, which
+  must be read rather than guessed at), and an under-matching extractor makes the whole
+  check pass vacuously — #295's lenient-direction rule, and #306's sixth-spelling hazard
+  met for the eighth time.  #316 got its own detector wrong three times, always leniently.
+- **Exhaustive in both directions**, like every other curated table here: a formula naming
+  no row fails, and a rated row whose rate IS expressible and is still a literal fails once
+  its formula is added.
+- **The load-bearing control is the FALSE POSITIVE.**  Editing a comment that mentions
+  `STERN_TRIALS`, or renaming a variable the formula does not use, must change nothing —
+  #318's rule, and what keeps this from rotting into noise people regenerate past.
+- **The budget is still JOB-level.**  Deriving the numbers must not become an excuse to
+  police each one against a per-row line; #300's first draft picked a per-gate 1e-6 and then
+  flagged three gates at 1.2e-6, a defect only against an arbitrary bar.
+
+**Known limit, stated up front.**  This closes "the rate's INPUTS moved" and not "the rate's
+DERIVATION was wrong".  A formula that is the wrong function of the right constants still
+evaluates, and the only checks on it are that it reproduces a measured rate (#304's
+`MEASURED` token) or that someone re-derives it.  Nor does it reach a rate that depends on
+something other than a constant — `[4]`'s `tol = 6 * 50/sqrt(n_run)` is a function of the
+iteration count, which `-r` moves at run time and which no static read can pin.
+
+Status: **DONE v9.5.8** — 5 of the 14 rated rows are evaluated from source every run
+over 20 variable cells, per port; the other 9 carry a recorded reason they cannot be, and
+the two tables invalidate each other in both directions.  Ten verified controls, including
+the one that matters (all four suite constants lowered together, where `PARAMETERS` and
+#318's fingerprints both stay silent and this fires at 1.17e-1), a false-positive control,
+and two new check-E rows so CLAUDE.md's copy of the budget is held to the tool.  Found and
+corrected a published rate that was 10x too large in all four ports.
+
+---

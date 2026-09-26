@@ -2789,7 +2789,61 @@ into the noise that trains people to re-generate without reading. **Known limit,
 sees that a decision changed, never what the new decision means — `[45]`'s rate lives in
 `SDF_ROUNDS`, which the fingerprint does not contain, so a change there moves the real rate
 and fires nothing here. That is `PARAMETERS`' axis, and folding it in would converge on
-completeness again.
+completeness again. **TODO #319 closed that limit**, and found on the way in that the
+constant is not where this paragraph says it is in two of the four ports.
+
+**And the rate that moves when a parameter moves, which is the limit #318 stated on
+itself (TODO #319).** #316 gave every sampled numbered test a verdict code with a DERIVED
+RATE or a stated ARGUMENT, and #318 pinned each test's verdict region by fingerprint.
+Neither covers the case where **the decision is unchanged and the rate underneath it
+moves**: a rate was a LITERAL and its formula was prose, so the arithmetic was checked by
+nobody and its inputs by nobody. Lower `[45]`'s round count and `PARAMETERS` compares the
+constant across four languages and finds them agreeing, the fingerprint excludes it, and
+`_TEST_DRAWS` still sees the same draw — while the banner goes on printing 1.0e-5 against a
+true rate of **7.8%**, the pre-#234 figure that made that test fail 38.5% of runs. A rate
+in `_SAMPLED_TEST_RATES` is now an EXPRESSION over constants read out of the source per
+port, and **5 of the 14 rated rows are evaluated from source every run** over 20 variable
+cells; the other 9 are named in `_SAMPLED_TEST_RATE_LITERAL` with a reason they cannot be,
+exhaustive in both directions so expressing a rate FORCES its literal entry out. Five
+things carry forward. (1) **THE CONSTANT IS NOT WHERE THE PROSE SAID IT WAS, AND IN TWO
+PORTS IT IS NOT A SUITE CONSTANT AT ALL.** The item was recommended as "move
+`sdf-rounds-demo` and nothing fires", which is true of two ports and false of two: C reads
+`SDF_ROUNDS` from `herradura.h` and Java `Stern.SDFR` from the suite — both the same
+`PARAMETERS` row, and C's moves from the command line with `-DSDF_ROUNDS=219` — while
+Python and Go carry a FUNCTION-LOCAL `STERN_ROUNDS` / `sternRounds` that no axis reads. One
+rate, one test, two ports tracked and two untracked, with the row's own prose naming
+`SDF_ROUNDS` for all three. That is #293's read-pattern split and #294's distribution split
+one axis over, with a FLAKE RATE as the object, and it is why the derivation is per port and
+a row takes its WORST one — any of the four required `native-*` jobs going red is a red
+check. (2) **ONE PUBLISHED RATE WAS ALREADY WRONG BY 10x, AND UNFALSIFIABLY SO.** `[53]`
+signs its forgery sub-check at 64 rounds in ONE trial, so its rate is `(2/3)^64` = 5.4e-12;
+the row said 5.5e-11, and so did the comment in the test body, in all four ports. It is
+wrong in the CONSERVATIVE direction — overstating the flake rate tenfold and eating ten
+times its share of the budget — which is exactly why nothing could catch it: **a
+hand-computed bound that is too LARGE fails no check and triggers no flake.** #304 found the
+same shape on the findings-gate side and answered it with a `MEASURED` token; the answer
+here is to stop hand-computing. (3) **THE CONTROL THAT MATTERS IS THE ONE WHERE THE OTHER
+AXES STAY SILENT.** Lowering the constant in all four languages at once leaves `PARAMETERS`
+green (they agree) and #318's fingerprints green (it is in no verdict line), and this check
+alone fires, at 1.17e-1 — the item's premise, executed rather than argued. The
+false-positive control is equally load-bearing: editing a comment that mentions
+`STERN_TRIALS` changes nothing. (4) **THE SLICE THAT IS RIGHT FOR A DRAW IS WRONG FOR A
+DECLARATION.** #316's forward slice starts at the `[N]` marker because a draw always happens
+after the header; C declares `zkp_nl_rounds`, `enum { STERN_TRIALS = 2 }` and
+`enum { RK = 3, RND = 12, FRND = 64 }` ABOVE the `printf` that carries the marker, so three
+of C's four variables were invisible. The widened slice is the overlapping one #316
+explicitly rejected, and it is safe HERE for a reason that does not transfer back — every
+consumer requires EXACTLY ONE match (#261's rule), so bleed fails loudly where in the draw
+census it made a silent test look busy. It is opt-in per variable, because widening them all
+turned `[22]`'s three readable variables into three ambiguous ones in all three ports at
+once. (5) **A VARIABLE THAT RESOLVES NOWHERE IS AN ERROR, NOT A SKIP.** Four ports spell one
+constant four ways and C's `[53]` spells it a fifth inside an `enum` — #306's
+sixth-spelling hazard again — and a skipped term silently SHRINKS the rate, which is #295's
+lenient direction. **Known limit, stated**: this closes "the rate's INPUTS moved" and not
+"the rate's DERIVATION was wrong" — a formula that is the wrong function of the right
+constants still evaluates. And it cannot reach a rate whose input is not a constant:
+`[4]`'s bar is `6 * 50/sqrt(n_run)`, a function of an iteration count `-r` supplies at run
+time, so it stays hand-computed and its entry says why.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`

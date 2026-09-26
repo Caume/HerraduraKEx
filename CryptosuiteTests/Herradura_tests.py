@@ -4061,7 +4061,10 @@ def test_stern_witness_binding():
     # survives whenever the challenge string happens to contain none of them --
     # (2/3)^rounds, which is 0.77% at the rounds = 12 the ring half uses, i.e.
     # one run in 130.  Measured: 3 acceptances in 400 trials, and all 3 were
-    # exactly the 3 no-b=0 challenge strings.  At 64 it is 5.5e-11.
+    # exactly the 3 no-b=0 challenge strings.  At 64 it is 5.4e-12
+    # ((2/3)^64; a hand-computed 5.5e-11 stood here and in the other three
+    # ports until TODO #319 derived it -- wrong in the CONSERVATIVE direction,
+    # which is why no check and no flake could ever have caught it).
     forge_rounds = 64
     seed, e_int, syn = stern_f_keygen(n)
     H_rows = [_stern_matrix_row(seed.uint, i, n).uint for i in range(n_rows)]

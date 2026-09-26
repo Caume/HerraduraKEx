@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.8] - 2026-09-25
+
+### Added
+- **`_SAMPLED_TEST_RATES`: a sampled test's false-failure rate is now DERIVED from source
+  rather than hand-computed (TODO #319).**  TODO #316 gave every sampled numbered test a
+  verdict code with a rate or an argument, and #318 pinned each test's verdict region by
+  fingerprint; neither covers the case where the decision is unchanged and the rate
+  underneath it moves.  A rate was a literal and its formula was prose, so lowering
+  `[45]`'s round count left `PARAMETERS` comparing a constant that still agreed across four
+  languages, the fingerprint excluding it, `_TEST_DRAWS` seeing the same draw — and the
+  banner printing 1.0e-5 against a true rate of 7.8%, the pre-#234 figure that made that
+  test fail 38.5% of runs.  A rate is now an expression over constants read out of the
+  source per port: **5 of the 14 rated rows are evaluated every run over 20 variable
+  cells**, and the other 9 are named in `_SAMPLED_TEST_RATE_LITERAL` with a reason they
+  cannot be, exhaustive in both directions so expressing a rate forces its literal entry
+  out.  `--sampled-rates` prints the per-port spread and what each term came from.
+- Two `check_docs_consistency.py` check-E rows: the numbered-test flake budget and the
+  count of rates evaluated from source, so CLAUDE.md's copies are held to the tool that
+  prints them rather than to a hand count (TODO #304's move, one layer over).
+
+### Fixed
+- **A published false-failure rate that was 10x too large, in all four ports.**  `[53]`
+  signs its forgery sub-check at 64 rounds in one trial, so its rate is `(2/3)^64` =
+  5.4e-12; `_SAMPLED_TESTS` said 5.5e-11 and so did the comment in the test body in C, Go,
+  Python and Java (and Java's `[35]`).  Wrong in the conservative direction, which is
+  exactly why nothing could catch it — a hand-computed bound that is too large fails no
+  check and triggers no flake.  The four comments are corrected and the number is now
+  derived.
+- The over-budget error path compared the `"derived"` sentinel against floats and raised
+  instead of reporting; found by the over-budget control on its first run.
+
+### Notes
+- **The constant is not where the prose said it was, and in two ports it is not a suite
+  constant at all.**  C reads `SDF_ROUNDS` from `herradura.h` and Java `Stern.SDFR` from
+  the suite — the same `PARAMETERS` row, and C's moves from the command line with
+  `-DSDF_ROUNDS=219` — while Python and Go carry a function-local `STERN_ROUNDS` /
+  `sternRounds` that no axis reads.  One rate, one test, two ports tracked and two
+  untracked, with the row's own prose naming `SDF_ROUNDS` for all three.  Hence the
+  per-port derivation, and hence a row taking its worst port: any of the four required
+  `native-*` jobs going red is a red check.
+- **Ten controls, all verified.**  The load-bearing one lowers the constant in all four
+  languages at once, where `PARAMETERS` stays green (they agree) and #318's fingerprints
+  stay green (it is in no verdict line), and this check alone fires at 1.17e-1.  The
+  false-positive control edits a comment mentioning `STERN_TRIALS` and changes nothing.
+  Four more invalidate the two tables against each other in both directions, and two
+  falsify CLAUDE.md's numbers to prove the new check-E rows are not passing vacuously.
+- **The slice that is right for a draw is wrong for a declaration.**  #316's forward slice
+  starts at the `[N]` marker because a draw always happens after the header; C declares
+  three of its four variables *above* the `printf` that carries the marker.  The widened
+  slice is the overlapping one #316 rejected, and is safe here because every consumer
+  requires exactly one match (#261's rule), so bleed fails loudly rather than quietly — it
+  is opt-in per variable, because widening them all turned `[22]`'s three readable
+  variables into three ambiguous ones in all three ports at once.
+- **Known limit, stated.**  This closes "the rate's inputs moved", not "the rate's
+  derivation was wrong": a formula that is the wrong function of the right constants still
+  evaluates.  It also cannot reach a rate whose input is not a constant — `[4]`'s bar is
+  `6 * 50/sqrt(n_run)`, a function of an iteration count `-r` supplies at run time, so it
+  stays hand-computed and its entry says why.
+
 ## [9.5.7] - 2026-09-25
 
 ### Added
