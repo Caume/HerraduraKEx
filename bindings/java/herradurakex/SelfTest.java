@@ -676,7 +676,17 @@ public final class SelfTest {
             // the same way CLAUDE.md's Testing section describes for [45]:
             // a probabilistic property was asserted as if deterministic).
             // 32 rounds matches this suite's other Stern-F self-test round
-            // counts and drops the error to ~2e-6, negligible for CI.
+            // counts.  THAT ARITHMETIC WAS RIGHT IN v5.3.x AND IS NOT NOW,
+            // which TODO #321 measured: at the time, only the b = 2 branch
+            // read the syndrome, so a badE forgery survived a challenge
+            // string with no b = 2 round.  TODO #298 then gave the b = 0
+            // branch wt(respA ^ respB) == SDFT, and a uniform badE has
+            // weight ~128 against t = 16 -- so TWO of the three branches
+            // catch it, only b = 1 misses, and the error is (1/3)^rounds =
+            // 5.2e-16 here rather than (2/3)^32 = 2.4e-6.  The fix made the
+            // test 4.6 million times safer and moved no INPUT to the rate,
+            // which is why nothing in spec/ could see it: see
+            // check_language_parity.py's _RATE_MECHANISMS['ring-forgery'].
             int demoRounds = 32;
             java.util.List<Stern.SternKeypair> keys = new java.util.ArrayList<>();
             java.util.List<SternRing.RingKey> ringPub = new java.util.ArrayList<>();

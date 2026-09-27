@@ -136,7 +136,7 @@ def check_numbered_tests(errors):
     return numbers
 
 
-# ── Part 1/4: the numbered tests that decide a verdict from a FRESH SAMPLE ──
+# ── Part 1/5: the numbered tests that decide a verdict from a FRESH SAMPLE ──
 #
 # TODO #316, the ninth axis, and the one that asks of the NUMBERED TESTS what
 # TODO #300 asked of the findings gates: does this check decide a verdict from
@@ -257,19 +257,34 @@ _SAMPLED_TESTS = {
         "the statistic: tol = 6 * 50/sqrt(n_run), i.e. 6 sigma of the "
         "Binomial(n_run, 1/2) per-bit percentage, reproducing the historical "
         "+/-3.00 at N=10000 and staying sound below it.  Union bound over "
-        "256+128+64 bits puts the run-level rate near 1e-6"),
+        "32+64+128+256 = 480 bits puts the run-level rate near 1e-6 -- and "
+        "TODO #321 is where that enumeration was CORRECTED: this row and the "
+        "test's own comment both said '256+128+64', dropping the 32-bit size "
+        "SIZES sweeps.  448 against 480 does not move the number (8.8e-7 vs "
+        "9.5e-7), and the direction is what earns the note: a union bound over "
+        "too FEW terms understates the rate, which is #295's lenient direction "
+        "in an enumeration instead of in a corpus"),
     ("shared", 5): ("negligible", 1e-30,
         "'mean HD >= size//4' against a null of size/2.  The per-trial HD is "
         "Binomial(size, 1/2), so the mean over N trials sits sqrt(size*N)/2 "
         "sigma from the bar -- 28 sigma at the smallest cell (size=32, "
         "N=GF_TRIALS=100).  Recorded as a bound, not a measurement"),
-    ("shared", 10): ("negligible", 1e-30,
-        "NL-FSCX v1 aperiodicity, 'no_period >= 95% of n2_run'.  MEASURED null "
-        "4000/4000 at n=32 and n=64: a period inside 4n steps needs cur == A, "
-        "about 4n * 2^-n = 3e-8 at n=32, and the gate needs 5% of 200 trials "
-        "to find one.  NOT #234-vacuous despite the slack: a v1 that lost its "
-        "aperiodicity scores no_period ~ 0, so the gate still fires on the "
-        "regression it defends"),
+    ("shared", 10): ("negligible", 2.4e-7,
+        "NL-FSCX v1, and THE ROW WHOSE STATED RATE WAS WRONG IN THE UNSAFE "
+        "DIRECTION -- TODO #321 found it, and it is the first on this axis that "
+        "errs that way rather than conservatively.  The row described the "
+        "APERIODICITY half ('no_period >= 95% of n2_run', a period inside 4n "
+        "steps needing cur == A, about 4n * 2^-n = 3e-8 at n=32 against a bar "
+        "of 5% of 200 trials, so P(Binom) ~ 4e-67) and published 1e-30.  The "
+        "verdict is a CONJUNCTION, and its other half is "
+        "'violations == n1_run' -- every one of _iters(1000) random (A, B) must "
+        "break the linear prediction, so ONE coincidence fails the run.  That "
+        "term is 1000 * 2^-32 = 2.3e-7 at the narrowest size, 10^23 larger "
+        "than the number the row carried.  MEASURED: 1 coincidence in 100 000 "
+        "at n=16 and 0 in 100 000 at n=24/32/40, i.e. the 2^-n the bound "
+        "assumes.  Still 0.2% of the budget, so nothing needs fixing in the "
+        "test -- what needed fixing is that a rate was read off the sub-check "
+        "somebody happened to be looking at"),
     ("shared", 11): ("negligible", 1e-14,
         "NL-FSCX v2 non-linearity, 'nl_ok >= 98% of n3_run', and the null is "
         "GENUINELY NONZERO -- 4 coincidences in 20 000 at n=32 (2.0e-4), not "
@@ -287,8 +302,24 @@ _SAMPLED_TESTS = {
     ("python", 19): ("negligible", 4e-75,
         "HFSCX-256 collision sanity over 500 fresh pairs, plus 6 block-boundary "
         "pairs, against a 256-bit digest"),
-    ("shared", 21): ("exact", None,
-        "ZKP-RNL, and the row TODO #316 FIXED.  rnl_sigma_sign gives up after "
+    ("shared", 21): ("negligible", 8.7e-6,
+        "ZKP-RNL, the row TODO #316 fixed and THE ROW TODO #321 TOOK OFF "
+        "`exact`.  Its tampered-commitment case increments w[0] and requires a "
+        "rejection; the verifier RECOMPUTES the Fiat-Shamir challenge over the "
+        "tampered w, so the case turns on a CHALLENGE COLLISION -- and on a "
+        "collision the residual-norm check sees one coefficient shifted by 1 "
+        "inside a slack of t*(q//(2p)+1) = 36 and accepts.  The challenge is a "
+        "weight-t signed sparse polynomial, so the space is comb(n, t)*2^t = "
+        "575 360 at n = 32, t = 4, and the rate is _iters(5)/575360 = 8.7e-6 "
+        "in each of C, Go and Python (all three sweep {32, 256} with N = 5 and "
+        "take t from their own sigma_params).  So the strongest verdict in the "
+        "table, the only one contributing NOTHING to the budget, was carrying "
+        "9% of it -- #304's recorded erosion shape, found by looking on "
+        "purpose.  MEASURED: see _ARGUED_MEASUREMENTS['sigma-challenge-"
+        "collision'].  The three OTHER cheats really are exact, and for a "
+        "reason worth keeping: m_blind is a UNIFORM polynomial, so a perturbed "
+        "z moves the residual by m * e_0 -- full-range garbage -- while a "
+        "perturbed w moves it by 1.  rnl_sigma_sign gives up after "
         "1000 rejection-sampling attempts -- a legitimate signer outcome -- and "
         "all four ports scored it differently and none correctly: Python "
         "decremented its denominator and could print 0/0 [PASS]; C and Go left "
@@ -325,16 +356,29 @@ _SAMPLED_TESTS = {
         "before TODO #234 it was 3.90%, which made the whole of [45] fail "
         "38.5% of runs.  If this table's budget is ever approached, this is "
         "the row to replicate"),
-    ("shared", 46): ("negligible", 1e-70,
+    ("shared", 46): ("negligible", 3.4e-75,
         "fpe/twk domain separation: two fresh 256-bit ciphertexts must differ, "
-        "and its key-boundary sibling likewise.  Coincidence terms"),
-    ("shared", 49): ("negligible", 1.5e-17,
-        "HKEX-RNL m_blind guard.  The ACCEPT-CONTROL is the sampled half -- a "
-        "genuine uniform draw must pass -- and the guard rejects a coefficient "
-        "RANGE below q/4, which n uniform draws fall inside with about "
-        "n*(1/4)^(n-1) = 1.5e-17 at n=32.  Its sparsity clause is unreachable "
-        "at q=65537.  The control exists because a guard that rejected "
-        "everything would pass the four rejection cases perfectly"),
+        "and its key-boundary sibling likewise.  Coincidence terms, 200 "
+        "iterations x 2 comparisons x 2^-256 = 3.4e-75 -- TODO #321 replaced a "
+        "recorded 1e-70, which was the same arithmetic rounded 3e4 too high "
+        "and disagreed with [19]'s 4e-75 for the identical shape one test "
+        "over"),
+    ("shared", 49): ("negligible", 1e-100,
+        "HKEX-RNL m_blind guard, and the row TODO #321 found stating THE WRONG "
+        "PARAMETER.  The ACCEPT-CONTROL is the sampled half -- a genuine "
+        "uniform draw must pass -- and the guard rejects a coefficient RANGE "
+        "below q/4, which n uniform draws fall inside with about "
+        "n*(1/4)^(n-1).  This row said '1.5e-17 at n=32' and the literal "
+        "beside it said 'at the ring dimension the test sweeps'; the test "
+        "SWEEPS NOTHING -- it hardcodes n = 256 -- so the term is "
+        "256*(1/4)^255 ~ 1e-152 over _iters(50) iterations, not 1e-17.  A "
+        "published rate 10^134 too LARGE, which is exactly why no check and no "
+        "flake could find it (#319's and #320's own finding: the conservative "
+        "direction is the invisible one).  Recorded as 1e-100 rather than the "
+        "arithmetic value because a bound that far below every other term is a "
+        "bound, not a measurement.  Its sparsity clause is unreachable at "
+        "q=65537.  The control exists because a guard that rejected everything "
+        "would pass the four rejection cases perfectly"),
     ("shared", 14): ("exact", None,
         "HKEX-RNL agreement, and THE ROW TO DISTRUST -- it rests on an "
         "ARGUMENT (Peikert 1-bit reconciliation eliminates agreement failures) "
@@ -371,11 +415,21 @@ _SAMPLED_TESTS = {
         "Java's Stern-F corrupt-syndrome rejection, signed at Stern.SDFR = 32. "
         "Its own comment derives why a smaller count would flake: only a b = 2 "
         "round references the syndrome, so 8 rounds skip it ~3.9% of the time"),
-    ("java", 26): ("negligible", 2e-6,
-        "Java's Stern ring forgery rejection at demoRounds = 32.  TODO #260 "
-        "caught this flaking at 8 rounds ((2/3)^8 = 3.9%) -- CLAUDE.md's "
-        "Testing class found by somebody tripping over it, which is the "
-        "history this whole axis exists to stop repeating"),
+    ("java", 26): ("negligible", "derived",
+        "Java's Stern ring forgery rejection at demoRounds = 32, and the row "
+        "TODO #298 SILENTLY MADE 4.6 MILLION TIMES SAFER while three places "
+        "went on quoting the old number.  TODO #260 caught it flaking at 8 "
+        "rounds and wrote (2/3)^8 = 3.9% in SelfTest.java's comment, which was "
+        "right AT THE TIME: only the b = 2 branch read the syndrome, so a "
+        "witness matching no member's syndrome survived a challenge string "
+        "with no b = 2 round.  Then #298 added wt(respA ^ respB) = t to the "
+        "b = 0 branch, and a uniform 256-bit badE has weight ~128 against "
+        "t = 16, so TWO of three branches now catch it and only b = 1 misses: "
+        "(1/3)^rounds.  The mechanism gained a detector and every INPUT to the "
+        "rate stayed put, which is why #319's machinery could not see it and "
+        "#318's fingerprint did not move -- the formula was the wrong function "
+        "of the right constants, one release after the fix that made it wrong.  "
+        "MEASURED at rounds = 1/2/3: see _RATE_MECHANISMS['ring-forgery']"),
     ("java", 14): ("negligible", 1e-50,
         "HPKE-Stern-KEM, the only row whose subject has a DESIGNED failure "
         "rate: QC-MDPC decoding has a real DFR and TODO #235's implicit "
@@ -416,7 +470,7 @@ _SAMPLED_TEST_CONSTANT = {
 }
 
 
-# ── Part 2/4: where each rate COMES FROM ─────────────────────────────────
+# ── Part 2/5: where each rate COMES FROM ─────────────────────────────────
 #
 # TODO #319.  A rate above is a LITERAL and its formula is prose, so the
 # arithmetic is checked by nobody and its inputs are checked by nobody.  Lower
@@ -559,6 +613,22 @@ _SAMPLED_TEST_RATES = {
         "the other half of the split: it signs at the SUITE's Stern.SDFR "
         "rather than at a harness literal, so this rate moves with a "
         "PARAMETERS row where Go's and Python's do not.  One trial"),
+    ("java", 26): (
+        "(1/3) ** rounds",
+        {"rounds": {"java": ("local", r"int demoRounds\s*=\s*(\d+)")}},
+        "Java's ring forgery rejection, and TODO #321 is where it STOPPED "
+        "being a literal.  A witness matching no member's syndrome is caught by "
+        "TWO of the verifier's three branches -- b = 0 binds "
+        "wt(respA ^ respB) = t (TODO #298's fix) and b = 2 checks "
+        "H(pi_seed, Hy ^ syndrome) -- so only b = 1 reads neither and the rate "
+        "is (1/3)^rounds, not the (2/3)^rounds SelfTest.java's comment and both "
+        "spec/ tables carried.  The old number was RIGHT WHEN WRITTEN: TODO "
+        "#260 saw a real flake at 8 rounds, which (2/3)^8 = 3.9% explains and "
+        "(1/3)^8 = 1.5e-4 does not, and #298 shipped the second detector a "
+        "year of items later.  So this is #319's object -- a rate that moved "
+        "and took nothing with it -- with a VERIFIER BRANCH in the moving role "
+        "instead of a constant, which is a case #319's machinery cannot see "
+        "either: every input stayed put.  See _RATE_MECHANISMS['ring-forgery']"),
     ("java", 35): (
         "(2/3) ** rounds",
         {"rounds": {"java": ("local", r"int forgeRounds\s*=\s*(\d+)")}},
@@ -578,55 +648,127 @@ _SAMPLED_TEST_RATES = {
 # or a trial budget: they are coincidence and union terms over a WIDTH, whose
 # derivation would restate the same 2^-n in Python and buy no tripwire, since
 # the width is already PARAMETERS' object and a numbered test that changed it
-# would move its verdict fingerprint (#318) as well.  The one that is NOT of
-# that shape is [4], and it is the recorded limit of this axis.
+# would move its verdict fingerprint (#318) as well.  The two that are NOT of
+# that shape are [4], whose input is a run-time flag, and [21], whose input is
+# a module-level dict OUT OF SLICE -- and those two are the recorded limits of
+# this axis, from opposite ends.
+#
+# EACH ENTRY CARRIES AN ANCHOR, which is TODO #321's structural addition:
+#
+#     row key -> (lang, regex, reason)
+#
+# The regex must match EXACTLY ONCE in that language's whole harness file AND
+# exactly once inside THAT test's own body slice, so the reason is pinned to the
+# test it describes rather than to the test somebody had in mind.  That is not
+# a hypothetical: TODO #320 found ("java", 26)'s reason describing "Java's
+# ZKBoo tamper-rejection", which is [28], and it found it INCIDENTALLY, while
+# doing something else.  A reason is prose, so nothing cross-checked WHICH test
+# it was about -- #295's false-reason finding aimed at this table instead of at
+# a constant -- and one anchor per row is the cheapest thing that does.
+#
+# It is ONE port per row and the scope is stated rather than assumed: the defect
+# the anchor closes is "this sentence is about another test", which one port
+# settles; C and Go carry no independent prose here, since a `shared` row's
+# reason is one sentence about one expression the three write the same way.
+#
+# WHAT THE TODO #321 AUDIT FOUND, because the precedent said to expect
+# something and the base rate was already 1 in 9: FIVE of these nine reasons
+# were wrong, in both directions.  [49] named a parameter the test does not use
+# (n = 32 against a hardcoded 256) and published a rate 10^134 too large; [10]
+# read its rate off the sub-check that does NOT bind, publishing 1e-30 for a
+# 2.3e-7 term -- the first error on this axis in the UNSAFE direction; [4]'s
+# union bound enumerated three of the four widths it sweeps; [46] rounded its
+# own arithmetic 3e4 too high; and ("java", 26) left the table entirely, its
+# rate having become (1/3)^rounds when TODO #298 gave the b = 0 branch a weight
+# binding, 4.6 million times smaller than the (2/3)^rounds every copy quoted.
+# [5], [11], [19] and ("java", 14) reproduced.
 _SAMPLED_TEST_RATE_LITERAL = {
-    ("shared", 4):  "THE LIMIT OF THIS AXIS, and it is a real one: the bar is "
+    ("shared", 4):  ("python", r"tol = 6\.0 \* 50\.0 / math\.sqrt\(n_run\)",
+                    "THE LIMIT OF THIS AXIS, and it is a real one: the bar is "
                     "tol = 6 * 50/sqrt(n_run), so the rate is a function of "
                     "the ITERATION COUNT, which -r moves at run time.  No "
                     "static read can pin a number the command line supplies; "
                     "what makes it safe is that the bar FOLLOWS the statistic "
                     "(#233), so the rate is ~1e-6 at every n_run rather than "
-                    "at one of them",
-    ("shared", 5):  "mean Hamming distance against a null of size/2 over "
+                    "at one of them.  TODO #321 re-derived it and corrected "
+                    "the union's enumeration in all three harnesses: 480 bits, "
+                    "not the 448 every copy said"),
+    ("shared", 5):  ("python", r"expected >=\{size//4\}",
+                    "mean Hamming distance against a null of size/2 over "
                     "GF_TRIALS: a 2^-n coincidence term at the widths swept, "
-                    "not a soundness error, so there is no round count in it",
-    ("shared", 10): "FSCX orbit coincidence: a union of 2^-n terms over the "
-                    "widths, measured rather than parameterised",
-    ("shared", 11): "the same shape as [10], on a genuinely nonzero exact "
-                    "quantity",
-    ("shared", 46): "fpe/twk domain separation: two fresh 256-bit ciphertexts "
-                    "must differ.  Pure coincidence at 2^-256, and a formula "
-                    "would restate the block width PARAMETERS already holds",
-    ("shared", 49): "HKEX-RNL m_blind accept-control: n * (1/4)^(n-1) at the "
-                    "ring dimension the test sweeps.  Parameterised by a "
-                    "WIDTH, not by a round count, and the sparsity clause is "
-                    "unreachable at q = 65537",
-    ("python", 19): "HFSCX-256 collision sanity over 500 fresh pairs: a "
-                    "birthday term at the digest width, 4e-75",
-    ("java", 14):   "Java's QC-MDPC decapsulation mismatch, inherited from "
+                    "not a soundness error, so there is no round count in it.  "
+                    "RE-DERIVED by TODO #321 and it reproduces: the per-trial "
+                    "HD is Binomial(size, 1/2), so the mean over 100 trials "
+                    "sits (16 - 8)/sqrt(32/4/100) = 28.3 sigma above the bar "
+                    "at the smallest cell, which is the row's own figure"),
+    ("shared", 10): ("python", r"linearity violations=\{violations\}",
+                    "TWO sub-checks in one conjunction, and TODO #321 found "
+                    "the published rate read off the wrong one.  The binding "
+                    "term is 'violations == n1_run' -- a 2^-n linearity "
+                    "coincidence over _iters(1000) draws at the narrowest "
+                    "size, 2.3e-7 -- and not the aperiodicity bar, which is "
+                    "4e-67.  Both are widths, not round counts, so neither is "
+                    "a formula this axis can read; what a formula would have "
+                    "bought is the discipline of writing down which term "
+                    "dominates, which is the whole finding"),
+    ("shared", 11): ("python", r"nonlinear=\{nl_ok\}",
+                    "the same shape as [10]'s aperiodicity half -- a binomial "
+                    "tail over a per-trial coincidence against a percentage "
+                    "bar -- on a genuinely nonzero exact quantity (4 in 20 000 "
+                    "at n=32).  P(Binom(500, 2e-4) >= 11) ~ 2.5e-19 against a "
+                    "recorded 1e-14, so the record is the conservative side of "
+                    "its own arithmetic and stays"),
+    ("shared", 21): ("python", r"z_tamper=\{ok_ztamper\}",
+                    "THE ROW TODO #321 TOOK OFF `exact`, and the reason it "
+                    "stays a literal is the same limit [4] records from the "
+                    "other end: the rate is _iters(5)/(comb(n, t)*2^t), and t "
+                    "comes from _sigma_params' MODULE-LEVEL dict a thousand "
+                    "lines above every [N] marker, which #319's body and scope "
+                    "slices cannot reach by construction.  So the second "
+                    "recorded instance of that limit -- [4]'s input is a "
+                    "run-time flag, this one's is out of slice -- and the "
+                    "answer is #320's rather than #319's: the MECHANISM is "
+                    "measured instead, in _ARGUED_MEASUREMENTS['sigma-"
+                    "challenge-collision'], where the reduced parameter is t "
+                    "itself"),
+    ("shared", 46): ("python", r"key-boundary collisions=\{amb\}",
+                    "fpe/twk domain separation: two fresh 256-bit ciphertexts "
+                    "must differ.  Pure coincidence at 2^-256 over 200 "
+                    "iterations and two comparisons, and a formula would "
+                    "restate the block width PARAMETERS already holds.  TODO "
+                    "#321 re-derived it as 3.4e-75 against a recorded 1e-70"),
+    ("shared", 49): ("python", r'\[49\] HKEX-RNL peer-m_blind',
+                    "HKEX-RNL m_blind accept-control: n * (1/4)^(n-1) at the "
+                    "ring dimension the test USES, which TODO #321 found is a "
+                    "hardcoded n = 256 and not the n = 32 both this entry and "
+                    "the census row claimed -- the test sweeps nothing.  "
+                    "Parameterised by a WIDTH, not by a round count, and the "
+                    "sparsity clause is unreachable at q = 65537.  A formula "
+                    "would still not have caught it: the width is a literal in "
+                    "the test body, so #319's reader would have read 256 and "
+                    "evaluated it correctly while the PROSE went on saying 32 "
+                    "-- which is #320's finding (the number right, the stated "
+                    "parameter wrong) with the two halves swapped"),
+    ("python", 19): ("python", r"collision sanity, block boundaries, keyed MAC",
+                    "HFSCX-256 collision sanity over 500 fresh pairs: a "
+                    "birthday term at the digest width, 4e-75.  Re-derived by "
+                    "TODO #321 as 500 * 2^-256 = 4.3e-75 and it reproduces -- "
+                    "the one literal of the nine whose number and whose stated "
+                    "mechanism were both already right"),
+    ("java", 14):   ("java", r"anyMismatch = false; break;",
+                    "Java's QC-MDPC decapsulation mismatch, inherited from "
                     "BIKE-128's DFR rather than derived here -- #285's finding "
                     "that no trial count reaches that rate is precisely why "
-                    "there is no expression to write",
-    ("java", 26):   "THIS REASON NAMED THE WRONG TEST until TODO #320 -- it "
-                    "said 'Java's ZKBoo tamper-rejection', which is [28]; "
-                    "[26] is the Stern RING round-trip, whose sampled half is "
-                    "a forged-member rejection at demoRounds = 32, and the "
-                    "_SAMPLED_TESTS row two hundred lines up says so "
-                    "correctly.  #295's false-reason finding aimed at this "
-                    "table rather than at a constant, and the direction it "
-                    "arrived from is the one that matters: a reason is prose, "
-                    "so nothing cross-checks WHICH test it describes.  Kept a "
-                    "literal because its mechanism is the ring verifier's "
-                    "per-member weight binding rather than one challenge "
-                    "value, so a formula would owe its own measurement under "
-                    "_RATE_MECHANISMS and buy no tripwire the verdict "
-                    "fingerprint does not already give",
+                    "there is no expression to write.  TODO #321 checked the "
+                    "shape rather than the number, which is all that is "
+                    "available: the gate is DFR^20 because the loop breaks on "
+                    "the first SUCCESS, so it fires only if all 20 trials "
+                    "miss, and 1e-50 is a bound on an inherited bound"),
 }
 
 
 
-# ── Part 3/4: whether the FORMULA is the right function ──────────────────
+# ── Part 3/5: whether the FORMULA is the right function ──────────────────
 #
 # TODO #320, and it is the limit #319 stated on itself in the same breath as
 # its own result: "this closes 'the rate's INPUTS moved' and not 'the rate's
@@ -841,6 +983,47 @@ _RATE_MECHANISMS = {
                     "the exponential without needing the witness at all -- and "
                     "the witness then settles it exactly",
     },
+    "ring-forgery": {
+        "rows": [("java", 26)],
+        "term": "(1/3) ** rounds",
+        "var":  "rounds",
+        "detects":  "any round whose challenge for the FORGING member is "
+                    "b != 1, because two of the three branches catch a witness "
+                    "matching no member's syndrome: b = 0 binds "
+                    "wt(respA ^ respB) = t and b = 2 checks "
+                    "H(pi_seed, Hy ^ syndrome)",
+        "excludes": "'no b = 2 round', the PRE-#298 mechanism -- when b = 0 "
+                    "bound nothing, which is what SelfTest.java's comment and "
+                    "both spec/ tables still said.  It predicts (2/3)^rounds, "
+                    "4.6 MILLION times larger at the shipped 32, and it was "
+                    "right once: TODO #260 saw a real flake at 8 rounds, which "
+                    "(2/3)^8 = 3.9% explains and (1/3)^8 = 1.5e-4 does not",
+        "ladder": {1: (300, 101, 0.333333),
+                   2: (300,  43, 0.111111),
+                   3: (300,  12, 0.037037)},
+        "witness":  "900/900 trials had accept == (every round's challenge for "
+                    "the forging member is b = 1), exactly; the pre-#298 "
+                    "predicate matched 619/900, so the old mechanism is not "
+                    "merely superseded, it is refuted against the code as it "
+                    "now stands",
+        "note":     "MEASURED at rounds = 1/2/3 over 900 trials, with an honest "
+                    "ring signature verified on every trial as an accept "
+                    "control (900/900).  Acceptance 101/43/12 against "
+                    "100.0/33.3/11.1 predicted by (1/3)^rounds, where the "
+                    "superseded (2/3)^rounds predicts 200/133/89 -- so the "
+                    "FREQUENCY separates these two, unusually for this table, "
+                    "and the witness then settles it exactly.  Run at the "
+                    "Python harness's ring width n = 32 with Java's k = 4 "
+                    "rather than at Java's n = 256: the mechanism is a "
+                    "statement about which verifier BRANCH reads what, and "
+                    "hpks_stern_ring_verify_local and SternRing.verify are the "
+                    "same three branches line for line, while one n = 256 trial "
+                    "costs 6.7 s against 0.5 s -- 1.7 hours for the ladder "
+                    "instead of 13 minutes.  That cross-port step is the same "
+                    "one 'corrupted-syndrome' takes for Java's [12], and it is "
+                    "the same limit: a property all four ports got wrong would "
+                    "be invisible here",
+    },
 }
 
 # The other direction, and it ships EMPTY -- see (4) above.  An entry here is a
@@ -851,7 +1034,297 @@ _RATE_MECHANISMS = {
 _RATE_MECHANISM_UNMEASURED = {}
 
 
-# ── Part 4/4: the VERDICT of each numbered test, pinned ──────────────────
+# ── Part 4/5: the ARGUED half -- an `exact` verdict owes a SLACK ──────────
+#
+# TODO #321.  #319 made every rate an EXPRESSION over constants read from
+# source and #320 held each such formula to a MEASURED mechanism.  Both act on
+# the rows that HAVE a formula.  The rest of `_SAMPLED_TESTS` rested on prose
+# alone -- 6 rows declared `exact` and 9 carrying a hand-computed literal -- and
+# nothing checked either kind.
+#
+# WHY THE `exact` ROWS ARE THE EXPOSED ONES.  `exact` is the strongest claim in
+# the table: the false-failure rate is ZERO.  It is also the only category that
+# contributes NOTHING to the advertised budget, which is precisely the erosion
+# shape #304 recorded ("an argued gate could be the job's dominant flake source
+# and the advertised number would not move").  And the precedent on curated
+# reasons is unanimous: #295 found 2 of 6, #304 found 3 of 3, #310 found one
+# "exact about the wrong object", and #320 found a tenth reason describing the
+# WRONG TEST -- incidentally, while doing something else.
+#
+# A SAMPLED ZERO CANNOT SHOW WHAT AN `exact` ROW ASKS IT TO SHOW, which is the
+# item's central point and is not about trial counts.  [14]'s evidence was
+# hkex_rnl_failure_rate.py's 0 failures in <= 2000 trials; that Wilson interval
+# tops out near 1.8e-3, EIGHTEEN TIMES the whole job budget, so the measurement
+# is equally consistent with `exact` and with a rate that alone would blow it --
+# #285's finding in a different protocol, and #300's gate-that-cannot-go-red
+# from the other side.  What the claim actually rests on is a MARGIN, and a
+# margin is a different object: it is a MAXIMUM over coefficients, so one trial
+# reports as many samples as the statement has terms, and its distribution has
+# a visible tail where a failure count has none.  Nothing measured it.
+#
+# SO THE TWO TABLES BELOW.  `_EXACT_BASES` is the census -- every `exact` row
+# says WHY it is exact and what happens at the parameters the suite DEPLOYS when
+# the test does not run there -- and `_ARGUED_MEASUREMENTS` holds the evidence,
+# on #320's model: a quantity, a bound, a ladder at a reduced parameter, an
+# exact per-trial WITNESS, and the token MEASURED.
+#
+# SIX THINGS THAT CAME OUT OF DOING IT.
+#
+# (1) ONE `exact` ROW WAS NOT EXACT.  [21]'s tampered-commitment case turns on
+#     a Fiat-Shamir CHALLENGE COLLISION, not on the residual-norm check, so it
+#     runs at _iters(5)/(comb(32, 4) * 2^4) = 8.7e-6 -- nine percent of the
+#     budget, from the category that was contributing nothing to it.
+#
+# (2) THE OTHER `exact` ROW'S BOUND WAS 4x WRONG, and the correction is EXACT
+#     rather than sampled.  SecurityProofs-4.md 480 says HKEX-RNL reconciliation
+#     needs "max per-coeff error << q/8"; over all 65537 residues the smallest
+#     error that can flip a bucket is q/32 down and 3q/32 up.  Lenient by 4x, so the DOCUMENTED safety
+#     factor was four times the real one -- and the real one is still 3.1x on the
+#     observed maximum at the deployed ring, so the row keeps `exact` and finally
+#     has evidence for it.
+#
+# (3) THE MARGIN HAD TO BE MEASURED AT THE DEPLOYED RING AND THE TEST IS NOT.
+#     [14] sweeps RNL_SIZES = [32, 64, 128, 256], all four RETIRED by #223,
+#     while the suite deploys RNLN = 1024 -- and the error accumulates as
+#     O(sqrt n) through the convolution, measured at 419.6 against n = 256's
+#     206.8, a factor 2.03 for 4x the dimension.  So the tested widths are the
+#     FAVOURABLE ones: #295's lenient direction in a parameter instead of in a
+#     corpus, and #313's "nothing ever ran the algorithm at another width"
+#     pointed at a CORRECTNESS property rather than at a cost figure.
+#
+# (4) A MARGIN IS NOT A RATE AND THE TABLE DOES NOT PRETEND IT IS.  The two
+#     `kind`s carry different ladders -- a margin rung records (trials, min,
+#     mean, adverse) and a rate rung (trials, events, predicted) -- because
+#     collapsing them would mean counting the margin's sign, which is the
+#     0/N this item exists to stop producing.
+#
+# (5) THE WITNESS IS WHAT MAKES EITHER OF THEM EVIDENCE, and for the margin it
+#     is not a proxy at all: the margin's SIGN and the reconciliation's answer
+#     are the same fact computed two ways, so the predicate is exact by
+#     construction and the instrument cannot flake on its own account (#299
+#     answered one level up rather than re-introduced).  The DEPLOYED rung alone
+#     could not check it -- every trial agrees there -- so the ladder's job is
+#     to supply the failing branch, which is #296's "a branch a random stream
+#     never enters is not covered either".
+#
+# (6) SCOPE, stated because #302 6 is what an unchecked scope paragraph becomes.
+#     This is about the rows with NO formula.  It is NOT about widening [14] to
+#     run at n = 1024 in the harness -- that is a cost decision (a deployed-ring
+#     handshake is ~39 ms in Python and the test runs _iters(200) per size) --
+#     and the measurement ANSWERS the question that would have justified it:
+#     the deployed slack is 16 spreads clear of the cliff, so the untested
+#     width is not a risk and there is nothing to file.  What the item's own
+#     text said to file if the margin said otherwise is therefore not filed,
+#     deliberately, rather than left as an omission.
+#
+#   row key -> {basis, deployed, evidence}
+#
+#     basis     why the rate is zero, one of:
+#                 identity            a width-independent algebraic identity,
+#                                     so the statistic has no variance
+#                 separated           the probabilistic branch is separated from
+#                                     the scored one (#233's [18])
+#                 no-assertion        the test asserts no rejection, so it
+#                                     carries no soundness error to begin with
+#                 exhaustive-branches every branch the sample can select
+#                                     rejects, so there is no detecting event
+#                 margin              an inequality, with measured slack
+#     deployed  what holds at the parameters the SUITE deploys, when the test
+#               does not run there -- the question nobody had asked of these
+#     evidence  the _ARGUED_MEASUREMENTS key, and only `margin` may have one
+_EXACT_BASES = {
+    ("shared", 2): {
+        "basis": "identity",
+        "deployed": "FSCX is LINEAR, so flipping input bit j moves the output "
+                    "by M . e_j = e_j ^ ROL(e_j) ^ ROR(e_j), of weight exactly "
+                    "3 at every n >= 3 because the three positions are distinct "
+                    "under ROTATION.  The mean is therefore 3.000 with zero "
+                    "variance at SIZES's four widths and at the deployed "
+                    "KEYBITS = 256 alike -- one statement, no parameter it can "
+                    "differ at, nothing to measure.  The printed min and max "
+                    "are not in the verdict, which is why the 2.9/3.1 window "
+                    "is legacy slack rather than tolerance",
+        "evidence": None,
+    },
+    ("shared", 18): {
+        "basis": "separated",
+        "deployed": "THE REFERENCE ROW, and its parameters point the safe way.  "
+                    "It runs at the harness's n = 32, t = 2 code, which is NOT "
+                    "uniquely decodable -- 43% of keys admit a weight-2 "
+                    "collision -- and that is exactly why #233 separated the "
+                    "ambiguous-syndrome branch from the failure branch.  The "
+                    "DEPLOYED Stern instance (SDF_T = 16 at n = 256) makes "
+                    "ambiguity vanishingly rarer, so the test runs the ADVERSE "
+                    "case and the separation makes the verdict exact at both",
+        "evidence": None,
+    },
+    ("shared", 20): {
+        "basis": "no-assertion",
+        "deployed": "ring COMPLETENESS at rounds = 4, against a shipped "
+                    "SDF_ROUNDS = 32 and a production 219.  A completeness "
+                    "assertion has no soundness error at ANY round count, so a "
+                    "reduced count is adverse to nothing here -- which is the "
+                    "one direction in which CLAUDE.md's rounds = 4 warning does "
+                    "not apply, and the row exists to say so.  Adding a "
+                    "rejection case at 4 would carry (2/3)^4 = 19.75%, which is "
+                    "that warning as a live constraint",
+        "evidence": None,
+    },
+    ("python", 17): {
+        "basis": "exhaustive-branches",
+        "deployed": "the forgery claims fake_chal = [0]*8 and the verifier "
+                    "recomputes the Fiat-Shamir challenge, rejecting at the "
+                    "first round that disagrees.  On the (1/3)^rounds of "
+                    "challenge strings where every round happens to agree it "
+                    "reaches the b = 0 branch and rejects THERE, on the merits "
+                    "(c1 carries no ds=2, and #298's wt(respA ^ respB) == t "
+                    "fails at weight 0).  Both paths reject, at every round "
+                    "count -- so the sampling TODO #316 removed cannot return "
+                    "through a parameter move, which is the property that makes "
+                    "this `exact` rather than negligible",
+        "evidence": None,
+    },
+    ("shared", 14): {
+        "basis": "margin",
+        "deployed": "THE ROW THE TABLE NOMINATED ITSELF, and the lead held.  It "
+                    "sweeps RNL_SIZES = [32, 64, 128, 256] -- every one RETIRED "
+                    "by TODO #223 -- while the suite deploys RNLN = 1024, and "
+                    "the per-coefficient error accumulates as O(sqrt n) through "
+                    "the ring convolution: max|e| measures 206.8 mean at n = 256 "
+                    "and 419.6 at n = 1024, a factor 2.03 for 4x the dimension, "
+                    "which is SecurityProofs-4.md 476's mechanism quantified.  "
+                    "So the TESTED widths are the favourable ones and the "
+                    "untested deployed one is adverse, and the margin is "
+                    "measured where the suite runs rather than where the test "
+                    "does.  It is comfortable: slack 2019 mean and 1647 worst of "
+                    "1000 against a bound of 2047, i.e. max|e| at 20% of the "
+                    "bound, 16 spreads clear of zero",
+        "evidence": "rnl-reconciliation-margin",
+    },
+}
+
+# The evidence.  #320's shape, with a `kind` because the objects differ: a
+# margin is an inequality with slack and a collision is a rate with a count.
+#
+#   name -> {kind, rows, quantity, bound, ladder, witness, note, ...}
+#
+#     kind == "margin": also `deployed` ({PARAMETERS row: value}, held to every
+#             port's source), `var` (the ladder's parameter) and `reduces` (the
+#             `deployed` key it reduces -- its deployed value IS the top rung).
+#             Rungs are (trials, min_margin, mean_margin, adverse).
+#     kind == "rate":   also `var`, `shipped` (the value the test runs at) and
+#             `shipped_why` (why no reader can pin it, since a value this axis
+#             cannot read is the whole reason the row stays a literal).
+#             Rungs are (trials, events, predicted), banded at 6 sigma like
+#             #320's.
+_ARGUED_MEASUREMENTS = {
+    "rnl-reconciliation-margin": {
+        "kind": "margin",
+        "rows": [("shared", 14)],
+        "quantity": "the signed distance from B's per-coefficient error to the "
+                    "nearest value that would move that coefficient's 2-bit "
+                    "Peikert bucket, minimised over the key_bits//2 "
+                    "coefficients reconciliation actually reads: with "
+                    "r = (4c + (2h+1)*(q//4)) mod q, "
+                    "min(e + r//4, (q-1-r)//4 - e)",
+        "bound":    "zero -- and the threshold underneath it is EXACT, not "
+                    "sampled: swept over all 65537 residues, the SMALLEST error "
+                    "that can flip a bucket is 2048 = q//32 downward and "
+                    "6145 = 3q/32 upward, so the room is 2047 down and 6144 up "
+                    "and the guaranteed symmetric bound is |e| <= 2047 = "
+                    "q/32 - 1, ASYMMETRIC 3:1.  SecurityProofs-4.md 480 says 'max "
+                    "per-coeff error << q/8', which is 4x too generous -- in "
+                    "the LENIENT direction, so the documented safety factor was "
+                    "four times the real one.  Correctness is unaffected and "
+                    "the sentence was not",
+        "deployed": {"rnl-n": 1024, "rnl-q": 65537, "rnl-p": 4096,
+                     "rnl-pp": 4, "keybits": 256},
+        "var":      "p",
+        "reduces":  "rnl-p",
+        "ladder":   {4096: (1000,  1647,  2019.3,   0),
+                     1024: (1000,   131,  1416.5,   0),
+                      512: (1000, -2181,   363.5, 261),
+                      256: (1000, -6404, -2057.5, 985)},
+        "witness":  "4000/4000 trials had agreement == (margin >= 0), exactly "
+                    "-- including the 1246 that DISAGREED, which is what makes "
+                    "it evidence rather than a tautology checked on one branch.  "
+                    "The margin's sign and the reconciliation's answer are the "
+                    "same fact computed two ways, so the predicate is exact by "
+                    "construction and the instrument cannot flake",
+        "note":     "MEASURED at the DEPLOYED ring (n = 1024, key_bits = 256) "
+                    "over 1000 trials per rung, with p -- the public-key "
+                    "rounding modulus -- as the ladder's reduced parameter, "
+                    "because the rounding error of lift() is q/(2p) and so "
+                    "scales as 1/p, which puts the cliff four rungs down and "
+                    "PREDICTS where rather than hunting for it.  The 1/p law "
+                    "reproduces to 1.2%: max|e| means 419.6 / 1665.7 / 3353.6 / "
+                    "6636.7 against 419.6 x {1, 4, 8, 16}.  The cliff arrives "
+                    "at p = 512, where the mean margin is 363.5 and 261 of 1000 "
+                    "trials disagree, and by p = 256 it is negative and 985 do.  "
+                    "THE DEPLOYED RUNG IS THE CLAIM: 0 adverse trials, worst "
+                    "margin 1647, mean 2019.3 with spread 121.6, so the shipped "
+                    "parameters sit 16 spreads clear of a cliff whose position "
+                    "is measured and not modelled -- which is the item's own "
+                    "constraint, since a worst-case bound on the noise sum would "
+                    "have certified the row from a model of a CBD(1) sampler "
+                    "when it is the convolution that accumulates (#304's "
+                    "finding, three gates over)",
+    },
+    "sigma-challenge-collision": {
+        "kind": "rate",
+        "rows": [("shared", 21)],
+        "quantity": "whether the verifier's RECOMPUTED Fiat-Shamir challenge "
+                    "over the tampered w equals the claimed one -- the event "
+                    "[21]'s tampered-commitment case is actually a function of, "
+                    "where the row said it was exact",
+        "bound":    "1/(comb(n, t) * 2^t) per trial: the challenge is a "
+                    "weight-t polynomial with a sign per position, so the space "
+                    "is comb(32, 4) * 2^4 = 575 360 at the narrowest width the "
+                    "test sweeps, and the n = 256 term is 2^-100-ish beside it.  "
+                    "On a collision the residual-norm check sees ONE coefficient "
+                    "shifted by 1 inside a slack of t*(q//(2p)+1) = 36 and "
+                    "accepts",
+        "var":      "t",
+        "shipped":  4,
+        "shipped_why":
+                    "t comes from _sigma_params' module-level _SIGMA_T dict, a "
+                    "thousand lines above every [N] marker, so neither #319's "
+                    "body slice nor its widened scope slice can reach it and "
+                    "there is no PARAMETERS row for it either (the three ports "
+                    "each inline the ladder in their own sigma_params).  That "
+                    "is why this row's RATE stays a literal while its MECHANISM "
+                    "is measured -- the second recorded limit of the reading "
+                    "axis, beside [4]'s run-time flag, and the answer to it is "
+                    "#320's rather than #319's",
+        "ladder":   {1: (1000, 15, 0.015625),
+                     2: (6000,  1, 0.00050403)},
+        "witness":  "7000/7000 trials had accept == (the recomputed challenge "
+                    "collides), exactly.  The ALTERNATIVE -- 'the residual-norm "
+                    "check is what catches it', which is what `exact` amounted "
+                    "to -- was measured against the SAME test's z-tamper case, "
+                    "where the norm check genuinely is the detector, and tracked "
+                    "the outcome in 985/1000 and 5999/6000: high enough to look "
+                    "like an answer, and not exact",
+        "note":     "MEASURED at t = 1 and t = 2 over 7000 trials at n = 32, "
+                    "with the honest proof verified first as an accept control "
+                    "(7000/7000) and an exhausted rejection limit excluded from "
+                    "the denominator rather than scored (#291, and #316's own "
+                    "fix to this very test).  Acceptance 15/1000 against 15.6 "
+                    "predicted and 1/6000 against 3.0, i.e. the 31x rate ratio "
+                    "between the two rungs reproduces where a single rung could "
+                    "not have distinguished the mechanism from a constant.  Two "
+                    "rungs and not three because the space is comb(n, t)*2^t: at "
+                    "t = 3 the predicted count over 6000 trials is 0.15, and "
+                    "another 0/N is what this item exists NOT to produce.  The "
+                    "shipped t = 4 needs 5.8e5 trials per expected event, about "
+                    "14 hours here, which is why the rate is argued from the "
+                    "ladder and the space rather than counted at the shipped "
+                    "parameter",
+    },
+}
+
+
+# ── Part 5/5: the VERDICT of each numbered test, pinned ──────────────────
 #
 # TODO #318, and it closes a hole in TODO #316's own table.  That census
 # catches a test which starts DRAWING fresh entropy; nothing caught a test
@@ -1431,6 +1904,318 @@ def check_rate_mechanisms(errors, envs):
     return len(_RATE_MECHANISMS), len(covered)
 
 
+_MARGIN_FIELDS = ("kind", "rows", "quantity", "bound", "deployed", "var",
+                  "reduces", "ladder", "witness", "note")
+_RATE_FIELDS = ("kind", "rows", "quantity", "bound", "var", "shipped",
+                "shipped_why", "ladder", "witness", "note")
+
+
+def check_argued_evidence(errors, ptables):
+    """TODO #321: the ARGUED half of `_SAMPLED_TESTS`.
+
+    Two jobs.  (a) Every `exact` row says WHY it is exact and what holds at the
+    DEPLOYED parameters, and a `margin` basis owes a measurement.  (b) Every
+    hand-computed literal is ANCHORED to the test it describes, read out of
+    source, because TODO #320 found one describing a different test entirely and
+    found it by accident.
+
+    Returns (exact rows with a basis, measurements, rows they back)."""
+    try:
+        with open(_RATE_MECHANISM_INSTRUMENT, encoding="utf-8") as f:
+            instrument = f.read()
+    except OSError:
+        instrument = None       # already reported by check_rate_mechanisms
+
+    # ── (a) the `exact` census, exhaustive in both directions ────────────
+    exact_rows = {k for k, (c, _r, _x) in _SAMPLED_TESTS.items() if c == "exact"}
+    for key in sorted(exact_rows, key=str):
+        if key not in _EXACT_BASES:
+            errors.append(
+                f"argued-evidence: {list(key)} is declared `exact` -- the "
+                f"strongest verdict here and the only one contributing nothing "
+                f"to the budget -- with no _EXACT_BASES entry saying why, and "
+                f"none saying what holds at the parameters the suite deploys"
+            )
+    claimed = {}
+    for key, ent in sorted(_EXACT_BASES.items(), key=str):
+        if key not in exact_rows:
+            errors.append(
+                f"argued-evidence: _EXACT_BASES{list(key)} names a row that is "
+                f"no longer `exact` -- a row that acquired a RATE has left this "
+                f"table's subject, so delete the entry with the verdict"
+            )
+        if set(ent) != {"basis", "deployed", "evidence"}:
+            errors.append(f"argued-evidence: _EXACT_BASES{list(key)} must carry "
+                          f"exactly basis/deployed/evidence")
+            continue
+        if ent["basis"] not in ("identity", "separated", "no-assertion",
+                               "exhaustive-branches", "margin"):
+            errors.append(f"argued-evidence: _EXACT_BASES{list(key)} has "
+                          f"unknown basis {ent['basis']!r}")
+        if len(ent["deployed"]) < 80:
+            errors.append(
+                f"argued-evidence: _EXACT_BASES{list(key)} needs a substantive "
+                f"statement of what holds at the DEPLOYED parameters -- the "
+                f"question no row here had been asked (TODO #321)"
+            )
+        ev = ent["evidence"]
+        if ent["basis"] == "margin":
+            if ev is None:
+                errors.append(
+                    f"argued-evidence: _EXACT_BASES{list(key)} rests on a "
+                    f"MARGIN and names no measurement.  A margin with no "
+                    f"measured slack is the count of zeros this item replaced"
+                )
+            elif ev not in _ARGUED_MEASUREMENTS:
+                errors.append(f"argued-evidence: _EXACT_BASES{list(key)} names "
+                              f"evidence {ev!r}, which does not exist")
+        elif ev is not None:
+            errors.append(
+                f"argued-evidence: _EXACT_BASES{list(key)} is {ent['basis']!r} "
+                f"and names evidence {ev!r} -- only a `margin` basis takes one, "
+                f"or the two categories stop meaning different things"
+            )
+
+    # ── the measurements ─────────────────────────────────────────────────
+    backed = {}
+    for name, m in sorted(_ARGUED_MEASUREMENTS.items()):
+        kind = m.get("kind")
+        if kind not in ("margin", "rate"):
+            errors.append(f"argued-evidence: {name!r} has unknown kind {kind!r}")
+            continue
+        want = set(_MARGIN_FIELDS if kind == "margin" else _RATE_FIELDS)
+        if set(m) != want:
+            errors.append(
+                f"argued-evidence: {name!r} ({kind}) carries "
+                f"{sorted(set(m) ^ want)} as a field mismatch against "
+                f"{sorted(want)}"
+            )
+            continue
+        if instrument is not None and f'"{name}":' not in instrument:
+            errors.append(
+                f"argued-evidence: {name!r} has no measurer in "
+                f"spec/measure_sampled_rates.py -- a recorded measurement whose "
+                f"recipe cannot be re-run is a claim, not a record (#296's "
+                f"thrown-away harness)"
+            )
+        if "MEASURED" not in m["note"]:
+            errors.append(
+                f"argued-evidence: {name!r} does not carry the token MEASURED "
+                f"-- #304's rule, extended to the category that carries no "
+                f"number at all"
+            )
+        for field in ("quantity", "bound", "witness", "note"):
+            if len(m[field]) < 60:
+                errors.append(f"argued-evidence: {name!r} needs a substantive "
+                              f"{field!r}")
+        if not m["ladder"]:
+            errors.append(f"argued-evidence: {name!r} records no measurement")
+            continue
+        for key in m["rows"]:
+            key = tuple(key)
+            if key in backed:
+                errors.append(f"argued-evidence: {list(key)} is backed by both "
+                              f"{backed[key]!r} and {name!r} -- one row, one "
+                              f"measurement")
+            backed[key] = name
+            row = _SAMPLED_TESTS.get(key)
+            if row is None:
+                errors.append(f"argued-evidence: {name!r} backs {list(key)}, "
+                              f"which is not a _SAMPLED_TESTS row")
+                continue
+            code, rate, _reason = row
+            if code == "exact":
+                ent = _EXACT_BASES.get(key)
+                if ent is None or ent.get("evidence") != name:
+                    errors.append(
+                        f"argued-evidence: {name!r} backs the `exact` row "
+                        f"{list(key)}, which does not name it as its evidence"
+                    )
+            elif rate == "derived":
+                errors.append(
+                    f"argued-evidence: {name!r} backs {list(key)}, whose rate "
+                    f"is DERIVED -- a formula's mechanism belongs in "
+                    f"_RATE_MECHANISMS, which validates it against the "
+                    f"expression.  Two tables for two objects (TODO #320, #321)"
+                )
+
+        if kind == "margin":
+            # (a) the DEPLOYED block is held to every port's source.  This is
+            # #320's rule (3) INVERTED: there the reduced parameter had to stay
+            # strictly below what ships, because the instrument was the
+            # instrument; here the top rung IS the claim, so it must EQUAL what
+            # ships -- and #223 has moved one of these constants once already.
+            for prow, val in sorted(m["deployed"].items()):
+                spec = PARAMETERS.get(prow)
+                if spec is None:
+                    errors.append(f"argued-evidence: {name!r} names PARAMETERS "
+                                  f"row {prow!r}, which does not exist")
+                    continue
+                for lang, cname in zip(PARAM_LANGS, spec[0]):
+                    if cname is None or lang not in ptables:
+                        continue
+                    table = ptables[lang]
+                    if cname not in table:
+                        continue
+                    got = _param_eval(table[cname], table, lang,
+                                      cls=_java_cls(lang, cname))
+                    if got is not None and got != val:
+                        errors.append(
+                            f"argued-evidence: {name!r} was measured at "
+                            f"{prow} = {val} and {lang} now SHIPS "
+                            f"{cname} = {got}.  The margin was measured at "
+                            f"parameters the suite no longer deploys, which is "
+                            f"the defect this table exists to close -- re-run "
+                            f"spec/measure_sampled_rates.py rather than "
+                            f"editing the number"
+                        )
+            if m["reduces"] not in m["deployed"]:
+                errors.append(f"argued-evidence: {name!r} reduces "
+                              f"{m['reduces']!r}, which its deployed block does "
+                              f"not name")
+                continue
+            top = m["deployed"][m["reduces"]]
+            if max(m["ladder"]) != top:
+                errors.append(
+                    f"argued-evidence: {name!r}'s ladder tops out at "
+                    f"{max(m['ladder'])} and {m['reduces']} deploys {top} -- "
+                    f"the deployed rung IS the claim, so it has to be in the "
+                    f"ladder and it has to be the top of it"
+                )
+            adverse_seen = 0
+            prev = None
+            for val in sorted(m["ladder"], reverse=True):
+                rung = m["ladder"][val]
+                if not (isinstance(rung, tuple) and len(rung) == 4):
+                    errors.append(f"argued-evidence: {name!r} rung {val} is not "
+                                  f"(trials, min, mean, adverse)")
+                    continue
+                trials, mn, mean, adverse = rung
+                if trials <= 0 or not 0 <= adverse <= trials:
+                    errors.append(f"argued-evidence: {name!r} rung {val} has "
+                                  f"{adverse} adverse of {trials}")
+                    continue
+                if mn > mean:
+                    errors.append(f"argued-evidence: {name!r} rung {val} has a "
+                                  f"minimum above its mean")
+                if val == top:
+                    if adverse:
+                        errors.append(
+                            f"argued-evidence: {name!r}'s DEPLOYED rung records "
+                            f"{adverse} adverse trial(s) of {trials}.  The row "
+                            f"it backs is `exact`, which claims zero"
+                        )
+                    if mn <= 0:
+                        errors.append(
+                            f"argued-evidence: {name!r}'s deployed worst-case "
+                            f"margin is {mn}, not positive -- the row it backs "
+                            f"is `exact` and the measurement says it is not"
+                        )
+                elif val >= top:
+                    errors.append(
+                        f"argued-evidence: {name!r} has a non-deployed rung at "
+                        f"{m['reduces']} = {val}, which is not BELOW the "
+                        f"shipped {top}.  A reduced parameter is an instrument "
+                        f"and must stay local (#320's rule 3)"
+                    )
+                if prev is not None and mean > prev:
+                    errors.append(
+                        f"argued-evidence: {name!r}'s mean margin RISES from "
+                        f"{prev} to {mean} as {m['reduces']} falls to {val} -- "
+                        f"the ladder has no cliff and so demonstrates nothing"
+                    )
+                prev = mean
+                adverse_seen += adverse
+            if not adverse_seen:
+                errors.append(
+                    f"argued-evidence: {name!r}'s ladder never reaches an "
+                    f"adverse trial, so the witness was only ever checked on "
+                    f"the agreeing branch -- #296's rule that a branch a "
+                    f"random stream never enters is not covered either"
+                )
+        else:
+            if len(m["shipped_why"]) < 60:
+                errors.append(f"argued-evidence: {name!r} needs a reason its "
+                              f"shipped {m['var']} cannot be read from source")
+            events_seen = 0
+            for val in sorted(m["ladder"]):
+                rung = m["ladder"][val]
+                if not (isinstance(rung, tuple) and len(rung) == 3):
+                    errors.append(f"argued-evidence: {name!r} rung {val} is not "
+                                  f"(trials, events, predicted)")
+                    continue
+                trials, events, predicted = rung
+                if val >= m["shipped"]:
+                    errors.append(
+                        f"argued-evidence: {name!r} measures at {m['var']} = "
+                        f"{val} and the test SHIPS {m['shipped']} -- the "
+                        f"reduced parameter has reached a default (#320's "
+                        f"rule 3)"
+                    )
+                if trials <= 0 or not 0 <= events <= trials:
+                    errors.append(f"argued-evidence: {name!r} rung {val} has "
+                                  f"{events} of {trials}")
+                    continue
+                sd = math.sqrt(trials * predicted * (1 - predicted))
+                if abs(events - trials * predicted) > 6 * sd:
+                    errors.append(
+                        f"argued-evidence: {name!r} at {m['var']}={val} records "
+                        f"{events}/{trials} against a prediction of "
+                        f"{trials * predicted:.2f} -- outside 6 sigma "
+                        f"({sd:.2f}), so the record contradicts its own bound"
+                    )
+                events_seen += events
+            if not events_seen:
+                errors.append(
+                    f"argued-evidence: {name!r}'s whole ladder observed ZERO "
+                    f"events, which is the 0/N this item exists not to produce "
+                    f"-- lower the parameter rather than raising the trials"
+                )
+
+    for name in sorted(_ARGUED_MEASUREMENTS):
+        if name not in set(backed.values()):
+            errors.append(f"argued-evidence: {name!r} backs no row -- a "
+                          f"measurement whose subject has gone stays only as "
+                          f"something to re-derive later")
+
+    # ── (b) the literal anchors ──────────────────────────────────────────
+    bodies = {l: _numbered_test_bodies(l) for l in NUMBERED_TEST_FILES}
+    texts = {}
+    for lang, (path, _rx) in NUMBERED_TEST_FILES.items():
+        with open(path, encoding="utf-8") as f:
+            texts[lang] = f.read()
+    for key in sorted(_SAMPLED_TEST_RATE_LITERAL, key=str):
+        scope, num = key
+        ent = _SAMPLED_TEST_RATE_LITERAL[key]
+        if not (isinstance(ent, tuple) and len(ent) == 3):
+            errors.append(f"argued-evidence: _SAMPLED_TEST_RATE_LITERAL"
+                          f"{list(key)} must be (lang, anchor, reason)")
+            continue
+        lang, anchor, _reason = ent
+        if lang not in NUMBERED_TEST_FILES:
+            errors.append(f"argued-evidence: _SAMPLED_TEST_RATE_LITERAL"
+                          f"{list(key)} anchors in unknown language {lang!r}")
+            continue
+        if scope not in ("shared",) and scope != lang:
+            errors.append(
+                f"argued-evidence: _SAMPLED_TEST_RATE_LITERAL{list(key)} is "
+                f"scoped to {scope!r} and anchors in {lang!r}"
+            )
+        n_file = len(re.findall(anchor, texts[lang]))
+        body = bodies.get(lang, {}).get(num, "")
+        n_body = len(re.findall(anchor, body))
+        if n_file != 1 or n_body != 1:
+            errors.append(
+                f"argued-evidence: _SAMPLED_TEST_RATE_LITERAL{list(key)}'s "
+                f"anchor {anchor!r} matched {n_file} time(s) in {lang}'s "
+                f"harness and {n_body} inside [{num}]'s own body, not exactly "
+                f"once each.  Re-anchor it: a reason pinned to the wrong test "
+                f"reads exactly like one pinned to the right test, which is how "
+                f"('java', 26)'s described [28] for two releases"
+            )
+    return len(_EXACT_BASES), len(_ARGUED_MEASUREMENTS), len(backed)
+
+
 def check_sampled_tests(errors, numbers):
     """TODO #316: which numbered tests decide a verdict from a fresh sample."""
     drawn = {}
@@ -1567,7 +2352,7 @@ def check_sampled_tests(errors, numbers):
                 f"_SAMPLED_TEST_RATES entry, or say in "
                 f"_SAMPLED_TEST_RATE_LITERAL why the number is hand-computed"
             )
-        elif len(_SAMPLED_TEST_RATE_LITERAL[key]) < 40:
+        elif len(_SAMPLED_TEST_RATE_LITERAL[key][-1]) < 40:
             errors.append(f"sampled-rates: {list(key)} needs a reason its rate "
                           f"cannot be derived")
     for key in sorted(_SAMPLED_TEST_RATE_LITERAL, key=str):
@@ -6110,6 +6895,17 @@ def _print_sampled_rates():
         print(f"{str(list(key)):16} {r:.1e}  hand-computed (reason recorded)")
     print(f"\nderived {total:.3e} + hand-computed {lit:.3e} = {total + lit:.3e} "
           f"against a budget of {_SAMPLED_TEST_BUDGET:.0e}")
+    # TODO #321.  The rows that contribute NOTHING to that sum are the ones
+    # worth printing beside it, since that is the category #304 showed decays.
+    print("\nexact rows (rate zero, contributing nothing to the sum above):")
+    for key, ent in sorted(_EXACT_BASES.items(), key=str):
+        ev = f" -> {ent['evidence']}" if ent["evidence"] else ""
+        print(f"{str(list(key)):16} {ent['basis']}{ev}")
+    print("\nargued rows held to a MEASURED record:")
+    for name, m in sorted(_ARGUED_MEASUREMENTS.items()):
+        rows = ", ".join(f"[{n}]/{sc}" for sc, n in m["rows"])
+        print(f"  {name} ({m['kind']}) for {rows}, reducing {m['var']} over "
+              f"{sorted(m['ladder'], reverse=True)}")
     if errors:
         print("\nERRORS:")
         for e in errors:
@@ -6128,6 +6924,8 @@ def main():
     check_shared_numbering(errors, numbers)
     (sampled_drawn, sampled_rate, sampled_rated,
      sampled_mechs, sampled_mech_rows) = check_sampled_tests(errors, numbers)
+    argued_exact, argued_meas, argued_rows = check_argued_evidence(
+        errors, _param_tables())
     verdicts_pinned = check_verdict_fingerprints(errors)
     checked = check_primitives(errors)
     census = check_census(errors)
@@ -6164,10 +6962,22 @@ def main():
         f"{sampled_mechs} validated formula(s) and "
         f"{len(_RATE_MECHANISM_UNMEASURED)} declared unmeasurable, and "
         f"{len(_SAMPLED_TEST_RATE_LITERAL)} are hand-computed with a recorded "
-        f"reason they cannot be) and "
+        f"reason they cannot be, each ANCHORED to the test it describes) and "
         f"{len(_SAMPLED_TEST_CONSTANT)} draw nothing that reaches a verdict.  "
         f"Summed false-failure rate {sampled_rate:.1e} per run against a budget "
-        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316, #319, #320)."
+        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316, #319, #320, #321)."
+    )
+    n_margin = sum(1 for m in _ARGUED_MEASUREMENTS.values()
+                   if m.get("kind") == "margin")
+    print(
+        f"OK: the ARGUED half — all {argued_exact} `exact` row(s) record WHY "
+        f"the rate is zero and what holds at the parameters the suite DEPLOYS; "
+        f"{argued_rows} argued rows carry measured evidence over "
+        f"{argued_meas} record(s) ({n_margin} measured MARGIN, "
+        f"{argued_meas - n_margin} measured rate), each with an exact "
+        f"per-trial witness; and all {len(_SAMPLED_TEST_RATE_LITERAL)} "
+        f"hand-computed literal(s) are anchored to the test they describe.  An "
+        f"`exact` verdict owes a SLACK, not a count of zeros (TODO #321)."
     )
     n_none = sum(1 for v in _VERDICT_FINGERPRINTS.values() if v == "none")
     print(

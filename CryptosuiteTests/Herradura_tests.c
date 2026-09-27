@@ -1754,7 +1754,9 @@ static void test_bit_frequency(void)
          * truncation cuts N to 1000x fewer samples, so the check failed on
          * sample noise rather than on bias.  Keeping the 6-sigma intent and
          * letting the window follow N reproduces +/-3.00 exactly at N=10000
-         * and stays sound below it; the union bound over 256+128+64 bits puts
+         * and stays sound below it; the union bound over 32+64+128+256 = 480
+         * bits (it said 256+128+64 until TODO #321 audited it, dropping the
+         * 32-bit size this loop sweeps -- the lenient direction) puts
          * the false-alarm rate near 1e-6 per run. */
         tol = N > 0 ? 6.0 * 50.0 / hsqrt((double)N) : 100.0;
         /* At tol >= 50 the window spans the whole 0-100% range, so the check

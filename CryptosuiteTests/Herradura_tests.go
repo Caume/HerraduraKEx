@@ -274,7 +274,10 @@ func testBitFrequency() {
 		// failed on sample noise rather than on bias.  Keeping the 6-sigma
 		// intent and letting the window follow nRun reproduces +/-3.00
 		// exactly at N=10000 and stays sound below it; the union bound over
-		// 256+128+64 bits puts the false-alarm rate near 1e-6 per run.
+		// 32+64+128+256 = 480 bits puts the false-alarm rate near 1e-6 per
+		// run.  Said 256+128+64 until TODO #321 audited it, dropping the
+		// 32-bit size this loop sweeps -- too few union terms understates the
+		// rate, i.e. the lenient direction (9.5e-7 against 8.8e-7).
 		tol := 100.0
 		if nRun > 0 { tol = 6.0 * 50.0 / math.Sqrt(float64(nRun)) }
 		// At tol >= 50 the window spans the whole 0-100% range, so the check

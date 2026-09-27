@@ -1475,7 +1475,11 @@ def test_bit_frequency():
         # failed on sample noise rather than on bias.  Keeping the 6-sigma
         # intent and letting the window follow n_run reproduces +/-3.00
         # exactly at N=10000 and stays sound below it; the union bound over
-        # 256+128+64 bits puts the false-alarm rate near 1e-6 per run.
+        # 32+64+128+256 = 480 bits puts the false-alarm rate near 1e-6 per
+        # run.  That enumeration said 256+128+64 until TODO #321 audited it,
+        # dropping the 32-bit size this very loop sweeps: a union bound over
+        # too few terms understates the rate, so the slip was in the lenient
+        # direction (it does not move the figure -- 8.8e-7 against 9.5e-7).
         tol = 6.0 * 50.0 / math.sqrt(n_run) if n_run > 0 else 100.0
         # At tol >= 50 the window spans the whole 0-100% range, so the check
         # cannot discriminate at all (n_run <= 36).  Say SKIP rather than

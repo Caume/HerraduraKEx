@@ -74,6 +74,7 @@ Usage:
     python3 spec/measure_sampled_rates.py                 # every mechanism
     python3 spec/measure_sampled_rates.py -m corrupted-syndrome
     python3 spec/measure_sampled_rates.py --trials 100    # a quicker sketch
+    python3 spec/measure_sampled_rates.py --only argued   # TODO #321's half
 """
 
 import argparse
@@ -86,7 +87,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 sys.path.insert(0, HERE)
-from check_language_parity import _RATE_MECHANISMS   # noqa: E402
+from check_language_parity import (_RATE_MECHANISMS,        # noqa: E402
+                                   _ARGUED_MEASUREMENTS)
 
 
 def _harness():
@@ -205,11 +207,236 @@ def _measure_zkboo_poke(H, rounds, trials):
     return acc, wit, alt, ctrl
 
 
+def _measure_ring_forgery(H, rounds, trials):
+    """java [26] (TODO #321): a ring signature produced with a witness that
+    matches NO member's syndrome.  Detecting event: any round whose challenge
+    for the forging member is b != 1, because TWO branches catch it -- b = 0
+    binds wt(respA ^ respB) = t (TODO #298's fix, which did not exist when this
+    test's rate was written down) and b = 2 checks H(pi_seed, Hy ^ syndrome).
+    Only b = 1 reads neither, so the rate is (1/3)^rounds.
+
+    Alternative under test: "no b = 2 round" -- the PRE-#298 mechanism, when
+    b = 0 bound nothing, and still what SelfTest.java's comment and both spec/
+    tables said.  It predicts (2/3)^rounds, 4.6 million times larger at the
+    shipped 32 rounds, and it is what made TODO #260 see a real flake at 8.
+
+    Run at the harness's own ring width n = 32 rather than at Java's 256: the
+    mechanism is a statement about which verifier BRANCH reads what, identical
+    in the two ports' source, and one n = 256 trial costs 6.7 s against 0.5 s
+    here -- 1.7 hours for the ladder instead of 13 minutes."""
+    n = 32
+    k = 4                           # Java's ring size, not the harness's 3
+    acc = wit = alt = ctrl = 0
+    for _ in range(trials):
+        keys, errs = [], []
+        for _ in range(k):
+            seed_i, e_i, syn_i = H.stern_f_keygen(n)
+            keys.append((seed_i, syn_i))
+            errs.append(e_i)
+        msg = H.BitArray.random(n)
+        # The accept control, as everywhere here: an honest ring signature must
+        # verify, or a signer producing nothing verifiable scores every trial a
+        # rejection and reads as a perfect result (#234's vacuous pass).
+        honest = H.hpks_stern_ring_sign_local(msg, errs[0], 0, keys, n, rounds)
+        if H.hpks_stern_ring_verify_local(msg, honest, keys, n):
+            ctrl += 1
+        bad = H.BitArray.random(n).uint      # matches no member's syndrome
+        sig = H.hpks_stern_ring_sign_local(msg, bad, 0, keys, n, rounds)
+        out = H.hpks_stern_ring_verify_local(msg, sig, keys, n)
+        ch = sig[1][0]                       # the forging member's challenges
+        acc += bool(out)
+        wit += (bool(out) == all(b == 1 for b in ch))
+        alt += (bool(out) == (2 not in ch))
+    return acc, wit, alt, ctrl
+
+
 _MEASURERS = {
     "corrupted-syndrome": _measure_corrupted_syndrome,
     "offweight-witness":  _measure_offweight_witness,
     "zkboo-poke":         _measure_zkboo_poke,
+    "ring-forgery":       _measure_ring_forgery,
 }
+
+
+# ── the ARGUED half: TODO #321 ────────────────────────────────────────────
+#
+# #320's three measurers above validate a FORMULA.  These two validate a row
+# that has no formula: an `exact` verdict, whose claim is that the rate is
+# ZERO, and a literal whose mechanism nobody had measured.  The shapes differ
+# because the objects do -- a MARGIN is not a rate, which is the whole point:
+# a rate has to be counted and an inequality can be read off one trial with as
+# many samples in it as the statement has coefficients.
+
+def _measure_rnl_margin(H, p, trials):
+    """[14] (TODO #321): HKEX-RNL Peikert reconciliation, at the DEPLOYED ring.
+
+    The quantity is the signed distance from each reconciled coefficient to the
+    nearest value of B's error that would move its 2-bit bucket, minimised over
+    the key_bits//2 coefficients reconciliation actually reads.  Its SIGN is not
+    a proxy for agreement -- it IS agreement, which is what makes the witness
+    exact rather than statistical.
+
+    The per-coefficient room is residue-dependent and ASYMMETRIC, which is the
+    finding: with r = (4c + (2h+1)*(q//4)) mod q, B may run down by r//4 and up
+    by (q-1-r)//4, and over all 65537 residues the smallest error that can flip
+    a bucket is exactly q//32 = 2048 downward and 3q/32 = 6145 upward, i.e. the
+    room bottoms out at 2047 down and 6144 up.  SecurityProofs-4.md 480's
+    "max per-coeff error << q/8" is therefore 4x too generous -- in the LENIENT
+    direction, so it overstates the safety factor rather than the risk.
+
+    `p` is the public-key rounding modulus and the ladder's reduced parameter;
+    lowering it scales the rounding error of lift() as q/(2p), i.e. as 1/p, so
+    the cliff is reachable in four rungs and its position is predicted rather
+    than hunted for.  The DEPLOYED rung is the top one and is the claim.
+    """
+    q, pp, qq, hq = H.RNLQ, H.RNLPP, H.RNLQ // 4, H.RNLQ // 2
+    # The DEPLOYED ring and key width come from the table's own `deployed`
+    # block, which check_language_parity.py holds to every port's source -- so
+    # there is one place that says 1024, and it is a place that fails if the
+    # suite moves (#223 moved this very constant once already).
+    dep = _ARGUED_MEASUREMENTS["rnl-reconciliation-margin"]["deployed"]
+    n, key_bits = dep["rnl-n"], dep["keybits"]
+    margins = []
+    adverse = wit = 0
+    maxerr = 0
+    for _ in range(trials):
+        m = H._rnl_poly_add(H._rnl_m_poly(n), H._rnl_rand_poly(n, q), q)
+        sA, CA = H._rnl_keygen(m, n, q, p)
+        sB, CB = H._rnl_keygen(m, n, q, p)
+        KA = H._rnl_poly_mul(sA, H._rnl_lift(CB, p, q), q, n)
+        KB = H._rnl_poly_mul(sB, H._rnl_lift(CA, p, q), q, n)
+        hint = H._rnl_hint(KA, q)
+        agree = (H._rnl_reconcile_bits(KA, hint, q, pp, key_bits)
+                 == H._rnl_reconcile_bits(KB, hint, q, pp, key_bits))
+        worst = None
+        for i in range(key_bits // 2):
+            c, h = KA[i], hint[i]
+            d = (KB[i] - c) % q
+            e = d - q if d > hq else d
+            maxerr = max(maxerr, abs(e))
+            r = (4 * c + (2 * h + 1) * qq) % q
+            mg = min(e + r // 4, (q - 1 - r) // 4 - e)
+            worst = mg if worst is None else min(worst, mg)
+        margins.append(worst)
+        adverse += (not agree)
+        # THE WITNESS.  Nothing statistical about it: the margin's sign and the
+        # reconciliation's answer are the same fact computed two ways, so one
+        # mismatch means the quantity recorded in the table is not the quantity
+        # the code decides on.
+        wit += (agree == (worst >= 0))
+    return (min(margins), sum(margins) / len(margins), adverse, wit, maxerr)
+
+
+def _measure_sigma_collision(H, t, trials):
+    """[21] (TODO #321): ZKP-RNL's tampered-commitment case, which is NOT exact.
+
+    [21] increments w[0] and requires the verifier to reject.  The verifier
+    recomputes the Fiat-Shamir challenge over the tampered w and rejects when it
+    disagrees with the claimed one -- so the case turns on a CHALLENGE
+    COLLISION, and the challenge is a weight-t signed sparse polynomial, i.e. a
+    space of comb(n, t) * 2^t.  On a collision the residual-norm check sees one
+    coefficient shifted by 1 inside a slack of t*(q//(2p)+1) and accepts, so the
+    row's `exact` verdict is wrong at about 1 trial in 575 360 at n = 32.
+
+    `t` is the ladder's reduced parameter because it is the only one that moves
+    the space by orders of magnitude without changing the mechanism; the shipped
+    value at n = 32 is 4, and it comes from _sigma_params' module-level dict
+    rather than from anything inside the test, which is why this row's rate
+    stays a literal (see _SAMPLED_TEST_RATE_LITERAL)."""
+    q = H.RNLQ
+    n = 32
+    H._SIGMA_T[n] = t                      # instrument-local, never shipped
+    m_base = H._rnl_m_poly(n)
+    acc = wit = alt = ctrl = ran = 0
+    for _ in range(trials):
+        m = H._rnl_poly_add(m_base, H._rnl_rand_poly(n, q), q)
+        s_poly, C = H._rnl_keygen(m, n, q, H.RNLP)
+        try:
+            w, c, z = H._rnl_sigma_sign(s_poly, m, C, n, H.ZKP_MSG)
+        except RuntimeError:
+            continue                        # #291: a trial that did not run
+        ran += 1
+        if H._rnl_sigma_verify(m, C, n, H.ZKP_MSG, w, c, z):
+            ctrl += 1
+        wt = list(w)
+        wt[0] += 1
+        out = H._rnl_sigma_verify(m, C, n, H.ZKP_MSG, wt, c, z)
+        coll = (c == H._sigma_challenge(m, C, wt, n, q, t, H.ZKP_MSG))
+        acc += bool(out)
+        wit += (bool(out) == coll)
+        # The ALTERNATIVE: "the residual-norm check is what catches it", which
+        # is what an `exact` verdict on this case amounts to.  Measured against
+        # the z-tamper case in the same test, where the norm check genuinely IS
+        # the detector -- so the two cases are shown to be different mechanisms
+        # rather than two descriptions of one.
+        zt = list(z)
+        zt[0] += 1
+        alt += (bool(out) == bool(H._rnl_sigma_verify(m, C, n, H.ZKP_MSG,
+                                                     w, c, zt)))
+    return acc, wit, alt, ctrl, ran
+
+
+_ARGUED_MEASURERS = {
+    "rnl-reconciliation-margin": _measure_rnl_margin,
+    "sigma-challenge-collision": _measure_sigma_collision,
+}
+
+
+def _run_argued(want, override):
+    """The TODO #321 half.  Same contract as the mechanisms above: the exit
+    status rests on the WITNESS, which is exact, and the numbers are
+    corroboration."""
+    failures = []
+    H = _harness()
+    for name in want:
+        spec = _ARGUED_MEASUREMENTS[name]
+        rows = ", ".join(f"[{n}]/{s}" for s, n in spec["rows"])
+        print(f"── {name}  ({rows})  [{spec['kind']}]")
+        print(f"   quantity  {spec['quantity']}")
+        print(f"   bound     {spec['bound']}")
+        tot = totwit = 0
+        for key in sorted(spec["ladder"], reverse=True):
+            rung = spec["ladder"][key]
+            flags = []
+            if spec["kind"] == "margin":
+                rec_trials = rung[0]
+                trials = override or rec_trials
+                mn, mean, adverse, wit, maxe = _ARGUED_MEASURERS[name](
+                    H, key, trials)
+                tot += trials
+                totwit += wit
+                if wit != trials:
+                    flags.append(f"WITNESS {wit}/{trials}")
+                if key == max(spec["ladder"]) and adverse:
+                    flags.append(f"DEPLOYED RUNG HAS {adverse} ADVERSE TRIAL(S)")
+                verdict = "PASS" if not flags else "FAIL: " + "; ".join(flags)
+                print(f"   {spec['var']}={key:<5} trials={trials:<5} "
+                      f"min={mn:<7} mean={mean:<9.1f} adverse={adverse:<5} "
+                      f"max|e|={maxe:<6} witness={wit}/{trials}  [{verdict}]")
+            else:
+                rec_trials, _rec_ev, predicted = rung
+                trials = override or rec_trials
+                acc, wit, alt, ctrl, ran = _ARGUED_MEASURERS[name](H, key, trials)
+                tot += ran
+                totwit += wit
+                sd = math.sqrt(max(ran, 1) * predicted * (1 - predicted))
+                lo, hi = ran * predicted - 6 * sd, ran * predicted + 6 * sd
+                if wit != ran:
+                    flags.append(f"WITNESS {wit}/{ran}")
+                if ctrl != ran:
+                    flags.append(f"ACCEPT-CONTROL {ctrl}/{ran}")
+                if not lo <= acc <= hi:
+                    flags.append(f"RATE outside 6 sigma [{lo:.1f}, {hi:.1f}]")
+                verdict = "PASS" if not flags else "FAIL: " + "; ".join(flags)
+                print(f"   {spec['var']}={key:<5} trials={ran:<5} "
+                      f"events={acc:<5} predicted={ran * predicted:<9.2f} "
+                      f"witness={wit}/{ran} alternative={alt}/{ran}  [{verdict}]")
+            if flags:
+                failures.append(f"{name} at {spec['var']}={key}: "
+                                + "; ".join(flags))
+        print(f"   TOTAL     witness {totwit}/{tot} exact")
+        print()
+    return failures
 
 
 def main(argv=None):
@@ -218,6 +445,9 @@ def main(argv=None):
                     help="measure only this mechanism (repeatable)")
     ap.add_argument("--trials", type=int, default=None,
                     help="override the recorded trial count per rung")
+    ap.add_argument("--only", choices=("mechanisms", "argued"), default=None,
+                    help="run only TODO #320's formula mechanisms, or only "
+                         "TODO #321's argued-row evidence")
     args = ap.parse_args(argv)
 
     # Exhaustive in both directions, like every curated table in spec/: a
@@ -234,17 +464,40 @@ def main(argv=None):
                   f"does not record")
         return 1
 
-    want = args.mechanism or sorted(_RATE_MECHANISMS)
-    bad = [m for m in want if m not in _RATE_MECHANISMS]
-    if bad:
-        print(f"FAIL: unknown mechanism(s): {', '.join(bad)}")
+    missing = sorted(set(_ARGUED_MEASUREMENTS) - set(_ARGUED_MEASURERS))
+    extra = sorted(set(_ARGUED_MEASURERS) - set(_ARGUED_MEASUREMENTS))
+    if missing or extra:
+        for k in missing:
+            print(f"FAIL: _ARGUED_MEASUREMENTS records {k!r} and this file has "
+                  f"no measurer for it")
+        for k in extra:
+            print(f"FAIL: this file measures {k!r}, which "
+                  f"_ARGUED_MEASUREMENTS does not record")
         return 1
 
-    print("TODO #320: mechanism validation for the derived false-failure rates")
-    print("(a rate check validates the arithmetic; only a witness check "
-          "validates the mechanism)\n")
-    H = _harness()
+    known = set(_RATE_MECHANISMS) | set(_ARGUED_MEASUREMENTS)
+    if args.mechanism:
+        bad = [m for m in args.mechanism if m not in known]
+        if bad:
+            print(f"FAIL: unknown mechanism(s): {', '.join(bad)}")
+            return 1
+        want = [m for m in args.mechanism if m in _RATE_MECHANISMS]
+        want_argued = [m for m in args.mechanism if m in _ARGUED_MEASUREMENTS]
+    else:
+        want = sorted(_RATE_MECHANISMS)
+        want_argued = sorted(_ARGUED_MEASUREMENTS)
+    if args.only == "mechanisms":
+        want_argued = []
+    elif args.only == "argued":
+        want = []
+
+    if want:
+        print("TODO #320: mechanism validation for the derived false-failure "
+              "rates")
+        print("(a rate check validates the arithmetic; only a witness check "
+              "validates the mechanism)\n")
     failures = []
+    H = _harness() if want else None
     for name in want:
         spec = _RATE_MECHANISMS[name]
         rows = ", ".join(f"[{n}]/{s}" for s, n in spec["rows"])
@@ -291,6 +544,11 @@ def main(argv=None):
             print(f"   [FAIL] {msg}")
             failures.append(msg)
         print()
+
+    if want_argued:
+        print("TODO #321: the ARGUED half -- an `exact` verdict owes a SLACK, "
+              "not a count of zeros\n")
+        failures += _run_argued(want_argued, args.trials)
 
     if failures:
         print("*** FAILED: the recorded mechanism does not match what the code "

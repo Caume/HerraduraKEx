@@ -215,7 +215,7 @@ Alice transmits the hint vector $(h_0,\ldots,h_{n/2-1})$ alongside her public ke
 $$b_i = \left\lfloor \frac{4c_i + (2h_i+1)\lfloor q/4 \rfloor}{q} \right\rfloor \bmod 4$$
 The extracted key is $K_\text{raw} = \sum_{i=0}^{k/2-1} b_i 4^i$ (first $k/2$ coefficients, $k$ = key bits; e.g. $k/2=128$ coefficients for a 256-bit key at $n=256$).
 
-3. **Correctness guarantee.** Empirical measurement shows $\max_i |K_{\text{poly,A}}[i] - K_{\text{poly,B}}[i]| \leq 379 \ll q/8 = 8192$.  The factor $(2h_i+1)$ in the extraction formula places each extraction grid point at an **odd multiple of $q/4$**, ensuring correct modular wrap-around at $c \approx 0$ and $c \approx q$.  Verified: **0 failures** over 53,751 test cases with $|\text{error}| \leq 380$.
+3. **Correctness guarantee.** Empirical measurement shows $\max_i |K_{\text{poly,A}}[i] - K_{\text{poly,B}}[i]| \leq 379 \ll q/32 = 2048$.  That threshold said q/8 = 8192 until TODO #321 DERIVED it exactly, over all 65537 residues rather than by quoting the grid spacing: the smallest error that can flip a bucket is 2048 = q/32 downward and 6145 = 3q/32 upward, so the room bottoms out at 2047 and the guaranteed symmetric bound is a quarter of what this line carried, asymmetric 3:1.  The error was lenient — it overstated the safety factor fourfold and never put correctness at risk — and it is why #321 records the margin MEASURED at the deployed n = 1024 ring (worst slack 1647 over 1000 trials, mean 2019.3, cliff located at p = 512) instead of at the retired widths the Q2 table below samples.  The factor $(2h_i+1)$ in the extraction formula places each extraction grid point at an **odd multiple of $q/4$**, ensuring correct modular wrap-around at $c \approx 0$ and $c \approx q$.  Verified: **0 failures** over 53,751 test cases with $|\text{error}| \leq 380$.
 
 **KDF post-processing.**  The reconciled raw key $K$ is passed through NL-FSCX v1 with a rotated seed:
 
@@ -476,7 +476,7 @@ All rows below use $n = 16$ unless noted.
 | **Key-agreement failure rate** ($q=65537$, $n=256$, $p=4096$, $\eta=1$), 5 000 trials | **1 862 / 5 000 = 37.24%** (95% CI: 35.9–38.6%) | Completely unusable without reconciliation. Per-coeff error accumulates as $O(\sqrt{n})$ via ring convolution. `hkex_rnl_failure_rate.py` §3 |
 | Max per-coeff error $\|e_A - e_B\|_\infty$ ($n=32$, 10 000 trials) | 134 (0.82% of extraction threshold 16 384) | Individual errors are tiny; failures occur only near extraction boundaries. §2 |
 | $p$-sensitivity at $n=32$: failure rate vs. $p \in \{512,\ldots,8192\}$ | 14.7% → 8.45% → 4.4% → 2.2% → 0.80% | No tested $p$ achieves <1%; architectural fix (reconciliation hints) required. §4 |
-| **Peikert reconciliation failure rate** ($q=65537$, $n=32$, $p=4096$, $\eta=1$), 10 000 trials | **0 / 10 000 = 0%** | Reconciliation eliminates all key-agreement failures; correctness guaranteed by max per-coeff error ≪ $q/8$. `hkex_rnl_failure_rate.py` §5 |
+| **Peikert reconciliation failure rate** ($q=65537$, $n=32$, $p=4096$, $\eta=1$), 10 000 trials | **0 / 10 000 = 0%** | Reconciliation eliminates all key-agreement failures; correctness guaranteed by max per-coeff error ≪ $q/32$ (it said q/8 until TODO #321 derived the bound exactly; see §11.4.2 item 3). `hkex_rnl_failure_rate.py` §5 |
 | **Peikert reconciliation failure rate** ($q=65537$, $n=256$, $p=4096$, $\eta=1$), 5 000 trials | **0 / 5 000 = 0%** | Confirmed at full suite parameter size. `hkex_rnl_failure_rate.py` §5 |
 
 #### Q3 — NL-FSCX injectivity and inverse
@@ -528,7 +528,7 @@ Peikert 2-bit reconciliation hints (§11.4.2, v1.7.0) eliminate all failures whi
 | $n=32$, $p=4096$, $\eta=1$, 10 000 trials | 2.04% (204/10 000) | **0%** (0/10 000) |
 | $n=256$, $p=4096$, $\eta=1$, 5 000 trials | 37.24% (1 862/5 000) | **0%** (0/5 000) |
 
-Alice generates and transmits a 2-bit hint per coefficient ($h_i \in \{0,1,2,3\}$, packed 2 bits/byte); both parties use the hint for 2-bit-per-coefficient extraction.  The maximum per-coefficient error $\leq 379 \ll q/8 = 8192$ guarantees the hint always resolves boundary crossings correctly.  Security assumptions are unchanged: the hint is derived from the public $K_\text{poly}$ after rounding and reveals no information about $s_A$.
+Alice generates and transmits a 2-bit hint per coefficient ($h_i \in \{0,1,2,3\}$, packed 2 bits/byte); both parties use the hint for 2-bit-per-coefficient extraction.  The maximum per-coefficient error $\leq 379 \ll q/32 = 2048$ (see §11.4.2 item 3 — this bound said q/8 until TODO #321) guarantees the hint always resolves boundary crossings correctly.  Security assumptions are unchanged: the hint is derived from the public $K_\text{poly}$ after rounding and reveals no information about $s_A$.
 
 **Status.** The NL-FSCX primitives and HKEX-RNL were implemented across all languages in v1.5.0.
 The CBD(η=1) secret sampler was deployed in v1.5.3.  Failure rates characterised in v1.5.15.
