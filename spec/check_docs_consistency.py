@@ -596,6 +596,18 @@ DOC_COUNTS = [
      r"with (\d+) of those held to a MEASURED mechanism",
      r"\*\*(\d+) of the \d+ derived rows carry a MEASURED mechanism\*\*",
      "check_language_parity.py's _RATE_MECHANISMS, quoted in CLAUDE.md's Testing section"),
+    # TODO #321.  And how many of the rows with NO formula carry measured
+    # evidence, which is the number that says whether the ARGUED half was ever
+    # checked against the code at all.  It is a row for #304's reason twice over:
+    # `exact` is the only verdict contributing nothing to the advertised budget,
+    # so a row quietly reverting from a measured margin to a prose argument moves
+    # nothing anyone reads -- unless it moves this.
+    ("argued rows with measured evidence",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"(\d+) argued rows carry measured evidence",
+     r"\*\*(\d+) argued rows carry measured evidence\*\*",
+     "check_language_parity.py's _ARGUED_MEASUREMENTS, quoted in CLAUDE.md's "
+     "Testing section"),
     # TODO #303.  The replay tables' sizes are the count of what the four ports
     # are actually held against each other on, and CLAUDE.md wrote both out by
     # hand -- "four samplers", "five whole OPERATIONS" -- so adding a row left

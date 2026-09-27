@@ -1917,7 +1917,32 @@ spec/                                                — machine-readable protoc
                                                       STRICTLY BELOW every port's shipped
                                                       value of the same variable -- the
                                                       variable and not the rate, since [45]
-                                                      carries a trials multiplier
+                                                      carries a trials multiplier.
+                                                      SINCE TODO #321 IT ALSO MEASURES THE
+                                                      ARGUED HALF, the rows with no formula
+                                                      to be the wrong function of:
+                                                      _EXACT_BASES makes every `exact` row
+                                                      state why its rate is ZERO and what
+                                                      holds at the parameters the suite
+                                                      DEPLOYS when the test does not run
+                                                      there, and _ARGUED_MEASUREMENTS backs
+                                                      the one that rests on an inequality
+                                                      with a measured SLACK.  Two shapes,
+                                                      because a margin is not a rate: a
+                                                      margin rung records (trials, min,
+                                                      mean, adverse) and a rate rung
+                                                      (trials, events, predicted), and
+                                                      collapsing them would mean counting
+                                                      the margin's sign -- the 0/N that
+                                                      item exists not to produce.  The
+                                                      DEPLOYED block is held to every port's
+                                                      source, which is rule (3) INVERTED:
+                                                      there the reduced parameter had to
+                                                      stay strictly below what ships, here
+                                                      the top rung IS the claim and must
+                                                      EQUAL it, so #223 moving RNL_N or
+                                                      RNL_P again fails the record rather
+                                                      than aging it
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 BITARRAY.md                                          — the NORMATIVE BitArray specification
@@ -2838,10 +2863,10 @@ Neither covers the case where **the decision is unchanged and the rate underneat
 moves**: a rate was a LITERAL and its formula was prose, so the arithmetic was checked by
 nobody and its inputs by nobody. Lower `[45]`'s round count and `PARAMETERS` compares the
 constant across four languages and finds them agreeing, the fingerprint excludes it, and
-`_TEST_DRAWS` still sees the same draw — while the banner goes on printing 1.0e-5 against a
+`_TEST_DRAWS` still sees the same draw — while the banner goes on printing 1.7e-5 against a
 true rate of **7.8%**, the pre-#234 figure that made that test fail 38.5% of runs. A rate
 in `_SAMPLED_TEST_RATES` is now an EXPRESSION over constants read out of the source per
-port, and **5 of the 14 rated rows are evaluated from source every run** over 20 variable
+port, and **6 of the 15 rated rows are evaluated from source every run** over 21 variable
 cells; the other 9 are named in `_SAMPLED_TEST_RATE_LITERAL` with a reason they cannot be,
 exhaustive in both directions so expressing a rate FORCES its literal entry out. Five
 things carry forward. (1) **THE CONSTANT IS NOT WHERE THE PROSE SAID IT WAS, AND IN TWO
@@ -2907,7 +2932,7 @@ item that restated it. `_RATE_MECHANISMS` is #304's move one level down: that it
 a `follows` gate to carry a rate AND the token `MEASURED` because "the arithmetic is only
 as good as the null it is done against", and here the arithmetic is only as good as the
 MECHANISM, where #319 shipped 14 rated rows with **not one of them held to a measurement**.
-**5 of the 5 derived rows carry a MEASURED mechanism**, over 3 validated formulas, with 0
+**6 of the 6 derived rows carry a MEASURED mechanism**, over 4 validated formulas, with 0
 declared unmeasurable. Five things carry forward. (1) **A FREQUENCY CHECK WOULD HAVE
 CONFIRMED THE WRONG MECHANISM, and excluding that is the whole design.** Both stories
 predict `(2/3)^rounds`, so the rate cannot separate them; what does is #310's shape —
@@ -2953,7 +2978,68 @@ implementation as it is, so a property ALL FOUR PORTS get wrong is invisible her
 everywhere — the standing blind spot of #277, #294, #296 and #297, whose only exit is an
 assertion about ONE implementation. What this closes is narrower and is the case that
 actually occurred: a formula whose stated mechanism disagrees with the verifier, where the
-arithmetic happens to come out the same.
+arithmetic happens to come out the same. **TODO #321 did the same audit to the fifteen rows
+that have no formula**, and found five of the nine literals wrong plus one `exact` row that
+is not exact.
+
+**And the ARGUED half, where an `exact` verdict owes a SLACK rather than a count of zeros
+(TODO #321).** #319 made every rate an expression over constants read from source; #320 held
+each such formula to a measured mechanism. Both act on the rows that HAVE a formula, and the
+other **15 of the 20 curated rows rested on prose alone** — 6 declared `exact` and 9 carrying
+a hand-computed literal — with nothing checking either kind. `exact` is the strongest claim
+in the table (the rate is ZERO) and the only category contributing NOTHING to the advertised
+budget, which is exactly #304's recorded erosion shape; the precedent on curated reasons is
+unanimous (#295 found 2 of 6, #304 3 of 3, #310 one "exact about the wrong object", #320 one
+naming the wrong test *incidentally*). Six things carry forward. (1) **A SAMPLED ZERO CANNOT
+SHOW WHAT AN `exact` ROW ASKS OF IT, at any trial count.** `[14]`'s evidence was
+`hkex_rnl_failure_rate.py`'s 0 failures over ≤ 2000 trials, whose Wilson interval tops out
+near 1.8e-3 — **eighteen times the whole job budget** — so the measurement is equally
+consistent with `exact` and with a rate that alone would blow it: #285's finding in another
+protocol and #300's gate-that-cannot-go-red from the other side. What the claim rests on is a
+MARGIN, and a margin is a different object — a MAXIMUM over coefficients, so one trial reports
+as many samples as the statement has terms, with a visible tail where a failure count has
+none. Nothing measured it. `_EXACT_BASES` now makes every `exact` row state why its rate is
+zero and **what holds at the parameters the suite DEPLOYS when the test does not run there**,
+and `_ARGUED_MEASUREMENTS` holds the evidence on #320's model —
+**2 argued rows carry measured evidence**, one a margin and one a rate mechanism, each
+with an exact per-trial witness. (2) **ONE `exact` ROW WAS NOT
+EXACT.** `[21]`'s tampered-commitment case turns on a Fiat-Shamir CHALLENGE COLLISION, not on
+the residual-norm check: the verifier recomputes the challenge over the tampered `w`, and on a
+collision the norm check sees one coefficient shifted by 1 inside a slack of 36 and accepts.
+`_iters(5)/(comb(32,4)·2^4)` = **8.7e-6, nine percent of the budget**, from the category
+contributing none of it. (3) **THE OTHER `exact` ROW'S BOUND WAS 4x WRONG, and the correction
+is EXACT rather than sampled.** `SecurityProofs-4.md` said HKEX-RNL reconciliation needs "max
+per-coeff error ≪ q/8" in three places; swept over all 65537 residues the smallest error that
+can flip a bucket is **q/32 down and 3q/32 up**, asymmetric 3:1. Lenient, so the documented safety factor was four times the
+real one — and the real one still holds: at the DEPLOYED ring the worst slack over 1000 trials
+is 1647 against a bound of 2047, 16 spreads clear of zero, so the row keeps `exact` and
+finally has evidence. (4) **THE MARGIN HAD TO BE MEASURED WHERE THE SUITE RUNS, WHICH IS NOT
+WHERE THE TEST RUNS.** `[14]` sweeps `RNL_SIZES = [32, 64, 128, 256]`, all four RETIRED by
+#223, while the suite deploys `RNLN = 1024` — and the error accumulates as O(√n) through the
+convolution, measured at 419.6 against n = 256's 206.8, a factor 2.03 for 4x the dimension. So
+the tested widths are the FAVOURABLE ones: #295's lenient direction in a parameter instead of
+a corpus, and #313's "nothing ever ran the algorithm at another width" aimed at a CORRECTNESS
+property rather than a cost figure. (5) **THE LADDER IS WHAT MAKES THE WITNESS EVIDENCE, and
+the decisive control proves it.** An instrument carrying the old q/8 quantity is witness-EXACT
+at the deployed rung and at the first reduced rung, and is refuted only at the cliff (134/200
+at p = 512) — so the deployed rung alone could not have told the two bounds apart, which is
+#296's "a branch a random stream never enters is not covered either". (6) **THE LITERALS ARE
+NOW ANCHORED**, each to a regex that must match exactly once in its port's whole harness and
+exactly once inside its own test's body slice, because #320 found `("java", 26)`'s reason
+describing `[28]` and found it by accident. That audit turned up four more: `[49]`'s rate was
+**10^134 too large** and named n = 32 where the test hardcodes 256; `[10]`'s was read off the
+sub-check that does not bind, publishing 1e-30 for a 2.3e-7 term — **the first error on this
+axis in the unsafe direction**; `[4]`'s union bound enumerated three of its four widths; and
+`("java", 26)` left the table entirely, its rate having become `(1/3)^rounds` when **TODO
+#298** gave the `b = 0` branch a weight binding — 4.6 million times smaller than every copy
+said, a rate that moved with no INPUT moving, which is the one shape #319 cannot see either.
+**Scope, and one thing deliberately NOT filed**: this is about the rows with no formula, not
+about widening `[14]` to run at n = 1024 in the harness — and the measurement answers the
+question that would have justified that, since the deployed slack is 16 spreads clear of the
+cliff. #321's own text said to file the cost decision if the margin said otherwise; it did not,
+so nothing is filed, said out loud rather than left as an omission. **Known limit, stated.** A
+margin measured on one port is #320's limit inherited: if all four ports shared a
+reconciliation defect the slack would be the same wrong number in all four.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
@@ -3518,7 +3604,12 @@ valgrind --leak-check=full --show-leak-kinds=definite,indirect \
 
 The `-r`/`--rounds` flag caps iterations per security test; `-t`/`--time` sets the wall-clock limit for both tests and benchmarks. CLI flags override `HTEST_ROUNDS`/`HTEST_TIME` env vars.
 
-**What `-t` actually bounds (TODO #225).** It caps iteration *count*, not wall time, and only at the granularity of `_trange`'s poll — `(i & 63) == 63`. A call site requesting fewer than 64 iterations is never polled, so the cap cannot reach it however slow its work becomes: 18 of the Python suite's 95 capped sites are in that category and carry ~71% of the time spent inside capped sites (worst: `test_hpke_stern_f_correctness`, 30 iterations requested, ~97 s against a 2.0 s cap). A truncated site always stops at a multiple of 64, never in between. Separately, 16 sites pass a literal count to `_trange` instead of `_iters(...)`, so `-r` does not reach them either. Every run now prints a closing `--- Time cap: ... ---` line reporting sites entered, truncated, and unpollable. The startup banner reports whether `_rnl_poly_mul` took the numpy or pure-Python path, and the `RNL_SIZES` the tests exercise — which is **not** the suite's deployed `RNLN`. Baseline: `benchmarks/rnl_ring_cost.py`; for what the deployed ring costs in each language, `benchmarks/rnl_deployed_ring_cost.{c,go,py}` (TODO #292) — benchmark [40]'s own HKEX-RNL rows stop at the retired n = 256.
+**What `-t` actually bounds (TODO #225).** It caps iteration *count*, not wall time, and only at the granularity of `_trange`'s poll — `(i & 63) == 63`. A call site requesting fewer than 64 iterations is never polled, so the cap cannot reach it however slow its work becomes: 18 of the Python suite's 95 capped sites are in that category and carry ~71% of the time spent inside capped sites (worst: `test_hpke_stern_f_correctness`, 30 iterations requested, ~97 s against a 2.0 s cap). A truncated site always stops at a multiple of 64, never in between. Separately, 16 sites pass a literal count to `_trange` instead of `_iters(...)`, so `-r` does not reach them either. Every run now prints a closing `--- Time cap: ... ---` line reporting sites entered, truncated, and unpollable. The startup banner reports whether `_rnl_poly_mul` took the numpy or pure-Python path, and the `RNL_SIZES` the tests exercise — which is **not** the suite's deployed `RNLN`. That
+sentence sat here as a framing note about COST until TODO #321 connected it to `[14]`'s
+correctness assertion: those four widths are the ones #223 retired, per-coefficient
+reconciliation error grows O(√n), so the tested ring is the FAVOURABLE one and the deployed
+one was never asserted at all. `[14]`'s margin is now measured at n = 1024 by
+`spec/measure_sampled_rates.py`, not by the harness. Baseline: `benchmarks/rnl_ring_cost.py`; for what the deployed ring costs in each language, `benchmarks/rnl_deployed_ring_cost.{c,go,py}` (TODO #292) — benchmark [40]'s own HKEX-RNL rows stop at the retired n = 256.
 
 The suite files run EVE (eavesdropper) bypass tests inline on every execution.
 

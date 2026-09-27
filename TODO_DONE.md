@@ -21747,3 +21747,131 @@ Eight static controls verified, the load-bearing one being the ladder raised INT
 shipped round count (it fires in all three ports, naming each shipped value), plus a
 false-positive control that changes nothing.  The three wrong b=0 comments in
 `Herradura_tests.{c,go,py}` are corrected; Java's was right all along and is untouched.
+
+### #321: the ARGUED half of `_SAMPLED_TESTS` — an `exact` verdict owes a SLACK, not a count of zeros
+
+TODO #319 made a sampled numbered test's false-failure rate an expression over constants
+read from source; TODO #320 held each such formula to a MEASURED mechanism with a witness
+predicate.  Both act on the **5 rows that carry a formula**.  The other **15 of the 20
+curated rows rest on prose alone** — 6 declared `exact` and 9 carrying a hand-computed
+literal with a recorded reason — and nothing checks either kind.
+
+**THE PRECEDENT IS UNANIMOUS AND #320 ADDED TO IT.**  #295 found **2 of 6** curated
+`PARAM_USE_EXEMPT`-era reasons carrying a false claim.  #304 found **3 of 3** `follows`
+entries defective and required the token `MEASURED` because *"the arithmetic is only as good
+as the null it is done against"*.  #310 found `SAMPLED_GATES`' reason for
+`stern_f_weight_binding.py` *"exact about the wrong object"* — true of the verifier, false
+of the witness.  And #320 found `_SAMPLED_TEST_RATE_LITERAL[("java", 26)]`'s reason
+describing **the wrong test entirely** (`[26]` is the Stern ring round-trip; `[28]` is the
+ZKBoo one) — **incidentally, while doing something else**, which is the argument for looking
+on purpose.
+
+**THE TABLE NOMINATES ITS OWN SUSPECT AND THE LEAD HOLDS UP.**  `_SAMPLED_TESTS[("shared",
+14)]` reads, verbatim:
+
+> HKEX-RNL agreement, and **THE ROW TO DISTRUST** -- it rests on an ARGUMENT (Peikert 1-bit
+> reconciliation eliminates agreement failures) rather than on a derived rate, and #310's
+> lesson is that a reason exact about the wrong object reads exactly like a correct one.
+
+#316 wrote that; #319 and #320 both left it.  Checking it turns up two things, and the
+SECOND is the transferable one.
+
+**(1) AN `exact` ROW IS BACKED BY A SAMPLED ZERO, AND A SAMPLED ZERO CANNOT SHOW WHAT IT IS
+BEING ASKED TO SHOW.**  `exact` means the false-failure rate is **zero** — the strongest
+claim in the table, and the only category contributing NOTHING to the advertised budget,
+which is precisely #304's recorded erosion shape.  Its evidence is
+`SecurityProofsCode/hkex_rnl_failure_rate.py`: §5 measures 0/10 000 at n=32 and 0/5 000 at
+n=256, and §7 — re-pointed at the deployed ring by TODO #286, so this item does NOT get to
+claim the deployed case is unmeasured — measures 0 failures at n=1024 over
+`min(2000, max(200, 180s/t_one))` trials and prints a Wilson CI.  **At 2000 trials that CI
+tops out near 1.8e-3, which is eighteen times the whole job budget of 1e-4.**  So the
+measurement is consistent with `exact` and equally consistent with a rate that alone would
+blow the budget, and no trial count fixes that: this is #285's own finding in a different
+protocol — *"§2 and §3 are about the SIZE of the failure rate, which at BIKE-128 is not
+observable at any sample size"* — and #300's `qcmdpc_bgf_failure_rate.py` case from the
+other side, a gate that could not go red.
+
+**What the claim actually rests on is a MARGIN**, and SecurityProofs-4.md §480 says so:
+*"correctness guaranteed by max per-coeff error ≪ q/8"*.  A margin is not a rate and is
+enormously cheaper to establish — it is a MAXIMUM over coefficients per trial, so one trial
+reports 1024 samples of the quantity that matters instead of one Bernoulli draw, and its
+distribution has a visible tail where the failure count has none.  **Nothing anywhere
+measures it.**  §7 counts failures; it never prints the slack.  That is the item: an `exact`
+row owes the distance to the cliff, not another zero.
+
+**(2) THE TEST AND ITS EVIDENCE RUN AT DIFFERENT PARAMETERS.**  `[14]` sweeps
+`RNL_SIZES = [32, 64, 128, 256]` — the ring sizes TODO #223 **RETIRED** — while the suite
+deploys `RNLN = 1024`.  CLAUDE.md already says these are *"**not** the suite's deployed
+`RNLN`"*, but only in the `-t` time-cap paragraph, as a framing note about cost; nobody
+connected it to the agreement ASSERTION or to the `exact` verdict that cites it.  So the
+numbered test asserts a property at four widths the suite does not use, the evidence for the
+verdict lives in a different job (`analysis-findings`, not `native-*`), and the row's prose
+distinguishes neither.  That is #292's retired-ring finding and #313's *"nothing ever ran
+the algorithm at another width"* aimed at a CORRECTNESS property rather than at a cost
+figure, and it is also #306's shape — the checked path and the shipped path being different
+code — one axis over.  Note which direction this cuts: per-coefficient error accumulates as
+**O(√n)** through the ring convolution (SecurityProofs-4.md §476 measures the unreconciled
+rate going 2.04% at n=32 to 37.24% at n=256 for exactly that reason), so the tested sizes
+are the FAVOURABLE ones and the untested deployed size is the adverse one.  #295's lenient
+direction, in a parameter instead of in a corpus.
+
+**What to build.**
+
+- **A `MARGIN` treatment for `exact` rows, on #320's `_RATE_MECHANISMS` model.**  An `exact`
+  row states the quantity whose sign makes it exact, the SLACK measured at the parameters
+  the suite deploys, and the token — #304's rule extended to the category that carries no
+  number.  For `[14]` that is `q/8 - max_i |error_i|` at n=1024, reported as a
+  distribution, with the reduced-parameter ladder #320 established (raise η or lower p until
+  the margin closes, confirm the predicted cliff, then state the deployed slack in units of
+  the observed spread).  If the slack is comfortable the row stays `exact` and finally has
+  evidence for it; if it is not, the row owes a rate and the budget is currently
+  understated.
+- **The same audit for the 9 literal reasons that #320 gave the 5 formulas.**  One in nine
+  was already found naming the wrong test, so the base rate here is not speculative.
+- **A statement, per `exact` row, of what happens at the DEPLOYED parameters when the test
+  does not run there.**  Three of the six are fine by inspection and should be recorded as
+  such rather than left unexamined: `[2]`'s claim is provable at every n >= 3 (FSCX is
+  linear, so `M . e_j` has weight exactly 3), `[20]` is exact because it asserts no
+  rejection at all, `[18]` is #233's reference row where the ambiguous branch is separated
+  from the failure branch.  The census is the deliverable, not the three fixes.
+
+**Four things it has to get right.**
+
+- **THE MARGIN MUST BE MEASURED, NOT MODELLED.**  #304's whole finding was that all three
+  `follows` entries computed a correct bar against a null nobody had checked.  A worst-case
+  bound on the noise sum is the obvious move here and is exactly that mistake: it would
+  certify the row from a model of the sampler, when the sampler is CBD(1) over a ring and
+  the convolution is what accumulates.  Measure the slack; use the bound to explain it.
+- **A ZERO IS NOT EVIDENCE AND THE ITEM MUST NOT PRODUCE MORE OF THEM.**  If the answer
+  comes back as another 0/N, the item has failed and should say so rather than raise N.
+- **THE REDUCED PARAMETER MUST STAY LOCAL**, #320's rule (5): an instrument that lowers `p`
+  or raises `η` must not reach a shipped default, and #320's checker already enforces that
+  shape for the variables it reads.
+- **SCOPE, because #302 §6 is what an unchecked scope paragraph becomes.**  This is about the
+  15 curated rows with no formula.  It is NOT about widening `[14]` to run at n=1024 in the
+  harness — that is a cost decision (a deployed-ring handshake is ~39 ms in Python, and the
+  test runs `_iters(200)` of them per size) and belongs to whoever measures it, filed
+  separately if the margin work says it matters.
+
+**Known limit, stated.**  A margin measured on one port's implementation is #320's limit
+inherited: if all four ports share a reconciliation defect, the slack is the same wrong
+number in all four.  What this closes is the case that occurred here — a verdict of
+"probability exactly zero" whose only evidence is a bounded count of zeros, at parameters
+the shipped code does not use.
+
+Status: **DONE v9.5.10** — `_EXACT_BASES` and `_ARGUED_MEASUREMENTS` in
+`spec/check_language_parity.py` (Part 4/5), measured by
+`spec/measure_sampled_rates.py --only argued`.  All 5 `exact` rows record why the
+rate is zero and what holds at the DEPLOYED parameters; `[14]`'s margin is
+MEASURED at n = 1024 (worst slack 1647 of 1000 trials against a bound of 2047,
+16 spreads clear, 0 adverse) and its bound was found to be q/32 rather than
+SecurityProofs-4.md's q/8 — derived exactly over all 65537 residues, 4x lenient.
+`[21]` was NOT exact (a Fiat-Shamir challenge collision, 8.7e-6, 9% of the
+budget) and `("java", 26)`'s rate was 4.6e6 too large, TODO #298 having given the
+b = 0 branch a second detector with no input to the rate moving; that row moved to
+the DERIVED half as `(1/3)^rounds` with a measured mechanism.  Five of the nine
+literals were wrong — `[49]` by 10^134 and naming a parameter the test does not
+use, `[10]` in the UNSAFE direction (1e-30 published for a 2.3e-7 term), `[4]`'s
+union enumerating three of four widths, `[46]` rounded 3e4 high — and all nine are
+now ANCHORED to the test they describe.  Summed rate 1.0e-05 -> 1.7e-05 against an
+unchanged 1e-04 budget.

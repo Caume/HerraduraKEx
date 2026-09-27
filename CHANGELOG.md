@@ -2,6 +2,94 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.10] - 2026-09-26
+
+### Added
+- **The ARGUED half of `_SAMPLED_TESTS` is now evidence-backed (TODO #321).**  TODO #319 made
+  every derived false-failure rate an expression over constants read from source and TODO #320
+  held each such formula to a MEASURED mechanism; both act on the rows that HAVE a formula.
+  The other **15 of 20 curated rows rested on prose alone** — 6 declared `exact` and 9 carrying
+  a hand-computed literal — and nothing checked either kind.  `spec/check_language_parity.py`
+  gains a Part 4/5 with two tables.  `_EXACT_BASES` requires every `exact` row to record WHY
+  its rate is zero (one of `identity`, `separated`, `no-assertion`, `exhaustive-branches`,
+  `margin`) and **what holds at the parameters the suite DEPLOYS when the test does not run
+  there** — the question none of them had been asked.  `_ARGUED_MEASUREMENTS` holds the
+  evidence on #320's model: a quantity, a bound, a ladder at a reduced parameter, an exact
+  per-trial WITNESS, and the token `MEASURED`.  Both are exhaustive in both directions, and
+  only a `margin` basis may name evidence.
+- **A MARGIN treatment for `[14]`, measured at the DEPLOYED ring.**  `exact` is the strongest
+  verdict in the table and the only category contributing nothing to the advertised budget —
+  #304's recorded erosion shape — and `[14]`'s evidence was
+  `hkex_rnl_failure_rate.py`'s 0 failures over at most 2000 trials, a Wilson interval topping
+  out near 1.8e-3, **eighteen times the whole job budget**.  A sampled zero cannot show what
+  an `exact` row asks of it at any trial count; a margin can, because it is a MAXIMUM over
+  coefficients rather than one Bernoulli draw.  `spec/measure_sampled_rates.py` measures the
+  signed distance from each reconciled coefficient to its nearest bucket boundary, minimised
+  over the 128 coefficients reconciliation reads, at n = 1024 / key_bits = 256 over 1000
+  trials per rung: worst slack **1647**, mean **2019.3** with spread 121.6, against a bound of
+  2047 — 16 spreads clear, with 0 adverse trials.
+- **`_RATE_MECHANISMS['ring-forgery']` and `_RATE_MECHANISMS`' fourth validated formula**, so
+  6 of the 6 derived rows now carry a measured mechanism.
+- **Anchors on all 9 hand-computed literals.**  Each entry is now `(lang, regex, reason)`, and
+  the regex must match exactly once in that language's whole harness AND exactly once inside
+  that test's own body slice — so a reason is pinned to the test it describes.  TODO #320 found
+  `("java", 26)`'s describing `[28]`, and found it by accident.
+
+### Fixed
+- **`("shared", 21)` was `exact` and is not.**  Its tampered-commitment case increments `w[0]`
+  and requires a rejection; the verifier RECOMPUTES the Fiat-Shamir challenge over the tampered
+  `w`, so the case turns on a **challenge collision**, and on one the residual-norm check sees a
+  single coefficient shifted by 1 inside a slack of 36 and accepts.  The challenge space is
+  `comb(32, 4) * 2^4 = 575 360`, so the rate is `_iters(5)/575360 = 8.7e-6` in C, Go and Python
+  alike — **9% of the job budget, from the category that was contributing none of it**.
+  MEASURED at t = 1 and t = 2 over 7000 trials: witness 7000/7000 exact, acceptance 15/1000
+  against 15.6 predicted and 1/6000 against 3.0.
+- **`("java", 26)`'s rate was 4.6 million times too large, and TODO #298 is what made it so.**
+  TODO #260 saw a real flake at 8 rounds and wrote `(2/3)^8 = 3.9%`, correct at the time: only
+  the `b = 2` branch read the syndrome.  #298 then gave `b = 0` the `wt(respA ^ respB) == t`
+  binding, and a uniform `badE` has weight ~128 against t = 16 — so **two of three branches
+  catch it and only `b = 1` misses**, i.e. `(1/3)^rounds`.  The mechanism gained a detector and
+  every INPUT to the rate stayed put, so #319's machinery could not see it and #318's
+  fingerprint did not move.  The row moves from the literal half to the DERIVED half; MEASURED
+  at rounds = 1/2/3 over 900 trials, witness 900/900 exact against the pre-#298 predicate's
+  619/900.
+- **`("shared", 49)`'s rate was wrong by 10^134 and named a parameter the test does not use.**
+  Both the census row and the literal said "at n = 32" and "the ring dimension the test
+  sweeps"; `[49]` sweeps nothing — it hardcodes n = 256 — so the accept-control term is
+  `256*(1/4)^255`, not `32*(1/4)^31`.  Conservative, hence invisible to every check and every
+  flake, which is the direction this axis keeps failing in.
+- **`("shared", 10)`'s rate was read off the wrong sub-check, in the UNSAFE direction** — the
+  first such error on this axis.  The row described the aperiodicity bar (4e-67) and published
+  1e-30; the verdict is a conjunction whose other half requires all 1000 linearity trials to
+  differ, a `2^-n` coincidence worth **2.3e-7** at the narrowest width.  MEASURED: 1
+  coincidence in 100 000 at n = 16, 0 in 100 000 at n = 24/32/40.
+- **`SecurityProofs-4.md`'s HKEX-RNL correctness bound was 4x too generous.**  Three places said
+  reconciliation needs "max per-coeff error ≪ q/8 = 8192".  Swept EXACTLY over all 65537
+  residues, the smallest error that can flip a bucket is **2048 = q/32 downward and
+  6145 = 3q/32 upward** — asymmetric 3:1, so the room bottoms out at 2047 and
+  the guaranteed symmetric bound is a quarter of what was written and the documented safety
+  factor was four times the real one.  Correctness was never at risk and the sentence was.
+  The decisive control is why the ladder exists: an instrument carrying the q/8 quantity is
+  witness-exact at the deployed rung AND at the first reduced rung, and is refuted only at the
+  cliff (134/200 at p = 512).
+- **`[4]`'s union bound enumerated three of the four widths it sweeps** (`256+128+64` against
+  `32+64+128+256 = 480`), in all three harness comments and in the census row.  Lenient
+  direction; the figure does not move (9.5e-7 against 8.8e-7).
+- **`("shared", 46)` rounded its own arithmetic 3e4 too high** — 1e-70 recorded for
+  `200 * 2 * 2^-256 = 3.4e-75`, disagreeing with `[19]`'s 4e-75 for the identical shape one
+  test over.
+
+### Changed
+- `spec/measure_sampled_rates.py` gains the two argued measurers and a `--only
+  {mechanisms,argued}` switch, and stays deliberately OUT of CI and out of
+  `SecurityProofsCode/` for the reasons TODO #320 recorded.
+- The summed false-failure rate the banner prints moves from **1.0e-05 to 1.7e-05** per run
+  against the unchanged 1e-04 budget: `[21]` adds 8.7e-6 and `[10]` 2.4e-7, `("java", 26)`
+  removes 2e-6, and `[49]` and `[46]` remove terms that were never real.  Derived rows go 5 to
+  6, validated formulas 3 to 4, `exact` rows 6 to 5.
+- CLAUDE.md's Testing section gains the TODO #321 paragraph, and its check-E-anchored counts
+  move with the tables.
+
 ## [9.5.9] - 2026-09-25
 
 ### Added
