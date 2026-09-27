@@ -3316,6 +3316,11 @@ def test_hcred_kkw():
         #     the same set KAT/hcred_kkw.json's tamper table applies.
         e0 = sorted(p["online"])[0]
         r0 = sorted(p["pre"])[0]
+        # (b) MESSAGE BINDING.  THREE independent bindings, not the one
+        #     term a reader models: the opened SUBSET, the rho PROJECTION
+        #     (drawn from a hash over `stmt`, so a tampered message moves it
+        #     and the residual check fails at 1 - 1/q per opened emulation)
+        #     and the pbar challenge.  ~2e-12 at this triple (TODO #322).
         if not suite.hcred_verify_kkw(m, C, seed_H, y, p, n, msg + b"!"):
             rejected["wrong_msg"] += 1
 

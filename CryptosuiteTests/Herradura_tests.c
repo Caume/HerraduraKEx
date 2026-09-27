@@ -5901,6 +5901,7 @@ int main(int argc, char *argv[])
         int rejected[6] = {0, 0, 0, 0, 0, 0};
         static const uint8_t kkw_msg[] = "HCRED-KKW test [50]";
         const size_t kkw_msg_len = sizeof(kkw_msg) - 1;
+        enum { KKW_N_PAR = 4, KKW_M = 4, KKW_TAU = 2 };
         static uint8_t kkw_msg2[sizeof(kkw_msg)];
         printf("[50] HCRED-KKW prove/verify + rejection axes  [PQC-EXT]\n");
         memcpy(kkw_msg2, kkw_msg, sizeof(kkw_msg) - 1);
@@ -5924,7 +5925,8 @@ int main(int argc, char *argv[])
             hcred_user_keygen(kk_s, kk_c, &kk_e, kk_m, urnd_fp);
             hcred_syndrome(kk_syndr, &kk_seed_H, &kk_e);
             if (hcred_prove_kkw(&kp, kk_s, kk_m, kk_c, &kk_seed_H, kk_syndr,
-                                4, 4, 2, kkw_msg, kkw_msg_len, urnd_fp) != 0) {
+                                KKW_N_PAR, KKW_M, KKW_TAU,
+                                kkw_msg, kkw_msg_len, urnd_fp) != 0) {
                 printf("    prove error  [FAIL]\n\n");
                 break;
             }
@@ -5940,6 +5942,11 @@ int main(int argc, char *argv[])
             for (j = 1; j < kp.m - kp.tau; j++)
                 if (kp.pre_e[j] < kp.pre_e[r0]) r0 = j;
 
+            /* (b) MESSAGE BINDING.  THREE independent bindings, not the one
+             * term a reader models: the opened SUBSET, the rho PROJECTION
+             * (drawn from a hash over stmt, so a tampered message moves it and
+             * the residual check fails at 1 - 1/q per opened emulation) and the
+             * pbar challenge.  ~2e-12 at this triple (TODO #322). */
             if (!hcred_verify_kkw(kk_m, kk_c, &kk_seed_H, kk_syndr, &kp,
                                   kkw_msg2, kkw_msg_len + 1)) rejected[0]++;
 
@@ -5988,8 +5995,9 @@ int main(int argc, char *argv[])
             }
             if (!miss[0]) strncpy(miss, "none", sizeof(miss) - 1);
             printf("    n=%d  verified=%d/%d  rejections missed=%s  "
-                   "(N=4, M=4, tau=2)  [%s]\n\n",
-                   n_run, ok_verify, n_run, miss, all_ok ? "PASS" : "FAIL");
+                   "(N=%d, M=%d, tau=%d)  [%s]\n\n",
+                   n_run, ok_verify, n_run, miss,
+                   KKW_N_PAR, KKW_M, KKW_TAU, all_ok ? "PASS" : "FAIL");
         }
     }
 

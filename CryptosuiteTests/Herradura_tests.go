@@ -2077,6 +2077,11 @@ func testHcredKkw() {
 				r0 = k
 			}
 		}
+		// MESSAGE BINDING.  THREE independent bindings, not the one term a
+		// reader models: the opened SUBSET, the rho PROJECTION (drawn from a
+		// hash over stmt, so a tampered message moves it and the residual
+		// check fails at 1 - 1/q per opened emulation) and the pbar
+		// challenge.  ~2e-12 at this triple (TODO #322).
 		if !HcredVerifyKkw(mB, c, seedH, y, p, n, append(append([]byte{}, msg...), '!')) {
 			rejected["wrong_msg"]++
 		}

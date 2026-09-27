@@ -896,6 +896,11 @@ public final class SelfTest {
                 Hcred.HcredKkwProof p = Hcred.proveKkw(kp.s, mBlind, kp.c, seedH, y,
                         nPar, mEmul, tau, msg, rng);
                 boolean okVerify = Hcred.verifyKkw(mBlind, kp.c, seedH, y, p, msg);
+                // MESSAGE BINDING rests on THREE independent bindings, not
+                // the one term a reader models: the opened SUBSET, the rho
+                // PROJECTION (hashed over stmt, so the residual check fails at
+                // 1 - 1/q per opened emulation) and the pbar challenge.
+                // ~2e-12 at this triple (TODO #322).
                 boolean rejMsg = !Hcred.verifyKkw(mBlind, kp.c, seedH, y, p, msg2);
 
                 int e0 = java.util.Collections.min(p.online.keySet());
