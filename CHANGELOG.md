@@ -2,6 +2,78 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.11] - 2026-09-27
+
+### Added
+- **The DERIVED DEFAULT of `_SAMPLED_TESTS` now owes a BASIS (TODO #322).**  TODO #319 made
+  every false-failure rate an expression over constants read from source, #320 held each
+  formula to a MEASURED mechanism, and #321 audited the fifteen curated rows that have no
+  formula.  All three act on the twenty rows that are CURATED.  The census counts 181 sampled
+  cells, 20 curated and 9 declared to draw nothing that reaches a verdict — so **126 fell
+  through to the derived default**, which `_SAMPLED_TESTS`' own header states as
+  "all-trials-must-succeed conjunctions of round-trips, where a fresh sample changes WHICH
+  instance is tested and not the outcome".  Asserted by nothing, and contributing nothing to
+  the advertised budget: #304's erosion shape a third time, after #321 found it in `exact` and
+  #304 in `follows`.
+  - `spec/check_language_parity.py` gains **Part 5/6**: a screen, DERIVED from source and
+    exhaustive in both directions, for the uncurated sampled cells that assert a REJECTION —
+    the one thing the default cannot cover, because whether a deliberately bad input is
+    DETECTABLE can itself turn on a fresh coin.  **30 cells**, each stating a BASIS from a
+    closed set of nine kinds: 8 rest on a fresh coin and now carry a rated `_SAMPLED_TESTS`
+    row, 12 on a collision or a forgery at a stated WIDTH (a number, so the claim is
+    falsifiable), and 10 on no coin at all.
+  - **Two protocols say "the verifier rejects a tampered message" in the same words and mean
+    things 2^-256 apart.**  ZKP-NL's commitments do not bind the message — it enters only the
+    challenge seed and the verifier compares `h[0] % 3` against the stored trit — so the rate
+    is `(1/3)^rounds`, MEASURED at rounds = 1/2/3 with the witness holding 600/600, 600/600
+    and 900/900 exactly, both branches covered.  HCRED's per-round commitment hashes the
+    STATEMENT, so the rate is a collision; MEASURED over 180 trials, the challenge vector
+    coincided 41 times — 40 of 120 at rounds = 1 and 1 of 60 at rounds = 4, both within noise
+    of `(1/3)^rounds` — and the tampered proof was REJECTED in all 41.  The alternative is
+    refuted rather than merely unconfirmed, with its own confounder occurring at its predicted
+    rate.
+  - `refutation` is a THIRD record kind beside #321's `margin` and `rate`, and its ladder
+    counts the CONFOUNDER rather than the event, because the event is what must never happen
+    while the confounder must.  `spec/measure_sampled_rates.py` grows `--only rejection` and
+    three new measurers.
+  - **The summed false-failure rate moves 1.7e-05 → 1.9e-05** against a job budget of 1e-04.
+
+### Fixed
+- **C's `[50]` printed its KKW parameter triple as a STRING LITERAL (TODO #322).**  Go, Python
+  and Java each declare `(N_par, M, tau) = (4, 4, 2)` as named locals; C passed `4, 4, 2` as
+  bare positional arguments to `hcred_prove_kkw` while its banner printed `"(N=4, M=4, tau=2)"`
+  as text, so a retune would have printed the old numbers beside new behaviour — TODO #295's
+  diagnostic-use rule inside a numbered test.  The constants are named and the banner prints
+  them.
+
+### Changed
+- Nothing in the shipped primitives or CLIs.  Outside `spec/` and the documents the only edit
+  is C's `[50]` banner and comments in the four harnesses recording what each message-binding
+  axis actually rests on.
+
+### Notes
+- **The item's own model of a mechanism was refuted by measurement TWICE, both times in the
+  conservative direction.**  HCRED's `wrong_msg` was modelled at `(1/3)^4` = 1.2e-2 and
+  measured at zero.  HCRED-KKW's was modelled at `1/comb(M,tau)` = 1/6, revised to
+  `1/(comb(M,tau)·N_par^tau)` = 1/96 — 105x the whole job budget — and a four-port test change
+  was written and BUILT against that number before the measurement refuted it too: the opened
+  subset coincides at exactly its predicted rate and the verifier still rejects, never reaching
+  the pbar comparison, because `rho` is drawn from a hash over `stmt` and the residual check
+  fails first at `1 - 1/q` per opened emulation.  THREE bindings, not one; the true rate is
+  ~2.4e-12.  **That four-port change was reverted** — a test edit justified by a wrong rate is
+  cost with no benefit — and the episode is the argument for why this axis requires a measured
+  mechanism rather than a stated one.
+- **The first screen was under-matching and looked principled.**  Reading only the verdict
+  LINES — #318's pinned region — missed `[44]` and `[50]`, whose verdict lines name only
+  counters while the rejection is asserted in the body.  Both are HCRED and both were among
+  the largest candidate terms.  #316's slice reasoning does not transfer: there over-matching
+  is the lenient direction, here it is the conservative one.
+- **A third limit of the derivation axis, and a fourth beside it.**  `[28]` and `[29]` share one
+  `int n = 8, rounds = 16` declaration sitting ABOVE the `PASS [28]` marker, so Java's trailing
+  marker makes it reachable from exactly one of the two tests that use it — `[28]` derives,
+  `[29]` carries a literal.  And the KKW rate needs `comb(M, tau)`, which the formula evaluator
+  cannot express at all, running as it does with `{"__builtins__": {}}`.
+
 ## [9.5.10] - 2026-09-26
 
 ### Added

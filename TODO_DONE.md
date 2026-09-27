@@ -21875,3 +21875,61 @@ use, `[10]` in the UNSAFE direction (1e-30 published for a 2.3e-7 term), `[4]`'s
 union enumerating three of four widths, `[46]` rounded 3e4 high — and all nine are
 now ANCHORED to the test they describe.  Summed rate 1.0e-05 -> 1.7e-05 against an
 unchanged 1e-04 budget.
+
+### #322: the DERIVED default of `_SAMPLED_TESTS` — a rejection owes a BASIS
+
+**TODO #319 made every rate an expression over constants read from source, #320 held each
+such formula to a MEASURED mechanism, and #321 audited the fifteen rows that have no
+formula.  All three act on the twenty rows that are CURATED.**  The census counts 181
+sampled cells; 20 carry a curated verdict and 9 are declared to draw nothing that reaches
+one, so **126 (language, test) cells fall through to the DERIVED DEFAULT** —
+`_SAMPLED_TESTS`' own header states it as "the other ~40 per language are all-trials-must-
+succeed conjunctions of round-trips, where a fresh sample changes WHICH instance is tested
+and not the outcome".  That sentence is asserted by nothing, and the category contributes
+nothing to the advertised budget, which is #304's recorded erosion shape for the third
+time: #321 found it in `exact`, #304 in `follows`, and this is the same hole one level
+further out, in the category that has no row at all.
+
+**The default is RIGHT for a round-trip and the item does not propose 126 prose reasons.**
+#296's rule stands — "there are 109, and a hundred prose reasons rot" — and a disagreement
+in a round-trip is a real defect, never a flake.  What the default cannot cover is a
+REJECTION assertion: a test that requires a verifier to say NO to a deliberately bad
+input, because whether the bad input is DETECTABLE can itself turn on a fresh coin.  That
+is the class #310 found in `[53]` (the forged witness was sometimes the true error, one run
+in 16), #316 found in `[17]` (a `(1/3)^8` branch that CRASHED), and #320 corrected in
+`[22]` (one term where the mechanism needs two).  Three items have now found this shape in
+a CURATED row; nothing has asked it of the uncurated ones.
+
+**What is owed.**  (1) A screen over the uncurated drawing cells for rejection assertions,
+DERIVED from source and exhaustive in both directions like every other table in that file.
+(2) A BASIS for each flagged cell, from a closed set of kinds rather than free prose, so
+the classification is checked and not merely recorded.  (3) A `_SAMPLED_TESTS` row, with a
+rate, for every cell whose basis is rate-bearing — and the rate held to #320's standard,
+measured with an exact per-trial witness, not modelled.  (4) The budget re-summed, and if a
+term puts the job over it, the TEST fixed rather than the budget raised: that is this
+section's standing rule and there is no allow-list.
+
+**THE POLARITY IS OPPOSITE TO #316's AND THAT IS THE DESIGN NOTE TO CARRY.**  #316 records
+why its draw census slices FORWARD from the marker: an over-wide slice "hides a test that
+stopped drawing behind a neighbour that did not", so over-matching is the LENIENT direction
+there.  Here a match means "you owe a statement", so over-matching is the CONSERVATIVE
+direction and under-matching is the vacuous one.  The first screen written for this item
+read only the verdict LINES — #318's pinned region — and MISSED `[44]` and `[50]`, whose
+verdict lines name only counters (`ok_replay`, `rejected[...]`) while the rejection is
+asserted in the body.  Both are HCRED, both were among the largest candidate terms, and
+both would have been certified by a narrower screen that looked principled.
+
+Status: **DONE v9.5.11** — 30 uncurated sampled cells assert a REJECTION and each now
+states a BASIS from a closed set of nine kinds: 8 rest on a fresh coin and carry a rated
+`_SAMPLED_TESTS` row, 12 on a collision or a forgery at a stated WIDTH, 10 on no coin at all.
+Two protocols say "the verifier rejects a tampered message" in the same words and mean things
+2^-256 apart — ZKP-NL is `(1/3)^rounds` (witness 600/600, 600/600, 900/900 exactly) and HCRED
+is a commitment hash over the statement (41 confounders observed, all rejected).  `refutation`
+is a third record kind beside #321's `margin` and `rate`.  The budget moves 1.7e-05 to
+1.9e-05.  THE ITEM'S OWN MODEL WAS REFUTED TWICE, both times conservatively: HCRED-KKW was
+modelled at 1/6, then 1/96, and a four-port test change was written and BUILT against the
+second before measurement put the true rate at ~2.4e-12 — three bindings, not one, the
+dominant being a rho projection hashed over `stmt`.  That change was REVERTED.  Also fixed:
+C's `[50]` printed its parameter triple as a string literal (#295's rule in a numbered test).
+
+---

@@ -75,6 +75,18 @@ Usage:
     python3 spec/measure_sampled_rates.py -m corrupted-syndrome
     python3 spec/measure_sampled_rates.py --trials 100    # a quicker sketch
     python3 spec/measure_sampled_rates.py --only argued   # TODO #321's half
+    python3 spec/measure_sampled_rates.py --only rejection  # TODO #322's
+
+A NOTE ON --trials FOR THE REJECTION HALF (TODO #322).  A refutation's ladder
+counts the CONFOUNDER -- the event the excluded mechanism says would make the
+tamper survive -- so a run reduced far below the recorded trial counts can
+legitimately observe none of it and reports that nothing was refuted, rather
+than passing.  That is #291's rule (a section that did not run must not be
+scored) and not a flake; reproduce a refutation at its recorded counts.  The
+requirement is on the LADDER and not per rung, because at the SHIPPED rung the
+confounder is rare by construction -- 1/81 for hcred at rounds = 4 -- so a
+per-rung demand would fail about half of honest runs, which is this axis's own
+defect class committed by its own instrument.  The first draft had it.
 """
 
 import argparse
@@ -87,8 +99,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 sys.path.insert(0, HERE)
-from check_language_parity import (_RATE_MECHANISMS,        # noqa: E402
-                                   _ARGUED_MEASUREMENTS)
+from check_language_parity import (_RATE_MECHANISMS,          # noqa: E402
+                                   _ARGUED_MEASUREMENTS,
+                                   _REJECTION_MEASUREMENTS)
 
 
 def _harness():
@@ -250,7 +263,99 @@ def _measure_ring_forgery(H, rounds, trials):
     return acc, wit, alt, ctrl
 
 
+def _measure_zkpnl_message(H, rounds, trials):
+    """TODO #322, java [19]/[28]: the ZKP-NL family's message-tamper rejection.
+
+    Detecting event: the verifier RECOMPUTES each round's Fiat-Shamir trit from
+    a seed over (commitments, B, y, msg) and compares it to the stored one, so a
+    tampered message survives exactly when every recomputed trit re-matches --
+    (1/3)^rounds, with ONE factor, because the message reaches nothing else.
+
+    Alternative reported beside it: the COMMITMENT-BINDING story, which is what
+    the identical phrase "rejects a tampered message" means in HCRED -- there
+    _hcred_commit hashes the statement, so the tamper is caught with
+    probability 1 - 2^-256 and acceptance is impossible in any sample.  Under
+    that story the accept count would be 0 at every rung; it is 193 at
+    rounds = 1, which is what makes the two distinguishable at all.
+
+    n = 32, not the Java rows' own 32 and 8: BITARRAY.md 2 admits no width
+    below 16 in this Python instrument, and the quantity is a property of the
+    challenge COMPARISON, which reads no width-dependent value.
+    """
+    n = 32
+    nb = (n + 7) // 8
+    acc = wit = alt = ctrl = 0
+    for _ in range(trials):
+        A, B, y = H._zkp_nl_keygen(n)
+        proof = H._zkp_nl_prove(A, B, y, n, rounds, H.ZKP_MSG)
+        if H._zkp_nl_verify(B, y, n, rounds, H.ZKP_MSG, proof):
+            ctrl += 1
+        other = H.ZKP_MSG + b"-tampered"
+        out = H._zkp_nl_verify(B, y, n, rounds, other, proof)
+        # The witness, recomputed exactly as the verifier's first loop does.
+        block = b"".join(b"".join([r["com_0"], r["com_1"], r["com_2"]])
+                         for r in proof)
+        seed = H._zkp_nl_h(block, B.to_bytes(nb, "big"),
+                           y.to_bytes(nb, "big"), other)
+        fs_ok = all(H._zkp_nl_h(seed, j.to_bytes(4, "big"))[0] % 3 == proof[j]["e"]
+                    for j in range(rounds))
+        acc += bool(out)
+        wit += (bool(out) == fs_ok)
+        # The alternative: "a commitment binds the message", i.e. never accept.
+        alt += (bool(out) is False)
+    return acc, wit, alt, ctrl
+
+
+def _measure_hcred_binding(H, rounds, trials):
+    """TODO #322, shared [44] / java [18]: HCRED's message-tamper rejection,
+    and the REFUTATION of the mechanism a reader reaches for first.
+
+    The bound is zero up to a 256-bit collision, because _hcred_commit hashes
+    `stmt` -- so every commitment the verifier recomputes moves with the
+    message.  What this measures is therefore not a rate but the CONFOUNDER: how
+    often the per-round Fiat-Shamir challenge vector re-derives to the same
+    trits, which is the (1/3)^rounds event that WOULD make the tamper survive
+    if the commitments did not bind it.  Every such trial is one where the
+    alternative predicts acceptance and the real mechanism predicts rejection.
+
+    Returns (events, confounders, witness, control, ran).  `events` must be 0.
+    """
+    n = 32
+    acc = coin = wit = ctrl = 0
+    m_base = H._rnl_m_poly(n)
+    msg, tam = b'Herradura ZKP test', b'Herradura ZKP tamper'
+    for _ in range(trials):
+        a_rand = [H.random.randrange(H.RNLQ) for _ in range(n)]
+        m_b = [(m_base[j] + a_rand[j]) % H.RNLQ for j in range(n)]
+        seed_H = H.BitArray.random(n)
+        s, C, e_int = H.hcred_user_keygen(m_b, n)
+        y = H.hcred_syndrome(seed_H, e_int, n)
+        proof = H.hcred_prove(s, m_b, C, seed_H, y, n, rounds, msg)
+        if H.hcred_verify(m_b, C, seed_H, y, proof, n, rounds, msg):
+            ctrl += 1
+        out = H.hcred_verify(m_b, C, seed_H, y, proof, n, rounds, tam)
+        acc += bool(out)
+        # The confounder, recomputed the way the verifier derives it.
+        coms_ser = b"".join(b"".join(rd["coms"]) for rd in proof["rounds"])
+        outs_ser = b"".join(H._hcred_outputs_ser(rd["outs"])
+                            for rd in proof["rounds"])
+        c_real = H._hcred_challenges(
+            H._hcred_stmt_hash(m_b, C, seed_H, y, n, msg),
+            coms_ser, outs_ser, rounds)
+        c_tam = H._hcred_challenges(
+            H._hcred_stmt_hash(m_b, C, seed_H, y, n, tam),
+            coms_ser, outs_ser, rounds)
+        same = list(c_real) == list(c_tam)
+        coin += same
+        # The witness is the REFUTATION: on a coincidence the alternative says
+        # accept and the commitment-binding mechanism says reject, so a trial
+        # supports the record iff it rejected.
+        wit += (not out)
+    return acc, coin, wit, ctrl, trials
+
+
 _MEASURERS = {
+    "zkpnl-message-rematch": _measure_zkpnl_message,
     "corrupted-syndrome": _measure_corrupted_syndrome,
     "offweight-witness":  _measure_offweight_witness,
     "zkboo-poke":         _measure_zkboo_poke,
@@ -439,15 +544,153 @@ def _run_argued(want, override):
     return failures
 
 
+def _suite():
+    """The shipped suite, which is where the KKW code lives.
+
+    Unlike [45], [53], [22] and [44], whose subjects the harness transcribes
+    locally, test [50] imports the suite itself -- KKW is ~113 lines of
+    interlocking cut-and-choose machinery and a second copy would be a new
+    place for the divergence it guards (CLAUDE.md's note on [50]).  So the
+    measurement has to load the same module the test does.
+    """
+    path = os.path.join(ROOT, "Herradura cryptographic suite.py")
+    spec = importlib.util.spec_from_file_location("_h322_suite", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _measure_kkw_projection(_H, tau, trials):
+    """TODO #322, shared [50] / java [31]: HCRED-KKW's message-tamper rejection,
+    and the refutation of TWO successive models of it.
+
+    Model 1 (wrong): the emulation hashes do not bind the statement, so the
+    tamper survives when the opened SUBSET re-derives to the same emulations --
+    1/comb(M, tau), i.e. 1/6 at the demo triple.  Model 2 (also wrong): plus the
+    pbar challenge, 1/(comb(M, tau) * N_par^tau) = 1/96.  Both are refuted by
+    the same measurement: the subset coincides at its predicted 1/comb(M, tau),
+    and on every such trial the verifier STILL rejects -- and never even reaches
+    the pbar comparison, because `rho` is drawn from a hash over `stmt` and the
+    residual check `sum(rho.(zo - targets)) == sum(u)` fails first, at 1 - 1/q
+    per opened emulation with q = 65537.
+
+    So the CONFOUNDER counted here is model 1's event, which is the one that
+    occurs often enough to be observed, and the bound is the conjunction of all
+    three.  Returns (events, confounders, witness, control, ran).
+    """
+    H = _suite()
+    n = 32
+    N_par, M = 4, 4
+    acc = coin = wit = ctrl = 0
+    msg = b"HCRED-KKW test [50]"
+    for _ in range(trials):
+        m_b = H._rnl_poly_add(H._rnl_m_poly(n),
+                              H._rnl_rand_poly(n, H.RNLQ), H.RNLQ)
+        seed_H = H.BitArray.random(n)
+        s, C, e_int = H.hcred_user_keygen(m_b, n)
+        y = H.hcred_syndrome(seed_H, e_int, n)
+        p = H.hcred_prove_kkw(s, m_b, C, seed_H, y, n,
+                              N_par=N_par, M=M, tau=tau, msg_bytes=msg)
+        if H.hcred_verify_kkw(m_b, C, seed_H, y, p, n, msg):
+            ctrl += 1
+        # Record what the verifier DERIVES, rather than re-deriving it here: the
+        # point at issue is which of its own challenges it got to compare.
+        real, log = H._hcred_kkw_fs_ints, []
+
+        def spy(tag, material, count, modulus, distinct=False, _r=real, _l=log):
+            out = _r(tag, material, count, modulus, distinct)
+            _l.append((tag, list(out)))
+            return out
+
+        H._hcred_kkw_fs_ints = spy
+        try:
+            out = H.hcred_verify_kkw(m_b, C, seed_H, y, p, n, msg + b"!")
+        finally:
+            H._hcred_kkw_fs_ints = real
+        acc += bool(out)
+        c1 = next((v for t, v in log if t == b"c1"), None)
+        coin += (c1 is not None and sorted(c1) == sorted(p["online"]))
+        # The witness is the refutation: the tamper is rejected even on the
+        # trials where the excluded model says it would be accepted.
+        wit += (not out)
+    return acc, coin, wit, ctrl, trials
+
+
+_REJECTION_MEASURERS = {
+    "kkw-statement-projection": _measure_kkw_projection,
+    "hcred-statement-binding": _measure_hcred_binding,
+}
+
+
+def _run_rejection(want, override):
+    """The TODO #322 half.  A REFUTATION, not a rate: the ladder counts the
+    CONFOUNDER -- the event the excluded alternative says would make the tamper
+    survive -- and the assertion is that acceptance never happens even so.  So
+    the failure conditions are inverted from the rate runner's: one acceptance
+    fails, and a rung that never produced a confounder fails too, because the
+    alternative was then never actually put to the verifier."""
+    failures = []
+    H = _harness()
+    for name in want:
+        spec = _REJECTION_MEASUREMENTS[name]
+        rows = ", ".join(f"[{n}]/{sc}" for sc, n in spec["rows"])
+        print(f"\u2500\u2500 {name}  ({rows})  [{spec['kind']}]")
+        print(f"   quantity    {spec['quantity']}")
+        print(f"   bound       {spec['bound']}")
+        print(f"   confounder  {spec['confounder']}")
+        tot = totwit = totcoin = 0
+        for key in sorted(spec["ladder"], reverse=True):
+            rec_trials, _rec_ev, _rec_coin = spec["ladder"][key]
+            trials = override or rec_trials
+            acc, coin, wit, ctrl, ran = _REJECTION_MEASURERS[name](
+                H, key, trials)
+            tot += ran
+            totwit += wit
+            totcoin += coin
+            flags = []
+            if ctrl != ran:
+                flags.append(f"ACCEPT-CONTROL {ctrl}/{ran}")
+            if acc:
+                flags.append(f"{acc} ACCEPTANCE(S) -- the bound says zero")
+            if wit != ran:
+                flags.append(f"WITNESS {wit}/{ran}")
+            # NOT a per-rung requirement, and the first draft's was a defect
+            # of exactly the kind this axis exists to find: at the SHIPPED rung
+            # the confounder is rare BY CONSTRUCTION -- 1/81 for hcred at
+            # rounds = 4 -- so demanding one there fails about half of honest
+            # runs at the recorded trial count.  The reduced rungs exist to make
+            # it frequent; the requirement therefore belongs to the LADDER, and
+            # it is checked below.
+            verdict = "PASS" if not flags else "FAIL: " + "; ".join(flags)
+            print(f"   {spec['var']}={key:<5} trials={ran:<5} "
+                  f"accepted={acc:<5} confounders={coin:<5} "
+                  f"(predicted {ran * (1 / 3) ** key:<7.2f}) "
+                  f"witness={wit}/{ran}  [{verdict}]")
+            if flags:
+                failures.append(f"{name} at {spec['var']}={key}: "
+                                + "; ".join(flags))
+        print(f"   TOTAL       witness {totwit}/{tot} exact, "
+              f"{totcoin} confounder(s) observed and rejected")
+        if not totcoin:
+            msg = (f"{name}: the confounder never occurred anywhere in the "
+                   f"ladder, so nothing was refuted")
+            print(f"   [FAIL] {msg}")
+            failures.append(msg)
+        print()
+    return failures
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("-m", "--mechanism", action="append",
                     help="measure only this mechanism (repeatable)")
     ap.add_argument("--trials", type=int, default=None,
                     help="override the recorded trial count per rung")
-    ap.add_argument("--only", choices=("mechanisms", "argued"), default=None,
-                    help="run only TODO #320's formula mechanisms, or only "
-                         "TODO #321's argued-row evidence")
+    ap.add_argument("--only",
+                    choices=("mechanisms", "argued", "rejection"), default=None,
+                    help="run only TODO #320's formula mechanisms, only "
+                         "TODO #321's argued-row evidence, or only TODO #322's "
+                         "rejection refutations")
     args = ap.parse_args(argv)
 
     # Exhaustive in both directions, like every curated table in spec/: a
@@ -475,7 +718,19 @@ def main(argv=None):
                   f"_ARGUED_MEASUREMENTS does not record")
         return 1
 
-    known = set(_RATE_MECHANISMS) | set(_ARGUED_MEASUREMENTS)
+    missing = sorted(set(_REJECTION_MEASUREMENTS) - set(_REJECTION_MEASURERS))
+    extra = sorted(set(_REJECTION_MEASURERS) - set(_REJECTION_MEASUREMENTS))
+    if missing or extra:
+        for k in missing:
+            print(f"FAIL: _REJECTION_MEASUREMENTS records {k!r} and this file "
+                  f"has no measurer for it")
+        for k in extra:
+            print(f"FAIL: this file measures {k!r}, which "
+                  f"_REJECTION_MEASUREMENTS does not record")
+        return 1
+
+    known = (set(_RATE_MECHANISMS) | set(_ARGUED_MEASUREMENTS)
+             | set(_REJECTION_MEASUREMENTS))
     if args.mechanism:
         bad = [m for m in args.mechanism if m not in known]
         if bad:
@@ -483,13 +738,17 @@ def main(argv=None):
             return 1
         want = [m for m in args.mechanism if m in _RATE_MECHANISMS]
         want_argued = [m for m in args.mechanism if m in _ARGUED_MEASUREMENTS]
+        want_rej = [m for m in args.mechanism if m in _REJECTION_MEASUREMENTS]
     else:
         want = sorted(_RATE_MECHANISMS)
         want_argued = sorted(_ARGUED_MEASUREMENTS)
+        want_rej = sorted(_REJECTION_MEASUREMENTS)
     if args.only == "mechanisms":
-        want_argued = []
+        want_argued = want_rej = []
     elif args.only == "argued":
-        want = []
+        want = want_rej = []
+    elif args.only == "rejection":
+        want = want_argued = []
 
     if want:
         print("TODO #320: mechanism validation for the derived false-failure "
@@ -549,6 +808,11 @@ def main(argv=None):
         print("TODO #321: the ARGUED half -- an `exact` verdict owes a SLACK, "
               "not a count of zeros\n")
         failures += _run_argued(want_argued, args.trials)
+
+    if want_rej:
+        print("TODO #322: the DERIVED default -- a rejection owes a BASIS, and "
+              "an excluded mechanism owes a REFUTATION\n")
+        failures += _run_rejection(want_rej, args.trials)
 
     if failures:
         print("*** FAILED: the recorded mechanism does not match what the code "

@@ -1942,7 +1942,21 @@ spec/                                                — machine-readable protoc
                                                       the top rung IS the claim and must
                                                       EQUAL it, so #223 moving RNL_N or
                                                       RNL_P again fails the record rather
-                                                      than aging it
+                                                      than aging it.  SINCE TODO #322 IT
+                                                      ALSO MEASURES REFUTATIONS -- a THIRD
+                                                      kind, because a refutation is not a
+                                                      rate either: its ladder counts the
+                                                      CONFOUNDER rather than the event,
+                                                      since the event is what must never
+                                                      happen while the confounder must, and
+                                                      a rate rung demanding events > 0
+                                                      would reject exactly the shape this
+                                                      records.  Its shipped rung is the
+                                                      CLAIM, as a margin's deployed rung is;
+                                                      the reduced rungs exist only to make
+                                                      the confounder frequent enough to be
+                                                      put to the verifier more than once.
+                                                      `--only rejection` runs that half
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 BITARRAY.md                                          — the NORMATIVE BitArray specification
@@ -2863,10 +2877,10 @@ Neither covers the case where **the decision is unchanged and the rate underneat
 moves**: a rate was a LITERAL and its formula was prose, so the arithmetic was checked by
 nobody and its inputs by nobody. Lower `[45]`'s round count and `PARAMETERS` compares the
 constant across four languages and finds them agreeing, the fingerprint excludes it, and
-`_TEST_DRAWS` still sees the same draw — while the banner goes on printing 1.7e-5 against a
+`_TEST_DRAWS` still sees the same draw — while the banner goes on printing 1.9e-5 against a
 true rate of **7.8%**, the pre-#234 figure that made that test fail 38.5% of runs. A rate
 in `_SAMPLED_TEST_RATES` is now an EXPRESSION over constants read out of the source per
-port, and **6 of the 15 rated rows are evaluated from source every run** over 21 variable
+port, and **8 of the 23 rated rows are evaluated from source every run** over 23 variable
 cells; the other 9 are named in `_SAMPLED_TEST_RATE_LITERAL` with a reason they cannot be,
 exhaustive in both directions so expressing a rate FORCES its literal entry out. Five
 things carry forward. (1) **THE CONSTANT IS NOT WHERE THE PROSE SAID IT WAS, AND IN TWO
@@ -2932,7 +2946,7 @@ item that restated it. `_RATE_MECHANISMS` is #304's move one level down: that it
 a `follows` gate to carry a rate AND the token `MEASURED` because "the arithmetic is only
 as good as the null it is done against", and here the arithmetic is only as good as the
 MECHANISM, where #319 shipped 14 rated rows with **not one of them held to a measurement**.
-**6 of the 6 derived rows carry a MEASURED mechanism**, over 4 validated formulas, with 0
+**8 of the 8 derived rows carry a MEASURED mechanism**, over 5 validated formulas, with 0
 declared unmeasurable. Five things carry forward. (1) **A FREQUENCY CHECK WOULD HAVE
 CONFIRMED THE WRONG MECHANISM, and excluding that is the whole design.** Both stories
 predict `(2/3)^rounds`, so the rate cannot separate them; what does is #310's shape —
@@ -3039,7 +3053,81 @@ question that would have justified that, since the deployed slack is 16 spreads 
 cliff. #321's own text said to file the cost decision if the margin said otherwise; it did not,
 so nothing is filed, said out loud rather than left as an omission. **Known limit, stated.** A
 margin measured on one port is #320's limit inherited: if all four ports shared a
-reconciliation defect the slack would be the same wrong number in all four.
+reconciliation defect the slack would be the same wrong number in all four. **TODO #322 asked
+the same question of the 126 cells that have no row at all**, and had its own model of a
+mechanism refuted by measurement twice.
+
+**And the DERIVED DEFAULT, where the category with no row at all is the largest one (TODO
+#322).** #319 made every rate an expression over constants read from source, #320 held each
+formula to a measured mechanism, #321 audited the fifteen curated rows that have no formula.
+All three act on the twenty rows that are CURATED. The census counts 181 sampled cells, 20
+curated and 9 declared to draw nothing that reaches a verdict — so **126 fall through to the
+DERIVED DEFAULT**, which `_SAMPLED_TESTS`' own header states as "all-trials-must-succeed
+conjunctions of round-trips, where a fresh sample changes WHICH instance is tested and not the
+outcome". That sentence was asserted by nothing and the category contributed nothing to the
+budget: #304's erosion shape a third time, after #321 found it in `exact` and #304 in
+`follows`. Six things carry forward. (1) **THE DEFAULT IS RIGHT FOR A ROUND-TRIP, and this is
+not 126 prose reasons.** #296's rule stands — "there are 109, and a hundred prose reasons rot"
+— and a disagreement in a round-trip is a real defect, never a flake. What the default cannot
+cover is a REJECTION assertion, because whether a deliberately bad input is DETECTABLE can
+itself turn on a fresh coin: #310 found that in `[53]` (the forged witness was sometimes the
+true error, one run in 16), #316 in `[17]` (a `(1/3)^8` branch that CRASHED), #320 in `[22]`
+(one term where the mechanism needs two). Three items found the shape in a curated row and
+nobody had asked it of the rest. **30 cells** assert a rejection; each now states a BASIS from
+a CLOSED SET of nine kinds, 8 rest on a fresh coin and carry a rated row, 12 on a collision or
+forgery at a stated WIDTH — a number, so the claim is falsifiable — and 10 on no coin at all.
+(2) **THE POLARITY IS OPPOSITE TO #316's, AND THAT IS THE DESIGN NOTE.** #316 records why its
+draw census slices FORWARD from the marker: an over-wide slice "hides a test that stopped
+drawing behind a neighbour that did not", so over-matching is the LENIENT direction there.
+Here a match means "you owe a statement", so over-matching is CONSERVATIVE. The first screen
+written for this item read only the verdict LINES — #318's pinned region, which looked like
+the principled choice — and MISSED `[44]` and `[50]`, whose verdict lines name only counters
+(`ok_replay`, `rejected[...]`) while the rejection is asserted in the body. Both are HCRED and
+both were among the largest candidate terms. The screen reads whole bodies now, and four of
+the nine kinds exist to absorb what that over-matches (`reference-count` for a mismatch
+counter, `not-a-verdict` for a declaration, a header string, or the last marker's slice
+bleeding to end of file). (3) **TWO PROTOCOLS SAY "THE VERIFIER REJECTS A TAMPERED MESSAGE" IN
+THE SAME WORDS AND MEAN THINGS 2^-256 APART.** ZKP-NL's commitments do NOT bind the message —
+it enters only the challenge seed, and the verifier compares `h[0] % 3` against the stored
+trit — so the rate is `(1/3)^rounds`, MEASURED at rounds = 1/2/3 with the witness holding
+600/600, 600/600 and 900/900 EXACTLY, both branches covered. HCRED's per-round commitment
+hashes the STATEMENT, so the rate is a collision; MEASURED over 180 trials, the challenge
+vector coincided 41 times (40 of 120 at rounds = 1, 1 of 60 at rounds = 4, both within noise
+of `(1/3)^rounds`) and the tampered proof was REJECTED in all 41 — the alternative is not
+merely unconfirmed, it is refuted, with its own confounder occurring at its predicted rate.
+`refutation` is therefore a THIRD record kind beside #321's `margin` and `rate`, and its
+ladder counts the CONFOUNDER rather than the event, because the event is what must never
+happen while the confounder must. (4) **THE ITEM'S OWN MODEL WAS WRONG TWICE, AND BOTH TIMES
+CONSERVATIVELY, WHICH IS THE DIRECTION THAT FAILS NO CHECK.** HCRED's `wrong_msg` was modelled
+at `(1/3)^4` = 1.2e-2 and measured at zero. HCRED-KKW's was then modelled at
+`1/comb(M,tau)` = 1/6, revised to `1/(comb(M,tau)·N_par^tau)` = 1/96 — 105x the whole job
+budget — and a four-port test change was written and BUILT against that number before the
+measurement refuted it too: the opened subset coincides at exactly its predicted rate, and the
+verifier still rejects, never even reaching the pbar comparison, because `rho` is drawn from a
+hash over `stmt` and the residual check `Σρ(ẑ−v) == Σu` fails first at `1 - 1/q` per opened
+emulation. THREE bindings, not one, and the true rate is ~2.4e-12. **The four-port change was
+REVERTED** — a test edit justified by a wrong rate is a cost with no benefit, and #312's rule
+that a refactor must not settle a question it happens to expose applies to a fix as much as to
+a refactor. What survived is the one independent defect found on the way: C's `[50]` passed
+`4, 4, 2` as bare positional arguments while its banner printed the triple as a STRING
+LITERAL, so a retune would have printed the old numbers beside new behaviour — #295's
+diagnostic-use rule inside a numbered test. The constants are named and the banner prints
+them. (5) **THE BUDGET BARELY MOVED AND THAT IS THE RESULT, NOT AN ANTICLIMAX**: 1.7e-05 to
+**1.9e-05** against 1e-04. Every term this axis was missing is small; what was missing was the
+statement that it is small, and the two refuted models are the argument for why a stated one
+cannot be trusted. #319's 10x, #320's 3x, #321's 10^134 and both of #322's own errors point
+the same way — **the direction this axis keeps failing in is the one where nothing red ever
+happens.** (6) **A THIRD LIMIT OF THE DERIVATION AXIS, and it is Java's marker convention.**
+`[28]` and `[29]` share ONE `int n = 8, rounds = 16` declaration which sits ABOVE the
+`PASS [28]` marker, so it is inside `[28]`'s slice and outside `[29]`'s — and outside the
+WIDENED scope slice too. Java's TRAILING marker makes a shared declaration reachable from
+exactly one of the two tests that use it, so `[28]` derives and `[29]` carries a literal. After
+`[4]`'s run-time flag and `[21]`'s module-level `t`, that is the third. A fourth is recorded
+with it: the KKW rate needs `comb(M, tau)`, and the formula evaluator runs with
+`{"__builtins__": {}}`, so a rate that is not arithmetic over the read constants cannot be
+expressed at all. **Known limit, stated.** The screen is syntactic, so a rejection asserted
+without any of the nine vocabulary stems goes unseen; the guard is that over-matching is the
+safe direction here and that a flagged cell cannot be silently dropped — only classified.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`

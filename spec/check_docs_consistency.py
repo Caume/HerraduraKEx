@@ -608,6 +608,16 @@ DOC_COUNTS = [
      r"\*\*(\d+) argued rows carry measured evidence\*\*",
      "check_language_parity.py's _ARGUED_MEASUREMENTS, quoted in CLAUDE.md's "
      "Testing section"),
+    # TODO #322.  The count of cells whose rejection now states a basis is the
+    # size of the category the DERIVED DEFAULT was carrying, so a cell dropping
+    # out of the screen -- or a basis quietly deleted -- moves nothing anyone
+    # reads unless it moves this.
+    ("rejection cells with a stated basis",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"(\d+) uncurated sampled cell\(s\) assert that something must be REFUSED",
+     r"\*\*(\d+) cells\*\* assert a rejection",
+     "check_language_parity.py's _REJECTION_BASES, quoted in CLAUDE.md's "
+     "Testing section"),
     # TODO #303.  The replay tables' sizes are the count of what the four ports
     # are actually held against each other on, and CLAUDE.md wrote both out by
     # hand -- "four samplers", "five whole OPERATIONS" -- so adding a row left

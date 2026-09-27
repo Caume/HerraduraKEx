@@ -136,7 +136,7 @@ def check_numbered_tests(errors):
     return numbers
 
 
-# ── Part 1/5: the numbered tests that decide a verdict from a FRESH SAMPLE ──
+# ── Part 1/6: the numbered tests that decide a verdict from a FRESH SAMPLE ──
 #
 # TODO #316, the ninth axis, and the one that asks of the NUMBERED TESTS what
 # TODO #300 asked of the findings gates: does this check decide a verdict from
@@ -440,6 +440,47 @@ _SAMPLED_TESTS = {
     ("java", 35): ("negligible", "derived",
         "Java's copy of [53], fixed by TODO #310 in the same pass: "
         "forgeRounds = 64, off-weight witness constructed by kernel addition"),
+
+    # ── TODO #322: the rows the DERIVED DEFAULT was carrying ─────────────
+    # Eight cells whose rejection assertion turns on a fresh coin, found by
+    # Part 5/6's screen.  Every one was resting on "a fresh sample changes
+    # WHICH instance is tested and not the outcome" -- true of a round-trip and
+    # false of all eight.
+    ("java", 19): ("negligible", "derived",
+        "ZKP-NL tamper rejection: ZkpNl.verify RECOMPUTES the per-round "
+        "Fiat-Shamir trit and compares it, so a tampered message survives when "
+        "all `rounds` coincide.  #316's [17] is this mechanism at rounds = 8, "
+        "where it CRASHED; here it simply goes unrecorded"),
+    ("java", 28): ("negligible", "derived",
+        "the ZKBoo half of Java's pair, `rejects_msg`, same verifier and same "
+        "recomputed-challenge comparison as [19]"),
+    ("java", 29): ("negligible", 2.3e-8,
+        "the ZKB++ half, `rejects_msg`.  #304 measured that ZKB++ kills a wrong "
+        "WITNESS every round; the MESSAGE reaches this verifier only through "
+        "the challenge seed, so this axis keeps the (1/3)^rounds term"),
+    ("java", 30): ("negligible", 1.7e-6,
+        "the Ring-LWR Sigma signer, and the JAVA COUNTERPART of the shared [21] "
+        "row TODO #321 found is not `exact`: the verifier recomputes the "
+        "challenge over the tampered w and on a collision the residual-norm "
+        "check sees one coefficient inside a slack of 36 and accepts"),
+    ("java", 31): ("negligible", 2.4e-12,
+        "Java's HCRED-KKW `rejects_msg`, and the row whose rate TWO successive "
+        "models got wrong: THREE bindings have to break, not one, and the "
+        "dominant one is the rho PROJECTION at 1/q per opened emulation"),
+    ("shared", 50): ("negligible", 2.4e-12,
+        "the C/Go/Python HCRED-KKW `wrong_msg` axis: acceptance needs the "
+        "opened SUBSET to coincide (1/comb(M, tau)), the rho PROJECTION "
+        "residual to hold in every opened emulation (1/q each, and rho is "
+        "hashed over `stmt`) and the pbar challenge to coincide "
+        "(1/N_par^tau) -- 1/6 * 1/65537^2 * 1/16 at the demo triple"),
+    ("shared", 8): ("negligible", 1e-77,
+        "HPKS Schnorr Eve resistance: the forgery attempts are DRAWN, so "
+        "`wins == 0` is a statement about a fresh sample, and a random (R, s) "
+        "satisfying g^s . C^e == R is a 2^-256 event"),
+    ("java", 27): ("negligible", 1e-150,
+        "the accept-control is the sampled half, as in shared [49]: a genuine "
+        "UNIFORM m_blind must pass a guard rejecting a coefficient range below "
+        "q/4, which n = 256 uniform draws fall inside with 256*(1/4)^255"),
 }
 
 # Tests that DRAW but are out of scope because what they draw does not reach
@@ -470,7 +511,7 @@ _SAMPLED_TEST_CONSTANT = {
 }
 
 
-# ── Part 2/5: where each rate COMES FROM ─────────────────────────────────
+# ── Part 2/6: where each rate COMES FROM ─────────────────────────────────
 #
 # TODO #319.  A rate above is a LITERAL and its formula is prose, so the
 # arithmetic is checked by nobody and its inputs are checked by nobody.  Lower
@@ -629,6 +670,19 @@ _SAMPLED_TEST_RATES = {
         "and took nothing with it -- with a VERIFIER BRANCH in the moving role "
         "instead of a constant, which is a case #319's machinery cannot see "
         "either: every input stayed put.  See _RATE_MECHANISMS['ring-forgery']"),
+    # TODO #322: the ZKP-NL message-tamper term, in the two ports whose
+    # declaration a slice can reach.  See _RATE_MECHANISMS for the measurement.
+    ("java", 19): (
+        "(1/3) ** rounds",
+        {"rounds": {"java": ("local", r"int n = 32, rounds\s*=\s*(\d+)")}},
+        "Java's ZKP-NL tamper axis.  The verifier recomputes the per-round "
+        "Fiat-Shamir trit and compares it, so the term is (1/3)^rounds with ONE "
+        "factor -- the message reaches nothing else in that verifier"),
+    ("java", 28): (
+        "(1/3) ** rounds",
+        {"rounds": {"java": ("local", r"int n = 8, rounds\s*=\s*(\d+)")}},
+        "the ZKBoo half of Java's ZKP-NL pair, same verifier and same "
+        "recomputed-challenge comparison at its own width"),
     ("java", 35): (
         "(2/3) ** rounds",
         {"rounds": {"java": ("local", r"int forgeRounds\s*=\s*(\d+)")}},
@@ -683,6 +737,47 @@ _SAMPLED_TEST_RATES = {
 # binding, 4.6 million times smaller than the (2/3)^rounds every copy quoted.
 # [5], [11], [19] and ("java", 14) reproduced.
 _SAMPLED_TEST_RATE_LITERAL = {
+    # ── TODO #322's six, and the reasons are three distinct limits ────────
+    ("shared", 8):  ("python", r'status = "PASS" if wins == 0',
+                    "a 2^-256 event, and the CONSTANT is the key width, which "
+                    "is not a per-test parameter any slice can read: [8] uses "
+                    "whatever _KEYBITS the harness was built for.  Deriving it "
+                    "would mean reading a module-level constant through the "
+                    "PARAMETERS axis, which is a different table's subject"),
+    ("java", 27):   ("java", r"rnlValidateMBlind\(uniform, q\)",
+                    "the accept-control term 256*(1/4)^255, whose exponent is "
+                    "the RING DIMENSION -- declared `final int n = 256` in a "
+                    "block that also declares n for three other cases, so no "
+                    "regex reads it uniquely.  Shared [49] carries the same "
+                    "number for the same reason"),
+    ("java", 29):   ("java", r"boolean ppMsg = !ZkpNl\.verifyPp\(",
+                    "THE THIRD RECORDED LIMIT OF THE DERIVATION AXIS, after "
+                    "[4]'s run-time flag and [21]'s module-level t: [28] and "
+                    "[29] share ONE `int n = 8, rounds = 16` declaration, which "
+                    "sits above the PASS [28] marker -- so it is inside [28]'s "
+                    "slice and outside [29]'s, and outside the WIDENED scope "
+                    "slice too.  Java's trailing marker makes a shared "
+                    "declaration reachable from exactly one of the two tests "
+                    "that use it"),
+    ("java", 30):   ("java", r"boolean rejMsg = !HerraduraNl\.rnlSigmaVerify\(",
+                    "the Sigma challenge space is comb(n, t) * 2^t and t lives "
+                    "in Java's own sigma parameter table, a class constant far "
+                    "outside any slice -- #321 recorded exactly this for the "
+                    "shared [21] row and this is its Java counterpart"),
+    ("java", 31):   ("java", r"final int nPar = 4, mEmul = 4, tau = 2",
+                    "1/(comb(mEmul, tau) * nPar^tau).  All three ARE local "
+                    "literals here, but the shared [50] row they mirror cannot "
+                    "be derived in C, and a rate derived in one port and "
+                    "hand-computed in the other three is two sources of truth "
+                    "for one number -- so both rows carry the literal"),
+    ("shared", 50): ("python", r'rejected\["wrong_msg"\] \+= 1',
+                    "1/(comb(M, tau) * N_par^tau) = 1/96, and C is why it is a "
+                    "literal: Go, Python and Java each declare the triple as "
+                    "named locals, and C passes `4, 4, 2` as BARE POSITIONAL "
+                    "ARGUMENTS at the hcred_prove_kkw call site while printing "
+                    "\"(N=4, M=4, tau=2)\" as a STRING LITERAL -- so a retune "
+                    "there would print the old numbers beside new behaviour, "
+                    "which is #295's diagnostic-use rule inside a numbered test"),
     ("shared", 4):  ("python", r"tol = 6\.0 \* 50\.0 / math\.sqrt\(n_run\)",
                     "THE LIMIT OF THIS AXIS, and it is a real one: the bar is "
                     "tol = 6 * 50/sqrt(n_run), so the rate is a function of "
@@ -768,7 +863,7 @@ _SAMPLED_TEST_RATE_LITERAL = {
 
 
 
-# ── Part 3/5: whether the FORMULA is the right function ──────────────────
+# ── Part 3/6: whether the FORMULA is the right function ──────────────────
 #
 # TODO #320, and it is the limit #319 stated on itself in the same breath as
 # its own result: "this closes 'the rate's INPUTS moved' and not 'the rate's
@@ -1031,10 +1126,48 @@ _RATE_MECHANISMS = {
 # way to postpone measuring one.
 #
 #   row key -> reason
+_RATE_MECHANISMS["zkpnl-message-rematch"] = {
+    "rows": [("java", 19), ("java", 28)],
+    "term": "(1/3) ** rounds",
+    "var":  "rounds",
+    "detects":  "a message tamper surviving because EVERY round's recomputed "
+                "Fiat-Shamir trit still equals the one the proof stored -- "
+                "`h[0] % 3 != challenges[j]` is the only place the message "
+                "reaches this verifier",
+    "excludes": "the commitment-binding story, which is what the SAME words "
+                "mean in HCRED: there _hcred_commit hashes the statement, so a "
+                "changed message changes every recomputed commitment and no "
+                "challenge coincidence can repair one.  Both stories say "
+                "'the verifier rejects a tampered message' and they differ by "
+                "2^-256 against (1/3)^rounds, so only a witness separates them",
+    "ladder": {1: (600, 193, 0.333333),
+               2: (600,  69, 0.111111),
+               3: (900,  42, 0.037037)},
+    "witness":  "600/600, 600/600 and 900/900 at rounds = 1/2/3 had "
+                "accept == (every recomputed challenge equals the stored one), "
+                "EXACTLY -- including the 193, 69 and 42 that ACCEPTED, so the "
+                "witness is checked on both branches and not only the "
+                "rejecting one (#296)",
+    "note":     "MEASURED at rounds = 1/2/3 over 2100 trials by "
+                "spec/measure_sampled_rates.py, at n = 32 rather than the Java "
+                "rows' own widths because BITARRAY.md 2 admits nothing below "
+                "16 in the Python instrument.  That substitution is safe for a "
+                "stated reason rather than by assumption: the quantity is a "
+                "property of the CHALLENGE COMPARISON, which reads neither n "
+                "nor any width-dependent value, and the witness holding "
+                "EXACTLY at every rung is what says the substitution did not "
+                "change the mechanism.  The rate reproduces too (193/69/31 "
+                "against 200.0/66.7/33.3 predicted), but per TODO #320 the "
+                "rate is corroboration and the witness is the check -- here "
+                "doubly so, since the alternative this excludes predicts a "
+                "DIFFERENT rate and would have been caught by frequency alone; "
+                "what frequency could not do is tell the reader WHICH of the "
+                "two protocols they are looking at"
+}
 _RATE_MECHANISM_UNMEASURED = {}
 
 
-# ── Part 4/5: the ARGUED half -- an `exact` verdict owes a SLACK ──────────
+# ── Part 4/6: the ARGUED half -- an `exact` verdict owes a SLACK ──────────
 #
 # TODO #321.  #319 made every rate an EXPRESSION over constants read from
 # source and #320 held each such formula to a MEASURED mechanism.  Both act on
@@ -1324,7 +1457,646 @@ _ARGUED_MEASUREMENTS = {
 }
 
 
-# ── Part 5/5: the VERDICT of each numbered test, pinned ──────────────────
+# ── Part 5/6: the DERIVED default -- a rejection owes a BASIS ─────────────
+#
+# TODO #322.  #319 made every rate an expression over constants read from
+# source; #320 held each such formula to a MEASURED mechanism; #321 audited the
+# fifteen curated rows that have no formula.  All three act on the TWENTY rows
+# that are curated.  The census counts 181 sampled cells, 20 curated and 9
+# declared to draw nothing that reaches a verdict, so 126 fall through to the
+# DERIVED DEFAULT -- which `_SAMPLED_TESTS`' own header states as "the other
+# ~40 per language are all-trials-must-succeed conjunctions of round-trips,
+# where a fresh sample changes WHICH instance is tested and not the outcome".
+#
+# That sentence was asserted by nothing, and the category contributes nothing
+# to the advertised budget, which is #304's recorded erosion shape a third
+# time: #321 found it in `exact`, #304 in `follows`, and this is the same hole
+# one level out, in the category with no row at all.
+#
+# THE DEFAULT IS RIGHT FOR A ROUND-TRIP, and this is not 126 prose reasons.
+# #296's rule stands -- "there are 109, and a hundred prose reasons rot" -- and
+# a disagreement in a round-trip is a real defect, never a flake.  What the
+# default cannot cover is a REJECTION assertion: a test requiring a verifier to
+# say NO to a deliberately bad input, because whether that input is DETECTABLE
+# can itself turn on a fresh coin.  #310 found it in [53] (the forged witness
+# was sometimes the true error, one run in 16), #316 in [17] (a (1/3)^8 branch
+# that CRASHED), #320 in [22] (one term where the mechanism needs two).  Three
+# items found the shape in a CURATED row; nothing had asked it of the rest.
+#
+# THE POLARITY IS OPPOSITE TO #316's, AND THAT IS THE NOTE TO CARRY.  #316
+# records why its draw census slices FORWARD from the marker: an over-wide
+# slice "hides a test that stopped drawing behind a neighbour that did not", so
+# over-matching is the LENIENT direction there.  Here a match means "you owe a
+# statement", so over-matching is CONSERVATIVE and under-matching is the
+# vacuous one.  The first screen written for this item read only the verdict
+# LINES -- #318's pinned region -- and MISSED [44] and [50], whose verdict
+# lines name only counters (`ok_replay`, `rejected[...]`) while the rejection
+# is asserted in the body.  Both are HCRED, both are among the largest
+# candidate terms, and a narrower screen would have certified them while
+# looking principled.  So the screen reads the whole body with comments
+# stripped, and four kinds below exist to absorb what that over-matches.
+#
+# WHAT IT FOUND, and the two halves are a matched pair worth reading together.
+# Two protocols in this repo assert "the verifier rejects a TAMPERED MESSAGE"
+# in the same words, and the mechanisms are not the same:
+#
+#   HCRED   the per-round commitment hashes the STATEMENT, so a changed
+#           message changes every recomputed commitment.  MEASURED: over 180
+#           trials at n = 32 the challenge vector coincided 41 times -- 40 of
+#           120 at rounds = 1 and 1 of 60 at rounds = 4, both within noise of
+#           (1/3)^rounds -- and the tampered proof was REJECTED in all 41.
+#           The challenge-rematch story is not merely unconfirmed, it is
+#           REFUTED, with its own confounder occurring at its predicted rate.
+#   ZKP-NL  the commitments do NOT bind the message; the verifier RECOMPUTES
+#           the per-round challenge and compares (`h[0] % 3 != challenges[j]`).
+#           MEASURED at rounds = 1: 193 of 600 accepted against a predicted
+#           0.333, and the witness -- accept IFF every recomputed challenge
+#           equals the stored one -- held 600/600 EXACTLY.
+#
+# So one is a 2^-256 hash collision and the other is (1/3)^rounds, and no
+# document here said which was which.  That is #320's finding ("the number was
+# right and the derivation was wrong") with the sign flipped: here the stated
+# reason was the same for both and only one of them was true of each.
+#
+# AND THIS ITEM'S OWN MODEL WAS REFUTED TWICE, WHICH IS THE PART TO CARRY.
+# HCRED's wrong_msg was modelled at (1/3)^4 = 1.2e-2 and measured at ZERO.
+# HCRED-KKW's was then modelled at 1/comb(M, tau) = 1/6, revised to
+# 1/(comb(M, tau) * N_par^tau) = 1/96 -- 105x the whole job budget -- and a
+# FOUR-PORT TEST CHANGE was written and BUILT against that number before the
+# measurement refuted it too: the opened subset coincides at exactly its
+# predicted rate, the verifier still rejects, and it never even reaches the
+# pbar comparison, because `rho` is drawn from a hash over `stmt` and the
+# residual check sum(rho.(zo - targets)) == sum(u) fails first at 1 - 1/q per
+# opened emulation.  THREE bindings, not one; the true rate is ~2.4e-12 and the
+# four-port change was REVERTED.  A test edit justified by a wrong rate is cost
+# with no benefit, and #312's rule -- a refactor must not settle a question it
+# happens to expose -- applies to a fix as much as to a refactor.
+#
+# Two things follow.  A MODEL OF A MECHANISM IS NOT A MEASUREMENT OF IT, which
+# is #320's whole premise turned on the author rather than on the code: both
+# wrong models were reached by reading the verifier carefully, and both looked
+# finished.  And both errors were CONSERVATIVE, like #319's 10x, #320's 3x and
+# #321's 10^134 -- so the direction this axis keeps failing in is the one where
+# nothing red ever happens, which is why every number here owes a witness.
+#
+# THE SCHEMA.  A basis, a WIDTH where the claim rests on one, and prose.  The
+# kinds are a closed set and fall into three groups:
+#
+#   RATED       the detection turns on a fresh coin, so the cell owes a
+#               _SAMPLED_TESTS row WITH a rate.  `challenge-rematch`,
+#               `random-forgery`, `sampled-accept-control`.
+#   BY-WIDTH    acceptance needs a collision or a forgery, so the term exists
+#               and is below anything the budget can represent.  Owes `bits`,
+#               a NUMBER, so the claim is falsifiable: narrow the tag and the
+#               row is wrong.  `hash-binding`, `mac`.
+#   EXACT       no coin at all.  `equation` (the verification identity fails
+#               algebraically), `structural` (a format, size, state or pinned
+#               vector), `reference-count` (the counter counts MISMATCHES
+#               against a reference -- a round-trip wearing a rejection's
+#               name, which is what the screen over-matches on), and
+#               `not-a-verdict` (the flag is a declaration, a header string,
+#               or slice bleed past the last marker).
+#
+# `not-a-verdict` earns its place rather than hiding a miss: python [43] is a
+# BENCHMARK whose slice runs to end of file, so it absorbs `main()` and the
+# harness epilogue -- which is also why #318 pins that cell's "verdict" as the
+# epilogue's own `*** FAILED:` line.  Recorded, because a screen artefact
+# nobody wrote down is one the next reader has to rediscover.
+# ONE CELL, ONE BASIS, AND IT IS THE WEAKEST OF THE CELL'S ASSERTIONS.  Most of
+# these tests assert several rejections at once -- [30] rejects a tampered
+# message AND a reused one-time key, [44] rejects a tamper, a corrupted
+# syndrome, a wrong key and a split witness -- and a verdict is their
+# CONJUNCTION, so the cell's false-failure rate is dominated by whichever
+# assertion is least certain.  The basis therefore names that one and the prose
+# says what the others rest on, which keeps the budget conservative: taking the
+# strongest assertion would let a rate-bearing axis hide behind an exact
+# neighbour, and that is #295's lenient direction inside a single row.
+_REJECTION_RATED = ("challenge-rematch", "random-forgery",
+                    "sampled-accept-control")
+_REJECTION_BY_WIDTH = ("hash-binding", "mac")
+_REJECTION_EXACT_KINDS = ("equation", "structural", "reference-count",
+                          "not-a-verdict")
+_REJECTION_KINDS = _REJECTION_RATED + _REJECTION_BY_WIDTH + _REJECTION_EXACT_KINDS
+
+# How the screen recognises "this test asserts that something must be
+# REFUSED".  Read over the whole body with comments stripped, for the polarity
+# reason above.  Deliberately WIDE: `_bad`/`bad_` catches the mismatch
+# counters of [47] and [48], which are round-trips, and they are classified
+# `reference-count` rather than excluded by a cleverer pattern -- a screen
+# tuned until it flags only what its author expected is a screen that agrees
+# with its author.
+_REJECTION_PATTERN = re.compile(
+    r'reject|refus|forg|tamper|_bad\b|\bbad_|invalid|corrupt|replay|reuse|'
+    r'mismatch|must_fail|split', re.I)
+
+_REJECTION_BASES = {
+    # ── RATED: a fresh coin decides whether the bad input is detectable ──
+    ("java", 19): {"basis": "challenge-rematch", "bits": None,
+        "why": "ZkpNl.verify RECOMPUTES the per-round Fiat-Shamir trit and "
+               "compares it to the stored one, so a tampered message is "
+               "undetected exactly when all `rounds` of them coincide.  "
+               "Nothing else in that verifier reads the message, so the rate "
+               "has ONE term -- unlike [22], where the poke also has to stay "
+               "unopened (#320)"},
+    ("java", 28): {"basis": "challenge-rematch", "bits": None,
+        "why": "the ZKBoo half of Java's ZKP-NL pair, `rejects_msg`, on the "
+               "same verifier and the same recomputed-challenge comparison as "
+               "[19].  `rejects_stmt` is separate and exact: changing y breaks "
+               "the output binding, which no challenge coincidence repairs"},
+    ("java", 29): {"basis": "challenge-rematch", "bits": None,
+        "why": "the ZKB++ half, `rejects_msg`.  #304 measured that ZKB++ "
+               "rebinds out_e to the public y so a wrong WITNESS dies every "
+               "round -- true, and about the witness; the MESSAGE reaches this "
+               "verifier only through the challenge seed, so this axis carries "
+               "the same (1/3)^rounds the ZKBoo one does"},
+    ("java", 30): {"basis": "challenge-rematch", "bits": None,
+        "why": "the Ring-LWR Sigma signer, and the JAVA COUNTERPART of the "
+               "shared [21] row TODO #321 found was not `exact` at all: "
+               "rnl_sigma_verify recomputes the challenge over the tampered w "
+               "and on a collision the residual-norm check sees one "
+               "coefficient inside its slack and accepts"},
+    ("shared", 50): {"basis": "challenge-rematch", "bits": None,
+        "why": "HCRED-KKW's `wrong_msg`, and the row this item got WRONG TWICE "
+               "before measuring it.  THREE Fiat-Shamir-derived values have to "
+               "re-match, not one: the opened SUBSET, the rho PROJECTION -- "
+               "hashed over `stmt`, so the residual check fails at 1 - 1/q per "
+               "opened emulation -- and the pbar challenge",
+        "evidence": "kkw-statement-projection"},
+    ("java", 31): {"basis": "challenge-rematch", "bits": None,
+        "why": "Java's HCRED-KKW, `rejects_msg`, at the same (nPar, mEmul, tau) "
+               "= (4, 4, 2) and the same three bindings, so it carries the same "
+               "rate in a job that is required just as the other three are",
+        "evidence": "kkw-statement-projection"},
+    ("shared", 8): {"basis": "random-forgery", "bits": None,
+        "why": "HPKS Schnorr Eve resistance: the forgery attempts are DRAWN, "
+               "so `wins == 0` is a statement about a fresh sample -- a random "
+               "(R, s) satisfying the verification identity is a 2^-n event "
+               "and the test asserts none of them occurs"},
+    ("java", 27): {"basis": "sampled-accept-control", "bits": None,
+        "why": "the ACCEPT-CONTROL is the sampled half, exactly as in the "
+               "shared [49] row: a genuine UNIFORM m_blind draw must pass a "
+               "guard that rejects a coefficient range below q/4, which n "
+               "uniform draws fall inside with about n*(1/4)^(n-1)"},
+
+    # ── BY-WIDTH: the term exists and is a collision or a forgery ────────
+    ("java", 3): {"basis": "hash-binding", "bits": 256,
+        "why": "hpksVerify recomputes e = fscx_revolve(R, msg, i) from the "
+               "message it is given, so accepting msg ^ 1 under a signature "
+               "over msg needs the challenge function to collide on two FIXED "
+               "messages at a freshly drawn R"},
+    ("java", 10): {"basis": "hash-binding", "bits": 256,
+        "why": "the NL-FSCX challenge variant of [3], same shape: the tampered "
+               "message is rejected unless nl_fscx_revolve_v1 collides on the "
+               "two messages at the drawn R"},
+    ("java", 16): {"basis": "hash-binding", "bits": 256,
+        "why": "WOTS verification walks the hash chains to the public key, so "
+               "a tampered message is accepted only if it hashes to the same "
+               "chain lengths -- a collision in the message digest"},
+    ("java", 17): {"basis": "hash-binding", "bits": 256,
+        "why": "XMSS is WOTS under an authentication path, so [16]'s argument "
+               "carries and the path adds a second collision requirement "
+               "rather than removing the first"},
+    ("java", 18): {"basis": "hash-binding", "bits": 256,
+        "why": "HCRED's per-round commitment hashes the STATEMENT, so a "
+               "tampered message changes every commitment the verifier "
+               "recomputes.  The challenge-rematch story a reader reaches for "
+               "first is REFUTED by measurement -- see the evidence",
+        "evidence": "hcred-statement-binding"},
+    ("shared", 44): {"basis": "hash-binding", "bits": 256,
+        "why": "the C/Go/Python HCRED row, `ok_replay`, identical in mechanism "
+               "to Java's [18]: _hcred_commit takes stmt, so the binding is a "
+               "commitment hash and not the Fiat-Shamir challenge",
+        "evidence": "hcred-statement-binding"},
+    ("shared", 25): {"basis": "hash-binding", "bits": 256,
+        "why": "the accumulator's Merkle proof: a tampered sibling is accepted "
+               "only if the recomputed root still equals the pinned one, which "
+               "is a collision in the node hash"},
+    ("shared", 28): {"basis": "mac", "bits": 128,
+        "why": "HSKE-NL-AEAD's three tamper axes are TAG checks -- a flipped "
+               "ciphertext, tag or nonce is accepted only on a tag forgery, "
+               "which is the authenticator's width and not a protocol coin"},
+    ("java", 25): {"basis": "mac", "bits": 128,
+        "why": "the duplex AEAD's v2/v3 ct and ad rejection, on the same tag "
+               "comparison: Duplex.v2Decrypt returns null unless the "
+               "recomputed tag matches"},
+    ("java", 33): {"basis": "mac", "bits": 128,
+        "why": "Java's HSKE-NL-AEAD row, the same three axes as the shared "
+               "[28] one and the same tag comparison"},
+    ("shared", 48): {"basis": "mac", "bits": 128,
+        "why": "among the v3 consumers' assertions, the only rejection is that "
+               "the v3 duplex refuses a FLIPPED AD, which is [28]'s tag check "
+               "again; everything else in that test is a round-trip"},
+    ("shared", 30): {"basis": "hash-binding", "bits": 256,
+        "why": "the WOTS/XMSS pair in C/Go/Python: `tamper_reject` is [16]'s "
+               "chain argument, and `reuse_reject` is a STATE check on the "
+               "one-time index, which is structural rather than either"},
+
+    # ── EXACT: no coin decides detection ─────────────────────────────────
+    ("java", 23): {"basis": "equation", "bits": None,
+        "why": "the tamper is `s.xor(ONE)` -- the signature SCALAR, not the "
+               "message -- so the threshold Schnorr identity g^s . C^e == R "
+               "fails as arithmetic, with nothing drawn between the poke and "
+               "the comparison"},
+    ("shared", 31): {"basis": "equation", "bits": None,
+        "why": "the C/Go/Python threshold Schnorr row pokes the same scalar "
+               "and fails the same identity; the fresh sample chooses WHICH "
+               "key the identity is checked at, not whether it holds"},
+    ("java", 20): {"basis": "equation", "bits": None,
+        "why": "aPAKE's wrong-login branch derives a different session key by "
+               "construction, so `wrongSk == null` follows from the key "
+               "schedule rather than from a comparison that could go either "
+               "way on a draw"},
+    ("java", 24): {"basis": "equation", "bits": None,
+        "why": "`keyBoundarySeparated` asserts two fpe encryptions under "
+               "DIFFERENT key/context splits DIFFER -- TODO #242's regression "
+               "guard.  Equality would need the separated derivation to "
+               "collide, which is the defect that guard exists to catch and "
+               "not a tolerance"},
+    ("java", 32): {"basis": "structural", "bits": None,
+        "why": "the QC-MDPC weak-key screen runs on PINNED supports, and the "
+               "only sampled part is that what keygen PRODUCES the screen "
+               "ACCEPTS -- which keygen guarantees by retrying until it does, "
+               "so the assertion cannot fail on a draw"},
+    ("shared", 51): {"basis": "structural", "bits": None,
+        "why": "the C/Go/Python weak-key screen, same pinned supports and the "
+               "same keygen-output accept-control; the supports are literals "
+               "chosen to sit on the threshold, so nothing here is sampled"},
+    ("c", 24): {"basis": "not-a-verdict", "bits": None,
+        "why": "the flag is the DECLARATION `int ok_valid = 0, ok_reject = 0` "
+               "in C's tweakable wide-block round-trip; `ok_reject` is never "
+               "incremented in this test and its verdict is `ok == N`, a "
+               "round-trip count"},
+    ("python", 43): {"basis": "not-a-verdict", "bits": None,
+        "why": "a BENCHMARK, and the last marker in the file, so its slice "
+               "runs to end of file and absorbs main() -- which is also why "
+               "#318 pins this cell's verdict as the harness epilogue's own "
+               "*** FAILED: line rather than a test's"},
+    ("c", 47): {"basis": "reference-count", "bits": None,
+        "why": "bad_ref / bad_inv / bad_rt COUNT MISMATCHES against a per-row "
+               "chi reference and its inverse -- a round-trip wearing a "
+               "rejection's name, which is what a deliberately wide screen "
+               "over-matches on"},
+    ("python", 47): {"basis": "reference-count", "bits": None,
+        "why": "Python's copy of the same v3 primitive check, with the "
+               "additional suite cross-check; every counter is a reference "
+               "mismatch, so a nonzero one is a defect and never a draw"},
+}
+
+
+# The measurements behind the bases that rest on one -- and a rate-bearing row
+# may have one too, because "what the rate is" and "which mechanism it is the
+# rate OF" are different questions: [50] and [31] carry both.  A rate-bearing
+# row's FORMULA still belongs to _RATE_MECHANISMS, which validates it against
+# the expression; what lives here is the mechanism a reader would otherwise
+# assume.  Same discipline as
+# TODO #320's and #321's: an EXACT per-trial witness, a ladder that reaches the
+# branch the witness has to be checked on, and the token MEASURED -- because a
+# recorded rate is only as good as the mechanism it was computed over, and here
+# the mechanism is which of two verifiers the reader is looking at.
+#
+# `refutation` is a THIRD kind, beside #321's `margin` and `rate`, and it is
+# not either of them: its ladder counts the CONFOUNDER rather than the event,
+# because the event is what must never happen while the confounder must.  A
+# rate record demands events > 0 somewhere ("the 0/N this item exists not to
+# produce"); a refutation demands CONFOUNDERS > 0 and events == 0, which is the
+# same rule pointed at the object that carries the information.
+_REJECTION_MEASUREMENTS = {
+    "hcred-statement-binding": {
+        "kind": "refutation",
+        "rows": [("shared", 44), ("java", 18)],
+        "quantity": "whether HCRED's verifier accepts a proof presented under a "
+                    "TAMPERED message, against the confounder a reader reaches "
+                    "for first -- that the per-round Fiat-Shamir challenge "
+                    "vector re-derives to the same trits",
+        "bound": "zero up to a 256-bit collision: _hcred_commit hashes `stmt`, "
+                 "which is _hcred_stmt_hash(m, C, seed_H, y, n, MSG), so every "
+                 "commitment the verifier recomputes changes with the message "
+                 "and no challenge coincidence can repair one",
+        "var": "rounds", "shipped": 4,
+        "confounder": "the re-derived challenge vector equals the stored one",
+        "ladder": {1: (120, 0, 40), 4: (60, 0, 1)},
+        "witness": "0 acceptances in 180 trials at n = 32, while the confounder "
+                   "occurred 41 times -- 40 of 120 at rounds = 1 and 1 of 60 at "
+                   "rounds = 4, both inside noise of (1/3)^rounds -- and the "
+                   "tampered proof was REJECTED in every one of the 41.  The "
+                   "challenge-rematch mechanism is REFUTED, not merely "
+                   "unconfirmed",
+        "note": "MEASURED at n = 32 by spec/measure_sampled_rates.py over 180 "
+                "trials.  The rungs reduce `rounds` BELOW the 4 that ships "
+                "(#320's rule 3) for one reason: at rounds = 4 the confounder "
+                "appears about once in 81, so a ladder that stayed at the "
+                "shipped count would have observed it once or not at all and "
+                "the refutation would rest on a single trial",
+    },
+    "kkw-statement-projection": {
+        "kind": "refutation",
+        "rows": [("shared", 50), ("java", 31)],
+        "quantity": "whether HCRED-KKW's verifier accepts a proof presented "
+                    "under a TAMPERED message, against the confounder TWO "
+                    "successive models of this row predicted would make it "
+                    "survive -- that the opened SUBSET re-derives to the same "
+                    "emulations",
+        "bound": "the conjunction of THREE bindings, which is why both models "
+                 "were wrong: 1/comb(M, tau) for the opened subset, then 1/q "
+                 "per opened emulation for the rho PROJECTION -- rho is drawn "
+                 "from a hash over `stmt`, so the residual check "
+                 "sum(rho.(zo - targets)) == sum(u) fails at 1 - 1/65537 -- and "
+                 "only then 1/N_par^tau for the pbar challenge",
+        "var": "tau", "shipped": 2,
+        "confounder": "the opened SUBSET re-derives to the same emulations, "
+                      "which is challenge 1 coinciding",
+        "ladder": {1: (80, 0, 24), 2: (24, 0, 3)},
+        "witness": "0 acceptances in 104 trials at n = 32, while the confounder "
+                   "occurred 27 times -- 24 of 80 at tau = 1 against a "
+                   "predicted 20.0 and 3 of 24 at the shipped tau = 2 against "
+                   "4.0 -- and the tampered proof was REJECTED every time.  The "
+                   "verifier does not even REACH the pbar comparison on those "
+                   "27: instrumenting its own Fiat-Shamir helper shows the c2 "
+                   "draw is never made, because the rho residual has already "
+                   "failed, which is what puts a number on the third binding",
+        "note": "MEASURED at tau = 1 and at the shipped tau = 2 over 104 trials "
+                "by spec/measure_sampled_rates.py.  This record exists because "
+                "the item's own arithmetic was wrong TWICE in the conservative "
+                "direction -- 1/6, then 1/96, against a true ~2.4e-12 -- and a "
+                "four-port test change had been written and BUILT against the "
+                "second figure before the measurement refuted it.  The reduced "
+                "rung raises the confounder from about one trial in six to one "
+                "in four; the shipped rung is the claim, and a ladder of "
+                "reduced rungs alone would refute the alternative only at "
+                "parameters nobody runs",
+    },
+}
+_REFUTATION_FIELDS = ("kind", "rows", "quantity", "bound", "var", "shipped",
+                      "confounder", "ladder", "witness", "note")
+
+
+def _rejection_candidates():
+    """The cells this axis is responsible for, DERIVED from source.
+
+    A cell qualifies when it (a) draws fresh entropy, (b) has a verdict line at
+    all, and (c) asserts somewhere in its body that something must be REFUSED.
+    Cells already carrying a curated `_SAMPLED_TESTS` row, or declared to draw
+    nothing that reaches a verdict, are out of scope: they have a statement.
+
+    C/Go/Python collapse to one `shared` key when ALL THREE flag the number,
+    which is `_SAMPLED_TESTS`' own convention; a number flagged in one or two of
+    them stays per-language, because that asymmetry is itself worth a row.
+    """
+    flagged = {}
+    for lang in NUMBERED_TEST_FILES:
+        bodies = _numbered_test_bodies(lang)
+        prefixes = _VERDICT_COMMENT_PREFIXES[lang]
+        for num in _TEST_DRAWS[lang]:
+            body = bodies.get(num, "")
+            code = "\n".join(
+                t for t in (l.strip() for l in body.split("\n"))
+                if t and not t.startswith(prefixes))
+            if not _REJECTION_PATTERN.search(code):
+                continue
+            if _verdict_fingerprint(lang, body) == "none":
+                continue        # a benchmark decides nothing to be wrong about
+            flagged.setdefault(num, set()).add(lang)
+
+    shared = set(SHARED_NUMBERING_LANGS)
+    out = set()
+    for num, langs in flagged.items():
+        if shared <= langs:
+            out.add(("shared", num))
+            langs = langs - shared
+        out.update((l, num) for l in sorted(langs))
+
+    def covered(key):
+        """Already carries a statement somewhere ELSE.
+
+        A cell this axis classifies stays in scope even once it acquires the
+        `_SAMPLED_TESTS` row that a rate-bearing basis REQUIRES -- otherwise
+        satisfying the requirement would remove the cell from the screen and
+        orphan its own entry, which the first draft of this check did.
+        """
+        if key in _REJECTION_BASES:
+            return False
+        if key in _SAMPLED_TESTS or key in _SAMPLED_TEST_CONSTANT:
+            return True
+        lang, num = key
+        return lang in shared and (("shared", num) in _SAMPLED_TESTS
+                                   or ("shared", num) in _SAMPLED_TEST_CONSTANT)
+
+    return {k for k in out if not covered(k)}
+
+
+def check_rejection_bases(errors):
+    """TODO #322: the DERIVED default of `_SAMPLED_TESTS`.
+
+    Every uncurated sampled cell that asserts a REJECTION states the BASIS on
+    which that rejection holds, from a closed set of kinds -- because the
+    default ("a fresh sample changes WHICH instance is tested and not the
+    outcome") is true of a round-trip and is exactly what a rejection can fail.
+
+    Returns (cells classified, rated cells, measurements)."""
+    candidates = _rejection_candidates()
+    for key in sorted(candidates, key=str):
+        if key not in _REJECTION_BASES:
+            errors.append(
+                f"rejection-bases: {list(key)} draws fresh entropy, decides a "
+                f"verdict and asserts that something must be REFUSED, with no "
+                f"_REJECTION_BASES entry.  It is therefore resting on the "
+                f"DERIVED DEFAULT, which is a statement about ROUND-TRIPS -- "
+                f"say on what basis the rejection holds, and give it a "
+                f"_SAMPLED_TESTS row if a fresh coin decides detection"
+            )
+    backed = {}
+    rated = set()
+    for key, ent in sorted(_REJECTION_BASES.items(), key=str):
+        where = f"_REJECTION_BASES{list(key)}"
+        if key not in candidates:
+            errors.append(
+                f"rejection-bases: {where} names a cell the screen no longer "
+                f"reaches -- it stopped drawing, stopped asserting a "
+                f"rejection, lost its verdict, or ACQUIRED a curated "
+                f"_SAMPLED_TESTS row.  Delete the entry: a basis and a curated "
+                f"verdict are two statements about one cell"
+            )
+            continue
+        extra = set(ent) - {"basis", "bits", "why", "evidence"}
+        if extra or not {"basis", "bits", "why"} <= set(ent):
+            errors.append(f"rejection-bases: {where} must carry basis/bits/why "
+                          f"and may carry evidence (got {sorted(ent)})")
+            continue
+        basis = ent["basis"]
+        if basis not in _REJECTION_KINDS:
+            errors.append(f"rejection-bases: {where} has unknown basis "
+                          f"{basis!r} -- the kinds are a CLOSED set, so a new "
+                          f"one is a claim to argue rather than a string")
+            continue
+        if len(ent["why"]) < 60:
+            errors.append(f"rejection-bases: {where} needs a substantive reason")
+
+        row = _SAMPLED_TESTS.get(key)
+        if basis in _REJECTION_RATED:
+            rated.add(key)
+            if row is None:
+                errors.append(
+                    f"rejection-bases: {where} is {basis!r}, which means a "
+                    f"FRESH COIN decides whether the bad input is detectable, "
+                    f"and there is no _SAMPLED_TESTS row -- so the term is "
+                    f"missing from the budget entirely"
+                )
+            elif row[1] is None:
+                errors.append(
+                    f"rejection-bases: {where} is {basis!r} and its "
+                    f"_SAMPLED_TESTS row is `exact` with no rate.  A coin that "
+                    f"decides detection is the definition of not exact "
+                    f"(TODO #321's [21], one category out)"
+                )
+            if ent["bits"] is not None:
+                errors.append(
+                    f"rejection-bases: {where} is {basis!r} and states "
+                    f"{ent['bits']} bits -- a width is how a BY-WIDTH basis is "
+                    f"made falsifiable, and quoting one beside a real rate "
+                    f"reads as though the rate were the collision"
+                )
+        else:
+            if row is not None:
+                errors.append(
+                    f"rejection-bases: {where} is {basis!r} -- not "
+                    f"rate-bearing -- and the cell ALSO carries a "
+                    f"_SAMPLED_TESTS row.  One of the two is wrong about "
+                    f"whether a coin decides detection"
+                )
+            if basis in _REJECTION_BY_WIDTH:
+                bits = ent["bits"]
+                if not isinstance(bits, int) or bits < 128:
+                    errors.append(
+                        f"rejection-bases: {where} is {basis!r} and must state "
+                        f"the WIDTH acceptance would have to break, as an int "
+                        f">= 128.  The number is what makes the claim "
+                        f"falsifiable: narrow the tag and the row is wrong"
+                    )
+            elif ent["bits"] is not None:
+                errors.append(
+                    f"rejection-bases: {where} is {basis!r} and states a width "
+                    f"-- an exact basis rests on no collision, so a width here "
+                    f"is either the wrong basis or the wrong field"
+                )
+
+        ev = ent.get("evidence")
+        if ev is not None:
+            if ev not in _REJECTION_MEASUREMENTS:
+                errors.append(f"rejection-bases: {where} names evidence "
+                              f"{ev!r}, which does not exist")
+            else:
+                backed.setdefault(ev, set()).add(key)
+
+    # ── the measurements ─────────────────────────────────────────────────
+    try:
+        with open(_RATE_MECHANISM_INSTRUMENT, encoding="utf-8") as f:
+            instrument = f.read()
+    except OSError:
+        instrument = None       # already reported by check_rate_mechanisms
+
+    for name, m in sorted(_REJECTION_MEASUREMENTS.items()):
+        kind = m.get("kind")
+        if kind != "refutation":
+            errors.append(
+                f"rejection-bases: {name!r} has kind {kind!r}.  A RATE-bearing "
+                f"row's mechanism belongs in _RATE_MECHANISMS, which holds it "
+                f"to the formula it is the mechanism OF; this table is for the "
+                f"third shape only (TODO #320, #321, #322)"
+            )
+            continue
+        want = set(_REFUTATION_FIELDS)
+        if set(m) != want:
+            errors.append(f"rejection-bases: {name!r} ({kind}) carries "
+                          f"{sorted(set(m) ^ want)} as a field mismatch")
+            continue
+        if instrument is not None and f'"{name}":' not in instrument:
+            errors.append(
+                f"rejection-bases: {name!r} has no measurer in "
+                f"spec/measure_sampled_rates.py -- a recorded measurement "
+                f"whose recipe cannot be re-run is a claim, not a record"
+            )
+        if "MEASURED" not in m["note"]:
+            errors.append(f"rejection-bases: {name!r} does not carry the token "
+                          f"MEASURED (#304's rule)")
+        for field in ("quantity", "bound", "witness", "note"):
+            if len(m[field]) < 60:
+                errors.append(f"rejection-bases: {name!r} needs a substantive "
+                              f"{field!r}")
+        if not m["ladder"]:
+            errors.append(f"rejection-bases: {name!r} records no measurement")
+            continue
+        for key in (tuple(k) for k in m["rows"]):
+            if kind == "refutation":
+                ent = _REJECTION_BASES.get(key)
+                if ent is None or ent.get("evidence") != name:
+                    errors.append(
+                        f"rejection-bases: {name!r} backs {list(key)}, which "
+                        f"does not name it as its evidence"
+                    )
+            elif key not in _SAMPLED_TESTS:
+                errors.append(f"rejection-bases: {name!r} backs {list(key)}, "
+                              f"which is not a _SAMPLED_TESTS row")
+
+        events_seen = confounders_seen = 0
+        for val in sorted(m["ladder"]):
+            rung = m["ladder"][val]
+            if not (isinstance(rung, tuple) and len(rung) == 3):
+                errors.append(f"rejection-bases: {name!r} rung {val} is not a "
+                              f"3-tuple")
+                continue
+            # A refutation's shipped rung is the CLAIM -- #321's MARGIN rule,
+            # not its rate rule: the statement is about the verifier the suite
+            # actually runs, and the LOWER rungs exist only to make the
+            # confounder frequent enough to be put to it more than once.
+            if val > m["shipped"]:
+                errors.append(
+                    f"rejection-bases: {name!r} measures at {m['var']} = {val}, "
+                    f"ABOVE the {m['shipped']} the test ships -- a rung above "
+                    f"the shipped value measures a verifier nobody runs"
+                )
+            trials, events, confounders = rung
+            if trials <= 0 or not 0 <= confounders <= trials:
+                errors.append(f"rejection-bases: {name!r} rung {val} has "
+                              f"{confounders} confounder(s) of {trials}")
+                continue
+            if events:
+                errors.append(
+                    f"rejection-bases: {name!r} at {m['var']}={val} records "
+                    f"{events} acceptance(s) -- a refutation asserts the event "
+                    f"NEVER happens, so this contradicts its own bound"
+                )
+            confounders_seen += confounders
+            events_seen += events
+        if m["shipped"] not in m["ladder"]:
+            errors.append(
+                f"rejection-bases: {name!r}'s ladder does not include the "
+                f"shipped {m['var']} = {m['shipped']} -- the refutation has to "
+                f"hold where the test RUNS, and a ladder of reduced rungs alone "
+                f"refutes the alternative only at parameters nobody deploys"
+            )
+        if not confounders_seen:
+            errors.append(
+                f"rejection-bases: {name!r} never observed its CONFOUNDER "
+                f"({m['confounder']!r}), so the alternative it claims to refute "
+                f"was never actually put to the verifier -- #296's rule that a "
+                f"branch a random stream never enters is not covered either"
+            )
+        if len(m["confounder"]) < 30:
+            errors.append(f"rejection-bases: {name!r} needs to say what its "
+                          f"confounder IS")
+
+    for name in sorted(_REJECTION_MEASUREMENTS):
+        m = _REJECTION_MEASUREMENTS[name]
+        if m.get("kind") == "refutation" and name not in backed:
+            errors.append(
+                f"rejection-bases: {name!r} is named as evidence by no basis "
+                f"-- a measurement whose subject has gone stays only as "
+                f"something to re-derive later"
+            )
+    return len(_REJECTION_BASES), len(rated), len(_REJECTION_MEASUREMENTS)
+
+
+# ── Part 6/6: the VERDICT of each numbered test, pinned ──────────────────
 #
 # TODO #318, and it closes a hole in TODO #316's own table.  That census
 # catches a test which starts DRAWING fresh entropy; nothing caught a test
@@ -1390,7 +2162,7 @@ _VERDICT_FINGERPRINTS = {
     ("c", 43): "none", ("c", 44): "f9063f18a0",
     ("c", 45): "f9063f18a0", ("c", 46): "9809bcaf57",
     ("c", 47): "3bed54b9b9", ("c", 48): "41b6f1ab99",
-    ("c", 49): "60f6315c3a", ("c", 50): "22c2f7bba4",
+    ("c", 49): "60f6315c3a", ("c", 50): "9aa82856a7",
     ("c", 51): "1de8b648fe", ("c", 52): "71897dda69",
     ("c", 53): "d9072fd977",
     # go
@@ -6926,6 +7698,7 @@ def main():
      sampled_mechs, sampled_mech_rows) = check_sampled_tests(errors, numbers)
     argued_exact, argued_meas, argued_rows = check_argued_evidence(
         errors, _param_tables())
+    rej_cells, rej_rated, rej_meas = check_rejection_bases(errors)
     verdicts_pinned = check_verdict_fingerprints(errors)
     checked = check_primitives(errors)
     census = check_census(errors)
@@ -6965,7 +7738,7 @@ def main():
         f"reason they cannot be, each ANCHORED to the test it describes) and "
         f"{len(_SAMPLED_TEST_CONSTANT)} draw nothing that reaches a verdict.  "
         f"Summed false-failure rate {sampled_rate:.1e} per run against a budget "
-        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316, #319, #320, #321)."
+        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316, #319, #320, #321, #322)."
     )
     n_margin = sum(1 for m in _ARGUED_MEASUREMENTS.values()
                    if m.get("kind") == "margin")
@@ -6978,6 +7751,18 @@ def main():
         f"per-trial witness; and all {len(_SAMPLED_TEST_RATE_LITERAL)} "
         f"hand-computed literal(s) are anchored to the test they describe.  An "
         f"`exact` verdict owes a SLACK, not a count of zeros (TODO #321)."
+    )
+    n_width = sum(1 for e in _REJECTION_BASES.values()
+                  if e["basis"] in _REJECTION_BY_WIDTH)
+    print(
+        f"OK: the DERIVED default — {rej_cells} uncurated sampled cell(s) "
+        f"assert that something must be REFUSED, and each states the BASIS on "
+        f"which that rejection holds: {rej_rated} rest on a fresh coin and now "
+        f"carry a rated _SAMPLED_TESTS row, {n_width} on a collision or a "
+        f"forgery at a stated WIDTH, and the rest on no coin at all.  "
+        f"{rej_meas} excluded mechanism(s) carry a measured REFUTATION.  The "
+        f"default is a statement about ROUND-TRIPS, which is what a rejection "
+        f"can fail (TODO #322)."
     )
     n_none = sum(1 for v in _VERDICT_FINGERPRINTS.values() if v == "none")
     print(
