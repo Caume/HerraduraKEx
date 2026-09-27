@@ -1957,6 +1957,51 @@ spec/                                                — machine-readable protoc
                                                       the confounder frequent enough to be
                                                       put to the verifier more than once.
                                                       `--only rejection` runs that half
+                                                           The ninth axis's CORPUS is stated
+                                                      in the file since TODO #323, and it is
+                                                      six harnesses rather than four.  Parts
+                                                      1/7-6/7 read
+                                                      Herradura_tests.{c,go,py} plus
+                                                      SelfTest.java; Part 7/7 adds the three
+                                                      REDUCED harnesses --
+                                                      Herradura_tests.{s,asm,ino} -- which
+                                                      appeared nowhere in spec/ with no
+                                                      sentence saying why.  They are not
+                                                      inert: ARM and NASM reseed their LCG
+                                                      from /dev/urandom before test [1], both
+                                                      carry [10] (a drawn random forgery, all
+                                                      20 of which must be REFUSED) and [18]
+                                                      (the v2 weak-key guard), and `arm-i386`
+                                                      and `arduino` are as BLOCKING as
+                                                      `native-c`.  Two things to know before
+                                                      extending it.  The screen reads each
+                                                      test's TITLE as well as its body, which
+                                                      inverts #322's remedy: in assembly the
+                                                      title is in .rodata ~760 lines from the
+                                                      body and the body's only rejection
+                                                      wording is a comment the screen strips,
+                                                      so a body-only screen MISSES [10] in
+                                                      both assembly ports -- demonstrated by
+                                                      reverting the screen, not argued.  And
+                                                      the entropy status is DERIVED per
+                                                      harness and cross-checked both ways,
+                                                      because Arduino never reseeds (an AVR
+                                                      has no source and simavr supplies none),
+                                                      so its flake rate is exactly ZERO and
+                                                      the same [10] is rated in two harnesses
+                                                      and exact in the third -- a harness
+                                                      recorded `fixed` is FORBIDDEN a rated
+                                                      basis.  The basis vocabulary is Part
+                                                      5/7's nine kinds, shared rather than
+                                                      duplicated, and [10]'s rate is computed
+                                                      rather than assumed: g = 3 generates an
+                                                      index-15 SUBGROUP of GF(2^32)*, so the
+                                                      rate is 20/286331153 and not 20.2^-32.
+                                                      Deliberately NOT ported here: the draw
+                                                      detector and #318's verdict
+                                                      fingerprints, a fingerprint over
+                                                      verdict-bearing LINES being a cmp/branch
+                                                      pair in assembly rather than a string
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 BITARRAY.md                                          — the NORMATIVE BitArray specification
@@ -2266,10 +2311,17 @@ instead, and `run_arduino.sh` fails on a `*** FAILED:` line **and on the OK line
 arriving**; a hang, a reset, or a `TIMEOUT` shorter than one pass (2-4 s; the default is
 90) is a failure, not a pass.
 
-One hazard to know before adding an assembly test: those harnesses assert *correctness*
-only, never *soundness*, and their Stern-F runs at `rounds=4`. A rejection test written
-there would carry a `(2/3)^4` = 19.75% soundness error per trial — five times worse than
-the `rounds=8` that made C's [45] fail 38.5% of runs. Give it its own round count.
+One hazard to know before adding an assembly test: their Stern-F runs at `rounds=4`, so a
+*Stern* rejection test written there would carry a `(2/3)^4` = 19.75% soundness error per
+trial — five times worse than the `rounds=8` that made C's [45] fail 38.5% of runs. Give it
+its own round count. That warning stands and is unviolated: `[11]`–`[14]` are completeness
+checks, each requiring all 3 trials to pass. **This paragraph used to open by saying those
+harnesses "assert *correctness* only, never *soundness*", and TODO #323 withdrew that half
+as false** — `[10] HPKS-NL Eve resistance: random forgery rejected (20 trials)` requires all
+20 of a drawn `s_fake` to be refused, and `[18] v2_weak_key_reject` is a weak-key guard, in
+all three harnesses, today. A sentence about what a body of code asserts, contradicted by
+that code, is #295's false-reason shape aimed at this section; the rejection assertions are
+now screened and rated rather than described.
 
 Three tests had to be fixed before the gate could be enabled, all the same class — a
 probabilistic property asserted as a deterministic one. If you write a test whose subject
@@ -3128,6 +3180,76 @@ with it: the KKW rate needs `comb(M, tau)`, and the formula evaluator runs with
 expressed at all. **Known limit, stated.** The screen is syntactic, so a rejection asserted
 without any of the nine vocabulary stems goes unseen; the guard is that over-matching is the
 safe direction here and that a flagged cell cannot be silently dropped — only classified.
+
+**And the three harnesses none of that read, which is prior to everything it says (TODO
+#323).** #316 censused which numbered tests decide a verdict from a fresh sample, #318
+pinned each verdict region, #319 made every rate an expression over constants read from
+source, #320 held each formula to a measured mechanism, #321 audited the fifteen curated
+rows with no formula, and #322 gave the 126 uncurated cells a derived default with a BASIS
+for every rejection. **All six read exactly four files** — `NUMBERED_TEST_FILES`' three plus
+`SelfTest.java`. `CryptosuiteTests/Herradura_tests.{s,asm,ino}` appear nowhere in `spec/`,
+and no sentence anywhere said why: not a scope decision but an unexamined boundary, which is
+#306's finding (*which code the census READS is prior to everything the census says*) and
+#295's rule that getting the corpus wrong in the LENIENT direction makes the whole check pass
+vacuously. `PARAM_USE_CORPUS` states its corpus forty lines into its own block for exactly
+this reason; the ninth axis did not. The axis now reads **3 more gated harnesses**, and six
+things carry forward. (1) **IT WAS NOT AN EMPTY GAP.** ARM and NASM both reseed their LCG
+from `/dev/urandom` before test `[1]` (the SA-01 marker in each), so every verdict after that
+is decided on a fresh sample; both carry `[10] HPKS-NL Eve resistance: random forgery
+rejected (20 trials)`, which draws `s_fake` per trial and requires all 20 to be REFUSED, and
+`[18] v2_weak_key_reject`. And `arm-i386` and `arduino` carry no `continue-on-error`, so a
+flake in either is a red REQUIRED check on somebody else's PR — #316's own stated reason for
+caring about the numbered tests more than about the findings gates. The advertised budget was
+summed over four of the six gated harnesses with the omission unstated. (2) **THE SCREEN MUST
+READ THE TITLE, WHICH INVERTS #322's OWN REMEDY.** That item found a verdict-line-only screen
+missing `[44]` and `[50]` and widened it to whole BODIES. In assembly whole bodies are still
+not enough: a test's title lives in `.rodata` (`fmt_t10: .asciz "... random forgery rejected
+..."` at line 49) while its body is at line 808, and the body's only rejection wording is a
+`/* random forgery */` comment the screen strips by design. **Demonstrated rather than
+argued** — reducing the shipped screen back to bodies alone reports both assembly `[10]` rows
+as unflagged, so the title is their only carrier. In C/Go/Python the title string IS the
+marker and sits inside the slice by construction; in assembly the marker is a symbol
+REFERENCE, so the symbol is resolved and an unresolved title is an ERROR rather than a skip
+(#319's rule: a term that resolves nowhere silently SHRINKS the rate). (3) **ONE TEST NUMBER
+IS SAMPLED IN TWO HARNESSES AND DETERMINISTIC IN THE THIRD.** `Herradura_tests.ino` sets
+`prng_state = 0x12345678UL` and `setup()` only opens the UART — an AVR has no entropy source
+and simavr supplies none — so it never reseeds, its 18 verdicts are identical every run, its
+false-failure rate is exactly ZERO, and it cannot contribute to the budget. What it buys in
+exchange is weaker coverage: its 20 "random" forgeries are the same 20 forever. So `[10]`
+carries a RATED basis in ARM and NASM and an exact one in Arduino — #319's per-port split
+with a FLAKE RATE as the object, one harness family over. The status is **DERIVED from each
+harness's source, not curated**, cross-checked against the record in both directions, and a
+harness recorded `fixed` is FORBIDDEN a rated basis, so the split is checked rather than
+described. (4) **THE RATE IS NOT THE 2^-32 THE CONSTRUCTION SUGGESTS, AND COMPUTING IT IS
+WHY.** `[10]` succeeds only if `g^s_fake · C^e == R`, i.e. one value of `s_fake` per
+`ord(g)` — and in GF(2^32) mod `0x00400007` the generator **g = 3 generates an index-15
+SUBGROUP**, `ord(3) = (2^32−1)/15 = 286331153`, so the rate is `20/ord` = **6.98e-08** per
+harness rather than `20·2^-32`. Every input is read from the harness's own source (the
+polynomial, the trial count, and the generator taken from the loads that actually FEED
+`gf_pow_32`) and the order is computed exactly, so lowering the trial count or moving the
+polynomial moves the published rate: verified, 20 → 4 trials takes it to 1.40e-08 and a
+changed polynomial to 4.66e-09. #322's model of a rejection rate was wrong twice, both times
+conservatively; the answer is to stop asserting them. (5) **A DOCUMENTATION CLAIM WITHDRAWN,
+NOT WORKED AROUND.** The Testing section above said these harnesses "assert *correctness*
+only, never *soundness*" — false, `[10]` and `[18]` are rejection assertions in all three —
+while its `(2/3)^4` Stern warning is true and unviolated, `[11]`–`[14]` being completeness
+checks. #295's false-reason shape aimed at this file's own Testing section: a curated
+sentence about how code behaves cannot be validated by a checker that reads only
+declarations. (6) **THE BUDGET MOVED 0.74% AND THAT IS THE RESULT**: 1.874e-05 to 1.888e-05
+against 1e-04, both rounding to the published 1.9e-05, so the advertised figure did not
+change at all. Every term this axis was missing is small; what was missing was the statement
+that it is small — the fifth item in a row to find it so, after #319's 10x, #320's 3x,
+#321's 10^134 and #322's two refuted models, all pointing the same way: **the direction this
+axis keeps failing in is the one where nothing red ever happens.** **Scope, stated in the
+item rather than discovered after it.** This does NOT port `_TEST_DRAWS`' draw detector or
+#318's verdict fingerprints to Thumb-2 and NASM: a fingerprint over "verdict-bearing lines"
+is a `cmp`/branch PAIR in assembly rather than a string, and a draw detector would need a
+fifth and sixth dialect after #306's sixth-spelling hazard had already been met twice.
+Folding either in converges on completeness again, which is #298's recorded reason for
+splitting an item instead of widening it. **Known limit.** These harnesses run reduced demo
+parameters by design, so a rate derived here is a rate for the demo instance and says nothing
+about what ships — which is not a defect of the derivation, because the harness's own flake
+rate is what the budget is about.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`

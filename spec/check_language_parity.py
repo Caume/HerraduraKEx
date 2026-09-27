@@ -136,7 +136,7 @@ def check_numbered_tests(errors):
     return numbers
 
 
-# ── Part 1/6: the numbered tests that decide a verdict from a FRESH SAMPLE ──
+# ── Part 1/7: the numbered tests that decide a verdict from a FRESH SAMPLE ──
 #
 # TODO #316, the ninth axis, and the one that asks of the NUMBERED TESTS what
 # TODO #300 asked of the findings gates: does this check decide a verdict from
@@ -511,7 +511,7 @@ _SAMPLED_TEST_CONSTANT = {
 }
 
 
-# ── Part 2/6: where each rate COMES FROM ─────────────────────────────────
+# ── Part 2/7: where each rate COMES FROM ─────────────────────────────────
 #
 # TODO #319.  A rate above is a LITERAL and its formula is prose, so the
 # arithmetic is checked by nobody and its inputs are checked by nobody.  Lower
@@ -863,7 +863,7 @@ _SAMPLED_TEST_RATE_LITERAL = {
 
 
 
-# ── Part 3/6: whether the FORMULA is the right function ──────────────────
+# ── Part 3/7: whether the FORMULA is the right function ──────────────────
 #
 # TODO #320, and it is the limit #319 stated on itself in the same breath as
 # its own result: "this closes 'the rate's INPUTS moved' and not 'the rate's
@@ -1167,7 +1167,7 @@ _RATE_MECHANISMS["zkpnl-message-rematch"] = {
 _RATE_MECHANISM_UNMEASURED = {}
 
 
-# ── Part 4/6: the ARGUED half -- an `exact` verdict owes a SLACK ──────────
+# ── Part 4/7: the ARGUED half -- an `exact` verdict owes a SLACK ──────────
 #
 # TODO #321.  #319 made every rate an EXPRESSION over constants read from
 # source and #320 held each such formula to a MEASURED mechanism.  Both act on
@@ -1457,7 +1457,7 @@ _ARGUED_MEASUREMENTS = {
 }
 
 
-# ── Part 5/6: the DERIVED default -- a rejection owes a BASIS ─────────────
+# ── Part 5/7: the DERIVED default -- a rejection owes a BASIS ─────────────
 #
 # TODO #322.  #319 made every rate an expression over constants read from
 # source; #320 held each such formula to a MEASURED mechanism; #321 audited the
@@ -2096,7 +2096,7 @@ def check_rejection_bases(errors):
     return len(_REJECTION_BASES), len(rated), len(_REJECTION_MEASUREMENTS)
 
 
-# ── Part 6/6: the VERDICT of each numbered test, pinned ──────────────────
+# ── Part 6/7: the VERDICT of each numbered test, pinned ──────────────────
 #
 # TODO #318, and it closes a hole in TODO #316's own table.  That census
 # catches a test which starts DRAWING fresh entropy; nothing caught a test
@@ -2988,6 +2988,489 @@ def check_argued_evidence(errors, ptables):
     return len(_EXACT_BASES), len(_ARGUED_MEASUREMENTS), len(backed)
 
 
+# ── Part 7/7: the harnesses this axis does NOT read ──────────────────────
+#
+# TODO #323.  Parts 1/7 through 6/7 read exactly four files -- the three in
+# NUMBERED_TEST_FILES plus SelfTest.java -- and `Herradura_tests.{s,asm,ino}`
+# appear nowhere in spec/.  There was no sentence anywhere saying why, which is
+# not a scope decision but an unexamined boundary: TODO #306's finding, that
+# WHICH CODE THE CENSUS READS is prior to everything the census says, and
+# TODO #295's rule that getting the corpus wrong in the LENIENT direction makes
+# the whole check pass vacuously.  `PARAM_USE_CORPUS` states its corpus forty
+# lines into its own block for exactly this reason; the ninth axis did not.
+#
+# IT IS NOT AN EMPTY GAP, WHICH IS WHY THIS IS A PART AND NOT A COMMENT.
+# ARM and NASM both reseed their LCG from /dev/urandom before test [1] (the
+# SA-01 marker in each), so every verdict after that is decided on a fresh
+# sample -- the property Part 1/7 censuses in the other four ports.  Both carry
+# [10] "HPKS-NL Eve resistance: random forgery rejected (20 trials)", which
+# draws s_fake per trial and requires all 20 to be REJECTED, and [18]
+# v2_weak_key_reject.  And `arm-i386` and `arduino` carry no
+# `continue-on-error`, so a flake in either is a red REQUIRED check on somebody
+# else's PR -- Part 1/7's own stated reason for caring about the numbered tests
+# more than about the findings gates.  Until this part the advertised budget was
+# summed over four of the six gated harnesses with the omission unstated.
+#
+# TWO THINGS MEASURED BEFORE ANY OF IT WAS WRITTEN, AND BOTH CHANGED THE SHAPE.
+#
+# (1) THE SCREEN MUST READ THE TITLE, WHICH INVERTS #322's OWN REMEDY.  Part
+# 5/7 found a verdict-line-only screen missing [44] and [50] and widened it to
+# whole BODIES.  In assembly whole bodies are still not enough: a test's title
+# lives in .rodata (`fmt_t10: .asciz "... random forgery rejected ..."`) while
+# its body is ~760 lines away, and the body's only rejection wording is a
+# `/* random forgery */` comment the screen strips by design.  So a body-only
+# screen flags [10] in Arduino and MISSES it in both assembly harnesses -- the
+# vacuous direction.  In C/Go/Python the title string IS the marker and sits
+# inside the slice by construction; in assembly the marker is a symbol
+# REFERENCE.  The symbol is resolved here, and a title that does not resolve is
+# an ERROR rather than a skip, which is #319's rule for a variable that
+# resolves nowhere: a silently missing title SHRINKS the screen.
+#
+# (2) ONE TEST NUMBER IS SAMPLED IN TWO HARNESSES AND DETERMINISTIC IN THE
+# THIRD.  `Herradura_tests.ino` sets `prng_state = 0x12345678UL` and `setup()`
+# only opens the UART -- an AVR has no entropy source -- so it is never
+# reseeded and its 18 verdicts are identical on every run.  Its false-failure
+# rate is exactly ZERO and it cannot contribute to the budget.  That is the
+# right answer for that port and was written down nowhere.  So [10] carries a
+# RATED basis in ARM and NASM and an exact one in Arduino: #319's per-port
+# split with a FLAKE RATE as the object, one harness family over.  The status
+# is DERIVED from each harness's source rather than curated, cross-checked
+# against the record BOTH WAYS, and a harness recorded `fixed` is FORBIDDEN a
+# rated basis -- so the split is checked rather than described.
+#
+# SCOPE, stated here rather than discovered later.  This does not port Part
+# 1/7's draw detector or Part 6/7's verdict fingerprints to Thumb-2 and NASM.
+# A fingerprint over "verdict-bearing lines" is a cmp/branch PAIR in assembly
+# rather than a string, and a draw detector would need a fifth and sixth
+# dialect after #306's sixth-spelling hazard had already been met twice.
+# Folding either in converges on completeness again, which is #298's recorded
+# reason for splitting an item instead of widening it.  What this closes is the
+# corpus boundary and the rejection statement -- the case that exists.
+#
+# KNOWN LIMIT.  These harnesses run reduced parameters by design (Stern-F at
+# N=32, t=2, rounds=4), so a rate derived here is a rate for the DEMO
+# instance and says nothing about what ships.  That is not a defect of the
+# derivation: the harness is the subject, and the flake rate of the harness is
+# what the budget is about.
+#
+# AND WHY THESE TWO RATES CARRY NO #320-STYLE MEASUREMENT, said here rather
+# than left as an omission.  Part 3/7 requires every DERIVED formula to be
+# held to a measured mechanism, because a formula can be the wrong function of
+# the right constants.  There is no competing mechanism to exclude here: the
+# verifier accepts iff g^s_fake . C^e == R, which has exactly one solution per
+# ord(g), so the rate is a THEOREM about a cyclic group and the denominator is
+# computed exactly by _gf_order rather than fitted.  And a measurement could
+# not settle it anyway -- at 7e-08 a confirming run needs ~10^8 trials, which
+# is #321's finding that a sampled zero cannot show what an exact claim asks
+# of it at any trial count.  What #320's discipline actually buys here is the
+# part that IS done: the inputs are read from source and the order recomputed
+# every run, so the published number moves when the harness does.  The standing warning in CLAUDE.md's Testing
+# section -- that a STERN rejection test written here would carry a (2/3)^4 =
+# 19.75% per-trial soundness error -- is unviolated and stays: [11]-[14] are
+# completeness checks, each requiring all 3 trials to pass.
+
+_REDUCED_HARNESSES = {
+    "arm": {
+        "path": os.path.join(REPO, "CryptosuiteTests", "Herradura_tests.s"),
+        # Leading marker, as in C/Go/Python -- the header printf comes first,
+        # so a forward slice is correct here and Java's trailing-marker hazard
+        # (#322's third derivation limit) does not arise.
+        "marker": re.compile(r'ldr\s+r0,\s*=fmt_t(\d+)\b'),
+        "title": r'fmt_t%d:\s*\.asciz\s*"([^"]*)"',
+        "line_comment": re.compile(r'@[^\n]*'),
+        "job": "arm-i386",
+        # The PRNG state being the DESTINATION of a read from the urandom
+        # handle.  Deliberately not a bare search for "/dev/urandom", which
+        # the SA-01 comment would satisfy on its own.
+        "seed_probe": re.compile(r'ldr\s+r0,\s*=lcg_state\b[\s\S]{0,240}?bl\s+fread'),
+        "poly": re.compile(r'ldr\s+r7,\s*=0x([0-9A-Fa-f]+)'),
+        "gen_load": re.compile(r'mov\s+r0,\s*#(\d+)\b'),
+        "gen_call": re.compile(r'bl\s+gf_pow_32\b'),
+        "trials": re.compile(r'cmp\s+r11,\s*#(\d+)\b'),
+    },
+    "i386": {
+        "path": os.path.join(REPO, "CryptosuiteTests", "Herradura_tests.asm"),
+        "marker": re.compile(r'mov\s+eax,\s*t(\d+)_hdr\b'),
+        "title": r't%d_hdr\s+db\s+"([^"]*)"',
+        "line_comment": re.compile(r';[^\n]*'),
+        "job": "arm-i386",
+        "seed_probe": re.compile(r'mov\s+ecx,\s*prng_state\b[\s\S]{0,120}?int\s+0x80'),
+        "poly": re.compile(r'%define\s+GF_POLY\s+0x([0-9A-Fa-f]+)'),
+        "gen_load": re.compile(r'mov\s+eax,\s*(\d+)\b'),
+        "gen_call": re.compile(r'call\s+gf_pow_32\b'),
+        "trials": re.compile(r'cmp\s+ebp,\s*(\d+)\b'),
+    },
+    "arduino": {
+        "path": os.path.join(REPO, "CryptosuiteTests", "Herradura_tests.ino"),
+        "marker": re.compile(r'Serial\.println\("\[(\d+)\]'),
+        # The println IS the title, so it is inside the slice already and
+        # there is no symbol to resolve.
+        "title": None,
+        "line_comment": re.compile(r'//[^\n]*'),
+        "job": "arduino",
+        # A reseed would be an assignment from something that is not a literal
+        # and not the LCG's own recurrence.  There is no entropy source on an
+        # AVR, so this is expected NOT to match -- and it firing is the
+        # interesting direction, since it would mean the harness started to
+        # flake.
+        "seed_probe": re.compile(
+            r'randomSeed\s*\(|analogRead\s*\(|/dev/urandom|'
+            r'prng_state\s*=\s*(?!prng_state\b)[A-Za-z_]'),
+        "poly": re.compile(r'#define\s+GF_POLY32\s+0x([0-9A-Fa-f]+)'),
+        "gen_load": re.compile(r'gf_pow_32\s*\(\s*GF_GEN\b'),
+        "gen_call": None,
+        "trials": None,
+    },
+}
+
+# The documented range: CLAUDE.md's Testing section says these three run tests
+# [1]-[18].  Held as a set rather than a count so a GAP is an error too.
+_REDUCED_RANGE = tuple(range(1, 19))
+
+# DERIVED per harness and cross-checked against this record in both
+# directions.  "fresh" means the PRNG state is reseeded from an external
+# entropy source, so a verdict is decided on a fresh sample; "fixed" means it
+# is not, so the harness reproduces run to run and its flake rate is ZERO.
+_REDUCED_ENTROPY = {
+    "arm":     ("fresh",
+        "SA-01 reads 4 bytes of /dev/urandom into `lcg_state` in main() before "
+        "test [1], so every trial after that point is a fresh sample"),
+    "i386":    ("fresh",
+        "SA-01 reads 4 bytes of /dev/urandom into `prng_state` in _start "
+        "before test [1], by the same convention as the ARM harness"),
+    "arduino": ("fixed",
+        "`prng_state = 0x12345678UL` and setup() only opens the UART -- an AVR "
+        "has no entropy source and simavr supplies none -- so the LCG replays "
+        "one stream and all 18 verdicts are identical on every run.  The "
+        "consequence is the point: this harness CANNOT flake, so it "
+        "contributes exactly 0 to the budget, and the same [10] that is rated "
+        "in ARM and NASM is exact here.  What it buys in exchange is weaker: "
+        "its 20 `random` forgeries are the same 20 forever"),
+}
+
+# Every cell the screen flags, classified from Part 5/7's CLOSED set of nine
+# kinds -- the same vocabulary, not a second one.  `rate` is present only for
+# a RATED basis in a `fresh` harness; anywhere else it must be None, which is
+# what makes the ARM/Arduino split a check rather than a sentence.
+_REDUCED_REJECTION_BASES = {
+    ("arm", 10): {"basis": "random-forgery", "bits": None, "rate": "derived",
+        "why": "s_fake = prng_next() per trial, and the verifier accepts only "
+               "if g^s_fake . C^e == R -- one value of s_fake in ord(g).  All "
+               "20 trials must be rejected (`cmp r11, #20`), so the rate is "
+               "20/ord(g), derived from the polynomial and the generator this "
+               "harness actually uses rather than assumed to be 2^-32"},
+    ("i386", 10): {"basis": "random-forgery", "bits": None, "rate": "derived",
+        "why": "the same construction as the ARM harness, transcribed for "
+               "NASM: 20 trials, `cmp ebp, 20`, all of which must reject.  A "
+               "separate row rather than a shared one because it is a separate "
+               "BINARY -- the two agree today and nothing makes them agree"},
+    ("arduino", 10): {"basis": "random-forgery", "bits": None, "rate": None,
+        "why": "the same Eve-resistance assertion, and the reason it carries "
+               "NO rate is the finding: this harness never reseeds its LCG, so "
+               "the 20 forgeries are a fixed vector and the verdict is "
+               "determined.  A rate here would be a claim about a coin that is "
+               "not tossed"},
+    ("arm", 18): {"basis": "structural", "bits": None, "rate": None,
+        "why": "v2_weak_key_reject feeds the guard TWO HARDCODED keys -- 2^17, "
+               "whose delta(K) is 0 at n=32 (TODO #169), which must be "
+               "refused, and an ordinary key which must be accepted -- so no "
+               "entropy reaches the verdict and the accept-control is built "
+               "in.  #234's rule that a rejection case needs an accept "
+               "control beside it, satisfied in one expression"},
+    ("i386", 18): {"basis": "structural", "bits": None, "rate": None,
+        "why": "the same two hardcoded keys as the ARM harness, and "
+               "deterministic for the same reason: the guard is a predicate on "
+               "delta(K) and neither input is drawn"},
+    ("arduino", 18): {"basis": "structural", "bits": None, "rate": None,
+        "why": "the same two hardcoded keys again, doubly deterministic here "
+               "-- the inputs are literals AND the harness draws nothing at "
+               "all -- so this cell is exact under either reading"},
+    ("arduino", 17): {"basis": "not-a-verdict", "bits": None, "rate": None,
+        "why": "an OVER-MATCH, kept and classified rather than dropped, which "
+               "is Part 5/7's rule.  [17] is a 4-leaf Merkle proof round-trip "
+               "asserting `cur == root` and rejects nothing; the screen sees "
+               "`reject` because the slice runs to the next marker and the "
+               "NEXT test's function declaration -- "
+               "`void test_v2_weak_key_reject()` -- sits inside it.  A "
+               "declaration, which is exactly what this kind exists to absorb"},
+}
+
+
+def _reduced_bodies(harness):
+    """{test number: (body-with-comments-stripped, resolved title)}.
+
+    Forward slice from each leading marker to the next, as Part 1/7 does for
+    C/Go/Python.  The title is resolved through its symbol and appended,
+    because in assembly the wording that says `this test asserts a rejection`
+    is in .rodata and not in the body at all.
+    """
+    h = _REDUCED_HARNESSES[harness]
+    with open(h["path"], encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    hits = sorted((m.start(), int(m.group(1))) for m in h["marker"].finditer(text))
+    out = {}
+    for i, (off, num) in enumerate(hits):
+        end = hits[i + 1][0] if i + 1 < len(hits) else len(text)
+        body = re.sub(r'/\*.*?\*/', ' ', text[off:end], flags=re.S)
+        body = h["line_comment"].sub(' ', body)
+        title = None
+        if h["title"] is not None:
+            m = re.search(h["title"] % num, text)
+            title = m.group(1) if m else None
+        out[num] = (body, title)
+    return out, text
+
+
+def _gf_order(gen, poly):
+    """ord(gen) in GF(2^32) under `poly`, computed exactly.
+
+    Not sampled and not modelled: the harnesses' gf_mul_32 is a 32-step
+    carryless multiply reducing on carry-out of bit 31, so this reproduces it
+    directly.  #322's own model of a rejection rate was wrong twice, both
+    times conservatively, which is the argument for computing rather than
+    asserting -- and here the answer is not the 2^-32 the construction
+    suggests, because g = 3 generates an index-15 SUBGROUP.
+    """
+    mask = 0xFFFFFFFF
+
+    def mul(a, b):
+        r = 0
+        for _ in range(32):
+            if b & 1:
+                r ^= a
+            carry = (a >> 31) & 1
+            a = (a << 1) & mask
+            if carry:
+                a ^= poly
+            b >>= 1
+        return r
+
+    def power(b, e):
+        r = 1
+        while e:
+            if e & 1:
+                r = mul(r, b)
+            b = mul(b, b)
+            e >>= 1
+        return r
+
+    n = (1 << 32) - 1
+    if power(gen, n) != 1:
+        return None          # not in the multiplicative group: caller errors
+    order = n
+    for p in (3, 5, 17, 257, 65537):     # 2^32-1 = 3.5.17.257.65537
+        while order % p == 0 and power(gen, order // p) == 1:
+            order //= p
+    return order
+
+
+def _reduced_derive(errors):
+    """{(harness, test): rate} for every RATED reduced-harness rejection row.
+
+    Every input is read from the harness's own source and the group order is
+    computed, so lowering the trial count or moving the polynomial moves the
+    published rate -- #319's rule, applied to the two harnesses it never read.
+    The polynomial is read from the RAW text, comments included, on purpose: a
+    second spelling anywhere makes the count exceed one and fail loudly, which
+    is #261's exactly-once rule and the safe direction for a denominator.
+    """
+    rates = {}
+    for (harness, num), row in sorted(_REDUCED_REJECTION_BASES.items()):
+        if row.get("rate") != "derived":
+            continue
+        h = _REDUCED_HARNESSES[harness]
+        bodies, text = _reduced_bodies(harness)
+        if num not in bodies:
+            errors.append(
+                f"reduced-rates: [{num}] is not a test in the {harness} "
+                f"harness, so its rate cannot be derived")
+            continue
+        body, _title = bodies[num]
+
+        polys = h["poly"].findall(text)
+        if len(polys) != 1:
+            errors.append(
+                f"reduced-rates: {harness} — the GF polynomial regex matched "
+                f"{len(polys)} time(s), not exactly once.  A variable that "
+                f"resolves nowhere is an ERROR, not a skip (TODO #319): a "
+                f"skipped term silently SHRINKS the rate")
+            continue
+        poly = int(polys[0], 16)
+
+        # The generator: for each gf_pow_32 call, the nearest PRECEDING
+        # immediate load of the first-argument register, and all of them must
+        # AGREE.  Said precisely because a reason exact about the wrong object
+        # reads exactly like a correct one (#310) -- this is a proximity read,
+        # not dataflow, so a call whose base is COMPUTED (the C^e term here)
+        # contributes its predecessor's value rather than its own.  That is
+        # sound in the direction that matters: any disagreement makes the set
+        # larger than one and ERRORS, so the failure mode is a refusal to
+        # publish a rate, never a wrong rate.
+        gens = set()
+        if h["gen_call"] is not None:
+            for call in h["gen_call"].finditer(body):
+                loads = h["gen_load"].findall(body[:call.start()])
+                if loads:
+                    gens.add(int(loads[-1]))
+        if len(gens) != 1:
+            errors.append(
+                f"reduced-rates: {harness} [{num}] — the gf_pow_32 call sites "
+                f"in this test load {sorted(gens) or 'no'} generator value(s); "
+                f"exactly one is required, or the rate is a rate for a group "
+                f"nobody uses")
+            continue
+        gen = gens.pop()
+
+        trials = h["trials"].findall(body) if h["trials"] else []
+        if len(trials) != 1:
+            errors.append(
+                f"reduced-rates: {harness} [{num}] — the all-must-reject "
+                f"threshold matched {len(trials)} time(s), not exactly once, "
+                f"so the number of trials entering the rate is ambiguous")
+            continue
+        n_trials = int(trials[0])
+
+        order = _gf_order(gen, poly)
+        if not order:
+            errors.append(
+                f"reduced-rates: {harness} [{num}] — generator {gen} is not in "
+                f"the multiplicative group of GF(2^32) mod {poly:#x}, so the "
+                f"forgery rate has no denominator.  Either the polynomial is "
+                f"reducible or the generator moved")
+            continue
+        rates[(harness, num)] = n_trials / float(order)
+    return rates
+
+
+def check_reduced_harnesses(errors):
+    """TODO #323: the three gated harnesses Parts 1/7-6/7 do not read."""
+    seen = {}
+    for harness, h in sorted(_REDUCED_HARNESSES.items()):
+        if not os.path.exists(h["path"]):
+            errors.append(f"reduced-harness: {harness} — {h['path']} is "
+                          f"missing; the corpus statement names a file that "
+                          f"is not there")
+            continue
+        bodies, text = _reduced_bodies(harness)
+        found = tuple(sorted(bodies))
+        seen[harness] = found
+        # #296's guard: an empty census is an error, never a clean bill.
+        if not found:
+            errors.append(
+                f"reduced-harness: {harness} — no [N] marker matched, so "
+                f"either the marker pattern is stale or the harness stopped "
+                f"numbering its tests.  An under-matching detector makes this "
+                f"whole part pass vacuously")
+            continue
+        if found != _REDUCED_RANGE:
+            missing = sorted(set(_REDUCED_RANGE) - set(found))
+            extra = sorted(set(found) - set(_REDUCED_RANGE))
+            errors.append(
+                f"reduced-harness: {harness} — runs tests {list(found)}, not "
+                f"the documented [1]-[18]"
+                + (f"; missing {missing}" if missing else "")
+                + (f"; new {extra}" if extra else "")
+                + ".  A test added to a reduced harness must be screened for "
+                  "a rejection assertion, so it cannot arrive unexamined")
+        # Titles must RESOLVE.  A missing title shrinks the screen, which is
+        # the direction this part exists to close.
+        for num, (_body, title) in sorted(bodies.items()):
+            if h["title"] is not None and title is None:
+                errors.append(
+                    f"reduced-harness: {harness} [{num}] — the title symbol "
+                    f"did not resolve to a string.  In assembly the rejection "
+                    f"wording lives in .rodata, so an unresolved title makes "
+                    f"the screen blind to this test rather than merely quiet")
+
+        # The entropy status, DERIVED and then compared with the record.
+        recorded, why = _REDUCED_ENTROPY.get(harness, (None, ""))
+        if recorded not in ("fresh", "fixed"):
+            errors.append(f"reduced-harness: {harness} has no recorded entropy "
+                          f"status; it is 'fresh' or 'fixed'")
+            continue
+        if len(why) < 60:
+            errors.append(f"reduced-harness: {harness}'s entropy status needs "
+                          f"a reason saying how it was read")
+        probed = "fresh" if h["seed_probe"].search(text) else "fixed"
+        if probed != recorded:
+            errors.append(
+                f"reduced-harness: {harness} is recorded {recorded!r} and its "
+                f"source reads {probed!r}.  "
+                + ("A harness that has STARTED drawing decides its verdicts on "
+                   "a fresh sample and owes rated rows and a budget term"
+                   if probed == "fresh" else
+                   "A harness that has STOPPED drawing no longer flakes, so "
+                   "its rated rows overstate the budget and its 'random' cases "
+                   "now test one fixed vector forever")
+                + " — fix the code or the record, not this check")
+
+    # The screen: exhaustive in BOTH directions, on Part 5/7's vocabulary.
+    for harness in sorted(seen):
+        bodies, _text = _reduced_bodies(harness)
+        for num, (body, title) in sorted(bodies.items()):
+            flagged = bool(_REJECTION_PATTERN.search(body + " " + (title or "")))
+            row = _REDUCED_REJECTION_BASES.get((harness, num))
+            if flagged and row is None:
+                errors.append(
+                    f"reduced-harness: {harness} [{num}] asserts something is "
+                    f"REFUSED and states no BASIS.  Add a "
+                    f"_REDUCED_REJECTION_BASES entry naming one of "
+                    f"{list(_REJECTION_KINDS)} — over-matching is the "
+                    f"CONSERVATIVE direction here, so classify it (a counter "
+                    f"or a declaration is 'reference-count' or "
+                    f"'not-a-verdict'), never drop it")
+            elif row is not None and not flagged:
+                errors.append(
+                    f"reduced-harness: _REDUCED_REJECTION_BASES[{harness!r}, "
+                    f"{num}] names a test the screen does not flag — the "
+                    f"assertion was removed, or the wording moved out of both "
+                    f"the body and the title")
+
+    rated = 0
+    for (harness, num), row in sorted(_REDUCED_REJECTION_BASES.items()):
+        if harness not in _REDUCED_HARNESSES:
+            errors.append(f"reduced-harness: _REDUCED_REJECTION_BASES names "
+                          f"unknown harness {harness!r}")
+            continue
+        basis = row.get("basis")
+        if basis not in _REJECTION_KINDS:
+            errors.append(
+                f"reduced-harness: {harness} [{num}] has basis {basis!r}, "
+                f"which is not one of Part 5/7's nine kinds.  The vocabulary "
+                f"is shared on purpose — a second closed set is a second thing "
+                f"to keep in step")
+        if len(row.get("why", "")) < 60:
+            errors.append(f"reduced-harness: {harness} [{num}] needs a reason "
+                          f"saying what its basis rests on")
+        status = _REDUCED_ENTROPY.get(harness, (None, ""))[0]
+        has_rate = row.get("rate") is not None
+        if has_rate and status != "fresh":
+            errors.append(
+                f"reduced-harness: {harness} [{num}] carries a rate and its "
+                f"harness is {status!r}.  A harness that draws nothing cannot "
+                f"flake, so a rate there is a claim about a coin that is not "
+                f"tossed — this is the ARM/Arduino split, checked")
+        if has_rate and basis not in _REJECTION_RATED:
+            errors.append(
+                f"reduced-harness: {harness} [{num}] carries a rate on basis "
+                f"{basis!r}, which is not one of Part 5/7's RATED kinds "
+                f"{list(_REJECTION_RATED)}")
+        if basis in _REJECTION_RATED and status == "fresh" and not has_rate:
+            errors.append(
+                f"reduced-harness: {harness} [{num}] rests on a fresh coin in "
+                f"a harness that draws, and states no rate.  That is the term "
+                f"the budget was missing")
+        if row.get("bits") is not None and basis not in _REJECTION_BY_WIDTH:
+            errors.append(
+                f"reduced-harness: {harness} [{num}] states a width on basis "
+                f"{basis!r}, which does not rest on one")
+        if has_rate:
+            rated += 1
+    fresh = sum(1 for s, _w in _REDUCED_ENTROPY.values() if s == "fresh")
+    return (len(seen), fresh, len(_REDUCED_ENTROPY) - fresh,
+            len(_REDUCED_REJECTION_BASES), rated)
+
+
 def check_sampled_tests(errors, numbers):
     """TODO #316: which numbered tests decide a verdict from a fresh sample."""
     drawn = {}
@@ -3160,6 +3643,12 @@ def check_sampled_tests(errors, numbers):
             rated.append((key, r, None))
     # TODO #320: the formula's MECHANISM, not just its inputs.
     mechs, mech_rows = check_rate_mechanisms(errors, envs)
+    # TODO #323: the two REDUCED harnesses this axis did not read.  Their terms
+    # join the SAME sum -- the budget is a JOB-level number and `arm-i386` is
+    # as blocking as `native-c`, so a rate summed over four of the six gated
+    # harnesses was not the number it was advertised as.
+    for key, rate in sorted(_reduced_derive(errors).items()):
+        rated.append((key, rate, None))
     total = sum(r for _k, r, _l in rated)
     if total > _SAMPLED_TEST_BUDGET:
         # Resolved values only -- reading the raw table here compared the
@@ -7699,6 +8188,8 @@ def main():
     argued_exact, argued_meas, argued_rows = check_argued_evidence(
         errors, _param_tables())
     rej_cells, rej_rated, rej_meas = check_rejection_bases(errors)
+    (red_files, red_fresh, red_fixed, red_rows,
+     red_rated) = check_reduced_harnesses(errors)
     verdicts_pinned = check_verdict_fingerprints(errors)
     checked = check_primitives(errors)
     census = check_census(errors)
@@ -7738,7 +8229,7 @@ def main():
         f"reason they cannot be, each ANCHORED to the test it describes) and "
         f"{len(_SAMPLED_TEST_CONSTANT)} draw nothing that reaches a verdict.  "
         f"Summed false-failure rate {sampled_rate:.1e} per run against a budget "
-        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316, #319, #320, #321, #322)."
+        f"of {_SAMPLED_TEST_BUDGET:.0e} (TODO #316, #319, #320, #321, #322, #323)."
     )
     n_margin = sum(1 for m in _ARGUED_MEASUREMENTS.values()
                    if m.get("kind") == "margin")
@@ -7763,6 +8254,17 @@ def main():
         f"{rej_meas} excluded mechanism(s) carry a measured REFUTATION.  The "
         f"default is a statement about ROUND-TRIPS, which is what a rejection "
         f"can fail (TODO #322)."
+    )
+    print(
+        f"OK: the REDUCED harnesses — this axis reads {red_files} more gated "
+        f"harness(es) than Parts 1/7-6/7 do, and states the corpus rather than "
+        f"leaving it unexamined: {red_fresh} reseed their PRNG from "
+        f"/dev/urandom and so decide verdicts on a FRESH sample, {red_fixed} "
+        f"never reseed and therefore cannot flake at all — DERIVED from each "
+        f"harness's source and cross-checked both ways.  {red_rows} flagged "
+        f"cell(s) state a BASIS from Part 5/7's closed set, {red_rated} of them "
+        f"rated and folded into the SAME budget.  The same [10] is rated in "
+        f"two harnesses and exact in the third (TODO #323)."
     )
     n_none = sum(1 for v in _VERDICT_FINGERPRINTS.values() if v == "none")
     print(

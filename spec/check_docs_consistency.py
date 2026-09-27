@@ -618,6 +618,17 @@ DOC_COUNTS = [
      r"\*\*(\d+) cells\*\* assert a rejection",
      "check_language_parity.py's _REJECTION_BASES, quoted in CLAUDE.md's "
      "Testing section"),
+    # TODO #323.  The number of GATED harnesses the ninth axis reads.  It sat
+    # at four for seven items with nothing saying so, which is the whole defect
+    # -- so the count is held to the tool rather than to a sentence, and
+    # dropping a harness from the corpus now moves a number CLAUDE.md is
+    # checked against.
+    ("gated harnesses the sampled-test axis reads",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"this axis reads (\d+) more gated harness\(es\)",
+     r"\*\*(\d+) more gated harnesses\*\*",
+     "check_language_parity.py's _REDUCED_HARNESSES, quoted in CLAUDE.md's "
+     "Testing section"),
     # TODO #303.  The replay tables' sizes are the count of what the four ports
     # are actually held against each other on, and CLAUDE.md wrote both out by
     # hand -- "four samplers", "five whole OPERATIONS" -- so adding a row left
