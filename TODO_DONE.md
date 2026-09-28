@@ -22130,3 +22130,79 @@ is recursive and `native-c` runs both new checks.  Guard cost measured at 0.7460
 0.7471 µs/op — free — after two wrong answers, both conservative.
 
 ---
+
+---
+
+### #325: the Go FFI tests that nothing runs — and the guard that cannot see them
+
+**TODO #324 found a harness that existed, failed, and that no job ran; this is the same
+finding one language over, inside #324's own fix.**  `bindings/ffi/go/` holds two test
+files -- `herradura_ffi_test.go` and `herradura_ffi_native_test.go` -- and **nothing in
+the repository runs either**.  There is no `go test` invocation in `ci.yml` at all; the
+only one anywhere is `Fuzz/run_fuzz.sh`'s `go test ./herradura/ -run=xxx -fuzz=...`, where
+`-run=xxx` deliberately excludes ordinary tests.  That is correct there, and is the reason
+it does not help here: `herradura/codec_fuzz_test.go` contains only `Fuzz*` functions, so
+the fuzz job covers it completely and reaches nothing else.
+
+**They are not decorative, and the demonstration is the filing.**  Rebuilt against the
+PRE-#324 shim -- the `bindings/ffi/herradura_shim.c` that shipped from v9.1.0 to v9.5.12 --
+and run with the build cache bypassed, `go test -count=1 ./...` **hard-crashes** with a
+register dump; against the post-#324 shim it passes in 0.565 s.  So these two files would
+have caught the seventeen-release defect on their first run.  `git log` makes it sharper:
+they were last EDITED at `9f7a5ee` (v9.2.0, TODO #314 pass 3), one release AFTER the defect
+landed, so they were touched while it was live by someone who did not run them.
+
+**THE GUARD HAS THE BLIND SPOT IT WAS REWRITTEN TO CLOSE.**  #287's coverage guard exists
+to catch "a NEW harness appearing outside `CliTest/` with nothing running it", and #324
+rewrote it from shell globs to `find` precisely because `bindings/ffi/test_*.py` was one
+directory too shallow.  The replacement searches `-name 'test_*.py' -o -name '*_test.py'`
+and **can never match `*_test.go`**.  #324 fixed the depth and left the LANGUAGE, so the
+guard that now fails loudly when its whole search comes back empty still passes silently
+when one language's share of it does -- which is #324's own "a glob that matches nothing is
+indistinguishable from a glob that is satisfied" at the per-pattern level instead of the
+per-search level.
+
+**What the census says, which is what keeps this small.**  Every test-shaped file outside
+`CliTest/` was checked against what `ci.yml` actually names: Java's `SelfTest.java` and
+`CodecTest.java` are run by `test_java_{bindings,codec}.sh` in `native-java`;
+`SecurityProofsCode/hkex_gf_test.py` and `hkex_cy_test.py` are DISCOVERED by
+`run_findings_gates.py`; `Mcp/test_server.py` and `bindings/ffi/python/
+test_ffi_correctness.py` are named directly; `herradura/codec_fuzz_test.go` is covered in
+full by the fuzz job.  **The orphans are exactly the two Go files.**  A small answer is the
+right answer only if the question was asked of everything.
+
+**Why `herradura_ffi_native_test.go` in particular is worth running.**  It is the ONLY
+thing in the tree that cross-checks the cgo binding against the native Go suite -- the
+classical quartet composed exactly as `"Herradura cryptographic suite.go"`'s `main()`
+composes it -- so it is a cross-implementation check of the kind this repo repeatedly
+records as the only exit from a single-port blind spot, and it has never been run in CI.
+
+**The design question, and it is the half worth arguing.**  Widening the guard's `find` to
+`*_test.go` fixes the case in front of it and leaves the next extension invisible, which is
+#314 pass 3's recorded lesson for the third time (*a tool that enumerates sites enumerates
+the sites you point it at*) and #324's for the second.  The guard cannot become "what
+executes a harness" without a call graph over shell and YAML, which is not available.  What
+IS available is to make the pattern set SELF-INVALIDATING per language the way the whole
+search already is per search: a declared pattern that matches NOTHING is an error, so
+deleting the last Go harness fails the guard until the pattern goes with it, and adding a
+fifth extension is a decision someone makes rather than one nobody notices.
+
+**Known limit, to be stated in the item rather than discovered after it.**  This is still a
+pattern list, so a harness named by none of the patterns is still invisible -- a `main()`
+in a file called something else, a shell script outside `CliTest/`.  What it closes is the
+case that occurred twice: a harness whose NAME says exactly what it is, sitting in a
+directory the guard's pattern could not reach.
+
+**Scope.**  No protocol, parameter, wire-format or CLI-surface change; a CI step and a
+guard, so PATCH.  One coupling to record rather than avoid: `herradura_ffi_native_test.go`
+imports `herradurakex/herradura` AND links the shared object, so it pins the Go package API
+against the C shim in one test and will break on any future `BITARRAY.md` pass that moves
+either.  That is an argument for running it, not for leaving it out.
+
+Status: **DONE v9.5.14** — native-go runs both Go FFI tests (they hard-crash
+against the pre-v9.5.13 shim, so they would have caught #324 on their first run);
+the coverage guard checks each pattern SEPARATELY and an empty pattern is an error,
+which found `*_test.py` dead on its first run; `SecurityProofsCode` added as a root
+with a discovery exemption checked against the runner's exit status.
+
+---

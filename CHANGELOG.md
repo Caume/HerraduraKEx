@@ -2,6 +2,80 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.14] - 2026-09-28
+
+### Fixed
+
+- **TODO #325 — the Go FFI tests that nothing ran, and the guard that could not
+  see them.** `bindings/ffi/go/` holds two test files and no job ran either:
+  there was no `go test` invocation in `ci.yml` at all, and the only one in the
+  repository is `Fuzz/run_fuzz.sh`'s `go test ./herradura/ -run=xxx -fuzz=...`,
+  whose `-run=xxx` excludes ordinary tests by design. Rebuilt against the
+  `herradura_shim.c` that shipped from v9.1.0 to v9.5.12 they **hard-crash**
+  with a register dump, and pass against the v9.5.13 shim — so they would have
+  caught TODO #324 on their first run. They were last edited at v9.2.0, one
+  release after that defect landed.
+- **The coverage guard had the blind spot it was rewritten to close.** TODO #324
+  replaced its shell globs with `find` because `bindings/ffi/test_*.py` was one
+  directory too shallow; the replacement searched `test_*.py` and `*_test.py`
+  only, so `*_test.go` could never match. The depth was fixed and the language
+  was not.
+- **A second dead pattern, found by the new rule on its first run.** `*_test.py`
+  matched nothing under the guard's roots: `find`'s OR made a dead pattern
+  indistinguishable from a live one, which is TODO #324's own finding one level
+  down. `SecurityProofsCode` is now a root, and the two scripts there are
+  claimed by discovery rather than by a step.
+
+### Added
+
+- `native-go` runs the FFI correctness step — `bindings/ffi/build.sh` then
+  `go test -count=1` — with `gcc`/`libc6-dev` added to that job because cgo needs
+  a C compiler. `-count=1` because the shared object is not a Go source file, so
+  a cached PASS survives the shim moving underneath it, which is the exact
+  failure mode being closed.
+- The step NAMES both test files rather than leaving them to `./...`: the guard
+  matches a harness by path, so a step that only says `./...` claims nothing, and
+  a rename now fails in the step instead of silently shrinking what it runs.
+
+### Changed
+
+- **The coverage guard checks each pattern SEPARATELY and treats a pattern that
+  matches nothing as an ERROR.** Widening the list to `*_test.go` alone would
+  leave the next extension equally invisible — TODO #314 pass 3's lesson for the
+  third time. Deleting the last Go harness now fails the guard until the pattern
+  goes with it, and adding a fifth extension becomes a decision someone makes.
+- `herradura/codec_fuzz_test.go` is exempt because `Fuzz/run_fuzz.sh` covers both
+  its targets; the exemption is CHECKED, and fails if the file grows an ordinary
+  `Test` function that `-run=xxx` would exclude.
+- The `SecurityProofsCode` exemption reads `run_findings_gates.py --list` and
+  checks its EXIT STATUS explicitly rather than relying on `bash -e`: a script
+  that stops gating makes the runner say so and exit 1, which is the detector
+  that actually fires.
+
+### Measured
+
+- Go FFI tests against the pre-v9.5.13 shim: **hard crash** (register dump);
+  against the current shim: **PASS**, `TestFFIMatchesNativeGo` 0.52 s,
+  `TestRoundTrips` 0.05 s.
+- Census of every test-shaped file outside `CliTest/`: the orphans were **exactly
+  the two Go files**. Java's `SelfTest`/`CodecTest` are run by
+  `test_java_{bindings,codec}.sh`, the two `SecurityProofsCode` scripts are
+  discovered by `run_findings_gates.py`, and `codec_fuzz_test.go` is covered in
+  full by the fuzz job.
+- Six controls: an unclaimed `*_test.go`, the FFI step deleted, the last Go
+  harness deleted with the pattern left behind, `codec_fuzz_test.go` growing an
+  ordinary `Test`, and a `SecurityProofsCode` script ceasing to gate — **all five
+  fire**; rewording a comment that names a harness path **does not**.
+
+### Scope
+
+No protocol, parameter, wire-format or CLI-surface change — a CI step and a
+guard, so PATCH. One coupling recorded rather than avoided:
+`herradura_ffi_native_test.go` imports `herradurakex/herradura` **and** links the
+shared object, so it pins the Go package API against the C shim in one test and
+will break on any future `BITARRAY.md` pass that moves either. That is an
+argument for running it, not for leaving it out.
+
 ## [9.5.13] - 2026-09-27
 
 ### Fixed
