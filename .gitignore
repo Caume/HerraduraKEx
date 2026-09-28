@@ -43,3 +43,9 @@ HerraduraCli/herradura_cli_asan
 # KAT/verify_kat_c.c is compiled on demand by CliTest/test_kat_vectors.sh
 # (TODO #266); the header it consumes IS tracked, the binary is not.
 /KAT/verify_kat_c
+
+# TODO #324: bindings/ffi/build.sh output, and now built by ci.yml's native-c job
+# as well.  The compiled CLIs are already untracked for the same reason (TODO
+# #229); this one had no rule, so a poisoned or local build left a 71 KB binary
+# staged for commit.
+bindings/ffi/*.so

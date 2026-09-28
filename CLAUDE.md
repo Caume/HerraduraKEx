@@ -3251,6 +3251,53 @@ parameters by design, so a rate derived here is a rate for the demo instance and
 about what ships — which is not a defect of the derivation, because the harness's own flake
 rate is what the budget is about.
 
+**And the code none of those checks compiles, which is prior to all of them (TODO
+#324).**  #316 to #323 ask what the numbered tests assert and at what rate; every one of
+them reads *sources*.  Nothing asked whether the shipped C actually RUNS.  It did not:
+`bindings/ffi/herradura_shim.c` declares **26 `BitArray` locals across its 8 exported
+functions and used `BA_INIT` zero times** where `herradura.h` uses it 82 times, so from
+the moment #314 pass 2 put `uint16_t nbits` in the struct, `nbits` was whatever the stack
+held — an uninitialised local measured at 65278, making `ba_nbytes()` hand back **8159
+octets as a loop bound over a 32-octet buffer**.  `git log` dates it without argument: the
+shim was last touched at the original FFI commit and `nbits` entered at v9.1.0, so **every
+release from v9.1.0 to v9.5.12 shipped a binding layer that stack-smashed on its first
+call**.  It was found by trying to run a benchmark.  Six things carry forward.  (1) **THREE
+OF TEN TRANSLATION UNITS, AND THE WORST IS THE DOCUMENTED ONE.**  #315 wrote that "the
+whole C tree is poison-built and RUN now" and named seven; all three it omitted had the
+defect, and `docs/examples/c/hello_herradura.c` — what `docs/TUTORIAL.md` points a new user
+at — **aborted on its first call even unpoisoned**.  (2) **THE SWEEP COULD NOT HAVE FOUND
+THE SHIM, and that is the transferable part.**  Poisoning is a RUN-TIME detector and the
+shim is the only TU with no `main()`; a library has nothing to run.  #315's list is seven
+*programs*, so the eighth was not overlooked so much as structurally unreachable — which is
+why `tools/poison_build.sh` splits its set by shape and makes "a TU with no `main()` and no
+driver" an ERROR rather than a silence.  (3) **THE POISONED BUILD EXISTED IN NO SCRIPT AT
+ALL.**  It was a manual invocation that left no artifact, so it could not be re-run, could
+not be checked, and could not cover a file added later.  #314 pass 3 had already recorded
+*a tool that enumerates sites enumerates the sites you point it at*; #315 answered it by
+pointing at more sites instead of making the pointing reproducible, and that is the third
+occurrence.  The set is DISCOVERED now, on #289's model.  (4) **THE HARNESS THAT WOULD HAVE
+CAUGHT IT EXISTED, FAILED, AND NO JOB RAN IT.**  #287's coverage guard — whose own comment
+says it catches "a NEW harness appearing outside `CliTest/` with nothing running it" —
+globbed `bindings/ffi/test_*.py`, one directory too shallow, so it matched NOTHING, and
+`benchmarks/test_*.py` matched nothing either.  **A glob that matches nothing is
+indistinguishable from a glob that is satisfied**, which is #300's gate-that-cannot-go-red
+written as a shell pattern.  It uses `find` now and fails if the search comes back empty.
+(5) **A FALSE ARGUMENT MADE IT LOOK UNNECESSARY TO LOOK.**  `BITARRAY.md` §9 rested C's
+source-compatibility ON the FFI — "the FFI ABI is flat byte buffers that never name
+`BitArray`" — which is true of `herradura_shim.h`, naming it zero times, and false of the
+`.c`, naming it eight.  The claim was verified against the header and applied to the shim:
+#295's false-reason shape aimed at a versioning decision.  (6) **THE GUARD'S COST WAS
+MEASURED AND THE FIRST TWO ANSWERS WERE BOTH WRONG.**  `ba_nbytes` now validates, because it
+is the choke point its own comment claims to be and the 35 call sites cannot each be audited
+— `ba_rand` calls it one line BEFORE its own check.  An A/B against an otherwise
+byte-identical header said +15% on `ba_fscx_revolve`; that was not the check but two loop
+CONDITIONS calling `ba_nbytes` per octet where every other site binds it to a local, with
+the cold `noreturn` arm blocking the hoist.  Hoisted, the guard is **free** (0.7460 vs
+0.7471 µs/op).  An earlier 17.5% on `ba_gf_mul` was an artefact of a benchmark that did not
+consume its result — it would have been published as a SPEEDUP.  **Known limit**: the
+poisoned build is a run-time detector, so it covers the paths its drivers take; what it
+closes is the case that occurred, a TU nobody pointed it at and a library nobody could.
+
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
 from TODO #289 until v9.5.6 — twelve jobs, eleven blocking — on the `arduino` job's #185
@@ -3657,7 +3704,10 @@ that finds this, and pass 3 had already recorded why it did not: **a tool that e
 sites enumerates the sites you point it at**, and pass 2 pointed it at four files while
 checking them by a grep for `BitArray` declarations.  The whole C tree is poison-built and
 RUN now — suite, tests, CLI, both KAT consumers, the dudect audit, the deployed-ring
-benchmark — and these two casts were the only ones.  (2) **A CONTRACT CHANGE COSTS WHAT
+benchmark — and these two casts were the only ones.  **That sentence named SEVEN targets
+where the tree has TEN, and TODO #324 found all three omissions carrying the defect** —
+this list is the thing it describes, so it was also the record that made them invisible.
+It is `tools/poison_build.sh` now, which DISCOVERS its set instead of naming it.  (2) **A CONTRACT CHANGE COSTS WHAT
 THE OLD IMPLEMENTATION HAPPENED TO ACCEPT, which is a separate bill from what its
 representation published.**  Pass 4's "the twenty `SecurityProofsCode/` scripts needed no
 edit at all" was true of the ACCESSOR surface and read rather than measured; `BITARRAY.md`

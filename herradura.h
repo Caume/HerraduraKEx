@@ -137,8 +137,16 @@ static const char *ba_status_name(BaStatus s)
     } while (0)
 #endif
 
-/* Active octet count.  The one place a width becomes a loop bound. */
-static int ba_nbytes(const BitArray *a) { return a->nbits / 8; }
+/* Branch hint and a cold noreturn attribute for the width guard's failure arm.
+   Both degrade to nothing on a compiler that lacks them -- the check is still
+   correct there, only marginally slower. */
+#if defined(__GNUC__) || defined(__clang__)
+#  define BA_UNLIKELY(x)     __builtin_expect(!!(x), 0)
+#  define BA_NORETURN_COLD   __attribute__((noreturn, cold, noinline))
+#else
+#  define BA_UNLIKELY(x)     (x)
+#  define BA_NORETURN_COLD
+#endif
 
 /* BITARRAY.md 2: a positive multiple of 8, at least 16, at most the capacity. */
 static BaStatus ba_check_width(int n)
@@ -147,6 +155,54 @@ static BaStatus ba_check_width(int n)
     if (n < 16)                 return BA_E_WIDTH;   /* fscx needs two octets */
     if (n > BA_MAX_BITS)        return BA_E_WIDTH;
     return BA_OK;
+}
+
+/* Active octet count.  The one place a width becomes a loop bound -- which is
+   why the width is VALIDATED here and not only where it is set (TODO #324).
+   ba_set_width and ba_same_width guard the WRITE path and the binary-operation
+   path; a unary READ of a width that was never set had no guard at all, so a
+   BitArray declared without BA_INIT reached this line with whatever the stack
+   held and returned it as a loop bound.  Measured: an uninitialised local gave
+   nbits = 65278, i.e. 8159 octets over a 32-octet buffer.  There are 35 call
+   sites and they cannot each be audited to check before use -- ba_rand itself
+   calls this function one line BEFORE its own check -- so the guarantee belongs
+   at the choke point rather than at each caller.
+
+   The check is one unsigned comparison plus one mask rather than a call to
+   ba_check_width, with a cold noreturn failure arm, and it rejects exactly the
+   same set -- asserted against ba_check_width over every uint16_t value by
+   tools/check_ba_width_guard.c, run by tools/poison_build.sh.  COST, measured rather than assumed, and the first two
+   answers were both wrong: an A/B against an otherwise byte-identical header
+   put ba_fscx_revolve(i = 64) at 0.854 vs 0.742 us/op, +15%.  That was NOT the
+   check.  ba_m_pow2_mul and ba_one_plus_m_pow2_mul called ba_nbytes in the LOOP
+   CONDITION, so a bound every other site binds to a local was re-read per octet
+   and the noreturn arm stopped the compiler hoisting it.  With those two bounds
+   hoisted the guard measures 0.7460 against 0.7471 -- free -- and the hoist is
+   an improvement independent of the guard.  An earlier figure of 17.5% on
+   ba_gf_mul was a measurement artefact: the benchmark did not consume its
+   result, so the new cold attribute let the whole loop be eliminated. */
+BA_NORETURN_COLD static void ba_nbytes_bad(void)
+{
+    BA_FAIL(BA_E_WIDTH, "ba_nbytes");
+}
+
+/* The same count WITHOUT the check, for use ONLY where the caller has already
+   validated the same BitArray in the same function.  ba_try_xor, ba_try_and,
+   ba_try_or, ba_try_compare and ba_try_fscx each call ba_same_width one line
+   above, and that checks BOTH operands -- so re-checking is redundant work in
+   the suite's five hottest primitives (measured: +15% on ba_fscx_revolve at
+   i = 64, where the check would be paid 64 times per call).  This is the guard
+   placed at the boundary ONCE, not the guard weakened; every use of this form
+   sits directly below a ba_same_width or ba_check_width on the same value. */
+static int ba_nbytes_unchecked(const BitArray *a) { return a->nbits / 8; }
+
+static int ba_nbytes(const BitArray *a)
+{
+    unsigned n = a->nbits;
+    /* valid iff n is a multiple of 8 and 16 <= n <= BA_MAX_BITS */
+    if (BA_UNLIKELY((n & 7u) != 0u || n - 16u > (unsigned)(BA_MAX_BITS - 16)))
+        ba_nbytes_bad();
+    return (int)(n / 8);
 }
 
 static BaStatus ba_try_set_width(BitArray *a, int n)
@@ -216,7 +272,7 @@ static BaStatus ba_try_xor(BitArray *dst, const BitArray *a, const BitArray *b)
     int i, nb;
     BaStatus st = ba_same_width(a, b);
     if (st != BA_OK) return st;
-    nb = ba_nbytes(a);
+    nb = ba_nbytes_unchecked(a);   /* ba_same_width just validated */
     dst->nbits = a->nbits;
     for (i = 0; i < nb; i++)
         dst->b[i] = a->b[i] ^ b->b[i];
@@ -235,7 +291,7 @@ static BaStatus ba_try_and(BitArray *dst, const BitArray *a, const BitArray *b)
     int i, nb;
     BaStatus st = ba_same_width(a, b);
     if (st != BA_OK) return st;
-    nb = ba_nbytes(a);
+    nb = ba_nbytes_unchecked(a);   /* ba_same_width just validated */
     dst->nbits = a->nbits;
     for (i = 0; i < nb; i++) dst->b[i] = a->b[i] & b->b[i];
     return BA_OK;
@@ -246,7 +302,7 @@ static BaStatus ba_try_or(BitArray *dst, const BitArray *a, const BitArray *b)
     int i, nb;
     BaStatus st = ba_same_width(a, b);
     if (st != BA_OK) return st;
-    nb = ba_nbytes(a);
+    nb = ba_nbytes_unchecked(a);   /* ba_same_width just validated */
     dst->nbits = a->nbits;
     for (i = 0; i < nb; i++) dst->b[i] = a->b[i] | b->b[i];
     return BA_OK;
@@ -284,7 +340,7 @@ static BaStatus ba_try_compare(int *out, const BitArray *a, const BitArray *b)
     int i, nb, res = 0;
     BaStatus st = ba_same_width(a, b);
     if (st != BA_OK) return st;
-    nb = ba_nbytes(a);
+    nb = ba_nbytes_unchecked(a);   /* ba_same_width just validated */
     for (i = 0; i < nb; i++) {
         int gt = (a->b[i] > b->b[i]);
         int lt = (a->b[i] < b->b[i]);
@@ -409,7 +465,7 @@ static BaStatus ba_try_fscx(BitArray *result, const BitArray *a, const BitArray 
     int i, nb;
     BaStatus st = ba_same_width(a, b);
     if (st != BA_OK) return st;
-    nb = ba_nbytes(a);
+    nb = ba_nbytes_unchecked(a);   /* ba_same_width just validated */
 
     a_msbit = a->b[0] >> 7;
     b_msbit = b->b[0] >> 7;
@@ -530,13 +586,14 @@ static void ba_ror_bits(BitArray *dst, const BitArray *src, int s)
 static void ba_m_pow2_mul(BitArray *v, int s)
 {
     BitArray l = BA_INIT, r = BA_INIT;
-    int i;
+    int i, nb;
 
     if (s == 0)
         return;
     ba_rol_bits(&l, v, s);
     ba_ror_bits(&r, v, s);
-    for (i = 0; i < ba_nbytes(v); i++)
+    nb = ba_nbytes(v);   /* hoisted: a loop bound is read once, not per octet */
+    for (i = 0; i < nb; i++)
         v->b[i] ^= (uint8_t)(l.b[i] ^ r.b[i]);
 }
 
@@ -546,7 +603,7 @@ static void ba_m_pow2_mul(BitArray *v, int s)
 static void ba_one_plus_m_pow2_mul(BitArray *v, int s)
 {
     BitArray l = BA_INIT, r = BA_INIT;
-    int i;
+    int i, nb;
 
     if (s == 0) {
         memset(v->b, 0, (size_t)ba_nbytes(v));
@@ -554,7 +611,8 @@ static void ba_one_plus_m_pow2_mul(BitArray *v, int s)
     }
     ba_rol_bits(&l, v, s);
     ba_ror_bits(&r, v, s);
-    for (i = 0; i < ba_nbytes(v); i++)
+    nb = ba_nbytes(v);   /* hoisted: a loop bound is read once, not per octet */
+    for (i = 0; i < nb; i++)
         v->b[i] = (uint8_t)(l.b[i] ^ r.b[i]);
 }
 

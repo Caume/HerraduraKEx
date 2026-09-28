@@ -22029,3 +22029,104 @@ harness, and the budget moves 1.874e-05 → 1.888e-05 against 1e-04 (both print 
 1.9e-05).  A body-only screen was shown to MISS `[10]` in both assembly ports, so the
 title symbol is resolved.  CLAUDE.md's "correctness only, never soundness" claim for these
 harnesses is WITHDRAWN as false.  No shipped code or harness changed.
+### #324: the FFI shim's width was never set — a binding layer broken for seventeen releases, and the two checks that should have said so
+
+**Found by trying to benchmark, not by looking.** Every `benchmarks/compare_*.py` runs the
+suite through `bindings/ffi`, and the first one invoked died with
+`*** stack smashing detected ***`.
+
+**The defect.** `bindings/ffi/herradura_shim.c` declares **26 `BitArray` locals across its
+8 exported functions and uses `BA_INIT` zero times** (`herradura.h` uses it 82 times).
+Since TODO #314 pass 2 added `uint16_t nbits` to the struct, `nbits` is whatever the stack
+held. Reproduced deterministically: an uninitialised local gave `nbits = 65278`, so
+`ba_nbytes()` returned **8159 octets as a loop bound over a 32-octet buffer** — segfault or
+stack smash depending on the frame. `git log` dates it exactly: the shim was last touched at
+`a5c357e` (the original TODO #137/#138 FFI commit) and `nbits` entered at `b4bc2d7` =
+**v9.1.0**, so the FFI has been broken across **all 17 releases from v9.1.0 to v9.5.12**.
+
+**It was not only the shim — three of ten translation units, and the worst one is
+documented.** Ten `.c` files include `herradura.h`. TODO #315 wrote that "the whole C tree
+is poison-built and RUN now" and named **seven**. All three it omitted carried the defect:
+the shim (8 sites), `benchmarks/v3_consumer_cost.c` (1 site, 4 locals), and
+`docs/examples/c/hello_herradura.c` (5 sites, 14 locals) — the integration example
+`docs/TUTORIAL.md` points a new user at, which **aborts on the first call even unpoisoned**
+with `herradura: E_WIDTH in ba_rand`.
+
+**Why the sweep could not have found the shim, which is the transferable part.** Poisoning
+is a **run-time** detector, and the shim is the one TU with **no `main()`** — a library has
+nothing to run. #315's list is seven *programs*; the eighth is a library whose driver
+existed and was run by nothing. So the two defects below are one defect from two sides.
+
+**The checks that should have said so, and why neither did.**
+
+1. **The poisoned build existed in no script at all.** It was a manual invocation that left
+   no artifact, so it could not be re-run, could not be checked, and could not cover a file
+   added later. #314 pass 3 had already recorded the limit — *a tool that enumerates sites
+   enumerates the sites you point it at* — and #315 answered it by pointing the tool at more
+   sites rather than by making the pointing reproducible. This is the third occurrence.
+2. **`bindings/ffi/python/test_ffi_correctness.py` existed, FAILED, and no job ran it.**
+   #287's coverage guard — whose own comment says it catches "a NEW harness appearing
+   outside `CliTest/` with nothing running it" — globs `bindings/ffi/test_*.py`, **one
+   directory too shallow**, so it matched nothing. `benchmarks/test_*.py` matches nothing
+   either. **A glob that matches nothing is indistinguishable from a glob that is
+   satisfied**, which is #300's gate-that-cannot-go-red in a shell pattern.
+3. **A false argument made it look unnecessary to check.** `BITARRAY.md` §9 established C's
+   source-compatibility *from* the FFI — "the FFI ABI is flat byte buffers that never name
+   `BitArray`". True of `herradura_shim.h`, which names it **zero** times. The
+   `.c` names it **eight** times. The argument was verified against the header and applied
+   to the shim — #295's false-reason shape, aimed at a versioning decision.
+
+**The fix, in four parts.**
+
+- `BA_INIT` at all 14 declaration sites across the three TUs.
+- **`ba_nbytes` now VALIDATES**, because it is the choke point its own comment claims to be
+  ("the one place a width becomes a loop bound"). `ba_set_width` and `ba_same_width` guard
+  the WRITE path and the binary-operation path; a unary READ of a never-set width had no
+  guard, and the 35 call sites cannot each be audited — `ba_rand` itself calls `ba_nbytes`
+  one line *before* its own check.
+- `tools/poison_build.sh` **discovers** its set rather than listing it (#289's model), and
+  splits it by shape: a TU with `main()` is built and RUN; a TU without one is a library and
+  must name a driver, or it is an ERROR. That is the rule that makes the shim's class
+  visible instead of structurally invisible.
+- The coverage guard is **recursive** (`find`, not a glob) and fails loudly if it finds no
+  harnesses at all — because the old failure mode was silence.
+
+**The cost of the guard was measured, and the first two answers were both wrong.** An A/B
+against an otherwise byte-identical header put `ba_fscx_revolve(i=64)` at **0.854 vs 0.742
+µs/op, +15%**. That was not the check: `ba_m_pow2_mul` and `ba_one_plus_m_pow2_mul` called
+`ba_nbytes` **in the loop condition**, so a bound every other site binds to a local was
+re-read per octet, and the cold `noreturn` arm stopped the compiler hoisting it. With those
+two hoisted the guard measures **0.7460 against 0.7471 — free** — and the hoist is an
+improvement independent of the guard. An earlier figure of 17.5% on `ba_gf_mul` was a
+**measurement artefact**: the benchmark did not consume its result, so the new `cold`
+attribute let the whole loop be eliminated, which would have been published as a *speedup*.
+Both errors point the same way as #319's 10x, #320's 3x and #322's two refuted models — the
+direction where nothing red ever happens.
+
+**The guard is a SECOND spelling of a rule that already had one**, which is #306's
+sixth-spelling hazard, so `tools/check_ba_width_guard.c` asserts the two agree over **every
+`uint16_t`** — exhaustive, not sampled, since `nbits` *is* a `uint16_t`. Measured: 31 legal
+widths, 65505 rejected, **0 disagreements**, with the accept-count checked against
+`(BA_MAX_BITS-16)/8+1` so the comparison cannot pass vacuously.
+
+**Scope.** No protocol, parameter, wire format or CLI surface changes; the shim's exported
+signatures are untouched, so this is a PATCH. Deliberately NOT done: adding a numbered test
+for the width guard, which would move `_TEST_DRAWS`, #318's fingerprints and #322's basis
+tables for a property that is not a numbered-test property — #312's rule that a fix must not
+settle a question it happens to expose.
+
+**Known limit.** The poisoned build is still a run-time detector, so it covers the paths the
+drivers actually take; a TU whose driver exercises one of three branches leaves two
+unpoisoned. What it now closes is the case that occurred — a TU nobody pointed it at, and a
+library nobody could.
+
+Status: **DONE v9.5.13** — `BA_INIT` at all 14 sites in the three translation units
+#315's sweep missed; `ba_nbytes` validates at the choke point, with
+`ba_nbytes_unchecked` for the five primitives that validate one line above;
+`tools/poison_build.sh` DISCOVERS its set and requires a driver for a TU with no
+`main()`; `tools/check_ba_width_guard.c` asserts the guard's two spellings agree over
+every `uint16_t` (31 legal, 65505 rejected, 0 disagreements); `ci.yml`'s coverage guard
+is recursive and `native-c` runs both new checks.  Guard cost measured at 0.7460 vs
+0.7471 µs/op — free — after two wrong answers, both conservative.
+
+---

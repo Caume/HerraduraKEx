@@ -21,8 +21,8 @@ int main(void)
     /* ── HKEX-GF: Diffie-Hellman over GF(2^256)* ──────────────────────── */
     printf("=== HKEX-GF key exchange ===\n");
 
-    BitArray alice_priv, alice_pub, bob_priv, bob_pub;
-    BitArray alice_shared, bob_shared;
+    BitArray alice_priv = BA_INIT, alice_pub = BA_INIT, bob_priv = BA_INIT, bob_pub = BA_INIT;
+    BitArray alice_shared = BA_INIT, bob_shared = BA_INIT;
 
     ba_rand(&alice_priv, urnd);
     ba_rand(&bob_priv,   urnd);
@@ -41,7 +41,7 @@ int main(void)
     /* ── HSKE: symmetric encryption with the derived shared key ──────── */
     printf("\n=== HSKE symmetric encryption ===\n");
 
-    BitArray plaintext, ciphertext, recovered;
+    BitArray plaintext = BA_INIT, ciphertext = BA_INIT, recovered = BA_INIT;
     ba_rand(&plaintext, urnd);
 
     hske_encrypt(&plaintext,  &alice_shared, &ciphertext);
@@ -56,7 +56,7 @@ int main(void)
     /* ── HPKS: Schnorr signature ─────────────────────────────────────── */
     printf("\n=== HPKS Schnorr signature ===\n");
 
-    BitArray msg, R, s;
+    BitArray msg = BA_INIT, R = BA_INIT, s = BA_INIT;
     ba_rand(&msg, urnd);
 
     hpks_sign(&msg, &alice_priv, &R, &s, urnd);
@@ -66,7 +66,7 @@ int main(void)
     /* ── HPKE: El Gamal encryption ───────────────────────────────────── */
     printf("\n=== HPKE El Gamal encryption ===\n");
 
-    BitArray ct_hpke, R_hpke, dec_hpke;
+    BitArray ct_hpke = BA_INIT, R_hpke = BA_INIT, dec_hpke = BA_INIT;
     ba_rand(&plaintext, urnd);
 
     hpke_encrypt(&plaintext, &alice_pub, &R_hpke, &ct_hpke, urnd);
