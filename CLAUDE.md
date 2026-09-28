@@ -2246,11 +2246,19 @@ Use the build scripts when building everything; they apply the correct flags, ou
 
 ### Docker
 
-`docker build -t herradurakex .` builds a quickstart image (TODO #139) covering the
-C/Go/Python/ARM Thumb-2/NASM i386 targets (Arduino is excluded — needs `arduino-cli`
-and a board target). `docker-entrypoint.sh` builds every host-portable target and runs
-a smoke test (the C/Go/Python security test suites plus a CLI interop test) on
-container start.
+`docker build -t herradurakex .` builds a quickstart image (TODO #139) covering
+FIVE of the suite's seven language targets — C/Go/Python/ARM Thumb-2/NASM i386.
+**Two are excluded on purpose and both reasons are now CHECKED** rather than merely
+written (TODO #326): Arduino needs `arduino-cli` plus a board target, so it is not a
+host-portable build; and JAVA is omitted because the image installs no JDK, which
+this sentence did not say for 437 commits while the Dockerfile advertised a language
+count it did not build. `docker-entrypoint.sh` builds every included target and runs
+a smoke test (the C/Go/Python/ARM/NASM security test suites plus a CLI interop test)
+on container start — **~75–90 min on an ARM SBC**, measured, where its own header used
+to say "several minutes". `HERRADURA_SMOKE_ROUNDS` / `HERRADURA_SMOKE_TIME` cap it
+without changing the shipped defaults. The `docker` CI job builds the image and runs
+the entrypoint at reduced caps, and `tools/check_docker_mirror.py` holds the script
+and `ci.yml` against each other in both directions.
 
 ### C
 
@@ -3341,6 +3349,47 @@ it, not for leaving it out.  **Known limit**: this is still a pattern list, so a
 named by none of the patterns stays invisible — a `main()` in a file called something else,
 a shell script outside `CliTest/`.  What it closes is the case that occurred twice, a
 harness whose NAME says exactly what it is in a place the pattern could not reach.
+
+**And the entry point a newcomer is sent to first, which no job built (TODO #326).**
+#325 stated its own limit — the coverage guard is a pattern list, so "a shell script
+outside `CliTest/`" stays invisible — and a census of every `.sh` against what `ci.yml`
+names found exactly one real orphan: `docker-entrypoint.sh`, with `Dockerfile`.  Both
+appear in `ci.yml` only inside COMMENTS, for 437 commits since #139, while `README.md`
+and this file both send a new user to `docker build -t herradurakex .`.  That is #324's
+`hello_herradura.c` shape, and that file aborted on its first call.  Six things carry
+forward.  (1) **IT WAS MEASURED BEFORE IT WAS FILED, AND BOTH HALVES PASS** — the image
+builds (exit 0, so the dependency list survived 437 commits) and the entrypoint exits 0
+with five harnesses green.  So this is COVERAGE AND CLAIMS, not a repair, and filing it as
+a breakage would have been wrong; the two negative results are the useful part.  (2) **THE
+MIRRORING SENTENCE WAS THE REAL DEFECT.**  `ci.yml`'s header says the matrix mirrors the
+entrypoint's smoke run "so CI and the scripts can't silently drift apart", and nothing
+compared them — #287's withdrawn trust-model sentence and #295's false-reason shape.  It
+HAD drifted: **Java is absent from a "six-language build matrix"**, `grep -ci java`
+returning 0 in both files, while a complete port shipped at #196–#203 and `native-java` is
+REQUIRED.  Arduino's exclusion was deliberate and documented; Java's was neither.  (3)
+**THE STALE NUMBER WAS LOAD-BEARING, NOT COSMETIC.**  The entrypoint claimed "several
+minutes (e.g. an ARM SBC)" and measures **~75–90 minutes** — written at #139, before ~190
+numbered-test items — and that figure is the input to "should CI run this", so a stale one
+argues for the wrong answer.  It decided the design instead of leaving it to review: the
+IMAGE BUILD is gated (cheap, and dependency rot is what actually threatens a quickstart)
+while the ENTRYPOINT runs at REDUCED CAPS, because the twelve other jobs already run every
+one of its targets at full size and what is unproven in the container is the SCRIPT.  (4)
+**A STRING-PRESENCE RULE CANNOT TELL A CLAIM FROM ITS RETRACTION**, learned twice inside
+one afternoon: the first check flagged `six-language` and then `several minutes` in the
+very comments added to WITHDRAW them.  #324's guard met the mirror image — its own
+rationale satisfied it — and answered by stripping comments, which is no use when the claim
+under test IS a comment.  The rule is SCOPED instead (#299's prescription for a source
+check): the phrase may appear only on a line marked retracted, over a two-line window with
+comment markers stripped, because a wrapped comment splits the marker across the boundary.
+Both discovered by running it.  And the rule has a POSITIVE half, or deleting the sentence
+would satisfy it — #234's vacuous pass.  (5) **THE CHECK CAUGHT ITS OWN JOB, correctly.**
+The `docker` job runs the entrypoint, so it cannot be "covered by" it without
+circularity, and it is listed in `EXEMPT` with that reason rather than special-cased —
+because the rule is exhaustive and a new job owes a statement either way.  (6) **NINE
+CONTROLS, EIGHT FIRE.**  Including the two directions that matter: a job with neither
+coverage nor reason, and the entrypoint running a target CI does not.  **Known limit**: it
+compares INVOCATIONS, not work, so it cannot see that two runs of one harness use
+different caps — which is exactly what the reduced caps are, by design.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`

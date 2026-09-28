@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v9.5.14)
+# Herradura Cryptographic Suite (v9.5.15)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -129,12 +129,16 @@ The gap narrows for Go because native Go is already compiled; the FFI number the
 
 ## Docker quickstart
 
-The full six-language build matrix needs a gcc, a Go toolchain, an ARM Thumb-2 cross-compiler,
-a NASM/i386-capable linker, and qemu — a real barrier for a first look. The included
+Building by hand needs a gcc, a Go toolchain, an ARM Thumb-2 cross-compiler, a
+NASM/i386-capable linker, and qemu — a real barrier for a first look. The included
 `Dockerfile` installs exactly what `build_c.sh`/`build_go.sh`/`build_arm.sh`/
-`build_asm_i386.sh`'s own header comments document, builds every host-portable target (C, Go,
-ARM Thumb-2, NASM i386 — Arduino needs a physical/simulated board target and is out of scope),
-and runs the C/Go/Python test suites plus one CLI integration test as a smoke test:
+`build_asm_i386.sh`'s own header comments document, builds **five of the suite's seven
+language targets** (C, Go, Python, ARM Thumb-2, NASM i386) and runs their test suites plus
+one CLI integration test as a smoke test. Two targets are excluded on purpose: **Arduino**
+needs a physical or simulated board target, and **Java** is omitted because the image
+installs no JDK — `bindings/java` is a complete port with its own required CI job, so run it
+locally rather than from this image. Both exclusions are checked by
+`tools/check_docker_mirror.py`:
 
 ```bash
 docker build -t herradurakex .
@@ -142,7 +146,9 @@ docker run --rm -it herradurakex
 ```
 
 No local cross-toolchain installation required; everything happens inside the container. See
-`docker-entrypoint.sh` for exactly what runs.
+`docker-entrypoint.sh` for exactly what runs. A full run takes roughly **75–90 minutes on an
+ARM SBC** and rather less on a modern x86_64 host; `HERRADURA_SMOKE_ROUNDS` and
+`HERRADURA_SMOKE_TIME` trade coverage for time without changing the defaults.
 
 ## C
 
