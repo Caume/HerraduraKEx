@@ -36,7 +36,7 @@ static FILE *hffi_urandom(void)
 
 HFFI_EXPORT void hffi_hkex_gf_pubkey(const uint8_t priv[KEYBYTES], uint8_t pub_out[KEYBYTES])
 {
-    BitArray priv_ba, pub_ba;
+    BitArray priv_ba = BA_INIT, pub_ba = BA_INIT;
     memcpy(priv_ba.b, priv, KEYBYTES);
     hkex_gf_pubkey(&priv_ba, &pub_ba);
     memcpy(pub_out, pub_ba.b, KEYBYTES);
@@ -47,7 +47,7 @@ HFFI_EXPORT int hffi_hkex_gf_agree(const uint8_t my_priv[KEYBYTES],
                                     const uint8_t their_pub[KEYBYTES],
                                     uint8_t shared_out[KEYBYTES])
 {
-    BitArray priv_ba, pub_ba, shared_ba;
+    BitArray priv_ba = BA_INIT, pub_ba = BA_INIT, shared_ba = BA_INIT;
     memcpy(priv_ba.b, my_priv, KEYBYTES);
     memcpy(pub_ba.b, their_pub, KEYBYTES);
     int ok = hkex_gf_agree(&priv_ba, &pub_ba, &shared_ba);
@@ -60,7 +60,7 @@ HFFI_EXPORT int hffi_hkex_gf_agree(const uint8_t my_priv[KEYBYTES],
 HFFI_EXPORT void hffi_hske_encrypt(const uint8_t pt[KEYBYTES], const uint8_t key[KEYBYTES],
                                     uint8_t ct_out[KEYBYTES])
 {
-    BitArray pt_ba, key_ba, ct_ba;
+    BitArray pt_ba = BA_INIT, key_ba = BA_INIT, ct_ba = BA_INIT;
     memcpy(pt_ba.b, pt, KEYBYTES);
     memcpy(key_ba.b, key, KEYBYTES);
     hske_encrypt(&pt_ba, &key_ba, &ct_ba);
@@ -70,7 +70,7 @@ HFFI_EXPORT void hffi_hske_encrypt(const uint8_t pt[KEYBYTES], const uint8_t key
 HFFI_EXPORT void hffi_hske_decrypt(const uint8_t ct[KEYBYTES], const uint8_t key[KEYBYTES],
                                     uint8_t pt_out[KEYBYTES])
 {
-    BitArray ct_ba, key_ba, pt_ba;
+    BitArray ct_ba = BA_INIT, key_ba = BA_INIT, pt_ba = BA_INIT;
     memcpy(ct_ba.b, ct, KEYBYTES);
     memcpy(key_ba.b, key, KEYBYTES);
     hske_decrypt(&ct_ba, &key_ba, &pt_ba);
@@ -82,7 +82,7 @@ HFFI_EXPORT void hffi_hske_decrypt(const uint8_t ct[KEYBYTES], const uint8_t key
 HFFI_EXPORT void hffi_hpks_sign(const uint8_t msg[KEYBYTES], const uint8_t priv[KEYBYTES],
                                  uint8_t R_out[KEYBYTES], uint8_t s_out[KEYBYTES])
 {
-    BitArray msg_ba, priv_ba, R_ba, s_ba;
+    BitArray msg_ba = BA_INIT, priv_ba = BA_INIT, R_ba = BA_INIT, s_ba = BA_INIT;
     memcpy(msg_ba.b, msg, KEYBYTES);
     memcpy(priv_ba.b, priv, KEYBYTES);
     hpks_sign(&msg_ba, &priv_ba, &R_ba, &s_ba, hffi_urandom());
@@ -93,7 +93,7 @@ HFFI_EXPORT void hffi_hpks_sign(const uint8_t msg[KEYBYTES], const uint8_t priv[
 HFFI_EXPORT int hffi_hpks_verify(const uint8_t msg[KEYBYTES], const uint8_t pub[KEYBYTES],
                                   const uint8_t R[KEYBYTES], const uint8_t s[KEYBYTES])
 {
-    BitArray msg_ba, pub_ba, R_ba, s_ba;
+    BitArray msg_ba = BA_INIT, pub_ba = BA_INIT, R_ba = BA_INIT, s_ba = BA_INIT;
     memcpy(msg_ba.b, msg, KEYBYTES);
     memcpy(pub_ba.b, pub, KEYBYTES);
     memcpy(R_ba.b, R, KEYBYTES);
@@ -106,7 +106,7 @@ HFFI_EXPORT int hffi_hpks_verify(const uint8_t msg[KEYBYTES], const uint8_t pub[
 HFFI_EXPORT int hffi_hpke_encrypt(const uint8_t pt[KEYBYTES], const uint8_t pub[KEYBYTES],
                                    uint8_t R_out[KEYBYTES], uint8_t ct_out[KEYBYTES])
 {
-    BitArray pt_ba, pub_ba, R_ba, ct_ba;
+    BitArray pt_ba = BA_INIT, pub_ba = BA_INIT, R_ba = BA_INIT, ct_ba = BA_INIT;
     memcpy(pt_ba.b, pt, KEYBYTES);
     memcpy(pub_ba.b, pub, KEYBYTES);
     int ok = hpke_encrypt(&pt_ba, &pub_ba, &R_ba, &ct_ba, hffi_urandom());
@@ -120,7 +120,7 @@ HFFI_EXPORT int hffi_hpke_encrypt(const uint8_t pt[KEYBYTES], const uint8_t pub[
 HFFI_EXPORT int hffi_hpke_decrypt(const uint8_t ct[KEYBYTES], const uint8_t R[KEYBYTES],
                                    const uint8_t priv[KEYBYTES], uint8_t pt_out[KEYBYTES])
 {
-    BitArray ct_ba, R_ba, priv_ba, pt_ba;
+    BitArray ct_ba = BA_INIT, R_ba = BA_INIT, priv_ba = BA_INIT, pt_ba = BA_INIT;
     memcpy(ct_ba.b, ct, KEYBYTES);
     memcpy(R_ba.b, R, KEYBYTES);
     memcpy(priv_ba.b, priv, KEYBYTES);

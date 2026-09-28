@@ -51,6 +51,28 @@ jobs:
       - name: C test suite
         run: ./CryptosuiteTests/Herradura_tests_c -t 2.0
 
+      # TODO #324. The poisoned build was introduced by #314 pass 2 and widened
+      # by #315, which wrote that "the whole C tree is poison-built and RUN now"
+      # -- describing a MANUAL invocation that left no artifact, so it could not
+      # be re-run and did not cover a file added later. The tree has TEN
+      # translation units including herradura.h and that sweep covered seven;
+      # all three it missed carried the defect, and bindings/ffi/herradura_shim.c
+      # stack-smashed on every call for seventeen releases (v9.1.0..v9.5.12).
+      # The set is DISCOVERED here, not listed, so a new TU with no driver is an
+      # error rather than a silence.
+      - name: Poisoned build — every C TU including herradura.h, built and run
+        run: bash tools/poison_build.sh
+
+      # TODO #324. This harness existed, failed, and NO job ran it: #287's
+      # coverage guard globs bindings/ffi/test_*.py, one directory too shallow,
+      # so it matched nothing -- and a glob that matches nothing is
+      # indistinguishable from a glob that is satisfied. The guard below is
+      # recursive now; this step is what it guards.
+      - name: FFI correctness (Python ctypes vs native C)
+        run: |
+          bash bindings/ffi/build.sh
+          python3 bindings/ffi/python/test_ffi_correctness.py
+
       - name: CliTest — C CLI
         run: |
           for f in CliTest/test_c_*.sh CliTest/test_weak_key_rejection.sh; do
@@ -319,9 +341,23 @@ jobs:
           # actually execute a harness are considered.
           sed 's/#.*$//' .github/workflows/ci.yml > /tmp/ci_nocomments.yml
           missing=0
-          for f in Mcp/test_*.py docs/examples/mcp/*.py \
-                   bindings/ffi/test_*.py benchmarks/test_*.py; do
-            [ -e "$f" ] || continue
+          # TODO #324: RECURSIVE. These were shell globs, so
+          # bindings/ffi/test_*.py did not reach
+          # bindings/ffi/python/test_ffi_correctness.py -- one directory too
+          # shallow -- and benchmarks/test_*.py matched nothing at all. A glob
+          # that matches nothing looks exactly like a glob that is satisfied,
+          # which is how a harness that FAILED sat unrun for seventeen releases.
+          # find(1) also means a harness added in a new subdirectory is caught
+          # without anyone remembering to extend a list.
+          harnesses=$(find Mcp docs/examples bindings benchmarks \
+                        -type f \( -name 'test_*.py' -o -name '*_test.py' \) \
+                        2>/dev/null | sort)
+          if [ -z "$harnesses" ]; then
+            echo "GUARD BROKEN: the search found no harnesses at all —" \
+                 "it used to find some, so the search itself is wrong (TODO #324)"
+            exit 1
+          fi
+          for f in $harnesses; do
             if ! grep -qF "$f" /tmp/ci_nocomments.yml; then
               echo "UNCLAIMED: $f is a test harness that no CI job runs —" \
                    "add it to a job or say in this guard why it is exempt (TODO #287)"

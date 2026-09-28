@@ -98,7 +98,7 @@ static double now_s(void)
 
 int main(void)
 {
-    BitArray P, K, N, out;
+    BitArray P = BA_INIT, K = BA_INIT, N = BA_INIT, out = BA_INIT;
     uint8_t key_b[KEYBYTES];
     FILE *u = fopen("/dev/urandom", "rb");
     if (!u) { fprintf(stderr, "cannot open /dev/urandom\n"); return 1; }
