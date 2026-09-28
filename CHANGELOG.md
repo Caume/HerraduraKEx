@@ -2,6 +2,95 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.12] - 2026-09-27
+
+### Added
+- **The ninth axis now reads SIX gated harnesses rather than four (TODO #323).**  TODO #316
+  censused which numbered tests decide a verdict from a fresh sample, #318 pinned each
+  verdict region, #319 made every rate an expression over constants read from source, #320
+  held each formula to a measured mechanism, #321 audited the fifteen curated rows with no
+  formula, and #322 gave the 126 uncurated cells a derived default with a BASIS for every
+  rejection.  **All six read exactly four files** — `NUMBERED_TEST_FILES`' three plus
+  `SelfTest.java` — while `CryptosuiteTests/Herradura_tests.{s,asm,ino}` appeared nowhere in
+  `spec/` with no sentence anywhere saying why.  Not a scope decision but an unexamined
+  boundary: TODO #306's finding that *which code the census READS is prior to everything the
+  census says*, and #295's rule that getting the corpus wrong in the LENIENT direction makes
+  the whole check pass vacuously.  `check_language_parity.py` gains **Part 7/7**, which
+  states the corpus in the file and closes it.
+- **The gap was not empty.**  ARM and NASM both reseed their LCG from `/dev/urandom` before
+  test `[1]` (the SA-01 marker in each), so every verdict after that point is decided on a
+  fresh sample; both carry `[10] HPKS-NL Eve resistance: random forgery rejected (20 trials)`,
+  which draws `s_fake` per trial and requires all 20 to be REFUSED, and `[18]
+  v2_weak_key_reject`.  `arm-i386` and `arduino` carry no `continue-on-error`, so a flake in
+  either is a red REQUIRED check on an unrelated PR — #316's own stated reason for caring
+  about the numbered tests more than about the findings gates.
+- `_REDUCED_HARNESSES`, `_REDUCED_ENTROPY` and `_REDUCED_REJECTION_BASES`: the three files'
+  `[N]` markers enumerated and held to the documented `[1]`–`[18]`, the entropy status
+  DERIVED from each harness's source and cross-checked against the record in both directions,
+  and every screened cell classified from Part 5/7's **closed set of nine kinds** — the same
+  vocabulary, not a second one.  7 flagged cells, 2 of them rated.
+
+### Fixed
+- **A rejection screen over whole BODIES is not enough in assembly, which inverts TODO #322's
+  own remedy.**  That item found a verdict-line-only screen missing `[44]` and `[50]` and
+  widened it to bodies.  In assembly a test's title lives in `.rodata`
+  (`fmt_t10: .asciz "... random forgery rejected ..."`, line 49) while its body is at line
+  808, and the body's only rejection wording is a `/* random forgery */` comment the screen
+  strips by design — so a body-only screen flags `[10]` in Arduino and **misses it in both
+  assembly harnesses**, the vacuous direction.  Demonstrated rather than argued: reverting
+  the shipped screen to bodies alone reports both assembly `[10]` rows as unflagged.  The
+  title symbol is resolved, and a title that does not resolve is an ERROR rather than a skip
+  (#319's rule — a term that resolves nowhere silently SHRINKS the rate).
+- **The same test number is sampled in two harnesses and DETERMINISTIC in the third.**
+  `Herradura_tests.ino` sets `prng_state = 0x12345678UL` and `setup()` only opens the UART —
+  an AVR has no entropy source and simavr supplies none — so it never reseeds, its 18
+  verdicts are identical on every run, and its false-failure rate is exactly ZERO.  What it
+  buys in exchange is weaker coverage: its 20 "random" forgeries are the same 20 forever.  So
+  `[10]` carries a RATED basis in ARM and NASM and an exact one in Arduino, and a harness
+  recorded `fixed` is FORBIDDEN a rated basis — #319's per-port split with a FLAKE RATE as
+  the object, checked rather than described.
+- **`[10]`'s rate is not the `2^-32` the construction suggests.**  A forgery succeeds only if
+  `g^s_fake · C^e == R`, i.e. one value of `s_fake` per `ord(g)` — and in GF(2^32) mod
+  `0x00400007` the generator **g = 3 generates an index-15 SUBGROUP**, so
+  `ord(3) = (2^32−1)/15 = 286331153` and the rate is `20/ord` = **6.98e-08** per harness.
+  Every input is read from the harness's own source — the polynomial, the trial count, and
+  the generator taken from the loads that actually FEED `gf_pow_32` — and the order computed
+  exactly, so the rate moves with its inputs: 20 → 4 trials gives 1.40e-08 and a changed
+  polynomial 4.66e-09.  TODO #322's model of a rejection rate was wrong twice, both times
+  conservatively.
+- **CLAUDE.md's Testing section said these harnesses "assert *correctness* only, never
+  *soundness*"; that half is WITHDRAWN as false.**  `[10]` is titled "random forgery
+  rejected" and `[18]` is a weak-key guard, in all three harnesses, today.  Its `(2/3)^4`
+  = 19.75% Stern warning is true and unviolated and stays — `[11]`–`[14]` are completeness
+  checks requiring all 3 trials to pass.  #295's false-reason shape aimed at this repo's own
+  Testing section.
+
+### Changed
+- The summed false-failure rate now covers six harnesses: **1.874e-05 → 1.888e-05** against
+  the JOB-level budget of 1e-04, a 0.74% move, with both figures rounding to the published
+  1.9e-05 — so the advertised number did not change.  Every term this axis was missing is
+  small; what was missing was the statement that it is small.  After #319's 10x, #320's 3x,
+  #321's 10^134 and #322's two refuted models, all five point the same way: **the direction
+  this axis keeps failing in is the one where nothing red ever happens.**
+- A new `check_docs_consistency.py` check-E row holds the count of gated harnesses the axis
+  reads to the tool that prints it.  It sat at four for seven items with nothing saying so,
+  which is the defect — so dropping a harness from the corpus now moves a number CLAUDE.md is
+  checked against.
+- **No shipped code and no test harness changed**: the three reduced harnesses are
+  byte-for-byte untouched, and this release adds a checker part, a corrected sentence and a
+  stated corpus.
+
+### Scope
+- Deliberately NOT ported to Thumb-2 and NASM: `_TEST_DRAWS`' draw detector and #318's
+  verdict fingerprints.  A fingerprint over "verdict-bearing lines" is a `cmp`/branch PAIR in
+  assembly rather than a string, and a draw detector would need a fifth and sixth dialect
+  after #306's sixth-spelling hazard had already been met twice; folding either in converges
+  on completeness again, which is #298's recorded reason for splitting an item instead of
+  widening it.
+- Known limit: these harnesses run reduced demo parameters by design, so a rate derived here
+  is a rate for the demo instance and says nothing about what ships — not a defect of the
+  derivation, because the harness's own flake rate is what the budget is about.
+
 ## [9.5.11] - 2026-09-27
 
 ### Added
