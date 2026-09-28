@@ -90,7 +90,10 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends golang-go
+          # TODO #325 added gcc/libc6-dev: the FFI step below builds the shared
+          # object and cgo needs a C compiler. The runner image ships one, but
+          # every other job here names what it uses rather than inheriting it.
+          sudo apt-get install -y --no-install-recommends golang-go gcc libc6-dev
 
       - name: Build Go
         run: ./build_go.sh
@@ -102,6 +105,28 @@ jobs:
 
       - name: Go test suite
         run: cd CryptosuiteTests && go run Herradura_tests.go -t 2.0
+
+      # TODO #325. These two files existed and NO job ran them: there was no
+      # `go test` invocation in this workflow at all, and the only one in the
+      # repo is Fuzz/run_fuzz.sh's `go test ./herradura/ -run=xxx -fuzz=...`,
+      # where -run=xxx deliberately excludes ordinary tests. Rebuilt against the
+      # shim that shipped from v9.1.0 to v9.5.12 they HARD-CRASH, so they would
+      # have caught TODO #324 on their first run -- and they were last edited at
+      # v9.2.0, one release after that defect landed. -count=1 because a cached
+      # PASS from a previous shim is exactly the failure mode being closed here:
+      # the .so is not a Go source file, so the test cache does not see it move.
+      - name: FFI correctness (Go cgo vs native Go suite)
+        run: |
+          bash bindings/ffi/build.sh
+          # The two files are NAMED rather than left to ./... for two reasons:
+          # the coverage guard below matches a harness by path, so a step that
+          # only says ./... claims nothing; and a rename or deletion then fails
+          # HERE, loudly, instead of silently reducing what this step runs.
+          for f in bindings/ffi/go/herradura_ffi_test.go \
+                   bindings/ffi/go/herradura_ffi_native_test.go; do
+            test -f "$f" || { echo "MISSING: $f (TODO #325)"; exit 1; }
+          done
+          cd bindings/ffi/go && go test -count=1 ./...
 
       - name: CliTest — Go CLI
         run: |
@@ -349,15 +374,94 @@ jobs:
           # which is how a harness that FAILED sat unrun for seventeen releases.
           # find(1) also means a harness added in a new subdirectory is caught
           # without anyone remembering to extend a list.
-          harnesses=$(find Mcp docs/examples bindings benchmarks \
-                        -type f \( -name 'test_*.py' -o -name '*_test.py' \) \
-                        2>/dev/null | sort)
+          #
+          # TODO #325: PER-PATTERN, and that is the part that does not decay.
+          # #324 fixed the DEPTH and left the LANGUAGE -- the patterns were
+          # Python-only, so bindings/ffi/go/*_test.go was invisible to the very
+          # guard rewritten to catch a harness nobody runs, and those two files
+          # HARD-CRASH against the shim #324 fixed. Widening the list to
+          # *_test.go alone would leave the next extension equally invisible,
+          # which is #314 pass 3's recorded lesson for the third time. So each
+          # pattern is checked SEPARATELY and one that matches NOTHING is an
+          # ERROR: deleting the last Go harness fails this guard until the
+          # pattern goes with it, and adding a fifth extension becomes a
+          # decision someone makes rather than one nobody notices.
+          #
+          # KNOWN LIMIT: this is still a pattern list, so a harness named by
+          # none of them is still invisible -- a main() in a file called
+          # something else, a shell script outside CliTest/. What it closes is
+          # the case that occurred twice: a harness whose NAME says exactly what
+          # it is, in a place the pattern could not reach.
+          # SecurityProofsCode is a root because the '*_test.py' pattern
+          # matched NOTHING without it -- the two files it names live only
+          # there -- and #324's combined find() hid that: OR-ing a dead pattern
+          # with a live one gives a non-empty result, so the dead half is
+          # invisible. That is the same defect one level down, found by the
+          # per-pattern rule on its first run. Those two are claimed by a
+          # DISCOVERING runner rather than by a step, which is a better
+          # mechanism, and the exemption below checks it rather than asserting
+          # it.
+          roots="Mcp docs/examples bindings benchmarks herradura SecurityProofsCode"
+          patterns="test_*.py *_test.py *_test.go"
+          harnesses=""
+          for pat in $patterns; do
+            found=$(find $roots -type f -name "$pat" 2>/dev/null | sort)
+            if [ -z "$found" ]; then
+              echo "GUARD BROKEN: pattern '$pat' matches nothing under" \
+                   "$roots — it used to match something, so either the search" \
+                   "is wrong or the last such harness went and the pattern" \
+                   "should go with it (TODO #325)"
+              missing=1
+              continue
+            fi
+            harnesses="$harnesses $found"
+          done
+          # The discovered set, read from the runner itself (TODO #289's model).
+          # Its EXIT STATUS is checked explicitly rather than left to `bash -e`:
+          # a script there that stops gating makes the runner say so and exit 1
+          # ("neither gates nor is declared"), which is a sharper detector than
+          # the name check below and is the one that actually fires.
+          if ! python3 SecurityProofsCode/run_findings_gates.py --list \
+                 > /tmp/gates_list.txt 2>&1; then
+            echo "GUARD BROKEN: run_findings_gates.py --list failed, so the" \
+                 "discovered set cannot be trusted (TODO #325):"
+            sed -n '1,20p' /tmp/gates_list.txt
+            exit 1
+          fi
           if [ -z "$harnesses" ]; then
             echo "GUARD BROKEN: the search found no harnesses at all —" \
                  "it used to find some, so the search itself is wrong (TODO #324)"
             exit 1
           fi
           for f in $harnesses; do
+            # Two harnesses are claimed by something other than a step that
+            # names them. Both exemptions are CHECKED rather than asserted.
+            case "$f" in
+              SecurityProofsCode/*)
+                # Claimed by discovery, not by a step: run_findings_gates.py
+                # finds any script whose exit status is its own verdict, and
+                # analysis-findings runs it. Verified against the runner's own
+                # listing, so a script that stops being discovered -- the shape
+                # #291 found 46 of -- fails here instead of going quiet.
+                if ! grep -qF "$(basename "$f")" /tmp/gates_list.txt; then
+                  echo "UNCLAIMED: $f is not in run_findings_gates.py's" \
+                       "discovered set and no step names it (TODO #325)"
+                  missing=1
+                fi
+                continue ;;
+              herradura/codec_fuzz_test.go)
+                # Carries only Fuzz* targets, and Fuzz/run_fuzz.sh runs both;
+                # the file itself is never spelled in this workflow, so it is
+                # claimed by that script rather than by a step. If it grows an
+                # ordinary Test function, the fuzz job's -run=xxx excludes it
+                # and the claim stops being true -- so that is an error here.
+                if grep -qE '^func Test' "$f"; then
+                  echo "UNCLAIMED: $f has grown an ordinary Test function," \
+                       "which Fuzz/run_fuzz.sh's -run=xxx excludes (TODO #325)"
+                  missing=1
+                fi
+                continue ;;
+            esac
             if ! grep -qF "$f" /tmp/ci_nocomments.yml; then
               echo "UNCLAIMED: $f is a test harness that no CI job runs —" \
                    "add it to a job or say in this guard why it is exempt (TODO #287)"

@@ -3298,6 +3298,50 @@ consume its result — it would have been published as a SPEEDUP.  **Known limit
 poisoned build is a run-time detector, so it covers the paths its drivers take; what it
 closes is the case that occurred, a TU nobody pointed it at and a library nobody could.
 
+**And the harness in the next language along, which the fix for that one could not see
+(TODO #325).**  #324 closed the case of a harness that existed, failed, and that no job
+ran.  `bindings/ffi/go/` holds two more — `herradura_ffi_test.go` and
+`herradura_ffi_native_test.go` — and **nothing in the repository ran either**: there was no
+`go test` invocation in `ci.yml` at all, and the only one anywhere is
+`Fuzz/run_fuzz.sh`'s `go test ./herradura/ -run=xxx -fuzz=...`, whose `-run=xxx` excludes
+ordinary tests by design.  That exclusion is correct there and is why it does not help
+here — `herradura/codec_fuzz_test.go` carries only `Fuzz*` targets, so the fuzz job covers
+it completely and reaches nothing else.  Six things carry forward.  (1) **THEY WOULD HAVE
+CAUGHT #324 ON THEIR FIRST RUN.**  Rebuilt against the shim that shipped from v9.1.0 to
+v9.5.12 and run with the build cache bypassed, `go test -count=1` **hard-crashes** with a
+register dump; against the v9.5.13 shim it passes in 0.57 s.  And `git log` makes it
+sharper: they were last EDITED at v9.2.0, one release *after* the defect landed, so they
+were touched while it was live by someone who did not run them.  (2) **THE GUARD HAD THE
+BLIND SPOT IT WAS REWRITTEN TO CLOSE.**  #324 replaced #287's shell globs with `find`
+because `bindings/ffi/test_*.py` was one directory too shallow — and the replacement
+searched `test_*.py` and `*_test.py` only, so `*_test.go` could never match.  **The depth
+was fixed and the LANGUAGE was not.**  (3) **SO THE RULE IS PER-PATTERN, NOT PER-SEARCH.**
+Widening the list to `*_test.go` would fix the case in front of it and leave the next
+extension invisible — #314 pass 3's *a tool that enumerates sites enumerates the sites you
+point it at*, for the third time.  Each pattern is checked separately and **one that
+matches nothing is an ERROR**, so deleting the last Go harness fails the guard until the
+pattern goes with it.  The alternative — asking what EXECUTES a harness — needs a call
+graph over shell and YAML and is not available.  (4) **THE NEW RULE FOUND A SECOND DEAD
+PATTERN ON ITS FIRST RUN**: `*_test.py` matched nothing under the guard's roots, because
+`find`'s OR makes a dead pattern indistinguishable from a live one — #324's own finding one
+level down, in #324's own fix.  `SecurityProofsCode` is a root now, and its two scripts are
+claimed by DISCOVERY rather than by a step, with the exemption checking
+`run_findings_gates.py --list`'s EXIT STATUS rather than asserting the claim.  (5) **A
+SMALL ANSWER IS ONLY RIGHT IF THE QUESTION WAS ASKED OF EVERYTHING.**  Every test-shaped
+file outside `CliTest/` was checked against what `ci.yml` actually names, and the orphans
+were exactly the two Go files — Java's `SelfTest`/`CodecTest` run under
+`test_java_{bindings,codec}.sh`, the `SecurityProofsCode` pair is discovered, and
+`codec_fuzz_test.go` is fully covered.  (6) **`herradura_ffi_native_test.go` IS THE ONLY
+CROSS-IMPLEMENTATION CHECK OF THE FFI**, comparing the cgo binding against the native Go
+suite for the classical quartet composed exactly as the suite's own `main()` composes it —
+the shape this file repeatedly records as the only exit from a single-port blind spot, and
+it had never run in CI.  It imports the Go package AND links the shared object, so it will
+break on any future `BITARRAY.md` pass that moves either; that is an argument for running
+it, not for leaving it out.  **Known limit**: this is still a pattern list, so a harness
+named by none of the patterns stays invisible — a `main()` in a file called something else,
+a shell script outside `CliTest/`.  What it closes is the case that occurred twice, a
+harness whose NAME says exactly what it is in a place the pattern could not reach.
+
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
 from TODO #289 until v9.5.6 — twelve jobs, eleven blocking — on the `arduino` job's #185
