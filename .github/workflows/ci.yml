@@ -923,6 +923,17 @@ jobs:
       - name: Mirror guard — docker-entrypoint.sh vs ci.yml
         run: python3 tools/check_docker_mirror.py
 
+      # TODO #328. Go's fmtRate had two branches where C's print_rate and Python's
+      # _bench have three, so every rate below 1e6 printed in K units and the
+      # harness's six slowest benchmarks published "0.00 K ops/sec" for true rates
+      # of 0.36-8.57 ops/sec -- false, not imprecise. Nothing caught it because NO
+      # checker parses benchmark output, and this does not change that (running
+      # benchmarks in CI is #289's runtime problem, and a cost figure is
+      # host-specific). It holds the three formatters against each other
+      # STATICALLY instead: same thresholds, same branches, read from source.
+      - name: Rate-formatter parity — C / Go / Python
+        run: python3 tools/check_rate_format.py
+
       - name: Build the quickstart image
         run: docker build -t herradurakex:ci .
 

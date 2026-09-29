@@ -2,6 +2,81 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.17] - 2026-09-29
+
+### Fixed
+
+- **TODO #328 — a published benchmark rate of zero.** Go's `fmtRate` had **two**
+  branches where C's `print_rate` and Python's `_bench` each have **three**:
+  everything below `1e6` printed in K units with no plain-ops fallback, so a rate
+  of 4.46 ops/sec rendered as `0.00 K ops/sec` — **false, not imprecise**, since it
+  reads as zero throughput. Measured on one Go run of 46 benchmark rows: **23
+  (half)** lost precision to K units and **6 printed `0.00`/`0.01 K ops/sec`**
+  against true rates of **0.36 to 8.57 ops/sec** — the harness's slowest and most
+  interesting benchmarks (Stern-F sign/verify at 256 bits, ZKP prove+verify).
+  Verified fixed: those rows now print `3.53`, `4.28` and `8.41 ops/sec`, and **no
+  row prints `0.0x` with a nonzero rate**.
+- **It obstructed TODO #327's own measurement**, which is why it earned an item: the
+  apparent `10 → 0` collapse on `n=256 sign+verify` in that item's rate A/B was
+  `0.01 K` against `0.00 K`, i.e. 5.90 against 4.46 ops/sec.
+- **A correction to #327's text, carried into all three documents it reached.** That
+  item called this "a 1-vs-1 port divergence." It is **1-vs-2** — C and Python both
+  have the three-branch form and **Go alone** was the outlier. Java has no benchmark
+  formatter at all, so the axis is three ports.
+
+### Added
+
+- **`tools/check_rate_format.py`**, wired into the `docker` job. The three
+  formatters are held against each other **statically**: each must COMPARE against
+  `1e6` for M and `1e3` for K and carry a plain-ops fallback, read out of each
+  port's own source. That is `PARAMETERS`' idea — compare a value across ports —
+  aimed at a formatter's **branch structure**, which no existing axis reads. Java's
+  absence from the axis is asserted, so gaining a formatter is an error rather than
+  a silence.
+
+### Changed
+
+- The checker reads thresholds from the **comparison operator**, not from any
+  literal in the body. A first version scanned every numeric literal and **its
+  control did not fire**: moving Python's K branch to `>= 1e4` left `rate/1e3` in
+  the body, so "1e3 appears" stayed true while the branch had drifted — precisely
+  the drift the check exists for.
+
+### Measured
+
+- Controls: **six fire, one holds.** Reverting the Go fix; dropping C's plain
+  branch; moving Python's K threshold to `1e4`; moving Go's M threshold to `1e7`;
+  renaming the formatter so it cannot be located (an unreadable formatter must fail,
+  not skip); and Java gaining a formatter. Rewording an unrelated comment does not
+  fire.
+
+### Scope
+
+No protocol, parameter, wire-format or CLI-surface change — one Go formatter branch,
+a static checker, and corrections to three documents, so PATCH. C's and Python's
+formatters are correct and untouched.
+
+### Withdrawn before it was filed
+
+This item was recommended with a second half — that benchmark row **labels** are not
+unique (`46 rows, 26 distinct labels, worst 6×`), making the output impossible to
+compare programmatically. **That is false and is retracted here rather than quietly
+dropped.** Every row sits under its own `[N] Title` group header, so `bits= 32`
+appearing six times is six groups, each identified by the line above it. The defect
+was in the **label-keyed parser** used to check #327 — which is also why that item
+burned three invalid rate comparisons. The output was structured all along; the
+reader was not. Nothing about labels is changed.
+
+### Known limit
+
+The check reads branch structure and thresholds, not output, so a formatter keeping
+all three branches and computing the wrong number still passes. And **no checker
+parses benchmark output** — `grep -rln 'ops/sec' spec/ tools/ CliTest/ .github/` was
+empty before this item and the new checker reads sources, not runs — so every
+published cost figure remains unverified by CI. That is deliberate: running
+benchmarks in CI is #289's runtime problem and a cost figure is host-specific by
+nature.
+
 ## [9.5.16] - 2026-09-29
 
 ### Fixed
@@ -71,8 +146,9 @@ timing helper, so PATCH.
   fixed here (#312: a refactor must not settle a question it happens to expose).**
   Go's `fmtRate` has only two branches — anything below 1e6 prints in K units — so
   a rate of 4.46 ops/sec renders as `0.00 K ops/sec`, reading as zero throughput,
-  where Python's `_bench` has a third plain-ops branch. It is a 1-vs-1 port
-  divergence in the reporting path, and it obscured a measurement of this very
+  where Python's `_bench` has a third plain-ops branch. It is a port
+  divergence in the reporting path — **1-vs-2**, corrected by TODO #328: C and
+  Python both carry the three-branch form and Go alone was the outlier, and it obscured a measurement of this very
   item: the apparent 10 → 0 collapse on `n=256 sign+verify` was `0.01 K` versus
   `0.00 K`, i.e. 5.90 versus 4.46 ops/sec. Filed for its own item.
 - `_trange`'s own floor (#225) is unchanged and still real: a call site requesting
