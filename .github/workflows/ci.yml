@@ -5,6 +5,13 @@ name: CI
 # logic: every job installs the dependencies each build_*.sh script's own
 # header comments document, then defers to those scripts for the rest, so CI
 # and the scripts can't silently drift apart (same rationale as the Dockerfile).
+#
+# TODO #326: that last clause is now CHECKED, by tools/check_docker_mirror.py in
+# the `docker` job below. It was asserted by nobody for 437 commits and it HAD
+# drifted -- a complete Java port shipped at #196-#203 and became a REQUIRED job
+# while the Dockerfile went on advertising a language count it did not build,
+# naming neither Java nor a reason. A sentence promising two things cannot drift
+# apart is #287's withdrawn trust-model sentence unless something compares them.
 
 on:
   push:
@@ -881,3 +888,49 @@ jobs:
       # cannot quietly join the uncovered set.
       - name: Every findings gate still reproduces
         run: python3 SecurityProofsCode/run_findings_gates.py --quick
+
+  docker:
+    name: Docker quickstart (image + entrypoint smoke run)
+    runs-on: ubuntu-latest
+    # TODO #326. Dockerfile and docker-entrypoint.sh were a DOCUMENTED entry
+    # point -- README.md and CLAUDE.md both send a new user to
+    # `docker build -t herradurakex .` -- that NO job built or ran, for 437
+    # commits. That is #324's hello_herradura.c shape: the path a newcomer takes
+    # first, exercised by nothing, and that file aborted on its first call.
+    #
+    # Both halves were measured BEFORE this job was written, and both passed --
+    # the image builds and the entrypoint exits 0 with five harnesses green --
+    # so this is coverage, not a repair. The split below is the whole design:
+    #
+    #   the IMAGE BUILD is what catches dependency rot (a base-image or apt
+    #   package name moving), and is cheap on a native-amd64 runner;
+    #
+    #   the ENTRYPOINT runs end-to-end at REDUCED CAPS, because the twelve other
+    #   jobs already run every one of its targets at FULL size. What is unproven
+    #   in the container is the SCRIPT, not the cryptography -- and a full run is
+    #   ~75-90 min on an ARM SBC, which would make this the slowest job in the
+    #   matrix and re-create #289's recorded runtime problem on purpose.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3
+
+      # Runs before the build: it is a source check, so it should fail in
+      # seconds rather than after an image build.
+      - name: Mirror guard — docker-entrypoint.sh vs ci.yml
+        run: python3 tools/check_docker_mirror.py
+
+      - name: Build the quickstart image
+        run: docker build -t herradurakex:ci .
+
+      # The caps are env vars whose DEFAULTS are the shipped behaviour, so a
+      # user's `docker run` is byte-identical to before TODO #326.
+      - name: Entrypoint smoke run (reduced caps)
+        run: |
+          docker run --rm \
+            -e HERRADURA_SMOKE_ROUNDS=2 \
+            -e HERRADURA_SMOKE_TIME=0.05 \
+            herradurakex:ci

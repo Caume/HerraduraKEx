@@ -1,10 +1,22 @@
 # HerraduraKEx quickstart image (TODO #139).
 #
-# Builds and runs the full six-language build matrix — C, Go, Python, ARM
-# Thumb-2 (via arm-linux-gnueabi-gcc + qemu-arm), NASM i386 (via nasm/ld +
-# qemu-i386), Arduino is excluded (needs arduino-cli + a board target, not a
-# host-portable build) — without requiring the user to install any
-# cross-toolchain locally.
+# Builds and runs FIVE of the suite's seven language targets — C, Go, Python,
+# ARM Thumb-2 (via arm-linux-gnueabi-gcc + qemu-arm) and NASM i386 (via nasm/ld
+# + qemu-i386) — without requiring the user to install any cross-toolchain
+# locally.  Two are excluded ON PURPOSE, and both reasons are now CHECKED by
+# tools/check_docker_mirror.py rather than merely written here:
+#
+#   Arduino — needs arduino-cli plus a board target, so it is not a
+#             host-portable build at all (excluded since TODO #139).
+#   JAVA    — the bindings/java port is complete (TODO #196-#203) and is a
+#             REQUIRED CI job, but this image installs no JDK: default-jdk-headless
+#             roughly doubles it, and that port's own CliTest scripts are
+#             Java-vs-Python interop, which needs no cross-toolchain and so gains
+#             nothing from a container.  THIS LINE IS THE POINT OF TODO #326 --
+#             until then this header advertised a language count it did not
+#             build, and named neither Java nor a reason for omitting it, which
+#             is the drift ci.yml's "CI and the scripts can't silently drift
+#             apart" had promised could not happen.
 #
 # This Dockerfile intentionally does not duplicate build logic: it installs
 # the dependencies each build_*.sh script's own header comments document,
@@ -27,7 +39,11 @@
 # Docker Desktop installs register this automatically; on Linux:
 #   sudo apt-get install -y docker-buildx qemu-user-binfmt
 #   docker buildx build --platform linux/amd64 --load -t herradurakex .
-FROM --platform=linux/amd64 ubuntu:24.04
+# ARG rather than a literal, so buildkit's FromPlatformFlagConstDisallowed lint
+# is satisfied and a caller can retarget without editing the file; the default
+# keeps the amd64 pinning the paragraph above argues for.
+ARG TARGET_PLATFORM=linux/amd64
+FROM --platform=${TARGET_PLATFORM} ubuntu:24.04
 
 # Dependencies, one apt-get per source they're documented in:
 #   build_c.sh          -> gcc (libc6-dev pulls in the C headers/libc gcc needs;

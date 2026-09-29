@@ -22206,3 +22206,92 @@ which found `*_test.py` dead on its first run; `SecurityProofsCode` added as a r
 with a discovery exemption checked against the runner's exit status.
 
 ---
+
+---
+
+### #326: the Docker quickstart nothing builds, and the mirroring claim nothing checks
+
+**TODO #325 stated this limit on itself:** the coverage guard is a pattern list, so a
+harness named by none of the patterns stays invisible — "a `main()` in a file called
+something else, **a shell script outside `CliTest/`**."  A census of every `.sh` against
+what `ci.yml` names found exactly one real orphan.  The `CliTest/test_c_*.sh` and
+`test_go_*.sh` that read as unnamed are run by glob loops and are covered by the sibling
+"every non-Java `CliTest/*.sh`" guard; `lib_*.sh` are sourced libraries, not harnesses.
+`docker-entrypoint.sh` and `Dockerfile` are the orphan, and they are a DOCUMENTED ENTRY
+POINT: `README.md` and CLAUDE.md both point a new user at `docker build -t herradurakex .`.
+
+**That is #324's `hello_herradura.c` shape** — the path a newcomer is sent down first,
+exercised by nothing — and that file turned out to abort on its first call.
+
+**MEASURED FIRST, BECAUSE IT DECIDES THE ITEM'S SIZE.**  Both halves were run before this
+was filed, and both PASS:
+
+* `docker build --platform linux/amd64` → **exit 0**.  The dependency list is still valid
+  after 437 commits, so the Dockerfile has NOT rotted at the apt layer.
+* `bash docker-entrypoint.sh` → **exit 0**, "All builds and smoke tests completed
+  successfully", five harnesses each closing `*** OK: no check reported [FAIL] ***`
+  (C, Go, Python, ARM Thumb-2, NASM i386).
+
+So this is a COVERAGE-AND-CLAIMS item, not a repair, and it is materially smaller than
+#324 or #325.  The two negative results are the useful part: filing it as a breakage would
+have been wrong.
+
+**WHAT IS ACTUALLY WRONG — four things, and the first is the one that matters.**
+
+1. **`ci.yml`'s header asserts a mirroring that nothing verifies.**  Verbatim: "build/test
+   matrix mirroring `docker-entrypoint.sh`'s smoke run and CLAUDE.md's Build/Testing
+   sections.  Intentionally does not duplicate build logic … **so CI and the scripts can't
+   silently drift apart** (same rationale as the Dockerfile)."  Nothing compares them.
+   That is #287's withdrawn trust-model sentence and #295's false-reason shape: a curated
+   claim about how two things relate, checked by nobody.  And it HAS drifted — see (2).
+2. **Java is absent from a "six-language build matrix."**  `grep -ci java` returns **0** in
+   both `Dockerfile` and `docker-entrypoint.sh`, and CLAUDE.md's own description of the
+   image names only C/Go/Python/ARM/NASM i386.  A complete Java port shipped at #196–#203
+   and `native-java` is a REQUIRED job.  Arduino's exclusion is deliberate and documented;
+   Java's is neither — it is the drift the mirroring sentence promised could not happen.
+3. **The runtime estimate is an order of magnitude stale, and it is load-bearing.**  The
+   entrypoint's header says "under a minute (modern x86_64) to several minutes (e.g. an ARM
+   SBC)".  Measured on an aarch64 SBC: **~75–90 minutes**.  Written at #139, it predates
+   ~190 numbered-test items; `[50]` HCRED-KKW alone is the ~38.5 s-per-prove Go path.  This
+   is not cosmetic — it is the input to "should CI run this", so a stale figure argues for
+   the wrong answer.
+4. **A buildkit lint warning**: `FromPlatformFlagConstDisallowed` — `FROM --platform` with
+   the constant `linux/amd64`.
+
+**THE DESIGN CALL, decided by (3) rather than left to review.**  Running the full smoke
+test per push would make this the slowest job in the matrix by a wide margin, which is
+#289's recorded runtime problem re-created deliberately.  But building the image and never
+running the script leaves the script unexercised, which is the defect itself.  So the job
+does both, split by what each half is for: the IMAGE BUILD is what catches dependency rot
+and is cheap on a native-amd64 runner; the ENTRYPOINT runs end-to-end under REDUCED CAPS,
+because the twelve other jobs already run every one of its targets at full size and what is
+unproven here is the SCRIPT, not the cryptography.  The caps are env vars with the shipped
+defaults unchanged, so `docker run` behaviour is byte-identical for a user.
+
+**AND THE MIRRORING BECOMES A CHECK, which is the part that does not decay.**
+`tools/check_docker_mirror.py` derives what `docker-entrypoint.sh` runs and what `ci.yml`
+runs and holds them against each other in BOTH directions: a target the entrypoint runs
+that no CI job runs is an error (the entrypoint drifting ahead), and a CI job the entrypoint
+does not cover must carry a reason in an EXEMPT table — self-invalidating like every other
+curated table here, so a reason naming a job that IS covered fails, and covering a job
+forces its reason out.  That is what makes (2) impossible to repeat: Java's absence stops
+being a silence and becomes either a covered job or a written-down decision.
+
+**Known limit, stated in the item.**  The check compares INVOCATIONS, so it cannot see
+whether two invocations of the same script do the same WORK — the entrypoint's reduced caps
+are exactly such a difference, and they are the point rather than a defect.  It also cannot
+run the ARM/Arduino halves of the matrix in a container that excludes them; Arduino's
+exclusion stays a documented scope decision, now checked as one rather than asserted.
+
+**Scope.**  No protocol, parameter, wire-format or CLI-surface change.  A CI job, a checker,
+and four documentation corrections, so PATCH.  The entrypoint gains two env vars with
+unchanged defaults, which is a new surface on a DEVELOPER tool and not on a shipped
+primitive.
+
+Status: **DONE v9.5.15** — a `docker` CI job builds the image and runs the entrypoint
+at reduced caps; `tools/check_docker_mirror.py` holds the script and `ci.yml` against
+each other in both directions with a self-invalidating EXEMPT table; the language count,
+Java's omission and the runtime figure corrected in Dockerfile, README.md and CLAUDE.md;
+the buildkit platform lint fixed.  Twelve controls fire, two false-positive controls hold.
+
+---

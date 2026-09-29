@@ -2,6 +2,106 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.15] - 2026-09-28
+
+### Fixed
+
+- **TODO #326 — the Docker quickstart nothing built, and the mirroring claim
+  nothing checked.** `Dockerfile` and `docker-entrypoint.sh` are a DOCUMENTED
+  entry point — `README.md` and CLAUDE.md both send a new user to
+  `docker build -t herradurakex .` — that no CI job built or ran, for **437
+  commits** since TODO #139. Both files appeared in `ci.yml` only inside
+  comments. That is TODO #324's `hello_herradura.c` shape: the path a newcomer
+  takes first, exercised by nothing, and that file aborted on its first call.
+- **`ci.yml`'s header asserted a mirroring that nothing verified** — "so CI and
+  the scripts can't silently drift apart" — which is #287's withdrawn
+  trust-model sentence and #295's false-reason shape. And it HAD drifted.
+- **Java was absent from a "six-language build matrix."** `grep -ci java`
+  returned **0** in both files, and CLAUDE.md's description of the image named
+  only C/Go/Python/ARM/NASM i386, while a complete Java port shipped at
+  #196–#203 and `native-java` is a REQUIRED job. Arduino's exclusion is
+  deliberate and documented; Java's was neither — it is precisely the drift the
+  mirroring sentence promised could not happen. Both exclusions are now stated
+  in the Dockerfile and CHECKED.
+- **The runtime estimate was an order of magnitude stale, and it is
+  load-bearing.** The entrypoint claimed "under a minute (modern x86_64) to
+  several minutes (e.g. an ARM SBC)"; measured at **~75–90 minutes** on an
+  aarch64 SBC. Written at #139, it predates ~190 numbered-test items. That figure
+  is the input to "should CI run this", so a stale one argues for the wrong
+  answer.
+- Buildkit's `FromPlatformFlagConstDisallowed` lint — `FROM --platform` with a
+  constant — now an `ARG` whose default keeps the amd64 pinning. Verified: the
+  rebuild reports **0 warnings**.
+
+### Added
+
+- **`tools/check_docker_mirror.py`** — makes the mirroring claim a check, in
+  BOTH directions. A target the entrypoint runs that no CI job runs is an error
+  (the quickstart drifting ahead); a CI job the entrypoint does not cover must
+  carry a reason in `EXEMPT`, self-invalidating like every other curated table
+  here — a reason naming a job that IS covered fails, a reason for a job that
+  does not exist fails, and a job that is neither covered nor reasoned about
+  fails. No third-party dependencies: `ci.yml` is read with a narrow line
+  scanner, not PyYAML.
+- **A `docker` CI job**, thirteenth. The IMAGE BUILD is what catches dependency
+  rot and is cheap on a native-amd64 runner; the ENTRYPOINT runs end-to-end at
+  REDUCED CAPS, because the twelve other jobs already run every one of its
+  targets at full size — what is unproven in the container is the SCRIPT, not the
+  cryptography. The mirror guard runs FIRST, being a source check that should
+  fail in seconds rather than after an image build.
+- `HERRADURA_SMOKE_ROUNDS` / `HERRADURA_SMOKE_TIME` in `docker-entrypoint.sh`,
+  **defaults unchanged**, so a user's `docker run` is byte-identical.
+
+### Measured
+
+- `docker build` → **exit 0** before any change (the dependency list survived 437
+  commits) and **exit 0, 0 lint warnings** after.
+- `bash docker-entrypoint.sh` → **exit 0**, "All builds and smoke tests completed
+  successfully", five harnesses each `*** OK: no check reported [FAIL] ***`
+  (C, Go, Python, ARM Thumb-2, NASM i386), **~75–90 min** on aarch64.
+- Reduced caps verified per target: C, ARM and NASM i386 each `rc=0` at
+  `-r 2 -t 0.05`.
+- **Nine controls: eight fire, one holds.** Re-asserting the stale runtime claim;
+  deleting the measured figure (so the rule is not satisfied by deletion);
+  restoring the language-count claim; removing Java's reason; a new `ci.yml` job
+  with neither coverage nor reason; `EXEMPT` naming a nonexistent job; `EXEMPT`
+  naming a job that IS covered; and the entrypoint running a target CI does not.
+  Rewording an unrelated comment does not fire.
+
+### Changed
+
+- The mirror check's stale-phrase rule is **scoped**, not absolute. A
+  string-presence rule cannot tell a claim from its retraction, and this one
+  learned it twice while being written — a first version flagged `six-language`
+  and then `several minutes` inside the very comments added to withdraw them.
+  #324's coverage guard met the mirror image (its own rationale satisfied it) and
+  answered by stripping comments; that is no use here, because the claim under
+  test IS a comment. So the phrase may appear only on a line marked as retracted,
+  over a two-line window with comment markers stripped — because a wrapped
+  comment splits the marker across the boundary. Both of those were found by
+  running it, not by reading it.
+
+### Known limits
+
+- The check compares INVOCATIONS, not work, so it cannot see that two runs of the
+  same harness use different caps — the entrypoint's reduced caps are exactly such
+  a difference, and they are the design rather than a defect.
+- **The container RUN was not validated on the development host, and that is
+  recorded rather than papered over.** The image must be amd64 (Ubuntu ships no
+  arm64→armel cross-toolchain), which on aarch64 means emulation, and two things
+  do not survive it: Go's runtime dies in `lfstack.push` under `qemu-x86_64`
+  (`go version` alone, before any repo code), and `run_arm.sh` nests `qemu-arm`
+  inside `qemu-x86_64`, which had not finished after 19 minutes. Neither is a
+  property of this repo. The entrypoint is verified NATIVELY end to end and the
+  IMAGE BUILD is verified in-container; GitHub's runners are native amd64, so the
+  `docker` job's own first run is the end-to-end proof — which is the item's point.
+
+### Scope
+
+No protocol, parameter, wire-format or CLI-surface change — a CI job, a checker
+and documentation corrections, so PATCH. The entrypoint gains two env vars with
+unchanged defaults: a new surface on a DEVELOPER tool, not on a shipped primitive.
+
 ## [9.5.14] - 2026-09-28
 
 ### Fixed
