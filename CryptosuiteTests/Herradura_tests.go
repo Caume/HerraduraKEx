@@ -95,17 +95,50 @@ var sizes    = []int{32, 64, 128, 256}
 var gfSizes  = []int{32, 64, 128, 256}
 var rnlSizes = []int{32, 64, 128, 256}
 
+// bench times fn with a batch DERIVED from what one call costs (TODO #327).
+//
+// This used to be a 10-call warmup then a loop whose elapsed check came AFTER a
+// 100-call batch -- a hard floor of 110 invocations that no time cap could
+// reduce.  Measured on TODO #326's CI run (the Python twin of this helper): 66
+// of 138 benchmark rows overshot a 0.05 s cap, the worst by 6683x, every one
+// reading exactly 100 ops.  C does not have the defect: it has no shared helper
+// and its benchmark loops carry eight hand-picked batch constants (1000 ... 2).
+// Rather than copy a constant into a third place the batch is derived, which is
+// what those eight encode by hand -- #294/#296's "there is a correct port, do
+// not invent a fourth design", applied to a timing helper.
+//
+// RATES ARE PRESERVED; only the sample size moves.  An operation faster than the
+// budget keeps batch 100 and warmup 10 exactly.
 func bench(label string, fn func()) (ops int, elapsed time.Duration) {
-	for i := 0; i < 10; i++ {
+	dur := gBenchDur
+	// One timed probe call chooses the batch, and doubles as a warmup, so a
+	// slow operation's floor is 3 calls rather than 110.
+	probe := time.Now()
+	fn()
+	perCall := time.Since(probe)
+	warm, batch := 10, 100
+	if perCall > 0 && dur > 0 {
+		batch = int(dur / (10 * perCall))
+		if batch > 100 {
+			batch = 100
+		}
+		if batch < 1 {
+			batch = 1
+		}
+		warm = batch
+		if warm > 10 {
+			warm = 10
+		}
+	}
+	for i := 0; i < warm; i++ {
 		fn()
 	}
-	dur := gBenchDur
 	start := time.Now()
 	for {
-		for i := 0; i < 100; i++ {
+		for i := 0; i < batch; i++ {
 			fn()
 		}
-		ops += 100
+		ops += batch
 		elapsed = time.Since(start)
 		if elapsed >= dur {
 			break

@@ -3391,6 +3391,50 @@ coverage nor reason, and the entrypoint running a target CI does not.  **Known l
 compares INVOCATIONS, not work, so it cannot see that two runs of one harness use
 different caps — which is exactly what the reduced caps are, by design.
 
+**And the cost control that could not reach the cost, found by trusting a documented
+limitation (TODO #327).**  #326 set the container smoke run to `-r 2 -t 0.05` expecting it
+to be cheap, got a **20-minute CI job**, and blamed #225's `_trange` floor.  **That
+diagnosis was wrong.**  `_bench` (Python) and `bench` (Go) warmed up 10 times and then
+checked elapsed only AFTER a 100-call batch — a **hard floor of 110 invocations that no
+time cap could reduce** — and the signature was in plain sight: every overshooting row read
+exactly `100 ops`.  Measured on #326's own CI log, 66 of 138 rows overshot a 0.05 s cap,
+the worst **334 s against it, 6683×**.  Six things carry forward.  (1) **THE FLAGS DID NOT
+GOVERN THE RUNTIME AT ALL**, which is the statement worth keeping: at `-r` 2, 10, 50 and
+500, every one with `-t 0.05`, the Python harness ran past a 600 s timeout — the most and
+least aggressive settings indistinguishable, because `-r` bounds counts inside `_trange`,
+`-t` is polled between batches, and the floor sits outside both.  (2) **C DID NOT HAVE THE
+DEFECT, and that is the usual shape.**  C has no shared helper; its benchmark loops carry
+**eight** hand-picked batch constants — 1000, 200, 100, 50, 20, 10, 5 and **2** for the slow
+Stern-F — so Go and Python did **55× more unavoidable work** on the slowest operations.  A
+2-vs-1 port split in a COST CONTROL, which no axis here can see: `PARAMETERS` compares a
+constant's value, `PARAM_USE_CORPUS` whether it is read, `_TEST_DRAWS` draws,
+`_SAMPLED_TESTS` verdicts.  A cap's REACHABILITY is none of them.  (3) **THE FIX DERIVES
+WHAT C ENCODES BY HAND** — one timed probe call sizes the batch — rather than copying a
+ninth constant into a third place, which is #294/#296's "there is a correct port, do not
+invent a fourth design" applied to a timing helper.  (4) **RATES ARE THE INVARIANT, SAMPLE
+SIZE IS NOT.**  A benchmark exists to report a rate, so the criterion is that rates hold
+while `ops` moves: an operation faster than the budget keeps batch 100 and warmup 10
+**exactly**, so its path is unchanged, and only a slower one sees a smaller batch.  (5)
+**THE ACCEPTANCE TEST WAS WRITTEN SO IT COULD NOT PASS VACUOUSLY** — before, `-r 500 -t 1.0`
+and `-r 2 -t 0.05` both simply timed out, so "both are fast now" would not have shown
+control was restored; they must DIFFER.  (6) **TWO MEASUREMENTS WERE THROWN AWAY FOR BEING
+INVALID BEFORE ANY WAS BELIEVED**: a 45× speed-up computed by comparing all five harnesses'
+benchmark time against Python's alone (the honest figure is 40×), and a rate table
+comparing a GitHub runner against an ARM SBC.  A third — a Go rate A/B — was discarded for
+running CONTENDED beside another 600 s job, with `ops` counts of 1 to 300 where a rate is
+meaningless.  **A cost measurement is worth exactly as much as the control over what else
+was running.**  The replacement — sequential and uncontended — turned out to be
+ORDER-CONFOUNDED on a thermally-throttling SBC (median 1.13x favouring whichever leg
+ran first, where the fast rows' code path is provably identical), so it supports
+"nothing regressed" and not a rate figure; the rate claim rests on the structural
+fact that a fast operation's derived parameters are `(10, 100)` exactly.  And the row
+that looked like a 10x regression was Go's `fmtRate` printing every rate below 1e6 in
+K units, so 4.46 ops/sec reads as `0.00 K ops/sec` where Python has a plain-ops
+branch — a 1-vs-1 reporting divergence that obscured a measurement of this very item,
+recorded and NOT fixed here (#312).  **Known limit**: C is untouched, so its eight constants remain hand-picked
+and a new C benchmark given the wrong one reintroduces the defect there — recorded rather
+than fixed, since a refactor must not settle a question it happens to expose (#312).
+
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
 from TODO #289 until v9.5.6 — twelve jobs, eleven blocking — on the `arduino` job's #185
@@ -3957,7 +4001,17 @@ valgrind --leak-check=full --show-leak-kinds=definite,indirect \
 
 The `-r`/`--rounds` flag caps iterations per security test; `-t`/`--time` sets the wall-clock limit for both tests and benchmarks. CLI flags override `HTEST_ROUNDS`/`HTEST_TIME` env vars.
 
-**What `-t` actually bounds (TODO #225).** It caps iteration *count*, not wall time, and only at the granularity of `_trange`'s poll — `(i & 63) == 63`. A call site requesting fewer than 64 iterations is never polled, so the cap cannot reach it however slow its work becomes: 18 of the Python suite's 95 capped sites are in that category and carry ~71% of the time spent inside capped sites (worst: `test_hpke_stern_f_correctness`, 30 iterations requested, ~97 s against a 2.0 s cap). A truncated site always stops at a multiple of 64, never in between. Separately, 16 sites pass a literal count to `_trange` instead of `_iters(...)`, so `-r` does not reach them either. Every run now prints a closing `--- Time cap: ... ---` line reporting sites entered, truncated, and unpollable. The startup banner reports whether `_rnl_poly_mul` took the numpy or pure-Python path, and the `RNL_SIZES` the tests exercise — which is **not** the suite's deployed `RNLN`. That
+**What `-t` actually bounds (TODO #225, corrected by TODO #327).** **The paragraph below
+is a correct account of ONE mechanism and was, until #327, the only one recorded — which
+made it misleading, because it is not where the time went.** `_bench`/`bench`, the
+benchmark timing helper, had a 10-call warmup and checked elapsed only AFTER a 100-call
+batch, so a **floor of 110 invocations no cap could reduce**: 66 of 138 rows overshot a
+0.05 s cap in #326's own CI run, the worst by 6683×, and the Python harness's runtime did
+not depend on `-r` or `-t` at all (it ran past 600 s at `-r` 2, 10, 50 and 500 alike).
+That is fixed — the batch is now derived from one timed probe call in Python and Go, C
+having always sized its batches per benchmark — so `-t` now does bound wall time in the
+benchmarks. Read the two together: `_trange` is what follows, `_bench` was the larger
+term. It caps iteration *count*, not wall time, and only at the granularity of `_trange`'s poll — `(i & 63) == 63`. A call site requesting fewer than 64 iterations is never polled, so the cap cannot reach it however slow its work becomes: 18 of the Python suite's 95 capped sites are in that category and carry ~71% of the time spent inside capped sites (worst: `test_hpke_stern_f_correctness`, 30 iterations requested, ~97 s against a 2.0 s cap). A truncated site always stops at a multiple of 64, never in between. Separately, 16 sites pass a literal count to `_trange` instead of `_iters(...)`, so `-r` does not reach them either. Every run now prints a closing `--- Time cap: ... ---` line reporting sites entered, truncated, and unpollable. The startup banner reports whether `_rnl_poly_mul` took the numpy or pure-Python path, and the `RNL_SIZES` the tests exercise — which is **not** the suite's deployed `RNLN`. That
 sentence sat here as a framing note about COST until TODO #321 connected it to `[14]`'s
 correctness assertion: those four widths are the ones #223 retired, per-coefficient
 reconciliation error grows O(√n), so the tested ring is the FAVOURABLE one and the deployed

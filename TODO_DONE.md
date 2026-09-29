@@ -22295,3 +22295,86 @@ Java's omission and the runtime figure corrected in Dockerfile, README.md and CL
 the buildkit platform lint fixed.  Twelve controls fire, two false-positive controls hold.
 
 ---
+
+---
+
+### #327: the benchmark cap that cannot reach its cost, in two ports of three
+
+**Found by a failure in TODO #326's own work.**  That item set
+`HERRADURA_SMOKE_ROUNDS=2 HERRADURA_SMOKE_TIME=0.05` expecting a cheap container
+smoke run and got a **20-minute CI job** — third-slowest of thirteen.  The cause was
+attributed to `-t`'s documented iteration-count limitation (#225's `_trange` floor).
+**That attribution was wrong**, and the real defect is separate, undocumented, and in a
+different function.
+
+**MEASURED, from #326's own CI log.**  Of 138 Python benchmark rows, **66 exceeded the
+0.05 s cap**; the worst ran **334 s against it, 6 683×**; the benchmark rows total
+**956 s ≈ 16 min** of a 20-minute job.  Every overshooting row reads exactly
+`100 ops`, which is the signature.
+
+**THE MECHANISM.**  `_bench` (Python) and `bench` (Go) are
+`for _ in range(10): fn()` followed by
+`while True: for _ in range(100): fn(); ops += 100; if elapsed >= g_bench_sec: break`.
+The elapsed check happens **after** a 100-call batch, so there is a **hard floor of 110
+invocations of `fn` that no time cap can reduce**.  Set `-t` to 0.05 or to 1.0; a slow
+`fn` runs 110 times either way.
+
+**AND THE FLAGS DO NOT GOVERN THE RUNTIME AT ALL, which is the sharper statement.**
+The Python harness was run at `-r 2`, `-r 10`, `-r 50` and `-r 500`, every one with
+`-t 0.05`, under a 600 s timeout: **all four were terminated at 600 s**.  The most
+aggressive setting and the least aggressive one are indistinguishable, because `-r`
+bounds counts inside `_trange`, `-t` is polled only between batches, and the floor sits
+outside both.  A user tuning these flags to make a run affordable is adjusting something
+that does not control the outcome.
+
+**C DOES NOT HAVE THE DEFECT, and that is what makes this the repo's usual shape.**
+C has no shared helper; each benchmark loop carries its own batch constant, and there
+are **eight distinct values** — 1000, 200, 100, 50, 20, 10, 5 and **2**, the last for the
+slow Stern-F sign/verify, with a matching 2-call warmup.  So on the slowest operations
+Go and Python do **55× more unavoidable work than C**.  A 2-vs-1 port split in a COST
+CONTROL, which no existing axis can see: `PARAMETERS` compares constants' values,
+`PARAM_USE_CORPUS` whether they are read, `_TEST_DRAWS` draws, `_SAMPLED_TESTS`
+verdicts.  A cap's REACHABILITY is none of those.  It is #293's read-pattern split and
+#294's distribution split with a third object.
+
+**AND THE DOCUMENTED LIMITATION ACTIVELY MISDIRECTS.**  CLAUDE.md's "What `-t` actually
+bounds (TODO #225)" paragraph is a careful, correct account of the `_trange` floor —
+and says nothing about `_bench`, which is where the time actually goes.  It is why
+#326 mis-diagnosed its own job.  A true statement about one mechanism, standing where a
+reader looks for the cost, reads as the whole answer.
+
+**WHAT THE FIX IS NOT.**  Raising the cap, or lowering the batch constant to a
+hand-picked number in two more places, is #234's vacuous pass and #225's finding
+repeated.  The batch must be DERIVED from what the operation costs — one timed probe
+call, then a batch sized so the budget is checked often enough — which is what C's eight
+constants encode by hand.  Adopting C's *approach* rather than its *constants* is the
+#294/#296 precedent applied to a helper instead of a sampler: there is a correct port,
+so do not invent a fourth design.
+
+**ACCEPTANCE, stated in the item so it cannot pass vacuously.**  Today `-r 500 -t 1.0`
+and `-r 2 -t 0.05` are indistinguishable — both time out at 600 s.  After the fix they
+must DIFFER measurably, and `-t 0.05` must complete far inside 600 s.  A fix that merely
+makes both fast has removed the symptom without restoring control.
+
+**BEHAVIOUR PRESERVATION, which is the risk.**  Changing the floor changes every
+published Python/Go benchmark's SAMPLE SIZE.  The `ops` counts will move and that is
+expected; the reported **rates must not**, since a rate is what the benchmark exists to
+report.  Fast operations must keep batch 100 and warmup 10 exactly, so their output is
+unchanged, and only operations slower than the budget can see a smaller batch.
+
+**Scope.**  No protocol, parameter, wire-format or CLI-surface change — two test
+harnesses' timing helper, so PATCH.  C is deliberately NOT touched: it is the correct
+port here, and a refactor must not settle a question it happens to expose (#312).  Its
+hand-tuned constants are recorded as a known fragility rather than fixed.
+
+Status: **DONE v9.5.16** — the batch is derived from one timed probe call in Python
+and Go (C already sized its batches per benchmark and is untouched).  Python at
+`-r 2 -t 0.05` went from killed at 600 s to 243 s; Go benchmark rows 179.2 s -> 5.7 s;
+rates preserved (a fast operation keeps warmup 10 / batch 100 EXACTLY, so its path is
+unchanged; 50/s vs 49/s on a 20 ms operation in a controlled A/B).  Residual overshoots
+read `1 ops`, the floor.  Found on the way and NOT fixed here per #312: Go's `fmtRate`
+prints every rate below 1e6 in K units, so 4.46 ops/sec reads as `0.00 K ops/sec` where
+Python has a plain-ops branch — a 1-vs-1 port divergence that obscured a measurement of
+this item.
+
+---

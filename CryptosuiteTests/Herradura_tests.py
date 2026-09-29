@@ -2357,14 +2357,49 @@ def test_hdrbg():
 # ---------------------------------------------------------------------------
 
 def _bench(label: str, fn):
-    for _ in range(10):
+    """Time `fn`, with a batch DERIVED from what one call costs (TODO #327).
+
+    This used to be `for _ in range(10): fn()` then a `while True` whose elapsed
+    check came AFTER a 100-call batch -- a hard floor of 110 invocations that no
+    time cap could reduce.  Measured on TODO #326's own CI run: 66 of 138
+    benchmark rows overshot a 0.05 s cap, the worst by 6683x (334 s), every one
+    of them reading exactly `100 ops`.  With -r and -t both unable to reach it,
+    the harness's runtime did not depend on its own cost-control flags at all:
+    -r 2 and -r 500 alike ran past a 600 s timeout.
+
+    C does not have the defect -- it has no shared helper, and its benchmark
+    loops carry eight different hand-picked batch constants (1000 ... 2, the
+    last for the slow Stern-F).  Rather than copy a constant into a third place,
+    the batch is DERIVED here, which is what those eight encode by hand.  That
+    is #294/#296's rule -- there is a correct port, so do not invent a fourth
+    design -- applied to a timing helper instead of a sampler.
+
+    RATES ARE PRESERVED, which is the property that matters: a benchmark exists
+    to report a rate, and only the SAMPLE SIZE moves.  An operation faster than
+    the budget keeps batch 100 and warmup 10 exactly, so its output is
+    byte-identical; only one slower than the budget sees a smaller batch.
+    """
+    budget = g_bench_sec
+    # One timed probe call chooses the batch.  It doubles as a warmup, so the
+    # floor for a slow operation is 3 calls (probe + warm + batch), not 110.
+    t0 = time.perf_counter(); fn(); per_call = time.perf_counter() - t0
+    if per_call <= 0.0 or budget <= 0.0:
+        # Below timer resolution, so the operation is cheap by definition and
+        # the historical constants apply unchanged.
+        warm, batch = 10, 100
+    else:
+        # Aim to check the budget ~10 times across it; never above the
+        # historical 100, never below 1.
+        batch = max(1, min(100, int(budget / (10.0 * per_call))))
+        warm = max(1, min(10, batch))
+    for _ in range(warm):
         fn()
     t0 = time.perf_counter(); ops = 0
     while True:
-        for _ in range(100): fn()
-        ops += 100
+        for _ in range(batch): fn()
+        ops += batch
         elapsed = time.perf_counter() - t0
-        if elapsed >= g_bench_sec: break
+        if elapsed >= budget: break
     rate = ops / elapsed
     if rate >= 1e6:    rate_str = f"{rate/1e6:.2f} M ops/sec"
     elif rate >= 1e3:  rate_str = f"{rate/1e3:.2f} K ops/sec"
