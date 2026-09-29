@@ -2,6 +2,83 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.16] - 2026-09-29
+
+### Fixed
+
+- **TODO #327 — the benchmark cap that could not reach its cost, in two ports of
+  three.** `_bench` (Python) and `bench` (Go) warmed up 10 times and then checked
+  elapsed only **after** a 100-call batch, so there was a **hard floor of 110
+  invocations of the timed function that no time cap could reduce**. Measured on
+  TODO #326's own CI log: **66 of 138 benchmark rows overshot a 0.05 s cap**, the
+  worst by **6683× (334 s)**, every overshooting row reading exactly `100 ops`.
+- **The harness's runtime did not depend on its own cost-control flags.** At
+  `-r 2`, `-r 10`, `-r 50` and `-r 500`, each with `-t 0.05`, the Python harness
+  ran past a 600 s timeout — the most and least aggressive settings
+  indistinguishable, because `-r` bounds counts inside `_trange`, `-t` is polled
+  only between batches, and the floor sits outside both.
+- **Found by a wrong diagnosis in #326**, which blamed #225's documented
+  `_trange` floor. CLAUDE.md's "What `-t` actually bounds" paragraph is a correct
+  account of that mechanism and was the only one recorded, which made it
+  misleading — it is not where the time went. It now names both, largest term
+  first.
+
+### Changed
+
+- The batch is **derived from one timed probe call** in both ports, which is what
+  C's benchmark loops encode by hand: C has no shared helper and carries **eight**
+  batch constants (1000, 200, 100, 50, 20, 10, 5 and **2** for the slow Stern-F),
+  so Go and Python were doing **55× more unavoidable work** on the slowest
+  operations. Deriving rather than copying a ninth constant into a third place is
+  #294/#296's rule — there is a correct port, so do not invent a fourth design.
+- **C is deliberately untouched**: it is the correct port here, and a refactor
+  must not settle a question it happens to expose (#312). Its hand-picked
+  constants are recorded as a known fragility.
+
+### Measured
+
+- Python, `-r 2 -t 0.05`, same machine: **killed at 600 s (rc=124) before printing
+  a single benchmark row** → **243 s, rc=0**, all checks passing.
+- Go, `-r 2 -t 0.05`, same machine: benchmark rows **179.2 s → 5.7 s (31×)**; run
+  completes in **83 s, rc=0**.
+- Python benchmark rows, same 46 rows and flags: **853.4 s → 21.1 s (40×)**.
+- Residual overshoots all read **`1 ops`** — batch is already at its floor of 1, so
+  a single call simply costs more than the budget. Irreducible, not unfixed.
+- **Rates preserved.** Two pieces of evidence, and the strong one is structural: a
+  fast operation's derived parameters are `warmup=10, batch=100` — **identical to
+  the historical constants** — at both 1.0 s and 0.05 s budgets, so its code path
+  is unchanged rather than merely similar. A controlled same-process A/B then
+  measures a 20 ms operation at **50/s before, 49/s after**, with its floor falling
+  from 110 calls to 3 and wall time from 2.21 s to 0.10 s.
+- A sequential uncontended A/B of the whole Go harness at `-r 50 -t 1.0` shows **no
+  rate regression**: median ratio 1.13×, minimum 0.76× on a **7-sample** row, one
+  ratio below 0.8. That run is **order-confounded and says so** — every large
+  deviation favours whichever leg ran first, which on a thermally-throttling SBC is
+  the expected artefact, and a 1.13× median where the code path is provably
+  identical is itself the evidence of it. It is reported as "nothing regressed",
+  not as a rate measurement.
+
+### Scope
+
+No protocol, parameter, wire-format or CLI-surface change — two test harnesses'
+timing helper, so PATCH.
+
+### Known limits
+
+- C's eight batch constants stay hand-picked, so a new C benchmark given the wrong
+  one reintroduces the defect there.
+- **A reporting defect was found in the same function family and deliberately NOT
+  fixed here (#312: a refactor must not settle a question it happens to expose).**
+  Go's `fmtRate` has only two branches — anything below 1e6 prints in K units — so
+  a rate of 4.46 ops/sec renders as `0.00 K ops/sec`, reading as zero throughput,
+  where Python's `_bench` has a third plain-ops branch. It is a 1-vs-1 port
+  divergence in the reporting path, and it obscured a measurement of this very
+  item: the apparent 10 → 0 collapse on `n=256 sign+verify` was `0.01 K` versus
+  `0.00 K`, i.e. 5.90 versus 4.46 ops/sec. Filed for its own item.
+- `_trange`'s own floor (#225) is unchanged and still real: a call site requesting
+  fewer than 64 iterations is never polled. This item fixes the larger term, not
+  both.
+
 ## [9.5.15] - 2026-09-28
 
 ### Fixed
