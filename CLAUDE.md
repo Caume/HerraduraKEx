@@ -2173,7 +2173,24 @@ benchmarks/                                          — recorded benchmark outp
                                                       both-sides-agree control but are NOT in
                                                       run_findings_gates.py's set (it scans
                                                       SecurityProofsCode/ only) -- host-specific
-                                                      cost figures do not belong in CI;
+                                                      cost figures do not belong in CI.  THAT
+                                                      SENTENCE WAS EXACT ABOUT THE WRONG OBJECT
+                                                      until TODO #329: it is right about the
+                                                      NUMBERS and was silent about whether these
+                                                      files still COMPILE, and nine of the
+                                                      eleven executables in this directory had
+                                                      no runner at all -- rnl_ring_cost.py had
+                                                      been exiting 1 on E_WIDTH since v9.3.0 and
+                                                      the three FFI-consuming compare_*.py
+                                                      aborted with rc=134 against the shim #324
+                                                      fixed.  So the .go is BUILD-ONLY in CI
+                                                      (building asserts nothing about a rate,
+                                                      which is why #292's position survives),
+                                                      rnl_ring_cost.py runs --quick (1 alone;
+                                                      2/3 are #225's cap audit and exceed
+                                                      600 s), and tools/check_runnable_coverage.py
+                                                      fails if a new executable here is
+                                                      unclaimed;
                                                       compare_*.py drivers, incl.
                                                       compare_fscx_revolve_closed_form.py
                                                       (TODO #213, C/Go/Python)
@@ -3471,6 +3488,61 @@ discarded comparisons.  **The output was structured all along; the reader was no
 Retracted in the item and the changelog rather than quietly dropped.  **Known limit**:
 the check reads structure, not output, so a formatter with all three branches computing
 the wrong number still passes.
+
+**And the shipped executables no job builds, which is #325's other stated limit (TODO
+#329).**  #325 recorded what its coverage guard cannot reach — *"a harness named by none
+of the patterns stays invisible — a `main()` in a file called something else, a shell
+script outside `CliTest/`"* — and #326 closed the shell-script half by census.  This is
+the `main()` half, over the two directories holding shipped executables that are neither
+tests nor the CLI: **15 executables, 11 with NO RUNNER AT ALL**, and two separate
+five-release breakages inside them.  Six things carry forward.  (1) **IT IS A REPAIR, NOT
+ONLY A CENSUS, AND THE BROKEN FILE IS A DOCUMENTED BASELINE.**
+`benchmarks/rnl_ring_cost.py` exited **1** with `ValueError: E_WIDTH: 512`: it sweeps to
+n=1024 and passed the ring dimension as the SESSION-KEY WIDTH too, which stopped being
+legal at **v9.3.0 / #314 pass 4** — the very commit #315 found breaking two
+`SecurityProofsCode` gates the same way.  **The third instance of one defect, in the one
+directory neither item looked at**, red from v9.3.0 to v9.5.17, and it is the file this
+document names as the HKEX-RNL cost baseline and as #225's audit instrument.  Fixed as
+`min(n, 256)` rather than a flat 256, which is behaviour-preserving BY CHOICE: every row
+that used to work keeps the width it was measured at, so no published figure moves, and
+the two rows the rule broke land on what the deployed ring actually uses.  All six rows
+report now and n=1024 reproduces #223's 5.2x (5.28x on the multiply, 5.13x end to end).
+(2) **THREE MORE WERE ABORTING, BY #324's DEFECT RATHER THAN #314's.**  The three
+`compare_*.py` that import `bindings/ffi/python/herradura_ffi.py` are FFI-shim consumers:
+against the shim that shipped v9.1.0..v9.5.12 one `hkex_gf_pubkey` call gives **rc=134,
+`E_WIDTH in ba_nbytes`**.  #324's record says it "was found by trying to run a benchmark"
+— one of these three is how, by hand, and none had a runner.  **The third set of shim
+consumers nothing ran**, after #324's C example and #325's two Go tests.  (3) **THE
+COVERAGE THAT EXISTED WAS ACCIDENTAL, and both files that ever got a runner got one
+because an item found them BROKEN** — #287's MCP example and #324's C example.  Three C
+files are covered only because `poison_build.sh` discovers `herradura.h` consumers for a
+width-guard reason; nobody ever decided to cover an example or a benchmark.  (4) **THE
+PREDICATE IS THE ENTRY POINT, NOT THE NAME, and that is the whole mechanism.**
+`hello_herradura.go` says exactly what it is and matches no test pattern, so no widening
+of #325's list could reach it.  `tools/check_runnable_coverage.py` carries #325's
+per-pattern rule over — a LANGUAGE whose detector matches nothing is an ERROR — and
+`EXEMPT` is self-invalidating both ways, shipping EMPTY like #295's `PARAM_USE_EXEMPT`.
+**Its first version MISSED BOTH Python examples**, looking for `if __name__ ==
+"__main__"` where both are top-level scripts with no guard: 13 of 15 censused and OK
+reported over a corpus with two holes, which is #306's sixth-spelling hazard and #295's
+rule that the lenient direction is the dangerous one, since an under-matching detector
+cannot fail.  Python is PARSED with `ast` now.  (5) **TWO DEFECTS WOULD HAVE MADE THE NEW
+COVERAGE VACUOUS.**  `compare_fscx_revolve_closed_form.py` printed `"C: skipped (build
+failed)"` and exited 0, so a compiler that rejected `herradura.h` read as a machine with
+no compiler — #234's vacuous pass, and running it in CI would have detected nothing; a
+missing tool is a skip, a failed build by a PRESENT compiler is an error.  And
+`rnl_ring_cost.py` computed `K_A == K_B` and threw it away, `median_of` wanting only the
+wall time — #291's 22 discarded verdicts, in a benchmark.  (6) **#292's EXCLUSION IS
+EXACT ABOUT THE WRONG OBJECT**, so the Go benchmark is BUILD-ONLY: that item kept
+host-specific cost figures out of CI, which is right about the NUMBERS and silent about
+whether the file still COMPILES (#310's shape), and building it asserts nothing about a
+rate.  A measurement was discarded on the way: a first `--quick` run put n=512 at `0.61x`
+against n=256, nonsense caused by two stale benchmark processes — **#327's contention
+error repeated**, re-measured at loadavg 0.29 with two runs agreeing to 0.01x.  **Known
+limit**: this asks whether something is BUILT AND RUN, never whether the run asserts
+anything, so a benchmark printing numbers nobody checks satisfies it; the two cases above
+were fixed because they would have made this coverage vacuous, not because the check can
+see the class.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`

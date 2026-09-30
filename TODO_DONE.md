@@ -22451,3 +22451,88 @@ claim corrected to 1-vs-2 in three documents; the labels half of the recommendat
 WITHDRAWN as false — the group header disambiguates and the parser was at fault.
 
 ---
+
+---
+
+### #329: the shipped executables no job builds — `docs/examples/` and `benchmarks/`
+
+TODO #325 stated its own limit and this is the other half of it: *"this is still a pattern
+list, so a harness named by none of the patterns stays invisible — a `main()` in a file
+called something else, a shell script outside `CliTest/`."*  #326 closed the shell-script
+half by census.  This is the `main()` half, and the census is of the two directories that
+hold shipped executables which are neither tests nor the CLI.
+
+**15 executables; 11 have no runner.**  Covered: `docs/examples/c/hello_herradura.c`,
+`benchmarks/rnl_deployed_ring_cost.c` and `benchmarks/v3_consumer_cost.c` (all three by
+`tools/poison_build.sh` DISCOVERY, which keys on `#include herradura.h`), and
+`docs/examples/mcp/hello_herradura_mcp.py` (by a `ci.yml` step).  Unrun: the Go and Python
+integration examples, five `benchmarks/compare_*.py`, `rnl_ring_cost.py`,
+`rnl_deployed_ring_cost.{go,py}` and `v3_round_cost.c`.
+
+**IT FOUND A FILE THAT HAS BEEN BROKEN FOR FIVE RELEASES, which is why this is a repair and
+not only a coverage item.**  `benchmarks/rnl_ring_cost.py` exits **1** with
+`ValueError: E_WIDTH: 512`.  It sweeps `RING_SIZES = [32, 64, 128, 256, 512, 1024]` and
+passes the ring dimension as the SESSION-KEY WIDTH as well —
+`_rnl_agree(..., n, n)`, where the second `n` is `key_bits` — so above 256 it asks for a
+BitArray no `BITARRAY.md` §2 width admits.  `E_WIDTH` entered
+`CryptosuiteTests/Herradura_tests.py` at **v9.3.0 / #314 pass 4**, the very commit #315
+found breaking two `SecurityProofsCode` gates the same way.  **This is the THIRD instance of
+that identical defect, in the one directory neither #314 nor #315 looked at**, red from
+v9.3.0 through v9.5.17.  And it is not a minor file: `CLAUDE.md` names it as the
+**baseline** for HKEX-RNL ring cost and as #225's recorded audit instrument for what `-t`
+caps.
+
+**AND THREE MORE WERE BROKEN FOR THE SAME FIVE RELEASES, by #324's defect rather than by
+#314's.**  `compare_hkex_x25519.py`, `compare_hpks_ed25519.py` and `compare_hske_aead.py`
+import `bindings/ffi/python/herradura_ffi.py`, so they are consumers of the FFI shim whose
+`nbits` was never set.  Rebuilt against the shim that shipped from v9.1.0 to v9.5.12, a
+single `hkex_gf_pubkey` call aborts — measured **rc=134 (SIGABRT)**, `E_WIDTH in ba_nbytes`,
+against rc=0 today.  #324's own record says it "was found by trying to run a benchmark":
+one of these three is how that item was discovered, by hand, and none of them has a runner
+yet.  They are the THIRD set of FFI-shim consumers nothing ran, after #324's C example and
+#325's two Go tests.
+
+**THE COVERAGE THAT EXISTS IS ACCIDENTAL, and both files that ever acquired a runner
+acquired one because an item found them BROKEN** — #287 (the MCP example: five of eight
+tools never called, `additionalProperties: false` never enforced) and #324 (the C example:
+aborted on its first call).  Nobody ever decided to cover an example or a benchmark; C's
+three are covered because a width-guard tool happens to discover `herradura.h` consumers.
+
+**THE EXPOSURE IS REAL AND ALREADY REALISED ONCE.**  `docs/examples/go/hello_herradura.go`
+dot-imports `herradurakex/herradura`, and #314 pass 3 unexported `Val` and changed
+`GfMul`/`GfPow`/`GfPoly`.  It WAS edited in that commit — one of the "six in-tree consumers"
+— i.e. fixed blind, with nothing to confirm the fix.  Control: the pre-pass-3 version
+against today's package fails with **7 compile errors** (`undefined: GfPoly`,
+`alicePriv.Val undefined`, `too many arguments in call to GfPow`).  Of 8 Go consumers of the
+package, 6 have runners; the 2 without are this example and `rnl_deployed_ring_cost.go`.
+
+**#292's STATED EXCLUSION IS EXACT ABOUT THE WRONG OBJECT.**  It says host-specific cost
+figures do not belong in CI — right about the NUMBERS, silent about whether the file still
+COMPILES.  That is #310's shape (*a reason exact about the wrong object reads exactly like a
+correct one*).  A build-and-smoke check asserts nothing about a rate, so #292's position
+survives intact and is not being reversed here.
+
+**TWO DEFECTS THAT WOULD HAVE MADE THE NEW COVERAGE VACUOUS, fixed so that running these
+means something.**  (a) `compare_fscx_revolve_closed_form.py` prints
+`"C: skipped (build failed)"` and returns — so a BUILD FAILURE is indistinguishable from an
+absent compiler and the script exits 0.  Running it in CI would then detect nothing, which
+is #234's vacuous pass; a missing tool is a skip, a failed build is an ERROR.  (b)
+`rnl_ring_cost.py`'s `_one_kex_iteration` computes `K_A == K_B` — a both-sides-agree
+reconciliation control — and `median_of` calls it only for its wall time and **discards the
+verdict**.  That is #291's finding (22 scripts computed a PASS/FAIL and threw it away) in a
+benchmark.
+
+**MECHANISM: DISCOVERY BY ENTRY POINT, NOT BY NAME.**  #325's guard matches a harness by
+filename pattern, which is exactly why it could not see these; keying on the ENTRY POINT
+(`func main`, `int main(`, `__main__`) is the predicate that reaches a file called
+`hello_herradura.go`.  `tools/check_runnable_coverage.py` discovers them and requires each
+to be claimed by a `ci.yml` step, by `poison_build.sh`'s discovery, or by an `EXEMPT` entry
+with a reason — self-invalidating in both directions like every other curated table here, so
+an entry naming an absent file fails AND an entry for a file that has since acquired a
+runner fails.  Per #325's per-pattern rule, a LANGUAGE whose detector finds nothing is an
+ERROR, not a silence.
+
+Scope: this covers the two directories censused, and does not become a rule for every file
+in the repo.  The cost benchmarks are BUILD-AND-SMOKE, not trusted for their numbers.
+
+Status: **DONE v9.5.18** — 15 executables censused under `docs/examples/` and `benchmarks/`, 11 unclaimed; `rnl_ring_cost.py` repaired (`E_WIDTH: 512` since v9.3.0) and three FFI-consuming benchmarks shown aborting (rc=134) against the pre-#324 shim; `tools/check_runnable_coverage.py` discovers by ENTRY POINT with `EXEMPT` empty; nine controls fire, one holds.

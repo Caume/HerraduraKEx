@@ -2,6 +2,134 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.18] - 2026-09-30
+
+### Fixed
+
+- **TODO #329 — the shipped executables no job builds.** TODO #325 stated the limit
+  its own coverage guard leaves — *"a harness named by none of the patterns stays
+  invisible — a `main()` in a file called something else, a shell script outside
+  `CliTest/`"* — and #326 closed the shell-script half by census. This is the
+  `main()` half. A census of `docs/examples/` and `benchmarks/`, the two
+  directories holding shipped executables that are neither tests nor the CLI,
+  found **15 executables of which 11 had no runner at all** — and two separate
+  five-release breakages inside them.
+
+- **`benchmarks/rnl_ring_cost.py` exited 1 with `ValueError: E_WIDTH: 512`, from
+  v9.3.0 to v9.5.17.** It sweeps `RING_SIZES = [32, 64, 128, 256, 512, 1024]` and
+  passed the ring dimension as the SESSION-KEY WIDTH as well — `_rnl_agree(..., n,
+  n)`, where the second `n` is `key_bits` — so above 256 it asked for a `BitArray`
+  no `BITARRAY.md` §2 width admits. `E_WIDTH` entered
+  `CryptosuiteTests/Herradura_tests.py` at **v9.3.0 / #314 pass 4**, the very
+  commit #315 found breaking two `SecurityProofsCode` gates the same way. **This is
+  the third instance of that identical defect, in the one directory neither #314
+  nor #315 looked at** — and not a minor file: `CLAUDE.md` names it as the HKEX-RNL
+  cost baseline and as #225's recorded audit instrument for what `-t` caps. Fixed
+  with `key_bits = min(n, 256)`, which is behaviour-preserving by choice: every row
+  that used to work keeps the width it was measured at, so no published figure
+  moves, and the two rows the width rule broke reconcile at 256 — what the deployed
+  ring (`RNLN = 1024`, session key 256 bits) actually uses, and what #228 settled
+  for the small-ring case. All six rows now produce figures and the n=1024 row
+  reproduces #223's documented 5.2x (measured **5.28x** on the ring multiply,
+  **5.13x** end to end, two runs agreeing to 0.01x).
+
+- **Three benchmarks aborted for the same five releases, by #324's defect rather
+  than #314's.** `compare_hkex_x25519.py`, `compare_hpks_ed25519.py` and
+  `compare_hske_aead.py` import `bindings/ffi/python/herradura_ffi.py`, so they are
+  consumers of the FFI shim whose `nbits` was never set. Rebuilt against the shim
+  that shipped from v9.1.0 to v9.5.12, a single `hkex_gf_pubkey` call aborts —
+  measured **rc=134 (SIGABRT)**, `E_WIDTH in ba_nbytes`, against rc=0 today.
+  #324's own record says it "was found by trying to run a benchmark": one of these
+  three is how that item was discovered, by hand, and none of them had a runner
+  yet. They are the **third** set of FFI-shim consumers nothing ran, after #324's
+  C example and #325's two Go tests.
+
+- **Two defects that would have made the new coverage vacuous.**
+  `compare_fscx_revolve_closed_form.py` printed `"C: skipped (build failed)"` and
+  returned, so a build failure was indistinguishable from an absent compiler and
+  the script still exited 0 — running it in CI would have detected nothing, which
+  is #234's vacuous pass. A missing tool is a skip; a failed build by a compiler
+  that IS present is now an error. And `rnl_ring_cost.py`'s `_one_kex_iteration`
+  computed `K_A == K_B` — a both-sides-agree reconciliation control — which
+  `median_of` called for its wall time only and **discarded**: #291's finding (22
+  scripts computed a PASS/FAIL verdict and threw it away) inside a benchmark. It is
+  asserted per dimension now, and a disagreement exits non-zero instead of being
+  reported as a cost figure.
+
+### Added
+
+- **`tools/check_runnable_coverage.py`, keyed on the ENTRY POINT rather than the
+  filename.** That is the whole point: `hello_herradura.go` says exactly what it is
+  and matches no test pattern, so no widening of #325's list could ever reach it.
+  Three rules, each self-invalidating on the model of `EXCLUDED` / `NON_GATING` /
+  `PARAM_USE_EXEMPT`: a discovered executable must be claimed by a `ci.yml` step, by
+  `tools/poison_build.sh`'s discovery, or by an `EXEMPT` reason; a LANGUAGE whose
+  detector matches nothing is an ERROR, not a silence (#325's per-pattern rule
+  carried over); and `EXEMPT` is exhaustive in both directions, so wiring something
+  up FORCES its entry out. **It ships with `EXEMPT` empty** — all eleven were wired
+  up — like #295's `PARAM_USE_EXEMPT`, so a future entry means somebody argued for
+  an unbuilt executable rather than that the check was switched off.
+
+- **`--quick` and `--max-n` on `benchmarks/rnl_ring_cost.py`.** CI runs `--quick`:
+  the whole of §1 at every dimension including 1024, so #223's 5.2x claim stays
+  checked and the reconciliation control is asserted at each, in **0.6 s**. §2 and
+  §3 are skipped there because they are #225's own cap audit and deliberately enter
+  sites slower than the cap — a full run measured **>600 s** here even at
+  `--max-n 256`, which is #289's runtime problem. `--max-n` refuses to drop n=256,
+  since every ratio in the file is measured against it.
+
+- **CI steps for all eleven.** `native-c` compiles and runs `v3_round_cost.c` — the
+  one C benchmark `poison_build.sh` does not discover, carrying its own packed
+  representation and no `herradura.h` — and runs `compare_stern_f_dilithium.py`,
+  which needs the C CLI (3.2 s). `native-go` runs the Go example, BUILDS
+  `rnl_deployed_ring_cost.go`, and runs `compare_fscx_revolve_closed_form.py`, which
+  wants gcc and go together (11.9 s). `native-python` runs the Python example, the
+  three FFI-consuming comparisons, and the two ring-cost benchmarks (27.7 s);
+  `gcc`/`libc6-dev` are named there for `bindings/ffi/build.sh` on #325's
+  precedent. libsodium and liboqs are absent on a runner and every affected script
+  degrades to the Herradura half with a NOTE — verified, rc=0 — which is the half
+  that exercises the shim.
+
+### Notes
+
+- **The coverage that existed was accidental, and both files that ever acquired a
+  runner acquired one because an item found them BROKEN** — #287 (the MCP example)
+  and #324 (the C example). Nobody had ever decided to cover an example or a
+  benchmark; three C files are covered because a width-guard tool happens to
+  discover `herradura.h` consumers.
+- **The Go example's exposure was already realised once.** It dot-imports
+  `herradurakex/herradura`, and #314 pass 3 unexported `Val` and changed
+  `GfMul`/`GfPow`/`GfPoly`. It WAS edited in that commit — fixed blind, with nothing
+  to confirm the fix. Control: the pre-pass-3 version against today's package fails
+  with **7 compile errors**.
+- **#292's stated exclusion is exact about the wrong object.** It says
+  host-specific cost figures do not belong in CI — right about the NUMBERS, silent
+  about whether the file still COMPILES (#310's shape). The Go benchmark is
+  BUILD-ONLY here, so #292's position is not reversed.
+- **A detector correction worth keeping.** The first version of the checker looked
+  for `if __name__ == "__main__"` and MISSED BOTH `docs/examples` Python examples —
+  they are top-level scripts with no guard — censusing 13 of 15 and reporting OK on
+  a corpus with two holes. That is #306's sixth-spelling hazard and #295's rule that
+  the LENIENT direction is the dangerous one, since an under-matching detector
+  cannot fail. Python is PARSED with `ast` now, so it sees what a file DOES rather
+  than how it is spelled.
+- **A measurement discarded as invalid.** A first `--quick` run reported n=512 at
+  `0.61x` and n=1024 at `1.39x` against n=256 — nonsense, and caused by two stale
+  benchmark processes still running: #327's contention error repeated. Re-measured
+  at loadavg 0.29, two runs agree to 0.01x. **A cost measurement is worth exactly as
+  much as the control over what else was running.**
+- **Nine controls fire, one holds.** A claimed file losing its step; the path
+  appearing only in a comment; a dead language detector; a stale `EXEMPT`; an
+  obsolete `EXEMPT`; a new unwired executable; reverting the width fix (`E_WIDTH:
+  512` returns); a C harness that will not compile (`BUILD FAILED`, rc=1 rather than
+  a silent skip). The false-positive control — rewording a comment that mentions
+  these paths — changes nothing.
+- **Known limit.** The check asks whether something is BUILT AND RUN, never whether
+  the run asserts anything; a benchmark printing numbers nobody checks satisfies it.
+  Two such cases were fixed here because they would have made this coverage vacuous,
+  but the check cannot see the class. Scope is the two directories censused, not
+  every file in the repo.
+
 ## [9.5.17] - 2026-09-29
 
 ### Fixed

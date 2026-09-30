@@ -80,6 +80,28 @@ jobs:
           bash bindings/ffi/build.sh
           python3 bindings/ffi/python/test_ffi_correctness.py
 
+      # TODO #329. docs/examples/ and benchmarks/ hold 15 shipped executables and
+      # 11 had no runner at all. Two of these were already broken: rnl_ring_cost.py
+      # exited 1 with E_WIDTH: 512 from v9.3.0 (#314 pass 4's width rule, the same
+      # defect #315 found in two SecurityProofsCode gates at that commit), and the
+      # three FFI-consuming compare_*.py aborted with rc=134 against the shim #324
+      # fixed. The coverage that existed was ACCIDENTAL -- three C files are
+      # discovered by poison_build.sh above because they include herradura.h.
+      #
+      # These two live here because they need the C CLI and herradura.h
+      # respectively: compare_stern_f_dilithium.py drives HerraduraCli/herradura_cli
+      # and exits non-zero if it is not built, and v3_round_cost.c is the one C
+      # benchmark poison_build.sh does NOT discover -- it carries its own packed
+      # representation and includes no herradura.h, so nothing compiled it.
+      # liboqs is absent on the runner and the script degrades to the Herradura
+      # half with a NOTE, which is the half that matters here.
+      - name: Benchmarks that need the C toolchain (docs/examples + benchmarks)
+        run: |
+          gcc -O2 -o /tmp/v3_round_cost benchmarks/v3_round_cost.c -lm
+          /tmp/v3_round_cost > /dev/null
+          echo "=== benchmarks/v3_round_cost.c built and ran ==="
+          python3 benchmarks/compare_stern_f_dilithium.py
+
       - name: CliTest — C CLI
         run: |
           for f in CliTest/test_c_*.sh CliTest/test_weak_key_rejection.sh; do
@@ -135,6 +157,32 @@ jobs:
           done
           cd bindings/ffi/go && go test -count=1 ./...
 
+      # TODO #329. The Go integration example and the Go deployed-ring benchmark
+      # are the two consumers of the herradura package that no job built -- of 8
+      # in-tree consumers, 6 had runners. The example is the sharper case: it
+      # dot-imports the package, and #314 pass 3 unexported Val and changed
+      # GfMul/GfPow/GfPoly. It WAS edited in that commit, i.e. fixed blind; the
+      # pre-pass-3 version against today's package fails with 7 compile errors
+      # (undefined: GfPoly, alicePriv.Val undefined, too many arguments in call
+      # to GfPow). Its C sibling in the same directory ABORTED on its first call
+      # for 437 commits until #324 ran it.
+      #
+      # The deployed-ring benchmark is BUILD-ONLY, deliberately: #292 excluded
+      # these from CI because host-specific cost figures do not belong here, which
+      # is right about the NUMBERS and silent about whether the file still
+      # COMPILES (#310's "a reason exact about the wrong object"). Building it
+      # asserts nothing about a rate, so #292's position is not reversed.
+      #
+      # compare_fscx_revolve_closed_form.py runs here because it wants gcc AND go
+      # and this job has both; it now treats a failed build as an ERROR rather
+      # than printing "skipped (build failed)" and exiting 0.
+      - name: Examples and benchmarks that need the Go toolchain
+        run: |
+          go run docs/examples/go/hello_herradura.go
+          go build -o /tmp/rnl_deployed_ring_cost_go benchmarks/rnl_deployed_ring_cost.go
+          echo "=== benchmarks/rnl_deployed_ring_cost.go builds ==="
+          python3 benchmarks/compare_fscx_revolve_closed_form.py
+
       - name: CliTest — Go CLI
         run: |
           for f in CliTest/test_go_*.sh; do
@@ -156,7 +204,10 @@ jobs:
           # suite and its CLI have no runtime dependencies. The gate passes
           # --require-schema, so if this install ever stops providing the package
           # the job fails rather than skipping the validation silently.
-          sudo apt-get install -y --no-install-recommends python3 python3-jsonschema
+          # gcc/libc6-dev are for TODO #329's FFI-consuming benchmarks below,
+          # which need bindings/ffi/build.sh. Named rather than inherited from
+          # the runner image, on #325's precedent in the Go job.
+          sudo apt-get install -y --no-install-recommends python3 python3-jsonschema gcc libc6-dev
 
       # TODO #258/#259. See the matching C step: gates on a crash AND a wrong
       # verdict, via the demo's own "[FAIL]"-marker exit code.
@@ -165,6 +216,37 @@ jobs:
 
       - name: Python test suite
         run: python3 CryptosuiteTests/Herradura_tests.py -t 2.0
+
+      # TODO #329. The Python integration example and four benchmarks, none of
+      # which any job ran. docs/examples/python/hello_herradura.py is what
+      # docs/TUTORIAL.md points a new user at, and its C sibling in the same
+      # directory aborted on its first call for 437 commits until #324.
+      #
+      # The three compare_*.py here import bindings/ffi/python/herradura_ffi.py,
+      # so they are consumers of the shim whose nbits was never set: against the
+      # shim that shipped v9.1.0..v9.5.12 a single hkex_gf_pubkey call aborts,
+      # measured rc=134 "E_WIDTH in ba_nbytes". #324's record says it "was found
+      # by trying to run a benchmark" -- one of these three is how, by hand.
+      # libsodium is absent on the runner and all three degrade to the Herradura
+      # half with a NOTE (verified), which is the half that exercises the shim.
+      #
+      # rnl_ring_cost.py is the repair in this item: it exited 1 with
+      # `ValueError: E_WIDTH: 512` from v9.3.0 to v9.5.17 because it passed the
+      # ring dimension as the session-key width too. --quick runs the whole of
+      # 1 -- every dimension INCLUDING 1024, so the 5.2x claim #223 quotes
+      # stays checked, and the per-dimension reconciliation control is asserted
+      # at each -- and skips 2/3, which are #225's cap audit and deliberately
+      # enter sites slower than the cap: a full run measured >600 s here even at
+      # --max-n 256, which is #289's runtime problem. --quick is 0.6 s.
+      - name: Examples and benchmarks (TODO #329's census)
+        run: |
+          python3 docs/examples/python/hello_herradura.py
+          bash bindings/ffi/build.sh
+          python3 benchmarks/compare_hkex_x25519.py
+          python3 benchmarks/compare_hpks_ed25519.py
+          python3 benchmarks/compare_hske_aead.py
+          python3 benchmarks/rnl_ring_cost.py --quick
+          python3 benchmarks/rnl_deployed_ring_cost.py
 
       # TODO #238. spec/generate_spec.py had a --check mode from the start and no
       # job ever ran it, so nothing verified that the shipped JSON matched its
@@ -476,6 +558,17 @@ jobs:
             fi
           done
           exit $missing
+
+      # TODO #329. The guard above matches a harness by FILENAME PATTERN, and #325
+      # stated the limit that leaves: "a harness named by none of the patterns
+      # stays invisible -- a main() in a file called something else, a shell
+      # script outside CliTest/." #326 closed the shell-script half by census;
+      # this is the main() half, and it keys on the ENTRY POINT instead, which is
+      # the only predicate that reaches a file called hello_herradura.go. 15
+      # executables under docs/examples/ and benchmarks/, 11 with no runner, and
+      # two five-release breakages inside them -- see the script's header.
+      - name: Coverage guard — every executable in docs/examples and benchmarks must be built
+        run: python3 tools/check_runnable_coverage.py
 
       - name: Skip guard — a missing CLI binary must never exit 0
         run: |
