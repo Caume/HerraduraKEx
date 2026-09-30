@@ -147,12 +147,31 @@ func bench(label string, fn func()) (ops int, elapsed time.Duration) {
 	return
 }
 
+// fmtRate renders a rate in M, K or plain ops/sec (TODO #328).
+//
+// The plain branch was MISSING: everything below 1e6 printed in K units, so the
+// harness's six slowest benchmarks -- Stern-F sign/verify at 256 bits, ZKP
+// prove+verify at rounds=16 -- published "0.00 K ops/sec" for true rates of 0.36
+// to 8.57 ops/sec.  Not imprecise but false: it reads as zero throughput.  Half
+// the rows (23 of 46) were losing precision to K units.
+//
+// C's print_rate and Python's _bench have had all three branches all along, so
+// Go was the outlier of three ports, and tools/check_rate_format.py now holds the
+// three against each other statically -- a port dropping a branch fails without
+// anyone running a benchmark.
+//
+// It also obstructed TODO #327's own measurement: an apparent 10x regression in
+// that item's rate A/B was "0.01 K" against "0.00 K", i.e. 5.90 against 4.46
+// ops/sec.
 func fmtRate(ops int, elapsed time.Duration) string {
 	rate := float64(ops) / elapsed.Seconds()
 	if rate >= 1e6 {
 		return fmt.Sprintf("%.2f M ops/sec", rate/1e6)
 	}
-	return fmt.Sprintf("%.2f K ops/sec", rate/1e3)
+	if rate >= 1e3 {
+		return fmt.Sprintf("%.2f K ops/sec", rate/1e3)
+	}
+	return fmt.Sprintf("%.2f ops/sec", rate)
 }
 
 // SOpBA computes S_op(delta, r) = XOR_{i=0}^{r} Fscx^i(delta, 0).

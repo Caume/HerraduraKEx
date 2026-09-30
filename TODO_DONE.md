@@ -22374,7 +22374,80 @@ rates preserved (a fast operation keeps warmup 10 / batch 100 EXACTLY, so its pa
 unchanged; 50/s vs 49/s on a 20 ms operation in a controlled A/B).  Residual overshoots
 read `1 ops`, the floor.  Found on the way and NOT fixed here per #312: Go's `fmtRate`
 prints every rate below 1e6 in K units, so 4.46 ops/sec reads as `0.00 K ops/sec` where
-Python has a plain-ops branch — a 1-vs-1 port divergence that obscured a measurement of
+Python has a plain-ops branch — a port divergence that obscured a measurement of
 this item.
+
+---
+
+---
+
+### #328: a published benchmark rate of zero, and the formatter divergence behind it
+
+**TODO #327 recorded this and left it per #312** (a refactor must not settle a question it
+happens to expose).  This is that question.
+
+**THE DEFECT.**  `fmtRate` in `CryptosuiteTests/Herradura_tests.go` has **two** branches
+where C's `print_rate` and Python's `_bench` each have **three**: anything below `1e6` is
+printed in K units, with no plain-ops fallback.  So a rate of 4.46 ops/sec renders as
+`0.00 K ops/sec` — not imprecise but **false**, since it reads as zero throughput.
+
+**MEASURED on one Go run (`-r 50 -t 1.0`, 46 benchmark rows).**  23 rows — **half** — have
+a rate below 1000 and lose precision to K units; **6 print `0.00` or `0.01 K ops/sec`**
+against true rates of **0.36 to 8.57 ops/sec**.  The six are the harness's slowest and
+most interesting benchmarks: Stern-F sign/verify at 256 bits, ZKP prove+verify at
+`rounds=16`.  Those are exactly the figures a reader would go looking for.
+
+**IT OBSTRUCTED #327's OWN MEASUREMENT**, which is why it is worth an item rather than a
+line in a diff: the apparent `10 -> 0` collapse on `n=256 sign+verify` in that item's rate
+A/B was `0.01 K` against `0.00 K`, i.e. **5.90 against 4.46 ops/sec**, a 0.76x ratio on a
+7-sample row.  A formatter that cannot express its own slowest measurements makes the
+harness's output unusable for the comparison the previous item needed to make.
+
+**ONE CORRECTION TO #327's TEXT.**  That item called this "a 1-vs-1 port divergence".  It
+is **1-vs-2**: C and Python both have the three-branch form and **Go alone** is the
+outlier.  Java has no benchmark formatter at all (`grep -rn 'ops/sec' bindings/java`
+returns nothing), so the axis is three ports.  Corrected in `CHANGELOG.md` and `CLAUDE.md`
+rather than left standing, on the model of #286's withdrawn projection.
+
+**A FINDING WITHDRAWN BEFORE IT WAS FILED, and it belongs in the record.**  This item was
+recommended with a second half: that benchmark row LABELS are not unique — `46 rows, 26
+distinct labels, worst 6x` — so the output could not be compared programmatically.  **That
+is false.**  Every row sits under its own `[N] Title` group header, so `bits= 32` appearing
+six times is six groups, each identified by the line above it.  The defect was in the
+LABEL-KEYED PARSER used to check #327, which collapsed six distinct measurements into one,
+and that parser is also why #327 burned three invalid rate comparisons.  **The output was
+structured all along; the reader was not.**  Nothing is changed about labels, and the
+recommendation that said otherwise is retracted here rather than quietly dropped.
+
+**WHY NOTHING CAUGHT IT.**  No checker anywhere parses benchmark output — verified,
+`grep -rln 'ops/sec' spec/ tools/ CliTest/ .github/` is empty — so every published cost
+figure in this repo is checked by nobody, and CLAUDE.md quotes many (the 32x HKEX-RNL
+advantage, the 0.503 ms handshake, the 2.12-2.17x v3 round cost).  This item does NOT
+close that; running benchmarks in CI is #289's runtime problem and a cost figure is
+host-specific by nature (`benchmarks/rnl_deployed_ring_cost.*` gates on a both-sides-agree
+control for exactly that reason and is deliberately out of CI).
+
+**WHAT IT CLOSES INSTEAD, which is the part that does not decay.**  The three formatters
+are held against each other STATICALLY by `tools/check_rate_format.py`: each must carry the
+same thresholds (`1e6` for M, `1e3` for K) and a plain-ops fallback, read out of each
+port's source.  That is `PARAMETERS`' idea — compare a value across ports — aimed at a
+FORMATTER'S BRANCH STRUCTURE, which no existing axis reads.  A port dropping a branch, or
+the thresholds drifting apart, fails without anyone running a benchmark.
+
+**Known limit, stated.**  The check reads branch structure and thresholds, not output, so a
+formatter that keeps all three branches and computes the wrong number still passes.  What
+it closes is the case that occurred: a missing branch, in one port, publishing zero for a
+nonzero rate.
+
+**Scope.**  No protocol, parameter, wire-format or CLI-surface change — one Go formatter
+branch, a new static checker, and two corrections to shipped documents, so PATCH.  C and
+Python's formatters are correct and untouched.
+
+Status: **DONE v9.5.17** — Go gained the plain-ops branch, so rows that published
+`0.00 K ops/sec` now read 3.53 / 4.28 / 8.41 ops/sec and none prints `0.0x` for a
+nonzero rate; `tools/check_rate_format.py` holds the three formatters to the same
+thresholds and branches statically (six controls fire, one holds); #327's "1-vs-1"
+claim corrected to 1-vs-2 in three documents; the labels half of the recommendation
+WITHDRAWN as false — the group header disambiguates and the parser was at fault.
 
 ---

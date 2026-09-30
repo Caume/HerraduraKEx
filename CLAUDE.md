@@ -3430,10 +3430,47 @@ ran first, where the fast rows' code path is provably identical), so it supports
 fact that a fast operation's derived parameters are `(10, 100)` exactly.  And the row
 that looked like a 10x regression was Go's `fmtRate` printing every rate below 1e6 in
 K units, so 4.46 ops/sec reads as `0.00 K ops/sec` where Python has a plain-ops
-branch — a 1-vs-1 reporting divergence that obscured a measurement of this very item,
+branch — a reporting divergence that obscured a measurement of this very item
+(**1-vs-2**, not 1-vs-1: TODO #328 corrected this, C and Python both having the
+three-branch form and Go alone being the outlier),
 recorded and NOT fixed here (#312).  **Known limit**: C is untouched, so its eight constants remain hand-picked
 and a new C benchmark given the wrong one reintroduces the defect there — recorded rather
 than fixed, since a refactor must not settle a question it happens to expose (#312).
+
+**And a published rate of zero, in the layer every cost figure is read from (TODO
+#328).**  #327 found this and left it per #312, and this is that question.  Go's `fmtRate`
+had **two** branches where C's `print_rate` and Python's `_bench` have **three**:
+everything below `1e6` printed in K units with no plain-ops fallback, so 4.46 ops/sec
+rendered as `0.00 K ops/sec` — **false, not imprecise**, since it reads as zero
+throughput.  Measured over 46 Go benchmark rows: **23 lost precision and 6 printed
+`0.00`/`0.01 K`** against true rates of **0.36–8.57 ops/sec**, and those six are the
+harness's most interesting benchmarks (Stern-F sign/verify at 256 bits, ZKP
+prove+verify).  Five things carry forward.  (1) **IT OBSTRUCTED THE PREVIOUS ITEM'S
+MEASUREMENT**, which is what earned it an item rather than a line in a diff: #327's
+apparent `10 → 0` regression on `n=256 sign+verify` was `0.01 K` against `0.00 K`.  A
+reporting layer that cannot express its own slowest measurements makes the harness
+unusable for exactly the comparison the previous item needed.  (2) **A CORRECTION
+CARRIED INTO THREE DOCUMENTS**: #327 called this "1-vs-1"; it is **1-vs-2**, C and
+Python both carrying the three-branch form and **Go alone** the outlier, with Java
+having no benchmark formatter at all.  Corrected in `CHANGELOG.md`, `TODO_DONE.md` and
+here rather than left standing.  (3) **THE GUARD IS STATIC, AND THAT IS THE SCOPE
+DECISION.**  No checker parses benchmark output — verified empty — and this does not
+change it, because running benchmarks in CI is #289's runtime problem and a cost figure
+is host-specific.  `tools/check_rate_format.py` holds the three formatters against each
+other instead: same thresholds, same branches, read from source.  `PARAMETERS`' idea
+aimed at a **branch structure**, which no axis reads.  (4) **THE CHECK'S FIRST VERSION
+HAD A CONTROL THAT DID NOT FIRE**, and fixing that is the lesson: it scanned every
+numeric literal, so moving Python's K branch to `>= 1e4` left `rate/1e3` in the body and
+"1e3 appears" stayed true while the branch had drifted — the exact drift it exists to
+catch.  Thresholds are read from the COMPARISON now.  (5) **A FINDING WAS WITHDRAWN
+BEFORE IT WAS FILED.**  The recommendation claimed benchmark labels are not unique (`46
+rows, 26 distinct labels, worst 6×`) and therefore unparseable.  False: every row sits
+under its own `[N] Title` header, so six `bits= 32` rows are six groups.  The defect was
+in the LABEL-KEYED PARSER used to check #327 — the same parser behind that item's three
+discarded comparisons.  **The output was structured all along; the reader was not.**
+Retracted in the item and the changelog rather than quietly dropped.  **Known limit**:
+the check reads structure, not output, so a formatter with all three branches computing
+the wrong number still passes.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
