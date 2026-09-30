@@ -210,7 +210,7 @@ def _parse(out):
 def bench_c(tmp):
     if not shutil.which("gcc"):
         print("\nC: skipped (gcc not found)")
-        return
+        return True
     src = os.path.join(tmp, "cbench.c")
     exe = os.path.join(tmp, "cbench")
     with open(src, "w") as f:
@@ -218,16 +218,24 @@ def bench_c(tmp):
     r = subprocess.run(["gcc", "-O2", f"-I{_ROOT}", "-o", exe, src],
                        capture_output=True, text=True)
     if r.returncode != 0:
-        print(f"\nC: skipped (build failed)\n{r.stderr[:400]}")
-        return
+        # A FAILED BUILD IS NOT A SKIP (TODO #329).  This used to print
+        # "skipped (build failed)" and return, so a compiler that rejected
+        # herradura.h was indistinguishable from a machine with no compiler and
+        # the script still exited 0 -- which would make the CI step that now
+        # runs this file detect nothing, i.e. #234's vacuous pass.  gcc is
+        # PRESENT at this point (checked above); if it cannot build the harness,
+        # that is a finding.
+        print(f"\nC: BUILD FAILED\n{r.stderr[:400]}")
+        return False
     out = subprocess.run([exe], capture_output=True, text=True).stdout
     _table("C (herradura.h, gcc -O2, byte-array BitArray)", _parse(out))
+    return True
 
 
 def bench_go(tmp):
     if not shutil.which("go"):
         print("\nGo: skipped (go not found)")
-        return
+        return True
     d = os.path.join(tmp, "gobench")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "main.go"), "w") as f:
@@ -236,9 +244,12 @@ def bench_go(tmp):
         f.write(GO_MOD.replace("{root}", _ROOT))
     r = subprocess.run(["go", "run", "."], cwd=d, capture_output=True, text=True)
     if r.returncode != 0:
-        print(f"\nGo: skipped (build failed)\n{r.stderr[:400]}")
-        return
+        # Same rule as bench_c: `go` is present, so a failure to build or run is
+        # a finding and not an absence (TODO #329).
+        print(f"\nGo: BUILD FAILED\n{r.stderr[:400]}")
+        return False
     _table("Go (herradura package, big.Int BitArray)", _parse(r.stdout))
+    return True
 
 
 def main():
@@ -246,10 +257,13 @@ def main():
     print(CAVEATS)
     bench_python()
     with tempfile.TemporaryDirectory() as tmp:
-        bench_c(tmp)
-        bench_go(tmp)
+        ok_c = bench_c(tmp)
+        ok_go = bench_go(tmp)
     print("\nBoth paths are bit-identical; see"
           " SecurityProofsCode/fscx_revolve_closed_form.py for the proof.")
+    if not (ok_c and ok_go):
+        print("\n*** FAILED: a present toolchain could not build its harness ***")
+        return 1
     return 0
 
 

@@ -50,6 +50,7 @@ _TESTS = os.path.join(_ROOT, "CryptosuiteTests", "Herradura_tests.py")
 CAP = 2.0          # the per-test wall-clock cap the CI job passes as -t 2.0
 POLL = 64          # _trange polls at (i & 63) == 63
 RING_SIZES = [32, 64, 128, 256, 512, 1024]
+_BA_MAX_BITS = 256   # BITARRAY.md 2's ceiling; see _key_bits (TODO #329)
 
 
 def load_harness():
@@ -88,27 +89,73 @@ def section1(ht):
         g = ht._rnl_rand_poly(n, ht.RNLQ)
         mul[n] = median_of(lambda f=f, g=g, n=n: ht._rnl_poly_mul(f, g, ht.RNLQ, n))
         m_base = ht._rnl_m_poly(n)
+        # The reconciliation verdict is ASSERTED, not just timed (TODO #329).
+        # median_of() wants a callable it can time, so the control is checked
+        # once here at each dimension: an n whose two sides stop agreeing is a
+        # correctness failure and must not be reported as a cost figure.
+        if not _one_kex_iteration(ht, n, m_base):
+            print(f"  FAIL: reconciliation disagreed at n={n} "
+                  f"(key_bits={_key_bits(n)}) -- not a cost result")
+            return None
         per[n] = median_of(lambda n=n, m=m_base: _one_kex_iteration(ht, n, m), reps=3)
     print("    n      poly_mul      vs n=256     one [14] iteration     vs n=256")
     for n in RING_SIZES:
         print(f"  {n:5d}   {mul[n]*1000:8.3f} ms   {mul[n]/mul[256]:7.2f}x   "
               f"{per[n]*1000:12.2f} ms   {per[n]/per[256]:9.2f}x")
     print()
-    print(f"  The 5.2x the item quotes for 256 -> 1024 reproduces: "
-          f"{mul[1024]/mul[256]:.2f}x on the ring multiply, "
-          f"{per[1024]/per[256]:.2f}x end to end.")
+    # Guarded because --max-n can cut the sweep short (TODO #329).  The claim
+    # this line checks is about 1024, so a reduced run must SAY it did not check
+    # it rather than print a ratio computed from some other top row.
+    if 1024 in mul and 256 in mul:
+        print(f"  The 5.2x the item quotes for 256 -> 1024 reproduces: "
+              f"{mul[1024]/mul[256]:.2f}x on the ring multiply, "
+              f"{per[1024]/per[256]:.2f}x end to end.")
+    else:
+        print(f"  n=1024 not in this run (--max-n), so the 5.2x claim is "
+              f"NOT checked here; sweep was {RING_SIZES}.")
     print()
     return per
 
 
+def _key_bits(n):
+    """The session-key width to reconcile at ring dimension n (TODO #329).
+
+    This used to pass `n` for `_rnl_agree`'s `key_bits` as well as for the ring
+    dimension -- ONE variable doing two jobs, which is the same conflation
+    CLAUDE.md records in the harnesses themselves.  It worked while Python's
+    BitArray was the interpreter's unbounded int, and stopped at v9.3.0 when
+    TODO #314 pass 4 gave the type BITARRAY.md 2's width rule: a 512-bit
+    BitArray is E_WIDTH, so this file exited 1 from v9.3.0 to v9.5.17 and
+    nothing ran it.  #315 found the identical defect in two
+    SecurityProofsCode gates at the same commit; benchmarks/ was the directory
+    nobody looked at.
+
+    min(n, BA_MAX_BITS) rather than a flat 256, and the choice is
+    behaviour-preserving on purpose: every row that used to work keeps the width
+    it was measured at, so no published figure moves, and only the two rows the
+    width rule broke change -- to 256, which is what the deployed ring (RNLN =
+    1024, session key 256 bits) actually uses, and what TODO #228 settled for
+    the small-ring case.
+    """
+    return min(n, _BA_MAX_BITS)
+
+
 def _one_kex_iteration(ht, n, m_base):
-    """One iteration of security test [14], at ring dimension n."""
+    """One iteration of security test [14], at ring dimension n.
+
+    Returns the reconciliation verdict; section1 ASSERTS it.  It used to be
+    returned and dropped -- median_of calls this for its wall time only -- so a
+    both-sides-agree control was computed on every sample and thrown away,
+    which is TODO #291's finding (22 scripts computed a PASS/FAIL verdict and
+    discarded it) inside a benchmark.
+    """
+    kb = _key_bits(n)
     a_rand = ht._rnl_rand_poly(n, ht.RNLQ)
     m_blind = ht._rnl_poly_add(m_base, a_rand, ht.RNLQ)
     s_A, C_A = ht._rnl_keygen(m_blind, n, ht.RNLQ, ht.RNLP)
     s_B, C_B = ht._rnl_keygen(m_blind, n, ht.RNLQ, ht.RNLP)
-    K_A, hint = ht._rnl_agree(s_A, C_B, ht.RNLQ, ht.RNLP, ht.RNLPP, n, n)
-    K_B = ht._rnl_agree(s_B, C_A, ht.RNLQ, ht.RNLP, ht.RNLPP, n, n, hint)
+    K_A, hint = ht._rnl_agree(s_A, C_B, ht.RNLQ, ht.RNLP, ht.RNLPP, n, kb)
+    K_B = ht._rnl_agree(s_B, C_A, ht.RNLQ, ht.RNLP, ht.RNLPP, n, kb, hint)
     return K_A == K_B
 
 
@@ -235,15 +282,56 @@ def section3(ht, census):
 
 
 def main():
+    global RING_SIZES
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--census", action="store_true",
                     help="run every test function, not just the known offenders (slow)")
+    # TODO #329: CI runs this file as a smoke check, and the top of the sweep is
+    # where the time is -- n=1024 is ~5.2x n=256 on a pure-Python NTT.  Capping
+    # the dimension keeps the code path identical and the assertions real while
+    # dropping the cost; the FIGURES this file exists to publish still come from
+    # a full local run, which is why the default is unchanged.
+    ap.add_argument("--max-n", type=int, default=None, metavar="N",
+                    help="skip ring dimensions above N (default: all of "
+                         f"{RING_SIZES})")
+    # TODO #329: 1 runs in seconds; 2 and 3 do not, and cannot -- 3 is
+    # #225's own audit, which enters capped test sites deliberately slower than
+    # the cap (CLAUDE.md records the worst at ~97 s against a 2.0 s cap, with the
+    # unpollable sites carrying ~71% of the time). A full run measured >600 s
+    # here even at --max-n 256, so CI runs --quick: the whole of 1, which is
+    # the section carrying the repair and the per-dimension reconciliation
+    # assertions, at every dimension INCLUDING 1024 so the 5.2x claim stays
+    # checked. Spelled --quick to match the reduced-sample mode the rest of the
+    # repo uses (run_findings_gates.py applies --quick/--fast).
+    ap.add_argument("--quick", action="store_true",
+                    help="run 1 only (seconds); 2 and 3 are the slow "
+                         "cap audit and are skipped")
     args = ap.parse_args()
+
+    if args.max_n is not None:
+        RING_SIZES = [n for n in RING_SIZES if n <= args.max_n]
+        # Every ratio in this file is "vs n=256" -- that is the reference the
+        # whole comparison is written around -- so a filter that drops it does
+        # not give a smaller table, it gives a KeyError. Refuse loudly instead
+        # of normalising against whatever row happens to be last.
+        if 256 not in RING_SIZES:
+            print(f"--max-n {args.max_n} drops n=256, which every ratio here is "
+                  f"measured against; use --max-n 256 or higher")
+            return 2
 
     ht = load_harness()
     print()
     per = section1(ht)
+    if per is None:
+        # A cost baseline whose correctness control failed is not a baseline.
+        # Exiting non-zero is what makes the CI smoke step in TODO #329 mean
+        # something: this file exited 1 for five releases and nothing looked.
+        print("*** FAILED: reconciliation control did not hold ***")
+        return 1
+    if args.quick:
+        print("--quick: sections 2 and 3 (the cap audit) skipped by request.")
+        return 0
     section2(ht, per)
     section3(ht, args.census)
     print("=" * 74)
