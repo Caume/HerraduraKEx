@@ -233,3 +233,91 @@ role appears that is neither parameter-fed nor movable.
 Status: **OPEN**
 
 ---
+
+---
+
+### #332: `hpke-stern-kem` has no benchmark row in any of the six harnesses
+
+**THE SUITE'S DEPLOYED POST-QUANTUM KEM HAS NO HARNESS-PUBLISHED COST FIGURE.**  The numbered
+benchmarks are `[32]`-`[43]` and **none of them is the QC-MDPC KEM** -- not keygen, not
+encapsulation, not decapsulation -- in a suite whose own `SECURITY.md` classifies
+`hpke-stern-kem` as the post-quantum key establishment it recommends over the classical
+quartet.  `[41]` and `[42]` benchmark the ZKPs, `[40]` benchmarks HKEX-RNL at the ring TODO #223
+RETIRED, and `[33]`-`[39]` are the classical and NL primitives.  Verified by reading the six
+harnesses rather than by grepping a label: `CryptosuiteTests/Herradura_tests.{c,go,py}`,
+`SelfTest.java`, and the three reduced harnesses `Herradura_tests.{s,asm,ino}`, which carry no
+QC-MDPC at all.
+
+**WHY IT IS FILED NOW, AND BY WHOM.**  TODO #330 named it as *"separate, and a prerequisite for
+claiming any speed-up here: a figure this item improves should be one the harness publishes"* --
+and then did not add the row, publishing its 12.6x / 10.1x / 5.7x from a reproducible A/B
+against the tagged baseline instead.  **That was recorded in #330 as a SHORTFALL against its own
+text rather than argued away**, and this is the item it was deferred to.  The A/B is a stronger
+claim in one respect (a before/after on one host beats an absolute host-specific rate) and a
+weaker one in another: it is reproducible only while the baseline commit is reachable and
+someone re-runs it by hand, where a harness row is produced by every CI run of four required
+jobs.
+
+**THE TENSION TO RESOLVE, WHICH IS THE WHOLE ITEM AND IS NOT OBVIOUS.**  TODO #292's recorded
+position is that **host-specific cost figures do not belong in CI** -- which is why
+`benchmarks/rnl_deployed_ring_cost.{c,go,py}` gate on a both-sides-agree control and are
+deliberately NOT in `run_findings_gates.py`'s set, and why TODO #329 made the Go one BUILD-ONLY.
+A benchmark row inside `[32]`-`[43]` is exactly such a figure, printed by `native-c`,
+`native-go`, `native-python` and `native-java`, all four REQUIRED.  So this item cannot simply
+add a row; it has to say what a benchmark row is FOR when nothing may assert on its value.  Two
+candidate answers, and the item owes a choice between them with a reason:
+
+* **A rate row like the others.**  Honest, cheap, and consistent with `[32]`-`[43]`, which all
+  print rates nobody asserts on -- TODO #318 pins their verdict region as `"none"` precisely so
+  that a benchmark which GROWS a verdict fires.  The value is that a human reading a CI log sees
+  the deployed KEM's cost at all, which today they cannot.
+* **A row with a CONTROL rather than a threshold**, on `rnl_deployed_ring_cost`'s model: assert
+  something about the KEM that is true at any speed (encap/decap agree; the
+  implicit-rejection path produces the pinned garbage) and print the rate beside it.  That makes
+  the row a test as well as a figure and keeps it off #327's and #328's axis.
+
+**FOUR THINGS TO GET RIGHT, each with a recorded trap behind it.**
+
+1. **COST, measured before the row is written.**  At BIKE-128 a keygen is ~198 ms in C and
+   ~276 ms in Go after TODO #330, and `qcmdpc_keygen` is dominated by `qcp_inv`; decapsulation
+   is ~4 ms in C, ~6 ms in Go, ~26 ms in Java and ~224 ms in Python.  A naive row that benchmarks
+   keygen in Python at the harness's default batch would add minutes to four required jobs.
+   TODO #327's finding applies directly and is not hypothetical: `_bench`/`bench` had a floor of
+   110 invocations that no `-t` cap could reduce, and C still carries **eight hand-picked batch
+   constants** rather than deriving them, which that item left in place under #312.  A new C
+   benchmark given the wrong constant reintroduces the defect there.
+2. **FOUR PORTS OR A STATED REASON FOR FEWER.**  `spec/check_language_parity.py`'s numbered-test
+   tables are exhaustive, and a new `[N]` needs a `_TEST_DRAWS` cell, a `_VERDICT_FINGERPRINTS`
+   entry (`"none"` for a benchmark, which is a PINNED value and not an absence) and, if it
+   decides anything, a `_SAMPLED_TESTS` row with a rate or an argument.  The three reduced
+   harnesses carry no QC-MDPC, so `arm-i386` and `arduino` are out by construction -- which must
+   be SAID, since TODO #323 found that axis reading four of six harnesses with no sentence
+   anywhere about the other two.
+3. **IT MUST NOT RENUMBER ANYTHING.**  `[44]`-`[53]` were appended after the benchmarks for
+   exactly this reason and `CLAUDE.md` records it; the next free number is `[54]`.  `llms.txt`'s
+   CLI section and `CLAUDE.md`'s test index both need the addition (TODO #145's standing rule).
+4. **THE FIGURE MUST SAY WHICH PATH IT MEASURED.**  Decapsulation has a success path and an
+   implicit-rejection path (TODO #235) and they cost different amounts -- TODO #330 measured
+   1.99 ms against 3.46 ms in C, which is the GJS channel that item registered in `dudect`
+   Batch 10.  A single "decap" rate that silently averages the two is a figure nobody can use,
+   and Python's `rnl_deployed_ring_cost.py` precedent applies: it prints which code path is live,
+   and a figure without that label is not a figure.
+
+**ALSO IN SCOPE, because it is the same gap one layer out.**  `MIGRATING.md` §17 and
+`CHANGELOG.md` carry hand-measured KEM costs (`33 ms in C`, `170 ms in Python` at #276's
+adoption; `46.3 -> 6.1 ms` and the rest at #330's), and nothing holds them to anything.  If a
+harness row lands, `check_docs_consistency.py` check E's model applies -- hold the DOCUMENT to
+the tool that prints the number -- and if it does not, say so where those figures are quoted.
+
+**NOT IN SCOPE.**  HFSCX-256's `2.42 MB/s` with no throughput row and its `malloc`-plus-copy per
+call, which bounds every PQC primitive here and which TODO #330 also recorded and declined;
+whether the decoder should be made constant-time (a posture decision whose fixed iteration count
+moves the DFR #285 and #250 measure); and C's eight hand-picked batch constants, which TODO #327
+left under #312.
+
+Acceptance: the deployed QC-MDPC KEM has a benchmark row in every harness that ships it, or a
+recorded reason it does not; the row's relationship to #292's no-cost-figures-in-CI position is
+stated rather than left to be inferred; its runtime cost in each of the four required jobs is
+measured and reported; and every `spec/` table a new `[N]` obliges is filled.
+
+Status: **OPEN**

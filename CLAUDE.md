@@ -3613,8 +3613,11 @@ than argued away.**  It called `hpke-stern-kem`'s missing benchmark row *"a prer
 claiming any speed-up here"*; **no row was added**.  The speed-up is published as a reproducible
 A/B against the tagged baseline instead — a stronger claim than a harness row, which publishes
 an absolute host-specific rate — because a row would put a host-specific figure inside a
-required job (#292's position) and the benchmark layer is #327's and #328's axis.  (8) **AND
-ITS OWN CI RUN TURNED UP A DEFECT IN A TEST IT DOES NOT TOUCH.**  `sanitizers` went red on
+required job (#292's position) and the benchmark layer is #327's and #328's axis — filed as
+**TODO #332**, which owes the choice between a plain rate row and a row with a control, because
+#292's position is that a host-specific cost figure does not belong in a required job.  (8)
+**AND ITS OWN CI RUN TURNED UP A DEFECT IN A TEST IT DOES NOT TOUCH, filed as TODO #331.**
+`sanitizers` went red on
 `[21] ZKP-RNL` at n = 32 with `tamper_reject=4/5` and PASSED on the same commit in the other
 run — a sampled gate firing, not a regression. **THE RECORD PRICED ONE OF TWO IDENTICAL
 BRANCHES**: `[21]` has two cheats requiring the verifier's recomputed Fiat-Shamir challenge to
