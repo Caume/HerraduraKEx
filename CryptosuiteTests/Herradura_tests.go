@@ -1032,10 +1032,40 @@ var zkpMsg2 = []byte("Herradura ZKP tamper")
 func testZkpRnlCorrectness() {
 	fmt.Println("[21] ZKP-RNL Sigma-protocol completeness + tamper-rejection  [PQC-EXT]")
 	zkpRnlSizes := []int{32, 256}
+	fsAny := false
 	for _, n := range zkpRnlSizes {
 		N := testRounds(5)
 		okVerify, okTamper := 0, 0
 		okWrongkey, okWtamper, okZtamper := 0, 0, 0
+		// THE TWO FIAT-SHAMIR-BINDING CHEATS GET THEIR OWN WIDTH (TODO #330).
+		// okTamper (verify under a different message) and okWtamper (verify
+		// against a tampered commitment) both require the verifier's
+		// RECOMPUTED challenge to DIFFER, so each turns on a CHALLENGE
+		// COLLISION -- and the challenge is a weight-t signed sparse
+		// polynomial, so its space is comb(n, t) * 2^t: 575 360 at n = 32,
+		// t = 4, against about 2^96 at n = 256, t = 16.  At n = 32 that is
+		// 1/575360 per trial per case, which is exactly the 8.7e-6 TODO #321
+		// recorded for the w case after taking this row off `exact` -- and the
+		// MESSAGE case, which that record did not cover, FIRED in CI.
+		// ON A COLLISION THE VERIFIER IS RIGHT TO ACCEPT: the proof genuinely
+		// is valid for the second message, so scoring the accept as a
+		// rejection failure scores the verifier for being correct.  Measured
+		// witness at a reduced t = 1, where the space is 64: 28 wrong-message
+		// accepts in 2000 trials, 28 challenge collisions, and the two sets
+		// were THE SAME 28 -- exactly, no exceptions.
+		// The remedy is TODO #310's for [53] ("give it its own round count") on
+		// the WIDTH axis, and it adopts the port that was already right:
+		// SelfTest.java's [30] runs at n = 256 only and so never had the
+		// defect (#294's and #296's precedent).  The other two cheats are exact
+		// at BOTH widths and stay at both: wrongkey and zTamper are caught by
+		// the residual-norm check, where the perturbation is full-range garbage
+		// in every coefficient, about 1e-93 over n of them.  A case that did
+		// not run keeps its OWN denominator so it cannot be scored (TODO #291).
+		fsBound := n >= 256
+		NFs := 0
+		if fsBound {
+			fsAny = true
+		}
 		t0 := time.Now()
 		mBase := RnlMPoly(n)
 		for i := 0; i < N; i++ {
@@ -1053,8 +1083,11 @@ func testZkpRnlCorrectness() {
 			if RnlSigmaVerify(mBlind, C, n, zkpMsg, w, c, z) {
 				okVerify++
 			}
-			if !RnlSigmaVerify(mBlind, C, n, zkpMsg2, w, c, z) {
-				okTamper++
+			if fsBound {
+				NFs++
+				if !RnlSigmaVerify(mBlind, C, n, zkpMsg2, w, c, z) {
+					okTamper++
+				}
 			}
 			// Structured cheats (TODO #94 item 2 — C/Go parity):
 			// (a) wrong-key witness: honest signer run with a fresh s' != s
@@ -1067,10 +1100,12 @@ func testZkpRnlCorrectness() {
 				okWrongkey++
 			}
 			// (b) tampered commitment w — must fail Fiat-Shamir re-derivation.
-			wT := append([]int(nil), w...)
-			wT[0]++
-			if !RnlSigmaVerify(mBlind, C, n, zkpMsg, wT, c, z) {
-				okWtamper++
+			if fsBound {
+				wT := append([]int(nil), w...)
+				wT[0]++
+				if !RnlSigmaVerify(mBlind, C, n, zkpMsg, wT, c, z) {
+					okWtamper++
+				}
 			}
 			// (c) perturbed response z (FS check still passes; the residual
 			//     norm check must catch it).
@@ -1081,13 +1116,36 @@ func testZkpRnlCorrectness() {
 			}
 			if timeExceeded(t0) { N = i + 1; break }
 		}
+		expFs := 0
+		if fsBound {
+			expFs = N
+		}
 		status := "PASS"
-		if N <= 0 || okVerify != N || okTamper != N || okWrongkey != N ||
-			okWtamper != N || okZtamper != N { status = "FAIL" }
-		fmt.Printf("    n=%3d  verify=%d/%d  tamper_reject=%d/%d"+
-			"  wrongkey_reject=%d/%d  w_tamper=%d/%d  z_tamper=%d/%d  [%s]\n",
-			n, okVerify, N, okTamper, N, okWrongkey, N, okWtamper, N,
+		if N <= 0 || okVerify != N || okWrongkey != N || okZtamper != N ||
+			okTamper != NFs || okWtamper != NFs || NFs != expFs {
+			status = "FAIL"
+		}
+		// A skipped case prints n/a rather than 0/0, so "did not run" and "ran
+		// and scored zero" are distinguishable in the output as well as in the
+		// verdict (TODO #291).
+		tbuf, wbuf := "n/a", "n/a"
+		if fsBound {
+			tbuf = fmt.Sprintf("%d/%d", okTamper, NFs)
+			wbuf = fmt.Sprintf("%d/%d", okWtamper, NFs)
+		}
+		fmt.Printf("    n=%3d  verify=%d/%d  tamper_reject=%s"+
+			"  wrongkey_reject=%d/%d  w_tamper=%s  z_tamper=%d/%d  [%s]\n",
+			n, okVerify, N, tbuf, okWrongkey, N, wbuf,
 			okZtamper, N, status)
+	}
+	// THE POSITIVE HALF OF THE WIDTH GATE (TODO #330).  Skipping the two
+	// Fiat-Shamir cheats where the challenge space makes them sampled is only
+	// sound while SOME width still runs them; widening the gate to skip
+	// everywhere would otherwise satisfy every assertion above by asserting
+	// nothing, which is TODO #234's vacuous pass.
+	if !fsAny {
+		fmt.Println("    no width ran the Fiat-Shamir binding cheats, so this " +
+			"test asserted nothing about message or commitment binding  [FAIL]")
 	}
 	fmt.Println()
 }

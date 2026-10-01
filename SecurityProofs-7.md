@@ -695,6 +695,80 @@ were audited when only C ever has been.
 complete at Batch 8; what #249 correctly identified is that the *result* had never been stated
 where a user would look for it.
 
+**Batch 10 — the QC-MDPC BGF decoder (TODO #330, v9.6.0), and the first target in this
+section that is NOT clean.**  Batches 1-9 audit arithmetic primitives, the Stern permutation,
+WOTS signing and HKEX-RNL reconciliation.  `qcmdpc_bgf_decode` — the trapdoor of
+`hpke-stern-kem`, the suite's deployed post-quantum KEM — appeared in **none** of the fourteen
+registered cases, in no batch above, in no row of §11.13's physical register, and in no line of
+`SECURITY.md`'s C-row enumeration.  Batch 8's own framing is the diagnosis: it was "recorded
+here late", and the gap that time was a *write-up* gap.  This one was an audit gap, in a
+section whose opening sentence is that the posture is stated per target "so it is not inferred
+from silence."
+
+*What was and was not missing.*  `herradura.h` has always documented the decoder as
+non-constant-time inline, so the **status** was not undocumented; what was missing is a
+measurement, a place that records one, and a justification that survives the parameters.  The
+justification did not: SecurityProofs-5.md §11.8.7 says timing is "not the binding constraint
+*at these parameters*", written at v3.3.0 / TODO #235 when the instance was worth about `2^21`
+classical operations, and TODO #276's adoption of BIKE-128 **inverted** that argument four
+majors later without moving the sentence.  It is withdrawn there rather than re-pointed.
+
+*Two axes, because the second is the one that breaks QC-MDPC.*  Every case above asks the
+fixed-vs-random question about a **secret operand**.  A KEM attacker does not choose the
+secret; he chooses the **ciphertext**, and the observable that matters is whether decoding
+succeeded — the GJS reaction signal, which recovers the private key from the decoder's failure
+behaviour and whose statistic §11.8.7's own table measures.  So Batch 10 runs one key against
+two ciphertext classes:
+
+| Axis | classes | mean A | mean B | `\|t\|` | decoded |
+|---|---|---|---|---|---|
+| **A — error pattern** | one fixed decodable syndrome vs. freshly drawn decodable ones | `1.99 ms` | `2.09 ms` | `7.07` | 133/133 vs 133/133 |
+| **B — GJS reaction** | a decodable syndrome vs. an undecodable one | `1.99 ms` | `3.46 ms` | `3281.20` | 133/133 vs **0/133** |
+
+*Axis B is not a statistical finding, and that is the point.*  The two classes differ by the
+whole iteration count, so the **means** separate by `1.47 ms` — about `74%` — and a single
+trace distinguishes them.  Quoting `|t| = 3281` would understate it by implying the channel
+needs averaging.  Axis A is the statistical one and is also positive: even among *decodable*
+syndromes the time depends on which error was encapsulated, by `0.10 ms` against a resolution
+of `0.004 ms` at this round count.
+
+*What the port changed and what it did not.*  TODO #330 made the decoder **bit-sliced in all
+four languages**, so the unsatisfied-parity pass no longer indexes memory on secret data at
+all: it is `QCMDPC_D` whole-register rotations and carry-save adds, the same instruction
+sequence for every syndrome, where the per-position predecessor did `QCMDPC_D × QCMDPC_R` =
+`874 933` secret-indexed reads per plane per iteration.  That removes the *address* channel.
+What remains is the **iteration count** — `qcmdpc_bgf_decode` breaks out early once the running
+syndrome reaches zero, and BIKE's threshold rule is a function of the syndrome weight — which
+is exactly what both axes measure.  A **fixed** iteration count is the standard route to an
+oblivious BIKE decoder and is deliberately not taken, because it changes the failure rate
+TODO #285 §2-§3 and TODO #250 measure and that §11.8.9's `QCMDPC_MAX_MULT` is recorded
+against: adopting it inside a performance port would settle a posture question the port
+happens to expose, which is TODO #312's rule.
+
+*Its own round count, and the price stated rather than implied.*  One decode is milliseconds
+where every case above is nanoseconds, so `qc_rounds` is `rounds / 30` with a floor of 40 —
+the Testing section's standing rule that a sub-check with a different cost gets its own count,
+and derived from `rounds` so a reduced invocation still reduces it.  The price is **power**,
+and each line prints it: at `n` rounds the test resolves a mean shift of about
+`4.5·σ·sqrt(2/n)`, so a *clean* verdict in this batch would be a bound and not a proof of
+constant time.  Neither axis returned one.  The undecodable class is **asserted, not assumed**
+— the decode count is printed per class, so a draw that started succeeding would be visible
+rather than quietly turning axis B into axis A.
+
+*One observation about the OTHER rows, recorded and deliberately not acted on.*  Nothing in
+TODO #330 touches any target above, and the eleven clean rows are clean in the same run
+(`gf_mul_ba` `0.13`, `gf_pow_ba` `0.04`, `ba_mul_mod_ord` `0.93`, `ba_fscx_revolve` `0.38`,
+`hpks_wots_sign` `0.73`, and all five Batch 8 rows between `1.16` and `3.18`).  The
+`stern_gen_perm`/`stern_apply_perm` pair reproduces Batch 7's *direction* — `16.53` and `16.16`
+under the all-zero fixed class, falling to `4.78` and `4.87` under `0xA5` — but **not** Batch 7's
+magnitude: this subsection and `SECURITY.md` both say the `0xA5` class takes `|t|` "under 1.5",
+and on this host at `rounds = 4000` it lands just over the `4.5` threshold, so the row still
+prints `LEAK SUSPECTED`.  The qualitative attribution is intact (a real leak would not move by
+3.4x with only the fixed test point changed) and the figure is a cross-host comparison, which
+TODO #327's rule says is not a comparison at all.  It is noted here rather than resolved
+because it predates this item, belongs to Batch 7's attribution, and a change must not settle a
+question it happens to expose (TODO #312).
+
 **Reproduce:**
 ```bash
 gcc -O2 -o /tmp/dudect_timing_audit SecurityProofsCode/dudect_timing_audit.c -lm

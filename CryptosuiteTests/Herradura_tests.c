@@ -4092,14 +4092,41 @@ static void test_hfscx_256_kav(void)
 static void test_zkp_rnl_correctness(void)
 {
     static const int zkp_rnl_sizes[] = {32, 256};
-    int si;
+    int si, fs_any = 0;
     printf("[21] ZKP-RNL Sigma-protocol completeness + tamper-rejection  [PQC-EXT]\n");
     for (si = 0; si < 2; si++) {
         int n = zkp_rnl_sizes[si];
         int N = g_rounds > 0 ? g_rounds : 5;
         int ok_verify = 0, ok_tamper = 0, i;
         int ok_wrongkey = 0, ok_wtamper = 0, ok_ztamper = 0;
+        /* THE TWO FIAT-SHAMIR-BINDING CHEATS GET THEIR OWN WIDTH (TODO #330).
+         * ok_tamper (verify under a different message) and ok_wtamper (verify
+         * against a tampered commitment) both require the verifier's
+         * RECOMPUTED challenge to DIFFER, so each turns on a CHALLENGE
+         * COLLISION -- and the challenge is a weight-t signed sparse
+         * polynomial, so its space is comb(n, t) * 2^t: 575 360 at n = 32,
+         * t = 4, against about 2^96 at n = 256, t = 16.  At n = 32 that is
+         * 1/575360 per trial per case, which is exactly the 8.7e-6 TODO #321
+         * recorded for the w case after taking this row off `exact` -- and the
+         * MESSAGE case, which that record did not cover, FIRED in CI.
+         * ON A COLLISION THE VERIFIER IS RIGHT TO ACCEPT: the proof genuinely
+         * is valid for the second message, so scoring the accept as a
+         * rejection failure scores the verifier for being correct.  Measured
+         * witness at a reduced t = 1, where the space is 64: 28 wrong-message
+         * accepts in 2000 trials, 28 challenge collisions, and the two sets
+         * were THE SAME 28 -- exactly, no exceptions.
+         * The remedy is TODO #310's for [53] ("give it its own round count") on
+         * the WIDTH axis, and it adopts the port that was already right:
+         * SelfTest.java's [30] runs at n = 256 only and so never had the defect
+         * (#294's and #296's precedent).  The other two cheats are exact at
+         * BOTH widths and stay at both: wrongkey and z_tamper are caught by the
+         * residual-norm check, where the perturbation is full-range garbage in
+         * every coefficient, i.e. about (2*36+1)/65537 per coefficient and
+         * ~1e-93 over n of them.  A case that did not run keeps its OWN
+         * denominator so it cannot be scored as a pass (TODO #291). */
+        int fs_bound = (n >= 256), N_fs = 0;
         struct timespec t0;
+        if (fs_bound) fs_any = 1;
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
             int32_t m_base[256], a_rand[256], m_blind[256];
@@ -4119,10 +4146,13 @@ static void test_zkp_rnl_correctness(void)
                                      zkp_msg, sizeof(zkp_msg) - 1,
                                      w, c_poly, z))
                     ok_verify++;
-                if (!rnl_sigma_verify(m_blind, C, n,
-                                      zkp_msg2, sizeof(zkp_msg2) - 1,
-                                      w, c_poly, z))
-                    ok_tamper++;
+                if (fs_bound) {
+                    N_fs++;
+                    if (!rnl_sigma_verify(m_blind, C, n,
+                                          zkp_msg2, sizeof(zkp_msg2) - 1,
+                                          w, c_poly, z))
+                        ok_tamper++;
+                }
             } else {
                 /* An exhausted rejection limit is a legitimate outcome of the
                    signer, not a wrong answer, so the trial is EXCLUDED from the
@@ -4149,11 +4179,13 @@ static void test_zkp_rnl_correctness(void)
                 ok_wrongkey++;   /* rejection-limit on a wrong key is a reject */
             }
             /* (b) tampered commitment w — must fail Fiat-Shamir re-derivation. */
-            memcpy(w_t, w, (size_t)n * sizeof(int32_t));
-            w_t[0] += 1;
-            if (!rnl_sigma_verify(m_blind, C, n,
-                                  zkp_msg, sizeof(zkp_msg) - 1, w_t, c_poly, z))
-                ok_wtamper++;
+            if (fs_bound) {
+                memcpy(w_t, w, (size_t)n * sizeof(int32_t));
+                w_t[0] += 1;
+                if (!rnl_sigma_verify(m_blind, C, n,
+                                      zkp_msg, sizeof(zkp_msg) - 1, w_t, c_poly, z))
+                    ok_wtamper++;
+            }
             /* (c) perturbed response z (FS check still passes; the residual */
             /*     norm check must catch it).                                */
             memcpy(z_t, z, (size_t)n * sizeof(int32_t));
@@ -4163,13 +4195,37 @@ static void test_zkp_rnl_correctness(void)
                 ok_ztamper++;
             if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
         }
-        printf("    n=%3d  verify=%d/%d  tamper_reject=%d/%d"
-               "  wrongkey_reject=%d/%d  w_tamper=%d/%d  z_tamper=%d/%d  [%s]\n",
-               n, ok_verify, N, ok_tamper, N,
-               ok_wrongkey, N, ok_wtamper, N, ok_ztamper, N,
-               (N > 0 && ok_verify == N && ok_tamper == N && ok_wrongkey == N &&
-                ok_wtamper == N && ok_ztamper == N) ? "PASS" : "FAIL");
+        {
+            char tbuf[32], wbuf[32];
+            /* A skipped case prints n/a rather than 0/0, so "did not run" and
+               "ran and scored zero" are distinguishable in the output as well
+               as in the verdict (TODO #291). */
+            if (fs_bound) {
+                snprintf(tbuf, sizeof tbuf, "%d/%d", ok_tamper, N_fs);
+                snprintf(wbuf, sizeof wbuf, "%d/%d", ok_wtamper, N_fs);
+            } else {
+                snprintf(tbuf, sizeof tbuf, "n/a");
+                snprintf(wbuf, sizeof wbuf, "n/a");
+            }
+            printf("    n=%3d  verify=%d/%d  tamper_reject=%s"
+                   "  wrongkey_reject=%d/%d  w_tamper=%s  z_tamper=%d/%d  [%s]\n",
+                   n, ok_verify, N, tbuf,
+                   ok_wrongkey, N, wbuf, ok_ztamper, N,
+                   (N > 0 && ok_verify == N && ok_wrongkey == N &&
+                    ok_ztamper == N && ok_tamper == N_fs &&
+                    ok_wtamper == N_fs &&
+                    N_fs == (fs_bound ? N : 0)) ? "PASS" : "FAIL");
+        }
     }
+    /* THE POSITIVE HALF OF THE WIDTH GATE (TODO #330).  Skipping the two
+       Fiat-Shamir cheats where the challenge space makes them sampled is only
+       sound while SOME width still runs them; widening the gate to skip
+       everywhere would otherwise satisfy every assertion above by asserting
+       nothing, which is TODO #234's vacuous pass and TODO #326's rule that a
+       scoped source check needs a positive half. */
+    if (!fs_any)
+        printf("    no width ran the Fiat-Shamir binding cheats, so this test "
+               "asserted nothing about message or commitment binding  [FAIL]\n");
     putchar('\n');
 }
 

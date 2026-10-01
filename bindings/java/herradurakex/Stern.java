@@ -630,11 +630,81 @@ public final class Stern {
         return qcmdpcEncap(hPub, new BigInteger(N, rng).and(MASK));
     }
 
+    // -----------------------------------------------------------------
+    // Bit-sliced unsatisfied-parity counters (TODO #330)
+    //
+    // TODO #276 rewrote the BGF decoder's UPC pass bit-sliced in PYTHON and its
+    // own checklist said "first".  There was never a second: C, Go and Java
+    // carried the per-position O(r*d) loop in the deployed BIKE-128 KEM -- here
+    // a BigInteger.testBit((j+k)%r) inside QCMDPC_D * QCMDPC_R = 874 933
+    // iterations per plane per decoder iteration, roughly 8.7 million testBit
+    // calls per decapsulation.  This is that rewrite, ported from the Python
+    // rather than redesigned (#294's and #296's precedent: adopt the port that
+    // is correct).
+    //
+    // Plane i holds bit i of EVERY position's counter, so one carry-save add
+    // per support element replaces r separate increments.
+    // -----------------------------------------------------------------
+
+    /** Plane count, sized from d rather than fixed: TODO #276's Python used four
+     * planes, which saturate at 15 -- exactly the RETIRED d -- and are silently
+     * wrong at 71.  A saturating counter produces a smaller UPC, i.e. fewer
+     * flips and a higher DFR, with nothing to observe. */
+    private static int qcmdpcPlanes(int d) {
+        return Math.max(4, 32 - Integer.numberOfLeadingZeros(d));
+    }
+
+    /** upc[j] = sum over k in sup of s[(j+k) % r], for every j at once, as nb
+     * bitplanes.  Bit j of ((s >>> k) | (s << (r-k))) is bit (j+k)%r of s,
+     * which is the whole trick: the r reads of one support element become one
+     * rotation. */
+    private static BigInteger[] qcmdpcCounters(BigInteger s, int[] sup, int r,
+                                               BigInteger full, int nb) {
+        BigInteger[] c = new BigInteger[nb];
+        for (int i = 0; i < nb; i++) c[i] = BigInteger.ZERO;
+        for (int k : sup) {
+            BigInteger v = (k == 0) ? s
+                    : s.shiftRight(k).or(s.shiftLeft(r - k)).and(full);
+            for (int i = 0; i < nb; i++) {
+                BigInteger cy = c[i].and(v);
+                c[i] = c[i].xor(v);
+                v = cy;
+                if (v.signum() == 0) break;
+            }
+        }
+        return c;
+    }
+
+    /** Mask whose bit j is set iff the counter at position j is &gt;= th,
+     * compared MSB first across the planes.
+     *
+     * <p>Total rather than merely correct over the reachable range: at BIKE-128
+     * the threshold rule tops out at 99, but a th outside [1, 2^nb) would
+     * otherwise be read modulo 2^nb.  The same two guards are in all four ports
+     * so the representation cannot diverge on an unreachable input. */
+    private static BigInteger qcmdpcMaskGe(BigInteger[] c, BigInteger full,
+                                           int th, int nb) {
+        if (th <= 0) return full;
+        if (th >= (1 << nb)) return BigInteger.ZERO;
+        BigInteger gt = BigInteger.ZERO, eq = full;
+        for (int i = nb - 1; i >= 0; i--) {
+            if (((th >> i) & 1) == 1) {
+                eq = eq.and(c[i]);
+            } else {
+                gt = gt.or(eq.and(c[i]));
+                eq = eq.andNot(c[i]);
+            }
+        }
+        return gt.or(eq);
+    }
+
     /** BGF (Black-Gray-Flip) decoder (Drucker-Gueron-Kostic 2019), with BIKE
      * Level 1's syndrome-adaptive threshold rule (TODO #276).  Returns
      * {e0, e1} or null on decoding failure. */
     static BigInteger[] qcmdpcBgfDecode(BigInteger synPub, int[] sup0, int[] sup1) {
         int r = QCMDPC_R, d = QCMDPC_D, nbIter = QCMDPC_NB_ITER;
+        BigInteger full = BigInteger.ONE.shiftLeft(r).subtract(BigInteger.ONE);
+        int nb = qcmdpcPlanes(d);
         BigInteger s = qcpMulSparse(synPub, sup0, r);
         BigInteger e0 = BigInteger.ZERO, e1 = BigInteger.ZERO;
         int thFloor = (d + 1) / 2 + 1;   // = 37; BIKE's masked-pass floor
@@ -648,46 +718,43 @@ public final class Stern {
             // meet it.
             int th = Math.max((int) (QCMDPC_TH_SLOPE * s.bitCount() + QCMDPC_TH_OFFSET),
                               QCMDPC_TH_MIN);
-            int[] upc0 = computeUpc(s, sup0, r);
-            int[] upc1 = computeUpc(s, sup1, r);
-            List<Integer> black0 = new ArrayList<>(), black1 = new ArrayList<>();
-            List<Integer> gray0 = new ArrayList<>(), gray1 = new ArrayList<>();
-            for (int j = 0; j < r; j++) {
-                if (upc0[j] >= th) black0.add(j);
-                else if (upc0[j] >= th - QCMDPC_TAU) gray0.add(j);
-                if (upc1[j] >= th) black1.add(j);
-                else if (upc1[j] >= th - QCMDPC_TAU) gray1.add(j);
-            }
-            for (int j : black0) { e0 = e0.xor(BigInteger.ONE.shiftLeft(j)); s = s.xor(qcpMulSparse(BigInteger.ONE.shiftLeft(j), sup0, r)); }
-            for (int j : black1) { e1 = e1.xor(BigInteger.ONE.shiftLeft(j)); s = s.xor(qcpMulSparse(BigInteger.ONE.shiftLeft(j), sup1, r)); }
+            // Black (>=th) and gray (>=th-tau, excluding black) as MASKS rather
+            // than position lists.  Both are read off the syndrome BEFORE any
+            // flip in either group is applied, exactly as the per-position
+            // version built its upc array once and then walked it.
+            BigInteger[] c0 = qcmdpcCounters(s, sup0, r, full, nb);
+            BigInteger[] c1 = qcmdpcCounters(s, sup1, r, full, nb);
+            BigInteger black0 = qcmdpcMaskGe(c0, full, th, nb);
+            BigInteger black1 = qcmdpcMaskGe(c1, full, th, nb);
+            BigInteger gray0 = qcmdpcMaskGe(c0, full, th - QCMDPC_TAU, nb).andNot(black0);
+            BigInteger gray1 = qcmdpcMaskGe(c1, full, th - QCMDPC_TAU, nb).andNot(black1);
+
+            // A whole group's flips in one multiply.  Not an approximation:
+            // each flip at j contributes ROL(h_b, j) to the syndrome and XOR is
+            // commutative, so the group's contribution is h_b times the OR of
+            // its positions -- which is what qcpMulSparse of the mask computes.
+            e0 = e0.xor(black0);
+            s = s.xor(qcpMulSparse(black0, sup0, r));
+            e1 = e1.xor(black1);
+            s = s.xor(qcpMulSparse(black1, sup1, r));
+
             if (it == 0) {
-                for (int pass = 0; pass < 2; pass++) {
-                    List<Integer> g0 = (pass == 0) ? black0 : gray0;
-                    List<Integer> g1 = (pass == 0) ? black1 : gray1;
-                    int[] u0 = computeUpc(s, sup0, r);
-                    int[] u1 = computeUpc(s, sup1, r);
-                    for (int j : g0) {
-                        if (u0[j] >= thFloor) { e0 = e0.xor(BigInteger.ONE.shiftLeft(j)); s = s.xor(qcpMulSparse(BigInteger.ONE.shiftLeft(j), sup0, r)); }
-                    }
-                    for (int j : g1) {
-                        if (u1[j] >= thFloor) { e1 = e1.xor(BigInteger.ONE.shiftLeft(j)); s = s.xor(qcpMulSparse(BigInteger.ONE.shiftLeft(j), sup1, r)); }
-                    }
+                // BGF: re-check black then gray with thFloor.
+                BigInteger[][] groups = { { black0, black1 }, { gray0, gray1 } };
+                for (BigInteger[] g : groups) {
+                    BigInteger f0 = qcmdpcMaskGe(qcmdpcCounters(s, sup0, r, full, nb),
+                                                 full, thFloor, nb);
+                    BigInteger f1 = qcmdpcMaskGe(qcmdpcCounters(s, sup1, r, full, nb),
+                                                 full, thFloor, nb);
+                    BigInteger k0 = f0.and(g[0]), k1 = f1.and(g[1]);
+                    e0 = e0.xor(k0);
+                    s = s.xor(qcpMulSparse(k0, sup0, r));
+                    e1 = e1.xor(k1);
+                    s = s.xor(qcpMulSparse(k1, sup1, r));
                 }
             }
         }
         return (s.signum() == 0) ? new BigInteger[] { e0, e1 } : null;
-    }
-
-    private static int[] computeUpc(BigInteger s, int[] sup, int r) {
-        int[] upc = new int[r];
-        for (int j = 0; j < r; j++) {
-            int count = 0;
-            for (int k : sup) {
-                if (s.testBit((j + k) % r)) count++;
-            }
-            upc[j] = count;
-        }
-        return upc;
     }
 
     /** Decapsulate — FO with implicit rejection (TODO #235 Part 2).

@@ -997,6 +997,12 @@ REQUIRED_CLAIMS = [
      "#297: HPKS-Ring's anonymity claim must keep the correction -- C and Go "
      "hashed a CONSTANT dummy commitment for a simulated b = 0 round, which "
      "identified the signer from the public signature"),
+    (SECURITY, r"leaks decode success vs\. failure",
+     "#330: SECURITY.md's C row must name the QC-MDPC BGF decoder as the one "
+     "audited target with a MEASURED channel. It appeared in no dudect case, "
+     "no batch of SecurityProofs-7.md 11.11 and no row of that section until "
+     "v9.6.0, in a section whose opening sentence is that the posture is "
+     "stated per target so it is not inferred from silence"),
 ]
 
 FORBIDDEN_CLAIMS = [
@@ -1018,6 +1024,15 @@ FORBIDDEN_CLAIMS = [
      "#297: that sentence, ending the row, is the UNCORRECTED claim. Ring "
      "anonymity did not survive in C or Go until v7.0.15, and the row must "
      "say so rather than asserting the property flatly"),
+    (SECURITY, r"\*\*Audited\.\*\* Two real leaks found and fixed",
+     "#330: that is the UNQUALIFIED C row. One audited target is not clean -- "
+     "qcmdpc_bgf_decode leaks decode success vs. failure, which is the GJS "
+     "reaction signal against the private key -- so the row must carry the "
+     "qualification rather than reading as a flat pass"),
+    (SECURITY, r"[Tt]wo documented limits on even the C result",
+     "#330: there are THREE now; the decoder channel is the first and the "
+     "heading must not revert to counting only the stern_gen_perm residual "
+     "and the cache/power exclusion"),
 ]
 
 

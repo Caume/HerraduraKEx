@@ -302,35 +302,46 @@ _SAMPLED_TESTS = {
     ("python", 19): ("negligible", 4e-75,
         "HFSCX-256 collision sanity over 500 fresh pairs, plus 6 block-boundary "
         "pairs, against a 256-bit digest"),
-    ("shared", 21): ("negligible", 8.7e-6,
-        "ZKP-RNL, the row TODO #316 fixed and THE ROW TODO #321 TOOK OFF "
-        "`exact`.  Its tampered-commitment case increments w[0] and requires a "
-        "rejection; the verifier RECOMPUTES the Fiat-Shamir challenge over the "
-        "tampered w, so the case turns on a CHALLENGE COLLISION -- and on a "
-        "collision the residual-norm check sees one coefficient shifted by 1 "
-        "inside a slack of t*(q//(2p)+1) = 36 and accepts.  The challenge is a "
-        "weight-t signed sparse polynomial, so the space is comb(n, t)*2^t = "
-        "575 360 at n = 32, t = 4, and the rate is _iters(5)/575360 = 8.7e-6 "
-        "in each of C, Go and Python (all three sweep {32, 256} with N = 5 and "
-        "take t from their own sigma_params).  So the strongest verdict in the "
-        "table, the only one contributing NOTHING to the budget, was carrying "
-        "9% of it -- #304's recorded erosion shape, found by looking on "
-        "purpose.  MEASURED: see _ARGUED_MEASUREMENTS['sigma-challenge-"
-        "collision'].  The three OTHER cheats really are exact, and for a "
-        "reason worth keeping: m_blind is a UNIFORM polynomial, so a perturbed "
-        "z moves the residual by m * e_0 -- full-range garbage -- while a "
-        "perturbed w moves it by 1.  rnl_sigma_sign gives up after "
-        "1000 rejection-sampling attempts -- a legitimate signer outcome -- and "
-        "all four ports scored it differently and none correctly: Python "
-        "decremented its denominator and could print 0/0 [PASS]; C and Go left "
-        "ok_verify == i against N == i+1, so ANY exhaustion FAILED the build; "
-        "Java did fails++ directly below a comment saying it did not (#295's "
-        "false-reason finding, aimed at a test).  Now one rule (#291: a section "
-        "that did not run must not be scored) -- the trial leaves the "
-        "denominator, N > 0 is guarded, Java retries 8 times.  Exhaustion "
-        "measured at 0 in 1166 signs at n=32 and 0 in 136 at n=256, but "
-        "_sigma_params records ~72% at the retired t=64, so the margin is a "
-        "parameter choice and not a property"),
+    ("shared", 21): ("negligible", 1.5e-29,
+        "ZKP-RNL, the row #316 fixed, #321 TOOK OFF `exact`, and TODO #330 "
+        "found UNDERSTATED BY EXACTLY 2x -- then took off the budget "
+        "altogether.  THE RECORD PRICED ONE OF TWO IDENTICAL BRANCHES.  Both "
+        "the wrong-MESSAGE case and the tampered-COMMITMENT case require the "
+        "verifier's RECOMPUTED Fiat-Shamir challenge to DIFFER, so each turns "
+        "on a CHALLENGE COLLISION in a space of comb(n, t)*2^t = 575 360 at "
+        "n = 32, t = 4 -- 8.7e-6 each, 1.74e-5 together, which at the time was "
+        "92% of the whole numbered-test budget while the row advertised half of "
+        "it.  #321's reason said the OTHER cheats `really are exact`, and that "
+        "is true of wrongkey and z-tamper (both caught by the residual-norm "
+        "check, where the perturbation is full-range garbage in every "
+        "coefficient, ~1e-93) and FALSE of the wrong-message one -- the second "
+        "time this row has carried a reason exact about the wrong object, which "
+        "is #310's shape and #295's.  IT FIRED: the message case failed a "
+        "required `sanitizers` run at n = 32, and the verifier was RIGHT, "
+        "because on a collision the proof genuinely IS valid for the second "
+        "message.  REMEDY, #310's for [53] on the WIDTH axis instead of the "
+        "round-count one: both FS-binding cases now run at n = 256 only, where "
+        "t = 16 puts the space at 6.6e29 and the pair at 1.5e-29.  It adopts "
+        "the port that was already right -- SelfTest.java's [30] runs at "
+        "n = 256 only and never had the defect (#294, #296) -- and a skipped "
+        "case keeps its OWN denominator and prints n/a, so `did not run` cannot "
+        "read as `ran and scored zero` (#291).  The skip has a POSITIVE half: "
+        "if NO width runs them the test prints [FAIL], or widening the gate "
+        "everywhere would satisfy every assertion by asserting nothing (#234, "
+        "#326).  Both controls were verified to fire -- dropping the verifier's "
+        "FS re-derivation takes n = 256 to 0/5 on both cases, and forcing the "
+        "gate off at every width trips the positive half.  MEASURED: see "
+        "_ARGUED_MEASUREMENTS['sigma-challenge-collision'].  rnl_sigma_sign "
+        "gives up after 1000 rejection-sampling attempts -- a legitimate signer "
+        "outcome -- and all four ports scored it differently and none "
+        "correctly: Python decremented its denominator and could print 0/0 "
+        "[PASS]; C and Go left ok_verify == i against N == i+1, so ANY "
+        "exhaustion FAILED the build; Java did fails++ directly below a comment "
+        "saying it did not (#295's false-reason finding, aimed at a test).  Now "
+        "one rule (#291) -- the trial leaves the denominator, N > 0 is guarded, "
+        "Java retries 8 times.  Exhaustion measured at 0 in 1166 signs at n=32 "
+        "and 0 in 136 at n=256, but _sigma_params records ~72% at the retired "
+        "t=64, so the margin is a parameter choice and not a property"),
     ("shared", 22): ("negligible", "derived",
         "ZKP-NL tamper rejection, and the pair that makes [17] legible: the "
         "verifier hashes ALL commitments into ch_seed and checks every round's "
@@ -814,18 +825,23 @@ _SAMPLED_TEST_RATE_LITERAL = {
                     "recorded 1e-14, so the record is the conservative side of "
                     "its own arithmetic and stays"),
     ("shared", 21): ("python", r"z_tamper=\{ok_ztamper\}",
-                    "THE ROW TODO #321 TOOK OFF `exact`, and the reason it "
-                    "stays a literal is the same limit [4] records from the "
-                    "other end: the rate is _iters(5)/(comb(n, t)*2^t), and t "
-                    "comes from _sigma_params' MODULE-LEVEL dict a thousand "
-                    "lines above every [N] marker, which #319's body and scope "
-                    "slices cannot reach by construction.  So the second "
-                    "recorded instance of that limit -- [4]'s input is a "
-                    "run-time flag, this one's is out of slice -- and the "
-                    "answer is #320's rather than #319's: the MECHANISM is "
-                    "measured instead, in _ARGUED_MEASUREMENTS['sigma-"
-                    "challenge-collision'], where the reduced parameter is t "
-                    "itself"),
+                    "THE ROW #321 TOOK OFF `exact` AND #330 TOOK OFF THE "
+                    "BUDGET, and the reason it stays a literal is unchanged and "
+                    "is the same limit [4] records from the other end: the rate "
+                    "is (cases * _iters(5))/(comb(n, t)*2^t), and t comes from "
+                    "_sigma_params' MODULE-LEVEL dict a thousand lines above "
+                    "every [N] marker, which #319's body and scope slices "
+                    "cannot reach by construction.  So the second recorded "
+                    "instance of that limit -- [4]'s input is a run-time flag, "
+                    "this one's is out of slice -- and the answer is #320's "
+                    "rather than #319's: the MECHANISM is measured instead, in "
+                    "_ARGUED_MEASUREMENTS['sigma-challenge-collision'], where "
+                    "the reduced parameter is t itself.  The literal moved from "
+                    "8.7e-6 to 1.5e-29 when #330 gave the two FS-binding cases "
+                    "their own WIDTH, and the anchor is deliberately on "
+                    "z_tamper rather than on either FS case: z_tamper is exact "
+                    "at BOTH widths and so is the one field of this line that "
+                    "the width gate cannot turn into n/a"),
     ("shared", 46): ("python", r"key-boundary collisions=\{amb\}",
                     "fpe/twk domain separation: two fresh 256-bit ciphertexts "
                     "must differ.  Pure coincidence at 2^-256 over 200 "
@@ -1407,18 +1423,22 @@ _ARGUED_MEASUREMENTS = {
         "kind": "rate",
         "rows": [("shared", 21)],
         "quantity": "whether the verifier's RECOMPUTED Fiat-Shamir challenge "
-                    "over the tampered w equals the claimed one -- the event "
-                    "[21]'s tampered-commitment case is actually a function of, "
-                    "where the row said it was exact",
-        "bound":    "1/(comb(n, t) * 2^t) per trial: the challenge is a "
+                    "equals the claimed one -- the event BOTH of [21]'s "
+                    "FS-binding cases are actually a function of, where the row "
+                    "said it was exact and then priced only one of the two "
+                    "(TODO #330)",
+        "bound":    "1/(comb(n, t) * 2^t) per trial PER CASE: the challenge is a "
                     "weight-t polynomial with a sign per position, so the space "
-                    "is comb(32, 4) * 2^4 = 575 360 at the narrowest width the "
-                    "test sweeps, and the n = 256 term is 2^-100-ish beside it.  "
-                    "On a collision the residual-norm check sees ONE coefficient "
-                    "shifted by 1 inside a slack of t*(q//(2p)+1) = 36 and "
-                    "accepts",
+                    "is comb(32, 4) * 2^4 = 575 360 at t = 4 and "
+                    "comb(256, 16) * 2^16 = 6.6e29 at the t = 16 the FS cases "
+                    "now run at.  On a collision the WRONG-MESSAGE case accepts "
+                    "with probability 1 -- the verification is then the honest "
+                    "one, term for term -- while the tampered-w case needs the "
+                    "residual-norm check to tolerate ONE coefficient shifted by "
+                    "1 inside a slack of t*(q//(2p)+1), which it does.  Two "
+                    "cases, one mechanism, and the record had one of them",
         "var":      "t",
-        "shipped":  4,
+        "shipped":  16,
         "shipped_why":
                     "t comes from _sigma_params' module-level _SIGMA_T dict, a "
                     "thousand lines above every [N] marker, so neither #319's "
@@ -1437,7 +1457,16 @@ _ARGUED_MEASUREMENTS = {
                     "to -- was measured against the SAME test's z-tamper case, "
                     "where the norm check genuinely is the detector, and tracked "
                     "the outcome in 985/1000 and 5999/6000: high enough to look "
-                    "like an answer, and not exact",
+                    "like an answer, and not exact.  THE WRONG-MESSAGE CASE "
+                    "WAS MEASURED TOO for TODO #330, and in two independent "
+                    "instruments: a C probe over the shipped herradura.h at "
+                    "t = 1 gave 28 accepts in 2000 trials, 28 collisions, and "
+                    "THE SAME 28 -- exactly, no exceptions -- and this "
+                    "measurer, in Python, gives witness 600/600 at t = 1 (6 "
+                    "accepts) and 600/600 at t = 2 (0 accepts).  So the two "
+                    "cases share ONE mechanism exactly, which is why pricing "
+                    "only the w case understated the row by 2x, and why the "
+                    "remedy is a WIDTH rather than a tolerance",
         "note":     "MEASURED at t = 1 and t = 2 over 7000 trials at n = 32, "
                     "with the honest proof verified first as an accept control "
                     "(7000/7000) and an exhausted rejection limit excluded from "
@@ -1449,10 +1478,13 @@ _ARGUED_MEASUREMENTS = {
                     "rungs and not three because the space is comb(n, t)*2^t: at "
                     "t = 3 the predicted count over 6000 trials is 0.15, and "
                     "another 0/N is what this item exists NOT to produce.  The "
-                    "shipped t = 4 needs 5.8e5 trials per expected event, about "
-                    "14 hours here, which is why the rate is argued from the "
-                    "ladder and the space rather than counted at the shipped "
-                    "parameter",
+                    "t = 4 the test used to run these cases at needs 5.8e5 "
+                    "trials per expected event, about 14 hours here, and the "
+                    "t = 16 it runs them at now needs 6.6e29 -- which is why "
+                    "the rate is argued from the ladder and the space rather "
+                    "than counted at the shipped parameter, and why TODO #330 "
+                    "moved the cases to a width where the space is the "
+                    "argument instead of tightening a threshold",
     },
 }
 
@@ -2148,7 +2180,7 @@ _VERDICT_FINGERPRINTS = {
     ("c", 15): "158d13ae58", ("c", 16): "158d13ae58",
     ("c", 17): "8965f8a720", ("c", 18): "c4ffefcf1b",
     ("c", 19): "c0593494da", ("c", 20): "83b3091774",
-    ("c", 21): "756337bffa", ("c", 22): "e38188098b",
+    ("c", 21): "de94a6f57c", ("c", 22): "e38188098b",
     ("c", 23): "6e34b5a147", ("c", 24): "6e34b5a147",
     ("c", 25): "49b930b7b4", ("c", 26): "5f0407f2d7",
     ("c", 27): "0bab6bce5d", ("c", 28): "cb3001321a",
@@ -2176,7 +2208,7 @@ _VERDICT_FINGERPRINTS = {
     ("go", 15): "10a9b5fc23", ("go", 16): "10a9b5fc23",
     ("go", 17): "10a9b5fc23", ("go", 18): "a72dd44d29",
     ("go", 19): "72cc1ae9d3", ("go", 20): "10a9b5fc23",
-    ("go", 21): "3e2043f939", ("go", 22): "c8665d6d66",
+    ("go", 21): "b8cf3ad177", ("go", 22): "c8665d6d66",
     ("go", 23): "10a9b5fc23", ("go", 24): "10a9b5fc23",
     ("go", 25): "2ce2ccb1e5", ("go", 26): "5902fad95c",
     ("go", 27): "664c3c41ef", ("go", 28): "11cf42adb4",
@@ -2204,7 +2236,7 @@ _VERDICT_FINGERPRINTS = {
     ("python", 15): "db6ea492b7", ("python", 16): "db6ea492b7",
     ("python", 17): "c5f298f1d9", ("python", 18): "8be0a29714",
     ("python", 19): "63a190de9f", ("python", 20): "db6ea492b7",
-    ("python", 21): "d6fad1add7", ("python", 22): "d7c00b291a",
+    ("python", 21): "19da1c270a", ("python", 22): "d7c00b291a",
     ("python", 23): "db6ea492b7", ("python", 24): "db6ea492b7",
     ("python", 25): "e3a6e8b264", ("python", 26): "d7997e3a5d",
     ("python", 27): "16542ad09f", ("python", 28): "32e12d56dd",
@@ -4490,7 +4522,7 @@ PRIMITIVES = {
             "Present, not reachable by a top-level marker",
         "c": r"static void qcprf_refill\(",
         "python": r"^def _qcprf_refill\(",
-        "java": r"Stern.java::private static int\[\] refill\(",
+        "java": r"Stern.java::private static byte\[\] refill\(",
     },
     "qcprf-idx-bytes": {
         "c": r"static int qcprf_idx_bytes\(",
@@ -4525,6 +4557,18 @@ PRIMITIVES = {
         "go": r"^func qcMdpcZSeed\(",
         "python": r"^def _qcmdpc_z_seed\(",
         "java": r"Stern.java::private static byte\[\] qcmdpcZSeed\(",
+    },
+    "qcmdpc-counters": {
+        "c": r"static void qcp_upc_planes\(",
+        "go": r"^func qcmdpcCounters\(",
+        "python": r"^def _qcmdpc_counters\(",
+        "java": r"Stern.java::private static BigInteger\[\] qcmdpcCounters\(",
+    },
+    "qcmdpc-mask-ge": {
+        "c": r"static void qcp_mask_ge\(",
+        "go": r"^func qcmdpcMaskGe\(",
+        "python": r"^def _qcmdpc_mask_ge\(",
+        "java": r"Stern.java::private static BigInteger qcmdpcMaskGe\(",
     },
     "qcmdpc-bgf-decode": {
         "c": r"static int qcmdpc_bgf_decode\(",
@@ -5021,7 +5065,7 @@ PRIMITIVES = {
             "those two are what a rename would have to keep",
         "c": r"static void nl_fscx_delta_v2_ba\(",
         "go": r"^func nlFscxDeltaV2\(",
-        "java": r"HerraduraNl.java::private static BigInteger delta\(",
+        "java": r"HerraduraNl.java::private static BitArray delta\(",
     },
     "nl-fscx-v2-round-const": {
         "acknowledged":
@@ -5295,13 +5339,16 @@ PRIMITIVES = {
             "ring-challenges; the other three derive it inline",
         "java": r"SternRing.java::private static BigInteger fiatShamirSeed\(",
     },
-    "qcmdpc-upc": {
+    "qcmdpc-planes": {
         "acknowledged":
-            "Java factors the BGF unsatisfied-parity-check counter out of the "
-            "decoder loop; C, Go and Python count inline in qcmdpc-bgf-decode. "
-            "The decoder is DFR-critical and covered behaviourally by "
-            "CliTest/lib_dfr.sh's byte compare",
-        "java": r"Stern.java::private static int\[\] computeUpc\(",
+            "the BGF counter PLANE COUNT, max(4, bit_length(d)) (TODO #330).  "
+            "Go and Java compute it in a named helper; C spells it as the "
+            "QCMDPC_NPLANE macro -- it sizes an array, so it must be a "
+            "constant expression there -- and Python writes the expression "
+            "inline at its one call site.  Four ports, one rule, two of them "
+            "with a function to name",
+        "go": r"^func qcmdpcPlanes\(",
+        "java": r"Stern.java::private static int qcmdpcPlanes\(",
     },
     "qcmdpc-support-to-poly": {
         "acknowledged":
@@ -5353,7 +5400,7 @@ PRIMITIVES = {
             "TODO #273; what remains is a FACTORING difference between two "
             "pairs of languages, not a missing capability",
         "python": r"^def _hske_nl_aead_streams\(",
-        "java": r"HerraduraNl.java::static BigInteger\[\] hskeNlAeadStreams\(",
+        "java": r"HerraduraNl.java::static BitArray\[\] hskeNlAeadStreams\(",
     },
     "rnl-bits-to-bitarray": {
         "acknowledged":
@@ -5473,13 +5520,23 @@ def check_primitives(errors):
                 paths = [paths] if isinstance(paths, str) else paths
                 rel = ", ".join(os.path.relpath(p, REPO) for p in paths)
             if hits == 0:
-                if reason:
-                    continue
+                # AN `acknowledged` REASON EXCUSES AN ABSENT CELL, NEVER A DEAD
+                # ANCHOR (TODO #330).  Until then `if reason: continue` sat here,
+                # so a row whose ONLY cell was a port-specific helper stayed
+                # green after that helper was deleted -- and the reason went on
+                # describing it.  qcmdpc-upc is the case that found it: its
+                # reason said "Java factors the UPC counter out of the decoder
+                # loop; C, Go and Python count inline", which #330 made false in
+                # all four ports at once while deleting the very function the
+                # row anchored on.  That is #295's false-reason shape with the
+                # manifest's own escape hatch as the carrier: a row cannot
+                # describe a port's code and also decline to point at it.
                 errors.append(
                     f"'{pid}': marker {pattern!r} not found in {lang}'s suite file(s) ({rel}) — "
                     f"either the function was renamed/removed (update PRIMITIVES to match) or "
-                    f"this is a real cross-language gap (port it, or add an 'acknowledged' "
-                    f"reason to the PRIMITIVES entry, the same way SECURITY.md records one)"
+                    f"this is a real cross-language gap (port it, or DROP the {lang} marker and "
+                    f"let the entry's 'acknowledged' reason carry the absence; a reason excuses "
+                    f"a missing cell, not a marker that points at nothing)"
                 )
             elif hits > 1:
                 # A marker must IDENTIFY one function, not merely occur. This
@@ -5644,14 +5701,6 @@ CENSUS_EXEMPT = {
          "exist and wrap ONE implementation rather than adding a second.  The "
          "width selects the polynomial, which is what BITARRAY.md 4.6 requires "
          "and what a `poly` parameter cannot enforce"),
-        (r"^_qcmdpc_(counters|mask_ge)$",
-         "the bitplane representation inside qcmdpc-bgf-decode (TODO #276): "
-         "counters for all r positions carried as bit-sliced big integers, and "
-         "the MSB-first >= comparison over them. Python alone needs it — an "
-         "interpreted per-position count is ~900 ms per iteration at a "
-         "production r — while C, Go and Java hold ordinary per-position "
-         "counter arrays and have nothing to port. The decoder they decompose "
-         "is manifest-named as qcmdpc-bgf-decode"),
     ],
     "java": [
         (r"^(checkWidth|hexVal|zero|fromHex|fromUint|gfPoly|rnlKdfSeed|fscx)$",
@@ -6231,6 +6280,14 @@ PARAM_LANGS = ("c", "go", "python", "java")
 
 
 PARAM_CENSUS_EXEMPT = {
+    "c": [(r"^QCMDPC_NPLANE$",
+           "the BGF decoder's counter PLANE COUNT (TODO #330), not a protocol "
+           "parameter: it is max(4, bit_length(QCMDPC_D)) -- which IS a row -- "
+           "and C needs it as a macro only because it sizes an array.  Go and "
+           "Java derive it at run time through qcmdpc-planes and Python writes "
+           "the expression inline, so there is no second value anywhere to "
+           "hold it against; a _Static_assert in herradura.h ties it to "
+           "QCMDPC_D, which is the check a PARAMETERS row would otherwise be")],
     "python": [(r"^_RNL_KDF_DC_", "the HFSCX-256 KDF's initialisation constants -- a "
                                   "hash IV, not a protocol parameter.  C keeps the same "
                                   "values and Go and Java build them inline")],

@@ -7750,13 +7750,77 @@ static void qcp_to_bytes(uint8_t out[QCMDPC_RBYTES], const QcPoly *p) {
             out[i * 8 + k] = (uint8_t)(p->w[i] >> (k * 8));
 }
 
-/* dst ^= ROL(src, j) mod (x^r - 1): bit i of src goes to bit (i+j)%r of dst */
-static void qcp_xor_rol(QcPoly *dst, const QcPoly *src, int j) {
-    int i;
-    for (i = 0; i < QCMDPC_R; i++) {
-        if (qcp_get(src, i))
-            qcp_flip(dst, (i + j) % QCMDPC_R);
+/* Bit-width of the last partially-used word, and the mask that keeps every
+ * operation inside r bits.  A QcPoly's bits at and above r are invariantly
+ * zero; the word-level shifts below are the only place that can break that, so
+ * each of them trims (TODO #330). */
+#define QCMDPC_TOPBITS (QCMDPC_R & 63)                      /* 35 */
+#define QCMDPC_TOPMASK (QCMDPC_TOPBITS ? (((uint64_t)1 << QCMDPC_TOPBITS) - 1u) \
+                                       : ~(uint64_t)0)
+static inline void qcp_trim(QcPoly *p) {
+    p->w[QCMDPC_RWORDS - 1] &= QCMDPC_TOPMASK;
+}
+
+/* out = in << s and out = in >> s over the whole RWORDS register, zero-filled.
+ * out and in must not alias.  The `bo ?` guards are not decoration: a shift by
+ * 64 - 0 is undefined, and that is the branch a naive version takes whenever
+ * the shift lands on a word boundary. */
+static void _qcp_shl(uint64_t *out, const uint64_t *in, int s) {
+    int wo = s >> 6, bo = s & 63, i;
+    for (i = QCMDPC_RWORDS - 1; i >= 0; i--) {
+        uint64_t lo = (i - wo >= 0)     ? in[i - wo]     : 0;
+        uint64_t hi = (i - wo - 1 >= 0) ? in[i - wo - 1] : 0;
+        out[i] = bo ? ((lo << bo) | (hi >> (64 - bo))) : lo;
     }
+}
+
+static void _qcp_shr(uint64_t *out, const uint64_t *in, int s) {
+    int wo = s >> 6, bo = s & 63, i;
+    for (i = 0; i < QCMDPC_RWORDS; i++) {
+        uint64_t lo = (i + wo     < QCMDPC_RWORDS) ? in[i + wo]     : 0;
+        uint64_t hi = (i + wo + 1 < QCMDPC_RWORDS) ? in[i + wo + 1] : 0;
+        out[i] = bo ? ((lo >> bo) | (hi << (64 - bo))) : lo;
+    }
+}
+
+/* dst = ROL(src, j) mod (x^r - 1): bit i of src goes to bit (i+j)%r of dst.
+ * The two halves are disjoint by construction -- the left shift supplies bits
+ * j..r-1 and the right shift bits 0..j-1 -- so the OR is also an XOR. */
+static void qcp_rotl(QcPoly *dst, const QcPoly *src, int j) {
+    QcPoly wrap;
+    int i;
+    /* PRECONDITION, AND NEWLY LOAD-BEARING.  src's bits at and above r must be
+     * zero.  The bit-by-bit predecessor IGNORED them -- it looped i < QCMDPC_R
+     * -- so a stray high bit was harmless there and wraps to the WRONG position
+     * here.  Every producer in this file maintains the invariant (qcp_set
+     * bounds j, qcp_inv's mod-(x^r - 1) fold CLEARS the bit it folds, and every
+     * mask operation below trims), and this guard is one AND per rotation so a
+     * future producer that does not is an abort rather than a silent wrong
+     * answer -- ba_nbytes' choke-point check from TODO #324, one type over. */
+    if (src->w[QCMDPC_RWORDS - 1] & ~QCMDPC_TOPMASK) {
+        fprintf(stderr, "qcp_rotl: QcPoly carries bits at or above r = %d\n",
+                QCMDPC_R);
+        exit(1);
+    }
+    j %= QCMDPC_R;
+    if (j == 0) { *dst = *src; return; }
+    _qcp_shl(dst->w, src->w, j);
+    qcp_trim(dst);
+    _qcp_shr(wrap.w, src->w, QCMDPC_R - j);
+    for (i = 0; i < QCMDPC_RWORDS; i++) dst->w[i] |= wrap.w[i];
+}
+
+/* dst ^= ROL(src, j) mod (x^r - 1).
+ *
+ * WAS BIT-BY-BIT, with a `%` per bit (TODO #330).  It is called QCMDPC_D times
+ * per qcp_mul_sparse and QCMDPC_R times per qcp_mul, so the private-syndrome
+ * derivation alone ran 874 933 modulo operations and keygen's one qcp_mul ran
+ * r times that.  Nothing about the result changed. */
+static void qcp_xor_rol(QcPoly *dst, const QcPoly *src, int j) {
+    QcPoly t;
+    int i;
+    qcp_rotl(&t, src, j);
+    for (i = 0; i < QCMDPC_RWORDS; i++) dst->w[i] ^= t.w[i];
 }
 
 /* dst = src · Σ_{k∈sup} x^k  mod (x^r - 1) */
@@ -8055,6 +8119,91 @@ static void qcmdpc_encap(QcPoly *syn_out, BitArray *K_out,
     qcmdpc_kem_key(K_out, &e0, &e1, syn_out);
 }
 
+/* ── Bit-sliced unsatisfied-parity counters (TODO #330) ── */
+/* TODO #276 rewrote the BGF decoder's UPC pass bit-sliced in PYTHON and its own
+ * checklist said "first".  There was never a second: C, Go and Java carried the
+ * per-position O(r*d) loop in the deployed BIKE-128 KEM, which at these
+ * parameters is QCMDPC_D * QCMDPC_R = 874 933 iterations per plane per decoder
+ * iteration, each with two integer divisions.  This is that rewrite, ported
+ * from the Python rather than redesigned -- #294's and #296's precedent that
+ * the right move is to adopt the port that is correct.
+ *
+ * Plane i holds bit i of EVERY position's counter, so one carry-save add per
+ * support element replaces r separate increments. */
+
+/* Sized from QCMDPC_D, not fixed: TODO #276's Python used four planes, which
+ * saturate at 15 -- exactly the RETIRED d -- and are silently wrong at 71.  A
+ * counter that saturates produces a smaller UPC, i.e. fewer flips and a higher
+ * DFR, with nothing to observe. */
+#define QCMDPC_NPLANE 7
+_Static_assert(QCMDPC_NPLANE >= 4 && QCMDPC_D < (1 << QCMDPC_NPLANE),
+    "QCMDPC_NPLANE must represent a count up to QCMDPC_D (TODO #330)");
+
+static void qcp_and(QcPoly *dst, const QcPoly *a, const QcPoly *b) {
+    int i;
+    for (i = 0; i < QCMDPC_RWORDS; i++) dst->w[i] = a->w[i] & b->w[i];
+}
+
+static void qcp_andnot(QcPoly *dst, const QcPoly *b) {   /* dst &= ~b */
+    int i;
+    for (i = 0; i < QCMDPC_RWORDS; i++) dst->w[i] &= ~b->w[i];
+}
+
+/* c[i] = bit i of upc[j] for every j, where upc[j] = Σ_{k∈sup} s[(j+k) % r].
+ * bit j of ROL(s, r-k) is bit (j+k) % r of s, which is the whole trick: the r
+ * reads of one support element become one rotation. */
+static void qcp_upc_planes(QcPoly c[QCMDPC_NPLANE], const QcPoly *s,
+                            const uint16_t *sup, int d) {
+    QcPoly v, cy;
+    int k, i, w;
+    for (i = 0; i < QCMDPC_NPLANE; i++) qcp_zero(&c[i]);
+    for (k = 0; k < d; k++) {
+        qcp_rotl(&v, s, (QCMDPC_R - sup[k]) % QCMDPC_R);
+        for (i = 0; i < QCMDPC_NPLANE; i++) {
+            uint64_t any = 0;
+            for (w = 0; w < QCMDPC_RWORDS; w++) {
+                uint64_t x = c[i].w[w], y = v.w[w];
+                cy.w[w] = x & y;
+                c[i].w[w] = x ^ y;
+                any |= cy.w[w];
+            }
+            if (!any) break;
+            v = cy;
+        }
+    }
+}
+
+/* out[j] = 1 iff the counter at position j is >= th, compared MSB first.
+ *
+ * Total rather than merely correct over the reachable range: at BIKE-128 the
+ * threshold rule tops out at 99, but a th outside [1, 2^NPLANE) would
+ * otherwise be read modulo 2^NPLANE.  The same two guards are in all four
+ * ports so the representation cannot diverge on an unreachable input. */
+static void qcp_mask_ge(QcPoly *out, const QcPoly c[QCMDPC_NPLANE], int th) {
+    QcPoly gt, eq;
+    int i, w;
+    if (th <= 0) {
+        for (w = 0; w < QCMDPC_RWORDS; w++) out->w[w] = ~(uint64_t)0;
+        qcp_trim(out);
+        return;
+    }
+    if (th >= (1 << QCMDPC_NPLANE)) { qcp_zero(out); return; }
+    qcp_zero(&gt);
+    for (w = 0; w < QCMDPC_RWORDS; w++) eq.w[w] = ~(uint64_t)0;
+    for (i = QCMDPC_NPLANE - 1; i >= 0; i--) {
+        if ((th >> i) & 1) {
+            for (w = 0; w < QCMDPC_RWORDS; w++) eq.w[w] &= c[i].w[w];
+        } else {
+            for (w = 0; w < QCMDPC_RWORDS; w++) {
+                gt.w[w] |= eq.w[w] & c[i].w[w];
+                eq.w[w] &= ~c[i].w[w];
+            }
+        }
+    }
+    for (w = 0; w < QCMDPC_RWORDS; w++) out->w[w] = gt.w[w] | eq.w[w];
+    qcp_trim(out);
+}
+
 /* ── BGF decoder ── */
 /* Recovers (e0, e1) from syn_pub using the private sparse supports.
    Returns 1 on success, 0 if syndrome weight nonzero after NB_ITER. */
@@ -8062,11 +8211,10 @@ static void qcmdpc_encap(QcPoly *syn_out, BitArray *K_out,
 static int qcmdpc_bgf_decode(QcPoly *e0_out, QcPoly *e1_out,
                               const QcPoly *syn_pub,
                               const QcMdpcPriv *priv) {
-    QcPoly s, e0, e1;
-    uint8_t upc0[QCMDPC_R], upc1[QCMDPC_R];
-    uint16_t black0[QCMDPC_R], black1[QCMDPC_R];
-    uint16_t gray0[QCMDPC_R],  gray1[QCMDPC_R];
-    int nb0, nb1, ng0, ng1, it, bi, j, k;
+    QcPoly s, e0, e1, tmp;
+    QcPoly c0[QCMDPC_NPLANE], c1[QCMDPC_NPLANE];
+    QcPoly black0, black1, gray0, gray1;
+    int it, pass;
     int th_floor = (QCMDPC_D + 1) / 2 + 1;  /* = 37; BIKE's masked-pass floor */
 
     /* Private syndrome: s = syn_pub · h0 */
@@ -8083,68 +8231,48 @@ static int qcmdpc_bgf_decode(QcPoly *e0_out, QcPoly *e1_out,
         int th = (int)(QCMDPC_TH_SLOPE * (double)qcp_popcount(&s) + QCMDPC_TH_OFFSET);
         if (th < QCMDPC_TH_MIN) th = QCMDPC_TH_MIN;
 
-        /* Compute UPC: upc_b[j] = Σ_{k∈sup_b} s[(j+k) % r] */
-        memset(upc0, 0, QCMDPC_R); memset(upc1, 0, QCMDPC_R);
-        for (k = 0; k < QCMDPC_D; k++) {
-            for (j = 0; j < QCMDPC_R; j++) {
-                upc0[j] += (uint8_t)qcp_get(&s, (j + priv->sup0[k]) % QCMDPC_R);
-                upc1[j] += (uint8_t)qcp_get(&s, (j + priv->sup1[k]) % QCMDPC_R);
-            }
-        }
+        /* Black (≥th) and gray (≥th-τ, excluding black) as MASKS rather than
+         * position lists.  Both are read off the syndrome BEFORE any flip in
+         * either group is applied, exactly as the per-position version read its
+         * upc array once and then walked it. */
+        qcp_upc_planes(c0, &s, priv->sup0, QCMDPC_D);
+        qcp_upc_planes(c1, &s, priv->sup1, QCMDPC_D);
+        qcp_mask_ge(&black0, c0, th);
+        qcp_mask_ge(&black1, c1, th);
+        qcp_mask_ge(&gray0,  c0, th - QCMDPC_TAU);
+        qcp_mask_ge(&gray1,  c1, th - QCMDPC_TAU);
+        qcp_andnot(&gray0, &black0);
+        qcp_andnot(&gray1, &black1);
 
-        /* Partition into black (≥th) and gray (≥th-2) sets */
-        nb0 = nb1 = ng0 = ng1 = 0;
-        for (j = 0; j < QCMDPC_R; j++) {
-            if      (upc0[j] >= (uint8_t)th)     black0[nb0++] = (uint16_t)j;
-            else if (upc0[j] >= (uint8_t)(th - QCMDPC_TAU)) gray0[ng0++] = (uint16_t)j;
-            if      (upc1[j] >= (uint8_t)th)     black1[nb1++] = (uint16_t)j;
-            else if (upc1[j] >= (uint8_t)(th - QCMDPC_TAU)) gray1[ng1++] = (uint16_t)j;
-        }
-        /* Apply black flips */
-        for (bi = 0; bi < nb0; bi++) {
-            j = black0[bi];
-            qcp_flip(&e0, j);
-            for (k = 0; k < QCMDPC_D; k++)
-                qcp_flip(&s, (priv->sup0[k] + j) % QCMDPC_R);
-        }
-        for (bi = 0; bi < nb1; bi++) {
-            j = black1[bi];
-            qcp_flip(&e1, j);
-            for (k = 0; k < QCMDPC_D; k++)
-                qcp_flip(&s, (priv->sup1[k] + j) % QCMDPC_R);
-        }
+        /* A whole group's flips in one multiply.  Not an approximation: each
+         * flip at j contributes ROL(h_b, j) to the syndrome and XOR is
+         * commutative, so the group's contribution is h_b times the OR of its
+         * positions -- which is what qcp_mul_sparse of the mask computes. */
+        qcp_xor(&e0, &black0);
+        qcp_mul_sparse(&tmp, &black0, priv->sup0, QCMDPC_D);
+        qcp_xor(&s, &tmp);
+        qcp_xor(&e1, &black1);
+        qcp_mul_sparse(&tmp, &black1, priv->sup1, QCMDPC_D);
+        qcp_xor(&s, &tmp);
 
         if (it == 0) {
             /* BGF: re-check black then gray with th_floor */
-            int pass;
             for (pass = 0; pass < 2; pass++) {
-                memset(upc0, 0, QCMDPC_R); memset(upc1, 0, QCMDPC_R);
-                for (k = 0; k < QCMDPC_D; k++) {
-                    for (j = 0; j < QCMDPC_R; j++) {
-                        upc0[j] += (uint8_t)qcp_get(&s, (j + priv->sup0[k]) % QCMDPC_R);
-                        upc1[j] += (uint8_t)qcp_get(&s, (j + priv->sup1[k]) % QCMDPC_R);
-                    }
-                }
-                int nb_b0 = (pass == 0) ? nb0 : ng0;
-                int nb_b1 = (pass == 0) ? nb1 : ng1;
-                uint16_t *blk0 = (pass == 0) ? black0 : gray0;
-                uint16_t *blk1 = (pass == 0) ? black1 : gray1;
-                for (bi = 0; bi < nb_b0; bi++) {
-                    j = blk0[bi];
-                    if (upc0[j] >= (uint8_t)th_floor) {
-                        qcp_flip(&e0, j);
-                        for (k = 0; k < QCMDPC_D; k++)
-                            qcp_flip(&s, (priv->sup0[k] + j) % QCMDPC_R);
-                    }
-                }
-                for (bi = 0; bi < nb_b1; bi++) {
-                    j = blk1[bi];
-                    if (upc1[j] >= (uint8_t)th_floor) {
-                        qcp_flip(&e1, j);
-                        for (k = 0; k < QCMDPC_D; k++)
-                            qcp_flip(&s, (priv->sup1[k] + j) % QCMDPC_R);
-                    }
-                }
+                const QcPoly *g0 = (pass == 0) ? &black0 : &gray0;
+                const QcPoly *g1 = (pass == 0) ? &black1 : &gray1;
+                QcPoly f0, f1, k0, k1;
+                qcp_upc_planes(c0, &s, priv->sup0, QCMDPC_D);
+                qcp_upc_planes(c1, &s, priv->sup1, QCMDPC_D);
+                qcp_mask_ge(&f0, c0, th_floor);
+                qcp_mask_ge(&f1, c1, th_floor);
+                qcp_and(&k0, &f0, g0);
+                qcp_and(&k1, &f1, g1);
+                qcp_xor(&e0, &k0);
+                qcp_mul_sparse(&tmp, &k0, priv->sup0, QCMDPC_D);
+                qcp_xor(&s, &tmp);
+                qcp_xor(&e1, &k1);
+                qcp_mul_sparse(&tmp, &k1, priv->sup1, QCMDPC_D);
+                qcp_xor(&s, &tmp);
             }
         }
     }
@@ -8171,9 +8299,31 @@ static int qcmdpc_bgf_decode(QcPoly *e0_out, QcPoly *e1_out,
    that e' has the weight an honest encapsulation samples, so that is the half
    checked explicitly here.  Decap therefore needs no access to h_pub.
 
-   Not constant time: the decoder is not, and neither is this branch.  Timing
-   side channels are out of scope at these parameters (SecurityProofs-5.md
-   §11.8.7); implicit rejection closes the *protocol-level* oracle only. */
+   Not constant time: the decoder is not, and neither is this branch.  Implicit
+   rejection closes the *protocol-level* oracle only.
+
+   THE JUSTIFICATION THIS USED TO CARRY RESTED ON RETIRED PARAMETERS (TODO
+   #330).  It said timing was "out of scope at these parameters", citing
+   SecurityProofs-5.md §11.8.7 -- whose own wording is "AT THESE PARAMETERS that
+   is not the binding constraint", written at v3.3.0 / TODO #235 when the
+   instance was (r, d, t) = (523, 15, 18), worth ~2^21 classical.  Timing was
+   moot there because the KEM was breakable outright.  TODO #276 adopted
+   BIKE-128 four majors later and INVERTED that: at ~2^128 a channel separating
+   decode success from decode failure is a candidate cheapest attack, and for
+   QC-MDPC it is specifically the GJS reaction signal against the PRIVATE KEY --
+   the attack §11.8.7's own table measures.  The out-of-scope sentence did not
+   move with the parameters and is withdrawn rather than re-pointed.
+
+   What is true today, measured rather than argued: the decoder is bit-sliced
+   (TODO #330) and no longer indexes on secret data, but it still carries a
+   secret-dependent early exit (`if (qcp_is_zero(&s)) break;`) and a
+   threshold-dependent iteration count, so the ITERATION COUNT varies with the
+   error pattern.  SecurityProofsCode/dudect_timing_audit.c Batch 10 measures
+   both axes and SecurityProofs-7.md §11.11 Batch 10 records the numbers.  A
+   FIXED iteration count is the standard route to an oblivious BIKE decoder and
+   is deliberately NOT taken here: it changes the DFR that TODO #285 and #250
+   measure, so it is a posture decision with its own blast radius, filed rather
+   than slipped in. */
 
 static void qcmdpc_decap_bgf(BitArray *K_out, const QcPoly *syn,
                               const QcMdpcPriv *priv) {

@@ -16839,7 +16839,12 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
   about**: isolating the decode gives 6.9 ms against 65 ms for the FO re-encryption hash,
   so the decoder is no longer the cost centre in either parameter set and 90% of a
   decapsulation is now HFSCX-256 over the ~4.6 KB of `e0 || e1 || syn`.  If Python
-  decapsulation needs to get faster after the port, that is where the time is;
+  decapsulation needs to get faster after the port, that is where the time is.
+  **CORRECTED BY TODO #330 (v9.6.0): that conclusion is PORT-LOCAL and reads as general.**
+  It is true in Python and false in C, where the same hash costs 1.289 ms against a decoder
+  in the tens of milliseconds.  The word "first" in this very line turned out to be the
+  finding: there was never a second, so C, Go and Java carried the per-position `O(r*d)` loop
+  in the deployed KEM for four majors.  #330 ported it to all three;
 * `QCMDPC_MAX_MULT` 5 -> 6, in four languages that nothing cross-checks (`spec/` reads
   `herradura.h` alone);
 * test [51]'s pinned distance-spectrum supports, all at `d = 15`, in four languages, plus
@@ -22536,3 +22541,241 @@ Scope: this covers the two directories censused, and does not become a rule for 
 in the repo.  The cost benchmarks are BUILD-AND-SMOKE, not trusted for their numbers.
 
 Status: **DONE v9.5.18** — 15 executables censused under `docs/examples/` and `benchmarks/`, 11 unclaimed; `rnl_ring_cost.py` repaired (`E_WIDTH: 512` since v9.3.0) and three FFI-consuming benchmarks shown aborting (rc=134) against the pre-#324 shim; `tools/check_runnable_coverage.py` discovers by ENTRY POINT with `EXEMPT` empty; nine controls fire, one holds.
+
+---
+
+### #330: the bit-sliced QC-MDPC decoder TODO #276 shipped to one port of four
+
+**TODO #276 rewrote the BGF decoder bit-sliced and its own closing checklist says so in
+the word that matters**: *"~~the Python decoder rewritten bit-sliced, **first**~~ **DONE
+v6.7.3**"*.  There was never a second.  C, Go and Java still carry the per-position
+`O(r*d)` UPC loop in the DEPLOYED post-quantum KEM, at BIKE-128.
+
+| port | UPC inner loop | cost per step |
+|---|---|---|
+| Python | bit-sliced; counters as bitplanes over big integers, `O(d)` big-int ops | — |
+| C | `upc0[j] += qcp_get(&s, (j + sup0[k]) % QCMDPC_R)` | two integer `%`, inline shift |
+| Go | `s.Bit((j+k)%r)` | `%` plus a `big.Int` method call |
+| Java | `s.testBit((j+k)%r)` | `%` plus a `BigInteger.testBit` |
+
+At BIKE-128 that loop is `QCMDPC_D * QCMDPC_R` = 71 * 12323 = **874 933 iterations per
+plane per decoder iteration**, two planes, `QCMDPC_NB_ITER` = 5 -- so Java performs
+roughly **8.7 million `BigInteger.testBit` calls per decapsulation**, and C roughly 8.7
+million integer divisions.
+
+**Measured before filing** (aarch64 SBC; the machine was NOT idle for some of these and
+each is labelled, because #327's rule is that a cost measurement is worth exactly as much
+as the control over what else was running):
+
+* Decapsulation of `KAT/pem/kem_ct.pem`, process start included.  First pass, five runs
+  each at loadavg 1.23: C 56.3 ms, Go 119.1 ms, Python 224.9 ms.  **RE-MEASURED** on a
+  quiet machine (loadavg 1.4, desktop baseline only, `apt` gone), 8 runs per port
+  ROUND-ROBIN so drift and order cannot favour one leg: medians **C 55 ms, Go 126 ms,
+  Python 237 ms** (C 39-70, Go 102-176, Python 212-265).  Both passes agree; the ordering
+  is C, then Go at ~2.3x, then Python at ~4.3x.  The wide C spread is process startup, so
+  an EXACT per-phase profile is still owed by this item rather than inferred from these
+  end-to-end numbers.
+* C's UPC pass alone, one plane, one iteration: **2.57 ms** -- so about 26 ms across both
+  planes and five iterations, against the 1.289 ms hash below.
+* Removing ONLY the `% QCMDPC_R`, by splitting the `j` range at the wrap point (no
+  algorithm change, no representation change): **2.05x**, output verified bit-identical
+  (`agree: YES`, 440129 both ways).  Measured twice, 15 ABBA-interleaved pairs each: at
+  loadavg 3.7 it gave min 1.99x / median 2.05x / max 4.36x, and re-run at loadavg 0.75 it
+  gives **min 2.04x / median 2.05x / max 2.05x**.  **The median was unmoved and the SPREAD
+  was the only thing contention touched** -- which is the useful methodological note, and
+  the reason the first pass quoted min-and-median and discarded the 4.36x rather than
+  reporting a range.  The bit-sliced form should be worth considerably more than this; the
+  modulo is the floor, not the win.
+
+**AND IT CORRECTS A CONCLUSION THAT READS AS GENERAL AND IS PORT-LOCAL.**  #276 measured,
+after bit-slicing Python, that *"isolating the decode gives 6.9 ms against 65 ms for the FO
+re-encryption hash, so **the decoder is no longer the cost centre** in either parameter set
+and 90% of a decapsulation is now HFSCX-256 over the ~4.6 KB of `e0 || e1 || syn`"*.  True
+where it was measured and **false in C**: HFSCX-256-DS over the 3114-byte decap buffer
+costs **1.289 ms** (median of 9, min 1.287, so stable despite load) against a decoder in
+the tens of milliseconds.  **The cost centre differs by port and no document says so** --
+#286's shape (a claim reading the present tense off one instance) and #310's (a reason
+exact about the wrong object).  Anyone optimising C or Go on the strength of that sentence
+would work on the hash and leave the real term untouched.
+
+**THE SECURITY HALF IS THE SAME ENGINEERING, and it is not that the decoder is
+non-constant-time -- that IS documented.**  `herradura.h` says so inline.  What is wrong is
+the JUSTIFICATION and the absence of a posture record.
+
+* **The decoder has never been timing-audited.**  Zero mentions across all nine batches of
+  SecurityProofs-7.md 11.11; absent from `dudect_timing_audit.c`'s 14 registered cases
+  (which cover `gf_mul`, `gf_pow`, `ba_mul_mod_ord`, `ba_fscx_revolve`, `stern_gen_perm`,
+  `stern_apply_perm`, `hpks_wots_sign`, `rnl_hint`, `rnl_reconcile_bits`, `rnl_agree`);
+  absent from 11.13's physical register; and not named in `SECURITY.md`'s C-row
+  enumeration -- in a section whose own opening sentence is that the posture is stated
+  per target **"so it is not inferred from silence."**
+* **Its only authority rests on retired parameters.**  `herradura.h` cites
+  SecurityProofs-5.md 11.8.7, which says *"**at these parameters** that is not the binding
+  constraint, and it is not claimed to be closed."*  `git log -S` dates that sentence to
+  **v3.3.0 / TODO #235**, when the instance was `(523, 15, 18)` -- the set #276's own
+  analysis values at **~2^21 classical**, i.e. timing was moot because the KEM was
+  breakable outright.  **#276 (v7.0.0), four majors later, adopted BIKE-128 (~2^128), which
+  INVERTS the argument**: at 128 bits a channel separating decode-success from
+  decode-failure becomes a candidate cheapest attack, and for QC-MDPC specifically it is
+  the GJS reaction signal against the PRIVATE KEY -- the very attack 11.8.7's own table
+  measures.  The decoder still carries a secret-dependent early exit
+  (`if (qcp_is_zero(&s)) break;`) and threshold-dependent branching, so the iteration count
+  varies with the error pattern.
+* A bit-sliced decoder with a FIXED iteration count and no data-dependent indexing is the
+  standard route to an oblivious BIKE decoder, so the performance port and the posture gap
+  close together.  **The correct implementation already exists in-tree**, which is #294's
+  and #296's precedent: adopt the port that is right rather than invent a fourth design.
+
+**TWO THINGS CHECKED AND NOT FOUND**, recorded so they are not re-investigated.
+`SECURITY.md`'s C row is **not** overstating its coverage: Batch 4 audited HKEX-RNL,
+ZKP-RNL and HCRED **by inspection**, and the Basis column does say "dudect leakage testing
+**plus inspection**".  And the decoder's non-constant-time status is **not** undocumented.
+The finding is narrower than either and is the two bullets above.
+
+**Scope, and what is deliberately NOT in this item** (#312: a change must not settle a
+question it happens to expose).
+
+* **HFSCX-256 measures 2.42 MB/s** in optimised C -- about 13 us per 32-byte Davies-Meyer
+  block -- it has a correctness KAT `[19]` and **no throughput row anywhere**, and it
+  bounds every PQC primitive: Stern-F at `rounds = 219`, the ZKPs, KKW, the KEM.  It also
+  `malloc`s and copies a padded duplicate of the whole message per call.  That is a bigger
+  lever than this decoder and is a separate item.
+* **`hpke-stern-kem` has no benchmark row in any of the six harnesses** -- benchmarks are
+  `[32]`-`[43]` and none of them is the deployed KEM, so the suite's post-quantum KEM has
+  no published cost figure at all.  Also separate, and a prerequisite for claiming any
+  speed-up here: a figure this item improves should be one the harness publishes.
+* Whether to make the decoder genuinely CONSTANT-TIME, as opposed to merely faster and
+  structurally oblivious, is a posture DECISION with a blast radius (a fixed iteration
+  count changes the DFR, which #285 and #250 both measure).  This item owes the
+  measurement and the recommendation; it must not quietly adopt a new posture.
+
+Acceptance: the three ports carry the bit-sliced decoder; every port still agrees
+bit-for-bit with the others and with `KAT/pem/kem_*` on both the success and the
+implicit-rejection path (#284's pinned garbage is what makes that checkable); the
+before/after decapsulation cost is measured UNCONTENDED per port; and the posture record
+says what was audited and what was not.
+
+**Status: DONE v9.5.19.**  All three ports carry the bit-sliced decoder.
+
+**(1) Measured uncontended, ABBA-interleaved and ROUND-ROBINED over the four ports** against
+the v9.5.18 build (worktree at `3c9ea24`), loadavg 0.87-0.92, desktop baseline only, with
+**Python as the control** -- its decoder did not change, so a host that drifted between legs
+shows up there and did not (`1.04x` end to end, `0.99x` on the decoder):
+
+| port | CLI decap end to end | decoder in isolation |
+|---|---|---|
+| C | `46.3 ms` -> `6.1 ms` (7.6x) | `27.49 ms` -> `2.18 ms` (**12.6x**) |
+| Go | `107.6 ms` -> `73.9 ms` (1.46x) | `58.4 ms` -> `5.8 ms` (**10.1x**) |
+| Java | `369.1 ms` -> `269.9 ms` (1.37x) | `148.3 ms` -> `26.1 ms` (**5.7x**) |
+| Python (control) | `232.6 ms` -> `223.1 ms` | `5.60 ms` -> `5.63 ms` |
+
+C's three ABBA reps spread 1% in both builds (`27.45-27.73` and `2.17-2.20`).  **The
+end-to-end column moves by less than the decoder column, and the reason is worth keeping**:
+it carries process start and the FO hash, and the pinned KAT ciphertext is ONE instance where
+the decoder benches average six -- decode time depends on the error pattern, which is axis A
+of the audit below.  Two measurements of two different instances are not a discrepancy, but
+quoting only the end-to-end figure would have understated the decoder by 5x in Go.
+
+**(2) Bit-for-bit agreement, on both paths.**  `CliTest/test_kat_pem.sh` 40/0 -- every port
+against FIXED bytes for the decode-success output and for #284's pinned implicit-rejection
+garbage, which is what makes a four-way DRIFT visible where a round-trip only catches a
+divergence.  `test_stern_kem.sh` 18/0.  Beyond the pinned instance: the C A/B agrees on a
+digest over **20 independent keygen/encap/decap instances**, and each per-port decoder bench
+reports an identical accumulator in both builds.
+
+**(3) The posture record.**  `dudect_timing_audit.c` Batch 10 registers the decoder in the
+harness it was absent from, on the two axes that matter, and §11.11 Batch 10 plus
+`SECURITY.md`'s C row carry the numbers.  Axis A (error pattern): `1.99` vs `2.09 ms`,
+`|t| = 7.07`.  Axis B (GJS): `1.99` vs `3.46 ms`, decoded 133/133 vs **0/133** -- a `74%` mean
+separation, so **a single trace distinguishes them and the t statistic understates it**.  The
+"out of scope at these parameters" justification is WITHDRAWN in §11.8.7 and in
+`herradura.h`, not re-pointed, for the reason the item gives.  What bit-slicing bought is the
+ADDRESS channel: the UPC pass no longer indexes memory on secret data at all.  What remains is
+the ITERATION COUNT, and a fixed one is NOT adopted -- it moves the DFR that #285 and #250
+measure, so it stays a posture decision (#312).
+
+**FOUR THINGS WORTH CARRYING FORWARD.**
+
+**(a) The word "first" was the whole item, and the correction underneath it was port-local.**
+#276's own checklist said "the Python decoder rewritten bit-sliced, **first**" and there was
+never a second.  The sentence that let it rest was its cost conclusion -- "the decoder is no
+longer the cost centre... 90% is HFSCX-256" -- which is a measurement of PYTHON stated in the
+present tense about the protocol.  In C the same hash is `1.289 ms` against a decoder in the
+tens of milliseconds, so anyone optimising C or Go on the strength of it would have worked on
+the hash.  #286's shape and #310's, corrected in place in `CHANGELOG.md` and `TODO_DONE.md`.
+It is true in C *now*, and only because of this item: `2.18 ms` of a `4.00 ms` decap.
+
+**(b) THE MANIFEST COULD NOT SEE ITS OWN FALSE REASON, and that is the transferable finding.**
+`PRIMITIVES["qcmdpc-upc"]` said "Java factors the UPC counter out of the decoder loop; C, Go
+and Python count inline" and anchored on `computeUpc`, which this item DELETED -- and the row
+stayed green, because `check_primitives` read `if hits == 0: if reason: continue`.  An
+`acknowledged` reason is meant to excuse an ABSENT CELL; it was also excusing a DEAD ANCHOR, so
+a row could describe a port's code and decline to point at it.  The same hole hid the Python
+`CENSUS_EXEMPT` rule whose reason said "C, Go and Java hold ordinary per-position counter
+arrays and have nothing to port" -- that one did not fail either, because its regex still
+matched while its reason had become false.  Tightening the rule (a PRESENT marker must match
+exactly once, `acknowledged` or not) **found three more on its first run**, all live functions
+whose signatures moved at #314 pass 5 and whose markers had been unanchored since v9.4.0:
+`qcprf-refill` (`int[]` -> `byte[]`), `nl-fscx-delta-v2` and `hske-nl-aead-streams`
+(`BigInteger` -> `BitArray`).  Those three are the negative control -- it was not asserted to
+fire, it fired.
+
+**(c) A STALE COMMENT HAD GONE STALE IN ITS OWN RELEASE.**  #276's Python said four planes
+"saturate at 15, which is exactly the deployed `QCMDPC_D`" -- and #276 moved the deployed `d`
+to 71 in the same release.  The code was right (it sized `nb` from `d`); the sentence was
+wrong, in the direction that invites a future reader to hardcode 4.  All four ports now derive
+`max(4, bit_length(d))`, C through `QCMDPC_NPLANE` with a `_Static_assert` tying it to
+`QCMDPC_D`, because a saturating counter yields a SMALLER UPC -- fewer flips, a higher DFR --
+with nothing to observe.
+
+**(d) A WORD SHIFT CANNOT IGNORE WHAT A BIT LOOP COULD.**  `qcp_xor_rol` looped `i < QCMDPC_R`,
+so a `QcPoly` carrying bits at or above `r` was harmless; the word-level rotation that replaced
+it wraps them to the WRONG position.  Every producer in `herradura.h` maintains the invariant
+(`qcp_set` bounds its index, `qcp_inv`'s mod-`(x^r - 1)` fold CLEARS the bit it folds), and it
+was verified by reading them rather than assumed -- but the invariant is now load-bearing where
+it was incidental, so `qcp_rotl` carries a one-AND choke-point guard on TODO #324's `ba_nbytes`
+model: a future producer that breaks it aborts instead of returning a quietly wrong answer.
+That rewrite also pays elsewhere, which is why it is here at all: `qcp_mul` calls it `r` times,
+so **C keygen goes `264.4 ms` -> `197.6 ms`** with no output changed.
+
+**AND A DEFECT THIS ITEM'S OWN CI RUN TURNED UP, in a test it does not touch.**  The
+`sanitizers` job went red on `[21] ZKP-RNL` at n = 32 with `tamper_reject=4/5`, and PASSED on
+the same commit in the other run -- the signature of a sampled gate firing, not a regression.
+**THE RECORD PRICED ONE OF TWO IDENTICAL BRANCHES.**  `[21]` has two cheats requiring the
+verifier's RECOMPUTED Fiat-Shamir challenge to DIFFER (a different MESSAGE, and a tampered
+COMMITMENT), so each turns on a CHALLENGE COLLISION in a space of `comb(n, t)*2^t` = 575 360 at
+n = 32, t = 4 -- 8.7e-6 each.  #321 took the row off `exact` for the **w** case and recorded
+that number; its reason then said the other cheats "really are exact", true of `wrongkey` and
+`z_tamper` (residual-norm, ~1e-93) and **false of the wrong-message one**.  The row advertised
+8.7e-6 where the test carried **1.74e-5 -- 92% of the whole numbered-test budget**.  Second time
+this row has carried a reason exact about the wrong object (#310's shape).  **And the verifier
+was RIGHT**: on a collision the proof genuinely IS valid for the second message, so scoring the
+accept as a rejection failure scored the verifier for being correct -- a probabilistic property
+asserted as a deterministic one, the class #233 fixed in three tests.  **MEASURED BEFORE
+ANYTHING CHANGED, in two instruments**: a C probe over the shipped header at a reduced t = 1
+gave 28 accepts in 2000 trials, 28 collisions, THE SAME 28 -- exactly; and
+`measure_sampled_rates.py` in Python gives witness 600/600 at t = 1 and 600/600 at t = 2.  At
+the shipped t = 4 the event is 0 in 4000 under -O2 and 0 in 1200 under the job's own ASan+UBSan
+build, so the rate was confirmed small rather than assumed.  **Remedy: #310's for [53] on the
+WIDTH axis** -- both FS-binding cases run at n = 256 only, where t = 16 puts the pair at
+**1.5e-29** -- which ADOPTS THE PORT THAT WAS ALREADY RIGHT, since `SelfTest.java`'s [30] runs
+at n = 256 only and never had the defect (#294, #296), so Java needed no change.  A skipped case
+keeps its own denominator and prints `n/a` (#291), and the skip has a POSITIVE half that
+[FAIL]s if NO width runs them (#234, #326).  Both controls were verified to FIRE.  The
+numbered-test budget goes **1.9e-05 -> 1.0e-05**.
+
+**WHAT IS STILL NOT DONE, and the one place this item fell short of its own text.**  The item
+listed `hpke-stern-kem`'s missing benchmark row as "separate, and a prerequisite for claiming
+any speed-up here".  **No row was added**, and the speed-up is instead published as a
+reproducible A/B against the tagged baseline -- which is a stronger claim than a harness row
+(it is a before/after on one host rather than an absolute host-specific rate) but is not the
+thing the item asked for.  The reason: a row would publish a host-specific cost figure inside a
+required job, which is #292's recorded position, and the benchmark layer is #327's and #328's
+axis.  Recorded as a shortfall rather than argued away.  Also untouched and still owed
+elsewhere: HFSCX-256's `2.42 MB/s` with no throughput row and a `malloc`-plus-copy per call,
+and the constant-time decision above.
+
+Status: **DONE v9.5.19** — the bit-sliced decoder ported to C, Go and Java (decoder 12.6x /
+10.1x / 5.7x, bit-identical on both the success and implicit-rejection paths), #276's
+port-local cost conclusion corrected, and the decoder registered in the timing audit with
+§11.8.7's retired-parameter justification withdrawn.

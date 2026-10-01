@@ -57,13 +57,33 @@ physical-side-channel risk register is §11.13 (TODO #160).
 
 | Target | Timing side channels | Basis |
 |---|---|---|
-| **C** (`herradura.h`, C CLI) | **Audited.** Two real leaks found and fixed; all core primitives, the eight `hkex_`/`hske_`/`hpks_`/`hpke_` entry points, WOTS/XMSS, Stern-F, HKEX-RNL reconciliation, ZKP-RNL and HCRED covered | Statistical fixed-vs-random (dudect) leakage testing plus inspection — `SecurityProofsCode/dudect_timing_audit.c`, re-verified each pass |
+| **C** (`herradura.h`, C CLI) | **Audited, with one target NOT clean and named below.** Two real leaks found and fixed; all core primitives, the eight `hkex_`/`hske_`/`hpks_`/`hpke_` entry points, WOTS/XMSS, Stern-F, HKEX-RNL reconciliation, ZKP-RNL and HCRED covered, and since TODO #330 the QC-MDPC BGF decoder — which **leaks decode success vs. failure** and is the one audited target with a measured channel rather than a clean verdict | Statistical fixed-vs-random (dudect) leakage testing plus inspection — `SecurityProofsCode/dudect_timing_audit.c`, re-verified each pass |
 | **Assembly** (ARM Thumb-2, NASM i386) | **Not empirically audited.** The GF multiply and the `stern_apply_perm` equivalent are branchless *by construction*, with the masking documented at the call sites, but no leakage testing has ever been run against these targets | Inspection only |
 | **Go** (`herradura/`, Go CLI) | **Not audited.** Data-dependent branching is avoided in critical paths, and the Stern permutation carries the same Lemire fix as C (TODO #129 Batch 3), but no leakage testing has been run | Inspection only; no dudect equivalent exists |
 | **Java** (`bindings/java/`) | **Not audited, and not achievable as written.** `java.math.BigInteger` offers no constant-time guarantee regardless of how the arithmetic is expressed | `bindings/java/README.md` |
 | **Python** (suite, Python CLI) | **Explicitly not constant-time**, by design. Do not use where timing side channels matter | Reference implementation |
 
-**Two documented limits on even the C result.**  First, a small residual timing signal on
+**The one target with a measured channel, stated here rather than left to the audit (TODO
+#330).**  `qcmdpc_bgf_decode` — the trapdoor of `hpke-stern-kem`, the suite's deployed
+post-quantum KEM — is **not constant time, and its timing separates a decoding success from a
+decoding failure**.  That distinction is the GJS reaction signal, which recovers the QC-MDPC
+*private key* from the decoder's failure behaviour, so it is the sharpest channel anywhere in
+this table.  Three things to be clear about.  It is not new, and `herradura.h` has always said
+the decoder is non-constant-time inline; what TODO #330 changed is that the decoder is now
+**measured** (`dudect_timing_audit.c` Batch 10, two axes) and **named here**, where before it
+appeared in no case of the harness, no batch of §11.11, and no row of this section — in a
+section whose own opening sentence is that the posture is stated per target so it is not
+inferred from silence.  The justification it used to rest on is **withdrawn**: SecurityProofs-5.md
+§11.8.7 said timing was "not the binding constraint *at these parameters*", written when the
+instance was worth about `2^21` classical operations, and TODO #276's adoption of BIKE-128
+inverted that argument without moving the sentence.  And implicit rejection (TODO #235) closes
+the **protocol-level** oracle only — decapsulation always returns a key — which was never a
+claim about timing.  Mitigation: `hpke-stern-kem` must not be used where a local attacker can
+time decapsulation.  Closing the channel needs a fixed-iteration decoder, which changes the
+failure rate TODO #285 and #250 measure, and is therefore a separate posture decision rather
+than part of the performance work that measured it.
+
+**Two further documented limits on the C result.**  First, a small residual timing signal on
 `stern_gen_perm`/`stern_apply_perm` is *positively attributed* to the audit harness's own
 degenerate all-zero test point rather than to a code path: swapping the fixed class to a
 non-degenerate `0xA5` pattern takes `|t|` from ~17 to under 1.5 with nothing else changed,

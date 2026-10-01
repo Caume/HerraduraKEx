@@ -6807,33 +6807,101 @@ func putLE(buf []byte, v *big.Int) {
 	}
 }
 
+// ── Bit-sliced unsatisfied-parity counters (TODO #330) ──
+//
+// TODO #276 rewrote the BGF decoder's UPC pass bit-sliced in PYTHON and its own
+// checklist said "first".  There was never a second: C, Go and Java carried the
+// per-position O(r*d) loop in the deployed BIKE-128 KEM -- here a
+// `s.Bit((j+k)%r)` inside QcMdpcD * QcMdpcR = 874 933 iterations per plane per
+// decoder iteration, each one a modulo plus a big.Int method call.  This is
+// that rewrite, ported from the Python rather than redesigned (#294's and
+// #296's precedent: adopt the port that is correct).
+//
+// Plane i holds bit i of EVERY position's counter, so one carry-save add per
+// support element replaces r separate increments.
+
+// qcmdpcPlanes is the plane count, sized from d rather than fixed: TODO #276's
+// Python used four planes, which saturate at 15 -- exactly the RETIRED d -- and
+// are silently wrong at 71.  A saturating counter produces a smaller UPC, i.e.
+// fewer flips and a higher DFR, with nothing to observe.
+func qcmdpcPlanes(d int) int {
+	nb := bits.Len(uint(d))
+	if nb < 4 {
+		nb = 4
+	}
+	return nb
+}
+
+// qcmdpcCounters returns upc[j] = sum over k in sup of s[(j+k) % r], for every
+// j at once, as nb bitplanes.  Bit j of (s >> k | s << (r-k)) is bit (j+k)%r of
+// s, which is the whole trick: the r reads of one support element become one
+// rotation.
+func qcmdpcCounters(s *big.Int, sup []int, r int, full *big.Int, nb int) []*big.Int {
+	c := make([]*big.Int, nb)
+	for i := range c {
+		c[i] = new(big.Int)
+	}
+	v, cy := new(big.Int), new(big.Int)
+	hi := new(big.Int)
+	for _, k := range sup {
+		if k == 0 {
+			v.Set(s)
+		} else {
+			v.Rsh(s, uint(k))
+			hi.Lsh(s, uint(r-k))
+			v.Or(v, hi)
+			v.And(v, full)
+		}
+		for i := 0; i < nb; i++ {
+			cy.And(c[i], v)
+			c[i].Xor(c[i], v)
+			v, cy = cy, v
+			if v.Sign() == 0 {
+				break
+			}
+		}
+	}
+	return c
+}
+
+// qcmdpcMaskGe returns the mask whose bit j is set iff the counter at position
+// j is >= th, compared MSB first across the planes.
+//
+// Total rather than merely correct over the reachable range: at BIKE-128 the
+// threshold rule tops out at 99, but a th outside [1, 2^nb) would otherwise be
+// read modulo 2^nb.  The same two guards are in all four ports so the
+// representation cannot diverge on an unreachable input.
+func qcmdpcMaskGe(c []*big.Int, full *big.Int, th, nb int) *big.Int {
+	if th <= 0 {
+		return new(big.Int).Set(full)
+	}
+	if th >= 1<<uint(nb) {
+		return new(big.Int)
+	}
+	gt := new(big.Int)
+	eq := new(big.Int).Set(full)
+	t := new(big.Int)
+	for i := nb - 1; i >= 0; i-- {
+		if (th>>uint(i))&1 == 1 {
+			eq.And(eq, c[i])
+		} else {
+			t.And(eq, c[i])
+			gt.Or(gt, t)
+			eq.AndNot(eq, c[i])
+		}
+	}
+	return gt.Or(gt, eq)
+}
+
 // QcMdpcBgfDecode runs the Black-Gray-Flip decoder.  Returns (e0, e1, ok).
 func QcMdpcBgfDecode(synPub *big.Int, sup0, sup1 []int) (*big.Int, *big.Int, bool) {
 	r, d, nbIter := QcMdpcR, QcMdpcD, QcMdpcNbIter
+	full := bitArrayMask(r)
+	nb := qcmdpcPlanes(d)
 	s := qcpMulSparse(synPub, sup0, r)
 	e0 := new(big.Int)
 	e1 := new(big.Int)
 	thFloor := (d+1)/2 + 1 // = 37; BIKE's masked-pass floor
-
-	computeUpc := func(sup []int) []int {
-		upc := make([]int, r)
-		for j := 0; j < r; j++ {
-			cnt := 0
-			for _, k := range sup {
-				if s.Bit((j+k)%r) == 1 {
-					cnt++
-				}
-			}
-			upc[j] = cnt
-		}
-		return upc
-	}
-	flipCol := func(j int, sup []int) {
-		for _, k := range sup {
-			pos := (j + k) % r
-			s.SetBit(s, pos, s.Bit(pos)^1)
-		}
-	}
 
 	for it := 0; it < nbIter; it++ {
 		if s.Sign() == 0 {
@@ -6851,46 +6919,39 @@ func QcMdpcBgfDecode(synPub *big.Int, sup0, sup1 []int) (*big.Int, *big.Int, boo
 		if th < QcMdpcThMin {
 			th = QcMdpcThMin
 		}
-		upc0 := computeUpc(sup0)
-		upc1 := computeUpc(sup1)
-		var black0, black1, gray0, gray1 []int
-		for j := 0; j < r; j++ {
-			if upc0[j] >= th {
-				black0 = append(black0, j)
-			} else if upc0[j] >= th-QcMdpcTau {
-				gray0 = append(gray0, j)
-			}
-			if upc1[j] >= th {
-				black1 = append(black1, j)
-			} else if upc1[j] >= th-QcMdpcTau {
-				gray1 = append(gray1, j)
-			}
-		}
-		for _, j := range black0 {
-			e0.SetBit(e0, j, e0.Bit(j)^1)
-			flipCol(j, sup0)
-		}
-		for _, j := range black1 {
-			e1.SetBit(e1, j, e1.Bit(j)^1)
-			flipCol(j, sup1)
-		}
+		// Black (>=th) and gray (>=th-tau, excluding black) as MASKS rather
+		// than position lists.  Both are read off the syndrome BEFORE any
+		// flip in either group is applied, exactly as the per-position
+		// version built its upc array once and then walked it.
+		c0 := qcmdpcCounters(s, sup0, r, full, nb)
+		c1 := qcmdpcCounters(s, sup1, r, full, nb)
+		black0 := qcmdpcMaskGe(c0, full, th, nb)
+		black1 := qcmdpcMaskGe(c1, full, th, nb)
+		gray0 := qcmdpcMaskGe(c0, full, th-QcMdpcTau, nb)
+		gray0.AndNot(gray0, black0)
+		gray1 := qcmdpcMaskGe(c1, full, th-QcMdpcTau, nb)
+		gray1.AndNot(gray1, black1)
+
+		// A whole group's flips in one multiply.  Not an approximation: each
+		// flip at j contributes ROL(h_b, j) to the syndrome and XOR is
+		// commutative, so the group's contribution is h_b times the OR of its
+		// positions -- which is what qcpMulSparse of the mask computes.
+		e0.Xor(e0, black0)
+		s.Xor(s, qcpMulSparse(black0, sup0, r))
+		e1.Xor(e1, black1)
+		s.Xor(s, qcpMulSparse(black1, sup1, r))
+
 		if it == 0 {
-			groups := [][2][]int{{black0, black1}, {gray0, gray1}}
-			for _, g := range groups {
-				u0 := computeUpc(sup0)
-				u1 := computeUpc(sup1)
-				for _, j := range g[0] {
-					if u0[j] >= thFloor {
-						e0.SetBit(e0, j, e0.Bit(j)^1)
-						flipCol(j, sup0)
-					}
-				}
-				for _, j := range g[1] {
-					if u1[j] >= thFloor {
-						e1.SetBit(e1, j, e1.Bit(j)^1)
-						flipCol(j, sup1)
-					}
-				}
+			// BGF: re-check black then gray with thFloor.
+			for _, g := range [][2]*big.Int{{black0, black1}, {gray0, gray1}} {
+				f0 := qcmdpcMaskGe(qcmdpcCounters(s, sup0, r, full, nb), full, thFloor, nb)
+				f1 := qcmdpcMaskGe(qcmdpcCounters(s, sup1, r, full, nb), full, thFloor, nb)
+				k0 := f0.And(f0, g[0])
+				k1 := f1.And(f1, g[1])
+				e0.Xor(e0, k0)
+				s.Xor(s, qcpMulSparse(k0, sup0, r))
+				e1.Xor(e1, k1)
+				s.Xor(s, qcpMulSparse(k1, sup1, r))
 			}
 		}
 	}
