@@ -137,6 +137,55 @@ did not fail, because its regex still matched the Python functions while its rea
 false.  The rule is deleted, `qcmdpc-upc` is replaced by `qcmdpc-planes`, and the manifest is
 202 entries.
 
+### A separate defect this PR's own CI run turned up: `[21]`'s rate was understated by 2x
+
+The `sanitizers` job went red on `[21] ZKP-RNL`, at `n = 32`, with
+`tamper_reject=4/5` — **nothing to do with the decoder**, and the same job passed on the same
+commit in the other run, which is the signature of a sampled gate firing rather than a
+regression.  It is a sampled gate, and the record that priced it was wrong.
+
+**THE RECORD PRICED ONE OF TWO IDENTICAL BRANCHES.**  `[21]` has two cheats that require the
+verifier's RECOMPUTED Fiat-Shamir challenge to DIFFER — verify under a different MESSAGE, and
+verify against a tampered COMMITMENT — so each turns on a CHALLENGE COLLISION in a space of
+`comb(n, t)·2^t` = `575 360` at `n = 32`, `t = 4`.  That is `8.7e-6` each.  TODO #321 took this
+row off `exact` for the **w** case and recorded exactly that number; its reason then said the
+other cheats *"really are exact"*, which is true of `wrongkey` and `z_tamper` (both caught by
+the residual-norm check, where the perturbation is full-range garbage in every coefficient,
+about `1e-93`) and **false of the wrong-message one**.  So the row advertised `8.7e-6` where the
+test carried `1.74e-5` — and at the time that was **92% of the entire numbered-test budget**.
+Second time this row has carried a reason exact about the wrong object (#310's shape, #295's).
+
+**AND THE VERIFIER WAS RIGHT.**  On a collision the proof genuinely *is* valid for the second
+message — the verification is then the honest one, term for term — so scoring the accept as a
+rejection failure scored the verifier for being correct.  The test asserted a probabilistic
+property as a deterministic one, which is the class the Testing section records #233 fixing in
+three tests.
+
+**MEASURED BEFORE ANYTHING WAS CHANGED, in two independent instruments.**  A C probe over the
+shipped `herradura.h` at a reduced `t = 1` (space 64): **28 wrong-message accepts in 2000
+trials, 28 challenge collisions, and THE SAME 28** — exactly, no exceptions.
+`spec/measure_sampled_rates.py`, in Python: witness **600/600** at `t = 1` (6 accepts) and
+**600/600** at `t = 2` (0 accepts).  At the shipped `t = 4` the direct event is 0 in 4000 under
+`-O2` and 0 in 1200 under the job's own ASan+UBSan build, which is how the rate was confirmed
+small rather than assumed.
+
+**REMEDY: #310's for `[53]`, on the WIDTH axis instead of the round-count one.**  Both
+FS-binding cases now run at `n = 256` only, where `t = 16` puts the space at `6.6e29` and the
+pair at **`1.5e-29`**.  It adopts the port that was already right — `SelfTest.java`'s `[30]`
+runs at `n = 256` only and never had the defect (#294's and #296's precedent) — so Java needed
+no change and C, Go and Python came to it.  A skipped case keeps its **own** denominator and
+prints `n/a`, so "did not run" cannot read as "ran and scored zero" (#291).  The skip has a
+**positive half**: if no width runs them the test prints `[FAIL]`, or widening the gate
+everywhere would satisfy every assertion by asserting nothing (#234, #326).
+
+**BOTH CONTROLS VERIFIED TO FIRE**, not asserted: dropping the verifier's Fiat-Shamir
+re-derivation takes `n = 256` to `tamper_reject=0/5` and `w_tamper=0/5`; forcing the gate off at
+every width trips the positive half.  And #318's verdict fingerprints fired on the change in all
+three ports and asked the right question before anything was regenerated.
+
+**The numbered-test budget goes `1.9e-05` → `1.0e-05`** against `1e-04` — nearly halved, which
+is the measure of how much of it this one row was carrying while advertising half.
+
 ### Verification
 
 `CliTest/test_kat_pem.sh` 40/0 across all four ports, pinning both the decode-success and the

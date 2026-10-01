@@ -2954,7 +2954,7 @@ Neither covers the case where **the decision is unchanged and the rate underneat
 moves**: a rate was a LITERAL and its formula was prose, so the arithmetic was checked by
 nobody and its inputs by nobody. Lower `[45]`'s round count and `PARAMETERS` compares the
 constant across four languages and finds them agreeing, the fingerprint excludes it, and
-`_TEST_DRAWS` still sees the same draw — while the banner goes on printing 1.9e-5 against a
+`_TEST_DRAWS` still sees the same draw — while the banner goes on printing 1.0e-05 against a
 true rate of **7.8%**, the pre-#234 figure that made that test fail 38.5% of runs. A rate
 in `_SAMPLED_TEST_RATES` is now an EXPRESSION over constants read out of the source per
 port, and **8 of the 23 rated rows are evaluated from source every run** over 23 variable
@@ -3613,7 +3613,30 @@ than argued away.**  It called `hpke-stern-kem`'s missing benchmark row *"a prer
 claiming any speed-up here"*; **no row was added**.  The speed-up is published as a reproducible
 A/B against the tagged baseline instead — a stronger claim than a harness row, which publishes
 an absolute host-specific rate — because a row would put a host-specific figure inside a
-required job (#292's position) and the benchmark layer is #327's and #328's axis.
+required job (#292's position) and the benchmark layer is #327's and #328's axis.  (8) **AND
+ITS OWN CI RUN TURNED UP A DEFECT IN A TEST IT DOES NOT TOUCH.**  `sanitizers` went red on
+`[21] ZKP-RNL` at n = 32 with `tamper_reject=4/5` and PASSED on the same commit in the other
+run — a sampled gate firing, not a regression. **THE RECORD PRICED ONE OF TWO IDENTICAL
+BRANCHES**: `[21]` has two cheats requiring the verifier's recomputed Fiat-Shamir challenge to
+DIFFER (a different MESSAGE, a tampered COMMITMENT), so each turns on a CHALLENGE COLLISION in a
+space of `comb(n, t)·2^t` = 575 360 at n = 32, t = 4 — `8.7e-6` each. #321 took the row off
+`exact` for the **w** case and recorded that number; its reason then said the other cheats
+*"really are exact"*, true of `wrongkey` and `z_tamper` (residual-norm, ~`1e-93`) and **false of
+the wrong-message one**, so the row advertised `8.7e-6` where the test carried `1.74e-5` — **92%
+of the whole numbered-test budget**. Second time this row has carried a reason exact about the
+wrong object. **And the verifier was RIGHT**: on a collision the proof genuinely IS valid for
+the second message, so scoring the accept as a rejection failure scored the verifier for being
+correct — a probabilistic property asserted as a deterministic one, the class #233 fixed in
+three tests. **Measured in two instruments before anything changed**: a C probe at a reduced
+t = 1 gave 28 accepts in 2000 trials, 28 collisions, THE SAME 28, exactly; `measure_sampled_
+rates.py` gives witness 600/600 at t = 1 and 600/600 at t = 2; and at the shipped t = 4 the event
+is 0 in 4000 under -O2 and 0 in 1200 under the job's own ASan+UBSan build. **Remedy: #310's for
+`[53]` on the WIDTH axis** — both FS-binding cases run at n = 256 only, where t = 16 puts the
+pair at `1.5e-29` — which **adopts the port that was already right**, `SelfTest.java`'s `[30]`
+running at n = 256 only, so Java needed no change. A skipped case keeps its own denominator and
+prints `n/a` (#291), and the skip has a POSITIVE half that `[FAIL]`s if NO width runs them
+(#234, #326); both controls were verified to fire, and #318's fingerprints fired on the change
+in all three ports and asked the right question first. The budget goes **1.9e-05 → 1.0e-05**.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`

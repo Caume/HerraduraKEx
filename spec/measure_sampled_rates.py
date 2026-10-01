@@ -433,26 +433,36 @@ def _measure_rnl_margin(H, p, trials):
 
 
 def _measure_sigma_collision(H, t, trials):
-    """[21] (TODO #321): ZKP-RNL's tampered-commitment case, which is NOT exact.
+    """[21] (TODO #321, extended by TODO #330): ZKP-RNL's TWO FS-binding cases.
 
-    [21] increments w[0] and requires the verifier to reject.  The verifier
-    recomputes the Fiat-Shamir challenge over the tampered w and rejects when it
-    disagrees with the claimed one -- so the case turns on a CHALLENGE
-    COLLISION, and the challenge is a weight-t signed sparse polynomial, i.e. a
-    space of comb(n, t) * 2^t.  On a collision the residual-norm check sees one
-    coefficient shifted by 1 inside a slack of t*(q//(2p)+1) and accepts, so the
-    row's `exact` verdict is wrong at about 1 trial in 575 360 at n = 32.
+    [21] has two cheats that require the verifier's RECOMPUTED Fiat-Shamir
+    challenge to DIFFER -- verify under a different MESSAGE, and verify against a
+    tampered COMMITMENT -- so each turns on a CHALLENGE COLLISION, and the
+    challenge is a weight-t signed sparse polynomial, i.e. a space of
+    comb(n, t) * 2^t.  On a collision the message case accepts with probability
+    1 (the verification is then the honest one, term for term) and the w case
+    needs the residual-norm check to tolerate one coefficient shifted by 1 inside
+    a slack of t*(q//(2p)+1), which it does.
+
+    #321 measured the w case and priced the row from it; #330 found that the
+    MESSAGE case shares the mechanism exactly and was never in the rate, so the
+    row understated itself by 2x -- and then it fired on a required CI run.
+    BOTH witnesses are measured here, because a record whose recipe cannot be
+    re-run is a claim and not a record (#296).
 
     `t` is the ladder's reduced parameter because it is the only one that moves
-    the space by orders of magnitude without changing the mechanism; the shipped
-    value at n = 32 is 4, and it comes from _sigma_params' module-level dict
-    rather than from anything inside the test, which is why this row's rate
-    stays a literal (see _SAMPLED_TEST_RATE_LITERAL)."""
+    the space by orders of magnitude without changing the mechanism.  The
+    instrument runs at n = 32 (where a reduced t makes collisions observable at
+    all); the TEST now runs both cases at n = 256, where t = 16 puts the space at
+    6.6e29, and t comes from _sigma_params' module-level dict rather than from
+    anything inside the test, which is why this row's rate stays a literal (see
+    _SAMPLED_TEST_RATE_LITERAL)."""
     q = H.RNLQ
     n = 32
     H._SIGMA_T[n] = t                      # instrument-local, never shipped
     m_base = H._rnl_m_poly(n)
     acc = wit = alt = ctrl = ran = 0
+    msg_acc = msg_wit = 0      # the WRONG-MESSAGE case (TODO #330)
     for _ in range(trials):
         m = H._rnl_poly_add(m_base, H._rnl_rand_poly(n, q), q)
         s_poly, C = H._rnl_keygen(m, n, q, H.RNLP)
@@ -478,6 +488,20 @@ def _measure_sigma_collision(H, t, trials):
         zt[0] += 1
         alt += (bool(out) == bool(H._rnl_sigma_verify(m, C, n, H.ZKP_MSG,
                                                      w, c, zt)))
+        # THE OTHER FS-BINDING CASE (TODO #330), same mechanism, never priced.
+        # Its collision is over the UNTAMPERED w and the second message, and on
+        # a collision the verification is the honest one term for term -- so the
+        # accept is correct, which is what made scoring it a rejection failure
+        # score the verifier for being right.
+        m_out = H._rnl_sigma_verify(m, C, n, H.ZKP_MSG2, w, c, z)
+        m_coll = (c == H._sigma_challenge(m, C, w, n, q, t, H.ZKP_MSG2))
+        msg_acc += bool(m_out)
+        msg_wit += (bool(m_out) == m_coll)
+    print(f"   wrong-message case: {msg_acc} accept(s), witness "
+          f"{msg_wit}/{ran} (accept == challenge collides)")
+    if ran and msg_wit != ran:
+        print("   *** the wrong-message witness is NOT exact ***")
+        wit = -1       # force the caller's witness check to fail
     return acc, wit, alt, ctrl, ran
 
 

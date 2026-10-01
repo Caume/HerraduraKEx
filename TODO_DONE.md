@@ -22738,6 +22738,32 @@ model: a future producer that breaks it aborts instead of returning a quietly wr
 That rewrite also pays elsewhere, which is why it is here at all: `qcp_mul` calls it `r` times,
 so **C keygen goes `264.4 ms` -> `197.6 ms`** with no output changed.
 
+**AND A DEFECT THIS ITEM'S OWN CI RUN TURNED UP, in a test it does not touch.**  The
+`sanitizers` job went red on `[21] ZKP-RNL` at n = 32 with `tamper_reject=4/5`, and PASSED on
+the same commit in the other run -- the signature of a sampled gate firing, not a regression.
+**THE RECORD PRICED ONE OF TWO IDENTICAL BRANCHES.**  `[21]` has two cheats requiring the
+verifier's RECOMPUTED Fiat-Shamir challenge to DIFFER (a different MESSAGE, and a tampered
+COMMITMENT), so each turns on a CHALLENGE COLLISION in a space of `comb(n, t)*2^t` = 575 360 at
+n = 32, t = 4 -- 8.7e-6 each.  #321 took the row off `exact` for the **w** case and recorded
+that number; its reason then said the other cheats "really are exact", true of `wrongkey` and
+`z_tamper` (residual-norm, ~1e-93) and **false of the wrong-message one**.  The row advertised
+8.7e-6 where the test carried **1.74e-5 -- 92% of the whole numbered-test budget**.  Second time
+this row has carried a reason exact about the wrong object (#310's shape).  **And the verifier
+was RIGHT**: on a collision the proof genuinely IS valid for the second message, so scoring the
+accept as a rejection failure scored the verifier for being correct -- a probabilistic property
+asserted as a deterministic one, the class #233 fixed in three tests.  **MEASURED BEFORE
+ANYTHING CHANGED, in two instruments**: a C probe over the shipped header at a reduced t = 1
+gave 28 accepts in 2000 trials, 28 collisions, THE SAME 28 -- exactly; and
+`measure_sampled_rates.py` in Python gives witness 600/600 at t = 1 and 600/600 at t = 2.  At
+the shipped t = 4 the event is 0 in 4000 under -O2 and 0 in 1200 under the job's own ASan+UBSan
+build, so the rate was confirmed small rather than assumed.  **Remedy: #310's for [53] on the
+WIDTH axis** -- both FS-binding cases run at n = 256 only, where t = 16 puts the pair at
+**1.5e-29** -- which ADOPTS THE PORT THAT WAS ALREADY RIGHT, since `SelfTest.java`'s [30] runs
+at n = 256 only and never had the defect (#294, #296), so Java needed no change.  A skipped case
+keeps its own denominator and prints `n/a` (#291), and the skip has a POSITIVE half that
+[FAIL]s if NO width runs them (#234, #326).  Both controls were verified to FIRE.  The
+numbered-test budget goes **1.9e-05 -> 1.0e-05**.
+
 **WHAT IS STILL NOT DONE, and the one place this item fell short of its own text.**  The item
 listed `hpke-stern-kem`'s missing benchmark row as "separate, and a prerequisite for claiming
 any speed-up here".  **No row was added**, and the speed-up is instead published as a
