@@ -193,6 +193,138 @@ static void op_rnl_agree(const rnl_poly_t secret)
     rnl_agree(&out, secret, g_c_other, NULL, hint_out);
 }
 
+/* ── Batch 10 (TODO #330): the QC-MDPC BGF decoder ──
+ *
+ * WHY IT WAS ABSENT AND WHY IT IS HERE.  The decoder is the deployed
+ * post-quantum KEM's trapdoor and until TODO #330 it appeared in NONE of this
+ * harness's cases, in no batch of SecurityProofs-7.md §11.11, and in no row of
+ * SECURITY.md's C enumeration -- in a posture record whose own opening sentence
+ * is that the status is stated per target "so it is not inferred from silence."
+ * herradura.h DID document it as non-constant-time; what was missing is a
+ * MEASUREMENT and a place that records one.
+ *
+ * TWO AXES, and the second is the one that matters.  Batches 1-8 all ask the
+ * fixed-vs-random question about a SECRET operand.  For a KEM decoder the
+ * attacker does not choose the secret, he chooses the CIPHERTEXT, and the
+ * observable that breaks QC-MDPC is whether DECODING SUCCEEDED -- the GJS
+ * reaction signal, which recovers the private key from the decoder's failure
+ * behaviour (SecurityProofs-5.md §11.8.7's own table).  So:
+ *
+ *   A.  one key, a fixed decodable syndrome vs freshly drawn decodable ones.
+ *       Does the time depend on WHICH valid error was encapsulated?
+ *   B.  one key, a decodable syndrome vs an undecodable one.  This is the
+ *       reaction channel itself, and it is not a statistical finding: the two
+ *       classes differ by the whole iteration count, so compare the MEANS
+ *       rather than the t statistic -- a single trace separates them.
+ *
+ * Implicit rejection (TODO #235) closes the PROTOCOL-level oracle: decap always
+ * returns a key and never reports which path it took.  It does not close this
+ * one, and was never claimed to.  The timed call is qcmdpc_bgf_decode rather
+ * than qcmdpc_decap_bgf on purpose, so the FO hash is not averaged in.
+ *
+ * ROUND COUNT: its own, and far below the harness default, because one decode
+ * is milliseconds where every other case here is nanoseconds -- the Testing
+ * section's standing rule that a sub-check with a different cost gets its own
+ * count.  The price is POWER, stated rather than implied: at n rounds a
+ * fixed-vs-random t-test resolves a mean shift of roughly 4.5*sigma*sqrt(2/n),
+ * which the per-case line prints, so a "clean" verdict here is a bound and not
+ * a proof of constant time. */
+
+static QcMdpcPriv g_qc_priv;
+static QcMdpcPub  g_qc_pub;
+static QcPoly     g_qc_syn_fixed;
+
+typedef void (*qc_draw_fn)(QcPoly *syn, FILE *urnd);
+
+static void qc_seed(uint8_t seed[KEYBYTES], FILE *urnd)
+{
+    if (fread(seed, 1, KEYBYTES, urnd) != (size_t)KEYBYTES)
+        memset(seed, 0x5A, KEYBYTES);
+}
+
+static void qc_setup(FILE *urnd)
+{
+    uint8_t seed[KEYBYTES];
+    QcMdpcPrf prf;
+    BitArray K = BA_INIT;
+    qc_seed(seed, urnd);
+    qcprf_init(&prf, seed);
+    qcmdpc_keygen(&g_qc_priv, &g_qc_pub, &prf);
+    qcmdpc_encap(&g_qc_syn_fixed, &K, &g_qc_pub, &prf);
+}
+
+static void qc_draw_fixed(QcPoly *syn, FILE *urnd)
+{ (void)urnd; *syn = g_qc_syn_fixed; }
+
+static void qc_draw_decodable(QcPoly *syn, FILE *urnd)
+{
+    uint8_t seed[KEYBYTES];
+    QcMdpcPrf prf;
+    BitArray K = BA_INIT;
+    qc_seed(seed, urnd);
+    qcprf_init(&prf, seed);
+    qcmdpc_encap(syn, &K, &g_qc_pub, &prf);
+}
+
+/* A uniform r-bit syndrome.  An honest ciphertext is e0 + e1*h_pub for an e of
+ * weight exactly QCMDPC_T, so the decodable set is a vanishing fraction of the
+ * 2^r syndromes and a uniform draw fails to decode.  ASSERTED, not assumed: the
+ * per-case line prints how many of each class decoded, so a draw that started
+ * succeeding would be visible rather than quietly turning case B into case A. */
+static void qc_draw_undecodable(QcPoly *syn, FILE *urnd)
+{
+    int i;
+    for (i = 0; i < QCMDPC_RWORDS; i++) {
+        uint64_t v = 0;
+        if (fread(&v, sizeof v, 1, urnd) != 1) v = 0x0123456789abcdefULL;
+        syn->w[i] = v;
+    }
+    qcp_trim(syn);
+}
+
+static double run_test_qc(const char *name, int rounds,
+                          qc_draw_fn draw_a, qc_draw_fn draw_b, FILE *urnd)
+{
+    double *ta = malloc(sizeof(double) * rounds);
+    double *tb = malloc(sizeof(double) * rounds);
+    QcPoly e0, e1, sa, sb;
+    int i, oka = 0, okb = 0;
+    double t, ma, mb, sa_var = 0, resolve;
+
+    draw_a(&sa, urnd);
+    for (i = 0; i < 3; i++) qcmdpc_bgf_decode(&e0, &e1, &sa, &g_qc_priv);
+
+    for (i = 0; i < rounds; i++) {
+        uint64_t t0, t1;
+        int a_first = (i & 1);
+        draw_a(&sa, urnd);
+        draw_b(&sb, urnd);
+        if (a_first) {
+            t0 = now_ns(); oka += qcmdpc_bgf_decode(&e0, &e1, &sa, &g_qc_priv); t1 = now_ns();
+            ta[i] = (double)(t1 - t0);
+            t0 = now_ns(); okb += qcmdpc_bgf_decode(&e0, &e1, &sb, &g_qc_priv); t1 = now_ns();
+            tb[i] = (double)(t1 - t0);
+        } else {
+            t0 = now_ns(); okb += qcmdpc_bgf_decode(&e0, &e1, &sb, &g_qc_priv); t1 = now_ns();
+            tb[i] = (double)(t1 - t0);
+            t0 = now_ns(); oka += qcmdpc_bgf_decode(&e0, &e1, &sa, &g_qc_priv); t1 = now_ns();
+            ta[i] = (double)(t1 - t0);
+        }
+    }
+
+    welch_t(ta, rounds, tb, rounds, &t, &ma, &mb);
+    for (i = 0; i < rounds; i++) sa_var += (ta[i] - ma) * (ta[i] - ma);
+    sa_var /= (rounds - 1);
+    resolve = 4.5 * sqrt(sa_var) * sqrt(2.0 / rounds);
+    printf("%-28s  mean_a=%.2fms mean_b=%.2fms  |t|=%.2f  %s\n"
+           "%-28s    decoded %d/%d vs %d/%d; resolves a shift of %.3f ms at n=%d\n",
+           name, ma / 1e6, mb / 1e6, fabs(t),
+           fabs(t) >= 4.5 ? "LEAK SUSPECTED" : "clean",
+           "", oka, rounds, okb, rounds, resolve / 1e6, rounds);
+    free(ta); free(tb);
+    return t;
+}
+
 static double run_test_poly(const char *name, int rounds,
                              void (*setup_fixed)(rnl_poly_t, FILE *),
                              void (*setup_random)(rnl_poly_t, FILE *),
@@ -266,6 +398,19 @@ int main(int argc, char **argv)
     run_test_poly("rnl_reconcile_bits (secret=K_poly)",   rounds, poly_setup_zero,     poly_setup_rand, op_rnl_reconcile_bits, urnd);
     run_test_poly("rnl_reconcile_bits (fixed=q/4)",       rounds, poly_setup_boundary, poly_setup_rand, op_rnl_reconcile_bits, urnd);
     run_test_poly("rnl_agree (secret=s)",                 rounds, poly_setup_zero,     poly_setup_rand, op_rnl_agree,          urnd);
+
+    /* Batch 10 (TODO #330): the QC-MDPC BGF decoder.  Its own round count --
+     * one decode is milliseconds against nanoseconds for everything above, so
+     * the harness default would cost hours.  qc_rounds is derived from
+     * `rounds` so -- like every other case -- a reduced invocation reduces it
+     * too, and the floor keeps the t-test meaningful at the small end. */
+    {
+        int qc_rounds = rounds / 30;
+        if (qc_rounds < 40) qc_rounds = 40;
+        qc_setup(urnd);
+        run_test_qc("qcmdpc_bgf_decode (error)",   qc_rounds, qc_draw_fixed, qc_draw_decodable,   urnd);
+        run_test_qc("qcmdpc_bgf_decode (GJS)",     qc_rounds, qc_draw_fixed, qc_draw_undecodable, urnd);
+    }
 
     fclose(urnd);
     return 0;

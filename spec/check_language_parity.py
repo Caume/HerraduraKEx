@@ -4490,7 +4490,7 @@ PRIMITIVES = {
             "Present, not reachable by a top-level marker",
         "c": r"static void qcprf_refill\(",
         "python": r"^def _qcprf_refill\(",
-        "java": r"Stern.java::private static int\[\] refill\(",
+        "java": r"Stern.java::private static byte\[\] refill\(",
     },
     "qcprf-idx-bytes": {
         "c": r"static int qcprf_idx_bytes\(",
@@ -4525,6 +4525,18 @@ PRIMITIVES = {
         "go": r"^func qcMdpcZSeed\(",
         "python": r"^def _qcmdpc_z_seed\(",
         "java": r"Stern.java::private static byte\[\] qcmdpcZSeed\(",
+    },
+    "qcmdpc-counters": {
+        "c": r"static void qcp_upc_planes\(",
+        "go": r"^func qcmdpcCounters\(",
+        "python": r"^def _qcmdpc_counters\(",
+        "java": r"Stern.java::private static BigInteger\[\] qcmdpcCounters\(",
+    },
+    "qcmdpc-mask-ge": {
+        "c": r"static void qcp_mask_ge\(",
+        "go": r"^func qcmdpcMaskGe\(",
+        "python": r"^def _qcmdpc_mask_ge\(",
+        "java": r"Stern.java::private static BigInteger qcmdpcMaskGe\(",
     },
     "qcmdpc-bgf-decode": {
         "c": r"static int qcmdpc_bgf_decode\(",
@@ -5021,7 +5033,7 @@ PRIMITIVES = {
             "those two are what a rename would have to keep",
         "c": r"static void nl_fscx_delta_v2_ba\(",
         "go": r"^func nlFscxDeltaV2\(",
-        "java": r"HerraduraNl.java::private static BigInteger delta\(",
+        "java": r"HerraduraNl.java::private static BitArray delta\(",
     },
     "nl-fscx-v2-round-const": {
         "acknowledged":
@@ -5295,13 +5307,16 @@ PRIMITIVES = {
             "ring-challenges; the other three derive it inline",
         "java": r"SternRing.java::private static BigInteger fiatShamirSeed\(",
     },
-    "qcmdpc-upc": {
+    "qcmdpc-planes": {
         "acknowledged":
-            "Java factors the BGF unsatisfied-parity-check counter out of the "
-            "decoder loop; C, Go and Python count inline in qcmdpc-bgf-decode. "
-            "The decoder is DFR-critical and covered behaviourally by "
-            "CliTest/lib_dfr.sh's byte compare",
-        "java": r"Stern.java::private static int\[\] computeUpc\(",
+            "the BGF counter PLANE COUNT, max(4, bit_length(d)) (TODO #330).  "
+            "Go and Java compute it in a named helper; C spells it as the "
+            "QCMDPC_NPLANE macro -- it sizes an array, so it must be a "
+            "constant expression there -- and Python writes the expression "
+            "inline at its one call site.  Four ports, one rule, two of them "
+            "with a function to name",
+        "go": r"^func qcmdpcPlanes\(",
+        "java": r"Stern.java::private static int qcmdpcPlanes\(",
     },
     "qcmdpc-support-to-poly": {
         "acknowledged":
@@ -5353,7 +5368,7 @@ PRIMITIVES = {
             "TODO #273; what remains is a FACTORING difference between two "
             "pairs of languages, not a missing capability",
         "python": r"^def _hske_nl_aead_streams\(",
-        "java": r"HerraduraNl.java::static BigInteger\[\] hskeNlAeadStreams\(",
+        "java": r"HerraduraNl.java::static BitArray\[\] hskeNlAeadStreams\(",
     },
     "rnl-bits-to-bitarray": {
         "acknowledged":
@@ -5473,13 +5488,23 @@ def check_primitives(errors):
                 paths = [paths] if isinstance(paths, str) else paths
                 rel = ", ".join(os.path.relpath(p, REPO) for p in paths)
             if hits == 0:
-                if reason:
-                    continue
+                # AN `acknowledged` REASON EXCUSES AN ABSENT CELL, NEVER A DEAD
+                # ANCHOR (TODO #330).  Until then `if reason: continue` sat here,
+                # so a row whose ONLY cell was a port-specific helper stayed
+                # green after that helper was deleted -- and the reason went on
+                # describing it.  qcmdpc-upc is the case that found it: its
+                # reason said "Java factors the UPC counter out of the decoder
+                # loop; C, Go and Python count inline", which #330 made false in
+                # all four ports at once while deleting the very function the
+                # row anchored on.  That is #295's false-reason shape with the
+                # manifest's own escape hatch as the carrier: a row cannot
+                # describe a port's code and also decline to point at it.
                 errors.append(
                     f"'{pid}': marker {pattern!r} not found in {lang}'s suite file(s) ({rel}) — "
                     f"either the function was renamed/removed (update PRIMITIVES to match) or "
-                    f"this is a real cross-language gap (port it, or add an 'acknowledged' "
-                    f"reason to the PRIMITIVES entry, the same way SECURITY.md records one)"
+                    f"this is a real cross-language gap (port it, or DROP the {lang} marker and "
+                    f"let the entry's 'acknowledged' reason carry the absence; a reason excuses "
+                    f"a missing cell, not a marker that points at nothing)"
                 )
             elif hits > 1:
                 # A marker must IDENTIFY one function, not merely occur. This
@@ -5644,14 +5669,6 @@ CENSUS_EXEMPT = {
          "exist and wrap ONE implementation rather than adding a second.  The "
          "width selects the polynomial, which is what BITARRAY.md 4.6 requires "
          "and what a `poly` parameter cannot enforce"),
-        (r"^_qcmdpc_(counters|mask_ge)$",
-         "the bitplane representation inside qcmdpc-bgf-decode (TODO #276): "
-         "counters for all r positions carried as bit-sliced big integers, and "
-         "the MSB-first >= comparison over them. Python alone needs it — an "
-         "interpreted per-position count is ~900 ms per iteration at a "
-         "production r — while C, Go and Java hold ordinary per-position "
-         "counter arrays and have nothing to port. The decoder they decompose "
-         "is manifest-named as qcmdpc-bgf-decode"),
     ],
     "java": [
         (r"^(checkWidth|hexVal|zero|fromHex|fromUint|gfPoly|rnlKdfSeed|fscx)$",
@@ -6231,6 +6248,14 @@ PARAM_LANGS = ("c", "go", "python", "java")
 
 
 PARAM_CENSUS_EXEMPT = {
+    "c": [(r"^QCMDPC_NPLANE$",
+           "the BGF decoder's counter PLANE COUNT (TODO #330), not a protocol "
+           "parameter: it is max(4, bit_length(QCMDPC_D)) -- which IS a row -- "
+           "and C needs it as a macro only because it sizes an array.  Go and "
+           "Java derive it at run time through qcmdpc-planes and Python writes "
+           "the expression inline, so there is no second value anywhere to "
+           "hold it against; a _Static_assert in herradura.h ties it to "
+           "QCMDPC_D, which is the check a PARAMETERS row would otherwise be")],
     "python": [(r"^_RNL_KDF_DC_", "the HFSCX-256 KDF's initialisation constants -- a "
                                   "hash IV, not a protocol parameter.  C keeps the same "
                                   "values and Go and Java build them inline")],

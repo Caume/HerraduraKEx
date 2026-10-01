@@ -890,6 +890,16 @@ The Python decoder was rewritten bit-sliced in v6.7.3 specifically so that this 
 would be affordable there; under the per-position decoder that preceded it the same
 decapsulation takes 5.6 seconds.
 
+**Updated at v9.6.0 (TODO #330).**  The bit-sliced decoder reached C, Go and Java too — it had
+been Python-only, which is the whole of that item — so the C figure above has moved and the
+Python one has not.  Measured uncontended, ABBA-interleaved against the v9.5.18 build, CLI
+decapsulation of `KAT/pem/kem_ct.pem` end to end: **C `46.3 ms` to `6.1 ms`**, **Go `107.6 ms`
+to `73.9 ms`**, **Java `369.1 ms` to `269.9 ms`**, and **Python `232.6 ms` to `223.1 ms`** —
+Python being the control, since its decoder did not change.  Isolating the decoder: C
+`27.49 ms` to `2.18 ms`, Go `58.4 ms` to `5.8 ms`, Java `148.3 ms` to `26.1 ms`.  Nothing on
+the wire moves: every key, ciphertext and session key is byte-identical, which is what makes
+this a note here rather than a migration step.
+
 ---
 
 ## 18. HPKS-Stern-F binds the witness weight (v8.0.0)

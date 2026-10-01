@@ -2361,8 +2361,11 @@ def _qcmdpc_counters(s: int, sup, r: int, full: int, nb: int) -> list:
 
     Plane i holds bit i of every position's counter, so one carry-save add per
     support element replaces r interpreted popcounts.  nb is sized from d by
-    the caller: four planes saturate at 15, which is exactly the deployed
-    QCMDPC_D and silently wrong at any larger d (TODO #276)."""
+    the caller: four planes saturate at 15, which was the deployed QCMDPC_D
+    when this was written and is silently wrong at any larger d (TODO #276).
+    THAT SENTENCE WENT STALE IN ITS OWN ITEM: #276's adoption of BIKE-128 put
+    the deployed d at 71 in the same release, so nb is 7, and C, Go and Java
+    derive it the same way rather than hardcoding it (TODO #330)."""
     c = [0] * nb
     for k in sup:
         v = s if k == 0 else ((s >> k) | (s << (r - k))) & full
@@ -2376,7 +2379,16 @@ def _qcmdpc_counters(s: int, sup, r: int, full: int, nb: int) -> list:
 
 
 def _qcmdpc_mask_ge(c: list, full: int, th: int, nb: int) -> int:
-    """Bit j set iff the counter at position j is >= th, compared MSB first."""
+    """Bit j set iff the counter at position j is >= th, compared MSB first.
+
+    Total rather than merely correct over the reachable range (TODO #330): at
+    BIKE-128 the threshold rule tops out at 99, but a th outside [1, 2**nb)
+    would otherwise be read modulo 2**nb.  The same two guards are in all four
+    ports so the representation cannot diverge on an unreachable input."""
+    if th <= 0:
+        return full
+    if th >= (1 << nb):
+        return 0
     gt, eq = 0, full
     for i in range(nb - 1, -1, -1):
         ci = c[i]

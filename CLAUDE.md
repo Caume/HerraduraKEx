@@ -1166,7 +1166,7 @@ spec/                                                — machine-readable protoc
                                                       each of C/Go/Python/Java, set-alignment of
                                                       C/Go/Python's shared [1]-[51] numbering, a
                                                       manifest of suite-internal (non-CLI)
-                                                      primitives -- 200 entries, four cells each --
+                                                      primitives -- 202 entries, four cells each --
                                                       so a primitive with no `--algo` tag can still
                                                       be caught missing in a language, and since
                                                       v6.1.0 an INTERNAL-SURFACE CENSUS that closed
@@ -3543,6 +3543,77 @@ limit**: this asks whether something is BUILT AND RUN, never whether the run ass
 anything, so a benchmark printing numbers nobody checks satisfies it; the two cases above
 were fixed because they would have made this coverage vacuous, not because the check can
 see the class.
+
+**And the half of a rewrite that never happened, four majors on (TODO #330).**  TODO #276
+rewrote the BGF decoder's unsatisfied-parity pass bit-sliced and its own checklist recorded it
+in the word that turned out to be the finding — *"the Python decoder rewritten bit-sliced,
+**first**"*.  **There was never a second.**  C, Go and Java carried the per-position `O(r·d)`
+loop in the **deployed post-quantum KEM** at BIKE-128, where `QCMDPC_D × QCMDPC_R` is
+**874 933** secret-indexed reads per plane per decoder iteration, two planes, five iterations —
+so roughly **8.7 million** `BigInteger.testBit` calls per Java decapsulation.  All three carry
+the bit-sliced form now, ported from the Python rather than redesigned (#294's and #296's
+precedent).  Measured uncontended, ABBA-interleaved and round-robined over the four ports, with
+**Python as the control** since its decoder did not change: the decoder alone goes **C `27.49` →
+`2.18 ms`, Go `58.4` → `5.8`, Java `148.3` → `26.1`** (Python `5.60` → `5.63`), and CLI
+decapsulation end to end **C `46.3` → `6.1`, Go `107.6` → `73.9`, Java `369.1` → `269.9`**.
+Nothing on the wire moves.  Seven things carry forward.  (1) **THE SENTENCE THAT LET IT REST
+WAS PORT-LOCAL AND READ AS GENERAL.**  #276 concluded, after bit-slicing Python, that *"the
+decoder is no longer the cost centre… 90% of a decapsulation is now HFSCX-256"* — true where
+measured and **false in C**, where the same hash over the 3114-byte decap buffer is `1.289 ms`
+against a decoder in the tens of milliseconds.  Anyone optimising C or Go on it would have
+worked on the hash.  #286's shape (present tense off one instance) and #310's (exact about the
+wrong object); corrected in place in `CHANGELOG.md` and `TODO_DONE.md`, and true in C *now*
+only because of this item.  (2) **THE MANIFEST COULD NOT SEE ITS OWN FALSE REASON, and that is
+the transferable part.**  `PRIMITIVES["qcmdpc-upc"]` said *"Java factors the UPC counter out of
+the decoder loop; C, Go and Python count inline"* and anchored on `computeUpc`, which this item
+DELETED — and the row stayed green, because `check_primitives` read `if hits == 0: if reason:
+continue`.  An `acknowledged` reason is meant to excuse an **absent cell**; it was also excusing
+a **dead anchor**, so a row could describe a port's code and decline to point at it.  The same
+hole hid the Python `CENSUS_EXEMPT` rule whose reason said the other three *"have nothing to
+port"* — that one never failed either, its regex still matching while its reason had gone false.
+Tightening the rule (a PRESENT marker must match exactly once, `acknowledged` or not)
+**found three more on its first run**, all live functions whose signatures moved at #314 pass 5
+and whose markers had been unanchored since v9.4.0: `qcprf-refill` (`int[]` → `byte[]`),
+`nl-fscx-delta-v2` and `hske-nl-aead-streams` (`BigInteger` → `BitArray`).  Those three are the
+negative control — the rule was not asserted to fire, it fired.  (3) **A COMMENT WENT STALE IN
+ITS OWN RELEASE.**  #276's Python said four planes *"saturate at 15, which is exactly the
+deployed `QCMDPC_D`"* — and #276 moved the deployed `d` to 71 in the same release.  The code was
+right (it sized `nb` from `d`); the sentence invited the next reader to hardcode 4.  All four
+ports derive `max(4, bit_length(d))` now, C through `QCMDPC_NPLANE` with a `_Static_assert`
+tying it to `QCMDPC_D`, because a saturating counter yields a SMALLER UPC — fewer flips, a
+higher DFR — with nothing to observe.  (4) **A WORD SHIFT CANNOT IGNORE WHAT A BIT LOOP COULD.**
+`qcp_xor_rol` looped `i < QCMDPC_R`, so a `QcPoly` carrying bits at or above `r` was harmless;
+the word-level rotation replacing it wraps them to the WRONG position.  Every producer in
+`herradura.h` maintains the invariant and that was verified by reading them, but it is now
+load-bearing where it was incidental, so `qcp_rotl` carries a one-AND choke-point guard on
+#324's `ba_nbytes` model.  That rewrite is also why keygen moved: `qcp_mul` calls it `r` times,
+so **C keygen goes `264.4` → `197.6 ms`** with no output changed.  (5) **THE SECURITY HALF IS
+THE SAME ENGINEERING, and the defect was the JUSTIFICATION, not the status.**  `herradura.h`
+always documented the decoder as non-constant-time; what rested on retired parameters was the
+excuse.  SecurityProofs-5.md §11.8.7 said timing is *"not the binding constraint at these
+parameters"*, written at v3.3.0 / #235 when the instance was worth about `2^21` classical —
+true of a broken parameter set — and #276's adoption of BIKE-128 at about `2^128` **inverted**
+it, because at that level a decode-success/failure channel is a candidate cheapest attack and
+for QC-MDPC it is the GJS reaction signal against the PRIVATE KEY, the attack §11.8.7's own
+table measures.  **Withdrawn rather than re-pointed** (#286's remedy), with
+`dudect_timing_audit.c` **Batch 10** registering the decoder in the harness where it appeared in
+none of fourteen cases, §11.11 Batch 10 carrying the numbers, and `SECURITY.md`'s C row naming
+it rather than leaving it to be inferred from silence — in a section whose opening sentence is
+that it is stated per target *"so it is not inferred from silence."*  (6) **THE DECISIVE AXIS IS
+NOT A STATISTICAL ONE.**  A KEM attacker chooses the CIPHERTEXT, not the secret, so Batch 10
+runs one key against two ciphertext classes: a decodable syndrome against freshly drawn
+decodable ones gives `1.99` vs `2.09 ms` (`|t| = 7.07`) — the time depends on which error was
+encapsulated — and a decodable against an UNDECODABLE one gives `1.99` vs `3.46 ms`, decoded
+133/133 vs **0/133**.  The classes differ by the whole iteration count, so the means separate by
+`74%` and a single trace distinguishes them; quoting its `|t| = 3281` would understate it by
+implying the channel needs averaging.  What bit-slicing bought is the ADDRESS channel; what
+remains is the ITERATION COUNT, and a FIXED one is **not** adopted because it moves the DFR
+#285 and #250 measure (#312).  (7) **WHERE THIS ITEM FELL SHORT OF ITS OWN TEXT, said rather
+than argued away.**  It called `hpke-stern-kem`'s missing benchmark row *"a prerequisite for
+claiming any speed-up here"*; **no row was added**.  The speed-up is published as a reproducible
+A/B against the tagged baseline instead — a stronger claim than a harness row, which publishes
+an absolute host-specific rate — because a row would put a host-specific figure inside a
+required job (#292's position) and the benchmark layer is #327's and #328's axis.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
