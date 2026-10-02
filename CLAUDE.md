@@ -2877,7 +2877,7 @@ does its rate have".
 left open (TODO #316).** #300 put that question to the 76 findings gates and found three
 defects; #310 found `[53]` failing about one run in 16, fixed it, and recorded that nobody
 had asked it of the numbered tests — which matters more, because these live in the four
-REQUIRED `native-*` jobs where a flake is a red check on somebody else's PR. **181
+REQUIRED `native-*` jobs where a flake is a red check on somebody else's PR. **184
 numbered tests across the four languages decide a verdict from a fresh sample**, all of
 them now recorded in `spec/check_language_parity.py`'s `_TEST_DRAWS`, with 20 carrying a
 curated verdict code and a rate or an argument, 9 declared to draw nothing that reaches a
@@ -2932,7 +2932,7 @@ invisible to it. And it needs every spelling of "this line decides", an enumerat
 went wrong THREE times in this item alone (Go's `verdict := "PASS"` and `status := "FAIL"`,
 C's `[19]` deciding via `puts("  FAIL: empty"); pass = 0`). #306's sixth-spelling hazard,
 met yet again. (2) **SO THE VERDICT REGION IS PINNED INSTEAD** — a hash over every
-PASS/FAIL-bearing line of each of the 194 tests, comments excluded — which needs no
+PASS/FAIL-bearing line of each of the 197 tests, comments excluded — which needs no
 threshold theory and covers the non-syntactic terms: an edit to a test's WORK does not fire,
 an edit to its VERDICT does. (3) **`"none"` IS A PINNED VALUE, not an absence.** 36 rows have
 no verdict line (the benchmarks, plus Go's `[52]`, whose verdict is in a helper), so a
@@ -3137,7 +3137,7 @@ mechanism refuted by measurement twice.
 **And the DERIVED DEFAULT, where the category with no row at all is the largest one (TODO
 #322).** #319 made every rate an expression over constants read from source, #320 held each
 formula to a measured mechanism, #321 audited the fifteen curated rows that have no formula.
-All three act on the twenty rows that are CURATED. The census counts 181 sampled cells, 20
+All three act on the twenty rows that are CURATED. The census counts 184 sampled cells, 20
 curated and 9 declared to draw nothing that reaches a verdict — so **126 fall through to the
 DERIVED DEFAULT**, which `_SAMPLED_TESTS`' own header states as "all-trials-must-succeed
 conjunctions of round-trips, where a fresh sample changes WHICH instance is tested and not the
@@ -3150,7 +3150,7 @@ cover is a REJECTION assertion, because whether a deliberately bad input is DETE
 itself turn on a fresh coin: #310 found that in `[53]` (the forged witness was sometimes the
 true error, one run in 16), #316 in `[17]` (a `(1/3)^8` branch that CRASHED), #320 in `[22]`
 (one term where the mechanism needs two). Three items found the shape in a curated row and
-nobody had asked it of the rest. **30 cells** assert a rejection; each now states a BASIS from
+nobody had asked it of the rest. **31 cells** assert a rejection; each now states a BASIS from
 a CLOSED SET of nine kinds, 8 rest on a fresh coin and carry a rated row, 12 on a collision or
 forgery at a stated WIDTH — a number, so the claim is falsifiable — and 10 on no coin at all.
 (2) **THE POLARITY IS OPPOSITE TO #316's, AND THAT IS THE DESIGN NOTE.** #316 records why its
@@ -3641,6 +3641,59 @@ prints `n/a` (#291), and the skip has a POSITIVE half that `[FAIL]`s if NO width
 (#234, #326); both controls were verified to fire, and #318's fingerprints fired on the change
 in all three ports and asked the right question first. The budget goes **1.9e-05 → 1.0e-05**.
 
+**And the cost of the thing all of that protects, which no harness published (TODO #332).**
+`[32]`-`[43]` benchmark FSCX, the classical quartet, the NL primitives, HKEX-RNL at the ring
+#223 RETIRED, Stern-F and the two ZKPs — and **not the QC-MDPC KEM**, in a suite whose
+`SECURITY.md` classifies `hpke-stern-kem` as the post-quantum key establishment it recommends
+over the classical quartet.  Not keygen, not encapsulation, not decapsulation, in any of the six
+harnesses.  Benchmark **`[54]`** is that row and is **the only one of the thirteen that carries
+a CONTROL**.  Six things carry forward.  (1) **THE CONTROL IS HOW A COST FIGURE EARNS A PLACE IN
+A REQUIRED JOB.**  #292's position is that host-specific cost figures do not belong in CI, and
+this prints in four of them; the grandfathered benchmarks print a rate nobody asserts on —
+#318 pins their verdict region as `"none"` so that a benchmark which GROWS a verdict fires —
+and this one is a test as well, at no extra cost, because the operations it times are the ones it
+checks.  `decap(encap(pk))` must reproduce the secret, and a uniform syndrome must give a
+DIFFERENT key, so #235's implicit-rejection path is REACHED rather than assumed.  #300's rule
+pointed forwards: if a required job will run the deployed KEM a few hundred times, the cheapest
+honest thing is to check each time that it works.  (2) **THE MEASUREMENT THE ITEM DEMANDED FOUND
+A DEFECT IN WHAT IT WAS ABOUT TO PUBLISH, IN ALL FOUR PORTS.**  Every port's `qcp_mul` loops over
+its SECOND argument and every port called it as `qcp_mul(e1, h_pub)` — the SPARSE operand first
+— so the loop walked `h_pub`'s ~6162 set bits where `e1` has ~`t/2` = 67, with
+`qcp_mul_sparse` sitting right there, built by #276 and #330 for exactly that shape.
+Convolution over GF(2) commutes, so the orders agree BIT FOR BIT: the multiply goes **C `5.237`
+→ `0.050 ms` (105x)**, **Go `230.9` → `3.752` (62x)**, **Java `74.427` → `0.759` (98x)**,
+**Python `26.487` → `0.125` (212x)**, and encapsulation **C `7.410` → `2.041 ms`**, **Go `298.7`
+→ `48.0`**, **Java `85.0` → `11.3`**, **Python `104.3` → `76.2`** — Python least because what
+remains is one 4623-byte `hfscx_256_ds` at `70.7 ms`, 94% of its encapsulation.  **It is not
+#312's rule, because there is no question to settle**: a theorem, a bit-identical output, no
+parameter and no wire change, verified by the oracles that already existed (identical `(syn, K)`
+AND PRF state over 50 C encapsulations on one stream, `operation_replay.json`'s `qcmdpc_encap`
+row in all four ports, `test_kat_pem.sh` 40/0).  Publishing a row whose first figure was a
+defect would have been #276's port-local sentence repeated.  (3) **THE ROW'S FIRST SURPRISE IS
+WHY IT EXISTS**: C's keygen is **4.1x SLOWER than interpreted Python's**, `198 ms` against
+`48 ms`, because `_qceuc_*` walks a 134-byte array byte at a time where `_qcp_inv` shifts native
+big integers.  Filed as **#334** rather than left in a changelog sentence — "the row publishes
+it now" is not anyone acting on it.  (4) **THREE OF SIX HARNESSES, TWO DIFFERENT REASONS, SAID
+RATHER THAN INFERRED FROM SILENCE** (#323's finding): the ARM, NASM and Arduino harnesses carry
+no QC-MDPC, and **Java ships the KEM and has NO BENCHMARK LAYER AT ALL** — no timing helper, no
+rate formatter, no throughput row for any protocol, which is why `check_rate_format.py` holds
+THREE formatters in a four-port repo.  One LAYER wide against one ROW wide, filed as **#333**.
+(5) **THE RATE IS THE INTERESTING TABLE ENTRY.**  `_REJECTION_BASES[("shared", 54)]` is
+`sampled-accept-control`, because the cell's WEAKEST assertion is the accept-control and not the
+rejection — the rejection needs two differently-domain-separated HFSCX-256 calls to collide,
+`2^-256`, where the fresh-key round-trip fails on a DECODER FAILURE — so the row's rate is the
+DFR, and it is a LITERAL because **it is not a function of the shipped constants and cannot be**:
+#285's finding is that `r`, `d` and `t` are in `PARAMETERS` while the rate they imply is read off
+BIKE's published analysis, and at BIKE-128 no trial count reaches it.  An expression over
+`QCMDPC_R/D/T` would be #320's defect with the arithmetic wrong too.  Budget unchanged at
+`1.0e-05`.  (6) **THE ITEM'S OWN PRESCRIPTION WAS WRONG TWICE, both about where the index
+lives**: `llms.txt` indexes no numbered test at all, so it needed nothing; and `CLAUDE.md`'s own
+test-command comment read "security tests [1]–[29] + benchmarks [30]–[41]", **two renumberings
+stale**, found only because it had to be read to be added to.  **Known limit**: the control
+asserts that the KEM works and the rate beside it is asserted by nothing, so a 10x regression
+prints and passes — which is #292's position honoured rather than evaded, and the reason the
+figure is published with the host it was measured on.
+
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
 from TODO #289 until v9.5.6 — twelve jobs, eleven blocking — on the `arduino` job's #185
@@ -4078,7 +4131,11 @@ surface under the repo's Security tab rather than as a required check.
 Whenever a TODO adds or removes a test number or CLI subcommand, re-check this section (and `llms.txt`'s CLI section) for drift rather than waiting for the next major-version doc audit — see TODO #145.
 
 ```bash
-# C/Go/Python — security tests [1]–[29] + benchmarks [30]–[41]
+# C/Go/Python — security tests [1]–[31] + benchmarks [32]–[43], then [44]–[53]
+# security tests and [54] one more benchmark, both APPENDED rather than
+# renumbered.  (This line said "[1]–[29] + benchmarks [30]–[41]" for six
+# releases, two renumberings behind the harnesses it describes — corrected
+# by TODO #332, which had to read the index to add to it.)
 # ([44] HCRED, [45] weak-key/malformed-input rejection, [46] fpe/twk domain
 #  separation, [47] the NL-FSCX v3 primitive appended after the benchmarks to
 #  avoid renumbering; all four
@@ -4175,7 +4232,25 @@ Whenever a TODO adds or removes a test number or CLI subcommand, re-check this s
 #  sampler through the suite rather than keeping a local copy -- a second
 #  opinion about the byte order in dispute would prove nothing -- which is
 #  why the Go package exports QcMdpcPrfDraw at all.  Java's counterpart is
-#  SelfTest.java's [34])
+#  SelfTest.java's [34]
+#  [54] is TODO #332's BENCHMARK row for the deployed QC-MDPC KEM, and the only
+#  one of [32]-[43]+[54] that carries a CONTROL.  The suite's own recommended
+#  post-quantum key establishment had no harness-published cost figure at all --
+#  not keygen, not encapsulation, not decapsulation -- so the only numbers for
+#  it were hand-measured ones in CHANGELOG.md and MIGRATING.md, held to
+#  nothing.  It carries a control because TODO #292's position is that a
+#  host-specific cost figure does not belong in CI and this row prints in four
+#  REQUIRED jobs: the grandfathered benchmarks print a rate nobody asserts on,
+#  and this one earns its place by also being a test, at no extra cost, since
+#  the operations it times are the ones it checks (decap(encap(pk)) reproduces
+#  the key; a uniform syndrome gives a DIFFERENT one, so #235's
+#  implicit-rejection path is reached rather than assumed).  The two decap paths
+#  are TIMED AND LABELLED SEPARATELY because they cost different amounts -- the
+#  GJS channel #330 registered in dudect Batch 10 -- and an averaged figure
+#  would be unusable.  THREE harnesses, with the reason stated in each: the ARM,
+#  NASM and Arduino harnesses carry no QC-MDPC, and JAVA ships the KEM but has
+#  NO BENCHMARK LAYER AT ALL, so its gap is one layer wide where this was one
+#  row wide (TODO #333))
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s

@@ -2207,7 +2207,17 @@ def _qcp_mul_sparse(dense: int, sup: set, r: int) -> int:
 
 
 def _qcp_mul(a: int, b: int, r: int) -> int:
-    """a · b mod (x^r − 1)."""
+    """a · b mod (x^r − 1).
+
+    THE LOOP IS OVER b, SO THE ARGUMENT ORDER IS A COST DECISION AND NOT A STYLE
+    ONE (TODO #332).  Cyclic convolution over GF(2) commutes, so the two orders
+    agree bit for bit and do not cost the same.  The remaining callers are
+    keygen and the CLI's pubout, both computing h1 · h0^-1 with two dense
+    operands, where there is nothing to choose.  qcmdpc_encap used to call it as
+    _qcp_mul(e1, h_pub) — the SPARSE operand first — so the loop ran over
+    h_pub's ~r/2 set bits, shifting a 12323-bit integer each time, instead of
+    e1's ~t/2.  All four ports had the operands the same way round, which is
+    why no cross-port check could see it."""
     full = (1 << r) - 1
     acc = 0
     while b:
@@ -2351,8 +2361,15 @@ def qcmdpc_encap(h_pub: int, seed_int: int | None = None):
     r, t = _QCMDPC_R, _QCMDPC_T
     sup_e = prf.sparse_support(2 * r, t)
     e0 = sum(1 << j for j in sup_e if j < r)
-    e1 = sum(1 << (j - r) for j in sup_e if j >= r)
-    syn = e0 ^ _qcp_mul(e1, h_pub, r)
+    sup_e1 = {j - r for j in sup_e if j >= r}
+    e1 = sum(1 << j for j in sup_e1)
+    # h_pub · e1 through the SPARSE helper.  _qcp_mul loops over its SECOND
+    # argument, so _qcp_mul(e1, h_pub, r) walked the dense operand's ~r/2 set
+    # bits where the support has ~t/2: measured 26.487 ms against 0.125 ms on
+    # one draw, 212x, bit-identical (convolution commutes).  Encapsulation goes
+    # 104.3 ms to 76.2 ms rather than 212x faster because what is left is the
+    # 4623-byte HFSCX-256 call, 70.7 ms of it (TODO #332).
+    syn = e0 ^ _qcp_mul_sparse(h_pub, sup_e1, r)
     return syn, _qcmdpc_kem_key(e0, e1, syn)
 
 

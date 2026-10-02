@@ -2,6 +2,81 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.20] - 2026-10-02
+
+### TODO #332 — the deployed post-quantum KEM gets a benchmark row, and the measurement it required found the multiply transposed in all four ports
+
+**Benchmark `[54]`: `hpke-stern-kem` keygen, encapsulation and BOTH decapsulation paths**, in
+`CryptosuiteTests/Herradura_tests.{c,go,py}`.  The numbered benchmarks were `[32]`-`[43]` and
+none of them was the QC-MDPC KEM, in a suite whose `SECURITY.md` classifies it as the
+post-quantum key establishment it recommends over the classical quartet.  Appended at `[54]`
+rather than inserted, so nothing renumbers.
+
+**It carries a CONTROL where `[32]`-`[43]` do not**, and that was the choice the item owed.
+TODO #292's position is that host-specific cost figures do not belong in CI, and this row
+prints in four REQUIRED jobs — so it earns its place by also being a test, at no extra cost,
+because the operations it times are the ones it checks: `decap(encap(pk))` must reproduce the
+encapsulated secret, and a uniform syndrome must decapsulate to a DIFFERENT key, so TODO #235's
+implicit-rejection path is reached rather than assumed.  The two decapsulation paths are timed
+and labelled SEPARATELY, because they cost different amounts — the GJS channel TODO #330
+registered in `dudect` Batch 10 — and an averaged figure would be unusable.  The decoder's
+outcome on the uniform syndrome is PRINTED, never scored: that is a `2^-11193` event, so
+asserting it would be an assertion with a rate, and the key-differs check holds either way.
+
+**ENCAPSULATION'S MULTIPLY WAS TRANSPOSED IN ALL FOUR PORTS.**  Every port's `qcp_mul` loops
+over its SECOND argument and every port called it as `qcp_mul(e1, h_pub)` — the SPARSE operand
+first — so the loop walked `h_pub`'s ~6162 set bits where `e1` has ~`t/2` = 67.  Cyclic
+convolution over GF(2) commutes, so the orders agree bit for bit and do not cost the same, and
+`qcp_mul_sparse` was already there for exactly this shape.  Measured in one process on one key,
+ABBA-interleaved: the multiply goes **C `5.237` → `0.050 ms` (105x)**, **Go `230.9` → `3.752 ms`
+(62x)**, **Java `74.427` → `0.759 ms` (98x)**, **Python `26.487` → `0.125 ms` (212x)**, and
+encapsulation **C `7.410` → `2.041 ms`**, **Go `298.7` → `48.0 ms`**, **Java `85.0` →
+`11.3 ms`**, **Python `104.3` → `76.2 ms`**.  Python moves least because what is left is one
+4623-byte `hfscx_256_ds` at `70.7 ms`, 94% of its encapsulation.  Nothing on the wire moves:
+identical `(syn, K)` and identical PRF state over 50 C encapsulations on one stream,
+`KAT/operation_replay.json`'s `qcmdpc_encap` row reproduced in all four ports, and
+`test_kat_pem.sh` 40/0.
+
+**The row's first published surprise**: C's keygen is **4.1x SLOWER than interpreted
+Python's** — `198 ms` against `48 ms` — because `_qceuc_*` walks a 134-byte array byte at a
+time where `_qcp_inv` shifts native big integers.  Recorded and filed as **TODO #334**, not
+fixed here.
+
+### Fixed
+
+- Three references to TODO #330 said **v9.6.0** where it shipped as **v9.5.19**
+  (`MIGRATING.md` section 17, this file's inline correction block on v6.7.3, and
+  `TODO_DONE.md`'s #276 entry).  `check_docs_consistency.py` check A compares README /
+  CHANGELOG head / `pyproject.toml` and does not read a version quoted inside prose, so
+  nothing caught it.
+- `CLAUDE.md`'s test-command comment read "security tests [1]–[29] + benchmarks [30]–[41]",
+  two renumberings behind the harnesses it describes; it had to be read to be added to, which
+  is how it was found.  `herradura.h`'s `qcp_mul` comment said "used once in keygen" while
+  encapsulation was its second caller.
+
+### Scope
+
+Three of the six harnesses, with the reason stated in each rather than inferred from silence
+(TODO #323's finding): `Herradura_tests.{s,asm,ino}` carry no QC-MDPC at all, and **Java ships
+the KEM but has no benchmark layer of any kind** — no timing helper, no rate formatter, no
+throughput row for any protocol — so its gap is one LAYER wide where this was one ROW wide,
+filed as **TODO #333**.  Runtime cost of the row, ABBA-interleaved at the default `-t 1.0`:
+C **`+4.42 s`**, Go **`+5.35 s`**, Python **`5.09 s`**; at `-t 0.05` it collapses to `0.40 s`
+of timed work in C, each rung down to one or two calls, so TODO #327's batch-floor defect is
+not reintroduced.
+
+### Spec
+
+`spec/check_language_parity.py` gains `[54]` in `_TEST_DRAWS` (three ports), three real
+`_VERDICT_FINGERPRINTS` hashes rather than `"none"`, a `sampled-accept-control`
+`_REJECTION_BASES` entry — the weakest assertion in the cell is the ACCEPT-control, not the
+rejection, which needs a `2^-256` hash collision — and the `_SAMPLED_TESTS` row that basis
+requires, whose rate is the DFR and sits in `_SAMPLED_TEST_RATE_LITERAL` because **it is not a
+function of the shipped constants and cannot be** (TODO #285: `r`, `d` and `t` are in
+`PARAMETERS` and the rate they imply is read off BIKE's analysis, and at BIKE-128 no trial
+count reaches it).  Budget unchanged at `1.0e-05`; rejection-basis cells 30 → 31, sampled-cell
+census 181 → 184, numbered tests 194 → 197.
+
 ## [9.5.19] - 2026-09-30
 
 ### TODO #330 — the bit-sliced QC-MDPC decoder #276 shipped to one port of four
@@ -3795,7 +3870,7 @@ is answered: 72 ms, and the remaining term is the hash, not the decoder.
 C, Go and Java are untouched — they hold ordinary per-position counter arrays and need no
 representation change (#276 §7).
 
-> **Corrected by TODO #330 (v9.6.0), two sentences above and one below.**  "The decoder is no
+> **Corrected by TODO #330 (v9.5.19), two sentences above and one below.**  "The decoder is no
 > longer the cost centre" is a measurement of PYTHON and reads as a statement about the
 > protocol: in C the FO hash over the 3114-byte decap buffer costs **1.289 ms** against a
 > per-position decoder in the tens of milliseconds, so the cost centre is the decoder and

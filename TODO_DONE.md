@@ -16840,7 +16840,7 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
   so the decoder is no longer the cost centre in either parameter set and 90% of a
   decapsulation is now HFSCX-256 over the ~4.6 KB of `e0 || e1 || syn`.  If Python
   decapsulation needs to get faster after the port, that is where the time is.
-  **CORRECTED BY TODO #330 (v9.6.0): that conclusion is PORT-LOCAL and reads as general.**
+  **CORRECTED BY TODO #330 (v9.5.19): that conclusion is PORT-LOCAL and reads as general.**
   It is true in Python and false in C, where the same hash costs 1.289 ms against a decoder
   in the tens of milliseconds.  The word "first" in this very line turned out to be the
   finding: there was never a second, so C, Go and Java carried the per-position `O(r*d)` loop
@@ -22848,3 +22848,138 @@ Status: **DONE v9.5.19** — both Fiat-Shamir-binding cheats moved to `n = 256`,
 challenge space makes them exact; the row's rate corrected from `8.7e-6` (one branch) to
 `1.5e-29` (both), the mechanism measured in two instruments with an exact witness, and the
 numbered-test budget taken from `1.9e-05` to `1.0e-05`.
+
+### #332: `hpke-stern-kem` has no benchmark row in any of the six harnesses
+
+**THE SUITE'S DEPLOYED POST-QUANTUM KEM HAD NO HARNESS-PUBLISHED COST FIGURE.**  The numbered
+benchmarks were `[32]`-`[43]` and none of them was the QC-MDPC KEM -- not keygen, not
+encapsulation, not decapsulation -- in a suite whose own `SECURITY.md` classifies
+`hpke-stern-kem` as the post-quantum key establishment it recommends over the classical
+quartet.  Benchmark **`[54]`** is that row, in `Herradura_tests.{c,go,py}`, and it is the only
+one of `[32]`-`[43]`+`[54]` that carries a **CONTROL**.
+
+**THE TENSION THE ITEM OWED A CHOICE ON, AND THE CHOICE.**  TODO #292's recorded position is
+that host-specific cost figures do not belong in CI; a row inside the numbered benchmarks is
+exactly such a figure, printed by `native-c`, `native-go`, `native-python` and `native-java`,
+all four REQUIRED.  The item offered a plain rate row or a row with a control and asked for a
+reason.  **The control, and the reason is that it costs nothing and settles the objection**:
+the grandfathered benchmarks print a rate nobody asserts on -- #318 pins their verdict region
+as `"none"` precisely so that a benchmark which GROWS a verdict fires -- and this row earns its
+place in a required job by also being a test, because the operations it times are the ones it
+checks.  `decap(encap(pk))` must reproduce the encapsulated secret (the first assertion
+anywhere that the SUITE's keygen/encap/decap agree at the deployed instance on a FRESH key --
+`KAT/pem/kem_*` pins ONE PINNED key, which is a different statement), and a uniform syndrome
+must decapsulate to a DIFFERENT key, so #235's implicit-rejection path is reached rather than
+assumed.  #300's rule applied forwards: if a required job is going to run the deployed KEM a
+few hundred times, the cheapest honest thing is to check each time that it works.
+
+**(1) THE MEASUREMENT THE ITEM DEMANDED FOUND A DEFECT IN THE THING IT WAS ABOUT TO PUBLISH,
+AND IT WAS IN ALL FOUR PORTS.**  Requirement (1) was "COST, measured before the row is
+written".  Measuring it turned up that **encapsulation's one sparse-times-dense multiply was
+passing its operands in the expensive order in C, Go, Python and Java alike.**  Every port's
+`qcp_mul` loops over its SECOND argument, and every port called it as `qcp_mul(e1, h_pub)` --
+the SPARSE operand first -- so the loop ran over `h_pub`'s ~6162 set bits where `e1` has ~`t/2`
+= 67.  Cyclic convolution over GF(2) commutes, so the two orders agree bit for bit and do not
+cost the same; `qcp_mul_sparse(h_pub, sup_e1)` is the function #276 and #330 had already built
+for exactly this shape, and the support is already in hand at the call site.  Measured on one
+draw, both legs in ONE process on ONE key, ABBA-interleaved:
+
+| port | `h_pub · e1` before | after | | encapsulation before | after |
+|---|---|---|---|---|---|
+| C      | `5.237 ms`  | `0.050 ms`  | **105x** | `7.410 ms`  | `2.041 ms`  (**3.6x**) |
+| Go     | `230.9 ms`  | `3.752 ms`  | **62x**  | `298.7 ms`  | `48.0 ms`   (**6.2x**) |
+| Java   | `74.427 ms` | `0.759 ms`  | **98x**  | `85.0 ms`   | `11.3 ms`   (**7.5x**) |
+| Python | `26.487 ms` | `0.125 ms`  | **212x** | `104.3 ms`  | `76.2 ms`   (**1.37x**) |
+
+Go's two figures are the SAME SHIPPED FUNCTION with its arguments swapped, which is the
+demonstration rather than an argument: `QcMdpcMul(e1, hPub)` against `QcMdpcMul(hPub, e1)`,
+bit-identical over 20 draws.  **Python moves least because what is left is the hash** -- one
+4623-byte `hfscx_256_ds` at `70.7 ms`, 94% of its encapsulation -- which is the bound #330
+recorded and declined and this item also leaves alone.
+
+**WHY THIS IS NOT #312'S "A CHANGE MUST NOT SETTLE A QUESTION IT HAPPENS TO EXPOSE".**  There
+is no question.  Commutativity is a theorem, the output is bit-identical, no parameter moves
+and nothing on the wire changes -- and it was verified by the existing oracles rather than
+asserted: identical `(syn, K)` AND identical PRF state over 50 C encapsulations on one stream,
+identical over 200 C draws and 20 Python encapsulations and 20 Java draws,
+`KAT/operation_replay.json`'s `qcmdpc_encap` row reproduced in all four ports, and
+`test_kat_pem.sh` 40/0.  #330 shipped its own keygen improvement (`264.4` to `197.6 ms`) inside
+the item on the same basis.  **Publishing a row whose first figure was a defect would have been
+#330's port-local sentence repeated** -- a number that reads as the KEM's cost and is an
+artefact of one call site.
+
+**(2) THE ROW'S FIRST PUBLISHED SURPRISE, WHICH IS WHY IT EXISTS.**  `C`'s keygen is **4.1x
+SLOWER than interpreted Python's** -- `5.04` against `20.64 ops/sec`, i.e. `198 ms` against
+`48 ms` -- because C's `_qceuc_*` extended Euclid walks a 134-byte array byte at a time while
+Python's `_qcp_inv` shifts native big integers.  Recorded, not acted on: it is an optimisation
+with no correctness content, and filed as **TODO #334** rather than left in a changelog
+sentence, because "the row now publishes it" is not the same as anyone acting on it.
+
+**(3) THREE OF THE SIX HARNESSES, AND THE TWO REASONS ARE DIFFERENT, SAID RATHER THAN INFERRED
+FROM SILENCE** -- #323 found this axis reading four of six harnesses with no sentence anywhere
+about the other two.  `Herradura_tests.{s,asm,ino}` carry no QC-MDPC at all, so there is
+nothing there to time.  **JAVA SHIPS THE KEM AND HAS NO BENCHMARK LAYER OF ANY KIND**: not a
+timing helper, not a rate formatter, not one throughput row for any protocol -- which is why
+`tools/check_rate_format.py` holds THREE formatters against each other in a repo with four
+ports.  So Java's gap is one LAYER wide where C, Go and Python's was one ROW wide, and Java's
+first benchmark is a decision about where benchmarks live in that port, not a KEM question.
+Filed as **TODO #333** (#312), and the reason is checkable: a grep for any timing or rate
+machinery across `bindings/java/` returns nothing.
+
+**(4) THE FIGURE SAYS WHICH PATH IT MEASURED, because the two cost different amounts.**
+Requirement (4): decapsulation has a success path and an implicit-rejection path and #330
+measured `1.99 ms` against `3.46 ms` for the decoder, which is the GJS channel its `dudect`
+Batch 10 registers.  The row times and labels them separately -- an averaged "decap" rate would
+be a figure nobody could use, `rnl_deployed_ring_cost.py`'s precedent.  **And the decoder's
+outcome on the uniform syndrome is PRINTED, never scored**: a uniform `r`-bit syndrome is a
+decodable weight-`t` one with probability about `C(2r,t)/2^r` = `2^-11193`, so asserting that it
+fails to decode would be an assertion with a rate, and the key-differs check holds either way
+(#291).
+
+**(5) THE RUNTIME COST IS MEASURED, AND THE CAP IS REACHABLE AT EVERY RUNG.**  Requirement (1)
+again, from the other side: ABBA-interleaved full-harness runs at the default `-t 1.0` put the
+row at **C `+4.42 s`** (`64.79` against `60.37 s`), **Go `+5.35 s`** (`108.61` against
+`103.26`), and Python at **`5.09 s`** timed in isolation at the same budget.  At `-t 0.05` the
+whole row collapses to `0.40 s` of timed work in C and `1.18 s` wall in Python, each rung down
+to one or two calls -- so #327's finding is not reintroduced.  C has no derived batch (that item
+fixed Go and Python and left C's eight hand-picked constants alone under #312), so the
+constants here are per rung and deliberately small: keygen costs ~0.2 s, so its batch is **1**
+and the elapsed check runs after every single call.  The one irreducible overshoot is a single
+keygen invocation, which no cap can subdivide.
+
+**(6) THE ITEM'S OWN PRESCRIPTION WAS WRONG TWICE, both about where the index lives.**  It said
+"`llms.txt`'s CLI section and `CLAUDE.md`'s test index both need the addition (TODO #145's
+standing rule)".  `llms.txt` indexes no numbered test or benchmark at all -- `[N]` appears
+nowhere in it -- so it needed nothing, and saying so is better than leaving the omission to be
+read as one.  And `CLAUDE.md`'s own test-command comment read **"security tests [1]-[29] +
+benchmarks [30]-[41]"**, TWO RENUMBERINGS behind the harnesses it describes and stale since
+before `[44]` existed; it had to be read to be added to, which is how it was found.  Corrected,
+with the staleness recorded in place.
+
+**(7) EVERY `spec/` TABLE A NEW `[N]` OBLIGES IS FILLED, and the interesting one is the rate.**
+`_TEST_DRAWS` gains `[54]` in three ports, `_VERDICT_FINGERPRINTS` gains three real hashes
+(**not** `"none"` -- it has a verdict), `_REJECTION_BASES[("shared", 54)]` is
+`sampled-accept-control`, and that basis is RATE-BEARING, so it owes a `_SAMPLED_TESTS` row.
+**The weakest assertion in the cell is the ACCEPT-control, not the rejection** (#322's rule
+that a basis names the weakest): the rejection needs two differently-domain-separated
+HFSCX-256 calls to collide and is `2^-256`, while the fresh-key round-trip fails on a DECODER
+FAILURE.  So the row's rate is the DFR -- and it goes in `_SAMPLED_TEST_RATE_LITERAL` with the
+reason that **it is not a function of the shipped constants and cannot be**, which is #285's
+whole finding: `r`, `d` and `t` are in `PARAMETERS` and the failure rate they imply is read off
+BIKE's published analysis, not computed from them, and at BIKE-128 no trial count reaches it.
+An expression over `QCMDPC_R/D/T` would be a formula nobody derived -- #320's defect with the
+arithmetic wrong as well as the mechanism.  The budget is unchanged at **`1.0e-05`** (the term
+is `2^-128`); the rejection-basis count goes `30` to `31` and the sampled-cell census `181` to
+`184`.
+
+**(8) AND THREE VERSION REFERENCES TO #330 SAID v9.6.0 WHERE IT SHIPPED AS v9.5.19** --
+`MIGRATING.md` section 17, `CHANGELOG.md`'s inline correction block and `TODO_DONE.md`'s #276
+entry.  `check_docs_consistency.py` check A compares README / CHANGELOG-head / `pyproject.toml`
+and does not read a version number quoted inside prose, so nothing caught it.  Corrected in all
+three.
+
+Nothing on the wire moves.  `MIGRATING.md` section 17 now says the figures it carries are
+published by the harness rather than hand-measured, and names encapsulation as the operation
+none of them had ever measured.
+
+Status: **DONE v9.5.20** — benchmark `[54]` publishes the deployed QC-MDPC KEM's keygen, encapsulation and both decapsulation paths in C, Go and Python, with a control rather than a bare rate; the measurement it required found the sparse-times-dense multiply transposed in all four ports, worth 105x/62x/98x/212x on the multiply and 3.6x/6.2x/7.5x/1.37x on encapsulation, bit-identically.

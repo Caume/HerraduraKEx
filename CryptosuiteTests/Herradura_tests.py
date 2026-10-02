@@ -3941,6 +3941,96 @@ def bench_hpks_stern_f():
     print()
 
 
+def bench_qcmdpc_kem():
+    """[54] HPKE-Stern-KEM keygen/encap/decap cost, WITH A CONTROL (TODO #332).
+
+    THE DEPLOYED POST-QUANTUM KEM HAD NO BENCHMARK ROW IN ANY OF THE SIX
+    HARNESSES.  [41] benchmarks Stern-F, [40] HKEX-RNL at the ring #223 retired,
+    and nothing measured the QC-MDPC KEM that SECURITY.md recommends over the
+    classical quartet -- not keygen, not encapsulation, not decapsulation.  So
+    the only published figures for it were hand-measured ones in CHANGELOG.md
+    and MIGRATING.md, which nothing holds to anything.
+
+    WHY IT CARRIES A CONTROL WHERE [32]-[43] DO NOT.  TODO #292's position is
+    that a host-specific cost figure does not belong in CI, and this row prints
+    in four REQUIRED jobs.  The grandfathered benchmarks print a rate nobody
+    asserts on; this one earns its place by being a TEST as well as a figure,
+    at no extra cost, because the operations it times are the ones it checks:
+
+      (a) decap(encap(pk)) reproduces the encapsulated key -- the KEM's
+          correctness, and the first assertion anywhere that the SUITE's
+          keygen/encap/decap agree at the DEPLOYED instance on a FRESH key
+          (KAT/pem/kem_* pins one PINNED key, which is a different statement);
+      (b) decapsulating a uniform syndrome yields a DIFFERENT key -- the
+          implicit-rejection path of TODO #235 is reached and is not silently
+          returning the success-path key.
+
+    WHICH PATH THE FIGURE MEASURED IS PRINTED, because the two differ: TODO #330
+    measured 1.99 ms against 3.46 ms for the decoder in C, which is the GJS
+    channel its dudect Batch 10 registers.  A single averaged "decap" rate would
+    be a figure nobody could use -- rnl_deployed_ring_cost.py's precedent, where
+    a Python RNL figure without its code-path label is not a figure.
+
+    The decoder's outcome is REPORTED rather than asserted on: a uniform
+    r-bit syndrome is a decodable weight-t one with probability about
+    C(2r,t)/2^r = 2^-11193, so asserting "it did not decode" would be an
+    assertion with a rate, and (b) holds either way (a decoded random syndrome
+    gives a different error and so a different key).
+
+    Calls the SUITE rather than keeping a local copy, as [50], [51] and [53] do:
+    the KEM is hundreds of lines of interlocking machinery and a second copy
+    would be a new place for the divergence it exists to measure.
+
+    SCOPE: THREE OF THE SIX HARNESSES, AND THE REASON DIFFERS BETWEEN THE TWO
+    GROUPS, said rather than inferred from silence -- TODO #323 found this axis
+    reading four of six harnesses with no sentence about the other two.
+    Herradura_tests.{s,asm,ino} carry no QC-MDPC at all, so there is nothing to
+    time.  JAVA ships the KEM (SelfTest.java's [14]) and has NO BENCHMARK LAYER
+    of any kind -- no timing helper, no rate formatter, no throughput row for
+    any protocol -- so its gap is one LAYER wide where this one was one ROW
+    wide, and Java's first benchmark is a decision about where benchmarks live
+    in that port rather than a KEM question.  Filed as TODO #333 (#312).
+    """
+    print("[54] HPKE-Stern-KEM keygen/encap/decap throughput  [CODE-BASED PQC]")
+    suite = None
+    try:
+        import importlib.util as _ilu
+        _p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "Herradura cryptographic suite.py")
+        _sp = _ilu.spec_from_file_location("_hsuite_kem", _p)
+        suite = _ilu.module_from_spec(_sp)
+        _sp.loader.exec_module(suite)
+    except Exception as e:                      # noqa: BLE001 - reported, not raised
+        print(f"    suite not importable: {type(e).__name__}  [FAIL]\n")
+        return
+
+    r, d, t = suite._QCMDPC_R, suite._QCMDPC_D, suite._QCMDPC_T
+    print(f"    r={r}  d={d}  t={t}  (BIKE-128)")
+
+    sup0, sup1, h0, h1, h_pub = suite.qcmdpc_keygen()
+    syn, K = suite.qcmdpc_encap(h_pub)
+    rnd = int.from_bytes(os.urandom((r + 7) // 8), 'big') & ((1 << r) - 1)
+
+    _bench("keygen (incl. weak-key screen + inversion)",
+           lambda: suite.qcmdpc_keygen())
+    _bench("encap", lambda: suite.qcmdpc_encap(h_pub))
+    _bench("decap  SUCCESS path (decoder converges)",
+           lambda: suite.qcmdpc_decap_bgf(syn, sup0, sup1, h0))
+    _bench("decap  IMPLICIT-REJECTION path (TODO #235)",
+           lambda: suite.qcmdpc_decap_bgf(rnd, sup0, sup1, h0))
+
+    # The control.  Fresh key, fresh ciphertext, both paths.
+    ok_agree = suite.qcmdpc_decap_bgf(syn, sup0, sup1, h0) == K
+    K_rej    = suite.qcmdpc_decap_bgf(rnd, sup0, sup1, h0)
+    ok_diff  = K_rej != K
+    ok_dec = suite.qcmdpc_bgf_decode(rnd, h0, sup0, sup1) is not None
+    print(f"    control: encap/decap agree={ok_agree}  "
+          f"rejection key differs={ok_diff}  "
+          f"uniform syndrome decoded={ok_dec}  "
+          f"[{'PASS' if (ok_agree and ok_diff) else 'FAIL'}]")
+    print()
+
+
 def bench_zkp_rnl():
     n = 256
     print(f"[42] ZKP-RNL sign+verify throughput  (n={n})  [PQC-EXT]")
@@ -4333,6 +4423,7 @@ if __name__ == '__main__':
     bench_hpks_stern_f()
     bench_zkp_rnl()
     bench_zkp_nl()
+    bench_qcmdpc_kem()
 
     # Security test [44] appended after benchmarks to preserve [32]-[43] numbering.
     print("--- Security Test [44]: HCRED hybrid credential ---\n")
