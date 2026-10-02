@@ -22738,31 +22738,13 @@ model: a future producer that breaks it aborts instead of returning a quietly wr
 That rewrite also pays elsewhere, which is why it is here at all: `qcp_mul` calls it `r` times,
 so **C keygen goes `264.4 ms` -> `197.6 ms`** with no output changed.
 
-**AND A DEFECT THIS ITEM'S OWN CI RUN TURNED UP, in a test it does not touch.**  The
-`sanitizers` job went red on `[21] ZKP-RNL` at n = 32 with `tamper_reject=4/5`, and PASSED on
-the same commit in the other run -- the signature of a sampled gate firing, not a regression.
-**THE RECORD PRICED ONE OF TWO IDENTICAL BRANCHES.**  `[21]` has two cheats requiring the
-verifier's RECOMPUTED Fiat-Shamir challenge to DIFFER (a different MESSAGE, and a tampered
-COMMITMENT), so each turns on a CHALLENGE COLLISION in a space of `comb(n, t)*2^t` = 575 360 at
-n = 32, t = 4 -- 8.7e-6 each.  #321 took the row off `exact` for the **w** case and recorded
-that number; its reason then said the other cheats "really are exact", true of `wrongkey` and
-`z_tamper` (residual-norm, ~1e-93) and **false of the wrong-message one**.  The row advertised
-8.7e-6 where the test carried **1.74e-5 -- 92% of the whole numbered-test budget**.  Second time
-this row has carried a reason exact about the wrong object (#310's shape).  **And the verifier
-was RIGHT**: on a collision the proof genuinely IS valid for the second message, so scoring the
-accept as a rejection failure scored the verifier for being correct -- a probabilistic property
-asserted as a deterministic one, the class #233 fixed in three tests.  **MEASURED BEFORE
-ANYTHING CHANGED, in two instruments**: a C probe over the shipped header at a reduced t = 1
-gave 28 accepts in 2000 trials, 28 collisions, THE SAME 28 -- exactly; and
-`measure_sampled_rates.py` in Python gives witness 600/600 at t = 1 and 600/600 at t = 2.  At
-the shipped t = 4 the event is 0 in 4000 under -O2 and 0 in 1200 under the job's own ASan+UBSan
-build, so the rate was confirmed small rather than assumed.  **Remedy: #310's for [53] on the
-WIDTH axis** -- both FS-binding cases run at n = 256 only, where t = 16 puts the pair at
-**1.5e-29** -- which ADOPTS THE PORT THAT WAS ALREADY RIGHT, since `SelfTest.java`'s [30] runs
-at n = 256 only and never had the defect (#294, #296), so Java needed no change.  A skipped case
-keeps its own denominator and prints `n/a` (#291), and the skip has a POSITIVE half that
-[FAIL]s if NO width runs them (#234, #326).  Both controls were verified to FIRE.  The
-numbered-test budget goes **1.9e-05 -> 1.0e-05**.
+**AND A DEFECT THIS ITEM'S OWN CI RUN TURNED UP, in a test it does not touch** -- the
+`sanitizers` job went red on `[21] ZKP-RNL` at n = 32 with `tamper_reject=4/5`, which is a
+sampled gate firing and not a regression in anything here.  **Filed and fixed as TODO #331**
+rather than recorded only in this entry, because it is a defect of the numbered-test rate axis
+(#316-#323) and not of the decoder: a reader auditing [21] would never think to look here.  The
+headline is that the record priced ONE OF TWO identical collision branches, so the row
+advertised 8.7e-6 where the test carried 1.74e-5.
 
 **WHAT IS STILL NOT DONE, and the one place this item fell short of its own text.**  The item
 listed `hpke-stern-kem`'s missing benchmark row as "separate, and a prerequisite for claiming
@@ -22779,3 +22761,90 @@ Status: **DONE v9.5.19** — the bit-sliced decoder ported to C, Go and Java (de
 10.1x / 5.7x, bit-identical on both the success and implicit-rejection paths), #276's
 port-local cost conclusion corrected, and the decoder registered in the timing audit with
 §11.8.7's retired-parameter justification withdrawn.
+
+---
+
+### #331: `[21]`'s two Fiat-Shamir-binding cheats shared one collision mechanism, and the record priced one of them
+
+**FOUND BY A RED REQUIRED CHECK, not by looking.**  TODO #330's own push turned the
+`sanitizers` job red on `[21] ZKP-RNL` at `n = 32` with `tamper_reject=4/5` -- one
+wrong-message verification ACCEPTED -- while the same job PASSED on the same commit in the
+other run.  Nothing in #330 touches `rnl_sigma_*`; two outcomes from one commit is the
+signature of a sampled gate firing, which is what TODO #300's census, #310's two hidden terms
+and #316's whole axis exist to make legible.
+
+**THE DEFECT IS IN THE RECORD, AND IT IS A FACTOR OF TWO.**  `[21]` runs four structured
+cheats.  Two of them -- verify under a different MESSAGE, and verify against a tampered
+COMMITMENT -- require the verifier's RECOMPUTED Fiat-Shamir challenge to DIFFER, so each turns
+on a CHALLENGE COLLISION.  The challenge is a weight-`t` signed sparse polynomial, so the space
+is `comb(n, t) * 2^t` = **575 360** at `n = 32`, `t = 4`, and each case is `_iters(5)/575360` =
+**8.7e-6**.  TODO #321 took this row off `exact` for the **w** case and recorded exactly that
+number.  Its reason then said *"the three OTHER cheats really are exact"* -- true of `wrongkey`
+and `z_tamper`, which the residual-norm check catches because the perturbation is full-range
+garbage in every coefficient (about `(2*36+1)/65537` per coefficient, `~1e-93` over `n` of
+them), and **FALSE of the wrong-message one, which shares the w case's mechanism exactly**.  So
+the row advertised `8.7e-6` where the test carried **`1.74e-5`** -- and against the then-summed
+`1.888e-05`, that one row was **92% of the entire numbered-test budget while publishing half of
+it**.  Second time this row has carried a reason exact about the wrong object: #310's shape,
+#295's finding, in the row #321 wrote to close exactly this.
+
+**AND THE VERIFIER WAS RIGHT, WHICH IS WHY THE TEST WAS WRONG.**  On a collision the proof
+genuinely IS valid for the second message -- the verification is then the honest one, term for
+term, since `w`, `c` and `z` are unchanged and only the message feeds the challenge -- so the
+accept is correct and scoring it as a rejection failure **scored the verifier for being
+correct**.  That is a probabilistic property asserted as a deterministic one, the class
+`CLAUDE.md`'s Testing section records #233 fixing in `[4]`, `[18]` and `[45]`.
+
+**MEASURED BEFORE ANYTHING WAS CHANGED, AND IN TWO INDEPENDENT INSTRUMENTS**, because #322's
+rule is that a test edit justified by a modelled rate is a cost with no benefit.  (1) A C probe
+over the SHIPPED `herradura.h` at a reduced `t = 1`, where the space is 64: **28 wrong-message
+accepts in 2000 trials, 28 challenge collisions, and THE SAME 28** -- exactly, no exceptions,
+which is #320's witness check rather than a frequency check.  (2)
+`spec/measure_sampled_rates.py`, in Python, extended to measure this case beside the w case it
+already measured: witness **600/600** at `t = 1` (6 accepts) and **600/600** at `t = 2` (0
+accepts).  (3) At the SHIPPED `t = 4` the event is **0 in 4000** under `-O2` and **0 in 1200**
+under the job's own `clang -fsanitize=address,undefined -O1` build -- which is how a regression
+in #330 was EXCLUDED rather than assumed away: a rate large enough to fail one run in two would
+have appeared instantly in 4000 trials.
+
+**REMEDY: #310's FOR `[53]`, ON THE WIDTH AXIS INSTEAD OF THE ROUND-COUNT ONE.**  `[53]`'s
+forgery sub-check got its own round count because its error term is `(2/3)^rounds`; these two
+cases get their own WIDTH because their error term is `1/(comb(n, t) * 2^t)`.  Both now run at
+`n = 256` only, where `t = 16` puts the space at **`6.6e29`** and the pair at **`1.5e-29`**.
+Three things make that a fix rather than a widened threshold.  **It ADOPTS THE PORT THAT WAS
+ALREADY RIGHT**: `SelfTest.java`'s `[30]` runs at `n = 256` only and so never had the defect, so
+Java needed no change and C, Go and Python came to it -- #294's and #296's precedent, for the
+fourth and fifth time.  **A SKIPPED CASE KEEPS ITS OWN DENOMINATOR** and prints `n/a` rather
+than `0/0`, so "did not run" is distinguishable from "ran and scored zero" in the output as well
+as in the verdict (#291).  And **THE SKIP HAS A POSITIVE HALF**: if NO width runs them the test
+prints `[FAIL]`, because otherwise widening the gate everywhere would satisfy every assertion
+above by asserting nothing -- #234's vacuous pass, and #326's rule that a scoped check needs the
+other direction too.
+
+**BOTH CONTROLS WERE VERIFIED TO FIRE, not argued.**  Deleting the verifier's Fiat-Shamir
+re-derivation takes `n = 256` to `tamper_reject=0/5` and `w_tamper=0/5`, so the detection power
+the width gate is supposed to preserve is demonstrated at the width it moved to; and forcing the
+gate off at every width trips the positive half.  #318's verdict fingerprints also fired on the
+change in all three ports and asked the right question -- *does this test now decide from a
+fresh sample against a fixed threshold?* -- before anything was regenerated, which is the
+machinery working rather than being worked around.
+
+**WHAT IT COSTS, stated rather than left implicit.**  The two cases no longer run at `n = 32`.
+The loss is small and nameable: `sigma_challenge` is the SAME function at both widths, so the
+property under test -- that the verifier binds the message and the commitment into the challenge
+-- is exercised identically at `n = 256`; what `n = 32` uniquely exercises is the narrow
+`sigma_poly_mul_n` path, and `verify`, `wrongkey` and `z_tamper` still run there and still
+depend on it.  **THE BUDGET GOES `1.9e-05` -> `1.0e-05`** against `1e-04`, nearly halved, which
+is the measure of how much this one row was carrying.
+
+**NOT FOLDED IN (#312).**  The three ports' exhaustion-retry accounting, `_sigma_params`' ladder
+and the `t = 64` exhaustion margin #316 recorded are all untouched.  And the question this
+leaves open is the one #321 left open one level up: `_ARGUED_MEASUREMENTS` now backs this row
+with two cases where it backed one, and nothing checks that a row's measurement covers EVERY
+branch its rate sums over -- the census of that is not filed, because a census of one row is not
+a census.
+
+Status: **DONE v9.5.19** — both Fiat-Shamir-binding cheats moved to `n = 256`, where the
+challenge space makes them exact; the row's rate corrected from `8.7e-6` (one branch) to
+`1.5e-29` (both), the mechanism measured in two instruments with an exact witness, and the
+numbered-test budget taken from `1.9e-05` to `1.0e-05`.

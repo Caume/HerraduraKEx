@@ -137,7 +137,11 @@ did not fail, because its regex still matched the Python functions while its rea
 false.  The rule is deleted, `qcmdpc-upc` is replaced by `qcmdpc-planes`, and the manifest is
 202 entries.
 
-### A separate defect this PR's own CI run turned up: `[21]`'s rate was understated by 2x
+### TODO #331 — `[21]`'s two Fiat-Shamir-binding cheats shared one collision mechanism
+
+Filed as its own item rather than folded into #330: the defect is on the numbered-test rate axis
+(#316–#323), not in the decoder, and a reader auditing `[21]` would never think to look under a
+QC-MDPC entry.  It was found by #330's own push turning the `sanitizers` job red.
 
 The `sanitizers` job went red on `[21] ZKP-RNL`, at `n = 32`, with
 `tamper_reject=4/5` — **nothing to do with the decoder**, and the same job passed on the same
