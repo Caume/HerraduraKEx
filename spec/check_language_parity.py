@@ -1734,12 +1734,30 @@ _REJECTION_BASES = {
         "why": "HCRED's per-round commitment hashes the STATEMENT, so a "
                "tampered message changes every commitment the verifier "
                "recomputes.  The challenge-rematch story a reader reaches for "
-               "first is REFUTED by measurement -- see the evidence",
+               "first is REFUTED by measurement -- see the evidence.  AND THIS "
+               "BASIS NAMED THE WRONG ASSERTION UNTIL TODO #335: the cell's "
+               "weakest axis was not its rejection at 2^-256 but its "
+               "ACCEPT-control, because hcred_verify refused an HONEST proof "
+               "unless 1 <= W <= W_MAX and no prover screened for it -- 6.5e-5 "
+               "at n=256 and 2.6e-4 at the n=32 the shared row runs.  userKeygen "
+               "screens now, so the accept-control is exact and the basis is "
+               "once again the weakest thing here",
         "evidence": "hcred-statement-binding"},
     ("shared", 44): {"basis": "hash-binding", "bits": 256,
         "why": "the C/Go/Python HCRED row, `ok_replay`, identical in mechanism "
                "to Java's [18]: _hcred_commit takes stmt, so the binding is a "
-               "commitment hash and not the Fiat-Shamir challenge",
+               "commitment hash and not the Fiat-Shamir challenge.  THE ROW "
+               "WENT RED IN CI BEFORE ANYONE CHECKED WHICH OF ITS AXES WAS "
+               "WEAKEST (TODO #335): `verify=0/1` at n=32, an honest proof "
+               "refused by its own verifier because W fell outside the "
+               "4-sigma weight window the verifier enforces and no prover "
+               "screened -- 2.6e-4, i.e. 2.6x the whole numbered-test budget, "
+               "from the ACCEPT-control of a cell whose basis named its "
+               "rejection.  #322's own warning, that taking the strongest "
+               "assertion lets a rate-bearing axis hide behind an exact "
+               "neighbour, with this row as the instance.  hcred_user_keygen "
+               "screens in all four ports now, so the rate is ZERO rather than "
+               "smaller and the stated basis is correct again",
         "evidence": "hcred-statement-binding"},
     ("shared", 25): {"basis": "hash-binding", "bits": 256,
         "why": "the accumulator's Merkle proof: a tampered sibling is accepted "

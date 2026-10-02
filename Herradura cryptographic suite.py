@@ -3373,9 +3373,33 @@ def hcred_phi(s_poly):
 def hcred_user_keygen(m_poly, n):
     """User enrolment keys: Ring-LWR pair (s, C) plus e = φ(s).
 
-    Returns (s_poly, C_poly, e_int)."""
-    s, C = _rnl_keygen(m_poly, n, RNLQ, RNLP, RNLB)
-    return s, C, hcred_phi(s)
+    Returns (s_poly, C_poly, e_int).
+
+    SCREENS THE WEIGHT, because the VERIFIER does and no prover did (TODO #335).
+    hcred_verify rejects unless 1 <= W <= w_max, where W = popcount(φ(s)) and
+    w_max = int(n/4 + 4σ) is a one-sided 4σ bound on Binomial(n, 1/4) -- so an
+    unscreened key whose weight landed in that tail produced an HONEST proof
+    that its own verifier refused, with no error anywhere: numbered test [44]
+    printed `verify=0/1  [FAIL]`.  The bound is a MODEL and the model is right
+    (measured mean/sd 8.23/2.49 at n=32 and 64.54/7.01 at n=256 against the
+    predicted 8.00/2.45 and 64.00/6.93), so the rate is exact arithmetic rather
+    than a sample: 2.6e-4 at n=32 (1.6e-4 from W > w_max plus 1.0e-4 from
+    W == 0, which fails the `1 <= W` half), 1.2e-4 at n=64, 6.5e-5 at n=256.
+    All four ports enforced the same window and none screened for it, which is
+    why no cross-port check could see it.
+
+    Screening at KEYGEN rather than raising at prove time follows
+    qcmdpc_keygen's weak-key screen: a credential key that cannot present is
+    useless, so the right place to refuse it is where it is made, and the rate
+    becomes ZERO rather than smaller.  It costs one extra draw in about 3 800 at
+    n=32 and removes at most 2.6e-4 of the key space -- under 0.001 bits of
+    min-entropy -- and no pinned key moves, every vector supplying its own."""
+    _, _, w_max = _hcred_params(n)
+    while True:
+        s, C = _rnl_keygen(m_poly, n, RNLQ, RNLP, RNLB)
+        e_int = hcred_phi(s)
+        if 1 <= bin(e_int).count('1') <= w_max:
+            return s, C, e_int
 
 
 def hcred_syndrome(seed_H, e_int, n):

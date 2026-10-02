@@ -3694,6 +3694,49 @@ asserts that the KEM works and the rate beside it is asserted by nothing, so a 1
 prints and passes — which is #292's position honoured rather than evaded, and the reason the
 figure is published with the host it was measured on.
 
+**And a verifier window no prover screened for, found as a flake on somebody else's PR (TODO
+#335).**  `cross-lang-compat` went red on #332's commit and GREEN on the identical SHA in the
+sibling run, `514 PASS / 4 FAIL`, the four being one leg: `FAIL hcred issue/prove=py ->
+{py,c,go,java}-verify (rc=1)`.  **An honest HCRED presentation proof was refused by its own
+verifier**, because `hcred_verify` enforces `1 <= W <= w_max` on `W = popcount(phi(s))` with
+`w_max = int(n/4 + 4σ)` and **no prover in any port screened for it**.  Six things carry
+forward.  (1) **THE SCRIPT WAS WRITTEN SO IT COULD NOT SAY WHAT BROKE.**  Every HCRED producer
+step ran under `>/dev/null 2>&1` with its exit code ignored, so one producer failure was
+reported as FOUR verifier failures with the diagnostic discarded — #234's vacuous pass pointed
+the other way, the dependent cases scored instead of skipped (#291).  A test that cannot name
+its own failure costs a day the next time it fires.  (2) **THE RATE IS EXACT ARITHMETIC AND THE
+MODEL WAS CHECKED** (#304's rule): `W ~ Binomial(n, 1/4)`, measured mean/sd `8.23/2.49` at
+n = 32 and `64.54/7.01` at n = 256 against the predicted `8.00/2.45` and `64.00/6.93`, so the
+binomial tail IS the rate — **`2.6e-4` at n = 32** (`1.6e-4` from `W > w_max` plus `1.0e-4` from
+`W = 0`, the window being two-sided), `1.2e-4` at n = 64, `6.5e-5` at n = 256.  `[44]` alone
+carried **2.6x the whole numbered-test budget**, from a cell resting on #322's DERIVED DEFAULT
+whose claim — a fresh sample changes WHICH instance is tested and not the outcome — is false for
+it.  (3) **A FREQUENCY CHECK COULD NOT HAVE SETTLED IT, AND 400/400 IS THE PROOF OF THAT.**  400
+honest prove/verify trials verified 400 times, which is exactly what a `2.6e-4` defect predicts
+(expected `0.10`) and bounds the rate only at `7.4e-3`, **74x the job budget** — #321's finding
+verbatim.  The mechanism is demonstrated with a WITNESS instead (#320): reduce the window until
+the confounder is common, and acceptance tracks `1 <= W <= w_max` **60/60 and 60/60 exactly** at
+reduced bounds of 10 and 8, with 11 and 21 rejections, so the agreement is not a quiet sample.
+(4) **THE FIX MAKES THE RATE ZERO RATHER THAN SMALLER**, which is the distinction #234 and #300
+both turn on: `hcred_user_keygen` screens the weight in all four ports, on `qcmdpc_keygen`'s
+weak-key-screen precedent — a credential key that cannot present is useless, so the place to
+refuse it is where it is made.  No verifier and no wire format move, every existing key stays
+valid, and the screen's own control FIRES (reduced to 10/6/4 it caps the observed `W` at exactly
+10/6/4 against an unscreened mean of 8) — because screening a 1-in-3800 tail is otherwise
+invisible.  (5) **THE `spec/` BASIS NAMED THE ROW'S STRONGEST AXIS INSTEAD OF ITS WEAKEST.**
+`_REJECTION_BASES[("shared", 44)]` was `hash-binding` at 256 bits, true of `ok_replay` and
+irrelevant to the accept-control that was failing at `2.6e-4`.  #322's own warning — "taking the
+strongest assertion would let a rate-bearing axis hide behind an exact neighbour, and that is
+#295's lenient direction inside a single row" — with this row as the instance it was written
+about.  (6) **ALL FOUR PORTS ENFORCED THE WINDOW AND NONE SCREENED FOR IT**, so no cross-port
+check could see it: the standing blind spot of #277, #294, #296 and #297, exited here by
+ARITHMETIC rather than by comparison or by a single-port assertion.  **Known limit, stated**:
+the n = 256 CLI symptom was a producer RAISE where the window causes a REJECTION, so this closes
+`[44]`'s shape with certainty and the n = 256 shape only if the raise shared the cause — three
+candidate raises are ruled out by measurement (the eps window has 13 of its 16 free, worst
+`|eps|` = 3 over 60 keys; 0/80 on the syndrome check and on the PEM round-trip), and if it
+recurs the script now names the step and prints the error.
+
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
 from TODO #289 until v9.5.6 — twelve jobs, eleven blocking — on the `arduino` job's #185

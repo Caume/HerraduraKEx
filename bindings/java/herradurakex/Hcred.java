@@ -90,10 +90,27 @@ public final class Hcred {
         UserKeypair(int[] s, int[] c, BigInteger e) { this.s = s; this.c = c; this.e = e; }
     }
 
-    /** User enrolment keys: Ring-LWR pair (s, C) plus e = phi(s). */
+    /** User enrolment keys: Ring-LWR pair (s, C) plus e = phi(s).
+     *
+     * SCREENS THE WEIGHT, because the VERIFIER does and no prover did (TODO
+     * #335).  verify rejects unless 1 &lt;= W &lt;= W_MAX, where W = popcount(phi(s))
+     * and W_MAX = (int)(N/4 + 4 sigma) is a one-sided 4-sigma bound on
+     * Binomial(N, 1/4) -- so an unscreened key whose weight landed in that tail
+     * produced an HONEST proof its own verifier refused, with no error
+     * anywhere.  The rate is exact arithmetic rather than a sample: 6.5e-5 at
+     * N = 256, and 2.6e-4 at the n=32 demo width the other ports also run.
+     * All four ports enforced the window and none screened for it, which is why
+     * no cross-port check could see it.  Screening at KEYGEN follows
+     * Stern.qcmdpcKeygen's weak-key screen: a credential key that cannot
+     * present is useless, so it is refused where it is made and the rate
+     * becomes ZERO rather than smaller. */
     public static UserKeypair userKeygen(int[] mPoly, SecureRandom rng) {
-        HerraduraNl.RnlKeypair kp = HerraduraNl.rnlKeygen(mPoly, N, RNLQ, RNLP, rng);
-        return new UserKeypair(kp.s, kp.c, phi(kp.s));
+        while (true) {
+            HerraduraNl.RnlKeypair kp = HerraduraNl.rnlKeygen(mPoly, N, RNLQ, RNLP, rng);
+            BigInteger e = phi(kp.s);
+            int w = e.bitCount();
+            if (w >= 1 && w <= W_MAX) return new UserKeypair(kp.s, kp.c, e);
+        }
     }
 
     /** Code syndrome y = H . e^T mod 2 for the credential. */

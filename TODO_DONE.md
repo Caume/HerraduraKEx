@@ -22983,3 +22983,95 @@ published by the harness rather than hand-measured, and names encapsulation as t
 none of them had ever measured.
 
 Status: **DONE v9.5.20** — benchmark `[54]` publishes the deployed QC-MDPC KEM's keygen, encapsulation and both decapsulation paths in C, Go and Python, with a control rather than a bare rate; the measurement it required found the sparse-times-dense multiply transposed in all four ports, worth 105x/62x/98x/212x on the multiply and 3.6x/6.2x/7.5x/1.37x on encapsulation, bit-identically.
+
+### #335: HCRED's verifier enforced a weight window no prover screened for, so an honest proof was refused at 2.6e-4
+
+**AN HONEST HCRED PRESENTATION PROOF WAS REJECTED BY ITS OWN VERIFIER, WITH NO ERROR
+ANYWHERE.**  `hcred_verify` refuses unless `1 <= W <= w_max`, where `W = popcount(φ(s))` and
+`w_max = int(n/4 + 4σ)` is a one-sided 4σ bound on `Binomial(n, 1/4)` — and **no prover in any
+port screened for it.**  A key whose weight landed in that tail produced a proof that was
+completely honest and verified nowhere: numbered test `[44]` printed `verify=0/1  [FAIL]`, and
+`CliTest/test_cross_lang_matrix.sh` printed four `FAIL hcred issue/prove=py -> *-verify (rc=1)`
+lines.  Both fired in CI within one day, on different commits and in different jobs.
+
+**HOW IT WAS FOUND, which is the part worth keeping.**  It presented as a flake on somebody
+else's PR: `cross-lang-compat` red on TODO #332's commit and GREEN on the identical SHA in the
+sibling run, with `514 PASS / 4 FAIL`.  The four were one leg — the Python producer's — and the
+script said nothing about why, because every producer command ran under `>/dev/null 2>&1` with
+its exit code ignored.  **One producer failure was therefore reported as four verifier
+failures with the diagnostic thrown away**, which is #234's vacuous-pass shape pointed the
+other way: the dependent cases were scored instead of skipped (#291).  The same defect family
+had already gone red on master at `fb09f0e` in `[44]`, which is what established it as
+pre-existing rather than #332's.
+
+**THE RATE IS EXACT ARITHMETIC, NOT A SAMPLE, and that mattered twice.**  `W` is the number of
+`+1` coefficients of a CBD(1) secret, so `W ~ Binomial(n, 1/4)` — and the model was CHECKED
+rather than assumed, which is #304's rule (`the arithmetic is only as good as the null it is
+done against`): measured mean/sd `8.23/2.49` at n=32 and `64.54/7.01` at n=256 against the
+predicted `8.00/2.45` and `64.00/6.93`.  So the exact binomial tail is the rate:
+
+| n | `w_max` | `P(W > w_max)` | `P(W = 0)` | per-presentation |
+|---|---|---|---|---|
+| 32  | 17 | `1.6e-4` | `1.0e-4` | **`2.6e-4`** |
+| 64  | 29 | `1.2e-4` | — | `1.2e-4` |
+| 256 | 91 | `6.5e-5` | — | `6.5e-5` |
+
+`P(W = 0)` counts because the window is two-sided — `1 <= W` fails too — and at n=32 it is 38%
+of the term.  At n=32 the bound sits only **3.53σ** above the measured mean, and the largest
+`W` in 400 draws was **exactly 17 = w_max**.
+
+**A FREQUENCY CHECK COULD NOT HAVE SETTLED THIS, AND SAYING SO IS THE POINT.**  400 honest
+prove/verify trials at n=32 gave **400/400 verified, 0 raised, 0 rejected** — exactly what a
+`2.6e-4` defect predicts (expected count `0.10`), and a Wilson upper bound of `7.4e-3`, i.e.
+**74x the whole job budget**.  That is #321's finding verbatim: a sampled zero cannot show what
+an exactness claim asks of it, at any trial count.  So the mechanism was demonstrated with a
+WITNESS instead (#320: a rate check validates the arithmetic, only a witness check validates
+the mechanism) — reduce the verifier's window until the confounder is common, then check that
+acceptance tracks `1 <= W <= w_max` per trial.  At a reduced `w_max` of 10 and 8: **49/11 and
+39/21 accept/reject, witness tracking the outcome 60/60 and 60/60 EXACTLY.**  The confounder
+occurs 11 and 21 times, so the agreement is not the silence of a quiet sample, and nothing else
+in the verifier rejects an honest proof.
+
+**THE REMEDY IS A KEYGEN SCREEN, on this repo's own precedent.**  `hcred_user_keygen` now loops
+until `1 <= W <= w_max` in C, Go, Python and Java — which is what `qcmdpc_keygen` already does
+with its weak-key screen (TODO #235 Part 1), and for the same reason: **a credential key that
+cannot present is useless, so the place to refuse it is where it is made.**  That makes the rate
+**ZERO** rather than smaller, which is the distinction #234 and #300 both turn on.  It costs one
+extra draw in about 3 800 at n=32 and 15 000 at n=256, removes at most `2.6e-4` of the key space
+(under 0.001 bits of min-entropy), touches **no verifier and no wire format**, and leaves every
+existing key valid — the screen only refuses keys the verifier would refuse anyway — so PATCH
+rather than MAJOR.  Widening `w_max` was the alternative and is worse on two counts: it changes
+the VERIFIER, i.e. the wire contract, and it weakens the soundness statement `W` exists to make.
+
+**THE SCREEN'S CONTROL FIRES, which a 2.6e-4 tail would otherwise hide.**  Screening something
+that happens once in 3 800 draws is invisible against the shipped bound, so the control reduces
+`w_max` to 10, 6 and 4 and checks that keygen still returns and that EVERY key it returns is
+inside the window: `W` ranges `[2,10]`, `[2,6]` and `[1,4]` over 40 keys each, against an
+unscreened mean of 8 at n=32.  The loop is doing real work rather than passing vacuously
+(#234).  And honest proofs verify 25/25 at the shipped bound with the screen live.
+
+**THE `spec/` BASIS NAMED THE WRONG AXIS, which is the finding under the finding.**
+`_REJECTION_BASES[("shared", 44)]` and `[("java", 18)]` were `hash-binding` at 256 bits — true
+of the row's REJECTION axis (`ok_replay`, a commitment-hash collision) and irrelevant to the
+axis that was actually failing.  #322's rule is that **a cell's basis is its WEAKEST
+assertion**, and the weakest here was the ACCEPT-control at `2.6e-4`, not the rejection at
+`2^-256`.  That item's own warning — "taking the strongest assertion would let a rate-bearing
+axis hide behind an exact neighbour, and that is #295's lenient direction inside a single row"
+— with this row as the instance it was written about.  Both `why` texts now record it; the
+basis is correct again only BECAUSE the screen makes the accept-control exact.
+
+**AND THE SCRIPT NOW DIAGNOSES ITSELF.**  Each HCRED producer step in
+`test_cross_lang_matrix.sh` is run through a helper that checks its exit code and PRINTS ITS
+STDERR, reports the first failure as ONE named failure (`hcred producer=py cred-prove (rc=1)`)
+and SKIPS the four verifies rather than blaming them.  Verified by a control that forces a
+producer failure, not by inspection.
+
+**NOT IN SCOPE, and recorded rather than quietly dropped.**  The `cross-lang-compat` symptom at
+n=256 was a producer *raise* (rc=1), where the weight window causes a *rejection* — so the
+screen fixes `[44]`'s shape with certainty and the n=256 shape only if the raise shared the
+cause.  Three candidate raises were RULED OUT by measurement: the ε-window `ValueError` has 13
+of headroom (worst `|ε|` = 3 against 16 over 60 keys), and 0/80 keys failed the syndrome check
+or the HCRED private-key PEM round-trip.  If it recurs, the script now names the step and
+prints the error, which is why that half is a diagnostic improvement rather than a guess.
+
+Status: **DONE v9.5.21** — `hcred_user_keygen` screens the weight in all four ports, so the rate is ZERO rather than 2.6e-4; the `spec/` basis that named the row's strongest axis instead of its weakest is corrected; and the cross-CLI matrix checks its producer steps instead of reporting one producer failure as four verifier failures.

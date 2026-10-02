@@ -4967,9 +4967,25 @@ func HcredPhi(sPoly []int) *big.Int {
 }
 
 // HcredUserKeygen returns (s, C, e=φ(s)) for enrolment.
+// SCREENS THE WEIGHT, because the VERIFIER does and no prover did (TODO #335).
+// HcredVerify rejects unless 1 <= W <= wMax, where W = popcount(phi(s)) and
+// wMax = int(n/4 + 4 sigma) is a one-sided 4-sigma bound on Binomial(n, 1/4) --
+// so an unscreened key whose weight landed in that tail produced an HONEST
+// proof its own verifier refused, with no error anywhere.  The rate is exact
+// arithmetic, not a sample: 2.6e-4 at n=32, 1.2e-4 at n=64, 6.5e-5 at n=256.
+// All four ports enforced the window and none screened for it, which is why no
+// cross-port check could see it.  Screening at KEYGEN follows QcMdpcKeygen's
+// weak-key screen -- a credential key that cannot present is useless, so it is
+// refused where it is made and the rate becomes ZERO rather than smaller.
 func HcredUserKeygen(mPoly []int, n int) ([]int, []int, *big.Int) {
-	s, c := RnlKeygen(mPoly, n, RnlQ, RnlP)
-	return s, c, HcredPhi(s)
+	_, _, wMax := HcredParams(n)
+	for {
+		s, c := RnlKeygen(mPoly, n, RnlQ, RnlP)
+		e := HcredPhi(s)
+		if w := bitCount(e); w >= 1 && w <= wMax {
+			return s, c, e
+		}
+	}
 }
 
 // HcredSyndrome computes the credential code syndrome y = H·e^T mod 2.

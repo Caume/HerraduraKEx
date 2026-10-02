@@ -5796,13 +5796,35 @@ static void hcred_phi(BitArray *e_out, const int32_t s_poly[HCRED_N])
             e_out->b[KEYBYTES-1-i/8] |= (uint8_t)(1u << (i%8));
 }
 
-/* User key generation: s ← CBD(1), C = round(m·s), e = φ(s). */
+/* User key generation: s ← CBD(1), C = round(m·s), e = φ(s).
+ *
+ * SCREENS THE WEIGHT, because the VERIFIER does and no prover did (TODO #335).
+ * hcred_verify rejects unless 1 <= W <= HCRED_W_MAX, where W = popcount(φ(s))
+ * and HCRED_W_MAX is a one-sided 4σ bound on Binomial(HCRED_N, 1/4) — so an
+ * unscreened key whose weight landed in that tail produced an HONEST proof that
+ * its own verifier refused, with no error anywhere: numbered test [44] printed
+ * `verify=0/1  [FAIL]`.  The bound is a MODEL and the model is right (measured
+ * mean/sd 64.54/7.01 at n=256 against the predicted 64.00/6.93), so the rate is
+ * exact arithmetic and not a sample: 6.5e-5 here, and 2.6e-4 at the n=32 demo
+ * width the other ports also run.  All four ports enforced the same window and
+ * none screened for it, which is why no cross-port check could see it.
+ *
+ * Screening at KEYGEN rather than failing at prove time follows
+ * qcmdpc_keygen's weak-key screen: a credential key that cannot present is
+ * useless, so the right place to refuse it is where it is made, and the rate
+ * becomes ZERO rather than smaller.  It costs one extra draw in about 15 000
+ * here and removes at most 6.5e-5 of the key space. */
 static void hcred_user_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
                                BitArray *e_out, const int32_t m_poly[RNL_N],
                                FILE *urnd)
 {
-    rnl_keygen_dim(s_out, c_out, m_poly, urnd, HCRED_N);
-    hcred_phi(e_out, s_out);
+    int w;
+    for (;;) {
+        rnl_keygen_dim(s_out, c_out, m_poly, urnd, HCRED_N);
+        hcred_phi(e_out, s_out);
+        w = ba_popcount(e_out);
+        if (w >= 1 && w <= HCRED_W_MAX) return;
+    }
 }
 
 /* Code syndrome y = H·e^T mod 2, packed into syndr[SDF_SYNBYTES]. */

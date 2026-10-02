@@ -2,6 +2,67 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.21] - 2026-10-02
+
+### TODO #335 — HCRED's verifier enforced a weight window no prover screened for
+
+**An honest HCRED presentation proof was rejected by its own verifier, with no error
+anywhere.** `hcred_verify` refuses unless `1 <= W <= w_max`, where `W = popcount(φ(s))` and
+`w_max = int(n/4 + 4σ)` is a one-sided 4σ bound on `Binomial(n, 1/4)` — and **no prover in any
+port screened for it.** A key whose weight landed in that tail produced a proof that was
+entirely honest and verified nowhere: numbered test `[44]` printed `verify=0/1  [FAIL]`, and
+`CliTest/test_cross_lang_matrix.sh` printed four `FAIL hcred issue/prove=py -> *-verify (rc=1)`
+lines. Both fired in CI within a day, on different commits and in different jobs.
+
+**The rate is exact arithmetic, not a sample**, and the model was checked rather than assumed
+(#304): measured mean/sd `8.23/2.49` at n=32 and `64.54/7.01` at n=256 against the predicted
+`8.00/2.45` and `64.00/6.93`. Per presentation: **`2.6e-4` at n=32** (`1.6e-4` from
+`W > w_max` plus `1.0e-4` from `W = 0`, which fails the `1 <= W` half), `1.2e-4` at n=64,
+`6.5e-5` at n=256 — so `[44]` alone carried **2.6× the whole numbered-test flake budget**, from
+a cell resting on the #322 derived default whose claim ("a fresh sample changes *which*
+instance is tested and not the outcome") is false for it.
+
+**A frequency check could not have settled it.** 400 honest prove/verify trials gave
+**400/400 verified** — exactly what a `2.6e-4` defect predicts, with a Wilson upper bound of
+`7.4e-3`, 74× the job budget; #321's finding verbatim. The mechanism is demonstrated with a
+**witness** instead (#320): at a reduced window of 10 and 8 the accept/reject split is 49/11
+and 39/21 and the predicate `1 <= W <= w_max` tracks the outcome **60/60 and 60/60 exactly**.
+
+**Fixed by a keygen screen**, on `qcmdpc_keygen`'s weak-key-screen precedent:
+`hcred_user_keygen` loops until the weight is inside the window, in C, Go, Python and Java. A
+credential key that cannot present is useless, so the place to refuse it is where it is made —
+and the rate becomes **zero** rather than smaller. One extra draw in ~3 800 at n=32, at most
+`2.6e-4` of the key space removed (under 0.001 bits of min-entropy), **no verifier and no wire
+format touched**, every existing key still valid. The screen's control fires: reduced to
+`w_max` 10 / 6 / 4 it caps the observed `W` at exactly 10 / 6 / 4 over 40 keys each, against an
+unscreened mean of 8.
+
+**All four ports enforced the window and none screened for it**, so no cross-port check could
+see it — the standing blind spot, exited here by arithmetic rather than by comparison.
+
+### Fixed
+
+- `spec/check_language_parity.py`'s `_REJECTION_BASES` entries for `("shared", 44)` and
+  `("java", 18)` named the row's **strongest** axis (`hash-binding` at 256 bits, the
+  `ok_replay` commitment collision) where #322's rule is that a basis names the **weakest** —
+  which was the accept-control at `2.6e-4`. That item's own warning, with this row as the
+  instance. Both reasons now record it; the basis is correct again only because the screen
+  makes the accept-control exact.
+- `CliTest/test_cross_lang_matrix.sh` ran every HCRED producer step under `>/dev/null 2>&1`
+  with its exit code ignored, so **one producer failure was reported as four verifier failures
+  with the diagnostic discarded**. Each step is now checked, prints its own stderr, reports the
+  first failure as one named failure, and **skips** the four verifies rather than scoring them
+  (#234, #291). Verified with a control that forces a producer failure.
+
+### Known limit
+
+The `cross-lang-compat` symptom at n=256 was a producer **raise**, where the weight window
+causes a **rejection** — so this closes `[44]`'s shape with certainty and the n=256 shape only
+if the raise shared the cause. Three candidate raises were ruled out by measurement: the ε
+window has 13 of headroom (worst `|ε|` = 3 against 16 over 60 keys), and 0/80 keys failed the
+syndrome check or the HCRED private-key PEM round-trip. If it recurs, the script now names the
+step and prints the error.
+
 ## [9.5.20] - 2026-10-02
 
 ### TODO #332 — the deployed post-quantum KEM gets a benchmark row, and the measurement it required found the multiply transposed in all four ports
