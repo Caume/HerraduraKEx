@@ -2096,7 +2096,33 @@ bindings/java/                                       — complete pure-Java port
                                                       the port had no AEAD primitive at all, so it was
                                                       the last Java capability gap that was not merely
                                                       argument-parser wiring.  CliTest/test_aead.sh is
-                                                      now a 4x4 matrix rather than 9-way
+                                                      now a 4x4 matrix rather than 9-way.
+                                                      FOUR ENTRY POINTS, and the fourth is new
+                                                      (TODO #333): SelfTest (asserts, [1]-[35]),
+                                                      Demo (walkthrough, [FAIL]-gated),
+                                                      KatVerify/VerifyBitArray (vector
+                                                      consumers) and BENCH -- the port's first
+                                                      timing code of any kind.  Before v9.5.23 a
+                                                      grep across the whole port for `bench`,
+                                                      `throughput`, `ops/sec` or `nanoTime`
+                                                      returned ZERO matches, in a port that
+                                                      ships the deployed KEM and whose job is
+                                                      REQUIRED, so check_rate_format.py held
+                                                      three formatters in a four-port repo.
+                                                      Bench carries [36] (the deployed QC-MDPC
+                                                      KEM, Java's counterpart of C/Go/Python's
+                                                      [54]) with a CONTROL that gates its exit,
+                                                      `-r`/`-t` + HTEST_ROUNDS/HTEST_TIME, a
+                                                      batch DERIVED from a warm per-call probe
+                                                      rather than C's eight hand-picked
+                                                      constants (#327), and a printed warmup
+                                                      count, because the first decapsulation on
+                                                      an SBC costs 5.7x the warm one and a
+                                                      figure whose warmup is unstated is not a
+                                                      figure.  Java's [1]-[36] therefore spans
+                                                      TWO files and
+                                                      spec/check_language_parity.py's
+                                                      NUMBERED_TEST_FILES reads both
 herradura/                                            — root-level Go package (herradura.go, codec.go)
                                                       used by the FFI Go binding and its fuzz tests
 benchmarks/                                          — recorded benchmark output/history;
@@ -3150,7 +3176,7 @@ cover is a REJECTION assertion, because whether a deliberately bad input is DETE
 itself turn on a fresh coin: #310 found that in `[53]` (the forged witness was sometimes the
 true error, one run in 16), #316 in `[17]` (a `(1/3)^8` branch that CRASHED), #320 in `[22]`
 (one term where the mechanism needs two). Three items found the shape in a curated row and
-nobody had asked it of the rest. **31 cells** assert a rejection; each now states a BASIS from
+nobody had asked it of the rest. **32 cells** assert a rejection; each now states a BASIS from
 a CLOSED SET of nine kinds, 8 rest on a fresh coin and carry a rated row, 12 on a collision or
 forgery at a stated WIDTH — a number, so the claim is falsifiable — and 10 on no coin at all.
 (2) **THE POLARITY IS OPPOSITE TO #316's, AND THAT IS THE DESIGN NOTE.** #316 records why its
@@ -3212,7 +3238,9 @@ pinned each verdict region, #319 made every rate an expression over constants re
 source, #320 held each formula to a measured mechanism, #321 audited the fifteen curated
 rows with no formula, and #322 gave the 126 uncurated cells a derived default with a BASIS
 for every rejection. **All six read exactly four files** — `NUMBERED_TEST_FILES`' three plus
-`SelfTest.java`. `CryptosuiteTests/Herradura_tests.{s,asm,ino}` appear nowhere in `spec/`,
+`SelfTest.java`. (FIVE since TODO #333, which added `Bench.java` and made that entry a TUPLE
+of paths per language; Java is the only one that needs more than one, and the generalisation
+is not cosmetic — a `[36]` the axis cannot see is a `[36]` it cannot hold to anything.) `CryptosuiteTests/Herradura_tests.{s,asm,ino}` appear nowhere in `spec/`,
 and no sentence anywhere said why: not a scope decision but an unexamined boundary, which is
 #306's finding (*which code the census READS is prior to everything the census says*) and
 #295's rule that getting the corpus wrong in the LENIENT direction makes the whole check pass
@@ -3473,8 +3501,9 @@ having no benchmark formatter at all.  Corrected in `CHANGELOG.md`, `TODO_DONE.m
 here rather than left standing.  (3) **THE GUARD IS STATIC, AND THAT IS THE SCOPE
 DECISION.**  No checker parses benchmark output — verified empty — and this does not
 change it, because running benchmarks in CI is #289's runtime problem and a cost figure
-is host-specific.  `tools/check_rate_format.py` holds the three formatters against each
-other instead: same thresholds, same branches, read from source.  `PARAMETERS`' idea
+is host-specific.  `tools/check_rate_format.py` holds the formatters against each
+other instead: same thresholds, same branches, read from source — **three of them until TODO
+#333 built Java's, four since**.  `PARAMETERS`' idea
 aimed at a **branch structure**, which no axis reads.  (4) **THE CHECK'S FIRST VERSION
 HAD A CONTROL THAT DID NOT FIRE**, and fixing that is the lesson: it scanned every
 numeric literal, so moving Python's K branch to `>= 1e4` left `rate/1e3` in the body and
@@ -3678,8 +3707,10 @@ sentence is past tense; the array length is corrected here too, 134 having been 
 the parameters #276 retired.  (4) **THREE OF SIX HARNESSES, TWO DIFFERENT REASONS, SAID
 RATHER THAN INFERRED FROM SILENCE** (#323's finding): the ARM, NASM and Arduino harnesses carry
 no QC-MDPC, and **Java ships the KEM and has NO BENCHMARK LAYER AT ALL** — no timing helper, no
-rate formatter, no throughput row for any protocol, which is why `check_rate_format.py` holds
-THREE formatters in a four-port repo.  One LAYER wide against one ROW wide, filed as **#333**.
+rate formatter, no throughput row for any protocol, which is why `check_rate_format.py` held
+THREE formatters in a four-port repo.  One LAYER wide against one ROW wide, filed as **#333**
+and **CLOSED at v9.5.23** — Java's row is `[36]`, in that port's own numbering, and the past
+tense here is because of it.
 (5) **THE RATE IS THE INTERESTING TABLE ENTRY.**  `_REJECTION_BASES[("shared", 54)]` is
 `sampled-accept-control`, because the cell's WEAKEST assertion is the accept-control and not the
 rejection — the rejection needs two differently-domain-separated HFSCX-256 calls to collide,
@@ -3796,6 +3827,65 @@ settle (#312) and the existing oracles are decisive: `KAT/operation_replay.json`
 for byte from `kem_priv.pem`, `test_kat_pem.sh` 40/0 and `test_stern_kem.sh` 18/0.  **Known
 limit, and it is #332's**: `[54]` prints the rate and nothing asserts it, so a future
 regression here prints and passes — which is #292's position honoured rather than evaded.
+
+**And the layer the previous item could only measure around, in the port whose job is as
+required as the other three (TODO #333).**  `[54]` gave the deployed QC-MDPC KEM a benchmark
+row in C, Go and Python and owed "four ports or a stated reason for fewer"; the reason for
+Java was not a KEM reason, so #332 filed it.  **`bindings/java/` contained no timing code of
+any kind** — a grep across the whole port for `bench`, `throughput`, `ops/sec` or `nanoTime`
+returned ZERO matches, so the gap was one LAYER wide where the other three ports' was one
+ROW wide, and `tools/check_rate_format.py` held three formatters in a four-port repo while
+its own text recorded that without filing it.  Java publishes `[36]` now, in
+`bindings/java/herradurakex/Bench.java`: keygen `14.9 ms`, encapsulation `10.8`,
+decapsulation `21.4` (success) and `25.1` (implicit rejection), uncontended on an aarch64
+SBC.  Six things carry forward.  (1) **WHERE IT LIVES WAS THE DECISION, and it rests on
+EXIT CONDITIONS rather than on tidiness.**  `SelfTest` asserts and exits non-zero; `Demo`
+walks through and is `[FAIL]`-gated; a benchmark publishes a host-specific rate nothing
+asserts on (#292's position) and is the only one of the three that needs `-r`/`-t`, which
+neither of the others parses at all.  A section inside `SelfTest` would have made a cost
+figure part of what that class asserts and left `-t` nowhere to live — so a third entry
+point, with its own `native-java` step, which is also the only way CI's reduced caps can
+differ from a developer's.  (2) **JIT WARMUP IS A CORRECTNESS QUESTION FOR THE FIGURE, and
+the number is larger than the item guessed.**  Measured call by call: the FIRST
+decapsulation costs `110.79 ms` against a warm `19.3` — **5.7x** — and the first keygen
+`30.95` against `14.0`; #332's own hand figures for this port moved keygen `99` to `56 ms`
+between runs on JIT state alone.  So the warmup count is PRINTED beside every rate, and it
+is a FLOOR of ten calls rather than Go's `min(batch, 10)`, because what it is defending
+against is compilation state and not noise — bounded by `-t`, since a fixed call count is
+the unbounded version of exactly the defect #327 fixed.  (3) **THE BATCH IS DERIVED, FROM A
+WARM PROBE.**  #327's remedy was one timed probe call, and Go's probe is the COLD one, which
+under-sizes the batch by the JIT factor; here the probe is the last warmup call, so the
+derivation is fed the number it was meant to have.  C's eight hand-picked constants are the
+form deliberately not copied — #327 recorded them as its own known limit, and a ninth in a
+fourth place is what #294 and #296 both answered with "adopt the port that is correct".
+Demonstrated rather than asserted: `-t 0.05` runs in `1.1 s` with 1 op on the slowest row
+and `-t 2.0` in `10.2 s` with 77, and `-r 2` caps every row at 2 ops against a 5 s budget —
+they must DIFFER, because before #327 both settings simply timed out and "both are fast now"
+would not have shown that control was restored.  (4) **A CONTROL THAT DID NOT FIRE SETTLED
+THE SHAPE OF TWO LINES, AND FOUND THE SAME HOLE IN GO.**  #318 fingerprints a test's
+PASS/FAIL-BEARING lines, so with the verdict written as `boolean ok = okAgree && okDiff;`
+above the outcome pair, **flipping that `&&` to `||` left every check in `spec/` green** —
+the decisive expression sat one line above the pinned region.  C's `[54]` and Python's both
+put the decision inside the printf that carries the markers and never had it; **Go's did
+not**, and flipping Go's conjunction was equally invisible, so that cell's pin could not go
+red either.  Fixed in both, behaviour-identical, and re-verified to fire.  2 of 4, with Go
+the outlier in the same row #328 found it the outlier of.  (5) **JAVA'S NUMBERING NOW SPANS
+TWO FILES, which is a `spec/` change and not a formality.**  `NUMBERED_TEST_FILES` takes a
+TUPLE of paths per language; had it stayed one file, `SelfTest.java`'s `[1]`-`[35]` would
+still be contiguous and duplicate-free, every table would still be satisfied, and `[36]`
+would have been invisible to the whole ninth axis — no draw cell, no verdict fingerprint, no
+rejection basis, no rate.  That is #324's *a glob that matches nothing is indistinguishable
+from a glob that is satisfied* one directory over.  `[36]` owes and has all four, its rate
+the same inherited DFR the `shared` row carries (`2^-39`, a LITERAL for #285's reason: at
+BIKE-128 the rate is not a function of `QCMDPC_R/D/T` and no trial count reaches it), and the
+budget is unchanged at `1.0e-05`.  (6) **ONE ROW, NOT TWELVE, SAID IN THE ITEM.**  The other
+eleven (`[32]`-`[43]`) are not ported: the question was whether Java has a benchmark layer
+and what it looks like, one row settles it, and eleven more would add seconds per CI run of
+figures nobody asserts on to answer a question already answered.  The layer exists, so a
+twelfth row is a one-method change rather than a decision.  **Known limit, and it is
+#332's**: the rate beside the control is asserted by nothing, so a 10x regression prints and
+passes — #292's position honoured rather than evaded, which is why the figure is published
+with the host it was measured on.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`
@@ -4351,9 +4441,14 @@ Whenever a TODO adds or removes a test number or CLI subcommand, re-check this s
 #  are TIMED AND LABELLED SEPARATELY because they cost different amounts -- the
 #  GJS channel #330 registered in dudect Batch 10 -- and an averaged figure
 #  would be unusable.  THREE harnesses, with the reason stated in each: the ARM,
-#  NASM and Arduino harnesses carry no QC-MDPC, and JAVA ships the KEM but has
-#  NO BENCHMARK LAYER AT ALL, so its gap is one layer wide where this was one
-#  row wide (TODO #333))
+#  NASM and Arduino harnesses carry no QC-MDPC, and JAVA shipped the KEM with
+#  NO BENCHMARK LAYER AT ALL, so its gap was one layer wide where this was one
+#  row wide (TODO #333, closed at v9.5.23).  Java's counterpart is now
+#  Bench.java's [36] -- a SEPARATE entry point from SelfTest.java, run by its
+#  own native-java step:
+#      java -cp bindings/java herradurakex.Bench [-r N] [-t S]
+#  Java's [1]-[35] are SelfTest's and [36] is Bench's; the two files share one
+#  numbering space and spec/check_language_parity.py reads both)
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s

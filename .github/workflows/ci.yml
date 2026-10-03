@@ -656,6 +656,25 @@ jobs:
       - name: Java suite demo runs to completion
         run: java -cp bindings/java herradurakex.Demo
 
+      # TODO #333.  Java's benchmark layer, and the first cost figure this
+      # port has ever published.  A SEPARATE step from SelfTest/Demo because
+      # the three have different exit conditions -- SelfTest asserts, Demo
+      # walks through, and this one publishes a host-specific RATE that
+      # nothing asserts on (TODO #292's position).  What makes it admissible
+      # in a REQUIRED job at all is [36]'s CONTROL, which does gate the exit
+      # status: decap(encap(pk)) must reproduce the key and a uniform
+      # syndrome must give a different one, so #235's implicit-rejection path
+      # is reached rather than assumed.
+      #
+      # Reduced caps, as the `docker` job runs docker-entrypoint.sh (TODO
+      # #326): -t 0.25 keeps the four rows to about 2 s plus JIT warmup here,
+      # where the shipped default is 1.0 s per row.  The caps REACH the rows
+      # -- that is #327's whole finding, a batch floor no cap could reduce --
+      # and Bench derives its batch from a warm per-call probe, so a reduced
+      # -t changes the sample size and not the code path.
+      - name: Java benchmarks — [36] deployed QC-MDPC KEM (TODO #333)
+        run: java -cp bindings/java herradurakex.Bench -t 0.25
+
       - name: CliTest — Java bindings + interop
         run: |
           for f in CliTest/test_java_bindings.sh CliTest/test_java_codec.sh \
