@@ -367,25 +367,35 @@ public final class Stern {
         return acc;
     }
 
-    /** a . b mod (x^r - 1), bit-by-bit shift-add over set bits of b.
+    /** a . b mod (x^r - 1), bit-by-bit shift-add over set bits of the LIGHTER
+     * operand.
      *
-     * THE LOOP IS OVER b, SO THE ARGUMENT ORDER IS A COST DECISION AND NOT A
-     * STYLE ONE (TODO #332).  Cyclic convolution over GF(2) commutes, so the two
-     * orders agree bit for bit and do not cost the same.  The remaining callers
-     * are keygen and qcmdpcPubFromPriv, both computing h1 . h0^-1 with two dense
-     * operands, where there is nothing to choose.  qcmdpcEncap used to call it
-     * as qcpMul(e1, hPub, r) -- the SPARSE operand in the a slot -- so the loop
-     * ran over hPub's ~r/2 set bits instead of e1's ~t/2, with a clearBit
-     * allocating a fresh BigInteger each time.  All four ports had the operands
-     * the same way round, which is why no cross-port check could see it. */
+     * SINCE TODO #334 THIS FUNCTION CHOOSES WHICH OPERAND TO WALK, RATHER THAN
+     * THE CALL SITE.  Cyclic convolution over GF(2) commutes, so the two orders
+     * agree bit for bit and cost one shift-or-and-xor of an r-bit BigInteger
+     * per set bit of whichever one is walked.  TODO #332 found qcmdpcEncap
+     * calling it as qcpMul(e1, hPub, r) -- the SPARSE operand in the a slot --
+     * walking hPub's ~r/2 set bits instead of e1's ~t/2, in all four ports.
+     *
+     * IT FIXED THE CALL SITE AND LEFT THE TRAP, and wrote a false reason past
+     * it: this comment said the remaining callers compute h1 . h0^-1 "with two
+     * dense operands, where there is nothing to choose".  h1 IS THE PRIVATE KEY
+     * HALF, of weight exactly QCMDPC_D = 71, so keygen and qcmdpcPubFromPriv
+     * were transposed too, by a further ~87x.  Asking the caller is what has
+     * now been got wrong twice; two bitCount calls are nothing against the work
+     * the choice saves.  It is also the better leak: the iteration count
+     * becomes min(wt(a), wt(b)), the PUBLIC constant QCMDPC_D at every call
+     * site here rather than the ~r/2 weight of a secret-derived inverse. */
     static BigInteger qcpMul(BigInteger a, BigInteger b, int r) {
         BigInteger full = BigInteger.ONE.shiftLeft(r).subtract(BigInteger.ONE);
+        BigInteger walk = b, shift = a;
+        if (a.bitCount() < b.bitCount()) { walk = a; shift = b; }
         BigInteger acc = BigInteger.ZERO;
-        BigInteger bb = b;
+        BigInteger bb = walk;
         while (bb.signum() != 0) {
             int j = bb.getLowestSetBit();
             bb = bb.clearBit(j);
-            acc = acc.xor(a.shiftLeft(j).or(a.shiftRight(r - j)).and(full));
+            acc = acc.xor(shift.shiftLeft(j).or(shift.shiftRight(r - j)).and(full));
         }
         return acc;
     }

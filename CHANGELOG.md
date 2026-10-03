@@ -2,6 +2,95 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.22] - 2026-10-02
+
+### TODO #334 — C's GF(2)[x] inversion, and the second transposed multiply it found in the function the previous item had just measured
+
+**Benchmark `[54]`'s first published figure was that C's `qcmdpc_keygen` costs `198 ms`
+against interpreted Python's `48 ms`** — the slowest of the four ports at one operation,
+filed by TODO #332 rather than fixed there.  It is now **`4.31 ms` in C**, the fastest of
+the four, with every pinned key byte-identical.
+
+**THE INVERSION IS WORD-LEVEL, AND THE LIMB WIDTH IS THE SMALLER HALF OF IT.**  `_qceuc_deg` and
+`_qceuc_xorsh` take `uint64_t *` where they took `uint8_t *`, which can be worth at most 8x
+of the 46.8x below; the predecessor also called `_qceuc_deg` **four times per reduction step**, each
+from the top of the register, where a step cancels the leading term by construction and the
+new degree is therefore strictly below the old one — so the degrees are now tracked and the
+scan starts where it can still find something.  The swap is a POINTER swap where it was five
+`memcpy` of the full register, and the closing `mod (x^r - 1)` fold is one pass of limb
+shifts where it visited all 24 672 bit positions one at a time.  Measured ABBA-interleaved in
+one process on the same input over 200 dense random draws, with both implementations compiled
+side by side: **`196.260 ms` to `4.196 ms`, 46.8x**, 0 value and 0 verdict mismatches (80 of
+the 200 draws are not invertible, which is what checks that the failure branch still agrees)
+and `h · h^-1 = 1` verified on every success.
+
+**A guard that only ever drops zeros is indistinguishable from a guard that is working.**
+The Bezout coefficient needs its own degree bound, and the obvious one — "`uw` limbs plus
+`sh` bits" — rounds up once per step over ~`r` steps, so it runs away from the register
+while the coefficient stays below degree `r`.  The first version clamped, the clamp dropped
+only zero limbs, and `KAT/operation_replay.json`, `test_kat_pem.sh`, `test_stern_kem.sh`
+and 200 random round-trips were all green over a bound doing nothing.  Replacing the clamp
+with an ABORT (`qcp_rotl`'s choke-point precedent) fired on the first key; tracking the
+degree instead — `u1 << sh` has degree `du1 + sh`, so the bound grows by `sh` and not by
+`sh` and one — is worth a further **2.4x** (`10.181 ms` with the loose bound, `4.196 ms`
+with the tracked one).
+
+**THE KEYGEN MULTIPLY WAS TRANSPOSED IN ALL FOUR PORTS, AND #332's OWN COMMENT SAID IT WAS
+NOT.**  That item fixed `qcmdpc_encap`'s `qcp_mul(e1, h_pub)` and recorded, in the comment of
+the function it had just measured, that the surviving caller was "keygen's `h1 · h0^-1`,
+where both operands are dense and there is nothing to choose".  **`h1` is the PRIVATE KEY
+HALF, of weight exactly `QCMDPC_D` = 71**, and `h0^-1` is dense — so `qcmdpc_keygen`,
+`pkey --pubout` and `kex --our-kem` were each walking ~6162 set bits where 71 would do, in C,
+Go, Python and Java, a further ~87x.  #295's false-reason shape, one item after the item that
+cited it.
+
+**The fix is that the FUNCTION chooses, not the call site.**  `qcp_mul` / `QcMdpcMul` /
+`_qcp_mul` / `qcpMul` now walk whichever operand has fewer set bits — one weight of each
+against the 13 703 word XORs the choice saves.  Fixing the call site is what #332 did, and
+the next caller got it wrong again.  Converting keygen to the sparse helper instead would
+have been marginally faster and would have left the generic multiply with no caller in the
+shipped path in any of the four ports, which is a dead-code question this item has no
+business settling (#312).  It is also the better leak: the loop count becomes
+`min(wt(a), wt(b))`, the PUBLIC constant `QCMDPC_D` at every call site here rather than the
+~`r/2` weight of a secret-derived inverse.
+
+**Measured through `[54]`, as the item required** — ABBA-interleaved against a binary built
+from the `bd050f3` header with the same harness source, uncontended, four legs:
+
+| `[54]` row | A (v9.5.21) | A (v9.5.21) | B (inversion, loose bound) | C (shipped) |
+|---|---|---|---|---|
+| keygen | `5.13` / `5.06` | `5.13` / `5.09` | `66.35` / `66.41` | `232.51` / `231.81` |
+| encap (control) | `392.76` / `387.36` | `392.84` / `389.34` | `389.85` / `389.73` | `391.45` / `389.77` |
+| decap success (control) | `233.42` / `230.18` | `233.35` / `231.30` | `231.61` / `231.62` | `232.71` / `231.44` |
+| decap rejection (control) | `172.13` / `169.84` | `172.06` / `170.76` | `170.53` / `170.72` | `171.62` / `170.45` |
+
+All figures ops/sec, two legs per cell.  **Two separate A-B-B-A runs**, the first against the
+intermediate state (word-level registers, tracked `a` degree, pointer swap, Bezout bound
+still over the whole register) and the second against what ships, each with its own baseline
+legs — so the B column is a stage and not a decomposition of the C column.  Means of the
+shipped run: keygen **`5.11` to `232.16` ops/sec, i.e. `195.7 ms` to `4.31 ms`, 45.4x**.
+
+The three control rows move by under 1.5% across every leg — this host's own spread — so the
+whole of the change is in the row the item is about.  The other three ports get the multiply
+half: **Go `292.3` to `36.5 ms` (8.0x)**, **Java `103.0` to `30.9 ms` (3.3x)**, **Python `47.7` to `20.9 ms` (2.3x)**, every leg reproducing the same `h_pub` as the other three ports.
+
+**Nothing on the wire moves.**  `KAT/operation_replay.json`'s `qcmdpc_keygen` row (`sup0`,
+`sup1`, `h_pub`) reproduces in all four ports; all four CLIs re-derive `KAT/pem/kem_pub.pem`
+byte for byte from `kem_priv.pem`; `test_kat_pem.sh` 40/0, `test_stern_kem.sh` 18/0,
+`test_kat_vectors.sh` clean, and the poisoned build (TODO #324) discovers and runs all 11
+C translation units width-clean.
+
+### Fixed
+
+- `_QCEUC_BYTES`' comment read **"134 — fits degree 2r"**, the figure at the RETIRED
+  `(523, 15, 18)` parameters; it has been **3084** since TODO #276 moved `r` to 12323.  The
+  v9.5.20 entry below and TODO #334's own text both repeat it, having been written from the
+  comment.  A stale constant beside a live expression is `check_docs_consistency.py` check
+  B's shape in a position nothing checks.
+- `spec/check_language_parity.py` gains a `qceuc-words` `PARAMETERS` row for the new
+  C-only `_QCEUC_WORDS`; the parameter census fails on a suite constant no row names, which
+  is what made adding it a step rather than a choice.
+
 ## [9.5.21] - 2026-10-02
 
 ### TODO #335 — HCRED's verifier enforced a weight window no prover screened for
@@ -99,9 +188,11 @@ identical `(syn, K)` and identical PRF state over 50 C encapsulations on one str
 `test_kat_pem.sh` 40/0.
 
 **The row's first published surprise**: C's keygen is **4.1x SLOWER than interpreted
-Python's** — `198 ms` against `48 ms` — because `_qceuc_*` walks a 134-byte array byte at a
+Python's** — `198 ms` against `48 ms` — because `_qceuc_*` walks a 3084-byte array byte at a
 time where `_qcp_inv` shifts native big integers.  Recorded and filed as **TODO #334**, not
-fixed here.
+fixed here.  *(Corrected at v9.5.22: the array is **3084** bytes, not the 134 this entry
+said — the figure at the `(523, 15, 18)` parameters TODO #276 retired, read out of the
+comment beside it.  TODO #334 closed the item, so the comparison above is historical.)*
 
 ### Fixed
 

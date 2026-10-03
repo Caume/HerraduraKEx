@@ -2209,16 +2209,26 @@ def _qcp_mul_sparse(dense: int, sup: set, r: int) -> int:
 def _qcp_mul(a: int, b: int, r: int) -> int:
     """a · b mod (x^r − 1).
 
-    THE LOOP IS OVER b, SO THE ARGUMENT ORDER IS A COST DECISION AND NOT A STYLE
-    ONE (TODO #332).  Cyclic convolution over GF(2) commutes, so the two orders
-    agree bit for bit and do not cost the same.  The remaining callers are
-    keygen and the CLI's pubout, both computing h1 · h0^-1 with two dense
-    operands, where there is nothing to choose.  qcmdpc_encap used to call it as
-    _qcp_mul(e1, h_pub) — the SPARSE operand first — so the loop ran over
-    h_pub's ~r/2 set bits, shifting a 12323-bit integer each time, instead of
-    e1's ~t/2.  All four ports had the operands the same way round, which is
-    why no cross-port check could see it."""
+    THE LOOP IS OVER THE LIGHTER OPERAND, AND SINCE TODO #334 THIS FUNCTION
+    CHOOSES RATHER THAN THE CALL SITE.  Cyclic convolution over GF(2) commutes,
+    so the two orders agree bit for bit and cost one rotate-and-XOR of a
+    12323-bit integer per set bit of whichever one is walked.  TODO #332 found
+    qcmdpc_encap calling it as _qcp_mul(e1, h_pub) — the SPARSE operand first
+    — walking h_pub's ~r/2 set bits instead of e1's ~t/2, in all four ports.
+
+    IT FIXED THE CALL SITE AND LEFT THE TRAP, and wrote a false reason past it:
+    this docstring said the remaining callers compute h1 · h0^-1 "with two
+    dense operands, where there is nothing to choose".  h1 IS THE PRIVATE KEY
+    HALF, of weight exactly _QCMDPC_D = 71, so keygen and both CLI
+    public-key derivations were transposed too, by a further ~87x.  Asking the
+    caller is what has now been got wrong twice; two bin(...).count('1') calls are
+    nothing against the work the choice saves.  It is also the better leak: the
+    iteration count becomes min(wt(a), wt(b)), the PUBLIC constant _QCMDPC_D at
+    every call site here rather than the ~r/2 weight of a secret-derived
+    inverse."""
     full = (1 << r) - 1
+    if bin(a).count('1') < bin(b).count('1'):
+        a, b = b, a
     acc = 0
     while b:
         j = (b & -b).bit_length() - 1

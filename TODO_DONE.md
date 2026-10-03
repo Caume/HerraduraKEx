@@ -22910,8 +22910,10 @@ artefact of one call site.
 
 **(2) THE ROW'S FIRST PUBLISHED SURPRISE, WHICH IS WHY IT EXISTS.**  `C`'s keygen is **4.1x
 SLOWER than interpreted Python's** -- `5.04` against `20.64 ops/sec`, i.e. `198 ms` against
-`48 ms` -- because C's `_qceuc_*` extended Euclid walks a 134-byte array byte at a time while
-Python's `_qcp_inv` shifts native big integers.  Recorded, not acted on: it is an optimisation
+`48 ms` -- because C's `_qceuc_*` extended Euclid walks a 3084-byte array byte at a time while
+Python's `_qcp_inv` shifts native big integers.  *(Corrected at v9.5.22: 3084, not the 134 this
+entry said -- the figure at the parameters #276 retired, copied from the comment beside the
+expression.  #334 closed the item, so the comparison is historical.)*  Recorded, not acted on: it is an optimisation
 with no correctness content, and filed as **TODO #334** rather than left in a changelog
 sentence, because "the row now publishes it" is not the same as anyone acting on it.
 
@@ -23075,3 +23077,151 @@ or the HCRED private-key PEM round-trip.  If it recurs, the script now names the
 prints the error, which is why that half is a diagnostic improvement rather than a guess.
 
 Status: **DONE v9.5.21** — `hcred_user_keygen` screens the weight in all four ports, so the rate is ZERO rather than 2.6e-4; the `spec/` basis that named the row's strongest axis instead of its weakest is corrected; and the cross-CLI matrix checks its producer steps instead of reporting one producer failure as four verifier failures.
+
+---
+
+### #334: C's GF(2)[x] inversion makes QC-MDPC keygen 4x slower than interpreted Python's
+
+**`qcmdpc_keygen` COSTS `198 ms` IN C AND `48 ms` IN PYTHON**, measured by benchmark `[54]`
+(TODO #332) on its first run: `5.04 ops/sec` against `20.64 ops/sec` on one host, with Go at
+`3.62` and Java at about `56 ms`.  **C is the SLOWEST of the four at this operation** and
+Python, the interpreted port, is the fastest by 4.1x.
+
+**WHERE IT GOES.**  `qcmdpc_keygen` is a weak-key screen, two sparse draws and ONE inversion,
+and the inversion is the whole cost: `_qceuc_*` in `herradura.h` runs extended Euclid over
+`uint8_t[3084]` arrays (the item said `[134]`, copied from the comment; see CORRECTED ON THE
+WAY below), shifting and XORing **byte at a time** with `_qceuc_xorsh` called once
+per reduction step, where Python's `_qcp_inv` does the same algorithm on native big integers and
+Go's and Java's on `math/big` and `BigInteger`.  TODO #330 rewrote the DECODER's inner loop from
+bit-by-bit to word-level and moved keygen `264.4` to `197.6 ms` as a side effect -- through
+`qcp_mul`, not through the inversion, which it did not touch.  The same word-level treatment
+applied to `_qceuc_*` is the obvious candidate; `QcPoly` is already `uint64_t[193]` and
+`herradura.h` already has `_qcp_shl`/`_qcp_shr`/`qcp_trim` from #330.
+
+**WHY IT IS FILED RATHER THAN DONE.**  #332's measurement requirement produced it; #332's
+subject was the ROW, and an optimisation with no correctness content is not something a
+benchmark item should do while nobody is looking (#312).  **And "the row publishes it now" is
+not the same as anyone acting on it** -- which is #305's finding about `owed` work parked in a
+prose reason, one layer out.
+
+**THREE THINGS TO GET RIGHT.**
+
+1. **BIT-IDENTITY IS THE BAR, and it is cheap to hold here.**  The inversion's output is a
+   public key, so `KAT/pem/kem_pub.pem`, `KAT/operation_replay.json`'s `qcmdpc_keygen` row and
+   `test_kat_pem.sh`'s 40 assertions all pin it in all four ports; a change that moves any byte
+   fails immediately.  `test_stern_kem.sh`'s 18 cross-port assertions are the second net.
+2. **THE RETRY PATH IS PART OF THE COST and must not be optimised out of the measurement.**
+   `qcmdpc_keygen` loops until the weak-key screen passes AND `h0` inverts, so a figure measured
+   on a stream that never retries is not the figure `[54]` prints.  #307 recorded the matching
+   trap on the vector side: its pinned stream REJECTS ONCE on purpose, because a branch a random
+   stream reaches one draw in 550 is otherwise unguarded.
+3. **MEASURE UNCONTENDED AND ABBA-INTERLEAVED, and against `[54]` rather than a scratch probe**
+   -- the row exists now, which is the whole point of #332, and #327's record is that a cost
+   measurement is worth exactly as much as the control over what else was running.
+
+**NOT IN SCOPE.**  HFSCX-256's `2.42 MB/s`, which bounds Python's encapsulation at 94% of its
+cost and which #330 and #332 both recorded and declined; and C's eight hand-picked benchmark
+batch constants, left under #312 by #327.
+
+Acceptance: C's QC-MDPC keygen is no longer the slowest of the four ports, or the reason it must
+be is recorded; every pinned key and ciphertext is byte-identical before and after; and the
+before/after is measured through `[54]` uncontended.
+
+---
+
+**DONE v9.5.22 — and the item found a SECOND transposed multiply on the way, in the
+function the previous item had just measured.**
+
+**(1) THE INVERSION IS WORD-LEVEL.**  `_qceuc_deg` and `_qceuc_xorsh` take `uint64_t *`
+where they took `uint8_t *`, and three things changed rather than one.  The registers move
+8x the data per operation; the DEGREE is tracked instead of rescanned, because a reduction
+step cancels the leading term by construction, so the new degree is strictly below the old
+one and the scan starts there (the predecessor called `_qceuc_deg` four times per step, each
+from the top of a 386-limb register -- and the limb width can account for at most 8x of
+the 46.8x below, so the scanning and prefix work is the larger half); and the swap is a
+POINTER swap where it was five `memcpy` of the full register.  The final `mod (x^r - 1)`
+fold is one pass of limb shifts where it visited all 24 672 bit positions individually.
+Measured ABBA-interleaved in one process on the same input, 200 dense random draws:
+**`196.260 ms` to `4.196 ms`, 46.8x**, with the two implementations compiled side by side
+and compared — 0 value mismatches, 0 verdict mismatches (80 of the 200 draws are
+NOT invertible, which is the guard that the failure branch still agrees), and
+`h * h^-1 = 1` checked on every success.
+
+**ONE BUG, AND IT WAS IN THE PART THAT LOOKED LIKE BOOKKEEPING.**  The byte-level
+predecessor recomputed both degrees from the arrays at the top of every iteration, so
+`b == 0` was observed on the pass AFTER the swap that put a zero there.  Tracking the
+degrees means the SWAP has to be the thing that exposes it, so the termination test moves
+BELOW the swap — with it above, the loop takes one more reduction step against an empty
+divisor and `h = 1` reports as not invertible.  Caught by `h = 1`, `h = x` and
+`h = 1 + x + x^3` before any random input was tried.
+
+**AND A SECOND, WHICH EVERY VECTOR PASSED.**  The Bezout side needs its own degree bound,
+and the obvious one is wrong: "`uw` limbs plus `sh` bits" rounds UP once per step and there
+are ~`r` steps, so the limb count runs away from the register while the coefficient itself
+stays below degree `r`.  The first version therefore CLAMPED, and the clamp dropped only
+zero limbs — so `KAT/operation_replay.json`, `test_kat_pem.sh`, `test_stern_kem.sh` and
+200 random round-trips were all green over a bound that was doing nothing.  It was found by
+replacing the clamp with an ABORT, on `qcp_rotl`'s choke-point precedent, and the abort
+fired on the first key.  Tracking the DEGREE instead (`u1 << sh` has degree `du1 + sh`, so
+the bound grows by `sh` and not by `sh` and one) makes the bound real, and it is worth a
+further **2.4x**: the limb rewrite with the loose bound measures `10.181 ms`, with the
+tracked one `4.196 ms`.  **A guard that only ever drops zeros is indistinguishable from a
+guard that is working** — #300's gate-that-cannot-go-red, in an array bound.
+
+**(2) THE KEYGEN MULTIPLY WAS TRANSPOSED IN ALL FOUR PORTS, AND #332's COMMENT SAID IT WAS
+NOT.**  That item fixed encapsulation's `qcp_mul(e1, h_pub)` and wrote, in the comment of
+the function it had just measured, that the surviving caller was "keygen's `h1 . h0^-1`,
+where both operands are dense and there is nothing to choose".  **`h1` IS THE PRIVATE KEY
+HALF, of weight exactly `QCMDPC_D` = 71**, and `h0^-1` is dense — so keygen,
+`pkey --pubout` and `kex --our-kem` were all walking ~6162 set bits where 71 would do, in
+C, Go, Python and Java, a further ~87x.  #295's false-reason shape, one item after the item
+that quoted it.
+
+**THE FIX IS THAT THE FUNCTION CHOOSES, NOT THE CALL SITE.**  `qcp_mul` now walks whichever
+operand has fewer set bits — one `qcp_popcount` of each against the 13 703 word XORs the
+choice saves — because fixing the call site is what #332 did and the next caller got it
+wrong again.  Converting keygen to `qcp_mul_sparse` would have been marginally faster and
+would have left the generic multiply with no caller in the shipped path in any of the four
+ports, which is a dead-code question this item has no business settling (#312).  It is also
+the better leak: the iteration count becomes `min(wt(a), wt(b))`, which at every call site
+here is the PUBLIC constant `QCMDPC_D` rather than the ~`r/2` weight of a secret-derived
+inverse.
+
+**MEASURED THROUGH `[54]`, as the item required**, ABBA-interleaved against a binary built
+from the `bd050f3` header with the same harness source, uncontended, four legs:
+
+| `[54]` row | A (v9.5.21) | A (v9.5.21) | B (inversion, loose bound) | C (shipped) |
+|---|---|---|---|---|
+| keygen | `5.13` / `5.06` | `5.13` / `5.09` | `66.35` / `66.41` | `232.51` / `231.81` |
+| encap (control) | `392.76` / `387.36` | `392.84` / `389.34` | `389.85` / `389.73` | `391.45` / `389.77` |
+| decap success (control) | `233.42` / `230.18` | `233.35` / `231.30` | `231.61` / `231.62` | `232.71` / `231.44` |
+| decap rejection (control) | `172.13` / `169.84` | `172.06` / `170.76` | `170.53` / `170.72` | `171.62` / `170.45` |
+
+All figures ops/sec, two legs per cell.  **Two separate A-B-B-A runs**, the first against the
+intermediate state (word-level registers, tracked `a` degree, pointer swap, Bezout bound
+still over the whole register) and the second against what ships, each with its own baseline
+legs — so the B column is a stage and not a decomposition of the C column.  Means of the
+shipped run: keygen **`5.11` to `232.16` ops/sec, i.e. `195.7 ms` to `4.31 ms`, 45.4x**.
+
+The three control rows move by under 1.5% across every leg, which is this host's own
+spread, so the whole of the change is in the row the item is about.
+
+**THE OTHER THREE PORTS GET THE MULTIPLY HALF**, keygen measured ABBA-interleaved in one
+process on one seed against a baseline copy loaded beside the shipped one, with `h_pub`
+compared every trial: **Go `292.3` to `36.5 ms` (8.0x)**, **Java `103.0` to `30.9 ms` (3.3x)**, **Python `47.7` to `20.9 ms` (2.3x)**, every leg reproducing the same `h_pub` as the other three ports.
+
+**ACCEPTANCE.**  C's QC-MDPC keygen is **no longer the slowest of the four ports; it is the
+fastest**, by 4.8x over the next fastest, Python's `20.9 ms`.  Every pinned key and ciphertext is byte-identical:
+`KAT/operation_replay.json`'s `qcmdpc_keygen` row (`sup0`, `sup1`, `h_pub`) reproduces in
+all four ports, all four CLIs re-derive `KAT/pem/kem_pub.pem` byte for byte from
+`kem_priv.pem`, `test_kat_pem.sh` is 40/0, `test_stern_kem.sh` 18/0 and
+`test_kat_vectors.sh` clean.  The retry path is inside the measurement, since `[54]` times
+`qcmdpc_keygen` itself and the weak-key screen runs before the inversion on every draw.
+
+**CORRECTED ON THE WAY.**  `_QCEUC_BYTES`' own comment read "134 — fits degree 2r", the
+figure at the RETIRED `(523, 15, 18)` parameters; it has been 3084 since #276 moved `r` to
+12323, and this item's own text above repeats the stale number from the `CHANGELOG.md`
+entry that recorded it.  A stale constant beside a live expression is check B's shape in a
+comment, where nothing looks for it.
+
+Status: **DONE v9.5.22** — the extended Euclid is word-level with tracked degrees (46.8x on the inversion), `qcp_mul` picks the lighter operand in all four ports rather than trusting the call site (a second ~87x transposition #332 had declared absent), and C's keygen goes from the slowest of the four to the fastest, bit-identically.

@@ -1342,7 +1342,7 @@ spec/                                                — machine-readable protoc
                                                       PARAMETERS / PARAM_DIVERGENCE (TODO #278),
                                                       in check_language_parity.py, are the SIXTH
                                                       axis and the first to compare a numeric
-                                                      parameter's VALUE: 84 rows, four cells each,
+                                                      parameter's VALUE: 85 rows, four cells each,
                                                       naming the CONSTANT and never its number, so
                                                       the checker reads and evaluates it from each
                                                       language's source and the table cannot go
@@ -3670,10 +3670,12 @@ parameter and no wire change, verified by the oracles that already existed (iden
 AND PRF state over 50 C encapsulations on one stream, `operation_replay.json`'s `qcmdpc_encap`
 row in all four ports, `test_kat_pem.sh` 40/0).  Publishing a row whose first figure was a
 defect would have been #276's port-local sentence repeated.  (3) **THE ROW'S FIRST SURPRISE IS
-WHY IT EXISTS**: C's keygen is **4.1x SLOWER than interpreted Python's**, `198 ms` against
-`48 ms`, because `_qceuc_*` walks a 134-byte array byte at a time where `_qcp_inv` shifts native
-big integers.  Filed as **#334** rather than left in a changelog sentence — "the row publishes
-it now" is not anyone acting on it.  (4) **THREE OF SIX HARNESSES, TWO DIFFERENT REASONS, SAID
+WHY IT EXISTS**: C's keygen was **4.1x SLOWER than interpreted Python's**, `198 ms` against
+`48 ms`, because `_qceuc_*` walked a **3084**-byte array byte at a time where `_qcp_inv` shifts
+native big integers.  Filed as **#334** rather than left in a changelog sentence — "the row
+publishes it now" is not anyone acting on it — and **CLOSED at v9.5.22**, which is why this
+sentence is past tense; the array length is corrected here too, 134 having been the figure at
+the parameters #276 retired.  (4) **THREE OF SIX HARNESSES, TWO DIFFERENT REASONS, SAID
 RATHER THAN INFERRED FROM SILENCE** (#323's finding): the ARM, NASM and Arduino harnesses carry
 no QC-MDPC, and **Java ships the KEM and has NO BENCHMARK LAYER AT ALL** — no timing helper, no
 rate formatter, no throughput row for any protocol, which is why `check_rate_format.py` holds
@@ -3736,6 +3738,64 @@ the n = 256 CLI symptom was a producer RAISE where the window causes a REJECTION
 candidate raises are ruled out by measurement (the eps window has 13 of its 16 free, worst
 `|eps|` = 3 over 60 keys; 0/80 on the syndrome check and on the PEM round-trip), and if it
 recurs the script now names the step and prints the error.
+
+**And the cost the previous item PUBLISHED, where fixing one call site had left the trap
+(TODO #334).**  `[54]`'s first run said C's `qcmdpc_keygen` costs `198 ms` against
+interpreted Python's `48 ms` — the slowest of the four ports at one operation — and #332
+filed it rather than fixing it, because an optimisation with no correctness content is not
+something a benchmark item should do while nobody is looking (#312).  It is **`4.31 ms` in
+C now, the fastest of the four**.  Six things carry forward.  (1) **THE LIMB WIDTH IS THE
+SMALLER HALF OF IT.**  `_qceuc_*` ran extended Euclid over `uint8_t[3084]`, so
+`uint64_t` limbs were the obvious 8x — but the predecessor also called `_qceuc_deg` **four
+times per reduction step**, each from the top of the register, where a step cancels the
+leading term BY CONSTRUCTION and the new degree is therefore strictly below the old one.
+Tracking the degrees, pointer-swapping instead of five `memcpy` of the full register, and
+folding `mod (x^r - 1)` in one limb pass instead of 24 672 individual bit positions is
+**46.8x** on the inversion (`196.260` to `4.196 ms`, ABBA-interleaved in one process over
+200 dense draws with both implementations compiled side by side), and the limb width can
+account for at most 8 of those.  **The expensive part of a loop is not always the part that
+moves the data.**  (2) **THE BUG WAS IN THE PART THAT LOOKED LIKE BOOKKEEPING.**  The byte-level
+version recomputed both degrees from the arrays every iteration, so `b == 0` was seen on the
+pass AFTER the swap that put a zero there; once the degrees are tracked, the SWAP has to be
+what exposes it, so the termination test moves BELOW the swap.  With it above, the loop takes
+one more reduction step against an empty divisor and **`h = 1` reports as not invertible** —
+caught by `h = 1`, `h = x` and `h = 1 + x + x^3` before any random input was tried, which is
+the cheapest test in the item and the one worth writing first.  **And a second bug in the same
+place passed every vector**: the Bezout coefficient needs its own degree bound, the obvious
+one ("`uw` limbs plus `sh` bits") rounds up once per step over ~`r` steps and so runs away
+from the register, and the first version CLAMPED — dropping only zero limbs, so
+`operation_replay.json`, `test_kat_pem.sh`, `test_stern_kem.sh` and 200 random round-trips
+were green over a bound that was doing nothing.  Replacing the clamp with an abort
+(`qcp_rotl`'s choke-point precedent) fired on the first key, and tracking the degree
+properly is worth a further **2.4x** on top of the limb rewrite.  **A guard that only ever
+drops zeros is indistinguishable from a guard that is working** — #300's gate-that-cannot-
+go-red, as an array bound.  (3) **#332's COMMENT SAID THE
+OTHER TRANSPOSITION WAS NOT THERE.**  That item fixed `qcmdpc_encap`'s `qcp_mul(e1, h_pub)`
+and wrote, in the comment of the function it had just measured, that the surviving caller was
+"keygen's `h1 · h0^-1`, where both operands are dense and there is nothing to choose".  `h1`
+**is the private key half, of weight exactly `QCMDPC_D` = 71**; `h0^-1` is dense.  So keygen,
+`pkey --pubout` and `kex --our-kem` were each walking ~6162 set bits where 71 would do, in
+all four ports, a further ~87x — #295's false-reason shape one item after the item that cited
+it, and a reminder that a comment asserting a cost property is as unvalidated as a curated
+table's reason.  (4) **SO THE FUNCTION CHOOSES NOW, NOT THE CALL SITE.**  `qcp_mul` walks
+whichever operand has fewer set bits, one weight of each against the 13 703 word XORs the
+choice saves.  Fixing the call site is what #332 did and the next caller got it wrong again;
+converting keygen to `qcp_mul_sparse` would have been marginally faster and would have left
+the generic multiply with **no caller in the shipped path in any of the four ports**, which
+is a dead-code question this item has no business settling (#312).  It is also the better
+leak: the loop count becomes `min(wt(a), wt(b))`, the PUBLIC constant `QCMDPC_D` at every
+call site here rather than the ~`r/2` weight of a secret-derived inverse.  (5) **THE ROW IS
+THE INSTRUMENT, which is what #332 bought.**  The before/after is four ABBA legs of `[54]`
+itself against a binary built from the `bd050f3` header with the same harness source, and
+the three non-keygen rows are the control — they move by under 1.5% across every leg, this
+host's own spread, so the whole of the change is in the row the item is about.  A scratch
+probe could not have said that.  (6) **BIT-IDENTITY IS CHEAP HERE AND WAS CHECKED FIRST.**
+The inverse mod `(x^r - 1)` is unique and convolution commutes, so there is no question to
+settle (#312) and the existing oracles are decisive: `KAT/operation_replay.json`'s
+`qcmdpc_keygen` row in all four ports, all four CLIs re-deriving `KAT/pem/kem_pub.pem` byte
+for byte from `kem_priv.pem`, `test_kat_pem.sh` 40/0 and `test_stern_kem.sh` 18/0.  **Known
+limit, and it is #332's**: `[54]` prints the rate and nothing asserts it, so a future
+regression here prints and passes — which is #292's position honoured rather than evaded.
 
 **And promoting the job that collects all of it, which every one of those items was
 the precondition for (TODO #317).** `analysis-findings` ran `continue-on-error: true`

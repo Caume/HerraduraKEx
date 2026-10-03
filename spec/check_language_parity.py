@@ -5725,11 +5725,15 @@ CENSUS_EXEMPT = {
                         "the DECL_PATTERNS comment excludes, reached through a "
                         "top-level func because Go has no constructors"),
         (r"^(bitArrayMask|zkpNlMask|bitCount|CountBits|lowestSetBit|putLE|word16|"
-         r"draw|draws|intSlicesEqual|qcpRotate)$",
+         r"draw|draws|intSlicesEqual|qcpRotate|qcpWeight)$",
          "bit/byte/slice plumbing on Go's own representation; C's counterparts are "
          "the exempted ba_ and qcp_ families and Python's are built in.  zkpNlMask "
          "is the low-n-bit mask ZKP-NL applies: C writes (1ULL << n) - 1 inline, "
-         "Python (1 << n) - 1, and Java factors it out as the exempted maskOf"),
+         "Python (1 << n) - 1, and Java factors it out as the exempted maskOf.  "
+         "qcpWeight is big.Int's missing popcount, added by TODO #334 so that "
+         "QcMdpcMul can walk the lighter operand: C has qcp_popcount in the "
+         "exempted qcp_ family, Python has bin(x).count(\'1\') and Java "
+         "BigInteger.bitCount"),
         (r"^(TryZero|TryFromBytes|TryFromUint|TryFromHex|MustFromHex|BaCode|"
          r"BaGfPoly|GfGenBA|baCheckWidth|baSameWidth|baErr|baFail|baHexVal)$",
          "the BitArray construction, width-check and error surface (TODO #314 pass "
@@ -6191,6 +6195,10 @@ PARAMETERS = {
     "qceuc-bytes": (["_QCEUC_BYTES", None, None, None], "local",
                     "scratch length for C's fixed-width extended-Euclid over "
                     "GF(2)[x]/(x^r - 1); the other three carry big integers"),
+    "qceuc-words": (["_QCEUC_WORDS", None, None, None], "local",
+                    "the same scratch length in uint64_t limbs, which is what the "
+                    "extended Euclid has operated on since TODO #334; the other "
+                    "three carry big integers and have no limb count to name"),
     "qcmdpc-rwords": (["QCMDPC_RWORDS", None, None, None], "local",
                       "ceil(r/64), C's limb count for the fixed-width QcPoly"),
     "qcmdpc-ds-k": (["QCMDPC_DS_K", "qcMdpcDsK", "_QCMDPC_DS_K", "Stern.QCMDPC_DS_K"],
