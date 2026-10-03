@@ -1221,6 +1221,86 @@ func benchZkpNl() {
 	fmt.Println()
 }
 
+// benchQcMdpcKem is [54]: the deployed QC-MDPC KEM's cost, WITH A CONTROL
+// (TODO #332).
+//
+// THE DEPLOYED POST-QUANTUM KEM HAD NO BENCHMARK ROW IN ANY OF THE SIX
+// HARNESSES.  [41] benchmarks Stern-F, [40] HKEX-RNL at the ring #223 retired,
+// and nothing measured the QC-MDPC KEM SECURITY.md recommends over the
+// classical quartet -- not keygen, not encapsulation, not decapsulation.  The
+// only published figures were hand-measured ones in CHANGELOG.md and
+// MIGRATING.md, held to nothing.
+//
+// WHY IT CARRIES A CONTROL WHERE [32]-[43] DO NOT.  TODO #292's position is
+// that a host-specific cost figure does not belong in CI, and this row prints
+// in four REQUIRED jobs.  The grandfathered benchmarks print a rate nobody
+// asserts on; this one earns its place by being a TEST as well as a figure, at
+// no extra cost, because the operations it times are the ones it checks:
+// decap(encap(pk)) must reproduce the encapsulated key, and decapsulating a
+// uniform syndrome must yield a DIFFERENT one, so the implicit-rejection path
+// of TODO #235 is reached rather than assumed.
+//
+// WHICH PATH THE FIGURE MEASURED IS PRINTED, because the two differ: TODO #330
+// measured 1.99 ms against 3.46 ms for the decoder in C, the GJS channel its
+// dudect Batch 10 registers.  An averaged "decap" rate would be a figure nobody
+// could use.
+//
+// The decoder's outcome on the uniform syndrome is REPORTED, never asserted: a
+// uniform r-bit syndrome is a decodable weight-t one with probability about
+// C(2r,t)/2^r = 2^-11193, so asserting it fails to decode would be an assertion
+// with a rate, and the key-differs check holds either way.
+//
+// SCOPE: THREE OF THE SIX HARNESSES, AND THE REASON DIFFERS BETWEEN THE TWO
+// GROUPS, said rather than inferred from silence -- TODO #323 found this axis
+// reading four of six harnesses with no sentence about the other two.
+// Herradura_tests.{s,asm,ino} carry no QC-MDPC at all, so there is nothing to
+// time.  JAVA ships the KEM (SelfTest.java's [14]) and has NO BENCHMARK LAYER
+// of any kind -- no timing helper, no rate formatter, no throughput row for any
+// protocol -- so its gap is one LAYER wide where this one was one ROW wide, and
+// Java's first benchmark is a decision about where benchmarks live in that port
+// rather than a KEM question.  Filed as TODO #333 (#312).
+func benchQcMdpcKem() {
+	fmt.Println("[54] HPKE-Stern-KEM keygen/encap/decap throughput  [CODE-BASED PQC]")
+	fmt.Printf("    r=%d  d=%d  t=%d  (BIKE-128)\n", QcMdpcR, QcMdpcD, QcMdpcT)
+
+	sup0, sup1, _, _, hPub := QcMdpcKeygen(nil)
+	syn, K := QcMdpcEncap(hPub, nil)
+
+	// A uniform r-bit syndrome, drawn through the suite's own CSPRNG wrapper
+	// so this adds no new spelling of "read the entropy source" to #316's draw
+	// census.
+	rb := make([]byte, 0, (QcMdpcR+7)/8+32)
+	for len(rb) < (QcMdpcR+7)/8 {
+		rb = append(rb, NewRandBitArray(256).Bytes()...)
+	}
+	rnd := new(big.Int).Mod(new(big.Int).SetBytes(rb[:(QcMdpcR+7)/8]),
+		new(big.Int).Lsh(big.NewInt(1), uint(QcMdpcR)))
+
+	row := func(label string, fn func()) {
+		ops, elapsed := bench("", fn)
+		fmt.Printf("    %-42s: %s  (%d ops in %.2fs)\n",
+			label, fmtRate(ops, elapsed), ops, elapsed.Seconds())
+	}
+	row("keygen (incl. weak-key screen + inversion)", func() { QcMdpcKeygen(nil) })
+	row("encap", func() { QcMdpcEncap(hPub, nil) })
+	row("decap  SUCCESS path (decoder converges)",
+		func() { QcMdpcDecapBgf(syn, sup0, sup1) })
+	row("decap  IMPLICIT-REJECTION path (TODO #235)",
+		func() { QcMdpcDecapBgf(rnd, sup0, sup1) })
+
+	// The control.  Fresh key, fresh ciphertext, both paths.
+	okAgree := bytes.Equal(QcMdpcDecapBgf(syn, sup0, sup1), K)
+	okDiff := !bytes.Equal(QcMdpcDecapBgf(rnd, sup0, sup1), K)
+	_, _, okDec := QcMdpcBgfDecode(rnd, sup0, sup1)
+	verdict := "FAIL"
+	if okAgree && okDiff {
+		verdict = "PASS"
+	}
+	fmt.Printf("    control: encap/decap agree=%v  rejection key differs=%v  "+
+		"uniform syndrome decoded=%v  [%s]\n", okAgree, okDiff, okDec, verdict)
+	fmt.Println()
+}
+
 // ---------------------------------------------------------------------------
 // Security tests [23]-[25]: FPE / Tweakable / Accumulator (78.A/B/J)
 // ---------------------------------------------------------------------------
@@ -1767,6 +1847,7 @@ func main() {
 	benchHpksSternF()
 	benchZkpRnl()
 	benchZkpNl()
+	benchQcMdpcKem()
 	testHcred()
 	testWeakKeyRejection()
 	testFpeTwkDomainSeparation()

@@ -308,14 +308,45 @@ for who in "${LANGS[@]}"; do
     # TODO #274 an unrecognised flag is refused, so passing it here would fail.
     bits_arg=(--bits 256)
     [ "$who" = "c" ] && bits_arg=()
-    ${CLI[$who]} genpkey --algo hcred "${bits_arg[@]}" --out "$TMP/hc_u_$who.pem" >/dev/null 2>&1
-    ${CLI[$who]} pkey --in "$TMP/hc_u_$who.pem" --pubout --out "$TMP/hc_u_${who}_pub.pem" >/dev/null 2>&1
-    ${CLI[$who]} genpkey --algo hpks-stern --out "$TMP/hc_i_$who.pem" >/dev/null 2>&1
-    ${CLI[$who]} pkey --in "$TMP/hc_i_$who.pem" --pubout --out "$TMP/hc_i_${who}_pub.pem" >/dev/null 2>&1
-    ${CLI[$who]} cred-issue --our "$TMP/hc_i_$who.pem" --in "$TMP/hc_u_${who}_pub.pem" --rounds $HCRED_ISSUE_ROUNDS \
-        --out "$TMP/hc_cred_$who.pem" >/dev/null 2>&1
-    ${CLI[$who]} cred-prove --in "$TMP/hc_u_$who.pem" --msg "matrix-presentation-$who" --rounds $HCRED_PROVE_ROUNDS \
-        --out "$TMP/hc_proof_$who.pem" >/dev/null 2>&1
+    # THE PRODUCER STEPS ARE CHECKED, AND THEIR STDERR IS KEPT (TODO #335).
+    # They used to run with `>/dev/null 2>&1` and their exit codes ignored, so
+    # ONE producer failure was reported as FOUR verifier failures with the
+    # diagnostic discarded -- which is exactly how it presented when HCRED's
+    # unscreened weight tail fired in CI: `FAIL hcred issue/prove=py ->
+    # {py,c,go,java}-verify (rc=1)` and nothing anywhere saying which step
+    # broke or why.  #234's rule that a control must be asserted before the
+    # cases that depend on it, and #291's that a section which did not run must
+    # not be scored: a producer failure is now ONE named failure carrying the
+    # command's own error text, and the four verifies are SKIPPED rather than
+    # blamed.
+    prod_rc=0
+    prod_step=""
+    run_prod() {
+        local step="$1"; shift
+        [ "$prod_rc" -eq 0 ] || return 0      # first failure wins; do not pile on
+        set +e
+        "$@" >"$TMP/hc_prod.out" 2>&1
+        local rc=$?
+        set -e
+        if [ "$rc" -ne 0 ]; then
+            prod_rc=$rc
+            prod_step="$step"
+            echo "     $who $step exited $rc:"
+            sed 's/^/       | /' "$TMP/hc_prod.out" | head -12
+        fi
+    }
+    run_prod "genpkey --algo hcred" ${CLI[$who]} genpkey --algo hcred "${bits_arg[@]}" --out "$TMP/hc_u_$who.pem"
+    run_prod "pkey --pubout (user)" ${CLI[$who]} pkey --in "$TMP/hc_u_$who.pem" --pubout --out "$TMP/hc_u_${who}_pub.pem"
+    run_prod "genpkey --algo hpks-stern" ${CLI[$who]} genpkey --algo hpks-stern --out "$TMP/hc_i_$who.pem"
+    run_prod "pkey --pubout (issuer)" ${CLI[$who]} pkey --in "$TMP/hc_i_$who.pem" --pubout --out "$TMP/hc_i_${who}_pub.pem"
+    run_prod "cred-issue" ${CLI[$who]} cred-issue --our "$TMP/hc_i_$who.pem" --in "$TMP/hc_u_${who}_pub.pem" \
+        --rounds $HCRED_ISSUE_ROUNDS --out "$TMP/hc_cred_$who.pem"
+    run_prod "cred-prove" ${CLI[$who]} cred-prove --in "$TMP/hc_u_$who.pem" --msg "matrix-presentation-$who" \
+        --rounds $HCRED_PROVE_ROUNDS --out "$TMP/hc_proof_$who.pem"
+    if [ "$prod_rc" -ne 0 ]; then
+        fail "hcred producer=$who $prod_step (rc=$prod_rc) -- 4 verifies skipped, not scored"
+        continue
+    fi
     for vf in "${LANGS[@]}"; do
         set +e
         ${CLI[$vf]} cred-verify --proof "$TMP/hc_proof_$who.pem" --pubkey "$TMP/hc_u_${who}_pub.pem" \

@@ -96,7 +96,7 @@
       [31] HPKS-T n-of-n threshold Schnorr over GF(2^n)* (3-of-3, sign/verify/tamper)  [CLASSICAL].
       C-only (unlabeled): F_stern(K,·) range compression at n=32 (HyperLogLog, TODO #42).
 
-    Performance benchmarks [32]–[43] (unified with Go and Python):
+    Performance benchmarks [32]–[43] and [54] (unified with Go and Python):
       [32] FSCX throughput (256-bit).
       [33] HKEX-GF gf_pow throughput (32-bit).
       [34] HKEX-GF full handshake (32-bit).
@@ -110,6 +110,9 @@
       [41] HPKS-Stern-F sign+verify throughput  [CODE-BASED PQC].
       [42] ZKP-RNL sign+verify throughput (n=256)  [PQC-EXT].
       [43] ZKP-NL prove+verify throughput (n=32, rounds=16)  [PQC-EXT].
+      [54] HPKE-Stern-KEM keygen/encap/decap throughput, WITH A CONTROL
+           (TODO #332)  [CODE-BASED PQC].  Appended at [54] rather than
+           inserted at [44], so nothing renumbers.
 
     Security test [44] appended after benchmarks to preserve [32]–[43] numbering:
       [44] HCRED hybrid credential: completeness + tamper/replay rejection  [PQC-EXT].
@@ -4039,6 +4042,138 @@ static void bench_zkp_nl(void)
     putchar('\n');
 }
 
+/* [54] HPKE-Stern-KEM keygen/encap/decap throughput, WITH A CONTROL
+ * (TODO #332).
+ *
+ * THE DEPLOYED POST-QUANTUM KEM HAD NO BENCHMARK ROW IN ANY OF THE SIX
+ * HARNESSES.  [41] benchmarks Stern-F, [40] HKEX-RNL at the ring #223 retired,
+ * and nothing measured the QC-MDPC KEM that SECURITY.md recommends over the
+ * classical quartet -- not keygen, not encapsulation, not decapsulation.  The
+ * only published figures for it were hand-measured ones in CHANGELOG.md and
+ * MIGRATING.md, which nothing holds to anything.
+ *
+ * WHY IT CARRIES A CONTROL WHERE [32]-[43] DO NOT.  TODO #292's position is
+ * that a host-specific cost figure does not belong in CI, and this row prints
+ * in four REQUIRED jobs.  The grandfathered benchmarks print a rate nobody
+ * asserts on; this one earns its place by being a TEST as well as a figure, at
+ * no extra cost, because the operations it times are the ones it checks:
+ * decap(encap(pk)) must reproduce the encapsulated key, and decapsulating a
+ * uniform syndrome must yield a DIFFERENT one -- so TODO #235's
+ * implicit-rejection path is reached rather than assumed.
+ *
+ * WHICH PATH THE FIGURE MEASURED IS PRINTED, because the two differ: TODO #330
+ * measured 1.99 ms against 3.46 ms for the decoder here, which is the GJS
+ * channel its dudect Batch 10 registers.  A single averaged "decap" rate would
+ * be a figure nobody could use.
+ *
+ * THE BATCH CONSTANTS ARE PER RUNG AND DELIBERATELY SMALL.  C has no derived
+ * batch -- TODO #327 fixed Go and Python by deriving one and left C's eight
+ * hand-picked constants alone under #312 -- so a new C benchmark given the
+ * wrong constant reintroduces the defect that item measured at 6683x.  keygen
+ * costs ~0.2 s here, so its batch is 1 and the elapsed check runs after every
+ * single call; the cap is reachable to within one invocation at every rung.
+ *
+ * The decoder's outcome on the uniform syndrome is REPORTED, never asserted: a
+ * uniform r-bit syndrome is a decodable weight-t one with probability about
+ * C(2r,t)/2^r = 2^-11193, so asserting that it fails to decode would be an
+ * assertion with a rate, and the key-differs check holds either way.
+ *
+ * SCOPE: THREE OF THE SIX HARNESSES, AND THE REASON IS DIFFERENT IN THE TWO
+ * GROUPS, which has to be said rather than inferred from silence -- TODO #323
+ * found this axis reading four of six harnesses with no sentence anywhere about
+ * the other two.  Herradura_tests.{s,asm,ino} carry no QC-MDPC at all (32-bit
+ * GF arithmetic and tests [1]-[18]), so there is nothing there to time.  JAVA
+ * ships the KEM -- SelfTest.java's [14] -- and has NO BENCHMARK LAYER OF ANY
+ * KIND: no timing helper, no rate formatter, not one throughput row for any
+ * protocol, which tools/check_rate_format.py records as three formatters where
+ * this repo has four ports.  So Java's gap is one LAYER wide where C, Go and
+ * Python's was one ROW wide, and building Java's first benchmark is a decision
+ * about where benchmarks live in that port rather than a KEM question -- filed
+ * as TODO #333 instead of smuggled in here (#312). */
+static void bench_qcmdpc_kem(void)
+{
+    struct timespec t0, t1;
+    long long ops;
+    double secs;
+    static QcMdpcPriv priv;
+    static QcMdpcPub  pub;
+    QcMdpcPrf prf;
+    QcPoly syn, rnd;
+    BitArray K = BA_INIT, K2 = BA_INIT, K3 = BA_INIT;
+    uint8_t seed[KEYBYTES];
+    int i, ok_agree, ok_diff, ok_dec;
+    QcPoly de0, de1;
+
+    printf("[54] HPKE-Stern-KEM keygen/encap/decap throughput  [CODE-BASED PQC]\n");
+    printf("    r=%d  d=%d  t=%d  (BIKE-128)\n",
+           QCMDPC_R, QCMDPC_D, QCMDPC_T);
+
+    for (i = 0; i < KEYBYTES; i++) seed[i] = (uint8_t)(rand() & 0xFF);
+    qcprf_init(&prf, seed);
+    qcmdpc_keygen(&priv, &pub, &prf);
+    qcmdpc_encap(&syn, &K, &pub, &prf);
+
+    /* keygen: ~0.2 s per call, so batch 1 and no separate warm-up -- the pair
+       above is the warm-up. */
+    ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+    do { QcMdpcPriv p2; QcMdpcPub b2;
+         qcmdpc_keygen(&p2, &b2, &prf);
+         ops++; clock_gettime(CLOCK_MONOTONIC, &t1);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+    printf("    keygen (incl. weak-key screen + inversion)  ");
+    print_rate(ops, secs);
+
+    { QcPoly s2; BitArray Kb = BA_INIT;
+      for (i = 0; i < 5; i++) qcmdpc_encap(&s2, &Kb, &pub, &prf);
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 20; i++) qcmdpc_encap(&s2, &Kb, &pub, &prf);
+           ops += 20; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    encap                                      ");
+      print_rate(ops, secs); }
+
+    for (i = 0; i < 5; i++) qcmdpc_decap_bgf(&K2, &syn, &priv);
+    ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+    do { for (i = 0; i < 10; i++) qcmdpc_decap_bgf(&K2, &syn, &priv);
+         ops += 10; clock_gettime(CLOCK_MONOTONIC, &t1);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+    printf("    decap  SUCCESS path (decoder converges)    ");
+    print_rate(ops, secs);
+
+    /* A uniform r-bit syndrome.  Drawn through ba_rand, so this adds no new
+       spelling of "read the entropy source" to TODO #316's draw census. */
+    { BitArray chunk = BA_INIT;
+      int w = 0, k, got = 0;
+      for (w = 0; w < QCMDPC_RWORDS; w++) rnd.w[w] = 0;
+      w = 0;
+      while (w < QCMDPC_RWORDS) {
+          ba_rand(&chunk, urnd_fp);
+          for (got = 0; got + 8 <= KEYBYTES && w < QCMDPC_RWORDS; got += 8, w++)
+              for (k = 0; k < 8; k++)
+                  rnd.w[w] |= (uint64_t)chunk.b[got + k] << (k * 8);
+      }
+      qcp_trim(&rnd); }
+
+    for (i = 0; i < 5; i++) qcmdpc_decap_bgf(&K3, &rnd, &priv);
+    ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+    do { for (i = 0; i < 10; i++) qcmdpc_decap_bgf(&K3, &rnd, &priv);
+         ops += 10; clock_gettime(CLOCK_MONOTONIC, &t1);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+    printf("    decap  IMPLICIT-REJECTION path (TODO #235) ");
+    print_rate(ops, secs);
+
+    /* The control.  Fresh key, fresh ciphertext, both paths. */
+    qcmdpc_decap_bgf(&K2, &syn, &priv);
+    qcmdpc_decap_bgf(&K3, &rnd, &priv);
+    ok_agree = ba_equal(&K, &K2);
+    ok_diff  = !ba_equal(&K, &K3);
+    ok_dec   = qcmdpc_bgf_decode(&de0, &de1, &rnd, &priv);
+    printf("    control: encap/decap agree=%d  rejection key differs=%d  "
+           "uniform syndrome decoded=%d  [%s]\n\n",
+           ok_agree, ok_diff, ok_dec,
+           (ok_agree && ok_diff) ? "PASS" : "FAIL");
+}
+
 /* ------------------------------------------------------------------ */
 /* Security test [19]: HFSCX-256 known-answer vectors                 */
 /* ------------------------------------------------------------------ */
@@ -4643,7 +4778,7 @@ static void test_hpkst(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Performance benchmarks [32]-[43]                                    */
+/* Performance benchmarks [32]-[43] (and [54], appended below)         */
 /* ------------------------------------------------------------------ */
 
 /* [32] FSCX throughput (64/128/256-bit) */
@@ -5398,6 +5533,7 @@ int main(int argc, char *argv[])
     bench_hpks_stern_f();
     bench_zkp_rnl();
     bench_zkp_nl();
+    bench_qcmdpc_kem();
 
     /* ------------------------------------------------------------------ */
     /* Security test [44]: HCRED hybrid credential.  Appended after        */

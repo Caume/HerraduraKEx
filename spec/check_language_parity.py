@@ -218,13 +218,16 @@ _TEST_DRAW_PATTERNS = {
 _TEST_DRAWS = {
     "c":      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
                20, 21, 22, 23, 24, 25, 26, 28, 30, 31, 32, 33, 34, 35, 36, 37,
-               38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53],
+               38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53,
+               54],
     "go":     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
                20, 21, 22, 23, 24, 25, 26, 28, 30, 31, 32, 33, 34, 35, 36, 37,
-               38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53],
+               38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+               53, 54],
     "python": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
                19, 20, 21, 22, 23, 24, 25, 26, 28, 30, 31, 32, 33, 34, 35, 36,
-               37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53],
+               37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+               53, 54],
     "java":   [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
                19, 20, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35],
 }
@@ -247,6 +250,21 @@ _TEST_DRAWS = {
 # a schema -- [53] was the same code at two parameter sets, failing one run in
 # 16 in Python and Go and one in 65536 in C and Java.
 _SAMPLED_TESTS = {
+    ("shared", 54): ("negligible", 2.9387358770557188e-39,
+        "[54]'s ACCEPT-CONTROL is the sampled half, and the half that is not "
+        "exact: a FRESH key and a FRESH ciphertext must decapsulate to the "
+        "encapsulated secret, which fails exactly on a DECODER FAILURE.  The "
+        "rejection half -- a uniform syndrome must give a DIFFERENT key -- "
+        "needs HFSCX-256-DS(0x11, z||syn) to collide with "
+        "HFSCX-256-DS(0x10, e0||e1||syn) and is 2^-256, so the basis names the "
+        "weaker one, which is #322's rule that a cell's basis is its weakest "
+        "assertion.  THE RATE IS INHERITED AND NOT MEASURED, which is the "
+        "honest statement #285 made about this parameter set: at BIKE-128 the "
+        "DFR is not observable at any sample size, qcmdpc_bgf_failure_rate.py "
+        "reports a one-sided bound rather than a count, and the 2^-128 comes "
+        "from BIKE's own analysis.  Exactly ONE (key, ciphertext) pair reaches "
+        "the verdict -- the benchmark rungs discard theirs -- so the term is "
+        "one DFR event per run, three ports over"),
     ("shared", 2): ("exact", None,
         "'2.9 <= mean <= 3.1' looks like the worst row in the file and is the "
         "safest: FSCX is LINEAR, so flipping one input bit moves the output by "
@@ -748,6 +766,19 @@ _SAMPLED_TEST_RATES = {
 # binding, 4.6 million times smaller than the (2/3)^rounds every copy quoted.
 # [5], [11], [19] and ("java", 14) reproduced.
 _SAMPLED_TEST_RATE_LITERAL = {
+    # ── TODO #332: a rate no constant in any port can express ─────────────
+    ("shared", 54): ("python", r"control: encap/decap agree=\{ok_agree\}",
+                    "THE DFR IS NOT A FUNCTION OF THE SHIPPED CONSTANTS, and "
+                    "that is the whole reason #285 exists: r, d and t are in "
+                    "PARAMETERS and the failure rate they imply is not "
+                    "computable from them -- it is read off BIKE's published "
+                    "analysis at the instance #276 adopted verbatim, and at "
+                    "BIKE-128 no trial count reaches it, so "
+                    "qcmdpc_bgf_failure_rate.py reports a one-sided upper "
+                    "bound and never a measurement.  An expression over "
+                    "QCMDPC_R/D/T would be a formula nobody derived, which is "
+                    "#320's defect with the arithmetic coming out wrong as "
+                    "well as the mechanism"),
     # ── TODO #322's six, and the reasons are three distinct limits ────────
     ("shared", 8):  ("python", r'status = "PASS" if wins == 0',
                     "a 2^-256 event, and the CONSTANT is the key width, which "
@@ -1623,6 +1654,17 @@ _REJECTION_PATTERN = re.compile(
 
 _REJECTION_BASES = {
     # ── RATED: a fresh coin decides whether the bad input is detectable ──
+    ("shared", 54): {"basis": "sampled-accept-control", "bits": None,
+        "why": "the SAMPLED half of [54] is its accept-control: a fresh key "
+               "and a fresh ciphertext must decapsulate to the encapsulated "
+               "secret, which a decoder failure breaks.  The REJECTION half "
+               "is exact at 2^-256 -- a uniform syndrome's implicit-rejection "
+               "key collides with the success-path key only if two "
+               "differently-domain-separated HFSCX-256 calls agree -- and the "
+               "basis names the weaker one.  The row also does NOT assert "
+               "that the uniform syndrome fails to decode: that is about "
+               "2^-11193 and is PRINTED rather than scored, since the "
+               "key-differs check holds either way (#291)"},
     ("java", 19): {"basis": "challenge-rematch", "bits": None,
         "why": "ZkpNl.verify RECOMPUTES the per-round Fiat-Shamir trit and "
                "compares it to the stored one, so a tampered message is "
@@ -1692,12 +1734,30 @@ _REJECTION_BASES = {
         "why": "HCRED's per-round commitment hashes the STATEMENT, so a "
                "tampered message changes every commitment the verifier "
                "recomputes.  The challenge-rematch story a reader reaches for "
-               "first is REFUTED by measurement -- see the evidence",
+               "first is REFUTED by measurement -- see the evidence.  AND THIS "
+               "BASIS NAMED THE WRONG ASSERTION UNTIL TODO #335: the cell's "
+               "weakest axis was not its rejection at 2^-256 but its "
+               "ACCEPT-control, because hcred_verify refused an HONEST proof "
+               "unless 1 <= W <= W_MAX and no prover screened for it -- 6.5e-5 "
+               "at n=256 and 2.6e-4 at the n=32 the shared row runs.  userKeygen "
+               "screens now, so the accept-control is exact and the basis is "
+               "once again the weakest thing here",
         "evidence": "hcred-statement-binding"},
     ("shared", 44): {"basis": "hash-binding", "bits": 256,
         "why": "the C/Go/Python HCRED row, `ok_replay`, identical in mechanism "
                "to Java's [18]: _hcred_commit takes stmt, so the binding is a "
-               "commitment hash and not the Fiat-Shamir challenge",
+               "commitment hash and not the Fiat-Shamir challenge.  THE ROW "
+               "WENT RED IN CI BEFORE ANYONE CHECKED WHICH OF ITS AXES WAS "
+               "WEAKEST (TODO #335): `verify=0/1` at n=32, an honest proof "
+               "refused by its own verifier because W fell outside the "
+               "4-sigma weight window the verifier enforces and no prover "
+               "screened -- 2.6e-4, i.e. 2.6x the whole numbered-test budget, "
+               "from the ACCEPT-control of a cell whose basis named its "
+               "rejection.  #322's own warning, that taking the strongest "
+               "assertion lets a rate-bearing axis hide behind an exact "
+               "neighbour, with this row as the instance.  hcred_user_keygen "
+               "screens in all four ports now, so the rate is ZERO rather than "
+               "smaller and the stated basis is correct again",
         "evidence": "hcred-statement-binding"},
     ("shared", 25): {"basis": "hash-binding", "bits": 256,
         "why": "the accumulator's Merkle proof: a tampered sibling is accepted "
@@ -2197,6 +2257,8 @@ _VERDICT_FINGERPRINTS = {
     ("c", 49): "60f6315c3a", ("c", 50): "9aa82856a7",
     ("c", 51): "1de8b648fe", ("c", 52): "71897dda69",
     ("c", 53): "d9072fd977",
+    # TODO #332: the one benchmark row with a verdict, so NOT "none".
+    ("c", 54): "c7edfe295a",
     # go
     ("go", 1): "10a9b5fc23", ("go", 2): "4ce634b424",
     ("go", 3): "f64d30ce54", ("go", 4): "48457c0dad",
@@ -2225,6 +2287,7 @@ _VERDICT_FINGERPRINTS = {
     ("go", 49): "01eca4540f", ("go", 50): "785c8baf28",
     ("go", 51): "01eca4540f", ("go", 52): "none",
     ("go", 53): "6c1ccbfd37",
+    ("go", 54): "6bb7b0ecf8",   # TODO #332
     # python
     ("python", 1): "db6ea492b7", ("python", 2): "8d558e9edf",
     ("python", 3): "4659f77207", ("python", 4): "e9725e3831",
@@ -2253,6 +2316,7 @@ _VERDICT_FINGERPRINTS = {
     ("python", 49): "a9d13b319a", ("python", 50): "4f6ccba4ce",
     ("python", 51): "9ee4fb2c2e", ("python", 52): "dfe56e60f6",
     ("python", 53): "01a1a93925",
+    ("python", 54): "255edfc9c2",   # TODO #332
     # java
     ("java", 1): "41d245afc5", ("java", 2): "2755b3f41c",
     ("java", 3): "1d765f8693", ("java", 4): "d21830647b",

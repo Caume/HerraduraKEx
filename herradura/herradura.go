@@ -4967,9 +4967,25 @@ func HcredPhi(sPoly []int) *big.Int {
 }
 
 // HcredUserKeygen returns (s, C, e=φ(s)) for enrolment.
+// SCREENS THE WEIGHT, because the VERIFIER does and no prover did (TODO #335).
+// HcredVerify rejects unless 1 <= W <= wMax, where W = popcount(phi(s)) and
+// wMax = int(n/4 + 4 sigma) is a one-sided 4-sigma bound on Binomial(n, 1/4) --
+// so an unscreened key whose weight landed in that tail produced an HONEST
+// proof its own verifier refused, with no error anywhere.  The rate is exact
+// arithmetic, not a sample: 2.6e-4 at n=32, 1.2e-4 at n=64, 6.5e-5 at n=256.
+// All four ports enforced the window and none screened for it, which is why no
+// cross-port check could see it.  Screening at KEYGEN follows QcMdpcKeygen's
+// weak-key screen -- a credential key that cannot present is useless, so it is
+// refused where it is made and the rate becomes ZERO rather than smaller.
 func HcredUserKeygen(mPoly []int, n int) ([]int, []int, *big.Int) {
-	s, c := RnlKeygen(mPoly, n, RnlQ, RnlP)
-	return s, c, HcredPhi(s)
+	_, _, wMax := HcredParams(n)
+	for {
+		s, c := RnlKeygen(mPoly, n, RnlQ, RnlP)
+		e := HcredPhi(s)
+		if w := bitCount(e); w >= 1 && w <= wMax {
+			return s, c, e
+		}
+	}
 }
 
 // HcredSyndrome computes the credential code syndrome y = H·e^T mod 2.
@@ -6594,6 +6610,17 @@ func qcpMulSparse(dense *big.Int, sup []int, r int) *big.Int {
 }
 
 // QcMdpcMul returns a * b mod (x^r - 1).
+//
+// THE LOOP IS OVER b, SO THE ARGUMENT ORDER IS A COST DECISION (TODO #332).
+// Cyclic convolution over GF(2) commutes, so both orders give the same bits and
+// they do not cost the same: the remaining callers are keygen and pkey --pubout
+// computing h1 * h0^-1, both operands dense, nothing to choose.  QcMdpcEncap
+// used to call it as QcMdpcMul(e1, hPub) -- the SPARSE operand in the a slot --
+// and paid 230.9 ms per encapsulation walking hPub's ~6162 set bits, against
+// 3.752 ms for this same function with its arguments swapped, with lowestSetBit
+// rescanning from bit 0 each time on top of that.  All four ports
+// had the operands the same way round, which is why no cross-port check could
+// see it.
 func QcMdpcMul(a, b *big.Int) *big.Int {
 	r := QcMdpcR
 	acc := new(big.Int)
@@ -6787,14 +6814,22 @@ func QcMdpcEncap(hPub *big.Int, seed []byte) (syn *big.Int, K []byte) {
 	supE := prf.sparseSupport(2*r, t, nil)
 	e0 := new(big.Int)
 	e1 := new(big.Int)
+	supE1 := make([]int, 0, t)
 	for _, j := range supE {
 		if j < r {
 			e0.SetBit(e0, j, 1)
 		} else {
 			e1.SetBit(e1, j-r, 1)
+			supE1 = append(supE1, j-r)
 		}
 	}
-	syn = new(big.Int).Xor(e0, QcMdpcMul(e1, hPub))
+	// hPub * e1 through the SPARSE helper: QcMdpcMul loops over its second
+	// argument, so QcMdpcMul(e1, hPub) walked hPub's ~6162 set bits -- 230.9 ms
+	// against 3.752 ms for the same shipped function with its arguments swapped,
+	// 62x -- where the support has ~t/2 = 67 entries.  Bit-identical, convolution
+	// commuting; encapsulation goes 298.7 ms to 48.0 ms ABBA-interleaved, what
+	// remains being the 4623-byte HFSCX-256 call at 40.6 ms (TODO #332).
+	syn = new(big.Int).Xor(e0, qcpMulSparse(hPub, supE1, QcMdpcR))
 	K = qcMdpcKemKey(e0, e1, syn)
 	return syn, K
 }

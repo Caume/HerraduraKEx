@@ -5796,13 +5796,35 @@ static void hcred_phi(BitArray *e_out, const int32_t s_poly[HCRED_N])
             e_out->b[KEYBYTES-1-i/8] |= (uint8_t)(1u << (i%8));
 }
 
-/* User key generation: s ← CBD(1), C = round(m·s), e = φ(s). */
+/* User key generation: s ← CBD(1), C = round(m·s), e = φ(s).
+ *
+ * SCREENS THE WEIGHT, because the VERIFIER does and no prover did (TODO #335).
+ * hcred_verify rejects unless 1 <= W <= HCRED_W_MAX, where W = popcount(φ(s))
+ * and HCRED_W_MAX is a one-sided 4σ bound on Binomial(HCRED_N, 1/4) — so an
+ * unscreened key whose weight landed in that tail produced an HONEST proof that
+ * its own verifier refused, with no error anywhere: numbered test [44] printed
+ * `verify=0/1  [FAIL]`.  The bound is a MODEL and the model is right (measured
+ * mean/sd 64.54/7.01 at n=256 against the predicted 64.00/6.93), so the rate is
+ * exact arithmetic and not a sample: 6.5e-5 here, and 2.6e-4 at the n=32 demo
+ * width the other ports also run.  All four ports enforced the same window and
+ * none screened for it, which is why no cross-port check could see it.
+ *
+ * Screening at KEYGEN rather than failing at prove time follows
+ * qcmdpc_keygen's weak-key screen: a credential key that cannot present is
+ * useless, so the right place to refuse it is where it is made, and the rate
+ * becomes ZERO rather than smaller.  It costs one extra draw in about 15 000
+ * here and removes at most 6.5e-5 of the key space. */
 static void hcred_user_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
                                BitArray *e_out, const int32_t m_poly[RNL_N],
                                FILE *urnd)
 {
-    rnl_keygen_dim(s_out, c_out, m_poly, urnd, HCRED_N);
-    hcred_phi(e_out, s_out);
+    int w;
+    for (;;) {
+        rnl_keygen_dim(s_out, c_out, m_poly, urnd, HCRED_N);
+        hcred_phi(e_out, s_out);
+        w = ba_popcount(e_out);
+        if (w >= 1 && w <= HCRED_W_MAX) return;
+    }
 }
 
 /* Code syndrome y = H·e^T mod 2, packed into syndr[SDF_SYNBYTES]. */
@@ -7831,7 +7853,21 @@ static void qcp_mul_sparse(QcPoly *dst, const QcPoly *src,
     for (k = 0; k < d; k++) qcp_xor_rol(dst, src, sup[k]);
 }
 
-/* dst = a · b mod (x^r - 1) — generic, used once in keygen */
+/* dst = a · b mod (x^r - 1) — generic.
+ *
+ * THE LOOP IS OVER b, WHICH MAKES THE ARGUMENT ORDER A COST DECISION AND NOT A
+ * STYLE ONE (TODO #332).  Cyclic convolution over GF(2) is commutative, so the
+ * two orders agree bit for bit; they do not cost the same.  Its one remaining
+ * caller is keygen's h1 · h0^-1, where both operands are dense and there is
+ * nothing to choose.  ENCAPSULATION used to call it as qcp_mul(e1, h_pub) —
+ * the SPARSE operand in the a slot — so the loop ran over h_pub's ~r/2 set
+ * bits instead of e1's ~t/2, and measured 5.237 ms against qcp_mul_sparse's
+ * 0.050 ms on the same draw: 105x, for the same output.  All four ports had it
+ * the same way round, which is why no cross-port check could see it.
+ *
+ * This comment also used to say "used once in keygen" while encap was the
+ * second caller — a false reason of the kind #295 found in a parameter
+ * table, in a position where nothing validates it. */
 static void qcp_mul(QcPoly *dst, const QcPoly *a, const QcPoly *b) {
     int j;
     qcp_zero(dst);
@@ -8104,16 +8140,24 @@ static void qcmdpc_z_seed(const QcMdpcPriv *priv, uint8_t z[32]) {
 
 static void qcmdpc_encap(QcPoly *syn_out, BitArray *K_out,
                           const QcMdpcPub *pub, QcMdpcPrf *prf) {
-    uint16_t sup_e[QCMDPC_T];
+    uint16_t sup_e[QCMDPC_T], sup_e1[QCMDPC_T];
     QcPoly e0, e1, e1h;
-    int k;
+    int k, n_e1 = 0;
     qcprf_sparse_support(prf, 2u * QCMDPC_R, QCMDPC_T, sup_e);
     qcp_zero(&e0); qcp_zero(&e1);
     for (k = 0; k < QCMDPC_T; k++) {
         if (sup_e[k] < QCMDPC_R) qcp_set(&e0, sup_e[k]);
-        else                       qcp_set(&e1, sup_e[k] - QCMDPC_R);
+        else { qcp_set(&e1, sup_e[k] - QCMDPC_R);
+               sup_e1[n_e1++] = (uint16_t)(sup_e[k] - QCMDPC_R); }
     }
-    qcp_mul(&e1h, &e1, &pub->h_pub);
+    /* h_pub · e1, and the operand order is load-bearing: qcp_mul loops over its
+       SECOND argument, so qcp_mul(&e1, &pub->h_pub) walked h_pub's ~6162 set
+       bits where e1 has ~t/2 = 67.  qcp_mul_sparse takes the support directly
+       and is the function #276 and #330 built for exactly this shape
+       (TODO #332).  Bit-identical — cyclic convolution commutes — and the
+       whole of C's encapsulation goes 7.410 ms to 2.041 ms, measured
+       ABBA-interleaved in one process on one key. */
+    qcp_mul_sparse(&e1h, &pub->h_pub, sup_e1, n_e1);
     qcp_copy(syn_out, &e0);
     qcp_xor(syn_out, &e1h);
     qcmdpc_kem_key(K_out, &e0, &e1, syn_out);
