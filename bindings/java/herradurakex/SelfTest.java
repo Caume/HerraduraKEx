@@ -36,10 +36,21 @@ import java.security.SecureRandom;
  * [29] zkp_nl_zkbpp [30] rnl_sigma [31] hcred_kkw
  * [32] qcmdpc_weak_key_screen [33] hske_nl_aead
  * [34] qcprf_seed_expansion [35] stern_witness_binding.
- * New checks append at [36]
+ * New checks append at [37]
  * onward; a check's
  * number is never reassigned once given, matching TODO.md/TODO_DONE.md's
  * own numbering discipline (TODO #154).
+ *
+ * <p>{@code [36]} IS NOT IN THIS FILE.  Java's numbering continues into
+ * {@link Bench}, whose {@code [36] qcmdpc_kem_throughput} is the port's
+ * benchmark layer (TODO #333) — a separate entry point because a
+ * host-specific cost figure is not something this class asserts (#292) and
+ * because it is the only one of the three drivers that takes {@code -r}/
+ * {@code -t}.  So the number space is shared between the two files and the
+ * numbers are still never reused: {@code spec/check_language_parity.py}'s
+ * {@code NUMBERED_TEST_FILES} reads BOTH, which is what keeps
+ * {@code [36]} visible to the whole ninth axis rather than merely
+ * contiguous-looking here.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */

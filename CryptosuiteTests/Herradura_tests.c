@@ -4083,13 +4083,15 @@ static void bench_zkp_nl(void)
  * found this axis reading four of six harnesses with no sentence anywhere about
  * the other two.  Herradura_tests.{s,asm,ino} carry no QC-MDPC at all (32-bit
  * GF arithmetic and tests [1]-[18]), so there is nothing there to time.  JAVA
- * ships the KEM -- SelfTest.java's [14] -- and has NO BENCHMARK LAYER OF ANY
+ * ships the KEM -- SelfTest.java's [14] -- and HAD NO BENCHMARK LAYER OF ANY
  * KIND: no timing helper, no rate formatter, not one throughput row for any
- * protocol, which tools/check_rate_format.py records as three formatters where
- * this repo has four ports.  So Java's gap is one LAYER wide where C, Go and
- * Python's was one ROW wide, and building Java's first benchmark is a decision
+ * protocol, which tools/check_rate_format.py recorded as three formatters where
+ * this repo has four ports.  So Java's gap was one LAYER wide where C, Go and
+ * Python's was one ROW wide, and building Java's first benchmark was a decision
  * about where benchmarks live in that port rather than a KEM question -- filed
- * as TODO #333 instead of smuggled in here (#312). */
+ * as TODO #333 instead of smuggled in here (#312), and CLOSED at v9.5.23.
+ * That row is [36] in bindings/java/herradurakex/Bench.java, Java's numbering
+ * being its own, and check_rate_format.py holds four formatters now. */
 static void bench_qcmdpc_kem(void)
 {
     struct timespec t0, t1;

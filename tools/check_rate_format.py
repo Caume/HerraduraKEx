@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
-"""TODO #328: hold the three benchmark rate formatters against each other.
+"""TODO #328: hold the benchmark rate formatters against each other.
 
-C's print_rate, Go's fmtRate and Python's _bench each render a benchmark rate as
+FOUR OF THEM SINCE TODO #333, which is the gap the KNOWN LIMIT below used to
+record without filing: there were three in a four-port repo, because
+bindings/java had no benchmark layer at all -- not a batch helper, not a rate
+formatter, not one throughput row for any protocol.  Java's Bench.fmtRate now
+exists and is in the axis.
+
+C's print_rate, Go's fmtRate, Python's _bench and Java's Bench.fmtRate each
+render a benchmark rate as
 M, K or plain ops/sec.  Go's had only TWO branches -- everything below 1e6 printed
 in K units -- so the harness's six slowest benchmarks published "0.00 K ops/sec"
 for true rates of 0.36 to 8.57 ops/sec.  Not imprecise but FALSE: it reads as zero
@@ -11,7 +18,7 @@ Nothing caught it because NO CHECKER PARSES BENCHMARK OUTPUT -- verified,
 `grep -rln 'ops/sec' spec/ tools/ CliTest/ .github/` is empty -- and this file does
 not change that: running benchmarks in CI is TODO #289's runtime problem, and a cost
 figure is host-specific by nature.  What it closes is the case that occurred, and it
-closes it STATICALLY: the three formatters must carry the same thresholds and the
+closes it STATICALLY: every formatter must carry the same thresholds and the
 same set of branches, read out of each port's own source.
 
 That is PARAMETERS' idea (compare a value across ports) aimed at a FORMATTER'S
@@ -19,9 +26,13 @@ BRANCH STRUCTURE, which no existing axis reads.
 
 KNOWN LIMIT, stated here rather than discovered later: this reads thresholds and
 branch structure, not output, so a formatter keeping all three branches and
-computing the wrong number still passes.  Java is not in the axis -- it has no
-benchmark formatter at all, asserted below so that gaining one is an error rather
-than a silence.
+computing the wrong number still passes.  A SECOND LIMIT comes from the shape
+rather than from the implementation, and TODO #333 is where it had to be said
+out loud: the four formatters are held to EACH OTHER, so a threshold all four
+agree on and that is wrong is invisible -- the standing blind spot of #277,
+#294, #296 and #297, whose only exit is an assertion about ONE implementation.
+WANT_M and WANT_K below are therefore this file's own numbers, read from no
+port, which is the single-implementation assertion that exit requires.
 """
 
 import re
@@ -38,6 +49,13 @@ FORMATTERS = [
      r"func fmtRate\s*\([^)]*\)\s*string\s*\{(.*?)\n\}"),
     ("python", "CryptosuiteTests/Herradura_tests.py",
      r"rate = ops / elapsed(.*?)print\(f\""),
+    # Java's method body closes on an INDENTED brace, so the C/Go terminator
+    # (a newline then `}` at column 0) does not reach it: a pattern that
+    # silently ran to end of file would read every later `ops/sec` in the
+    # class as part of the formatter, and over-matching is the LENIENT
+    # direction for a branch census (#295).
+    ("java", "bindings/java/herradurakex/Bench.java",
+     r"static String fmtRate\s*\([^)]*\)\s*\{(.*?)\n    \}"),
 ]
 
 # Every port must express all three, at the same thresholds.
@@ -108,22 +126,36 @@ def main():
                 f"the ports DISAGREE on which branches exist: {shapes} — a "
                 f"benchmark rate must render the same way in every port")
 
-    # Java is deliberately outside the axis; gaining a formatter is an error.
+    # Java's formatter is IN the axis since TODO #333, so this clause is
+    # INVERTED rather than deleted.  It used to assert that bindings/java had
+    # no formatter at all; it now asserts that the only one there is the one
+    # FORMATTERS names.  Both halves are load-bearing: a second renderer in
+    # another class is unchecked, which is how the third diverged, and the
+    # POSITIVE half stops a pure absence rule from passing once the thing it
+    # describes is deleted (#234's vacuous pass; #326's "a string-presence
+    # rule cannot tell a claim from its retraction").
     java = ROOT / "bindings/java"
+    named = {ROOT / rel for _port, rel, _rx in FORMATTERS}
     if java.exists():
-        hits = [f for f in java.rglob("*.java") if "ops/sec" in f.read_text(errors="ignore")]
-        if hits:
+        hits = [f for f in java.rglob("*.java")
+                if "ops/sec" in f.read_text(errors="ignore")]
+        extra = sorted(h for h in hits if h not in named)
+        if extra:
             errors.append(
-                f"bindings/java has grown a benchmark rate formatter "
-                f"({', '.join(h.name for h in hits)}) — add it to FORMATTERS, "
-                f"because an unchecked fourth renderer is how the third diverged")
+                f"bindings/java has grown a SECOND benchmark rate formatter "
+                f"({', '.join(h.name for h in extra)}) — add it to FORMATTERS, "
+                f"because an unchecked renderer is how the third diverged")
+        if not hits:
+            errors.append(
+                "bindings/java renders no rate at all — Bench.java's "
+                "formatter is gone, and an absence rule that passes once the "
+                "thing it describes is deleted is TODO #234's vacuous pass")
 
-    for port in ("c", "go", "python"):
+    for port in ("c", "go", "python", "java"):
         if port in results:
             mk, kk, pk, units = results[port]
             print(f"  {port:<8} M={'y' if mk else 'N'} K={'y' if kk else 'N'} "
                   f"plain={'y' if pk else 'N'}   units seen: {units}")
-    print(f"  java     no benchmark formatter (asserted)")
 
     if errors:
         print()
@@ -131,8 +163,8 @@ def main():
             print(f"  FAIL: {e}")
         print(f"\n*** FAILED: {len(errors)} rate-formatter problem(s) (TODO #328) ***")
         return 1
-    print("\n*** OK: all three ports render M / K / plain ops/sec at the same "
-          "thresholds ***")
+    print(f"\n*** OK: all {len(results)} ports render M / K / plain ops/sec "
+          f"at the same thresholds ***")
     return 0
 
 

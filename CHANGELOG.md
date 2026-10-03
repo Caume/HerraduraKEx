@@ -2,6 +2,166 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.23] - 2026-10-03
+
+### TODO #333 — the Java port had no benchmark layer at all, in a REQUIRED job
+
+**`bindings/java/` contained no timing code of any kind.**  Not a batch helper, not a rate
+formatter, not one throughput row for any protocol: a grep across the whole port for
+`bench`, `throughput`, `ops/sec` or `nanoTime` returned **zero matches**, in `SelfTest.java`,
+`Demo.java` and every suite class.  C, Go and Python each publish `[32]`–`[43]` plus `[54]`;
+Java published `[1]`–`[35]` and no cost figure at all, while `native-java` is as REQUIRED as
+the other three jobs.  TODO #332 added `[54]` and owed "four ports or a stated reason for
+fewer"; the reason for Java was not a KEM reason — **its gap was one LAYER wide where the
+other three ports' was one ROW wide** — so that item filed this one rather than settling in
+passing where benchmarks live in a port (#312).
+
+`bindings/java/herradurakex/Bench.java` is that layer, and `[36] qcmdpc_kem_throughput` is
+its first and only row: the deployed QC-MDPC KEM at BIKE-128, Java's counterpart of
+C/Go/Python's `[54]`, with keygen, encapsulation and **both** decapsulation paths timed and
+labelled separately.
+
+#### The figures, and why they come with a range
+
+Median of 9 uncontended runs at `-t 1.0` on an aarch64 RK3588 SBC, with the measured range:
+
+| operation | median | range |
+|---|---|---|
+| keygen (incl. weak-key screen + inversion) | **26.9 ms** | 15.3 – 31.3 ms (2.04x) |
+| encapsulation | **11.3 ms** | 10.7 – 13.2 ms (1.24x) |
+| decapsulation, success path | **34.4 ms** | 22.8 – 41.7 ms (1.83x) |
+| decapsulation, implicit rejection (#235) | **46.3 ms** | 24.9 – 51.8 ms (2.08x) |
+
+**The spread is not noise and the cause was measured rather than guessed.**  This host is
+big.LITTLE — four Cortex-A55 at 1.8 GHz and four Cortex-A76 at 2.35 GHz — and pinning the
+whole run to one cluster separates them by far more than the clock ratio: `taskset -c 0-3`
+(A55) against `taskset -c 4-7` (A76), ABBA-interleaved, gives **keygen 4.3x, encapsulation
+2.9x, decapsulation 4.0x and the rejection path 3.8x**.  So an unpinned run's mode depends on
+which cluster the hot thread lands on, which is why a single number would have been the wrong
+thing to publish.  Worth knowing before anyone reaches for `taskset`: pinning to the big
+cluster ALONE measures **slower** than the best unpinned run (keygen `35-38` against `65`
+ops/sec), because the JVM's GC and JIT threads then contend for the same four cores — so the
+fast mode is "hot thread on an A76 with the helpers elsewhere", not "all four big cores".
+This is TODO #327's rule applied to a first publication rather than to an A/B: a cost
+measurement is worth exactly as much as the control over what else was running.
+
+**One correction this earns, to TODO #333's own filing.**  That item recorded Java at keygen
+`56 ms` against C's `198 ms` and called it "**3.5x FASTER than C at keygen** — a crossing
+nobody could have read off the other three ports' rows".  **The crossing has since crossed
+back, and by TODO #334**: C's keygen is `4.31 ms` at v9.5.22, so C is now about 6x faster
+than Java there, and Java is 5.5x slower at encapsulation and ~8x at decapsulation.
+Encapsulation's `11.3 ms` is the one figure that reproduced exactly.  (C and Java were not
+measured in one interleaved process, so that comparison is coarse by construction — C's
+numbers are `[54]`'s own, from the same host.)
+
+#### Five things the item had to get right, and what each cost
+
+1. **Where it lives was the decision, and it rests on EXIT CONDITIONS.**  `SelfTest` asserts
+   and exits non-zero; `Demo` is a walkthrough gated on the `[FAIL]` marker convention; a
+   benchmark publishes a host-specific rate nothing asserts on (#292's position), and it is
+   the only one of the three that needs `-r`/`-t`, which neither of the others parses at
+   all.  A section inside `SelfTest` would have made a cost figure part of what that class
+   asserts and left `-t` nowhere to live.  So: a third entry point, with its own
+   `native-java` step at `-t 0.25` (about 2.3 s), which is also the only way CI's reduced
+   caps can differ from a developer's.
+2. **The batch is DERIVED, from a WARM probe.**  TODO #327's defect was a floor of 110
+   invocations no time cap could reduce; its remedy was one timed probe call, and Go's probe
+   is the COLD one, which under-sizes the batch by the JIT factor.  Here the probe is the
+   last warmup call, so the derivation is fed the number it was meant to have.  C's eight
+   hand-picked batch constants are the form deliberately **not** copied — #327 recorded them
+   as its own known limit, and a ninth in a fourth place is what #294 and #296 both answered
+   with "adopt the port that is correct".  Demonstrated rather than asserted, and the two
+   settings must DIFFER (before #327 both simply timed out, so "both are fast now" would not
+   have shown control was restored): `-t 0.05` runs in **1.1 s** with 1 op on the slowest row,
+   `-t 2.0` in **10.2 s** with 77, and `-r 2` caps every row at 2 ops against a 5 s budget.
+3. **JIT warmup is a correctness question for the figure, and the factor is bigger than the
+   item guessed.**  Measured call by call: the FIRST decapsulation costs **110.79 ms against
+   a warm 19.3 — 5.7x** — and the first keygen `30.95` against `14.0`; #332's own hand
+   figures for this port moved keygen `99` to `56 ms` between runs on JIT state alone.  The
+   warmup count is therefore PRINTED beside every rate, and it is a FLOOR of ten calls rather
+   than Go's `min(batch, 10)`, because what it defends against is compilation state and not
+   noise — bounded by `-t`, since a fixed call count is the unbounded version of exactly the
+   defect #327 fixed.
+4. **A CONTROL THAT DID NOT FIRE SETTLED THE SHAPE OF TWO LINES — AND FOUND THE SAME HOLE IN
+   GO.**  TODO #318 fingerprints a numbered test's PASS/FAIL-BEARING lines.  Written the
+   obvious way, with `boolean ok = okAgree && okDiff;` above the outcome pair, **flipping
+   that `&&` to `||` left every check in `spec/` green**: the decisive expression sat one
+   line above the pinned region.  C's `[54]` and Python's both put the decision inside the
+   printf that carries the markers and never had it; **Go's did not**, and flipping Go's
+   conjunction was equally invisible, so that cell's pin could not go red either.  Fixed in
+   both — behaviour-identical, output byte-identical — and re-verified to fire, with the
+   false-positive control (a comment mentioning FAIL) silent.  2 of 4, with Go the outlier in
+   the same row #328 found it the outlier of.  Java's form is additionally constrained by its
+   TRAILING marker: the body slice ends AT `println("PASS [N]")`, so the FAIL branch must come
+   first or both outcome lines fall outside the slice and the fingerprint reads `"none"` — the
+   value pinned for a test that decides nothing.
+5. **Java's numbering now spans TWO files, which is a `spec/` change and not a formality.**
+   `NUMBERED_TEST_FILES` takes a TUPLE of paths per language.  Had it stayed one file,
+   `SelfTest.java`'s `[1]`–`[35]` would still be contiguous and duplicate-free, every table
+   would still be satisfied, and `[36]` would have been **invisible to the whole ninth axis**
+   — no draw cell, no verdict fingerprint, no rejection basis, no rate.  That is #324's *a
+   glob that matches nothing is indistinguishable from a glob that is satisfied* one directory
+   over, and it is checked: dropping `Bench.java` from the tuple fails five tables at once.
+
+#### What the row asserts, and what it does not
+
+`[36]` carries a **control**, which is how a host-specific cost figure earns a place in a
+required job (#292): `decap(encap(pk))` must reproduce the encapsulated key and a uniform
+syndrome must give a DIFFERENT one, so #235's implicit-rejection path is reached rather than
+assumed, and the control gates the process's exit status.  The decoder's outcome on the
+uniform syndrome is **reported, never asserted** — about `2^-11193` — since the key-differs
+check holds either way (#291).
+
+**Known limit, and it is #332's**: the rate beside the control is asserted by nothing, so a
+10x regression prints and passes.  That is #292's position honoured rather than evaded, and
+the reason the figures above are published with the host and the spread they were measured
+with.
+
+**Scope: one row, not twelve**, said in the item rather than discovered after it.  C/Go/
+Python's other eleven benchmarks (`[32]`–`[43]`: FSCX, the classical quartet, the NL
+primitives, HKEX-RNL at the ring #223 retired, Stern-F and the two ZKPs) are not ported.  The
+question was whether Java has a benchmark layer and what it looks like; one row settles it,
+and eleven more would add seconds per CI run of figures nobody asserts on to answer a question
+already answered.  The layer exists now, so a twelfth row is a one-method change rather than a
+decision.
+
+#### Changed
+
+- **`bindings/java/herradurakex/Bench.java`** (new) — the benchmark layer: `fmtRate` with all
+  three branches, `bench` with a warm-probe-derived batch and a printed warmup count,
+  `[36]`'s four rows and its control, and `-r`/`-t` plus `HTEST_ROUNDS`/`HTEST_TIME`.
+- **`tools/check_rate_format.py`** — **four formatters instead of three.**  Java's
+  `Bench.fmtRate` joins the axis, and the clause that asserted Java had no formatter at all is
+  **inverted rather than deleted**: a SECOND renderer elsewhere in the port is now the error,
+  and the positive half fails if `Bench.java`'s is deleted, because an absence rule that
+  passes once the thing it describes is gone is #234's vacuous pass.  Its own KNOWN LIMIT
+  paragraph — which had recorded this gap without filing it — is corrected, and a second limit
+  is stated: the four formatters are held to each other, so `WANT_M`/`WANT_K` are this file's
+  own numbers and read from no port, which is the single-implementation assertion that exits
+  the standing four-port blind spot.  Three controls verified to fire (Java losing its plain
+  branch, Java's K threshold drifting to `1e4`, Java's formatter deleted), plus a fourth for a
+  second renderer.
+- **`spec/check_language_parity.py`** — `NUMBERED_TEST_FILES` values become
+  `(paths_tuple, pattern)` with a new `_marker_sources()` helper (read per FILE and never
+  concatenated, because Java's trailing-marker slicing is positional); `Bench.java` added to
+  `JAVA_NON_SUITE` with its reason; and `[36]`'s four obliged entries — `_TEST_DRAWS["java"]`,
+  `_SAMPLED_TESTS[("java", 36)]`, `_SAMPLED_TEST_RATE_LITERAL[("java", 36)]`,
+  `_REJECTION_BASES[("java", 36)]` and `_VERDICT_FINGERPRINTS[("java", 36)]`.  The rate is the
+  same inherited DFR the `shared` row carries and is a LITERAL for #285's reason: at BIKE-128
+  it is not a function of `QCMDPC_R/D/T` and no trial count reaches it.  **197 numbered tests
+  become 198 and the job's summed false-failure budget is unchanged at `1.0e-05`.**
+- **`CryptosuiteTests/Herradura_tests.go`** — `[54]`'s verdict conjunction moved onto a
+  PASS-bearing line (see 4 above).  No output change; the fingerprint is re-pinned.
+- **`CryptosuiteTests/Herradura_tests.{c,go,py}`** — each port's `[54]` scope paragraph said in
+  the present tense that Java has no benchmark layer.  Corrected in place to past tense naming
+  this release, on #330's precedent.
+- **`.github/workflows/ci.yml`** — a new `native-java` step, `herradurakex.Bench -t 0.25`.
+- **`bindings/java/README.md`**, **`bindings/java/herradurakex/SelfTest.java`** (its class doc
+  now records that `[36]` is NOT in that file and that new checks append at `[37]`), and
+  **`CLAUDE.md`** (the `bindings/java/` entry, the #328 and #332 paragraphs' "three
+  formatters", the #323 paragraph's "exactly four files", the `[54]` test-command comment, and
+  a new #333 narrative).
+
 ## [9.5.22] - 2026-10-02
 
 ### TODO #334 — C's GF(2)[x] inversion, and the second transposed multiply it found in the function the previous item had just measured
