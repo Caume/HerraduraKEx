@@ -7855,95 +7855,184 @@ static void qcp_mul_sparse(QcPoly *dst, const QcPoly *src,
 
 /* dst = a · b mod (x^r - 1) — generic.
  *
- * THE LOOP IS OVER b, WHICH MAKES THE ARGUMENT ORDER A COST DECISION AND NOT A
- * STYLE ONE (TODO #332).  Cyclic convolution over GF(2) is commutative, so the
- * two orders agree bit for bit; they do not cost the same.  Its one remaining
- * caller is keygen's h1 · h0^-1, where both operands are dense and there is
- * nothing to choose.  ENCAPSULATION used to call it as qcp_mul(e1, h_pub) —
- * the SPARSE operand in the a slot — so the loop ran over h_pub's ~r/2 set
- * bits instead of e1's ~t/2, and measured 5.237 ms against qcp_mul_sparse's
- * 0.050 ms on the same draw: 105x, for the same output.  All four ports had it
- * the same way round, which is why no cross-port check could see it.
+ * THE LOOP IS OVER THE LIGHTER OPERAND, AND SINCE TODO #334 THIS FUNCTION
+ * CHOOSES RATHER THAN THE CALL SITE.  Cyclic convolution over GF(2) is
+ * commutative, so the two orders agree bit for bit; they cost one qcp_xor_rol
+ * per set bit of whichever one is walked, so they do not cost the same.  TODO
+ * #332 found ENCAPSULATION calling it as qcp_mul(e1, h_pub) — the SPARSE
+ * operand in the a slot — walking h_pub's ~r/2 set bits instead of e1's
+ * ~t/2, 5.237 ms against qcp_mul_sparse's 0.050 ms on the same draw, in all
+ * four ports.
  *
- * This comment also used to say "used once in keygen" while encap was the
- * second caller — a false reason of the kind #295 found in a parameter
- * table, in a position where nothing validates it. */
+ * IT FIXED THE CALL SITE AND LEFT THE TRAP, and wrote a false reason on the
+ * way past: this comment said its remaining caller was "keygen's h1 · h0^-1,
+ * where both operands are dense and there is nothing to choose".  h1 IS THE
+ * PRIVATE KEY HALF, of weight exactly QCMDPC_D = 71, and h0^-1 is dense —
+ * so every surviving caller in all four ports (keygen, `pkey --pubout`,
+ * `kex --our-kem`) was transposed too, by a further ~87x.  #295's false-reason
+ * shape, in the comment of the function the previous item had just measured;
+ * the remedy is to stop asking the caller, since the next caller gets it wrong
+ * again.  One qcp_popcount of each operand is 193 word loads against the
+ * 13 703 word XORs the choice saves.
+ *
+ * It is also the better leak: the iteration count becomes min(wt(a), wt(b)),
+ * which at every call site here is the PUBLIC constant QCMDPC_D rather than
+ * the ~r/2 weight of a secret-derived inverse. */
 static void qcp_mul(QcPoly *dst, const QcPoly *a, const QcPoly *b) {
+    const QcPoly *walk = b, *shift = a;
     int j;
+    if (qcp_popcount(a) < qcp_popcount(b)) { walk = a; shift = b; }
     qcp_zero(dst);
     for (j = 0; j < QCMDPC_R; j++)
-        if (qcp_get(b, j)) qcp_xor_rol(dst, a, j);
+        if (qcp_get(walk, j)) qcp_xor_rol(dst, shift, j);
 }
 
 /* ── Extended Euclid in GF(2)[x]: h^{-1} mod (x^r - 1) ── */
-/* Uses byte arrays sized to hold polynomials up to degree 2r. */
+/* WORD-LEVEL since TODO #334, and the one place TODO #330's rewrite did not
+ * reach: it bit-sliced the DECODER and moved keygen 264.4 -> 197.6 ms through
+ * qcp_mul, leaving this function -- keygen's only other cost -- walking
+ * uint8_t[3084] arrays one octet at a time.  Benchmark [54] then published the
+ * consequence: C's qcmdpc_keygen at 198 ms against interpreted PYTHON's 48 ms,
+ * the slowest of the four ports at one operation, because _qcp_inv does this
+ * same algorithm on native big integers.
+ *
+ * Three changes, and the second is the larger one.  (1) The registers are
+ * uint64_t, so every XOR and shift moves 8x the data.  (2) The DEGREE is
+ * tracked instead of rescanned: a reduction step cancels the leading term by
+ * construction, so the new degree is strictly below the old one and the scan
+ * starts there -- the predecessor called _qceuc_deg FOUR times per step, each
+ * from the top of the register.  (3) The swap is a POINTER swap where it was
+ * five memcpy of the full register.  Nothing about the output changes: the
+ * inverse mod (x^r - 1) is unique, and it is pinned by KAT/pem/kem_pub.pem,
+ * KAT/operation_replay.json's qcmdpc_keygen row and test_kat_pem.sh.
+ *
+ * The old comment here read "134 -- fits degree 2r".  It was 134 at the
+ * retired (523, 15, 18) parameters and has been 3084 since TODO #276 moved r
+ * to 12323 -- a stale figure beside a live expression, which is the shape
+ * check_docs_consistency.py check B looks for in the documents and nothing
+ * looks for in a comment. */
 
-#define _QCEUC_BYTES (2 * QCMDPC_RBYTES + 2)  /* 134 — fits degree 2r */
+#define _QCEUC_BYTES (2 * QCMDPC_RBYTES + 2)        /* 3084 — fits degree 2r */
+#define _QCEUC_WORDS ((_QCEUC_BYTES + 7) / 8)       /* 386                   */
 
-static int _qceuc_deg(const uint8_t *p, int bytes) {
+/* Degree of p, scanning DOWN from the word holding bit `from`.  The caller
+ * guarantees p's bits above `from` are zero, which is why this is cheap. */
+static int _qceuc_deg(const uint64_t *p, int from) {
     int i;
-    for (i = bytes - 1; i >= 0; i--)
-        if (p[i]) return i * 8 + (31 - __builtin_clz(p[i]));
+    /* `from < 0` means the caller just cancelled a degree-0 leading term, so
+     * p is zero.  It is spelled out rather than left to `-1 >> 6`, whose
+     * result is implementation-defined. */
+    if (from < 0) return -1;
+    i = from >> 6;
+    if (i >= _QCEUC_WORDS) i = _QCEUC_WORDS - 1;
+    for (; i >= 0; i--)
+        if (p[i]) return i * 64 + (63 - __builtin_clzll(p[i]));
     return -1;
 }
 
-static void _qceuc_xorsh(uint8_t *a, const uint8_t *b, int sh, int bytes) {
-    int bsh = sh >> 3, ksh = sh & 7, i;
+/* a ^= b << sh, over the low `words` limbs.  `words` is bounded by the caller
+ * from the degree it is about to cancel, so the work tracks the LIVE PREFIX
+ * rather than the register: a and b never exceed 193 of the 386 limbs, and
+ * u0/u1 grow to that bound rather than starting at it.  The dropped carry at
+ * i + wsh + 1 == words is provably zero -- deg(b << sh) is exactly the degree
+ * `words` was sized from. */
+static void _qceuc_xorsh(uint64_t *a, const uint64_t *b, int sh, int words) {
+    int wsh = sh >> 6, ksh = sh & 63, i;
+    if (words > _QCEUC_WORDS) words = _QCEUC_WORDS;
     if (ksh == 0) {
-        for (i = 0; i + bsh < bytes; i++) a[i + bsh] ^= b[i];
+        for (i = 0; i + wsh < words; i++) a[i + wsh] ^= b[i];
     } else {
-        int rsh = 8 - ksh;
-        for (i = 0; i + bsh < bytes; i++) {
-            a[i + bsh] ^= (uint8_t)(b[i] << ksh);
-            if (i + bsh + 1 < bytes) a[i + bsh + 1] ^= b[i] >> rsh;
+        for (i = 0; i + wsh < words; i++) {
+            a[i + wsh] ^= b[i] << ksh;
+            if (i + wsh + 1 < words) a[i + wsh + 1] ^= b[i] >> (64 - ksh);
         }
     }
 }
 
 /* Returns 1 on success, 0 if h not invertible mod (x^r - 1). */
 static int qcp_inv(QcPoly *inv_out, const QcPoly *h) {
-    uint8_t a[_QCEUC_BYTES], b[_QCEUC_BYTES], u0[_QCEUC_BYTES], u1[_QCEUC_BYTES];
-    uint8_t tmp[_QCEUC_BYTES];
-    int i, k, da, db, sh;
-    memset(a, 0, _QCEUC_BYTES); memset(b, 0, _QCEUC_BYTES);
-    memset(u0, 0, _QCEUC_BYTES); memset(u1, 0, _QCEUC_BYTES);
-    /* a = x^r + 1 (modulus) */
-    a[QCMDPC_R >> 3] |= (uint8_t)(1u << (QCMDPC_R & 7));
-    a[0] = 1;
-    /* b = h: convert QcPoly (uint64_t words, LE) to byte array */
-    for (i = 0; i < QCMDPC_RWORDS; i++) {
-        for (k = 0; k < 8 && i * 8 + k < QCMDPC_RBYTES; k++)
-            b[i * 8 + k] = (uint8_t)(h->w[i] >> (8 * k));
-    }
-    u1[0] = 1;
+    uint64_t A[_QCEUC_WORDS], B[_QCEUC_WORDS];
+    uint64_t U0[_QCEUC_WORDS], U1[_QCEUC_WORDS];
+    uint64_t *a = A, *b = B, *u0 = U0, *u1 = U1, *t;
+    int i, da, db, sh, du0, du1, nd;
 
+    memset(A, 0, sizeof A); memset(B, 0, sizeof B);
+    memset(U0, 0, sizeof U0); memset(U1, 0, sizeof U1);
+    /* a = x^r + 1 (the modulus) */
+    A[QCMDPC_R >> 6] |= (uint64_t)1 << (QCMDPC_R & 63);
+    A[0] ^= 1;
+    /* b = h.  A QcPoly is already little-endian uint64_t limbs, so this is a
+     * limb copy where the byte-level version repacked 1541 octets. */
+    for (i = 0; i < QCMDPC_RWORDS; i++) B[i] = h->w[i];
+    U1[0] = 1;
+    du0 = -1;                     /* u0 = 0 */
+    du1 = 0;                      /* u1 = 1 */
+
+    da = _qceuc_deg(a, QCMDPC_R);
+    db = _qceuc_deg(b, QCMDPC_R - 1);
     for (;;) {
-        db = _qceuc_deg(b, _QCEUC_BYTES);
-        if (db < 0) break;
-        da = _qceuc_deg(a, _QCEUC_BYTES);
+        /* The swap comes BEFORE the termination test, not after it.  The
+         * byte-level predecessor recomputed both degrees from the arrays at
+         * the top of every iteration, so `b == 0` was observed on the pass
+         * after the swap that put a zero there; tracking the degrees instead
+         * means the swap must be the thing that exposes it, or the loop takes
+         * one more reduction step against an empty divisor. */
         if (da < db) {
-            memcpy(tmp, a, _QCEUC_BYTES); memcpy(a, b, _QCEUC_BYTES); memcpy(b, tmp, _QCEUC_BYTES);
-            memcpy(tmp, u0, _QCEUC_BYTES); memcpy(u0, u1, _QCEUC_BYTES); memcpy(u1, tmp, _QCEUC_BYTES);
-            da = _qceuc_deg(a, _QCEUC_BYTES);
-            db = _qceuc_deg(b, _QCEUC_BYTES);
+            t = a;  a  = b;  b  = t;
+            t = u0; u0 = u1; u1 = t;
+            i = da;  da  = db;  db  = i;
+            i = du0; du0 = du1; du1 = i;
         }
+        if (db < 0) break;          /* b == 0: a holds the gcd */
         sh = da - db;
-        _qceuc_xorsh(a, b, sh, _QCEUC_BYTES);
-        _qceuc_xorsh(u0, u1, sh, _QCEUC_BYTES);
+        /* The Bezout side needs its OWN degree bound, and the obvious one does
+         * not work: `uw` limbs plus `sh` bits rounds UP once per step, and
+         * there are ~r steps, so a limb count grown that way runs away from
+         * the register while the coefficient itself stays below degree r.  The
+         * first draft of this did exactly that and silently clamped -- the
+         * clamp dropped only zero limbs, so every vector still passed.  So
+         * track the DEGREE: u1 << sh has degree du1 + sh, nothing cancels in
+         * general, and the bound grows by sh rather than by sh and one. */
+        nd = (du1 < 0) ? du0 : (du1 + sh > du0 ? du1 + sh : du0);
+        if (nd >= _QCEUC_WORDS * 64) {
+            /* Unreachable: deg u < r = QCMDPC_R and the register is 2r.  An
+             * abort rather than a clamp, because a clamp here hands back a
+             * WRONG inverse -- qcp_rotl's choke-point guard, one function
+             * over. */
+            fprintf(stderr, "qcp_inv: Bezout degree %d exceeds %d bits\n",
+                    nd, _QCEUC_WORDS * 64);
+            exit(1);
+        }
+        _qceuc_xorsh(a, b, sh, (da >> 6) + 1);
+        if (nd >= 0) _qceuc_xorsh(u0, u1, sh, (nd >> 6) + 1);
+        du0 = nd;
+        da = _qceuc_deg(a, da - 1);   /* the leading term just cancelled */
     }
-    if (_qceuc_deg(a, _QCEUC_BYTES) != 0 || !(a[0] & 1)) return 0;
+    if (da != 0 || !(a[0] & 1)) return 0;
 
-    /* Reduce u0 mod (x^r - 1): fold bits >= r back to bit (i-r) */
-    for (i = QCMDPC_R; i < _QCEUC_BYTES * 8; i++) {
-        if ((u0[i >> 3] >> (i & 7)) & 1) {
-            u0[i >> 3] ^= (uint8_t)(1u << (i & 7));
-            u0[(i - QCMDPC_R) >> 3] ^= (uint8_t)(1u << ((i - QCMDPC_R) & 7));
+    /* Reduce u0 mod (x^r - 1): bit k < r becomes bit k XOR bit (k + r), and
+     * every bit at or above r is cleared.  u0's degree is below 2r, so one
+     * pass suffices; the byte-level predecessor visited all 24 672 bit
+     * positions individually for the same result.  Sources sit at limb
+     * i + wsh and the target at limb i, and i increases, so each limb is read
+     * as a source (at step i - wsh) strictly before it is written. */
+    {
+        int wsh = QCMDPC_R >> 6, ksh = QCMDPC_R & 63;
+        for (i = 0; i + wsh < _QCEUC_WORDS; i++) {
+            uint64_t v = u0[i + wsh] >> ksh;
+            if (ksh && i + wsh + 1 < _QCEUC_WORDS)
+                v |= u0[i + wsh + 1] << (64 - ksh);
+            u0[i] ^= v;
+        }
+        if (ksh) {
+            u0[wsh] &= ((uint64_t)1 << ksh) - 1u;
+            for (i = wsh + 1; i < _QCEUC_WORDS; i++) u0[i] = 0;
+        } else {
+            for (i = wsh; i < _QCEUC_WORDS; i++) u0[i] = 0;
         }
     }
-    /* Convert back to QcPoly */
     qcp_zero(inv_out);
-    for (i = 0; i < QCMDPC_RBYTES; i++)
-        inv_out->w[i >> 3] |= (uint64_t)u0[i] << ((i & 7) * 8);
+    for (i = 0; i < QCMDPC_RWORDS; i++) inv_out->w[i] = u0[i];
     return 1;
 }
 

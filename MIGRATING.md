@@ -914,6 +914,23 @@ encapsulation goes **C `7.41 ms` to `2.04 ms`**, **Go `298.7 ms` to `48.0 ms`**,
 `85.0 ms` to `11.3 ms`**, **Python `104.3 ms` to `76.2 ms`**, all ABBA-interleaved in one
 process on one key.  Nothing on the wire moves here either.
 
+**Updated again at v9.5.22 (TODO #334), and the row did its job: it found the KEYGEN figure
+wrong too.**  `[54]`'s first run put C's `qcmdpc_keygen` at `198 ms` against interpreted
+Python's `48 ms`.  Two things were behind it, and the second one is the note above
+immediately needing a correction.  C's extended Euclid ran over `uint8_t[3084]` arrays and
+rescanned the degree from the top of the register four times per reduction step; it is
+`uint64_t` limbs with tracked degrees now, **`196.260 ms` to `4.196 ms` on the inversion
+alone**, 46.8x, ABBA-interleaved in one process over 200 dense draws.  And the paragraph
+above said `qcp_mul`'s surviving caller had "two dense operands, nothing to choose" — `h1`
+is the private key half, of weight exactly `QCMDPC_D` = 71, so keygen, `pkey --pubout` and
+`kex --our-kem` were transposed in all four ports by a further ~87x.  The generic multiply
+now walks whichever operand is lighter, so the call site cannot get it wrong again.  Measured
+through `[54]`, four ABBA legs against the v9.5.21 binary with the encapsulation and both
+decapsulation rows as controls (all within 1.5%): **keygen `5.10` to `232.51` / `231.81`BARE
+ops/sec**, i.e. **`196.2 ms` to `4.31 ms`**, and the other three ports get the multiply half
+— **Go `292.3` to `36.5 ms` (8.0x)**, **Java `103.0` to `30.9 ms` (3.3x)**, **Python `47.7` to `20.9 ms` (2.3x)**, every leg reproducing the same `h_pub` as the other three ports.  Nothing on the wire moves: `KAT/operation_replay.json`'s `qcmdpc_keygen` row
+reproduces in all four ports and all four CLIs re-derive `KAT/pem/kem_pub.pem` byte for byte.
+
 ---
 
 ## 18. HPKS-Stern-F binds the witness weight (v8.0.0)

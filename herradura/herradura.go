@@ -6609,26 +6609,47 @@ func qcpMulSparse(dense *big.Int, sup []int, r int) *big.Int {
 	return acc
 }
 
+// qcpWeight returns the Hamming weight of x.  big.Int has no popcount, and
+// Bits() is the limb slice, so this is one pass over ceil(r/word) limbs.
+func qcpWeight(x *big.Int) int {
+	n := 0
+	for _, w := range x.Bits() {
+		n += bits.OnesCount(uint(w))
+	}
+	return n
+}
+
 // QcMdpcMul returns a * b mod (x^r - 1).
 //
-// THE LOOP IS OVER b, SO THE ARGUMENT ORDER IS A COST DECISION (TODO #332).
-// Cyclic convolution over GF(2) commutes, so both orders give the same bits and
-// they do not cost the same: the remaining callers are keygen and pkey --pubout
-// computing h1 * h0^-1, both operands dense, nothing to choose.  QcMdpcEncap
-// used to call it as QcMdpcMul(e1, hPub) -- the SPARSE operand in the a slot --
-// and paid 230.9 ms per encapsulation walking hPub's ~6162 set bits, against
-// 3.752 ms for this same function with its arguments swapped, with lowestSetBit
-// rescanning from bit 0 each time on top of that.  All four ports
-// had the operands the same way round, which is why no cross-port check could
-// see it.
+// THE LOOP IS OVER THE LIGHTER OPERAND, AND SINCE TODO #334 THIS FUNCTION
+// CHOOSES RATHER THAN THE CALL SITE.  Cyclic convolution over GF(2) commutes,
+// so both orders give the same bits and cost one qcpRotate per set bit of
+// whichever one is walked.  TODO #332 found QcMdpcEncap calling it as
+// QcMdpcMul(e1, hPub) -- the SPARSE operand in the a slot -- paying 230.9 ms
+// per encapsulation walking hPub's ~6162 set bits against 3.752 ms for this
+// same function with its arguments swapped, in all four ports.
+//
+// IT FIXED THE CALL SITE AND LEFT THE TRAP, and wrote a false reason past it:
+// this comment said the remaining callers compute h1 * h0^-1 with "both
+// operands dense, nothing to choose".  h1 IS THE PRIVATE KEY HALF, of weight
+// exactly QcMdpcD = 71, so keygen, pkey --pubout and kex --our-kem were all
+// transposed too, by a further ~87x.  Asking the caller is what has now been
+// got wrong twice; one weight of each operand is a limb pass against the work
+// it saves.  It is also the better leak: the iteration count becomes
+// min(wt(a), wt(b)), which at every call site here is the PUBLIC constant
+// QcMdpcD and not the ~r/2 weight of a secret-derived inverse.
 func QcMdpcMul(a, b *big.Int) *big.Int {
 	r := QcMdpcR
+	walk, shift := b, a
+	if qcpWeight(a) < qcpWeight(b) {
+		walk, shift = a, b
+	}
 	acc := new(big.Int)
-	bb := new(big.Int).Set(b)
+	bb := new(big.Int).Set(walk)
 	for bb.Sign() != 0 {
 		j := lowestSetBit(bb)
 		bb.SetBit(bb, j, 0)
-		acc.Xor(acc, qcpRotate(a, j, r))
+		acc.Xor(acc, qcpRotate(shift, j, r))
 	}
 	return acc
 }
