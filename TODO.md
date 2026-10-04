@@ -119,6 +119,43 @@ exactly-evaluated ESTIMATOR -- now with its internal consistency established rat
 assumed.  (2) The LINEAR HULL, unchanged from §11.36.9: a trail statement is not a hull
 statement, and nothing in this line of work reaches the hull.
 
+**Third pass (v9.5.24) — the quenched check, by measurement, and the model is NOT
+conservative.**  See SecurityProofs-9.md §11.40 and
+`SecurityProofsCode/quenched_exact_ladder.py`.  No proof is attempted; what is done is
+the comparison §11.39.3 made a prediction about and nobody had run past n = 11.
+
+  * **Exact mu was limited by construction, not size.**  `diff_cycle_mean.py` built each
+    graph from a 2^(2n) DDT.  Enumerating a node's out-edges from §11.38.1's carry-pair
+    automaton costs (out-degree x n), so the FIXED round's exact minimum mean cycle now
+    reaches n = 13, 14, 16 and 17 (~30 s per key at 16).  n = 19 is offered under
+    `--full` and no key completed (one passed 4.6 GB and half an hour of CPU).
+    Checked edge for edge against the DDT-built graph at n = 8, 10, 11.
+  * **The model's error changes sign.**  §11.39.3 said the gap was an over-count dying as
+    2^-0.65n, so the model would converge from the SAFE side.  Measured, exact/annealed
+    falls 1.18 -> 1.10 -> 1.07 -> 1.04 over n = 7, 8, 10, 11, crosses 1 between 11 and
+    13, and is below 1 for EVERY sampled key at n = 14, 16 and 17 (median 0.94, 0.93,
+    ~0.93; the fall slowing).  §11.39.3's account is WITHDRAWN.  The linear axis (exact
+    only to n = 11 here) falls the same way, 1.23 -> 1.08, and has not crossed.
+  * **What that does to §11.38's n = 256 figures.**  They become an estimator of UNKNOWN
+    sign.  The 36x margin is UNSUPPORTED, not lost: losing 4/3 would need the ratio to
+    fall to ~1/36, against ~0.93 at the widest width measured.
+  * **The measured lead on mechanism.**  The keys the model over-states most have long
+    RUNS of equal bits (and many trailing zeros) in delta.  Over a run the carry is near-
+    deterministic, so a difference at its top passes addition for ~2^-run bits.  Where the
+    runs sit is a property of ONE constant, which an independent-edge ensemble cannot
+    see -- the quenched effect itself.  At n = 256 six fixed keys each carry an explicit
+    two-round trail under half a bit, cheapest on the longest run.
+  * **A rigorous route tried and dropped**, recorded so it is not re-derived: mu >= W_k/k
+    via a componentwise-max relaxation of the k-round carry-pair product automaton is
+    sound and nearly tight at n = 8 (1.54 exact at k = 2, 3.41 vs 3.54 at k = 3) once the
+    cyclic boundary of M is enforced, and useless without it (0 at k = 1..3).  But at
+    n = 256 the k-round transient is nearly free for exactly the run reason above, and
+    the state grows as 2^(3(k+1)), so no affordable k gets W_k/k anywhere near 4/3.
+
+**What is left**, sharpened: (1') a quenched argument, which must now control the RUN
+STRUCTURE of delta rather than the weight distribution alone, since the latter is
+demonstrably not enough; and (2) the linear hull, unchanged.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely

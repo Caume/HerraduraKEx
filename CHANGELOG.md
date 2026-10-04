@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.24] - 2026-10-03
+
+### TODO #257 (third pass, item stays OPEN) — the quenched check, and the model is not conservative
+
+TODO #257 owed a *quenched* statement: §11.39 showed the annealed ensemble behind §11.38's
+n = 256 figures concentrates, but nothing said that one FIXED round function is a typical
+member of it.  No proof is attempted here.  What is done is the comparison §11.39.3 made a
+prediction about and nobody had run past n = 11: the model against the exact minimum mean
+cycle of the fixed round, at more widths.
+
+**Exact mu was limited by how the graph was built, not by its size.**
+`diff_cycle_mean.py` built each difference graph from an exhaustive DDT, 2^(2n) work,
+which stops at n = 11.  The out-degree is only ~30-150, and §11.38.1's carry-pair
+automaton gives a node's out-edges directly as the class sequences with a nonzero path
+count.  Enumerated by depth-first search that is (out-degree x n) per node, and with
+Howard on compact arrays exact mu takes ~30 s per key at n = 16 and a few minutes at
+n = 17.  The new builder is checked edge for edge and weight for weight against the
+DDT-built graph at n = 8, 10, 11, and its Howard against `diff_cycle_mean.py`'s to 1e-9.
+
+**The finding: the model's error changes sign.**  §11.39.3 explained §11.38's validation
+gap as an edge-sharing over-count, O(1) on n = 10..13 and dying as 2^-0.65n, so the model
+would converge from the SAFE side.  Measured, same key both ways, fixed seeds:
+
+| n | 7 | 8 | 10 | 11 | 13 | 14 | 16 | 17 |
+|---|---|---|---|---|---|---|---|---|
+| median exact/annealed | 1.177 | 1.097 | 1.067 | 1.043 | 0.983 | 0.936 | 0.927 | 0.923 |
+| keys below 1 | 0% | 25% | 17% | 8% | 83% | 100% | 100% | 100% |
+
+The ratio crosses 1 between n = 11 and 13 and stays below it for every sampled key from
+n = 14 on, with the fall slowing to ~0.93.  The linear axis (exact only to n = 11 here)
+falls the same way, 1.23 to 1.08, and has not crossed.  §11.39.3's account is
+**withdrawn** — the arithmetic stands, the conclusion does not — and §11.38's n = 256
+figures (48.44 / 22.40) are now an estimator of **unknown sign**.  The 36x margin is
+unsupported rather than lost: losing the 4/3 criterion would need the ratio to fall to
+about 1/36, against ~0.93 at the widest width measured.  Every EXACT number is unchanged;
+per-width medians clear 4/3 from n = 8 through n = 17.
+
+**The measured lead on mechanism.**  The keys the model over-states most have long runs
+of equal bits and many trailing zeros in the additive constant delta (pooled over
+n >= 10: mean longest run 4.5 and mean tz 2.4 in the lowest-ratio quarter, against 3.4 and
+0.9 in the highest).  Over a run the carry is nearly deterministic, so a difference at
+its top passes the addition for about 2^-run bits.  Where the runs sit is a property of
+one constant, which an independent-edge ensemble cannot see: the quenched effect itself.
+At n = 256, six fixed deployed keys each carry an explicit two-round trail under half a
+bit, exactly computed, and the cheapest is on the key with the longest run.
+
+**A rigorous route, tried and dropped.**  mu >= W_k/k, with W_k bounded by a
+componentwise-maximum relaxation of the k-round carry-pair product automaton, is sound
+and nearly tight at n = 8 once the cyclic boundary of M is enforced (1.54 exact at k = 2;
+3.41 against 3.54 at k = 3), and gives 0 without it.  At n = 256 the k-round transient is
+nearly free for the run reason above, and the state grows as 2^(3(k+1)), so no affordable
+k gets near 4/3.  Recorded in the item so that it is not re-derived.
+
+Files: new `SecurityProofsCode/quenched_exact_ladder.py` (findings gate, `--quick` ~4 min;
+discovered by `run_findings_gates.py`, 77 gating now); SecurityProofs-9.md §11.40, with
+withdrawal notes at §11.38.7, §11.39.3 and §11.39.4; the matching notes in
+`annealed_moment_ladder.py` and `pair_correlation_second_moment.py` (prose only, no check
+moved); the part index updated to §11.37–§11.40 everywhere.  No rating moves.
+
 ## [9.5.23] - 2026-10-03
 
 ### TODO #333 — the Java port had no benchmark layer at all, in a REQUIRED job

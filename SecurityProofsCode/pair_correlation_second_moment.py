@@ -53,6 +53,12 @@ needed is one identity:
       over n = 10..13 -- the entire range where exact mu exists -- and falls
       exponentially above it.  The discrepancy the validation range showed is
       the pair correlation, and it is a property of that range, not of the model.
+      [WITHDRAWN as an account, TODO #257 v9.5.24.  The over-count arithmetic
+      below stands; the conclusion drawn from it does not.  quenched_exact_ladder.py
+      computes exact mu past n = 13 and the gap does not close from the safe side:
+      it crosses zero between n = 11 and 13 and opens the other way, the model
+      OVER-stating mu for every sampled key at n = 14 and 16.  SecurityProofs-9.md
+      §11.40.]
 
 WHAT THIS DOES AND DOES NOT SETTLE.  It closes #257's item (1) as posed: the
 annealed count's edge-sharing over-count is quantified, at any width, on both
@@ -233,7 +239,11 @@ def section_4(quick):
 falls away above them.  That is the account §11.38 could not give for its own validation
 gap: it reported the model 3-15% BELOW exact mu at n <= 13 "and converging upward"
 without saying why.  This is why, and it predicts the direction -- the annealed count
-over-counts, so it under-states the threshold, and the over-count is what dies.""")
+over-counts, so it under-states the threshold, and the over-count is what dies.
+
+[WITHDRAWN as an account, TODO #257 v9.5.24: the arithmetic below still holds, but
+exact mu past n = 13 (quenched_exact_ladder.py) shows the gap crossing zero rather
+than closing -- the model over-states mu above n = 11.  SecurityProofs-9.md §11.40.]""")
     random.seed(4242)
     print("\n  worst-case log2(L^2 R / E) over 16 random odd addends")
     print("  %5s %10s %10s %10s %12s" % ("n", "L=n", "L=0.86n", "L=0.6n", "L=n^2"))
@@ -248,7 +258,7 @@ over-counts, so it under-states the threshold, and the over-count is what dies."
         if cross is None and vals[0] < 0:
             cross = n
     check(cross is not None and cross <= 14,
-          "the correction crosses 1 at n=%s, inside the exact-mu range (n <= 13)" % cross)
+          "the correction crosses 1 at n=%s, at or below n = 14" % cross)
     print("""
   L is the one input taken from elsewhere, and it is the one that cannot matter: even
   the absurd L = n^2 only shifts the curve by a constant, because log2(R/E) is LINEAR in
@@ -293,9 +303,11 @@ def section_6():
     width from n ~ 11 on both axes, for any polynomial cycle length.  Within the annealed ensemble the first moment is NOT
     carried by rare graphs, which is the objection item (1) raised.
 
-  * The 3-15% validation gap at n <= 13 is EXPLAINED rather than merely reported:
-    the correction is O(1) precisely on n = 10..13 and nowhere above.  Its sign
-    matches too -- an over-count under-states the threshold, and the model runs low.
+  * The 3-15% validation gap at n <= 13 was offered here as EXPLAINED: the correction
+    is O(1) precisely on n = 10..13 and nowhere above, and its sign matches.  That
+    account is WITHDRAWN (TODO #257, v9.5.24): exact mu past n = 13 shows the gap
+    crossing zero and opening the other way, which an over-count that dies cannot
+    produce.  The arithmetic stands; it is not what the gap is.  §11.40.
 
 NOT SETTLED.
 

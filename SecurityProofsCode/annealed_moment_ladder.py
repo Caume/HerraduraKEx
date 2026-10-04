@@ -801,6 +801,12 @@ NOT SETTLED, and neither is small.
      graphs.  It is validated against exact mu only at n <= 13, where it runs 3-15%%
      BELOW the truth and converging upward.  Nothing here promotes it to a bound, and a
      quenched second-moment argument is the obvious next thing and is not attempted.
+     [TODO #257, v9.5.24: the "converging upward" did not hold.  Exact mu, now computed
+     to n = 16 and beyond by quenched_exact_ladder.py, crosses BELOW the model between
+     n = 11 and 13 and stays below it for every sampled key at n = 14 and 16 -- the
+     model's finite-size error is in the unsafe direction there, so the n = 256 row
+     above is an estimator of unknown sign, not a conservative one.  SecurityProofs-9.md
+     §11.40.]
 
   2. THE LINEAR HULL.  Unchanged from #254's second pass: a trail statement is not a hull
      statement, and no method in this line of work reaches the hull.
