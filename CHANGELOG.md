@@ -2,6 +2,63 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.26] - 2026-10-04
+
+### TODO #257 (fifth pass, item stays OPEN) — the exact slope with enough keys: not flat, still growing
+
+v9.5.25 replaced §11.38's model figures with a reading of the EXACT slope: median mu/n
+looked flat at 0.14-0.16 (differential) and 0.07-0.08 (linear) to n = 20, which put
+n = 256 near 36 and 18, about 27x both criteria.  That reading stood on 12 keys per
+width at n ≤ 16 and 4 at n = 20, because the Python solver was slow.
+
+**The same solver, in C.**  `SecurityProofsCode/certified_cycle_mean.c` transcribes
+§11.41's certified solver.  It reads the automaton tables from the Python sources on
+stdin, so the two cannot disagree about what an edge is, and the new gate checks it
+against the Python solver on mu (to 1e-12), edges kept and certificate rounds before
+using any number.  It is about 40x faster and compacts its edge pool in place, so the
+ladder carries 32-96 keys per width to n = 20, 8 at n = 22 and 3 at n = 23.
+
+**The findings.**
+
+| n | 13 | 14 | 16 | 17 | 19 | 20 | 22 | 23 |
+|---|---|---|---|---|---|---|---|---|
+| keys | 32 | 32 | 32 | 96 | 48 | 16 | 8 | 3 |
+| differential, run-adjusted median mu/n | 0.151 | 0.153 | 0.141 | 0.142 | 0.132 | 0.130 | 0.123 | 0.128 |
+| linear, run-adjusted median mu/n | 0.073 | 0.074 | 0.069 | 0.070 | 0.066 | 0.066 | 0.064 | 0.071 |
+| differential, run-adjusted median mu | 1.96 | 2.14 | 2.26 | 2.42 | 2.50 | 2.59 | 2.70 | 2.95 |
+| linear, run-adjusted median mu | 0.95 | 1.03 | 1.10 | 1.19 | 1.25 | 1.31 | 1.42 | 1.63 |
+
+- **"Flat" was partly a sampling artefact, and is withdrawn with its 27x.**  Exact mu
+  rises with the number of runs in delta (about 0.13 per run differential, 0.074
+  linear), and v9.5.25's n = 20 sample carried 0.60 n runs against about 0.5 n
+  elsewhere.  At a typical run count the differential per-bit median steps from about
+  0.15 to about 0.13, and keys already near n/2 runs show the same step with no
+  regression.  Whether it keeps falling or has levelled is not resolved.  The linear
+  axis shows no trend beyond the scatter.
+- **Exact mu grows at every width step to n = 23**, ending at 2.2x and 2.4x the 4/3 and
+  2/3 criteria.
+- **The model's error is a scale error.**  It ranks keys almost exactly (correlation
+  0.98) but credits each run of delta with about 0.21 where exact mu gains about 0.12.
+  So the slope of exact mu on lambda* across one width's keys falls from 1.0 at n = 13
+  to 0.1-0.6 at n = 20-23, and the keys converge: IQR/median goes from about 0.3 to
+  0.03-0.1.
+- **No single n = 256 figure is supported.**  A power law reads about 13 and 11 (10x
+  and 17x the criteria); a per-bit median levelled at its last four widths reads about
+  33 and 17 (25x).  The data do not choose between them.
+
+What remains is §11.37's monotonicity residue with ten widths behind it: the criterion
+holds at n = 256 if exact mu is non-decreasing in n.  No rating moves.
+
+**Files.**  New gate `SecurityProofsCode/exact_slope_ladder.py`, with its C solver
+`SecurityProofsCode/certified_cycle_mean.c`.  Fixed seeds, so it cannot flake.  The C
+solver is the gate above n = 14, so a machine without a C compiler fails rather than
+skips.  Run times: `--quick` about 3 min, default about 1.5 h, `--full` adds n = 22 and
+23 at about 8 h.  `run_findings_gates.py` now discovers 79 gates.
+SecurityProofs-9.md gains §11.42, with notes in §11.41.3 and §11.41.4.  It is now at 726
+of about 750 KaTeX spans, so the next section belongs in a new Part 10.  Prose-only notes
+in `certified_cycle_ladder.py`.  The part index reads §11.37–§11.42.  TODO #257 gets its
+fifth-pass block.
+
 ## [9.5.25] - 2026-10-04
 
 ### TODO #257 (fourth pass, item stays OPEN) — exact mu on both axes to n = 20, and the ratio does not settle

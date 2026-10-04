@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v9.5.25)
+# Herradura Cryptographic Suite (v9.5.26)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -329,12 +329,13 @@ SecurityProofs-8.md                                 — formal analysis §11.34�
                                                       exact row analysis, weak keys; the
                                                       asymptotic differential and linear
                                                       slopes, measured exactly)
-SecurityProofs-9.md                                 — formal analysis §11.37–§11.41 (the width
+SecurityProofs-9.md                                 — formal analysis §11.37–§11.42 (the width
                                                       residue #252 and #254 shared; the
                                                       annealed threshold evaluated exactly
                                                       at n = 256; the pair correlation; the
                                                       quenched check against exact mu; the
-                                                      certified ladder to n = 20)
+                                                      certified ladder to n = 20; the
+                                                      exact slope to n = 23)
 SecurityProofs.md                                   — split index (redirects to the nine files above)
 MIGRATING.md                                        — consolidated breaking-change history and
                                                       upgrade notes

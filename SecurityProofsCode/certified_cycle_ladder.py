@@ -55,7 +55,12 @@ under an hour at n = 20.
 
   §4  WHAT THIS CHANGES.  The model's slope is what is wrong, so no constant-factor
       correction to §11.38's figures is available; the exact slope, flat for eight
-      widths, is the quantity left to argue about.
+      widths, is the quantity left to argue about.  [v9.5.26: the flat exact slope
+      is WITHDRAWN by exact_slope_ladder.py.  It rested partly on a run-heavy n = 20
+      sample; at a typical run count the differential per-bit median is ~0.13 at
+      n = 19-23, down from ~0.15 at 13-14, so the ~36 / ~18 / 27x reading in §4 below
+      is withdrawn too.  What survives is that exact mu grows at every width step.
+      SecurityProofs-9.md §11.42.]
 
 Every key is drawn from a FIXED seed (quenched_exact_ladder.keys), so the verdict is a
 deterministic computation and cannot flake: no fresh sample is drawn.
@@ -459,6 +464,10 @@ the keys it rates strongest.  Read as a slope, the exact band puts n = 256 near
 0.14 x 256 = 36 differential and 0.07 x 256 = 18 linear, about 27x the 4/3 and 2/3
 criteria.  That is a READING of eight widths, not a bound.  It is the reading the
 evidence now supports, and it replaces §11.38's model-based 36x and 34x.
+[v9.5.26: WITHDRAWN -- the flatness rested partly on a run-heavy sample at n = 20; at a
+typical run count the per-bit median is ~0.13 at n = 19-23, and forms that fit
+n = 13..23 read anywhere from ~10x to ~26x at n = 256.  exact_slope_ladder.py,
+SecurityProofs-9.md §11.42.]
 
 OWED.  A quenched argument for n = 256.  This pass moves its target: the quantity to
 control is the exact slope, flat at 0.14-0.16 over eight widths, not the annealed

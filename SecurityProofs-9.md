@@ -12,7 +12,7 @@
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
-> - **Part 9 — §11.37–§11.41** (this file): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder
+> - **Part 9 — §11.37–§11.42** (this file): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
 
 ---
 
@@ -415,7 +415,7 @@ Same fixed key stream as §11.40.2, so the rows to n = 16 reproduce that table. 
 
 **The ratio does not settle.** §11.40.2 read the differential median as slowing near 0.93. With eight keys it is 0.90 at n = 17, then 0.81 at n = 19 and 0.75 at n = 20. The linear axis crosses between n = 13 and 14 and falls the same way, at about half the rate. The samples at n = 19 and 20 are small, six and four keys. But every key there is below 1 on both axes, and the trend agrees with the eight-key row at n = 17.
 
-**The exact slope does settle.** Exact median $\mu/n$ stays between 0.14 and 0.16 on the differential axis from n = 13 to 20, and between 0.07 and 0.08 on the linear axis. Over the same widths the model's median $\lambda^*/n$ climbs from 0.14 to about 0.2 and from 0.07 to about 0.09. So the exact minimum mean cycle is still growing linearly in $n$. What the model gets wrong is the slope.
+**The exact slope does settle.** Exact median $\mu/n$ stays between 0.14 and 0.16 on the differential axis from n = 13 to 20, and between 0.07 and 0.08 on the linear axis. Over the same widths the model's median $\lambda^*/n$ climbs from 0.14 to about 0.2 and from 0.07 to about 0.09. So the exact minimum mean cycle is still growing linearly in $n$. What the model gets wrong is the slope. *(§11.42: partly a sampling artefact. The n = 20 sample here was run-heavy, and at a typical run count the differential median steps down to about 0.13.)*
 
 **The model's error is largest where it predicts most.** Within one width, the least-squares slope of exact $\mu$ on $\lambda^*$ across keys is about 1 at n = 13, and 0.61 (differential) and 0.68 (linear) at n = 17. The keys the model rates strongest are the ones it over-states most. That is consistent with §11.40.3: the run structure of one fixed constant caps the exact value, and the independent-edge ensemble does not see the cap.
 
@@ -423,10 +423,74 @@ Same fixed key stream as §11.40.2, so the rows to n = 16 reproduce that table. 
 
 **Withdrawn: §11.38 as the basis for the n = 256 figures.** §11.40 left them as an estimator of unknown sign whose error might at least be a constant factor. It is not a constant factor: the ratio falls at every width measured, by 0.25 on the differential axis by n = 20. So 48.44 and 22.40, and the $36\times$ and $34\times$ margins, have no measured support, and no correction of them is available.
 
-**Replacing it, as a reading:** the exact slope. A median $\mu/n$ that has stayed at 0.14 to 0.16 over eight widths puts n = 256 near $0.14 \times 256 \approx 36$ differential. On the linear axis, $0.07 \times 256 \approx 18$. Both are about $27\times$ the $4/3$ and $2/3$ criteria. This is a reading of eight widths and not a bound, the same status §11.38's figures had. The difference is that it extrapolates the exact object rather than a model now measured to drift away from it.
+**Replacing it, as a reading:** the exact slope. A median $\mu/n$ that has stayed at 0.14 to 0.16 over eight widths puts n = 256 near $0.14 \times 256 \approx 36$ differential. On the linear axis, $0.07 \times 256 \approx 18$. Both are about $27\times$ the $4/3$ and $2/3$ criteria. This is a reading of eight widths and not a bound, the same status §11.38's figures had. The difference is that it extrapolates the exact object rather than a model now measured to drift away from it. *(§11.42 withdraws this reading. With 32–96 keys per width, and adjusted for the run count of $\delta$, the differential per-bit median is about 0.13 at n = 19–23, not 0.145. Forms that fit n = 13–23 read anywhere from about 10 to 26 times the criteria at n = 256.)*
 
 **Unchanged: every exact number.** The medians clear both criteria at every width from n = 10 on. From n = 17 on, every sampled key clears both.
 
 **Still owed.** A quenched argument for n = 256. Its target has moved: it is the exact slope, flat for eight widths, rather than the model's error, which is not converging. The linear hull is owed too.
+
+**No rating moves, and none could**, for the reasons §11.38.7 gives.
+
+## 11.42 The exact slope, with enough keys: not flat, still growing (TODO #257)
+
+**Reproduced by `SecurityProofsCode/exact_slope_ladder.py`, which exits non-zero if any finding here stops holding.**
+
+§11.41 replaced §11.38's model figures with a reading of the exact slope: median $\mu/n$ looked flat at 0.14–0.16 (differential) and 0.07–0.08 (linear) from n = 13 to 20, which put n = 256 near 36 and 18. That reading rested on 12 keys per width at n ≤ 16, 8 at n = 17, 6 at n = 19 and 4 at n = 20. That is too few to call a distribution flat. The Python solver was why it was so few.
+
+### 11.42.1 The same solver, faster
+
+`certified_cycle_mean.c` is §11.41.1's certified solver transcribed to C. It takes the automaton tables from the Python sources on its input, so the two cannot disagree about what an edge is. On n = 7, 8, 10, 11, 13 and 14, three keys each, both axes, it returns the same $\mu$ (to $10^{-12}$), the same number of edges kept and the same number of certificate rounds. It is about 40 times faster and compacts its edge pool in place. An n = 20 key takes about two minutes and an n = 22 key about half an hour, at up to 5 GB.
+
+### 11.42.2 The ladder
+
+Fixed key stream as before, so earlier tables' keys are a prefix of these. "Run-adjusted" moves each key to a typical run count of $\delta$ (n/2 runs) along the pooled within-width slope of exact $\mu$ on the run count: 0.132 per run differential, 0.075 linear. "Slope on $\lambda^*$" is the least-squares slope of exact $\mu$ on the model's value across one width's keys.
+
+**Differential:**
+
+| n | keys | median exact μ/n | runs/n | run-adjusted μ/n | run-adjusted μ | model λ*/n | median ratio | IQR/median | slope on λ* |
+|---|---|---|---|---|---|---|---|---|---|
+| 13 | 32 | 0.1476 | 0.54 | 0.1507 | 1.959 | 0.1580 | 0.958 | 0.303 | 1.00 |
+| 14 | 32 | 0.1559 | 0.50 | 0.1528 | 2.140 | 0.1645 | 0.940 | 0.291 | 0.90 |
+| 16 | 32 | 0.1448 | 0.50 | 0.1413 | 2.261 | 0.1622 | 0.882 | 0.274 | 0.80 |
+| 17 | 96 | 0.1486 | 0.53 | 0.1424 | 2.420 | 0.1692 | 0.873 | 0.206 | 0.67 |
+| 19 | 48 | 0.1394 | 0.53 | 0.1316 | 2.500 | 0.1665 | 0.807 | 0.172 | 0.60 |
+| 20 | 16 | 0.1448 | 0.60 | 0.1295 | 2.590 | 0.1953 | 0.740 | 0.026 | 0.32 |
+| 22 | 8 | 0.1274 | 0.55 | 0.1228 | 2.703 | 0.1658 | 0.757 | 0.023 | 0.23 |
+| 23 | 3 | 0.1310 | 0.52 | 0.1281 | 2.947 | 0.1963 | 0.667 | 0.046 | 0.13 |
+
+**Linear:**
+
+| n | keys | median exact μ/n | runs/n | run-adjusted μ/n | run-adjusted μ | model λ*/n | median ratio | IQR/median | slope on λ* |
+|---|---|---|---|---|---|---|---|---|---|
+| 13 | 32 | 0.0712 | 0.54 | 0.0727 | 0.946 | 0.0726 | 1.020 | 0.278 | 1.02 |
+| 14 | 32 | 0.0735 | 0.50 | 0.0735 | 1.029 | 0.0755 | 0.998 | 0.303 | 0.97 |
+| 16 | 32 | 0.0705 | 0.50 | 0.0685 | 1.097 | 0.0745 | 0.951 | 0.302 | 0.86 |
+| 17 | 96 | 0.0722 | 0.53 | 0.0702 | 1.193 | 0.0775 | 0.928 | 0.259 | 0.83 |
+| 19 | 48 | 0.0692 | 0.53 | 0.0660 | 1.253 | 0.0766 | 0.873 | 0.194 | 0.81 |
+| 20 | 16 | 0.0749 | 0.60 | 0.0657 | 1.314 | 0.0900 | 0.825 | 0.083 | 0.60 |
+| 22 | 8 | 0.0644 | 0.55 | 0.0644 | 1.417 | 0.0760 | 0.840 | 0.066 | 0.43 |
+| 23 | 3 | 0.0724 | 0.52 | 0.0708 | 1.629 | 0.0899 | 0.805 | 0.142 | 0.50 |
+
+### 11.42.3 What the ladder says
+
+The rows at n = 17 and 19 carry 96 and 48 keys (the gate's default runs 32 and 24); n = 22 and 23 run under `--full` only.
+
+**The slope is not flat at the level §11.41 read.** Exact $\mu$ rises with the number of runs in $\delta$, and the n = 20 sample in §11.41 happened to carry 0.60 n runs against about 0.5 n elsewhere, which raised its median. Moved to a typical run count, the differential per-bit median is about 0.15 at n = 13–14 and about 0.13 at n = 19–23: 0.132, 0.130, 0.123, 0.128. Keys already within one run of n/2 show the same step with no regression involved. Whether the median keeps falling or has levelled is not resolved. The linear median moves within 0.064–0.074 with no decline established beyond the scatter; it is 0.071 at n = 23, on three keys.
+
+**Exact $\mu$ still grows.** Run-adjusted, the median rises at every width step on both axes: 1.96 to 2.95 differential and 0.95 to 1.63 linear, over n = 13 to 23. At n = 23 it is 2.2 and 2.4 times the criteria.
+
+**The model's error is a scale error.** Within one width the model ranks keys almost exactly; the correlation of $\lambda^*$ with exact $\mu$ is 0.98 at n = 13. But at n ≥ 17 it credits each run of $\delta$ with about 0.21 on the differential axis where exact $\mu$ gains about 0.12, and about 0.095 against 0.074 on the linear axis. So the keys it rates strongest are the ones it over-states most. The slope of exact $\mu$ on $\lambda^*$ across keys falls from 1.0 at n = 13 to 0.1–0.6 at n = 20–23.
+
+**The keys agree more as n grows.** The interquartile range of exact $\mu/n$, over its median, falls from about 0.3 at n = 13 to 0.02–0.05 differential and 0.07–0.14 linear at n = 20–23.
+
+### 11.42.4 What this changes
+
+**Withdrawn: §11.41.4's reading of the exact slope as flat at 0.14–0.16**, and its n = 256 figures of about 36 and 18, about $27\times$ both criteria. At a typical run count the differential per-bit median is about 0.13 from n = 19 to 23, and it got there by falling from about 0.15.
+
+**Not fixed by the data: any single n = 256 figure.** Forms that fit n = 13 to 23 differ by a factor of 2.5 at n = 256. A power law ($\mu \sim n^{0.63}$ differential, $n^{0.84}$ linear) reads about 13 and 11, roughly 10 and 17 times the criteria. A per-bit median that has levelled at its last four widths (0.128 and 0.067) reads about 33 and 17, roughly 25 times. Both are readings and not bounds, and the data do not choose between them.
+
+**What is measured: §11.37's monotonicity residue**, now with ten widths behind it. The run-adjusted median exact $\mu$ grows at every step from n = 13 to 23 on both axes, and is more than twice both criteria at n = 23. So the criterion holds at n = 256 if exact $\mu$ is non-decreasing in n. That, and not a slope, is what an argument has to show. There is still no embedding between widths (§11.37), so it cannot be shown by comparing two graphs.
+
+**Still owed.** That quenched argument, and the linear hull.
 
 **No rating moves, and none could**, for the reasons §11.38.7 gives.
