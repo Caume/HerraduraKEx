@@ -12,7 +12,7 @@
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
-> - **Part 9 — §11.37–§11.39** (this file): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation
+> - **Part 9 — §11.37–§11.40** (this file): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check
 
 ---
 
@@ -239,7 +239,7 @@ Over twenty keys at $n = 256$ the per-key range is $43.91$ to $50.86$ (different
 
 **Not settled, and neither part is small.**
 
-1. **The model is an estimator.**  It is annealed — a first-moment count of cheap cycles — and a first moment bounds nothing on its own, since it can be carried by rare graphs.  It is validated against exact $\mu$ only at $n \le 13$, where it runs $3$ to $15$% *below* the truth and converging upward.  Nothing here promotes it to a bound.
+1. **The model is an estimator.**  It is annealed — a first-moment count of cheap cycles — and a first moment bounds nothing on its own, since it can be carried by rare graphs.  It is validated against exact $\mu$ only at $n \le 13$, where it runs $3$ to $15$% *below* the truth and converging upward.  Nothing here promotes it to a bound.  *(§11.40: past $n = 13$ the convergence did not hold — the model crosses the exact value and runs about $7$% **above** it, so it is an estimator of unknown sign.)*
 2. **The linear hull.**  Unchanged from §11.36.9: a trail statement is not a hull statement, and no method in this line of work reaches the hull.
 
 The cheapest thing that would upgrade the first item is now stated precisely, and is the whole of what #257 has left.  The annealed count over-counts cycles sharing edges, so the gap between the model and $\mu$ is a **second-moment** question about the same two inputs — the edge-weight distribution and the out-degree — and both are exactly computable here at any width.  It needs no new machinery, only the pair correlation.
@@ -300,13 +300,70 @@ Within the annealed ensemble the first moment is **not** carried by rare graphs,
 
 So the discrepancy visible in the validation range is a property of that range rather than of the model, and the "converging upward" that §11.38 could only observe is the over-count dying at $2^{-0.65n}$.
 
+> **Withdrawn as an account (§11.40).** The arithmetic above stands; the conclusion drawn from it does not. Exact $\mu$ computed past $n = 13$ shows the gap crossing zero between $n = 11$ and $n = 13$ and opening the other way: the model over-states $\mu$ for every sampled key at $n = 14$, $16$ and $17$. An over-count that dies cannot produce that.
+
 ### 11.39.4 What this settles, and what it does not
 
 **Settled — §11.38.7's item 1 as posed.** The edge-sharing over-count is quantified exactly, at any width, on both axes, from the existing ladder; it is negligible wherever the answer is not already exact; and it accounts for the validation gap in both magnitude and sign.
 
 **Not settled.**
 
-1. **This is not a bound on the deterministic object.** Concentration of an annealed ensemble says that ensemble's typical member is representative. It does not say that one fixed round function is a typical member of it. Closing that is a *quenched* argument and none is attempted here, so the status of §11.38's $n = 256$ figures is unchanged: an exactly-evaluated **estimator**, now with its internal consistency established rather than assumed.
+1. **This is not a bound on the deterministic object.** Concentration of an annealed ensemble says that ensemble's typical member is representative. It does not say that one fixed round function is a typical member of it. Closing that is a *quenched* argument and none is attempted here, so the status of §11.38's $n = 256$ figures is unchanged: an exactly-evaluated **estimator**, now with its internal consistency established rather than assumed.  *(§11.40 then compared it with the exact answer past $n = 13$, and the estimator's error turns out not to be conservative.)*
 2. **The linear hull.** Untouched, and out of reach of this line of work — unchanged from §11.36.9 and §11.38.7.
 
 **No rating moves, and none could**, for the reasons §11.38.7 gives: every row this analysis touches is demo-only on other axes (#243, #244, #248), and the production-track rows left the scope of a trail bound in §11.36.8.
+
+---
+
+## 11.40 The quenched check: exact $\mu$ past $n = 13$, and the model crosses it (TODO #257)
+
+**Reproduced by `SecurityProofsCode/quenched_exact_ladder.py`, which exits non-zero if any finding here stops holding.**
+
+§11.39.4 left #257 owing a *quenched* statement: the annealed ensemble concentrates, but nothing said that one fixed round function is a typical member of it. A proof of that is not attempted here either. What is attempted is the cheaper thing that had never been done: compare the model with the exact answer over more widths than the five where both had been computed. §11.39.3 had made a prediction that this comparison can test. It said the model's error was an edge-sharing over-count, $O(1)$ on $n = 10$ to $13$ and dying as $2^{-0.65n}$ above, so the model should converge to the exact $\mu$ from the safe side.
+
+**It does not.** The error changes sign between $n = 11$ and $n = 13$. At every width computed above that, the model over-states the exact minimum mean cycle of the fixed round.
+
+### 11.40.1 The exact graph was limited by how it was built, not by its size
+
+`diff_cycle_mean.py` built each difference graph from an exhaustive DDT of $x \mapsto x + \delta$, which is $2^{2n}$ work and stops at $n = 11$. The graph itself is much smaller than that, because the out-degree is small — about 30 to 150 at these widths. §11.38.1's carry-pair automaton gives the out-edges of one node directly: they are the class sequences with a nonzero path count, enumerated by depth-first search. That costs (out-degree $\times$ $n$) per node. Exact $\mu$ then follows from Howard's algorithm on compact arrays, in about 30 s per key at $n = 16$ and a few minutes at $n = 17$. ($n = 12$ and $n = 15$ are skipped, since $M$ is singular there.)
+
+The automaton-built graph is checked edge for edge and weight for weight against the DDT-built one at $n = 8, 10, 11$. The compact Howard is checked against `diff_cycle_mean.py`'s own Howard at $n = 11$ and $13$, to $10^{-9}$.
+
+### 11.40.2 Exact against annealed, same key, both axes
+
+Each row uses a fixed key stream (seeded, so the table reproduces) with the deployed key screen applied. The ratio is exact $\mu$ divided by the lower end of the annealed bracket of §11.38.3, which closes to $10^{-12}$ on this axis.
+
+| $n$ | keys | median exact $\mu$ | $\mu/n$ | median ratio | min ratio | max ratio | keys with ratio $< 1$ |
+|---|---|---|---|---|---|---|---|
+| 7 | 12 | $1.279$ | $0.183$ | $1.177$ | $1.087$ | $1.239$ | $0$% |
+| 8 | 12 | $1.361$ | $0.170$ | $1.097$ | $0.626$ | $1.190$ | $25$% |
+| 10 | 12 | $1.701$ | $0.170$ | $1.067$ | $0.692$ | $1.113$ | $17$% |
+| 11 | 12 | $1.860$ | $0.169$ | $1.043$ | $0.968$ | $1.095$ | $8$% |
+| 13 | 12 | $1.858$ | $0.143$ | $0.983$ | $0.753$ | $1.023$ | $83$% |
+| 14 | 12 | $2.201$ | $0.157$ | $0.936$ | $0.750$ | $0.999$ | $100$% |
+| 16 | 12 | $2.280$ | $0.143$ | $0.927$ | $0.804$ | $0.970$ | $100$% |
+| 17 | 6 | $2.605$ | $0.153$ | $0.923$ | $0.804$ | $0.951$ | $100$% |
+
+The median ratio falls at every step from $n = 7$ to $n = 14$, from $1.18$ to $0.94$. After that the fall slows: $0.93$ at $n = 16$ and at $n = 17$. Every sampled key is below $1$ from $n = 14$ on. The linear axis can be checked only to $n = 11$ here, because exact linear $\mu$ needs a LAT row per mask. Its ratio falls the same way, from $1.23$ at $n = 7$ to $1.08$ at $n = 11$. It is still above $1$ at the median, with one key in eight already below.
+
+### 11.40.3 Which keys the model over-states
+
+The keys with the lowest ratios are the ones whose additive constant has long runs of equal bits and many trailing zeros. Pooled over $n \ge 10$, the lowest-ratio quarter has a mean longest run of $4.5$ and a mean $\mathrm{tz}(\delta)$ of $2.4$. The highest-ratio quarter has $3.4$ and $0.9$.
+
+A run of ones below bit $i$ pushes $\Pr[c_i = 1] = (\delta \bmod 2^i)/2^i$ toward $1$, and a run of zeros pushes it toward $0$. Either way, the carry into the top of a run is nearly deterministic, so a difference sitting there passes the addition for about $2^{-\text{run}}$ bits rather than one. A cheap *cycle* is then a set of differences that keeps returning to the same runs. Where those runs are is a property of one fixed constant. An annealed ensemble with independent edges reproduces the weight distribution but not where the cheap edges sit relative to each other, so it cannot see such a cycle.
+
+This is the quenched effect itself, observed. It is a correlation over a few dozen keys, offered as the measured lead and not as a derivation.
+
+The same structure is visible at $n = 256$ directly, where no exact $\mu$ exists. Take six fixed deployed keys, and for each find the cheapest two-round trail whose input difference is one bit and which passes each addition unchanged ($\beta = \alpha$). Computed exactly from the automaton, every one weighs under half a bit: $0.028$ to $0.46$. The cheapest belongs to the key with the longest run, $11$ equal bits. That says nothing about $\mu$, which is a cycle statement — a cheap transient is §11.35's old news. What it shows is where the cheap edges sit at the deployed width: on the runs of one fixed constant.
+
+### 11.40.4 What this changes
+
+**Withdrawn: §11.39.3's account of the validation gap.** The over-count arithmetic of §11.39.1 and §11.39.2 stands. The conclusion drawn from it, that the gap closes from the safe side, does not: the gap crosses zero and opens the other way, which an over-count that dies cannot produce.
+
+**Downgraded: §11.38's $n = 256$ figures** ($48.44$ differential, $22.40$ linear). They were presented as an exactly evaluated estimator whose finite-size error had been observed to be conservative. It is not conservative: above $n = 11$ the error is about $7$% at the median on the unsafe side, and where it settles is not measured. An estimator whose bias has changed sign and whose limit is unknown cannot be extrapolated across 240 widths with a sign attached. So the $36\times$ margin is no longer supported by anything measured. It is not *lost* either: losing the $4/3$ criterion would need the ratio to fall to about $1/36$, against $0.93$ at the widest width computed. What is lost is the claim that the margin is measured.
+
+**Unchanged: every exact number.** Per-width medians clear $4/3$ from $n = 8$ on, through $n = 17$. Every width also has keys below it, as §11.37.1 recorded for narrower widths. The median is not monotone at this sample size, since $n = 13$ does not clear $n = 11$. $\mu/n$ stays between $0.14$ and $0.16$ from $n = 13$ on, which is consistent with linear growth. But the slope that would carry it to $n = 256$ is exactly what the model no longer supplies.
+
+**Still owed.** A quenched argument, now with a measured reason why the annealed one cannot stand in for it and a measured lead (§11.40.3) on what such an argument would have to control: the run structure of $\delta$. The linear hull remains owed too.
+
+**No rating moves, and none could**, for the reasons §11.38.7 gives.

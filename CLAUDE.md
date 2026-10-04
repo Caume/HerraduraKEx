@@ -737,7 +737,34 @@ SecurityProofsCode/                                 — standalone Python proof/
                              under-states the threshold).  Still NOT a bound on the
                              deterministic object -- an annealed ensemble
                              concentrating is not a fixed round function being
-                             typical of it, which is why #257 stays open
+                             typical of it, which is why #257 stays open.
+                             ITS §4 ACCOUNT OF THE VALIDATION GAP IS WITHDRAWN
+                             by quenched_exact_ladder.py: the arithmetic
+                             stands, the "gap closes from the safe side" does not
+  quenched_exact_ladder.py  — TODO #257's QUENCHED CHECK, by measurement rather
+                             than proof (v9.5.24).  Exact mu was stuck at n = 11
+                             on the differential axis because each graph was built
+                             from a 2^(2n) DDT; enumerating each node's out-edges
+                             from §11.38.1's carry-pair automaton costs (out-degree
+                             x n) instead, so the FIXED round's exact minimum mean
+                             cycle reaches n = 13, 14, 16, 17 (n = 19 is under
+                             --full but no key completed: > 4.6 GB, > 30 min).  FINDING: the model's error is NOT
+                             conservative.  exact/annealed falls 1.18 -> 1.04 over
+                             n = 7..11, crosses 1 between 11 and 13, and is below 1
+                             for EVERY sampled key at n = 14, 16 and 17 (~0.93 at
+                             the median, the fall slowing).  So §11.38's n = 256
+                             figures are an estimator of UNKNOWN sign, not a
+                             conservative one -- the 36x margin is unsupported, not
+                             lost (losing 4/3 needs a ratio near 1/36).  The keys
+                             it over-states most have long RUNS of equal bits in
+                             delta, where carries are near-deterministic and a
+                             difference passes addition almost free: a property of
+                             one fixed constant that an independent-edge ensemble
+                             cannot see, i.e. the quenched effect itself.  At
+                             n = 256 the same keys carry explicit two-round trails
+                             under half a bit.  Fixed seeds throughout, so it
+                             cannot flake.  Exits non-zero if a finding stops
+                             reproducing
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -1100,7 +1127,7 @@ SecurityProofs-5.md                                 — §11.8.3–§11.8.10: PQ
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
-SecurityProofs-9.md                                 — §11.37–§11.39: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item (485 math expressions)
+SecurityProofs-9.md                                 — §11.37–§11.40: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model (628 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -2419,7 +2446,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; ran
 `continue-on-error: true` on the `arduino` job's TODO #185 route until TODO #317
 promoted it). Locally, run the same scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 76
+**The findings gates, and why they are a job rather than a step (TODO #289).** 77
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -2446,7 +2473,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **76
+backs the security documents rather than the one that tests the code. It is now **77
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.
