@@ -12,7 +12,7 @@
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
-> - **Part 9 — §11.37–§11.40** (this file): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check
+> - **Part 9 — §11.37–§11.41** (this file): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder
 
 ---
 
@@ -344,7 +344,7 @@ Each row uses a fixed key stream (seeded, so the table reproduces) with the depl
 | 16 | 12 | $2.280$ | $0.143$ | $0.927$ | $0.804$ | $0.970$ | $100$% |
 | 17 | 6 | $2.605$ | $0.153$ | $0.923$ | $0.804$ | $0.951$ | $100$% |
 
-The median ratio falls at every step from $n = 7$ to $n = 14$, from $1.18$ to $0.94$. After that the fall slows: $0.93$ at $n = 16$ and at $n = 17$. Every sampled key is below $1$ from $n = 14$ on. The linear axis can be checked only to $n = 11$ here, because exact linear $\mu$ needs a LAT row per mask. Its ratio falls the same way, from $1.23$ at $n = 7$ to $1.08$ at $n = 11$. It is still above $1$ at the median, with one key in eight already below.
+The median ratio falls at every step from $n = 7$ to $n = 14$, from $1.18$ to $0.94$. After that the fall slows: $0.93$ at $n = 16$ and at $n = 17$. *(§11.41: it does not slow. With eight keys $n = 17$ is at $0.90$, and the certified solver takes the ladder on to $0.81$ at $n = 19$ and $0.75$ at $n = 20$. The linear axis crosses too, between $n = 13$ and $14$.)* Every sampled key is below $1$ from $n = 14$ on. The linear axis can be checked only to $n = 11$ here, because exact linear $\mu$ needs a LAT row per mask. Its ratio falls the same way, from $1.23$ at $n = 7$ to $1.08$ at $n = 11$. It is still above $1$ at the median, with one key in eight already below.
 
 ### 11.40.3 Which keys the model over-states
 
@@ -360,10 +360,73 @@ The same structure is visible at $n = 256$ directly, where no exact $\mu$ exists
 
 **Withdrawn: §11.39.3's account of the validation gap.** The over-count arithmetic of §11.39.1 and §11.39.2 stands. The conclusion drawn from it, that the gap closes from the safe side, does not: the gap crosses zero and opens the other way, which an over-count that dies cannot produce.
 
-**Downgraded: §11.38's $n = 256$ figures** ($48.44$ differential, $22.40$ linear). They were presented as an exactly evaluated estimator whose finite-size error had been observed to be conservative. It is not conservative: above $n = 11$ the error is about $7$% at the median on the unsafe side, and where it settles is not measured. An estimator whose bias has changed sign and whose limit is unknown cannot be extrapolated across 240 widths with a sign attached. So the $36\times$ margin is no longer supported by anything measured. It is not *lost* either: losing the $4/3$ criterion would need the ratio to fall to about $1/36$, against $0.93$ at the widest width computed. What is lost is the claim that the margin is measured.
+**Downgraded: §11.38's $n = 256$ figures** ($48.44$ differential, $22.40$ linear). They were presented as an exactly evaluated estimator whose finite-size error had been observed to be conservative. It is not conservative: above $n = 11$ the error is about $7$% at the median on the unsafe side, and where it settles is not measured. An estimator whose bias has changed sign and whose limit is unknown cannot be extrapolated across 240 widths with a sign attached. So the $36\times$ margin is no longer supported by anything measured. It is not *lost* either: losing the $4/3$ criterion would need the ratio to fall to about $1/36$, against $0.93$ at the widest width computed. What is lost is the claim that the margin is measured. *(§11.41 withdraws the model as the basis for these figures. The ratio keeps falling, so no constant-factor correction is available. The exact $\mu/n$ is flat over eight widths and gives about $27\times$ instead, as a reading and not a bound.)*
 
 **Unchanged: every exact number.** Per-width medians clear $4/3$ from $n = 8$ on, through $n = 17$. Every width also has keys below it, as §11.37.1 recorded for narrower widths. The median is not monotone at this sample size, since $n = 13$ does not clear $n = 11$. $\mu/n$ stays between $0.14$ and $0.16$ from $n = 13$ on, which is consistent with linear growth. But the slope that would carry it to $n = 256$ is exactly what the model no longer supplies.
 
 **Still owed.** A quenched argument, now with a measured reason why the annealed one cannot stand in for it and a measured lead (§11.40.3) on what such an argument would have to control: the run structure of $\delta$. The linear hull remains owed too.
+
+**No rating moves, and none could**, for the reasons §11.38.7 gives.
+
+## 11.41 Exact $\mu$ to n = 20 on both axes: the ratio does not settle, the exact slope does (TODO #257)
+
+**Reproduced by `SecurityProofsCode/certified_cycle_ladder.py`, which exits non-zero if any finding here stops holding.**
+
+§11.40 left two limits, and both were limits of construction. The linear axis stopped at n = 11, because exact linear $\mu$ built every LAT row, which is $(n+1)4^n$ work. The differential axis stopped at n = 17, because the automaton builder enumerated *every* out-edge, and one n = 19 key passed 4.6 GB without finishing. So whether the falling ratio settles was not measured on either axis.
+
+### 11.41.1 A certificate makes a pruned graph exact
+
+A minimum mean cycle is decided by cheap edges. So keep, out of each node $u$, only the edges of weight at most $W_u$, giving a subgraph $G'$ in which every node keeps at least one edge. Its minimum mean cycle $\mu'$ satisfies $\mu' \ge \mu(G)$. Let $p$ be the shortest-path potential of the reduced weights $w - \mu'$ from a zero-weight virtual source. It is well defined because $G'$ has no negative cycle, and it satisfies $p \le 0$ and $p(v) \le p(u) + w(u,v) - \mu'$ on $G'$. An omitted edge has $w(u,v) > W_u$. So if $W_u \ge \mu' - p(u)$ at every node, then $p(u) + w - \mu' > 0 \ge p(v)$, which makes $p$ feasible on all of $G$. Every cycle of $G$ then has mean at least $\mu'$, so $\mu(G) = \mu'$.
+
+Where a node fails the test, its threshold is raised to $\mu' - p(u)$ and the subgraph is solved again. The loop ends only when every node passes, so a returned value is exact rather than an estimate.
+
+The pruning inside a row is sound because a partial edge's weight only grows as bits are added. On the linear axis, the correlation of $x \mapsto x + \delta$ is a product of $2 \times 2$ carry matrices whose columns have $\ell_1$ norm at most 1, so the $\ell_1$ norm of the partial vector bounds $|C|$. On the differential axis, the carry-pair automaton has two choices of $x$ per bit, so the partial path count at most doubles per remaining bit. A row then costs (edges kept) $\times$ $n$ rather than $2^n$. The pruned graph keeps about 3 to 25 edges per node, against roughly $2^n/3$ in the full linear graph. Exact $\mu$ costs about two minutes per key per axis at n = 17 and under an hour at n = 20.
+
+The solver returns the full-graph value to $10^{-9}$ on both axes at n = 7, 8, 10, 11, and on the differential axis at n = 13, 14. A negative control shows the raising loop is what makes it exact. Without the loop, at a fixed $W = 1$ bit, 13 of 18 keys get a $\mu$ that is too large, and the certificate test flags all 13.
+
+### 11.41.2 The ladders
+
+Same fixed key stream as §11.40.2, so the rows to n = 16 reproduce that table. n = 17 now has eight keys rather than six. The rows for n = 19 and 20 run under `--full` only. The ratio is exact $\mu$ over the lower end of the annealed bracket; "ann$/n$" is that lower end's median over $n$.
+
+**Differential:**
+
+| $n$ | keys | median exact $\mu$ | exact $\mu/n$ | ann$/n$ | median ratio | min ratio | max ratio | min exact $\mu$ | ratio $< 1$ |
+|---|---|---|---|---|---|---|---|---|---|
+| 13 | 12 | 1.858 | 0.143 | 0.144 | 0.983 | 0.753 | 1.023 | 0.833 | 83% |
+| 14 | 12 | 2.201 | 0.157 | 0.163 | 0.936 | 0.750 | 0.999 | 0.977 | 100% |
+| 16 | 12 | 2.280 | 0.143 | 0.154 | 0.927 | 0.804 | 0.970 | 1.193 | 100% |
+| 17 | 8 | 2.790 | 0.164 | 0.182 | 0.901 | 0.804 | 0.951 | 2.057 | 100% |
+| 19 | 6 | 2.707 | 0.142 | 0.177 | 0.809 | 0.773 | 0.869 | 2.201 | 100% |
+| 20 | 4 | 2.933 | 0.147 | 0.205 | 0.749 | 0.691 | 0.756 | 2.857 | 100% |
+
+**Linear:**
+
+| $n$ | keys | median exact $\mu$ | exact $\mu/n$ | ann$/n$ | median ratio | min ratio | max ratio | min exact $\mu$ | ratio $< 1$ |
+|---|---|---|---|---|---|---|---|---|---|
+| 11 | 12 | 0.860 | 0.078 | 0.072 | 1.082 | 0.932 | 1.172 | 0.514 | 17% |
+| 13 | 12 | 0.898 | 0.069 | 0.066 | 1.020 | 0.857 | 1.064 | 0.422 | 25% |
+| 14 | 12 | 0.986 | 0.070 | 0.075 | 0.984 | 0.834 | 1.073 | 0.497 | 75% |
+| 16 | 12 | 1.108 | 0.069 | 0.071 | 0.975 | 0.879 | 1.055 | 0.598 | 83% |
+| 17 | 8 | 1.316 | 0.077 | 0.084 | 0.929 | 0.865 | 1.015 | 1.009 | 75% |
+| 19 | 6 | 1.347 | 0.071 | 0.082 | 0.873 | 0.854 | 0.941 | 1.108 | 100% |
+| 20 | 4 | 1.557 | 0.078 | 0.095 | 0.823 | 0.814 | 0.835 | 1.412 | 100% |
+
+### 11.41.3 What the ladders say
+
+**The ratio does not settle.** §11.40.2 read the differential median as slowing near 0.93. With eight keys it is 0.90 at n = 17, then 0.81 at n = 19 and 0.75 at n = 20. The linear axis crosses between n = 13 and 14 and falls the same way, at about half the rate. The samples at n = 19 and 20 are small, six and four keys. But every key there is below 1 on both axes, and the trend agrees with the eight-key row at n = 17.
+
+**The exact slope does settle.** Exact median $\mu/n$ stays between 0.14 and 0.16 on the differential axis from n = 13 to 20, and between 0.07 and 0.08 on the linear axis. Over the same widths the model's median $\lambda^*/n$ climbs from 0.14 to about 0.2 and from 0.07 to about 0.09. So the exact minimum mean cycle is still growing linearly in $n$. What the model gets wrong is the slope.
+
+**The model's error is largest where it predicts most.** Within one width, the least-squares slope of exact $\mu$ on $\lambda^*$ across keys is about 1 at n = 13, and 0.61 (differential) and 0.68 (linear) at n = 17. The keys the model rates strongest are the ones it over-states most. That is consistent with §11.40.3: the run structure of one fixed constant caps the exact value, and the independent-edge ensemble does not see the cap.
+
+### 11.41.4 What this changes
+
+**Withdrawn: §11.38 as the basis for the n = 256 figures.** §11.40 left them as an estimator of unknown sign whose error might at least be a constant factor. It is not a constant factor: the ratio falls at every width measured, by 0.25 on the differential axis by n = 20. So 48.44 and 22.40, and the $36\times$ and $34\times$ margins, have no measured support, and no correction of them is available.
+
+**Replacing it, as a reading:** the exact slope. A median $\mu/n$ that has stayed at 0.14 to 0.16 over eight widths puts n = 256 near $0.14 \times 256 \approx 36$ differential. On the linear axis, $0.07 \times 256 \approx 18$. Both are about $27\times$ the $4/3$ and $2/3$ criteria. This is a reading of eight widths and not a bound, the same status §11.38's figures had. The difference is that it extrapolates the exact object rather than a model now measured to drift away from it.
+
+**Unchanged: every exact number.** The medians clear both criteria at every width from n = 10 on. From n = 17 on, every sampled key clears both.
+
+**Still owed.** A quenched argument for n = 256. Its target has moved: it is the exact slope, flat for eight widths, rather than the model's error, which is not converging. The linear hull is owed too.
 
 **No rating moves, and none could**, for the reasons §11.38.7 gives.

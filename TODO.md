@@ -156,6 +156,37 @@ the comparison §11.39.3 made a prediction about and nobody had run past n = 11.
 STRUCTURE of delta rather than the weight distribution alone, since the latter is
 demonstrably not enough; and (2) the linear hull, unchanged.
 
+**Fourth pass (v9.5.25) — exact mu on both axes to n = 20, and the ratio does NOT
+settle.**  See SecurityProofs-9.md §11.41 and `SecurityProofsCode/certified_cycle_ladder.py`.
+
+  * **A certificate makes a pruned graph exact.**  Build only the edges below a per-node
+    threshold W_u, solve, take the shortest-path potential p of w - mu', and raise W_u
+    wherever W_u < mu' - p(u).  When no node fails, p is feasible on the FULL graph, so
+    the subgraph's mu is the full graph's.  Pruning inside a row is sound because
+    partial weight only grows (the l1 norm of the linear carry vector; the at-most-
+    doubling of the differential path count).  ~3-25 edges per node against ~2^n/3, so
+    the LINEAR axis goes from n = 11 to n = 20 and the differential from 17 to 20.
+    Exact to 1e-9 against both exhaustive builders; a negative control (fixed W = 1,
+    loop off) over-states mu on 13 of 18 keys and the test flags all 13.
+  * **v9.5.24's "the fall slows near 0.93" is withdrawn.**  At 8 keys n = 17 is 0.90,
+    then 0.81 at n = 19 and 0.75 at n = 20.  The linear axis crosses between 13 and 14
+    and falls about half as fast, to 0.82 at n = 20.  No constant-factor correction to
+    §11.38's 48.44 / 22.40 exists, so they lose their basis entirely.
+  * **What IS flat is the exact slope.**  Median exact mu/n stays at 0.14-0.16
+    (differential) and 0.07-0.08 (linear) from n = 13 to 20, while the model's lambda*/n
+    climbs to ~0.2 / ~0.09.  Within a width, exact mu rises only ~0.6 per unit of
+    lambda* at n = 17: the keys the model rates strongest are over-stated most, which
+    fits §11.40.3's run-structure cap.  Read as a slope, n = 256 lands near 36 and 18,
+    ~27x both criteria -- a reading of eight widths, not a bound, replacing the
+    model-based 36x/34x.
+  * **Tried and not finished:** n = 22 (4M nodes) passed 2.3 GB on its first key
+    within an hour on an 8-core SBC already running seven other keys, and was stopped
+    for memory; it is not claimed.
+
+**What is left**, re-aimed: (1'') a quenched argument whose target is the EXACT slope
+(flat at 0.14-0.16 over eight widths), not the annealed model's error, which is not
+converging; and (2) the linear hull, unchanged.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely

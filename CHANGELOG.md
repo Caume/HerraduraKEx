@@ -2,6 +2,60 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.25] - 2026-10-04
+
+### TODO #257 (fourth pass, item stays OPEN) — exact mu on both axes to n = 20, and the ratio does not settle
+
+v9.5.24 found the annealed model of §11.38 crossing the exact minimum mean cycle on the
+differential axis, and left two limits that were both limits of *construction*: the
+linear axis stopped at n = 11 (every LAT row, (n+1)·4^n work) and the differential at
+n = 17 (every out-edge; one n = 19 key passed 4.6 GB).  So whether the falling ratio
+settles was not measured on either axis.
+
+**A certificate makes a pruned graph exact.**  A minimum mean cycle is decided by
+cheap edges, so `certified_cycle_ladder.py` keeps only the edges below a per-node
+threshold W_u, solves that subgraph for mu', and takes the shortest-path potential p
+of w − mu'.  Wherever W_u < mu' − p(u) the threshold is raised and the subgraph
+re-solved; when no node fails, p is a feasible potential on the FULL graph and the
+answer is exact rather than an estimate.  Pruning inside a row is sound because a
+partial edge's weight only grows: the l1 norm of the linear carry vector bounds |C|,
+and the differential path count at most doubles per remaining bit.  The pruned graph
+keeps ~3-25 edges per node against ~2^n/3 for the full linear graph.  It matches both
+exhaustive builders to 1e-9 (both axes at n = 7, 8, 10, 11; differential at 13, 14),
+and a negative control fires: with the raising loop off at a fixed W = 1 bit, 13 of 18
+keys get a mu that is too large, and the certificate test flags all 13.
+
+**The finding: the ratio does not settle, the exact slope does.**
+
+| n | 13 | 14 | 16 | 17 | 19 | 20 |
+|---|---|---|---|---|---|---|
+| differential exact/annealed (median) | 0.983 | 0.936 | 0.927 | 0.901 | 0.809 | 0.749 |
+| linear exact/annealed (median) | 1.020 | 0.984 | 0.975 | 0.929 | 0.873 | 0.823 |
+| differential exact mu/n | 0.143 | 0.157 | 0.143 | 0.164 | 0.142 | 0.147 |
+| linear exact mu/n | 0.069 | 0.070 | 0.069 | 0.077 | 0.071 | 0.078 |
+
+(12 keys to n = 16, 8 at 17, 6 at 19, 4 at 20; fixed seeds.)  v9.5.24's reading that
+the differential fall "slows near 0.93" was a six-key artefact and is **withdrawn**.
+The linear axis crosses too, between n = 13 and 14.  Meanwhile exact median mu/n is
+flat over eight widths, while the model's lambda*/n climbs to ~0.2 and ~0.09.  Within
+one width, exact mu rises only 0.61 (differential) and 0.68 (linear) per unit of
+lambda* at n = 17, so the keys the model rates strongest are over-stated most.  That
+fits §11.40.3's run-structure cap.
+
+**What changes.**  §11.38's n = 256 figures (48.44, 22.40) lose their basis: the
+model's error grows with width, so no constant-factor correction exists.  The reading
+that replaces them is the exact slope, ~0.14 × 256 ≈ 36 and ~0.07 × 256 ≈ 18, about
+27x the 4/3 and 2/3 criteria.  That is a reading of eight widths, not a bound.  Every
+exact value is unchanged.  No rating moves.
+
+**Files.**  New gate `SecurityProofsCode/certified_cycle_ladder.py` (fixed seeds,
+cannot flake; `--quick` n ≤ 14 at 12 keys, ~6 min; default adds n = 16, 17; `--full`
+adds n = 19, 20, ~6 h; discovered by `run_findings_gates.py`, 78 gating now).
+SecurityProofs-9.md §11.41, with notes in §11.40.2 and §11.40.4, and math spans moved
+out of plain numbers to stay under the per-page limit (703).  Prose-only notes in
+`quenched_exact_ladder.py`.  The part index reads §11.37–§11.41 everywhere.  TODO #257
+gets its fourth-pass block and stays OPEN.
+
 ## [9.5.24] - 2026-10-03
 
 ### TODO #257 (third pass, item stays OPEN) — the quenched check, and the model is not conservative

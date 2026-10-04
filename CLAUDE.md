@@ -764,7 +764,37 @@ SecurityProofsCode/                                 — standalone Python proof/
                              n = 256 the same keys carry explicit two-round trails
                              under half a bit.  Fixed seeds throughout, so it
                              cannot flake.  Exits non-zero if a finding stops
-                             reproducing
+                             reproducing.  ITS "FALL SLOWING" READING IS WITHDRAWN
+                             by certified_cycle_ladder.py: at 8 keys n = 17 is 0.90
+                             and the ratio goes on to 0.75 by n = 20
+  certified_cycle_ladder.py — TODO #257's fourth pass (v9.5.25): exact mu on BOTH
+                             axes to n = 20.  READ ITS CERTIFICATE BEFORE REUSING
+                             THE SOLVER: it builds only the edges below a per-node
+                             threshold W_u, solves that subgraph, then takes the
+                             shortest-path potential p of w - mu' and raises W_u
+                             wherever W_u < mu' - p(u).  When no node fails, p is
+                             feasible on the FULL graph and the subgraph's mu is
+                             EXACT, not an estimate; a negative control shows a
+                             fixed small W with the loop off over-states mu on 13
+                             of 18 keys and the test flags all 13.  Pruning inside
+                             a row is sound because partial weight only grows (l1
+                             norm of the linear carry vector; at most doubling of
+                             the differential path count).  ~3-25 edges per node
+                             where the full linear graph has ~2^n/3, so the linear
+                             axis goes from n = 11 to n = 20.  FINDINGS: the ratio
+                             to the annealed model does NOT settle -- differential
+                             0.90 / 0.81 / 0.75 at n = 17 / 19 / 20, linear crosses
+                             1 between 13 and 14 and reaches 0.82 -- but the EXACT
+                             median mu/n is flat for eight widths (0.14-0.16 and
+                             0.07-0.08), and within a width exact mu rises only
+                             ~0.6 per unit of the model's lambda*.  So the model's
+                             SLOPE is wrong, §11.38's n = 256 figures lose their
+                             basis, and the reading that replaces them is the exact
+                             slope: ~36 and ~18 at n = 256, ~27x both criteria --
+                             a reading, not a bound.  n = 19 and 20 run under
+                             --full only (~6 h, ~1 GB per n = 20 key).  Fixed
+                             seeds, so it cannot flake.  Exits non-zero if a
+                             finding stops reproducing
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -1127,7 +1157,7 @@ SecurityProofs-5.md                                 — §11.8.3–§11.8.10: PQ
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
-SecurityProofs-9.md                                 — §11.37–§11.40: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model (628 math expressions)
+SecurityProofs-9.md                                 — §11.37–§11.41: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model · the certified ladder, exact mu to n = 20 on both axes, where the ratio keeps falling and the exact slope holds (703 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -2446,7 +2476,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; ran
 `continue-on-error: true` on the `arduino` job's TODO #185 route until TODO #317
 promoted it). Locally, run the same scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 77
+**The findings gates, and why they are a job rather than a step (TODO #289).** 78
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -2473,7 +2503,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **77
+backs the security documents rather than the one that tests the code. It is now **78
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.
