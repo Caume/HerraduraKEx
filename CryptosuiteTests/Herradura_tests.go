@@ -1254,11 +1254,13 @@ func benchZkpNl() {
 // GROUPS, said rather than inferred from silence -- TODO #323 found this axis
 // reading four of six harnesses with no sentence about the other two.
 // Herradura_tests.{s,asm,ino} carry no QC-MDPC at all, so there is nothing to
-// time.  JAVA ships the KEM (SelfTest.java's [14]) and has NO BENCHMARK LAYER
+// time.  JAVA ships the KEM (SelfTest.java's [14]) and HAD NO BENCHMARK LAYER
 // of any kind -- no timing helper, no rate formatter, no throughput row for any
-// protocol -- so its gap is one LAYER wide where this one was one ROW wide, and
-// Java's first benchmark is a decision about where benchmarks live in that port
-// rather than a KEM question.  Filed as TODO #333 (#312).
+// protocol -- so its gap was one LAYER wide where this one was one ROW wide, and
+// Java's first benchmark was a decision about where benchmarks live in that port
+// rather than a KEM question.  Filed as TODO #333 (#312) and CLOSED at v9.5.23:
+// that row is [36] in bindings/java/herradurakex/Bench.java, in Java's own
+// numbering, so this sentence is past tense because of it.
 func benchQcMdpcKem() {
 	fmt.Println("[54] HPKE-Stern-KEM keygen/encap/decap throughput  [CODE-BASED PQC]")
 	fmt.Printf("    r=%d  d=%d  t=%d  (BIKE-128)\n", QcMdpcR, QcMdpcD, QcMdpcT)
@@ -1293,9 +1295,17 @@ func benchQcMdpcKem() {
 	okDiff := !bytes.Equal(QcMdpcDecapBgf(rnd, sup0, sup1), K)
 	_, _, okDec := QcMdpcBgfDecode(rnd, sup0, sup1)
 	verdict := "FAIL"
-	if okAgree && okDiff {
-		verdict = "PASS"
-	}
+	// ONE LINE ON PURPOSE, and do not let gofmt split it (TODO #333).  #318
+	// fingerprints a test's PASS/FAIL-BEARING LINES, so with the assignment
+	// on its own line the CONJUNCTION sits on a line carrying neither word
+	// and the pin cannot see it: flipping `&&` to `||` here left every check
+	// in spec/ green, demonstrated rather than argued.  C's [54] and
+	// Python's both put the decision inside the printf that carries the
+	// markers and so never had the hole -- 2 of 4, Go the outlier in the
+	// same row #328 found it the outlier of.  Extracting a passFail() helper
+	// is strictly worse: the words leave the body and the fingerprint
+	// becomes "none", which is Go's own [52].
+	if okAgree && okDiff { verdict = "PASS" }
 	fmt.Printf("    control: encap/decap agree=%v  rejection key differs=%v  "+
 		"uniform syndrome decoded=%v  [%s]\n", okAgree, okDiff, okDec, verdict)
 	fmt.Println()

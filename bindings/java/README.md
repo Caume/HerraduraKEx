@@ -35,7 +35,38 @@ scope for this binding.
   (`KAT/verify_kat.go`).
 - `herradurakex/SelfTest.java` — end-to-end round-trip smoke test with
   fresh random keys each run (HKEX-GF agreement, HSKE round-trip, HPKS
-  sign/verify + tamper rejection, HPKE round-trip).
+  sign/verify + tamper rejection, HPKE round-trip).  Carries Java's
+  numbered checks `[1]`–`[35]`.
+- `herradurakex/Bench.java` (TODO #333) — **this port's benchmark layer,
+  and its only timing code.**  Before v9.5.23 a grep across the whole
+  port for `bench`, `throughput`, `ops/sec` or `nanoTime` returned zero
+  matches, in a port that ships the deployed QC-MDPC KEM and whose CI job
+  is as REQUIRED as C's, Go's and Python's — so `[54]`'s cost figures
+  existed in three ports of four and `tools/check_rate_format.py` held
+  three rate formatters in a four-port repo.
+  Carries `[36] qcmdpc_kem_throughput`: keygen, encapsulation and BOTH
+  decapsulation paths, separately labelled because they cost different
+  amounts (the GJS channel TODO #330 registered in dudect Batch 10), so
+  an averaged figure would be unusable.
+  It is a SEPARATE entry point from `SelfTest` and `Demo` because the
+  three have different exit conditions — `SelfTest` asserts, `Demo` walks
+  through, and a benchmark publishes a host-specific rate nothing asserts
+  on (TODO #292) — and because it is the only one of the three that takes
+  `-r`/`-t`.  Three things to know before extending it.  (a) `[36]`
+  carries a CONTROL that DOES gate the exit status, which is how a cost
+  figure earns a place in a required job: `decap(encap(pk))` must
+  reproduce the key and a uniform syndrome must give a different one, so
+  TODO #235's implicit-rejection path is reached rather than assumed.
+  The decoder's outcome on the uniform syndrome is REPORTED and never
+  asserted (about 2^-11193).  (b) The batch is DERIVED from one timed
+  WARM probe call, never a constant — TODO #327's defect was a batch
+  floor no time cap could reduce, and C's eight hand-picked constants are
+  the form deliberately not copied here.  (c) The WARMUP COUNT IS PRINTED
+  beside every rate, because the first decapsulation on an aarch64 SBC
+  costs 110.79 ms against a warm 19.3 (5.7x) and the first keygen 30.95
+  against 14.0: a figure whose warmup is unstated is not a figure.
+  Adding a row is one method; adding a second rate formatter is a
+  `check_rate_format.py` failure by design.
 - `herradurakex/Codec.java` (TODO #197) — PEM/DER codec for the classical
   quartet's wire format: Base64 (76-char lines), PEM wrap/unwrap, and a
   minimal DER (INTEGER 0x02 / SEQUENCE 0x30) subset, byte-for-byte
@@ -138,10 +169,20 @@ java -cp bindings/java herradurakex.KatVerify KAT/classical_quartet.json
 java -cp bindings/java herradurakex.SelfTest
 java -cp bindings/java herradurakex.CodecTest
 
+# Benchmarks (TODO #333) — [36], the deployed QC-MDPC KEM, with a control
+java -cp bindings/java herradurakex.Bench
+java -cp bindings/java herradurakex.Bench -t 0.25     # CI's reduced cap
+java -cp bindings/java herradurakex.Bench -r 2        # cap timed ops per row
+HTEST_TIME=2.0 java -cp bindings/java herradurakex.Bench   # env equivalent
+
 # CLI (TODO #198)
 java -cp bindings/java herradurakex.HerraduraCli genpkey --algo hkex-gf --out alice.pem
 java -cp bindings/java herradurakex.HerraduraCli pkey --in alice.pem --pubout --out alice_pub.pem
 ```
+
+`Bench` is run by its own `native-java` CI step at `-t 0.25`, not by any
+`CliTest/` script: it asserts `[36]`'s control and nothing else, and the
+rates it prints are host-specific by nature.
 
 These are also run by `CliTest/test_java_bindings.sh` /
 `CliTest/test_java_codec.sh` / `CliTest/test_java_keygen.sh` /

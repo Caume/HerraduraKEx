@@ -23225,3 +23225,119 @@ entry that recorded it.  A stale constant beside a live expression is check B's 
 comment, where nothing looks for it.
 
 Status: **DONE v9.5.22** — the extended Euclid is word-level with tracked degrees (46.8x on the inversion), `qcp_mul` picks the lighter operand in all four ports rather than trusting the call site (a second ~87x transposition #332 had declared absent), and C's keygen goes from the slowest of the four to the fastest, bit-identically.
+
+### #333: the Java port has no benchmark layer at all, in a REQUIRED job
+
+**`bindings/java/` CONTAINS NO TIMING CODE OF ANY KIND.**  Not a `bench` helper, not a rate
+formatter, not one throughput row for any protocol: a grep across the whole port for `bench`,
+`throughput`, `ops/sec` or `nanoTime` returns **zero matches**, in `SelfTest.java`, `Demo.java`
+and every suite class.  C, Go and Python each publish `[32]`-`[43]` plus `[54]`; Java publishes
+`[1]`-`[35]` and no cost figure at all, and `native-java` is as REQUIRED as the other three.
+
+**WHY IT IS FILED NOW, AND WHY IT WAS NOT FOLDED IN.**  TODO #332 added `[54]`, the deployed
+QC-MDPC KEM's benchmark row, and owed "FOUR PORTS OR A STATED REASON FOR FEWER".  The reason
+for Java is not a KEM reason: **its gap is one LAYER wide where the other three ports' was one
+ROW wide**, so building Java's first benchmark means deciding where benchmarks live in that
+port, and that is a change a KEM item must not settle in passing (#312).  The same split is
+already visible one axis over: `tools/check_rate_format.py` (TODO #328) holds **three**
+formatters against each other in a repo with four ports, and its own text says Java "has no
+benchmark formatter at all" without anywhere recording that as a gap.
+
+**WHAT MAKES IT WORTH DOING RATHER THAN RECORDING.**  Java's KEM costs were hand-measured
+while #332 ran and they are not where anyone would guess: keygen `56 ms` against C's `198 ms`,
+encapsulation `11.3 ms` against C's `2.04 ms`, decapsulation `24 ms` (success) and `28 ms`
+(implicit rejection) against C's `4.3`/`5.9 ms`.  So Java is **3.5x FASTER than C at keygen**
+and 5x slower at encapsulation -- a crossing nobody could have read off the other three ports'
+rows, and exactly the port-local-conclusion shape #330 found in #276's cost sentence.  Java is
+also the port whose decapsulation #330 improved least in relative terms (`148.3` to `26.1 ms`
+for the decoder), so it is the one where a regression would be least visible.
+
+**FIVE THINGS TO GET RIGHT.**
+
+1. **WHERE IT LIVES IS THE DECISION, not an implementation detail.**  `SelfTest.java` is a
+   self-test and `Demo.java` a walkthrough; neither is a benchmark harness, and neither takes
+   `-r`/`-t`.  A third entry point (`Bench.java`) keeps the three roles separate and needs its
+   own `native-java` step; a section inside `SelfTest` is cheaper and muddles what that class
+   asserts.  Say which and why.
+2. **`-r`/`-t` HAVE NO JAVA EQUIVALENT TODAY**, and TODO #327 is the reason this matters: the
+   defect it fixed was a batch floor no cap could reduce, and a Java harness written without
+   `-t` would reintroduce the *unbounded* version of that.  Derive the batch from one timed
+   probe call, as Go and Python now do -- do NOT copy C's eight hand-picked constants into a
+   fourth place (#294/#296: adopt the port that is correct).
+3. **THE FOURTH RATE FORMATTER MUST BE TAUGHT TO `tools/check_rate_format.py`**, which reads
+   thresholds out of the COMPARISON rather than scanning literals (that check's own first
+   version had a control that did not fire).  Three branches, not two -- #328's whole finding
+   was Go printing `0.00 K ops/sec` for a true `4.46 ops/sec`.
+4. **JIT WARMUP IS A CORRECTNESS QUESTION FOR THE FIGURE, not a nicety.**  #332's own first
+   Java measurements moved keygen `99` to `56 ms` and decapsulation `36` to `24 ms` between
+   runs with no code change, purely on JIT state; a benchmark that reports the cold number
+   publishes a figure 1.8x wrong.  Warm to a stated count and say so in the output.
+5. **NUMBERING.**  Java's set is its own `[1]`-`[35]` by `SelfTest.java`'s class doc, so a
+   benchmark there is `[36]`+ and does NOT align with C/Go/Python's `[54]`.
+   `spec/check_language_parity.py` checks the shared numbering of the other three only, so
+   nothing forces alignment -- which means the mapping has to be written down rather than
+   inferred.  A new Java `[N]` owes a `_TEST_DRAWS` cell and a `_VERDICT_FINGERPRINTS` entry
+   (`"none"` for a bare benchmark, which is a PINNED value and not an absence, so one that
+   GROWS a verdict fires).
+
+**NOT IN SCOPE.**  Porting all twelve of C/Go/Python's benchmarks -- the question is whether
+Java has a benchmark layer and what it looks like, and one row (the deployed KEM, matching
+`[54]`) is enough to settle it; and Java's own cost defects, if the first figures turn any up.
+
+Acceptance: `bindings/java/` publishes at least the deployed QC-MDPC KEM's keygen, encapsulation
+and both decapsulation paths; the batch is derived rather than constant and `-t`-equivalent
+control is demonstrated to work; the rate formatter has all three branches and
+`tools/check_rate_format.py` compares four ports instead of three; every `spec/` table the new
+`[N]` obliges is filled; and the reason the remaining eleven C/Go/Python benchmarks are not
+ported is recorded.
+
+**CLOSED at v9.5.23.**  Five notes the item's own text did not predict.
+
+(1) **WHERE IT LIVES rests on EXIT CONDITIONS, which is a sharper reason than the item's
+"keeps the three roles separate".**  `SelfTest` asserts and exits non-zero, `Demo` is
+`[FAIL]`-gated, a benchmark publishes a host-specific rate nothing asserts on (#292) -- and
+it is the only one of the three that needs `-r`/`-t`, which neither of the others parses at
+all.  `Bench.java`, with its own `native-java` step at `-t 0.25` (~2.3 s).
+
+(2) **A CONTROL THAT DID NOT FIRE FOUND THE SAME HOLE IN GO.**  #318 fingerprints a test's
+PASS/FAIL-BEARING lines, so written the obvious way -- `boolean ok = okAgree && okDiff;`
+above the outcome pair -- flipping that `&&` to `||` left EVERY check in `spec/` green.  C's
+`[54]` and Python's put the decision inside the printf that carries the markers and never had
+it; **Go's did not**, and Go's was equally invisible.  Fixed in both, behaviour-identical,
+re-verified to fire, false-positive control silent.  2 of 4, Go the outlier in the same row
+#328 found it the outlier of.  Java's form is further constrained by its TRAILING marker: the
+body slice ends AT `println("PASS [N]")`, so the FAIL branch must come FIRST or both outcome
+lines fall outside it and the fingerprint reads `"none"` -- the value pinned for a test that
+decides nothing.
+
+(3) **THE FIGURE IS BIMODAL ON THIS HOST AND THE CAUSE WAS MEASURED.**  Median of 9
+uncontended runs: keygen **26.9 ms** (range 15.3-31.3, 2.04x), encapsulation **11.3**
+(10.7-13.2, 1.24x), decapsulation **34.4** success (22.8-41.7) and **46.3** implicit
+rejection (24.9-51.8, 2.08x).  The spread is CLUSTER ASSIGNMENT, not noise: the host is
+big.LITTLE (4x Cortex-A55 at 1.8 GHz, 4x Cortex-A76 at 2.35 GHz) and `taskset`-pinning the
+run to one cluster, ABBA-interleaved, separates them by 4.3x on keygen, 2.9x on encapsulation,
+4.0x and 3.8x on the two decapsulation paths -- far more than the clock ratio.  And pinning to
+the BIG cluster alone measures SLOWER than the best unpinned run (35-38 against 65 ops/sec),
+because the JVM's GC and JIT threads then contend for the same four cores, so the fast mode is
+"hot thread on an A76 with the helpers elsewhere".  #327's rule applied to a first publication
+rather than to an A/B.
+
+(4) **THE ITEM'S OWN HEADLINE FINDING HAS SINCE INVERTED, by #334 rather than by anything
+here.**  It recorded Java at keygen `56 ms` against C's `198 ms` and called it "3.5x FASTER
+than C at keygen -- a crossing nobody could have read off the other three ports' rows".  C's
+keygen is `4.31 ms` at v9.5.22, so **C is now about 6x faster than Java there**, with Java 5.5x
+slower at encapsulation and ~8x at decapsulation.  Encapsulation's `11.3 ms` is the one figure
+that reproduced exactly.  The crossing was real when filed and is gone; a cost sentence written
+against another port's current state has a shelf life.
+
+(5) **JIT WARMUP IS BIGGER THAN THE ITEM GUESSED.**  It cited #332's `99` to `56 ms` keygen
+drift; measured call by call, the FIRST decapsulation costs `110.79 ms` against a warm `19.3`
+-- **5.7x** -- and the first keygen `30.95` against `14.0`, settling by about call 5-8.  So the
+warmup is a FLOOR of ten calls rather than Go's `min(batch, 10)` (what it defends against is
+compilation state, not noise), it is bounded by `-t` so a fixed count cannot reintroduce #327's
+unbounded shape, and the achieved count is PRINTED beside every rate.
+
+**NOT DONE, as scoped**: the other eleven benchmarks (`[32]`-`[43]`) are not ported.  The
+layer exists now, so a twelfth row is a one-method change rather than a decision.
+
+Status: **DONE v9.5.23** — bindings/java/herradurakex/Bench.java is the layer and [36] qcmdpc_kem_throughput its one row, with a control that gates the exit; the batch is derived from a warm probe, -t/-r reach the rows (0.05s -> 1.1s/1 op vs 2.0s -> 10.2s/77 ops), the warmup count is printed because the first decapsulation costs 5.7x the warm one, check_rate_format.py holds FOUR formatters, and NUMBERED_TEST_FILES reads two Java files so [36] is visible to the whole ninth axis.  Found and fixed a hole in #318's pin that Go's [54] shared: with the verdict conjunction one line above the PASS/FAIL marker, flipping `&&` to `||` left every spec/ check green.

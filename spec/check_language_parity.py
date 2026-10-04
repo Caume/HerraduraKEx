@@ -73,17 +73,35 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ── Part 1/2: numbered-test files ────────────────────────────────────────
 # (path, pattern-with-one-group-capturing-the-number)
+# {lang: (files holding this language's [N] markers, marker regex)}.
+#
+# A TUPLE OF FILES, NOT ONE FILE, since TODO #333 -- and Java is the only
+# language that needs more than one.  Its benchmark layer is its own entry
+# point (`Bench.java`, [36]) rather than a section inside `SelfTest.java`,
+# because the two have different exit conditions: SelfTest asserts and the
+# benchmark publishes a host-specific rate nothing asserts on (#292).  C, Go
+# and Python keep benchmarks and security tests in ONE harness file, so their
+# tuples have one element and nothing about them moves.
+#
+# WHY THIS IS NOT A COSMETIC GENERALISATION.  Had the Java entry stayed a
+# single file, SelfTest.java's [1]-[35] would still be contiguous and
+# duplicate-free, every table below would still be satisfied, and Bench.java's
+# [36] would be invisible to the whole ninth axis -- no draw cell, no verdict
+# fingerprint, no rejection basis, no rate.  That is #324's "a glob that
+# matches nothing is indistinguishable from a glob that is satisfied" one
+# directory over: a number this axis cannot see is a number it cannot hold to
+# anything.
 NUMBERED_TEST_FILES = {
     "c": (
-        os.path.join(REPO, "CryptosuiteTests", "Herradura_tests.c"),
+        (os.path.join(REPO, "CryptosuiteTests", "Herradura_tests.c"),),
         re.compile(r'printf\("\[(\d+)\]'),
     ),
     "go": (
-        os.path.join(REPO, "CryptosuiteTests", "Herradura_tests.go"),
+        (os.path.join(REPO, "CryptosuiteTests", "Herradura_tests.go"),),
         re.compile(r'fmt\.Print(?:ln|f)\("\[(\d+)\]'),
     ),
     "python": (
-        os.path.join(REPO, "CryptosuiteTests", "Herradura_tests.py"),
+        (os.path.join(REPO, "CryptosuiteTests", "Herradura_tests.py"),),
         re.compile(r'print\(f?"\[(\d+)\]'),
     ),
     "java": (
@@ -91,10 +109,32 @@ NUMBERED_TEST_FILES = {
         # and FAIL string literal (the exhaustive if/else outcome pair, both
         # always present in source regardless of runtime result), so
         # matching both would double-count every number by construction.
-        os.path.join(REPO, "bindings", "java", "herradurakex", "SelfTest.java"),
+        # Bench.java follows the same convention for exactly this reason --
+        # it prints its [36] HEADER first, as every benchmark in every port
+        # does, and then a trailing PASS/FAIL [36] for its control, so the
+        # header is not a second marker.
+        (os.path.join(REPO, "bindings", "java", "herradurakex", "SelfTest.java"),
+         os.path.join(REPO, "bindings", "java", "herradurakex", "Bench.java")),
         re.compile(r'println\("PASS \[(\d+)\]'),
     ),
 }
+
+
+def _marker_sources(lang):
+    """[(path, text)] for the files holding this language's [N] markers.
+
+    Read per FILE and never concatenated, because the slicing in
+    `_numbered_test_bodies` is positional: Java's marker is trailing, so a
+    body runs from the PREVIOUS marker, and gluing two files together would
+    make Bench.java's [36] body start at SelfTest.java's [35] and swallow the
+    whole tail of that file.
+    """
+    paths, _pattern = NUMBERED_TEST_FILES[lang]
+    out = []
+    for path in paths:
+        with open(path, encoding="utf-8") as f:
+            out.append((path, f.read()))
+    return out
 
 # C/Go/Python are documented (CLAUDE.md's Testing section) as sharing one
 # numbering convention; Java's is explicitly its own (SelfTest.java's class
@@ -105,11 +145,11 @@ SHARED_NUMBERING_LANGS = ("c", "go", "python")
 def check_numbered_tests(errors):
     """Returns {lang: sorted distinct numbers found}."""
     numbers = {}
-    for lang, (path, pattern) in NUMBERED_TEST_FILES.items():
-        with open(path, encoding="utf-8") as f:
-            text = f.read()
-        found = [int(m) for m in pattern.findall(text)]
-        rel = os.path.relpath(path, REPO)
+    for lang, (paths, pattern) in NUMBERED_TEST_FILES.items():
+        found = []
+        for _path, text in _marker_sources(lang):
+            found.extend(int(m) for m in pattern.findall(text))
+        rel = ", ".join(os.path.relpath(p, REPO) for p in paths)
         if not found:
             errors.append(
                 f"{lang}: no numbered [N] tests matched in {rel} — the marker pattern is stale "
@@ -228,8 +268,11 @@ _TEST_DRAWS = {
                19, 20, 21, 22, 23, 24, 25, 26, 28, 30, 31, 32, 33, 34, 35, 36,
                37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
                53, 54],
+    # [36] is in Bench.java, not SelfTest.java (TODO #333).  It is the only
+    # cell in this table that lives outside its language's single harness
+    # file, which is why NUMBERED_TEST_FILES now takes a tuple of paths.
     "java":   [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
-               19, 20, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35],
+               19, 20, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36],
 }
 
 # The CURATED half.  An entry only where a verdict rests on a THRESHOLD or on
@@ -250,6 +293,22 @@ _TEST_DRAWS = {
 # a schema -- [53] was the same code at two parameter sets, failing one run in
 # 16 in Python and Go and one in 65536 in C and Java.
 _SAMPLED_TESTS = {
+    ("java", 36): ("negligible", 2.9387358770557188e-39,
+        "JAVA'S COUNTERPART OF THE SHARED [54] ROW (TODO #333), at the same "
+        "parameters and so at the same rate.  Its accept-control is the "
+        "sampled half: a FRESH key and a FRESH ciphertext must decapsulate to "
+        "the encapsulated secret, which fails exactly on a DECODER FAILURE, "
+        "and the rejection half -- a uniform syndrome must give a DIFFERENT "
+        "key -- needs two differently-domain-separated HFSCX-256 calls to "
+        "collide, so it is 2^-256 and the basis names the weaker one (#322).  "
+        "THE RATE IS INHERITED AND NOT MEASURED, which is #285's honest "
+        "statement about BIKE-128: the DFR is not observable at any sample "
+        "size, so it cannot be a function of QCMDPC_R/D/T and is read off "
+        "BIKE's own analysis.  It is a SEPARATE row rather than folded into "
+        "the `shared` key because `shared` means C/Go/Python by construction "
+        "and Java's numbering is its own -- the same reason ('java', 30) sits "
+        "beside ('shared', 21).  Exactly ONE (key, ciphertext) pair reaches "
+        "the verdict; the four benchmark rungs discard theirs"),
     ("shared", 54): ("negligible", 2.9387358770557188e-39,
         "[54]'s ACCEPT-CONTROL is the sampled half, and the half that is not "
         "exact: a FRESH key and a FRESH ciphertext must decapsulate to the "
@@ -766,6 +825,17 @@ _SAMPLED_TEST_RATES = {
 # binding, 4.6 million times smaller than the (2/3)^rounds every copy quoted.
 # [5], [11], [19] and ("java", 14) reproduced.
 _SAMPLED_TEST_RATE_LITERAL = {
+    # ── TODO #333: the same rate, in the port that had no benchmark layer ──
+    ("java", 36): ("java", r"boolean okAgree = Stern\.qcmdpcDecapBgf\(",
+                    "THE SAME DFR THE SHARED [54] ROW CARRIES, for the same "
+                    "reason and with the same consequence: it is not a "
+                    "function of the shipped constants, so an expression over "
+                    "QCMDPC_R/D/T would be #320's defect with the arithmetic "
+                    "wrong as well as the mechanism.  Both rows therefore "
+                    "carry the literal -- deriving it in one port and "
+                    "hand-computing it in the others would be two sources of "
+                    "truth for one number, which is exactly the reason "
+                    "('java', 31) gives for mirroring ('shared', 50)"),
     # ── TODO #332: a rate no constant in any port can express ─────────────
     ("shared", 54): ("python", r"control: encap/decap agree=\{ok_agree\}",
                     "THE DFR IS NOT A FUNCTION OF THE SHIPPED CONSTANTS, and "
@@ -1654,6 +1724,15 @@ _REJECTION_PATTERN = re.compile(
 
 _REJECTION_BASES = {
     # ── RATED: a fresh coin decides whether the bad input is detectable ──
+    ("java", 36): {"basis": "sampled-accept-control", "bits": None,
+        "why": "Java's [36] is the shared [54] row in that port's own "
+               "numbering (TODO #333), so it has the same weakest assertion: "
+               "the ACCEPT-control, where a fresh key and a fresh ciphertext "
+               "must agree and a decoder failure breaks it.  The rejection "
+               "half is exact at 2^-256, and the row does NOT assert that the "
+               "uniform syndrome fails to DECODE -- about 2^-11193, PRINTED "
+               "rather than scored, since the key-differs check holds either "
+               "way (#291)"},
     ("shared", 54): {"basis": "sampled-accept-control", "bits": None,
         "why": "the SAMPLED half of [54] is its accept-control: a fresh key "
                "and a fresh ciphertext must decapsulate to the encapsulated "
@@ -2287,7 +2366,7 @@ _VERDICT_FINGERPRINTS = {
     ("go", 49): "01eca4540f", ("go", 50): "785c8baf28",
     ("go", 51): "01eca4540f", ("go", 52): "none",
     ("go", 53): "6c1ccbfd37",
-    ("go", 54): "6bb7b0ecf8",   # TODO #332
+    ("go", 54): "58a2bcf2b3",   # TODO #332, re-pinned by #333
     # python
     ("python", 1): "db6ea492b7", ("python", 2): "8d558e9edf",
     ("python", 3): "4659f77207", ("python", 4): "e9725e3831",
@@ -2336,6 +2415,7 @@ _VERDICT_FINGERPRINTS = {
     ("java", 31): "04dd85e615", ("java", 32): "b3eefc3e48",
     ("java", 33): "80c2726ac4", ("java", 34): "f548811911",
     ("java", 35): "ff38ed8c50",
+    ("java", 36): "5ad1db3856",   # TODO #333 — Bench.java, not SelfTest.java
 }
 
 
@@ -2413,21 +2493,20 @@ def _numbered_test_bodies(lang):
     Over-wide slicing is the LENIENT direction again (#295): it hides a test
     that stopped drawing behind a neighbour that did not.
     """
-    path, marker = NUMBERED_TEST_FILES[lang]
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    marks = sorted((m.start(), int(m.group(1))) for m in marker.finditer(text))
+    _paths, marker = NUMBERED_TEST_FILES[lang]
     bodies = {}
     trailing = lang in _TRAILING_MARKER_LANGS
-    for i, (pos, num) in enumerate(marks):
-        if trailing:
-            start = marks[i - 1][0] if i else 0
-            end = pos
-        else:
-            start = pos
-            end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
-        bodies.setdefault(num, "")
-        bodies[num] += text[start:end]
+    for _path, text in _marker_sources(lang):
+        marks = sorted((m.start(), int(m.group(1))) for m in marker.finditer(text))
+        for i, (pos, num) in enumerate(marks):
+            if trailing:
+                start = marks[i - 1][0] if i else 0
+                end = pos
+            else:
+                start = pos
+                end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
+            bodies.setdefault(num, "")
+            bodies[num] += text[start:end]
     return bodies
 
 
@@ -2459,16 +2538,15 @@ def _numbered_test_scopes(lang):
     ports at once, because the neighbouring test spells its iteration count
     identically.
     """
-    path, marker = NUMBERED_TEST_FILES[lang]
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    marks = sorted((m.start(), int(m.group(1))) for m in marker.finditer(text))
+    _paths, marker = NUMBERED_TEST_FILES[lang]
     scopes = {}
-    for i, (pos, num) in enumerate(marks):
-        start = marks[i - 1][0] if i else 0
-        end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
-        scopes.setdefault(num, "")
-        scopes[num] += text[start:end]
+    for _path, text in _marker_sources(lang):
+        marks = sorted((m.start(), int(m.group(1))) for m in marker.finditer(text))
+        for i, (pos, num) in enumerate(marks):
+            start = marks[i - 1][0] if i else 0
+            end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
+            scopes.setdefault(num, "")
+            scopes[num] += text[start:end]
     return scopes
 
 
@@ -3048,10 +3126,13 @@ def check_argued_evidence(errors, ptables):
 
     # ── (b) the literal anchors ──────────────────────────────────────────
     bodies = {l: _numbered_test_bodies(l) for l in NUMBERED_TEST_FILES}
-    texts = {}
-    for lang, (path, _rx) in NUMBERED_TEST_FILES.items():
-        with open(path, encoding="utf-8") as f:
-            texts[lang] = f.read()
+    # The whole-harness text, for the "exactly once in this port" half of the
+    # anchor rule.  CONCATENATED across the port's files, unlike the body
+    # slices: an anchor that matched one line in SelfTest.java and another in
+    # Bench.java would be ambiguous about which test it describes, which is
+    # the defect #320 found in ("java", 26) and found only by accident.
+    texts = {lang: "\n".join(t for _p, t in _marker_sources(lang))
+             for lang in NUMBERED_TEST_FILES}
     for key in sorted(_SAMPLED_TEST_RATE_LITERAL, key=str):
         scope, num = key
         ent = _SAMPLED_TEST_RATE_LITERAL[key]
@@ -3804,6 +3885,11 @@ JAVA_NON_SUITE = {
     "HerraduraCli.java",   # CLI layer; C/Go/Python's equivalents live in HerraduraCli/
     "Codec.java",          # PEM/DER wire format; ditto (herradura_codec.h, codec.py)
     "SelfTest.java",       # test driver, counted by Part 1 instead
+    "Bench.java",          # benchmark driver (TODO #333), counted by Part 1
+                           # instead -- the Java counterpart of
+                           # CryptosuiteTests/Herradura_tests.{c,go,py}'s
+                           # [32]-[43]+[54] half, which lives outside every
+                           # port's suite file for the same reason
     "Demo.java",           # suite walkthrough
     "CodecTest.java",      # test driver
     "KatVerify.java",      # KAT consumer, the Java counterpart of KAT/verify_kat.go

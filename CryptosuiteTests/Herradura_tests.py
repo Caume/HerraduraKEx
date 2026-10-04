@@ -3985,11 +3985,14 @@ def bench_qcmdpc_kem():
     GROUPS, said rather than inferred from silence -- TODO #323 found this axis
     reading four of six harnesses with no sentence about the other two.
     Herradura_tests.{s,asm,ino} carry no QC-MDPC at all, so there is nothing to
-    time.  JAVA ships the KEM (SelfTest.java's [14]) and has NO BENCHMARK LAYER
+    time.  JAVA ships the KEM (SelfTest.java's [14]) and HAD NO BENCHMARK LAYER
     of any kind -- no timing helper, no rate formatter, no throughput row for
-    any protocol -- so its gap is one LAYER wide where this one was one ROW
-    wide, and Java's first benchmark is a decision about where benchmarks live
-    in that port rather than a KEM question.  Filed as TODO #333 (#312).
+    any protocol -- so its gap was one LAYER wide where this one was one ROW
+    wide, and Java's first benchmark was a decision about where benchmarks live
+    in that port rather than a KEM question.  Filed as TODO #333 (#312) and
+    CLOSED at v9.5.23: that row is `[36]` in bindings/java/herradurakex/
+    Bench.java, in Java's own numbering, and this sentence is past tense
+    because of it.
     """
     print("[54] HPKE-Stern-KEM keygen/encap/decap throughput  [CODE-BASED PQC]")
     suite = None
