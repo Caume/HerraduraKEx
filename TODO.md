@@ -187,6 +187,39 @@ settle.**  See SecurityProofs-9.md §11.41 and `SecurityProofsCode/certified_cyc
 (flat at 0.14-0.16 over eight widths), not the annealed model's error, which is not
 converging; and (2) the linear hull, unchanged.
 
+**Fifth pass (v9.5.26) — the exact slope with enough keys: not flat, still growing.**
+See SecurityProofs-9.md §11.42 and `SecurityProofsCode/exact_slope_ladder.py`.
+
+  * **The same certified solver in C** (`certified_cycle_mean.c`), fed the automaton
+    tables from the Python sources and checked against the Python solver on mu, edges
+    kept AND certificate rounds.  ~40x faster with in-place edge compaction, so 32-96
+    keys per width to n = 20, 8 at n = 22 and 3 at n = 23 (~5 and ~8 GB per key).
+  * **The fourth pass's "flat at 0.14-0.16" is withdrawn, and so are its ~36 / ~18
+    (27x).**  Exact mu rises with the number of runs in delta (~0.13 per run
+    differential, ~0.074 linear) and the n = 20 sample was run-heavy (0.60 n runs).  At a
+    typical run count the differential per-bit median is ~0.15 at n = 13-14 and ~0.13 at
+    n = 19-23; keys already near n/2 runs show the same step without a regression.
+    Levelling or still falling: not resolved.  Linear: no trend beyond scatter.
+  * **Exact mu grows at every width step to n = 23** (run-adjusted 1.96 -> 2.95 and
+    0.95 -> 1.63), ending at 2.2x / 2.4x the criteria.  That is §11.37's monotonicity
+    residue with ten widths behind it.
+  * **The model's error is a scale error**: it ranks keys right (corr 0.98) but credits
+    each run of delta ~0.21 where exact mu gains ~0.12, so the slope of exact on lambda*
+    across keys falls from 1.0 to 0.1-0.6 by n = 20-23, and the keys converge (IQR/median
+    0.3 -> ~0.03-0.1).
+  * **No single n = 256 figure is supported.**  A power law reads ~13 / ~11 (10x / 17x);
+    a levelled per-bit median ~33 / ~17 (25x).  The data do not choose.
+  * **Tried and dropped:** the optimal cycles at n = 13-17 are long (5-37 edges) and
+    pass through dense differences, so there is no small structural family to search
+    for at n = 256 as an upper bound.
+  * **Part 9 is at 726 of ~750 KaTeX spans**: the next section of this item belongs in
+    a new Part 10.
+
+**What is left**, re-aimed again: (1''') an argument that exact mu is NON-DECREASING in n
+(the criterion then holds at n = 256 by the measured margin at n = 23), which cannot come
+from comparing graphs since there is no embedding between widths; and (2) the linear
+hull, unchanged.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely

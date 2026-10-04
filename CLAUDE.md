@@ -794,7 +794,42 @@ SecurityProofsCode/                                 — standalone Python proof/
                              a reading, not a bound.  n = 19 and 20 run under
                              --full only (~6 h, ~1 GB per n = 20 key).  Fixed
                              seeds, so it cannot flake.  Exits non-zero if a
+                             finding stops reproducing.  ITS FLAT-SLOPE READING (and
+                             the ~36 / ~18 / 27x it gave n = 256) IS WITHDRAWN by
+                             exact_slope_ladder.py: it rested partly on a run-heavy
+                             n = 20 sample
+  exact_slope_ladder.py    — TODO #257's fifth pass (v9.5.26), and the reason the
+                             previous one's reading did not survive.  Drives
+                             certified_cycle_mean.c, the same certified solver in C
+                             (~40x faster, in-place edge compaction), which §1
+                             checks against the Python one on mu, edges kept AND
+                             certificate rounds before any number is used; the C
+                             reads the automaton tables from the Python sources on
+                             stdin, so the two cannot disagree about what an edge
+                             is.  The C IS the gate above n = 14, so no compiler is
+                             a FAILURE, not a skip.  With 32-96 keys per width:
+                             (a) exact mu rises with the RUN COUNT of delta (~0.13
+                             per run differential, ~0.074 linear) and §11.41's n = 20
+                             sample was run-heavy, so its "flat at 0.14-0.16" was
+                             partly a sampling artefact -- at a typical run count the
+                             differential per-bit median is ~0.15 at n = 13-14 and
+                             ~0.13 at n = 19-23 (levelling or still falling: not
+                             resolved); the linear one shows no trend beyond scatter;
+                             (b) exact mu itself GROWS at every width step to n = 23,
+                             ending at 2.2x / 2.4x the criteria; (c) the model ranks
+                             keys right (corr 0.98) but credits each run ~0.21 where
+                             exact mu gains ~0.12; (d) the keys converge (IQR/median
+                             0.3 -> ~0.03-0.1).  So NO single n = 256 figure is
+                             supported -- a power law reads ~13 / ~11 (10x / 17x), a
+                             levelled per-bit median ~33 / ~17 (25x) -- and what is
+                             measured is §11.37's monotonicity residue with ten
+                             widths behind it.  --full reaches n = 22 and 23 (~5 and
+                             ~8 GB per key; do not run two at once on a 16 GB host).
+                             Fixed seeds, so it cannot flake.  Exits non-zero if a
                              finding stops reproducing
+  certified_cycle_mean.c   — the C solver exact_slope_ladder.py compiles and drives;
+                             standalone (no herradura.h), so tools/poison_build.sh
+                             does not discover it and need not
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -1157,7 +1192,7 @@ SecurityProofs-5.md                                 — §11.8.3–§11.8.10: PQ
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
-SecurityProofs-9.md                                 — §11.37–§11.41: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model · the certified ladder, exact mu to n = 20 on both axes, where the ratio keeps falling and the exact slope holds (703 math expressions)
+SecurityProofs-9.md                                 — §11.37–§11.42: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model · the certified ladder, exact mu to n = 20 on both axes, where the ratio keeps falling · the exact slope with 32-96 keys per width, not flat but still growing to n = 23 (726 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -2476,7 +2511,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; ran
 `continue-on-error: true` on the `arduino` job's TODO #185 route until TODO #317
 promoted it). Locally, run the same scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 78
+**The findings gates, and why they are a job rather than a step (TODO #289).** 79
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -2503,7 +2538,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **78
+backs the security documents rather than the one that tests the code. It is now **79
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.
