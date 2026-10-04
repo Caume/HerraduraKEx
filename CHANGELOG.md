@@ -2,6 +2,51 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.27] - 2026-10-04
+
+### TODO #257 (sixth pass, item stays OPEN) — the local certificate: a sound bound at any width, whose window must grow with n
+
+#257 owes monotonicity: that exact mu does not decrease between n = 23 and n = 256.
+§11.37 had closed comparing graphs (no embedding between widths) and GUESSING a
+potential.  This pass OPTIMISES the potential instead, restricted to the form a
+bit-position DP can evaluate at any width -- so if it worked it would be a proof at
+n = 256, the first in this line of work.
+
+**The certificate.**  For any phi, every cycle has mean >= min over edges of
+w(a,b) + phi(a) - phi(b), and with phi unrestricted that bound IS mu (LP duality).  With
+phi a sum of w-bit WINDOW functions the minimum is a shortest path along the bit
+positions -- the §11.38.1 carry-pair automaton plus the window bits -- linear in n, and
+the best phi per window is an LP.
+
+**The findings.**
+
+- **The DP must keep the carry SLOT.**  The weight is -log2 of a path count, not
+  additive; keeping the slot's 2-vector and merging by componentwise max is sound
+  (never above the exhaustive minimum at n = 7, 8, 10, optimal and random phi) and close
+  to the LP.  Dropping the slot gives mu = 0 on every key -- the gate's negative control.
+- **The window it needs grows with n**: median w* (the first window at which the bound
+  equals mu) is n-1, n-2, n-3 at n = 7, 8, 10, about 0.7n.
+- **At a fixed window it does not grow**: w = 5 certifies 0.94, 0.87, 0.81, 0.71, 0.70 of
+  mu (median) at n = 8, 10, 11, 13, 14, and the bound itself is lower at n = 13-14
+  (1.27, 1.32) than at n = 10-11 (1.43, 1.50) while exact mu is not (1.79, 1.87 against
+  1.63, 1.83).
+- **Why**: the LP dual is a distribution over edges whose window statistics balance
+  locally, not a cycle, and it sits on light differences (dual-weighted popcount ~0.42n
+  falling to 0.34n) where optimal cycles are dense (0.6-0.86n).  It never sees M grow the
+  support.  The DP costs ~4^w per bit, so a window growing with n is not available at
+  n = 256.  The route is closed by measurement and recorded so it is not re-derived;
+  what is left has to carry non-local information.
+
+**Added.**  `SecurityProofsCode/local_potential_certificate.py`, a findings gate (80
+now).  It needs `highspy` -- the LP is the whole gate, so a missing solver is a FAILURE,
+on z3-solver's precedent (TODO #290) -- and CI's `analysis-findings` job installs it
+beside z3-solver.  Fixed keys and a deterministic LP, so it cannot flake.
+
+**Docs.**  SecurityProofs-10.md (§11.43), a new Part 10, because Part 9 stood at 726 of
+GitHub's ~750 math spans; the part index moves to ten parts in every copy, and
+`check_part_index.py` accepts a two-digit part number.  CLAUDE.md's dependency table
+records highspy's new role.
+
 ## [9.5.26] - 2026-10-04
 
 ### TODO #257 (fifth pass, item stays OPEN) — the exact slope with enough keys: not flat, still growing

@@ -7,7 +7,7 @@
 > titles below are unfamiliar; `docs/INTRODUCTION.md` links back into these same
 > Part files at the point where each concept is introduced.
 
-**This document has been split into nine parts to avoid GitHub's per-page math rendering limit (~750 expressions):**
+**This document has been split into ten parts to avoid GitHub's per-page math rendering limit (~750 expressions):**
 
 - **Part 1 — §1** (SecurityProofs-1.md): Algebraic Foundations (300 math expressions)
 - **Part 2 — §2–§8** (SecurityProofs-2.md): Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
@@ -18,6 +18,7 @@
 - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections (698 math expressions)
 - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes (435 math expressions)
 - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope (726 math expressions)
+- **Part 10 — §11.43** (SecurityProofs-10.md): The Local Certificate (30 math expressions)
 
 ---
 
