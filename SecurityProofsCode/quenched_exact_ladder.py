@@ -32,7 +32,9 @@ passed 4.6 GB and over half an hour of CPU without finishing.)
       width -- about 1.18 at n = 7, 1.04 at n = 11 -- crosses 1 between n = 11 and 13,
       and is below 1 for EVERY sampled key at n = 14, 16 and 17, at about 0.93 at the
       median.  The fall SLOWS there (0.94 at n = 14, 0.93 at n = 16 and 17), so where it
-      settles is not measured.  Above n = 11 the annealed model OVER-states the exact
+      settles is not measured.  [v9.5.25: it does not slow.  certified_cycle_ladder.py
+      runs 8 keys at n = 17 (0.90) and certifies n = 19 and 20 (0.81, 0.75); what is
+      flat is the exact mu/n, not this ratio.  SecurityProofs-9.md §11.41.]  Above n = 11 the annealed model OVER-states the exact
       minimum mean cycle, which is the unsafe direction, and §11.39.3's account of the
       gap is withdrawn: the gap does not close, it inverts.
 
@@ -43,7 +45,8 @@ passed 4.6 GB and over half an hour of CPU without finishing.)
       That is a property of the FIXED constant, which a random-graph ensemble with
       independent edges cannot see.  It is the quenched effect itself, observed.
 
-  §4  THE LINEAR AXIS, where exact mu is affordable only to n = 11 here.  The same
+  §4  THE LINEAR AXIS, where exact mu is affordable only to n = 11 here.  [v9.5.25:
+      certified_cycle_ladder.py takes it to n = 20, and it crosses between 13 and 14.]  The same
       ratio falls there too, 1.23 at n = 7 to 1.08 at n = 11, still above 1 at the
       median (one key in eight is already below it at n = 10 and 11).
 
@@ -495,7 +498,8 @@ DOWNGRADED.  §11.38's n = 256 figures (48.44 differential, 22.40 linear).  They
 exactly-evaluated estimator whose finite-size error had been OBSERVED to be
 conservative.  It is not: on the differential axis the error changes sign between
 n = 11 and 13 and stays on the UNSAFE side at every width computed above that, about
-7% at the median, with the fall slowing but its limit unmeasured.  An estimator whose
+7% at the median, with the fall slowing but its limit unmeasured.
+[v9.5.25: it is not slowing -- 0.75 by n = 20.  SecurityProofs-9.md §11.41.]  An estimator whose
 bias has changed sign, and whose limit is not known, cannot be extrapolated 240 widths
 with a sign attached, so the n = 256 margin is no longer supported by anything
 measured.  It is not LOST either: losing the 4/3 criterion would take the ratio down
