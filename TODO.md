@@ -220,6 +220,36 @@ See SecurityProofs-9.md §11.42 and `SecurityProofsCode/exact_slope_ladder.py`.
 from comparing graphs since there is no embedding between widths; and (2) the linear
 hull, unchanged.
 
+**Sixth pass (v9.5.27) — the local certificate: a route that would have been a proof
+at n = 256, built and measured, and why it does not get there.**  See
+SecurityProofs-10.md §11.43 (the new Part 10; Part 9 was at 726 spans) and
+`SecurityProofsCode/local_potential_certificate.py`.
+
+  * **The certificate.**  For ANY phi, mu >= min over edges of w(a,b) + phi(a) - phi(b),
+    and with phi unrestricted that IS mu.  With phi a sum of w-bit WINDOW functions,
+    the minimum is a bit-position DP (the §11.38.1 carry-pair automaton plus window
+    bits), linear in n and so evaluable at n = 256; the best phi per window is an LP
+    (HiGHS).  The DP must keep the carry SLOT and merge by componentwise max -- sound,
+    and close to the LP at the optimal phi; dropping the slot gives mu = 0 on every key
+    (the negative control).
+  * **The window it needs grows with n.**  Median w* (first window at which the bound
+    equals mu) is n-1, n-2, n-3 at n = 7, 8, 10 -- about 0.7n.
+  * **At a fixed window it does not grow.**  w = 5 certifies a FALLING share of mu
+    (median 0.94, 0.87, 0.81, 0.71, 0.70 at n = 8, 10, 11, 13, 14), and the bound itself
+    is lower at n = 13-14 (1.27, 1.32) than at n = 10-11 (1.43, 1.50) while exact mu is
+    not (1.79, 1.87 against 1.63, 1.83).
+  * **Why.**  The LP dual is a distribution over edges with locally balanced window
+    statistics, not a cycle, and it sits on LIGHT differences (dual-weighted popcount
+    ~0.42n -> 0.34n over n = 8..11) where the optimal cycles are dense (0.6-0.86n).  It
+    never sees M grow the support, so the bound is set by the cheapest local
+    neighbourhoods of delta while mu is global.  The DP costs ~4^w per bit, so a window
+    that grows with n is not available at 256.
+
+**What is left**, unchanged in substance and narrowed in method: (1''') monotonicity of
+exact mu in n, by an argument that carries NON-LOCAL information -- support growth under
+M being the obvious candidate, since that is exactly what the local certificate cannot
+see; and (2) the linear hull.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely

@@ -830,6 +830,27 @@ SecurityProofsCode/                                 — standalone Python proof/
   certified_cycle_mean.c   — the C solver exact_slope_ladder.py compiles and drives;
                              standalone (no herradura.h), so tools/poison_build.sh
                              does not discover it and need not
+  local_potential_certificate.py — TODO #257's sixth pass (v9.5.27): the first
+                             route in #257 that would have been a PROOF at n = 256,
+                             built and measured, and why it does not get there.  For
+                             any phi, mu >= min over edges of w + phi(a) - phi(b);
+                             with phi a sum of w-bit WINDOW functions that minimum is
+                             a bit-position DP (the carry-pair automaton plus window
+                             bits), linear in n, and the optimal phi is an LP (HiGHS).
+                             READ §1 BEFORE REUSING THE DP: the weight is -log2 of a
+                             path COUNT, so the DP keeps the carry SLOT and merges by
+                             componentwise max (sound, measured close); dropping the
+                             slot gives mu = 0 on every key, the negative control.
+                             FINDING: the window it needs to reach mu GROWS with n
+                             (median w* = n-1, n-2, n-3 at n = 7, 8, 10, ~0.7n), and
+                             at a fixed window the certified share of mu FALLS
+                             (0.94 -> 0.70 over n = 8..14 at w = 5), the bound itself
+                             lower at n = 13-14 than at 10-11 while mu is not.
+                             The LP dual says why: a distribution of LIGHT edges
+                             whose local window statistics balance stands in for a
+                             cycle, and it never sees M grow the support.  Needs
+                             highspy, which IS the gate, so absent means FAIL.
+                             Fixed keys and a deterministic LP, so it cannot flake
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -1183,7 +1204,7 @@ SecurityProofsCode/                                 — standalone Python proof/
                               the failures at the end, because #286 found three
                               broken gates in one script and #288 six.
                               `--list` prints the set without running it
-SecurityProofs.md                                   — split index (redirects to Parts 1–9; quantum analysis is in SecurityProofs-2.md §6)
+SecurityProofs.md                                   — split index (redirects to Parts 1–10; quantum analysis is in SecurityProofs-2.md §6)
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
@@ -1193,6 +1214,7 @@ SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (13
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
 SecurityProofs-9.md                                 — §11.37–§11.42: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model · the certified ladder, exact mu to n = 20 on both axes, where the ratio keeps falling · the exact slope with 32-96 keys per width, not flat but still growing to n = 23 (726 math expressions)
+SecurityProofs-10.md                                — §11.43: the local certificate, a sound lower bound on mu at any width whose window must grow with n (30 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -2352,14 +2374,15 @@ The shipped primitives and CLIs have **none**, in any language, and that is a pr
 worth preserving — `./build_c.sh`, `./build_go.sh` and every `HerraduraCli/` entry point
 run against a bare toolchain.  Four optional packages exist, all analysis- or
 tooling-only.  Most consumers degrade to a printed NOTE rather than failing; `z3-solver`
-is the documented exception, for the reason in its row (TODO #290).
+and `highspy` are the documented exceptions, for the reasons in their rows (TODO #290,
+TODO #257's sixth pass).
 
 | package | used by | absent ⇒ | install |
 |---|---|---|---|
 | `jsonschema` | `spec/generate_spec.py` schema validation | NOTE, but CI passes `--require-schema` so a skipped validation cannot pass | `pip install jsonschema` |
 | `z3-solver` | `SecurityProofsCode/nl_fscx_exact_trail_search.py` (TODO #214), `fscx_periodicity_z3.py`, `hpks_schnorr_z3.py` | **the gate FAILS** — those last two are z3 from top to bottom, so there is no section left to skip and a printed NOTE plus exit 0 would report a finding as reproducing that was never checked.  All three print the install line and exit non-zero; CI's `analysis-findings` job installs the package for exactly this reason (TODO #290) | `pip install z3-solver` |
 | `pulp` (CBC) | `SecurityProofsCode/nl_fscx_v2_bounds.py` §(d) MILP bounds (TODO #247) | section skipped | `sudo apt-get install -y python3-pulp`, or a venv: `python3 -m venv ~/.venvs/herradura-milp && ~/.venvs/herradura-milp/bin/pip install pulp` |
-| `highspy` | the same §(d) model under a stronger backend (TODO #252 §11.35.6) | CBC is used instead, and reaches one round fewer | `~/.venvs/herradura-milp/bin/pip install highspy` (PuLP finds it as the `HiGHS` solver) |
+| `highspy` | the same §(d) model under a stronger backend (TODO #252 §11.35.6); and `SecurityProofsCode/local_potential_certificate.py` (TODO #257, sixth pass), where every bound is an LP optimum | in `nl_fscx_v2_bounds.py`, CBC is used instead and reaches one round fewer; in `local_potential_certificate.py` **the gate FAILS**, on z3's reasoning -- the solver is the whole gate, so there is nothing left to skip.  CI's `analysis-findings` job installs it beside z3-solver | `pip install highspy` (pulls in numpy), or `~/.venvs/herradura-milp/bin/pip install highspy` (PuLP finds it as the `HiGHS` solver) |
 
 Never add one to a shipped primitive.  If an analysis script needs a solver, it imports it
 inside a `try`/`except ImportError` and prints what to install — and then decides its exit
@@ -2511,7 +2534,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; ran
 `continue-on-error: true` on the `arduino` job's TODO #185 route until TODO #317
 promoted it). Locally, run the same scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 79
+**The findings gates, and why they are a job rather than a step (TODO #289).** 80
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -2538,7 +2561,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **79
+backs the security documents rather than the one that tests the code. It is now **80
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.

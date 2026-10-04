@@ -935,6 +935,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # highspy (the HiGHS LP solver, which pulls in numpy) backs
+      # local_potential_certificate.py (TODO #257, sixth pass), whose every
+      # bound is an LP optimum, so it is not optional either: absent, that
+      # gate exits non-zero on z3's reasoning below.
+      #
       # z3-solver backs three of the gates below and is NOT optional here --
       # see the note on the runner step. Everything else in this job runs on a
       # bare python3. The install must FAIL the step rather than be skipped:
@@ -947,9 +952,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3 python3-pip
-          python3 -m pip install z3-solver \
-            || python3 -m pip install --break-system-packages z3-solver
+          python3 -m pip install z3-solver highspy \
+            || python3 -m pip install --break-system-packages z3-solver highspy
           python3 -c 'import z3; print("z3", z3.get_version_string())'
+          python3 -c 'import highspy, numpy; print("highspy ok, numpy", numpy.__version__)'
 
       # TODO #289. About three dozen SecurityProofsCode/ scripts advertise
       # "exits non-zero if a finding stops reproducing". TODO #285 found that
@@ -983,9 +989,12 @@ jobs:
       # trail search -- a bounded cost against two SMT proofs about the
       # deployed GF arithmetic and FSCX period structure.
       #
-      # pulp/highspy stay OUT: those genuinely are one section of a script
-      # that gates without them, and the bounds they compute are recorded in
-      # SecurityProofs-*.md rather than asserted about shipped code.
+      # pulp stays OUT: nl_fscx_v2_bounds.py §(d) genuinely is one section
+      # of a script that gates without it, and the bounds it computes are
+      # recorded in SecurityProofs-*.md rather than asserted about shipped
+      # code.  highspy was out for the same reason until TODO #257's sixth
+      # pass made it the whole of a gate.  Installing it does NOT reach §(d):
+      # that script finds HiGHS only through pulp, which is still absent.
       #
       # The local counterpart of this decision is in the three scripts: a
       # missing z3 now prints what to install and exits NON-ZERO rather than
