@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.44** (this file): The Local Certificate · The Local Certificate at n = 256
+> - **Part 10 — §11.43–§11.45** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured
 
 ---
 
@@ -145,3 +145,77 @@ The finite-round corollary is weak. An r-round trail weighs at least $r t - (\ma
 **What a window misses** is not density, which buys 0.03–0.04, and not a few rounds of support growth, which buy 0.05–0.07. It is that a LIGHT difference cannot stay light around a whole cycle. The LP dual stitches cheap, sparse, locally balanced edges together, while every real cheap cycle is dense. The next route has to bound, globally, how much weight a sparse difference sheds under $M$ per round. That is a statement about the support, not about windows of it.
 
 **Unchanged.** Exact $\mu$, measured to n = 23, grows at every width step. Still owed: monotonicity from n = 23 to 256, and the linear hull. No rating moves (§11.38.7).
+
+---
+
+## 11.45 The linear hull, measured — TODO #257, eighth pass
+
+`SecurityProofsCode/hull_exact.py` reproduces everything in this section. It drives `hull_exact.c`.
+
+#257 has carried two obligations since it merged #252 and #254. The second has been carried forward unchanged by all seven passes, since §11.36.9. Every number in this line of work is a TRAIL weight. What an attacker gets is the HULL: the signed sum over every trail that shares the endpoints. A trail weight bounds it in one direction only. This pass measures the hull exactly, at the widths where that is possible.
+
+### 11.45.1 The object, and why it is not a model
+
+Fix a key B. Build the r-round map of the shipped round as a table, r = 1 up to three rounds past 3n/4. That round is x ↦ M(x ⊕ i ⊕ B) + δ(B) mod 2^n, including the round constants i of TODO #245. Then scan the map's whole correlation table and whole difference table for the largest nontrivial entry. Write H_lin(r) and H_diff(r) for those, in bits. Nothing here assumes independence, key averaging or a Markov chain. The figures are what the cipher has at that width.
+
+The round constants matter here and nowhere earlier. An XOR constant leaves every trail weight unchanged, which is why TODO #245 could add them without touching a single trail bound. It does change the sign of each trail's contribution, and the hull is a signed sum. Every earlier measurement was blind to them; this one is not.
+
+Beside the hull, three more measurements:
+
+- the best r-round trail on each axis, T_lin(r) and T_diff(r): the least weight of any r-step walk on the mask or difference graph;
+- the same table scan over uniformly random permutations, which gives the ideal-cipher floor;
+- the point at which a hull counts as at the floor: when it is no worse than the worst of 32 random permutations (12 at n = 14).
+
+A fixed tolerance around the median floor does not work. At small n the tables are coarsely quantised, and a first draft with a 0.25-bit band flagged nine keys that were merely inside the random spread.
+
+The cost is n · 4^n per round, so the method reaches n = 14 by default and n = 16 under `--full`. It does not reach n = 23, the widest exact trail measurement (§11.42), let alone 256.
+
+**Soundness.** The helper reproduces the shipped `nl_fscx_revolve_v2` on all 65,536 inputs at n = 16, for two keys and r = 1 and 3. Its hulls and trails agree with a pure-Python brute force at n = 7 for r = 1–4: the brute force takes every (u, v) and every input difference, and the trails come from Bellman iteration on the graph builders of §11.35–§11.36. One round has a correlation-1 and a probability-1 approximation on every key, the MSB freebie. **Negative control:** with + replaced by ⊕, the round is affine, and the scan reads 0 bits at every round on both axes, so it can report a failure.
+
+### 11.45.2 Hull against trail
+
+The table gives three quantities, as min / median / max over keys:
+
+- **H/T:** the hull's weight divided by the best trail's, at the last round before saturation;
+- **gain:** the trail weight minus the hull weight, in bits, at the same round;
+- **lag:** how many rounds after the best trail the hull reaches the floor, as median (maximum).
+
+A round counts as before saturation while the trail weight is at least 1 bit and at least 0.5 bits below the median floor. The n = 16 row is `--full` only.
+
+| n | keys | linear H/T | linear gain (bits) | linear lag | differential H/T | differential gain (bits) | differential lag |
+|---|---|---|---|---|---|---|---|
+| 8 | 16 | 0.72 / 0.75 / 0.93 | 0.09 / 0.25 / 0.39 | 0 (2) | 0.76 / 0.97 / 1.12 | −0.26 / 0.07 / 0.86 | 0 (2) |
+| 10 | 16 | 0.71 / 0.91 / 1.23 | −0.42 / 0.16 / 0.57 | 1 (2) | 0.90 / 0.97 / 1.06 | −0.29 / 0.15 / 0.52 | 1 (2) |
+| 11 | 16 | 0.75 / 0.86 / 1.03 | −0.08 / 0.27 / 0.60 | 1 (2) | 0.74 / 0.95 / 1.02 | −0.13 / 0.30 / 1.11 | 1 (1) |
+| 13 | 8 | 0.71 / 0.89 / 0.99 | 0.01 / 0.30 / 0.75 | 1 (2) | 0.85 / 0.95 / 0.97 | 0.20 / 0.45 / 1.04 | 0 (1) |
+| 14 | 6 | 0.77 / 0.87 / 0.89 | 0.40 / 0.49 / 0.89 | 1 (1) | 0.79 / 0.90 / 1.00 | −0.03 / 0.85 / 1.96 | 1 (1) |
+| 16 | 8 | 0.73 / 0.82 / 0.92 | 0.38 / 0.76 / 1.06 | 1 (1) | 0.80 / 0.90 / 1.02 | −0.14 / 1.08 / 2.18 | 1 (1) |
+
+At n = 7 the linear floor (1.5 bits) leaves no round between the 1-bit minimum and saturation, so that row is omitted. One n = 16 key, with tz(δ) = 5, is in #253's weak class and is slow on the trail already. Its linear lag is 3, and it is left out of the lag column.
+
+**Clustering is real.** Before saturation the hull usually runs below the best trail. The median gain is positive at every width, and the maximum reaches 1.1 bits linear and 2.2 bits differential at n = 16. Sometimes the hull is above the trail instead (negative gain), where trails with opposite signs cancel.
+
+**It is a share, and the share falls.** The gain in bits grows with n partly because the trail weight at the last pre-saturation round does. As a share of that weight, the median is:
+
+| n | 10 | 11 | 13 | 14 | 16 |
+|---|---|---|---|---|---|
+| linear | 0.91 | 0.86 | 0.89 | 0.87 | 0.82 |
+| differential | 0.97 | 0.95 | 0.95 | 0.90 | 0.90 |
+
+A least-squares line falls about 0.011 per bit on both axes. The linear medians are noisy; the differential ones fall almost monotonically. No key at any width keeps less than 0.71. A draft of this section read n = 10–14 alone, saw "no downward trend", and called the hull a fixed factor. The n = 16 row withdrew that before it was published.
+
+**In rounds it costs about one, at every width.** The hull reaches the ideal floor at most two rounds after the best trail, and typically one, outside #253's class. At n ≥ 13 every key's hull is at the floor by r = 3n/4 + 1.
+
+### 11.45.3 Late, not stuck
+
+Seven (key, axis) cells have a trail that clears the floor by r = 3n/4 and a hull that does not. Six are at n ≤ 11 and one is at n = 16. The clearest is n = 8, B = 21 on the linear axis: the trail weighs 2.31 bits at r = 6, while the hull weighs 1.36 against a worst random permutation of 1.61.
+
+The count is not the finding. An ideal cipher lands below the worst of 32 random permutations about once in 33 tries, which is about 3.4 of the 113 such cells at n ≤ 13. What matters is that every one reaches the floor within two more rounds: the one-round lag of §11.45.2, crossing 3n/4 at widths where 3n/4 leaves no slack. The n = 16 cell is a quantised maximum one count above what every random permutation showed, and it is at the floor one round later.
+
+### 11.45.4 What this changes
+
+**Item (2) of #257 is no longer unreached.** The linear hull has been measured exactly, for the shipped round with its round constants, to n = 14 (n = 16 under `--full`). It is a proportional correction to the trail. At n = 16 it is worth a median 18% of the trail weight on the linear axis and 10% on the differential, at most 29% on any key. The share grows slowly with width.
+
+**It cannot be carried to n = 256 as a fixed factor.** Exact $\mu$ at n = 23 is 2.4× the linear criterion and 2.2× the differential one (§11.42). The hull eats that margin only if its share falls below 0.42 on the linear axis or 0.45 on the differential. At n ≤ 16 no key comes close; the worst is 0.71. A straight line through the medians would reach 0.42 near n = 50. That is an extrapolation of exactly the kind #257 has withdrawn four times. It is recorded here as the question it raises, not as an answer.
+
+**Still owed.** Monotonicity of exact $\mu$ in n, from n = 23 to 256, unchanged from §11.44.5. And now the hull share above n = 16, which no exact method reaches: the cost is n · 4^n per round. No rating moves (§11.38.7).
