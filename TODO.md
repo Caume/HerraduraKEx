@@ -250,6 +250,39 @@ exact mu in n, by an argument that carries NON-LOCAL information -- support grow
 M being the obvious candidate, since that is exactly what the local certificate cannot
 see; and (2) the linear hull.
 
+**Seventh pass (v9.5.28) — the local certificate SOLVED at n = 256: positive, and below
+4/3.**  See SecurityProofs-10.md §11.44 and `SecurityProofsCode/local_certificate_n256.py`
+(with `local_certificate_dp.c` and the pinned `local_certificate_n256.json`).
+
+  * **Non-local information at small n does not change the trend.**  A global statistic
+    (popcount, run count) alone certifies ~0.3 of mu; added to w = 5 windows it buys
+    0.03-0.04; two-round paths buy 0.05-0.07.  The share still falls from n = 8 to 11
+    in every row.
+  * **The LP solved without listing the graph.**  Constraint generation from exact edge
+    weights, separated by the sound DP's traces AND an exact single-carry-path Viterbi
+    (the Viterbi alone overstates the LP and its potential certifies ~0.1 against an
+    optimum ~1 -- the negative control), with the potential's box grown in stages.  One
+    SHARED table F[a-window][delta window] costs 2-7% against a table per position and
+    keeps the LP one size at every width.  The DP is renormalised per bit position; the
+    sixth pass's overflows a double at n = 256.
+  * **Solved per width, the bound does not grow.**  Median certified bound 0.81 / 1.50 /
+    1.36 / 0.98 / 1.03 at n = 16 / 20 / 24 / 32 / 48 (LP), 0.72 / 0.76 / 0.67 / 0.77 /
+    0.66 at n = 64 / 96 / 128 / 192 / 256 (supergradient ascent; the LP takes ~30 min a
+    key at n = 64 and its rows grow faster than n).  Exact mu grows ~0.14 per bit, so the
+    certified share falls roughly as 1/n -- §11.43's extrapolation, now measured.
+  * **At n = 256 four keys get mu >= 0.54 / 0.58 / 0.74 / 0.90**, re-verified from the
+    pinned tables by the pure-Python DP: the first NONZERO lower bound at the deployed
+    width (the trivial one is 0), and every one BELOW the 4/3 criterion.  The 192-round
+    corollary is weak (phi spans 77-98 bits, so 13-95 bits certified against 256).
+  * **No shortcut**: a table solved jointly over six keys at n = 24 is NEGATIVE on every
+    unseen n = 256 key.  The certificate must be solved per key, at the width.
+
+**What is left**, sharpened: (1''') monotonicity of exact mu in n.  What a window misses
+is neither density nor a few rounds of support growth; it is that a LIGHT difference
+cannot stay light around a whole cycle (the LP dual stitches sparse, locally balanced
+edges; real cheap cycles are dense).  The next route has to bound, globally, the weight
+a sparse difference sheds under M per round.  (2) The linear hull, unchanged.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely
