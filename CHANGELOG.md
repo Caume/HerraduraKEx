@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.29] - 2026-10-05
+
+### TODO #257 (eighth pass, item stays OPEN) — the linear hull, measured: a share of the trail that falls slowly with width
+
+#257 owes two things.  The second -- the LINEAR HULL -- had been carried forward
+unchanged since §11.36.9 by all seven passes, each recording that no method in this line
+of work reaches it.  Every number they produced is a trail weight; an attacker gets the
+signed sum over all trails.  This pass measures the hull exactly at the widths where
+that is possible.
+
+**The findings.**
+
+- **The object is the cipher, not a model.**  For a fixed key the r-round map of the
+  SHIPPED round is built as a table, round constants included, and its whole correlation
+  and difference tables are scanned.  TODO #245's round constants only flip a trail's
+  sign, so they were invisible to every trail measurement, and the hull sees them.  No
+  independence, key averaging or Markov assumption.  Beside it: the best r-round trail
+  on each axis, and the same scan over random permutations, which gives the floor.
+- **Clustering is real, and it is a SHARE that FALLS.**  Before saturation the hull
+  usually runs below the best trail; sometimes above, where trails cancel.  At the last
+  pre-saturation round the hull keeps a median 0.91 / 0.86 / 0.89 / 0.87 / 0.82 of the
+  trail's weight on the linear axis and 0.97 / 0.95 / 0.95 / 0.90 / 0.90 on the
+  differential at n = 10 / 11 / 13 / 14 / 16 -- about -0.011 per bit on both axes.  No
+  key keeps less than 0.71.
+- **In rounds it costs about one, at every width.**  The hull reaches the ideal floor
+  0-2 rounds after the best trail, median 1, outside #253's tz(delta) >= 4 class.
+- **Seven cells are late, not stuck.**  Their trail clears the floor by r = 3n/4 and
+  their hull does not, but every one reaches it within two more rounds.  The count is
+  close to what an ideal cipher would show at the threshold used; the lateness is the
+  finding.
+- **Not carried to n = 256.**  Exact mu at n = 23 is 2.4x / 2.2x the criteria
+  (§11.42); the hull eats that margin only below a share of 0.42 / 0.45.  No key at
+  n <= 16 comes close (worst 0.71), but a straight line through the medians reaches it
+  near n = 50.  That is recorded as a question, not an answer: #257 has withdrawn four
+  extrapolations of that kind.
+
+**Soundness and controls.**  The C helper reproduces the shipped `nl_fscx_revolve_v2`
+on all 65536 inputs at n = 16.  Its hulls and trails agree with a pure-Python brute
+force at n = 7.  Every key has the one-round correlation-1 / probability-1 freebie.
+NEGATIVE CONTROL: the same round with "+" replaced by "^" is affine and reads 0 bits at
+every round.
+
+**A conclusion withdrawn before it shipped, recorded.**  The first draft read
+n = 10-14, saw no downward trend, and called the hull a FIXED factor carried to n = 256
+at 1.7x / 1.6x.  Running n = 16 (`--full`) showed the share falling on both axes.  The
+fixed-factor reading is gone; the decline is now a pinned finding.
+
+**A threshold that had to be replaced, recorded.**  The first draft counted a hull as
+"at the floor" within 0.25 bits of the median random permutation, and flagged nine keys
+that were merely inside the random spread: at small n the tables are coarsely quantised.
+"At the floor" now means no worse than the worst of 32 random permutations.
+
+**What is left**: monotonicity of exact mu in n (unchanged), and how the hull share
+behaves above n = 16, which no exact method reaches -- an exact hull costs n * 4^n per
+round.
+
+Adds `SecurityProofsCode/hull_exact.py` (findings gate, 82 now) and `hull_exact.c`;
+SecurityProofs-10.md §11.45.
+
 ## [9.5.28] - 2026-10-04
 
 ### TODO #257 (seventh pass, item stays OPEN) — the local certificate solved at n = 256: positive, and below 4/3

@@ -283,6 +283,44 @@ cannot stay light around a whole cycle (the LP dual stitches sparse, locally bal
 edges; real cheap cycles are dense).  The next route has to bound, globally, the weight
 a sparse difference sheds under M per round.  (2) The linear hull, unchanged.
 
+**Eighth pass (v9.5.29) — the linear hull, MEASURED: a proportional correction that
+grows slowly with width, and about one round.**  See SecurityProofs-10.md §11.45 and `SecurityProofsCode/hull_exact.py` (with
+`hull_exact.c`).  Item (2) had been carried forward unchanged by all seven passes.
+
+  * **The object is the cipher, not a model.**  For a fixed key the r-round map of the
+    SHIPPED round -- with #245's round constants, which only flip signs on a trail and
+    so were invisible to every trail measurement -- is built as a table, and its whole
+    correlation and difference tables are scanned for the largest nontrivial entry.  No
+    trail, no independence, no key averaging.  Beside it: the best r-round trail on
+    each axis, and the same scan over uniformly random permutations (the floor).  The
+    helper matches the shipped `nl_fscx_revolve_v2` on all 65536 inputs at n = 16, and
+    a pure-Python brute force at n = 7.  NEGATIVE CONTROL: the round with "+" replaced
+    by "^" (affine) reads 0 bits at every round.
+  * **Clustering is real, and it is a SHARE that FALLS.**  Before the hull saturates
+    it runs below the best trail.  At the last round before saturation it keeps a
+    median 0.91 / 0.86 / 0.89 / 0.87 / 0.82 of the trail's weight on the linear axis and
+    0.97 / 0.95 / 0.95 / 0.90 / 0.90 on the differential at n = 10 / 11 / 13 / 14 / 16,
+    about -0.011 per bit on both axes; no key keeps less than 0.71.  A draft read
+    n = 10-14 alone as "no downward trend" and called it a fixed factor; the n = 16
+    run (--full) withdrew that before it shipped.
+  * **In rounds it costs about one, at every width.**  The hull reaches the ideal
+    floor 0-2 rounds after the best trail (median 1), outside #253's tz(delta) >= 4
+    class, which is slow on the trail already.
+  * **Seven cells are LATE, not stuck.**  Their trail clears the floor by r = 3n/4
+    and their hull does not (six at n <= 11, one at n = 16), but each reaches it within
+    two more rounds, and an ideal cipher would put ~3.4 of the n <= 13 cells below the
+    threshold anyway.  It is the one-round lag crossing 3n/4.
+  * **NOT carried to n = 256.**  Exact mu at n = 23 is 2.4x / 2.2x the criteria
+    (§11.42); the hull eats that margin only below a share of 0.42 / 0.45.  No key at
+    n <= 16 comes close (worst 0.71), but a straight line through the medians reaches
+    it near n = 50 -- recorded as a question, not an answer, since #257 has withdrawn
+    four extrapolations of that kind.
+
+**What is left**: (1''') monotonicity of exact mu in n, unchanged from the seventh pass.
+(2') how the hull's share of the trail weight behaves above n = 16 -- it falls slowly
+over n = 10-16, and no exact method reaches further (an exact hull costs n * 4^n per
+round).  Item (2) is no longer "unreached"; it now has the same shape as item (1).
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely

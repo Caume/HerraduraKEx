@@ -889,6 +889,35 @@ SecurityProofsCode/                                 — standalone Python proof/
                              certified_cycle_mean.c
   local_certificate_n256.json — the pinned certificates: one 16 x 16 table per key at
                              n = 64, 96, 128, 192 and 256, and the bound each gives
+  hull_exact.py            — TODO #257's eighth pass (v9.5.29): the LINEAR HULL, which
+                             all seven earlier passes carried forward as "unreached",
+                             MEASURED -- exactly, for the shipped round WITH #245's round
+                             constants (they only flip a trail's sign, so every trail
+                             measurement was blind to them and the hull is not).  For a
+                             fixed key the r-round map is built as a table and its whole
+                             correlation and difference tables are scanned: no trail, no
+                             independence, no key averaging.  Beside it the best r-round
+                             trail and the same scan over random permutations (the
+                             floor).  READ THE NOTE ABOVE `PRE` before changing what "at the
+                             floor" means: a fixed band around the median floor flagged
+                             nine keys that were inside the random spread, because small
+                             tables are coarsely quantised -- "at the floor" is "no worse
+                             than the worst of 32 random permutations".  FINDINGS:
+                             clustering is real and it is a SHARE of the trail weight
+                             that FALLS -- median 0.91 -> 0.82 (linear) and 0.97 -> 0.90
+                             (differential) over n = 10..16, ~-0.011 per bit, worst key
+                             0.71 -- and it costs about ONE ROUND to the ideal floor at
+                             every width.  Seven cells are LATE, not stuck (each at the
+                             floor by 3n/4 + 2).  A first draft read n = 10-14 as "no
+                             trend" and carried a FIXED factor to n = 256; --full's n = 16
+                             withdrew that, so the hull is NOT carried to 256 -- a line
+                             through the medians eats the n = 23 exact-mu margin near
+                             n = 50, recorded as a question.  Cost is n * 4^n per round:
+                             n = 14 by default, 16 under --full (~80 min).  Needs a C
+                             compiler (absent means FAIL)
+  hull_exact.c             — the C helper hull_exact.py compiles and drives: the r-round
+                             table, both hull scans and both trail DPs.  Standalone (no
+                             herradura.h), like certified_cycle_mean.c
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -1252,7 +1281,7 @@ SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (13
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
 SecurityProofs-9.md                                 — §11.37–§11.42: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model · the certified ladder, exact mu to n = 20 on both axes, where the ratio keeps falling · the exact slope with 32-96 keys per width, not flat but still growing to n = 23 (726 math expressions)
-SecurityProofs-10.md                                — §11.43–§11.44: the local certificate, a sound lower bound on mu at any width whose window must grow with n · the certificate SOLVED at n = 256, positive (0.54-0.90) and below 4/3 (43 math expressions)
+SecurityProofs-10.md                                — §11.43–§11.45: the local certificate, a sound lower bound on mu at any width whose window must grow with n · the certificate SOLVED at n = 256, positive (0.54-0.90) and below 4/3 · the linear hull MEASURED exactly to n = 16, a share of the trail weight (0.91 -> 0.82 linear) that falls slowly with width and costs about one round (45 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -2572,7 +2601,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; ran
 `continue-on-error: true` on the `arduino` job's TODO #185 route until TODO #317
 promoted it). Locally, run the same scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 81
+**The findings gates, and why they are a job rather than a step (TODO #289).** 82
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -2599,7 +2628,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **81
+backs the security documents rather than the one that tests the code. It is now **82
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.
