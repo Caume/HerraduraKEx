@@ -2,6 +2,59 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.28] - 2026-10-04
+
+### TODO #257 (seventh pass, item stays OPEN) — the local certificate solved at n = 256: positive, and below 4/3
+
+The sixth pass built a certificate that is SOUND at any width -- a potential made of
+w-bit window functions, whose bound is a bit-position DP -- and measured at n <= 14 that
+its window must grow with n.  It said the next route had to carry non-local
+information.  This pass tries that first, then stops extrapolating and solves the
+certificate at the deployed width.
+
+**The findings.**
+
+- **Non-local information at small n does not change the trend.**  A global statistic
+  (popcount, run count) alone certifies ~0.3 of mu; added to w = 5 windows it buys
+  0.03-0.04, and two-round paths buy 0.05-0.07.  In every case the certified share still
+  falls from n = 8 to 11.
+- **The LP, solved without listing the graph.**  Constraint generation from exact edge
+  weights, with two separators -- the sound DP's back-pointer traces and an exact
+  single-carry-path Viterbi.  The Viterbi alone is the negative control: it OVERSTATES
+  the LP and its potential certifies ~0.1 where the optimum is ~1, because one carry
+  path under-counts the edges with many.  The potential's box grows in stages, or the
+  DP's traces stop naming violated edges.  One SHARED table F[a-window][delta window]
+  costs 2-7% of the LP against a table per position and keeps the LP one size at every
+  width.
+- **Solved per width, the bound does not grow.**  Median certified bound 0.81 / 1.50 / 1.36 / 0.98 / 1.03 at
+  n = 16 / 20 / 24 / 32 / 48 (LP), and 0.72 / 0.76 / 0.67 / 0.77 / 0.66 at n = 64 / 96 /
+  128 / 192 / 256 (supergradient ascent: by constraint generation n = 64 takes ~30 min a
+  key and the rows grow faster than n).  Exact mu grows ~0.14 per bit, so the certified
+  share falls roughly as 1/n -- the sixth pass's extrapolation, now measured.
+- **At n = 256 four keys get mu >= 0.54 / 0.58 / 0.74 / 0.90**: the first NONZERO lower
+  bound at the deployed width (the trivial bound is 0, because every key has a
+  probability-1 one-round differential), and every one BELOW the 4/3 criterion.  The
+  192-round corollary is weak -- phi spans 77-98 bits, so only 13-95 bits are certified
+  against 256.  A 10,000-step ascent returns the same bound as 3,000.
+- **No shortcut.**  A table solved jointly over six keys at n = 24 is negative on every
+  unseen n = 256 key: the certificate must be solved per key, at the width.
+
+**Added.**  `SecurityProofsCode/local_certificate_n256.py`, a findings gate (81 now),
+with `local_certificate_dp.c` (the two bit-position passes in C, ~15-60x the Python, fed
+the automaton tables on stdin and checked against the Python DP exactly) and
+`local_certificate_n256.json` (16 pinned certificates, one 16 x 16 table each, which §4
+re-verifies from scratch with the pure-Python DP).  The DP is renormalised per bit
+position: the sixth pass's overflows a double at n = 256 for a large potential, which
+§1(b) demonstrates.  Needs highspy and a C compiler, both FAILURES when absent; fixed
+keys, a deterministic LP and a deterministic ascent, so it cannot flake.  `--quick` is
+~5 min; `--regenerate` rebuilds the pins (~1 h); the n = 64 entry was checked to come back bit for bit.
+
+**Docs.**  SecurityProofs-10.md §11.44 (Part 10 now §11.43-§11.44, 43 math spans); the
+part index moves in every copy.  TODO #257's "what is left" is sharpened: what a window
+misses is neither density nor a few rounds of support growth, but that a LIGHT difference
+cannot stay light around a whole cycle, so the next route has to bound globally the
+weight a sparse difference sheds under M per round.
+
 ## [9.5.27] - 2026-10-04
 
 ### TODO #257 (sixth pass, item stays OPEN) — the local certificate: a sound bound at any width, whose window must grow with n

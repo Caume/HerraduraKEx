@@ -936,9 +936,11 @@ jobs:
       - uses: actions/checkout@v4
 
       # highspy (the HiGHS LP solver, which pulls in numpy) backs
-      # local_potential_certificate.py (TODO #257, sixth pass), whose every
-      # bound is an LP optimum, so it is not optional either: absent, that
-      # gate exits non-zero on z3's reasoning below.
+      # local_potential_certificate.py and local_certificate_n256.py (TODO
+      # #257, sixth and seventh passes), whose bounds are LP optima, so it is
+      # not optional either: absent, those gates exit non-zero on z3's
+      # reasoning below.  The seventh pass also compiles a standalone C helper
+      # with the runner's gcc, on exact_slope_ladder.py's precedent.
       #
       # z3-solver backs three of the gates below and is NOT optional here --
       # see the note on the runner step. Everything else in this job runs on a

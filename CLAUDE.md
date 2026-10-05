@@ -850,7 +850,45 @@ SecurityProofsCode/                                 — standalone Python proof/
                              whose local window statistics balance stands in for a
                              cycle, and it never sees M grow the support.  Needs
                              highspy, which IS the gate, so absent means FAIL.
-                             Fixed keys and a deterministic LP, so it cannot flake
+                             Fixed keys and a deterministic LP, so it cannot flake.
+                             ITS "AT A FIXED WINDOW IT DOES NOT GROW" IS NOW MEASURED
+                             TO n = 256 by local_certificate_n256.py
+  local_certificate_n256.py — TODO #257's seventh pass (v9.5.28): the sixth pass's
+                             certificate SOLVED at the deployed width instead of
+                             extrapolated.  READ §1(d) AND THE solve() DOCSTRING
+                             BEFORE REUSING THE SOLVER: the LP is built by
+                             constraint generation from exact edges (no graph is
+                             listed), and it needs BOTH separators -- the sound DP's
+                             back-pointer traces and an exact single-carry-path
+                             Viterbi -- because the Viterbi alone under-counts the
+                             edges with many carry paths and OVERSTATES the LP (its
+                             potential certifies ~0.1 where the optimum is ~1); the
+                             potential's box must grow in stages or the DP's traces
+                             stop naming violated edges.  One SHARED table
+                             F[a-window][delta window] costs 2-7% of the LP against
+                             a table per position and keeps it one size at every
+                             width; above n = 48 the LP is too slow (rows grow faster
+                             than n) and a supergradient ascent finds F.  Whatever F
+                             is, the DP's bound is a theorem, so the 16 tables are
+                             PINNED in local_certificate_n256.json (16 x 16 numbers
+                             each) and §4 re-verifies them from scratch.  FINDINGS:
+                             non-local additions at small n (popcount/run-count
+                             tables, two-round paths) buy 0.03-0.07 and the share
+                             still falls; solved per width the bound peaks near
+                             n = 20 (~1.5) and sits at ~0.6-0.8 from n = 64 to 256
+                             while exact mu grows ~0.14 per bit; at n = 256 four keys
+                             get mu >= 0.54 / 0.58 / 0.74 / 0.90 -- the first NONZERO
+                             lower bound at the deployed width, every one BELOW 4/3.
+                             A table solved at n = 24 and carried to n = 256 is
+                             negative on every unseen key: solve per key, at the
+                             width.  Needs highspy and a C compiler (both FAIL when
+                             absent).  --regenerate rebuilds the pins (~1 h)
+  local_certificate_dp.c   — the C helper local_certificate_n256.py compiles and
+                             drives over a pipe: the sound DP with traces and the
+                             Viterbi.  Standalone (no herradura.h), like
+                             certified_cycle_mean.c
+  local_certificate_n256.json — the pinned certificates: one 16 x 16 table per key at
+                             n = 64, 96, 128, 192 and 256, and the bound each gives
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -1214,7 +1252,7 @@ SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (13
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
 SecurityProofs-9.md                                 — §11.37–§11.42: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model · the certified ladder, exact mu to n = 20 on both axes, where the ratio keeps falling · the exact slope with 32-96 keys per width, not flat but still growing to n = 23 (726 math expressions)
-SecurityProofs-10.md                                — §11.43: the local certificate, a sound lower bound on mu at any width whose window must grow with n (30 math expressions)
+SecurityProofs-10.md                                — §11.43–§11.44: the local certificate, a sound lower bound on mu at any width whose window must grow with n · the certificate SOLVED at n = 256, positive (0.54-0.90) and below 4/3 (43 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -2382,7 +2420,7 @@ TODO #257's sixth pass).
 | `jsonschema` | `spec/generate_spec.py` schema validation | NOTE, but CI passes `--require-schema` so a skipped validation cannot pass | `pip install jsonschema` |
 | `z3-solver` | `SecurityProofsCode/nl_fscx_exact_trail_search.py` (TODO #214), `fscx_periodicity_z3.py`, `hpks_schnorr_z3.py` | **the gate FAILS** — those last two are z3 from top to bottom, so there is no section left to skip and a printed NOTE plus exit 0 would report a finding as reproducing that was never checked.  All three print the install line and exit non-zero; CI's `analysis-findings` job installs the package for exactly this reason (TODO #290) | `pip install z3-solver` |
 | `pulp` (CBC) | `SecurityProofsCode/nl_fscx_v2_bounds.py` §(d) MILP bounds (TODO #247) | section skipped | `sudo apt-get install -y python3-pulp`, or a venv: `python3 -m venv ~/.venvs/herradura-milp && ~/.venvs/herradura-milp/bin/pip install pulp` |
-| `highspy` | the same §(d) model under a stronger backend (TODO #252 §11.35.6); and `SecurityProofsCode/local_potential_certificate.py` (TODO #257, sixth pass), where every bound is an LP optimum | in `nl_fscx_v2_bounds.py`, CBC is used instead and reaches one round fewer; in `local_potential_certificate.py` **the gate FAILS**, on z3's reasoning -- the solver is the whole gate, so there is nothing left to skip.  CI's `analysis-findings` job installs it beside z3-solver | `pip install highspy` (pulls in numpy), or `~/.venvs/herradura-milp/bin/pip install highspy` (PuLP finds it as the `HiGHS` solver) |
+| `highspy` | the same §(d) model under a stronger backend (TODO #252 §11.35.6); and `SecurityProofsCode/local_potential_certificate.py` / `local_certificate_n256.py` (TODO #257, sixth and seventh passes), where every bound is an LP optimum | in `nl_fscx_v2_bounds.py`, CBC is used instead and reaches one round fewer; in `local_potential_certificate.py` and `local_certificate_n256.py` **the gate FAILS**, on z3's reasoning -- the solver is the whole gate, so there is nothing left to skip.  CI's `analysis-findings` job installs it beside z3-solver | `pip install highspy` (pulls in numpy), or `~/.venvs/herradura-milp/bin/pip install highspy` (PuLP finds it as the `HiGHS` solver) |
 
 Never add one to a shipped primitive.  If an analysis script needs a solver, it imports it
 inside a `try`/`except ImportError` and prints what to install — and then decides its exit
@@ -2534,7 +2572,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; ran
 `continue-on-error: true` on the `arduino` job's TODO #185 route until TODO #317
 promoted it). Locally, run the same scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 80
+**The findings gates, and why they are a job rather than a step (TODO #289).** 81
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -2561,7 +2599,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **80
+backs the security documents rather than the one that tests the code. It is now **81
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.
