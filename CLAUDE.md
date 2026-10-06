@@ -3093,8 +3093,10 @@ hole made `[53]` go red again, differently: an off-weight witness the verifier A
 verifier binds `wt(e)` only on `b = 0` rounds — that is the shape of #298's own fix, since
 `wt(respA ^ respB)` is checkable only where both responses exist — so a wrong-weight witness
 survives a challenge string containing no `b = 0` round at all: **(2/3)^rounds**, 0.77% at
-`[53]`'s rounds = 12, one run in 130, in all four ports, and 7.4e-6 at
-`stern_f_weight_binding.py` §1's rounds = 32. Measured: 3 acceptances in 400 trials, 3
+`[53]`'s rounds = 12, one run in 130, in all four ports, and 2.3e-6 at
+`stern_f_weight_binding.py` §1's rounds = 32 — and **1.5e-3 at the rounds = 16 CI actually
+ran**, because §1's new 64-round default was never reached: `main()` passed the `--quick`
+round count straight into it, and that fired in CI before TODO #337 fixed the call site. Measured: 3 acceptances in 400 trials, 3
 no-`b=0` strings, the same 3. The remedy is the one this section already prescribes — **give
 it its own round count** — which is what #234 did to `[45]` at 38.5% and what the standing
 warning about a rounds = 4 Stern-F rejection test is about; `[53]`'s forgery sub-check now

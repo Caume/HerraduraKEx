@@ -23358,3 +23358,24 @@ QC-MDPC regression fails the language job it touches and not only the two-hour f
 No code, test, artifact or CLI surface moves.
 
 Status: **DONE v9.5.31** — the two stale "on probation" justifications were reworded to defense in depth; the step itself is unchanged.
+
+### #337: `stern_f_weight_binding.py` §1's 64-round default was never used, so CI ran it at (2/3)^16
+
+`analysis-findings` failed on the v9.5.31 PR run, and the push run on the same SHA passed.
+`stern_f_weight_binding.py` §1 reported that the shipped verifier accepted the off-weight
+forged witness.  That is TODO #310's second term: the verifier binds `wt(e)` only on `b = 0`
+rounds, so a wrong-weight witness survives a challenge string with no `b = 0` round, with
+probability `(2/3)^rounds`.  #310's remedy was to give §1 its own round count: `section1(rounds=64)`.
+`main()` still called `section1(rounds)` with the shared `--quick`/full value (16 / 32), so the
+64 was a dead default and the `SAMPLED_GATES` reason saying "Now 64" was false.  At `--quick`,
+which is what CI runs, the rate was `(2/3)^16` = 1.5e-3.
+
+Fix: a named `SECTION1_ROUNDS = 64`, called with no argument from `main()` and printed in the
+banner.  Verified: `--quick` passes with the forgery rejected.  Two hand-computed rates were also
+corrected, in the script and in the runner reason: `(2/3)^32` = 2.3e-6 (was 7.4e-6) and
+`(2/3)^64` = 5.4e-12 (was 5.5e-11).
+
+Lesson: a default argument that is supposed to stay fixed is not fixed if a caller passes a
+shared parameter into it.  #310 checked the function and not its call site.
+
+Status: **DONE v9.5.32** — §1 now signs at 64 rounds in both modes; the rate figures were corrected.

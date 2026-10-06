@@ -267,9 +267,12 @@ SAMPLED_GATES = {
         "unreachable.  §1 carried a SECOND term of the same kind, also argued "
         "away by that sentence: the verifier binds wt(e) only on b = 0 "
         "rounds, so the forgery survives a challenge string with none -- "
-        "(2/3)^rounds, 7.4e-6 at the rounds = 32 it used.  Now 64, i.e. "
-        "5.5e-11, so the section is exact to well past this table's "
-        "resolution rather than usually right.  The negative controls "
+        "(2/3)^rounds, 2.3e-6 at the rounds = 32 it used.  Now 64, i.e. "
+        "5.4e-12, so the section is exact to well past this table's "
+        "resolution rather than usually right -- and since TODO #337 that "
+        "is TRUE: until v9.5.32 main() passed the --quick round count (16) "
+        "into §1, so the 64 was a dead default and CI ran the section at "
+        "(2/3)^16 = 1.5e-3, 23x this whole job's advertised rate.  The negative controls "
         "score 20/20 and 32/33"),
     # ── follows ─────────────────────────────────────────────────────────────
     "hybrid_credential_phi.py": ("follows", 2.2e-7,
