@@ -918,6 +918,26 @@ SecurityProofsCode/                                 — standalone Python proof/
   hull_exact.c             — the C helper hull_exact.py compiles and drives: the r-round
                              table, both hull scans and both trail DPs.  Standalone (no
                              herradura.h), like certified_cycle_mean.c
+  live_region_certificate.py — TODO #257's ninth pass (v9.5.30): where the optimal cycles
+                             PAY, and why telling the local certificate does not help.
+                             A LIVE-REGION LEMMA, exhaustive: addition with a constant
+                             keeps a difference's LOWEST active bit (a mask's HIGHEST,
+                             on the linear axis) and M moves it one bit per round or
+                             resets it at the wrap, so every cycle must reset.  Every
+                             optimal-cycle edge split bit by bit (an exact chain-rule
+                             decomposition): the cost sits at delta's RUN BOUNDARIES,
+                             about one bit above each, delta's trailing zeros are never
+                             paid for, and mu per boundary (~0.31 / ~0.15) FALLS as
+                             boundaries crowd -- a description, not a figure for 256.
+                             Then the window LP is given features of the live region,
+                             and READ ITS CONTROL BEFORE TRUSTING A FEATURE: a RANDOM
+                             labelling with the same number of classes ties the two
+                             n-class features and beats every richer one, because at
+                             small n extra classes let the LP approach a value per node,
+                             which IS mu -- an anchored feature reached 1.000 at n = 8
+                             with 4096 classes for 256 nodes.  So the local-potential
+                             route (sixth, seventh, ninth passes) is CLOSED.  Needs a C
+                             compiler and highspy (both FAIL when absent)
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -1281,7 +1301,7 @@ SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (13
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
 SecurityProofs-9.md                                 — §11.37–§11.42: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model · the certified ladder, exact mu to n = 20 on both axes, where the ratio keeps falling · the exact slope with 32-96 keys per width, not flat but still growing to n = 23 (726 math expressions)
-SecurityProofs-10.md                                — §11.43–§11.45: the local certificate, a sound lower bound on mu at any width whose window must grow with n · the certificate SOLVED at n = 256, positive (0.54-0.90) and below 4/3 · the linear hull MEASURED exactly to n = 16, a share of the trail weight (0.91 -> 0.82 linear) that falls slowly with width and costs about one round (45 math expressions)
+SecurityProofs-10.md                                — §11.43–§11.46: the local certificate, a sound lower bound on mu at any width whose window must grow with n · the certificate SOLVED at n = 256, positive (0.54-0.90) and below 4/3 · the linear hull MEASURED exactly to n = 16, a share of the trail weight (0.91 -> 0.82 linear) that falls slowly with width and costs about one round · where the optimal cycles PAY, at delta's run boundaries, and the local-potential route closed by a random-labelling control (52 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -2449,7 +2469,7 @@ TODO #257's sixth pass).
 | `jsonschema` | `spec/generate_spec.py` schema validation | NOTE, but CI passes `--require-schema` so a skipped validation cannot pass | `pip install jsonschema` |
 | `z3-solver` | `SecurityProofsCode/nl_fscx_exact_trail_search.py` (TODO #214), `fscx_periodicity_z3.py`, `hpks_schnorr_z3.py` | **the gate FAILS** — those last two are z3 from top to bottom, so there is no section left to skip and a printed NOTE plus exit 0 would report a finding as reproducing that was never checked.  All three print the install line and exit non-zero; CI's `analysis-findings` job installs the package for exactly this reason (TODO #290) | `pip install z3-solver` |
 | `pulp` (CBC) | `SecurityProofsCode/nl_fscx_v2_bounds.py` §(d) MILP bounds (TODO #247) | section skipped | `sudo apt-get install -y python3-pulp`, or a venv: `python3 -m venv ~/.venvs/herradura-milp && ~/.venvs/herradura-milp/bin/pip install pulp` |
-| `highspy` | the same §(d) model under a stronger backend (TODO #252 §11.35.6); and `SecurityProofsCode/local_potential_certificate.py` / `local_certificate_n256.py` (TODO #257, sixth and seventh passes), where every bound is an LP optimum | in `nl_fscx_v2_bounds.py`, CBC is used instead and reaches one round fewer; in `local_potential_certificate.py` and `local_certificate_n256.py` **the gate FAILS**, on z3's reasoning -- the solver is the whole gate, so there is nothing left to skip.  CI's `analysis-findings` job installs it beside z3-solver | `pip install highspy` (pulls in numpy), or `~/.venvs/herradura-milp/bin/pip install highspy` (PuLP finds it as the `HiGHS` solver) |
+| `highspy` | the same §(d) model under a stronger backend (TODO #252 §11.35.6); and `SecurityProofsCode/local_potential_certificate.py` / `local_certificate_n256.py` / `live_region_certificate.py` (TODO #257, sixth, seventh and ninth passes), where every bound is an LP optimum | in `nl_fscx_v2_bounds.py`, CBC is used instead and reaches one round fewer; in `local_potential_certificate.py`, `local_certificate_n256.py` and `live_region_certificate.py` **the gate FAILS**, on z3's reasoning -- the solver is the whole gate, so there is nothing left to skip.  CI's `analysis-findings` job installs it beside z3-solver | `pip install highspy` (pulls in numpy), or `~/.venvs/herradura-milp/bin/pip install highspy` (PuLP finds it as the `HiGHS` solver) |
 
 Never add one to a shipped primitive.  If an analysis script needs a solver, it imports it
 inside a `try`/`except ImportError` and prints what to install — and then decides its exit
@@ -2601,7 +2621,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; ran
 `continue-on-error: true` on the `arduino` job's TODO #185 route until TODO #317
 promoted it). Locally, run the same scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 82
+**The findings gates, and why they are a job rather than a step (TODO #289).** 83
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -2628,7 +2648,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **82
+backs the security documents rather than the one that tests the code. It is now **83
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.

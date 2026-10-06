@@ -2,6 +2,53 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.30] - 2026-10-05
+
+### TODO #257 (ninth pass, item stays OPEN) — where the optimal cycles pay, and the local-potential route closed with a control
+
+The seventh pass said what the window certificate misses: a light difference cannot stay
+light around a whole cycle, so the next route had to carry non-local information about
+how a difference moves.  This pass finds such a fact, measures where the optimal cycles
+actually pay, gives the certificate that information, and finds it does not help.  See
+SecurityProofs-10.md §11.46 and `SecurityProofsCode/live_region_certificate.py`.
+
+**The findings.**
+
+- **A live-region lemma, exhaustive.**  Addition with a constant keeps a difference's
+  lowest active bit, and M moves it down one bit per round or resets it to 0 when the
+  MSB is set; XOR constants do not touch it.  So every cycle must reset.  The linear
+  axis is the mirror: a nonzero correlation of addition with a constant needs equal
+  highest mask bits.  Every step of every optimal cycle measured obeys it.
+- **The cost sits at delta's run boundaries.**  Each optimal-cycle edge split bit by bit
+  along the carry automaton (exact to 5e-13): 0.88-0.93 of the differential weight is
+  on or one bit above a run boundary of delta, against ~0.62 of the positions, and a
+  position above a boundary costs 3-4x an ordinary one -- the carry is
+  near-deterministic inside a run and a fresh bit just after one.  delta's trailing
+  zeros are never paid for (28 of 28 keys), #253's weak class seen from the cycle side.
+  This is the mechanism under the fifth pass's "mu rises with the run count".
+- **Not a figure for n = 256.**  mu per boundary is ~0.31 / ~0.15 over n = 13-17 but
+  falls as boundaries crowd (correlation -0.56 / -0.60); single rounds with many live
+  boundaries can cost ~0, so any argument must amortise; and cycles are not pinned at
+  the wrap (rounds away from the bottom grow 0.25 -> 0.64 of a cycle).
+- **The certificate, told -- and the control.**  The window LP plus a table on the live
+  region (the extreme bit, its boundary count, both extreme bits, anchored windows):
+  every one leaves the certified share falling from n = 8 to 10.  A random labelling
+  with the same number of classes ties the n-class features and beats every richer
+  one, so the gains are class count, not content.  The local-potential route (sixth,
+  seventh, ninth passes) is closed.
+
+**Corrected before publishing**, by the gate's own first run: "delta's lowest run is
+never paid for" was true of the median cycle, not of every one -- only a lowest run of
+ZEROS is free; and "excursions are the cheap part of a cycle" was withdrawn, since
+their share of the weight tracks their share of the rounds.
+
+**What is left**, unchanged in substance: (1''') monotonicity of exact mu, now needing an
+argument about cycles rather than edge-local potentials; (2') the hull share above
+n = 16.  No rating moves.
+
+New findings gate (83): `live_region_certificate.py`, ~2 min `--quick`, ~6.5 min
+default.  Needs a C compiler and highspy, both FAIL when absent.
+
 ## [9.5.29] - 2026-10-05
 
 ### TODO #257 (eighth pass, item stays OPEN) — the linear hull, measured: a share of the trail that falls slowly with width
