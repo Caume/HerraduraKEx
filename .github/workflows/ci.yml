@@ -301,10 +301,14 @@ jobs:
       #
       # These two stay HERE as well, and the duplication is deliberate: they are
       # the two QC-MDPC gates that #285 and #286 found broken, they are the ones
-      # that cover the parameters a deployed KEM rests on, and native-python is
-      # a REQUIRED job where analysis-findings is still on probation. ~4.5 min
-      # of a job that already runs longer than that. Do not add a third script
-      # here -- the new job takes it automatically.
+      # that cover the parameters a deployed KEM rests on. This used to add
+      # "native-python is a REQUIRED job where analysis-findings is still on
+      # probation"; TODO #317 made analysis-findings blocking, so the duplication
+      # is now defense in depth rather than the only required coverage (TODO
+      # #336): a QC-MDPC regression fails the language job it touches, not only
+      # the 2-hour findings job. ~4.5 min of a job that already runs longer than
+      # that. Do not add a third script here -- the new job takes it
+      # automatically.
       #
       # TODO #286 added the second one, and the reason is the argument for this
       # step existing at all: qcmdpc_parameter_selection.py was ALREADY FAILING

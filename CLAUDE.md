@@ -2641,7 +2641,10 @@ B″ — and the guard against it is that a script ADVERTISING a findings gate i
 header and not discovered is an error, checked in both negative controls. (3) Failures
 do not stop the run: #286 hit three and #288 six, so a `set -e` loop reporting the first
 and hiding the rest is not hypothetical. The two QC-MDPC scripts stay in `native-python`
-as well, deliberately, because that job is required and this one is not yet.
+as well, deliberately. That was first justified by this job not yet being required; TODO
+#317 made it blocking, so the reason now is defense in depth (TODO #336): they are the two
+gates #285 and #286 found broken and the ones the deployed KEM's parameters rest on, so they
+fail the language job a QC-MDPC change most directly touches, not only this one.
 
 **And which scripts GATE, which is the prior question (TODO #291).** #289 and #290 both
 answer "which of the gating scripts run"; nothing asked how many scripts gate at all.

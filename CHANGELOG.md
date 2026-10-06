@@ -2,6 +2,18 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.31] - 2026-10-06
+
+### TODO #336 — two sentences still called `analysis-findings` "on probation"
+
+Documentation only.  `.github/workflows/ci.yml` (the comment on `native-python`'s QC-MDPC step)
+and `CLAUDE.md` (Testing section) both justified running the two QC-MDPC findings gates in
+`native-python` as well by saying `analysis-findings` was not yet a required job.  TODO #317
+made it blocking at v9.5.6, and both files already said so elsewhere.  The duplication is kept;
+its reason is now stated as defense in depth.  Found during a full local run of every CI job
+(all green: the native, interop, cross-language, ARM/i386, Arduino, Java, KaTeX, sanitizer,
+valgrind and fuzz jobs, and all 83 findings gates).
+
 ## [9.5.30] - 2026-10-05
 
 ### TODO #257 (ninth pass, item stays OPEN) — where the optimal cycles pay, and the local-potential route closed with a control
