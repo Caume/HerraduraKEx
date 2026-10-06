@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.45** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured
+> - **Part 10 — §11.43–§11.46** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay
 
 ---
 
@@ -219,3 +219,79 @@ The count is not the finding. An ideal cipher lands below the worst of 32 random
 **It cannot be carried to n = 256 as a fixed factor.** Exact $\mu$ at n = 23 is 2.4× the linear criterion and 2.2× the differential one (§11.42). The hull eats that margin only if its share falls below 0.42 on the linear axis or 0.45 on the differential. At n ≤ 16 no key comes close; the worst is 0.71. A straight line through the medians would reach 0.42 near n = 50. That is an extrapolation of exactly the kind #257 has withdrawn four times. It is recorded here as the question it raises, not as an answer.
 
 **Still owed.** Monotonicity of exact $\mu$ in n, from n = 23 to 256, unchanged from §11.44.5. And now the hull share above n = 16, which no exact method reaches: the cost is n · 4^n per round. No rating moves (§11.38.7).
+
+---
+
+## 11.46 Where the cycles pay — TODO #257, ninth pass
+
+`SecurityProofsCode/live_region_certificate.py` reproduces everything in this section.
+
+§11.44.5 said what the window certificate misses: a light difference cannot stay light around a whole cycle, so the next route had to carry non-local information about how a difference moves. This pass finds such a fact, and it is exact. It then measures where the optimal cycles actually pay, and gives the certificate that information. The certificate does not improve, and a control says why.
+
+### 11.46.1 The live region
+
+Three facts, each checked exhaustively:
+
+- **Addition with a constant keeps the lowest active bit of a difference.** Below that bit the two inputs agree, so their carries agree, so the output difference is zero there and one at that bit. There were 0 violations over every difference and every input, at n = 10, for six keys.
+- **M moves the lowest active bit down by exactly one.** The exception is a difference whose most significant bit is set: ROL wraps that bit to position 0, and the lowest active bit resets to 0. There were 0 violations over every difference at n = 10 and n = 16.
+- **XOR round constants do not touch a difference.**
+
+So in every round the lowest active bit either descends one position for free or resets at the wrap, and every cycle must reset. The bits below it are dead: no carry difference exists there. Everything above it is the **live region**. The linear axis is the mirror image. Addition with a constant has a nonzero correlation only when the input and output masks share their highest bit (0 violations over every mask pair at n = 8), so a mask's live region is everything below its highest bit.
+
+Every step of every optimal cycle measured in §11.46.2 obeys this.
+
+### 11.46.2 Where the optimal cycles pay
+
+For each key, the exact solver of §11.42 returns an optimal cycle. Each edge's weight is split bit by bit by the chain rule along the carry automaton, from the least significant bit up. The split is exact: it sums to the solver's edge weight on every edge, to within 5e-13. On the linear axis the split uses the sign-free norm of the carry vector, and the last position absorbs the final cancellation.
+
+| axis | n | keys | weight on or one above a run boundary of δ | share of positions that are | cost per position one above a boundary ÷ elsewhere | $\mu$ per boundary |
+|---|---|---|---|---|---|---|
+| differential | 13 | 16 | 0.93 | 0.65 | 4.2 | 0.31 |
+| differential | 14 | 16 | 0.90 | 0.61 | 4.1 | 0.34 |
+| differential | 16 | 12 | 0.89 | 0.62 | 4.1 | 0.31 |
+| differential | 17 | 12 | 0.88 | 0.62 | 3.1 | 0.32 |
+| linear | 13 | 16 | 0.90 | 0.65 | 2.2 | 0.15 |
+| linear | 14 | 16 | 0.79 | 0.61 | 1.8 | 0.16 |
+| linear | 16 | 12 | 0.79 | 0.62 | 1.8 | 0.15 |
+| linear | 17 | 12 | 0.83 | 0.62 | 1.3 | 0.16 |
+
+A run boundary is a position where δ's bit differs from the one below it. The weight columns are medians over keys.
+
+**The cost is at δ's run boundaries.** Inside a run of δ the carry is nearly determined, because it tends to the run's value. Just above a boundary it is a fresh random bit. Uncertainty costs weight; determinism does not. That is why a position one bit above a boundary costs three to four times an ordinary one on the differential axis. It is the mechanism under §11.42's finding that exact $\mu$ rises with the run count of δ, which until now was only a regression.
+
+**δ's trailing zeros are free.** With no carry in and a 0 addend, no carry can form, so a difference there passes at no cost. In all 28 keys whose lowest run is zeros, no optimal cycle pays anything inside that run. A lowest run of ones is paid for in 8 of 28. This is #253's weak class, keys with at least four trailing zeros in δ, seen from the cycle side.
+
+**It is not a figure for n = 256.** $\mu$ per boundary is steady at about 0.31 (differential) and 0.15 (linear) over these widths, but it is not a constant. Across keys it falls as boundaries crowd: the correlation with boundary density is −0.56 differential and −0.60 linear. Boundaries share cost. A typical 256-bit δ has about 128 of them, and how much each would then cost is exactly the open question.
+
+**No per-round bound of this shape exists.** In 61 rounds of optimal cycles, three or more boundaries are live and the round costs under 0.05 bits. Any argument has to amortise cost across rounds, which is what a potential does.
+
+**Cycles are not pinned at the wrap.** The share of rounds whose lowest active bit has left the bottom three positions grows from 0.25 to 0.64 over n = 13–17 on the differential axis. So the cycles are not a finite problem at the wrap boundary either.
+
+### 11.46.3 The certificate, told where the live region is
+
+The window LP of §11.43 and §11.44 gets one extra table, a value per class of some feature of the live region. Five features are tried: the position of the lowest active bit; the number of δ boundaries in the live region (§11.46.2's quantity); the lowest and highest active bits together; and a 3-bit or 5-bit window anchored at the lowest active bit. Each runs against the exhaustive graph, as a share of exact $\mu$, at windows of 3 and 5 bits.
+
+Beside each feature is a **control**: a random labelling of the nodes into the same number of classes.
+
+| feature | classes | w = 3, n = 8 → 10 | random, same classes | w = 5, n = 8 → 10 | random, same classes |
+|---|---|---|---|---|---|
+| windows only | – | 0.737 → 0.598 | – | 0.940 → 0.878 | – |
+| lowest active bit | n | 0.750 → 0.644 | 0.769 → 0.639 | 0.946 → 0.884 | 0.954 → 0.888 |
+| boundaries in the live region | n | 0.741 → 0.635 | 0.770 → 0.638 | 0.940 → 0.881 | 0.948 → 0.886 |
+| lowest and highest bits | n² | 0.791 → 0.712 | 0.878 → 0.791 | 0.957 → 0.904 | 1.000 → 0.946 |
+| anchored 3-bit window | 8n | 0.789 → 0.685 | 0.896 → 0.779 | 0.962 → 0.897 | 1.000 → 0.940 |
+| anchored 5-bit window | 32n | 0.836 → 0.715 | 0.998 → 0.905 | 0.989 → 0.916 | 1.000 → 0.988 |
+
+**Every feature leaves the share falling.** That was the stop rule set before the run.
+
+**None clears the control.** The random labelling ties the two n-class features, within 0.005, and beats every richer one, by 0.011 to 0.19. So what a feature buys is its class count, not its content. At these sizes extra classes let the LP approach a separate value per node, and per-node values give exactly $\mu$. Without the control, an anchored feature paired with the highest bit reaches 1.000 at n = 8, which reads as progress; it has 4096 classes for 256 nodes. At n = 256 a random labelling has no structure for the bit-position DP to evaluate, so it is not a candidate. It is the bar a usable feature had to clear.
+
+### 11.46.4 What this changes
+
+**A structural fact, exact at every width.** The live region of a difference, or of a mask, moves one bit per round or resets at the wrap. It is the non-local information §11.44.5 asked for, and it is true.
+
+**Where $\mu$ is paid.** At δ's run boundaries, about one bit above each, with δ's trailing zeros free. This explains the run-count dependence of §11.42. It is a description, not a figure for n = 256, because the cost per boundary falls as boundaries crowd.
+
+**The local-potential route is closed.** Three passes have now given the window certificate non-local information: windows alone (§11.43), global statistics and two-round paths (§11.44), and the live region (here). Each leaves the certified share falling. This pass adds the control the others lacked: a random labelling of equal size does as well. A potential whose class count stays small against the graph carries nothing a DP at n = 256 could use. A bound at the deployed width needs an argument about cycles, not about edge-local potentials, and §11.46.2 is what such an argument would have to account for.
+
+**Still owed.** Monotonicity of exact $\mu$ in n, and the hull share above n = 16, both unchanged from §11.45.4. No rating moves (§11.38.7).

@@ -321,6 +321,46 @@ grows slowly with width, and about one round.**  See SecurityProofs-10.md §11.4
 over n = 10-16, and no exact method reaches further (an exact hull costs n * 4^n per
 round).  Item (2) is no longer "unreached"; it now has the same shape as item (1).
 
+**Ninth pass (v9.5.30) — where the optimal cycles pay, and the local-potential route
+closed with a control.**  See SecurityProofs-10.md §11.46 and
+`SecurityProofsCode/live_region_certificate.py`.  It took the seventh pass's instruction
+literally -- give the certificate non-local information about how a difference moves --
+and found a true fact that does not help.
+
+  * **A live-region lemma, exhaustive.**  Addition with a constant keeps a difference's
+    LOWEST active bit (below it the two carries agree), and M moves it down by one bit
+    per round, or resets it to 0 when the MSB is set.  The linear axis is the mirror: a
+    nonzero correlation needs equal HIGHEST mask bits.  So every cycle must reset, and
+    every step of every optimal cycle measured obeys it.
+  * **Where mu is paid.**  Each optimal-cycle edge split bit by bit along the carry
+    automaton (exact; it sums to the solver's weight).  The cost sits at delta's RUN
+    BOUNDARIES -- 0.88-0.93 of the differential weight on or one above a boundary,
+    against ~0.62 of the positions, a position above a boundary costing 3-4x an
+    ordinary one -- because the carry is near-deterministic inside a run and a fresh
+    bit just after one.  delta's trailing ZEROS are never paid for, which is #253's
+    tz(delta) weak class from the cycle side.  This is the mechanism under the fifth
+    pass's "mu rises with the run count", which was a regression until now.
+  * **Not pinned at the wrap.**  Rounds whose extreme bit has left the bottom grow
+    from 0.25 to 0.64 of a cycle over n = 13-17, so cycles are not a finite problem at
+    the wrap boundary either.
+  * **Not a figure for n = 256.**  mu per boundary is ~0.31 / ~0.15 over n = 13-17, but
+    it FALLS as boundaries crowd (correlation -0.5 to -0.6 with boundary density), and
+    single rounds with many boundaries live can cost ~0, so no per-round bound of that
+    shape exists: any argument must amortise.
+  * **The certificate, told.**  The window LP plus a table on the live region's
+    position, its boundary count, both extreme bits, or windows anchored at the extreme
+    bit: every one leaves the share FALLING from n = 8 to 10.  The CONTROL -- a random
+    labelling with the same number of classes -- ties the n-class features and beats
+    every richer one, so the gains are class count, not content (an anchored feature hit
+    1.000 at n = 8 with 4096 classes for 256 nodes).  At n = 256 a random labelling has
+    no structure for the DP, so this was the bar a usable feature had to clear.
+
+**What is left**, unchanged in substance: (1''') monotonicity of exact mu in n -- now
+with the LOCAL-POTENTIAL ROUTE CLOSED after three passes (windows; global statistics and
+two-round paths; the live region), so a bound at n = 256 needs an argument about CYCLES
+rather than edge-local potentials; the cost-at-boundaries picture is what such an
+argument would have to account for.  (2') the hull share above n = 16, unchanged.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely
