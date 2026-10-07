@@ -938,6 +938,25 @@ SecurityProofsCode/                                 — standalone Python proof/
                              with 4096 classes for 256 nodes.  So the local-potential
                              route (sixth, seventh, ninth passes) is CLOSED.  Needs a C
                              compiler and highspy (both FAIL when absent)
+  width_lift_closure.py    — TODO #257's tenth pass (v9.5.33): two cycle-level routes that
+                             need no potential, both CLOSED.  (1) An UPPER bound by
+                             construction -- the only kind that could refute one of
+                             §11.42's two n = 256 readings (~13, ~33): iterate the
+                             cheapest-edge map (best-first over the carry automaton,
+                             checked against the certified solver's rows) until it
+                             closes.  Sound, but it closes like a random mapping (rho
+                             grows ~0.48 bits per bit over n = 14..26, so ~2^120 steps
+                             at 256), and where it closes it is ~1.5x loose.  (2) The
+                             LIFT between widths that §11.37's "no embedding" missed:
+                             it is true of graphs, not keys -- stretching a run of delta
+                             by one bit is a natural map n -> n + 1.  Exact mu is NOT
+                             monotone along it (falls on ~25% of lifts, both axes,
+                             n = 13 and 16), and what sets the sign is the RUN LENGTH:
+                             a length-1 run adds 0.17-0.19 (differential), a run of
+                             length >= 3 ~0.  Width without a boundary adds no cost, so
+                             what #257 owes is a DISTRIBUTIONAL statement about boundary
+                             count at density 1/2, not a pointwise one.  Drives
+                             exact_slope_ladder.py's C solver (no compiler means FAIL)
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -1301,7 +1320,7 @@ SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (13
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
 SecurityProofs-9.md                                 — §11.37–§11.42: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model · the certified ladder, exact mu to n = 20 on both axes, where the ratio keeps falling · the exact slope with 32-96 keys per width, not flat but still growing to n = 23 (726 math expressions)
-SecurityProofs-10.md                                — §11.43–§11.46: the local certificate, a sound lower bound on mu at any width whose window must grow with n · the certificate SOLVED at n = 256, positive (0.54-0.90) and below 4/3 · the linear hull MEASURED exactly to n = 16, a share of the trail weight (0.91 -> 0.82 linear) that falls slowly with width and costs about one round · where the optimal cycles PAY, at delta's run boundaries, and the local-potential route closed by a random-labelling control (52 math expressions)
+SecurityProofs-10.md                                — §11.43–§11.47: the local certificate, a sound lower bound on mu at any width whose window must grow with n · the certificate SOLVED at n = 256, positive (0.54-0.90) and below 4/3 · the linear hull MEASURED exactly to n = 16, a share of the trail weight (0.91 -> 0.82 linear) that falls slowly with width and costs about one round · where the optimal cycles PAY, at delta's run boundaries, and the local-potential route closed by a random-labelling control · two routes without a potential, both closed: no upper bound on mu(256) by search, and no monotone lift between widths (72 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -2621,7 +2640,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; ran
 `continue-on-error: true` on the `arduino` job's TODO #185 route until TODO #317
 promoted it). Locally, run the same scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 83
+**The findings gates, and why they are a job rather than a step (TODO #289).** 84
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -2651,7 +2670,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **83
+backs the security documents rather than the one that tests the code. It is now **84
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.

@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.46** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay
+> - **Part 10 — §11.43–§11.47** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential
 
 ---
 
@@ -295,3 +295,63 @@ Beside each feature is a **control**: a random labelling of the nodes into the s
 **The local-potential route is closed.** Three passes have now given the window certificate non-local information: windows alone (§11.43), global statistics and two-round paths (§11.44), and the live region (here). Each leaves the certified share falling. This pass adds the control the others lacked: a random labelling of equal size does as well. A potential whose class count stays small against the graph carries nothing a DP at n = 256 could use. A bound at the deployed width needs an argument about cycles, not about edge-local potentials, and §11.46.2 is what such an argument would have to account for.
 
 **Still owed.** Monotonicity of exact $\mu$ in n, and the hull share above n = 16, both unchanged from §11.45.4. No rating moves (§11.38.7).
+
+---
+
+## 11.47 Two routes without a potential — TODO #257, tenth pass
+
+`SecurityProofsCode/width_lift_closure.py` reproduces everything in this section. It drives the C solver of §11.42.
+
+§11.46.4 closed the local-potential route and said that a bound at n = 256 needs an argument about cycles. Two cycle-level routes need no certificate at all. This pass walks both, and neither reaches n = 256. Each fails in a way that says something about the question.
+
+### 11.47.1 An upper bound by construction
+
+Every bound in #257 so far has been a lower bound. §11.42 left two readings of n = 256 standing, about 13 from a power law and about 33 from a levelled per-bit median, and no lower bound can separate them. An upper bound can. One explicit cycle at n = 256 with mean below 33 would refute the levelled reading for that key.
+
+The search is the simplest one available. Map each difference to its cheapest out-edge. Best-first search over the carry-pair automaton finds that edge exactly, because the partial weight never decreases along a branch. The map is a function on $2^n$ differences, so iterating it must close a cycle, and every edge on that cycle is a real edge. Its mean is a sound upper bound on $\mu$. On 441 nodes at n = 10 the enumerator returns the same least edge weight as the certified solver's row.
+
+**Where it closes, the cycle is loose.** Against exact $\mu$ at n = 13 and 14 the greedy cycle's mean is 1.27 to 2.03 times as large, with a median of 1.47. At n = 20–26 it is 0.21–0.30 per bit, against exact $\mu$'s 0.13–0.15.
+
+**It closes after exponentially many steps.** The rho length (tail plus cycle), median over 16 walks per width:
+
+| n | 14 | 16 | 20 | 22 | 24 | 26 |
+|---|---|---|---|---|---|---|
+| log2 median rho | 7.21 | 8.98 | 9.86 | 10.21 | 11.13 | 14.45 |
+| greedy cycle mean per bit | 0.174 | 0.216 | 0.302 | 0.285 | 0.267 | 0.207 |
+
+A least-squares line gives 0.48 bits of rho per bit of width. A random mapping gives 0.5. Over n = 14–22 alone the slope is 0.34, so the exact rate is not pinned. Either rate puts closure at n = 256 beyond $2^{80}$ steps. Breadth-first exploration does no better: 20,000 nodes at n = 32 or 64, expanding four cheapest edges each, contained no cycle at all.
+
+**So there is no constructive upper bound on $\mu$ at n = 256.** Even a walk that did close would be about 1.5 times loose. It could confirm a low value near the power law's 13, never establish a high one. The two readings of §11.42 stay unseparated.
+
+### 11.47.2 The lift between widths
+
+§11.37 recorded that there is no embedding between widths, because M and δ both depend on n. That is true of the graphs. It is not true of the keys. Insert one bit inside a run of δ, equal to the run: that is a natural map from width n to n + 1 that keeps δ's boundary sequence. The strongest form of what #257 owes would be that exact $\mu$ never decreases along it. With a second local operation, adding boundaries, that would carry $\mu \geq 4/3$ from a width where it is exact to n = 256 one step at a time.
+
+It does not hold. Every run of every key is stretched in turn and exact $\mu$ compared before and after (n + 1 = 15 is skipped by stretching two bits, since M is singular there). "Flip" is the second operation at fixed width: one interior bit of a run of length at least 3 is flipped, adding two boundaries.
+
+| axis | n → n + 1 | lifts | lifts that lower $\mu$ | largest drop | run length 1 | run length ≥ 3 | lowest run of zeros | flip: median, keys lowered |
+|---|---|---|---|---|---|---|---|---|
+| differential | 13 → 14 | 165 | 41 (25%) | −0.245 | +0.169 | +0.030 | +0.004 | +0.267, 1 of 23 |
+| differential | 16 → 17 | 121 | 30 (25%) | −0.203 | +0.190 | +0.016 | +0.029 | +0.329, 0 of 16 |
+| linear | 13 → 14 | 165 | 49 (30%) | −0.229 | +0.058 | −0.012 | −0.020 | +0.134, 3 of 23 |
+| linear | 16 → 17 | 121 | 28 (23%) | −0.098 | +0.083 | +0.005 | −0.014 | +0.164, 1 of 16 |
+
+The three middle columns are the mean change in $\mu$ when a run of that kind is stretched.
+
+**The lift is not monotone.** It lowers exact $\mu$ on a quarter of all lifts, on both axes and at both widths, by up to a quarter of a bit.
+
+**What decides the sign is the run length.** Stretching a run of length 1 turns a one-bit run into a two-bit one and moves the boundary above it one position further from the one below. That adds 0.17–0.19 on the differential axis and 0.06–0.08 on the linear. Stretching a run of length 3 or more moves $\mu$ by between −0.012 and +0.030 on average. Width that adds no boundary adds no cost. That is §11.46.2's finding, that the cost sits at δ's run boundaries, stated as a fact about n.
+
+**The lowest run of zeros moves $\mu$ by about nothing.** Those bits are never paid for (§11.46.2), so one more is neither a cost nor a saving. A first draft said stretching it lowers $\mu$ "most often". That was true at n = 13 (8 of 12 keys) and false at n = 16 (3 of 7), and it was withdrawn before publication.
+
+**Adding boundaries raises $\mu$ on almost every key, but not every one.** Every key at n = 16 rose on the differential axis; 1 to 3 keys fell in each of the other three cells.
+
+### 11.47.3 What this changes
+
+**Closed: an upper bound by search.** The cheapest-edge map closes after exponentially many steps, and its cycles are about 1.5 times loose where they do close. No cycle can be exhibited at the deployed width, so the two readings of §11.42 stay unseparated.
+
+**Closed: monotonicity along a lift.** There is a natural map between widths, on keys rather than graphs, and exact $\mu$ is not monotone along it. The fixed-width boundary insertion is not monotone either. So the monotonicity #257 owes cannot be proved pointwise along any chain of these operations. If it holds, it is a statement about typical keys, in distribution.
+
+**Measured: width without boundaries adds nothing.** Exact $\mu$ grows with n through the number of boundaries in δ, about n/2 for a typical key, and not through n itself. That moves the question without answering it. What #257 owes is how $\mu$ behaves as boundaries are added at density 1/2, and §11.46.2 found that the cost per boundary falls as boundaries crowd.
+
+**Still owed.** Monotonicity of exact $\mu$ in n, now as a distributional statement about the boundary count at density 1/2; and the hull share above n = 16, unchanged from §11.45.4. No rating moves (§11.38.7).

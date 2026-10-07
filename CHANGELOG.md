@@ -2,6 +2,46 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.33] - 2026-10-07
+
+### TODO #257 (tenth pass, item stays OPEN) — two routes without a potential, both closed
+
+The ninth pass closed the local-potential route and said a bound at n = 256 needs an
+argument about cycles.  Two cycle-level routes need no certificate at all; this pass
+walks both and neither reaches n = 256.  See SecurityProofs-10.md §11.47 and
+`SecurityProofsCode/width_lift_closure.py`.
+
+**The findings.**
+
+- **No upper bound by search.**  An upper bound is the only kind that could refute one
+  of §11.42's two n = 256 readings (~13 power law, ~33 levelled).  Iterating the
+  cheapest-edge map closes a cycle whose mean bounds mu from above -- soundly (every
+  greedy mean is >= exact mu at n = 13, 14) but loosely (1.27-2.03x, median 1.47), and
+  it closes after exponentially many steps: log2 rho grows 0.48 bits per bit over
+  n = 14..26, so closure at 256 lies past 2^80 steps.  Breadth-first exploration found
+  no cycle in 20 000 nodes at n = 32 or 64.
+- **No monotone lift between widths.**  §11.37's "no embedding" is true of the graphs,
+  not of the keys: stretching a run of delta by one bit is a natural map n -> n + 1.
+  Exact mu falls along it on 23-30% of (key, run) lifts, on both axes, at n = 13 and 16,
+  by up to 0.25.  Adding two boundaries at fixed width raises mu on nearly every key,
+  but not every one.
+- **The run length sets the sign.**  Stretching a length-1 run adds 0.17-0.19
+  (differential) / 0.06-0.08 (linear); a run of length >= 3, -0.012 to +0.030.  Width
+  without a boundary adds no cost -- §11.46.2's boundary mechanism, stated about n.
+
+**Corrected before publishing**, by the default run: "stretching the lowest run of zeros
+lowers mu most often" held at n = 13 (8 of 12) and not at n = 16 (3 of 7); it moves mu by
+~0, those bits being free, and the gate asserts that instead.  And the closure slope over
+n = 14..22 alone is 0.34, not the random mapping's 0.5, so the gate asserts exponential
+growth rather than a rate.
+
+**What is left**: (1''') monotonicity of exact mu, now necessarily a distributional
+statement about typical keys as boundaries are added at density 1/2; (2') the hull share
+above n = 16.  No rating moves.
+
+New findings gate (84): `width_lift_closure.py`, ~1.5 min `--quick`, ~17 min default.
+Drives the fifth pass's C solver, so no C compiler is a FAIL.
+
 ## [9.5.32] - 2026-10-06
 
 ### TODO #337 — `stern_f_weight_binding.py` §1 never ran at the round count TODO #310 gave it
