@@ -2641,7 +2641,10 @@ B″ — and the guard against it is that a script ADVERTISING a findings gate i
 header and not discovered is an error, checked in both negative controls. (3) Failures
 do not stop the run: #286 hit three and #288 six, so a `set -e` loop reporting the first
 and hiding the rest is not hypothetical. The two QC-MDPC scripts stay in `native-python`
-as well, deliberately, because that job is required and this one is not yet.
+as well, deliberately. That was first justified by this job not yet being required; TODO
+#317 made it blocking, so the reason now is defense in depth (TODO #336): they are the two
+gates #285 and #286 found broken and the ones the deployed KEM's parameters rest on, so they
+fail the language job a QC-MDPC change most directly touches, not only this one.
 
 **And which scripts GATE, which is the prior question (TODO #291).** #289 and #290 both
 answer "which of the gating scripts run"; nothing asked how many scripts gate at all.
@@ -3090,8 +3093,10 @@ hole made `[53]` go red again, differently: an off-weight witness the verifier A
 verifier binds `wt(e)` only on `b = 0` rounds — that is the shape of #298's own fix, since
 `wt(respA ^ respB)` is checkable only where both responses exist — so a wrong-weight witness
 survives a challenge string containing no `b = 0` round at all: **(2/3)^rounds**, 0.77% at
-`[53]`'s rounds = 12, one run in 130, in all four ports, and 7.4e-6 at
-`stern_f_weight_binding.py` §1's rounds = 32. Measured: 3 acceptances in 400 trials, 3
+`[53]`'s rounds = 12, one run in 130, in all four ports, and 2.3e-6 at
+`stern_f_weight_binding.py` §1's rounds = 32 — and **1.5e-3 at the rounds = 16 CI actually
+ran**, because §1's new 64-round default was never reached: `main()` passed the `--quick`
+round count straight into it, and that fired in CI before TODO #337 fixed the call site. Measured: 3 acceptances in 400 trials, 3
 no-`b=0` strings, the same 3. The remedy is the one this section already prescribes — **give
 it its own round count** — which is what #234 did to `[45]` at 38.5% and what the standing
 warning about a rounds = 4 Stern-F rejection test is about; `[53]`'s forgery sub-check now

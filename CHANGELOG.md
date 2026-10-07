@@ -2,6 +2,35 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.32] - 2026-10-06
+
+### TODO #337 — `stern_f_weight_binding.py` §1 never ran at the round count TODO #310 gave it
+
+Fixes a red `analysis-findings` run on the v9.5.31 PR.  The push run on the same SHA was green.
+§1 reported `forgery accepted: True` for the off-weight Gaussian-elimination witness.  The
+verifier binds `wt(e)` only on `b = 0` rounds, so that witness survives any challenge string
+that contains no `b = 0` round, with probability `(2/3)^rounds`.  TODO #310 fixed this by giving
+§1 its own `rounds=64` default.  But `main()` called `section1(rounds)` with the shared sample
+knob (16 under `--quick`, 32 in full mode), so the default was dead code.  CI runs `--quick`, so
+the gate shipped at `(2/3)^16` = **1.5e-3**, one run in 657 and about 23x the whole job's
+advertised rate.  `main()` now calls `section1()` with no argument, through a named
+`SECTION1_ROUNDS = 64`, and the banner prints it.  Also corrected two hand-computed rates in the
+script and in `run_findings_gates.py`'s `SAMPLED_GATES` reason: `(2/3)^32` is 2.3e-6 (not
+7.4e-6) and `(2/3)^64` is 5.4e-12 (not 5.5e-11).  That second one is the same 10x slip TODO
+#319 found in `[53]`.  No shipped code, test, artifact or CLI surface changes.
+
+## [9.5.31] - 2026-10-06
+
+### TODO #336 — two sentences still called `analysis-findings` "on probation"
+
+Documentation only.  `.github/workflows/ci.yml` (the comment on `native-python`'s QC-MDPC step)
+and `CLAUDE.md` (Testing section) both justified running the two QC-MDPC findings gates in
+`native-python` as well by saying `analysis-findings` was not yet a required job.  TODO #317
+made it blocking at v9.5.6, and both files already said so elsewhere.  The duplication is kept;
+its reason is now stated as defense in depth.  Found during a full local run of every CI job
+(all green: the native, interop, cross-language, ARM/i386, Arduino, Java, KaTeX, sanitizer,
+valgrind and fuzz jobs, and all 83 findings gates).
+
 ## [9.5.30] - 2026-10-05
 
 ### TODO #257 (ninth pass, item stays OPEN) — where the optimal cycles pay, and the local-potential route closed with a control

@@ -23341,3 +23341,41 @@ unbounded shape, and the achieved count is PRINTED beside every rate.
 layer exists now, so a twelfth row is a one-method change rather than a decision.
 
 Status: **DONE v9.5.23** — bindings/java/herradurakex/Bench.java is the layer and [36] qcmdpc_kem_throughput its one row, with a control that gates the exit; the batch is derived from a warm probe, -t/-r reach the rows (0.05s -> 1.1s/1 op vs 2.0s -> 10.2s/77 ops), the warmup count is printed because the first decapsulation costs 5.7x the warm one, check_rate_format.py holds FOUR formatters, and NUMBERED_TEST_FILES reads two Java files so [36] is visible to the whole ninth axis.  Found and fixed a hole in #318's pin that Go's [54] shared: with the verdict conjunction one line above the PASS/FAIL marker, flipping `&&` to `||` left every spec/ check green.
+
+### #336: two sentences still said analysis-findings was on probation after TODO #317 made it blocking
+
+`.github/workflows/ci.yml`'s comment on the `native-python` QC-MDPC step and `CLAUDE.md`'s
+Testing section both justified running `qcmdpc_dfr_weak_keys.py` and
+`qcmdpc_parameter_selection.py` in `native-python` as well as in `analysis-findings` by saying
+the latter was "still on probation" / "not yet" required.  TODO #317 made it blocking at v9.5.6,
+and `ci.yml`'s own `analysis-findings` header and `CLAUDE.md`'s job list already said so, so the
+repo contradicted itself in two places.  Found by a full local run of every CI job, re-reading
+the documents against what had been run; `spec/check_docs_consistency.py` does not track this
+claim.
+
+The duplication itself stays.  Only its stated reason changed: it is now defense in depth, so a
+QC-MDPC regression fails the language job it touches and not only the two-hour findings job.
+No code, test, artifact or CLI surface moves.
+
+Status: **DONE v9.5.31** — the two stale "on probation" justifications were reworded to defense in depth; the step itself is unchanged.
+
+### #337: `stern_f_weight_binding.py` §1's 64-round default was never used, so CI ran it at (2/3)^16
+
+`analysis-findings` failed on the v9.5.31 PR run, and the push run on the same SHA passed.
+`stern_f_weight_binding.py` §1 reported that the shipped verifier accepted the off-weight
+forged witness.  That is TODO #310's second term: the verifier binds `wt(e)` only on `b = 0`
+rounds, so a wrong-weight witness survives a challenge string with no `b = 0` round, with
+probability `(2/3)^rounds`.  #310's remedy was to give §1 its own round count: `section1(rounds=64)`.
+`main()` still called `section1(rounds)` with the shared `--quick`/full value (16 / 32), so the
+64 was a dead default and the `SAMPLED_GATES` reason saying "Now 64" was false.  At `--quick`,
+which is what CI runs, the rate was `(2/3)^16` = 1.5e-3.
+
+Fix: a named `SECTION1_ROUNDS = 64`, called with no argument from `main()` and printed in the
+banner.  Verified: `--quick` passes with the forgery rejected.  Two hand-computed rates were also
+corrected, in the script and in the runner reason: `(2/3)^32` = 2.3e-6 (was 7.4e-6) and
+`(2/3)^64` = 5.4e-12 (was 5.5e-11).
+
+Lesson: a default argument that is supposed to stay fixed is not fixed if a caller passes a
+shared parameter into it.  #310 checked the function and not its call site.
+
+Status: **DONE v9.5.32** — §1 now signs at 64 rounds in both modes; the rate figures were corrected.

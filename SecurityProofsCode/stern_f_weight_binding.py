@@ -209,12 +209,22 @@ def _sign_retired(msg, e_int, seed, rounds):
     return (commits, chals, resps)
 
 
-def section1(rounds=64):
+SECTION1_ROUNDS = 64
+
+
+def section1(rounds=SECTION1_ROUNDS):
     # rounds = 64, not 32, and that is the SECOND half of TODO #310: the
     # verifier binds wt(e) only on b = 0 rounds, so the forgery survives
     # whenever the challenge string contains none -- (2/3)^rounds, which is
-    # 7.4e-6 at 32 and 5.5e-11 at 64.  "§1 is exact" was false at 32 too, just
-    # 200x less often than the witness-weight hole it sat beside.
+    # 2.3e-6 at 32 and 5.4e-12 at 64.  "§1 is exact" was false at 32 too.
+    #
+    # TODO #337: this default was dead code from #310 until v9.5.32, because
+    # main() passed its shared --quick/full round count (16 / 32) straight
+    # through.  CI runs --quick, so the gate shipped at (2/3)^16 = 1.5e-3 --
+    # one run in 657 -- and fired on the v9.5.31 PR run.  main() now calls
+    # section1() with NO argument: this section's round count is its own and
+    # must not follow the sample-size knob, which is #310's remedy ("give it
+    # its own round count") and the reason the constant is named.
     print("\n§1  Witness-weight binding — is wt(e) = t bound by the verifier?")
     seed, e, syn = H.stern_f_keygen()
     H_rows = H._stern_build_H(seed.uint, N, NROWS)
@@ -425,11 +435,12 @@ def main():
 
     print("=" * 74)
     print("TODO #298 — Stern-F witness binding and Stern-Ring anonymity")
-    print(f"  n = {N}, t = {T}, rounds = {rounds}, trials = {trials}")
+    print(f"  n = {N}, t = {T}, rounds = {rounds} "
+          f"(§1: {SECTION1_ROUNDS}), trials = {trials}")
     print("=" * 74)
 
     results = [
-        ("§1 witness-weight binding", section1(rounds)),
+        ("§1 witness-weight binding", section1()),
         ("§2 ring anonymity", section2(rounds=rounds, trials=trials)),
         ("§3 negative controls", section3(rounds=rounds, trials=trials)),
     ]
