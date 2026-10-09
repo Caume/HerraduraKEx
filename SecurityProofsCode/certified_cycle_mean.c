@@ -32,6 +32,16 @@
 
 #define EPS 1e-9
 #define TOL 1e-9
+/* SPFA runs on w - (mu' - POT_SHIFT), not on w - mu'.  Howard's mu' is a cycle's
+ * sum / length, and SPFA re-adds the same w - mu' one edge at a time; on n = 17,
+ * delta = 0x1f6ef (differential) the two roundings disagree by less than 1e-11 and
+ * the optimal cycle is a NEGATIVE cycle to SPFA, which then never terminates (found
+ * by TODO #257's eleventh pass, sampling uniform delta; no fixed seed before it had
+ * met one).  The shift costs the certificate POT_SHIFT: mu(G) >= mu' - POT_SHIFT -
+ * TOL instead of mu' - TOL.  RELAX_BUDGET turns a genuine negative cycle -- Howard
+ * wrong by more than the shift -- into an error rather than a hang. */
+#define POT_SHIFT 1e-9
+#define RELAX_BUDGET(E, N) (64 * ((E) + (uint64_t)(N)))
 
 static int n, axis;
 static uint32_t N, dd;
@@ -185,7 +195,8 @@ static uint8_t *inq;
 
 static void potentials(double m)
 {
-    uint64_t qh = 0, qt = 0;
+    uint64_t qh = 0, qt = 0, relax = 0, budget = RELAX_BUDGET(pused, N);
+    m -= POT_SHIFT;
     for (uint32_t v = 1; v < N; v++) { pot[v] = 0.0; inq[v] = 1; q[qt++ % N] = v; }
     while (qh != qt) {
         uint32_t u = q[qh++ % N];
@@ -197,6 +208,7 @@ static void potentials(double m)
             double nv = pu + pw8[s0 + j] - m;
             if (nv < pot[v] - 1e-12) {
                 pot[v] = nv;
+                if (++relax > budget) die("SPFA over budget: negative cycle below mu'");
                 if (!inq[v]) { inq[v] = 1; q[qt++ % N] = v; }
             }
         }

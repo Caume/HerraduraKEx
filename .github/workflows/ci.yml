@@ -949,7 +949,7 @@ jobs:
       # The ninth (live_region_certificate.py) needs both: it drives the fifth
       # pass's C solver and the seventh pass's LP.
       # The tenth (width_lift_closure.py) drives the fifth pass's C solver and
-      # needs no solver.
+      # needs no solver; so does the eleventh (coupled_width_increment.py).
       #
       # z3-solver backs three of the gates below and is NOT optional here --
       # see the note on the runner step. Everything else in this job runs on a
