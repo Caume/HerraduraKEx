@@ -361,6 +361,36 @@ two-round paths; the live region), so a bound at n = 256 needs an argument about
 rather than edge-local potentials; the cost-at-boundaries picture is what such an
 argument would have to account for.  (2') the hull share above n = 16, unchanged.
 
+**Tenth pass (v9.5.33) — two routes without a potential, both closed.**  See
+SecurityProofs-10.md §11.47 and `SecurityProofsCode/width_lift_closure.py`.  The ninth pass
+asked for an argument about CYCLES; two cycle-level routes need no certificate at all.
+
+  * **An upper bound by construction.**  The only bound that could REFUTE one of §11.42's
+    two n = 256 readings (~13, ~33).  The cheapest-edge map (best-first over the carry
+    automaton, exact against the certified solver's rows) must close a cycle, and the
+    cycle's mean bounds mu from above.  It does, soundly -- and it closes like a random
+    mapping: log2 rho grows 0.48 bits per bit over n = 14..26 (0.34 over 14..22 alone),
+    so closure at n = 256 lies past 2^80 steps.  Breadth-first exploration found no
+    cycle in 20 000 nodes at n = 32 or 64.  Where it closes it is 1.27-2.03x exact mu
+    (median 1.47), so even a closed walk could only confirm a low value.
+  * **The lift between widths.**  §11.37's "no embedding" is true of the GRAPHS, not of
+    the KEYS: stretching a run of delta by one bit is a natural map n -> n + 1 keeping the
+    boundary sequence.  Exact mu is NOT monotone along it -- it falls on 23-30% of all
+    (key, run) lifts, on both axes, at n = 13 and 16, by up to 0.25 -- and the fixed-width
+    boundary insertion (flip an interior bit) is not monotone either, though it raises mu
+    on nearly every key.
+  * **What sets the sign is the run length.**  Stretching a length-1 run adds 0.17-0.19
+    (differential) / 0.06-0.08 (linear); a run of length >= 3 moves mu by -0.012..+0.030.
+    Width without a boundary adds no cost: exact mu grows with n through delta's
+    boundary count, which is §11.46.2 stated about n.  "Stretching the lowest zero run
+    lowers mu most often" was true at n = 13 and false at n = 16, withdrawn before it
+    shipped -- it moves mu by ~0, those bits being free.
+
+**What is left**, re-stated: (1''') monotonicity of exact mu -- now necessarily a
+DISTRIBUTIONAL statement about typical keys as boundaries are added at density 1/2, since
+no pointwise chain of the two natural local operations is monotone, and no upper bound at
+n = 256 is available to test it against; (2') the hull share above n = 16, unchanged.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely

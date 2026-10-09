@@ -948,6 +948,8 @@ jobs:
       # does the eighth (hull_exact.py / hull_exact.c, which needs no solver).
       # The ninth (live_region_certificate.py) needs both: it drives the fifth
       # pass's C solver and the seventh pass's LP.
+      # The tenth (width_lift_closure.py) drives the fifth pass's C solver and
+      # needs no solver.
       #
       # z3-solver backs three of the gates below and is NOT optional here --
       # see the note on the runner step. Everything else in this job runs on a
