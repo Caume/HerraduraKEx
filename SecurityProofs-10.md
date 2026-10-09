@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.47** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential
+> - **Part 10 — §11.43–§11.48** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder
 
 ---
 
@@ -355,3 +355,66 @@ The three middle columns are the mean change in $\mu$ when a run of that kind is
 **Measured: width without boundaries adds nothing.** Exact $\mu$ grows with n through the number of boundaries in δ, about n/2 for a typical key, and not through n itself. That moves the question without answering it. What #257 owes is how $\mu$ behaves as boundaries are added at density 1/2, and §11.46.2 found that the cost per boundary falls as boundaries crowd.
 
 **Still owed.** Monotonicity of exact $\mu$ in n, now as a distributional statement about the boundary count at density 1/2; and the hull share above n = 16, unchanged from §11.45.4. No rating moves (§11.38.7).
+
+## 11.48 The coupled ladder — TODO #257, eleventh pass
+
+§11.47 left #257 owing a distributional statement: that $\mu$ rises with n for typical keys, since no pointwise chain of local operations on δ is monotone. Every earlier ladder compared that expectation across widths with independent samples of keys, and §11.42 could not tell "levelling" from "still falling" that way. This pass couples the widths instead. Reproduced by `SecurityProofsCode/coupled_width_increment.py`, which drives §11.42's certified C solver.
+
+### 11.48.1 The coupling is exact
+
+Insert one uniform bit at a uniform position (0 to n) of a uniform n-bit δ. For a fixed output and a fixed position, exactly one pair (δ, bit) produces it, so the output is uniform at width n + 1. Hence
+
+E[$\mu$ at n + 1] − E[$\mu$ at n] = E[$\mu$(inserted δ) − $\mu$(δ)]
+
+exactly, and the right side is a mean of paired differences. Two insertions step over a singular width (3 divides n, where M is not invertible). Both statements are checked exhaustively at small n rather than argued.
+
+The deployed key map, δ(B) over odd B, is injective onto a pseudo-random half of δ-space. Its run-count law is within 1% (total variation) of uniform δ's at n = 13, 14 and 16, checked exhaustively. Since §11.46.2 found that $\mu$ is paid at run boundaries, uniform δ is the right ensemble for a statement about deployed keys.
+
+### 11.48.2 Every step rises in expectation
+
+Exact $\mu$ on both sides of every pair, at every valid step from n = 4 to 17. "Increment" is per step (one or two bits), "se" is its paired standard error, and "falls" is the share of single pairs where $\mu$ went down.
+
+| step | differential increment | se | falls | linear increment | se | falls |
+|---|---|---|---|---|---|---|
+| 4 → 5 | 0.287 | 0.010 | 1% | 0.162 | 0.006 | 15% |
+| 5 → 7 | 0.443 | 0.016 | 12% | 0.182 | 0.007 | 8% |
+| 7 → 8 | 0.094 | 0.013 | 49% | 0.063 | 0.006 | 36% |
+| 8 → 10 | 0.365 | 0.015 | 16% | 0.139 | 0.007 | 19% |
+| 10 → 11 | 0.174 | 0.012 | 21% | 0.095 | 0.007 | 20% |
+| 11 → 13 | 0.190 | 0.018 | 25% | 0.111 | 0.009 | 25% |
+| 13 → 14 | 0.185 | 0.014 | 21% | 0.087 | 0.007 | 21% |
+| 14 → 16 | 0.185 | 0.017 | 23% | 0.122 | 0.008 | 11% |
+| 16 → 17 | 0.089 | 0.017 | 32% | 0.060 | 0.008 | 22% |
+
+**Expected $\mu$ rises at every step, on both axes.** The smallest lower 3σ bound on any step is +0.04, while single pairs fall on up to 49% (differential) and 36% (linear) of draws. This is the distributional monotonicity #257 owes, measured over a range of widths. It is not a proof for every n: nothing here keeps the increment away from zero as n grows.
+
+**Pairing is what makes it measurable.** The paired standard error is a median 4.2 times smaller than an unpaired comparison of the same numbers would carry. That is why §11.42's independent samples could not resolve the per-bit trend.
+
+**The mechanism survives the coupling.** An insertion that adds two boundaries raises $\mu$ more than one that adds none, at every step on both axes.
+
+### 11.48.3 Single steps are not stationary; periods of three widths are
+
+A density-1/2 argument predicts that the increment settles, because boundary density does not change with n. Single steps do not settle. Neighbouring steps disagree per bit by up to 5.9 standard errors on the differential axis (7 → 8 at 0.094 against 8 → 10 at 0.183) and 4.6 on the linear (10 → 11 at 0.095 against 11 → 13 at 0.056). So the expected $\mu$ carries a width-specific term that no run statistic sees.
+
+Summed over a period of three widths, the term cancels. A period is a one-bit step plus the two-bit step over the next singular width, which is the period of M's singularity.
+
+| period | differential | linear |
+|---|---|---|
+| 4 → 7 | 0.730 ± 0.018 | 0.344 ± 0.009 |
+| 7 → 10 | 0.459 ± 0.020 | 0.202 ± 0.009 |
+| 10 → 13 | 0.364 ± 0.022 | 0.206 ± 0.012 |
+| 13 → 16 | 0.370 ± 0.022 | 0.209 ± 0.011 |
+
+From n = 10 on, both series are flat within their errors, at 0.122 and 0.069 per bit. That is within 5% of §11.42's levelled per-bit medians (0.128 and 0.067), reached by an independent method. The next period, 16 → 19, is in `--full` only. There the differential axis gives 0.089 + 0.257 = 0.346 ± 0.034, also within errors.
+
+### 11.48.4 What this changes
+
+**Measured: monotonicity in expectation.** The obligation §11.47 re-stated holds at every step from n = 4 to 17, on both axes, by an exact coupling. It holds in expectation and not pointwise.
+
+**Measured: a flat per-period rate.** The per-period increment is flat from n = 10 to 16. So E[$\mu$] has no measured curvature over that range once its period-three term is removed.
+
+**Not decided: §11.42's two readings.** A power law with §11.42's exponents (0.63 and 0.84) predicts the last period at 0.92 and 0.96 times the one before. A levelled rate predicts 1.00. The measured ratios, 1.02 ± 0.09 and 1.01 ± 0.08, sit 1.2 and 0.6 standard errors from the power law and 0.2 from a levelled rate. Carried flat, the series reads about 32 and 18 at n = 256, which is a reading and not a bound. Deciding between the readings needs more periods, and each costs exact $\mu$ at the next widths for every pair.
+
+**Fixed on the way: a hang in the certified solver.** SPFA in `certified_cycle_mean.c`, and in its Python twin, ran on w − $\mu'$, where Howard's $\mu'$ is a cycle's sum divided by its length. At n = 17, δ = 0x1f6ef the two roundings disagree by less than 1e-11. The optimal cycle is then a negative cycle to SPFA, which never terminates. Every fixed seed before this pass missed such a key; uniform sampling met one. Both solvers now run SPFA at $\mu'$ − 1e-9 and certify $\mu$ to within 2e-9. A relaxation budget turns a genuine negative cycle into an error instead of a hang. All five earlier gates that use the solver reproduce unchanged.
+
+**Still owed.** A reason the per-period increment stays bounded away from zero, or enough further periods to separate §11.42's readings; and the hull share above n = 16, unchanged from §11.45.4. No rating moves (§11.38.7).

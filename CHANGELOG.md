@@ -2,6 +2,63 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.34] - 2026-10-09
+
+### TODO #257 (eleventh pass, item stays OPEN) — the coupled ladder
+
+The tenth pass re-stated #257's open obligation as a DISTRIBUTIONAL one -- that exact mu
+rises with n for typical keys -- because no pointwise chain of local operations on delta
+is monotone.  Every earlier ladder compared that expectation across widths with
+INDEPENDENT key samples.  This pass couples the widths.  See SecurityProofs-10.md §11.48
+and `SecurityProofsCode/coupled_width_increment.py` (findings gate #85).
+
+**The findings.**
+
+- **The coupling is exact.**  A uniform bit inserted at a uniform position of a uniform
+  delta is uniform one width up -- checked exhaustively at small n, not argued -- so
+  E[mu_{n+1}] - E[mu_n] is a mean of PAIRED differences, and two insertions step over a
+  singular width.  Deployed keys (delta over odd B) are a pseudo-random half of
+  delta-space, injective, with a run-count law within 1% (total variation) of uniform
+  delta's at n = 13, 14, 16, exhaustively.
+- **E[mu] rises at every step from n = 4 to 17, on both axes**, nine steps each, the
+  smallest lower 3-sigma bound on any step +0.04 -- while single pairs fall on up to 49%
+  (differential) / 36% (linear) of draws.  Monotone in expectation, not pointwise.
+- **Pairing is what made it measurable**: the paired standard error is a median 4.2x
+  smaller than an unpaired comparison of the same numbers, which is why the fifth pass
+  could not tell "levelling" from "still falling".
+- **Single steps are not stationary; periods of three widths are.**  Neighbouring steps
+  disagree per bit by up to 5.9 / 4.6 standard errors -- a width-specific term with the
+  period of M's singularity -- and it cancels over a period: 0.364 / 0.370 (differential)
+  and 0.206 / 0.209 (linear) over n = 10 -> 13 -> 16, i.e. 0.122 / 0.069 per bit, within
+  5% of the fifth pass's levelled per-bit medians (0.128 / 0.067) by an independent
+  method.  `--full`'s 16 -> 19 period (differential 0.346 +- 0.034) agrees.
+- **It does not decide §11.42's two n = 256 readings.**  A power law with the fifth
+  pass's exponents predicts the last period at 0.92x / 0.96x the one before; measured
+  1.02 +- 0.09 / 1.01 +- 0.08, 1.2 and 0.6 standard errors away.  Carried flat, the series
+  reads ~32 / ~18 at n = 256 -- a reading, not a bound.
+- **The mechanism survives the coupling**: an insertion adding two boundaries raises mu
+  more than one adding none, at every step on both axes.
+
+**A hang fixed in the certified solver, found by sampling.**  SPFA in
+`certified_cycle_mean.c` and its Python twin `certified_cycle_ladder.py` ran on
+w - mu', with Howard's mu' a cycle's sum / length.  On n = 17, delta = 0x1f6ef
+(differential) the two roundings disagree by less than 1e-11, the optimal cycle is a
+NEGATIVE cycle to SPFA, and the solver never terminated -- the eleventh pass's first run
+sat 19 minutes on one call that should take 3 s.  Every fixed seed in five earlier gates
+had missed such a key; uniform sampling met one.  Both solvers now run SPFA at
+mu' - 1e-9 (the certificate gives mu exact to 2e-9 instead of 1e-9) with a relaxation
+budget that turns a genuine negative cycle -- Howard wrong by more than the shift -- into
+an error rather than a hang.  `certified_cycle_ladder.py`, `exact_slope_ladder.py`,
+`width_lift_closure.py`, `live_region_certificate.py` and
+`local_potential_certificate.py` all reproduce unchanged.
+
+**What is left**: a reason the per-period increment stays bounded away from zero, or
+enough further periods to separate §11.42's readings; and the hull share above n = 16.
+No rating moves.
+
+**Bookkeeping.**  Findings gates 84 -> 85 (CLAUDE.md, check E).  Part 10 grows to
+§11.43–§11.48, 89 math expressions; every copy of the part index updated.
+
 ## [9.5.33] - 2026-10-07
 
 ### TODO #257 (tenth pass, item stays OPEN) — two routes without a potential, both closed

@@ -391,6 +391,39 @@ DISTRIBUTIONAL statement about typical keys as boundaries are added at density 1
 no pointwise chain of the two natural local operations is monotone, and no upper bound at
 n = 256 is available to test it against; (2') the hull share above n = 16, unchanged.
 
+**Eleventh pass (v9.5.34) — the coupled ladder.**  See SecurityProofs-10.md §11.48 and
+`SecurityProofsCode/coupled_width_increment.py`.  The tenth pass re-stated (1''') as a
+DISTRIBUTIONAL statement; this pass measures it with an exact coupling instead of
+independent samples.
+
+  * **The coupling is exact.**  A uniform bit inserted at a uniform position of a uniform
+    delta is uniform one width up (checked exhaustively), so E[mu_{n+1}] - E[mu_n] is a
+    mean of PAIRED differences.  Pairing cuts the standard error a median 4.2x against
+    an unpaired comparison of the same numbers.  Deployed keys (delta over odd B) are a
+    pseudo-random half of delta-space whose run-count law is within 1% of uniform's.
+  * **E[mu] rises at every step from n = 4 to 17, on both axes** (smallest lower 3-sigma
+    bound +0.04), while single pairs fall on up to 49% / 36% of draws.  Monotone in
+    expectation, not pointwise -- the tenth pass's finding from the other side.
+  * **Single steps are not stationary; periods of three widths are.**  Neighbouring
+    steps disagree by up to 5.9 / 4.6 standard errors (a period-3 term: M's singular
+    widths), but summed over a period the increment is FLAT from n = 10 to 16 --
+    0.364 / 0.370 differential, 0.206 / 0.209 linear, i.e. 0.122 / 0.069 per bit, within
+    5% of the fifth pass's levelled per-bit medians by an independent method.
+  * **It does not decide §11.42's two n = 256 readings.**  A power law predicts the last
+    period at 0.92x / 0.96x the one before; measured 1.02 +- 0.09 / 1.01 +- 0.08 (1.2 / 0.6 sigma).  Carried
+    flat the series reads ~32 / ~18 at n = 256 -- a reading, not a bound.
+  * **A hang fixed in the certified solver.**  SPFA ran on w - mu' with Howard's mu'
+    rounded as a cycle's sum / length; on n = 17, delta = 0x1f6ef the two roundings
+    disagree by < 1e-11, the optimal cycle is a negative cycle to SPFA, and it never
+    terminated.  No fixed seed had met such a key; uniform sampling did.  Both solvers
+    (C and Python) now run SPFA at mu' - 1e-9 with a relaxation budget; the five earlier
+    gates that use them reproduce unchanged.
+
+**What is left**, narrowed: (1''') monotonicity of E[mu] is now MEASURED at every step to
+n = 17; what is owed is either a reason the per-period increment stays bounded away from
+zero, or enough further periods to separate §11.42's readings (each costs exact mu at
+n = 19-20+ per pair); (2') the hull share above n = 16, unchanged.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely

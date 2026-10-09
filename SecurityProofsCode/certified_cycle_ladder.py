@@ -200,9 +200,21 @@ def diff_row(n, d, a, W, Ma):
 # ═══════════════════════════════════════════════════════════════════════════
 # The certified solver
 # ═══════════════════════════════════════════════════════════════════════════
+POT_SHIFT = 1e-9
+
+
 def potentials(BS, WS, m):
-    """Shortest paths of w - m from a zero-weight virtual source (SPFA)."""
+    """Shortest paths of w - (m - POT_SHIFT) from a zero-weight virtual source (SPFA).
+
+    The shift, and the relaxation budget, are certified_cycle_mean.c's: Howard's m is
+    a cycle's sum / length and SPFA re-adds w - m edge by edge, and where the two
+    roundings disagree the optimal cycle is a negative cycle to SPFA, which then never
+    terminates (TODO #257, eleventh pass: n = 17, delta = 0x1f6ef).  The certificate
+    then gives mu(G) >= m - POT_SHIFT - TOL."""
     N = len(BS)
+    m -= POT_SHIFT
+    budget = 64 * (sum(map(len, BS)) + N)
+    relax = 0
     p = array('d', [0.0]) * N
     inq = bytearray(N)
     dq = deque(range(1, N))
@@ -218,6 +230,9 @@ def potentials(BS, WS, m):
             nv = pu + ws[j] - m
             if nv < p[v] - 1e-12:
                 p[v] = nv
+                relax += 1
+                if relax > budget:
+                    raise RuntimeError("SPFA over budget: negative cycle below m")
                 if not inq[v]:
                     inq[v] = 1
                     dq.append(v)
