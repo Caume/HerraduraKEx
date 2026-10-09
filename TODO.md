@@ -424,6 +424,37 @@ n = 17; what is owed is either a reason the per-period increment stays bounded a
 zero, or enough further periods to separate §11.42's readings (each costs exact mu at
 n = 19-20+ per pair); (2') the hull share above n = 16, unchanged.
 
+**Twelfth pass (v9.5.35) — the period exponent, and two eleventh-pass claims withdrawn.**
+See SecurityProofs-10.md §11.49 and `SecurityProofsCode/period_exponent.py`.
+
+  * **The eleventh pass's errors were understated.**  It drew several insertions per
+    base delta and divided by sqrt(pairs); the insertions share mu(delta), so clustered
+    by key every error is 1.4-1.6x larger.  `coupled_width_increment.py` is corrected
+    and prints both.  Monotonicity survives (every step still rises at 3 sigma; the
+    weakest, differential 16 -> 17, by +0.009); its linear "single steps are not
+    stationary" does not (~3 sigma clustered, and an independent 3000-pair run per step
+    resolves no such term) and is WITHDRAWN.
+  * **A better estimator.**  The coupling is exact for any k, so a whole PERIOD is one
+    three-bit insertion -- one solver call, checked exhaustively -- and the change in
+    run count is a control variate with an EXACT mean (k/2, corrected for the two
+    excluded degenerate deltas, checked against brute force).
+  * **The per-period increment FALLS on both axes.**  ~8000 pairs per period on
+    independent seeds: P = 0.451 / 0.382 / 0.362 (differential) and 0.227 / 0.207 /
+    0.199 (linear) at n = 7 / 10 / 13.  Local exponent over 10 -> 13: -0.23 +- 0.06
+    and -0.18 +- 0.05, 4.0 and 3.5 sigma below a levelled rate (the gate's smaller
+    sample: 5.3 and 1.9 sigma, so it scores the differential one).  The eleventh pass's
+    "flat from n = 10" -- and the ~32 / ~18 it read for n = 256 -- are WITHDRAWN.
+  * **Neither of §11.42's readings describes it.**  The levelled one (~33 / ~17) loses
+    its premise; the power law (~13 / ~11) is not confirmed, because the differential
+    exponent drifts from -0.55 to -0.23 across two adjacent intervals (~3.6 sigma, the
+    shared P(10) included; the replication's, not resolved at the gate's seeds), so
+    the decline is itself slowing.  The n = 256 value sits between them.
+
+**What is left**, narrowed again: (1''') a reason the per-period increment stays
+bounded away from zero as it declines -- monotonicity is measured at every step to
+n = 17 and the decline is slowing, but nothing bounds it; (2') the hull share above
+n = 16, unchanged.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely

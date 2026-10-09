@@ -2,6 +2,60 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.35] - 2026-10-09
+
+### TODO #257 (twelfth pass, item stays OPEN) — the period exponent, and two of the eleventh pass's claims withdrawn
+
+The eleventh pass read the per-period increment of E[mu] as "flat from n = 10" and found
+it agreeing with §11.42's levelled n = 256 reading.  Both halves were wrong, for one
+cause it shared with every error in that pass.  See SecurityProofs-10.md §11.49 and
+`SecurityProofsCode/period_exponent.py` (findings gate #86).
+
+**The correction.**  `coupled_width_increment.py` drew m insertions per base delta and
+divided by sqrt(pairs).  The insertions share mu(delta), so they are not independent:
+clustered by key every error is 1.4-1.6x larger.  The script now clusters and prints
+the naive figure beside it.  What survives: E[mu] rises at every step from n = 4 to 17
+on both axes at 3 sigma (the weakest step, differential 16 -> 17, clears zero by
++0.009).  What does not:
+
+- **"Single steps are not stationary" on the LINEAR axis** -- ~3 sigma clustered, and an
+  independent 3000-pair run per step resolves no width term there.  Withdrawn; the
+  differential claim stands (~4 sigma, and 6.6 sigma in an independent 3000-pair run).
+- **"Flat from n = 10" per period, on both axes**, and the ~32 / ~18 it read for n = 256.
+  Withdrawn, by the measurement below.
+
+SecurityProofs-10.md §11.48 is corrected in place, with each withdrawn sentence marked.
+
+**The findings.**
+
+- **A whole period is one paired draw.**  The coupling is exact for any number of
+  inserted bits, so three uniform insertions take a uniform delta at n to a uniform delta
+  at n + 3 (checked exhaustively): one solver call per pair and no error from adding two
+  separately estimated steps.  No valid delta has a degenerate output, also exhaustive.
+- **A control variate with an exact mean**: the change in run count, whose mean is k/2
+  over all strings, corrected for the two excluded degenerate deltas and checked against
+  brute force.  It cuts the error 10-20%.
+- **The per-period increment FALLS on both axes.**  With ~8000 pairs per period on
+  independent seeds, P = 0.451 / 0.382 / 0.362 (differential) and 0.227 / 0.207 / 0.199
+  (linear) at n = 7 / 10 / 13.  The local exponent over 10 -> 13 is -0.23 +- 0.06 and
+  -0.18 +- 0.05, 4.0 and 3.5 standard errors below a levelled rate.  The gate's own
+  smaller sample gives 5.3 and 1.9 sigma, so it SCORES the differential rejection and
+  prints the linear one: a check that passes on one sample and fails on the other is
+  #299's defect.
+- **Neither of §11.42's two n = 256 readings describes it.**  The levelled one (~33 /
+  ~17) loses its premise.  The power law (~13 / ~11) is not confirmed: the differential
+  exponent drifts from -0.55 to -0.23 across two adjacent intervals (~3.6 sigma with the
+  shared P(10) accounted for; the gate's seeds do not resolve it), so the
+  decline is itself slowing and no fixed exponent fits.  The gate scores the levelled
+  rejection and prints the power-law distance without scoring it.
+
+**What is left**: a reason the per-period increment stays bounded away from zero as it
+declines; and the hull share above n = 16.  Nothing here threatens the 4/3 and 2/3
+criteria -- the lower reading is still ~10x them.  No rating moves.
+
+**Bookkeeping.**  Findings gates 85 -> 86 (CLAUDE.md, check E).  Part 10 grows to
+§11.43–§11.49, 90 math expressions; every copy of the part index updated.
+
 ## [9.5.34] - 2026-10-09
 
 ### TODO #257 (eleventh pass, item stays OPEN) — the coupled ladder
