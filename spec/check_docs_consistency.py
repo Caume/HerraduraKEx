@@ -511,32 +511,31 @@ CURRENCY_EXEMPT = [
 ]
 
 
-# ── E.  CLAUDE.md's tool-emitted counts (TODO #287) ────────────────────────
+# ── E.  tool-emitted coverage counts (TODO #287) ──────────────────────────
 #
-# CLAUDE.md describes what each checker COVERS, in prose, with numbers the
-# checkers themselves print: "196 entries, four cells each", "79 rows".  Two of
-# those were stale at the time TODO #287 ran -- the manifest had grown to 198
-# and the parameter table to 83 -- and nothing compared them, so the file that
-# configures every future session understated the coverage it was describing.
+# The checkers print numbers about their own coverage ("202 entries, four cells
+# each", "85 rows").  Those numbers used to be quoted by hand in CLAUDE.md, where
+# two were stale when TODO #287 ran.  They now live in one table,
+# spec/COVERAGE_COUNTS.md, so CLAUDE.md can stay a short working guide.
 #
-# Held to the TOOL, not re-counted here: each entry names a command, a regex
-# over that command's output, and a regex over CLAUDE.md.  If the tool's wording
-# changes, the entry fails as "cannot read" rather than passing vacuously.
+# Held to the TOOL, not re-counted here: each entry names a command and a regex
+# over that command's output, and the document row is found by its label.  If
+# the tool's wording changes, the entry fails as "cannot read" rather than
+# passing vacuously; a row with no entry, or an entry with no row, also fails.
 
-CLAUDE_MD = _p("CLAUDE.md")
+COUNTS_MD = _p("spec", "COVERAGE_COUNTS.md")
+_COUNT_ROW_RE = re.compile(r"^\|\s*([^|]+?)\s*\|\s*([\d.]+(?:e-\d+)?)\s*\|", re.M)
 
-# (label, argv, regex over tool output, regex over CLAUDE.md, why)
+# (label, argv, regex over tool output, why)
 DOC_COUNTS = [
     ("suite-internal primitive manifest",
      ["python3", _p("spec", "check_language_parity.py")],
      r"(\d+) suite-internal primitive",
-     r"primitives -- (\d+) entries, four cells each",
-     "check_language_parity.py's manifest size, quoted in CLAUDE.md's spec/ entry"),
+     "check_language_parity.py's manifest size"),
     ("PARAMETERS table",
      ["python3", _p("spec", "check_language_parity.py")],
      r"parity — (\d+) rows over",
-     r"parameter's VALUE: (\d+) rows, four cells each",
-     "the TODO #278 parameter-value table's size, quoted in the same entry"),
+     "the TODO #278 parameter-value table's size"),
     # TODO #289. The runner DISCOVERS its set, so this number moves whenever a
     # script gains or loses a findings gate -- which is exactly the kind of
     # number a hand count in CLAUDE.md gets wrong quietly. --list does not run
@@ -544,8 +543,7 @@ DOC_COUNTS = [
     ("findings-gating analysis scripts",
      ["python3", _p("SecurityProofsCode", "run_findings_gates.py"), "--list"],
      r"findings gates: (\d+) discovered",
-     r"(\d+)\s*\n?findings-gating scripts in `SecurityProofsCode/`",
-     "run_findings_gates.py's discovered set, quoted in CLAUDE.md's Testing section"),
+     "run_findings_gates.py's discovered set"),
     # TODO #300.  The census classifies every gating script that draws FRESH
     # entropy, and that population moves whenever a script starts or stops
     # sampling -- another number a hand count gets wrong quietly.  Same --list
@@ -553,8 +551,7 @@ DOC_COUNTS = [
     ("fresh-sampling findings gates",
      ["python3", _p("SecurityProofsCode", "run_findings_gates.py"), "--list"],
      r"fresh-sampling gates: (\d+) of \d+ classified",
-     r"\*\*(\d+) of the \d+\*\* decide a verdict from a\s+fresh random sample",
-     "the TODO #300 sampling census, quoted in CLAUDE.md's Testing section"),
+     "the TODO #300 sampling census"),
     # TODO #304.  The job's nominal false-failure rate is the number #289's
     # whole premise rests on, it is printed by the runner, and CLAUDE.md quoted
     # it by hand -- so nothing compared them, which is the same reporting gap
@@ -563,8 +560,7 @@ DOC_COUNTS = [
     ("nominal job false-failure rate",
      ["python3", _p("SecurityProofsCode", "run_findings_gates.py"), "--list"],
      r"false-failure rate of the whole job: ([\d.]+e-\d+) per run",
-     r"is the rate of the whole job: \*\*([\d.]+e-\d+) per run\*\*",
-     "run_findings_gates.py's flake budget, quoted in CLAUDE.md's Testing section"),
+     "run_findings_gates.py's flake budget"),
     # TODO #319.  The numbered tests' own flake budget, which #316 published and
     # CLAUDE.md quoted by hand -- the same gap #304 closed one layer up for the
     # findings gates, and it matters more now that the number is DERIVED from
@@ -574,8 +570,7 @@ DOC_COUNTS = [
     ("numbered-test flake budget",
      ["python3", _p("spec", "check_language_parity.py")],
      r"Summed false-failure rate ([\d.]+e-\d+) per run",
-     r"printing ([\d.]+e-\d+) against a\s+true rate",
-     "check_language_parity.py's sampled-test budget, quoted in CLAUDE.md's Testing section"),
+     "check_language_parity.py's sampled-test budget"),
     # And how many of those rates are evaluated rather than asserted, which is
     # the number that says whether the axis is doing anything.  A rate reverted
     # to a literal already fails the table's own cross-invalidation; this holds
@@ -583,8 +578,7 @@ DOC_COUNTS = [
     ("rates evaluated from source",
      ["python3", _p("spec", "check_language_parity.py")],
      r"which (\d+) are EVALUATED FROM SOURCE",
-     r"\*\*(\d+) of the \d+ rated rows are evaluated from source every run\*\*",
-     "check_language_parity.py's derived-rate table, quoted in CLAUDE.md's Testing section"),
+     "check_language_parity.py's derived-rate table"),
     # TODO #320.  And how many of those DERIVED rates are held to a measured
     # mechanism, which is the number that says whether the formulas were ever
     # checked against the code rather than only against their inputs.  #304's
@@ -594,8 +588,7 @@ DOC_COUNTS = [
     ("rate mechanisms measured",
      ["python3", _p("spec", "check_language_parity.py")],
      r"with (\d+) of those held to a MEASURED mechanism",
-     r"\*\*(\d+) of the \d+ derived rows carry a MEASURED mechanism\*\*",
-     "check_language_parity.py's _RATE_MECHANISMS, quoted in CLAUDE.md's Testing section"),
+     "check_language_parity.py's _RATE_MECHANISMS"),
     # TODO #321.  And how many of the rows with NO formula carry measured
     # evidence, which is the number that says whether the ARGUED half was ever
     # checked against the code at all.  It is a row for #304's reason twice over:
@@ -605,9 +598,7 @@ DOC_COUNTS = [
     ("argued rows with measured evidence",
      ["python3", _p("spec", "check_language_parity.py")],
      r"(\d+) argued rows carry measured evidence",
-     r"\*\*(\d+) argued rows carry measured evidence\*\*",
-     "check_language_parity.py's _ARGUED_MEASUREMENTS, quoted in CLAUDE.md's "
-     "Testing section"),
+     "check_language_parity.py's _ARGUED_MEASUREMENTS"),
     # TODO #322.  The count of cells whose rejection now states a basis is the
     # size of the category the DERIVED DEFAULT was carrying, so a cell dropping
     # out of the screen -- or a basis quietly deleted -- moves nothing anyone
@@ -615,20 +606,16 @@ DOC_COUNTS = [
     ("rejection cells with a stated basis",
      ["python3", _p("spec", "check_language_parity.py")],
      r"(\d+) uncurated sampled cell\(s\) assert that something must be REFUSED",
-     r"\*\*(\d+) cells\*\* assert a rejection",
-     "check_language_parity.py's _REJECTION_BASES, quoted in CLAUDE.md's "
-     "Testing section"),
+     "check_language_parity.py's _REJECTION_BASES"),
     # TODO #323.  The number of GATED harnesses the ninth axis reads.  It sat
     # at four for seven items with nothing saying so, which is the whole defect
     # -- so the count is held to the tool rather than to a sentence, and
-    # dropping a harness from the corpus now moves a number CLAUDE.md is
+    # dropping a harness from the corpus now moves a number spec/COVERAGE_COUNTS.md is
     # checked against.
     ("gated harnesses the sampled-test axis reads",
      ["python3", _p("spec", "check_language_parity.py")],
      r"this axis reads (\d+) more gated harness\(es\)",
-     r"\*\*(\d+) more gated harnesses\*\*",
-     "check_language_parity.py's _REDUCED_HARNESSES, quoted in CLAUDE.md's "
-     "Testing section"),
+     "check_language_parity.py's _REDUCED_HARNESSES"),
     # TODO #303.  The replay tables' sizes are the count of what the four ports
     # are actually held against each other on, and CLAUDE.md wrote both out by
     # hand -- "four samplers", "five whole OPERATIONS" -- so adding a row left
@@ -637,13 +624,11 @@ DOC_COUNTS = [
     ("pinned leaf samplers",
      ["python3", _p("spec", "check_language_parity.py")],
      r"(\d+) sampler\(s\) pinned against a fixed stream",
-     r"KAT/sampler_replay.json\s+is the harness kept: (\d+) leaf",
-     "check_language_parity.py's sampler-replay table, quoted in CLAUDE.md's spec/ entry"),
+     "check_language_parity.py's sampler-replay table"),
     ("pinned whole operations",
      ["python3", _p("spec", "check_language_parity.py")],
      r"and (\d+) whole operation\(s\)",
-     r"KAT/operation_replay.json pins (\d+)\s+whole randomised OPERATIONS",
-     "check_language_parity.py's operation-replay table, quoted in the same entry"),
+     "check_language_parity.py's operation-replay table"),
     # TODO #305.  The one of the three counts that erodes in the DANGEROUS
     # direction: `owed` is work the coverage census refused to let a prose
     # reason absorb, so a number that quietly grows -- or quietly shrinks
@@ -652,8 +637,7 @@ DOC_COUNTS = [
     ("replay pins still owed",
      ["python3", _p("spec", "check_language_parity.py")],
      r"and (\d+) still OWED a pin",
-     r"(\d+) consumers are still OWED a pin",
-     "check_language_parity.py's REPLAY_COVERAGE table, quoted in CLAUDE.md's Testing section"),
+     "check_language_parity.py's REPLAY_COVERAGE table"),
     # TODO #306.  The number that measures the corpus, not the coverage: how
     # many raw-entropy draws sit in the four CLIs, on the far side of the
     # boundary the randomness census used to stop at.  Held to the tool for
@@ -663,16 +647,23 @@ DOC_COUNTS = [
     ("CLI raw-entropy sites",
      ["python3", _p("spec", "check_language_parity.py")],
      r"raw-entropy site\(s\) in the four CLIs, (\d+) in\s+all",
-     r"(\d+) raw-entropy draws sit in the four CLIs",
-     "check_language_parity.py's CLI_DRAW_COVERAGE table, quoted in CLAUDE.md's Testing section"),
+     "check_language_parity.py's CLI_DRAW_COVERAGE table"),
 ]
 
 
 def check_doc_counts():
     import subprocess
-    text = read(CLAUDE_MD)
+    if not os.path.exists(COUNTS_MD):
+        fail("E", "spec/COVERAGE_COUNTS.md is missing")
+        return
+    rows = {m.group(1): m.group(2) for m in _COUNT_ROW_RE.finditer(read(COUNTS_MD))}
+    rows.pop("count", None)
+    labels = {entry[0] for entry in DOC_COUNTS}
+    for orphan in sorted(set(rows) - labels):
+        fail("E", "spec/COVERAGE_COUNTS.md has a row '%s' that no DOC_COUNTS "
+                  "entry checks -- add the entry or delete the row." % orphan)
     cache = {}
-    for label, argv, out_re, doc_re, why in DOC_COUNTS:
+    for label, argv, out_re, why in DOC_COUNTS:
         key = tuple(argv)
         if key not in cache:
             try:
@@ -686,22 +677,21 @@ def check_doc_counts():
             fail("E", "CANNOT READ the count for %s -- /%s/ does not match the "
                       "output of %s any more.  The tool's wording changed; "
                       "re-point this entry rather than deleting it, or the "
-                      "claim in CLAUDE.md goes unchecked again."
+                      "published count goes unchecked again."
                       % (label, out_re, os.path.basename(argv[-1])))
             continue
-        claimed = re.search(doc_re, text)
-        if not claimed:
-            fail("E", "ANCHOR LOST -- CLAUDE.md: /%s/ no longer matches (%s)."
-                      % (doc_re, why))
+        if label not in rows:
+            fail("E", "ROW MISSING -- spec/COVERAGE_COUNTS.md has no '%s' row (%s)."
+                      % (label, why))
             continue
-        # float() rather than int(): TODO #304 added a RATE to this table, and
-        # every count already here parses identically as a float.
-        if float(claimed.group(1)) != float(got.group(1)):
-            fail("E", "CLAUDE.md says %s for the %s where %s reports %s (%s)."
-                      % (claimed.group(1), label, os.path.basename(argv[-1]),
+        # float() rather than int(): TODO #304 added a RATE to this table.
+        if float(rows[label]) != float(got.group(1)):
+            fail("E", "spec/COVERAGE_COUNTS.md says %s for the %s where %s "
+                      "reports %s (%s)."
+                      % (rows[label], label, os.path.basename(argv[-1]),
                          got.group(1), why))
-    print("  E: %d tool-emitted number(s) in CLAUDE.md checked against the tool"
-          % len(DOC_COUNTS))
+    print("  E: %d tool-emitted number(s) in spec/COVERAGE_COUNTS.md checked "
+          "against the tool" % len(DOC_COUNTS))
 
 
 def check_currency_claims(consts):
@@ -1076,7 +1066,7 @@ def main():
         "B''": "currency claims in SecurityProofsCode/ vs. herradura.h",
         "C": "protocol coverage (spec/ vs. README / INTRODUCTION)",
         "D": "claims (corrected statements kept, superseded ones gone)",
-        "E": "CLAUDE.md's tool-emitted coverage counts vs. the tools",
+        "E": "spec/COVERAGE_COUNTS.md vs. the tools that emit the counts",
     }
     for key in ("A", "B", "B''", "C", "D", "E"):
         hits = [m for k, m in FAILURES if k == key]

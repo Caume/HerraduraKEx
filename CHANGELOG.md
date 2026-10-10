@@ -2,6 +2,31 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.36] - 2026-10-09
+
+### CLAUDE.md slimmed to a working guide; check E's counts moved to `spec/COVERAGE_COUNTS.md`
+
+`CLAUDE.md` had grown to ~4,900 lines (~416 KB) and loads into every Claude Code
+session.  About 90% was history this file's own policy says belongs here: per-file
+essays in Repository Structure and ~45 TODO retrospectives (#289–#336) in Testing.  It
+is now ~430 lines: one line per directory or file, the standing test-writing rules
+distilled from those retrospectives with their TODO numbers, the CI job list, and the
+unchanged policy, dependency, build, architecture and KaTeX sections.  Nothing is lost;
+the retrospectives are in this file and `TODO_DONE.md` under their item numbers.
+
+Stale statements corrected along the way: the CLI section said "three parallel
+implementations" (Java's is the fourth), the SecurityProofsCode section said the scripts
+need no third-party packages (some gates require z3-solver / highspy), and CI runs
+thirteen jobs, not twelve (`docker` was added by TODO #326).
+
+**Check E moved.**  `spec/check_docs_consistency.py` check E used to hold ~15 sentences
+scattered through `CLAUDE.md` against the tools that print them, so those sentences
+could not be shortened.  The counts now live in one table, `spec/COVERAGE_COUNTS.md`,
+looked up by label instead of by a per-row regex.  The table is exhaustive in both
+directions: a wrong value, a missing row and an orphan row each fail (all three
+controls verified to fire).  `check_part_index.py` and `check_docker_mirror.py` still
+read `CLAUDE.md` and still pass.
+
 ## [9.5.35] - 2026-10-09
 
 ### TODO #257 (twelfth pass, item stays OPEN) — the period exponent, and two of the eleventh pass's claims withdrawn
