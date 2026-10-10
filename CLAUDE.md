@@ -966,14 +966,15 @@ SecurityProofsCode/                                 — standalone Python proof/
                              standard error ~4x against the independent ladders every
                              earlier pass used.  FINDINGS: E[mu] rises at EVERY step from
                              n = 4 to 17 on both axes while single pairs fall on up to
-                             half of all draws; single steps are NOT stationary (a period-3
-                             term, M's singular widths), but summed over a period of three
-                             widths the increment is FLAT from n = 10 to 16 (0.122 /
-                             0.069 per bit, within 5% of the fifth pass's levelled
-                             medians).  It does NOT choose between §11.42's two n = 256
-                             readings: the last period ratio is ~1 sigma from the power
-                             law.  The flatness check is unscored in --quick (one period
-                             only).  ALSO FIXED A HANG in the solver it drives: SPFA in
+                             half of all draws; single steps are NOT stationary on the
+                             differential axis (a period-3 term, M's singular widths).
+                             TWO CLAIMS OF ITS FIRST RELEASE ARE WITHDRAWN by
+                             period_exponent.py: "flat from n = 10" per period (with
+                             the ~32 / ~18 it read for n = 256) and the linear
+                             non-stationarity -- both rested on errors that ignored the
+                             clustering of insertions by key, now corrected (1.4-1.6x
+                             larger; the weakest step, differential 16 -> 17, clears 0 at
+                             3 sigma by +0.009).  ALSO FIXED A HANG in the solver it drives: SPFA in
                              certified_cycle_mean.c and certified_cycle_ladder.py ran on
                              w - mu' with Howard's mu' rounded as sum / length, so on
                              n = 17, delta = 0x1f6ef the optimal cycle was a NEGATIVE cycle
@@ -981,6 +982,26 @@ SecurityProofsCode/                                 — standalone Python proof/
                              before had missed such a key.  Both run SPFA at mu' - 1e-9
                              now, with a relaxation budget that turns a real negative
                              cycle into an error.  Needs a C compiler (absent means FAIL)
+  period_exponent.py       — TODO #257's twelfth pass (v9.5.35): the per-period increment
+                             of E[mu] RESOLVED, and the eleventh pass's "flat from n = 10"
+                             WITHDRAWN.  Two corrections: errors CLUSTERED BY KEY (the m
+                             insertions into one delta share mu(delta)), and one THREE-BIT
+                             insertion per pair, since the coupling is exact for any k --
+                             a whole period is one paired draw, checked exhaustively -- plus
+                             a CONTROL VARIATE (change in run count) whose mean is EXACT,
+                             the two excluded degenerate deltas corrected for and checked
+                             against brute force.  FINDINGS: P(n) = E[mu_{n+3}] - E[mu_n]
+                             FALLS on both axes, the 10 -> 13 local exponent 3.5-4 sigma
+                             below a levelled rate in a ~8000-pair replication (~-0.23
+                             differential, ~-0.18 linear; only the differential one is
+                             SCORED, the gate's own sample putting linear at 1.9 sigma),
+                             so §11.42's higher n = 256 reading (~33 / ~17) loses its
+                             premise -- and the power law is NOT confirmed either: the
+                             differential exponent drifts from -0.55 to -0.23 across two
+                             adjacent intervals, so the decline is slowing.  The scored
+                             check is the levelled rejection; the power-law distance is
+                             printed, not scored.  Drives exact_slope_ladder.py's C solver
+                             (no compiler means FAIL)
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -1344,7 +1365,7 @@ SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (13
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
 SecurityProofs-9.md                                 — §11.37–§11.42: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item · the quenched check, where exact mu to n = 17 crosses below the model · the certified ladder, exact mu to n = 20 on both axes, where the ratio keeps falling · the exact slope with 32-96 keys per width, not flat but still growing to n = 23 (726 math expressions)
-SecurityProofs-10.md                                — §11.43–§11.48: the local certificate, a sound lower bound on mu at any width whose window must grow with n · the certificate SOLVED at n = 256, positive (0.54-0.90) and below 4/3 · the linear hull MEASURED exactly to n = 16, a share of the trail weight (0.91 -> 0.82 linear) that falls slowly with width and costs about one round · where the optimal cycles PAY, at delta's run boundaries, and the local-potential route closed by a random-labelling control · two routes without a potential, both closed: no upper bound on mu(256) by search, and no monotone lift between widths · the coupled ladder, an exact pairing between widths under which E[mu] rises at every step from n = 4 to 17 on both axes, with a per-period rate flat from n = 10 (89 math expressions)
+SecurityProofs-10.md                                — §11.43–§11.49: the local certificate, a sound lower bound on mu at any width whose window must grow with n · the certificate SOLVED at n = 256, positive (0.54-0.90) and below 4/3 · the linear hull MEASURED exactly to n = 16, a share of the trail weight (0.91 -> 0.82 linear) that falls slowly with width and costs about one round · where the optimal cycles PAY, at delta's run boundaries, and the local-potential route closed by a random-labelling control · two routes without a potential, both closed: no upper bound on mu(256) by search, and no monotone lift between widths · the coupled ladder, an exact pairing between widths under which E[mu] rises at every step from n = 4 to 17 on both axes, and the period exponent, which resolves the per-period increment FALLING on both axes and so rejects the levelled n = 256 reading without confirming the power law (90 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -2664,7 +2685,7 @@ findings-gating `SecurityProofsCode/` script, via `run_findings_gates.py`; ran
 `continue-on-error: true` on the `arduino` job's TODO #185 route until TODO #317
 promoted it). Locally, run the same scripts by hand as described below.
 
-**The findings gates, and why they are a job rather than a step (TODO #289).** 85
+**The findings gates, and why they are a job rather than a step (TODO #289).** 86
 findings-gating scripts in `SecurityProofsCode/` close with "exits non-zero if a finding
 stops reproducing" — a count read from the runner rather than by hand, and checked by
 `check_docs_consistency.py`'s check E. TODO #285 found that NO job collected that status, and the three items
@@ -2694,7 +2715,7 @@ answer "which of the gating scripts run"; nothing asked how many scripts gate at
 The answer was **35 of 81**: 46 produced output no exit status carried, 33 of them cited
 by `SecurityProofs-*.md` or `CLAUDE.md` as backing a claim, and **22 computed a PASS/FAIL
 verdict and discarded it** — TODO #233's defect class one layer out, in the layer that
-backs the security documents rather than the one that tests the code. It is now **85
+backs the security documents rather than the one that tests the code. It is now **86
 gating and 7 declared non-gating**, and every `SecurityProofsCode/*.py` is one or the
 other: the runner FAILS on a script that is neither, which is the part that does not
 decay, since adding an analysis script now forces the question. Four things worth knowing.

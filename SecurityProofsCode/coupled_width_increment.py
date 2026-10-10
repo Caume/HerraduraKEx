@@ -27,34 +27,36 @@ pass couples the widths instead.
       exact mu from the fifth pass's certified C solver on both sides of every
       pair.  FINDINGS.
       (a) E[mu] RISES AT EVERY STEP MEASURED, on both axes -- nine steps each,
-          the smallest lower 3-sigma bound on any step +0.04 -- while single
-          pairs fall on up to 49% (differential) / 36% (linear) of draws.  That
+          the smallest lower 3-sigma bound on any step +0.009 differential
+          (16 -> 17, the one marginal step) and +0.027 linear, errors clustered
+          by key -- while single pairs fall on up to 49% (differential) / 36%
+          (linear) of draws.  That
           is the distributional monotonicity #257 owes, as a measurement over a
           width range and nothing more.
       (b) Pairing is what makes it measurable: the paired standard error is a
-          median 4.2x smaller than the unpaired one built from the same numbers,
-          which is why independent ladders (the fifth pass) could not resolve the
-          per-bit trend.
+          median 3.3-4.0x smaller than independent samples with as many keys
+          would carry, which is why independent ladders (the fifth pass) could
+          not resolve the per-bit trend.  Every error here is CLUSTERED BY KEY:
+          the m insertions into one delta share mu(delta).  This script's first
+          release divided by sqrt(pairs) instead and understated every error by
+          ~1.4-1.6x (corrected by the twelfth pass, period_exponent.py).
       (c) The mechanism survives the coupling: draws that add two boundaries
           raise mu more than draws that add none, at every step, on both axes.
 
-  §3  SINGLE STEPS ARE NOT STATIONARY; PERIODS OF THREE WIDTHS ARE.
-      (a) A single step's per-bit increment moves between neighbours by 4.6-5.9
-          standard errors (differential 7 -> 8 at 0.094 against 8 -> 10 at
-          0.183; linear 10 -> 11 at 0.095 against 11 -> 13 at 0.056), so E[mu_n]
-          carries a width-specific term no density-1/2 run statistic sees.
-      (b) Summed over a PERIOD of three widths -- a one-bit step plus the two-bit
-          step over the next singular width, the period of M's singularity -- the
-          term cancels: differential 0.364 / 0.370 over 10 -> 13 -> 16, linear
-          0.206 / 0.209 (and 0.202 over 7 -> 10).  Flat within errors, at 0.122
-          and 0.069 per bit -- within 5% of the fifth pass's levelled per-bit
-          medians (0.128, 0.067), reached by an independent method.
-      (c) What it does NOT do is choose between §11.42's two n = 256 readings.  A
-          power law with the fifth pass's exponents predicts the last period at
-          0.92x / 0.96x the one before; measured 1.02 +- 0.09 / 1.01 +- 0.08, so
-          1.2 / 0.6 standard errors from the power law and 0.2 from a levelled
-          rate.  Carried flat, the series reads ~32 / ~18 at n = 256: a
-          reading, not a bound.
+  §3  SINGLE STEPS ARE NOT STATIONARY ON THE DIFFERENTIAL AXIS.
+      (a) A single step's per-bit increment moves between neighbours by ~4
+          standard errors (7 -> 8 at 0.094 against 8 -> 10 at 0.183), so E[mu_n]
+          carries a width-specific term no density-1/2 run statistic sees.  The
+          first release claimed the same on the linear axis; clustered, it is
+          ~3 sigma, and an independent 3000-pair run per step resolves no such
+          term there.  WITHDRAWN on that axis.
+      (b) WITHDRAWN: the first release read the PERIOD series (one-bit step plus
+          the two-bit step over the next singular width) as "flat from n = 10" --
+          0.364 / 0.370 differential, 0.206 / 0.209 linear -- and carried it to
+          n = 256 as ~32 / ~18, agreeing with §11.42's levelled reading.  Two
+          periods inside understated errors could not see a 9% decline;
+          period_exponent.py resolves one on both axes, 3.5-4 standard errors
+          from a levelled rate.
 
   §4  WHAT THIS CHANGES.  Prose.
 
@@ -122,7 +124,6 @@ ESL = _load("exact_slope_ladder.py")   # the C solver (cmu), build(), nruns
 FK = ESL.CCL.QEL.FK                    # delta(n, B), the deployed key map
 nruns = ESL.nruns
 NAME = {0: "differential", 1: "linear"}
-POWER = {0: 0.63, 1: 0.84}     # §11.42's power-law exponents (exact_slope_ladder.py)
 PERIOD_FROM = 10
 
 
@@ -204,18 +205,34 @@ def step(n, k, K, m, axis, seed=257):
     return rows, base
 
 
+def cluster_se(vals, m):
+    """Standard error of a mean of vals taken in consecutive blocks of m that share a
+    base key.  The m insertions into one delta are NOT independent draws -- they share
+    mu(delta) -- so the error is computed over KEYS (a cluster-robust standard error),
+    not over pairs.  The eleventh pass's first release divided by sqrt(pairs), which
+    understates it; see §2's note."""
+    N = len(vals)
+    mu = sum(vals) / N
+    blocks = [vals[i:i + m] for i in range(0, N, m)]
+    G = len(blocks)
+    ss = sum((sum(b) - len(b) * mu) ** 2 for b in blocks)
+    return math.sqrt(ss * G / (G - 1)) / N
+
+
 def summarise(n, k, rows, base):
     D = [r[0] for r in rows]
+    m = len(rows) // len(base)
     mean = statistics.mean(D)
-    se = statistics.stdev(D) / math.sqrt(len(D))
-    # what an unpaired comparison of the same numbers would have had to resolve
+    se = cluster_se(D, m)
+    se_naive = statistics.stdev(D) / math.sqrt(len(D))
+    # what an unpaired comparison with the same number of KEYS at each width would carry
     lifted = [r[2] for r in rows]
     se_un = math.sqrt(statistics.variance(base) / len(base)
-                      + statistics.variance(lifted) / len(lifted))
+                      + statistics.variance(lifted) / len(base))
     by = collections.defaultdict(list)
     for dm, db, _ in rows:
         by[db].append(dm)
-    return dict(n=n, k=k, mean=mean, se=se, se_un=se_un, N=len(D),
+    return dict(n=n, k=k, mean=mean, se=se, se_naive=se_naive, se_un=se_un, N=len(D),
                 base=statistics.mean(base),
                 neg=sum(x < -1e-9 for x in D) / len(D),
                 b0=statistics.mean(by[0]) if by[0] else None,
@@ -235,23 +252,27 @@ def plan(quick, full):
 def section_2(steps):
     rule("§2  The coupled ladder: E[mu_{n+k}] - E[mu_n], measured pairwise")
     print("""Exact mu on both sides of every pair.  "mean" is the per-STEP increment (k bits),
-"se" its paired standard error, "unpaired" the standard error a comparison of
-independent samples of the same size would carry, "falls" the share of single
+"se" its paired standard error, clustered by KEY (the insertions into one delta
+share it), "naive" the same error computed as if every pair were independent --
+which the first release of this script used, and which understates it -- and
+"unpaired" what independent samples with the same number of keys at each width
+would carry.  "falls" is the share of single
 pairs where mu went DOWN, and the last two columns split the mean by whether the
 insertion added no boundary or two.
 """)
     out = {}
     for axis in (0, 1):
         print("\n  %s" % NAME[axis].upper())
-        print("  %9s  %5s  %7s  %6s  %8s  %6s  %8s  %8s"
-              % ("step", "pairs", "mean", "se", "unpaired", "falls", "+0 bnd", "+2 bnd"))
+        print("  %9s  %5s  %7s  %6s  %6s  %8s  %6s  %8s  %8s"
+              % ("step", "pairs", "mean", "se", "naive", "unpaired", "falls", "+0 bnd",
+                 "+2 bnd"))
         res = []
         for n, k, K, m in steps:
             s = summarise(n, k, *step(n, k, K, m, axis))
             res.append(s)
-            print("  %3d -> %2d  %5d  %7.3f  %6.3f  %8.3f  %5.0f%%  %8.3f  %8.3f"
-                  % (n, n + k, s["N"], s["mean"], s["se"], s["se_un"], 100 * s["neg"],
-                     s["b0"], s["b2"]), flush=True)
+            print("  %3d -> %2d  %5d  %7.3f  %6.3f  %6.3f  %8.3f  %5.0f%%  %8.3f  %8.3f"
+                  % (n, n + k, s["N"], s["mean"], s["se"], s["se_naive"], s["se_un"],
+                     100 * s["neg"], s["b0"], s["b2"]), flush=True)
         out[axis] = res
         nm = NAME[axis]
         lo = min(s["mean"] - 3 * s["se"] for s in res)
@@ -265,9 +286,14 @@ insertion added no boundary or two.
               "expectation, not pointwise (the tenth pass's finding, from the other "
               "side)" % (nm, 100 * mx))
         gain = statistics.median(s["se_un"] / s["se"] for s in res)
-        check(gain > 2,
-              "%s: pairing cuts the standard error by a median %.1fx against an "
-              "unpaired comparison of the same numbers" % (nm, gain))
+        check(gain > 1.5,
+              "%s: pairing cuts the standard error by a median %.1fx against independent "
+              "samples with as many keys" % (nm, gain))
+        under = statistics.median(s["se"] / s["se_naive"] for s in res)
+        check(under > 1.1,
+              "%s: CORRECTION to this script's first release -- treating the insertions "
+              "into one key as independent understates the error by a median %.2fx; "
+              "every error here is clustered by key" % (nm, under))
         ok = [s for s in res if s["b2"] is not None and s["b2"] > s["b0"]]
         check(len(ok) == len(res),
               "%s: an insertion that adds two boundaries raises mu more than one that "
@@ -307,39 +333,28 @@ the two-bit step over the next singular width), which is the smoother series.
             if zz > z:
                 z, pair = zz, (a, b)
         a, b = pair
-        check(z > 4,
-              "%s: single steps are NOT stationary -- neighbouring steps disagree per bit "
-              "by %.1f standard errors (%d -> %d: %.3f, %d -> %d: %.3f)"
-              % (nm, z, a["n"], a["n"] + a["k"], a["mean"] / a["k"], b["n"],
-                 b["n"] + b["k"], b["mean"] / b["k"]))
-        # (b) the period-of-3 series from n = 10 on
-        late = [p for p in periods if p[0] >= PERIOD_FROM]
-        if len(late) < 2:
-            print("  %s: one period from n = %d only -- flatness NOT measured in this mode "
-                  "(not scored)" % (nm, PERIOD_FROM))
-            return_periods[axis] = periods
-            continue
-        worst = max(abs(x[1] - y[1]) / math.hypot(x[2], y[2])
-                    for x, y in zip(late, late[1:]))
-        check(worst < 2.5,
-              "%s: summed over a period of three widths the increment is FLAT from n = %d: "
-              "%s (largest consecutive gap %.1f standard errors)"
-              % (nm, PERIOD_FROM, ", ".join("%.3f" % p[1] for p in late), worst))
-        # (c) what that is and is not evidence for, against §11.42's two readings
-        (p1, v1, e1), (p2, v2, e2) = late[-2], late[-1]
-        r, re = v2 / v1, (v2 / v1) * math.hypot(e1 / v1, e2 / v2)
-        al = POWER[axis]
-        pl = (((p2 + 3) ** al - p2 ** al) / ((p1 + 3) ** al - p1 ** al))
-        flat = statistics.mean(p[1] for p in late)
-        last = res[-1] if res[-1]["k"] == 1 else res[-2]
-        reading = last["base"] + (256 - last["n"]) / 3 * flat
-        print("  %s: ratio of the last two periods %.3f +- %.3f; a power law n^%.2f "
-              "(§11.42) predicts %.3f, a levelled per-bit rate 1.000 -- %.1f standard "
-              "errors from the first, %.1f from the second"
-              % (nm, r, re, al, pl, abs(r - pl) / re, abs(r - 1) / re))
-        print("  %s: per bit %.3f; carried flat from E[mu_%d] = %.2f it would read %.0f at "
-              "n = 256 -- a READING, not a bound, and the ratio above does not yet "
-              "choose it" % (nm, flat / 3, last["n"], last["base"], reading))
+        what = ("neighbouring steps disagree per bit by %.1f standard errors (%d -> %d: "
+                "%.3f, %d -> %d: %.3f)" % (z, a["n"], a["n"] + a["k"], a["mean"] / a["k"],
+                                           b["n"], b["n"] + b["k"], b["mean"] / b["k"]))
+        if axis == 0:
+            check(z > 4, "%s: single steps are NOT stationary -- %s" % (nm, what))
+        else:
+            # WITHDRAWN (twelfth pass): the first release claimed this on the linear
+            # axis too, at 4.6 sigma -- with errors that ignored the key clustering.
+            # Clustered, it is ~3 sigma, and an independent 3000-pair run per step
+            # (period_exponent.py) resolves no width term on this axis at all.
+            print("  %s: %s -- NOT resolved on this axis (not scored; the first "
+                  "release's claim is withdrawn)" % (nm, what))
+        # (b) WITHDRAWN (twelfth pass).  The first release checked here that the
+        # period series is "FLAT from n = 10" and carried it to n = 256 as a reading
+        # that agreed with §11.42's levelled one.  Its two periods sat inside errors
+        # that ignored the key clustering, and period_exponent.py, with thousands
+        # of keys per period and one three-bit pair per period, resolves a DECLINE on
+        # both axes, 3.5-4 standard errors from a levelled rate.  The series is printed
+        # above; what it does is period_exponent.py's to say.
+        print("  %s: the period series is resolved by period_exponent.py; its first "
+              "release's \"flat from n = %d\" is withdrawn (not scored here)"
+              % (nm, PERIOD_FROM))
         return_periods[axis] = periods
     return return_periods
 
@@ -352,15 +367,14 @@ and it is positive at every step from n = 4 to 17 on both axes, while single pai
 fall on up to half of all draws.  A measurement over a range of widths, not a proof
 for every n: nothing here bounds the increment away from zero as n grows.
 
-MEASURED: the per-period increment is flat from n = 10 to 16 on both axes, at 0.122 and
-0.069 per bit, matching the fifth pass's levelled per-bit medians by a different
-route.  Single steps are not; the width-specific term has period three, the period
-of M's singularity, and cancels over a period.
+MEASURED, differential only: single steps are not stationary -- a width-specific term
+with the period of M's singularity.  The first release also claimed it on the linear
+axis; with errors clustered by key it is not resolved there, and is withdrawn.
 
-NOT DECIDED: §11.42's two n = 256 readings.  The power law and a levelled rate predict
-the last period ratio 0.92-0.96 and 1.00; the measurement is 1.2 and 0.6 standard errors
-from the first.  Deciding it needs more periods, and the next costs exact mu at
-n = 19 and 20 per pair (--full reaches 17 -> 19 only).
+WITHDRAWN: "the per-period increment is flat from n = 10 to 16".  It was a statement
+about two periods inside understated errors; period_exponent.py resolves the period
+series and finds it FALLING on both axes, 3.5-4 standard errors from a levelled
+rate, so the readings this pass carried to n = 256 (~32 / ~18) are withdrawn with it.
 
 No rating moves (every row this touches is demo-only on other axes: #243, #244, #248).""")
 
