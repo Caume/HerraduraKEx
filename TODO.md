@@ -570,38 +570,6 @@ Status: **OPEN**
 
 ---
 
-### #338: present-tense docs still describe three CLIs, and nothing reads `llms.txt`
-
-Found while verifying v9.5.36.  Java has shipped a complete CLI since TODO #196-#203 and
-#261 gave it every `--algo` tag, yet the narrative docs still say "three":
-
-- `llms.txt:143` "All three implementations share one PEM wire format"; its heading names
-  three CLIs.
-- `llms.txt:149` and `:172` call `hpks-xmss` "Python-only (TODO #143)", but `spec/`'s
-  `cli_support` has it in all four CLIs.
-- `llms.txt:168` says Java ships "no duplex in either version"; `spec/` has
-  `hske-duplex` and `hske-duplex3` in all four.
-- `README.md:401` says `sign --rounds` works "in all three CLIs", `docs/TUTORIAL.md:97`
-  says "The three CLIs", `:2118` "All three CLIs" (OPRF, heading "Python, C, Go"),
-  `:2380` "all three CLI implementations", `:2604` "All three implementations retry until
-  gcd(r, ORD) = 1".  Java's `Oprf.blind` retries as well, and `cli_flag_matrix` has
-  `sign --rounds` and every OPRF subcommand in all four CLIs.
-
-Why it survived: `check_docs_consistency.py` reads README / INTRODUCTION / CHANGELOG
-against `spec/`, but nothing reads `llms.txt`, and no check compares an implementation COUNT
-or an "X-only" claim with `cli_support`.
-
-Fix: correct the sentences, and add a check that holds present-tense docs (README.md,
-llms.txt, docs/TUTORIAL.md, docs/INTRODUCTION.md, SPEC.md, SECURITY.md) to `spec/`.  It
-should fail on (a) an implementation count that differs from the number of CLIs `spec/`
-knows, (b) "<tag> ... <Language>-only" where `cli_support` says otherwise, and (c) a
-`cli_subcommands` entry `llms.txt` never mentions.  Historical files (CHANGELOG.md,
-MIGRATING.md, TODO_DONE.md) are out of scope, because a past-tense "three" is correct there.
-
-Status: **OPEN**
-
----
-
 ### #339: the C, Go and Java `--help` text is hand-written and has drifted from dispatch
 
 `spec/`'s `cross_implementation_gaps` already records it.  C's `usage()` omits `oprf` /

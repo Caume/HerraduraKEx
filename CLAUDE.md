@@ -80,7 +80,8 @@ spec/                      — machine-readable protocol spec (generate_spec.py;
                              it) and the cross-document / cross-language checkers; see
                              spec/README.md:
   check_security_md.py     — protocol status vs. SECURITY.md
-  check_docs_consistency.py — README/INTRODUCTION/CHANGELOG vs. spec and herradura.h
+  check_docs_consistency.py — README/INTRODUCTION/TUTORIAL/llms.txt/CHANGELOG vs. spec
+                             and herradura.h
   check_language_parity.py — four-way parity: numbered tests, primitive manifest,
                              parameters, randomness/replay censuses, sampled-test rates
   measure_sampled_rates.py — instrument behind the recorded rate mechanisms (NOT run in CI)

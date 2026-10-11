@@ -47,6 +47,15 @@ WHAT IT CHECKS.
   D. CLAIMS.  A curated table of prose assertions that must hold, and of
      superseded assertions that must NOT come back.
 
+  E. COVERAGE COUNTS.  spec/COVERAGE_COUNTS.md against the tools that print
+     each number (TODO #287).
+
+  F. CLI-SURFACE CLAIMS (TODO #338).  Present-tense docs, llms.txt included,
+     against spec/'s cli_support: an implementation COUNT ("all three CLIs")
+     must equal the number of CLIs spec/ knows, an "<tag> ... X-only" claim
+     must agree with that tag's cli_support, and every cli_subcommands entry
+     must appear in llms.txt.  Historical files are out of scope.
+
 THE CURATED TABLES ARE THE POINT, AND THEY ARE SELF-INVALIDATING.  Prose cannot
 be derived from a spec file, so B, C and D each rest on a hand-written table --
 the same bargain `check_security_md.py` struck, for the same reason.  What keeps
@@ -1040,6 +1049,108 @@ def check_claims():
                       % (rel, line, m.group(0), why))
 
 
+# ── F.  CLI-surface claims in present-tense docs (TODO #338) ───────────────
+#
+# Java's CLI reached all --algo tags at TODO #261, and llms.txt, README.md and
+# docs/TUTORIAL.md went on saying "three CLIs" and calling hpks-xmss
+# "Python-only" for dozens of releases, because no check read llms.txt and none
+# compared an implementation COUNT with spec/.  The authority is
+# spec/herradura-protocol-spec.json; the documents are the ones written in the
+# present tense.  CHANGELOG.md, MIGRATING.md and TODO*.md are history, where a
+# past "three" is correct, and are deliberately not read.
+
+LLMS = _p("llms.txt")
+SURFACE_DOCS = [README, LLMS, INTRO, _p("docs", "TUTORIAL.md"), _p("SPEC.md"),
+                SECURITY, SPEC_PATH]
+_NUMWORDS = {"two": 2, "three": 3, "four": 4, "five": 5}
+_COUNT_RE = re.compile(
+    r"\b(two|three|four|five)\s+(?:parallel\s+|CLI\s+|language\s+)?"
+    r"(CLIs|CLI implementations|implementations)\b", re.I)
+_LANGS = {"python": "python", "c": "c", "go": "go", "java": "java"}
+_ONLY_RE = re.compile(r"\b(Python|C|Go|Java)-only\b")
+_TAG_RE = re.compile(r"(?<![\w-])([a-z][a-z0-9]*(?:-[a-z0-9]+)+)(?![\w-])")
+
+# (document basename, regex over the line, reason) for a count or an "-only"
+# claim that is correct as written.  Self-invalidating: an entry matching no
+# line fails, so a fixed or deleted sentence forces its exemption out.
+SURFACE_EXEMPT = []
+
+
+def _cli_support(spec):
+    out = {}
+    for proto in spec.get("protocols", []):
+        cs = proto.get("cli_support")
+        if not isinstance(cs, dict):
+            continue
+        binding = proto.get("cli_binding") or {}
+        for tag in (proto.get("id"), binding.get("algo_tag")):
+            if tag:
+                out[tag] = cs
+    return out
+
+
+def check_cli_surface_claims(spec):
+    support = _cli_support(spec)
+    n_clis = len(next(iter(support.values()))) if support else 0
+    if n_clis == 0:
+        fail("F", "could not read any cli_support from spec/ -- the check "
+                  "would pass vacuously")
+        return
+    used = [False] * len(SURFACE_EXEMPT)
+
+    def exempt(base, line):
+        for i, (doc, rx, _why) in enumerate(SURFACE_EXEMPT):
+            if doc == base and re.search(rx, line):
+                used[i] = True
+                return True
+        return False
+
+    claims = 0
+    for path in SURFACE_DOCS:
+        if not os.path.exists(path):
+            fail("F", "%s is missing" % os.path.relpath(path, REPO))
+            continue
+        base = os.path.relpath(path, REPO)
+        for lineno, line in enumerate(read(path).splitlines(), 1):
+            for m in _COUNT_RE.finditer(line):
+                claims += 1
+                if _NUMWORDS[m.group(1).lower()] != n_clis and not exempt(base, line):
+                    fail("F", "%s:%d says %r, but spec/ knows %d CLIs."
+                              % (base, lineno, m.group(0), n_clis))
+            for m in _ONLY_RE.finditer(line):
+                lang = _LANGS[m.group(1).lower()]
+                # The claim belongs to the nearest tag BEFORE the marker
+                # ("hpks-xmss (Python-only)", "hpks-xmss is Python-only"), not to
+                # every tag on the line -- llms.txt lists fifteen on one line.
+                before = [t for t in _TAG_RE.findall(line[max(0, m.start() - 60):m.start()])
+                          if t in support]
+                for tag in before[-1:]:
+                    cs = support[tag]
+                    claims += 1
+                    others = [k for k, v in cs.items() if v and k != lang]
+                    if others and not exempt(base, line):
+                        fail("F", "%s:%d calls %s %s-only, but spec/'s "
+                                  "cli_support has it in %s too."
+                                  % (base, lineno, tag, m.group(1),
+                                     ", ".join(sorted(others))))
+    for i, (doc, rx, why) in enumerate(SURFACE_EXEMPT):
+        if not used[i]:
+            fail("F", "stale exemption: %s /%s/ matches nothing (%s)"
+                      % (doc, rx, why))
+
+    llms = read(LLMS)
+    subs = spec.get("cli_subcommands", {})
+    names = list(subs) if isinstance(subs, dict) else [x.get("name") for x in subs]
+    if not names:
+        fail("F", "spec/ lists no cli_subcommands -- the llms.txt coverage "
+                  "check would pass vacuously")
+    for name in names:
+        if not re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", llms):
+            fail("F", "llms.txt never mentions the %r subcommand" % name)
+    print("  F: %d CLI-surface claim(s) in %d present-tense docs, %d "
+          "subcommands in llms.txt" % (claims, len(SURFACE_DOCS), len(names)))
+
+
 # ══ main ═══════════════════════════════════════════════════════════════════
 
 def main():
@@ -1048,8 +1159,9 @@ def main():
 
     print("Cross-document consistency audit (TODO #265)")
     print("  authorities: herradura.h, spec/herradura-protocol-spec.json")
-    print("  documents:   README.md, docs/INTRODUCTION.md, CHANGELOG.md, "
-          "MIGRATING.md, pyproject.toml")
+    print("  documents:   README.md, docs/INTRODUCTION.md, docs/TUTORIAL.md, "
+          "llms.txt, SPEC.md, SECURITY.md, CHANGELOG.md, MIGRATING.md, "
+          "pyproject.toml")
     print("  read %d integer constants from herradura.h" % len(consts))
 
     check_versions()
@@ -1059,6 +1171,7 @@ def main():
     check_doc_counts()
     check_protocol_coverage(spec)
     check_claims()
+    check_cli_surface_claims(spec)
 
     labels = {
         "A": "versions (README / CHANGELOG / pyproject / MIGRATING)",
@@ -1067,8 +1180,9 @@ def main():
         "C": "protocol coverage (spec/ vs. README / INTRODUCTION)",
         "D": "claims (corrected statements kept, superseded ones gone)",
         "E": "spec/COVERAGE_COUNTS.md vs. the tools that emit the counts",
+        "F": "CLI-surface claims in present-tense docs vs. spec/ cli_support",
     }
-    for key in ("A", "B", "B''", "C", "D", "E"):
+    for key in ("A", "B", "B''", "C", "D", "E", "F"):
         hits = [m for k, m in FAILURES if k == key]
         print("\n%s. %s" % (key, labels[key]))
         if not hits:

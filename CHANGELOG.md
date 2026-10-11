@@ -2,6 +2,32 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.37] - 2026-10-11
+
+### TODO #338 — present-tense docs said "three CLIs"; check F now holds them to `spec/`
+
+Java's CLI has carried every `--algo` tag since TODO #261, but several docs still described
+three CLIs.  llms.txt said "All three implementations", called `hpks-xmss` "Python-only (TODO
+#143)" twice, and said Java ships "no duplex in either version".  `spec/` shows all four CLIs
+supporting both.  README.md, docs/TUTORIAL.md (four places) and four of
+`spec/generate_spec.py`'s hand-written protocol notes said "all three CLIs" about things Java
+also does: `sign --rounds`, the OPRF subcommands and its gcd retry, `nl_v2_key_is_valid`, the
+HCRED subcommands and `kex --algo hybrid-rnl-stern`.  All corrected.  The spec JSON is
+regenerated, and only its notes change.
+
+**Why it survived:** nothing read llms.txt, and nothing compared an implementation COUNT or an
+"X-only" claim against `cli_support`.  `spec/check_docs_consistency.py` check F does both, over
+README.md, llms.txt, docs/INTRODUCTION.md, docs/TUTORIAL.md, SPEC.md, SECURITY.md and the spec
+JSON's own notes.  It also requires every `cli_subcommands` entry to appear in llms.txt.  An
+"-only" claim is attributed to the nearest `--algo` tag before it, not to every tag on the
+line, because llms.txt lists fifteen tags on one line.  CHANGELOG.md, MIGRATING.md and
+TODO*.md are history and are deliberately not read.  First run: 12 failures, now 0.  All three
+negative controls fire.
+
+Also filed: TODO #339 (generate the C/Go/Java `--help` synopses from the flag tables), #340
+(`-t` cannot cut a call site that requests fewer than 64 iterations) and #341 (one local
+command for CI's cheap checks).
+
 ## [9.5.36] - 2026-10-09
 
 ### CLAUDE.md slimmed to a working guide; check E's counts moved to `spec/COVERAGE_COUNTS.md`
