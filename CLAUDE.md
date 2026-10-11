@@ -211,7 +211,6 @@ Use `build_arm.sh` / `build_asm_i386.sh`. To run: `qemu-arm -L /usr/arm-linux-gn
 > - `sudo apt-get install -y binutils-i686-linux-gnu`    (provides `i686-linux-gnu-ld`)
 
 ## Testing
-## Testing
 
 No unit-test framework — tests are pass/fail assertions printed by the suite/CLI binaries
 themselves, and **any `[FAIL]` fails the build**.
