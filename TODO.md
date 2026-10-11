@@ -570,5 +570,79 @@ Status: **OPEN**
 
 ---
 
+### #338: present-tense docs still describe three CLIs, and nothing reads `llms.txt`
+
+Found while verifying v9.5.36.  Java has shipped a complete CLI since TODO #196-#203 and
+#261 gave it every `--algo` tag, yet the narrative docs still say "three":
+
+- `llms.txt:143` "All three implementations share one PEM wire format"; its heading names
+  three CLIs.
+- `llms.txt:149` and `:172` call `hpks-xmss` "Python-only (TODO #143)", but `spec/`'s
+  `cli_support` has it in all four CLIs.
+- `llms.txt:168` says Java ships "no duplex in either version"; `spec/` has
+  `hske-duplex` and `hske-duplex3` in all four.
+- `README.md:401` says `sign --rounds` works "in all three CLIs", `docs/TUTORIAL.md:97`
+  says "The three CLIs", `:2118` "All three CLIs" (OPRF, heading "Python, C, Go"),
+  `:2380` "all three CLI implementations", `:2604` "All three implementations retry until
+  gcd(r, ORD) = 1".  Java's `Oprf.blind` retries as well, and `cli_flag_matrix` has
+  `sign --rounds` and every OPRF subcommand in all four CLIs.
+
+Why it survived: `check_docs_consistency.py` reads README / INTRODUCTION / CHANGELOG
+against `spec/`, but nothing reads `llms.txt`, and no check compares an implementation COUNT
+or an "X-only" claim with `cli_support`.
+
+Fix: correct the sentences, and add a check that holds present-tense docs (README.md,
+llms.txt, docs/TUTORIAL.md, docs/INTRODUCTION.md, SPEC.md, SECURITY.md) to `spec/`.  It
+should fail on (a) an implementation count that differs from the number of CLIs `spec/`
+knows, (b) "<tag> ... <Language>-only" where `cli_support` says otherwise, and (c) a
+`cli_subcommands` entry `llms.txt` never mentions.  Historical files (CHANGELOG.md,
+MIGRATING.md, TODO_DONE.md) are out of scope, because a past-tense "three" is correct there.
+
+Status: **OPEN**
+
 ---
 
+### #339: the C, Go and Java `--help` text is hand-written and has drifted from dispatch
+
+`spec/`'s `cross_implementation_gaps` already records it.  C's `usage()` omits `oprf` /
+`hcred` from the genpkey line and `--bits` / `--xmss-height` from genpkey's synopsis.  Go's
+banner omits `hpke-stern-kem`, `nl-zkbpp`, `oprf` and `hpks-t`, all of which it dispatches.
+`generate_spec.py` already emits `HerraduraCli/cli_flag_table.h` and
+`bindings/java/herradurakex/CliFlagTable.java` from each CLI's own dispatch source, so a
+generated per-subcommand synopsis (flags and `--algo` choices) would make the help text
+unable to drift.  Python's comes from argparse and is already correct.  Scope note: keep the
+hand-written prose (protocol caveats); generate only the synopsis and choices lines.
+
+Status: **OPEN**
+
+---
+
+### #340: `-t` does not bound wall time for call sites requesting fewer than 64 iterations
+
+Measured while verifying v9.5.36: at `-r 20 -t 0.3` the Go harness took 485 s and the
+Python harness 1100 s.  Python's closing line reported 100 capped sites, 0 truncated and
+100 "could not poll (fewer than 64 iterations requested)".  `_trange` polls the clock only
+when `(i & 63) == 63`, so a site requesting fewer than 64 iterations never sees the cap.
+TODO #225 documented this and #327 fixed the benchmark-side floor, but the test-side poll
+granularity is still a floor `-t` cannot reach.  Proposed: poll every iteration when the
+requested count is below 64 (the clock read is negligible beside a test iteration there),
+and the same in Go's and C's loop helpers.  The time-cap summary line should keep reporting
+truncation so the change is measurable.  A truncated site must stay a site that RAN, so the
+rule that a section which did not run is never scored still holds.
+
+Status: **OPEN**
+
+---
+
+### #341: no single local command runs CI's cheap consistency checks
+
+Verifying v9.5.36 needed eleven separate commands (`generate_spec.py --check`, the three
+`spec/check_*.py`, `check_part_index.py`, the four `tools/check_*.py`, and the three
+`KAT/generate_*.py --check`).  Together they take about 5 minutes on an aarch64 SBC, where
+the test harnesses and the findings gates take hours.  A `tools/check_fast.sh` that runs
+them all, does not stop at the first failure, and lists the failures at the end (the shape
+`run_findings_gates.py` already uses, per TODO #286/#288) would give a pre-push check
+covering the doc/spec class CI catches.  It should also be claimed by CI so that it cannot
+rot, without duplicating the steps that already run.
+
+Status: **OPEN**
