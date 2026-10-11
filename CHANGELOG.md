@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.38] - 2026-10-11
+
+### TODO #341 — `tools/check_fast.sh`: CI's cheap consistency checks in one local command
+
+Verifying v9.5.36 took eleven separate commands spread over four CI jobs.
+`bash tools/check_fast.sh` now runs all of them: the spec/ generator and checkers,
+the part index, the three `tools/check_*.py`, and the three KAT regenerate-and-diff checks.
+That is about 5 minutes on an aarch64 SBC with no build.  Like `run_findings_gates.py`, it
+does not stop at the first failure and lists every failure at the end.  `--skip-kat` drops the
+~4 min KAT step and `--list` prints the set.
+
+**It cannot drift from CI.**  `native-python` runs `bash tools/check_fast.sh --verify-ci`,
+which checks the list rather than re-running it.  It fails if a listed command appears in
+neither `ci.yml` nor a CliTest script.  It fails if `ci.yml` invokes a checker-shaped script
+(`check_*`, `generate_*`, `run_findings_gates`) that is neither listed nor in `NOT_FAST` with a
+reason.  It also fails if a `NOT_FAST` entry no longer matches CI.  All three controls were
+verified to fire.  CLAUDE.md's Testing section now says to run it before pushing a doc, spec or
+KAT change.
+
 ## [9.5.37] - 2026-10-11
 
 ### TODO #338 — present-tense docs said "three CLIs"; check F now holds them to `spec/`

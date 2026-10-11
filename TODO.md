@@ -599,18 +599,3 @@ truncation so the change is measurable.  A truncated site must stay a site that 
 rule that a section which did not run is never scored still holds.
 
 Status: **OPEN**
-
----
-
-### #341: no single local command runs CI's cheap consistency checks
-
-Verifying v9.5.36 needed eleven separate commands (`generate_spec.py --check`, the three
-`spec/check_*.py`, `check_part_index.py`, the four `tools/check_*.py`, and the three
-`KAT/generate_*.py --check`).  Together they take about 5 minutes on an aarch64 SBC, where
-the test harnesses and the findings gates take hours.  A `tools/check_fast.sh` that runs
-them all, does not stop at the first failure, and lists the failures at the end (the shape
-`run_findings_gates.py` already uses, per TODO #286/#288) would give a pre-push check
-covering the doc/spec class CI catches.  It should also be claimed by CI so that it cannot
-rot, without duplicating the steps that already run.
-
-Status: **OPEN**

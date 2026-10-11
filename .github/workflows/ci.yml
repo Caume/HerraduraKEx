@@ -283,6 +283,14 @@ jobs:
       - name: cross-document consistency (README / INTRODUCTION / CHANGELOG vs. sources)
         run: python3 spec/check_docs_consistency.py
 
+      # TODO #341. tools/check_fast.sh runs the cheap checks above (and the KAT
+      # currency checks the CliTest scripts run) locally in one command. This
+      # step does not re-run them; it holds the script's list to this file in
+      # both directions, so a checker added to or removed from CI fails here
+      # until the local script follows.
+      - name: tools/check_fast.sh mirrors CI's consistency checks
+        run: bash tools/check_fast.sh --verify-ci
+
       # TODO #285. About 34 of the SecurityProofsCode/ scripts advertise "exits
       # non-zero if a finding stops reproducing" and until now NO job collected
       # that status, so the promise was untested. That is how

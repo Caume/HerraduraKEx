@@ -23422,3 +23422,29 @@ renamed out of llms.txt.  Not caught by the rule, and fixed by hand: llms.txt's 
 ... no duplex", which states an absence rather than a count or an "-only".
 
 Status: **DONE v9.5.37** — stale "three CLIs" / "Python-only" claims corrected; check F holds present-tense docs to spec/'s cli_support.
+
+---
+
+### #341: no single local command runs CI's cheap consistency checks
+
+Verifying v9.5.36 needed eleven separate commands (`generate_spec.py --check`, the three
+`spec/check_*.py`, `check_part_index.py`, the four `tools/check_*.py`, and the three
+`KAT/generate_*.py --check`).  Together they take about 5 minutes on an aarch64 SBC, where
+the test harnesses and the findings gates take hours.  A `tools/check_fast.sh` that runs
+them all, does not stop at the first failure, and lists the failures at the end (the shape
+`run_findings_gates.py` already uses, per TODO #286/#288) would give a pre-push check
+covering the doc/spec class CI catches.  It should also be claimed by CI so that it cannot
+rot, without duplicating the steps that already run.
+
+Fixed in v9.5.38.  `tools/check_fast.sh` runs the 11 checks: `generate_spec.py --check
+--require-schema`, `check_security_md.py`, `check_language_parity.py`,
+`check_docs_consistency.py`, `check_part_index.py --require-counts`, the three `tools/check_*.py`
+and the three `KAT/generate_*.py --check`.  It does not stop at the first failure and lists the
+failures at the end.  `--skip-kat` drops the ~4 min KAT regeneration, and `--list` prints the
+set.  It is claimed by CI without duplicating any step: `native-python` runs
+`check_fast.sh --verify-ci`, which fails if a listed command appears in neither ci.yml nor a
+CliTest script, if ci.yml invokes a `check_*` / `generate_*` / `run_findings_gates` script that
+is neither listed nor in `NOT_FAST` with a reason, or if a `NOT_FAST` entry has gone stale.  All
+three controls fire.
+
+Status: **DONE v9.5.38** — `tools/check_fast.sh` runs CI's cheap checks locally; `--verify-ci` keeps its list matched to CI.

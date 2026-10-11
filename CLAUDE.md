@@ -86,9 +86,11 @@ spec/                      — machine-readable protocol spec (generate_spec.py;
                              parameters, randomness/replay censuses, sampled-test rates
   measure_sampled_rates.py — instrument behind the recorded rate mechanisms (NOT run in CI)
   COVERAGE_COUNTS.md       — the coverage counts the checkers print, held to them by check E
-tools/                     — poison_build.sh (run-time BitArray width poisoning over every C
-                             TU), check_runnable_coverage.py, check_rate_format.py,
-                             check_docker_mirror.py, check_ba_width_guard.c
+tools/                     — check_fast.sh (CI's cheap consistency checks in one local
+                             command), poison_build.sh (run-time BitArray width poisoning
+                             over every C TU), check_runnable_coverage.py,
+                             check_rate_format.py, check_docker_mirror.py,
+                             check_ba_width_guard.c
 benchmarks/                — cost measurements (host-specific; figures do not belong in CI,
                              but CI checks they still build/run).  rnl_deployed_ring_cost.*
                              is the deployed HKEX-RNL ring (benchmark [40] uses retired rings)
@@ -277,6 +279,11 @@ on purpose (defense in depth, TODO #336).  `.github/workflows/codeql.yml` is a s
 non-blocking CodeQL matrix (TODO #189).
 
 ### Commands
+
+**Before pushing a doc, spec or KAT change, run `bash tools/check_fast.sh`** (about 5 min;
+`--skip-kat` drops the ~4 min KAT regeneration).  It runs every consistency checker CI runs,
+does not stop at the first failure, and lists the failures at the end.  CI holds its list to
+`ci.yml` in both directions (`--verify-ci`).
 
 Test numbering (C/Go/Python share one): security tests `[1]–[31]`, benchmarks
 `[32]–[43]`, security tests `[44]–[53]` appended after the benchmarks, benchmark `[54]`
