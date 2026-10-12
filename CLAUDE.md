@@ -322,8 +322,9 @@ bash tools/poison_build.sh
 
 `-r`/`--rounds` caps iterations per security test; `-t`/`--time` caps wall-clock for tests
 and benchmarks; CLI flags override `HTEST_ROUNDS`/`HTEST_TIME`.  In the Python harness,
-`_trange` only polls the time cap every 64 iterations, so a site requesting fewer than 64
-is never truncated; each run prints a closing `--- Time cap: ... ---` summary.  `[14]`
+`_trange` polls the time cap every 64 iterations, or after every iteration for a site
+requesting fewer (TODO #340; C/Go apply the same rule at each site's own stride via
+`cap_poll` / `capPoll`); each run prints a closing `--- Time cap: ... ---` summary.  `[14]`
 exercises `RNL_SIZES` (retired rings), not the deployed `RNLN = 1024`.
 
 ### CLI integration tests (CliTest/)

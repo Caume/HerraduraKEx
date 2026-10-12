@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.39] - 2026-10-11
+
+### TODO #340 — `-t` now reaches call sites shorter than their poll stride
+
+The time cap was polled only every 64 iterations in Python (`(i & 63) == 63`), and every 8 to
+256 in C and Go, so a site that requested fewer iterations than its stride was never polled.
+Python's own closing line reported it: at `-r 20 -t 0.3`, 100 of 100 capped sites "could not
+poll".  Such a site is now polled after EVERY iteration.  Python's change is in `_trange`;
+C and Go replace all 27 and 24 inline polls with one helper each (`cap_poll` / `capPoll`),
+so the rule holds at every stride.  The poll follows an iteration, so a truncated site still
+ran, and every call site was checked to score on the iterations it actually ran.
+
+Measuring after the change found a site no poll reached: test `[50]` (HCRED-KKW) had no time
+check in C or Go, and at `-r 20` its 20 proofs took 374 s of Go's 447.  Python's port always
+had one; C and Go now poll there every iteration.
+
+At `-r 20 -t 0.3`: C 205 s -> 34 s, Go 538 s -> 93 s, Python 1100 s -> 221 s, all three
+`*** OK ***`.  The time-cap line now reports how many short sites were polled and truncated,
+and `benchmarks/rnl_ring_cost.py` §3 calls them "short" rather than "cap INERT".
+
 ## [9.5.38] - 2026-10-11
 
 ### TODO #341 — `tools/check_fast.sh`: CI's cheap consistency checks in one local command

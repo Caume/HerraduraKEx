@@ -23448,3 +23448,42 @@ is neither listed nor in `NOT_FAST` with a reason, or if a `NOT_FAST` entry has 
 three controls fire.
 
 Status: **DONE v9.5.38** — `tools/check_fast.sh` runs CI's cheap checks locally; `--verify-ci` keeps its list matched to CI.
+
+---
+
+### #340: `-t` does not bound wall time for call sites requesting fewer than 64 iterations
+
+Measured while verifying v9.5.36: at `-r 20 -t 0.3` the Go harness took 485 s and the
+Python harness 1100 s.  Python's closing line reported 100 capped sites, 0 truncated and
+100 "could not poll (fewer than 64 iterations requested)".  `_trange` polls the clock only
+when `(i & 63) == 63`, so a site requesting fewer than 64 iterations never sees the cap.
+TODO #225 documented this and #327 fixed the benchmark-side floor, but the test-side poll
+granularity is still a floor `-t` cannot reach.  Proposed: poll every iteration when the
+requested count is below 64 (the clock read is negligible beside a test iteration there),
+and the same in Go's and C's loop helpers.  The time-cap summary line should keep reporting
+truncation so the change is measurable.  A truncated site must stay a site that RAN, so the
+rule that a section which did not run is never scored still holds.
+
+Fixed in v9.5.39.  Python's `_trange` now polls after every iteration when the site
+requested fewer than 64; C and Go got the same rule through one helper each,
+`cap_poll(i, n, mask, &t0)` / `capPoll(i, n, mask, t0)`, which replaced all 27 C and 24 Go
+inline `(i & mask) == mask` polls (their strides are 8, 16, 32, 64 and 256, and the rule holds
+at each).  The poll follows an iteration, so a truncated site still ran.  Every call site was
+checked to score on the iterations it actually ran, not on the requested count; two Python
+prints in `[19]` used the requested count as their denominator and now use the actual one.
+The closing time-cap line now reads "N requested fewer than 64 iterations and were polled
+every iteration, M of them truncated", and no longer counts a cut after the final iteration
+as a truncation.
+
+Measuring after the change found one more site `-t` could not reach: test `[50]`
+(HCRED-KKW) in C and Go had no time check at all, and at `-r 20` it ran 20 proofs of about
+18 s each, 374 s of Go's 447.  Python's port always had the cap; C and Go now poll there
+every iteration.
+
+At `-r 20 -t 0.3` on the aarch64 SBC: C 205 s -> 34 s, Go 538 s -> 93 s, Python 1100 s ->
+221 s (the before figures for Go and Python are from v9.5.36's verification run; all runs
+were in parallel).  All three exit OK; 37 of Python's 100 short sites were truncated.
+`benchmarks/rnl_ring_cost.py` §3 now labels such sites "short" instead of "cap INERT", and
+marks its recorded figures as pre-#340.
+
+Status: **DONE v9.5.39** — `-t` now reaches sites requesting fewer iterations than their poll stride, in C, Go and Python, plus test [50] in C/Go.
