@@ -2,6 +2,20 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.41] - 2026-10-12
+
+### Fix — `zkboo_view_hiding.py` §3's negative control no longer depends on a sampled key
+
+The findings gate `SecurityProofsCode/zkboo_view_hiding.py` (TODO #301) failed in CI with
+"§3 negative control fires: FAIL": every candidate survived the stuck-PRG control.  Nothing
+had leaked or stopped leaking.  The control sampled a fresh key, and the carry gates see A
+only through B's set bits, so a B with one set bit or none (0, 64, 128 ...) gives the known
+mask nothing to expose.  That happened in about 2% of runs (6 of 300 locally).
+
+§3 now CONSTRUCTS B as all ones and samples only A and the proof.  It fired for every one of
+the 256 values of A, three proofs each, with at most 16 of 256 candidates surviving.  §1 and
+§2 still sample the whole key.
+
 ## [9.5.40] - 2026-10-11
 
 ### TODO #339 — the C, Go and Java `--help` synopses are generated, so they cannot drift

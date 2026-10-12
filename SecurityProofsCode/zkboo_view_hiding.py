@@ -148,13 +148,20 @@ def _consistent(A_cand, e, vp1, vp2, B, n, prg):
     return True
 
 
-def _count_survivors(n, rounds, prg, patch=None):
-    """(survivors, total, true-A-kept) for one fresh proof."""
+def _count_survivors(n, rounds, prg, patch=None, B=None):
+    """(survivors, total, true-A-kept) for one fresh proof.
+
+    B=None samples the whole key; otherwise only A is sampled and B is fixed.
+    """
     orig = H._zkp_nl_prg_bit
     if patch:
         H._zkp_nl_prg_bit = patch
     try:
-        A, B, y = H.zkp_nl_keygen(n)
+        if B is None:
+            A, B, y = H.zkp_nl_keygen(n)
+        else:
+            A = int.from_bytes(os.urandom((n + 7) // 8), 'big') & ((1 << n) - 1)
+            y = H.zkp_nl_f1(A, B, n)
         proof = H.zkp_nl_prove(A, B, y, n, rounds, b"TODO-301")
     finally:
         H._zkp_nl_prg_bit = orig
@@ -207,7 +214,13 @@ def section3(n=8, rounds=8):
     print("  free variable, so the transcript starts naming the witness.  If this")
     print("  section does not FIRE, §1 and §2 are asserting nothing.")
     zero = lambda tape, gate: 0                                    # noqa: E731
-    surv, total, kept = _count_survivors(n, rounds, zero, patch=zero)
+    # B is CONSTRUCTED, not sampled.  The carry gates see A only through B's
+    # set bits, so a sampled B with one set bit or none (B = 0, 64, 128 ...)
+    # gives the known mask nothing to expose: the control then missed ~2% of
+    # CI runs (6 / 300 locally).  With B all ones it fired for every A
+    # (all 256, 3 proofs each; at most 16 / 256 survive).
+    surv, total, kept = _count_survivors(n, rounds, zero, patch=zero,
+                                         B=(1 << n) - 1)
     fired = surv < total
     narrowed = (total.bit_length() - 1) - (surv.bit_length() - 1) if surv else total.bit_length()
     print(f"  surviving        : {surv} / {total}   true A kept: {kept}")
