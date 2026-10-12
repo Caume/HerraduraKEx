@@ -152,6 +152,9 @@ def _count_survivors(n, rounds, prg, patch=None, B=None):
     """(survivors, total, true-A-kept) for one fresh proof.
 
     B=None samples the whole key; otherwise only A is sampled and B is fixed.
+    Every section passes B all ones: the carry gates see A only through B's
+    set bits, so a sampled B with one set bit or none (0, 64, 128 ...) makes
+    §1/§2's hiding check vacuous for that run and §3's control unable to fire.
     """
     orig = H._zkp_nl_prg_bit
     if patch:
@@ -181,7 +184,8 @@ def section1(n=8, rounds=8):
     print(f"§1 — The revealed pair of views vs. the witness  (n={n}, "
           f"rounds={rounds})")
     print(SEP)
-    surv, total, kept = _count_survivors(n, rounds, H._zkp_nl_prg_bit)
+    surv, total, kept = _count_survivors(n, rounds, H._zkp_nl_prg_bit,
+                                         B=(1 << n) - 1)
     print(f"  candidates for A : {total}")
     print(f"  surviving        : {surv}")
     print(f"  true A kept      : {kept}")
@@ -199,7 +203,8 @@ def section2(n=12, rounds=16):
     print(SEP)
     print("  More rounds means more revealed view pairs.  If any of them leaked,")
     print("  the intersection over rounds would shrink; it does not.")
-    surv, total, kept = _count_survivors(n, rounds, H._zkp_nl_prg_bit)
+    surv, total, kept = _count_survivors(n, rounds, H._zkp_nl_prg_bit,
+                                         B=(1 << n) - 1)
     print(f"  surviving        : {surv} / {total}   true A kept: {kept}")
     ok = surv == total and kept
     print(f"  Hiding           : {'PASS' if ok else 'FAIL — the views narrow A'}")
@@ -214,11 +219,10 @@ def section3(n=8, rounds=8):
     print("  free variable, so the transcript starts naming the witness.  If this")
     print("  section does not FIRE, §1 and §2 are asserting nothing.")
     zero = lambda tape, gate: 0                                    # noqa: E731
-    # B is CONSTRUCTED, not sampled.  The carry gates see A only through B's
-    # set bits, so a sampled B with one set bit or none (B = 0, 64, 128 ...)
-    # gives the known mask nothing to expose: the control then missed ~2% of
-    # CI runs (6 / 300 locally).  With B all ones it fired for every A
-    # (all 256, 3 proofs each; at most 16 / 256 survive).
+    # B is all ones here as in §1/§2 (see _count_survivors): a sampled B with
+    # one set bit or none made this control miss ~2% of CI runs (6 / 300
+    # locally).  With B all ones it fired for every A (all 256, 3 proofs
+    # each; at most 16 / 256 survive).
     surv, total, kept = _count_survivors(n, rounds, zero, patch=zero,
                                          B=(1 << n) - 1)
     fired = surv < total
