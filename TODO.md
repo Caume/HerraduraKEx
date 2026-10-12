@@ -455,6 +455,44 @@ bounded away from zero as it declines -- monotonicity is measured at every step 
 n = 17 and the decline is slowing, but nothing bounds it; (2') the hull share above
 n = 16, unchanged.
 
+**Thirteenth pass (v9.5.42) — one period further, to n = 19: the fall STEEPENS.**  See
+SecurityProofs-10.md §11.50 and `SecurityProofsCode/period_series_n19.py` (with the pinned
+`period_series_n19.json`).
+
+  * **The sample.**  P(n) at every start the singular widths allow -- 7, 10, 13, 16 and
+    8, 11, 14 (a period cannot start at 3 | n, where mu is identically 0) -- one
+    three-bit insertion per key, 11 700 pairs per axis, 500 of them solved exactly at
+    n = 19 (~30 s each).  P(13) reproduces the twelfth pass's replication (0.9 / 0.1
+    sigma) and E[mu_16] agrees between two independent samples.
+  * **E[mu] still rises over every period, to n = 19**, by 24 standard errors or more.
+    E[mu_19] = 2.61 differential, 1.31 linear: 1.95x and 1.96x the criteria.
+  * **But the fall steepens, and "the decline is slowing" is WITHDRAWN.**  In the
+    n = 1 (mod 3) series the twelfth pass used, P = 0.447 / 0.384 / 0.357 / 0.244
+    (differential) and 0.225 / 0.210 / 0.199 / 0.157 (linear) at n = 7 / 10 / 13 / 16;
+    the local exponent moves from -0.32 to -2.02 (6.2 sigma) and -0.23 to -1.26 (4.5
+    sigma).  The n = 2 (mod 3) series also falls at every step (0.505 / 0.365 / 0.308
+    and 0.211 / 0.206 / 0.176); it steepens on the linear axis and not on the
+    differential one, so that is printed, not scored.
+  * **Both n = 256 readings lose their premise.**  Neither a fixed exponent (~13 / ~11)
+    nor a levelled rate (~33 / ~17) describes a decline that is accelerating.  At the
+    last period the increment is 0.081 / 0.052 per bit; if it reaches zero within a few
+    more periods E[mu] levels at about twice the criteria, and if it goes negative
+    nothing here says where it stops.
+  * **A Howard non-termination, fixed in all four solvers** (`certified_cycle_mean.c`,
+    `quenched_exact_ladder.py`, `diff_cycle_mean.py`, `width_residue.py`).  On
+    n = 14, delta = 0x1500, linear, policy iteration never stopped: every node held
+    the optimal mean, but h was rooted wherever the scan entered a cycle, and two
+    cycles of EQUAL mean then have incomparable h.  h is now rooted at each cycle's
+    smallest node.  mu and the certificate do not depend on the root; 744 random keys
+    at n = 7..16 give identical mu, edges and rounds, and the gate's negative control
+    shows the old root not terminating in certificate round 2.
+
+**What is left**, re-aimed: (1'''') whether E[mu] stays above the criteria at all --
+monotonicity is measured to n = 19, but the per-period increment is now falling FASTER,
+so the question is no longer which growth curve holds, and the margin at the widest
+measured width is ~2x, not ~10x.  The next period, P(17) to n = 20, costs ~60-100 s per
+solve; (2') the hull share above n = 16, unchanged.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely

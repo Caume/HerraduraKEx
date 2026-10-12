@@ -175,6 +175,11 @@ def howard(adj, alive):
                 m = sum(pw[u] for u in cyc) / len(cyc)
                 for u in cyc:
                     mu[u] = m
+                # Root h at the cycle's SMALLEST node, not where this scan entered it:
+                # a scan-order root makes h of two equal-mean cycles incomparable, and
+                # Howard then cycles forever (TODO #257, thirteenth pass: n = 14,
+                # delta = 0x1500, linear).  mu does not depend on the root.
+                v = min(cyc)
                 h[v] = 0.0
                 order = []
                 u = v
