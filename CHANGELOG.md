@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.41] - 2026-10-12
+
+### Fix — `zkboo_view_hiding.py` no longer depends on a sampled key
+
+The findings gate `SecurityProofsCode/zkboo_view_hiding.py` (TODO #301) failed in CI with
+"§3 negative control fires: FAIL": every candidate survived the stuck-PRG control.  Nothing
+had leaked or stopped leaking.  The control sampled a fresh key, and the carry gates see A
+only through B's set bits, so a B with one set bit or none (0, 64, 128 ...) gives the known
+mask nothing to expose.  That happened in about 2% of runs (6 of 300 locally).
+
+Every section now CONSTRUCTS B as all ones and samples only A and the proof.  §3 fired for
+every one of the 256 values of A, three proofs each, with at most 16 of 256 candidates
+surviving.  §1 and §2, the hiding checks, had the mirror-image weakness: under such a B they
+passed without testing much.  With B all ones they test the case where A reaches every carry
+gate, and they still narrow A by 0 bits (256 / 256 at n=8, 4096 / 4096 at n=12).
+
+## [9.5.40] - 2026-10-11
+
+### TODO #339 — the C, Go and Java `--help` synopses are generated, so they cannot drift
+
+The three CLIs' help text was hand-written and had drifted from what they dispatch.  C's
+genpkey line omitted `oprf` and `hcred`.  Go's banner omitted `hpke-stern-kem`, `nl-zkbpp`,
+`oprf` and `hpks-t`, and 13 of its 26 subcommands.  `spec/` recorded the gap in
+`cross_implementation_gaps`.
+
+`spec/generate_spec.py` already derives each CLI's flags from its own parser, and the tags it
+dispatches from its own source.  It now also emits a synopsis from those rows: every
+subcommand, the flags its handler reads, and its `--algo` tags.  The synopsis goes to
+`HKX_HELP_SYNOPSIS` in `HerraduraCli/cli_flag_table.h` for C and to
+`CliFlagTable.HELP_SYNOPSIS` for Java.  For Go it goes to a marked generated region of
+`herradura_cli.go`, since `build_go.sh` compiles that one file.  `generate_spec.py --check`
+covers all three.  Each `usage()` prints the synopsis and then the hand-written notes, which
+keep the protocol caveats but no longer list flags or algorithms.
+
+Go and Java now answer `--help` / `-h` with the synopsis and exit 0.  Go used to treat
+`--help` as an unknown command, and Java had no help at all.  The curated
+`cross_implementation_gaps` entry is retired, leaving that list empty.  Python's help comes
+from argparse and is unchanged.
+
+## [9.5.39] - 2026-10-11
+
+### TODO #340 — `-t` now reaches call sites shorter than their poll stride
+
+The time cap was polled only every 64 iterations in Python (`(i & 63) == 63`), and every 8 to
+256 in C and Go, so a site that requested fewer iterations than its stride was never polled.
+Python's own closing line reported it: at `-r 20 -t 0.3`, 100 of 100 capped sites "could not
+poll".  Such a site is now polled after EVERY iteration.  Python's change is in `_trange`;
+C and Go replace all 27 and 24 inline polls with one helper each (`cap_poll` / `capPoll`),
+so the rule holds at every stride.  The poll follows an iteration, so a truncated site still
+ran, and every call site was checked to score on the iterations it actually ran.
+
+Measuring after the change found a site no poll reached: test `[50]` (HCRED-KKW) had no time
+check in C or Go, and at `-r 20` its 20 proofs took 374 s of Go's 447.  Python's port always
+had one; C and Go now poll there every iteration.
+
+At `-r 20 -t 0.3`: C 205 s -> 34 s, Go 538 s -> 93 s, Python 1100 s -> 221 s, all three
+`*** OK ***`.  The time-cap line now reports how many short sites were polled and truncated,
+and `benchmarks/rnl_ring_cost.py` §3 calls them "short" rather than "cap INERT".
+
 ## [9.5.38] - 2026-10-11
 
 ### TODO #341 — `tools/check_fast.sh`: CI's cheap consistency checks in one local command

@@ -59,8 +59,10 @@ regex, so these fields cannot silently drift from what the CLIs actually impleme
   by construction. Those five now appear in `cross_implementation_gaps` with a
   recorded reason each, which is what #261's acceptance criterion asks for
   ("all four cells filled, or ACKNOWLEDGED with a recorded reason, never a
-  silent absence"). Dispatch code, not `--help` text — both banners
-  under-document working tags. This was a curated `CLI_SUPPORT` table until TODO #238
+  silent absence"). Dispatch code, not `--help` text: the C and Go banners
+  under-documented working tags until TODO #339, which now GENERATES the C, Go and
+  Java `--help` synopses from these rows (into `HerraduraCli/cli_flag_table.h`,
+  `CliFlagTable.java`, and a marked region of `herradura_cli.go`). This was a curated `CLI_SUPPORT` table until TODO #238
   found it wrong in two places: it called `hpks-xmss` Python-only when all four
   implementations have shipped it since TODO #201/#208, and said `hcred` was missing from
   Go when the Go CLI dispatches `cred-issue`/`-prove`/`-verify`. `cross_implementation_gaps`

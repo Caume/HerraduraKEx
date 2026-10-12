@@ -77,6 +77,15 @@ func timeExceeded(t0 time.Time) bool {
 	return time.Since(t0) >= gTimeLimit
 }
 
+// capPoll polls the time cap at iteration i of a loop bounded by n: every
+// mask+1 iterations, or EVERY iteration when the site requested no more than
+// mask.  Without the second clause a site requesting fewer than mask+1
+// iterations was never polled at all, so -t could not reach it however slow it
+// ran (TODO #340).  The poll follows an iteration, so a truncated site still ran.
+func capPoll(i, n, mask int, t0 time.Time) bool {
+	return (i&mask == mask || n <= mask) && timeExceeded(t0)
+}
+
 // ---------------------------------------------------------------------------
 // Test-local helpers
 // ---------------------------------------------------------------------------
@@ -226,7 +235,7 @@ func testHkexGFCorrectness() {
 			if GfPow(C2, a).Cmp(GfPow(C, b)) == 0 {
 				ok++
 			}
-			if i&7 == 7 && timeExceeded(t0) { N = i + 1; break }
+			if capPoll(i, N, 7, t0) { N = i + 1; break }
 		}
 		status := "PASS"
 		if ok != N { status = "FAIL" }
@@ -254,7 +263,7 @@ func testAvalanche() {
 				if hd < gmin { gmin = hd }
 				if hd > gmax { gmax = hd }
 			}
-			if trial&63 == 63 && timeExceeded(t0) { N = trial + 1; break }
+			if capPoll(trial, N, 63, t0) { N = trial + 1; break }
 		}
 		mean := total / (float64(N) * float64(size))
 		status := "PASS"
@@ -282,7 +291,7 @@ func testOrbitPeriod() {
 				period++
 			}
 			if period == size { cntP++ } else if period == size/2 { cntHP++ } else { other++ }
-			if trial&15 == 15 && timeExceeded(t0) { N = trial + 1; break }
+			if capPoll(trial, N, 15, t0) { N = trial + 1; break }
 		}
 		status := "PASS"
 		if other != 0 { status = "FAIL" }
@@ -307,7 +316,7 @@ func testBitFrequency() {
 			for bit := 0; bit < size; bit++ {
 				if out.Bit(bit) == 1 { counts[bit]++ }
 			}
-			if trial&255 == 255 && timeExceeded(t0) { break }
+			if capPoll(trial, N, 255, t0) { break }
 		}
 		var mn, mx, mean float64
 		mn = 101.0; mx = -1.0
@@ -365,7 +374,7 @@ func testHkexGFKeySensitivity() {
 			sk2 := GfPow(C2, af)
 			diff := sk1.Xor(sk2)
 			total += float64(diff.Popcount())
-			if i&7 == 7 && timeExceeded(t0) { N = i + 1; break }
+			if capPoll(i, N, 7, t0) { N = i + 1; break }
 		}
 		mean := total / float64(N)
 		expected := size / 4
@@ -393,7 +402,7 @@ func testHkexGFEveResistance() {
 			delta := C.Xor(C2)
 			eveGuess := SOpBA(delta, rv)
 			if eveGuess.Equal(realSk) { successes++ }
-			if i&7 == 7 && timeExceeded(t0) { N = i + 1; break }
+			if capPoll(i, N, 7, t0) { N = i + 1; break }
 		}
 		status := "PASS"
 		if successes != 0 { status = "FAIL" }
@@ -420,7 +429,7 @@ func testHpksSchnorrCorrectness() {
 			s := k.SubModOrd(a.MulModOrd(e))
 			lhs := GfMul(GfPow(g, s), GfPow(cVal, e))
 			if lhs.Equal(rInt) { ok++ }
-			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
+			if capPoll(i, N, 63, t0) { N = i + 1; break }
 		}
 		status := "PASS"
 		if ok != N { status = "FAIL" }
@@ -445,7 +454,7 @@ func testHpksSchnorrEveResistance() {
 			sEve := randBA(size)
 			lhs := GfMul(GfPow(g, sEve), GfPow(cVal, eEve))
 			if lhs.Equal(rEve) { wins++ }
-			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
+			if capPoll(i, N, 63, t0) { N = i + 1; break }
 		}
 		status := "PASS"
 		if wins != 0 { status = "FAIL" }
@@ -473,7 +482,7 @@ func testHpkeRoundTrip() {
 			decKey := GfPow(rVal2, a)
 			D := FscxRevolve(E, decKey, rv)
 			if D.Equal(pt) { ok++ }
-			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
+			if capPoll(i, N, 63, t0) { N = i + 1; break }
 		}
 		status := "PASS"
 		if ok != N { status = "FAIL" }
@@ -497,7 +506,7 @@ func testNlFscxV1Nonlinearity() {
 			A := randBA(size); B := randBA(size)
 			linPred := Fscx(A, zero).Xor(NlFscxV1(zero, B))
 			if !NlFscxV1(A, B).Equal(linPred) { violations++ }
-			if i&63 == 63 && timeExceeded(t0) { N1 = i + 1; break }
+			if capPoll(i, N1, 63, t0) { N1 = i + 1; break }
 		}
 		cap := 4 * size
 		noPeriod := 0
@@ -511,7 +520,7 @@ func testNlFscxV1Nonlinearity() {
 				if cur.Equal(A) { found = true; break }
 			}
 			if !found { noPeriod++ }
-			if i&31 == 31 && timeExceeded(t0) { N2 = i + 1; break }
+			if capPoll(i, N2, 31, t0) { N2 = i + 1; break }
 		}
 		status := "PASS"
 		if violations != N1 || noPeriod < N2*95/100 { status = "FAIL" }
@@ -538,14 +547,14 @@ func testNlFscxV2BijectiveInverse() {
 				if prev, ok := seen[out]; ok && prev != A.LowUint64() { nonBij++; break }
 				seen[out] = A.LowUint64()
 			}
-			if i&63 == 63 && timeExceeded(t0) { N1 = i + 1; break }
+			if capPoll(i, N1, 63, t0) { N1 = i + 1; break }
 		}
 		invOk := 0
 		t0 = time.Now()
 		for i := 0; i < N2; i++ {
 			A := randBA(size); B := randBA(size)
 			if NlFscxV2Inv(NlFscxV2(A, B), B).Equal(A) { invOk++ }
-			if i&63 == 63 && timeExceeded(t0) { N2 = i + 1; break }
+			if capPoll(i, N2, 63, t0) { N2 = i + 1; break }
 		}
 		zero := NewBitArray(size, new(big.Int))
 		nlOk := 0
@@ -554,7 +563,7 @@ func testNlFscxV2BijectiveInverse() {
 			A := randBA(size); B := randBA(size)
 			linPred := Fscx(A, zero).Xor(NlFscxV2(zero, B))
 			if !NlFscxV2(A, B).Equal(linPred) { nlOk++ }
-			if i&63 == 63 && timeExceeded(t0) { N3 = i + 1; break }
+			if capPoll(i, N3, 63, t0) { N3 = i + 1; break }
 		}
 		status := "PASS"
 		if nonBij != 0 || invOk != N2 || nlOk < N3*98/100 { status = "FAIL" }
@@ -579,7 +588,7 @@ func testHskeNlA1Correctness() {
 			C := P.Xor(ks)
 			D := C.Xor(ks)
 			if D.Equal(P) { ok++ }
-			if trial&63 == 63 && timeExceeded(t0) { N = trial + 1; break }
+			if capPoll(trial, N, 63, t0) { N = trial + 1; break }
 		}
 		status := "PASS"
 		if ok != N { status = "FAIL" }
@@ -599,7 +608,7 @@ func testHskeNlA2Correctness() {
 			E := NlFscxRevolveV2(P, K, rv)
 			D := NlFscxRevolveV2Inv(E, K, rv)
 			if D.Equal(P) { ok++ }
-			if i&15 == 15 && timeExceeded(t0) { N = i + 1; break }
+			if capPoll(i, N, 15, t0) { N = i + 1; break }
 		}
 		status := "PASS"
 		if ok != N { status = "FAIL" }
@@ -627,7 +636,7 @@ func testHkexRnlCorrectness() {
 			skA := NlFscxRevolveV1(RnlKdfSeed(KA), KA, nRnl/4)
 			skB := NlFscxRevolveV1(RnlKdfSeed(KB), KB, nRnl/4)
 			if skA.Equal(skB) { okSk++ }
-			if i&15 == 15 && timeExceeded(t0) { trials = i + 1; break }
+			if capPoll(i, trials, 15, t0) { trials = i + 1; break }
 		}
 		status := "PASS"
 		if okRaw < trials { status = "FAIL" }
@@ -655,7 +664,7 @@ func testHpksNlCorrectness() {
 			s := k.SubModOrd(a.MulModOrd(e))
 			lhs := GfMul(GfPow(g, s), GfPow(cVal, e))
 			if lhs.Equal(rInt) { ok++ }
-			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
+			if capPoll(i, N, 63, t0) { N = i + 1; break }
 		}
 		status := "PASS"
 		if ok != N { status = "FAIL" }
@@ -681,7 +690,7 @@ func testHpkeNlCorrectness() {
 			decKey := GfPow(rInt, a)
 			D := NlFscxRevolveV2Inv(E, decKey, iv)
 			if D.Equal(pt) { ok++ }
-			if i&31 == 31 && timeExceeded(t0) { N = i + 1; break }
+			if capPoll(i, N, 31, t0) { N = i + 1; break }
 		}
 		status := "PASS"
 		if ok != N { status = "FAIL" }
@@ -1329,7 +1338,7 @@ func testFpeCorrectness() {
 		if D.Equal(P) {
 			ok++
 		}
-		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
+		if capPoll(i, N, 63, t0) {
 			N = i + 1
 			break
 		}
@@ -1354,7 +1363,7 @@ func testTwkCorrectness() {
 		if D.Equal(P) {
 			ok++
 		}
-		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
+		if capPoll(i, N, 63, t0) {
 			N = i + 1
 			break
 		}
@@ -1984,7 +1993,7 @@ func testFpeTwkDomainSeparation() {
 		if FpeEncrypt(P, key[:2], key[2:3]).Equal(FpeEncrypt(P, key[:1], key[1:3])) {
 			amb++
 		}
-		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
+		if capPoll(i, N, 63, t0) {
 			N = i + 1
 			break
 		}
@@ -2052,7 +2061,7 @@ func testNlFscxV3() {
 		if NlFscxRevolveV2(P, K, R3Value).Equal(Y) {
 			sameAsV2++
 		}
-		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
+		if capPoll(i, N, 63, t0) {
 			N = i + 1
 			break
 		}
@@ -2142,7 +2151,7 @@ func testNlFscxV3Consumers() {
 			fpeEqTwk++
 		}
 
-		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
+		if capPoll(i, N, 63, t0) {
 			N = i + 1
 			break
 		}
@@ -2249,6 +2258,7 @@ func testHcredKkw() {
 		"flip_pre_root", "relabel_pbar"}
 	rejected := map[string]int{}
 
+	t0 := time.Now()
 	for i := 0; i < N; i++ {
 		nRun++
 		mB := RnlPolyAdd(RnlMPoly(n), RnlRandPoly(n, RnlQ), RnlQ)
@@ -2321,6 +2331,12 @@ func testHcredKkw() {
 			rejected["relabel_pbar"]++
 		}
 		p.Online[e0].Pbar = origPbar
+		// One proof costs seconds, so poll every iteration (mask 0); the
+		// scoring below runs on nRun.  Python's port always had this cap; C
+		// and Go had none, so -r 20 ran 20 full proofs (TODO #340).
+		if capPoll(i, N, 0, t0) {
+			break
+		}
 	}
 
 	ok := nRun > 0 && okVerify == nRun

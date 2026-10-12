@@ -1073,6 +1073,16 @@ static int time_exceeded(struct timespec *t0)
     return elapsed_sec(t0, &t1) >= g_time_limit;
 }
 
+/* Poll the time cap at iteration i of a loop bounded by n: every mask+1
+ * iterations, or EVERY iteration when the site requested no more than mask.
+ * Without the second clause a site requesting fewer than mask+1 iterations
+ * was never polled at all, so -t could not reach it however slow it ran
+ * (TODO #340).  The poll follows an iteration, so a truncated site still ran. */
+static int cap_poll(long i, long n, long mask, struct timespec *t0)
+{
+    return ((i & mask) == mask || n <= mask) && time_exceeded(t0);
+}
+
 /* ------------------------------------------------------------------ */
 /* Security tests [1]-[6]: HKEX-GF and FSCX primitives               */
 /* ------------------------------------------------------------------ */
@@ -1601,7 +1611,7 @@ static void test_hkex_gf_correctness(void)
                 skA32 = gf_pow_32(C2_32a, a32);   skB32  = gf_pow_32(C32a, b32);
                 if (skA32 == skB32) ok++;
             }
-            if ((i & 7) == 7 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 7, &t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %d / %d correct  [%s]\n",
                size, ok, N, ok == N ? "PASS" : "FAIL");
@@ -1659,7 +1669,7 @@ static void test_avalanche(void)
                     if (hd > gmax) gmax = hd;
                 }
             }
-            if ((trial & 63) == 63 && time_exceeded(&t0)) { N = trial + 1; break; }
+            if (cap_poll(trial, N, 63, &t0)) { N = trial + 1; break; }
         }
         {
             double mean = total / ((double)N * (double)size);
@@ -1702,7 +1712,7 @@ static void test_orbit_period(void)
             if      (period == size)     cntP++;
             else if (period == size / 2) cntHP++;
             else                         other++;
-            if ((trial & 15) == 15 && time_exceeded(&t0)) { N = trial + 1; break; }
+            if (cap_poll(trial, N, 15, &t0)) { N = trial + 1; break; }
         }
         printf("    bits=%3d  period=%d: %3d  period=%d: %3d  other: %d  [%s]\n",
                size, size, cntP, size / 2, cntHP, other,
@@ -1740,7 +1750,7 @@ static void test_bit_frequency(void)
                 for (bit = 0; bit < 64; bit++)
                     if ((out >> bit) & 1) counts[bit]++;
             }
-            if ((trial & 255) == 255 && time_exceeded(&t0)) { N = trial + 1; break; }
+            if (cap_poll(trial, N, 255, &t0)) { N = trial + 1; break; }
         }
         minpct = 101.0; maxpct = -1.0; meanpct = 0.0;
         for (bit = 0; bit < size; bit++) {
@@ -1818,7 +1828,7 @@ static void test_hkex_gf_key_sensitivity(void)
                 sk2_32 = gf_pow_32(C2_32b, a32 ^ 1U);
                 total += (double)__builtin_popcount(sk1_32 ^ sk2_32);
             }
-            if ((i & 7) == 7 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 7, &t0)) { N = i + 1; break; }
         }
         mean = total / (double)N;
         printf("    bits=%3d  mean HD=%.2f (expected >=%d)  [%s]\n",
@@ -1882,7 +1892,7 @@ static void test_eve_attack_resistance(void)
                 evsk32 = s_op32(C32e ^ C2_32e, rv);
                 if (evsk32 == sk32) hits++;
             }
-            if ((i & 7) == 7 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 7, &t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %5d / %d Eve successes (expected 0)  [%s]\n",
                size, hits, N, hits == 0 ? "PASS" : "FAIL");
@@ -1922,7 +1932,7 @@ static void test_hpks_schnorr_correctness(void)
             bn_gf_pow_n(Ce, C, e, size);
             bn_gf_mul_n(lhs, gs, Ce, size);
             if (bn_equal_n(lhs, R, size)) ok++;
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %4d / %d verified  [%s]\n",
                size, ok, N, ok == N ? "PASS" : "FAIL");
@@ -1956,7 +1966,7 @@ static void test_hpks_schnorr_eve(void)
             bn_gf_pow_n(Ce, C, e, size);
             bn_gf_mul_n(lhs, gs, Ce, size);
             if (bn_equal_n(lhs, R, size)) hits++;
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %4d / %d Eve wins (expected 0)  [%s]\n",
                size, hits, N, hits == 0 ? "PASS" : "FAIL");
@@ -2017,7 +2027,7 @@ static void test_hpke_el_gamal(void)
                 D32g  = fscx_revolve32(E32g, dec32, 24);
                 if (D32g == pt32) ok++;
             }
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %4d / %d decrypted  [%s]\n",
                size, ok, N, ok == N ? "PASS" : "FAIL");
@@ -2075,7 +2085,7 @@ static void test_nl_fscx_v1_nonlinearity(void)
                 uint64_t lin_pred = fscx64(A, 0) ^ nl_fscx_v1_64(0, B);
                 if (nl_fscx_v1_64(A, B) != lin_pred) violations++;
             }
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N1 = i + 1; break; }
+            if (cap_poll(i, N1, 63, &t0)) { N1 = i + 1; break; }
         }
         /* Aperiodicity: orbit of 4*n steps should not return to A */
         clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -2105,7 +2115,7 @@ static void test_nl_fscx_v1_nonlinearity(void)
                 }
             }
             if (!found) no_period++;
-            if ((i & 31) == 31 && time_exceeded(&t0)) { N2 = i + 1; break; }
+            if (cap_poll(i, N2, 31, &t0)) { N2 = i + 1; break; }
         }
         printf("    bits=%3d  linearity violations=%d/%d  no-period=%d/%d  [%s]\n",
                size, violations, N1, no_period, N2,
@@ -2167,7 +2177,7 @@ static void test_nl_fscx_v2_bijective_inverse(void)
                             found = 1;
             }
             if (found) non_bij++;
-            if ((i & 15) == 15 && time_exceeded(&t0)) { N1 = i + 1; break; }
+            if (cap_poll(i, N1, 15, &t0)) { N1 = i + 1; break; }
         }
         /* Inverse correctness */
         clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -2185,7 +2195,7 @@ static void test_nl_fscx_v2_bijective_inverse(void)
                 uint64_t A = rand64(), B = rand64();
                 if (nl_fscx_v2_inv_64(nl_fscx_v2_64(A, B), B) == A) inv_ok++;
             }
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N2 = i + 1; break; }
+            if (cap_poll(i, N2, 63, &t0)) { N2 = i + 1; break; }
         }
         /* Non-linearity */
         clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -2206,7 +2216,7 @@ static void test_nl_fscx_v2_bijective_inverse(void)
                 uint64_t A = rand64(), B = rand64();
                 if (nl_fscx_v2_64(A, B) != (fscx64(A, 0) ^ nl_fscx_v2_64(0, B))) nl_ok++;
             }
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N3 = i + 1; break; }
+            if (cap_poll(i, N3, 63, &t0)) { N3 = i + 1; break; }
         }
         printf("    bits=%3d  collisions=%d/%d  inv=%d/%d  nonlinear=%d/%d  [%s]\n",
                size, non_bij, N1, inv_ok, N2, nl_ok, N3,
@@ -2262,7 +2272,7 @@ static void test_hske_nl_a1_correctness(void)
                 uint64_t ks = nl_fscx_revolve_v1_64(seed, base ^ ctr, iv);
                 if ((P ^ ks ^ ks) == P) ok++;
             }
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %4d / %d correct  [%s]\n",
                size, ok, N, ok == N ? "PASS" : "FAIL");
@@ -2300,7 +2310,7 @@ static void test_hske_nl_a2_correctness(void)
                 uint64_t D = nl_fscx_revolve_v2_inv_64(E, K, rv);
                 if (D == P) ok++;
             }
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %4d / %d correct  [%s]\n",
                size, ok, N, ok == N ? "PASS" : "FAIL");
@@ -2339,7 +2349,7 @@ static void test_hkex_rnl_correctness(void)
                 if (K_A == K_B) ok_raw++;
                 if (nl_fscx_revolve_v1_32(((K_A<<4)|(K_A>>28)) ^ _RNL_KDF_DC_32, K_A, NL_I32) ==
                     nl_fscx_revolve_v1_32(((K_B<<4)|(K_B>>28)) ^ _RNL_KDF_DC_32, K_B, NL_I32)) ok_sk++;
-                if ((i & 15) == 15 && time_exceeded(&t0)) { N = i + 1; break; }
+                if (cap_poll(i, N, 15, &t0)) { N = i + 1; break; }
             }
         } else if (n == 64) {
             int32_t m_base64[64], a_rand64[64], m_blind64[64];
@@ -2356,7 +2366,7 @@ static void test_hkex_rnl_correctness(void)
                 if (K_A64 == K_B64) ok_raw++;
                 if (nl_fscx_revolve_v1_64(((K_A64<<8)|(K_A64>>56)) ^ _RNL_KDF_DC_64, K_A64, NL_I64) ==
                     nl_fscx_revolve_v1_64(((K_B64<<8)|(K_B64>>56)) ^ _RNL_KDF_DC_64, K_B64, NL_I64)) ok_sk++;
-                if ((i & 15) == 15 && time_exceeded(&t0)) { N = i + 1; break; }
+                if (cap_poll(i, N, 15, &t0)) { N = i + 1; break; }
             }
         } else if (n == 128) {
             int32_t m_base128[128], a_rand128[128], m_blind128[128];
@@ -2375,7 +2385,7 @@ static void test_hkex_rnl_correctness(void)
                   __uint128_t sB = (K_B128 << 16) | (K_B128 >> 112);
                   if (nl_fscx_revolve_v1_128(sA, K_A128, NL_I128) ==
                       nl_fscx_revolve_v1_128(sB, K_B128, NL_I128)) ok_sk++; }
-                if ((i & 15) == 15 && time_exceeded(&t0)) { N = i + 1; break; }
+                if (cap_poll(i, N, 15, &t0)) { N = i + 1; break; }
             }
         } else { /* n == 256 */
             int32_t m_base256[256], a_rand256[256], m_blind256[256];
@@ -2395,7 +2405,7 @@ static void test_hkex_rnl_correctness(void)
                 nl_fscx_revolve_v1_ba(&sk_A256, &seed_A, &K_A256, NL_I256);
                 nl_fscx_revolve_v1_ba(&sk_B256, &seed_B, &K_B256, NL_I256);
                 if (ba_equal(&sk_A256, &sk_B256)) ok_sk++;
-                if ((i & 15) == 15 && time_exceeded(&t0)) { N = i + 1; break; }
+                if (cap_poll(i, N, 15, &t0)) { N = i + 1; break; }
             }
         }
         printf("    n=%3d  raw agree=%d/%d  sk agree=%d/%d  [%s]\n",
@@ -2433,7 +2443,7 @@ static void test_hpks_nl_correctness(void)
             bn_gf_pow_n(Ce, C, e, size);
             bn_gf_mul_n(lhs, gs, Ce, size);
             if (bn_equal_n(lhs, R, size)) ok++;
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %4d / %d verified  [%s]\n",
                size, ok, N, ok == N ? "PASS" : "FAIL");
@@ -2494,7 +2504,7 @@ static void test_hpke_nl_correctness(void)
                 D32h   = nl_fscx_revolve_v2_inv_32(E32h, dec32h, NL_I32);
                 if (D32h == pt32h) ok++;
             }
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %4d / %d decrypted  [%s]\n",
                size, ok, N, ok == N ? "PASS" : "FAIL");
@@ -4424,7 +4434,7 @@ static void test_fpe_correctness(void)
         fpe_encrypt(&P, key_bytes, KEYBYTES, ctx, sizeof(ctx), &C);
         fpe_decrypt(&C, key_bytes, KEYBYTES, ctx, sizeof(ctx), &D);
         if (ba_equal(&D, &P)) ok++;
-        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+        if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
     }
     printf("    %d / %d round-trips correct  [%s]\n", ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
@@ -4448,7 +4458,7 @@ static void test_twk_correctness(void)
         twk_encrypt(&P, key_bytes, KEYBYTES, sector, bidx, &C);
         twk_decrypt(&C, key_bytes, KEYBYTES, sector, bidx, &D);
         if (ba_equal(&D, &P)) ok++;
-        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+        if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
     }
     printf("    %d / %d round-trips correct  [%s]\n", ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
@@ -5847,7 +5857,7 @@ int main(int argc, char *argv[])
             fpe_encrypt(&P, key_bytes,     2, key_bytes + 2, 1, &Ca);
             fpe_encrypt(&P, key_bytes,     1, key_bytes + 1, 2, &Cb);
             if (ba_equal(&Ca, &Cb)) amb++;
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
         }
         printf("    n=%d  fpe/twk collisions=%d  key-boundary collisions=%d  [%s]\n\n",
                N, coll, amb, (coll == 0 && amb == 0) ? "PASS" : "FAIL");
@@ -5911,7 +5921,7 @@ int main(int argc, char *argv[])
             /* (d) v3 != v2 */
             nl_fscx_revolve_v2_ba(&V2, &P, &K, R3_VALUE);
             if (ba_equal(&V2, &Y)) same_as_v2++;
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
         }
         printf("    n=%d  R3_VALUE=%d  rows=50 sum=%d illegal=%d  chi!=ref=%d"
                "  chi-inv fails=%d  revolve round-trip fails=%d  v3==v2=%d  [%s]\n\n",
@@ -5997,7 +6007,7 @@ int main(int argc, char *argv[])
             if (ba_equal(&T2, &T3)) same_as_v2++;
             if (ba_equal(&F3, &T3)) fpe_eq_twk++;
 
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+            if (cap_poll(i, N, 63, &t0)) { N = i + 1; break; }
         }
         printf("    n=%d  round-trip fails=%d  v3==v2=%d  fpe-v3==twk-v3 at "
                "12-byte ctx=%d  AEAD forgeries=%d  [%s]\n\n",
@@ -6088,6 +6098,7 @@ int main(int argc, char *argv[])
     {
         int i, N = g_rounds > 0 ? g_rounds : 1;
         int n_run = 0, ok_verify = 0;
+        struct timespec t0;
         static const char *const axis[6] = {
             "wrong_msg", "flip_W", "flip_u", "flip_t",
             "flip_pre_root", "relabel_pbar"
@@ -6100,6 +6111,7 @@ int main(int argc, char *argv[])
         printf("[50] HCRED-KKW prove/verify + rejection axes  [PQC-EXT]\n");
         memcpy(kkw_msg2, kkw_msg, sizeof(kkw_msg) - 1);
         kkw_msg2[sizeof(kkw_msg) - 1] = '!';
+        clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
             /* Full RNL_N buffers, exactly as the suite demo declares them:
              * rnl_m_poly/rnl_rand_poly write RNL_N coefficients while
@@ -6175,6 +6187,10 @@ int main(int argc, char *argv[])
             kp.online[e0].pbar = saved;
 
             hcred_kkw_proof_free(&kp);
+            /* One proof costs seconds, so poll every iteration (mask 0); the
+             * scoring below runs on n_run.  Python's port always had this cap;
+             * C and Go had none, so -r 20 ran 20 full proofs (TODO #340). */
+            if (cap_poll(i, N, 0, &t0)) break;
         }
         {
             int all_ok = (n_run > 0 && ok_verify == n_run), k;

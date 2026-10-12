@@ -23448,3 +23448,73 @@ is neither listed nor in `NOT_FAST` with a reason, or if a `NOT_FAST` entry has 
 three controls fire.
 
 Status: **DONE v9.5.38** — `tools/check_fast.sh` runs CI's cheap checks locally; `--verify-ci` keeps its list matched to CI.
+
+---
+
+### #340: `-t` does not bound wall time for call sites requesting fewer than 64 iterations
+
+Measured while verifying v9.5.36: at `-r 20 -t 0.3` the Go harness took 485 s and the
+Python harness 1100 s.  Python's closing line reported 100 capped sites, 0 truncated and
+100 "could not poll (fewer than 64 iterations requested)".  `_trange` polls the clock only
+when `(i & 63) == 63`, so a site requesting fewer than 64 iterations never sees the cap.
+TODO #225 documented this and #327 fixed the benchmark-side floor, but the test-side poll
+granularity is still a floor `-t` cannot reach.  Proposed: poll every iteration when the
+requested count is below 64 (the clock read is negligible beside a test iteration there),
+and the same in Go's and C's loop helpers.  The time-cap summary line should keep reporting
+truncation so the change is measurable.  A truncated site must stay a site that RAN, so the
+rule that a section which did not run is never scored still holds.
+
+Fixed in v9.5.39.  Python's `_trange` now polls after every iteration when the site
+requested fewer than 64; C and Go got the same rule through one helper each,
+`cap_poll(i, n, mask, &t0)` / `capPoll(i, n, mask, t0)`, which replaced all 27 C and 24 Go
+inline `(i & mask) == mask` polls (their strides are 8, 16, 32, 64 and 256, and the rule holds
+at each).  The poll follows an iteration, so a truncated site still ran.  Every call site was
+checked to score on the iterations it actually ran, not on the requested count; two Python
+prints in `[19]` used the requested count as their denominator and now use the actual one.
+The closing time-cap line now reads "N requested fewer than 64 iterations and were polled
+every iteration, M of them truncated", and no longer counts a cut after the final iteration
+as a truncation.
+
+Measuring after the change found one more site `-t` could not reach: test `[50]`
+(HCRED-KKW) in C and Go had no time check at all, and at `-r 20` it ran 20 proofs of about
+18 s each, 374 s of Go's 447.  Python's port always had the cap; C and Go now poll there
+every iteration.
+
+At `-r 20 -t 0.3` on the aarch64 SBC: C 205 s -> 34 s, Go 538 s -> 93 s, Python 1100 s ->
+221 s (the before figures for Go and Python are from v9.5.36's verification run; all runs
+were in parallel).  All three exit OK; 37 of Python's 100 short sites were truncated.
+`benchmarks/rnl_ring_cost.py` §3 now labels such sites "short" instead of "cap INERT", and
+marks its recorded figures as pre-#340.
+
+Status: **DONE v9.5.39** — `-t` now reaches sites requesting fewer iterations than their poll stride, in C, Go and Python, plus test [50] in C/Go.
+
+---
+
+### #339: the C, Go and Java `--help` text is hand-written and has drifted from dispatch
+
+`spec/`'s `cross_implementation_gaps` already records it.  C's `usage()` omits `oprf` /
+`hcred` from the genpkey line and `--bits` / `--xmss-height` from genpkey's synopsis.  Go's
+banner omits `hpke-stern-kem`, `nl-zkbpp`, `oprf` and `hpks-t`, all of which it dispatches.
+`generate_spec.py` already emits `HerraduraCli/cli_flag_table.h` and
+`bindings/java/herradurakex/CliFlagTable.java` from each CLI's own dispatch source, so a
+generated per-subcommand synopsis (flags and `--algo` choices) would make the help text
+unable to drift.  Python's comes from argparse and is already correct.  Scope note: keep the
+hand-written prose (protocol caveats); generate only the synopsis and choices lines.
+
+Fixed in v9.5.40.  `spec/generate_spec.py` now builds each CLI's synopsis from the spec rows
+it already derives from that CLI's own parser and dispatch: every subcommand, the flags its
+handler reads, and for `--algo` subcommands the Python choices filtered to the tags that CLI
+dispatches.  C gets it as `HKX_HELP_SYNOPSIS` in `cli_flag_table.h` and Java as
+`CliFlagTable.HELP_SYNOPSIS`.  Go gets it as a `helpSynopsis` constant in a marked
+BEGIN/END GENERATED region of `herradura_cli.go` itself, because `build_go.sh` compiles that
+file alone.  `--check` covers all three, so a stale synopsis fails CI.
+
+The hand-written prose stays, as notes after the synopsis; only the flag and algorithm lists
+went.  Go's banner had been missing 13 of its 26 subcommands as well as the four tags; it now
+lists them all.  Go and Java also learned `--help` / `-h`: Go used to answer
+`--help` with "unknown command" and exit 1, and Java had no help at all, only a hand-kept
+subcommand list in its no-arguments error, which now prints the generated synopsis instead.
+The curated `cross_implementation_gaps` entry that recorded the drift is retired, so that
+list is empty.
+
+Status: **DONE v9.5.40** — C/Go/Java `--help` synopses generated from the spec; Go and Java gain `--help`.

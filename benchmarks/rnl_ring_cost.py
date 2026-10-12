@@ -24,12 +24,12 @@ Measured, that concern does not apply, for a reason the item did not anticipate:
     `KAT/hkex_rnl.json` (which does pin n=1024) and from the CliTest scripts that
     drive the CLI at its default ring, not from the capped suite.
 
-What the census in §3 does find is that `-t` caps much less than it appears to.
-`_trange` polls the clock at `(i & 63) == 63`, so a call site that requests fewer
-than 64 iterations can never be interrupted: the cap is structurally inert there.
-18 of 95 capped sites are in that category, and they account for ~71% of all time
-spent inside capped sites.  The worst single site requests 30 iterations and runs
-~97 s against a 2.0 s cap.  That, not the ring, is where the job time goes.
+What the census in §3 found is that `-t` capped much less than it appeared to.
+`_trange` polled the clock only at `(i & 63) == 63`, so a call site that requested
+fewer than 64 iterations could never be interrupted.  18 of 95 capped sites were in
+that category, and they accounted for ~71% of all time spent inside capped sites;
+the worst requested 30 iterations and ran ~97 s against a 2.0 s cap.  TODO #340
+now polls such a site after every iteration, and §3 shows what that buys.
 
 Run:
     python3 benchmarks/rnl_ring_cost.py              # ring cost + cap arithmetic
@@ -48,7 +48,7 @@ _ROOT = os.path.dirname(_HERE)
 _TESTS = os.path.join(_ROOT, "CryptosuiteTests", "Herradura_tests.py")
 
 CAP = 2.0          # the per-test wall-clock cap the CI job passes as -t 2.0
-POLL = 64          # _trange polls at (i & 63) == 63
+POLL = 64          # _trange polls at (i & 63) == 63, or every iteration below 64
 RING_SIZES = [32, 64, 128, 256, 512, 1024]
 _BA_MAX_BITS = 256   # BITARRAY.md 2's ceiling; see _key_bits (TODO #329)
 
@@ -217,8 +217,9 @@ def section3(ht, census):
     print("§3  Cap coverage — the sites -t cannot touch")
     print("=" * 74)
     print()
-    print(f"  A site requesting fewer than {POLL} iterations is never polled, so the cap")
-    print("  is structurally inert there no matter how slow the work becomes.")
+    print(f"  A site requesting fewer than {POLL} iterations used to be never polled, so")
+    print("  the cap was inert there.  Since TODO #340 it is polled every iteration;")
+    print("  'short' below marks those sites.")
     print()
     names = sorted(n for n in dir(ht) if n.startswith("test_")) if census \
         else list(KNOWN_OFFENDERS)
@@ -252,24 +253,26 @@ def section3(ht, census):
                 sys.stdout = saved
     ht._trange = orig
 
-    inert = [r for r in rec if r[1] < POLL]
+    short = [r for r in rec if r[1] < POLL]
     trunc = [r for r in rec if r[2] < r[1]]
     total = sum(r[3] for r in rec)
     print(f"    {'test':<34} {'req':>5} {'done':>5} {'wall s':>8}  status")
     for name, req, done, wall in sorted(rec, key=lambda r: -r[3])[:12]:
-        status = ("cap INERT" if req < POLL else
-                  "truncated" if done < req else "ran in full")
+        status = ("truncated" if done < req else "ran in full") + \
+            (" (short)" if req < POLL else "")
         print(f"    {name:<34} {req:>5} {done:>5} {wall:>8.2f}  {status}"
               f"{'  <- ' + format(wall / CAP, '.0f') + 'x cap' if wall > 2 * CAP else ''}")
     print()
     print(f"  sites measured:            {len(rec)}")
     print(f"  truncated by the cap:      {len(trunc)}")
-    print(f"  cap-inert (requested < {POLL}): {len(inert)}")
+    print(f"  short (requested < {POLL}): {len(short)}, "
+          f"{sum(1 for r in short if r[2] < r[1])} of them truncated")
     if rec:
-        print(f"  wall inside cap-inert sites: {sum(r[3] for r in inert):.1f}s of "
-              f"{total:.1f}s ({100 * sum(r[3] for r in inert) / total:.0f}%)")
+        print(f"  wall inside short sites: {sum(r[3] for r in short):.1f}s of "
+              f"{total:.1f}s ({100 * sum(r[3] for r in short) / total:.0f}%)")
     print()
-    print("  Recorded for the whole suite on an idle host (95 sites, -t 2.0):")
+    print("  Recorded for the whole suite on an idle host (95 sites, -t 2.0),")
+    print("  BEFORE TODO #340, when short sites were never polled:")
     print("    16 sites truncated — all GF/NL/FPE/TWK, none of them RNL, and every")
     print("       one stops at exactly 64 of 100, the poll granularity.")
     print("    18 sites cap-inert, carrying 302 s of the 424 s spent in capped sites.")

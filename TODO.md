@@ -567,35 +567,3 @@ not next, and it should not be implemented as posed.  Revisit only if a future `
 role appears that is neither parameter-fed nor movable.
 
 Status: **OPEN**
-
----
-
-### #339: the C, Go and Java `--help` text is hand-written and has drifted from dispatch
-
-`spec/`'s `cross_implementation_gaps` already records it.  C's `usage()` omits `oprf` /
-`hcred` from the genpkey line and `--bits` / `--xmss-height` from genpkey's synopsis.  Go's
-banner omits `hpke-stern-kem`, `nl-zkbpp`, `oprf` and `hpks-t`, all of which it dispatches.
-`generate_spec.py` already emits `HerraduraCli/cli_flag_table.h` and
-`bindings/java/herradurakex/CliFlagTable.java` from each CLI's own dispatch source, so a
-generated per-subcommand synopsis (flags and `--algo` choices) would make the help text
-unable to drift.  Python's comes from argparse and is already correct.  Scope note: keep the
-hand-written prose (protocol caveats); generate only the synopsis and choices lines.
-
-Status: **OPEN**
-
----
-
-### #340: `-t` does not bound wall time for call sites requesting fewer than 64 iterations
-
-Measured while verifying v9.5.36: at `-r 20 -t 0.3` the Go harness took 485 s and the
-Python harness 1100 s.  Python's closing line reported 100 capped sites, 0 truncated and
-100 "could not poll (fewer than 64 iterations requested)".  `_trange` polls the clock only
-when `(i & 63) == 63`, so a site requesting fewer than 64 iterations never sees the cap.
-TODO #225 documented this and #327 fixed the benchmark-side floor, but the test-side poll
-granularity is still a floor `-t` cannot reach.  Proposed: poll every iteration when the
-requested count is below 64 (the clock read is negligible beside a test iteration there),
-and the same in Go's and C's loop helpers.  The time-cap summary line should keep reporting
-truncation so the change is measurable.  A truncated site must stay a site that RAN, so the
-rule that a section which did not run is never scored still holds.
-
-Status: **OPEN**

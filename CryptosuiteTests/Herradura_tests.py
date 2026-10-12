@@ -1352,34 +1352,38 @@ def _iters(default_n: int) -> int:
 
 
 # Cap accounting (TODO #225).  The -t cap bounds iteration *count*, not wall
-# time, and only at the granularity of the poll below: a site that requests
-# fewer than _TRANGE_POLL iterations is never polled at all, so the cap cannot
-# reach it however slow its work becomes.  Measured on the shipped suite, 18 of
-# 95 call sites are in that category and carry ~71% of the time spent inside
-# capped sites.  Nothing here changes that behaviour — it only makes the run
-# report it, since the previous silence is what let the question go unanswered.
+# time, at the granularity of the poll below: every _TRANGE_POLL iterations.
+# A site requesting fewer than that used to be never polled at all, so the cap
+# could not reach it however slow its work became (18 of 95 sites carrying ~71%
+# of capped time, TODO #225's census).  Such a site is now polled after EVERY
+# iteration (TODO #340); a clock read is negligible beside an iteration that
+# slow.  The poll follows an iteration, so a truncated site still ran.
 _TRANGE_POLL = 64          # poll fires when (i & (_TRANGE_POLL - 1)) == last
 _cap_sites_total = 0       # capped call sites entered
 _cap_sites_cut = 0         # sites the cap actually truncated
-_cap_sites_unpollable = 0  # sites too short for the poll to ever fire
+_cap_sites_short = 0       # sites below the stride, polled every iteration
+_cap_sites_short_cut = 0   # ... and of those, the ones the cap truncated
 
 
 def _trange(n: int):
     """Like range(n) but stops early when g_time_limit is reached.
     Yields the iteration index so callers can use it as a loop variable."""
-    global _cap_sites_total, _cap_sites_cut, _cap_sites_unpollable
+    global _cap_sites_total, _cap_sites_cut, _cap_sites_short, _cap_sites_short_cut
     if g_time_limit <= 0:
         yield from range(n)
         return
     _cap_sites_total += 1
-    if n < _TRANGE_POLL:
-        _cap_sites_unpollable += 1
+    short = n < _TRANGE_POLL
+    if short:
+        _cap_sites_short += 1
     t0 = time.monotonic()
     for i in range(n):
         yield i
-        if (i & (_TRANGE_POLL - 1)) == _TRANGE_POLL - 1 and \
+        if i + 1 < n and (short or (i & (_TRANGE_POLL - 1)) == _TRANGE_POLL - 1) and \
                 time.monotonic() - t0 >= g_time_limit:
             _cap_sites_cut += 1
+            if short:
+                _cap_sites_short_cut += 1
             return
 
 
@@ -1933,23 +1937,25 @@ def test_hfscx_256():
 
     # Determinism: same input always gives same digest
     n_det = _iters(200)
-    det_fail = 0
+    det_fail = 0; det_run = 0
     for _ in _trange(n_det):
+        det_run += 1
         data = os.urandom(random.randint(0, 128))
         if hfscx_256(data) != hfscx_256(data):
             det_fail += 1
-    print(f"    Determinism: {n_det - det_fail}/{n_det} consistent "
+    print(f"    Determinism: {det_run - det_fail}/{det_run} consistent "
           f"[{'PASS' if det_fail == 0 else 'FAIL'}]")
 
     # Collision sanity: distinct random inputs rarely collide
     n_coll = _iters(500)
-    collisions = 0
+    collisions = 0; coll_run = 0
     for _ in _trange(n_coll):
+        coll_run += 1
         a = os.urandom(random.randint(0, 64))
         b_bytes = os.urandom(random.randint(0, 64))
         if a != b_bytes and hfscx_256(a) == hfscx_256(b_bytes):
             collisions += 1
-    print(f"    Collision sanity: {collisions}/{n_coll} collisions found "
+    print(f"    Collision sanity: {collisions}/{coll_run} collisions found "
           f"[{'PASS' if collisions == 0 else 'FAIL'}]")
 
     # Block boundary sensitivity: inputs near 32/64-byte boundaries produce different hashes
@@ -4448,8 +4454,8 @@ if __name__ == '__main__':
     if g_time_limit > 0 and _cap_sites_total:
         print(f"--- Time cap: -t {g_time_limit:.2f}s reached {_cap_sites_total} capped "
               f"call sites; truncated {_cap_sites_cut}, "
-              f"could not poll {_cap_sites_unpollable} "
-              f"(fewer than {_TRANGE_POLL} iterations requested) ---")
+              f"{_cap_sites_short} requested fewer than {_TRANGE_POLL} iterations and "
+              f"were polled every iteration, {_cap_sites_short_cut} of them truncated ---")
 
     # Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
     # so that `native-python` can actually fail.  There is no allow-list: the

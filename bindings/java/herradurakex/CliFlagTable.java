@@ -43,4 +43,55 @@ final class CliFlagTable {
         m.put("verify", new HashSet<>(Arrays.asList("algo", "digest", "in", "pubkey", "ring", "sig")));
         FLAGS = Collections.unmodifiableMap(m);
     }
+
+    /** --help's synopsis (TODO #339). */
+    static final String HELP_SYNOPSIS =
+        "Subcommands and the flags each one reads (generated from this CLI's\n" +
+        "own parser by spec/generate_spec.py; the notes below say which are\n" +
+        "required):\n" +
+        "  cred-issue           --in --our --out --rounds\n" +
+        "  cred-prove           --in --msg --out --rounds\n" +
+        "  cred-verify          --cred --issuer --msg --proof --pubkey\n" +
+        "  dec                  --ad --algo --in --key --out\n" +
+        "                       --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex\n" +
+        "                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern\n" +
+        "                               hpke-stern-kem\n" +
+        "  decfile              --algo --in --key --out\n" +
+        "                       --algo: hske-nla1\n" +
+        "  dgst                 --algo --in --out\n" +
+        "                       --algo: hfscx-256 hfscx-256-ds\n" +
+        "  enc                  --ad --aead --algo --in --key --out --pubkey\n" +
+        "                       --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex\n" +
+        "                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern\n" +
+        "                               hpke-stern-kem\n" +
+        "  encfile              --algo --in --key --out\n" +
+        "                       --algo: hske-nla1\n" +
+        "  fpe                  --context --decrypt --encrypt --in --key --out --v3\n" +
+        "  genpkey              --algo --bits --kdf-iterations --out --passphrase\n" +
+        "                       --xmss-height\n" +
+        "                       --algo: hcred hkex-gf hkex-rnl hpke hpke-nl hpke-nl3\n" +
+        "                               hpke-stern hpke-stern-kem hpks hpks-nl\n" +
+        "                               hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf\n" +
+        "  kex                  --algo --kdf --our --our-kem --out --their --their-kem\n" +
+        "                       --algo: hkex-gf hkex-rnl hybrid-rnl-stern\n" +
+        "  oprf-blind           --in --out\n" +
+        "  oprf-eval            --in --key --out\n" +
+        "  oprf-unblind         --eval --out --state\n" +
+        "  pake-demo            --key --password --username\n" +
+        "  pake-register        --key --out --password --username\n" +
+        "  pkey                 --decrypt --in --out --passphrase --pubout --text\n" +
+        "  rand                 --bytes --hex --out --personalization --reseed --seed\n" +
+        "                       --state\n" +
+        "  sign                 --algo --digest --in --key --out --ring --rounds\n" +
+        "                       --algo: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo\n" +
+        "                               nl-zkbpp hpks-xmss hpks-wots hpks-ring\n" +
+        "  threshold-aggregate  --commit --commits --digest --in --out\n" +
+        "  threshold-combine    --aggregate --out --partial --partials\n" +
+        "  threshold-commit     --commit-out --key --nonce-out\n" +
+        "  threshold-respond    --aggregate --commit --commits --key --nonce --out\n" +
+        "  twk                  --bidx --decrypt --encrypt --in --key --out --sector\n" +
+        "                       --v3\n" +
+        "  verify               --algo --digest --in --pubkey --ring --sig\n" +
+        "                       --algo: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo\n" +
+        "                               nl-zkbpp hpks-xmss hpks-wots hpks-ring hpks-t\n";
 }
