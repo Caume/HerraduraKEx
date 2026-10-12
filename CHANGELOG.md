@@ -2,6 +2,76 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.38] - 2026-10-11
+
+### TODO #341 — `tools/check_fast.sh`: CI's cheap consistency checks in one local command
+
+Verifying v9.5.36 took eleven separate commands spread over four CI jobs.
+`bash tools/check_fast.sh` now runs all of them: the spec/ generator and checkers,
+the part index, the three `tools/check_*.py`, and the three KAT regenerate-and-diff checks.
+That is about 5 minutes on an aarch64 SBC with no build.  Like `run_findings_gates.py`, it
+does not stop at the first failure and lists every failure at the end.  `--skip-kat` drops the
+~4 min KAT step and `--list` prints the set.
+
+**It cannot drift from CI.**  `native-python` runs `bash tools/check_fast.sh --verify-ci`,
+which checks the list rather than re-running it.  It fails if a listed command appears in
+neither `ci.yml` nor a CliTest script.  It fails if `ci.yml` invokes a checker-shaped script
+(`check_*`, `generate_*`, `run_findings_gates`) that is neither listed nor in `NOT_FAST` with a
+reason.  It also fails if a `NOT_FAST` entry no longer matches CI.  All three controls were
+verified to fire.  CLAUDE.md's Testing section now says to run it before pushing a doc, spec or
+KAT change.
+
+## [9.5.37] - 2026-10-11
+
+### TODO #338 — present-tense docs said "three CLIs"; check F now holds them to `spec/`
+
+Java's CLI has carried every `--algo` tag since TODO #261, but several docs still described
+three CLIs.  llms.txt said "All three implementations", called `hpks-xmss` "Python-only (TODO
+#143)" twice, and said Java ships "no duplex in either version".  `spec/` shows all four CLIs
+supporting both.  README.md, docs/TUTORIAL.md (four places) and four of
+`spec/generate_spec.py`'s hand-written protocol notes said "all three CLIs" about things Java
+also does: `sign --rounds`, the OPRF subcommands and its gcd retry, `nl_v2_key_is_valid`, the
+HCRED subcommands and `kex --algo hybrid-rnl-stern`.  All corrected.  The spec JSON is
+regenerated, and only its notes change.
+
+**Why it survived:** nothing read llms.txt, and nothing compared an implementation COUNT or an
+"X-only" claim against `cli_support`.  `spec/check_docs_consistency.py` check F does both, over
+README.md, llms.txt, docs/INTRODUCTION.md, docs/TUTORIAL.md, SPEC.md, SECURITY.md and the spec
+JSON's own notes.  It also requires every `cli_subcommands` entry to appear in llms.txt.  An
+"-only" claim is attributed to the nearest `--algo` tag before it, not to every tag on the
+line, because llms.txt lists fifteen tags on one line.  CHANGELOG.md, MIGRATING.md and
+TODO*.md are history and are deliberately not read.  First run: 12 failures, now 0.  All three
+negative controls fire.
+
+Also filed: TODO #339 (generate the C/Go/Java `--help` synopses from the flag tables), #340
+(`-t` cannot cut a call site that requests fewer than 64 iterations) and #341 (one local
+command for CI's cheap checks).
+
+## [9.5.36] - 2026-10-09
+
+### CLAUDE.md slimmed to a working guide; check E's counts moved to `spec/COVERAGE_COUNTS.md`
+
+`CLAUDE.md` had grown to ~4,900 lines (~416 KB) and loads into every Claude Code
+session.  About 90% was history this file's own policy says belongs here: per-file
+essays in Repository Structure and ~45 TODO retrospectives (#289–#336) in Testing.  It
+is now ~430 lines: one line per directory or file, the standing test-writing rules
+distilled from those retrospectives with their TODO numbers, the CI job list, and the
+unchanged policy, dependency, build, architecture and KaTeX sections.  Nothing is lost;
+the retrospectives are in this file and `TODO_DONE.md` under their item numbers.
+
+Stale statements corrected along the way: the CLI section said "three parallel
+implementations" (Java's is the fourth), the SecurityProofsCode section said the scripts
+need no third-party packages (some gates require z3-solver / highspy), and CI runs
+thirteen jobs, not twelve (`docker` was added by TODO #326).
+
+**Check E moved.**  `spec/check_docs_consistency.py` check E used to hold ~15 sentences
+scattered through `CLAUDE.md` against the tools that print them, so those sentences
+could not be shortened.  The counts now live in one table, `spec/COVERAGE_COUNTS.md`,
+looked up by label instead of by a per-row regex.  The table is exhaustive in both
+directions: a wrong value, a missing row and an orphan row each fail (all three
+controls verified to fire).  `check_part_index.py` and `check_docker_mirror.py` still
+read `CLAUDE.md` and still pass.
+
 ## [9.5.35] - 2026-10-09
 
 ### TODO #257 (twelfth pass, item stays OPEN) — the period exponent, and two of the eleventh pass's claims withdrawn

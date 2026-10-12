@@ -23379,3 +23379,72 @@ Lesson: a default argument that is supposed to stay fixed is not fixed if a call
 shared parameter into it.  #310 checked the function and not its call site.
 
 Status: **DONE v9.5.32** — §1 now signs at 64 rounds in both modes; the rate figures were corrected.
+
+---
+
+### #338: present-tense docs still describe three CLIs, and nothing reads `llms.txt`
+
+Found while verifying v9.5.36.  Java has shipped a complete CLI since TODO #196-#203 and
+#261 gave it every `--algo` tag, yet the narrative docs still say "three":
+
+- `llms.txt:143` "All three implementations share one PEM wire format"; its heading names
+  three CLIs.
+- `llms.txt:149` and `:172` call `hpks-xmss` "Python-only (TODO #143)", but `spec/`'s
+  `cli_support` has it in all four CLIs.
+- `llms.txt:168` says Java ships "no duplex in either version"; `spec/` has
+  `hske-duplex` and `hske-duplex3` in all four.
+- `README.md:401` says `sign --rounds` works "in all three CLIs", `docs/TUTORIAL.md:97`
+  says "The three CLIs", `:2118` "All three CLIs" (OPRF, heading "Python, C, Go"),
+  `:2380` "all three CLI implementations", `:2604` "All three implementations retry until
+  gcd(r, ORD) = 1".  Java's `Oprf.blind` retries as well, and `cli_flag_matrix` has
+  `sign --rounds` and every OPRF subcommand in all four CLIs.
+
+Why it survived: `check_docs_consistency.py` reads README / INTRODUCTION / CHANGELOG
+against `spec/`, but nothing reads `llms.txt`, and no check compares an implementation COUNT
+or an "X-only" claim with `cli_support`.
+
+Fix: correct the sentences, and add a check that holds present-tense docs (README.md,
+llms.txt, docs/TUTORIAL.md, docs/INTRODUCTION.md, SPEC.md, SECURITY.md) to `spec/`.  It
+should fail on (a) an implementation count that differs from the number of CLIs `spec/`
+knows, (b) "<tag> ... <Language>-only" where `cli_support` says otherwise, and (c) a
+`cli_subcommands` entry `llms.txt` never mentions.  Historical files (CHANGELOG.md,
+MIGRATING.md, TODO_DONE.md) are out of scope, because a past-tense "three" is correct there.
+
+Fixed in v9.5.37.  `spec/check_docs_consistency.py` gained check F, which reads README.md,
+llms.txt, docs/INTRODUCTION.md, docs/TUTORIAL.md, SPEC.md, SECURITY.md and the spec JSON's
+own notes.  It fails on an implementation count different from the number of CLIs in
+`cli_support`, on an "X-only" claim about the nearest preceding `--algo` tag that
+`cli_support` contradicts, and on a `cli_subcommands` entry missing from llms.txt.  Its first
+run reported 12 failures, including four "all three CLIs" sentences in `generate_spec.py`'s
+hand-written notes, which feed the spec JSON.  All are corrected.  Three negative controls
+fire: an appended "three CLIs", an appended "hske-duplex3 is Java-only", and a subcommand
+renamed out of llms.txt.  Not caught by the rule, and fixed by hand: llms.txt's "Java ships
+... no duplex", which states an absence rather than a count or an "-only".
+
+Status: **DONE v9.5.37** — stale "three CLIs" / "Python-only" claims corrected; check F holds present-tense docs to spec/'s cli_support.
+
+---
+
+### #341: no single local command runs CI's cheap consistency checks
+
+Verifying v9.5.36 needed eleven separate commands (`generate_spec.py --check`, the three
+`spec/check_*.py`, `check_part_index.py`, the four `tools/check_*.py`, and the three
+`KAT/generate_*.py --check`).  Together they take about 5 minutes on an aarch64 SBC, where
+the test harnesses and the findings gates take hours.  A `tools/check_fast.sh` that runs
+them all, does not stop at the first failure, and lists the failures at the end (the shape
+`run_findings_gates.py` already uses, per TODO #286/#288) would give a pre-push check
+covering the doc/spec class CI catches.  It should also be claimed by CI so that it cannot
+rot, without duplicating the steps that already run.
+
+Fixed in v9.5.38.  `tools/check_fast.sh` runs the 11 checks: `generate_spec.py --check
+--require-schema`, `check_security_md.py`, `check_language_parity.py`,
+`check_docs_consistency.py`, `check_part_index.py --require-counts`, the three `tools/check_*.py`
+and the three `KAT/generate_*.py --check`.  It does not stop at the first failure and lists the
+failures at the end.  `--skip-kat` drops the ~4 min KAT regeneration, and `--list` prints the
+set.  It is claimed by CI without duplicating any step: `native-python` runs
+`check_fast.sh --verify-ci`, which fails if a listed command appears in neither ci.yml nor a
+CliTest script, if ci.yml invokes a `check_*` / `generate_*` / `run_findings_gates` script that
+is neither listed nor in `NOT_FAST` with a reason, or if a `NOT_FAST` entry has gone stale.  All
+three controls fire.
+
+Status: **DONE v9.5.38** — `tools/check_fast.sh` runs CI's cheap checks locally; `--verify-ci` keeps its list matched to CI.

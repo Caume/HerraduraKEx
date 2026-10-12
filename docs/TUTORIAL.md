@@ -94,7 +94,8 @@ library APIs. Set these up once, then jump to whichever protocol section you nee
 
 ### CLI
 
-The three CLIs (`herradura.py`, `herradura_cli`, `herradura_cli_go`) share identical
+The four CLIs (`herradura.py`, `herradura_cli`, `herradura_cli_go`, and Java's
+`herradurakex.HerraduraCli`) share identical
 subcommands and PEM wire formats. PEM files produced by one implementation are
 byte-for-byte compatible with all others. The Python CLI requires no build step and
 is the easiest starting point.
@@ -2113,9 +2114,9 @@ F = beta^{r^{-1}}       ◄── beta ────
 The blinding factor `r` must be coprime to ORD = 2^256−1; all three
 implementations retry automatically (expected two attempts on average).
 
-### OPRF CLI usage (Python, C, Go)
+### OPRF CLI usage (Python, C, Go, Java)
 
-All three CLIs share the same subcommands and PEM wire format:
+All four CLIs share the same subcommands and PEM wire format:
 
 ```bash
 # --- Python CLI ---
@@ -2377,7 +2378,7 @@ blast radius as "the agent can run the CLI directly."
 (validated by [`spec/herradura-protocol-spec.schema.json`](../spec/herradura-protocol-spec.schema.json))
 is the canonical source for every `--algo` tag, PEM wire-format label, and per-protocol security
 classification (production / demo-only / pedagogical / deprecated / broken / research) across all
-three CLI implementations — generated directly from source (`spec/generate_spec.py`) so it can't
+four CLI implementations — generated directly from source (`spec/generate_spec.py`) so it can't
 drift from what the CLIs actually accept. The tables below are a human-readable summary; when a
 tool or script needs the exact wire-format string or algo tag, read the JSON, not this table.
 
@@ -2601,7 +2602,7 @@ models that exclude quantum adversaries.
   can recover the server key `k` from any blinded query.
 - **ORD = 2^256−1 is composite** with small factors (3, 5, 17, 257, 641, …).
   Roughly 50% of random 256-bit scalars share a factor with ORD and cannot be
-  inverted. All three implementations retry until `gcd(r, ORD) = 1`. Never
+  inverted. All four implementations retry until `gcd(r, ORD) = 1`. Never
   supply a static or low-entropy blinding factor; always generate `r` from a
   cryptographic RNG.
 - **OPRF blinding factor leakage:** The client's blinding factor `r` must be kept

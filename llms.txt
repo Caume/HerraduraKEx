@@ -139,14 +139,16 @@ qcmdpc_*). BitArray is the core
 class (BitArray.random(n)). Notable constants: KEYBITS, GF_POLY, GF_GEN, I_VALUE,
 R_VALUE.
 
-## HerraduraCli — OpenSSL-style CLI (herradura.py / herradura_cli.c / herradura_cli_go)
-All three implementations share one PEM wire format and subcommand interface;
-PEM files from any one are byte-for-byte readable by the others, EXCEPT hpks-xmss
-which is Python-only (see note below — no C or Go CLI support, TODO #143).
+## HerraduraCli — OpenSSL-style CLI (herradura.py / herradura_cli.c / herradura_cli_go / Java herradurakex.HerraduraCli)
+All four implementations share one PEM wire format and subcommand interface;
+PEM files from any one are byte-for-byte readable by the others.  Per-CLI support
+for every --algo tag and flag is in spec/herradura-protocol-spec.json
+(cli_support, cli_flag_matrix); deliberate per-CLI differences are in its
+cli_surface_gaps.
 
   genpkey --algo <ID> [--bits N] [--xmss-height N] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,
-             hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss (Python-only), hpks-wots, hcred
+             hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss, hpks-wots, hcred
   pkey --in FILE [--pubout] [--text] [--out FILE]
   kex --algo {hkex-gf,hkex-rnl} --our FILE --their FILE --out FILE [--kdf {none,hfscx-256}]
     hkex-rnl is two-round: responder replies first, initiator completes with the response PEM.
@@ -164,14 +166,13 @@ which is Python-only (see note below — no C or Go CLI support, TODO #143).
     (BITARRAY.md 3 -- a mixed width is never coerced).  encfile/decfile stay
     256-bit: the .hkx container has no width field.  See MIGRATING.md 23.
     hske-duplex3 ciphertexts carry format tag 4, hske-duplex's tag 3, so each
-    refuses the other's artifact at the parser.  Java ships hske-nla3 and
-    hpke-nl3 but no duplex in either version.
+    refuses the other's artifact at the parser.  All four CLIs ship both duplex
+    versions.
   sign --algo {hpks,hpks-nl,hpks-stern,rnl-sigma,nl-zkboo,nl-zkbpp,hpks-xmss,hpks-wots,hpks-ring}
        --key FILE [--ring FILE1,FILE2,...] --in FILE --out FILE
        [--digest {none,hfscx-256}] [--rounds N]
-    hpks-xmss is Python-only (herradura.py); not implemented in herradura_cli.c or
-    herradura_cli_go even though the underlying primitive exists in herradura.h /
-    herradura/herradura.go — see TODO #143.
+    hpks-wots / hpks-xmss keep one-time-use / leaf-index state in a <keyfile>.idx
+    sidecar; reusing a WOTS key or an XMSS leaf breaks the signature.
   verify --algo {sign algos + hpks-t} --pubkey FILE [--ring ...] --in FILE --sig FILE
          [--digest {none,hfscx-256}]
   threshold-commit --key FILE --commit-out FILE --nonce-out FILE

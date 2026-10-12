@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v9.5.35)
+# Herradura Cryptographic Suite (v9.5.38)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -398,9 +398,9 @@ visible without having to search `TODO_DONE.md`.
   failure is now silent, surfacing as a shared secret the peer disagrees with rather than
   an error. See `SECURITY.md` and `SecurityProofs-5.md` §11.8.7. The
   round count is a separate, independent axis from N: `sign --algo hpks-stern`/`hpks-ring`
-  accepts `--rounds` in all three CLIs (219 reaches 128-bit Fiat-Shamir soundness), and
-  since v3.1.0 the C CLI does too — the count is a per-signature PEM field, not a
-  compile-time constant, so any build reads any round count (TODO #236). Raising rounds
+  accepts `--rounds` in all four CLIs (219 reaches 128-bit Fiat-Shamir soundness); the
+  count is a per-signature PEM field, not a compile-time constant, so any build reads any
+  round count (TODO #236). Raising rounds
   alone does not fix the N = 256 SD-hardness shortfall above.
 - **No test is FAIL-by-design; every `[FAIL]` fails the build (TODO #233, v3.0.8).** This
   bullet used to say the opposite — that test `[4]` (bit-frequency bias) and C test `[18]`

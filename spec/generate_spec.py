@@ -6,7 +6,7 @@ CLIs actually implement.
 Mechanically extracted (regex, not hand-copied) from source:
   - Algo tag -> PEM private/public key label mapping: HerraduraCli/herradura.py's
     `_PRIV_ALGOS` dict (the single most complete, most explicit definition across
-    the three CLI implementations -- it covers every genpkey-producible algo).
+    the four CLI implementations -- it covers every genpkey-producible algo).
   - Every wire-format PEM_* label: HerraduraCli/herradura_codec.h.
   - Per-subcommand --algo choices: HerraduraCli/herradura.py's argparse
     `choices=[...]` lists (enc/dec/sign/verify/kex/encfile/decfile/dgst).
@@ -415,7 +415,7 @@ SECURITY = {
                               "Shipped SDF_ROUNDS=32 is a demo parameter; herradura.h emits a #pragma message "
                               "warning at compile time when SDF_ROUNDS < SDF_PRODUCTION_ROUNDS. The round "
                               "count is a per-signature wire field (item[1] of the DER SEQUENCE), not a "
-                              "compile-time constant: since v3.1.0 all three CLIs accept `sign --rounds` and "
+                              "compile-time constant: all four CLIs accept `sign --rounds` and "
                               "any reader accepts any count in [1, SDF_MAX_ROUNDS] regardless of its own "
                               "SDF_ROUNDS, which is only the signing default (TODO #236). Before that the C "
                               "reader rejected any count != SDF_ROUNDS, so two C builds were mutually "
@@ -429,7 +429,7 @@ SECURITY = {
                                                   "QC-MDPC half is capped by its 2^-8.6 DFR, not by a "
                                                   "work factor",
                         notes="Hybrid key exchange combining HKEX-RNL with HPKE-Stern-KEM. Shipped as a "
-                              "`kex --algo` value by all three CLIs since TODO #167, but it had no entry "
+                              "`kex --algo` value by C, Go and Python since TODO #167 and by Java since TODO #261, but it had no entry "
                               "in this spec at all until TODO #238 added the check that caught it: "
                               "build_protocols keyed off _PRIV_ALGOS | SECURITY and hybrid-rnl-stern is "
                               "in neither, being kex-only. It inherits the hpke-stern-kem row's "
@@ -585,7 +585,7 @@ SECURITY = {
                              "messages share a key (SecurityProofs-4.md 11.3.2). (2) Keys with "
                              "delta(K) in {0, 2^(n-1)} collapse the permutation to GF(2)-affine and are "
                              "recoverable from a handful of known plaintexts; the class is about 2^-129 "
-                             "of the key space and all three CLIs refuse it via nl_v2_key_is_valid "
+                             "of the key space and all four CLIs refuse it via nl_v2_key_is_valid "
                              "(SecurityProofs-7.md 11.19.2). (3) NEW in TODO #244, and the reason this "
                              "entry was DOWNGRADED FROM production in v4.0.2: the construction is "
                              "self-similar -- one unvaried round iterated 192 times, no round constant, "
@@ -826,7 +826,7 @@ SECURITY = {
                                "SecurityProofs-7.md 11.24"]),
     "hcred":     dict(status="research", quantum_resistant="conjectured",
                        notes="Hybrid Ring-LWR + Stern-F credential over a unified ZKBoo-(2,3) "
-                             "MPC-in-the-head circuit. All three CLIs dispatch cred-issue/cred-prove/"
+                             "MPC-in-the-head circuit. All four CLIs dispatch cred-issue/cred-prove/"
                              "cred-verify -- the \"Python and C CLI only, not in Go\" note this row "
                              "used to carry was stale, and nothing checked it (TODO #238).",
                        source=["TODO_DONE.md #128", "SecurityProofs-7.md 11.10.8-11.10.10"]),
