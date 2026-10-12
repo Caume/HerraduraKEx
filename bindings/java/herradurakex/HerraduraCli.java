@@ -107,12 +107,18 @@ public final class HerraduraCli {
     }
 
     private static void run(String[] args) throws IOException {
+        // The subcommand list is CliFlagTable.HELP_SYNOPSIS, generated from this
+        // file's own dispatch by spec/generate_spec.py, so it cannot drift from
+        // the switch below (TODO #339).
         if (args.length == 0) {
-            throw new CliError("usage: herradurakex <genpkey|pkey|kex|enc|dec|sign|verify|dgst|encfile|decfile"
-                + "|rand|fpe|twk"
-                + "|threshold-commit|threshold-aggregate|threshold-respond|threshold-combine"
-                + "|oprf-blind|oprf-eval|oprf-unblind|cred-issue|cred-prove|cred-verify"
-                + "|pake-register|pake-demo> [options]");
+            throw new CliError("usage: herradurakex <command> [options]\n\n"
+                + CliFlagTable.HELP_SYNOPSIS);
+        }
+        if (args[0].equals("--help") || args[0].equals("-h")) {
+            System.out.print("Usage: herradurakex <command> [options]\n\n"
+                + CliFlagTable.HELP_SYNOPSIS
+                + "\nPEM output goes to stdout when --out is absent or '-'.\n");
+            return;
         }
         String cmd = args[0];
         Map<String, String> opt = parseOpts(args, 1);

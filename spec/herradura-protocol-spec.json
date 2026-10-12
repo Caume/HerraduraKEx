@@ -1738,19 +1738,7 @@
       "protocol": "hcred"
     }
   },
-  "cross_implementation_gaps": [
-    {
-      "feature": "genpkey --help text completeness",
-      "present_in": [
-        "python"
-      ],
-      "missing_from": [
-        "c",
-        "go"
-      ],
-      "note": "C's usage() omits oprf/hcred from the genpkey line despite dispatching both; Go's banner omits hpke-stern-kem, nl-zkbpp, oprf, hpks-t despite dispatching all. This spec's algo enumeration is sourced from dispatch logic, not --help text, which is why the banners' omissions do not reach cli_support."
-    }
-  ],
+  "cross_implementation_gaps": [],
   "cli_flag_matrix": {
     "cred-issue": {
       "--in": {

@@ -567,19 +567,3 @@ not next, and it should not be implemented as posed.  Revisit only if a future `
 role appears that is neither parameter-fed nor movable.
 
 Status: **OPEN**
-
----
-
-### #339: the C, Go and Java `--help` text is hand-written and has drifted from dispatch
-
-`spec/`'s `cross_implementation_gaps` already records it.  C's `usage()` omits `oprf` /
-`hcred` from the genpkey line and `--bits` / `--xmss-height` from genpkey's synopsis.  Go's
-banner omits `hpke-stern-kem`, `nl-zkbpp`, `oprf` and `hpks-t`, all of which it dispatches.
-`generate_spec.py` already emits `HerraduraCli/cli_flag_table.h` and
-`bindings/java/herradurakex/CliFlagTable.java` from each CLI's own dispatch source, so a
-generated per-subcommand synopsis (flags and `--algo` choices) would make the help text
-unable to drift.  Python's comes from argparse and is already correct.  Scope note: keep the
-hand-written prose (protocol caveats); generate only the synopsis and choices lines.
-
-Status: **OPEN**
-

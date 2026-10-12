@@ -4877,35 +4877,81 @@ func digestValue(cmd string, digest *string) {
 	}
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `Usage: herradura_cli_go <command> [options]
-
-Commands:
-  genpkey  --algo ALGO [--bits N] [--out FILE]
-  pkey     --in FILE (--pubout | --text) [--out FILE]
-  kex      --algo ALGO --our FILE --their FILE [--kdf none|hfscx-256] [--out FILE]
-  enc      --algo ALGO (--key FILE | --pubkey FILE) --in FILE [--out FILE]
-  dec      --algo ALGO --key FILE --in FILE [--out FILE]
-  sign     --algo ALGO --key FILE --in FILE [--digest hfscx-256] [--out FILE]
-  verify   --algo ALGO --pubkey FILE --in FILE --sig FILE [--digest hfscx-256]
-  encfile  --key FILE --in FILE --out FILE
-  decfile  --key FILE --in FILE --out FILE
-  dgst     [--algo hfscx-256] --in FILE [--out FILE]
-  rand     (--seed FILE | --state FILE) [--personalization STR] [--reseed FILE] [--bytes N] [--hex] [--out FILE]
-
-Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern hpks-zkp-nl
-Algorithms (kex):           hkex-gf hkex-rnl hybrid-rnl-stern
-  kex --algo hybrid-rnl-stern --their-kem FILE (Bob step) | --our-kem FILE (Alice step)
-Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hske-nla3 hske-duplex hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern
-Algorithms (encfile/decfile): hske-nla1
-Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots (one-time) hpks-ring (anonymous)
+// usage prints the generated synopsis -- every subcommand, the flags its
+// handler reads and its --algo tags -- and then the notes a synopsis cannot
+// carry.  Only the notes are hand-written, so the list cannot drift from
+// dispatch again (TODO #339).
+func usage(w io.Writer) {
+	fmt.Fprint(w, "Usage: herradura_cli_go <command> [options]\n\n")
+	fmt.Fprint(w, helpSynopsis)
+	fmt.Fprint(w, `
+Notes:
+  kex --algo hkex-rnl is 2-round: Bob responds first (--their alice_pub.pem),
+      then Alice completes with Bob's response PEM.
+  kex --algo hybrid-rnl-stern: --their-kem FILE (Bob step) | --our-kem FILE (Alice step)
+  kex --kdf none|hfscx-256: both sides must pass the same value.
   sign/verify --algo hpks-ring --ring p0_pub.pem,p1_pub.pem,... : code-based ring signature
-  fpe      --encrypt|--decrypt --key SK --context STR --in FILE [--out FILE]
-           NOT format-preserving in the FF1/FF3-1 sense: no radix, no domain --
-           32 bytes in, 32 raw bytes out. See SECURITY.md.
-  twk      --encrypt|--decrypt --key SK [--sector N] [--bidx N] --in FILE [--out FILE]
+  sign --algo hpks-wots is ONE-TIME: a WOTS key may sign exactly once.
+  encfile/decfile: hske-nla1 only (stream CTR-AEAD); decfile exits non-zero on auth failure.
+  fpe: NOT format-preserving in the FF1/FF3-1 sense: no radix, no domain --
+       32 bytes in, 32 raw bytes out. See SECURITY.md.
+  PEM output goes to stdout when --out is absent or '-'.
 `)
 }
+
+// BEGIN GENERATED help synopsis (spec/generate_spec.py, TODO #339) -- DO NOT EDIT.
+const helpSynopsis = `Subcommands and the flags each one reads (generated from this CLI's
+own parser by spec/generate_spec.py; the notes below say which are
+required):
+  cred-issue           --in --our --out --rounds
+  cred-prove           --in --msg --out --rounds
+  cred-verify          --cred --issuer --msg --proof --pubkey --rounds
+  dec                  --ad --algo --in --key --out
+                       --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex
+                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern
+                               hpke-stern-kem
+  decfile              --algo --in --key --out
+                       --algo: hske-nla1
+  dgst                 --algo --in --out
+                       --algo: hfscx-256 hfscx-256-ds
+  enc                  --ad --aead --algo --in --key --out --pubkey
+                       --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex
+                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern
+                               hpke-stern-kem
+  encfile              --algo --in --key --out
+                       --algo: hske-nla1
+  fpe                  --context --decrypt --encrypt --in --key --out --v3
+  genpkey              --algo --bits --kdf-iterations --out --passphrase
+                       --xmss-height
+                       --algo: hcred hkex-gf hkex-rnl hpke hpke-nl hpke-nl3
+                               hpke-stern hpke-stern-kem hpks hpks-nl
+                               hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf
+  kex                  --algo --kdf --our --our-kem --out --their --their-kem
+                       --algo: hkex-gf hkex-rnl hybrid-rnl-stern
+  oprf-blind           --in --out
+  oprf-eval            --in --key --out
+  oprf-unblind         --eval --out --state
+  pake-demo            --key --password
+  pake-register        --key --out --password
+  pkey                 --decrypt --in --out --passphrase --pubout --text
+  rand                 --bytes --hex --out --personalization --reseed --seed
+                       --state
+  sign                 --algo --digest --in --key --out --ring --rounds
+                       --algo: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo
+                               nl-zkbpp hpks-xmss hpks-wots hpks-ring
+  threshold-aggregate  --commit --commits --digest --in --out
+  threshold-combine    --aggregate --out --partial --partials
+  threshold-commit     --commit-out --key --nonce-out
+  threshold-respond    --aggregate --commit --commits --key --nonce --out
+  threshold-verify     --digest --in --sig
+  twk                  --bidx --decrypt --encrypt --in --key --out --sector
+                       --v3
+  verify               --algo --digest --in --pubkey --ring --sig
+                       --algo: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo
+                               nl-zkbpp hpks-xmss hpks-wots hpks-ring hpks-t
+`
+// END GENERATED help synopsis
+
 
 // ── HPKS-T threshold signing (TODO #106) ─────────────────────────────────────
 
@@ -5303,8 +5349,12 @@ func cmdThresholdVerify(args []string) {
 
 func main() {
 	if len(os.Args) < 2 {
-		usage()
+		usage(os.Stderr)
 		os.Exit(1)
+	}
+	if os.Args[1] == "--help" || os.Args[1] == "-h" {
+		usage(os.Stdout)
+		os.Exit(0)
 	}
 	cmd  := os.Args[1]
 	rest := os.Args[2:]
@@ -5363,7 +5413,7 @@ func main() {
 		cmdCredVerify(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
-		usage()
+		usage(os.Stderr)
 		os.Exit(1)
 	}
 }

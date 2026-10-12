@@ -2,6 +2,29 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.40] - 2026-10-11
+
+### TODO #339 — the C, Go and Java `--help` synopses are generated, so they cannot drift
+
+The three CLIs' help text was hand-written and had drifted from what they dispatch.  C's
+genpkey line omitted `oprf` and `hcred`.  Go's banner omitted `hpke-stern-kem`, `nl-zkbpp`,
+`oprf` and `hpks-t`, and 13 of its 26 subcommands.  `spec/` recorded the gap in
+`cross_implementation_gaps`.
+
+`spec/generate_spec.py` already derives each CLI's flags from its own parser, and the tags it
+dispatches from its own source.  It now also emits a synopsis from those rows: every
+subcommand, the flags its handler reads, and its `--algo` tags.  The synopsis goes to
+`HKX_HELP_SYNOPSIS` in `HerraduraCli/cli_flag_table.h` for C and to
+`CliFlagTable.HELP_SYNOPSIS` for Java.  For Go it goes to a marked generated region of
+`herradura_cli.go`, since `build_go.sh` compiles that one file.  `generate_spec.py --check`
+covers all three.  Each `usage()` prints the synopsis and then the hand-written notes, which
+keep the protocol caveats but no longer list flags or algorithms.
+
+Go and Java now answer `--help` / `-h` with the synopsis and exit 0.  Go used to treat
+`--help` as an unknown command, and Java had no help at all.  The curated
+`cross_implementation_gaps` entry is retired, leaving that list empty.  Python's help comes
+from argparse and is unchanged.
+
 ## [9.5.39] - 2026-10-11
 
 ### TODO #340 — `-t` now reaches call sites shorter than their poll stride
