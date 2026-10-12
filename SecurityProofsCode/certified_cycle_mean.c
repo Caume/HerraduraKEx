@@ -148,8 +148,18 @@ static double howard(void)
                 for (uint32_t k = i; k < len; k++) sum += pwp[path[k]];
                 double m = sum / (len - i);
                 for (uint32_t k = i; k < len; k++) mu[path[k]] = m;
-                hh[v] = 0.0;
-                for (uint32_t k = len - 1; k > i; k--) {
+                /* Root hh at the cycle's SMALLEST node, not where this scan entered
+                 * it: a scan-order root makes hh of two equal-mean cycles
+                 * incomparable, and Howard then cycles forever (TODO #257, thirteenth
+                 * pass: n = 14, delta = 0x1500, linear).  mu does not depend on it. */
+                uint32_t r = i;
+                for (uint32_t k = i + 1; k < len; k++) if (path[k] < path[r]) r = k;
+                hh[path[r]] = 0.0;
+                for (uint32_t k = r; k-- > i;) {
+                    uint32_t x = path[k];
+                    hh[x] = pwp[x] - m + hh[pi[x]];
+                }
+                for (uint32_t k = len - 1; k > r; k--) {
                     uint32_t x = path[k];
                     hh[x] = pwp[x] - m + hh[pi[x]];
                 }

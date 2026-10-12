@@ -2,6 +2,42 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.42] - 2026-10-12
+
+### TODO #257 (thirteenth pass) — one period further, to n = 19: the fall steepens
+
+New gate `SecurityProofsCode/period_series_n19.py`, with its pinned sample
+`period_series_n19.json`.  It measures the per-period increment P(n) = E[mu_{n+3}] -
+E[mu_n] one period beyond §11.49, to n = 19, and adds the second residue class beside it.
+A period cannot start at a width divisible by 3, where M is singular and mu is
+identically 0, so the starts are 7, 10, 13, 16 and 8, 11, 14.  The sample has 11 700 pairs
+per axis.  The 500 pairs at n = 19 cost about 30 s each to solve exactly, so the sample is
+pinned; the gate shows the file is the whole seeded sample and re-solves a prefix of
+every cell.
+
+- **E[mu] still rises over every period to n = 19**, by 24 standard errors or more.
+  E[mu_19] is 2.61 differential and 1.31 linear, about twice the 4/3 and 2/3 criteria.
+- **The fall steepens, and §11.49's "the decline is slowing" is withdrawn.**  In the
+  series §11.49 measured, P runs 0.447 / 0.384 / 0.357 / 0.244 (differential) and
+  0.225 / 0.210 / 0.199 / 0.157 (linear) from n = 7 to 16.  The local exponent moves
+  from -0.32 to -2.02 (6.2 sigma) and from -0.23 to -1.26 (4.5 sigma).
+- **Both n = 256 readings lose their premise.**  Neither a fixed exponent nor a levelled
+  rate fits an accelerating decline.  #257 now asks whether E[mu] stays above the
+  criteria at all; the margin at the widest measured width is about 2x, not 10x.  No
+  rating moves.
+
+### Fix — Howard's policy iteration could run forever on equal-mean cycles
+
+The sample hit one key, n = 14 with delta = 0x1500 on the linear axis, on which Howard
+never terminated, in `certified_cycle_mean.c` and in the Python solvers it transcribes.
+Every node already held the optimal mean, but the bias h was rooted wherever the scan
+entered a cycle, and two cycles of equal mean then have incomparable h.  All four Howard
+implementations (`certified_cycle_mean.c`, `quenched_exact_ladder.py`,
+`diff_cycle_mean.py`, `width_residue.py`) now root h at each cycle's smallest node.  mu
+and the certificate do not depend on the root; on 744 random keys at n = 7 to 16, both
+axes, mu, edges kept and certificate rounds are unchanged.  The new gate's negative
+control shows the old root failing to terminate in certificate round 2 of this key.
+
 ## [9.5.41] - 2026-10-12
 
 ### Fix — `zkboo_view_hiding.py` no longer depends on a sampled key

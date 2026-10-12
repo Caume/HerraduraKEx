@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.49** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent
+> - **Part 10 — §11.43–§11.50** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19
 
 ---
 
@@ -431,7 +431,7 @@ Summed over a period of three widths, the term cancels. A period is a one-bit st
 
 **A control variate with an exact mean.** The change in δ's run count has a known mean: k/2 for k inserted bits over all strings, corrected exactly for the two degenerate δ the sampler excludes (checked against brute force). It correlates with the increment because $\mu$ is paid at run boundaries (§11.46.2), and cuts the error by 10–20%.
 
-### 11.49.2 The period series, resolved
+### 11.49.2 The period series, resolved (partly withdrawn, §11.50)
 
 P(n) is the expected increase in $\mu$ from n to n + 3. These figures come from an independent replication with about 8000 pairs per period; the gate reproduces them on its own seeds.
 
@@ -452,6 +452,8 @@ The local exponent compares two adjacent periods (d log P / d log n). A levelled
 
 **Neither of §11.42's readings describes it.** A power law has one exponent. The differential exponent moves from −0.55 to −0.23 across two adjacent intervals, about 3.6 standard errors once the period at 10, shared by both, is accounted for. So the decline is itself slowing. The gate's own seeds do not resolve this drift (−0.53 to −0.40); it rests on the replication. The linear value at 10 → 13 sits on the power law's −0.16, but its value at 7 → 10 does not.
 
+**Withdrawn (§11.50): the decline is slowing.** One period further, to n = 19, the differential exponent is −2.02 ± 0.23 and the linear −1.26 ± 0.19. The fall steepens rather than slows.
+
 ### 11.49.3 What this changes
 
 **Withdrawn: a flat per-period rate**, on both axes, and with it §11.48's agreement with the levelled reading.
@@ -461,3 +463,49 @@ The local exponent compares two adjacent periods (d log P / d log n). A levelled
 **Unaffected: monotonicity and the criteria.** Every step still rises in expectation (§11.48.2, corrected errors). The lower reading is still about 10 times the 4/3 and 2/3 criteria, so nothing here threatens them.
 
 **Still owed.** A reason the per-period increment stays bounded away from zero as it declines; and the hull share above n = 16, unchanged from §11.45.4. No rating moves (§11.38.7).
+
+## 11.50 The period series to n = 19 — TODO #257, thirteenth pass
+
+§11.49 read the decline of the per-period increment as slowing. This pass measures the next period, which reaches n = 19, and the second residue class beside it. Reproduced by `SecurityProofsCode/period_series_n19.py`, from the pinned sample `period_series_n19.json`.
+
+### 11.50.1 The sample
+
+A period cannot start at a singular width. Where 3 divides n, M is not invertible and $\mu$ is identically 0, so P(15) = 0 − 0. The periods therefore form two series: starts 7, 10, 13 and 16, which is the series §11.49 measured, and starts 8, 11 and 14.
+
+Each pair is one three-bit insertion into one key, the exact coupling of §11.49.1, with the run-count control variate at its exact mean. There are 11 700 pairs per axis. The 500 pairs at n = 19 each take about 30 s to solve exactly, so the whole sample is pinned and the gate re-solves a prefix of every cell.
+
+Two consistency checks pass. P(13) on this seed reproduces §11.49.2's independent replication, at 0.9σ differential and 0.1σ linear. E[$\mu_{16}$] from the end of P(13) and from the start of P(16), two independent samples, agree within 0.8σ.
+
+### 11.50.2 The series
+
+| period | differential P | linear P |
+|---|---|---|
+| 7 → 10 | 0.447 ± 0.007 | 0.225 ± 0.003 |
+| 10 → 13 | 0.384 ± 0.006 | 0.210 ± 0.003 |
+| 13 → 16 | 0.357 ± 0.006 | 0.199 ± 0.003 |
+| 16 → 19 | 0.244 ± 0.010 | 0.157 ± 0.005 |
+| 8 → 11 | 0.505 ± 0.007 | 0.211 ± 0.003 |
+| 11 → 14 | 0.365 ± 0.006 | 0.206 ± 0.003 |
+| 14 → 17 | 0.308 ± 0.007 | 0.176 ± 0.003 |
+
+**E[$\mu$] still rises over every period.** The smallest increment, P(16), is 24 standard errors above zero on the differential axis and 31 on the linear. E[$\mu_{19}$] is 2.61 differential and 1.31 linear, which is 1.95 and 1.96 times the 4/3 and 2/3 criteria.
+
+**The fall steepens.** In the series §11.49 measured, the local exponent moves from −0.32 over 10 → 13 to −2.02 over 13 → 16 on the differential axis, 6.2 standard errors with the shared period counted once. On the linear axis it moves from −0.23 to −1.26, 4.5 standard errors. P falls over the last step of both series on both axes, by 6.7 to 9.8 standard errors. In the second series the exponent steepens on the linear axis (−0.09 to −0.72) and not on the differential one (−1.18 to −0.80). The gate prints that series and does not score it.
+
+### 11.50.3 A Howard non-termination, fixed
+
+The sample hit one key, n = 14 with δ = 0x1500 on the linear axis, on which Howard's policy iteration never terminated. That happened in `certified_cycle_mean.c` and in the Python solvers it transcribes. Every node already held the optimal mean. What kept moving was the bias h, which each evaluation rooted at whichever cycle node the scan reached first. With several cycles of equal mean, the h values of two cycles are then not comparable, so one "strict improvement" can be undone by the next.
+
+The fix roots h at each cycle's smallest node, in all four Howard implementations. $\mu$ does not depend on the root, and the certificate (SPFA on the full graph at $\mu'$ − 1e-9) is what makes the answer exact. On 744 random keys at n = 7 to 16, both axes, the fixed and old solvers give identical $\mu$, edges kept and certificate rounds. The gate's negative control runs the old root inside the certified solver and shows it failing to terminate in certificate round 2 of this key.
+
+### 11.50.4 What this changes
+
+**Withdrawn: the decline is slowing** (§11.49.2). One period further, it steepens on both axes.
+
+**Removed: the premise of both n = 256 readings.** §11.42's power law (about 13 differential and 11 linear) assumed a fixed exponent. The levelled reading (about 33 and 17) was already rejected in §11.49. A decline that accelerates fits neither.
+
+**Unaffected: monotonicity to n = 19.** Every period measured still rises in expectation.
+
+**Re-aimed: what #257 owes.** The question is no longer which growth curve holds at n = 256. It is whether E[$\mu$] stays above the criteria at all. At the last period the increment is 0.081 per bit differential and 0.052 linear. If it reaches zero within a few more periods, E[$\mu$] levels at about twice the criteria. If it turns negative, nothing measured so far says where it stops. The margin at the widest measured width is about 2x, not 10x.
+
+**Still owed.** Further periods, starting with P(17) to n = 20 at about 60–100 s per solve, or an argument that bounds the increment below. The hull share above n = 16 is unchanged from §11.45.4. No rating moves (§11.38.7).
