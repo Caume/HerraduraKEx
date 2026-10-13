@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.44] - 2026-10-13
+
+### SECURITY.md — TODO #257's findings to v9.5.43
+
+The HSKE-NL-A2 row still described the trail-bound question as it stood at n <= 11
+under TODO #254.  It now records where TODO #257 (which absorbed #252 and #254) stands
+after its fourteenth pass:
+
+- the average per-round cost rises to n = 20 and is about 2x both criteria there;
+- each period shrinks faster than the last, and both residue classes now shrink by
+  the same factor;
+- the 10x-36x projections are withdrawn, and the likely margin at n = 256 is modest
+  (about 2-3x) and unproven;
+- every route to a proof tried so far has failed, and the next exact period is out of
+  the current solver's reach.
+
+The `twk` row points to it.  No rating changes; `spec/check_security_md.py` passes
+unchanged.
+
 ## [9.5.43] - 2026-10-12
 
 ### TODO #257 (fourteenth pass) — P(17) to n = 20: both residue classes fall by the same factor
