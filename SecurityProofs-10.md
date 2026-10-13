@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.50** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19
+> - **Part 10 — §11.43–§11.51** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20
 
 ---
 
@@ -508,4 +508,43 @@ The fix roots h at each cycle's smallest node, in all four Howard implementation
 
 **Re-aimed: what #257 owes.** The question is no longer which growth curve holds at n = 256. It is whether E[$\mu$] stays above the criteria at all. At the last period the increment is 0.081 per bit differential and 0.052 linear. If it reaches zero within a few more periods, E[$\mu$] levels at about twice the criteria. If it turns negative, nothing measured so far says where it stops. The margin at the widest measured width is about 2x, not 10x.
 
-**Still owed.** Further periods, starting with P(17) to n = 20 at about 60–100 s per solve, or an argument that bounds the increment below. The hull share above n = 16 is unchanged from §11.45.4. No rating moves (§11.38.7).
+**Still owed.** Further periods, starting with P(17) to n = 20 at about 60–100 s per solve (measured in §11.51), or an argument that bounds the increment below. The hull share above n = 16 is unchanged from §11.45.4. No rating moves (§11.38.7).
+
+## 11.51 The period series to n = 20 — TODO #257, fourteenth pass
+
+§11.50 left the n = 2 (mod 3) series one period short of the n = 1 series. This pass measures the period that starts at n = 17, so that both classes reach the same depth. Reproduced by `SecurityProofsCode/period_series_n20.py`, from the pinned sample `period_series_n20.json`.
+
+### 11.51.1 The sample
+
+There are 500 pairs per axis, drawn by §11.50's own sampler with the same seed and the same three-bit coupling. Each pair needs one exact solve at n = 20. That takes 1 to 2 minutes, and up to 4.1 GB on the differential axis against 0.83 GB at n = 19. The whole cell is about 26 CPU hours, so it is pinned and the gate re-solves a prefix.
+
+E[$\mu_{17}$] from the end of P(14) and from the start of P(17), two independent samples, agree within 0.3σ differential and 1.1σ linear.
+
+### 11.51.2 The series
+
+| period | differential P | linear P |
+|---|---|---|
+| 13 → 16 | 0.357 ± 0.006 | 0.199 ± 0.003 |
+| 16 → 19 | 0.244 ± 0.010 | 0.157 ± 0.005 |
+| 14 → 17 | 0.308 ± 0.007 | 0.176 ± 0.003 |
+| 17 → 20 | 0.210 ± 0.008 | 0.147 ± 0.004 |
+
+**E[$\mu$] still rises.** P(17) is 27 standard errors above zero differential and 33 linear. E[$\mu_{20}$] is 2.67 differential and 1.35 linear, 2.00 and 2.03 times the 4/3 and 2/3 criteria: the same margin as at n = 19.
+
+**P falls again.** From P(14) to P(17) it drops by 9.6 standard errors differential and 5.2 linear.
+
+**The two classes fall by the same factor.** Over their latest period, P(16)/P(13) and P(17)/P(14) are 0.684 ± 0.030 and 0.682 ± 0.029 on the differential axis, and 0.789 ± 0.028 and 0.835 ± 0.030 on the linear axis, 0.1σ and 1.1σ apart. So §11.50's steeper fall was not one cell's fluctuation.
+
+**The second series now steepens too.** Its differential exponent moves from −0.80 over 11 → 14 to −2.17 over 14 → 17, 4.4 standard errors. §11.50 had printed that series' earlier step as not steepening. On the linear axis the change, −0.72 to −1.02, is 1.1 standard errors and is printed, not scored.
+
+### 11.51.3 What a constant ratio would mean
+
+If every later period kept the pooled ratio (0.683 differential, 0.810 linear), the remaining increments would form a geometric series and E[$\mu$] would level near 3.12 and 1.98, which is 2.3 and 3.0 times the criteria. The gate prints this and does not score it. A constant ratio is the optimistic end, not a floor: in the n = 1 series the ratio already fell once, from 0.93 (P(13)/P(10)) to 0.68.
+
+### 11.51.4 What this changes
+
+**Confirmed: the steeper fall.** Both residue classes now show it, by the same factor.
+
+**Unaffected: monotonicity to n = 20,** and a margin of about 2x over both criteria at the widest measured width.
+
+**Narrowed: what #257 owes.** If the ratio holds, E[$\mu$] levels comfortably above the criteria. If it keeps falling, E[$\mu$] levels near the present 2x or lower, and a negative increment is not excluded. The next period, P(19), needs n = 22 solves. Peak memory grew about 5x from n = 19 to n = 20, so it is out of reach of this solver on this host. A lower-memory solver, or an argument that bounds the ratio, is the way forward. The hull share above n = 16 is unchanged from §11.45.4. No rating moves (§11.38.7).

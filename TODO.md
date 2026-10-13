@@ -493,6 +493,32 @@ so the question is no longer which growth curve holds, and the margin at the wid
 measured width is ~2x, not ~10x.  The next period, P(17) to n = 20, costs ~60-100 s per
 solve; (2') the hull share above n = 16, unchanged.
 
+**Fourteenth pass (v9.5.43) — P(17) to n = 20: the n = 2 series falls by the same
+factor.**  See SecurityProofs-10.md §11.51 and `SecurityProofsCode/period_series_n20.py`
+(with the pinned `period_series_n20.json`).
+
+  * **The sample.**  500 pairs per axis from the thirteenth pass's own draws() at
+    start n = 17, one exact n = 20 solve each (1-2 min, up to 4.1 GB differential,
+    against 0.83 GB at n = 19); ~26 CPU hours, so pinned.  E[mu_17] agrees between
+    two independent samples (0.3 / 1.1 sigma).
+  * **E[mu] still rises, to n = 20**: P(17) = 0.210 differential, 0.147 linear, 27 /
+    33 standard errors above zero.  E[mu_20] = 2.67 / 1.35: 2.00x and 2.03x the
+    criteria -- the same margin as at n = 19.
+  * **P falls again** from P(14) (9.6 / 5.2 sigma), **by the same factor as the n = 1
+    series**: P(16)/P(13) and P(17)/P(14) are 0.684 / 0.682 differential and
+    0.789 / 0.835 linear (0.1 / 1.1 sigma apart).  The n = 2 series' differential
+    exponent now steepens too, -0.80 to -2.17 (4.4 sigma).
+  * **A constant ratio, printed not scored**, would level E[mu] near 3.12 / 1.98
+    (2.3x / 3.0x the criteria).  It is the optimistic end: the n = 1 series' ratio
+    already fell once, 0.93 to 0.68.
+
+**What is left (1''''')**: whether the per-period ratio holds or keeps falling -- that is
+now the whole question, since a held ratio levels E[mu] comfortably above the criteria
+and a falling one leaves it near 2x or below.  The next period, P(19), needs n = 22
+solves; peak memory grew ~5x per bit from n = 19 to n = 20, so it needs a lower-memory
+solver or a larger host, or an argument that bounds the ratio below; (2') the hull
+share above n = 16, unchanged.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely
