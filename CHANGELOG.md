@@ -2,6 +2,29 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.43] - 2026-10-12
+
+### TODO #257 (fourteenth pass) — P(17) to n = 20: both residue classes fall by the same factor
+
+New gate `SecurityProofsCode/period_series_n20.py`, with its pinned sample
+`period_series_n20.json`: the period that starts at n = 17, so the n = 2 (mod 3) series
+reaches the same depth as the n = 1 series.  500 pairs per axis from
+`period_series_n19.py`'s own sampler and seed; each needs one exact n = 20 solve (1-2 min,
+up to 4.1 GB), about 26 CPU hours in all, so the sample is pinned and the gate re-solves a
+prefix.
+
+- **E[mu] still rises, to n = 20.**  P(17) is 0.210 differential and 0.147 linear, 27 and
+  33 standard errors above zero.  E[mu_20] is 2.67 / 1.35, 2.00x and 2.03x the 4/3 and
+  2/3 criteria -- the same margin as at n = 19.
+- **The steeper fall is confirmed in both residue classes.**  P drops from P(14) by 9.6 /
+  5.2 standard errors, and P(17)/P(14) matches P(16)/P(13): 0.682 vs 0.684 differential,
+  0.835 vs 0.789 linear.  The n = 2 series' differential exponent now steepens too, -0.80
+  to -2.17 (4.4 sigma).
+- **What a constant ratio would mean** (printed, not scored): E[mu] would level near
+  3.12 / 1.98, 2.3x / 3.0x the criteria.  If the ratio keeps falling, as it did once in
+  the n = 1 series, the margin stays near 2x or shrinks.  The next period needs n = 22,
+  beyond this solver's memory on the measuring host.  No rating moves.
+
 ## [9.5.42] - 2026-10-12
 
 ### TODO #257 (thirteenth pass) — one period further, to n = 19: the fall steepens
