@@ -517,7 +517,12 @@ now the whole question, since a held ratio levels E[mu] comfortably above the cr
 and a falling one leaves it near 2x or below.  The next period, P(19), needs n = 22
 solves; peak memory grew ~5x per bit from n = 19 to n = 20, so it needs a lower-memory
 solver or a larger host, or an argument that bounds the ratio below; (2') the hull
-share above n = 16, unchanged.
+share above n = 16, unchanged; (3) **NL-FSCX v3's linear slope at realistic width**,
+against v3's own bar s_lin >= 0.8 (TODO #342, SecurityProofs-10.md §11.52).  v3's
+differential axis is closed at every width by §11.34.3's round-level floor; its linear
+axis has only the layer-wise 1-bit floor, and the round-level floor is 0.1926.  At n = 10
+the exact slope clears 0.8 for all 1024 keys, least 1.178 (1.47x).  Next widths with a
+5/7-row partition and an invertible M are n = 14 and 17.
 
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,

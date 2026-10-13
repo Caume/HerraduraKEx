@@ -23518,3 +23518,39 @@ The curated `cross_implementation_gaps` entry that recorded the drift is retired
 list is empty.
 
 Status: **DONE v9.5.40** — C/Go/Java `--help` synopses generated from the spec; Go and Java gain `--help`.
+
+### #342: SECURITY.md's v3 rows say v3 has no trail bound on either axis, beside a floor that clears the differential bar
+
+Found while updating the HSKE-NL-A2 row for TODO #257 (v9.5.44).  SECURITY.md's five v3
+rows (HSKE-NL-A3, HSKE-Duplex-V3, HPKE-NL3, FPE-V3, `twk --v3`), and `spec/`'s notes for
+them, say both that chi gives the v3 round "an unconditional per-round trail floor of
+1.6781 bits differential and 1 bit linear", and that v3 has "no trail bound at realistic
+width on either axis".  At v3's own round count those floors appear to clear v3's own bars
+(160 x 1.6781 = 268.5 >= 256; 160 x 1 = 160 >= 128), so the two statements cannot both
+hold.  Settle which is true, axis by axis, and correct every copy.
+
+Fixed in v9.5.45.  See SecurityProofs-10.md §11.52 and the new findings gate
+`SecurityProofsCode/nl_fscx_v3_trail_criterion.py`.
+
+  * **v3's own bars** are s_diff >= 1.6 and s_lin >= 0.8, at both R3 = 160 (256-bit
+    block) and the duplex's I3 = 80 (128-bit capacity) -- not v2's 4/3 and 2/3.
+  * **Differential: proven at every width.**  §11.34.3's 1.6781 bounds the round's own
+    DDT entry, carry clustering included, so every characteristic has weight >= 1.6781
+    per round: v3 HAS a differential trail bound at n = 256, at 1.049x.  Checked against
+    the exhaustive full-round DDT at n = 10 (never above 5/16, which is attained).
+    Hulls are not covered.
+  * **Linear: not proven.**  The 1 bit is §11.33.2's layer-wise floor; the round's own
+    proven floor is §11.34.2's 0.1926 bits (30.8 bits over 160 rounds, against 128).
+    Negative control: the full round at n = 10 attains |corr| = 0.875 in one round.
+  * **Exact asymptotic slopes at n = 10, all 1024 keys**, certified minimum mean
+    cycles of the round-level graphs: differential least 2.500 (never below the
+    proof's floor), linear least 1.178 at key 0x095, median 1.524 -- 1.47x the 0.8
+    bar at worst.  One width, not a bound.
+  * **Corrected:** the five SECURITY.md rows and spec/ notes (A3's status line now
+    reads "narrower gap than HSKE-NL-A2 (linear axis only)"; the duplex's r >= 64
+    linear requirement is marked layer-wise); §11.34.6, which compared v3's linear slope
+    with v2's 2/3 (and `nl_fscx_v3_weak_keys.py`'s check, now 0.8); §11.34.8's citation
+    of the 1-bit floor.  No rating moves.
+  * **Filed:** v3's linear slope at realistic width, as TODO #257's item (3).
+
+Status: **DONE v9.5.45** — v3 has a proven differential trail bound at every width; the linear one is layer-wise only; five rows and spec/ corrected.
