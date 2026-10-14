@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.52** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion
+> - **Part 10 — §11.43–§11.53** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope
 
 ---
 
@@ -591,3 +591,52 @@ This is one width. §11.42 to §11.51 show for v2 how far small-width figures ca
 **Filed:** v3's linear slope at realistic width, against 0.8, as TODO #257's item (3) beside v2's two axes.
 
 **Unchanged:** every v3 rating. None of the five rows is demo-only for want of a trail bound alone. The missing PRP/SPRP reduction stands, and so, for the duplex, does the uncharacterised sponge profile (TODO #99).
+
+## 11.53 v3's linear slope at n = 14 and 17, and the LSB-row ceiling — TODO #257, item (3)
+
+§11.52 left v3's linear axis open: the round-level floor is 0.1926 bits, and the exact asymptotic slope had been measured at n = 10 only. This section takes it to n = 14 (rows 7, 7) and n = 17 (rows 5, 5, 7), the next two widths with an all-5-or-7 partition and an invertible M. It also proves a width-independent **ceiling** on the worst key's slope. The gate is `SecurityProofsCode/nl_fscx_v3_linear_width.py`, with the C helper `v3_round_mmc.c`.
+
+### 11.53.1 The solver
+
+At n = 17 the round-level LAT has 2^34 entries, too many to store. `v3_round_mmc.c` keeps the graph implicit: a full pass recomputes the LAT one column at a time, with one Walsh–Hadamard transform per output mask, and the DDT one row at a time. Howard's iteration runs on a subgraph G′ of the cheap edges, plus each node's cheapest edge. The answer is then **certified** against the whole graph. Shortest paths of w − (μ − 10⁻⁹) on G′ give a potential p, and one full pass checks p(u) ≤ w − μ + p(v) on every edge. If any edge violates it, that edge joins G′ and the solve repeats. So every figure below is the exact minimum mean cycle of the full graph, to 10⁻⁹. It is not the minimum over a subgraph.
+
+The gate holds the solver to the Python one of §11.52 on four keys and both axes. Before relying on it here, it was also checked against the exhaustive n = 10 run, all 1024 keys on both axes, with no disagreement. A negative control shows the certificate firing: with the cap at 1 bit, the first subgraph's optimum is wrong (1.6270 against 1.5982 for key 0x009). The certificate finds 72 violating edges, and the loop ends at the true value.
+
+### 11.53.2 The measurements
+
+The samples are uniform keys: 2048 of the 16384 at n = 14, and 24 at n = 17. Every answer is certified.
+
+| n | rows | keys | differential least / median | linear least / 1st pct / median / most | least / 0.8 |
+|---|---|---|---|---|---|
+| 10 | 5, 5 | all 1024 (§11.52) | 2.500 / 3.000 | 1.178 / 1.238 / 1.524 / 1.766 | 1.47× |
+| 14 | 7, 7 | 2048 | 3.000 / 3.000 | 1.607 / 1.678 / 1.869 / 2.000 | 2.01× |
+| 17 | 5, 5, 7 | 24 | 3.000 / 3.000 | 1.415 / 1.415 / 1.667 / 2.000 | 1.77× |
+
+Every sampled key clears 0.8 at both widths. No differential slope falls below §11.34.3's proven 1.6781, so the measurement and the proof agree again.
+
+The partitions differ, and the figures follow them. n = 14 has no 5-row, and 7-rows are the stronger row (§11.34.2: worst one-round grade 0.719 against 0.875). n = 10 and n = 17 have a 5-row at the LSB, as the deployed 47 × 5 + 3 × 7 does. These are the comparable pair: from n = 10 (exhaustive) to n = 17 (sampled), the least linear slope rose from 1.178 to 1.415 and the median from 1.524 to 1.667.
+
+### 11.53.3 The LSB-row ceiling
+
+Of the 24 optimal cycles at n = 17, 15 lie on masks inside the lowest 5-bit row. The least-linear key's is one of them, a single self-loop on mask 0x1c. The other nine sit in the second 5-row or in the 7-row, rows that receive a carry. The LSB row is special because the addition's carry starts at bit 0.
+
+**Lemma.** Let the partition have a row of length L at the LSB, and let n ≥ L + 2. For masks u and v confined to that row, the LAT entry |corr(u·x, v·T(x))| depends on δ(B) mod 2^L and on nothing else. In particular it does not depend on n.
+
+*Proof.* v·T(x) reads only the row's L output bits. Those are χ_L applied to the low L bits of M(x ⊕ B) + δ(B). No carry enters bit 0, so the low L bits of the sum are a function of the low L bits of M(x ⊕ B) and of δ(B) mod 2^L. Bit i of M(y) is y_{i−1} ⊕ y_i ⊕ y_{i+1}, so those L bits read y at positions n − 1 and 0..L, and these are L + 2 distinct positions when n ≥ L + 2. u·x reads positions 0..L−1. So the correlation is an average over L + 2 uniform bits of a fixed function of δ(B) mod 2^L. The XOR with B only flips signs. ∎
+
+So every cycle through LSB-row masks is a cycle of the full round-level graph, with the same mean at every width. The minimum mean cycle of the LSB-row graph is an **upper** bound on the key's linear slope at every width, n = 256 included. Computed exactly over all classes and certified:
+
+- **L = 5:** the least is **1.4150** = −log2(3/8), at δ(B) ≡ 5 (mod 8), which is 4 of the 32 classes. The most is 2.000.
+- **L = 7:** the least is 1.6781.
+
+The deployed partition has a 5-row at the LSB, and δ(B) mod 32 takes every value over the keys; about one key in eight is ≡ 5 (mod 8), and the gate checks both on 4096 random 256-bit keys. So **at n = 256, every key with δ(B) ≡ 5 (mod 8) has linear slope at most 1.4150. v3's worst-key linear margin over the 0.8 bar is therefore at most 1.77×, at every width.** This is a ceiling, not a floor: it says how good the linear axis can be, not that it is good.
+
+The gate checks the lemma directly. The full-width LAT entries between LSB-row masks equal the local ones exactly at n = 10 (three keys) and at n = 14. Against the table of the wrong δ class, the same comparison fails. The gate also checks that no solved key exceeds its LSB-row value. Over every key measured, 1024 + 2048 + 24 of them, none does. The share whose slope *equals* the LSB-row value is 22% at n = 10, 77% at n = 14 and 67% at n = 17. The n = 17 least sits exactly on the 5-row ceiling.
+
+### 11.53.4 What it changes
+
+**Established:** a proven, width-independent ceiling of 1.4150 on the worst key's linear slope, from the LSB row alone. The linear margin at n = 256 cannot exceed 1.77×. There are also exact certified slopes at two more widths, all clearing 0.8 in sample.
+
+**Still open, and now sharper:** a lower bound. The question is whether some cycle cheaper than the LSB row's appears as n grows. Such a cycle must use rows that do receive a carry. On the comparable widths, the share of keys sitting at their LSB-row value grew and the least slope rose, which is the direction a ceiling-tight answer would take. But that rests on one exhaustive width and one sampled one, and §11.42–§11.51 show for v2 how far small-width figures can sit from n = 256. TODO #257's item (3) stays open, narrowed to the cycles below the LSB-row value.
+
+**Unchanged:** every v3 rating. HSKE-NL-A3's status already reads "linear axis only". The ceiling does not move that.

@@ -2,6 +2,37 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.46] - 2026-10-13
+
+### TODO #257, item (3) — v3's linear slope at n = 14 and 17, and a proven ceiling
+
+TODO #342 left NL-FSCX v3's linear axis open, measured at n = 10 only.  New gate
+`SecurityProofsCode/nl_fscx_v3_linear_width.py` (SecurityProofs-10.md §11.53), with the
+C helper `v3_round_mmc.c`, takes the certified exact slope to the next two widths with a
+legal partition and an invertible M.
+
+- **The solver.**  The round-level LAT at n = 17 is 2^34 entries, so the graph is
+  implicit: Howard runs on a subgraph of cheap edges, and a potential is checked against
+  EVERY edge in one full pass (Walsh-Hadamard per output mask), violators added back
+  until it holds.  Checked against the Python solver of §11.52 on all 1024 keys at
+  n = 10 before use; the gate pins four keys and shows the certificate firing.
+- **Measured.**  n = 14 (rows 7/7), 2048 uniform keys: linear least 1.607 (2.01x the
+  0.8 bar), median 1.869.  n = 17 (rows 5/5/7), 24 keys: least 1.415 (1.77x), median
+  1.667.  Every key clears 0.8; every differential slope sits at or above the proven
+  1.6781.
+- **Proven: a ceiling.**  The addition's LSB row receives no carry, so the LAT entries
+  between masks on it depend on delta(B) mod 2^L alone, identically at every width
+  n >= L + 2.  Its least cycle mean -- 1.4150 for a 5-row, at delta = 5 mod 8, about
+  one key in eight at n = 256 -- is an UPPER bound on those keys' linear slope at
+  n = 256: v3's worst-key linear margin is at most 1.77x.  The gate checks the full-width
+  entries equal the local ones (and fail against the wrong delta class), and no solved
+  key exceeds its LSB-row value.
+- **Still open:** the floor -- whether cycles through carry-receiving rows undercut the
+  LSB row as n grows.  TODO #257's item (3) is narrowed to that.
+
+SECURITY.md's five v3 rows and `spec/`'s notes now carry the n = 14/17 figures and the
+ceiling; no rating changes.  Part index §11.43–§11.53; findings gates 89 -> 90.
+
 ## [9.5.45] - 2026-10-13
 
 ### TODO #342 — what NL-FSCX v3's trail floors prove against v3's own criterion
