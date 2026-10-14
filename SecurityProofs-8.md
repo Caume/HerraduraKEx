@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (this file): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.51** (SecurityProofs-10.md): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20
+> - **Part 10 — §11.43–§11.52** (SecurityProofs-10.md): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion
 
 ---
 
@@ -122,7 +122,7 @@ so $R_3 = 160$ clears it — at $1.049\times$, not the $1.25\times$ §11.33.6 re
 
 > **$R_3 = 160$ is the right number, for a reason narrower than the one on record, and there is no room to reduce it.** A future item that wants to trim the round count must first widen this floor, not merely re-measure it.
 
-The linear axis is unchanged in both findings and logic.  The round-level figure $0.1926$ would demand $r \ge 664$ if it were a slope, and §11.33.5 declined to price it that way because it is not chainable. §11.34's exact multi-round trail search — maximum over *all* mask paths, not a sample — re-confirms that at $n = 10$: the slope rises from $0.79$ at $r = 1$ to about $1.4$ bits/round by $r = 6$, comfortably above the $s_{\mathrm{lin}} \ge 2/3$ bar and roughly seven times the single-round figure.  $0.1926$ is a transient, not a slope.
+The linear axis is unchanged in both findings and logic.  The round-level figure $0.1926$ would demand $r \ge 664$ if it were a slope, and §11.33.5 declined to price it that way because it is not chainable. §11.34's exact multi-round trail search — maximum over *all* mask paths, not a sample — re-confirms that at $n = 10$: the slope rises from $0.79$ at $r = 1$ to about $1.4$ bits/round by $r = 6$, comfortably above the $s_{\mathrm{lin}} \ge 0.8$ bar that $R_3 = 160$ needs (128 bits over 160 rounds; an earlier draft compared it with v2's 2/3, corrected under TODO #342, §11.52) and roughly seven times the single-round figure.  $0.1926$ is a transient, not a slope.
 
 ### 11.34.7 Consequence for the implementation
 
@@ -149,7 +149,7 @@ and it is the first duplex round count in this suite that is derived rather than
 
 **The target.** The state is 256 bits split rate $128$ / capacity $c = 128$. A sponge's security against the generic attacks is governed by the capacity, so the quantity to clear is $c = 128$ bits, not $n = 256$.
 
-**The requirement.** §11.34.3 gives the v3 round an unconditional differential floor of $4 - \log_2 5 = 1.6781$ bits and §11.34.2 a linear floor of $1$ bit, both per round and both independent of the key. Applying §11.30.1's two criteria at the capacity rather than the block size:
+**The requirement.** §11.34.3 gives the v3 round an unconditional differential floor of $4 - \log_2 5 = 1.6781$ bits, and §11.33.2 a linear floor of $1$ bit, both per round and both independent of the key. *Correction (TODO #342, §11.52):* the two are not the same kind of floor. The differential one bounds the round's own DDT entry; the linear one is layer-wise, and the round-level linear floor is only §11.34.2's 0.1926 bits. So the linear requirement below holds in the layer-wise model only. Applying §11.30.1's two criteria at the capacity rather than the block size:
 
 $$r \ \ge\ \frac{c}{1.6781} = 76.3 \quad\text{(differential)}, \qquad r \ \ge\ \frac{c}{2} = 64 \quad\text{(linear)}.$$
 

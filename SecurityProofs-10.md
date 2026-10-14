@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.51** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20
+> - **Part 10 — §11.43–§11.52** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion
 
 ---
 
@@ -548,3 +548,46 @@ If every later period kept the pooled ratio (0.683 differential, 0.810 linear), 
 **Unaffected: monotonicity to n = 20,** and a margin of about 2x over both criteria at the widest measured width.
 
 **Narrowed: what #257 owes.** If the ratio holds, E[$\mu$] levels comfortably above the criteria. If it keeps falling, E[$\mu$] levels near the present 2x or lower, and a negative increment is not excluded. The next period, P(19), needs n = 22 solves. Peak memory grew about 5x from n = 19 to n = 20, so it is out of reach of this solver on this host. A lower-memory solver, or an argument that bounds the ratio, is the way forward. The hull share above n = 16 is unchanged from §11.45.4. No rating moves (§11.38.7).
+
+## 11.52 What v3's trail floors prove against v3's own criterion — TODO #342
+
+SECURITY.md's five v3 rows, and spec/'s notes for them, said two things that cannot both hold. They said χ gives the v3 round "an unconditional per-round trail floor of 1.6781 bits differential and 1 bit linear", and that v3 has "no trail bound at realistic width on either axis". This section settles which is true, axis by axis. Reproduced by `SecurityProofsCode/nl_fscx_v3_trail_criterion.py`.
+
+### 11.52.1 v3's own bars
+
+§11.30.1's criterion is that a differential trail dies once s_diff · r ≥ n, and a linear one once s_lin · r ≥ n/2. For v2 the round count is tied to n, so the bars collapse to 4/3 and 2/3. For v3 the round count is free. At R3 = 160 against a 256-bit block, and at the duplex's I3 = 80 against its 128-bit capacity, the bars are the same two numbers: **s_diff ≥ 1.6 and s_lin ≥ 0.8**.
+
+### 11.52.2 Differential: a proven trail bound at every width
+
+§11.34.3's lowest-active-row lemma bounds the round's own DDT entry, which sums over every intermediate difference and so includes clustering across the carry. That bound is 5/16 for every key at every width. Every r-round characteristic therefore has weight at least 1.6781 · r. Since 1.6781 ≥ 1.6, **v3 has a proven differential trail bound at n = 256**: 268.5 bits over 160 rounds against 256 needed, which is 1.049× with no room to trim R3. The gate checks the bound against the exhaustive full-round DDT at n = 10: no entry exceeds 5/16, and 5/16 is attained.
+
+Differential hulls, which sum over characteristics, are not covered.
+
+### 11.52.3 Linear: the 1-bit floor is layer-wise
+
+§11.33.2's linear floor of 1 bit charges χ alone, with the mask between the addition and χ held fixed. The round's own LAT entry sums over that mask. The proven round-level floor is §11.34.2's single-row bound, 0.1926 bits, which gives 30.8 bits over 160 rounds against 128 needed. The negative control: the full round at n = 10 attains |corr| = 0.875 in a single round, below both the layer-wise 1 bit and the 0.8 bar. So the 1-bit figure is not a bound on the round, and **v3 has no proven linear trail bound at n = 256**.
+
+The rows had placed a round-level floor and a layer-wise one side by side as if they were the same kind.
+
+### 11.52.4 The exact asymptotic slopes at n = 10
+
+The asymptotic slope is the minimum mean cycle of the round-level DDT or LAT graph: 1023 nodes and every edge. It is computed by Howard's iteration and certified by a potential: every edge u → v satisfies h(u) ≤ w − μ + h(v), so no cycle is cheaper than μ, and the policy cycle attains it. Over **all 1024 keys** (the gate's `--full`):
+
+| axis | least | median | most | bar | least / bar |
+|---|---|---|---|---|---|
+| differential | 2.500 | 3.000 | 3.667 | 1.6 | 1.56× |
+| linear | 1.178 | 1.524 | 1.766 | 0.8 | 1.47× |
+
+No key's differential slope falls below the proven floor, so the measurement agrees with the proof. Every key's linear slope clears 0.8. The least is at key 0x095, and the gate pins that key and a least-differential key into every run.
+
+This is one width. §11.42 to §11.51 show for v2 how far small-width figures can sit from n = 256, so it is evidence, not a bound.
+
+### 11.52.5 What this changes
+
+**Corrected:** all five v3 rows of SECURITY.md and spec/'s notes. The differential axis has a proven trail bound at every width. The linear axis does not, and the 1-bit figure is now labelled layer-wise. HSKE-NL-A3's status line reads "narrower gap than HSKE-NL-A2 (linear axis only)". The duplex's r ≥ 64 linear requirement is labelled layer-wise too.
+
+**Corrected in §11.34:** §11.34.6 compared v3's multi-round linear slope with v2's 2/3 rather than v3's 0.8. The slope clears either bar, and `nl_fscx_v3_weak_keys.py` now checks 0.8. §11.34.8 had cited the 1-bit linear floor to §11.34.2, which gives 0.1926; its source is §11.33.2.
+
+**Filed:** v3's linear slope at realistic width, against 0.8, as TODO #257's item (3) beside v2's two axes.
+
+**Unchanged:** every v3 rating. None of the five rows is demo-only for want of a trail bound alone. The missing PRP/SPRP reduction stands, and so, for the duplex, does the uncharacterised sponge profile (TODO #99).

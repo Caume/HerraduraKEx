@@ -2,6 +2,32 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.45] - 2026-10-13
+
+### TODO #342 — what NL-FSCX v3's trail floors prove against v3's own criterion
+
+SECURITY.md's five v3 rows, and `spec/`'s notes for them, said both that the v3 round has
+"an unconditional per-round trail floor of 1.6781 bits differential and 1 bit linear" and
+that v3 has "no trail bound at realistic width on either axis".  New gate
+`SecurityProofsCode/nl_fscx_v3_trail_criterion.py` (SecurityProofs-10.md §11.52) settles
+it:
+
+- **v3's own bars** are s_diff >= 1.6 and s_lin >= 0.8, at R3 = 160 and at the duplex's
+  I3 = 80 alike -- not v2's 4/3 and 2/3.
+- **Differential: proven at every width.**  1.6781 bounds the round's own DDT entry, so v3
+  has a differential trail bound at n = 256 (268.5 bits against 256, 1.049x).  Hulls are
+  not covered.
+- **Linear: not proven.**  The 1 bit is a layer-wise floor; the round-level floor is
+  0.1926, and the full round at n = 10 attains it.
+- **Exact asymptotic slopes at n = 10, all 1024 keys** (certified minimum mean cycles):
+  linear least 1.178, 1.47x the bar; differential least 2.500, never below the proof.
+
+Corrected: the five v3 rows and spec/ notes (HSKE-NL-A3's status line now reads
+"narrower gap than HSKE-NL-A2 (linear axis only)"), §11.34.6 and
+`nl_fscx_v3_weak_keys.py`, which held v3's linear slope to v2's 2/3 instead of 0.8, and
+§11.34.8's citation of the 1-bit floor.  v3's linear slope at realistic width is filed as
+TODO #257's item (3).  No rating moves.
+
 ## [9.5.44] - 2026-10-13
 
 ### SECURITY.md — TODO #257's findings to v9.5.43

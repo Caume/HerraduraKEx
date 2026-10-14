@@ -461,12 +461,14 @@ than reported), so every floor below is sound.""")
                 m = max(best[1:])
                 print("        r = %d   |corr| = %.6f   weight = %6.4f   "
                       "slope = %.4f" % (r, m, w(m), w(m) / r))
-            check(w(max(best[1:])) / 6 > 2 / 3,
-                  "the multi-round linear slope fell below the 2/3 criterion")
+            # v3's own linear bar is (n/2)/R3 = 128/160 = 0.8, not v2's 2/3
+            # (TODO #342; nl_fscx_v3_trail_criterion.py §1).
+            check(w(max(best[1:])) / 6 > 0.8,
+                  "the multi-round linear slope fell below v3's 0.8 criterion")
         print("""
-      The slope rises to ~1.4 bits/round by r = 6, comfortably above the
-      s_lin >= 2/3 bar and seven times the single-round figure.  0.193 is a
-      transient, not a slope.""")
+      The slope rises to ~1.4 bits/round by r = 6, comfortably above v3's
+      s_lin >= 0.8 bar (128 bits over R3 = 160 rounds) and seven times the
+      single-round figure.  0.193 is a transient, not a slope.""")
 
     # ── §7 ──────────────────────────────────────────────────────────────────
     rule("§7  Verdict")
