@@ -2,6 +2,37 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.47] - 2026-10-14
+
+### TODO #343 (first pass) — an audit of the v2 measurement methodology
+
+New TODO #343, filed after an end-to-end review of how TODO #257 measures NL-FSCX v2's
+trail slopes.  New gate `SecurityProofsCode/v2_measurement_audit.py`
+(SecurityProofs-10.md §11.54), with the C helper `v2_round_transient.c`.  Two errors,
+both of which make the n = 256 margin look larger than it is, and one screen gap:
+
+- **The wrong population.**  The series sampled delta uniformly; real keys give
+  delta(B) = ROL(B * ((B+1) >> 1), n/4).  A closed-form preimage count (checked against
+  brute force for every delta at every n <= 16) shows only ~54% of deltas are
+  reachable, and P(tz(p) = t) ~ 2^(-t/2) instead of 2^-(t+1).  Long zero runs make the
+  round cheap: exhaustively at n = 7..13 the key-weighted E[mu] is 2.5-7% lower on both
+  axes, and the 5th percentile far lower (0.648 against 1.065, n = 11 differential).
+  Reweighting the pinned series by preimage count lowers all 20 (axis, width) points.
+- **The criterion dropped the transient.**  The exact best trail at the deployed
+  r = 3n/4 is W(r) = mu * r + c, with c < 0 for every key and c/n about -0.28
+  differential and -0.15 linear at n = 10..13, not shrinking with n.  The bars on mu
+  become about 1.71 and 0.87, not 4/3 and 2/3.  At n = 20 the margin is about 1.5x on
+  both axes, not 2x (an extrapolation of c/n from n <= 13).
+- **The affine class has four members**, {0, 2^(n-1), 2^(n-2), 3 * 2^(n-2)}; the CLIs
+  screen two.  Keys reach 2^(n-2) at n = 11, 14, 17, 19, 20, 22, but provably none
+  reaches either unscreened value at any n = 0 (mod 8), n = 256 included: the shipped
+  screen is complete.  No code change.
+
+SECURITY.md's HSKE-NL-A2 and `twk` rows now read their margins against the corrected
+bars; TODO #257 carries a pointer.  No rating changes.  What is left -- a key-drawn
+series, c/n at more rounds, an implicit-edge v2 solver -- is TODO #343.  Part index
+§11.43–§11.54; findings gates 90 -> 91.
+
 ## [9.5.46] - 2026-10-13
 
 ### TODO #257, item (3) — v3's linear slope at n = 14 and 17, and a proven ceiling

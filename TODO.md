@@ -533,6 +533,13 @@ row's value as n grows.  On the 5-row-LSB widths the least rose (1.178 at n = 10
 1.415 at n = 17) and 67% of n = 17 keys sit exactly on their LSB-row value, but that
 is one exhaustive and one sampled width.
 
+**Methodology correction (TODO #343, v9.5.47, SecurityProofs-10.md §11.54).**  Every
+E[mu] above was sampled over uniform delta, which overstates the key average by a few
+percent, and held to mu * 3n/4 >= n, which drops a transient of about -0.3n
+(differential) / -0.15n (linear) at the deployed round count.  Read the margins against
+the corrected bars, about 1.71 and 0.87: n = 20 sits near 1.5x, not 2x.  The fixes to
+the sampler and the solver are tracked in #343.
+
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
 HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely
@@ -540,6 +547,55 @@ in §11.36.8, because in both those modes the attacked input is the round CONSTA
 enters every round at once, so there is no trail to bound.  This item can therefore move
 no rating in either direction, and is filed as an outstanding proof obligation behind
 figures already published, not as a gate on anything.
+
+Status: **OPEN**
+
+---
+
+### #343: TODO #257's v2 measurement methodology -- the wrong population and a dropped transient
+
+Found by an end-to-end review of how TODO #257 measures NL-FSCX v2's trail slopes
+(period_series_n19.py, period_series_n20.py and the ladders before them).  Two errors,
+both pushing the n = 256 margin UP, and one gap in the weak-key screen.
+
+1. **The wrong population.**  `draws()` samples delta uniformly over n-bit strings, but
+   a key gives delta(B) = ROL(B * ((B+1) >> 1) mod 2^n, n/4): only ~54% of deltas are
+   reachable, some by 2^(n/2) keys, and p's trailing-zero run has a heavy tail
+   (P(tz = t) ~ 2^(-t/2), against 2^-(t+1)).  Long runs make the round cheap, so the
+   key-weighted E[mu] is 2.5-7% below the uniform one (exhaustive, n = 7..13) and the
+   5th percentile far below (0.648 against 1.065 at n = 11, differential).
+2. **The criterion drops the transient.**  #257 holds the slope to mu * 3n/4 >= n (n/2
+   linear).  The deployed criterion is on the exact r-round trail W(3n/4) = mu * r + c,
+   and c is NEGATIVE for every key measured and proportional to n: c/n about -0.3
+   differential and -0.15 linear at n = 10..13.  If that holds at 192 rounds, the bars on
+   mu are about 1.70 and 0.86, not 4/3 and 2/3.
+3. **The affine class has four members**: delta in {0, 2^(n-1), 2^(n-2), 3 * 2^(n-2)};
+   the CLIs screen the first two.  Keys reach 2^(n-2) at n = 11, 14, 17, 19, 20, 22 (the
+   sample met B = 0x40, mu = 0, at n = 17), but at n = 256 -- at every n = 0 (mod 8) -- no key
+   reaches either unscreened value, so the shipped screen is complete where it is used.
+
+**First pass done in v9.5.47 (SecurityProofs-10.md §11.54,
+`SecurityProofsCode/v2_measurement_audit.py`, helper `v2_round_transient.c`):** all three
+established and gated -- a closed-form preimage count for delta (checked against brute
+force at every n <= 16), the exhaustive key-weighted comparison, the affine class and its
+n = 256 unreachability, exact W(r) beside certified mu, and the pinned series reweighted
+by preimage count (lower at 20 of 20 points).  SECURITY.md's HSKE-NL-A2 and `twk` rows
+now read their margins against the corrected bars: about 1.5x at n = 20, not 2x.
+
+**What is left:**
+
+- **Sample keys, not deltas.**  Rebuild the period series on draws of B (stratified by
+  tz(p), whose class probabilities are exact) and replace the reweighted figures, which
+  are noisy because ~46% of the pinned draws get weight zero.
+- **c/n at more rounds.**  The transient is measured at r = 7..10 only.  Track W(3n/4)
+  beside mu at every width the series reaches, and find whether c/n settles, grows or
+  shrinks -- the corrected bars stand or fall on it.  The dense helper stops at n = 14;
+  an implicit-edge min-plus pass (v3_round_mmc.c's approach) reaches further.
+- **An implicit-edge v2 solver.**  certified_cycle_mean.c stores every kept edge (4.1 GB
+  at n = 20); holding the graph implicitly, as v3_round_mmc.c does, makes n = 22-23
+  reachable for the series.
+- **Quantiles over keys**, not only means, and extrapolation on the n = 1 (mod 3) class
+  that n = 256 belongs to, excluding n = 7, 8 (their r = 5, 6 rounds are all transient).
 
 Status: **OPEN**
 
