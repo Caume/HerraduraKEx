@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v9.5.46)
+# Herradura Cryptographic Suite (v9.5.47)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -336,7 +336,7 @@ SecurityProofs-9.md                                 — formal analysis §11.37�
                                                       quenched check against exact mu; the
                                                       certified ladder to n = 20; the
                                                       exact slope to n = 23)
-SecurityProofs-10.md                                — formal analysis §11.43–§11.53 (the
+SecurityProofs-10.md                                — formal analysis §11.43–§11.54 (the
                                                       local certificate: a sound lower
                                                       bound on mu at any width, why its
                                                       window must grow with n, and the
@@ -357,7 +357,11 @@ SecurityProofs-10.md                                — formal analysis §11.43�
                                                       v3's own bars; v3's linear slope
                                                       at n = 14 and 17, and its
                                                       width-independent LSB-row
-                                                      ceiling)
+                                                      ceiling; an audit of the v2
+                                                      methodology: real keys versus
+                                                      uniform delta, and the r-round
+                                                      transient the slope criterion
+                                                      dropped)
 SecurityProofs.md                                   — split index (redirects to the ten files above)
 MIGRATING.md                                        — consolidated breaking-change history and
                                                       upgrade notes

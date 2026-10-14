@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.53** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope
+> - **Part 10 — §11.43–§11.54** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit
 
 ---
 
@@ -640,3 +640,69 @@ The gate checks the lemma directly. The full-width LAT entries between LSB-row m
 **Still open, and now sharper:** a lower bound. The question is whether some cycle cheaper than the LSB row's appears as n grows. Such a cycle must use rows that do receive a carry. On the comparable widths, the share of keys sitting at their LSB-row value grew and the least slope rose, which is the direction a ceiling-tight answer would take. But that rests on one exhaustive width and one sampled one, and §11.42–§11.51 show for v2 how far small-width figures can sit from n = 256. TODO #257's item (3) stays open, narrowed to the cycles below the LSB-row value.
 
 **Unchanged:** every v3 rating. HSKE-NL-A3's status already reads "linear axis only". The ceiling does not move that.
+
+---
+
+## 11.54 An audit of the v2 measurement methodology — TODO #343
+
+§11.42–§11.51 estimate E[μ], the per-round slope of NL-FSCX v2's best trail, by sampling the additive constant δ uniformly over n-bit strings, and hold it to μ · 3n/4 ≥ n (n/2 on the linear axis). This section checks both choices against what they stand for. Two of them are errors, and both make the n = 256 margin look larger than it is. A third finding is a gap in the weak-key screen that turns out to be harmless at the deployed width. The gate is `SecurityProofsCode/v2_measurement_audit.py`, with the C helper `v2_round_transient.c`.
+
+### 11.54.1 The key-induced distribution of δ
+
+A key B gives δ(B) = ROL(p, n/4) with p = B · ⌊(B+1)/2⌋ mod 2^n. Write tz for the number of trailing zeros.
+
+- **Even B = 2^j · u, u odd:** p = 2^(2j−1) · u², so tz(p) = 2j − 1 is odd.
+- **Odd B:** p = B · (B+1)/2, so tz(p) = tz(B+1) − 1.
+
+This gives an exact preimage count for every δ. Let k = tz(p), w = p / 2^k and m = n − k. The even branch needs k odd and u² ≡ w (mod 2^m); each square root lifts to 2^(j−1) odd u. The odd branch writes B + 1 = 2^(k+1) · v, and v ↦ v · (2^(k+1) · v − 1) is a bijection on odd residues mod 2^m, so exactly one v₀ solves it; it counts when v₀ ≤ 2^(n−k−1). The gate checks this count against brute force for every nonzero δ at every n ≤ 16, 131 043 values in all.
+
+Three consequences:
+
+- **About half the δ values are reachable** by any key: 54% at n = 16.
+- **Some are reached by many keys:** up to 2^(n/2), 256 at n = 16.
+- **The zero run is heavy-tailed:** P(tz(p) = t) = 2^−(t+2) + [t odd] · 2^−((t+3)/2), exactly, at every t well below n. That is about 2^(−t/2), against 2^−(t+1) for a uniform string. The rotation puts that run at δ's bits n/4 and up.
+
+### 11.54.2 The wrong population
+
+μ depends on δ alone, so the slope over real keys is the slope over δ weighted by preimage count. Exhaustively, over every δ and every key:
+
+| n | differential, uniform δ | differential, keys | linear, uniform δ | linear, keys |
+|---|---|---|---|---|
+| 7 | 1.164 | 1.119 (−3.8%) | 0.529 | 0.516 (−2.5%) |
+| 8 | 1.270 | 1.198 (−5.7%) | 0.609 | 0.576 (−5.5%) |
+| 10 | 1.602 | 1.503 (−6.1%) | 0.749 | 0.706 (−5.7%) |
+| 11 | 1.777 | 1.654 (−7.0%) | 0.823 | 0.770 (−6.4%) |
+| 13 | 1.988 | 1.892 (−4.8%) | 0.955 | 0.908 (−4.9%) |
+
+The 5th percentile falls further: at n = 11 (differential) it is 1.065 over uniform δ and 0.648 over keys. The cause is the zero run of §11.54.1. At n = 13 the differential mean is about 2.0 for keys with t ≤ 2, 1.44 at t = 5, 1.15 at t = 7 and about 0.55 at t = 9 and 11.
+
+**Correction to the published series.** Reweighting the pinned samples of §11.50 and §11.51 by preimage count lowers E[μ] at all 20 (axis, width) points, by 0.8% to 7.3%. The reweighted figures are noisy, because the ~46% of pinned draws that no key reaches get weight zero. A series drawn over keys is TODO #343's next step.
+
+### 11.54.3 The affine class has four members
+
+δ ∈ {0, 2^(n−1), 2^(n−2), 3 · 2^(n−2)} makes the round GF(2)-affine. Adding 2^(n−2) flips bit n − 2 and carries that bit into the top bit, which is linear. Exhaustively at n = 7, 8 and 10, these four are the only affine values. The CLIs reject the first two. Keys reach 2^(n−2) at n = 11, 14, 17, 19, 20 and 22; this review first met one as a μ = 0 key at n = 17, B = 0x40.
+
+**At the deployed width the screen is complete.** At n ≡ 0 (mod 8) the target p is 2^k or 3 · 2^k with k = 3n/4 − 2 even. An even B gives p an odd valuation, so it cannot reach either. An odd B needs v ≡ −1 or −3 (mod 2^(n/4+2)) with v ≤ 2^(n/4+1), which is impossible. The gate evaluates §11.54.1's count at n = 8, 16, 24, 32, 64, 128 and 256 and gets zero for both values at each.
+
+### 11.54.4 The criterion is on W(r), not on μ · r
+
+μ is the slope a trail pays in the limit. A trail of r rounds pays W(r) = μ · r + c, and the deployed criterion is W(3n/4) ≥ n (n/2 linear). `v2_round_transient.c` computes W(r) exactly from the full DDT or LAT by a min-plus recursion. Its slope over rounds 4n to 8n reproduces the certified μ within 4% for every key, which checks the two tools against each other. Over keys B drawn uniformly, eight per width:
+
+| n | r | differential mean c/n (worst) | linear mean c/n (worst) |
+|---|---|---|---|
+| 10 | 7 | −0.30 (−0.40) | −0.14 (−0.18) |
+| 11 | 8 | −0.25 (−0.32) | −0.15 (−0.17) |
+| 13 | 9 | −0.30 (−0.38) | −0.17 (−0.22) |
+| 14 | 10 | −0.37 (−0.42) | −0.20 (−0.24) |
+
+The n = 14 row has six keys and runs under `--full` only. c is negative for every key measured, and c/n does not shrink with n; at n = 14 it is the largest yet. This fits M's local diffusion: a sparse difference spreads by one bit each way per round, so a trail can spend a fixed fraction of its rounds in a cheap ramp. If c/n holds at 192 rounds, the criterion on μ becomes (1 − c/n) / (3/4) instead of 1 / (3/4): about **1.71** instead of 4/3 differential, and **0.87** instead of 2/3 linear.
+
+### 11.54.5 What it changes
+
+At n = 20, the widest exact width, the published averages are 2.00× and 2.03× the old bars. Weighted to keys and held to the corrected bars, they are about **1.5×** on both axes. That figure applies c/n measured at n ≤ 13 to n = 20, so it is an extrapolation. The levelling scenario of §11.51.3 (E[μ] near 3.1 and 2.0) becomes about 1.8× and 2.3× rather than 2.3× and 3×.
+
+**Established:** the population error and its size; the transient at the deployed round count, at three widths; the affine class, and its unreachability at n = 256.
+
+**Still open (TODO #343):** whether c/n holds, grows or shrinks at larger r, which the corrected bars depend on; the period series drawn over keys rather than δ; and an implicit-edge v2 solver to take both past n = 20.
+
+**Unchanged:** every rating. HSKE-NL-A2 and `twk` were demo-only already; their outlook is weaker again. The CLIs' affine screen needs no change for the deployed width.
