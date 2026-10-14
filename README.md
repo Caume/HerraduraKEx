@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v9.5.45)
+# Herradura Cryptographic Suite (v9.5.46)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -336,7 +336,7 @@ SecurityProofs-9.md                                 — formal analysis §11.37�
                                                       quenched check against exact mu; the
                                                       certified ladder to n = 20; the
                                                       exact slope to n = 23)
-SecurityProofs-10.md                                — formal analysis §11.43–§11.52 (the
+SecurityProofs-10.md                                — formal analysis §11.43–§11.53 (the
                                                       local certificate: a sound lower
                                                       bound on mu at any width, why its
                                                       window must grow with n, and the
@@ -354,7 +354,10 @@ SecurityProofs-10.md                                — formal analysis §11.43�
                                                       whose fall steepens in both
                                                       residue classes; what v3's
                                                       trail floors prove against
-                                                      v3's own bars)
+                                                      v3's own bars; v3's linear slope
+                                                      at n = 14 and 17, and its
+                                                      width-independent LSB-row
+                                                      ceiling)
 SecurityProofs.md                                   — split index (redirects to the ten files above)
 MIGRATING.md                                        — consolidated breaking-change history and
                                                       upgrade notes

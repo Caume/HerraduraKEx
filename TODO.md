@@ -521,8 +521,17 @@ share above n = 16, unchanged; (3) **NL-FSCX v3's linear slope at realistic widt
 against v3's own bar s_lin >= 0.8 (TODO #342, SecurityProofs-10.md §11.52).  v3's
 differential axis is closed at every width by §11.34.3's round-level floor; its linear
 axis has only the layer-wise 1-bit floor, and the round-level floor is 0.1926.  At n = 10
-the exact slope clears 0.8 for all 1024 keys, least 1.178 (1.47x).  Next widths with a
-5/7-row partition and an invertible M are n = 14 and 17.
+the exact slope clears 0.8 for all 1024 keys, least 1.178 (1.47x).  **v9.5.46
+(§11.53, nl_fscx_v3_linear_width.py):** certified exact slopes at n = 14 (rows 7/7,
+2048 keys, least 1.607) and n = 17 (rows 5/5/7, 24 keys, least 1.415), every key
+clearing 0.8.  And a proven CEILING: the LSB row gets no carry in, so its LAT entries
+depend on delta(B) mod 2^L only, at every width n >= L + 2; its least cycle mean
+(1.4150 for a 5-row, at delta = 5 mod 8, one key in eight at n = 256) bounds the
+worst key's slope from ABOVE at n = 256 -- the linear margin is at most 1.77x.  What
+is left is the FLOOR: whether a cycle through carry-receiving rows undercuts the LSB
+row's value as n grows.  On the 5-row-LSB widths the least rose (1.178 at n = 10 to
+1.415 at n = 17) and 67% of n = 17 keys sit exactly on their LSB-row value, but that
+is one exhaustive and one sampled width.
 
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
