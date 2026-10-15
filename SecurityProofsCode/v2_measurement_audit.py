@@ -452,8 +452,8 @@ def section_5():
     check(down == len(acc), "the key-weighted E[mu] is below the published one at %d of "
           "%d (axis, width) points" % (down, len(acc)))
     top = max(n for _, n in acc)
-    print("  (noisy: the ~46% of draws no key reaches get weight 0.  Fixing the sampler"
-          "\n   -- draw B, not delta -- is TODO #343's next step.)")
+    print("  (noisy: the ~46% of draws no key reaches get weight 0.  key_series.py"
+          "\n   (§11.55) replaces these figures with a series drawn over keys.)")
     return top, {a: (st.mean(v for v, _ in acc[(a, top)]),
                      sum(v * w for v, w in acc[(a, top)]) / sum(w for _, w in acc[(a, top)]))
                  for a in (0, 1)}

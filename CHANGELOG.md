@@ -2,6 +2,33 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.48] - 2026-10-14
+
+### TODO #343 (second pass) — the v2 period series over keys, to n = 20
+
+v9.5.47 found that TODO #257's series sampled uniform delta instead of real keys, and
+could only reweight it.  New gate `SecurityProofsCode/key_series.py`
+(SecurityProofs-10.md §11.55), with the pinned sample `key_series.json` (~17 h of CPU),
+measures the series over keys directly.
+
+- **The sampler.**  Keys are stratified by the zero run of p = B * ((B+1) >> 1)
+  (t = 0..7, t >= 8), with exact stratum weights and at least 8 keys per stratum.  Keys
+  whose delta makes the round affine are excluded, since n = 256 has none.  A sample
+  drawn by the same code agrees with the exhaustive key average at n = 10, 11 and 13.
+- **The series.**  Exhaustive to n = 13, then 1207 / 809 / 610 / 313 / 113 keys at
+  n = 14 / 16 / 17 / 19 / 20, both axes per key.  E[mu] over keys rises at every step of
+  both residue classes, by 5.6 standard errors or more, and is 3-5% below the
+  uniform-delta record at every width.  At n = 19, the widest width in n = 256's class,
+  it is 2.507 differential and 1.250 linear: 1.47x and 1.44x the corrected bars (1.88x
+  and 1.87x the old ones).
+- **The tail thins.**  The share of keys below the corrected bars falls at every step,
+  from 21% / 27% at n = 14 to 4.6% / 5.0% at n = 20.  The per-period increments keep
+  shrinking (differential ratios 0.88 and 0.80 in the n = 1 (mod 3) class).
+
+SECURITY.md's HSKE-NL-A2 row carries the key-sampled figures; no rating changes.  TODO
+#343 stays open for c/n at more rounds and an implicit-edge v2 solver.  Part index
+§11.43–§11.55; findings gates 91 -> 92.
+
 ## [9.5.47] - 2026-10-14
 
 ### TODO #343 (first pass) — an audit of the v2 measurement methodology

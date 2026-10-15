@@ -582,11 +582,19 @@ n = 256 unreachability, exact W(r) beside certified mu, and the pinned series re
 by preimage count (lower at 20 of 20 points).  SECURITY.md's HSKE-NL-A2 and `twk` rows
 now read their margins against the corrected bars: about 1.5x at n = 20, not 2x.
 
+**Second pass done in v9.5.48 (SecurityProofs-10.md §11.55,
+`SecurityProofsCode/key_series.py`, pinned `key_series.json`):** the period series over
+KEYS -- exhaustive to n = 13, then stratified samples (by tz(p), exact stratum weights,
+affine-delta keys excluded) of 1207 / 809 / 610 / 313 / 113 keys at n = 14 / 16 / 17 /
+19 / 20, both axes per key.  The sampler agrees with the exhaustive key average at
+n = 10, 11, 13.  E[mu] over keys rises at every step of both residue classes (5.6 SE or
+more) and sits 3-5% below the uniform-delta record at every width; at n = 19 it is
+2.507 / 1.250, 1.47x / 1.44x the corrected bars.  The share of keys below those bars
+falls at every step, to ~5% at n = 20, and the per-period increments keep shrinking
+(ratios 0.88, 0.80 differential in n = 1 mod 3).
+
 **What is left:**
 
-- **Sample keys, not deltas.**  Rebuild the period series on draws of B (stratified by
-  tz(p), whose class probabilities are exact) and replace the reweighted figures, which
-  are noisy because ~46% of the pinned draws get weight zero.
 - **c/n at more rounds.**  The transient is measured at r = 7..10 only.  Track W(3n/4)
   beside mu at every width the series reaches, and find whether c/n settles, grows or
   shrinks -- the corrected bars stand or fall on it.  The dense helper stops at n = 14;
