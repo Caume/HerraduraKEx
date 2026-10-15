@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.54** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit
+> - **Part 10 — §11.43–§11.55** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys
 
 ---
 
@@ -676,7 +676,7 @@ Three consequences:
 
 The 5th percentile falls further: at n = 11 (differential) it is 1.065 over uniform δ and 0.648 over keys. The cause is the zero run of §11.54.1. At n = 13 the differential mean is about 2.0 for keys with t ≤ 2, 1.44 at t = 5, 1.15 at t = 7 and about 0.55 at t = 9 and 11.
 
-**Correction to the published series.** Reweighting the pinned samples of §11.50 and §11.51 by preimage count lowers E[μ] at all 20 (axis, width) points, by 0.8% to 7.3%. The reweighted figures are noisy, because the ~46% of pinned draws that no key reaches get weight zero. A series drawn over keys is TODO #343's next step.
+**Correction to the published series.** Reweighting the pinned samples of §11.50 and §11.51 by preimage count lowers E[μ] at all 20 (axis, width) points, by 0.8% to 7.3%. The reweighted figures are noisy, because the ~46% of pinned draws that no key reaches get weight zero. §11.55 replaces them with a series drawn over keys.
 
 ### 11.54.3 The affine class has four members
 
@@ -706,3 +706,51 @@ At n = 20, the widest exact width, the published averages are 2.00× and 2.03× 
 **Still open (TODO #343):** whether c/n holds, grows or shrinks at larger r, which the corrected bars depend on; the period series drawn over keys rather than δ; and an implicit-edge v2 solver to take both past n = 20.
 
 **Unchanged:** every rating. HSKE-NL-A2 and `twk` were demo-only already; their outlook is weaker again. The CLIs' affine screen needs no change for the deployed width.
+
+---
+
+## 11.55 The period series over keys — TODO #343, second pass
+
+§11.54.2 showed that the series of §11.42–§11.51 sampled the wrong population, uniform δ instead of real keys, and could only correct it by reweighting, which gave ~46% of the pinned draws weight zero. This section measures the series over keys directly. The gate is `SecurityProofsCode/key_series.py`, and the sample is pinned in `key_series.json`.
+
+### 11.55.1 The sampler
+
+Keys are split into strata by the length t of p's trailing zero run (§11.54.1): t = 0 to 7 each on its own, and t ≥ 8 together. Each stratum's weight is its exact share of the key space, by enumeration. Every stratum gets at least eight keys, so the long-run tail is resolved rather than merely present. The estimate is the stratum-weighted mean, with the stratified standard error.
+
+Keys whose δ makes the round affine (§11.54.3) are left out. The CLIs refuse two of those values, and no key reaches the other two at n = 256, so keeping them would weigh in a class the deployed width does not have. At n = 11 this alone moves the exhaustive key average from 1.654 to 1.680.
+
+**Check:** at n = 10 and 11 (and 13 by default) a stratified sample of about 300 keys, drawn by the same code, agrees with the exhaustive key average on both axes, with z between 0.2 and 1.7.
+
+### 11.55.2 The series
+
+Exhaustive over every key to n = 13. Sampled above that: 1207, 809, 610, 313 and 113 keys at n = 14, 16, 17, 19 and 20, both axes solved on every key with the certified solver.
+
+| n | differential, keys | differential, uniform δ | linear, keys | linear, uniform δ | keys below the corrected bars (diff / lin) |
+|---|---|---|---|---|---|
+| 7 | 1.119 | 1.149 | 0.516 | 0.531 | 97% / 100% |
+| 8 | 1.198 | 1.274 | 0.576 | 0.613 | 82% / 94% |
+| 10 | 1.503 | 1.604 | 0.706 | 0.754 | 58% / 72% |
+| 11 | 1.680 | 1.784 | 0.783 | 0.823 | 43% / 61% |
+| 13 | 1.892 | 1.989 | 0.908 | 0.958 | 30% / 39% |
+| 14 | 2.067 ± 0.012 | 2.149 | 0.996 ± 0.006 | 1.031 | 21% / 27% |
+| 16 | 2.233 ± 0.015 | 2.342 | 1.096 ± 0.007 | 1.155 | 15% / 17% |
+| 17 | 2.368 ± 0.015 | 2.461 | 1.169 ± 0.008 | 1.205 | 10% / 11% |
+| 19 | 2.507 ± 0.019 | 2.605 | 1.250 ± 0.011 | 1.308 | 6.5% / 7.4% |
+| 20 | 2.564 ± 0.032 | 2.666 | 1.313 ± 0.019 | 1.353 | 4.6% / 5.0% |
+
+The corrected bars are §11.54.4's 1.71 and 0.87.
+
+- **The rise continues over keys:** at every step of both residue classes, on both axes, by 5.6 standard errors or more.
+- **Over keys E[μ] is lower** than the uniform-δ record at every pinned width, by 3–5%.
+- **The weak share thins.** The share of keys below the corrected bar falls at every step of both classes from n = 10, to about 5% at n = 20.
+- **The increments keep shrinking.** Over keys, in the n ≡ 1 (mod 3) class that n = 256 belongs to, P = 0.384, 0.388, 0.342 and 0.273 (differential), with ratios 1.01, 0.88 and 0.80. Linear: 0.190, 0.203, 0.188 and 0.154, ratios 1.07, 0.93 and 0.82. In the n ≡ 2 class the differential ratios are 0.80, 0.78 and 0.65.
+
+### 11.55.3 What it changes
+
+At n = 19, the widest width of n = 256's residue class, E[μ] over keys is 2.507 differential and 1.250 linear. That is 1.88× and 1.87× the old bars, but **1.47× and 1.44×** the corrected ones. The corrected bars themselves rest on §11.54.4's c/n, measured to n = 14 only.
+
+**Established:** the series over the population that ships, to n = 20, with exhaustive values to n = 13. It replaces §11.54.2's reweighted figures, and the uniform-δ levels of §11.50–§11.51 should no longer be quoted.
+
+**Still open (TODO #343):** c/n at more rounds; an implicit-edge solver for n = 22–23; and, inherited from TODO #257, whether the rise continues to n = 256 at all. The increments are shrinking faster each period, so the levelling question is unchanged in kind. Over keys, it starts from a lower level.
+
+**Unchanged:** every rating.
