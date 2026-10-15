@@ -2,6 +2,33 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.49] - 2026-10-14
+
+### TODO #343 (third pass) — the certified v2 solver with its graph held implicitly
+
+The v2 period series stopped at n = 20 because `certified_cycle_mean.c` stores every
+edge below the certificate's bound mu' - p(u), which charges each target the least
+potential there is.  The solver gains an implicit-edge mode (header field 6, and
+`exact_slope_ladder.cmu(..., implicit=True)`).  New gate
+`SecurityProofsCode/v2_implicit_solver.py` (SecurityProofs-10.md §11.56).
+
+- **The mode.**  G' starts as the stored solver's first graph.  After each Howard solve
+  a certify pass re-walks every row to the same bound and tests each edge against the
+  potential at its own target; the violators join G' (all of them when there are at most
+  2^n, else each row's four worst).  A pass with none certifies mu on the whole graph,
+  at the stored solver's tolerances.  The stored mode is unchanged.
+- **The same answers.**  Identical mu on 64 fixed-seed solves at n = 7..17 and on 50
+  pinned `key_series.json` keys, including n = 20's heaviest.  A control shows the
+  certify passes change the answer at every width from n = 10.
+- **The graph held.**  0.30 of the stored edges over the ten heaviest pinned keys.
+  n = 22: 225 M -> 26 M edges and 2.9 GB -> 0.7 GB (differential), 54 M -> 38 M and
+  940 -> 778 MB (linear), with no loss of speed.  n = 23 now solves in 1.2-1.4 GB.
+- **A limit.**  The linear gain shrinks with width (0.45 of the stored edges at n = 20,
+  0.70 at n = 22): on that axis most of the stored graph is edges the certificate needs.
+
+TODO #343 stays open for the key-sampled series at n = 22-23 and c/n at more rounds.
+Part index §11.43–§11.56; findings gates 92 -> 93.
+
 ## [9.5.48] - 2026-10-14
 
 ### TODO #343 (second pass) — the v2 period series over keys, to n = 20

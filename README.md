@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v9.5.48)
+# Herradura Cryptographic Suite (v9.5.49)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -336,7 +336,7 @@ SecurityProofs-9.md                                 — formal analysis §11.37�
                                                       quenched check against exact mu; the
                                                       certified ladder to n = 20; the
                                                       exact slope to n = 23)
-SecurityProofs-10.md                                — formal analysis §11.43–§11.55 (the
+SecurityProofs-10.md                                — formal analysis §11.43–§11.56 (the
                                                       local certificate: a sound lower
                                                       bound on mu at any width, why its
                                                       window must grow with n, and the
@@ -362,7 +362,9 @@ SecurityProofs-10.md                                — formal analysis §11.43�
                                                       uniform delta, and the r-round
                                                       transient the slope criterion
                                                       dropped; the period series
-                                                      re-measured over keys to n = 20)
+                                                      re-measured over keys to n = 20;
+                                                      the certified solver with its
+                                                      graph held implicitly)
 SecurityProofs.md                                   — split index (redirects to the ten files above)
 MIGRATING.md                                        — consolidated breaking-change history and
                                                       upgrade notes

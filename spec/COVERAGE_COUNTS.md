@@ -14,7 +14,7 @@ named tool prints.
 |---|---|---|
 | suite-internal primitive manifest | 202 | `spec/check_language_parity.py` (`PRIMITIVES`, four cells each) |
 | PARAMETERS table | 85 | `spec/check_language_parity.py` (TODO #278, four cells each) |
-| findings-gating analysis scripts | 92 | `SecurityProofsCode/run_findings_gates.py --list` (TODO #289) |
+| findings-gating analysis scripts | 93 | `SecurityProofsCode/run_findings_gates.py --list` (TODO #289) |
 | fresh-sampling findings gates | 29 | `SecurityProofsCode/run_findings_gates.py --list` (`SAMPLED_GATES`, TODO #300) |
 | nominal job false-failure rate | 6.4e-05 | `SecurityProofsCode/run_findings_gates.py --list` (per `analysis-findings` run, TODO #304) |
 | numbered-test flake budget | 1.0e-05 | `spec/check_language_parity.py` (summed over sampled numbered tests, TODO #316/#319) |

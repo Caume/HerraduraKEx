@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.55** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys
+> - **Part 10 — §11.43–§11.56** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver
 
 ---
 
@@ -751,6 +751,48 @@ At n = 19, the widest width of n = 256's residue class, E[μ] over keys is 2.507
 
 **Established:** the series over the population that ships, to n = 20, with exhaustive values to n = 13. It replaces §11.54.2's reweighted figures, and the uniform-δ levels of §11.50–§11.51 should no longer be quoted.
 
-**Still open (TODO #343):** c/n at more rounds; an implicit-edge solver for n = 22–23; and, inherited from TODO #257, whether the rise continues to n = 256 at all. The increments are shrinking faster each period, so the levelling question is unchanged in kind. Over keys, it starts from a lower level.
+**Still open (TODO #343):** c/n at more rounds; an implicit-edge solver for n = 22–23 (§11.56); and, inherited from TODO #257, whether the rise continues to n = 256 at all. The increments are shrinking faster each period, so the levelling question is unchanged in kind. Over keys, it starts from a lower level.
 
 **Unchanged:** every rating.
+
+## 11.56 The certified solver with its graph held implicitly — TODO #343, third pass
+
+The series of §11.50–§11.55 stops at n = 20 because of memory, not time. `certified_cycle_mean.c` keeps every edge of weight at most $W_u$ out of each node u, and raises $W_u$ until $W_u \ge \mu' - p(u)$. Because every potential is at most zero, a heavier edge cannot violate p, so the kept graph is certified without looking at the rest. But that bound charges every edge's target the least potential there is, so the solver keeps far more edges than the certificate uses: 76 million on the heaviest pinned n = 20 key and 225 million on an n = 22 key. The gate is `SecurityProofsCode/v2_implicit_solver.py`.
+
+### 11.56.1 The implicit mode
+
+The same program has a second mode, selected by a sixth header field, and it reuses the same row walks. It holds a subgraph G′ and checks the rest of the graph by regenerating it:
+
+- G′ starts as the stored solver's first graph, the edges of weight at most $W_0$.
+- Howard's policy iteration and the potential run on G′ exactly as before.
+- A certify pass then walks every row again, to the same bound $\mu' - p(u)$, so no edge the stored solver would keep is skipped. It tests each edge against the potential at its own target: $p(v) \le p(u) + w - \mu' + \text{TOL}$.
+- The edges that fail join G′, and the solve repeats. When a pass finds at most $2^n$ violators it adds all of them; otherwise it adds the four worst of each row, which keeps the first, poorly informed passes from filling G′.
+
+A pass that finds no violator certifies $\mu(G) \ge \mu' - \text{TOL}$ on the whole graph. That is the stored solver's certificate, with the same tolerances, and nothing outside G′ is ever stored.
+
+### 11.56.2 The checks
+
+- **The same μ:** on 64 fixed-seed solves at n = 7–17, both axes, the two modes agree exactly. **Control:** at every width from n = 10, some key's G′ before the first certify pass overstates μ, so the certify passes do change the answer. (At n = 7 and 8 the starting graph is already exact.)
+- **The pinned slopes:** 50 pinned keys of `key_series.json`, including the heaviest n = 20 key on each axis, re-solve to the recorded μ.
+- **The graph held:** on the ten heaviest pinned keys, G′ holds 0.30 of the stored edges in all, and between 0.10 and 0.57 on any one key.
+
+| key | stored: edges / peak / time | implicit: edges / peak / time |
+|---|---|---|
+| n = 20, differential (heaviest pinned) | 76 M / 964 MB / 208 s | 19 M / 316 MB / 363 s |
+| n = 20, linear (heaviest pinned) | 35 M / 486 MB / 129 s | 16 M / 272 MB / 95 s |
+| n = 22, differential | 225 M / 2.9 GB / 880 s | 26 M / 716 MB / 649 s |
+| n = 22, linear | 54 M / 940 MB / 221 s | 38 M / 778 MB / 215 s |
+| n = 23, differential | — (about 8 GB, not run) | 37 M / 1.2 GB / 23 min |
+| n = 23, linear | — | 60 M / 1.4 GB / 8 min |
+
+The n = 22 and 23 rows use the first fixed-seed key of `exact_slope_ladder.py` and are reproduced under `--full`.
+
+### 11.56.3 What it changes
+
+**Established:** a certified v2 solver whose memory is G′ plus about 100 bytes per node, at the stored solver's tolerances and with its answers. On the differential axis it holds a quarter to an eighth of the stored graph at n = 20–22, with no loss of speed. That removes the memory cap on the series: an n = 23 key now takes 1.2–1.4 GB, so several solve side by side on a 16 GB host.
+
+**A limit, measured:** the linear gain shrinks with width. G′ holds 0.25–0.57 of the stored linear graph at n = 17, 0.45 at n = 20 and 0.70 at n = 22. On that axis most of the stored graph is edges the certificate does need, and the per-node arrays are a growing share of the peak.
+
+**Still open (TODO #343):** the key-sampled series of §11.55 carried to n = 22–23 with this solver, and c/n at more rounds.
+
+**Unchanged:** every rating, and every pinned figure.
