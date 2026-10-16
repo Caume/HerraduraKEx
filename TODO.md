@@ -540,7 +540,8 @@ percent, and held to mu * 3n/4 >= n, which drops a transient of about -0.3n
 the corrected bars, about 1.71 and 0.87: n = 20 sits near 1.5x, not 2x.  The fixes to
 the sampler and the solver are tracked in #343.  **v9.5.50 (§11.57):** the transient
 deepens with width, so at n = 19 the bars are 1.89 / 0.94 and the key average sits about
-1.3x above them.
+1.3x above them.  **v9.5.51 (§11.57.4):** at n = 20, 1.91 / 0.97 and 1.34x / 1.36x; the
+deepening has not slowed.
 
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
@@ -615,11 +616,17 @@ the deployed round count (c(2n) within 0.016 n of c(3n/4)); but it does NOT sett
 width -- E[c/n] -0.283 -> -0.419 differential, -0.160 -> -0.208 linear.  The bars at
 n = 19 are 1.89 / 0.94, not 1.71 / 0.87, and §11.55's E[mu] sits 1.32x above both.
 
+**Fifth pass done in v9.5.51 (SecurityProofs-10.md §11.57.4):** n = 20's 107 keys (~4 h
+on 8 cores).  E[c/n] -0.434 / -0.225, bars 1.91 / 0.97, §11.55's E[mu] 1.34x / 1.36x them.
+The discount does NOT slow: its per-bit slope is -0.0167 over n = 14..20 against -0.0104
+over n = 10..14 (differential; -0.0060 against -0.0052 linear), so c grows like n^2 over
+this range.  E[W(3n/4)]/n still rises, +0.056 / +0.037 per bit (11 / 13 SE).
+
 **What is left:**
 
-- **c/n past n = 19.**  n = 20 (107 keys, ~5 h on 8 cores; the trail mode is
-  memory-bandwidth bound when eight run at once) and beyond: whether the differential
-  discount's ~0.015 n per bit slows, and whether E[W(3n/4)]/n keeps rising.
+- **c/n past n = 20.**  Whether the discount's deepening (~0.017 n per bit at n = 14..20)
+  ever slows, and whether E[W(3n/4)]/n keeps rising.  n = 22 has not been timed in the
+  trail mode; n = 20 already takes ~15 min per key with eight solves at once.
 - **The key-sampled series at n = 22-23.**  Carry §11.55's stratified sample to n = 22
   (and 23) with `ESL.cmu(..., implicit=True)`; an n = 22 key takes ~15 min and ~0.8 GB
   per axis, so a few hundred keys is a multi-day run on one host.

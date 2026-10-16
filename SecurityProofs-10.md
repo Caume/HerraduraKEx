@@ -797,7 +797,7 @@ The n = 22 and 23 rows use the first fixed-seed key of `exact_slope_ladder.py` a
 
 **Unchanged:** every rating, and every pinned figure.
 
-## 11.57 The r-round transient over keys, to n = 19 — TODO #343, fourth pass
+## 11.57 The r-round transient over keys, to n = 20 — TODO #343, fourth and fifth passes
 
 §11.54.4 found that the deployed criterion is on the exact best trail over the deployed rounds, W(3n/4) ≥ n (n/2 linear). That trail is cheaper than μ · 3n/4 by a start-up discount c = W(r) − μ · r. It measured c/n on eight keys per width at n = 10–14, because `v2_round_transient.c` holds the round's whole $2^{2n}$ table. The corrected bars on μ, 1.71 and 0.87, and the margins of §11.55 rest on that measurement. The gate is `SecurityProofsCode/v2_transient_series.py`, and the sample is pinned in `v2_transient_series.json`.
 
@@ -814,7 +814,7 @@ With S(k) the largest U(r) − r · $\mu_{lb}$ over r = k to R, a node reached a
 
 ### 11.57.2 The transient over keys
 
-The keys are drawn by §11.55's stratified sampler, with R = 2n rounds and both axes per key: 216, 223, 183, 145, 128, 128 and 113 keys at n = 10, 11, 13, 14, 16, 17 and 19. Here r = ⌊3n/4⌋, and the bar on μ is (1 − c/n) / (3/4), or (1/2 − c/n) / (3/4) on the linear axis.
+The keys are drawn by §11.55's stratified sampler, with R = 2n rounds and both axes per key: 216, 223, 183, 145, 128, 128, 113 and 107 keys at n = 10, 11, 13, 14, 16, 17, 19 and 20. Here r = ⌊3n/4⌋, and the bar on μ is (1 − c/n) / (3/4), or (1/2 − c/n) / (3/4) on the linear axis.
 
 | n | diff. E[c/n] | diff. bar on μ | diff. keys failing W(r) ≥ n | lin. E[c/n] | lin. bar on μ | lin. keys failing W(r) ≥ n/2 |
 |---|---|---|---|---|---|---|
@@ -825,20 +825,35 @@ The keys are drawn by §11.55's stratified sampler, with R = 2n rounds and both 
 | 16 | −0.374 | 1.83 | 16% | −0.201 | 0.94 | 19% |
 | 17 | −0.397 | 1.86 | 13% | −0.198 | 0.93 | 17% |
 | 19 | −0.419 | 1.89 | 8.3% | −0.208 | 0.94 | 12% |
+| 20 | −0.434 | 1.91 | 3.8% | −0.225 | 0.97 | 5.2% |
 
 Standard errors on E[c/n] are 0.003–0.007.
 
 - **A discount on every key:** c < 0 on every key of every width, on both axes.
-- **Settled in rounds:** E[c(2n)]/n is within 0.016 (differential) and 0.011 (linear) of E[c(⌊3n/4⌋)]/n at every width. The average discount is taken within a few rounds of the start, so the deployed round count is already past it.
-- **Not settled in width:** E[c/n] goes from −0.283 to −0.419 differential and from −0.160 to −0.208 linear between n = 10 and 19. That is 17.7 and 13.2 standard errors. The differential discount deepens at every step.
-- **The true criterion:** it fails on more keys than μ · ⌊3n/4⌋ ≥ n does at every width. The share it fails on falls with n: from 71% to 8% differential and from 84% to 12% linear.
+- **Settled in rounds:** E[c(2n)]/n is within 0.018 (differential) and 0.011 (linear) of E[c(⌊3n/4⌋)]/n at every width. The average discount is taken within a few rounds of the start, so the deployed round count is already past it.
+- **Not settled in width:** E[c/n] goes from −0.283 to −0.434 differential and from −0.160 to −0.225 linear between n = 10 and 20. That is 19.6 and 17.6 standard errors. The differential discount deepens at every step.
+- **The true criterion:** it fails on more keys than μ · ⌊3n/4⌋ ≥ n does at every width. The share it fails on falls with n: from 71% to 3.8% differential and from 84% to 5.2% linear.
 
 ### 11.57.3 What it changes
 
 At n = 19, the widest width of n = 256's residue class, the bars on μ are **1.89 and 0.94**, not §11.54.4's 1.71 and 0.87; those lie 19–22 standard errors below. §11.55's E[μ] over keys at n = 19, 2.507 and 1.250, is **1.32×** both bars, not 1.47× and 1.44×. Read directly, E[W(⌊3n/4⌋)] is 1.42 n differential and 1.40 · (n/2) linear.
 
-**Established:** the transient over keys to n = 19 at the deployed round count. It is a discount on every key, it is spent early, and it deepens with width.
+At n = 20 the bars are **1.91 and 0.97**, and §11.55's E[μ] there, 2.564 and 1.313, is 1.34× and 1.36× them. E[W(⌊3n/4⌋)] is 1.51 n and 1.54 · (n/2).
 
-**Open (TODO #343):** where c/n goes past n = 19. Over this range the differential discount deepens by about 0.015 n per bit while E[μ] · 3/4 rises by about 0.07 per bit, so the margin still grows. Nothing here bounds either trend at n = 256. n = 20 is left for a later pass: at about 15 minutes per key with eight solves sharing memory bandwidth, its 107 keys take about 5 hours by themselves.
+### 11.57.4 The pace at n = 20 — fifth pass
+
+n = 20 is the costliest width of the sample: about 15 minutes per key with eight solves sharing memory bandwidth, 107 keys in about 4 hours. The default gate re-solves none of them, and `--full` re-solves them all. They answer the question §11.57.3 left open, which was whether the discount's growth slows. A weighted least-squares slope of E[c/n] against n, fitted over two ranges that share n = 14:
+
+| | d E[c/n] / dn, n = 10–14 | d E[c/n] / dn, n = 14–20 | d E[W(⌊3n/4⌋)/n] / dn, n = 14–20 |
+|---|---|---|---|
+| differential | −0.0104 ± 0.0016 | −0.0167 ± 0.0013 | +0.056 ± 0.005 |
+| linear | −0.0052 ± 0.0008 | −0.0060 ± 0.0006 | +0.037 ± 0.003 |
+
+- **The discount does not slow.** Over n = 14–20 it deepens at least as fast as over n = 10–14: about 3 standard errors faster differential, and level within error linear. Over this range c grows like n², not like n, so the sample fixes no constant c/n that could be carried to n = 256.
+- **The criterion still gains.** E[W(⌊3n/4⌋)]/n rises 11 and 13 standard errors over n = 14–20, so μ's growth outpaces the discount. The keys failing the true criterion fall from 8.3% to 3.8% differential and from 12% to 5.2% linear between n = 19 and 20.
+
+**Established:** the transient over keys to n = 20 at the deployed round count. It is a discount on every key and is spent early. It deepens with width and has not slowed by n = 20, while W(⌊3n/4⌋)/n keeps rising.
+
+**Open (TODO #343):** both trends past n = 20. Neither the discount nor the gain on W(⌊3n/4⌋)/n is bounded at n = 256 by anything here, so the bars on μ quoted at n = 19–20 are read at those widths only.
 
 **Unchanged:** every rating. The margins quoted against the deployed criterion fall from about 1.45× to about 1.3×.

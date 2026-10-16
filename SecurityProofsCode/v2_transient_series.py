@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""v2_transient_series.py — TODO #343 (fourth pass): the r-round transient of NL-FSCX
-v2 over keys, to n = 20, at the deployed round count and past it.
+"""v2_transient_series.py — TODO #343 (fourth and fifth passes): the r-round transient
+of NL-FSCX v2 over keys, to n = 20, at the deployed round count and past it.
 
 §11.54.4 (v2_measurement_audit.py) found that the deployed criterion is on the exact
 r-round trail, W(3n/4) >= n (n/2 linear), not on mu * 3n/4, and that
@@ -22,19 +22,25 @@ v2_round_transient.c holds the round's whole 2^(2n) table.  The corrected bars o
       v2_transient_series.json.  The gate shows the file is the whole seeded sample
       and re-solves a prefix of every width.
 
-  §3  THE TRANSIENT OVER KEYS.  1236 keys at n = 10, 11, 13, 14, 16, 17, 19.
+  §3  THE TRANSIENT OVER KEYS.  1343 keys at n = 10, 11, 13, 14, 16, 17, 19, 20.
       (a) c(floor(3n/4)) < 0 on EVERY key of every width, both axes.
-      (b) It has SETTLED by the deployed round count: E[c(2n)]/n is within 0.016
+      (b) It has SETTLED by the deployed round count: E[c(2n)]/n is within 0.018
           (differential) and 0.011 (linear) of E[c(3n/4)]/n at every width; the mean
           c(r)/n is deepest within a few rounds of the start.
-      (c) It does NOT settle in WIDTH: E[c/n] goes -0.283 -> -0.419 differential and
-          -0.160 -> -0.208 linear from n = 10 to 19 (17.7 and 13.2 SE).
+      (c) It does NOT settle in WIDTH: E[c/n] goes -0.283 -> -0.434 differential and
+          -0.160 -> -0.225 linear from n = 10 to 20 (19.6 and 17.6 SE).
       (d) The true criterion W(floor(3n/4)) >= n (n/2) fails on more keys than
-          mu * floor(3n/4) does at every width, and on fewer as n grows: 71% -> 8%
-          differential, 84% -> 12% linear.
+          mu * floor(3n/4) does at every width, and on fewer as n grows: 71% -> 4%
+          differential, 84% -> 5% linear.
+      (e) The discount does NOT SLOW (fifth pass, n = 20): its per-bit slope is
+          -0.0167 over n = 14..20 against -0.0104 over n = 10..14 (differential),
+          -0.0060 against -0.0052 (linear) -- so c grows like n^2 over this range,
+          and no constant c/n can be read off it.  E[W(3n/4)]/n still rises, by
+          +0.056 (+0.037 linear) per bit over n = 14..20: mu outpaces the discount.
   §4  WHAT IT CHANGES.  At n = 19 the bars on mu are 1.89 and 0.94, not §11.54.4's
       1.71 and 0.87 (19-22 SE), and §11.55's E[mu] over keys sits 1.32x above both of
-      them, not 1.47x / 1.44x.  E[W(floor(3n/4))] is 1.42 n and 1.40 (n/2).
+      them, not 1.47x / 1.44x; at n = 20 they are 1.91 and 0.97, and 1.34x / 1.36x.
+      E[W(floor(3n/4))] is 1.42 n and 1.40 (n/2) at n = 19, 1.51 n and 1.54 (n/2) at 20.
 
 The verdicts on the series are computed from the pinned file, so they cannot flake;
 the re-solves use the C solver, so no C compiler is a FAILURE, not a skip.
@@ -45,10 +51,10 @@ Run:  python3 SecurityProofsCode/v2_transient_series.py [--quick | --full]
       --quick      : §1 to n = 13; re-solve 2 pinned keys per width below 19
                      (~1 min on an aarch64 SBC, 8 threads)
       default      : §1 to n = 14; re-solve 3 per width below 19, and 1 at n = 19
-                     (~4 min)
-      --full       : re-solve every pinned key            (~6 h on 8 cores)
+                     (~4 min); n = 20 is re-solved only by --full
+      --full       : re-solve every pinned key            (~10 h on 8 cores)
       --regenerate : rebuild v2_transient_series.json in parallel, resumable
-                     (~2.5 h on 8 cores)
+                     (~6.5 h on 8 cores, n = 20 ~4 h of it)
 """
 
 import argparse
@@ -69,11 +75,11 @@ FAIL = []
 THREADS = max(1, min(os.cpu_count() or 1, 64))
 NAME = {0: "differential", 1: "linear"}
 BAR = {0: 1.0, 1: 0.5}          # the deployed criterion: W(3n/4) >= BAR * n
-# (width, nominal sample size), drawn by key_series.draw(): every stratum gets >= 8
-# n = 20 is left for a later pass: at ~15 min per key with 8 solves sharing memory
-# bandwidth, its 107 keys are ~5 h by themselves; n = 19 is the widest width of the
-# n = 1 (mod 3) class that n = 256 belongs to
-PLAN = ((10, 200), (11, 200), (13, 160), (14, 120), (16, 100), (17, 100), (19, 80))
+# (width, nominal sample size), drawn by key_series.draw(): every stratum gets >= 8.
+# n = 20 (fifth pass) costs ~15 min per key with 8 solves sharing memory bandwidth, so
+# its 107 keys are ~4 h by themselves and the default run re-solves none of them; n = 19
+# is the widest width of the n = 1 (mod 3) class that n = 256 belongs to
+PLAN = ((10, 200), (11, 200), (13, 160), (14, 120), (16, 100), (17, 100), (19, 80), (20, 72))
 
 
 def rule(t):
@@ -214,7 +220,7 @@ def section_2(rec, per, full):
     jobs = []
     for n, _ in PLAN:
         rows = rec["widths"][str(n)]
-        k = len(rows) if full else (per if n < 19 else (1 if per > 2 else 0))
+        k = len(rows) if full else (per if n < 19 else (1 if per > 2 and n == 19 else 0))
         jobs += [(n, r) for r in rows[:k]]
     with ThreadPoolExecutor(THREADS) as ex:
         got = list(ex.map(lambda j: solve(j[0], j[1][1]), jobs))
@@ -293,7 +299,33 @@ def section_3(rec):
         check(fw[-1] < fw[0] / 2,
               "%s: the share failing the true criterion falls from %.0f%% at n = %d to "
               "%.0f%% at n = %d" % (nm, 100 * fw[0], ns[0], 100 * fw[-1], ns[-1]))
+        # (e) the per-bit pace, in two halves that share n = 14
+        ec = wfit([(n,) + M[(n, axis)]["c"] for n in ns if n <= 14])
+        lc = wfit([(n,) + M[(n, axis)]["c"] for n in ns if n >= 14])
+        lw = wfit([(n,) + M[(n, axis)]["w"] for n in ns if n >= 14])
+        print("  %s: d(E[c/n])/dn %+.4f +/- %.4f at n = 10..14, %+.4f +/- %.4f at n = 14..%d;"
+              " d(E[W(3n/4)]/n)/dn %+.4f +/- %.4f at n = 14..%d"
+              % (nm, ec[0], ec[1], lc[0], lc[1], ns[-1], lw[0], lw[1], ns[-1]))
+        check(lc[0] <= ec[0] + 2 * math.hypot(ec[1], lc[1]),
+              "%s: the discount does NOT slow with width -- its per-bit slope over "
+              "n = 14..%d (%+.4f) is no shallower than over n = 10..14 (%+.4f)"
+              % (nm, ns[-1], lc[0], ec[0]))
+        check(lw[0] > 5 * lw[1],
+              "%s: E[W(3n/4)]/n still rises over n = 14..%d (%+.4f per bit, %.0f SE) -- mu's "
+              "growth outpaces the discount" % (nm, ns[-1], lw[0], lw[0] / lw[1]))
     return M
+
+
+def wfit(pts):
+    """Weighted least-squares slope (and its SE) of (x, y, se_y) points."""
+    w = [1 / e ** 2 for _, _, e in pts]
+    S = sum(w)
+    Sx = sum(wi * x for wi, (x, _, _) in zip(w, pts))
+    Sy = sum(wi * y for wi, (_, y, _) in zip(w, pts))
+    Sxx = sum(wi * x * x for wi, (x, _, _) in zip(w, pts))
+    Sxy = sum(wi * x * y for wi, (x, y, _) in zip(w, pts))
+    D = S * Sxx - Sx * Sx
+    return (S * Sxy - Sx * Sy) / D, math.sqrt(S / D)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -303,12 +335,11 @@ BAR_5454 = {0: 1.71, 1: 0.87}    # §11.54.4's bars, from c/n at n = 10..14, 8 k
 
 
 def section_4(M):
-    rule("§4  What it changes: the bars on mu, read at n = 19")
+    rule("§4  What it changes: the bars on mu, read at n = 19 and 20")
     with open(KS.PINNED) as fh:
         ks = json.load(fh)
-    n = PLAN[-1][0]
-    S = KS.strata(n)
-    for axis in (0, 1):
+    for n, axis in ((n, axis) for n in (19, 20) for axis in (0, 1)):
+        S = KS.strata(n)
         e = M[(n, axis)]
         bar = (BAR[axis] - e["c"][0]) / 0.75
         se = e["c"][1] / 0.75

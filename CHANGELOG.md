@@ -2,6 +2,29 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.51] - 2026-10-16
+
+### TODO #343 (fifth pass) — c/n at n = 20: the discount does not slow
+
+v9.5.50 left n = 20 out of the transient series (§11.57) because its 107 keys take about
+4 hours on 8 cores.  This pass runs them.  `v2_transient_series.py`'s PLAN gains
+(20, 72), the same seeded 107-key sample whose first 25 results were saved during the
+fourth pass; `v2_transient_series.json` now holds 1343 keys.
+
+- **n = 20:** E[c/n] -0.434 differential and -0.225 linear (from -0.419 and -0.208 at
+  n = 19), bars on mu 1.91 and 0.97; §11.55's E[mu] at n = 20 is 1.34x / 1.36x them.
+  c < 0 on every key, and E[c(2n)]/n is within 0.018 of E[c(3n/4)]/n.
+- **The discount does not slow:** a weighted slope of E[c/n] over n = 14-20 is -0.0167
+  per bit, against -0.0104 over n = 10-14 (differential), and -0.0060 against -0.0052
+  (linear).  No constant c/n can be carried to n = 256.
+- **The criterion still gains:** E[W(3n/4)]/n rises +0.056 (+0.037 linear) per bit over
+  n = 14-20, 11 and 13 SE; the keys failing W(3n/4) >= n (n/2) fall to 3.8% / 5.2%.
+- Gate: two new findings per axis in §3 (e), and §4 reads the bars at n = 19 and 20.
+  The default run re-solves no n = 20 key (~15 min each); `--full` re-solves all of them.
+  Default and `--quick` both pass.
+- SecurityProofs-10.md §11.57 now covers n = 20, with a new §11.57.4.  SECURITY.md's
+  HSKE-NL-A2 and `twk` rows and TODO #343 updated.  No rating changes.
+
 ## [9.5.50] - 2026-10-15
 
 ### TODO #343 (fourth pass) — the r-round transient over keys, to n = 19
