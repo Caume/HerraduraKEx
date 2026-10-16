@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.56** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver
+> - **Part 10 — §11.43–§11.57** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys
 
 ---
 
@@ -695,7 +695,7 @@ The 5th percentile falls further: at n = 11 (differential) it is 1.065 over unif
 | 13 | 9 | −0.30 (−0.38) | −0.17 (−0.22) |
 | 14 | 10 | −0.37 (−0.42) | −0.20 (−0.24) |
 
-The n = 14 row has six keys and runs under `--full` only. c is negative for every key measured, and c/n does not shrink with n; at n = 14 it is the largest yet. This fits M's local diffusion: a sparse difference spreads by one bit each way per round, so a trail can spend a fixed fraction of its rounds in a cheap ramp. If c/n holds at 192 rounds, the criterion on μ becomes (1 − c/n) / (3/4) instead of 1 / (3/4): about **1.71** instead of 4/3 differential, and **0.87** instead of 2/3 linear.
+The n = 14 row has six keys and runs under `--full` only. c is negative for every key measured, and c/n does not shrink with n; at n = 14 it is the largest yet. This fits M's local diffusion: a sparse difference spreads by one bit each way per round, so a trail can spend a fixed fraction of its rounds in a cheap ramp. If c/n holds at 192 rounds, the criterion on μ becomes (1 − c/n) / (3/4) instead of 1 / (3/4): about **1.71** instead of 4/3 differential, and **0.87** instead of 2/3 linear. §11.57 re-measures c/n over keys to n = 19: it does not hold, it deepens with width, and the bars at n = 19 are 1.89 and 0.94.
 
 ### 11.54.5 What it changes
 
@@ -747,7 +747,7 @@ The corrected bars are §11.54.4's 1.71 and 0.87.
 
 ### 11.55.3 What it changes
 
-At n = 19, the widest width of n = 256's residue class, E[μ] over keys is 2.507 differential and 1.250 linear. That is 1.88× and 1.87× the old bars, but **1.47× and 1.44×** the corrected ones. The corrected bars themselves rest on §11.54.4's c/n, measured to n = 14 only.
+At n = 19, the widest width of n = 256's residue class, E[μ] over keys is 2.507 differential and 1.250 linear. That is 1.88× and 1.87× the old bars, but **1.47× and 1.44×** the corrected ones. The corrected bars themselves rest on §11.54.4's c/n, measured to n = 14 only; §11.57 re-measures them to n = 19, where they are 1.89 and 0.94, and the margins become 1.32× on both axes.
 
 **Established:** the series over the population that ships, to n = 20, with exhaustive values to n = 13. It replaces §11.54.2's reweighted figures, and the uniform-δ levels of §11.50–§11.51 should no longer be quoted.
 
@@ -793,6 +793,52 @@ The n = 22 and 23 rows use the first fixed-seed key of `exact_slope_ladder.py` a
 
 **A limit, measured:** the linear gain shrinks with width. G′ holds 0.25–0.57 of the stored linear graph at n = 17, 0.45 at n = 20 and 0.70 at n = 22. On that axis most of the stored graph is edges the certificate does need, and the per-node arrays are a growing share of the peak.
 
-**Still open (TODO #343):** the key-sampled series of §11.55 carried to n = 22–23 with this solver, and c/n at more rounds.
+**Still open (TODO #343):** the key-sampled series of §11.55 carried to n = 22–23 with this solver, and c/n at more rounds (§11.57).
 
 **Unchanged:** every rating, and every pinned figure.
+
+## 11.57 The r-round transient over keys, to n = 19 — TODO #343, fourth pass
+
+§11.54.4 found that the deployed criterion is on the exact best trail over the deployed rounds, W(3n/4) ≥ n (n/2 linear). That trail is cheaper than μ · 3n/4 by a start-up discount c = W(r) − μ · r. It measured c/n on eight keys per width at n = 10–14, because `v2_round_transient.c` holds the round's whole $2^{2n}$ table. The corrected bars on μ, 1.71 and 0.87, and the margins of §11.55 rest on that measurement. The gate is `SecurityProofsCode/v2_transient_series.py`, and the sample is pinned in `v2_transient_series.json`.
+
+### 11.57.1 W(r) without the table
+
+`certified_cycle_mean.c` gains a third mode, which computes W(r) for r = 1 to R. It first runs §11.56's implicit solve, for two things:
+
+- **A lower bound.** The certified potential satisfies $p(v) \le p(u) + w - \mu_{lb}$ on every edge of the graph, so any k-round path out of u weighs at least $k \mu_{lb} + p_{min} - p(u)$.
+- **An upper bound.** The same min-plus recursion over G′ alone gives U(r) ≥ W(r), since G′'s paths are paths of the graph.
+
+With S(k) the largest U(r) − r · $\mu_{lb}$ over r = k to R, a node reached after k rounds at cost x can lie on an optimal trail only if $x \le k \mu_{lb} + S(k) - p_{min} + p(u)$. An edge out of it is needed only if its weight is at most $(k+1) \mu_{lb} + S(k+1) - p_{min} - x$. The exact recursion walks only those rows, to that bound. Every prefix of an optimal trail passes both tests, so W(r) is exact.
+
+**Check:** W(r) for r = 1 to 2n equals the dense recursion's at every round, on 36 solves at n = 7–14, both axes, within 1e-12. **Control:** from n = 10, U(r) from G′ alone overstates some W(r) on some key of every width, so the walk over the whole graph is needed. An n = 19 key takes about a minute per axis.
+
+### 11.57.2 The transient over keys
+
+The keys are drawn by §11.55's stratified sampler, with R = 2n rounds and both axes per key: 216, 223, 183, 145, 128, 128 and 113 keys at n = 10, 11, 13, 14, 16, 17 and 19. Here r = ⌊3n/4⌋, and the bar on μ is (1 − c/n) / (3/4), or (1/2 − c/n) / (3/4) on the linear axis.
+
+| n | diff. E[c/n] | diff. bar on μ | diff. keys failing W(r) ≥ n | lin. E[c/n] | lin. bar on μ | lin. keys failing W(r) ≥ n/2 |
+|---|---|---|---|---|---|---|
+| 10 | −0.283 | 1.71 | 71% | −0.160 | 0.88 | 84% |
+| 11 | −0.300 | 1.73 | 53% | −0.162 | 0.88 | 70% |
+| 13 | −0.314 | 1.75 | 47% | −0.168 | 0.89 | 59% |
+| 14 | −0.330 | 1.77 | 33% | −0.184 | 0.91 | 35% |
+| 16 | −0.374 | 1.83 | 16% | −0.201 | 0.94 | 19% |
+| 17 | −0.397 | 1.86 | 13% | −0.198 | 0.93 | 17% |
+| 19 | −0.419 | 1.89 | 8.3% | −0.208 | 0.94 | 12% |
+
+Standard errors on E[c/n] are 0.003–0.007.
+
+- **A discount on every key:** c < 0 on every key of every width, on both axes.
+- **Settled in rounds:** E[c(2n)]/n is within 0.016 (differential) and 0.011 (linear) of E[c(⌊3n/4⌋)]/n at every width. The average discount is taken within a few rounds of the start, so the deployed round count is already past it.
+- **Not settled in width:** E[c/n] goes from −0.283 to −0.419 differential and from −0.160 to −0.208 linear between n = 10 and 19. That is 17.7 and 13.2 standard errors. The differential discount deepens at every step.
+- **The true criterion:** it fails on more keys than μ · ⌊3n/4⌋ ≥ n does at every width. The share it fails on falls with n: from 71% to 8% differential and from 84% to 12% linear.
+
+### 11.57.3 What it changes
+
+At n = 19, the widest width of n = 256's residue class, the bars on μ are **1.89 and 0.94**, not §11.54.4's 1.71 and 0.87; those lie 19–22 standard errors below. §11.55's E[μ] over keys at n = 19, 2.507 and 1.250, is **1.32×** both bars, not 1.47× and 1.44×. Read directly, E[W(⌊3n/4⌋)] is 1.42 n differential and 1.40 · (n/2) linear.
+
+**Established:** the transient over keys to n = 19 at the deployed round count. It is a discount on every key, it is spent early, and it deepens with width.
+
+**Open (TODO #343):** where c/n goes past n = 19. Over this range the differential discount deepens by about 0.015 n per bit while E[μ] · 3/4 rises by about 0.07 per bit, so the margin still grows. Nothing here bounds either trend at n = 256. n = 20 is left for a later pass: at about 15 minutes per key with eight solves sharing memory bandwidth, its 107 keys take about 5 hours by themselves.
+
+**Unchanged:** every rating. The margins quoted against the deployed criterion fall from about 1.45× to about 1.3×.
