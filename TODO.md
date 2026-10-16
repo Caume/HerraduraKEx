@@ -538,7 +538,9 @@ E[mu] above was sampled over uniform delta, which overstates the key average by 
 percent, and held to mu * 3n/4 >= n, which drops a transient of about -0.3n
 (differential) / -0.15n (linear) at the deployed round count.  Read the margins against
 the corrected bars, about 1.71 and 0.87: n = 20 sits near 1.5x, not 2x.  The fixes to
-the sampler and the solver are tracked in #343.
+the sampler and the solver are tracked in #343.  **v9.5.50 (§11.57):** the transient
+deepens with width, so at n = 19 the bars are 1.89 / 0.94 and the key average sits about
+1.3x above them.
 
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
@@ -603,15 +605,24 @@ the ten heaviest pinned keys.  n = 22: 225 M -> 26 M edges, 2.9 GB -> 0.7 GB
 (differential), 54 M -> 38 M (linear); n = 23 in 1.2-1.4 GB.  The linear gain shrinks
 with width (0.45 at n = 20, 0.70 at n = 22).
 
+**Fourth pass done in v9.5.50 (SecurityProofs-10.md §11.57,
+`SecurityProofsCode/v2_transient_series.py`, pinned `v2_transient_series.json`):** c/n at
+more rounds and widths.  certified_cycle_mean.c's trail mode (mode 2) computes exact
+W(1..R) without the 2^(2n) table, by a min-plus recursion pruned by the certified
+potential and an upper bound from G' (equal to v2_round_transient.c at n = 7..14).
+Over 1236 stratified keys at n = 10..19, R = 2n: c < 0 on every key; it has settled by
+the deployed round count (c(2n) within 0.016 n of c(3n/4)); but it does NOT settle in
+width -- E[c/n] -0.283 -> -0.419 differential, -0.160 -> -0.208 linear.  The bars at
+n = 19 are 1.89 / 0.94, not 1.71 / 0.87, and §11.55's E[mu] sits 1.32x above both.
+
 **What is left:**
 
+- **c/n past n = 19.**  n = 20 (107 keys, ~5 h on 8 cores; the trail mode is
+  memory-bandwidth bound when eight run at once) and beyond: whether the differential
+  discount's ~0.015 n per bit slows, and whether E[W(3n/4)]/n keeps rising.
 - **The key-sampled series at n = 22-23.**  Carry §11.55's stratified sample to n = 22
   (and 23) with `ESL.cmu(..., implicit=True)`; an n = 22 key takes ~15 min and ~0.8 GB
   per axis, so a few hundred keys is a multi-day run on one host.
-- **c/n at more rounds.**  The transient is measured at r = 7..10 only.  Track W(3n/4)
-  beside mu at every width the series reaches, and find whether c/n settles, grows or
-  shrinks -- the corrected bars stand or fall on it.  The dense helper stops at n = 14;
-  an implicit-edge min-plus pass (v3_round_mmc.c's approach) reaches further.
 - **Quantiles over keys**, not only means, and extrapolation on the n = 1 (mod 3) class
   that n = 256 belongs to, excluding n = 7, 8 (their r = 5, 6 rounds are all transient).
 

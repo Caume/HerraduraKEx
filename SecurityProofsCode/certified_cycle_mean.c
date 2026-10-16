@@ -13,10 +13,13 @@
  * the additive constant delta that the driver derives from the key.
  *
  *   stdin:  n  d  axis(0 = differential, 1 = linear)  W0  want_cycle(0/1)
- *           [implicit(0/1), default 0: see THE IMPLICIT MODE below]
+ *           [mode, default 0: 0 = stored, 1 = THE IMPLICIT MODE, 2 = THE TRAIL MODE
+ *            (both below)]  [K, default 4: the implicit mode's per-row cap]
+ *           [R: the trail mode's last round]
  *           16 x 4 differential entries, indexed [d][a][c][e], then
  *            8 x 4 linear entries, indexed [d][u][w]
  *   stdout: mu  edges  rounds   (implicit: edges = |G'|, rounds = certify passes)
+ *           and, in the trail mode, R lines "r W(r)"
  *           and, if want_cycle, one optimal cycle: its length, then one
  *           "node weight" pair per edge
  *
@@ -392,15 +395,100 @@ static double solve_implicit(double *Wn, int *rounds)
     }
 }
 
+/* THE TRAIL MODE (TODO #343, fourth pass): W(r), the least weight of an r-round
+ * trail with a nonzero input, for r = 1..R -- the quantity the deployed criterion is
+ * on -- without the 2^(2n) table v2_round_transient.c holds.
+ *
+ * It runs the implicit solve first, for two things.  The certified potential p,
+ * which satisfies p(v) <= p(u) + w - mu_lb on EVERY edge of G (mu_lb = mu' - TOL),
+ * bounds any k-edge path out of u from below by k * mu_lb + pmin - p(u).  And G'
+ * gives an upper bound U(r) on W(r): the same min-plus recursion over G' alone,
+ * whose paths are paths of G.  With S(k) = max over r = k..R of U(r) - r * mu_lb, a
+ * node u reached after k rounds at cost x can lie on an optimal r-round trail for
+ * some r in k..R only if x <= k * mu_lb + S(k) - pmin + p(u), and an edge out of it
+ * only if its weight is at most (k + 1) * mu_lb + S(k + 1) - pmin - x (p(v) <= 0).  The exact recursion over G
+ * then walks only those rows, to that bound, keeping only those nodes: every prefix
+ * of an optimal trail passes both tests, so W(r) is exact.  The bounds carry the
+ * certificate's TOL and a 1e-9 margin, so they only ever keep more. */
+static double *cur, *nxt, tr_cu, tr_keep;   /* tr_keep: the round-(k + 1) node bound */
+
+static void emit_relax(uint32_t u, uint32_t t, double w)
+{
+    (void)u;
+    double x = tr_cu + w;
+    if (x < nxt[t] && x <= tr_keep + pot[t] + 1e-9) nxt[t] = x;
+}
+
+static void trails(int R, double m)
+{
+    double mlb = m - POT_SHIFT - TOL, pmin = 0.0;
+    double *U = malloc((R + 2) * sizeof *U), *S = malloc((R + 2) * sizeof *S);
+    cur = malloc(N * sizeof *cur);
+    nxt = malloc(N * sizeof *nxt);
+    if (!U || !S || !cur || !nxt) die("out of memory");
+    for (uint32_t v = 1; v < N; v++) if (pot[v] < pmin) pmin = pot[v];
+
+    /* U(r): the recursion over G' */
+    for (uint32_t v = 1; v < N; v++) cur[v] = 0.0;
+    for (int r = 1; r <= R; r++) {
+        for (uint32_t v = 1; v < N; v++) nxt[v] = INFINITY;
+        for (uint32_t u = 1; u < N; u++) {
+            uint64_t s0 = start[u];
+            for (uint32_t j = 0; j < elen[u]; j++) {
+                double x = cur[u] + pw8[s0 + j];
+                if (x < nxt[ptgt[s0 + j]]) nxt[ptgt[s0 + j]] = x;
+            }
+        }
+        U[r] = INFINITY;
+        for (uint32_t v = 1; v < N; v++) if (nxt[v] < U[r]) U[r] = nxt[v];
+        double *t = cur; cur = nxt; nxt = t;
+    }
+    S[R + 1] = -INFINITY;
+    for (int r = R; r >= 1; r--) S[r] = fmax(S[r + 1], U[r] - r * mlb);
+    S[0] = S[1];
+
+    /* the exact recursion over G, pruned */
+    emit = emit_relax;
+    for (uint32_t v = 1; v < N; v++) cur[v] = 0.0;
+    uint64_t live_max = 0;
+    for (int k = 0; k < R; k++) {
+        double keep = S[k] - pmin + k * mlb + 1e-9;
+        for (uint32_t v = 1; v < N; v++) nxt[v] = INFINITY;
+        tr_keep = S[k + 1] - pmin + (k + 1) * mlb;
+        uint64_t live = 0;
+        for (uint32_t u = 1; u < N; u++) {
+            double x = cur[u];
+            if (x == INFINITY || x > keep + pot[u]) continue;
+            live++;
+            tr_cu = x;
+            double Wb = tr_keep - x + 1e-9;
+            if (axis == 0) diff_row(u, Wb); else lin_row(u, Wb);
+        }
+        if (live > live_max) live_max = live;
+        double W = INFINITY;
+        for (uint32_t v = 1; v < N; v++) if (nxt[v] < W) W = nxt[v];
+        if (W > U[k + 1] + 1e-9) die("trail recursion above its own upper bound");
+        printf("%d %.12f\n", k + 1, W);
+        fprintf(stderr, "  round %d: %llu live nodes, W %.6f, U %.6f\n", k + 1,
+                (unsigned long long)live, W, U[k + 1]);
+        double *t = cur; cur = nxt; nxt = t;
+    }
+    fprintf(stderr, "  S(R) = %.6f, pmin = %.6f, most live nodes %llu\n", S[R], pmin,
+            (unsigned long long)live_max);
+    free(U);
+    free(S);
+}
+
 int main(void)
 {
     double W0;
-    int want_cycle = 0, implicit = 0;
+    int want_cycle = 0, implicit = 0, R = 0;
     char line[256];
     if (!fgets(line, sizeof line, stdin) ||
-        sscanf(line, "%d %u %d %lf %d %d %d", &n, &dd, &axis, &W0, &want_cycle, &implicit,
-               &KMAX) < 4)
+        sscanf(line, "%d %u %d %lf %d %d %d %d", &n, &dd, &axis, &W0, &want_cycle, &implicit,
+               &KMAX, &R) < 4)
         die("bad header");
+    if (implicit == 2 && R < 1) die("the trail mode needs R >= 1");
     if (KMAX < 1 || KMAX > KMAX_LIM) die("K out of range");
     if (n < 4 || n > 26) die("n out of range");
     for (int d = 0; d < 2; d++) for (int a = 0; a < 2; a++)
@@ -453,6 +541,7 @@ int main(void)
     uint64_t E = 0;
     for (uint32_t v = 1; v < N; v++) E += elen[v];
     printf("%.12f %llu %d\n", m, (unsigned long long)E, rounds);
+    if (implicit == 2) trails(R, m);
     if (want_cycle) {
         /* Howard's final policy: a node attaining the minimum lies on (or leads into)
          * a policy cycle of that mean; walk N steps to land on the cycle itself */

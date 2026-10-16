@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.56** (SecurityProofs-10.md): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver
+> - **Part 10 — §11.43–§11.57** (SecurityProofs-10.md): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys
 
 ---
 

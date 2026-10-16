@@ -2,6 +2,35 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.50] - 2026-10-15
+
+### TODO #343 (fourth pass) — the r-round transient over keys, to n = 19
+
+§11.54.4 measured the start-up discount c = W(r) - mu * r on eight keys per width at
+n = 10-14, because `v2_round_transient.c` holds the round's whole 2^(2n) table; the
+corrected bars (1.71 / 0.87) and §11.55's margins rested on it.  New gate
+`SecurityProofsCode/v2_transient_series.py` (SecurityProofs-10.md §11.57), with the pinned
+sample `v2_transient_series.json` (~2.5 h on 8 cores).
+
+- **The trail mode.**  `certified_cycle_mean.c` gains mode 2: exact W(r), r = 1..R,
+  without the table.  A min-plus recursion walks only the rows and edges an optimal trail
+  can use, bounded below by the certified potential and above by the same recursion over
+  G'.  Equal to the dense recursion at every round on 36 solves at n = 7-14; a control
+  shows G' alone overstates W(r) at every width from n = 10.
+- **The sample.**  §11.55's stratified key sampler, 1236 keys at n = 10, 11, 13, 14, 16,
+  17 and 19, both axes, R = 2n.
+- **Settled in rounds.**  c < 0 on every key, and E[c(2n)] is within 0.016 n of
+  E[c(3n/4)] at every width: the discount is spent within a few rounds of the start.
+- **Not settled in width.**  E[c/n] deepens from -0.283 to -0.419 (differential) and
+  -0.160 to -0.208 (linear) between n = 10 and 19 (17.7 and 13.2 SE).  At n = 19 the bars
+  on mu are **1.89 / 0.94**, not 1.71 / 0.87, and §11.55's key average sits **1.32x**
+  above both, not 1.47x / 1.44x.  The share of keys failing the deployed criterion
+  W(3n/4) >= n (n/2) still falls, from 71% / 84% at n = 10 to 8% / 12% at n = 19.
+
+SECURITY.md's HSKE-NL-A2 and `twk` rows carry the re-measured bars; no rating changes.
+n = 20 is left for a later pass (~5 h by itself).  Part index §11.43–§11.57; findings
+gates 93 -> 94.
+
 ## [9.5.49] - 2026-10-14
 
 ### TODO #343 (third pass) — the certified v2 solver with its graph held implicitly
