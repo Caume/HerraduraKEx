@@ -633,6 +633,16 @@ the bar at every width, and from n = 16 every key with w >= 10 is above it.  Exa
 weight: P(tz(p) >= 2k - 1) = 2^-k + 4^-k, so P(w <= 9) is 1.6% at n = 20, 2^-124 at
 n = 256.
 
+**Seventh pass done in v9.5.53 (SecurityProofs-10.md §11.59,
+`SecurityProofsCode/v2_short_window.py`, pinned `v2_short_window.json`):** the
+short-window class, CONSTRUCTED rather than sampled -- up to six keys with distinct
+deltas per (n, w), n = 10..20, w = 1..12, 409 keys, both axes.  With the window fixed,
+mu does not grow with n (fixed-effects slope -0.006 +/- 0.006 differential, +0.001 +/-
+0.003 linear, against +0.107 / +0.061 for random keys, 16 / 19 SE apart), so the window
+and not the width caps the per-round cost.  Every w <= 6 class has mean y < 0.75 at
+every width.  At n = 256, w <= 6 weighs 2^-126 and w <= 12 weighs 2^-123; a screen on
+tz(p) >= n - 12 would remove them at that cost (none ships).
+
 **What is left:**
 
 - **c/n past n = 20.**  Whether the discount's deepening (~0.017 n per bit at n = 14..20)
@@ -643,9 +653,9 @@ n = 256.
   per axis, so a few hundred keys is a multi-day run on one host.
 - **Extrapolation on the n = 1 (mod 3) class** that n = 256 belongs to, excluding
   n = 7, 8 (their r = 5, 6 rounds are all transient).
-- **The short-window class at n = 256** (§11.58.3): whether the window w = n - tz(p),
-  not the width, is what keeps a key weak -- the reading that puts the bottom of the
-  distribution at weight 2^-124 there.
+- **Windows of 13 bits and more at n = 256** (§11.59): the short-window measurement
+  stops at w = 12.  Whether a mid-length window (say 40 bits) is weak at n = 256 is the
+  width question in another form -- generic keys at n = 20 are ~20-bit windows.
 
 Status: **OPEN**
 

@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.58** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys
+> - **Part 10 — §11.43–§11.59** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class
 
 ---
 
@@ -903,6 +903,39 @@ The bottom of the distribution is therefore a class set by the window, not by n.
 
 **Established:** the deployed criterion over keys by quantile to n = 20. Every quantile from q5 up rises, the 5–25% tail at the median's pace, and q5 reaches the bar at n = 20. The keys that stay weak are a short-window class whose exact weight falls as $2^{-(n-w)/2}$.
 
-**Open (TODO #343):** reading the short-window class at n = 256 assumes the window, not the width, is what makes a key weak. That holds on the sample to n = 20 but is not proved. The quantile trends, like the means, are not bounded at n = 256 by anything here.
+**Open (TODO #343):** reading the short-window class at n = 256 assumes the window, not the width, is what makes a key weak. That holds on the sample to n = 20 but is not proved; §11.59 measures it on constructed keys. The quantile trends, like the means, are not bounded at n = 256 by anything here.
+
+**Unchanged:** every rating.
+
+## 11.59 The short-window class — TODO #343, seventh pass
+
+§11.58 found the bottom of the key distribution among short-window keys, whose δ has its nonzero bits in a cyclic window of w = n − tz(p) bits. It put their weight at n = 256 near $2^{-124}$, provided the window rather than the width is what keeps a key weak. The random sample could not test that, because it held only 16, 8, 6 and 4 such keys at n = 16–20. This pass constructs them. The gate is `SecurityProofsCode/v2_short_window.py`, and the keys are pinned in `v2_short_window.json`.
+
+### 11.59.1 The construction
+
+The two branches of tz(p) give keys directly. An even key B = odd · 2^s has tz(p) = 2s − 1, and an odd key B = odd · 2^(t+1) − 1 has tz(p) = t. For each width n = 10, 11, 13, 14, 16, 17, 19 and 20, and each window w = 1 to min(12, n − 2), the gate builds up to six keys with distinct δ. Affine δ are left out, which gives 409 keys. Both axes are solved exactly with §11.57.1's trail mode.
+
+**Check:** every row is the seeded construction and has the window it claims. A prefix re-solves to the recorded values.
+
+### 11.59.2 The window, not the width
+
+With the window held fixed, μ does not grow with n. The slope comes from a fixed-effects fit of μ on n over n = 10–20, with one intercept per window:
+
+| | fixed window, w ≤ 12 | random keys (§11.57) |
+|---|---|---|
+| differential, per bit | −0.006 ± 0.006 | +0.107 ± 0.003 |
+| linear, per bit | +0.001 ± 0.003 | +0.061 ± 0.002 |
+
+The random keys' slope is computed from their own pinned file, as a control: if both slopes were flat, the comparison would fail. Here they differ by 16 and 19 standard errors.
+
+So a key's per-round cost is capped by its window, whatever the width. At n = 20, windows of 1–6 bits give μ of 0.3–1.4 differential, against a key average of 2.59.
+
+### 11.59.3 The class stays weak
+
+For every window w ≤ 6 and every width, the mean margin y = W(⌊3n/4⌋) / (bar · n) is below 0.75: at most 0.70 differential and 0.65 linear. At every width, some key with w ≤ 6 has y < 0.25. Windows of 9–12 bits sit near the bar: their mean y is mostly between 0.8 and 1.25, and lowest (0.50) at n = 11, w = 9.
+
+**Established:** over n = 10–20 and windows up to 12 bits, the window and not the width sets a key's per-round cost. §11.58's reading of the bottom of the distribution is therefore measured, not assumed, within that range. At n = 256, keys with w ≤ 6 weigh P(tz(p) ≥ 250) = $2^{-126}$, and keys with w ≤ 12 weigh $2^{-123}$. That is next to the $2^{-129}$ affine class the CLIs already screen. A screen on tz(p) ≥ n − 12 would remove them at that cost, but no CLI does this today.
+
+**Open (TODO #343):** windows of 13 bits or more are not measured here. Whether a 40-bit window is weak at n = 256 is the width question in another form, since generic keys at n = 20 are windows of about 20 bits.
 
 **Unchanged:** every rating.
