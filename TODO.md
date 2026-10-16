@@ -593,15 +593,25 @@ more) and sits 3-5% below the uniform-delta record at every width; at n = 19 it 
 falls at every step, to ~5% at n = 20, and the per-period increments keep shrinking
 (ratios 0.88, 0.80 differential in n = 1 mod 3).
 
+**Third pass done in v9.5.49 (SecurityProofs-10.md §11.56,
+`SecurityProofsCode/v2_implicit_solver.py`):** certified_cycle_mean.c's implicit-edge
+mode (header field 6).  It keeps only G' = the W0 graph plus the edges a certify pass
+catches; each pass re-walks every row to the stored bound mu' - p(u) and tests each edge
+against the potential at its own target.  Same mu as the stored mode on 64 fixed-seed
+solves (n = 7..17) and on 50 pinned key_series.json keys; 0.30 of the stored edges over
+the ten heaviest pinned keys.  n = 22: 225 M -> 26 M edges, 2.9 GB -> 0.7 GB
+(differential), 54 M -> 38 M (linear); n = 23 in 1.2-1.4 GB.  The linear gain shrinks
+with width (0.45 at n = 20, 0.70 at n = 22).
+
 **What is left:**
 
+- **The key-sampled series at n = 22-23.**  Carry §11.55's stratified sample to n = 22
+  (and 23) with `ESL.cmu(..., implicit=True)`; an n = 22 key takes ~15 min and ~0.8 GB
+  per axis, so a few hundred keys is a multi-day run on one host.
 - **c/n at more rounds.**  The transient is measured at r = 7..10 only.  Track W(3n/4)
   beside mu at every width the series reaches, and find whether c/n settles, grows or
   shrinks -- the corrected bars stand or fall on it.  The dense helper stops at n = 14;
   an implicit-edge min-plus pass (v3_round_mmc.c's approach) reaches further.
-- **An implicit-edge v2 solver.**  certified_cycle_mean.c stores every kept edge (4.1 GB
-  at n = 20); holding the graph implicitly, as v3_round_mmc.c does, makes n = 22-23
-  reachable for the series.
 - **Quantiles over keys**, not only means, and extrapolation on the n = 1 (mod 3) class
   that n = 256 belongs to, excluding n = 7, 8 (their r = 5, 6 rounds are all transient).
 

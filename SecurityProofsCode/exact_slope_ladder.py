@@ -139,12 +139,14 @@ def build():
     EXE = exe
 
 
-def cmu(n, d, axis, cycle=False):
+def cmu(n, d, axis, cycle=False, implicit=False):
     """(mu, edges kept, certificate rounds[, cycle]) from the C solver; axis 0 = diff,
-    1 = linear.  The cycle is a list of (node, weight of its policy edge)."""
+    1 = linear.  The cycle is a list of (node, weight of its policy edge).  implicit
+    selects the solver's implicit-edge mode (TODO #343): the same certified mu, with
+    edges = |G'| and rounds = certify passes."""
     w0 = 3.0 if axis == 0 else 2.0
-    r = subprocess.run([EXE], input="%d %d %d %r %d\n%s\n"
-                       % (n, d, axis, w0, int(cycle), TABLES),
+    r = subprocess.run([EXE], input="%d %d %d %r %d %d\n%s\n"
+                       % (n, d, axis, w0, int(cycle), int(implicit), TABLES),
                        capture_output=True, text=True, check=True)
     lines = r.stdout.split("\n")
     m, e, rd = lines[0].split()

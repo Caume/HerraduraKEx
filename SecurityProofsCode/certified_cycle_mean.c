@@ -13,9 +13,10 @@
  * the additive constant delta that the driver derives from the key.
  *
  *   stdin:  n  d  axis(0 = differential, 1 = linear)  W0  want_cycle(0/1)
+ *           [implicit(0/1), default 0: see THE IMPLICIT MODE below]
  *           16 x 4 differential entries, indexed [d][a][c][e], then
  *            8 x 4 linear entries, indexed [d][u][w]
- *   stdout: mu  edges  rounds
+ *   stdout: mu  edges  rounds   (implicit: edges = |G'|, rounds = certify passes)
  *           and, if want_cycle, one optimal cycle: its length, then one
  *           "node weight" pair per edge
  *
@@ -70,6 +71,11 @@ static void push_edge(uint32_t t, double w)
     pw8[pused++] = w;
 }
 
+/* Every edge a row walk finds goes through emit(): the stored solver pushes it into
+ * the pool, the implicit one's certify pass checks it against the potential */
+static void (*emit)(uint32_t u, uint32_t t, double w);
+static void emit_store(uint32_t u, uint32_t t, double w) { (void)u; push_edge(t, w); }
+
 /* explicit DFS stacks, sized for depth n with two children per level */
 typedef struct { int i, cls; double v0, v1; uint32_t e; } DS;
 static DS *stk;
@@ -83,7 +89,7 @@ static void diff_row(uint32_t a, double W)
         DS s = stk[--sp];
         if (s.i == top) {
             double w = top - log2(s.v0 + s.v1);
-            if (w <= W + 1e-12) push_edge(al ^ s.e, w);
+            if (w <= W + 1e-12) emit(a, al ^ s.e, w);
             continue;
         }
         int di = (dd >> s.i) & 1, ai = (al >> s.i) & 1;
@@ -106,7 +112,7 @@ static void lin_row(uint32_t u, double W)
         DS s = stk[--sp];
         if (s.i == n) {
             double c = fabs(s.v0 + s.v1);
-            if (s.e && c >= thr) push_edge(Ma[s.e], -log2(c));
+            if (s.e && c >= thr) emit(u, Ma[s.e], -log2(c));
             continue;
         }
         int di = (dd >> s.i) & 1, ui = (u >> s.i) & 1;
@@ -267,14 +273,135 @@ static void compact(void)
     pused = live;
 }
 
+/* THE IMPLICIT MODE (TODO #343).  The stored solver keeps every edge of weight
+ * <= W_u, and the certificate pushes W_u up to mu' - p(u): with p(v) <= 0 for every
+ * v, an edge heavier than that cannot violate p, so the kept graph is certified
+ * without looking at the rest.  That bound is loose -- it charges every target the
+ * least potential there is -- and at n = 20 the kept graph reaches 4.1 GB.
+ *
+ * The implicit mode keeps G' = the edges of weight <= W0 plus every edge a check
+ * has caught, and checks the rest by WALKING it: one pass regenerates, for each u,
+ * the edges of weight below mu' - p(u) (the same row walks, the same bound) and
+ * tests each against the potential at its own target,
+ *     p(v) <= p(u) + w - mu' + TOL.
+ * Every edge that fails joins G' and the solve is repeated.  When a pass finds none,
+ * every edge of G -- the walked ones by test, the rest by the bound -- satisfies p,
+ * so every cycle of G has mean >= mu' - TOL: the stored solver's certificate, with
+ * the stored solver's tolerances, over a graph held only as G'. */
+static uint32_t *vu, *vt;
+static double *vw, mcert;
+static uint64_t nv, vcap, nviol;
+
+/* the row being checked keeps its KMAX worst violators: kt/kw/kx, by excess */
+#define KMAX_LIM 64
+static int KMAX = 4, nk;
+static uint32_t kt[KMAX_LIM];
+static double kw[KMAX_LIM], kx[KMAX_LIM];
+
+/* every violator of the pass, while they fit in N entries */
+static uint32_t *au, *at;
+static double *aw;
+static uint64_t na;
+
+static void emit_check(uint32_t u, uint32_t t, double w)
+{
+    double x = pot[t] - (pot[u] + w - mcert);
+    if (x <= TOL) return;
+    if (nviol++ < N) { au[na] = u; at[na] = t; aw[na++] = w; }
+    int j;
+    if (nk < KMAX) j = nk++;
+    else {
+        j = 0;
+        for (int i = 1; i < nk; i++) if (kx[i] < kx[j]) j = i;
+        if (kx[j] >= x) return;
+    }
+    kt[j] = t; kw[j] = w; kx[j] = x;
+}
+
+static void push_violator(uint32_t u, uint32_t t, double w)
+{
+    if (nv == vcap) {
+        vcap = vcap ? vcap * 2 : 1 << 16;
+        vu = realloc(vu, vcap * sizeof *vu);
+        vt = realloc(vt, vcap * sizeof *vt);
+        vw = realloc(vw, vcap * sizeof *vw);
+        if (!vu || !vt || !vw) die("out of memory (violators)");
+    }
+    vu[nv] = u; vt[nv] = t; vw[nv++] = w;
+}
+
+/* append the violators, which the pass found in increasing u, to their rows.  The
+ * rows lie in increasing u (built in that order and never rebuilt), so moving them
+ * up from the top row down never overwrites a row that has not been moved yet */
+static void merge_violators(void)
+{
+    uint64_t tot = pused + nv;
+    if (tot > pcap) {
+        pcap = tot + tot / 4;
+        ptgt = realloc(ptgt, pcap * sizeof *ptgt);
+        pw8 = realloc(pw8, pcap * sizeof *pw8);
+        if (!ptgt || !pw8) die("out of memory");
+    }
+    uint64_t k = nv;                      /* violators still to place: vu[0 .. k) */
+    for (uint32_t u = N - 1; u >= 1; u--) {
+        uint64_t j = k;
+        while (j > 0 && vu[j - 1] == u) j--;
+        uint64_t add = k - j, dst = start[u] + j;
+        if (dst != start[u]) {
+            memmove(ptgt + dst, ptgt + start[u], elen[u] * sizeof *ptgt);
+            memmove(pw8 + dst, pw8 + start[u], elen[u] * sizeof *pw8);
+        }
+        memcpy(ptgt + dst + elen[u], vt + j, add * sizeof *ptgt);
+        memcpy(pw8 + dst + elen[u], vw + j, add * sizeof *pw8);
+        start[u] = dst;
+        elen[u] += (uint32_t)add;
+        k = j;
+    }
+    pused = tot;
+    nv = 0;
+}
+
+static double solve_implicit(double *Wn, int *rounds)
+{
+    double m;
+    au = malloc(N * sizeof *au); at = malloc(N * sizeof *at); aw = malloc(N * sizeof *aw);
+    if (!au || !at || !aw) die("out of memory");
+    emit = emit_store;
+    for (uint32_t v = 1; v < N; v++) build_node(v, Wn);
+    for (*rounds = 1;; (*rounds)++) {
+        m = howard();
+        potentials(m);
+        mcert = m - POT_SHIFT;
+        emit = emit_check;
+        nviol = na = 0;
+        for (uint32_t u = 1; u < N; u++) {
+            nk = 0;
+            if (axis == 0) diff_row(u, mcert - pot[u]); else lin_row(u, mcert - pot[u]);
+            for (int i = 0; i < nk; i++) push_violator(u, kt[i], kw[i]);
+        }
+        emit = emit_store;
+        if (nviol && nviol <= N) {        /* few enough: take every one of them */
+            nv = 0;
+            for (uint64_t i = 0; i < na; i++) push_violator(au[i], at[i], aw[i]);
+        }
+        fprintf(stderr, "  pass %d: |G'| = %llu, mu %.10f, %llu violators, %llu kept\n",
+                *rounds, (unsigned long long)pused, m, (unsigned long long)nviol,
+                (unsigned long long)nv);
+        if (!nviol) return m;
+        merge_violators();
+    }
+}
+
 int main(void)
 {
     double W0;
-    int want_cycle = 0;
+    int want_cycle = 0, implicit = 0;
     char line[256];
     if (!fgets(line, sizeof line, stdin) ||
-        sscanf(line, "%d %u %d %lf %d", &n, &dd, &axis, &W0, &want_cycle) < 4)
+        sscanf(line, "%d %u %d %lf %d %d %d", &n, &dd, &axis, &W0, &want_cycle, &implicit,
+               &KMAX) < 4)
         die("bad header");
+    if (KMAX < 1 || KMAX > KMAX_LIM) die("K out of range");
     if (n < 4 || n > 26) die("n out of range");
     for (int d = 0; d < 2; d++) for (int a = 0; a < 2; a++)
         for (int c = 0; c < 2; c++) for (int e = 0; e < 2; e++)
@@ -301,22 +428,27 @@ int main(void)
     if (!Ma || !stk || !start || !elen || !pi || !path || !pwp || !mu || !hh || !col ||
         !pot || !q || !inq || !Wn || !todo || !order) die("out of memory");
 
-    for (uint32_t v = 0; v < N; v++) Wn[v] = W0;
-    uint32_t nt = 0;
-    for (uint32_t v = 1; v < N; v++) todo[nt++] = v;
     int rounds = 0;
     double m;
-    for (;;) {
-        rounds++;
-        for (uint32_t k = 0; k < nt; k++) build_node(todo[k], Wn);
-        compact();
-        m = howard();
-        potentials(m);
-        nt = 0;
-        for (uint32_t v = 1; v < N; v++)
-            if (Wn[v] < m - pot[v] - TOL) todo[nt++] = v;
-        if (!nt) break;
-        for (uint32_t k = 0; k < nt; k++) Wn[todo[k]] = m - pot[todo[k]] + 0.5;
+    for (uint32_t v = 0; v < N; v++) Wn[v] = W0;
+    if (implicit) {
+        m = solve_implicit(Wn, &rounds);
+    } else {
+        uint32_t nt = 0;
+        for (uint32_t v = 1; v < N; v++) todo[nt++] = v;
+        emit = emit_store;
+        for (;;) {
+            rounds++;
+            for (uint32_t k = 0; k < nt; k++) build_node(todo[k], Wn);
+            compact();
+            m = howard();
+            potentials(m);
+            nt = 0;
+            for (uint32_t v = 1; v < N; v++)
+                if (Wn[v] < m - pot[v] - TOL) todo[nt++] = v;
+            if (!nt) break;
+            for (uint32_t k = 0; k < nt; k++) Wn[todo[k]] = m - pot[todo[k]] + 0.5;
+        }
     }
     uint64_t E = 0;
     for (uint32_t v = 1; v < N; v++) E += elen[v];
