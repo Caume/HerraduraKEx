@@ -2,6 +2,32 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.52] - 2026-10-16
+
+### TODO #343 (sixth pass) — the deployed criterion over keys by quantile
+
+§11.55 and §11.57 reported means over keys; a mean can rise while its weak tail stays
+put.  New gate `SecurityProofsCode/v2_key_quantiles.py` (SecurityProofs-10.md §11.58)
+reads the per-key margin y = W(floor(3n/4)) / (bar * n) from the 1343 keys already
+pinned in `v2_transient_series.json`.  It solves nothing and runs in about 3 s.
+
+- **The tail weight, exactly:** since p = B * ((B+1) >> 1), P(tz(p) >= 2k - 1) =
+  2^-k + 4^-k away from the edges; the exact sum is checked against enumeration at
+  n = 8-16.
+- **Quantiles:** q5, q10, q25 and q50, with seeded stratified-bootstrap errors, all rise
+  from n = 10 to 20 by 6.7 SE or more on both axes.  The median key meets the deployed
+  criterion from n = 14.  Over n = 14-20 the 5-25% tail rises at least as fast per bit
+  as the median (q5 +0.061 against +0.059 differential, +0.076 against +0.076 linear),
+  and q5 reaches the bar at n = 20 (1.03 / 1.00).
+- **The bottom does not move:** the weakest sampled key at every width has a window
+  w = n - tz(p) <= 9, those keys stay below 0.25 of the bar at every width, and from
+  n = 16 every key with w >= 10 is above it.  The class weighs 1.6% at n = 20 and
+  2^-124 at n = 256 -- a reading that assumes the window, not the width, keeps a key
+  weak.
+- Part 10 is now §11.43-§11.58 (122 math expressions); the part index is updated
+  everywhere.  Findings gates: 95.  SECURITY.md's HSKE-NL-A2 row and TODO #343
+  updated.  No rating changes.
+
 ## [9.5.51] - 2026-10-16
 
 ### TODO #343 (fifth pass) — c/n at n = 20: the discount does not slow

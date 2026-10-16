@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.57** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys
+> - **Part 10 — §11.43–§11.58** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys
 
 ---
 
@@ -854,6 +854,55 @@ n = 20 is the costliest width of the sample: about 15 minutes per key with eight
 
 **Established:** the transient over keys to n = 20 at the deployed round count. It is a discount on every key and is spent early. It deepens with width and has not slowed by n = 20, while W(⌊3n/4⌋)/n keeps rising.
 
-**Open (TODO #343):** both trends past n = 20. Neither the discount nor the gain on W(⌊3n/4⌋)/n is bounded at n = 256 by anything here, so the bars on μ quoted at n = 19–20 are read at those widths only.
+**Open (TODO #343):** both trends past n = 20. Neither the discount nor the gain on W(⌊3n/4⌋)/n is bounded at n = 256 by anything here, so the bars on μ quoted at n = 19–20 are read at those widths only. §11.58 reads the same keys by quantile.
 
 **Unchanged:** every rating. The margins quoted against the deployed criterion fall from about 1.45× to about 1.3×.
+
+## 11.58 The criterion over keys by quantile — TODO #343, sixth pass
+
+§11.55 and §11.57 report means over keys. A mean can rise while its weak tail stays put, and the weak tail is what a fixed key meets. This section reads the per-key margin y = W(⌊3n/4⌋) / (bar · n), with bar = 1 differential and 1/2 linear, so y ≥ 1 means that key's exact best trail over the deployed rounds meets the deployed criterion. It uses the 1343 keys pinned for §11.57 and solves nothing. The gate is `SecurityProofsCode/v2_key_quantiles.py`.
+
+### 11.58.1 The tail weight, exactly
+
+δ is p rotated by n/4, with p = B · ((B + 1) >> 1) mod 2^n, so δ's nonzero bits lie in a cyclic window of w = n − tz(p) bits. An even key with tz(B) = s gives tz(p) = 2s − 1; an odd key gives tz(p) = tz(B + 1) − 1. So away from the edges P(tz(p) ≥ 2k − 1) = 2^−k + 4^−k, and the exact share, edge keys included, is a short sum.
+
+**Check:** the sum equals enumeration over every key at n = 8–16, for every t.
+
+### 11.58.2 The quantiles
+
+These are stratified quantiles of y. The standard errors come from a seeded bootstrap within strata.
+
+| n | diff. q5 | diff. q10 | diff. q25 | diff. q50 | lin. q5 | lin. q10 | lin. q25 | lin. q50 |
+|---|---|---|---|---|---|---|---|---|
+| 10 | 0.22 | 0.36 | 0.57 | 0.88 | 0.13 | 0.23 | 0.49 | 0.76 |
+| 11 | 0.25 | 0.49 | 0.66 | 0.99 | 0.18 | 0.40 | 0.61 | 0.88 |
+| 13 | 0.39 | 0.57 | 0.79 | 1.01 | 0.34 | 0.53 | 0.72 | 0.93 |
+| 14 | 0.49 | 0.65 | 0.93 | 1.22 | 0.43 | 0.54 | 0.84 | 1.13 |
+| 16 | 0.88 | 0.93 | 1.22 | 1.36 | 0.77 | 0.85 | 1.12 | 1.30 |
+| 17 | 0.82 | 0.90 | 1.17 | 1.42 | 0.75 | 0.85 | 1.17 | 1.39 |
+| 19 | 0.73 | 1.05 | 1.31 | 1.51 | 0.77 | 0.94 | 1.23 | 1.49 |
+| 20 | 1.03 | 1.11 | 1.45 | 1.59 | 1.00 | 1.09 | 1.37 | 1.61 |
+
+Standard errors are 0.02–0.04 on the median and 0.03–0.13 on q5 and q10.
+
+- **Every quantile rises.** q5, q10, q25 and q50 all rise from n = 10 to 20, by 6.7 standard errors or more on both axes.
+- **The median key meets the criterion** at every width from n = 14.
+- **The tail keeps pace.** Over n = 14–20, q5, q10 and q25 rise at least as fast per bit as the median, within two standard errors. q5 gains +0.061 per bit against the median's +0.059 (differential), and +0.076 against +0.076 (linear). The distribution moves up as a whole, and at n = 20 even q5 is at the bar: 1.03 and 1.00.
+
+### 11.58.3 The bottom does not move
+
+The weakest keys are short-window keys.
+
+- **Where the minimum sits:** at every width, the weakest sampled key has w ≤ 9.
+- **No improvement:** keys with w ≤ 9 reach y < 0.25 at every width from n = 10 to 20.
+- **Everyone else rises:** from n = 16, every sampled key with w ≥ 10 has y > 0.25; the lowest is 0.42 differential and 0.29 linear.
+
+These findings only bite from n = 16. Below that, w ≤ 9 covers most keys: 75% of them at n = 10. At n = 16–20 the class holds 16, 8, 6 and 4 sampled keys, all from the oversampled t ≥ 8 stratum, so the minima rest on few keys.
+
+The bottom of the distribution is therefore a class set by the window, not by n. §11.58.1 gives its weight: P(w ≤ 9) is 1.6% at n = 20 and $2^{-124}$ at n = 256, comparable to the $2^{-129}$ affine class the CLIs already screen.
+
+**Established:** the deployed criterion over keys by quantile to n = 20. Every quantile from q5 up rises, the 5–25% tail at the median's pace, and q5 reaches the bar at n = 20. The keys that stay weak are a short-window class whose exact weight falls as $2^{-(n-w)/2}$.
+
+**Open (TODO #343):** reading the short-window class at n = 256 assumes the window, not the width, is what makes a key weak. That holds on the sample to n = 20 but is not proved. The quantile trends, like the means, are not bounded at n = 256 by anything here.
+
+**Unchanged:** every rating.

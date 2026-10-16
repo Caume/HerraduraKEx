@@ -622,6 +622,17 @@ The discount does NOT slow: its per-bit slope is -0.0167 over n = 14..20 against
 over n = 10..14 (differential; -0.0060 against -0.0052 linear), so c grows like n^2 over
 this range.  E[W(3n/4)]/n still rises, +0.056 / +0.037 per bit (11 / 13 SE).
 
+**Sixth pass done in v9.5.52 (SecurityProofs-10.md §11.58,
+`SecurityProofsCode/v2_key_quantiles.py`):** the deployed criterion over keys by
+QUANTILE, y = W(3n/4) / (bar * n), read from the pinned 1343 keys.  q5..q50 all rise from
+n = 10 to 20 (6.7 SE or more), the median key meets the criterion from n = 14, and the
+5-25% tail rises at the median's pace over n = 14..20 (q5 +0.061 vs +0.059 per bit
+differential); q5 reaches the bar at n = 20 (1.03 / 1.00).  The bottom does not move:
+the weakest key at every width has w = n - tz(p) <= 9, those keys stay below 0.25 of
+the bar at every width, and from n = 16 every key with w >= 10 is above it.  Exact
+weight: P(tz(p) >= 2k - 1) = 2^-k + 4^-k, so P(w <= 9) is 1.6% at n = 20, 2^-124 at
+n = 256.
+
 **What is left:**
 
 - **c/n past n = 20.**  Whether the discount's deepening (~0.017 n per bit at n = 14..20)
@@ -630,8 +641,11 @@ this range.  E[W(3n/4)]/n still rises, +0.056 / +0.037 per bit (11 / 13 SE).
 - **The key-sampled series at n = 22-23.**  Carry §11.55's stratified sample to n = 22
   (and 23) with `ESL.cmu(..., implicit=True)`; an n = 22 key takes ~15 min and ~0.8 GB
   per axis, so a few hundred keys is a multi-day run on one host.
-- **Quantiles over keys**, not only means, and extrapolation on the n = 1 (mod 3) class
-  that n = 256 belongs to, excluding n = 7, 8 (their r = 5, 6 rounds are all transient).
+- **Extrapolation on the n = 1 (mod 3) class** that n = 256 belongs to, excluding
+  n = 7, 8 (their r = 5, 6 rounds are all transient).
+- **The short-window class at n = 256** (§11.58.3): whether the window w = n - tz(p),
+  not the width, is what keeps a key weak -- the reading that puts the bottom of the
+  distribution at weight 2^-124 there.
 
 Status: **OPEN**
 
