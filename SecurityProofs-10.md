@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.59** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class
+> - **Part 10 — §11.43–§11.60** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share
 
 ---
 
@@ -854,13 +854,13 @@ n = 20 is the costliest width of the sample: about 15 minutes per key with eight
 
 **Established:** the transient over keys to n = 20 at the deployed round count. It is a discount on every key and is spent early. It deepens with width and has not slowed by n = 20, while W(⌊3n/4⌋)/n keeps rising.
 
-**Open (TODO #343):** both trends past n = 20. Neither the discount nor the gain on W(⌊3n/4⌋)/n is bounded at n = 256 by anything here, so the bars on μ quoted at n = 19–20 are read at those widths only. §11.58 reads the same keys by quantile.
+**Open (TODO #343):** both trends past n = 20. Neither the discount nor the gain on W(⌊3n/4⌋)/n is bounded at n = 256 by anything here, so the bars on μ quoted at n = 19–20 are read at those widths only. §11.58 reads the same keys by quantile, and §11.60 reads the discount as a share of μ.
 
 **Unchanged:** every rating. The margins quoted against the deployed criterion fall from about 1.45× to about 1.3×.
 
 ## 11.58 The criterion over keys by quantile — TODO #343, sixth pass
 
-§11.55 and §11.57 report means over keys. A mean can rise while its weak tail stays put, and the weak tail is what a fixed key meets. This section reads the per-key margin y = W(⌊3n/4⌋) / (bar · n), with bar = 1 differential and 1/2 linear, so y ≥ 1 means that key's exact best trail over the deployed rounds meets the deployed criterion. It uses the 1343 keys pinned for §11.57 and solves nothing. The gate is `SecurityProofsCode/v2_key_quantiles.py`.
+§11.55 and §11.57 report means over keys. A mean can rise while its weak tail stays put, and the weak tail is what a fixed key meets. This section reads the per-key margin y = W(⌊3n/4⌋) / (bar · n), with bar = 1 differential and 1/2 linear, so y ≥ 1 means that key's exact best trail over the deployed rounds meets the deployed criterion. It uses the 1243 keys pinned for §11.57 and solves nothing. The gate is `SecurityProofsCode/v2_key_quantiles.py`.
 
 ### 11.58.1 The tail weight, exactly
 
@@ -939,3 +939,59 @@ For every window w ≤ 6 and every width, the mean margin y = W(⌊3n/4⌋) / (b
 **Open (TODO #343):** windows of 13 bits or more are not measured here. Whether a 40-bit window is weak at n = 256 is the width question in another form, since generic keys at n = 20 are windows of about 20 bits.
 
 **Unchanged:** every rating.
+
+## 11.60 The discount as a share of the trail — TODO #343, eighth pass
+
+§11.57.4 found that E[c/n] keeps deepening through n = 20, so that c grows like n² and no constant c/n can be carried to n = 256. The bar on μ that §11.57 derives from it climbs with width too. This pass asks what the deepening is made of, and what is left of an extrapolation in n = 256's residue class. It reads the 1243 keys pinned for §11.57 and solves nothing. The gate is `SecurityProofsCode/v2_discount_share.py`.
+
+### 11.60.1 c ≤ 0 is a theorem
+
+The round graph does not change from round to round, because δ(B) is fixed for a key, and a trail's state stays nonzero. So the best trail weight is superadditive: W(a + b) ≥ W(a) + W(b). By Fekete's lemma, μ = lim W(r)/r = sup W(r)/r, so W(r) ≤ μ · r at every r. §11.57.3's finding that c is negative on every key is that lemma, not an empirical result.
+
+**Check:** superadditivity holds on all 505,033 pairs a + b ≤ 2n of every pinned key, on both axes, and c(r) ≤ 0 at every r = 1 to 2n. **Controls:** the first check fires on 162 of 216 n = 10 keys once W is shifted up by one bit, and the second fires on all 216 against a μ understated by 20%.
+
+### 11.60.2 The share holds while c/n deepens
+
+The discount's share is λ(n) = −E[c(⌊3n/4⌋)/n] / E[μ], a ratio of stratified means.
+
+| n | 10 | 11 | 13 | 14 | 16 | 17 | 19 | 20 |
+|---|---|---|---|---|---|---|---|---|
+| λ, differential | 0.180 | 0.178 | 0.168 | 0.161 | 0.165 | 0.163 | 0.168 | 0.167 |
+| λ, linear | 0.217 | 0.207 | 0.189 | 0.184 | 0.181 | 0.165 | 0.169 | 0.169 |
+
+Standard errors are 0.002–0.004. Over n = 14–20, E[c/n] deepens by 0.0167 per bit differential and 0.0060 linear. If that deepening were independent of μ, λ would rise by about 0.0071 and 0.0051 per bit. It does not:
+
+- **Differential:** λ moves +0.0011 ± 0.0006 per bit.
+- **Linear:** λ falls, −0.0024 ± 0.0007 per bit.
+
+So most of the deepening is μ's own growth. The trail saves about the same share, roughly one sixth, of a dearer round. In §11.57's terms the discount does not slow, but it is not a separate trend competing with μ.
+
+### 11.60.3 Not a law for each key
+
+Within a width, c/n is not proportional to μ. A least-squares line c/n = a + b · μ over a width's keys has b near −0.085 differential and −0.06 linear, well short of −λ. Its intercept is below zero by 6 standard errors or more differential, and 9 or more linear, at every width from n = 14. So λ describes the key average, and a single key's margin still has to be read from its own W.
+
+### 11.60.4 The class n ≡ 1 (mod 3)
+
+n = 256 is in this class, and its measured widths are 10, 13, 16 and 19. n = 7 is left out because its five rounds are all transient. With the share held, the margin at 3n/4 rounds, which is exact at n = 256, is y\* = E[μ] · (3/4 − λ) / bar. This also removes the wobble of ⌊3n/4⌋/n, which is 0.700, 0.692, 0.750 and 0.737 across the class.
+
+| n | 10 | 13 | 16 | 19 |
+|---|---|---|---|---|
+| y\*, differential | 0.917 | 1.091 | 1.329 | 1.457 |
+| y\*, linear | 0.850 | 1.030 | 1.288 | 1.428 |
+
+- **y\* rises at every step** of the class, by 4.4 standard errors or more.
+- **The bar on μ becomes fixed in n.** With λ pooled over n = 14–20, it is bar / (3/4 − λ) = **1.71 and 0.865**, against §11.57's 1.89 and 0.94 at n = 19, which climb with E[c/n]. E[μ] at n = 19 is **1.46× and 1.43×** it, 22 and 18 standard errors above.
+
+The gate prints three readings at n = 256 and scores none of them:
+
+- If E[μ] froze at its n = 19 value, y\*(256) would be 1.46 and 1.43.
+- The criterion fails at n = 256 only if E[μ] falls 31% (30% linear) below its n = 19 value, or if λ rises to about 0.35, double any value measured from n = 14.
+- If the class's increments of y\* kept their last ratio, 0.54, y\* would level at 1.61 and 1.59.
+
+Each of these spans 79 periods, and assumes the share holds over 237 bits more than were measured.
+
+**Established:** c ≤ 0 is a theorem. Over n = 14–20, the discount is a roughly constant share of μ on average over keys, so the deepening of c/n does not compete with μ's growth. With the share held, the n = 256 question narrows to whether E[μ] stays within 30% of its n = 19 value.
+
+**Open (TODO #343):** whether λ stays near 0.17 past n = 20. Nothing here bounds it, and §11.60.3 shows it is not a per-key law. Whether E[μ] keeps rising remains #257's question.
+
+**Unchanged:** every rating. The margin against the deployed criterion reads about 1.45× with the share held, against about 1.3× with c/n held at its n = 19–20 value. The share-held figure is a reading, not a bound.

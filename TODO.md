@@ -611,7 +611,7 @@ with width (0.45 at n = 20, 0.70 at n = 22).
 more rounds and widths.  certified_cycle_mean.c's trail mode (mode 2) computes exact
 W(1..R) without the 2^(2n) table, by a min-plus recursion pruned by the certified
 potential and an upper bound from G' (equal to v2_round_transient.c at n = 7..14).
-Over 1236 stratified keys at n = 10..19, R = 2n: c < 0 on every key; it has settled by
+Over 1136 stratified keys at n = 10..19, R = 2n: c < 0 on every key; it has settled by
 the deployed round count (c(2n) within 0.016 n of c(3n/4)); but it does NOT settle in
 width -- E[c/n] -0.283 -> -0.419 differential, -0.160 -> -0.208 linear.  The bars at
 n = 19 are 1.89 / 0.94, not 1.71 / 0.87, and §11.55's E[mu] sits 1.32x above both.
@@ -624,7 +624,7 @@ this range.  E[W(3n/4)]/n still rises, +0.056 / +0.037 per bit (11 / 13 SE).
 
 **Sixth pass done in v9.5.52 (SecurityProofs-10.md §11.58,
 `SecurityProofsCode/v2_key_quantiles.py`):** the deployed criterion over keys by
-QUANTILE, y = W(3n/4) / (bar * n), read from the pinned 1343 keys.  q5..q50 all rise from
+QUANTILE, y = W(3n/4) / (bar * n), read from the pinned 1243 keys.  q5..q50 all rise from
 n = 10 to 20 (6.7 SE or more), the median key meets the criterion from n = 14, and the
 5-25% tail rises at the median's pace over n = 14..20 (q5 +0.061 vs +0.059 per bit
 differential); q5 reaches the bar at n = 20 (1.03 / 1.00).  The bottom does not move:
@@ -643,6 +643,19 @@ and not the width caps the per-round cost.  Every w <= 6 class has mean y < 0.75
 every width.  At n = 256, w <= 6 weighs 2^-126 and w <= 12 weighs 2^-123; a screen on
 tz(p) >= n - 12 would remove them at that cost (none ships).
 
+**Eighth pass done in v9.5.54 (SecurityProofs-10.md §11.60,
+`SecurityProofsCode/v2_discount_share.py`):** the discount as a SHARE of the trail, read
+from the pinned 1243 keys.  c <= 0 is a theorem (W is superadditive on a fixed round
+graph, so mu = sup W(r)/r by Fekete; checked on all 505,033 pairs per axis).  The share
+lambda = -E[c/n]/E[mu] holds while E[c/n] deepens: over n = 14..20 it moves +0.0011 +/-
+0.0006 per bit differential and -0.0024 +/- 0.0007 linear, against +0.0071 / +0.0051 if
+the deepening were independent of mu -- so the deepening is mu's own growth, at
+lambda ~ 0.17.  It is an average, not a per-key law (within a width c/n = a + b mu with
+a < 0 by 6 SE or more).  In the n = 1 (mod 3) class (10, 13, 16, 19), y* = E[mu](3/4 -
+lambda)/bar rises at every step; the bar on mu is a FIXED 1.71 / 0.865 and E[mu] at
+n = 19 is 1.46x / 1.43x it.  Printed, not scored: the criterion fails at n = 256 only if
+E[mu] falls ~30% below its n = 19 value or lambda doubles to ~0.35.
+
 **What is left:**
 
 - **c/n past n = 20.**  Whether the discount's deepening (~0.017 n per bit at n = 14..20)
@@ -651,8 +664,9 @@ tz(p) >= n - 12 would remove them at that cost (none ships).
 - **The key-sampled series at n = 22-23.**  Carry §11.55's stratified sample to n = 22
   (and 23) with `ESL.cmu(..., implicit=True)`; an n = 22 key takes ~15 min and ~0.8 GB
   per axis, so a few hundred keys is a multi-day run on one host.
-- **Extrapolation on the n = 1 (mod 3) class** that n = 256 belongs to, excluding
-  n = 7, 8 (their r = 5, 6 rounds are all transient).
+- **The share past n = 20.**  §11.60 reduces the class-1 extrapolation to two
+  quantities: whether lambda stays near 0.17 and whether E[mu] stays within ~30% of its
+  n = 19 value.  Neither is bounded; both need wider widths (the n = 22 items above).
 - **Windows of 13 bits and more at n = 256** (§11.59): the short-window measurement
   stops at w = 12.  Whether a mid-length window (say 40 bits) is weak at n = 256 is the
   width question in another form -- generic keys at n = 20 are ~20-bit windows.

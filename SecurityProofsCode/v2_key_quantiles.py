@@ -9,7 +9,7 @@ what a fixed key meets.  This pass reads the per-key criterion margin
     y(B) = W(floor(3n/4)) / (bar * n),   bar = 1 (differential), 1/2 (linear),
 
 y >= 1 meaning that key's exact best trail over the deployed rounds meets the deployed
-criterion, from v2_transient_series.json (1343 stratified keys, n = 10..20).  No solves:
+criterion, from v2_transient_series.json (1243 stratified keys, n = 10..20).  No solves:
 every verdict is computed from the pinned file, so it cannot flake.
 
   §1  THE TAIL WEIGHT, EXACTLY.  delta(B) = ROL(p, n/4), p = B * ((B+1) >> 1) mod 2^n,
