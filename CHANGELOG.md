@@ -2,6 +2,35 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.54] - 2026-10-16
+
+### TODO #343 (eighth pass) — the discount as a share of the trail
+
+§11.57.4 found E[c/n] still deepening at n = 20 (c ~ n^2), so the bar on mu derived from
+it climbs with width and no constant c/n reaches n = 256.  New gate
+`SecurityProofsCode/v2_discount_share.py` (SecurityProofs-10.md §11.60) reads the same
+pinned `v2_transient_series.json` and solves nothing.
+
+- **c <= 0 is a theorem:** on a fixed round graph W is superadditive, so by Fekete
+  mu = sup W(r)/r and W(r) <= mu * r at every r.  Checked on all 505,033 pairs
+  a + b <= 2n of every pinned key, both axes, with controls that fire (W + 1; mu
+  understated 20%).  §11.57.3(a) is that lemma, not an empirical finding.
+- **The share holds:** lambda = -E[c/n]/E[mu] moves +0.0011 +/- 0.0006 per bit
+  (differential) and -0.0024 +/- 0.0007 (linear) over n = 14..20, against +0.0071 /
+  +0.0051 if the deepening were independent of mu.  The deepening is mu's own growth,
+  at lambda ~ 0.17.  It is a key-average regularity, not a per-key law: within a width
+  c/n = a + b * mu with a < 0 by 6 SE or more.
+- **The n = 1 (mod 3) class:** y* = E[mu](3/4 - lambda)/bar rises at every step of
+  10 -> 13 -> 16 -> 19 (4.4 SE or more); the bar on mu is a fixed 1.71 / 0.865, and
+  E[mu] at n = 19 is 1.46x / 1.43x it.  Printed, not scored: n = 256 fails only if
+  E[mu] falls ~30% below its n = 19 value or lambda doubles to ~0.35.
+- **Corrected:** `v2_transient_series.json` holds 1243 keys, not the 1343 stated in
+  9.5.51-9.5.53 (and 1136 at n = 10..19, not 1236, in 9.5.50); fixed in the gates'
+  headers, SecurityProofs-10.md §11.58 and TODO #343.  The figures were always computed
+  from the file; only the stated count was wrong.
+- Run ~7 s.  Part 10 is now §11.43-§11.60 (126 math expressions); findings gates: 97.
+  SECURITY.md's HSKE-NL-A2 and `twk` rows and TODO #343 updated.  No rating changes.
+
 ## [9.5.53] - 2026-10-16
 
 ### TODO #343 (seventh pass) — the short-window class: the window, not the width

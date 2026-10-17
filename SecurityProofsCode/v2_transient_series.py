@@ -22,7 +22,7 @@ v2_round_transient.c holds the round's whole 2^(2n) table.  The corrected bars o
       v2_transient_series.json.  The gate shows the file is the whole seeded sample
       and re-solves a prefix of every width.
 
-  §3  THE TRANSIENT OVER KEYS.  1343 keys at n = 10, 11, 13, 14, 16, 17, 19, 20.
+  §3  THE TRANSIENT OVER KEYS.  1243 keys at n = 10, 11, 13, 14, 16, 17, 19, 20.
       (a) c(floor(3n/4)) < 0 on EVERY key of every width, both axes.
       (b) It has SETTLED by the deployed round count: E[c(2n)]/n is within 0.018
           (differential) and 0.011 (linear) of E[c(3n/4)]/n at every width; the mean
