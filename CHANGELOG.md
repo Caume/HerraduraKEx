@@ -2,6 +2,32 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.53] - 2026-10-16
+
+### TODO #343 (seventh pass) — the short-window class: the window, not the width
+
+§11.58 read the bottom of the key distribution as short-window keys (delta's nonzero
+bits in a w = n - tz(p) bit window) weighing ~2^-124 at n = 256, on the assumption that
+the window and not the width keeps them weak; the random sample held too few of them
+to test it.  New gate `SecurityProofsCode/v2_short_window.py` (SecurityProofs-10.md
+§11.59), pinned `v2_short_window.json`, CONSTRUCTS them: up to six keys with distinct
+deltas for each n = 10..20 and w = 1..12, 409 keys, both axes, exact W(floor(3n/4)) by
+the trail mode.
+
+- **The window, not the width:** with w fixed, a fixed-effects slope of mu on n is
+  -0.006 +/- 0.006 per bit differential and +0.001 +/- 0.003 linear, against +0.107 and
+  +0.061 for random keys (16 and 19 SE apart; the control is computed from
+  v2_transient_series.json).
+- **The class stays weak:** every w <= 6 class has mean y below 0.75 at every width,
+  and at every width some w <= 6 key has y < 0.25.  Windows of 9-12 bits sit near the
+  bar.
+- **At n = 256:** w <= 6 weighs 2^-126 and w <= 12 weighs 2^-123, next to the 2^-129
+  affine class the CLIs screen.  A tz(p) >= n - 12 screen would remove them; none
+  ships, and windows of 13 bits or more are not measured.
+- Default run ~20 s, `--quick` ~3 s.  Part 10 is now §11.43-§11.59 (126 math
+  expressions); findings gates: 96.  SECURITY.md's HSKE-NL-A2 row and TODO #343
+  updated.  No rating changes.
+
 ## [9.5.52] - 2026-10-16
 
 ### TODO #343 (sixth pass) — the deployed criterion over keys by quantile
