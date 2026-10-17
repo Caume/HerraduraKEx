@@ -666,20 +666,29 @@ and the residual is positive.  The window curve f(w) rises block by block to 2.6
 at w = 17-20; every w >= 13 has mean y >= 1.21 / 1.15, and the share below the bar falls
 from 23% / 26% (w = 13-14) to 4% / 7% (w = 17-20).  At n = 256, P(w <= 20) ~ 2^-119.
 
+**Tenth pass done in v9.5.56 (SecurityProofs-10.md §11.62,
+`SecurityProofsCode/v2_series_n22.py`):** a 43-key stratified sample at n = 22, the next
+width of the n = 1 (mod 3) class, W(1..16) per key on both axes (~32 + 12 min per key at
+~0.87 GB; 6 h 17 min at seven in parallel).  Fekete's c <= 0 holds on every key.  E[mu]
+rises from n = 19, 2.492 -> 2.757 (5.1 SE) and 1.235 -> 1.430 (6.1 SE); lambda(22) =
+0.172 / 0.161, within 0.015 of the pooled 0.165 / 0.172; y* = 1.61 / 1.65, and E[mu] is
+1.61x / 1.65x the share-held bar.  The share below the bar falls to 2.3% / 2.3% (three
+keys, all tz(p) >= 6).  The class increments of E[mu] alternate (+0.22 then +0.27
+differential) rather than shrink, so §11.60.4's levelling reading is already reached at
+n = 22 and no level is visible.
+
 **What is left:**
 
-- **c/n past n = 20.**  Whether the discount's deepening (~0.017 n per bit at n = 14..20)
-  ever slows, and whether E[W(3n/4)]/n keeps rising.  n = 22 has not been timed in the
-  trail mode; n = 20 already takes ~15 min per key with eight solves at once.
-- **The key-sampled series at n = 22-23.**  Carry §11.55's stratified sample to n = 22
-  (and 23) with `ESL.cmu(..., implicit=True)`; an n = 22 key takes ~15 min and ~0.8 GB
-  per axis, so a few hundred keys is a multi-day run on one host.
-- **The share past n = 20.**  §11.60 reduces the class-1 extrapolation to two
-  quantities: whether lambda stays near 0.17 and whether E[mu] stays within ~30% of its
-  n = 19 value.  Neither is bounded; both need wider widths (the n = 22 items above).
+- **The share and E[mu] past n = 22.**  §11.62 measured both at n = 22; whether lambda
+  stays near 0.17 and E[mu] keeps rising beyond that is still unbounded.  The next class
+  width, n = 25, needs ~7 GB per solve if memory keeps scaling with 2^n (untimed).
+- **A larger n = 22 sample, and n = 23.**  43 keys pin E[mu] and lambda well (SE 0.04 /
+  0.003) but not the tail: the 2.3% below the bar is three keys, and the strata t >= 2
+  hold 3-5 keys each.  A few hundred keys is a multi-day run on one host.
 - **The window curve past w = 20** (§11.61).  f(w)'s block increments shrink (+0.46 then
   +0.24 differential); whether f levels above the bar is #257's levelling question asked
-  of the window.  Windows above 20 bits need n >= 22 too.
+  of the window.  §11.62's n = 22 keys reach w = 21-22 but only 20 of them, too few for a
+  cell-by-cell curve.
 
 Status: **OPEN**
 

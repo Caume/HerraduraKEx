@@ -2,6 +2,33 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.56] - 2026-10-17
+
+### TODO #343 (tenth pass) — the series at n = 22
+
+Every open #343 item needed a width past 20.  New gate
+`SecurityProofsCode/v2_series_n22.py` (SecurityProofs-10.md §11.62) pins a 43-key
+stratified sample at n = 22, the next width of n = 256's residue class n = 1 (mod 3),
+drawn by key_series' rule (max(3, ceil(30 * share)), seed 3431).  Each key is solved for
+W(1..16) on both axes with §11.53's implicit solver, at about 32 + 12 min and ~0.87 GB per
+key; the run took 6 h 17 min at seven solves in parallel.  The default run reads the pinned
+`v2_series_n22.json`; `--full` re-solves every key and `--regenerate` rebuilds the file,
+resumably.
+
+- **Fekete at a new width:** W is superadditive and c(r) <= 0 on every key, both axes;
+  the control fires on W(r) + 1 at 40 of 43 keys.
+- **E[mu] keeps rising:** 2.492 -> 2.757 differential (5.1 SE) and 1.235 -> 1.430
+  linear (6.1 SE) from n = 19; y* = 1.61 / 1.65.
+- **The share holds:** lambda(22) = 0.172 / 0.161, within 0.015 of §11.60's pooled
+  0.165 / 0.172 and under half the break-even; E[mu] is 1.61x / 1.65x the share-held bar.
+- **Fewer keys fail:** 2.3% / 2.3% below the bar (8.3% / 11.7% at n = 19), all of them
+  with tz(p) >= 6.
+- Printed, not scored: the class increments of E[mu] alternate rather than shrink, so
+  §11.60.4's levelling reading is already reached at n = 22.  The sample is thin in the
+  tail (the 2.3% is three keys).
+- Run ~15 s.  Part 10 is now §11.43-§11.62 (126 math expressions); findings gates: 99.
+  SECURITY.md's HSKE-NL-A2 row and TODO #343 are updated.  No rating changes.
+
 ## [9.5.55] - 2026-10-16
 
 ### TODO #343 (ninth pass) — the long-window keys
