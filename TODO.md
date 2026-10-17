@@ -656,6 +656,16 @@ lambda)/bar rises at every step; the bar on mu is a FIXED 1.71 / 0.865 and E[mu]
 n = 19 is 1.46x / 1.43x it.  Printed, not scored: the criterion fails at n = 256 only if
 E[mu] falls ~30% below its n = 19 value or lambda doubles to ~0.35.
 
+**Ninth pass done in v9.5.55 (SecurityProofs-10.md §11.61,
+`SecurityProofsCode/v2_long_window.py`):** windows of 13 bits and more, read from the
+pinned random sample (every stratum t < 8 is a uniform sample of window w = n - t; 8+
+keys in every cell w = 13..20) beside §11.59's constructed keys.  At a fixed window
+w = 13..20, mu grows +0.023 +/- 0.010 (differential) and +0.016 +/- 0.005 (linear) per bit,
+8 SE below random keys' +0.107 / +0.061: most of the width trend is the window growing,
+and the residual is positive.  The window curve f(w) rises block by block to 2.60 / 1.32
+at w = 17-20; every w >= 13 has mean y >= 1.21 / 1.15, and the share below the bar falls
+from 23% / 26% (w = 13-14) to 4% / 7% (w = 17-20).  At n = 256, P(w <= 20) ~ 2^-119.
+
 **What is left:**
 
 - **c/n past n = 20.**  Whether the discount's deepening (~0.017 n per bit at n = 14..20)
@@ -667,9 +677,9 @@ E[mu] falls ~30% below its n = 19 value or lambda doubles to ~0.35.
 - **The share past n = 20.**  §11.60 reduces the class-1 extrapolation to two
   quantities: whether lambda stays near 0.17 and whether E[mu] stays within ~30% of its
   n = 19 value.  Neither is bounded; both need wider widths (the n = 22 items above).
-- **Windows of 13 bits and more at n = 256** (§11.59): the short-window measurement
-  stops at w = 12.  Whether a mid-length window (say 40 bits) is weak at n = 256 is the
-  width question in another form -- generic keys at n = 20 are ~20-bit windows.
+- **The window curve past w = 20** (§11.61).  f(w)'s block increments shrink (+0.46 then
+  +0.24 differential); whether f levels above the bar is #257's levelling question asked
+  of the window.  Windows above 20 bits need n >= 22 too.
 
 Status: **OPEN**
 
