@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.61** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys
+> - **Part 10 — §11.43–§11.62** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22
 
 ---
 
@@ -1034,5 +1034,43 @@ At n = 256, every window measured here is negligible. P(w ≤ 20) is about 2^-11
 **Established:** keys with windows of 13–20 bits behave like ordinary keys of that many bits. Most of E[μ]'s growth with n is the window growing, and the width adds a small positive residual. Under the deployed criterion the weak class is the windows of about 12 bits or fewer, as in §11.59.
 
 **Closed as far as n ≤ 20 can close it:** windows of 13 bits or more. Above 20 bits a w-bit window is the width question at w. Because the residual width effect is not negative, a key at n = 256 is read as no weaker than a key with the same window measured at width w. That is a reading of n ≤ 20, not a bound.
+
+**Unchanged:** every rating.
+
+## 11.62 The series at n = 22 — TODO #343, tenth pass
+
+Every item §11.60 and §11.61 left open needs a width past 20. n = 22 is the next width of n = 256's residue class n ≡ 1 (mod 3), and §11.53's implicit solver reaches it: one key costs about 32 minutes differential and 12 minutes linear, at about 0.87 GB. So this is a sample, not a census. 43 keys are drawn by key_series' rule, at least 3 per stratum of t = tz(p) and otherwise 30 keys in proportion, with seed 3431. Each is solved for W(1..16) on both axes, and 16 = ⌊3n/4⌋. The run took 6 h 17 min at seven solves in parallel on an aarch64 SBC. The gate is `SecurityProofsCode/v2_series_n22.py`. It reads the pinned file, so its verdicts cannot flake.
+
+### 11.62.1 The sample and Fekete
+
+The nine strata hold all 2^22 keys except key_series' 1536 affine-delta keys, and the pinned rows are exactly the seeded draw. W is superadditive and c(r) ≤ 0 at every round of every key, on both axes. That is §11.60.1's theorem, checked at a width where it had not been looked at. The control fires on W(r) + 1 at 40 of the 43 keys.
+
+### 11.62.2 The class one step on
+
+| n | 10 | 13 | 16 | 19 | 22 |
+|---|---|---|---|---|---|
+| E[μ], differential | 1.569 | 1.866 | 2.272 | 2.492 | 2.757 ± 0.038 |
+| y\*, differential | 0.917 | 1.091 | 1.329 | 1.457 | 1.613 |
+| below the bar, differential | 70.9% | 46.5% | 16.2% | 8.3% | 2.3% |
+| E[μ], linear | 0.735 | 0.891 | 1.114 | 1.235 | 1.430 ± 0.025 |
+| y\*, linear | 0.850 | 1.030 | 1.288 | 1.428 | 1.653 |
+| below the bar, linear | 83.7% | 58.7% | 18.8% | 11.7% | 2.3% |
+
+y\* uses §11.60.4's λ, pooled over n = 14–20.
+
+- **E[μ] keeps rising**, by 5.1 standard errors differential and 6.1 linear from n = 19, and y\* rises with it.
+- **The share holds at a fifth width.** λ(22) is 0.172 differential and 0.161 linear, within 0.015 of the pooled 0.165 and 0.172. The two axes move in opposite directions, by +2.0 and −2.8 standard errors. Both are under half the break-even λ at n = 22, 0.387 and 0.400.
+- **E[μ] at n = 22 is 1.61× and 1.65× the share-held bar** of 1.71 and 0.865.
+- **The keys below the bar fall to 2.3%** on each axis. Every sampled key below the bar has tz(p) ≥ 6, which means a window of 16 bits or less. The failures that remain are §11.61's short windows.
+
+The gate prints the class increments of E[μ] and does not score them. They are +0.30, +0.41, +0.22, +0.27 differential and +0.16, +0.22, +0.12, +0.20 linear. §11.60.4's levelling reading took the 16 → 19 step's ratio, 0.54, and levelled y\* at 1.61 and 1.59. n = 22 alone reaches that, and its step is larger than the one before. The increments alternate instead of shrinking, so four steps show no level.
+
+### 11.62.3 What it changes
+
+**Established:** at n = 22, over a 43-key stratified sample, E[μ] still rises and λ still sits near 0.17. The deployed criterion's margin with the share held reads about 1.6× on both axes, up from about 1.45× at n = 19.
+
+**Caveats:** 43 keys is a thin sample. The 2.3% below the bar is three keys, and the strata t ≥ 2 hold 3–5 keys each. The SEs above are the stratified ones and are honest for E[μ] and λ, but not for the tail share. This is a measurement at n = 22, not a bound at n = 256.
+
+**Open (TODO #343, #257):** whether λ stays near 0.17 and E[μ] keeps rising past n = 22. The next width of the class is n = 25. If memory scales with 2^n, as it has so far, a solve there needs about 7 GB, so this 16 GB host could run only two at a time. That cost has not been measured.
 
 **Unchanged:** every rating.
