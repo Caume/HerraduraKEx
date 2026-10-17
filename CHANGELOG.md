@@ -2,6 +2,32 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.55] - 2026-10-16
+
+### TODO #343 (ninth pass) — the long-window keys
+
+§11.59 measured windows w = n - tz(p) up to 12 bits on constructed keys and left longer
+windows open.  New gate `SecurityProofsCode/v2_long_window.py` (SecurityProofs-10.md
+§11.61) reads them from the pinned random sample.  §11.55's sampler stratifies on
+tz(p) exactly, so each stratum t < 8 is a uniform sample of window n - t, with 8 or
+more keys in every cell w = 13..20.  It reads these together with §11.59's constructed
+keys and solves nothing.
+
+- **Mostly the window, not quite only:** at a fixed window w = 13..20, mu grows
+  +0.023 +/- 0.010 (differential) and +0.016 +/- 0.005 (linear) per bit, 8 SE below
+  random keys' +0.107 / +0.061.  Most of E[mu]'s growth with n is the window growing,
+  and the residual width effect is positive.
+- **The window curve:** f(w) rises block by block (w = 1-4 ... 17-20) to 2.60 / 1.32.
+  Every window from 13 bits has mean margin y >= 1.21 / 1.15, and the share of keys
+  below the bar falls from 23% / 26% at w = 13-14 to 4% / 7% at w = 17-20.  The block
+  increments shrink, which is printed and not scored.
+- **At n = 256:** P(w <= 20) ~ 2^-119 and 93% of keys have w >= 250, so the weak class
+  stays the windows of about 12 bits or fewer, and every longer window is the width
+  question.  The TODO #343 item for windows of 13 bits and more is replaced by "the
+  window curve past w = 20".
+- Run ~2 s.  Part 10 is now §11.43-§11.61 (126 math expressions); findings gates: 98.
+  SECURITY.md's HSKE-NL-A2 row and TODO #343 are updated.  No rating changes.
+
 ## [9.5.54] - 2026-10-16
 
 ### TODO #343 (eighth pass) — the discount as a share of the trail

@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.60** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share
+> - **Part 10 — §11.43–§11.61** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys
 
 ---
 
@@ -936,7 +936,7 @@ For every window w ≤ 6 and every width, the mean margin y = W(⌊3n/4⌋) / (b
 
 **Established:** over n = 10–20 and windows up to 12 bits, the window and not the width sets a key's per-round cost. §11.58's reading of the bottom of the distribution is therefore measured, not assumed, within that range. At n = 256, keys with w ≤ 6 weigh P(tz(p) ≥ 250) = $2^{-126}$, and keys with w ≤ 12 weigh $2^{-123}$. That is next to the $2^{-129}$ affine class the CLIs already screen. A screen on tz(p) ≥ n − 12 would remove them at that cost, but no CLI does this today.
 
-**Open (TODO #343):** windows of 13 bits or more are not measured here. Whether a 40-bit window is weak at n = 256 is the width question in another form, since generic keys at n = 20 are windows of about 20 bits.
+**Open (TODO #343):** windows of 13 bits or more are not measured here. Whether a 40-bit window is weak at n = 256 is the width question in another form, since generic keys at n = 20 are windows of about 20 bits. §11.61 measures windows of 13–20 bits from the pinned random sample.
 
 **Unchanged:** every rating.
 
@@ -995,3 +995,44 @@ Each of these spans 79 periods, and assumes the share holds over 237 bits more t
 **Open (TODO #343):** whether λ stays near 0.17 past n = 20. Nothing here bounds it, and §11.60.3 shows it is not a per-key law. Whether E[μ] keeps rising remains #257's question.
 
 **Unchanged:** every rating. The margin against the deployed criterion reads about 1.45× with the share held, against about 1.3× with c/n held at its n = 19–20 value. The share-held figure is a reading, not a bound.
+
+## 11.61 The long-window keys — TODO #343, ninth pass
+
+§11.59 constructed keys with windows w = n − tz(p) of at most 12 bits, and left longer windows unmeasured. Those need no construction. §11.55's sampler stratifies on t = tz(p) exactly, so each stratum t < 8 of the pinned random sample is a uniform sample of the keys with window w = n − t. The 1243 keys pinned for §11.57 hold at least 8 keys in every (w, n) cell with w = 13–20 that the plan reaches. This pass reads them together with §11.59's 409 constructed keys and solves nothing. The gate is `SecurityProofsCode/v2_long_window.py`.
+
+### 11.61.1 Mostly the window, not quite only
+
+A fixed-effects slope of μ on n, with one intercept per window, over the 498 random keys with w = 13–20:
+
+| | fixed window, w = 13–20 | random keys (§11.57) |
+|---|---|---|
+| differential, per bit | +0.023 ± 0.010 | +0.107 ± 0.003 |
+| linear, per bit | +0.016 ± 0.005 | +0.061 ± 0.002 |
+
+- **Most of the width trend is the window.** The fixed-window slope is 8 standard errors below the random keys' on both axes. A random key's window is within six bits of n for 93% of keys, so E[μ] rising with n is mostly the window growing.
+- **What is left only helps.** The residual width effect is positive, at 2.2 and 3.0 standard errors. For windows up to 12 bits, §11.59's constructed keys showed none.
+
+### 11.61.2 The window curve
+
+The window curve f(w) is the mean over widths of the cell means, taken over both pinned files.
+
+| w | 1–4 | 5–8 | 9–12 | 13–16 | 17–20 |
+|---|---|---|---|---|---|
+| f, differential | 0.76 | 1.28 | 1.90 | 2.36 | 2.60 |
+| f, linear | 0.39 | 0.62 | 0.92 | 1.16 | 1.32 |
+
+- **f rises block by block** on both axes.
+- **Every window from 13 bits meets the criterion on average.** The mean margin y = W(⌊3n/4⌋) / (bar · n) is at least 1.21 differential and 1.15 linear.
+- **Long-window keys still fail, and less often as the window grows.** 23% and 26% of keys are below the bar at w = 13–14, and 4% and 7% at w = 17–20.
+
+The block increments shrink from +0.46 to +0.24 differential and from +0.24 to +0.16 linear. The gate prints this and does not score it. It is #257's levelling question, asked of the window instead of the width.
+
+### 11.61.3 What it changes
+
+At n = 256, every window measured here is negligible. P(w ≤ 20) is about 2^-119, and 93% of keys have windows of 250 bits or more.
+
+**Established:** keys with windows of 13–20 bits behave like ordinary keys of that many bits. Most of E[μ]'s growth with n is the window growing, and the width adds a small positive residual. Under the deployed criterion the weak class is the windows of about 12 bits or fewer, as in §11.59.
+
+**Closed as far as n ≤ 20 can close it:** windows of 13 bits or more. Above 20 bits a w-bit window is the width question at w. Because the residual width effect is not negative, a key at n = 256 is read as no weaker than a key with the same window measured at width w. That is a reading of n ≤ 20, not a bound.
+
+**Unchanged:** every rating.
