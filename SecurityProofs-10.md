@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.62** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22
+> - **Part 10 — §11.43–§11.63** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc
 
 ---
 
@@ -1061,7 +1061,7 @@ y\* uses §11.60.4's λ, pooled over n = 14–20.
 - **E[μ] keeps rising**, by 5.1 standard errors differential and 6.1 linear from n = 19, and y\* rises with it.
 - **The share holds at a fifth width.** λ(22) is 0.172 differential and 0.161 linear, within 0.015 of the pooled 0.165 and 0.172. The two axes move in opposite directions, by +2.0 and −2.8 standard errors. Both are under half the break-even λ at n = 22, 0.387 and 0.400.
 - **E[μ] at n = 22 is 1.61× and 1.65× the share-held bar** of 1.71 and 0.865.
-- **The keys below the bar fall to 2.3%** on each axis. Every sampled key below the bar has tz(p) ≥ 6, which means a window of 16 bits or less. The failures that remain are §11.61's short windows.
+- **The keys below the bar fall to 2.3%** on each axis. Every sampled key below the bar has tz(p) ≥ 6, which means a window of 16 bits or less. In this sample the failures that remain are §11.61's short windows. §11.63.1 corrects that reading: a larger sample has a failing key whose window is 18 bits.
 
 The gate prints the class increments of E[μ] and does not score them. They are +0.30, +0.41, +0.22, +0.27 differential and +0.16, +0.22, +0.12, +0.20 linear. §11.60.4's levelling reading took the 16 → 19 step's ratio, 0.54, and levelled y\* at 1.61 and 1.59. n = 22 alone reaches that, and its step is larger than the one before. The increments alternate instead of shrinking, so four steps show no level.
 
@@ -1072,5 +1072,42 @@ The gate prints the class increments of E[μ] and does not score them. They are 
 **Caveats:** 43 keys is a thin sample. The 2.3% below the bar is three keys, and the strata t ≥ 2 hold 3–5 keys each. The SEs above are the stratified ones and are honest for E[μ] and λ, but not for the tail share. This is a measurement at n = 22, not a bound at n = 256.
 
 **Open (TODO #343, #257):** whether λ stays near 0.17 and E[μ] keeps rising past n = 22. The next width of the class is n = 25. If memory scales with 2^n, as it has so far, a solve there needs about 7 GB, so this 16 GB host could run only two at a time. That cost has not been measured.
+
+**Unchanged:** every rating.
+
+## 11.63 The tail at n = 22, and the arc the window misses — TODO #343, eleventh pass
+
+§11.62's tail was thin. The strata t ≥ 2 held 3–5 keys each, and the share below the bar was three keys. This pass draws 33 more keys in a second seeded draw that does not overlap the first, bringing every stratum from t = 2 to t = 8 up to 8 keys. The union of two disjoint simple random samples of a stratum is itself one, so the stratified estimators carry over. The run took 4 h 04 min at seven solves in parallel. The gate is `SecurityProofsCode/v2_tail_n22.py`. It reads the two pinned files and counts five widths exhaustively, so its verdicts cannot flake.
+
+### 11.63.1 The tail at n = 22
+
+| 76 keys at n = 22 | differential | linear |
+|---|---|---|
+| E[μ] (43 keys: 2.757, 1.430) | 2.754 ± 0.030 | 1.429 ± 0.022 |
+| λ (43 keys: 0.172, 0.161) | 0.172 ± 0.003 | 0.162 ± 0.003 |
+| below the bar | 1.9% ± 0.8% | 1.9% ± 0.8% |
+| below the bar at n = 19 | 8.3% ± 2.4% | 11.7% ± 2.8% |
+
+- **The top-up leaves E[μ] and λ in place**, within one of §11.62's standard errors.
+- **The share below the bar falls from n = 19**, by 2.6 standard errors differential and 3.4 linear. It now has a standard error, but it still rests on six keys.
+- **Correction to §11.62.2.** One of the failing keys has t = 4, which is a window n − tz(p) of 18 bits. Its p is `0000000000100010010000`, with ten leading zeros as well as four trailing zeros, so the nonzero bits of its round constant fit in an 8-bit arc.
+- **§11.61's fixed-window slope** with the 48 n = 22 keys of windows 15–20 added is +0.016 ± 0.008 differential and +0.012 ± 0.004 linear per bit. That is still 10 standard errors below random keys'.
+
+### 11.63.2 The arc, not n − tz(p)
+
+The nonzero bits of δ lie in a cyclic arc of length n minus δ's longest cyclic run of zeros. tz(p) is only one of those zero runs, so the window n − tz(p) bounds the arc from above. Over all 1319 pinned random keys, n = 10–22:
+
+- **Within a width, the arc explains the margin far better than the window does.** R² is 0.62 and 0.63 for the arc, against 0.37 and 0.38 for the window. The control, with the arcs shuffled among the keys of each width, gives 0.001.
+- **Long arcs rarely fail.** From n = 19 on, keys with an arc over 12 bits fall below the bar 3 times out of 237 on each axis, against 15 and 20 out of 268 for a window over 12 bits. Most of §11.61's long-window failures are short arcs.
+
+### 11.63.3 What it changes
+
+Counted exhaustively at n = 16, 17, 19, 20 and 22, the short-arc class (arc ≤ 12) is 2.25–3.63 times the short-window class (w ≤ 12), with no trend in n. The gate prints and does not score the reading at n = 256: at that ratio the class would weigh about 2^-121, against 2^-123 for w ≤ 12. That is an extrapolation, not a count.
+
+**Established:** the weak class of v2 keys is the keys whose round constant's nonzero bits fit in a short cyclic arc. n − tz(p) is an upper bound on that arc, so §11.59–§11.61 read the class through a coarse proxy. The class stays negligible at n = 256.
+
+**Corrected:** §11.59's suggested screen on tz(p) ≥ n − 12 misses most of the class. A screen should test the arc. None ships.
+
+**Caveats:** §11.63.2's counts are unweighted, because the sample is stratified on t and not on the arc.
 
 **Unchanged:** every rating.

@@ -641,7 +641,8 @@ mu does not grow with n (fixed-effects slope -0.006 +/- 0.006 differential, +0.0
 0.003 linear, against +0.107 / +0.061 for random keys, 16 / 19 SE apart), so the window
 and not the width caps the per-round cost.  Every w <= 6 class has mean y < 0.75 at
 every width.  At n = 256, w <= 6 weighs 2^-126 and w <= 12 weighs 2^-123; a screen on
-tz(p) >= n - 12 would remove them at that cost (none ships).
+tz(p) >= n - 12 would remove them at that cost (none ships).  (v9.5.57, §11.63: that
+screen misses most of the class -- it should test delta's cyclic arc instead.)
 
 **Eighth pass done in v9.5.54 (SecurityProofs-10.md §11.60,
 `SecurityProofsCode/v2_discount_share.py`):** the discount as a SHARE of the trail, read
@@ -677,18 +678,29 @@ keys, all tz(p) >= 6).  The class increments of E[mu] alternate (+0.22 then +0.2
 differential) rather than shrink, so §11.60.4's levelling reading is already reached at
 n = 22 and no level is visible.
 
+**Eleventh pass done in v9.5.57 (SecurityProofs-10.md §11.63,
+`SecurityProofsCode/v2_tail_n22.py`):** the n = 22 strata t >= 2 topped up to 8 keys (33
+more, a disjoint seeded draw; 4 h 04 min).  Over 76 keys E[mu] and lambda do not move, and
+the share below the bar is 1.9% +/- 0.8% on both axes (8.3% / 11.7% at n = 19).  One
+failing key has a window n - tz(p) of 18 bits but an 8-bit arc, which corrects §11.62's
+"every failure is a short window".  delta's cyclic ARC (n minus its longest cyclic zero
+run) is the variable: within a width it explains y with R^2 0.62 / 0.63 against 0.37 /
+0.38 for the window, and from n = 19 keys with an arc over 12 bits fail 3 of 237 times
+against 15 / 20 of 268 for a window over 12.  Counted exhaustively at n = 16..22 the
+short-arc class is only 2.25-3.63x the short-window class, so it stays negligible at
+n = 256 (~2^-121, extrapolated).
+
 **What is left:**
 
 - **The share and E[mu] past n = 22.**  §11.62 measured both at n = 22; whether lambda
   stays near 0.17 and E[mu] keeps rising beyond that is still unbounded.  The next class
   width, n = 25, needs ~7 GB per solve if memory keeps scaling with 2^n (untimed).
-- **A larger n = 22 sample, and n = 23.**  43 keys pin E[mu] and lambda well (SE 0.04 /
-  0.003) but not the tail: the 2.3% below the bar is three keys, and the strata t >= 2
-  hold 3-5 keys each.  A few hundred keys is a multi-day run on one host.
-- **The window curve past w = 20** (§11.61).  f(w)'s block increments shrink (+0.46 then
-  +0.24 differential); whether f levels above the bar is #257's levelling question asked
-  of the window.  §11.62's n = 22 keys reach w = 21-22 but only 20 of them, too few for a
-  cell-by-cell curve.
+- **n = 23**, and a larger n = 22 sample if the fail share matters more precisely than
+  1.9% +/- 0.8% (it rests on six keys).
+- **The arc curve.**  §11.59-§11.61 measured mu by window w = n - tz(p); §11.63 shows
+  the arc is the variable, and the pinned sample is stratified on t, not on the arc.  A
+  curve of mu by arc, and whether a fixed arc's mu grows with n, needs a sample (or a
+  construction) stratified on the arc.  §11.61's window curve past w = 20 folds into it.
 
 Status: **OPEN**
 
