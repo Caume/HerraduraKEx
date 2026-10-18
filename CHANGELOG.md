@@ -2,6 +2,31 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.57] - 2026-10-17
+
+### TODO #343 (eleventh pass) — the tail at n = 22, and the arc the window misses
+
+§11.62's n = 22 tail was thin (3-5 keys per stratum t >= 2; three failing keys).  New
+gate `SecurityProofsCode/v2_tail_n22.py` (SecurityProofs-10.md §11.63) pins 33 more keys
+in a seeded draw disjoint from the first, bringing every stratum t = 2..8 to 8 keys
+(4 h 04 min at seven solves in parallel), and re-reads every pinned random key.
+
+- **The tail at n = 22:** over 76 keys E[mu] and lambda move by less than one SE, and the
+  share below the bar is 1.9% +/- 0.8% on both axes, down from 8.3% / 11.7% at n = 19
+  (2.6 / 3.4 SE).
+- **Correction to §11.62:** a failing key has t = 4 (window 18 bits), but its round
+  constant's nonzero bits fit in an 8-bit cyclic arc.
+- **The arc, not n - tz(p):** within a width, delta's cyclic arc explains the margin with
+  R^2 0.62 / 0.63 against 0.37 / 0.38 for the window (shuffled control: 0.001).  From
+  n = 19, keys with an arc over 12 bits fail 3 of 237 times, against 15 / 20 of 268 for a
+  window over 12, so §11.61's long-window failures are mostly short arcs.
+- **The weight:** counted exhaustively at n = 16..22, the short-arc class is 2.25-3.63x
+  the short-window class with no trend, about 2^-121 at n = 256 (printed, extrapolated).
+  §11.59's suggested tz(p) screen would miss most of it; a screen should test the arc.
+- §11.61's fixed-window slope with the n = 22 keys added stays 10 SE below random keys'.
+- Run ~35 s.  Part 10 is now §11.43-§11.63 (126 math expressions); findings gates: 100.
+  SECURITY.md's HSKE-NL-A2 row and TODO #343 are updated.  No rating changes.
+
 ## [9.5.56] - 2026-10-17
 
 ### TODO #343 (tenth pass) — the series at n = 22
