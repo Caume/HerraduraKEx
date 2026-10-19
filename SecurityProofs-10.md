@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.64** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve
+> - **Part 10 — §11.43–§11.65** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve
 
 ---
 
@@ -1147,10 +1147,51 @@ Counted over every key, a random key's arc falls a few bits short of n, and the 
 
 **Established:** μ is set by the arc, and at a fixed arc it falls slowly with the width over n = 10–22. Random keys gain with width only because their arc grows with it.
 
-**For typical keys:** they sit near the diagonal, with an arc close to n, so §11.64.1's fall reaches them only through a gap of a few bits that grows like log n. Their n = 256 question is still the width question.
+**For typical keys:** they sit near the diagonal, with an arc close to n, so §11.64.1's fall reaches them only through a gap of a few bits that grows like log n. Their n = 256 question is still the width question; §11.65 reads it at a fixed gap.
 
 **For short-arc keys:** they get weaker as the width grows at a fixed arc, so at n = 256 they are weaker than the same arc measured here. They are already the class that fails, and it weighs about 2^-121 (§11.63.3, extrapolated).
 
 **Caveats:** six keys per cell; arc 16 is measured only at n = 19, 20 and 22. The fall is a slope measured over n = 10–22, not a law.
+
+**Unchanged:** every rating.
+
+## 11.65 The gap curve — TODO #343, thirteenth pass
+
+§11.64 found that at a fixed arc μ falls with the width, and that a typical key's arc sits a few bits short of n. It left open the question that matters for those keys: μ at a fixed gap n − arc as n grows, and whether the cost of a gap bit stays bounded. This pass needs no solves. It reads the gap off every pinned random key: the 1243 keys of the transient series at n = 10–20 and the 76 keys at n = 22 (§11.62, §11.63), 1319 in all. The 162 arc-drawn keys of §11.64 serve as an independent replicate. The gate is `SecurityProofsCode/v2_gap_curve.py`.
+
+### 11.65.1 At a fixed gap, μ rises with the width
+
+| differential μ | n = 10 | 11 | 13 | 14 | 16 | 17 | 19 | 20 | 22 |
+|---|---|---|---|---|---|---|---|---|---|
+| gap 2 | 1.94 | 2.10 | 2.18 | 2.45 | 2.49 | 2.60 | 2.79 | 2.69 | 2.99 |
+| gap 3 | 1.73 | 1.81 | 2.12 | 2.36 | 2.45 | 2.63 | 2.75 | 2.83 | 2.95 |
+| gap 4 | 1.38 | 1.78 | 1.89 | 2.08 | 2.44 | 2.53 | 2.71 | 2.70 | 2.84 |
+| gap 6 | 0.94 | 1.30 | 1.51 | 1.66 | 2.12 | 2.26 | 2.20 | 2.34 | 2.63 |
+
+- **The fixed-gap slope is the random-key slope.** With one intercept per gap, over the 770 keys with a gap of at most 4, it is +0.111 ± 0.003 per bit differential and +0.065 ± 0.002 linear. Random keys gain +0.107 and +0.061. So E[μ]'s growth with n is growth at a fixed gap, and none of it is carried by the gap moving.
+- **It is not the stratification.** With one intercept per (gap, t) cell it is +0.125 and +0.069. On the t = 0 stratum alone it is +0.102 and +0.061, above 15 standard errors on both axes.
+- **It replicates** on the independent arc-drawn keys with a gap of at most 10: +0.135 ± 0.008 and +0.069 ± 0.004.
+
+This and §11.64.1 read one surface along two lines. At a fixed gap the arc grows one-for-one with n, and a bit of arc is worth more than the fixed-arc fall takes away.
+
+### 11.65.2 The cost of a gap bit falls with the width
+
+At each width the gate fits the slope of μ on the gap over gaps 2–10. Gaps 0 and 1 are rare, with at most 13 keys per width, and are not monotone.
+
+| n | 10 | 11 | 13 | 14 | 16 | 17 | 19 | 20 | 22 |
+|---|---|---|---|---|---|---|---|---|---|
+| differential, per gap bit | −0.22 | −0.20 | −0.20 | −0.21 | −0.14 | −0.15 | −0.16 | −0.12 | −0.11 |
+| as a share of mean μ | 15% | 12% | 11% | 11% | 7% | 6% | 7% | 5% | 4% |
+| linear, per gap bit | −0.10 | −0.09 | −0.09 | −0.11 | −0.07 | −0.08 | −0.09 | −0.07 | −0.07 |
+
+- **A gap bit always costs.** Every slope is below −5 standard errors.
+- **The cost shrinks with the width.** Differential, it is −0.21 per bit at n = 10–11 and −0.11 at n = 20–22 (8.3 SE apart); linear, −0.094 and −0.072 (3.5 SE). As a share of the width's mean μ it falls by more than half on both axes, from about 13% to about 5%.
+- The gate prints and does not score one reading: at n = 22, moving a key from gap 4 to the roughly 8 bits that §11.64.3 extrapolates for n = 256 costs about 0.45 of a mean μ of 2.56 differential.
+
+**Established:** over n = 10–22, typical keys gain with width at a fixed gap at the full random-key rate. §11.64's fall at a fixed arc is the cost of a gap bit, and that cost is bounded and shrinking.
+
+**For typical keys:** this is the most direct reading of the n = 256 question these widths allow, and every part of it says the width helps. Their gap grows like log n (§11.64.3) while the cost of each gap bit falls.
+
+**Caveats:** keys are stratified on t, not on the gap, so cell means are unweighted. The mean μ in the share row is the sample's, not E[μ]. Every trend is measured over n = 10–22, not proved, and nothing says how it continues.
 
 **Unchanged:** every rating.

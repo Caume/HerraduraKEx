@@ -701,6 +701,17 @@ below the diagonal (mean n - arc 4.0 -> 4.5 at n = 13..20, ~log n), so the fall 
 them only through that gap.  (A first run included 3 | n widths, where mu is identically
 0; it stalled at n = 21 and was restarted without them.)
 
+**Thirteenth pass done in v9.5.59 (SecurityProofs-10.md §11.65,
+`SecurityProofsCode/v2_gap_curve.py`):** mu along the diagonal, read from the 1319 pinned
+random keys with no new solves.  At a fixed gap n - arc mu RISES with n at the full
+random-key rate: +0.111 +/- 0.003 per bit differential, +0.065 +/- 0.002 linear over the
+keys with gap <= 4, against random keys' +0.107 / +0.061; robust to one intercept per
+(gap, t) and to the t = 0 stratum alone, and replicated on the 162 arc-drawn keys.  The
+cost of a gap bit is negative at every width and SHRINKS: -0.21 -> -0.11 per bit
+differential and -0.094 -> -0.072 linear from n = 10-11 to n = 20-22, about 13% -> 5% of
+mean mu.  So §11.64's fixed-arc fall is a bounded, shrinking cost per gap bit, and for
+typical keys every part of n = 10..22 says the width helps.
+
 **What is left:**
 
 - **The share and E[mu] past n = 22.**  §11.62 measured both at n = 22; whether lambda
@@ -708,10 +719,8 @@ them only through that gap.  (A first run included 3 | n widths, where mu is ide
   width, n = 25, needs ~7 GB per solve if memory keeps scaling with 2^n (untimed).
 - **n = 23**, and a larger n = 22 sample if the fail share matters more precisely than
   1.9% +/- 0.8% (it rests on six keys).
-- **mu along the diagonal.**  §11.64 puts typical keys at a gap n - arc of a few bits;
-  the n = 256 question is mu at a FIXED GAP as n grows (the random-key trend, read per
-  gap), and whether §11.64's fall at a fixed arc is a cost per gap bit that stays
-  bounded.  Read from the pinned keys by gap first; it may need no new solves.
+- **Whether the gap-bit cost keeps shrinking** (§11.65.2) past n = 22: it is measured,
+  not bounded, and each width at n = 20-22 holds only a few dozen keys per gap.
 
 Status: **OPEN**
 
