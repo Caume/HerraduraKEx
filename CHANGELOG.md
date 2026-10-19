@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.59] - 2026-10-19
+
+### TODO #343 (thirteenth pass) — the gap curve
+
+§11.64 put typical keys a few bits below the diagonal arc ~ n and left mu at a fixed gap
+n - arc open.  New gate `SecurityProofsCode/v2_gap_curve.py` (SecurityProofs-10.md
+§11.65) reads the gap off the 1319 pinned random keys at n = 10..22; no new solves.
+
+- **At a fixed gap, mu rises with the width at the full random-key rate:** +0.111 +/-
+  0.003 per bit differential and +0.065 +/- 0.002 linear (gap <= 4), against random
+  keys' +0.107 / +0.061.  Robust to one intercept per (gap, t) and to the t = 0 stratum
+  alone; replicated on §11.64's 162 arc-drawn keys (+0.135 / +0.069).
+- **The cost of a gap bit falls with the width:** negative at every width, -0.21 -> -0.11
+  per bit differential (8.3 SE) and -0.094 -> -0.072 linear (3.5 SE) from n = 10-11 to
+  n = 20-22; about 13% -> 5% of mean mu on both axes.  §11.64's fixed-arc fall is this
+  cost, bounded and shrinking over the measured widths.
+- Run ~3 s.  Part 10 is now §11.43-§11.65 (126 math expressions); findings gates: 102.
+  SECURITY.md's HSKE-NL-A2 row and TODO #343 are updated.  No rating changes.
+
 ## [9.5.58] - 2026-10-18
 
 ### TODO #343 (twelfth pass) — the arc curve
