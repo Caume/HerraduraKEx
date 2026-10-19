@@ -2,6 +2,31 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.58] - 2026-10-18
+
+### TODO #343 (twelfth pass) — the arc curve
+
+§11.63 found that delta's cyclic arc sets a key's margin, but every pinned sample was
+stratified on t, not on the arc.  New gate `SecurityProofsCode/v2_arc_curve.py`
+(SecurityProofs-10.md §11.64) pins a sample drawn by arc: arcs 4, 8, 12 and 16 at every
+width n = 10..22 not divisible by 3, 6 keys per cell drawn uniformly from the keys with
+that exact arc (162 keys; 2 h 13 min).  Widths divisible by 3 are skipped because M is not
+invertible there and mu is identically 0; a control solves n = 12 to show it.
+
+- **At a fixed arc, mu falls with the width:** -0.030 +/- 0.007 per bit differential and
+  -0.013 +/- 0.003 linear (4 SE), in both residue classes mod 3, and replicated on the
+  1368 earlier pinned keys with arc <= 12.  Random keys' +0.107 / +0.061 per bit is the
+  arc growing with n.  At arc 8, differential mu falls 30% from n = 10 to 22.
+- **Withdrawn:** §11.61.3's reading that a key at n = 256 is no weaker than its window
+  measured at width w (it rested on a positive fixed-window slope).
+- **At a fixed width, mu rises with the arc** (4 < 8 < 12 < 16 at every width); every
+  arc-4 key fails the deployed criterion, no arc-16 key does.
+- **Typical keys** sit a few bits below the diagonal: mean n - arc 4.0 -> 4.5 over
+  n = 13..20 (exhaustive), growing like log n.  The n = 256 question for them is still
+  the width question.
+- Run ~30 s.  Part 10 is now §11.43-§11.64 (126 math expressions); findings gates: 101.
+  SECURITY.md's HSKE-NL-A2 row and TODO #343 are updated.  No rating changes.
+
 ## [9.5.57] - 2026-10-17
 
 ### TODO #343 (eleventh pass) — the tail at n = 22, and the arc the window misses

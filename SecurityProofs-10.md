@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.63** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc
+> - **Part 10 — §11.43–§11.64** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve
 
 ---
 
@@ -1033,7 +1033,7 @@ At n = 256, every window measured here is negligible. P(w ≤ 20) is about 2^-11
 
 **Established:** keys with windows of 13–20 bits behave like ordinary keys of that many bits. Most of E[μ]'s growth with n is the window growing, and the width adds a small positive residual. Under the deployed criterion the weak class is the windows of about 12 bits or fewer, as in §11.59.
 
-**Closed as far as n ≤ 20 can close it:** windows of 13 bits or more. Above 20 bits a w-bit window is the width question at w. Because the residual width effect is not negative, a key at n = 256 is read as no weaker than a key with the same window measured at width w. That is a reading of n ≤ 20, not a bound.
+**Closed as far as n ≤ 20 can close it:** windows of 13 bits or more. Above 20 bits a w-bit window is the width question at w. Because the residual width effect is not negative, a key at n = 256 is read as no weaker than a key with the same window measured at width w. That is a reading of n ≤ 20, not a bound. §11.64.1 withdraws it: with the arc held fixed instead of the window, μ falls with n.
 
 **Unchanged:** every rating.
 
@@ -1109,5 +1109,48 @@ Counted exhaustively at n = 16, 17, 19, 20 and 22, the short-arc class (arc ≤ 
 **Corrected:** §11.59's suggested screen on tz(p) ≥ n − 12 misses most of the class. A screen should test the arc. None ships.
 
 **Caveats:** §11.63.2's counts are unweighted, because the sample is stratified on t and not on the arc.
+
+**Unchanged:** every rating.
+
+## 11.64 The arc curve — TODO #343, twelfth pass
+
+§11.63 found that the cyclic arc of δ, not the window n − tz(p), sets a key's margin. It left the arc curve open, because every pinned sample was stratified on t and not on the arc. This pass draws by the arc. For arcs 4, 8, 12 and 16 and every width n = 10–22 not divisible by 3, it draws 6 keys uniformly from the keys with exactly that arc, with distinct round constants. That is 162 keys in 27 cells, with μ and W(⌊3n/4⌋) solved on both axes. Widths divisible by 3 are left out because M is not invertible there and μ is 0 on every key; the gate checks this at n = 12. The gate is `SecurityProofsCode/v2_arc_curve.py`, and it reads the pinned file.
+
+### 11.64.1 At a fixed arc, μ falls with the width
+
+| differential μ | n = 10 | 11 | 13 | 14 | 16 | 17 | 19 | 20 | 22 |
+|---|---|---|---|---|---|---|---|---|---|
+| arc 4 | 0.81 | 1.15 | 0.90 | 1.00 | 0.84 | 0.95 | 0.68 | 0.95 | 0.80 |
+| arc 8 | 1.90 | 2.03 | 1.71 | 1.66 | 1.59 | 1.77 | 1.48 | 1.50 | 1.33 |
+| arc 12 | | | | 2.15 | 2.36 | 2.27 | 2.25 | 2.26 | 2.00 |
+| arc 16 | | | | | | | 2.80 | 2.76 | 2.71 |
+
+- **The fixed-arc slope is negative.** With one intercept per arc it is −0.030 ± 0.007 per bit differential and −0.013 ± 0.003 linear, at 4.4 and 4.0 standard errors. Random keys gain +0.107 and +0.061 per bit, so their growth with n is the arc growing with n, which more than offsets the fall.
+- **It is not a residue-class mix.** At arc 8 it falls in both classes, n ≡ 1 and n ≡ 2 (mod 3).
+- **It replicates** on the 1368 earlier pinned keys with an arc of at most 12, random and constructed: −0.025 ± 0.003 and −0.007 ± 0.001 per bit.
+- At arc 8, differential μ falls 30% from n = 10 to n = 22, and no levelling is visible.
+
+**This withdraws §11.61.3's reading** that a key at n = 256 is no weaker than a key with the same window measured at width w. That reading rested on a positive fixed-window slope, and a fixed window mixes arcs.
+
+### 11.64.2 At a fixed width, μ rises with the arc
+
+At every width the cell means rise from arc 4 to 8 to 12 to 16, on both axes. Every arc-4 key fails the deployed criterion at every width, and no arc-16 key does. The share failing is 43 and 46 of 54 at arc 8, and 6 of 36 at arc 12.
+
+### 11.64.3 Where typical keys sit
+
+| n | 13 | 14 | 16 | 17 | 19 | 20 |
+|---|---|---|---|---|---|---|
+| mean n − arc | 3.99 | 4.13 | 4.28 | 4.35 | 4.47 | 4.54 |
+| P(n − arc ≤ 3) | 0.50 | 0.48 | 0.45 | 0.43 | 0.40 | 0.38 |
+
+Counted over every key, a random key's arc falls a few bits short of n, and the gap grows the way the longest zero run of a random string does, about 0.9 bits per doubling of n. The gate prints and does not score the reading at n = 256, which is about 8 bits.
+
+**Established:** μ is set by the arc, and at a fixed arc it falls slowly with the width over n = 10–22. Random keys gain with width only because their arc grows with it.
+
+**For typical keys:** they sit near the diagonal, with an arc close to n, so §11.64.1's fall reaches them only through a gap of a few bits that grows like log n. Their n = 256 question is still the width question.
+
+**For short-arc keys:** they get weaker as the width grows at a fixed arc, so at n = 256 they are weaker than the same arc measured here. They are already the class that fails, and it weighs about 2^-121 (§11.63.3, extrapolated).
+
+**Caveats:** six keys per cell; arc 16 is measured only at n = 19, 20 and 22. The fall is a slope measured over n = 10–22, not a law.
 
 **Unchanged:** every rating.
