@@ -690,6 +690,17 @@ against 15 / 20 of 268 for a window over 12.  Counted exhaustively at n = 16..22
 short-arc class is only 2.25-3.63x the short-window class, so it stays negligible at
 n = 256 (~2^-121, extrapolated).
 
+**Twelfth pass done in v9.5.58 (SecurityProofs-10.md §11.64,
+`SecurityProofsCode/v2_arc_curve.py`):** a sample drawn BY ARC -- arcs 4, 8, 12, 16 at
+every width n = 10..22 not divisible by 3, 6 keys per cell (162 keys).  At a fixed arc mu
+FALLS with n: -0.030 +/- 0.007 per bit differential, -0.013 +/- 0.003 linear (4 SE), in
+both residue classes, and replicated on the 1368 earlier keys with arc <= 12.  This
+withdraws §11.61.3's "no weaker than its window at width w".  At a fixed width mu rises
+with the arc; every arc-4 key fails, no arc-16 key does.  Typical keys sit a few bits
+below the diagonal (mean n - arc 4.0 -> 4.5 at n = 13..20, ~log n), so the fall reaches
+them only through that gap.  (A first run included 3 | n widths, where mu is identically
+0; it stalled at n = 21 and was restarted without them.)
+
 **What is left:**
 
 - **The share and E[mu] past n = 22.**  §11.62 measured both at n = 22; whether lambda
@@ -697,10 +708,10 @@ n = 256 (~2^-121, extrapolated).
   width, n = 25, needs ~7 GB per solve if memory keeps scaling with 2^n (untimed).
 - **n = 23**, and a larger n = 22 sample if the fail share matters more precisely than
   1.9% +/- 0.8% (it rests on six keys).
-- **The arc curve.**  §11.59-§11.61 measured mu by window w = n - tz(p); §11.63 shows
-  the arc is the variable, and the pinned sample is stratified on t, not on the arc.  A
-  curve of mu by arc, and whether a fixed arc's mu grows with n, needs a sample (or a
-  construction) stratified on the arc.  §11.61's window curve past w = 20 folds into it.
+- **mu along the diagonal.**  §11.64 puts typical keys at a gap n - arc of a few bits;
+  the n = 256 question is mu at a FIXED GAP as n grows (the random-key trend, read per
+  gap), and whether §11.64's fall at a fixed arc is a cost per gap bit that stays
+  bounded.  Read from the pinned keys by gap first; it may need no new solves.
 
 Status: **OPEN**
 
