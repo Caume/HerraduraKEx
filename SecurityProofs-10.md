@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.65** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve
+> - **Part 10 — §11.43–§11.66** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23
 
 ---
 
@@ -1188,10 +1188,45 @@ At each width the gate fits the slope of μ on the gap over gaps 2–10. Gaps 0 
 - **The cost shrinks with the width.** Differential, it is −0.21 per bit at n = 10–11 and −0.11 at n = 20–22 (8.3 SE apart); linear, −0.094 and −0.072 (3.5 SE). As a share of the width's mean μ it falls by more than half on both axes, from about 13% to about 5%.
 - The gate prints and does not score one reading: at n = 22, moving a key from gap 4 to the roughly 8 bits that §11.64.3 extrapolates for n = 256 costs about 0.45 of a mean μ of 2.56 differential.
 
-**Established:** over n = 10–22, typical keys gain with width at a fixed gap at the full random-key rate. §11.64's fall at a fixed arc is the cost of a gap bit, and that cost is bounded and shrinking.
+**Established:** over n = 10–22, typical keys gain with width at a fixed gap at the full random-key rate. §11.64's fall at a fixed arc is the cost of a gap bit, and that cost is bounded and shrinking. §11.66.2 finds it flat from n = 20 to n = 23, so the shrinking is measured to n = 20.
 
 **For typical keys:** this is the most direct reading of the n = 256 question these widths allow, and every part of it says the width helps. Their gap grows like log n (§11.64.3) while the cost of each gap bit falls.
 
 **Caveats:** keys are stratified on t, not on the gap, so cell means are unweighted. The mean μ in the share row is the sample's, not E[μ]. Every trend is measured over n = 10–22, not proved, and nothing says how it continues.
+
+**Unchanged:** every rating.
+
+## 11.66 The gap at n = 23 — TODO #343, fourteenth pass
+
+§11.65 measured μ at a fixed gap n − arc only to n = 22. This pass solves the next width not divisible by 3. At n = 23, for gaps 2, 4, 6 and 8, it draws 6 keys uniformly from the keys with exactly that gap, with distinct round constants. That is 24 keys, with μ and W(⌊3n/4⌋) solved on both axes. The run took 11 h 43 min at four solves in parallel, between 32 min and 5 h 23 min per key, with up to 2.2 GB per solve. The gate is `SecurityProofsCode/v2_gap_n23.py`, and it reads the pinned file.
+
+### 11.66.1 The fixed-gap rise continues one class step
+
+| differential μ | n = 19 | 20 | 22 | 23 |
+|---|---|---|---|---|
+| gap 2 | 2.79 | 2.69 | 2.99 | 3.00 ± 0.04 |
+| gap 4 | 2.71 | 2.70 | 2.84 | 2.85 ± 0.06 |
+| gap 6 | 2.20 | 2.34 | 2.63 | 2.73 ± 0.12 |
+| gap 8 | 1.94 | 2.06 | 2.71 | 2.42 ± 0.10 |
+
+- **From n = 20 to n = 23, within one residue class mod 3, μ rises at a fixed gap.** With one intercept per gap it is +0.097 ± 0.022 per bit differential and +0.061 ± 0.013 linear, at 4.4 and 4.8 standard errors.
+- **That is in line with the n = 10–22 slope** over the same gaps, +0.122 and +0.068: within 1.2 standard errors on both axes.
+- The gate prints and does not score the single step from n = 22 to 23. It is flat within its error, −0.007 ± 0.065 and +0.011 ± 0.043 per bit. It is one bit, it crosses residue classes, and the n = 22 cells at gaps 2 and 8 hold only 3 keys each, so it resolves nothing.
+
+### 11.66.2 A gap bit still costs, and less than at small widths
+
+At n = 23 the slope of μ on the gap is −0.093 ± 0.019 differential and −0.070 ± 0.013 linear, at 4.9 and 5.6 standard errors below zero. At n = 10–11, over the same gaps, it was −0.228 and −0.107, so the cost is 6.2 and 2.7 standard errors smaller. As a share of the sample's mean μ it is 3.4% and 4.9% per bit.
+
+The gate prints and does not score how the cost compares at the widest widths. It did not shrink further from n = 22 (−0.090 and −0.069), and on the linear axis it has been flat since n = 20 (−0.072).
+
+### 11.66.3 The margin
+
+23 of the 24 keys clear the deployed criterion on both axes. The one that does not is a gap-8 key, below the bar on both axes (y = 0.97 and 0.83). The sample is drawn by gap, not by key, so that is not a population share.
+
+**Established:** at n = 23, one residue-class step past n = 20, μ at a fixed gap still rises at the rate n = 10–22 measured, and a gap bit still costs less than it did at n = 10–11.
+
+**Not established:** whether the cost of a gap bit keeps shrinking. From n = 20 to 23 it is flat within its error, so §11.65.2's shrinking is measured over n = 10–20, and past that a bounded cost is all these widths show.
+
+**Caveats:** six keys per gap at one width. E[μ] at n = 23 is not estimated, because the sample covers four gaps, not the gap distribution.
 
 **Unchanged:** every rating.

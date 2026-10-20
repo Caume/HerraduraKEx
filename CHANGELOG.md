@@ -2,6 +2,27 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.60] - 2026-10-20
+
+### TODO #343 (fourteenth pass) — the gap at n = 23
+
+§11.65 measured mu at a fixed gap n - arc only to n = 22.  New gate
+`SecurityProofsCode/v2_gap_n23.py` (SecurityProofs-10.md §11.66) pins 24 keys at n = 23,
+drawn uniformly by gap (gaps 2, 4, 6, 8; 6 keys each; 11 h 43 min at four solves in
+parallel, up to 2.2 GB each).
+
+- **The fixed-gap rise continues one class step:** n = 20 -> 23 at a fixed gap,
+  +0.097 +/- 0.022 per bit differential and +0.061 +/- 0.013 linear (4.4 / 4.8 SE), in
+  line with the n = 10..22 slope.  The single step 22 -> 23 is flat within its error
+  (printed, not scored).
+- **A gap bit still costs, less than at n = 10-11:** -0.093 / -0.070 per bit at n = 23
+  (6.2 / 2.7 SE smaller than n = 10-11), but no smaller than at n = 20-22; §11.65's
+  shrinking is measured to n = 20.
+- **Margin:** 23 of 24 keys clear the criterion on both axes; the one that does not has
+  gap 8.
+- Run ~30 s.  Part 10 is now §11.43-§11.66 (126 math expressions); findings gates: 103.
+  SECURITY.md's HSKE-NL-A2 row and TODO #343 are updated.  No rating changes.
+
 ## [9.5.59] - 2026-10-19
 
 ### TODO #343 (thirteenth pass) — the gap curve
