@@ -712,15 +712,25 @@ differential and -0.094 -> -0.072 linear from n = 10-11 to n = 20-22, about 13% 
 mean mu.  So §11.64's fixed-arc fall is a bounded, shrinking cost per gap bit, and for
 typical keys every part of n = 10..22 says the width helps.
 
+**Fourteenth pass done in v9.5.60 (SecurityProofs-10.md §11.66,
+`SecurityProofsCode/v2_gap_n23.py`):** 24 keys at n = 23 drawn by gap (2, 4, 6, 8; 6
+each), 11 h 43 min.  From n = 20 to 23, one residue-class step, mu at a fixed gap rises
++0.097 +/- 0.022 / +0.061 +/- 0.013 per bit, in line with n = 10..22.  A gap bit costs
+-0.093 / -0.070 at n = 23, less than at n = 10-11 (6.2 / 2.7 SE) but not less than at
+n = 20-22: the shrinking is measured to n = 20, and flat since.  23 of 24 keys clear the
+criterion; the one that does not is a gap-8 key.
+
 **What is left:**
 
 - **The share and E[mu] past n = 22.**  §11.62 measured both at n = 22; whether lambda
-  stays near 0.17 and E[mu] keeps rising beyond that is still unbounded.  The next class
-  width, n = 25, needs ~7 GB per solve if memory keeps scaling with 2^n (untimed).
-- **n = 23**, and a larger n = 22 sample if the fail share matters more precisely than
+  stays near 0.17 and E[mu] keeps rising beyond that is still unbounded.  E[mu] at n = 23
+  needs a key-sampled draw, not a gap-drawn one; the next class width, n = 25, is untimed:
+  peak memory went from ~0.9 GB per solve at n = 22 to 2.2 GB at n = 23, and at that
+  rate n = 25 may not fit this 16 GB host.
+- **A larger n = 22 sample** if the fail share matters more precisely than
   1.9% +/- 0.8% (it rests on six keys).
-- **Whether the gap-bit cost keeps shrinking** (§11.65.2) past n = 22: it is measured,
-  not bounded, and each width at n = 20-22 holds only a few dozen keys per gap.
+- **Whether the gap-bit cost levels or keeps falling** past n = 20 (§11.66.2: flat from
+  20 to 23 within its error).
 
 Status: **OPEN**
 
