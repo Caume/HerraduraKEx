@@ -27,6 +27,12 @@
  * subgraph G' of edges with weight <= W_u, take p = shortest paths of w - mu' from a
  * zero-weight virtual source, and raise W_u wherever W_u < mu' - p(u).  When no node
  * fails, p is feasible on the full graph and mu(G') = mu(G).
+ *
+ * MEMORY (TODO #344).  The implicit and trail modes peak at the edge pool plus the
+ * N-sized arrays.  Scratch arrays that are never live together share storage, and a
+ * stored weight is an index into a table of distinct exact doubles, so the peak is
+ * ~57 bytes per node plus 8 per edge (was ~102 plus 12): a third less at n = 19-20,
+ * at the same speed, with bit-identical output.
  */
 #include <math.h>
 #include <stdint.h>
@@ -53,10 +59,53 @@ static double DT[2][2][2][2][4];   /* [d][a][cls][ec] -> m00 m01 m10 m11 */
 static double LT[2][2][2][4];      /* [d][u][w]       -> m00 m01 m10 m11 */
 static uint32_t *Ma;
 
-/* edge pool: node u owns pool[start[u] .. start[u] + len[u]) */
-static uint32_t *ptgt;
-static double *pw8;
+/* edge pool: node u owns pool[start[u] .. start[u] + len[u]).  A weight is stored as
+ * an index into wtab, the table of distinct weights, exact doubles: the weights take
+ * few values (at most ~1200 differential and ~31 000 linear at n <= 20), so 8 bytes
+ * per edge instead of 12 and no rounding anywhere (TODO #344) */
+static uint32_t *ptgt, *pwi;
 static uint64_t pcap, pused;
+#define W8(i) (wtab[pwi[i]])
+
+static double *wtab;
+static uint32_t nwt, wtcap, *wslot, wsmask;   /* wslot: open addressing, index + 1 */
+
+static void die(const char *m);
+
+static uint32_t intern(double w)
+{
+    uint64_t b;
+    memcpy(&b, &w, sizeof b);
+    if (2 * (uint64_t)(nwt + 1) > (uint64_t)wsmask + 1) {   /* keep the load under 1/2 */
+        uint32_t cap = wsmask ? 2 * (wsmask + 1) : 1024, *ns = calloc(cap, sizeof *ns);
+        if (!ns) die("out of memory (weights)");
+        for (uint32_t i = 0; i < nwt; i++) {
+            uint64_t c;
+            memcpy(&c, &wtab[i], sizeof c);
+            uint32_t h = (uint32_t)((c * 0x9E3779B97F4A7C15ull) >> 32) & (cap - 1);
+            while (ns[h]) h = (h + 1) & (cap - 1);
+            ns[h] = i + 1;
+        }
+        free(wslot);
+        wslot = ns;
+        wsmask = cap - 1;
+    }
+    uint32_t h = (uint32_t)((b * 0x9E3779B97F4A7C15ull) >> 32) & wsmask;
+    while (wslot[h]) {
+        uint64_t c;
+        memcpy(&c, &wtab[wslot[h] - 1], sizeof c);
+        if (c == b) return wslot[h] - 1;
+        h = (h + 1) & wsmask;
+    }
+    if (nwt == wtcap) {
+        wtcap = wtcap ? 2 * wtcap : 1024;
+        wtab = realloc(wtab, wtcap * sizeof *wtab);
+        if (!wtab) die("out of memory (weights)");
+    }
+    wtab[nwt] = w;
+    wslot[h] = nwt + 1;
+    return nwt++;
+}
 static uint64_t *start;
 static uint32_t *elen;
 
@@ -67,11 +116,11 @@ static void push_edge(uint32_t t, double w)
     if (pused == pcap) {
         pcap = pcap ? pcap * 3 / 2 : (uint64_t)N * 8;
         ptgt = realloc(ptgt, pcap * sizeof *ptgt);
-        pw8 = realloc(pw8, pcap * sizeof *pw8);
-        if (!ptgt || !pw8) die("out of memory");
+        pwi = realloc(pwi, pcap * sizeof *pwi);
+        if (!ptgt || !pwi) die("out of memory");
     }
     ptgt[pused] = t;
-    pw8[pused++] = w;
+    pwi[pused++] = intern(w);
 }
 
 /* Every edge a row walk finds goes through emit(): the stored solver pushes it into
@@ -139,9 +188,9 @@ static double howard(void)
         uint64_t s0 = start[v];
         uint32_t best = 0;
         for (uint32_t j = 1; j < elen[v]; j++)
-            if (pw8[s0 + j] < pw8[s0 + best]) best = j;
+            if (W8(s0 + j) < W8(s0 + best)) best = j;
         pi[v] = ptgt[s0 + best];
-        pwp[v] = pw8[s0 + best];
+        pwp[v] = W8(s0 + best);
     }
     for (int it = 0; it < 1000000; it++) {
         memset(col, 0, N);
@@ -189,13 +238,13 @@ static double howard(void)
             for (uint32_t j = 0; j < elen[v]; j++) {
                 uint32_t b = ptgt[s0 + j];
                 double cmu = mu[b];
-                if (cmu < bmu - EPS) { bmu = cmu; bh = pw8[s0 + j] - cmu + hh[b]; bj = j; }
+                if (cmu < bmu - EPS) { bmu = cmu; bh = W8(s0 + j) - cmu + hh[b]; bj = j; }
                 else if (cmu <= bmu + EPS) {
-                    double ch = pw8[s0 + j] - cmu + hh[b];
+                    double ch = W8(s0 + j) - cmu + hh[b];
                     if (ch < bh - EPS) { bmu = cmu; bh = ch; bj = j; }
                 }
             }
-            if (bj >= 0) { pi[v] = ptgt[s0 + bj]; pwp[v] = pw8[s0 + bj]; improved = 1; }
+            if (bj >= 0) { pi[v] = ptgt[s0 + bj]; pwp[v] = W8(s0 + bj); improved = 1; }
         }
         if (!improved) {
             double m = mu[1];
@@ -224,7 +273,7 @@ static void potentials(double m)
         uint64_t s0 = start[u];
         for (uint32_t j = 0; j < elen[u]; j++) {
             uint32_t v = ptgt[s0 + j];
-            double nv = pu + pw8[s0 + j] - m;
+            double nv = pu + W8(s0 + j) - m;
             if (nv < pot[v] - 1e-12) {
                 pot[v] = nv;
                 if (++relax > budget) die("SPFA over budget: negative cycle below mu'");
@@ -268,7 +317,7 @@ static void compact(void)
         uint32_t v = order[i];
         if (start[v] != k) {
             memmove(ptgt + k, ptgt + start[v], elen[v] * sizeof *ptgt);
-            memmove(pw8 + k, pw8 + start[v], elen[v] * sizeof *pw8);
+            memmove(pwi + k, pwi + start[v], elen[v] * sizeof *pwi);
             start[v] = k;
         }
         k += elen[v];
@@ -292,7 +341,8 @@ static void compact(void)
  * so every cycle of G has mean >= mu' - TOL: the stored solver's certificate, with
  * the stored solver's tolerances, over a graph held only as G'. */
 static uint32_t *vu, *vt;
-static double *vw, mcert;
+static uint32_t *vw;                    /* weight indices, as in the pool */
+static double mcert;
 static uint64_t nv, vcap, nviol;
 
 /* the row being checked keeps its KMAX worst violators: kt/kw/kx, by excess */
@@ -301,7 +351,11 @@ static int KMAX = 4, nk;
 static uint32_t kt[KMAX_LIM];
 static double kw[KMAX_LIM], kx[KMAX_LIM];
 
-/* every violator of the pass, while they fit in N entries */
+/* every violator of the pass, while they fit in N entries.  They are not separate
+ * arrays (TODO #344): the check pass runs after howard() and potentials(), so Howard's
+ * pi, path (= potentials' q) and mu are dead while it runs, and howard() rebuilds all
+ * three from scratch.  The last pass, which leaves Howard's policy for the cycle
+ * output, has no violator and so writes none of them. */
 static uint32_t *au, *at;
 static double *aw;
 static uint64_t na;
@@ -330,7 +384,7 @@ static void push_violator(uint32_t u, uint32_t t, double w)
         vw = realloc(vw, vcap * sizeof *vw);
         if (!vu || !vt || !vw) die("out of memory (violators)");
     }
-    vu[nv] = u; vt[nv] = t; vw[nv++] = w;
+    vu[nv] = u; vt[nv] = t; vw[nv++] = intern(w);
 }
 
 /* append the violators, which the pass found in increasing u, to their rows.  The
@@ -342,8 +396,8 @@ static void merge_violators(void)
     if (tot > pcap) {
         pcap = tot + tot / 4;
         ptgt = realloc(ptgt, pcap * sizeof *ptgt);
-        pw8 = realloc(pw8, pcap * sizeof *pw8);
-        if (!ptgt || !pw8) die("out of memory");
+        pwi = realloc(pwi, pcap * sizeof *pwi);
+        if (!ptgt || !pwi) die("out of memory");
     }
     uint64_t k = nv;                      /* violators still to place: vu[0 .. k) */
     for (uint32_t u = N - 1; u >= 1; u--) {
@@ -352,10 +406,10 @@ static void merge_violators(void)
         uint64_t add = k - j, dst = start[u] + j;
         if (dst != start[u]) {
             memmove(ptgt + dst, ptgt + start[u], elen[u] * sizeof *ptgt);
-            memmove(pw8 + dst, pw8 + start[u], elen[u] * sizeof *pw8);
+            memmove(pwi + dst, pwi + start[u], elen[u] * sizeof *pwi);
         }
         memcpy(ptgt + dst + elen[u], vt + j, add * sizeof *ptgt);
-        memcpy(pw8 + dst + elen[u], vw + j, add * sizeof *pw8);
+        memcpy(pwi + dst + elen[u], vw + j, add * sizeof *pwi);
         start[u] = dst;
         elen[u] += (uint32_t)add;
         k = j;
@@ -367,10 +421,10 @@ static void merge_violators(void)
 static double solve_implicit(double *Wn, int *rounds)
 {
     double m;
-    au = malloc(N * sizeof *au); at = malloc(N * sizeof *at); aw = malloc(N * sizeof *aw);
-    if (!au || !at || !aw) die("out of memory");
+    au = pi; at = path; aw = mu;
     emit = emit_store;
     for (uint32_t v = 1; v < N; v++) build_node(v, Wn);
+    free(Wn);                             /* the implicit mode never reads it again */
     for (*rounds = 1;; (*rounds)++) {
         m = howard();
         potentials(m);
@@ -390,7 +444,11 @@ static double solve_implicit(double *Wn, int *rounds)
         fprintf(stderr, "  pass %d: |G'| = %llu, mu %.10f, %llu violators, %llu kept\n",
                 *rounds, (unsigned long long)pused, m, (unsigned long long)nviol,
                 (unsigned long long)nv);
-        if (!nviol) return m;
+        if (!nviol) {
+            free(vu); free(vt); free(vw);
+            vu = vt = NULL; vw = NULL; vcap = 0;
+            return m;
+        }
         merge_violators();
     }
 }
@@ -419,12 +477,14 @@ static void emit_relax(uint32_t u, uint32_t t, double w)
     if (x < nxt[t] && x <= tr_keep + pot[t] + 1e-9) nxt[t] = x;
 }
 
-static void trails(int R, double m)
+static void trails(int R, double m, int keep_policy)
 {
     double mlb = m - POT_SHIFT - TOL, pmin = 0.0;
     double *U = malloc((R + 2) * sizeof *U), *S = malloc((R + 2) * sizeof *S);
-    cur = malloc(N * sizeof *cur);
-    nxt = malloc(N * sizeof *nxt);
+    /* Howard's mu and hh are dead by now unless the cycle output still needs his
+     * policy (TODO #344) */
+    cur = keep_policy ? malloc(N * sizeof *cur) : mu;
+    nxt = keep_policy ? malloc(N * sizeof *nxt) : hh;
     if (!U || !S || !cur || !nxt) die("out of memory");
     for (uint32_t v = 1; v < N; v++) if (pot[v] < pmin) pmin = pot[v];
 
@@ -435,7 +495,7 @@ static void trails(int R, double m)
         for (uint32_t u = 1; u < N; u++) {
             uint64_t s0 = start[u];
             for (uint32_t j = 0; j < elen[u]; j++) {
-                double x = cur[u] + pw8[s0 + j];
+                double x = cur[u] + W8(s0 + j);
                 if (x < nxt[ptgt[s0 + j]]) nxt[ptgt[s0 + j]] = x;
             }
         }
@@ -509,12 +569,15 @@ int main(void)
     elen = calloc(N, sizeof *elen);
     pi = malloc(N * sizeof *pi); path = malloc(N * sizeof *path);
     pwp = malloc(N * sizeof *pwp); mu = malloc(N * sizeof *mu); hh = malloc(N * sizeof *hh);
-    col = malloc(N); pot = malloc(N * sizeof *pot); q = malloc(N * sizeof *q); inq = malloc(N);
+    col = malloc(N); pot = malloc(N * sizeof *pot);
+    /* Howard's path and col are scratch, dead whenever potentials() runs, so its queue
+     * and queued flags share them (TODO #344) */
+    q = path; inq = col;
     double *Wn = malloc(N * sizeof *Wn);
-    order = malloc(N * sizeof *order);
-    uint32_t *todo = malloc(N * sizeof *todo);
+    uint32_t *todo = NULL;
+    if (!implicit) { order = malloc(N * sizeof *order); todo = malloc(N * sizeof *todo); }
     if (!Ma || !stk || !start || !elen || !pi || !path || !pwp || !mu || !hh || !col ||
-        !pot || !q || !inq || !Wn || !todo || !order) die("out of memory");
+        !pot || !Wn || (!implicit && (!todo || !order))) die("out of memory");
 
     int rounds = 0;
     double m;
@@ -541,7 +604,7 @@ int main(void)
     uint64_t E = 0;
     for (uint32_t v = 1; v < N; v++) E += elen[v];
     printf("%.12f %llu %d\n", m, (unsigned long long)E, rounds);
-    if (implicit == 2) trails(R, m);
+    if (implicit == 2) trails(R, m, want_cycle);
     if (want_cycle) {
         /* Howard's final policy: a node attaining the minimum lies on (or leads into)
          * a policy cycle of that mean; walk N steps to land on the cycle itself */
