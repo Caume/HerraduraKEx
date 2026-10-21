@@ -23554,3 +23554,53 @@ Fixed in v9.5.45.  See SecurityProofs-10.md §11.52 and the new findings gate
   * **Filed:** v3's linear slope at realistic width, as TODO #257's item (3).
 
 Status: **DONE v9.5.45** — v3 has a proven differential trail bound at every width; the linear one is layer-wise only; five rows and spec/ corrected.
+
+---
+
+### #344: certified_cycle_mean.c's peak memory -- fit n = 25, and more n = 23 solves in parallel
+
+**Why.**  TODO #343's open items past n = 22 are bounded by this solver's peak memory.
+The n = 23 solves of #343's fourteenth pass peaked at 1.83 / 2.24 GB (218 / 267 bytes per
+node).  At n = 25 (2^25 nodes) that is 7.3-9 GB per solve, or more if the edge count per
+node keeps growing; on this 16 GB host that is one solve at a time at best.  At n = 23 it
+caps the pool at four solves.
+
+**Where it goes**, profiled per stage (RSS from /proc/self/statm) on an n = 20 key:
+
+- ~102 bytes per node of N-sized arrays, all resident: Ma, start, elen, Wn (24); Howard's
+  pi, path, pwp, mu, hh, col (33); potentials' pot, q, inq (13); the check pass's
+  au/at/aw (up to 16); trails()'s cur/nxt (16).
+- 12 bytes per stored edge (uint32 target + double weight), 7-14 edges per node at
+  n = 19-23 -- the largest part, 84-170 bytes per node.
+- The violator buffer is small (at most a few MB at n = 20).  The peak is the steady
+  state; there is no transient spike.
+
+**The plan**, each step leaving every mu, |G'|, round count and W(r) bit-identical:
+
+1. Share scratch arrays that are never live together: Howard's path/col with
+   potentials' q/inq; the check pass's au/at/aw with Howard's mu/hh (Howard rebuilds
+   them from scratch each call); trails()'s cur/nxt with mu/hh when no cycle is
+   wanted.  Free Wn after the implicit mode's first build.  ~102 -> ~57 bytes per node.
+2. Store each edge's weight as an index into a table of exact doubles: the differential
+   axis has at most ~1200 distinct weights at n <= 20, the linear one up to 31 196 at
+   n = 19.  12 -> 8 bytes per edge, with no rounding anywhere.
+
+**Acceptance.**  Bit-identical stdout against the current solver over a fixed case set
+(n = 10-20, both axes, the stored, implicit and trail modes, with and without the cycle,
+two K values); every gate that drives the solver still passing; the peak re-measured.
+Expected: ~150-180 bytes per node, i.e. ~1.3-1.5 GB at n = 23 (six solves at a time)
+and ~5-6 GB at n = 25 (one, perhaps two).
+
+**Not in scope.**  Regenerating edges instead of storing them: Howard and SPFA scan
+every edge many times, so each scan would become a depth-n row walk per edge.  And
+n = 25 TIME: an estimated 10-30 h per key, so even with the memory fixed an n = 25
+sample is weeks on this host; a few-key spot check is the most it allows.
+
+**Result (v9.5.61).**  Both steps done.  The 100-case set (n = 10-20, both axes, modes
+0/1/2, with and without the cycle, K = 4 and 16) is byte-identical to the old binary;
+every findings gate passes.  Peak at n = 19-20 in trail mode: 203 -> 133 and 224 -> 152
+bytes per node (-32 to -35%), same speed.  At n = 22 (gap-6 key B = 1545631): 680 ->
+423 MB differential (106 bytes per node) and 842 -> 535 MB linear (134), output
+identical, time +6% / +3%.  Projected: n = 23 ~1.2-1.5 GB, n = 25 ~4.5-5.5 GB.
+
+Status: **DONE v9.5.61** — certified_cycle_mean.c's peak memory down about a third (shared scratch arrays, edge weights as table indices), output bit-identical.

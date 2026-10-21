@@ -724,9 +724,9 @@ criterion; the one that does not is a gap-8 key.
 
 - **The share and E[mu] past n = 22.**  §11.62 measured both at n = 22; whether lambda
   stays near 0.17 and E[mu] keeps rising beyond that is still unbounded.  E[mu] at n = 23
-  needs a key-sampled draw, not a gap-drawn one; the next class width, n = 25, is untimed:
-  peak memory went from ~0.9 GB per solve at n = 22 to 2.2 GB at n = 23, and at that
-  rate n = 25 may not fit this 16 GB host.
+  needs a key-sampled draw, not a gap-drawn one; since TODO #344 an n = 23 solve should
+  peak at ~1.2-1.5 GB, i.e. six or seven in parallel.  The next class width, n = 25,
+  should fit in ~4.5-5.5 GB, but its time is an estimated 10-30 h per key.
 - **A larger n = 22 sample** if the fail share matters more precisely than
   1.9% +/- 0.8% (it rests on six keys).
 - **Whether the gap-bit cost levels or keeps falling** past n = 20 (§11.66.2: flat from

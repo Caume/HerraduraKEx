@@ -2,6 +2,28 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.61] - 2026-10-21
+
+### TODO #344 — certified_cycle_mean.c's peak memory
+
+TODO #343's open items past n = 22 were bounded by the solver's peak memory: 1.83 /
+2.24 GB per n = 23 solve (218 / 267 bytes per node), projecting to 7.3-9 GB at n = 25.
+`SecurityProofsCode/certified_cycle_mean.c` now holds about a third less, with
+bit-identical output.
+
+- **Scratch arrays share storage:** the check pass reuses Howard's pi/path/mu, the
+  potentials' queue reuses Howard's path/col, trails() reuses mu/hh when no cycle is
+  wanted, the order/todo arrays exist only in the stored mode, and Wn is freed after the
+  implicit mode's first build.  ~102 -> ~57 bytes per node.
+- **Edge weights are indices** into a hash-interned table of exact doubles (at most a
+  few tens of thousands of distinct values): 12 -> 8 bytes per stored edge, no rounding.
+- **Checked:** 100 cases (n = 10-20, both axes, modes 0/1/2, with and without the cycle,
+  K = 4 and 16) byte-identical to the old binary; all 103 findings gates pass.  Peak at
+  n = 19-20: -32 to -35%, same speed.  n = 22 (key B = 1545631): 680 -> 423 MB
+  differential, 842 -> 535 MB linear, time +6% / +3%.  Projected: n = 23 ~1.2-1.5 GB
+  (six or seven solves in parallel), n = 25 ~4.5-5.5 GB.  TODO #343's "What is left"
+  is updated.  No finding or rating changes.
+
 ## [9.5.60] - 2026-10-20
 
 ### TODO #343 (fourteenth pass) — the gap at n = 23
