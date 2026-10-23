@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.66** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23
+> - **Part 10 — §11.43–§11.67** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23
 
 ---
 
@@ -1228,5 +1228,36 @@ The gate prints and does not score how the cost compares at the widest widths. I
 **Not established:** whether the cost of a gap bit keeps shrinking. From n = 20 to 23 it is flat within its error, so §11.65.2's shrinking is measured over n = 10–20, and past that a bounded cost is all these widths show.
 
 **Caveats:** six keys per gap at one width. E[μ] at n = 23 is not estimated, because the sample covers four gaps, not the gap distribution.
+
+**Unchanged:** every rating.
+
+## 11.67 The series at n = 23 — TODO #343, fifteenth pass
+
+§11.62 measured E[μ] and the discount's share λ over a key sample at n = 22, and §11.66's n = 23 keys are drawn by gap, so they estimate neither. Since TODO #344 an n = 23 solve fits in about 1.5 GB. This pass draws a key sample at n = 23: 25 keys by key_series' rule scaled down, max(2, ⌈15 × stratum share⌉) per stratum, seed 3431, over the nine strata of t = tz(p). Each key is solved for W(1..17) = W(⌊3n/4⌋) on both axes. The run took 12 h 9 min at six solves in parallel, between 1.2 and 5.2 h per key. The gate is `SecurityProofsCode/v2_series_n23.py`, and it reads the pinned file.
+
+### 11.67.1 Fekete at a new width
+
+W is superadditive and c(r) ≤ 0 at every round of every key, on both axes (3400 pairs each). The control fires: adding 1 to W(r) breaks superadditivity at 25 of 25 keys.
+
+### 11.67.2 The class n ≡ 2 (mod 3) one step on
+
+| | n = 11 | 14 | 17 | 20 | 23 |
+|---|---|---|---|---|---|
+| E[μ] differential | 1.681 | 2.052 | 2.431 | 2.592 | 2.814 ± 0.048 |
+| E[μ] linear | 0.784 | 0.998 | 1.199 | 1.329 | 1.480 ± 0.039 |
+| below the bar, differential | 53.2% | 32.9% | 13.3% | 3.8% | 1.8% |
+| below the bar, linear | 69.9% | 34.6% | 17.1% | 5.2% | 3.5% |
+
+- **E[μ] rises from n = 20 to 23**, by 3.8 standard errors differential and 3.5 linear. The margin y* rises with it, to 1.646 and 1.712.
+- **The share holds at a sixth width.** λ(23) is 0.174 differential and 0.158 linear. Both are within 0.015 of §11.60's pooled 0.165 and 0.172, at +2.4 and −3.2 standard errors, with opposite signs as at n = 22. Both are under half the break-even share, 0.395 and 0.412.
+- **E[μ] is 1.65× and 1.71× the share-held bar** of 1.710 and 0.865.
+- **The share of keys below the bar falls**, from 3.8% and 5.2% at n = 20 to 1.8% and 3.5%. Every sampled key below it has tz(p) ≥ 6, a window of 17 bits or less: the failures left are §11.61's short windows.
+- The gate prints and does not score the class increments of E[μ]: +0.37, +0.38, +0.16, +0.22 differential and +0.21, +0.20, +0.13, +0.15 linear. The last step is larger than the one before, as in n = 22's class, so no level can be read off them. E[μ] per bit from n = 22 to 23 is +0.056 and +0.051.
+
+**Established:** at n = 23 E[μ] still rises, λ stays near 0.17, and the fail share falls, on both axes. Both residue classes the samples reach, n = 22 and n = 23, now say the same.
+
+**Not established:** whether E[μ] levels. Two classes with alternating increments do not show a limit.
+
+**Caveats:** 25 keys is thinner than n = 22's 43. The strata t ≥ 2 hold two keys each, and the fail shares rest on two and three keys. The linear λ sits 0.014 from the pooled value, inside the 0.015 tolerance but not by much. This is a measurement at n = 23, not a bound at n = 256.
 
 **Unchanged:** every rating.

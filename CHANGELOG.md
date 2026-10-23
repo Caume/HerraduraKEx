@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.62] - 2026-10-22
+
+### TODO #343 (fifteenth pass) — the series at n = 23
+
+§11.62 estimated E[mu] and the discount's share lambda over keys at n = 22; §11.66's n = 23
+keys were drawn by gap, which estimates neither.  New gate
+`SecurityProofsCode/v2_series_n23.py` (SecurityProofs-10.md §11.67) pins a 25-key sample
+at n = 23 by key_series' stratified rule (max(2, ceil(15 * stratum share)), seed 3431),
+solved for W(1..17) on both axes: 12 h 9 min at six solves in parallel, up to 1.5 GB each
+(possible since TODO #344).
+
+- **E[mu] rises from n = 20 to 23** in the class n = 2 (mod 3): 2.592 -> 2.814
+  differential (3.8 SE), 1.329 -> 1.480 linear (3.5 SE); 1.65x / 1.71x the share-held bar.
+- **The share holds at a sixth width:** lambda(23) = 0.174 / 0.158, within 0.015 of the
+  pooled 0.165 / 0.172 and under half the break-even.
+- **The fail share falls,** 3.8% / 5.2% at n = 20 -> 1.8% / 3.5%, and every sampled
+  failure has tz(p) >= 6 (a short window).  Fekete holds on every key; its control fires.
+- Run ~30 s.  Part 10 is now §11.43-§11.67 (126 math expressions); findings gates: 104.
+  SECURITY.md's HSKE-NL-A2 row and TODO #343 are updated.  No rating changes.
+
 ## [9.5.61] - 2026-10-21
 
 ### TODO #344 — certified_cycle_mean.c's peak memory
