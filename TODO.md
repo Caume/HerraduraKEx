@@ -720,13 +720,21 @@ each), 11 h 43 min.  From n = 20 to 23, one residue-class step, mu at a fixed ga
 n = 20-22: the shrinking is measured to n = 20, and flat since.  23 of 24 keys clear the
 criterion; the one that does not is a gap-8 key.
 
+**Fifteenth pass done in v9.5.62 (SecurityProofs-10.md §11.67,
+`SecurityProofsCode/v2_series_n23.py`):** 25 keys at n = 23 drawn by key (key_series'
+rule, max(2, ceil(15 * share)) over the nine t strata), 12 h 9 min at six in parallel
+after TODO #344.  E[mu] rises from n = 20 to 23, 2.592 -> 2.814 / 1.329 -> 1.480
+(3.8 / 3.5 SE); lambda(23) = 0.174 / 0.158, within 0.015 of the pooled 0.165 / 0.172;
+the fail share falls 3.8% / 5.2% -> 1.8% / 3.5%, every failure with tz(p) >= 6.  Both
+classes the samples reach (n = 22, 23) now agree.
+
 **What is left:**
 
-- **The share and E[mu] past n = 22.**  §11.62 measured both at n = 22; whether lambda
-  stays near 0.17 and E[mu] keeps rising beyond that is still unbounded.  E[mu] at n = 23
-  needs a key-sampled draw, not a gap-drawn one; since TODO #344 an n = 23 solve should
-  peak at ~1.2-1.5 GB, i.e. six or seven in parallel.  The next class width, n = 25,
-  should fit in ~4.5-5.5 GB, but its time is an estimated 10-30 h per key.
+- **Whether E[mu] levels.**  The class increments alternate rather than shrink in both
+  classes (n = 2 mod 3: +0.37 +0.38 +0.16 +0.22), so no limit can be read off them.  The
+  next class width, n = 25, should fit in ~4.5-5.5 GB, but its time is an estimated
+  10-30 h per key; a larger n = 23 sample (the strata t >= 2 hold two keys each) is the
+  cheaper refinement.
 - **A larger n = 22 sample** if the fail share matters more precisely than
   1.9% +/- 0.8% (it rests on six keys).
 - **Whether the gap-bit cost levels or keeps falling** past n = 20 (§11.66.2: flat from
