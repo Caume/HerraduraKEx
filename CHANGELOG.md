@@ -2,6 +2,23 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.63] - 2026-10-25
+
+### TODO #343 — n = 25 timed
+
+The next width of the class n = 1 (mod 3) had only an extrapolated cost (10-30 h per key,
+4.5-5.5 GB after TODO #344).  A spot check solved two keys from key_series' seeded draw at
+n = 25 (one each from the two largest strata, t = 0 and t = 1), both axes, one at a time.
+
+- **Cost:** 17.0 h and 25.7 h per key (10.4 + 6.6 h and 13.8 + 12.0 h, differential +
+  linear); peak 3.8-4.3 GB differential and 5.3-6.1 GB linear.  Two linear solves do not
+  fit side by side on a 16 GB host, so a 12-15 key n = 25 sample is ~11-14 days serial.
+- **Both keys clear the criterion** on both axes: W(18)/n = 1.73 / 0.93 and 1.61 / 0.94
+  against 1 / 0.5, with mu 2.97 / 1.60 and 3.01 / 1.58 -- above n = 23's E[mu], but two
+  keys are not an estimate, so nothing is gated or written up as a finding.
+- TODO #343's "What is left" records the measured cost.  No gate, rating or document
+  section changes.
+
 ## [9.5.62] - 2026-10-22
 
 ### TODO #343 (fifteenth pass) — the series at n = 23

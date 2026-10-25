@@ -732,9 +732,14 @@ classes the samples reach (n = 22, 23) now agree.
 
 - **Whether E[mu] levels.**  The class increments alternate rather than shrink in both
   classes (n = 2 mod 3: +0.37 +0.38 +0.16 +0.22), so no limit can be read off them.  The
-  next class width, n = 25, should fit in ~4.5-5.5 GB, but its time is an estimated
-  10-30 h per key; a larger n = 23 sample (the strata t >= 2 hold two keys each) is the
-  cheaper refinement.
+  next class width, n = 25, is now TIMED (v9.5.63 spot check, two keys from key_series'
+  seeded draw, solved one at a time): t = 0 key B = 25151637 took 10.4 h differential +
+  6.6 h linear, peaks 3.8 / 5.3 GB; t = 1 key B = 5093646 took 13.8 h + 12.0 h, peaks
+  4.3 / 6.1 GB.  Both clear the criterion (W(18)/n = 1.73 / 0.93 and 1.61 / 0.94 against
+  1 / 0.5; mu 2.97 / 1.60 and 3.01 / 1.58, above n = 23's E[mu] 2.81 / 1.48 -- two keys,
+  not an estimate).  So ~17-26 h per key, and two linear solves at ~6 GB do not fit side
+  by side on this 16 GB host: a 12-15 key n = 25 sample is ~11-14 days of serial running.
+  A larger n = 23 sample (the strata t >= 2 hold two keys each) is the cheaper refinement.
 - **A larger n = 22 sample** if the fail share matters more precisely than
   1.9% +/- 0.8% (it rests on six keys).
 - **Whether the gap-bit cost levels or keeps falling** past n = 20 (§11.66.2: flat from
