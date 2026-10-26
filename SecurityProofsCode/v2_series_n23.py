@@ -1,46 +1,50 @@
 #!/usr/bin/env python3
-"""v2_series_n23.py — TODO #343 (fifteenth pass): NL-FSCX v2 over keys at n = 23, the next
-width of the class n = 2 (mod 3).
+"""v2_series_n23.py — TODO #343 (fifteenth and sixteenth passes): NL-FSCX v2 over keys at
+n = 23, the next width of the class n = 2 (mod 3).
 
 §11.62 (v2_series_n22.py) measured E[mu] and the discount's share lambda over a key
 sample at n = 22; §11.66 solved n = 23 keys drawn by gap, which estimates neither.  Since
-TODO #344 an n = 23 solve fits in ~1.5 GB, so this pass draws a KEY sample at n = 23:
-25 keys by key_series' rule scaled down (max(2, ceil(15 * stratum share)), seed 3431)
-over the nine strata of t = tz(p), each solved for W(1..17) = W(floor(3n/4)) on both
-axes.  The run took 12 h 9 min at 6 solves in parallel (1.2-5.2 h per key, up to 1.5 GB
-each) on an aarch64 SBC.  The default run reads the pinned file, so its verdicts cannot
-flake.
+TODO #344 an n = 23 solve fits in ~1.5-2 GB, so this gate draws a KEY sample at n = 23:
+two replicates of key_series' rule scaled down (max(2, ceil(15 * stratum share)) each;
+seed 3431, then 3431 * 100 + 23 + 100000 for the second, skipping keys already drawn),
+pooled to 50 keys over the nine strata of t = tz(p), each solved for W(1..17) =
+W(floor(3n/4)) on both axes.  Each replicate took about 12 h at 6 solves in parallel
+(1.2-7.8 h per key, up to 2.1 GB each) on an aarch64 SBC.  The default run reads the
+pinned file, so its verdicts cannot flake.
 
   §1  THE SAMPLE.  The strata hold all 2^23 keys but the affine-delta ones, and the
-      pinned rows are exactly draw()'s seeded sample.
+      pinned rows are exactly draw()'s seeded sample (the first 25 are v9.5.62's).
 
   §2  FEKETE AT A NEW WIDTH.  W is superadditive and c(r) <= 0 on every round of every
-      key, both axes.  CONTROL: it FIRES on W(r) + 1 at 25 of 25 keys.
+      key, both axes.  CONTROL: it FIRES on W(r) + 1 at 46 of 50 keys.
 
   §3  THE CLASS ONE STEP ON (11, 14, 17, 20 -> 23).
-      (a) E[mu] rises, 2.592 -> 2.814 differential (3.8 SE) and 1.329 -> 1.480 linear
-          (3.5 SE), so y* rises with it: to 1.646 / 1.712.
-      (b) The share holds: lambda(23) = 0.174 / 0.158, within 0.015 of §11.60's pooled
-          0.165 / 0.172 (+2.4 / -3.2 SE, opposite signs, as at n = 22) and under half the
-          break-even 0.395 / 0.412.
+      (a) E[mu] rises, 2.592 -> 2.813 differential and 1.329 -> 1.482 linear (4.9 SE
+          each), so y* rises with it: to 1.645 / 1.713.
+      (b) The share holds: lambda(23) = 0.171 / 0.158, within 0.015 of §11.60's pooled
+          0.165 / 0.172 (+2.2 / -3.7 SE, opposite signs, as at n = 22) and under half the
+          break-even 0.395 / 0.413.
       (c) E[mu] at n = 23 is 1.65x / 1.71x the share-held bar 1.710 / 0.865.
-      (d) The share of keys below the bar falls, 3.8% / 5.2% at n = 20 -> 1.8% / 3.5%,
+      (d) The share of keys below the bar falls, 3.8% / 5.2% at n = 20 -> 1.7% / 2.6%,
           and every sampled key below it has tz(p) >= 6 (a window of 17 bits or less).
       PRINTED, NOT SCORED: the class increments of E[mu] are +0.37 +0.38 +0.16 +0.22
       (differential) and +0.21 +0.20 +0.13 +0.15 (linear): the last step is LARGER than
-      the one before, as in n = 22's class.  E[mu] per bit from n = 22: +0.056 / +0.051.
+      the one before, as in n = 22's class.  E[mu] per bit from n = 22: +0.056 / +0.052.
+      And the linear share is not noise: the second replicate left it where the first
+      put it (0.158), at -3.7 SE, so with lambda(22) = 0.161 the linear discount looks
+      to be SHRINKING with the width -- the favourable direction.
 
-  CAVEATS.  25 keys is a thinner sample than n = 22's 43: the strata t >= 2 hold two keys
-  each, the fail shares are two and three keys, and the linear lambda sits 0.014 from
-  the pooled value, inside the 0.015 tolerance but not by much.  This is still a measurement at
-  n = 23, not a bound at n = 256.
+  CAVEATS.  The linear lambda sits 0.014 from the pooled value, inside the 0.015
+  tolerance by 0.001; if the drift continues the "share holds" check will fail in the
+  favourable direction, and should then be restated, not loosened.  The fail shares rest
+  on three and four keys.  This is still a measurement at n = 23, not a bound at n = 256.
 
 Exits non-zero if a finding stops reproducing.
 
 Run:  python3 SecurityProofsCode/v2_series_n23.py [--full | --regenerate]
       default      : verdicts from the pinned file only (about 30 s; the strata of 2^23
                      keys are most of it)
-      --full       : also re-solve every pinned key (about 12 h at JOBS = 6, ~9 GB)
+      --full       : also re-solve every pinned key (about 24 h at JOBS = 6, ~9 GB)
       --regenerate : rebuild v2_series_n23.json in parallel, resumable
 """
 
@@ -64,6 +68,7 @@ K23 = 15                          # proportional allocation target at n = 23
 KMIN23 = 2                        # and the floor per stratum (2: a variance per stratum)
 JOBS = 6                          # parallel solves: ~1.2-1.5 GB each since TODO #344
 R23 = 3 * N // 4                  # W(1..17): the deployed round count
+REPS = 2                          # replicate draws, pooled: rep 0 is v9.5.62's 25 keys
 
 
 def rule(t):
@@ -101,15 +106,25 @@ CLASS2 = (11, 14, 17, 20)             # n = 2 (mod 3), n = 8 left out as in CLAS
 
 
 def draw(S=None):
-    """The seeded stratified sample at n = 23, [(t, B)]: key_series.allocation()'s
-    rule, max(KMIN23, ceil(K23 * stratum share)), with key_series' seed."""
+    """The seeded stratified sample at n = 23, [(t, B)]: REPS replicates of
+    key_series.allocation()'s rule, max(KMIN23, ceil(K23 * stratum share)).  Rep 0 is
+    key_series' seed; rep i > 0 adds 100000 * i to it and skips keys already drawn, so
+    the pooled sample is a simple random sample within each stratum."""
     S = S or KS.strata(N)
     tot = sum(len(v) for v in S.values())
-    rnd = random.Random(KS.SEED * 100 + N)
-    out = []
-    for t in sorted(S):
-        k = min(len(S[t]), max(KMIN23, math.ceil(K23 * len(S[t]) / tot)))
-        out += [(t, B) for B in rnd.sample(S[t], k)]
+    out, seen = [], set()
+    for rep in range(REPS):
+        rnd = random.Random(KS.SEED * 100 + N + 100000 * rep)
+        for t in sorted(S):
+            k = min(len(S[t]), max(KMIN23, math.ceil(K23 * len(S[t]) / tot)))
+            got = 0      # rep 0 is exactly v9.5.62's call; later reps oversample
+            for B in rnd.sample(S[t], k if rep == 0 else min(len(S[t]), 3 * k)):
+                if got == k:
+                    break
+                if B not in seen:
+                    seen.add(B)
+                    out.append((t, B))
+                    got += 1
     return out
 
 
@@ -126,6 +141,10 @@ def regenerate():
     ESL.build()
     ck = PINNED + ".partial"
     done = {}
+    if os.path.exists(PINNED):    # earlier replicates are kept, not re-solved
+        with open(PINNED) as fh:
+            for r in json.load(fh)["rows"]:
+                done[r[1]] = (r[2], r[3])
     if os.path.exists(ck):
         with open(ck) as fh:
             for ln in fh:
@@ -154,7 +173,7 @@ def regenerate():
         json.dump({"what": "TODO #343: exact v2 trail weights W(1..3n/4) at n = 23 over a "
                    "stratified key sample; rows are [stratum t, key B, [mu_diff, W_diff], "
                    "[mu_lin, W_lin]]",
-                   "seed": KS.SEED, "n": N, "k": K23, "kmin": KMIN23,
+                   "seed": KS.SEED, "n": N, "k": K23, "kmin": KMIN23, "reps": REPS,
                    "rows": [[t, B] + list(done[B]) for t, B in rows]},
                   fh, separators=(",", ":"))
     os.remove(ck)
