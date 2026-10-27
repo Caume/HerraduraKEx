@@ -73,6 +73,8 @@ exact choices list per subcommand.
 - HPKS-t: threshold Schnorr signature (4-phase protocol: commit, aggregate, respond,
   combine — see threshold-* CLI subcommands).
 - HPKS-WOTS / HPKS-XMSS: hash-based one-time / stateful many-time signatures.
+  Demo-only since TODO #346, with HFSCX-256 (zero proven margin on its compression
+  function); HSKE-NL-A1 is production-track only under a 2^64-block per-key limit.
 - OPRF / aPAKE (HPAKE): 2HashDH oblivious PRF, used to build an augmented PAKE.
 - HCRED: anonymous credentials (Stern-F signature issuance + ZKBoo presentation proof).
 - FPE / TWK: format-preserving and tweakable-wide-block encryption of a single 256-bit

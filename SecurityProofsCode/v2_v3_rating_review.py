@@ -11,9 +11,12 @@ and it covers four rows, not two: HSKE-NL-A3 and `twk --v3` were demo-only for
 exactly A2's stated reasons, on evidence at least as strong, so promoting v2 alone
 would leave SECURITY.md recommending a demo-only variant over a production-track one.
 
-  §1  THE STANDARD.  The six production-track rows #248 §2 named still rest on a
-      named conjecture with no reduction.  If any of them stops being
-      production-track, this review's consistency premise is gone and it FAILS.
+  §1  THE STANDARD.  #248 §2 named six production-track rows resting on a named
+      conjecture with no reduction.  TODO #346 demoted three of them (HFSCX-256,
+      HPKS-WOTS, HPKS-XMSS) for a FINDING -- zero proven margin on NL-FSCX v1's
+      compression function -- not for a change of standard; the other three are
+      still production-track on it.  If either stops holding, the premise is gone
+      and this gate FAILS.
 
   §2  v2, FROM THE PINNED n = 23 RECORD (v2_series_n23.json), not from prose.
       E[mu] = 2.813 / 1.482 is 1.65x / 1.71x the share-held bar 1.710 / 0.865, more
@@ -58,9 +61,10 @@ ROOT = os.path.dirname(HERE)
 FAIL = []
 NAME = {0: "differential", 1: "linear"}
 
-# The six rows #248 §2 named as production-track on a named conjecture alone.
-STANDARD = ("HSKE-NL-A1", "HFSCX-256 / HFSCX-256-DS", "HKEX-RNL", "HPKS-WOTS",
-            "HPKS-XMSS", "ZKP-RNL Σ-protocol")
+# The six rows #248 §2 named as production-track on a named conjecture alone: three
+# still are, and three were demoted by TODO #346 for a finding against NL-FSCX v1.
+STANDARD = ("HSKE-NL-A1", "HKEX-RNL", "ZKP-RNL Σ-protocol")
+DEMOTED_346 = ("HFSCX-256 / HFSCX-256-DS", "HPKS-WOTS", "HPKS-XMSS")
 
 # The four rows this review moves: SECURITY.md heading -> (spec/ id, version, the
 # numbers its conjecture must name).
@@ -128,16 +132,21 @@ def row_ok(status, row, nums):
 # ═══════════════════════════════════════════════════════════════════════════
 def section_1(rows):
     rule("§1  The standard: production-track on a named conjecture")
-    for h in STANDARD:
+    for h in STANDARD + DEMOTED_346:
         st = rows.get(h, ("(missing)", ""))[0]
-        print("    %-26s %s" % (h, st))
+        print("    %-26s %s" % (h, st[:60]))
     check(all(rows.get(h, ("",))[0].startswith("Production-track") for h in STANDARD),
-          "all six rows #248 §2 named are still production-track, none on a reduction")
+          "the three of #248 §2's six not reached by TODO #346 are still production-track, "
+          "none on a reduction")
+    check(all(rows.get(h, ("",))[0].startswith("Demo-only") and "TODO #346"
+              in rows.get(h, ("", ""))[1] for h in DEMOTED_346),
+          "the other three are demo-only for TODO #346's finding, which the row names -- "
+          "a finding against NL-FSCX v1, not a change of standard")
     print("""
   So the bar is a NAMED CONJECTURE + quantitative cryptanalysis at the criterion
-  + no known attack.  HSKE-NL-A1 meets it with NL-FSCX v1's linear axis measured
-  at n <= 10 over 64 rounds, and its own criterion not yet derived (its row says
-  so).  The question for the four rows below is whether they meet the same bar,
+  + no known attack.  HSKE-NL-A1 meets it only under a per-key data limit since
+  TODO #346 derived its criterion; HFSCX-256 met it at zero margin, which #346
+  judged not enough.  The question for the four rows below is whether they meet the same bar,
   not whether they meet a higher one.""")
 
 

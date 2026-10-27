@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.68** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review
+> - **Part 10 — §11.43–§11.69** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes
 
 ---
 
@@ -1303,3 +1303,54 @@ Neither is a bound. What erodes the v2 margin is carried, not argued away. n = 2
 **Out of scope:** HPKE-NL and HPKE-NL3, which are demo-only for Pohlig–Hellman, a reason no NL-FSCX result reaches. HSKE-Duplex and HSKE-Duplex-V3 stay research, since a sponge needs a different argument. FPE and FPE-V3 stay broken as named.
 
 **What would undo it:** a v2 measurement past n = 23 below the bar, the linear share failing in the unfavourable direction, a v3 key below 0.8 outside a negligible class, or any attack. TODO #257 carries the measurements.
+
+---
+
+## 11.69 NL-FSCX v1 in its two n/4-round modes — TODO #346
+
+§11.30.1's trail criterion was derived for a block cipher at 3n/4 rounds, and it does not transfer unexamined to the two constructions that run NL-FSCX v1 for n/4 rounds. HSKE-NL-A1 is a counter-mode PRF, and HFSCX-256 is a Davies–Meyer compression function. This section derives each mode's bar and holds v1 to it. The result is adverse. The gate is `SecurityProofsCode/v1_mode_criterion.py`: pure Python, seeded, about 10 s.
+
+### 11.69.1 The two bars
+
+The round is F_B(A) = M(A ⊕ B) ⊕ ROL(A + B, n/4). It is iterated with B held constant and no round constant. A difference β in B therefore enters every round, and a characteristic is a path over the state difference α with β held fixed.
+
+- **HFSCX-256**, h′ = E_m(h) ⊕ h. A collision of the compression function needs Δ(E) = Δ(h). The attacker chooses the message and works offline, so the bar is the birthday bound: weight at least n/2 = 128 over the 64 rounds, or 2 bits per round.
+- **HSKE-NL-A1**, ks = F_base^(n/4)(seed(base)) with base = K ⊕ nonce. A differential distinguisher needs about 2^w pairs with a fixed nonce difference, so the bar is the data handed out per key. At the full codebook that is n = 256, the bar HSKE-NL-A2 is held to, or 4 bits per round. Under a stated limit of D blocks per key it is log₂ D.
+
+### 11.69.2 The trail model fails for v1
+
+The usual model treats each round's B as fresh. In v1 the same B enters every round. For a fixed B the one-round transition probabilities are exact: a carry automaton matches brute force on 40 of 40 pairs (B, β) at n = 8. Two rounds already break the model. Of 29 pairs with a finite-weight two-round trail to a zero difference, 9 have no real two-round collision at all. So v1 is measured by exact probabilities on the real cipher, and the trail model is used only to find candidates.
+
+Small widths mislead in a second way. At n = 8–11 the rotation n/4 is 2, which lines up with M's three-bit spread. That gives a 1-bit-per-round iterate, α = ¬3 under β = ¬1, which does not exist at n = 256. The key-averaged trail runs at n = 7–11 read exactly that artifact.
+
+### 11.69.3 A width-independent iterative characteristic
+
+Take β = 2^(n−2) + 1 and α = M(2^(n−1)) = 2^(n−1) + 2^(n−2) + 1. Then α ⊕ β = 2^(n−1), so the linear part returns α. If the addition's output difference is 0, the rotation never sees a difference and the round maps α back to α.
+
+- **One round:** the addition (α, β → 0) holds with probability **exactly 1/4 for each of 256 random B** at n = 256, by the carry automaton. Averaged over random A and B on the shipped round it measures 2^−2.00.
+- **Exhaustive at n = 16:** over all 2^16 states, rounds 1 and 2 hold for exactly 1/4 and 1/16, for every B tried.
+- **The real cipher at n = 256, B fixed:** the characteristic holds r rounds with probability 4^−r to r = 9, using a model pinned to `nl_fscx_v1`. The gate checks r = 1..6 within 5 standard errors.
+- **Control:** flipping one more bit of β (β ⊕ 2) stops it iterating, 0 of 20 000.
+
+Nothing in it depends on n or on the rotation, so v1's per-round differential cost is **at most 2 bits at every width**. v2's margin came from its per-round cost growing with the width (§11.67). v1's cannot grow past 2.
+
+### 11.69.4 What it caps
+
+| mode | bar over 64 rounds | the characteristic | margin |
+|---|---|---|---|
+| HFSCX-256, semi-free-start (Δh = α, Δm = β) | 128 | 128 | **1.00×, a ceiling** |
+| HFSCX-256, collision of the hash (Δh = 0) | 128 | 128 + entry + exit; none of weight ≤ 22 within 3 rounds | unknown, at most 1.0× in the core |
+| HSKE-NL-A1, full codebook | 256 | 128 + entry from the nonce difference ROL(β, n/8) | below 1 unless entry costs over 128 |
+| HSKE-NL-A1, 2^64 blocks per key | 64 | 128 in the core alone | 2× |
+
+The semi-free-start characteristic is exactly the birthday bound. Every other path α → α only adds probability, so the true margin is at most 1.00×. That is a certificational result: the compression function is distinguishable from an ideal one at the birthday level. It is not a collision of the hash. A hash collision needs a zero chaining difference, and no entry into or exit from the core of key-averaged weight ≤ 22 within 3 rounds exists at n = 256. Longer entries were not searched.
+
+### 11.69.5 Verdict
+
+**HFSCX-256 / -DS, HPKS-WOTS and HPKS-XMSS move to demo-only.** A proven ceiling equal to the bar is not cryptanalysis at the criterion with room to spare, the bar #345 applied, and no measurement can raise it. WOTS and XMSS are this hash's security, so they move with it.
+
+The hash's KDF, MAC and random-oracle uses under a secret or fresh input are not reached, because the finding needs a chaining difference the attacker sets. Those uses are HKEX-RNL's session key, ZKP-RNL's Fiat–Shamir challenge, and the `--aead` and `.hkx` tags. Their rows keep their ratings and record what they rest on.
+
+**HSKE-NL-A1 stays production-track only under a per-key data limit of 2^64 blocks**, with the conjecture named in its row: no differential or linear distinguisher on the 64-round keystream generator has probability, or squared correlation, above 2^−64.
+
+**Not done:** v1's linear axis in these modes, and a full search for a cheaper characteristic. The 2-bit core is the least the bounded searches saw, not a proven least. **The fix** is TODO #347: more rounds, the hash on the v3 round, or breaking the core directly. Each is a wire-format break and a MAJOR version.

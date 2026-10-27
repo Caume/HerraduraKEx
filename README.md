@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v9.5.66)
+# Herradura Cryptographic Suite (v9.5.67)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -336,7 +336,7 @@ SecurityProofs-9.md                                 — formal analysis §11.37�
                                                       quenched check against exact mu; the
                                                       certified ladder to n = 20; the
                                                       exact slope to n = 23)
-SecurityProofs-10.md                                — formal analysis §11.43–§11.68 (the
+SecurityProofs-10.md                                — formal analysis §11.43–§11.69 (the
                                                       local certificate: a sound lower
                                                       bound on mu at any width, why its
                                                       window must grow with n, and the
@@ -390,7 +390,10 @@ SecurityProofs-10.md                                — formal analysis §11.43�
                                                       n = 23; and the review that
                                                       moved the v2 and v3 block-
                                                       cipher rows to production-track
-                                                      (conjectured))
+                                                      (conjectured); and NL-FSCX v1's
+                                                      1/4-per-round iterative
+                                                      characteristic, which caps its
+                                                      two n/4-round modes)
 SecurityProofs.md                                   — split index (redirects to the ten files above)
 MIGRATING.md                                        — consolidated breaking-change history and
                                                       upgrade notes

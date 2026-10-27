@@ -2,6 +2,42 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.67] - 2026-10-27
+
+### TODO #346 — NL-FSCX v1's n/4-round modes: an iterative characteristic, and three demotions
+
+TODO #346 derived the trail criterion for the two constructions that run NL-FSCX v1 for
+n/4 = 64 rounds, then held v1 to it.  The result is adverse.
+
+- **The trail model is the wrong instrument for v1.**  The same B enters every round, so at
+  n = 8 a fixed-B two-round "trail" of finite weight has zero real probability on 9 of 29
+  (B, beta) pairs.  At n = 8-11 the rotation n/4 = 2 also produces a 1-bit-per-round trail
+  that exists at no wider width.
+- **A key- and width-independent iterative characteristic.**  Take beta = 2^(n-2) + 1 and
+  alpha = M(2^(n-1)), with the addition's output difference 0.  It holds with probability
+  exactly 1/4 per round for every B (carry automaton at n = 256; 4^-r on the shipped round
+  to r = 9; exhaustive at n = 16).  So v1's per-round differential cost is at most 2 bits at
+  every width.
+- **HFSCX-256:** its compression function has a semi-free-start collision characteristic
+  (chaining difference alpha, message difference beta) at 2^-128 over 64 rounds.  That is
+  exactly the birthday bound: zero margin, and a ceiling.  It is not a collision of the hash;
+  no entry or exit of weight <= 22 within 3 rounds exists.  **HFSCX-256 / -DS, HPKS-WOTS and
+  HPKS-XMSS move to demo-only.**  HKEX-RNL's session-key KDF and ZKP-RNL's Fiat-Shamir
+  challenge use the hash in roles the finding does not reach (it needs an attacker-set
+  chaining difference).  Those rows keep their ratings and record the dependency.
+- **HSKE-NL-A1** cannot meet the full-codebook bar HSKE-NL-A2 is held to.  It stays
+  production-track **only under a per-key data limit of 2^64 blocks**, with its conjecture
+  named in its row.
+- **New gate** `SecurityProofsCode/v1_mode_criterion.py` (106 findings gates).  It pins the
+  model to the shipped `nl_fscx_v1`, shows the Markov failure, proves and measures the
+  characteristic (with a control), and holds SECURITY.md and spec/ to the verdict (with a
+  control).  `v2_v3_rating_review.py` §1 now checks the three standard rows still
+  production-track and the three demoted for this finding.
+- SecurityProofs-10.md §11.69.  spec/ statuses and notes, TUTORIAL.md and llms.txt follow the
+  new ratings.  No wire format, key or digest changes.  The fix (more rounds, the hash on
+  the v3 round, or breaking the core) would be a MAJOR wire break and is filed as TODO #347,
+  together with v1's linear axis and a fuller search.
+
 ## [9.5.66] - 2026-10-26
 
 ### TODO #345 — the v2 and v3 block-cipher rows promoted to Production-track (conjectured)

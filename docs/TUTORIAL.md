@@ -1230,7 +1230,8 @@ WOTS leaves.
 
 > **Statefulness warning:** A WOTS-F leaf key must **never** be reused. Sign
 > only one message per leaf index — reuse catastrophically breaks security.
-> XMSS-F is the recommended multi-signature variant — it tracks the Merkle tree
+> XMSS-F is the multi-signature variant to use over raw WOTS-F (both are demo-only
+> since TODO #346; see SECURITY.md) — it tracks the Merkle tree
 > so each signing call advances the leaf counter automatically. Signatures are
 > byte-for-byte interoperable across the Python, C, and Go CLIs (`CliTest/test_wots.sh`).
 
@@ -2395,7 +2396,7 @@ tool or script needs the exact wire-format string or algo tag, read the JSON, no
 
 | Protocol | Primitive | Direction |
 |----------|-----------|-----------|
-| HSKE-NL-A1 | `nl_fscx_revolve_v1` | counter-mode (one-way) |
+| HSKE-NL-A1 | `nl_fscx_revolve_v1` | counter-mode (one-way); rekey after 2^64 blocks (TODO #346) |
 | HSKE-NL-A2 | `nl_fscx_revolve_v2` / `_inv` | revolve-mode (invertible) |
 | HSKE-NL-AEAD | HSKE-NL-A1 + HFSCX-256 MAC | authenticated encryption (recommended) |
 | HKEX-RNL | Ring-LWR polynomial arithmetic | key exchange |
@@ -2413,8 +2414,8 @@ tool or script needs the exact wire-format string or algo tag, read the JSON, no
 
 | Protocol | Hard problem | Availability | Notes |
 |----------|-------------|--------------|-------|
-| HPKS-WOTS-F | Second-preimage of HFSCX-256 | C, Go, Python | One-time: one message per leaf index; reuse breaks security |
-| HPKS-XMSS-F | Second-preimage of HFSCX-256 | C, Go, Python | Multi-use: 2^h slots per master seed; persist leaf counter |
+| HPKS-WOTS-F | Second-preimage of HFSCX-256 | C, Go, Python | One-time: one message per leaf index; reuse breaks security. Demo-only since TODO #346 (the hash's compression function has zero proven margin) |
+| HPKS-XMSS-F | Second-preimage of HFSCX-256 | C, Go, Python | Multi-use: 2^h slots per master seed; persist leaf counter. Demo-only since TODO #346, with WOTS-F |
 
 ### ZKP protocols
 
