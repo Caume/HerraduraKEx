@@ -1262,3 +1262,5 @@ W is superadditive and c(r) ≤ 0 at every round of every key, on both axes (680
 **Caveats:** the strata t ≥ 2 hold four keys each, and the fail shares rest on three and four keys. The linear λ sits 0.014 from the pooled value, inside the 0.015 tolerance by 0.001. If the drift continues, the gate's "share holds" check will fail in the favourable direction, and should then be restated rather than loosened. This is a measurement at n = 23, not a bound at n = 256.
 
 **Unchanged:** every rating.
+
+**TODO #343 is closed (v9.5.65).** Its two methodology errors are corrected and re-measured on key samples through n = 23, with this section as the last pass. The questions marked "Open (TODO #343)" in §11.54–§11.67 that are still unanswered — whether E[μ] levels, the gap-bit cost past n = 20, and larger samples at n = 22 — are now tracked under TODO #257, with n = 25's measured cost (17–26 h per key).

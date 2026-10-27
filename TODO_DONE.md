@@ -23604,3 +23604,211 @@ bytes per node (-32 to -35%), same speed.  At n = 22 (gap-6 key B = 1545631): 68
 identical, time +6% / +3%.  Projected: n = 23 ~1.2-1.5 GB, n = 25 ~4.5-5.5 GB.
 
 Status: **DONE v9.5.61** — certified_cycle_mean.c's peak memory down about a third (shared scratch arrays, edge weights as table indices), output bit-identical.
+
+---
+
+### #343: TODO #257's v2 measurement methodology -- the wrong population and a dropped transient
+
+Found by an end-to-end review of how TODO #257 measures NL-FSCX v2's trail slopes
+(period_series_n19.py, period_series_n20.py and the ladders before them).  Two errors,
+both pushing the n = 256 margin UP, and one gap in the weak-key screen.
+
+1. **The wrong population.**  `draws()` samples delta uniformly over n-bit strings, but
+   a key gives delta(B) = ROL(B * ((B+1) >> 1) mod 2^n, n/4): only ~54% of deltas are
+   reachable, some by 2^(n/2) keys, and p's trailing-zero run has a heavy tail
+   (P(tz = t) ~ 2^(-t/2), against 2^-(t+1)).  Long runs make the round cheap, so the
+   key-weighted E[mu] is 2.5-7% below the uniform one (exhaustive, n = 7..13) and the
+   5th percentile far below (0.648 against 1.065 at n = 11, differential).
+2. **The criterion drops the transient.**  #257 holds the slope to mu * 3n/4 >= n (n/2
+   linear).  The deployed criterion is on the exact r-round trail W(3n/4) = mu * r + c,
+   and c is NEGATIVE for every key measured and proportional to n: c/n about -0.3
+   differential and -0.15 linear at n = 10..13.  If that holds at 192 rounds, the bars on
+   mu are about 1.70 and 0.86, not 4/3 and 2/3.
+3. **The affine class has four members**: delta in {0, 2^(n-1), 2^(n-2), 3 * 2^(n-2)};
+   the CLIs screen the first two.  Keys reach 2^(n-2) at n = 11, 14, 17, 19, 20, 22 (the
+   sample met B = 0x40, mu = 0, at n = 17), but at n = 256 -- at every n = 0 (mod 8) -- no key
+   reaches either unscreened value, so the shipped screen is complete where it is used.
+
+**First pass done in v9.5.47 (SecurityProofs-10.md §11.54,
+`SecurityProofsCode/v2_measurement_audit.py`, helper `v2_round_transient.c`):** all three
+established and gated -- a closed-form preimage count for delta (checked against brute
+force at every n <= 16), the exhaustive key-weighted comparison, the affine class and its
+n = 256 unreachability, exact W(r) beside certified mu, and the pinned series reweighted
+by preimage count (lower at 20 of 20 points).  SECURITY.md's HSKE-NL-A2 and `twk` rows
+now read their margins against the corrected bars: about 1.5x at n = 20, not 2x.
+
+**Second pass done in v9.5.48 (SecurityProofs-10.md §11.55,
+`SecurityProofsCode/key_series.py`, pinned `key_series.json`):** the period series over
+KEYS -- exhaustive to n = 13, then stratified samples (by tz(p), exact stratum weights,
+affine-delta keys excluded) of 1207 / 809 / 610 / 313 / 113 keys at n = 14 / 16 / 17 /
+19 / 20, both axes per key.  The sampler agrees with the exhaustive key average at
+n = 10, 11, 13.  E[mu] over keys rises at every step of both residue classes (5.6 SE or
+more) and sits 3-5% below the uniform-delta record at every width; at n = 19 it is
+2.507 / 1.250, 1.47x / 1.44x the corrected bars.  The share of keys below those bars
+falls at every step, to ~5% at n = 20, and the per-period increments keep shrinking
+(ratios 0.88, 0.80 differential in n = 1 mod 3).
+
+**Third pass done in v9.5.49 (SecurityProofs-10.md §11.56,
+`SecurityProofsCode/v2_implicit_solver.py`):** certified_cycle_mean.c's implicit-edge
+mode (header field 6).  It keeps only G' = the W0 graph plus the edges a certify pass
+catches; each pass re-walks every row to the stored bound mu' - p(u) and tests each edge
+against the potential at its own target.  Same mu as the stored mode on 64 fixed-seed
+solves (n = 7..17) and on 50 pinned key_series.json keys; 0.30 of the stored edges over
+the ten heaviest pinned keys.  n = 22: 225 M -> 26 M edges, 2.9 GB -> 0.7 GB
+(differential), 54 M -> 38 M (linear); n = 23 in 1.2-1.4 GB.  The linear gain shrinks
+with width (0.45 at n = 20, 0.70 at n = 22).
+
+**Fourth pass done in v9.5.50 (SecurityProofs-10.md §11.57,
+`SecurityProofsCode/v2_transient_series.py`, pinned `v2_transient_series.json`):** c/n at
+more rounds and widths.  certified_cycle_mean.c's trail mode (mode 2) computes exact
+W(1..R) without the 2^(2n) table, by a min-plus recursion pruned by the certified
+potential and an upper bound from G' (equal to v2_round_transient.c at n = 7..14).
+Over 1136 stratified keys at n = 10..19, R = 2n: c < 0 on every key; it has settled by
+the deployed round count (c(2n) within 0.016 n of c(3n/4)); but it does NOT settle in
+width -- E[c/n] -0.283 -> -0.419 differential, -0.160 -> -0.208 linear.  The bars at
+n = 19 are 1.89 / 0.94, not 1.71 / 0.87, and §11.55's E[mu] sits 1.32x above both.
+
+**Fifth pass done in v9.5.51 (SecurityProofs-10.md §11.57.4):** n = 20's 107 keys (~4 h
+on 8 cores).  E[c/n] -0.434 / -0.225, bars 1.91 / 0.97, §11.55's E[mu] 1.34x / 1.36x them.
+The discount does NOT slow: its per-bit slope is -0.0167 over n = 14..20 against -0.0104
+over n = 10..14 (differential; -0.0060 against -0.0052 linear), so c grows like n^2 over
+this range.  E[W(3n/4)]/n still rises, +0.056 / +0.037 per bit (11 / 13 SE).
+
+**Sixth pass done in v9.5.52 (SecurityProofs-10.md §11.58,
+`SecurityProofsCode/v2_key_quantiles.py`):** the deployed criterion over keys by
+QUANTILE, y = W(3n/4) / (bar * n), read from the pinned 1243 keys.  q5..q50 all rise from
+n = 10 to 20 (6.7 SE or more), the median key meets the criterion from n = 14, and the
+5-25% tail rises at the median's pace over n = 14..20 (q5 +0.061 vs +0.059 per bit
+differential); q5 reaches the bar at n = 20 (1.03 / 1.00).  The bottom does not move:
+the weakest key at every width has w = n - tz(p) <= 9, those keys stay below 0.25 of
+the bar at every width, and from n = 16 every key with w >= 10 is above it.  Exact
+weight: P(tz(p) >= 2k - 1) = 2^-k + 4^-k, so P(w <= 9) is 1.6% at n = 20, 2^-124 at
+n = 256.
+
+**Seventh pass done in v9.5.53 (SecurityProofs-10.md §11.59,
+`SecurityProofsCode/v2_short_window.py`, pinned `v2_short_window.json`):** the
+short-window class, CONSTRUCTED rather than sampled -- up to six keys with distinct
+deltas per (n, w), n = 10..20, w = 1..12, 409 keys, both axes.  With the window fixed,
+mu does not grow with n (fixed-effects slope -0.006 +/- 0.006 differential, +0.001 +/-
+0.003 linear, against +0.107 / +0.061 for random keys, 16 / 19 SE apart), so the window
+and not the width caps the per-round cost.  Every w <= 6 class has mean y < 0.75 at
+every width.  At n = 256, w <= 6 weighs 2^-126 and w <= 12 weighs 2^-123; a screen on
+tz(p) >= n - 12 would remove them at that cost (none ships).  (v9.5.57, §11.63: that
+screen misses most of the class -- it should test delta's cyclic arc instead.)
+
+**Eighth pass done in v9.5.54 (SecurityProofs-10.md §11.60,
+`SecurityProofsCode/v2_discount_share.py`):** the discount as a SHARE of the trail, read
+from the pinned 1243 keys.  c <= 0 is a theorem (W is superadditive on a fixed round
+graph, so mu = sup W(r)/r by Fekete; checked on all 505,033 pairs per axis).  The share
+lambda = -E[c/n]/E[mu] holds while E[c/n] deepens: over n = 14..20 it moves +0.0011 +/-
+0.0006 per bit differential and -0.0024 +/- 0.0007 linear, against +0.0071 / +0.0051 if
+the deepening were independent of mu -- so the deepening is mu's own growth, at
+lambda ~ 0.17.  It is an average, not a per-key law (within a width c/n = a + b mu with
+a < 0 by 6 SE or more).  In the n = 1 (mod 3) class (10, 13, 16, 19), y* = E[mu](3/4 -
+lambda)/bar rises at every step; the bar on mu is a FIXED 1.71 / 0.865 and E[mu] at
+n = 19 is 1.46x / 1.43x it.  Printed, not scored: the criterion fails at n = 256 only if
+E[mu] falls ~30% below its n = 19 value or lambda doubles to ~0.35.
+
+**Ninth pass done in v9.5.55 (SecurityProofs-10.md §11.61,
+`SecurityProofsCode/v2_long_window.py`):** windows of 13 bits and more, read from the
+pinned random sample (every stratum t < 8 is a uniform sample of window w = n - t; 8+
+keys in every cell w = 13..20) beside §11.59's constructed keys.  At a fixed window
+w = 13..20, mu grows +0.023 +/- 0.010 (differential) and +0.016 +/- 0.005 (linear) per bit,
+8 SE below random keys' +0.107 / +0.061: most of the width trend is the window growing,
+and the residual is positive.  The window curve f(w) rises block by block to 2.60 / 1.32
+at w = 17-20; every w >= 13 has mean y >= 1.21 / 1.15, and the share below the bar falls
+from 23% / 26% (w = 13-14) to 4% / 7% (w = 17-20).  At n = 256, P(w <= 20) ~ 2^-119.
+
+**Tenth pass done in v9.5.56 (SecurityProofs-10.md §11.62,
+`SecurityProofsCode/v2_series_n22.py`):** a 43-key stratified sample at n = 22, the next
+width of the n = 1 (mod 3) class, W(1..16) per key on both axes (~32 + 12 min per key at
+~0.87 GB; 6 h 17 min at seven in parallel).  Fekete's c <= 0 holds on every key.  E[mu]
+rises from n = 19, 2.492 -> 2.757 (5.1 SE) and 1.235 -> 1.430 (6.1 SE); lambda(22) =
+0.172 / 0.161, within 0.015 of the pooled 0.165 / 0.172; y* = 1.61 / 1.65, and E[mu] is
+1.61x / 1.65x the share-held bar.  The share below the bar falls to 2.3% / 2.3% (three
+keys, all tz(p) >= 6).  The class increments of E[mu] alternate (+0.22 then +0.27
+differential) rather than shrink, so §11.60.4's levelling reading is already reached at
+n = 22 and no level is visible.
+
+**Eleventh pass done in v9.5.57 (SecurityProofs-10.md §11.63,
+`SecurityProofsCode/v2_tail_n22.py`):** the n = 22 strata t >= 2 topped up to 8 keys (33
+more, a disjoint seeded draw; 4 h 04 min).  Over 76 keys E[mu] and lambda do not move, and
+the share below the bar is 1.9% +/- 0.8% on both axes (8.3% / 11.7% at n = 19).  One
+failing key has a window n - tz(p) of 18 bits but an 8-bit arc, which corrects §11.62's
+"every failure is a short window".  delta's cyclic ARC (n minus its longest cyclic zero
+run) is the variable: within a width it explains y with R^2 0.62 / 0.63 against 0.37 /
+0.38 for the window, and from n = 19 keys with an arc over 12 bits fail 3 of 237 times
+against 15 / 20 of 268 for a window over 12.  Counted exhaustively at n = 16..22 the
+short-arc class is only 2.25-3.63x the short-window class, so it stays negligible at
+n = 256 (~2^-121, extrapolated).
+
+**Twelfth pass done in v9.5.58 (SecurityProofs-10.md §11.64,
+`SecurityProofsCode/v2_arc_curve.py`):** a sample drawn BY ARC -- arcs 4, 8, 12, 16 at
+every width n = 10..22 not divisible by 3, 6 keys per cell (162 keys).  At a fixed arc mu
+FALLS with n: -0.030 +/- 0.007 per bit differential, -0.013 +/- 0.003 linear (4 SE), in
+both residue classes, and replicated on the 1368 earlier keys with arc <= 12.  This
+withdraws §11.61.3's "no weaker than its window at width w".  At a fixed width mu rises
+with the arc; every arc-4 key fails, no arc-16 key does.  Typical keys sit a few bits
+below the diagonal (mean n - arc 4.0 -> 4.5 at n = 13..20, ~log n), so the fall reaches
+them only through that gap.  (A first run included 3 | n widths, where mu is identically
+0; it stalled at n = 21 and was restarted without them.)
+
+**Thirteenth pass done in v9.5.59 (SecurityProofs-10.md §11.65,
+`SecurityProofsCode/v2_gap_curve.py`):** mu along the diagonal, read from the 1319 pinned
+random keys with no new solves.  At a fixed gap n - arc mu RISES with n at the full
+random-key rate: +0.111 +/- 0.003 per bit differential, +0.065 +/- 0.002 linear over the
+keys with gap <= 4, against random keys' +0.107 / +0.061; robust to one intercept per
+(gap, t) and to the t = 0 stratum alone, and replicated on the 162 arc-drawn keys.  The
+cost of a gap bit is negative at every width and SHRINKS: -0.21 -> -0.11 per bit
+differential and -0.094 -> -0.072 linear from n = 10-11 to n = 20-22, about 13% -> 5% of
+mean mu.  So §11.64's fixed-arc fall is a bounded, shrinking cost per gap bit, and for
+typical keys every part of n = 10..22 says the width helps.
+
+**Fourteenth pass done in v9.5.60 (SecurityProofs-10.md §11.66,
+`SecurityProofsCode/v2_gap_n23.py`):** 24 keys at n = 23 drawn by gap (2, 4, 6, 8; 6
+each), 11 h 43 min.  From n = 20 to 23, one residue-class step, mu at a fixed gap rises
++0.097 +/- 0.022 / +0.061 +/- 0.013 per bit, in line with n = 10..22.  A gap bit costs
+-0.093 / -0.070 at n = 23, less than at n = 10-11 (6.2 / 2.7 SE) but not less than at
+n = 20-22: the shrinking is measured to n = 20, and flat since.  23 of 24 keys clear the
+criterion; the one that does not is a gap-8 key.
+
+**Fifteenth pass done in v9.5.62 (SecurityProofs-10.md §11.67,
+`SecurityProofsCode/v2_series_n23.py`):** 25 keys at n = 23 drawn by key (key_series'
+rule, max(2, ceil(15 * share)) over the nine t strata), 12 h 9 min at six in parallel
+after TODO #344.  E[mu] rises from n = 20 to 23, 2.592 -> 2.814 / 1.329 -> 1.480
+(3.8 / 3.5 SE); lambda(23) = 0.174 / 0.158, within 0.015 of the pooled 0.165 / 0.172;
+the fail share falls 3.8% / 5.2% -> 1.8% / 3.5%, every failure with tz(p) >= 6.  Both
+classes the samples reach (n = 22, 23) now agree.
+
+**Sixteenth pass done in v9.5.64 (§11.67, same gate):** a second seeded replicate of
+25 keys at n = 23 (12 h 23 min), pooled to 50.  Every check still holds, with smaller
+errors: E[mu] 2.813 / 1.482 (+4.9 SE from n = 20 on both axes), lambda(23) 0.171 /
+0.158, fail share 1.7% / 2.6%.  The linear lambda did NOT regress toward the pooled 0.172:
+it is 0.014 below it at -3.7 SE, and with lambda(22) = 0.161 the linear discount looks to
+shrink with the width (favourable).  It is inside the gate's 0.015 tolerance by 0.001.
+
+**Handed to TODO #257 at closure:**
+
+- **Whether E[mu] levels.**  The class increments alternate rather than shrink in both
+  classes (n = 2 mod 3: +0.37 +0.38 +0.16 +0.22), so no limit can be read off them.  The
+  next class width, n = 25, is now TIMED (v9.5.63 spot check, two keys from key_series'
+  seeded draw, solved one at a time): t = 0 key B = 25151637 took 10.4 h differential +
+  6.6 h linear, peaks 3.8 / 5.3 GB; t = 1 key B = 5093646 took 13.8 h + 12.0 h, peaks
+  4.3 / 6.1 GB.  Both clear the criterion (W(18)/n = 1.73 / 0.93 and 1.61 / 0.94 against
+  1 / 0.5; mu 2.97 / 1.60 and 3.01 / 1.58, above n = 23's E[mu] 2.81 / 1.48 -- two keys,
+  not an estimate).  So ~17-26 h per key, and two linear solves at ~6 GB do not fit side
+  by side on this 16 GB host: a 12-15 key n = 25 sample is ~11-14 days of serial running.
+- **A larger n = 22 sample** if the fail share matters more precisely than
+  1.9% +/- 0.8% (it rests on six keys).
+- **Whether the gap-bit cost levels or keeps falling** past n = 20 (§11.66.2: flat from
+  20 to 23 within its error).
+
+**Closed in v9.5.65.**  Both methodology errors are corrected and re-measured on KEY
+samples to n = 23 (key_series to n = 20, §11.62 at n = 22, §11.67's 50 keys at n = 23):
+E[mu] over keys rises at every class step, the discount's share lambda stays near 0.17
+(the linear one now shrinking), and the keys below the corrected bars fall to 1.7% /
+2.6%, all short windows; the affine class is closed at n = 256.  The two n = 25 keys
+agree.  What remains is #257's own question -- whether the margin keeps growing with the
+width -- so the three refinements above move there.
+
+Status: **DONE v9.5.65** — v2's key population and transient corrected and re-measured to n = 23; leftovers moved to #257.
