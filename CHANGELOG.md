@@ -2,6 +2,24 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.65] - 2026-10-26
+
+### TODO #343 closed — v2's measurement methodology, re-measured to n = 23
+
+TODO #343 found two errors in how TODO #257 measured NL-FSCX v2's trail slopes: deltas
+were sampled instead of keys, and the criterion dropped the negative transient c.  Over
+sixteen passes (v9.5.47-v9.5.64, SecurityProofs-10.md §11.54-§11.67) both were corrected
+and re-measured on key samples to n = 23.  At n = 23 (50 keys), E[mu] is 2.813 / 1.482,
+1.65x / 1.71x the share-held bars, with lambda = 0.171 / 0.158 and 1.7% / 2.6% of keys
+below the bar, all short windows.  The affine class is closed at n = 256, and two n = 25
+keys agree.
+
+- **#343 is DONE and archived in TODO_DONE.md.**  Its remaining refinements are now
+  TODO #257's: whether E[mu] levels (n = 25 timed at 17-26 h per key), the linear-share
+  check that passes by 0.001 in the favourable direction, a larger n = 22 sample, and the
+  gap-bit cost past n = 20.
+- §11.67 ends with a closing note.  No gate, rating or finding changes.
+
 ## [9.5.64] - 2026-10-26
 
 ### TODO #343 (sixteenth pass) — the series at n = 23, doubled
