@@ -2,6 +2,35 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.66] - 2026-10-26
+
+### TODO #345 — the v2 and v3 block-cipher rows promoted to Production-track (conjectured)
+
+TODO #248 kept HSKE-NL-A2 and `twk` demo-only until the linear axis was measured at
+realistic width; TODO #343 has since measured both axes exactly over real keys to n = 23
+with its methodology corrected.  This review promotes **HSKE-NL-A2, `twk`, HSKE-NL-A3 and
+`twk --v3`** together, on the standard the six existing production-track rows use: a named
+conjecture, cryptanalysis at the criterion, and no known attack.  The v3 rows are included
+because they were demo-only for exactly A2's reasons on evidence at least as strong;
+promoting v2 alone would have recommended a demo-only variant over a production-track one.
+
+- **The conjectures, named in each row.**  v2: the key-averaged per-round trail cost at
+  n = 256 stays at or above 1.71 differential / 0.865 linear (at n = 23 it is 1.65x / 1.71x
+  that).  v3: the per-round linear slope stays at or above 0.8 for every key outside a
+  negligible class; its differential floor is proven.  Neither is a bound.
+- **HSKE-NL-A3 stays the variant to prefer** when security is critical: better-founded,
+  not proven.
+- **Unchanged:** both versions are deterministic; v2 keeps its affine screen and the
+  short-arc weak class is documented rather than screened; no wire format, key or
+  ciphertext changes.  HPKE-NL / HPKE-NL3, the duplex and FPE rows are out of scope.
+- **New gate** `SecurityProofsCode/v2_v3_rating_review.py` (105 findings gates): reads the
+  pinned n = 23 and v3 records, constructs v2's probability-1 one-round differential
+  (with a control), re-derives the constraints, and holds SECURITY.md and spec/ to the
+  verdict (with a control that fires on the old status).
+- `hske_nl_a2_rating_review.py` and `v2_family_rating_review.py` are marked superseded in
+  their verdicts; spec/ statuses and notes, llms.txt and TUTORIAL.md follow the new
+  ratings.  SecurityProofs-10.md §11.68; TODO #257 now notes that four ratings rest on it.
+
 ## [9.5.65] - 2026-10-26
 
 ### TODO #343 closed — v2's measurement methodology, re-measured to n = 23

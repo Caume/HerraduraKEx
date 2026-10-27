@@ -765,7 +765,7 @@ assert plaintext == recovered
 
 ### NL-FSCX v3 (the χ-hardened round)
 
-**Demo-only, like v2.** v3 is the v2 round followed by a Keccak-χ layer over the
+**Production-track (conjectured) since TODO #345, like v2's revolve mode, and the variant to prefer** — under a named conjecture, not a proof; see SECURITY.md. v3 is the v2 round followed by a Keccak-χ layer over the
 `256 = 47×5 + 3×7` row partition, at the derived `R3_VALUE = 5n/8 = 160` rounds
 (v2 uses `R_VALUE = 3n/4 = 192`). It is an *addition*: v2 is untouched, so every
 stored v2 key, ciphertext and signature keeps working, and the two are not

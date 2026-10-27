@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.67** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23
+> - **Part 10 — §11.43–§11.68** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review
 
 ---
 
@@ -1264,3 +1264,42 @@ W is superadditive and c(r) ≤ 0 at every round of every key, on both axes (680
 **Unchanged:** every rating.
 
 **TODO #343 is closed (v9.5.65).** Its two methodology errors are corrected and re-measured on key samples through n = 23, with this section as the last pass. The questions marked "Open (TODO #343)" in §11.54–§11.67 that are still unanswered — whether E[μ] levels, the gap-bit cost past n = 20, and larger samples at n = 22 — are now tracked under TODO #257, with n = 25's measured cost (17–26 h per key).
+
+---
+
+## 11.68 The v2 and v3 rating review — TODO #345
+
+TODO #248 (§11.29, `v2_family_rating_review.py`) kept HSKE-NL-A2 and `twk` demo-only. It replaced their rationale, since the absent PRP/SPRP reduction is not the standard the rest of SECURITY.md uses, and it named what would earn the promotion: the linear axis measured at realistic width, landing where the trend pointed. TODO #343 (§11.54–§11.67) then corrected two methodology errors in that measurement and re-measured both axes over real keys to n = 23. This section is the review #248 asked for. It covers four rows, not two. HSKE-NL-A3 and `twk --v3` were demo-only for exactly A2's stated reasons, on evidence at least as strong, so promoting v2 alone would have left SECURITY.md recommending a demo-only variant over a production-track one. The gate is `SecurityProofsCode/v2_v3_rating_review.py`. It reads pinned records only, and it also holds SECURITY.md and spec/ to its verdict.
+
+### 11.68.1 The standard
+
+The six rows #248 named are still production-track, and none rests on a reduction: HSKE-NL-A1, HFSCX-256 / -DS, HKEX-RNL, HPKS-WOTS, HPKS-XMSS and ZKP-RNL. Each rests on a named conjecture, cryptanalysis at its criterion, and no known attack. HSKE-NL-A1 meets that bar with NL-FSCX v1's linear axis measured at n ≤ 10 over 64 rounds, and with its own criterion not yet derived. The gate fails if any of the six stops being production-track, since the consistency argument would then be gone.
+
+### 11.68.2 The evidence
+
+| | v2 (A2, `twk`) | v3 (A3, `twk --v3`) |
+|---|---|---|
+| differential | measured: key average 2.813 ± 0.030 at n = 23, 1.65× the share-held bar 1.710, 36 SE above it | **proven**: round-level floor 4 − log₂5 = 1.6781 against a bar of 1.6, at every width (1.049×) |
+| linear | measured: key average 1.482 ± 0.024 at n = 23, 1.71× the bar 0.865, 26 SE above it | measured: every key clears 0.8; least 1.47× at n = 10 (all 1024 keys), 2.01× and 1.77× at n = 14 and 17 (sampled); median 2.08× at n = 17 |
+| trend | rose from n = 20 by 4.9 SE on both axes | least and median rose from n = 10 to 17 on the comparable partitions |
+| keys below the bar | 1.7% / 2.6%, all short-window | none measured |
+| proven against | none per round: a probability-1 one-round differential for every key | a ceiling of 1.77× on the worst key's linear margin (§11.53.3) |
+
+The gate reads v2's figures from `v2_series_n23.json` through `v2_series_n23.py`'s own estimator, and v3's from `nl_fscx_v3_linear_width.py`'s record. It constructs v2's probability-1 differential against the shipped round at n = 16: the input difference M⁻¹(2ⁿ⁻¹) leaves one round as 2ⁿ⁻¹ in 200 of 200 trials. The control is a random difference, which passes linearly in 3 of 200.
+
+### 11.68.3 The conjectures
+
+- **v2:** the key-averaged per-round trail cost at n = 256 stays at or above 1.71 differential and 0.865 linear. That allows a fall to 61% and 58% of its n = 23 value.
+- **v3:** the per-round linear trail slope at n = 256 stays at or above 0.8 for every key outside a negligible class. The differential axis needs no conjecture.
+
+Neither is a bound. What erodes the v2 margin is carried, not argued away. n = 23 to 256 is an 11× extrapolation. The discount share is a reading of eight widths, and its linear check passes by 0.001 in the favourable direction. Each class step adds less than the one before, so a level or a later turn-down is not excluded. Trails are not hulls (§11.44). The figures are key averages, and the short-arc class, about 2⁻¹²³ of keys at n = 256, stays weak at any width.
+
+### 11.68.4 Verdict
+
+**HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3` move to Production-track (conjectured), together.** #248 withheld the promotion because the binding axis had one small-width measurement and an unresolved width trend. It is now measured exactly, over keys, on both axes, to n = 23, with the errors that flattered it corrected, and the margin rose at every width. On the linear axis A2 is better covered than HSKE-NL-A1. v3's evidence is at least as strong as v2's on both axes, so its rows move too.
+
+**Unchanged:** the usage constraints. Both versions are deterministic, so embed a nonce or prefer HSKE-NL-A1 when messages share a key. v2 keeps its affine screen and leaves the short-arc class documented rather than screened, because a new refusal would make an existing `--algo` accept less. v3 has no key check. No wire format, key or ciphertext changes. HSKE-NL-A3 stays the variant to prefer when security is critical. It is better-founded, not proven: its round-level linear floor is 0.19 against 0.8.
+
+**Out of scope:** HPKE-NL and HPKE-NL3, which are demo-only for Pohlig–Hellman, a reason no NL-FSCX result reaches. HSKE-Duplex and HSKE-Duplex-V3 stay research, since a sponge needs a different argument. FPE and FPE-V3 stay broken as named.
+
+**What would undo it:** a v2 measurement past n = 23 below the bar, the linear share failing in the unfavourable direction, a v3 key below 0.8 outside a negligible class, or any attack. TODO #257 carries the measurements.

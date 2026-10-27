@@ -543,6 +543,8 @@ deepens with width, so at n = 19 the bars are 1.89 / 0.94 and the key average si
 1.3x above them.  **v9.5.51 (§11.57.4):** at n = 20, 1.91 / 0.97 and 1.34x / 1.36x; the
 deepening has not slowed.
 
+**Ratings now rest on this item (TODO #345, v9.5.66).**  HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3` are production-track under conjectures this item measures: v2's key-averaged per-round cost at n = 256 >= 1.71 / 0.865, and v3's linear slope >= 0.8.  A v2 measurement past n = 23 below the bar, the linear share failing in the unfavourable direction, or a v3 key below 0.8 outside a negligible class reopens all four.
+
 **From TODO #343, closed in v9.5.65.**  #343 re-measured everything above on key samples
 with the deployed criterion, to n = 23 (SecurityProofs-10.md §11.54-§11.67).  At n = 23
 (50 keys) E[mu] is 2.813 / 1.482, 1.65x / 1.71x the share-held bars 1.710 / 0.865, with
@@ -671,62 +673,3 @@ role appears that is neither parameter-fed nor movable.
 
 Status: **OPEN**
 
----
-
-### #345: re-review HSKE-NL-A2 and `twk` for Production-track (conjectured)
-
-**Why now.**  TODO #343 (closed v9.5.65) corrected the two methodology errors behind the
-v2 series and re-measured to n = 23 over real keys.  The row it leaves in SECURITY.md is
-still "Demo-only", and that rating was set before the corrections.  This item asks the
-rating question again with the corrected evidence.  It does **not** promote to
-"production": the row's named gap, a trail bound at realistic width, is still open, and
-the target is the label A2 held until v4.0.2.
-
-**The consistency argument.**  `v2_family_rating_review.py` §2 established that six
-production-track rows (HSKE-NL-A1, HFSCX-256, HKEX-RNL, HPKS-WOTS, HPKS-XMSS, ZKP-RNL)
-rest on named conjectures with no reduction.  HSKE-NL-A1 in particular has the same
-unbounded linear-trail axis as A2, over 64 rounds against A2's 192.  Either A2 can carry
-the same label under a named conjecture, or A1's rating needs the same review.  The
-verdict must answer both halves.
-
-**Evidence for** (SecurityProofs-10.md §11.43–§11.67):
-- the key-averaged per-round cost rises at every width to n = 23: E[μ] = 2.81
-  differential / 1.48 linear, 1.65x / 1.71x the share-held bars 1.71 / 0.865;
-- the share of keys failing the deployed criterion falls from 71% / 84% at n = 10 to
-  1.7% / 2.6% at n = 23, all of them short-window keys;
-- the weak class is characterised (short cyclic arc), about 2^-123 of keys at n = 256;
-- invariant-subspace resistance and bijectivity are proven at n = 256; no attack at
-  n = 256 is known.
-
-**Evidence against, which the verdict must carry:**
-- no bound: n = 23 to n = 256 is an 11x extrapolation, and the discount share holding at
-  about one sixth is a reading of eight widths;
-- the linear share check passes by 0.001 (TODO #257's #343 block);
-- each width step adds less than the one before, and nothing excludes a later turn-down;
-- trails are not hulls: clustering cost 10–20% of the margin at n = 16 and grows;
-- v2 has provably no per-round differential floor (a probability-1 one-round
-  differential for every key), where v3 has a proven one.
-
-**Work.**
-1. A rating-review script (gate) in the shape of `v2_family_rating_review.py`: pin the
-   model, restate both evidence lists from the pinned n = 19–23 JSON rather than from
-   prose, and decide.  If the verdict is to promote, **name the conjecture exactly**:
-   the key-averaged per-round trail cost at n = 256 stays above 1.71 differential and
-   0.865 linear (about 60% of its n = 23 value).
-2. SECURITY.md: the HSKE-NL-A2 and `twk` rows move together (§11.25.1).  Keep both usage
-   constraints (deterministic; the affine weak-key refusal) and keep "prefer HSKE-NL-A3".
-   Word the v3 recommendation as better-founded, not proven: v3's proven linear floor is
-   0.19 against a 0.8 bar (TODO #342).
-3. The short-arc class (arcs of about 12 bits or fewer): **document, do not screen.**  A
-   new CLI refusal makes an existing `--algo` accept less, which CLAUDE.md treats as
-   MAJOR; the `tz(delta(B)) >= 4` class is the precedent for documenting instead.
-4. Update what pins the current rating: `hske_nl_a2_rating_review.py` (TODO #244's
-   verdict), `v2_family_rating_review.py` §6, and `spec/check_security_md.py`'s status
-   map; re-run both gates and `check_fast.sh`.
-5. If A2 is not promoted, record why in the same gate and re-examine HSKE-NL-A1's rating
-   on the same standard.
-
-HPKE-NL is **out of scope**: it is demo-only for Pohlig–Hellman, which no v2 result
-touches.
-
-Status: **OPEN**

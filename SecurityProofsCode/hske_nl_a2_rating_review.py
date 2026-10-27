@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """hske_nl_a2_rating_review.py — TODO #244: is HSKE-NL-A2 production-track?
 
+SUPERSEDED.  TODO #245 (v5.0.0) removed the self-similarity §3 rests on, TODO #248
+replaced this verdict's rationale, and TODO #345 (v2_v3_rating_review.py) promoted
+the row back to production-track (conjectured).  Kept as the record of #244.
+
 TODO #243 reviewed `twk` for promotion and kept it demo-only, on the finding
 that `nl_fscx_revolve_v2` has no SPRP result and a self-similar structure the
 round count cannot improve.  HSKE-NL-A2 is the same permutation at the same
@@ -377,7 +381,8 @@ def main():
     section6(measured)
 
     print("\n" + SEP)
-    print("Verdict: HSKE-NL-A2 -> demo-only.  Candidate fixes are TODO #245.")
+    print("Verdict (TODO #244): HSKE-NL-A2 -> demo-only.  Candidate fixes are TODO #245.")
+    print("SUPERSEDED: TODO #345 promoted it back -- see v2_v3_rating_review.py.")
     print(SEP)
     return 0
 
