@@ -2,6 +2,27 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.64] - 2026-10-26
+
+### TODO #343 (sixteenth pass) — the series at n = 23, doubled
+
+§11.67's n = 23 key sample had two keys in each stratum t >= 2, and its linear lambda sat
+0.014 from the pooled value.  `SecurityProofsCode/v2_series_n23.py` now draws a second
+seeded replicate of 25 keys (key_series' rule again, its own seed, skipping keys already
+drawn; the first 25 are unchanged) and pools them: 50 keys, four per thin stratum.  12 h
+23 min at six solves in parallel, up to 2.1 GB each.
+
+- **Every finding holds, with smaller errors:** E[mu] 2.813 differential and 1.482 linear,
+  up 4.9 SE from n = 20 on both axes; lambda(23) = 0.171 / 0.158; keys below the bar
+  1.7% / 2.6%, all with tz(p) >= 6.
+- **The linear share is shrinking, not noisy:** the second replicate left it at 0.158,
+  now -3.7 SE from the pooled 0.172; with lambda(22) = 0.161 the linear discount looks to
+  shrink with the width, the favourable direction.  It is inside the gate's 0.015
+  tolerance by 0.001, so a further drift would fail that check favourably -- to be
+  restated, not loosened.
+- §11.67, SECURITY.md's HSKE-NL-A2 row and TODO #343 are updated.  Findings gates: 104.
+  No rating changes.
+
 ## [9.5.63] - 2026-10-25
 
 ### TODO #343 — n = 25 timed

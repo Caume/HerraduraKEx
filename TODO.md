@@ -728,6 +728,13 @@ after TODO #344.  E[mu] rises from n = 20 to 23, 2.592 -> 2.814 / 1.329 -> 1.480
 the fail share falls 3.8% / 5.2% -> 1.8% / 3.5%, every failure with tz(p) >= 6.  Both
 classes the samples reach (n = 22, 23) now agree.
 
+**Sixteenth pass done in v9.5.64 (§11.67, same gate):** a second seeded replicate of
+25 keys at n = 23 (12 h 23 min), pooled to 50.  Every check still holds, with smaller
+errors: E[mu] 2.813 / 1.482 (+4.9 SE from n = 20 on both axes), lambda(23) 0.171 /
+0.158, fail share 1.7% / 2.6%.  The linear lambda did NOT regress toward the pooled 0.172:
+it is 0.014 below it at -3.7 SE, and with lambda(22) = 0.161 the linear discount looks to
+shrink with the width (favourable).  It is inside the gate's 0.015 tolerance by 0.001.
+
 **What is left:**
 
 - **Whether E[mu] levels.**  The class increments alternate rather than shrink in both
@@ -739,7 +746,6 @@ classes the samples reach (n = 22, 23) now agree.
   1 / 0.5; mu 2.97 / 1.60 and 3.01 / 1.58, above n = 23's E[mu] 2.81 / 1.48 -- two keys,
   not an estimate).  So ~17-26 h per key, and two linear solves at ~6 GB do not fit side
   by side on this 16 GB host: a 12-15 key n = 25 sample is ~11-14 days of serial running.
-  A larger n = 23 sample (the strata t >= 2 hold two keys each) is the cheaper refinement.
 - **A larger n = 22 sample** if the fail share matters more precisely than
   1.9% +/- 0.8% (it rests on six keys).
 - **Whether the gap-bit cost levels or keeps falling** past n = 20 (§11.66.2: flat from
