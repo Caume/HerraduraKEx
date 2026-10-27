@@ -23874,3 +23874,75 @@ touches.
 **Resolution (v9.5.66).**  Scope widened before work began: HSKE-NL-A3 and `twk --v3` were demo-only for exactly A2's reasons on evidence at least as strong, so the four rows moved together (the user chose this over promoting v2 alone).  `SecurityProofsCode/v2_v3_rating_review.py` reads the pinned n = 23 and v3 records, constructs v2's probability-1 one-round differential, re-derives the constraints, and holds SECURITY.md and spec/ to its verdict (control: the row check fires on the old status).  All four rows are Production-track (conjectured), each naming its conjecture; HSKE-NL-A3 stays the variant to prefer.  The short-arc class is documented, not screened.  The #244 and #248 reviews are marked superseded.  HSKE-NL-A1 was not re-examined (item 5 applied only if A2 stayed demo-only); its own criterion remains open under #257.  SecurityProofs-10.md §11.68.
 
 Status: **DONE v9.5.66** — HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3` promoted to Production-track (conjectured) under named conjectures.
+
+---
+
+### #346: the trail criterion for the n/4-round v1 modes — HSKE-NL-A1 and HFSCX-256
+
+**Why now.**  TODO #345 (v9.5.66) promoted the v2 and v3 block-cipher rows partly on a
+consistency argument.  One of the six rows it measured them against was HSKE-NL-A1, which is
+production-track with NL-FSCX v1's linear axis measured only at n <= 10.  That makes the v1
+rows the thinnest-evidenced production-track ratings in SECURITY.md.  Five rows hang on
+NL-FSCX v1: HSKE-NL-A1, HFSCX-256 / -DS, and through the hash HPKS-WOTS, HPKS-XMSS and the
+Fiat-Shamir transforms.  Split out of TODO #257, which inherited it from #254.  It is a
+different question from #257's v2/v3 width extrapolation, and its answer can move ratings
+in either direction.
+
+**What is missing.**  The rows say it themselves: §11.30.1's per-round criterion is derived
+for a **block cipher** (codebook 2^n, 3n/4 rounds).  It does not transfer unexamined to
+- **HSKE-NL-A1**, a counter-mode PRF: ks = nl_fscx_revolve_v1(K, K XOR ctr, n/4).  The
+  attacker knows the counter differences but not K, and sees keystream, not a codebook;
+- **HFSCX-256**, a Davies-Meyer compression function at n/4 = 64 rounds.  The attacker
+  chooses message blocks.  There is no key, so the attack models are collision and
+  (second) preimage, not distinguishing.
+Both run n/4 rounds, not 3n/4.  The naive transfer, n bits of differential weight over 64
+rounds, would need about 4 bits/round differential and 2 linear.  That is a far sharper bar
+than v2's 1.71 / 0.865, against a measured v1 linear slope of 0.47–0.69 at n = 7/8/10.  If the
+naive bar were right, the v1 rows would not meet it.  So the mode-specific criterion is the
+whole question.  A second difference: **NL-FSCX v1 is not bijective in A** (collisions
+exist), so the trail framework built for v2's permutation needs checking before it is
+applied.
+
+**Work.**
+1. **Derive each mode's criterion** from its attack model, in the style of §11.30.1.  For
+   A1: what trail weight over n/4 rounds defeats a distinguisher on the keystream, given
+   known counter differences.  The data limit is per key, and so is how much of the trail
+   the attacker can actually choose.  For HFSCX-256: which trails a collision or
+   near-collision search on the DM compression function can use, and at what weight, with
+   the feed-forward and the chosen message block both accounted for.
+2. **Measure v1 against the derived bars** with the existing exact machinery, first at
+   n <= 11 and then as far as the certified solver reaches (v2 went to n = 23).  Do it
+   over keys or chaining values the way TODO #343 corrected v2's methodology: the right
+   population, and the r-round transient included.  Check the non-bijective round
+   against the solver's assumptions first.
+3. **Re-examine the five ratings** on the result, in one rating-review gate shaped like
+   `v2_v3_rating_review.py`: holding them if v1 clears its bars, naming the conjecture
+   each rests on, or downgrading.  A downgrade of HFSCX-256 carries to WOTS, XMSS and every
+   Fiat-Shamir hash, so the gate must list everything that inherits the row.
+4. If a row moves, update SECURITY.md, spec/ statuses and notes, and
+   `v2_v3_rating_review.py` §1.  That gate checks the six production-track rows; a demotion
+   there means #345's consistency premise needs restating, not just a status edit.
+
+**Not in scope:** changing v1, its round counts or the modes.  That would be a wire-format
+break with its own TODO, filed only if step 3 finds a row that cannot be held.
+
+**Resolution (v9.5.67).**  Step 2 found that the trail model is the wrong
+instrument for v1.  The same B enters every round, so a fixed-B two-round "trail" of finite
+weight has zero real probability on a third of (B, beta) pairs at n = 8.  The small widths also
+mislead: n/4 = 2 at n = 8-11 gives a 1-bit-per-round trail that exists at no wider width.
+Measuring exactly on the real cipher instead found a **key- and width-independent iterative
+characteristic**: beta = 2^(n-2) + 1, alpha = M(2^(n-1)), the addition's output difference 0,
+probability exactly 1/4 per round for every B (carry automaton at n = 256; 4^-r on the
+shipped round).  Consequences:
+- **HFSCX-256:** a semi-free-start collision characteristic of its compression function at
+  2^-128 over 64 rounds, exactly the birthday bound.  That is zero margin, and a ceiling.  It
+  is not a hash collision: there is no entry or exit of weight <= 22 within 3 rounds.
+  HFSCX-256 / -DS, HPKS-WOTS and HPKS-XMSS are now demo-only (the user's choice of three
+  offered).  HKEX-RNL and ZKP-RNL keep their ratings and record the dependency.
+- **HSKE-NL-A1:** it cannot meet a full-codebook bar, so it is production-track only under a
+  per-key limit of 2^64 blocks and a named conjecture.
+Gate `SecurityProofsCode/v1_mode_criterion.py`; SecurityProofs-10.md §11.69.  Step 4 is
+done: `v2_v3_rating_review.py` §1 now checks three standard rows plus the three demoted for
+this finding.  The fix, the linear axis and a full search are TODO #347.
+
+Status: **DONE v9.5.67** — NL-FSCX v1's 1/4-per-round iterative characteristic: HFSCX-256, WOTS, XMSS demoted; HSKE-NL-A1 held under a 2^64-block limit.

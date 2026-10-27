@@ -543,6 +543,8 @@ deepens with width, so at n = 19 the bars are 1.89 / 0.94 and the key average si
 1.3x above them.  **v9.5.51 (§11.57.4):** at n = 20, 1.91 / 0.97 and 1.34x / 1.36x; the
 deepening has not slowed.
 
+**Split out: the n/4-round v1 criterion (from #254) became TODO #346, closed in v9.5.67 with an adverse finding; its follow-up is TODO #347.**
+
 **Ratings now rest on this item (TODO #345, v9.5.66).**  HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3` are production-track under conjectures this item measures: v2's key-averaged per-round cost at n = 256 >= 1.71 / 0.865, and v3's linear slope >= 0.8.  A v2 measurement past n = 23 below the bar, the linear share failing in the unfavourable direction, or a v3 key below 0.8 outside a negligible class reopens all four.
 
 **From TODO #343, closed in v9.5.65.**  #343 re-measured everything above on key samples
@@ -670,6 +672,43 @@ without adding a shipped surface.  **This item is not closed** -- the hazard ana
 owes is owed in full if it is ever revived, and nothing above is withdrawn -- but it is
 not next, and it should not be implemented as posed.  Revisit only if a future `cli_only`
 role appears that is neither parameter-fed nor movable.
+
+Status: **OPEN**
+
+---
+
+### #347: restore a margin under NL-FSCX v1's modes — HFSCX-256 first
+
+**Why.**  TODO #346 (v9.5.67) found that NL-FSCX v1 has an iterative differential holding
+with probability exactly 1/4 per round, for every key and at every width.  With beta =
+2^(n-2) + 1 and alpha = M(2^(n-1)), the addition's output difference is 0.  So v1 costs at
+most 2 bits per round.  HFSCX-256's 64-round compression function therefore has a
+semi-free-start collision characteristic at exactly the birthday bound.  HFSCX-256 / -DS,
+HPKS-WOTS and HPKS-XMSS were demoted, and HSKE-NL-A1 was held only under a per-key limit of
+2^64 blocks.  No measurement can lift a proven ceiling; only a construction change can.
+
+**Before choosing a fix:**
+1. **A fuller search for cheaper characteristics.**  The 2-bit core is the least that
+   #346's bounded searches saw, not a proven least.  A cheaper one would lower every
+   figure below.  Candidates must be checked exactly on the real cipher, because the
+   Markov model fails for v1.
+2. **v1's linear axis in both modes**, which #346 did not measure.
+3. **The cost of a real hash collision through the core:** 128 bits plus entry plus exit.
+   No entry or exit of weight <= 22 within 3 rounds exists at n = 256, but longer ones
+   were not searched.
+
+**Candidate fixes, each a wire-format break:**
+- **More rounds.**  The core costs 2 bits per round, so the collision bar n/2 needs more
+  than n/4 rounds with margin.  At 3n/4 = 192 rounds the core costs 384 bits.  Every
+  digest, MAC, WOTS/XMSS key, signature and `.hkx` file changes.
+- **The hash on the v3 round**, whose chi layer has a proven differential floor of 1.678
+  bits per round (§11.52).  The same breaks apply, plus a new primitive dependency.
+- **Breaking the core directly**, with a round-dependent B or a nonzero constant in the
+  addition, so that (alpha, beta -> 0) stops iterating.  This must be re-measured: a
+  different core may exist.
+Whichever is chosen is a **MAJOR** version under CLAUDE.md's policy and needs a
+MIGRATING.md entry.  HSKE-NL-A1's data limit can be lifted only by the same change applied
+to the keystream generator.
 
 Status: **OPEN**
 
