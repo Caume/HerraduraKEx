@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """v2_family_rating_review.py — TODO #248: re-review the NL-FSCX v2 family ratings.
 
+SUPERSEDED in its verdict by TODO #345 (v2_v3_rating_review.py), which promoted both
+rows; the findings below still gate.
+
 TODO #245 shipped round constants and deliberately re-rated nothing.  TODO #253
 supplied the evidence #248 was gated on.  This is the review.
 
@@ -403,7 +406,12 @@ against the shipped construction rather than carried over.\n""")
 
 def section_6():
     rule("§6  Verdict")
-    print("""**HSKE-NL-A2 and `twk` both stay demo-only.  Both rationales are replaced.**
+    print("""SUPERSEDED by TODO #345 (v9.5.66, v2_v3_rating_review.py): once TODO #343 had
+measured the linear axis over keys to n = 23, the promotion this verdict names
+as earned by that measurement was made, under a named conjecture.  The verdict
+below is #248's, kept as the record.
+
+**HSKE-NL-A2 and `twk` both stay demo-only.  Both rationales are replaced.**
 
 The rating does not move, and the reason it does not move is NOT the reason
 either row currently gives.

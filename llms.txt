@@ -41,8 +41,11 @@ NL-FSCX v3 (TODO #255): the -nla3 / -duplex3 / -nl3 tags above, plus `fpe --v3` 
                   replacements: no stored artifact changes, and the two versions do
                   not interoperate.  fpe/twk take a flag rather than new subcommands
                   because both are already reached by subcommand rather than by tag.
-                  There is deliberately NO key check on any v3 path.  Demo-only, like
-                  v2 — see SECURITY.md.
+                  There is deliberately NO key check on any v3 path.  Ratings differ
+                  per tag (SECURITY.md): hske-nla3 and twk --v3 are production-track
+                  (conjectured) since TODO #345, like hske-nla2 and twk, and are the
+                  ones to prefer; hske-duplex3 is research, hpke-nl3 demo-only, and
+                  fpe --v3 broken as named.
 
 Not every identifier is valid for every subcommand — see the CLI section below for the
 exact choices list per subcommand.

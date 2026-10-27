@@ -575,37 +575,29 @@ SECURITY = {
                              "conjecture that NL-FSCX v1 is a PRF (SecurityProofs-4.md 11.3.1) -- an "
                              "assumption, not a proof.",
                        source=["TODO.md #237", "TODO_DONE.md #210"]),
-    "hske-nla2": dict(status="demo-only", quantum_resistant="conjectured",
-                       notes="NL-FSCX v2 revolve-mode symmetric encryption -- a keyed bijection, not a "
-                             "stream cipher, so there is no keystream for a known-plaintext pair to "
-                             "recover and E XOR P is not constant across messages. Two usage constraints "
-                             "are load-bearing. (1) Deterministic: the same (P, K) always gives the same "
-                             "E, so it is not IND-CPA in the multi-message sense unless the caller embeds "
-                             "a nonce or sequence number in the plaintext; prefer hske-nla1 when several "
-                             "messages share a key (SecurityProofs-4.md 11.3.2). (2) Keys with "
-                             "delta(K) in {0, 2^(n-1)} collapse the permutation to GF(2)-affine and are "
-                             "recoverable from a handful of known plaintexts; the class is about 2^-129 "
-                             "of the key space and all four CLIs refuse it via nl_v2_key_is_valid "
-                             "(SecurityProofs-7.md 11.19.2). (3) NEW in TODO #244, and the reason this "
-                             "entry was DOWNGRADED FROM production in v4.0.2: the construction is "
-                             "self-similar -- one unvaried round iterated 192 times, no round constant, "
-                             "no key schedule -- so one slid pair very nearly determines the key and the "
-                             "~2^128 birthday cost of finding one does not depend on the round count, and "
-                             "it is provably not an ideal cipher, showing ~14 fixed points (tau(192); "
-                             "measured 13.84 at n=16) where an ideal cipher shows 1. Neither is an attack "
-                             "at n=256 and A2 is not broken -- bijectivity is proven and no attack is "
-                             "known -- but the rating rested on nl_fscx_revolve_v2 being a PRP/SPRP, for "
-                             "which no result exists at any round count. TODO #243 refused to promote twk "
-                             "on identical evidence about the identical permutation, and A2 is the worse "
-                             "of the two because its key is caller-supplied. Candidate fixes (round "
-                             "constants; a prime round count, since the fixed-point excess is tau(r)) are "
-                             "TODO #245, which shipped round constants in v5.0.0 -- the "
-                             "structural objection is answered but the missing PRP/SPRP "
-                             "reduction is not, so the rating is unchanged.",
-                       source=["TODO.md #237", "TODO_DONE.md #159", "TODO_DONE.md #168",
-                               "TODO_DONE.md #244",
-                               "SecurityProofsCode/hske_nl_a2_rating_review.py",
-                               "SecurityProofs-7.md 11.25, 11.26"]),
+    "hske-nla2": dict(status="production", quantum_resistant="conjectured",
+                       notes="NL-FSCX v2 revolve-mode symmetric encryption -- a keyed bijection, not a stream "
+                             "cipher. CONJECTURE (TODO #345): the key-averaged per-round trail cost of NL-FSCX"
+                             " v2 at n = 256 stays at or above 1.71 differential and 0.865 linear (the share-"
+                             "held bars, about 60% of its value at n = 23). Promoted from demo-only by TODO "
+                             "#345 (v9.5.66), with twk, hske-nla3 and twk-v3, on the standard the other "
+                             "production-track rows use: a named conjecture, cryptanalysis at the criterion "
+                             "and no known attack. TODO #343 measured both trail axes exactly over real keys "
+                             "to n = 23 with its methodology corrected: the key average is 1.65x / 1.71x the "
+                             "bar there and rose at every width, 1.7% / 2.6% of keys sit below it, and on the "
+                             "linear axis this is better covered than hske-nla1. It is NOT a bound: n = 23 to "
+                             "256 is an 11x extrapolation, each width step adds less than the one before, "
+                             "trails are not hulls, and v2 provably has no per-round differential floor (a "
+                             "probability-1 one-round differential for every key). For security-critical use "
+                             "prefer hske-nla3. Usage constraints: (1) DETERMINISTIC -- the same (P, K) gives "
+                             "the same E, so embed a nonce or prefer hske-nla1 when several messages share a "
+                             "key (SecurityProofs-4.md 11.3.2). (2) Keys with delta(K) in {0, 2^(n-1)} "
+                             "collapse the permutation to GF(2)-affine; about 2^-129 of the key space, refused"
+                             " by all four CLIs via nl_v2_key_is_valid. The short-arc weak class (about 2^-123"
+                             " of keys at n = 256) is documented rather than screened, since a new refusal "
+                             "would make an existing --algo accept less. The self-similarity TODO #244 "
+                             "downgraded the row for was removed by TODO #245's round constants (v5.0.0).",
+                       source=["TODO_DONE.md #345", "TODO_DONE.md #343", "TODO_DONE.md #244", "TODO_DONE.md #248", "SecurityProofsCode/hske_nl_a2_rating_review.py", "SecurityProofs-7.md 11.25, 11.26", "SecurityProofsCode/v2_v3_rating_review.py", "SecurityProofs-10.md 11.68", "SECURITY.md"]),
     "hske-duplex": dict(status="research", quantum_resistant="conjectured",
                        notes="Arbitrary-length single-pass AEAD: a MonkeyDuplex-style sponge using "
                              "nl_fscx_revolve_v2 as the permutation (TODO #95 Option 2). Reclassified from "
@@ -711,53 +703,39 @@ SECURITY = {
                                "herradura.h fpe_encrypt", "herradura/herradura.go FpeEncrypt",
                                "SecurityProofsCode/rand_fpe_twk_analysis.py",
                                "SECURITY.md", "SecurityProofs-7.md 11.24"]),
-    "twk":       dict(status="demo-only", quantum_resistant="conjectured",
-                       notes="Per-(sector, block-index) tweaked 256-bit permutation, reached "
-                             "through the `twk` subcommand rather than an --algo tag. The shape is "
-                             "right for disk encryption and determinism per tweak is the expected "
-                             "XTS-style property, not a defect. Three things keep it below "
-                             "production. TODO #242 (v4.0.0) closed all three of the blockers "
-                             "TODO #241 recorded: it is now domain-separated from fpe with tag "
-                             "0x21 rather than sharing an unseparated HFSCX-256(key || tweak) "
-                             "derivation, the key||tweak boundary is length-encoded, and it runs "
-                             "nl_fscx_revolve_v2 at R_VALUE=192 rather than I_VALUE=64, matching "
-                             "HSKE-NL-A2. What keeps it demo-only is now the absence of a positive "
-                             "result rather than a defect list: no reduction to a standard "
-                             "tweakable-cipher security definition (no STPRP argument), and "
-                             "NL-FSCX v2's security is conjectural with only key-averaged trail "
-                             "bounds behind it. TODO #243 reviewed it for promotion and KEPT it "
-                             "demo-only: in the random-oracle model twk is an STPRP exactly if "
-                             "nl_fscx_revolve_v2 is an SPRP under a uniform key, and no such result "
-                             "exists -- the permutation is one unvaried round iterated 192 times "
-                             "with no round constant and no key schedule, so one slid pair "
-                             "determines the key and the ~2^128 cost of finding one does not "
-                             "depend on the round count. twk is nonetheless stronger than "
-                             "HSKE-NL-A2 on three axes because its subkey is a hash output: key "
-                             "recovery is confined to one block, the degenerate affine class is "
-                             "unreachable, and per-tweak determinism is expected rather than a "
-                             "constraint. That contains the blast radius of an unproven assumption "
-                             "without replacing the missing proof. A2 carries the same assumption "
-                             "at production-track with worse failure consequences; re-rating A2 is "
-                             "TODO #244. Wire-format breaking in v4.0.0 -- every earlier twk "
-                             "ciphertext is undecryptable, silently; see MIGRATING.md section 8.",
-                       source=["Herradura cryptographic suite.py twk_encrypt/twk_decrypt",
-                               "herradura.h twk_encrypt", "herradura/herradura.go TwkEncrypt",
-                               "SecurityProofsCode/rand_fpe_twk_analysis.py",
-                               "SecurityProofsCode/twk_stprp_review.py",
-                               "SECURITY.md", "SecurityProofs-7.md 11.24, 11.25"]),
-    "hske-nla3": dict(status="demo-only", quantum_resistant="conjectured",
-                       notes="NL-FSCX v3 revolve-mode symmetric encryption -- hske-nla2's shape over "
-                             "the v3 round. The NL-FSCX v3 round is the deployed v2 round followed by a Keccak-chi layer over 47 five-bit and 3 seven-bit rows, at R3_VALUE = 5n/8 = 160 rounds (TODO #255). It is ADDED alongside v2, not a replacement: no stored artifact changes and the v2 tag keeps working. Its margin is wider than v2's and for the first time in this family it rests in part on a PROOF -- chi gives the round an unconditional per-round DIFFERENTIAL floor of 4 - log2(5) = 1.6781 bits, a bound on the round's own DDT entry, which clears v3's own bar of 1.6 (256 bits over 160 rounds) at every width, so v3 has a proven differential trail bound at n = 256 (at 1.05x) where v2 provably has none (its linear-then-add-constant round hands every key a probability-1 one-round differential). The 1-bit LINEAR floor is layer-wise only: the round's own proven linear floor is 0.1926 bits, below the 0.8 bar (TODO #342, SecurityProofs-10.md 11.52). There is deliberately NO key check: both v2 weak classes dissolve under chi and there is no chi-specific class to screen, proven exhaustively rather than sampled (SecurityProofs-8.md 11.34.4). IT ARRIVES DEMO-ONLY ANYWAY, and that is the point of the rating: v3 still has no PRP/SPRP reduction, and no LINEAR trail bound at realistic width -- its exact asymptotic linear slope clears 0.8 for every key at n = 10 (least 1.47x) and every sampled key at n = 14 and 17 (TODO #257 item 3), but those are small widths, not a bound; the margin has a proven ceiling, since the LSB row receives no carry and its cycles cost the same at every width, capping the worst key's linear slope at 1.415, at most 1.77x the bar at n = 256 (SecurityProofs-10.md §11.53) -- and differential hulls are not covered. A wider margin is not a promotion. "
-                             "hske-nla2's two usage constraints carry over unchanged except the "
-                             "weak-key one: it is still DETERMINISTIC (same (P, K) gives the same E, "
-                             "so embed a nonce or prefer hske-nla1 when several messages share a "
-                             "key), and self-similarity is answered by v2's round constant, which v3 "
-                             "inherits verbatim -- an XOR round constant leaves xdp+ exactly "
-                             "invariant (TODO #245). The affine-weak-key refusal is GONE because the "
-                             "class is gone.",
-                       source=["TODO.md #255", "SecurityProofs-8.md 11.34",
-                               "SecurityProofsCode/nl_fscx_v3_round_count.py",
-                               "SecurityProofsCode/nl_fscx_v3_weak_keys.py"]),
+    "twk":       dict(status="production", quantum_resistant="conjectured",
+                       notes="Per-(sector, block-index) tweaked 256-bit permutation, reached through the `twk`"
+                             " subcommand rather than an --algo tag; per-tweak determinism is the expected "
+                             "XTS-style property. Domain-separated from fpe with tag 0x21, length-encoded "
+                             "key||tweak, nl_fscx_revolve_v2 at R_VALUE=192 (TODO #242). In the random-oracle "
+                             "model twk is an STPRP exactly if nl_fscx_revolve_v2 is an SPRP under a uniform "
+                             "key, so it moves with hske-nla2: promoted from demo-only by TODO #345 (v9.5.66) "
+                             "under the same CONJECTURE (TODO #345): the key-averaged per-round trail cost of "
+                             "NL-FSCX v2 at n = 256 stays at or above 1.71 differential and 0.865 linear (the "
+                             "share-held bars, about 60% of its value at n = 23). It is not a bound; see hske-"
+                             "nla2. Its subkey is a hash output, so key recovery is confined to one block and "
+                             "the affine class is unreachable. Prefer twk-v3 when security is critical. Wire-"
+                             "format breaking in v4.0.0; see MIGRATING.md section 8.",
+                       source=["Herradura cryptographic suite.py twk_encrypt/twk_decrypt", "herradura.h twk_encrypt", "herradura/herradura.go TwkEncrypt", "SecurityProofsCode/rand_fpe_twk_analysis.py", "SecurityProofsCode/twk_stprp_review.py", "SecurityProofsCode/v2_v3_rating_review.py", "SecurityProofs-10.md 11.68", "SECURITY.md"]),
+    "hske-nla3": dict(status="production", quantum_resistant="conjectured",
+                       notes="NL-FSCX v3 revolve-mode symmetric encryption -- hske-nla2's shape over the v3 "
+                             "round: the deployed v2 round followed by a Keccak-chi layer over 47 five-bit and"
+                             " 3 seven-bit rows, at R3_VALUE = 5n/8 = 160 rounds (TODO #255). Added alongside "
+                             "v2, not a replacement. CONJECTURE (TODO #345): the per-round linear trail slope "
+                             "of NL-FSCX v3 at n = 256 stays at or above its bar of 0.8 for every key outside "
+                             "a negligible class; the differential floor 4 - log2(5) = 1.6781 >= 1.6 is "
+                             "PROVEN. Promoted from demo-only by TODO #345 (v9.5.66), with hske-nla2, twk and "
+                             "twk-v3. Every key measured clears 0.8 (least 1.47x at n = 10, exhaustive; 2.01x "
+                             "and 1.77x in sample at n = 14 and 17) and the median key at n = 17 is above v2's"
+                             " key average at n = 23, so the evidence is at least as strong as v2's on both "
+                             "axes; promoting v2 alone would have recommended a demo-only variant over a "
+                             "production-track one. Better-founded, not proven: the round's own linear floor "
+                             "is 0.1926 bits, below 0.8 (TODO #342), and a proven LSB-row ceiling caps the "
+                             "worst key's linear margin at 1.77x (SecurityProofs-10.md 11.53). The variant to "
+                             "prefer when security is critical. Still DETERMINISTIC (embed a nonce or prefer "
+                             "hske-nla1 when messages share a key); there is deliberately NO key check, since "
+                             "both v2 weak classes dissolve under chi (SecurityProofs-8.md 11.34.4).",
+                       source=["TODO_DONE.md #345", "TODO.md #255", "SecurityProofs-8.md 11.34", "SecurityProofsCode/nl_fscx_v3_weak_keys.py", "SecurityProofsCode/nl_fscx_v3_linear_width.py", "SecurityProofsCode/v2_v3_rating_review.py", "SecurityProofs-10.md 11.68"]),
     "hske-duplex3": dict(status="research", quantum_resistant="conjectured",
                        notes="hske-duplex's MonkeyDuplex sponge over the v3 permutation, with its own "
                              "domain-separation strings and its own format tag (4, against v2's 3), so "
@@ -810,22 +788,18 @@ SECURITY = {
                              "The NL-FSCX v3 round is the deployed v2 round followed by a Keccak-chi layer over 47 five-bit and 3 seven-bit rows, at R3_VALUE = 5n/8 = 160 rounds (TODO #255). It is ADDED alongside v2, not a replacement: no stored artifact changes and the v2 tag keeps working. Its margin is wider than v2's and for the first time in this family it rests in part on a PROOF -- chi gives the round an unconditional per-round DIFFERENTIAL floor of 4 - log2(5) = 1.6781 bits, a bound on the round's own DDT entry, which clears v3's own bar of 1.6 (256 bits over 160 rounds) at every width, so v3 has a proven differential trail bound at n = 256 (at 1.05x) where v2 provably has none (its linear-then-add-constant round hands every key a probability-1 one-round differential). The 1-bit LINEAR floor is layer-wise only: the round's own proven linear floor is 0.1926 bits, below the 0.8 bar (TODO #342, SecurityProofs-10.md 11.52). There is deliberately NO key check: both v2 weak classes dissolve under chi and there is no chi-specific class to screen, proven exhaustively rather than sampled (SecurityProofs-8.md 11.34.4). IT ARRIVES DEMO-ONLY ANYWAY, and that is the point of the rating: v3 still has no PRP/SPRP reduction, and no LINEAR trail bound at realistic width -- its exact asymptotic linear slope clears 0.8 for every key at n = 10 (least 1.47x) and every sampled key at n = 14 and 17 (TODO #257 item 3), but those are small widths, not a bound; the margin has a proven ceiling, since the LSB row receives no carry and its cycles cost the same at every width, capping the worst key's linear slope at 1.415, at most 1.77x the bar at n = 256 (SecurityProofs-10.md §11.53) -- and differential hulls are not covered. A wider margin is not a promotion.",
                        source=["TODO.md #255", "SecurityProofs-8.md 11.34",
                                "SecurityProofs-7.md 11.24.2"]),
-    "twk-v3":    dict(status="demo-only", quantum_resistant="conjectured",
-                       notes="Reached as `twk --v3`; see fpe-v3 for why a flag rather than a "
-                             "subcommand. twk's shape over the v3 round, domain-separated with tag "
-                             "0x23. The NL-FSCX v3 round is the deployed v2 round followed by a Keccak-chi layer over 47 five-bit and 3 seven-bit rows, at R3_VALUE = 5n/8 = 160 rounds (TODO #255). It is ADDED alongside v2, not a replacement: no stored artifact changes and the v2 tag keeps working. Its margin is wider than v2's and for the first time in this family it rests in part on a PROOF -- chi gives the round an unconditional per-round DIFFERENTIAL floor of 4 - log2(5) = 1.6781 bits, a bound on the round's own DDT entry, which clears v3's own bar of 1.6 (256 bits over 160 rounds) at every width, so v3 has a proven differential trail bound at n = 256 (at 1.05x) where v2 provably has none (its linear-then-add-constant round hands every key a probability-1 one-round differential). The 1-bit LINEAR floor is layer-wise only: the round's own proven linear floor is 0.1926 bits, below the 0.8 bar (TODO #342, SecurityProofs-10.md 11.52). There is deliberately NO key check: both v2 weak classes dissolve under chi and there is no chi-specific class to screen, proven exhaustively rather than sampled (SecurityProofs-8.md 11.34.4). IT ARRIVES DEMO-ONLY ANYWAY, and that is the point of the rating: v3 still has no PRP/SPRP reduction, and no LINEAR trail bound at realistic width -- its exact asymptotic linear slope clears 0.8 for every key at n = 10 (least 1.47x) and every sampled key at n = 14 and 17 (TODO #257 item 3), but those are small widths, not a bound; the margin has a proven ceiling, since the LSB row receives no carry and its cycles cost the same at every width, capping the worst key's linear slope at 1.415, at most 1.77x the bar at n = 256 (SecurityProofs-10.md §11.53) -- and differential hulls are not covered. A wider margin is not a promotion. "
-                             "WHAT KEEPS IT DEMO-ONLY IS EXACTLY WHAT KEEPS twk DEMO-ONLY: TODO "
-                             "#243 refused to promote twk because in the ROM it is an STPRP iff the "
-                             "permutation is an SPRP under a uniform key, and no such result exists. "
-                             "v3 does not supply one. It removes the structural objection TODO #243 "
-                             "recorded alongside it -- the round is no longer linear-then-add-constant "
-                             "-- and it inherits twk's three genuine advantages over hske-nla3, all "
-                             "from the subkey being a hash output: key recovery is confined to one "
-                             "block, no caller-supplied key reaches the permutation, and per-tweak "
-                             "determinism is the expected XTS-style property rather than a "
-                             "constraint. A promotion is #248-shaped work on separate evidence.",
-                       source=["TODO.md #255", "TODO_DONE.md #243", "SecurityProofs-8.md 11.34",
-                               "SecurityProofs-7.md 11.24"]),
+    "twk-v3":    dict(status="production", quantum_resistant="conjectured",
+                       notes="Reached as `twk --v3`; see fpe-v3 for why a flag rather than a subcommand. twk's"
+                             " shape over the v3 round, domain-separated with tag 0x23, at R3_VALUE = 160 "
+                             "rounds (TODO #255). It moves with twk (the STPRP question is the permutation's) "
+                             "and with hske-nla3 (the same round): promoted from demo-only by TODO #345 "
+                             "(v9.5.66) under the same CONJECTURE (TODO #345): the per-round linear trail "
+                             "slope of NL-FSCX v3 at n = 256 stays at or above its bar of 0.8 for every key "
+                             "outside a negligible class; the differential floor 4 - log2(5) = 1.6781 >= 1.6 "
+                             "is PROVEN. It is not a bound; see hske-nla3. It keeps twk's advantages from a "
+                             "hashed subkey: key recovery confined to one block, no caller-supplied key "
+                             "reaches the permutation.",
+                       source=["TODO_DONE.md #345", "TODO.md #255", "TODO_DONE.md #243", "SecurityProofs-8.md 11.34", "SecurityProofsCode/v2_v3_rating_review.py", "SecurityProofs-10.md 11.68"]),
     "hcred":     dict(status="research", quantum_resistant="conjectured",
                        notes="Hybrid Ring-LWR + Stern-F credential over a unified ZKBoo-(2,3) "
                              "MPC-in-the-head circuit. All four CLIs dispatch cred-issue/cred-prove/"
