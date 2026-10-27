@@ -543,6 +543,8 @@ deepens with width, so at n = 19 the bars are 1.89 / 0.94 and the key average si
 1.3x above them.  **v9.5.51 (§11.57.4):** at n = 20, 1.91 / 0.97 and 1.34x / 1.36x; the
 deepening has not slowed.
 
+**Split out: the n/4-round v1 criterion (from #254) is now TODO #346.**
+
 **Ratings now rest on this item (TODO #345, v9.5.66).**  HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3` are production-track under conjectures this item measures: v2's key-averaged per-round cost at n = 256 >= 1.71 / 0.865, and v3's linear slope >= 0.8.  A v2 measurement past n = 23 below the bar, the linear share failing in the unfavourable direction, or a v3 key below 0.8 outside a negligible class reopens all four.
 
 **From TODO #343, closed in v9.5.65.**  #343 re-measured everything above on key samples
@@ -673,3 +675,56 @@ role appears that is neither parameter-fed nor movable.
 
 Status: **OPEN**
 
+
+---
+
+### #346: the trail criterion for the n/4-round v1 modes — HSKE-NL-A1 and HFSCX-256
+
+**Why now.**  TODO #345 (v9.5.66) promoted the v2 and v3 block-cipher rows partly on a
+consistency argument.  One of the six rows it measured them against was HSKE-NL-A1, which is
+production-track with NL-FSCX v1's linear axis measured only at n <= 10.  That makes the v1
+rows the thinnest-evidenced production-track ratings in SECURITY.md.  Five rows hang on
+NL-FSCX v1: HSKE-NL-A1, HFSCX-256 / -DS, and through the hash HPKS-WOTS, HPKS-XMSS and the
+Fiat-Shamir transforms.  Split out of TODO #257, which inherited it from #254.  It is a
+different question from #257's v2/v3 width extrapolation, and its answer can move ratings
+in either direction.
+
+**What is missing.**  The rows say it themselves: §11.30.1's per-round criterion is derived
+for a **block cipher** (codebook 2^n, 3n/4 rounds).  It does not transfer unexamined to
+- **HSKE-NL-A1**, a counter-mode PRF: ks = nl_fscx_revolve_v1(K, K XOR ctr, n/4).  The
+  attacker knows the counter differences but not K, and sees keystream, not a codebook;
+- **HFSCX-256**, a Davies-Meyer compression function at n/4 = 64 rounds.  The attacker
+  chooses message blocks.  There is no key, so the attack models are collision and
+  (second) preimage, not distinguishing.
+Both run n/4 rounds, not 3n/4.  The naive transfer, n bits of differential weight over 64
+rounds, would need about 4 bits/round differential and 2 linear.  That is a far sharper bar
+than v2's 1.71 / 0.865, against a measured v1 linear slope of 0.47–0.69 at n = 7/8/10.  If the
+naive bar were right, the v1 rows would not meet it.  So the mode-specific criterion is the
+whole question.  A second difference: **NL-FSCX v1 is not bijective in A** (collisions
+exist), so the trail framework built for v2's permutation needs checking before it is
+applied.
+
+**Work.**
+1. **Derive each mode's criterion** from its attack model, in the style of §11.30.1.  For
+   A1: what trail weight over n/4 rounds defeats a distinguisher on the keystream, given
+   known counter differences.  The data limit is per key, and so is how much of the trail
+   the attacker can actually choose.  For HFSCX-256: which trails a collision or
+   near-collision search on the DM compression function can use, and at what weight, with
+   the feed-forward and the chosen message block both accounted for.
+2. **Measure v1 against the derived bars** with the existing exact machinery, first at
+   n <= 11 and then as far as the certified solver reaches (v2 went to n = 23).  Do it
+   over keys or chaining values the way TODO #343 corrected v2's methodology: the right
+   population, and the r-round transient included.  Check the non-bijective round
+   against the solver's assumptions first.
+3. **Re-examine the five ratings** on the result, in one rating-review gate shaped like
+   `v2_v3_rating_review.py`: holding them if v1 clears its bars, naming the conjecture
+   each rests on, or downgrading.  A downgrade of HFSCX-256 carries to WOTS, XMSS and every
+   Fiat-Shamir hash, so the gate must list everything that inherits the row.
+4. If a row moves, update SECURITY.md, spec/ statuses and notes, and
+   `v2_v3_rating_review.py` §1.  That gate checks the six production-track rows; a demotion
+   there means #345's consistency premise needs restating, not just a status edit.
+
+**Not in scope:** changing v1, its round counts or the modes.  That would be a wire-format
+break with its own TODO, filed only if step 3 finds a row that cannot be held.
+
+Status: **OPEN**
