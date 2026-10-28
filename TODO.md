@@ -713,6 +713,20 @@ The ratings do not move.  Still open before a fix: the exact probability (the mo
 not the cipher for v1), the linear hull, and rounds of > 4 bits inside the residual.  The
 2-bit-per-round floor means the round count can now be sized from the table in §11.70.
 
+**Second pass (v9.5.69), `SecurityProofsCode/v1_core_break.py`, SecurityProofs-10.md §11.71.**
+The third fix ("breaking the core directly") is now measured:
+- *Round constants are ruled out.*  B ^ RC_r, A ^ RC_r or a constant inside the addition
+  leave both cores exactly where they are: each holds at exactly 1/4 for every B, and its
+  event A + B = A' + B' does not see a constant.  Checked on the real round.
+- *A rotating key schedule B_r = ROL(B, r s) breaks both cores*, at probability exactly 0
+  once the key has rotated by 3.  For s >= 3 it also kills the whole alpha ^ beta = 2^j
+  family; at s = 1 that family rotates along at 3 bits per round (190 over 64 rounds).
+  Under s = 3 no beta in a 135-member family per rotation keeps a characteristic of
+  rounds <= 3 bits.  But Lemma 1 holds round by round, so the proven floor stays 2 bits
+  per round: nothing above it is proven until the residual argument is redone.
+So more rounds remain the only fix sized by a proof in the v1 round.  A rotating schedule
+can be added to them, but does not replace them.
+
 **Candidate fixes, each a wire-format break:**
 - **More rounds.**  The core costs 2 bits per round, so the collision bar n/2 needs more
   than n/4 rounds with margin.  At 3n/4 = 192 rounds the core costs 384 bits.  Every
