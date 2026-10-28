@@ -2,6 +2,48 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.68] - 2026-10-27
+
+### TODO #347, first pass — the floor under NL-FSCX v1's 2-bit cores
+
+TODO #346 left three questions to answer before choosing a fix for v1's n/4-round modes.
+This pass answers all three in the trail-weight model at n = 256.  No rating, wire
+format, key or digest changes.  #347 stays open for the fix.
+
+- **Nothing cheaper than 2 bits per round outside a residual family of 538.**
+  - Lemma 1: LM validity puts beta's value changes inside S u (S+1).  So a round costs at
+    least half as many bits as beta has transitions, and at most 1 bit only when they
+    form one adjacent pair.
+  - Lemma 2: consecutive rounds satisfy 4 w_r + w_(r+1) + 5 >= wt(beta ^ ROL(beta, n/4)).
+  - What both leave is 538 betas.  An exhaustive search over characteristics whose
+    rounds each cost <= 4 bits (<= 3 under `--quick`) finds no cycle below 2 bits per
+    round for any of them.
+- **A second 2-bit core:** beta = 2^255 + 2^253, alpha = M(2^254).  It holds with
+  probability exactly 1/4 per round for every B (carry automaton; 4^-r on the shipped
+  round).  Both cores are the alpha ^ beta = 2^j, gamma = 0 family at the two positions
+  where the MSB's free carry saves a bit.
+- **HFSCX-256:** a real one-block collision characteristic costs at least 129 outside the
+  residual.  This was checked over all 64 768 candidate message differences, and none
+  exists in the residual's class.  One bit above the birthday bar is not a margin, so
+  the row stays demo-only.
+- **HSKE-NL-A1** under its 2^64-block limit:
+  - Its differential floor of 128 (2x) is now a bound in the model, not a search result.
+  - Every linear trail weighs >= R - 1 at R rounds (T = M o ROL^(n/4) + I has branch
+    number 5), so its squared correlation is <= 2^-126 at 64 rounds.
+- **Sizing the fix:** with the per-round floor at 2, 3n/4 = 192 rounds give the collision
+  bar a 3x margin and A1's full-codebook bar 1.5x.
+- **New gate** `SecurityProofsCode/v1_mode_floor.py` (107 findings gates).
+  - It pins every instrument by brute force and checks both lemmas on sampled
+    characteristics.
+  - It runs the residual search and the collision search (with a control), and the
+    linear floor.
+  - It holds SECURITY.md and TODO #347 to the result, with a control.
+- SecurityProofs-10.md §11.70; the HSKE-NL-A1 and HFSCX-256 rows of SECURITY.md cite it.
+  **Not done:**
+  - the exact probability, since the trail model is not the cipher for v1 (§11.69.2);
+  - the linear hull;
+  - rounds above 4 bits inside the residual.
+
 ## [9.5.67] - 2026-10-27
 
 ### TODO #346 — NL-FSCX v1's n/4-round modes: an iterative characteristic, and three demotions

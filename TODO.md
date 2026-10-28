@@ -697,6 +697,22 @@ HPKS-WOTS and HPKS-XMSS were demoted, and HSKE-NL-A1 was held only under a per-k
    No entry or exit of weight <= 22 within 3 rounds exists at n = 256, but longer ones
    were not searched.
 
+**First pass (v9.5.68), `SecurityProofsCode/v1_mode_floor.py`, SecurityProofs-10.md §11.70.**
+All three items above were answered in the trail-weight model at n = 256:
+1. *Cheaper characteristics:* none outside a residual family of 538 betas.  Two lemmas
+   prove it: LM validity puts beta's transitions inside S u (S+1), and consecutive rounds
+   must cover beta ^ ROL(beta, n/4).  Inside the residual, an exhaustive search over
+   characteristics whose rounds each cost <= 4 bits finds no cycle below 2 bits per round.
+   It does find a second 2-bit core, beta = 2^255 + 2^253, at exactly 1/4 per round.
+2. *Linear:* every R-round linear trail weighs >= R - 1, because T = M o ROL^(n/4) + I
+   has branch number 5.  So 64 rounds give a squared correlation <= 2^-126.  The hull is
+   not measured.
+3. *Hash collision:* a one-block collision characteristic costs >= 129 outside the
+   residual, and none exists inside the residual's class.
+The ratings do not move.  Still open before a fix: the exact probability (the model is
+not the cipher for v1), the linear hull, and rounds of > 4 bits inside the residual.  The
+2-bit-per-round floor means the round count can now be sized from the table in §11.70.
+
 **Candidate fixes, each a wire-format break:**
 - **More rounds.**  The core costs 2 bits per round, so the collision bar n/2 needs more
   than n/4 rounds with margin.  At 3n/4 = 192 rounds the core costs 384 bits.  Every
