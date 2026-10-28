@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.69** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes
+> - **Part 10 — §11.43–§11.70** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores
 
 ---
 
@@ -1354,3 +1354,72 @@ The hash's KDF, MAC and random-oracle uses under a secret or fresh input are not
 **HSKE-NL-A1 stays production-track only under a per-key data limit of 2^64 blocks**, with the conjecture named in its row: no differential or linear distinguisher on the 64-round keystream generator has probability, or squared correlation, above 2^−64.
 
 **Not done:** v1's linear axis in these modes, and a full search for a cheaper characteristic. The 2-bit core is the least the bounded searches saw, not a proven least. **The fix** is TODO #347: more rounds, the hash on the v3 round, or breaking the core directly. Each is a wire-format break and a MAJOR version.
+
+---
+
+## 11.70 The floor under v1's cores — TODO #347, first pass
+
+§11.69 found an iterative differential at exactly 1/4 per round and left three questions before a fix could be chosen. Is anything cheaper? What does v1's linear axis cost? What does a real hash collision cost? This section answers all three at n = 256, the deployed width, in the trail-weight model. The gate is `SecurityProofsCode/v1_mode_floor.py`: pure Python and deterministic. It searches the class "every round costs ≤ 4 bits", which takes about 15 minutes, or ≤ 3 bits under `--quick` in about 5. Every instrument is pinned by brute force first: the LM weight, the least-weight DP and the γ enumerator at n = 8, and Wallén's linear weight at n = 4.
+
+The model is not the cipher for v1 (§11.69.2), so every bound here is a bound on trail weights. The cheapest characteristics are checked exactly on the real round.
+
+### 11.70.1 Two lemmas
+
+Write S for the positions i ≤ n − 2 where α, β and γ are not all equal, so |S| is the round's weight. Write tr(β) for the positions where β changes value; bit 0 counts if β₀ = 1. Write δ = α ⊕ β and u = γ ⊕ β. Both vanish outside S ∪ {n − 1}.
+
+- **Lemma 1 (transitions).** Lipmaa–Moriai validity says that where α, β and γ agree at bit i − 1, α_i ⊕ β_i ⊕ γ_i = β_(i−1). So β can change value only at a position in S or just above one: **tr(β) ⊆ S ∪ (S + 1)**. A round therefore costs at least ⌈|tr(β)|/2⌉. It costs ≤ 1 only if tr(β) lies inside one pair {s, s + 1}. The 1 020 betas with that property form B1. Under every other β, **every round costs ≥ 2**.
+- **Lemma 2 (consecutive rounds).** α_(r+1) = M(δ_r) ⊕ ROL(β ⊕ u_r, n/4), so β ⊕ ROL(β, n/4) = M(δ_r) ⊕ ROL(u_r, n/4) ⊕ δ_(r+1). Counting bits gives **4 w_r + w_(r+1) + 5 ≥ wt(β ⊕ ROL(β, n/4))**. When that weight is ≥ 16, a 64-round characteristic costs at least 139.
+
+Both lemmas are checked on sampled characteristics at n = 8 and n = 256. Together they leave a **residual of 538 betas**: 510 single bits and 24 short runs at the top, each counted with and without the MSB, plus 0, the MSB, ¬MSB and ¬0.
+
+### 11.70.2 Nothing cheaper than 2 bits per round
+
+Both lemmas also make a round's structure enumerable. A round is a covering of β ⊕ ROL(β, n/4) by sparse terms. The lowest uncovered bit must come from a round-r position next to it, from one n/4 below it, or from the next round's δ, so branching on those finds every solution. So the graph of "every round costs ≤ D" is built exactly for each residual β.
+
+| question | result |
+|---|---|
+| a cycle averaging below 2 bits per round, D = 4 | **none**, for all 538 betas |
+| least 64-round characteristic in the class | **128**, under β = 2^255 + 2^253 |
+| that characteristic, exact | probability **exactly 1/4 per round for every B** (carry automaton, 64 keys); 4^−r on the shipped round to r = 5 |
+
+The new characteristic is a second core of the same family. If α ⊕ β = 2^j, the linear part returns M(2^j), and α = M(2^j) iterates with γ = 0. The addition then costs one bit for each of j − 1, j and j + 1 that is not the MSB, and it is valid only if j ≠ 0. That is 3 bits in general. It is 2 at j = n − 1, which is §11.69's core, and at j = n − 2, which is this one. Outside the residual, Lemma 1 or Lemma 2 gives the floor directly.
+
+### 11.70.3 HFSCX-256: a real collision
+
+A one-block collision needs Δh = 0 at both ends of the 64 rounds.
+
+- **Outside B1** every round costs ≥ 2, so a collision at exactly 128 needs every round to cost exactly 2. Its first round starts at α = 0, where δ = β, so β can have at most two bits below the MSB. All **64 768** such betas were searched. None has an all-2-bit walk 0 → 0, so the floor there is **≥ 129**.
+- **B1 outside the residual** costs ≥ 139 by Lemma 2.
+- **The residual** has no collision characteristic at all in its class.
+- **Control:** the same walk finder recovers §11.69's 128-bit semi-free-start α → α.
+
+So a real collision costs at least 129 in the model. That is one bit above the birthday bar, which is not a margin, and the row stays demo-only.
+
+### 11.70.4 HSKE-NL-A1: entry from the nonce
+
+The seed difference is ROL(β, n/8). Outside the residual the floor is 2 bits per round from any start, which is 128 over 64 rounds and 2× the 2^64-block bar. That is now a bound in the model rather than the least a search saw. In the residual's class no 64-round characteristic starts from the nonce difference at all.
+
+### 11.70.5 The linear axis
+
+Correlation matrices compose for any maps, so a linear trail's correlation is the product of its rounds' Wallén correlations. Only the hull sum is unknown.
+
+- **Lemma L1.** Wallén's carry mask z forces the addition's output mask λ and input mask μ into Z ∪ (Z + 1) ∪ {0}, where Z = supp z. So wt(λ_r), wt(μ_r) ≤ 2 w_r + 1, and λ_r ⊕ μ_r ⊆ Z_r.
+- **Consecutive rounds.** The A-mask entering round r is M(ROL(λ_r, n/4)) ⊕ μ_r and equals ROL(λ_(r−1), n/4). So T(λ_r) = ROL(λ_(r−1), n/4) ⊕ (λ_r ⊕ μ_r), with T = M ∘ ROL^(n/4) + I.
+- **T's branch number is 5.** Its kernel is {0, 0x55…, 0xaa…, ¬0}, of weight ≥ 128. Weight ≤ 2 inputs give 5, and weight 3 gives 7. T commutes with rotation, so the checks fix bit 0.
+- **So 3 w_r + 2 w_(r−1) ≥ 3.** A round costs 0 only after one costing ≥ 2, and two zero-cost rounds never touch. **Every R-round linear trail weighs ≥ R − 1**: 63 over 64 rounds, a squared correlation ≤ 2^−126.
+
+The least found from single-bit masks is 3 bits over 2 rounds and 6 over 3, so the floor is not tight.
+
+### 11.70.6 What it means for the fix
+
+In the model, v1's floor is 2 bits per round. It is proven outside the residual and exhaustive inside it for rounds of ≤ 4 bits, and the two cores meet it exactly. So the round count is the lever, and it can be sized:
+
+| rounds | differential floor | collision bar 128 | HSKE-NL-A1 full codebook 256 |
+|---|---|---|---|
+| 64 (today) | 128 | 1.00× | 0.50× |
+| 128 | 256 | 2.00× | 1.00× |
+| 192 (3n/4) | 384 | 3.00× | 1.50× |
+
+Linear trails cost ≥ R − 1 at R rounds. Moving the hash onto the v3 round would replace this argument with §11.52's. A round constant that breaks the cores would need this argument redone.
+
+**Not done:** the exact probability, since the model is not the cipher for v1; the linear hull; and rounds above 4 bits inside the residual. **Ratings:** none move. HFSCX-256 stays demo-only at a collision floor of 129. HSKE-NL-A1's 2^64-block conjecture now rests on a bound in the model rather than on a search.
