@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.70** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores
+> - **Part 10 — §11.43–§11.71** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores
 
 ---
 
@@ -1423,3 +1423,53 @@ In the model, v1's floor is 2 bits per round. It is proven outside the residual 
 Linear trails cost ≥ R − 1 at R rounds. Moving the hash onto the v3 round would replace this argument with §11.52's. A round constant that breaks the cores would need this argument redone.
 
 **Not done:** the exact probability, since the model is not the cipher for v1; the linear hull; and rounds above 4 bits inside the residual. **Ratings:** none move. HFSCX-256 stays demo-only at a collision floor of 129. HSKE-NL-A1's 2^64-block conjecture now rests on a bound in the model rather than on a search.
+
+---
+
+## 11.71 Breaking the cores — TODO #347, second pass
+
+§11.70 left three fixes. More rounds is sized by its table, and the v3 round by §11.52's floor of 1.678 bits per round. The third fix, "breaking the core directly, with a round-dependent B or a nonzero constant in the addition", had no number. This section measures it at n = 256 in the trail-weight model. The gate is `SecurityProofsCode/v1_core_break.py`: pure Python and deterministic. It reuses §11.70's edge finder, generalised to a key difference that changes from β_r to β_(r+1). That finder is checked against the fixed-β one, and under a fixed key its layered walk recovers both 128-bit cores.
+
+The two cores are β = 2^254 + 1 with α = M(2^255), and β = 2^255 + 2^253 with α = M(2^254). Both have α ⊕ β = 2^j and an addition output difference of 0.
+
+### 11.71.1 Round constants are transparent
+
+A constant cannot touch either core, wherever it goes:
+
+- **B ⊕ RC_r** keeps the key difference β. Each core holds with probability exactly 1/4 for every B, so it does for every B ⊕ RC_r too.
+- **A ⊕ RC_r** keeps the state difference α, and the 1/4 is taken over a uniform A.
+- **A + B + c_r** inside the addition: the core's event is A + B = A′ + B′, and adding c_r to both sides leaves the same event.
+
+On the real round, with fresh random constants in each of the three places, both cores hold r rounds at 4^−r for r = 1 to 5. The linear bound of §11.70.5 is untouched as well. A trail's masks are on A, the B-side mask only fixes a key-dependent sign, and a constant only flips signs. **Round constants are ruled out.**
+
+### 11.71.2 A rotating key schedule
+
+Let round r use B_r = ROL(B, r·s). The key difference becomes β_r = ROL(β, r·s), so neither fixed-β core iterates. Once the key has rotated by 3, the round maps neither core's α back to itself: the transition is LM-impossible and has probability exactly 0 for every B (carry automaton). On the shipped round with s = 3, core 2 holds round 0 at 1/4 and never holds round 1.
+
+The core family can follow the rotation: α_r = M(2^(j_r − s)), β_r = α_r ⊕ 2^(j_r), with j_r = j_0 + r·s and γ = 0, maps round r onto round r + 1. But LM validity at bit j_r needs bit j_r − 1 inside α_r's three-bit block {j_r − s − 1, j_r − s, j_r − s + 1}. So the family exists only for s ∈ {0, 1, 2}, as checked for every s and every j:
+
+| s | rotating family | cost per round |
+|---|---|---|
+| 0 (today) | valid for j ≠ 0 | 3, or 2 at j = n − 2, n − 1 |
+| 1 | valid for j ≠ 0 | 3, or 2 at j = 1, n − 1; **190** over 64 rounds |
+| 2 | valid for j ≠ 0 | 3 or 4 |
+| 3 to 255 | **invalid at every j** | — |
+
+### 11.71.3 What the rotating schedule leaves
+
+Under s = 3 the class search "every round costs ≤ 3 bits" ran over a structured family at every rotation: runs of 1 to 4 bits, their complements, and two bits at every distance. That is 135 betas per rotation. **None** has a 64-round characteristic in the class, and every one leaves it by round 2. Under a fixed key, the same walk finds both 128-bit cores.
+
+That is a sampled family, not a floor. Lemma 1 holds round by round, so the **proven floor stays 2 bits per round**, 128 over 64 rounds. A higher floor needs §11.70's residual argument redone for the rotating schedule. Lemma 2's covered term becomes β ⊕ ROL(β, s − n/4), so s = n/4 makes it vacuous and is to be avoided.
+
+### 11.71.4 What it means for the fix
+
+| fix | proven floor at 64 rounds | status |
+|---|---|---|
+| more rounds, 192 (3n/4) | 384, 3.0× the collision bar | sized by §11.70.6 |
+| the v3 round | 1.678 bits per round (§11.52) | sized |
+| round constants | 128, the cores survive exactly | **ruled out** |
+| rotating B, s ≥ 3 | 128 (Lemma 1) | cores broken; nothing above the floor proven |
+
+A rotating schedule can be added to more rounds without losing anything, but it does not replace them. **More rounds remain the only fix sized by a proof in the v1 round.** Every option is a wire-format break and a MAJOR version.
+
+**Not done:** Lemma 2 and the residual search for the rotating schedule, any exact multi-round probability, and the choice itself. **Ratings:** none move.

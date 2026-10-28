@@ -2,6 +2,40 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [9.5.69] - 2026-10-28
+
+### TODO #347, second pass — what breaking NL-FSCX v1's cores buys
+
+TODO #347 listed three fixes.  More rounds and the v3 round were already sized; the third,
+"breaking the core directly, with a round-dependent B or a nonzero constant in the
+addition", had no number.  This pass measures it in the trail-weight model at n = 256.
+No rating, wire format, key or digest changes.  #347 stays open for the choice.
+
+- **Round constants are ruled out.**  A constant XORed into B or into A, or added inside
+  the addition, leaves both cores exactly where they are.
+  - Each core holds at exactly 1/4 for every B, so also for every B ^ RC_r.
+  - Its event, A + B = A' + B', does not see a constant added to both sides.
+  - On the real round, with fresh random constants in each place, both still hold r
+    rounds at 4^-r, r = 1..5.  The linear floor is untouched: constants flip signs only.
+- **A rotating key schedule B_r = ROL(B, r s) breaks both cores.**
+  - Once the key has rotated by 3, neither core maps back to itself: probability exactly
+    0 for every B (carry automaton).
+  - For s >= 3 the whole alpha ^ beta = 2^j family is LM-invalid at every j, checked for
+    every s; at s = 1 it rotates along at 3 bits per round, 190 over 64 rounds.
+  - Under s = 3, no beta in a 135-member family per rotation (short runs, their
+    complements, two bits at every distance) keeps a characteristic of rounds <= 3 bits.
+  - That is a sample, not a floor.  Lemma 1 holds round by round, so the proven floor
+    stays 2 bits per round until §11.70's residual argument is redone for the schedule.
+- **For the choice:** more rounds remain the only fix sized by a proof in the v1 round.
+  A rotating schedule can be added to them but does not replace them.
+- **New gate** `SecurityProofsCode/v1_core_break.py` (108 findings gates).
+  - Its edge finder for a changing key difference is checked against §11.70's, and its
+    walk recovers both 128-bit cores under a fixed key (control).
+  - It holds TODO #347 to the result, with a control.
+- SecurityProofs-10.md §11.71.
+  **Not done:** Lemma 2 and the residual search for the rotating schedule; any exact
+  multi-round probability; the choice itself, which is a MAJOR version.
+
 ## [9.5.68] - 2026-10-27
 
 ### TODO #347, first pass — the floor under NL-FSCX v1's 2-bit cores
