@@ -744,25 +744,31 @@ Status: **OPEN**
 
 ---
 
-### #349: the 32-bit assembly / Arduino targets still run NL-FSCX v1 at n/4
+### #350: the 32-bit suite demos are ungated — a failing demo cannot fail a build
 
-**#347 left these out on purpose.  The ARM Thumb-2 (`.s`), NASM i386 (`.asm`) and Arduino
-(`.ino`) suites and their test harnesses still run every v1 mode at `I_VALUE = n/4` = 8
-rounds over 32 bits, including HSKE-NL-A1, which v10.0.0 raised to 3n/4 in the four ports.**
-They share no wire format with the four ports.  `KEYBITS = 32` makes them demonstrations,
-not deployments, so nothing interoperates with them and nothing breaks.  But they now
-show a round count the ports have abandoned, and a reader comparing a demo to the 256-bit
-code sees a mismatch nothing explains.
+**Found by TODO #349.**  The ARM suite printed `- ZKP-RNL verify FAILED` on every run,
+because of a reduction bug in `rnl_poly_mul` / `rnl_ntt`.  Nothing failed, and this had gone
+unseen until #349.  TODO #234's `[FAIL]` gate covers the 32-bit TEST HARNESSES only: their
+output goes through `hprintf` / `print_str` / `verdict()`, and `build_arm.sh` /
+`build_asm_i386.sh` reject a bypassing call site.  The SUITE demos are outside it on three
+counts:
+- they print failures as `- … FAILED`, with no `[FAIL]` marker.  The ARM and NASM suites each
+  have nine such strings (Stern-F sign and KEM, ZKP-RNL, ZKP-NL, FPE, tweak, accumulator, OPRF,
+  ring), and the Arduino suite has eleven;
+- the ARM suite calls `bl printf` directly, not `hprintf`;
+- CI runs only `run_arm.sh tests`, `run_asm_i386.sh tests` and `run_arduino.sh tests`.
 
-**Options.**  (a) Raise their v1 modes to 3n/4 = 24 rounds, mirroring
-`V1_MODE_STEPS` per target.  The cost is cycle budget under qemu and simavr, which matters
-for `run_arduino.sh`'s 90 s TIMEOUT.  Pin the change with each harness's own expected
-vectors.  (b) Keep n/4 and state it: a header comment in each of the five files, plus
-a line in SECURITY.md's demo-target note, saying they predate #347 and why they were not
-moved.  (a) is preferred if the Arduino run stays inside its timeout.  Whichever is
-chosen, extend `v1_mode_rounds.py` §1's source-site census to these files, so the choice
-is held by a gate rather than by this item.
+The four ports' demos are `[FAIL]`-gated (TODO #233).  The 32-bit demos are the only
+shipped programs whose verdicts reach nothing.
 
-Do this after #348 settles which v1 sites move, so the 32-bit targets change once.
+**Options.**  (a) Mark the failure strings `[FAIL]`, route the suite's output through the
+same counter as the harness, and add the suite runs to the `arm-i386` and `arduino` CI jobs.
+(b) Move each demo verdict that has no harness counterpart into the harness: ZKP-RNL,
+for one, is not among the 32-bit harness's tests `[1]`–`[18]`.  Whichever is chosen,
+the Arduino suite is the hard case.  Under simavr it never gets past its HKEX-RNL
+section.  #349 watched it for 15 minutes, and the unmodified v10.0.1 build for 5, and both
+stalled there, so this predates #349 and may be a hang rather than slowness.  Everything after
+that section has gone unexecuted, including every Arduino `hfscx_32` caller.  Find out why
+before choosing a timeout.
 
 Status: **OPEN**

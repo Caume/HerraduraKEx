@@ -24024,3 +24024,43 @@ probability, the linear hull, and the 32-bit assembly / Arduino demo targets, wh
 their n/4 round counts and share no wire format with the four ports.
 
 Status: **DONE v10.0.0** — NL-FSCX v1's three modes at 3n/4 = 192 rounds; 384-bit trail floor; four rows restored.
+
+---
+
+### #349: the 32-bit assembly / Arduino targets still run NL-FSCX v1 at n/4
+
+**#347 left these out on purpose.  The ARM Thumb-2 (`.s`), NASM i386 (`.asm`) and Arduino
+(`.ino`) suites and their test harnesses still run every v1 mode at `I_VALUE = n/4` = 8
+rounds over 32 bits, including HSKE-NL-A1, which v10.0.0 raised to 3n/4 in the four ports.**
+They share no wire format with the four ports.  `KEYBITS = 32` makes them demonstrations,
+not deployments, so nothing interoperates with them and nothing breaks.  But they now
+show a round count the ports have abandoned, and a reader comparing a demo to the 256-bit
+code sees a mismatch nothing explains.
+
+**Options.**  (a) Raise their v1 modes to 3n/4 = 24 rounds, mirroring
+`V1_MODE_STEPS` per target.  The cost is cycle budget under qemu and simavr, which matters
+for `run_arduino.sh`'s 90 s TIMEOUT.  Pin the change with each harness's own expected
+vectors.  (b) Keep n/4 and state it: a header comment in each of the five files, plus
+a line in SECURITY.md's demo-target note, saying they predate #347 and why they were not
+moved.  (a) is preferred if the Arduino run stays inside its timeout.  Whichever is
+chosen, extend `v1_mode_rounds.py` §1's source-site census to these files, so the choice
+is held by a gate rather than by this item.
+
+Do this after #348 settles which v1 sites move, so the 32-bit targets change once.
+
+**Closed (v10.0.2), option (a).**  The rule is the four ports' rule: a 32-bit
+construction moves exactly when its four-port counterpart is at 3n/4.  `V1_MODE_STEPS = 24`
+is defined in the ARM and NASM suites and harnesses and in the Arduino suite.  It is used by
+`hfscx_32`'s two Davies–Meyer blocks (their HFSCX-256) and by the HSKE-NL-A1 demo's keystream
+in the three suites.  The Stern and ZKBoo stand-ins, the HPKS-NL challenge and the RNL KDF stay
+at n/4 with #348's sites.  `v1_mode_rounds.py` §1 checks the five files, with a control that
+fires.  The ARM and NASM harnesses pass.  The Arduino harness still sends its OK line inside
+`run_arduino.sh`'s 90 s window.  The Arduino suite's `hfscx_32` change compiles but never
+runs: the suite demo stalls in HKEX-RNL, which predates this change (#350), and the harness
+has no `hfscx_32`.  **Found on the way:** the ARM `rnl_poly_mul` / `rnl_ntt`
+reductions used a flagless `sub` before `it mi`, so ZKP-RNL's signer exhausted all 200 attempts
+on ARM; this had gone unseen until now.  The fix is `subs` at 12 sites, plus a `build_arm.sh`
+guard that fires on the old source.  Why nothing caught it is TODO #350.  SecurityProofs-10.md
+§11.74.
+
+Status: **DONE v10.0.2** — the 32-bit targets run hfscx_32 and the A1 keystream at 3n/4 = 24; ARM's NTT reduction fixed.

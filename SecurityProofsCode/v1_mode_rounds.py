@@ -12,6 +12,8 @@ sized fix: the three modes now run V1_MODE_STEPS = 3n/4 = 192 rounds.
       it: the HFSCX-256 compression function, HSKE-NL-A1's keystream (plain and
       AEAD) and MAC key, and the WOTS chain step.  The shipped Python functions are
       recomputed by hand at 192 rounds, with a 64-round CONTROL that must differ.
+      The 32-bit demo targets follow at 3n/4 = 24 (TODO #349): hfscx_32 and the A1
+      keystream in the ARM / NASM / Arduino files, with a CONTROL that fires.
 
   §2  THE DIFFERENTIAL FLOOR AT 192 ROUNDS.  Lemma 1 (v1_mode_floor.py §2) is per
       round, so outside B1 every characteristic costs >= 2 per round, 384 over 192;
@@ -77,6 +79,46 @@ def _src(rel):
         return fh.read()
 
 
+_ASM32 = {  # file -> (constant definition, the step operand, A1 keystream checked?)
+    "Herradura cryptographic suite.s": (r"\.equ V1_MODE_STEPS, 24", "#V1_MODE_STEPS", True),
+    "CryptosuiteTests/Herradura_tests.s": (r"\.equ V1_MODE_STEPS, 24", "#V1_MODE_STEPS",
+                                           False),
+    "Herradura cryptographic suite.asm": (r"%define V1_MODE_STEPS 24", "V1_MODE_STEPS", True),
+    "CryptosuiteTests/Herradura_tests.asm": (r"%define V1_MODE_STEPS 24", "V1_MODE_STEPS",
+                                             False),
+    "Herradura cryptographic suite.ino": (r"#define V1_MODE_STEPS \(3 \* KEYBITS / 4\)",
+                                          "V1_MODE_STEPS", True),
+}
+
+
+def _check_32bit(override=None):
+    """TODO #349: the 32-bit demo targets (KEYBITS = 32) run v1's modes at 3n/4 = 24.
+    hfscx_32 is their HFSCX-256; the A1 demo is their HSKE-NL-A1.  Their Stern and
+    ZKBoo stand-ins, the HPKS-NL challenge and the RNL KDF stay at n/4 with the four
+    ports (TODO #348).  Returns what is wrong; empty means all of it holds."""
+    bad = []
+    for f, (const, op, a1) in _ASM32.items():
+        s = (override or {}).get(f) or _src(f)
+        if not re.search(const, s):
+            bad.append("%s: no V1_MODE_STEPS = 24" % f)
+        if f.endswith(".ino"):
+            body = s[s.index("static uint32 hfscx_32("):]
+            body = body[:body.index("\n}")]
+            ok = body.count("V1_MODE_STEPS)") == 2 and ", 8)" not in body
+            a1_ok = "RNL_KDF_DC, base, V1_MODE_STEPS)" in s
+        else:
+            body = s[s.index("\nhfscx_32:\n"):]
+            body = body[:body.index("pop     {r4, r5, pc}" if f.endswith(".s") else "ret")]
+            ok = body.count(op + "\n") == 2 and not re.search(r"(#8|ecx, 8)\n", body)
+            a1_ok = re.search(re.escape(op) + r"\s+[@;] 3n/4 \(TODO #349\)\n\s+"
+                              r"(bl|call)\s+nl_fscx_revolve_v1\s+[@;] \w+ +=\s+ks", s)
+        if not ok:
+            bad.append("%s: hfscx_32 not at V1_MODE_STEPS in both blocks" % f)
+        if a1 and not a1_ok:
+            bad.append("%s: A1 keystream not at V1_MODE_STEPS" % f)
+    return bad
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 def section_1():
     rule("§1  What ships: V1_MODE_STEPS = 3n/4 in the three modes, all four ports")
@@ -117,6 +159,15 @@ def section_1():
     check(not stale, "no port still runs the compression function at 64 rounds (%s)"
           % stale)
     check(H.V1_MODE_STEPS == ROUNDS, "the shipped Python constant is %d" % H.V1_MODE_STEPS)
+    bad32 = _check_32bit()
+    check(not bad32, "TODO #349: the 32-bit targets mirror it at 3n/4 = 24 -- hfscx_32's "
+          "two blocks in the ARM / NASM suites and harnesses and the Arduino suite, and "
+          "A1's keystream in the three suites (%s)" % bad32[:3])
+    ctl = _check_32bit({"Herradura cryptographic suite.ino":
+                        _src("Herradura cryptographic suite.ino").replace(
+                            "nl_fscx_revolve_v1(prev, x, V1_MODE_STEPS)",
+                            "nl_fscx_revolve_v1(prev, x, 8)")})
+    check(ctl, "CONTROL: the 32-bit check FIRES on an hfscx_32 block put back at 8 rounds")
 
     BA, rv1 = H.BitArray, H.nl_fscx_revolve_v1
     iv = int.from_bytes(H._HFSCX256_IV_BYTES, "big")

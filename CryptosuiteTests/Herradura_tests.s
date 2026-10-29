@@ -21,6 +21,7 @@
 
     .equ I_VALUE,  8
     .equ R_VALUE,  24
+    .equ V1_MODE_STEPS, 24   @ 3n/4: NL-FSCX v1's modes, as the four ports (TODO #349)
     .equ RNL_N,    32
     .equ RNL_Q,    65537
     .equ RNL_P,    4096
@@ -2306,7 +2307,7 @@ t_ntt_bf:
     add     r0, r0, r12
     lsr     r12, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r12
+    subs    r0, r0, r12         @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     add     r12, r3, r0
@@ -2348,7 +2349,7 @@ t_ntt_scale:
     add     r0, r0, r1
     lsr     r1, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r1
+    subs    r0, r0, r1          @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     str     r0, [r4, r6, lsl #2]
@@ -2379,7 +2380,7 @@ t_rpm_twist:
     add     r0, r0, r1
     lsr     r1, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r1
+    subs    r0, r0, r1          @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     str     r0, [r6, r9, lsl #2]
@@ -2388,7 +2389,7 @@ t_rpm_twist:
     add     r0, r0, r1
     lsr     r1, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r1
+    subs    r0, r0, r1          @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     str     r0, [r7, r9, lsl #2]
@@ -2414,7 +2415,7 @@ t_rpm_pw:
     add     r0, r0, r1
     lsr     r1, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r1
+    subs    r0, r0, r1          @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     str     r0, [r6, r9, lsl #2]
@@ -2438,7 +2439,7 @@ t_rpm_untwist:
     add     r0, r0, r1
     lsr     r1, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r1
+    subs    r0, r0, r1          @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     str     r0, [r3, r9, lsl #2]
@@ -2808,8 +2809,8 @@ rnl_agree_recv:
 
 /* ------------------------------------------------------------------ */
 /* hfscx_32: r0=x -> r0=hfscx_32(x)  (DM, v1.9.0)                   */
-/* C_DM(s,m)=nl(s,m,8)^s; IV=0xA3C5E7B9, LB=0xA3C5E799              */
-/* s=nl(IV,x,8)^IV; return nl(s,LB,8)^s                              */
+/* C_DM(s,m)=nl(s,m,24)^s; IV=0xA3C5E7B9, LB=0xA3C5E799              */
+/* s=nl(IV,x,24)^IV; return nl(s,LB,24)^s                            */
 /* ------------------------------------------------------------------ */
     .thumb_func
 hfscx_32:
@@ -2818,13 +2819,13 @@ hfscx_32:
     ldr     r5, .LHIV2          @ r5 = IV_32 (prev for block 1)
     ldr     r0, .LHIV2          @ A = IV_32
     mov     r1, r4              @ B = x
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1  @ r0 = nl(IV, x, 8)
+    mov     r2, #V1_MODE_STEPS
+    bl      nl_fscx_revolve_v1  @ r0 = nl(IV, x, 24)
     eor     r0, r0, r5          @ s = result ^ IV  (DM block 1)
     mov     r5, r0              @ r5 = s  (prev for block 2)
     ldr     r1, .LHLB2          @ B = LB
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1  @ r0 = nl(s, LB, 8)
+    mov     r2, #V1_MODE_STEPS
+    bl      nl_fscx_revolve_v1  @ r0 = nl(s, LB, 24)
     eor     r0, r0, r5          @ result ^ s  (DM block 2)
     pop     {r4, r5, pc}
 .LHIV2: .word 0xA3C5E7B9

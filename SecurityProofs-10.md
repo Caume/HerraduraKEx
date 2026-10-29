@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.73** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites
+> - **Part 10 — §11.43–§11.74** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4
 
 ---
 
@@ -1507,7 +1507,7 @@ Lemma 1 holds round by round and Lemma 2 for each pair of rounds, so neither dep
 
 **HFSCX-256 / -DS, HPKS-WOTS and HPKS-XMSS return to production-track (conjectured).** That is the standard the other production-track rows meet: a named conjecture, cryptanalysis at the criterion with room to spare, and no known attack. **HSKE-NL-A1's 2^64-block per-key data limit is lifted.**
 
-The 32-bit assembly and Arduino demo targets keep n/4. They carry no rating and share no wire format with the four ports.
+The 32-bit assembly and Arduino demo targets kept n/4 in this release. They carry no rating and share no wire format with the four ports; TODO #349 moved them to 3n/4 (§11.74).
 
 **Cost:** about 3× on everything that hashes or runs A1. **Wire format:** MAJOR, MIGRATING.md section 24.
 
@@ -1546,3 +1546,34 @@ A trail bound is a bar only where someone can choose the pair of inputs. The fou
 Both owed sites are in the condition §11.69 called inadequate for HFSCX-256: a floor at the bar. **Neither moves a rating.** Every protocol they serve is already Demo-only or Research for an independent reason. HPKS-NL and HPKS-T fall to Pohlig–Hellman over GF(2^256)\*, at about 2^36.5. Stern-F and its ring, KEM and credential uses sit at N = 256, about 30–40 bits. The raise is owed so that no v1 hash in the suite sits at its own bar. It would be MAJOR, because every HPKS-NL, HPKS-T and Stern-F signature, ring signature and credential changes, and it is TODO #348's second pass.
 
 **Not done:** the raise; the exact probability (§11.69.2); and the linear hull.
+
+## 11.74 The 32-bit targets at 3n/4 — TODO #349, closed (v10.0.2)
+
+The ARM Thumb-2, NASM i386 and Arduino suites run at `KEYBITS = 32`, so n/4 is 8 rounds and 3n/4 is 24. They share no wire format with the four ports and carry no rating. Until this release, though, they still showed the round count the four ports gave up in v10.0.0, with nothing to explain the difference.
+
+### 11.74.1 What moves
+
+The rule is the four ports' rule: a 32-bit construction moves to 3n/4 exactly when its four-port counterpart is now at 3n/4. Each of the five files with such a construction defines `V1_MODE_STEPS = 24`. Two constructions use it:
+
+| construction | four-port counterpart | where |
+|---|---|---|
+| `hfscx_32`, both Davies–Meyer blocks | HFSCX-256 | ARM and NASM suites and test harnesses; Arduino suite |
+| the HSKE-NL-A1 demo's keystream | HSKE-NL-A1 | the three suites |
+
+Everything else stays at n/4 with the four ports' §11.73 sites: the Stern hashes and the Arduino harness's ZKBoo commit and PRG stand-ins (which say they use the Stern reduction), the HPKS-NL challenge, the RNL KDF, and the FPE, tweak and accumulator derivations, which are separate constructions on these targets. `SecurityProofsCode/v1_mode_rounds.py` §1 now checks the five files. It requires the constant, both `hfscx_32` blocks and the A1 keystream, and it rejects a literal 8 left inside `hfscx_32`. A control shows the check fires on an `hfscx_32` block put back at 8 rounds.
+
+### 11.74.2 A defect found on the way
+
+Running the ARM suite showed `- ZKP-RNL verify FAILED`, and the unmodified build printed the same. The signer gave up after all 200 attempts, while the NASM build verifies the same proof. The cause is in the ARM `rnl_poly_mul` and `rnl_ntt` reductions modulo q = 65537:
+
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+
+Under `.syntax unified` a plain `sub` assembles to `sub.w`, which sets no flags, as the disassembly confirms. So the `addmi` read stale flags, and each reduction was left unnormalised. Inside the NTT those values fed the next products, and the product c·s came out wrong: c has four entries of ±1 and s is small, so c·s should be small, yet the dumped coefficients were spread across [0, 2q). Every z = y + c·s then broke the bound |z| ≤ 4092. HKEX-RNL's demo and test did not notice: both parties run the same multiply, and they still agree.
+
+The fix is `subs` at all twelve sites, six in the suite and six in the test harness. `build_arm.sh` now refuses a flagless arithmetic instruction directly before an `it` unless the line is marked `FLAGS-OK`. Run on the unmodified source, the check fires. ZKP-RNL now verifies on ARM.
+
+That the failure went unseen for so long is a second defect, and it is filed as TODO #350. TODO #234's `[FAIL]` gate covers the 32-bit test harnesses only. The suite demos print `- … FAILED` with no marker, and CI runs only the harnesses (`run_arm.sh tests`). No demo failure on these targets can fail a build.
+
+**Not done:** gating the suite demos (TODO #350). The Arduino suite's `hfscx_32` change compiles but has not been executed. Under simavr the suite demo never gets past HKEX-RNL, in this build or in the unmodified one, and its test harness has no `hfscx_32`.
