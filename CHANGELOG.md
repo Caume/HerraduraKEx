@@ -2,6 +2,38 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [10.0.1] - 2026-10-28
+
+### TODO #348, first pass — NL-FSCX v1's remaining n/4 sites, censused and judged
+
+v10.0.0 raised three v1 modes to 3n/4 rounds.  This pass asks every other v1 call the
+same question: does an attacker set a difference into it, and does the n/4 floor clear
+the bar?  No shipped code changes.
+
+- **New gate** `SecurityProofsCode/v1_remaining_sites.py` (SecurityProofs-10.md §11.73),
+  in three parts:
+  - **The census.**  Every `nl_fscx_revolve_v1` call in the shipped code: 102 calls in
+    23 files.  Each call is recorded with its enclosing function and step argument and
+    held to a table in both directions.  Python is parsed with `ast`.  Controls show
+    that an injected call and a changed step count are both caught.
+  - **The site table, with verdicts.**  **Owed:** the Schnorr challenge (HPKS-NL,
+    HPKS-T) and the Stern chain hash (commitments, Fiat–Shamir and ring challenges,
+    HPKE-Stern-F's key).  An attacker sets the difference into both, and both sit at
+    the 128 bar.  **Adequate:** HDRBG's walk, the QC-MDPC PRF, the Stern matrix rows
+    and the RNL KDFs, where no party can difference the inputs.  **n/a:** the ratchet.
+  - **The owed sites, measured at 64 rounds in the model.**  The challenge's shape
+    (ΔA = 0) is v1_mode_floor.py §5's, at least 129.  The chain's first differing item
+    enters at ROR(β, n/8): at least 128 outside B1 by Lemma 1, and the residual's class
+    has no characteristic leaving that entry.
+- **No rating moves.**  Every protocol an owed site serves is already Demo-only or
+  Research for an independent reason.  The round raise is #348's second pass, and it
+  is MAJOR.
+- **Correction:** CHANGELOG [10.0.0] listed "the HKEX-RNL KDF" as unchanged.  The
+  deployed HKEX-RNL session key is HFSCX-256 (TODO #228), so it changed in 10.0.0.  What
+  still runs v1 at n/4 is HPAKE's RNL KDF and the suite-level session KDF that the KAT
+  transcribes.
+- Findings gates: 109 → 110.
+
 ## [10.0.0] - 2026-10-28
 
 ### TODO #347, closed — NL-FSCX v1's modes run 3n/4 rounds (BREAKING, wire format)
