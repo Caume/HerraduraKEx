@@ -801,6 +801,16 @@ jobs:
       - name: NASM i386 test suite (qemu-i386)
         run: ./run_asm_i386.sh tests
 
+      # TODO #350: the suite demos carry the same [FAIL] gate as the harnesses
+      # (hprintf / print_str count the marker, the exit status follows it).
+      # Until they ran here, the ARM demo printed "ZKP-RNL verify FAILED" on
+      # every run and nothing failed (TODO #349).
+      - name: ARM Thumb-2 suite demo (qemu-arm)
+        run: ./run_arm.sh suite
+
+      - name: NASM i386 suite demo (qemu-i386)
+        run: ./run_asm_i386.sh suite
+
   katex:
     name: KaTeX math rendering validation (TODO #179)
     runs-on: ubuntu-latest
@@ -842,6 +852,12 @@ jobs:
 
       - name: Arduino test suite (simavr)
         run: ./run_arduino.sh tests
+
+      # TODO #350: the suite firmware prints *** OK / *** FAILED at the end of
+      # every pass, read back by run_arduino.sh exactly as for the harness; a
+      # pass that never finishes fails too.  It hung in HKEX-RNL until #350.
+      - name: Arduino suite demo (simavr)
+        run: ./run_arduino.sh suite
 
   fuzz-smoke:
     name: Fuzz smoke test (TODO #187)

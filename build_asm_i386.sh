@@ -64,18 +64,21 @@ fi
 
 echo "=== HerraduraKEx v${VERSION} — NASM i386 build ==="
 
-# ── TODO #234 gate guard ──────────────────────────────────────────────────────
-# The test harness counts "[FAIL]" markers inside print_str, so every message
-# has to go out through it.  print_str_raw skips the counter and exists only
-# for the gate's own verdict lines, which carry the marker themselves.
-UNGATED=$(grep -n 'call[[:space:]]\+print_str_raw' "${TESTS_SRC}" | grep -v 'GATE-EXEMPT' || true)
-if [ -n "${UNGATED}" ]; then
-    echo "ERROR: ungated print_str_raw call site(s) in ${TESTS_SRC}:"
-    echo "${UNGATED}"
-    echo "  Use 'call print_str' so the [FAIL] gate sees the output (TODO #234),"
-    echo "  or mark the line GATE-EXEMPT if it must bypass the counter."
-    exit 1
-fi
+# ── TODO #234 / #350 gate guard ───────────────────────────────────────────────
+# The test harness and (since TODO #350) the suite demo count "[FAIL]" markers
+# inside print_str, so every message has to go out through it.  print_str_raw
+# skips the counter and exists only for the gate's own verdict lines, which
+# carry the marker themselves.
+for SRC in "${SUITE_SRC}" "${TESTS_SRC}"; do
+    UNGATED=$(grep -n 'call[[:space:]]\+print_str_raw' "${SRC}" | grep -v 'GATE-EXEMPT' || true)
+    if [ -n "${UNGATED}" ]; then
+        echo "ERROR: ungated print_str_raw call site(s) in ${SRC}:"
+        echo "${UNGATED}"
+        echo "  Use 'call print_str' so the [FAIL] gate sees the output (TODO #234/#350),"
+        echo "  or mark the line GATE-EXEMPT if it must bypass the counter."
+        exit 1
+    fi
+done
 echo "  Linker: ${LD}"
 
 echo "  Assembling suite..."

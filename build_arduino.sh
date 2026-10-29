@@ -105,6 +105,32 @@ build_ino() {
 
     echo "    -> ${ELF}"
     avr-size "${ELF}" 2>/dev/null || true
+    ram_guard "${ELF}" "${LABEL}"
+}
+
+# ── TODO #350 RAM guard ───────────────────────────────────────────────────────
+# .data and .bss sit at the bottom of the ATmega2560's 8 KB of SRAM and the stack
+# grows down towards them, with nothing to stop it.  Until TODO #350 the suite's
+# string literals alone took 3.4 KB of .data (a literal without F() is copied to
+# RAM at boot), which left ~360 bytes of stack: the demo hung in its first
+# HKEX-RNL multiply, silently.  Keep the headroom below in both firmwares, and
+# put new strings in flash with F().
+RAM_BYTES=8192
+MIN_STACK_BYTES=2048
+ram_guard() {
+    local ELF="$1"
+    local LABEL="$2"
+    local SIZES DATA BSS FREE
+    SIZES=$(avr-size "${ELF}" | awk 'NR == 2 { print $2, $3 }')
+    read -r DATA BSS <<<"${SIZES}"
+    FREE=$(( RAM_BYTES - DATA - BSS ))
+    if (( FREE < MIN_STACK_BYTES )); then
+        echo "ERROR: ${LABEL}: .data (${DATA}) + .bss (${BSS}) leave ${FREE} bytes of"
+        echo "  SRAM for the stack; at least ${MIN_STACK_BYTES} are required (TODO #350)."
+        echo "  Move string literals to flash with F(\"...\")."
+        exit 1
+    fi
+    echo "    RAM: ${FREE} of ${RAM_BYTES} bytes left for the stack (guard: >= ${MIN_STACK_BYTES})"
 }
 
 # ── build suite and tests ─────────────────────────────────────────────────────
