@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.72** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds
+> - **Part 10 — §11.43–§11.73** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites
 
 ---
 
@@ -1512,3 +1512,37 @@ The 32-bit assembly and Arduino demo targets keep n/4. They carry no rating and 
 **Cost:** about 3× on everything that hashes or runs A1. **Wire format:** MAJOR, MIGRATING.md section 24.
 
 **Not done:** the exact probability, since the model is not the cipher for v1 (§11.69.2); the linear hull; and rounds above 4 bits inside the residual.
+
+## 11.73 v1's remaining sites — TODO #348, first pass (v10.0.1)
+
+§11.72 raised three of NL-FSCX v1's modes to 3n/4 rounds. Every other v1 call kept n/4 = 64 rounds, and the ratchet kept one. At 64 rounds Lemma 1's floor of 2 bits per round is 128, which is the collision bar with no margin. §11.69 called that inadequate for HFSCX-256. This pass asks each remaining site the same question. The gate is `SecurityProofsCode/v1_remaining_sites.py`.
+
+### 11.73.1 The census
+
+The gate parses every `nl_fscx_revolve_v1` call in the shipped code: the library, the suite demos, the four CLIs, the Java port, the KAT generator and consumers, and `docs/examples`. That is 102 calls in 23 files. Python is read with `ast`; the C-family files have their comments and strings blanked first. Each call is recorded with its enclosing function and its step argument, and the record is held to a table in both directions. A new call, a vanished call or a changed step count fails the gate. Each row names the site it serves, and every n/4 site must take an n/4 expression. Two controls are shown to fire: a call injected into a copy of `herradura.h`, and a changed step count.
+
+### 11.73.2 The sites
+
+| site | rounds | bar | who sets a difference | verdict |
+|---|---|---|---|---|
+| Schnorr challenge e = v1(R, msg) — HPKS-NL, HPKS-T | n/4 | 128 per signing query | the forger, through msg | **owed** |
+| Stern chain hash — commitments, Fiat–Shamir and ring challenges, the HPKE-Stern-F key | n/4 | 128 binding / collision | the prover and the message | **owed** |
+| HDRBG state walk | n/4 | one-way state walk | nobody: secret state, fixed B | adequate |
+| QC-MDPC PRF | n/4 | PRF whose outputs are never published | nobody: fresh secret seed | adequate |
+| Stern matrix rows | n/4 | uniform rows, behind an HFSCX-256 finalizer | nobody: public seed and row index | adequate |
+| RNL KDFs — HPAKE's, and the suite-level session KDF in the KAT and examples | n/4 | KDF of a secret | nobody: K is the ring secret | adequate |
+| ratchet | 1 | one-way-ness (Theorem 16) | nobody | n/a |
+
+A trail bound is a bar only where someone can choose the pair of inputs. The four adequate sites run over a secret or a public value that no party can difference. HDRBG's outputs and the matrix rows also pass through HFSCX-256 at 3n/4. The QC-MDPC PRF's counter differences enter as A1's nonce did; §11.70 bounds that entry at 128 outside the residual and finds none inside its class. The attack that bound prices also needs outputs, and nobody sees the PRF's. The ratchet's single round is a one-way-ness question, and this pass makes no claim on it.
+
+### 11.73.3 The owed sites, at 64 rounds in the model
+
+**Schnorr challenge.** A forger fixes m and m ⊕ β in advance, asks for a signature on m, and wins if e collides under the signer's fresh R. That is ΔA = 0, ΔB = β → 0, the shape §11.70 measured for the HFSCX-256 one-block collision. Outside the residual it costs at least 129, and in the residual's class there is none. The bar is 128, so the margin is one bit.
+
+**Stern chain hash**, h ← v1(h ⊕ v, ROL(v, n/8), n/4). The first item that differs enters with Δh = 0, so ΔA = ROR(β, n/8) and ΔB = β. Lemma 1 holds for that item's 64 rounds whatever the later items do, so outside B1 the floor is 128. The gate searches the 538 residual betas in the class "every round ≤ 4" and finds no 64-round characteristic that leaves this entry. The control is the second core: the same search finds its 128-bit α → α. The bar is 128, so there is no margin.
+
+### 11.73.4 What it means
+
+Both owed sites are in the condition §11.69 called inadequate for HFSCX-256: a floor at the bar. **Neither moves a rating.** Every protocol they serve is already Demo-only or Research for an independent reason. HPKS-NL and HPKS-T fall to Pohlig–Hellman over GF(2^256)\*, at about 2^36.5. Stern-F and its ring, KEM and credential uses sit at N = 256, about 30–40 bits. The raise is owed so that no v1 hash in the suite sits at its own bar. It would be MAJOR, because every HPKS-NL, HPKS-T and Stern-F signature, ring signature and credential changes, and it is TODO #348's second pass.
+
+**Not done:** the raise; the exact probability (§11.69.2); and the linear hull.

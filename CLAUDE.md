@@ -75,7 +75,7 @@ SecurityProofs-6.md        — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md        — §11.10–§11.13, §11.15–§11.33: ZKP extensions · research reviews (698 math expressions)
 SecurityProofs-8.md        — §11.34–§11.36: NL-FSCX v3 · asymptotic slopes (436 math expressions)
 SecurityProofs-9.md        — §11.37–§11.42: width residue · annealed / quenched / exact ladders (726 math expressions)
-SecurityProofs-10.md       — §11.43–§11.72: local certificate · linear hull · coupled ladder · period series · v3 trail criterion · v3 linear slope · v2 measurement audit · key-sampled series · implicit solver · transient over keys · quantiles over keys · short-window class · discount share · long-window keys · series at n = 22 · tail and arc · arc curve · gap curve · gap at n = 23 · series at n = 23 · rating review · v1 modes · v1 floor · v1 core break · v1 at 3n/4 (126 math expressions)
+SecurityProofs-10.md       — §11.43–§11.73: local certificate · linear hull · coupled ladder · period series · v3 trail criterion · v3 linear slope · v2 measurement audit · key-sampled series · implicit solver · transient over keys · quantiles over keys · short-window class · discount share · long-window keys · series at n = 22 · tail and arc · arc curve · gap curve · gap at n = 23 · series at n = 23 · rating review · v1 modes · v1 floor · v1 core break · v1 at 3n/4 · v1 remaining sites (126 math expressions)
 spec/                      — machine-readable protocol spec (generate_spec.py; --check gates
                              it) and the cross-document / cross-language checkers; see
                              spec/README.md:
