@@ -5801,10 +5801,10 @@ CENSUS_EXEMPT = {
                    "fixed-width stem is what the manifest names"),
     ],
     "go": [
-        (r"^(sternT|sternNRows|nlV3ISteps)$", "width-scaling helpers added by TODO "
+        (r"^(sternT|sternNRows|nlV3ISteps|v1ModeSteps)$", "width-scaling helpers added by TODO "
          "#295 so that SdfT, SdfNRows and I3Value GOVERN the code instead of "
          "being restated as the literal ratios n/16, n/2 and 5n/16 at the call "
-         "site. Go alone needs them: its Stern and v3 duplex take the width as "
+         "site (v1ModeSteps does the same for V1ModeSteps' 3n/4, TODO #347). Go alone needs them: its Stern and v3 duplex take the width as "
          "an argument, where C compiles for a single KEYBITS and Python and "
          "Java read the constant directly. Not a protocol step in any language"),
         (r"^(New|new)", "constructors for BitArray/QcMdpcPrf — the receiver surface "
@@ -6191,6 +6191,11 @@ PARAMETERS = {
                      "a constant no code reads -- the defect TODO #295's use census "
                      "exists to catch, and it fired here on the first draft of pass 3"),
     # ── NL-FSCX v3 (TODO #255) ──
+    "v1-mode-steps": (["V1_MODE_STEPS", "V1ModeSteps", "V1_MODE_STEPS",
+                       "Hfscx256.V1_MODE_STEPS"], "wire",
+                      "3n/4 = 192, NL-FSCX v1's step count in the HFSCX-256 "
+                      "compression function, HSKE-NL-A1's keystream and MAC key, "
+                      "and the WOTS chain step; n/4 until v10.0.0 (TODO #347)"),
     "nl-v3-i-steps": (["I3_VALUE", "I3Value", "I3_VALUE", "Duplex.I3_VALUE"], "wire",
                       "5n/16, the v3 duplex step count"),
     "nl-v3-r-steps": (["R3_VALUE", "R3Value", "R3_VALUE", "HerraduraNl.R3_VALUE"], "wire",

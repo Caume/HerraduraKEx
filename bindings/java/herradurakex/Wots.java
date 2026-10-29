@@ -34,10 +34,10 @@ public final class Wots {
     static final int L2 = 3;          // checksum digits
     static final int L = L1 + L2;     // 67 — total chains
 
-    /** Single WOTS-F hash chain step: h(x) = nl_fscx_revolve_v1(ROL(x,n/8), x, n/4). */
+    /** Single WOTS-F hash chain step: h(x) = nl_fscx_revolve_v1(ROL(x,n/8), x, 3n/4). */
     static BigInteger h(BigInteger x) {
         BitArray b = BitArray.fromBigInteger(x, N);
-        return Hfscx256.nlFscxRevolveV1(b.rotLeft(N / 8), b, N / 4).toBigInteger();
+        return Hfscx256.nlFscxRevolveV1(b.rotLeft(N / 8), b, Hfscx256.V1_MODE_STEPS).toBigInteger();
     }
 
     static BigInteger chain(BigInteger x, int steps) {

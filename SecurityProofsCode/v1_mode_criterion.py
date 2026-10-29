@@ -365,7 +365,13 @@ DEMOTED = {"HFSCX-256 / HFSCX-256-DS": ("hfscx-256", "hfscx-256-ds"),
 
 
 def demoted_ok(status, row):
-    return status.startswith("Demo-only") and "TODO #346" in row
+    """Demo-only naming TODO #346 -- or, since v10.0.0, restored by TODO #347's 3n/4
+    rounds with #346's demotion kept in the row's record.  This gate's FINDING (the
+    64-round core) still reproduces; the rating it set is superseded, not withdrawn."""
+    if status.startswith("Demo-only"):
+        return "TODO #346" in row
+    return (status.startswith("Production-track") and "Restored by TODO #347 (v10.0.0)"
+            in row and "Demoted by TODO #346" in row)
 
 
 def section_6():
@@ -377,20 +383,22 @@ def section_6():
         status, row = rows.get(h, ("(missing)", ""))
         check(demoted_ok(status, row), "SECURITY.md '%s' is demo-only and names TODO #346 "
               "('%s...')" % (h, status[:40]))
-        check(all(st.get(p) == "demo-only" for p in pids), "spec/ %s: demo-only (%s)"
-              % ("/".join(pids), [st.get(p) for p in pids]))
+        want = "demo-only" if status.startswith("Demo-only") else "production"
+        check(all(st.get(p) == want for p in pids), "spec/ %s: %s, matching SECURITY.md (%s)"
+              % ("/".join(pids), want, [st.get(p) for p in pids]))
     status, row = rows.get("HSKE-NL-A1", ("(missing)", ""))
-    check(status.startswith("Production-track") and "2^64" in status
+    check(status.startswith("Production-track") and
+          ("2^64" in status or "lifted by TODO #347 (v10.0.0)" in status)
           and "Conjecture (TODO #346)" in row and st.get("hske-nla1") == "production",
-          "HSKE-NL-A1 stays production-track only under the stated 2^64-block data limit, "
-          "naming its conjecture, and spec/ agrees")
+          "HSKE-NL-A1 stays production-track, under the stated 2^64-block data limit or "
+          "with it lifted by TODO #347's 3n/4 rounds, naming its conjecture, and spec/ agrees")
     for h in ("HKEX-RNL", "ZKP-RNL Σ-protocol"):
         status, row = rows.get(h, ("(missing)", ""))
         check(status.startswith("Production-track") and "HFSCX-256 dependency (TODO #346)"
               in row, "%s keeps its rating and records its HFSCX-256 dependency" % h)
     status, row = rows["HFSCX-256 / HFSCX-256-DS"]
     old = "Production-track (conjectured)"
-    check(not demoted_ok(old, row.replace(status, old)),
+    check(not demoted_ok(old, row.replace(status, old).replace("Restored by TODO #347", "")),
           "CONTROL: the row check FIRES on the pre-#346 HFSCX-256 status")
 
 

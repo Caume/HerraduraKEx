@@ -138,10 +138,17 @@ def section_1(rows):
     check(all(rows.get(h, ("",))[0].startswith("Production-track") for h in STANDARD),
           "the three of #248 §2's six not reached by TODO #346 are still production-track, "
           "none on a reduction")
-    check(all(rows.get(h, ("",))[0].startswith("Demo-only") and "TODO #346"
-              in rows.get(h, ("", ""))[1] for h in DEMOTED_346),
-          "the other three are demo-only for TODO #346's finding, which the row names -- "
-          "a finding against NL-FSCX v1, not a change of standard")
+    def _346(h):
+        st, row = rows.get(h, ("", ""))
+        if st.startswith("Demo-only"):
+            return "TODO #346" in row
+        # v10.0.0: TODO #347's 3n/4 rounds restored them, on this same standard.
+        return (st.startswith("Production-track") and "Demoted by TODO #346" in row
+                and "Restored by TODO #347 (v10.0.0)" in row)
+    check(all(_346(h) for h in DEMOTED_346),
+          "the other three were demoted for TODO #346's finding, which the row names -- "
+          "a finding against NL-FSCX v1, not a change of standard -- and are demo-only "
+          "or, since v10.0.0, restored by TODO #347 on the same standard")
     print("""
   So the bar is a NAMED CONJECTURE + quantitative cryptanalysis at the criterion
   + no known attack.  HSKE-NL-A1 meets it only under a per-key data limit since

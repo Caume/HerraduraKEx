@@ -1471,6 +1471,17 @@ const I3Value = 5 * 256 / 16 // 80
 // and the same ratio elsewhere.
 func nlV3ISteps(n int) int { return n * I3Value / 256 }
 
+// V1ModeSteps is NL-FSCX v1's step count in its three n/4-round modes until
+// v10.0.0: the HFSCX-256 compression function, HSKE-NL-A1's keystream and MAC
+// key, and the WOTS chain step (TODO #347).  v1 costs at most 2 bits per round
+// (an exact 1/4-per-round core, TODO #346), so n/4 = 64 rounds sat exactly at
+// the 128-bit collision bar; 3n/4 puts the proven trail floor at 384, 3x that
+// bar (SecurityProofs-10.md 11.70-11.72).
+const V1ModeSteps = 3 * 256 / 4 // 192
+
+// v1ModeSteps scales V1ModeSteps to a runtime width, as nlV3ISteps does.
+func v1ModeSteps(n int) int { return n * V1ModeSteps / 256 }
+
 // V3Rows returns the chi row partition for width n: 5-bit rows followed by
 // 7-bit rows, the unique such partition with the fewest 7-rows. Both lengths
 // are odd and >= 5, so the minimum-row-5 constraint holds by construction.
@@ -1641,7 +1652,7 @@ func RnlKdfSeed(k *BitArray) *BitArray {
 }
 
 // Hfscx256 computes the HFSCX-256-DM hash of data (Davies-Meyer compression).
-// Compression: C_DM(s,m) = F_1^{64}(s,m) ⊕ s.
+// Compression: C_DM(s,m) = F_1^{192}(s,m) ⊕ s (V1ModeSteps, TODO #347).
 // iv==nil uses the standard domain IV (bare hash).
 // A non-nil iv (32 bytes, caller sets iv = key XOR Hfscx256IV[:]) selects the keyed-MAC variant.
 func Hfscx256(data []byte, iv []byte) []byte {
@@ -1672,11 +1683,11 @@ func Hfscx256(data []byte, iv []byte) []byte {
 	}
 	padded = append(padded, lb...)
 
-	// Chain each 32-byte block: C_DM(s,m) = F_1^{64}(s,m) ⊕ s (Davies-Meyer)
+	// Chain each 32-byte block: C_DM(s,m) = F_1^{192}(s,m) ⊕ s (Davies-Meyer)
 	for off := 0; off < len(padded); off += 32 {
 		prev := state.Copy()
 		block := NewFromBytes(padded[off:off+32], 0, 256)
-		state = NlFscxRevolveV1(state, block, 64)
+		state = NlFscxRevolveV1(state, block, V1ModeSteps)
 		state = state.Xor(prev)
 	}
 
@@ -1720,14 +1731,14 @@ func HmacHfscx256(key, data []byte) []byte {
 // Caller must set: base = K XOR nonce; seed = rnlKdfSeed(base)  [ROL(base,n/8) XOR DC].
 func HskeNla1KsBlock(seed, base *BitArray, i uint32) *BitArray {
 	baseI := base.XorUint(uint64(i))
-	return NlFscxRevolveV1(seed, baseI, 64) // 64 = 256/4 = I_VALUE
+	return NlFscxRevolveV1(seed, baseI, V1ModeSteps)
 }
 
 // HskeNla1MacKey returns the MAC key (domain-separated from encryption).
-// mac_key = NlFscxRevolveV1(ROL(seed, 64), base, 64)
+// mac_key = NlFscxRevolveV1(ROL(seed, 64), base, V1ModeSteps)
 func HskeNla1MacKey(seed, base *BitArray) *BitArray {
 	seed2 := seed.RotateLeft(64) // ROL(seed, n/4)
-	return NlFscxRevolveV1(seed2, base, 64)
+	return NlFscxRevolveV1(seed2, base, V1ModeSteps)
 }
 
 // ---------------------------------------------------------------------------
@@ -1779,7 +1790,7 @@ func hskeNlAeadTag(macKey, nonce *BitArray, ad, ct []byte) []byte {
 // HskeNlA1Encrypt is HSKE-NL-A1's plain (unauthenticated) counter mode:
 //
 //	base = K XOR nonce;  seed = RnlKdfSeed(base)
-//	ks   = NlFscxRevolveV1(seed, base, n/4);  E = P XOR ks
+//	ks   = NlFscxRevolveV1(seed, base, 3n/4);  E = P XOR ks
 //
 // Java's HerraduraNl.hskeNlA1Encrypt has always been a suite function; C, Go
 // and Python transcribed it in their CLIs (enc AND dec) until TODO #312, while
@@ -1794,7 +1805,7 @@ func hskeNlAeadTag(macKey, nonce *BitArray, ad, ct []byte) []byte {
 func HskeNlA1Encrypt(pt, key, nonce *BitArray) *BitArray {
 	n := key.Size()
 	base := key.Xor(nonce)
-	ks := NlFscxRevolveV1(RnlKdfSeed(base), base, n/4)
+	ks := NlFscxRevolveV1(RnlKdfSeed(base), base, v1ModeSteps(n))
 	return pt.Xor(ks)
 }
 
@@ -4366,10 +4377,10 @@ const (
 	WotsL  = 67
 )
 
-// wotsH applies one hash-chain step: h(x) = NlFscxRevolveV1(ROL(x,n/8), x, n/4).
+// wotsH applies one hash-chain step: h(x) = NlFscxRevolveV1(ROL(x,n/8), x, 3n/4).
 func wotsH(x *BitArray) *BitArray {
 	n := x.Size()
-	return NlFscxRevolveV1(x.RotateLeft(n/8), x, n/4)
+	return NlFscxRevolveV1(x.RotateLeft(n/8), x, v1ModeSteps(n))
 }
 
 // wotsChain applies wotsH exactly steps times.

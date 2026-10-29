@@ -2,6 +2,79 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [10.0.0] - 2026-10-28
+
+### TODO #347, closed — NL-FSCX v1's modes run 3n/4 rounds (BREAKING, wire format)
+
+TODO #346 found that NL-FSCX v1 costs at most 2 bits per round, which left its n/4 =
+64-round modes with no margin.  #347's two analysis passes proved that floor in the
+trail-weight model and ruled out round constants as a fix.  This release takes the fix
+those passes sized: more rounds.  **MAJOR: almost every stored artifact changes.**  Read
+MIGRATING.md section 24 before upgrading.
+
+- **Three uses of `nl_fscx_revolve_v1` now run `V1_MODE_STEPS = 3n/4 = 192` steps instead
+  of n/4 = 64, in C, Go, Python and Java:**
+  - the HFSCX-256 compression function, C_DM(s, m) = F_m^192(s) ⊕ s;
+  - HSKE-NL-A1's keystream (plain, `--aead` and `.hkx`) and its MAC key;
+  - the WOTS chain step.
+  Every other v1 use is unchanged: the HKEX-RNL KDF, the HPKS-NL challenge, HDRBG and
+  the ratchet.  The 32-bit assembly and Arduino demo targets keep n/4; they share no wire
+  format with the four ports.
+- **New parameter** `v1-mode-steps` in `spec/check_language_parity.py`'s `PARAMETERS`
+  census (`V1_MODE_STEPS` / `V1ModeSteps` / `Hfscx256.V1_MODE_STEPS`).
+- **The floors at 192 rounds, in the model:**
+  - every differential characteristic costs >= 384 bits: 3x HFSCX-256's 128-bit
+    collision bar, and 1.5x HSKE-NL-A1's full-codebook bar of 256;
+  - inside the residual, the class search finds 384 as the least, no one-block collision
+    characteristic and no entry from the nonce;
+  - every linear trail weighs >= 191 bits (squared correlation <= 2^-382).
+- **Ratings:**
+  - HFSCX-256 / -DS, HPKS-WOTS and HPKS-XMSS return to production-track (conjectured),
+    after being demo-only since v9.5.67.
+  - HSKE-NL-A1's per-key data limit of 2^64 blocks is lifted.
+  - SECURITY.md, `spec/` and the #346 / #347 gates are updated to the restored state,
+    and each row keeps its earlier record.
+- **Breaks, all recorded in MIGRATING.md section 24:**
+  - every digest and HMAC;
+  - every signature, Stern/ring/WOTS/XMSS/ZKP/credential proof;
+  - every password-protected private key (PBKDF2-HMAC-HFSCX-256);
+  - every `.hkx`, `--aead` and plain `hske-nla1` ciphertext (the last decrypts
+    **silently** to garbage);
+  - every WOTS/XMSS key;
+  - hash-derived session secrets (HKEX-RNL, `hpke-stern-kem`, hybrid).
+  - Unchanged: HKEX-GF, HKEX-RNL and QC-MDPC key pairs.
+- **Cost:** hashing and A1 are about 3x slower.
+- **Vectors:**
+  - All KATs, PEM artifacts and replay rows are regenerated, and `hcred_kkw.json` is
+    re-captured.
+  - The hard-coded HFSCX-256, AEAD and HDRBG vectors in all four test harnesses are
+    updated.
+  - Four stream labels in `KAT/generate_kat.py` are re-chosen, because det_bytes is
+    HFSCX-256: the Sigma-signing label (v24 -> v1), the KKW label (v2 -> v3), the
+    QC-MDPC keygen label (1137 -> 2624) and the Stern weight-t label (2 -> 11).
+  - The weight-t and OPRF stream properties, which only a comment stated, are now
+    asserted.
+- **New gate** `SecurityProofsCode/v1_mode_rounds.py` (109 findings gates):
+  - it reads the shipped round count at 24 sites;
+  - it recomputes the shipped functions at 192 rounds against a 64-round control;
+  - it re-runs the residual class search at 192 rounds;
+  - it holds SECURITY.md, TODO_DONE.md and MIGRATING.md to the result.
+- **A latent gate bug, exposed by the new hash.**  `zkboo_view_hiding.py` decided
+  whether the ZKBoo PRG depends on the party tape by comparing ONE output bit of two
+  fixed tapes, a 1/2 coin.  The old hash happened to make the bits differ; the new one
+  made them agree, which turned the hiding check into its own negative control (the true
+  witness fell out of the candidate set).  The probe now compares 64 gate indices.
+- **Gates held to the restored ratings:** `v1_mode_criterion.py`, `v1_mode_floor.py`,
+  `v1_core_break.py` and `v2_v3_rating_review.py` accept the rows restored by #347, with
+  #346's demotion kept in the row's record.  `spec/check_docs_consistency.py`'s
+  INTRODUCTION anchor now reads `V1_MODE_STEPS`.
+- SecurityProofs-10.md §11.72; a callout at the head of SecurityProofs-6.md §11.9;
+  docs/INTRODUCTION.md §4.5.3.  TODO #347 is closed.
+  **Not done:**
+  - the exact probability (the model is not the cipher for v1);
+  - the linear hull;
+  - rounds above 4 bits inside the residual.
+
 ## [9.5.69] - 2026-10-28
 
 ### TODO #347, second pass — what breaking NL-FSCX v1's cores buys

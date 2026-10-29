@@ -577,14 +577,14 @@ public final class HerraduraNl {
     // -----------------------------------------------------------------
     // HSKE-NL-A1: counter-mode keystream:
     // base = K^nonce; seed = ROL(base, n/8) ^ RNL_KDF_DC_256 (n=256 => no shift);
-    // ks = nl_fscx_revolve_v1(seed, base, n/4); E = P ^ ks.
+    // ks = nl_fscx_revolve_v1(seed, base, 3n/4); E = P ^ ks (TODO #347).
     // -----------------------------------------------------------------
 
     public static BitArray hskeNlA1Encrypt(BitArray pt, BitArray key, BitArray nonce) {
         BitArray base = key.xor(nonce);
         // The ONE truncation (BITARRAY.md §4.4), through the one named function.
         BitArray seed = BitArray.rnlKdfSeed(base);
-        return pt.xor(Hfscx256.nlFscxRevolveV1(seed, base, base.size() / 4));
+        return pt.xor(Hfscx256.nlFscxRevolveV1(seed, base, 3 * base.size() / 4));
     }
 
     public static BitArray hskeNlA1Decrypt(BitArray ct, BitArray key, BitArray nonce) {
@@ -597,7 +597,7 @@ public final class HerraduraNl {
     // Encrypt-then-MAC over the HSKE-NL-A1 counter keystream:
     //   base    = K ^ nonce
     //   seed    = ROL(base, n/8) ^ RNL_KDF_DC_256
-    //   mac_iv  = nl_fscx_revolve_v1(ROL(seed, n/4), base, n/4) ^ IV_CONST
+    //   mac_iv  = nl_fscx_revolve_v1(ROL(seed, n/4), base, 3n/4) ^ IV_CONST
     //   ct      = pt ^ ks          (ks block i keyed on base ^ i, truncated)
     //   tag     = HFSCX-256-MAC(mac_iv,
     //                 DS || nonce || len(ad) || ad || len(ct) || ct)
@@ -617,7 +617,7 @@ public final class HerraduraNl {
     static BitArray[] hskeNlAeadStreams(BitArray key, BitArray nonce) {
         BitArray base = key.xor(nonce);
         BitArray seed = BitArray.rnlKdfSeed(base);      // the one truncation
-        BitArray macKey = Hfscx256.nlFscxRevolveV1(seed.rotLeft(N / 4), base, N / 4);
+        BitArray macKey = Hfscx256.nlFscxRevolveV1(seed.rotLeft(N / 4), base, Hfscx256.V1_MODE_STEPS);
         BitArray macIv = macKey.xor(Hfscx256.IV_CONST);
         return new BitArray[] { base, seed, macIv };
     }
@@ -628,7 +628,7 @@ public final class HerraduraNl {
         int nBlocks = (data.length + AEAD_BLOCK - 1) / AEAD_BLOCK;
         for (int i = 0; i < nBlocks; i++) {
             byte[] ksBytes = Hfscx256.nlFscxRevolveV1(
-                seed, base.xorUint(i), N / 4).toBytes();
+                seed, base.xorUint(i), Hfscx256.V1_MODE_STEPS).toBytes();
             int off = i * AEAD_BLOCK;
             int len = Math.min(AEAD_BLOCK, data.length - off);
             for (int j = 0; j < len; j++) {

@@ -264,9 +264,9 @@ DOC_PARAMS = [
     ("RNL_P", INTRO,
      r"q=\d+ \(modulus\), p=(\d+) \(rounding modulus\)",
      "HKEX-RNL rounding modulus p, INTRODUCTION"),
-    ("I_VALUE", INTRO,
-     r"iterated (\d+) steps \(= n/4\)",
-     "HFSCX-256 compression step count, INTRODUCTION"),
+    ("V1_MODE_STEPS", INTRO,
+     r"iterated (\d+) steps \(= 3n/4",
+     "HFSCX-256 compression step count, INTRODUCTION (3n/4 since v10.0.0, TODO #347)"),
     # QC-MDPC (TODO #285).  These three rows are why this table now has a
     # census below: TODO #276 moved r/d/t off the toy set and all four prose
     # copies below kept quoting the retired numbers for two releases, because

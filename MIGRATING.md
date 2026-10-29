@@ -40,6 +40,15 @@ width moves by a byte. It gets a MAJOR bump anyway, because changing what an exi
 failure it removes was the worst shape on this list: `dec` wrote the wrong plaintext and
 **exited 0**, in 16 of the matrix's cells. See [section 19](#19-hske-nla1-refuses-any-width-but-256-v900).
 
+The twenty-fourth is the reason the version is **10.0.0**, and it is the widest on this
+list. It changes how many rounds NL-FSCX v1 runs in its three hash-like modes (n/4 = 64 to
+3n/4 = 192): the **HFSCX-256 hash**, **HSKE-NL-A1's keystream and MAC key**, and the
+**WOTS chain step**. Almost everything in the suite passes through HFSCX-256, so almost
+every stored artifact changes: digests, signatures, password-protected private keys,
+`.hkx` files and every `hske-nla1` ciphertext. **Decrypt and re-export anything you need
+with a pre-10.0.0 build before upgrading**; plain `hske-nla1` ciphertexts fail silently.
+See [section 24](#24-nl-fscx-v1s-modes-run-3n4-rounds-v1000).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -74,6 +83,7 @@ trusting any signature made by an earlier build.
 | [HPKE-Stern-KEM moves to BIKE-128 parameters](#17-hpke-stern-kem-moves-to-bike-128-parameters-v700) | v7.0.0 | Every `hpke-stern-kem` key and ciphertext, and every `hybrid-rnl-stern` artifact carrying one | **Regenerate on v7.0.0+.** `r` sizes the wire format, so old artifacts are unreadable — but the row is demo-only and the old parameters were worth ~2^21 operations, so nothing with a security claim is being broken |
 | [HPKS-Stern-F binds the witness weight](#18-hpks-stern-f-binds-the-witness-weight-v800) | v8.0.0 | Every `hpks-stern` signature, and every HPKS-Stern-Ring, HCRED-issuance and `hybrid-rnl-stern` artifact carrying one | **Re-sign on v8.0.0+, and treat every pre-8.0.0 signature as unverified.** Keys are unchanged and still valid; the old verification rule bound nothing, so it accepted forgeries |
 | [`hske-nla1` refuses any width but 256](#19-hske-nla1-refuses-any-width-but-256-v900) | v9.0.0 | `enc`/`dec`/`encfile`/`decfile --algo hske-nla1` with a session key narrower than 256 bits | **Nothing at the default 256 bits.** A narrow-width ciphertext was only ever readable by the port that wrote it — decrypt it with a pre-9.0.0 build of THAT language and re-encrypt at 256 |
+| [NL-FSCX v1's modes run 3n/4 rounds](#24-nl-fscx-v1s-modes-run-3n4-rounds-v1000) | v10.0.0 | Every HFSCX-256 digest and MAC, so every signature, password-protected private key, `.hkx` file, `--aead` tag and hash-derived session secret; every `hske-nla1` ciphertext; every `hpks-wots` / `hpks-xmss` key | **Decrypt and re-export with a pre-10.0.0 build before upgrading; regenerate WOTS/XMSS keys and re-sign.** Plain `hske-nla1` fails silently |
 
 ---
 
@@ -1343,3 +1353,53 @@ fixed-`KEYBYTES` arithmetic (`ba_add256`, `ba_rol64_256` and friends, now
 `ba_add_mod2n`/`ba_rol_quarter`). See `BITARRAY.md` §8.4 and
 `CliTest/test_narrow_width_matrix.sh`, which measures the full 4 × 4 matrix at 256, 128,
 64 and 32 bits.
+
+---
+
+## 24. NL-FSCX v1's modes run 3n/4 rounds (v10.0.0)
+
+**This is the reason the version is 10.0.0.** It changes what existing `--algo` values
+produce, which is the surface the 2.0.0 tag froze.
+
+**Why.** TODO #346 found that NL-FSCX v1 has an iterative differential holding with
+probability exactly 1/4 per round for every key, so v1 costs at most 2 bits per round.
+At n/4 = 64 rounds that put HFSCX-256's compression function exactly at the 128-bit
+birthday bar, with zero margin; HFSCX-256 / -DS, HPKS-WOTS and HPKS-XMSS were demoted to
+demo-only, and HSKE-NL-A1 was held under a 2^64-block per-key data limit. TODO #347
+proved the 2-bit-per-round floor in the trail-weight model, showed that round constants
+cannot break the cores, and sized the fix by round count. At 3n/4 = 192 rounds every
+differential characteristic costs at least 384 bits in that model (3x the collision bar,
+1.5x HSKE-NL-A1's full-codebook bar), and every linear trail at least 191. Those rows are
+restored to production-track (conjectured), and the data limit is lifted
+(`SecurityProofsCode/v1_mode_rounds.py`, SecurityProofs-10.md §11.72).
+
+**What changed.** Three uses of `nl_fscx_revolve_v1`, in all four ports (C, Go, Python,
+Java), now run `V1_MODE_STEPS = 3n/4` steps instead of n/4:
+
+| use | before | v10.0.0+ |
+|---|---|---|
+| HFSCX-256 compression `C_DM(s, m) = F_m^r(s) ⊕ s` | r = 64 | r = 192 |
+| HSKE-NL-A1 keystream (plain, `--aead`, `.hkx`) and MAC key | n/4 | 3n/4 |
+| WOTS chain step `h(x) = F(ROL(x, n/8), x, r)` | n/4 | 3n/4 |
+
+Every other use of v1 is unchanged, in particular the HKEX-RNL KDF, the HPKS-NL
+challenge, HDRBG's state update and the ratchet. The 32-bit assembly and Arduino demo
+targets are unchanged too: they share no wire format with the four ports.
+
+**Who is affected, and what to do:**
+
+| artifact | effect | action |
+|---|---|---|
+| `dgst` digests and HMACs | different values | recompute |
+| signatures made with `sign --digest hfscx-256`, and every `hpks-stern`, ring, `hpks-wots`, `hpks-xmss`, ZKP and credential proof (all hash with HFSCX-256 internally) | does not verify | re-sign on 10.0.0+ |
+| `hpks-wots` / `hpks-xmss` keys | public key changes (chain step and tree hash) | **regenerate the keys**, keeping the `.idx` discipline for the new ones |
+| password-protected private keys (PBKDF2-HMAC-HFSCX-256) | refuse to unlock | re-export unencrypted with a pre-10.0.0 build, then re-protect on 10.0.0+ |
+| `.hkx` files (`encfile`) and `--aead` ciphertexts | tag check fails | decrypt with a pre-10.0.0 build first |
+| plain `enc --algo hske-nla1` ciphertexts | **decrypt to garbage and exit 0** (no tag) | decrypt with a pre-10.0.0 build first |
+| HKEX-RNL sessions, `hpke-stern-kem` and hybrid shared secrets | derived secret differs | both peers on the same side of the upgrade |
+| HKEX-GF, HKEX-RNL and QC-MDPC key pairs themselves | unchanged | none |
+
+**Cost.** HFSCX-256 and HSKE-NL-A1 are about 3x slower, and so is everything built on
+them; a password-protected key at the production PBKDF2 count takes about 3x longer to
+unlock.
+

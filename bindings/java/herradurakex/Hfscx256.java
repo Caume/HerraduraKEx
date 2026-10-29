@@ -66,6 +66,15 @@ public final class Hfscx256 {
     // -----------------------------------------------------------------
 
     private static final int BLOCK = 32; // bytes
+    /**
+     * NL-FSCX v1's step count in its three n/4-round modes until v10.0.0: the
+     * HFSCX-256 compression function, HSKE-NL-A1's keystream and MAC key, and
+     * the WOTS chain step (TODO #347).  v1 costs at most 2 bits per round (an
+     * exact 1/4-per-round core, TODO #346), so n/4 = 64 rounds sat exactly at
+     * the 128-bit collision bar; 3n/4 puts the proven trail floor at 384, 3x
+     * that bar (SecurityProofs-10.md §11.70-§11.72).
+     */
+    static final int V1_MODE_STEPS = 3 * N / 4; // 192
 
     /** Bare hash (iv == null) or keyed MAC (iv = key XOR IV_CONST, per the
      * suite's convention — see "Herradura cryptographic suite.py"'s hfscx_256
@@ -90,7 +99,7 @@ public final class Hfscx256 {
         BitArray lenXored = BitArray.fromBytes(lenBlock, N).xor(initState);
         System.arraycopy(lenXored.toBytes(), 0, padded, padLen, BLOCK);
 
-        int steps = N / 4; // 64
+        int steps = V1_MODE_STEPS; // 192
         for (int off = 0; off < padded.length; off += BLOCK) {
             BitArray prev = state;
             BitArray block = BitArray.fromBytes(Arrays.copyOfRange(padded, off, off + BLOCK), N);
@@ -188,7 +197,7 @@ public final class Hfscx256 {
 
     /** Deterministic form (explicit nonce) for KAT/test use. */
     static byte[] encFile(BitArray key, BitArray nonce, byte[] plaintext) {
-        int steps = N / 4;
+        int steps = V1_MODE_STEPS;
         BitArray base = key.xor(nonce);
         // TODO #314 pass 5: ONE named truncation, in one place.  This site used
         // to transcribe `rol(base, n/8) XOR RNL_KDF_DC_256` with a comment
@@ -260,7 +269,7 @@ public final class Hfscx256 {
         BitArray base = K.xor(nonce);
         BitArray seed = BitArray.rnlKdfSeed(base);      // the one truncation
 
-        int steps = N / 4;
+        int steps = V1_MODE_STEPS;
         BitArray macKey = nlFscxRevolveV1(seed.rotLeft(N / 4), base, steps);
         BitArray macIv = macKey.xor(IV_CONST);
         byte[] macData = new byte[nonceBytes.length + 8 + ctBytes.length];

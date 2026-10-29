@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.71** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores
+> - **Part 10 — §11.43–§11.72** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds
 
 ---
 
@@ -1473,3 +1473,42 @@ That is a sampled family, not a floor. Lemma 1 holds round by round, so the **pr
 A rotating schedule can be added to more rounds without losing anything, but it does not replace them. **More rounds remain the only fix sized by a proof in the v1 round.** Every option is a wire-format break and a MAJOR version.
 
 **Not done:** Lemma 2 and the residual search for the rotating schedule, any exact multi-round probability, and the choice itself. **Ratings:** none move.
+
+---
+
+## 11.72 v1's modes at 3n/4 rounds — TODO #347, closed (v10.0.0)
+
+§11.70 proved v1's floor of 2 bits per round in the trail-weight model and sized the fix by round count. §11.71 showed that round constants cannot break the cores and that a rotating key adds no proven margin. v10.0.0 takes the sized fix. The HFSCX-256 compression function, HSKE-NL-A1's keystream and MAC key, and the WOTS chain step now run NL-FSCX v1 for **3n/4 = 192 rounds** instead of n/4 = 64, through one named constant, `V1_MODE_STEPS`, in all four ports. The gate is `SecurityProofsCode/v1_mode_rounds.py`.
+
+### 11.72.1 What ships
+
+The gate reads each port's source and finds the constant and its use at the three sites, 24 sites in all, with no compression function left at 64 rounds. It then recomputes the shipped Python functions by hand at 192 rounds: `hfscx_256` on three messages, `hske_nla1_encrypt`'s keystream and `_wots_h`. Each is also compared with the same computation at 64 rounds, a control that must differ. Every KAT, PEM vector and replay row was regenerated. Four stream labels in `KAT/generate_kat.py` were re-chosen, because their streams come from HFSCX-256. Two that had only a comment behind them are now asserted.
+
+### 11.72.2 The floors at 192 rounds
+
+| quantity | 64 rounds (before) | 192 rounds |
+|---|---|---|
+| differential floor, β outside B1 (Lemma 1) | 128 | **384** |
+| B1 outside the residual (Lemma 2) | ≥ 139 | ≥ 422 |
+| residual, least in the class "every round ≤ 4" | 128 (β = 2^255 + 2^253) | **384**, same β |
+| §11.69's core (β = 2^254 + 1), α → α | 128 | 384 |
+| one-block collision in the residual's class | none | none |
+| entry from A1's nonce difference in the class | none | none |
+| linear trail, every R rounds ≥ R − 1 | 63 (2^−126) | **191 (2^−382)** |
+
+Lemma 1 holds round by round and Lemma 2 for each pair of rounds, so neither depends on the round count. The class search over the 538 residual betas is re-run at 192 rounds.
+
+### 11.72.3 The ratings
+
+| mode | bar | floor in the model | margin |
+|---|---|---|---|
+| HFSCX-256, collision and semi-free-start | 128 | 384 | **3.0×** |
+| HSKE-NL-A1, full codebook | 256 | 384 | **1.5×** |
+
+**HFSCX-256 / -DS, HPKS-WOTS and HPKS-XMSS return to production-track (conjectured).** That is the standard the other production-track rows meet: a named conjecture, cryptanalysis at the criterion with room to spare, and no known attack. **HSKE-NL-A1's 2^64-block per-key data limit is lifted.**
+
+The 32-bit assembly and Arduino demo targets keep n/4. They carry no rating and share no wire format with the four ports.
+
+**Cost:** about 3× on everything that hashes or runs A1. **Wire format:** MAJOR, MIGRATING.md section 24.
+
+**Not done:** the exact probability, since the model is not the cipher for v1 (§11.69.2); the linear hull; and rounds above 4 bits inside the residual.

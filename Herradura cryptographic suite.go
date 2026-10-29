@@ -203,7 +203,7 @@ func main() {
 	baseA1 := preshared.Xor(nA1)
 	counter := 0
 	bA1  := baseA1.XorUint(uint64(counter))
-	ksA1 := NlFscxRevolveV1(RnlKdfSeed(baseA1), bA1, n/4)
+	ksA1 := NlFscxRevolveV1(RnlKdfSeed(baseA1), bA1, V1ModeSteps)
 	eA1  := plaintext.Xor(ksA1)
 	dA1  := eA1.Xor(ksA1)
 	fmt.Printf("N (nonce) : %x\n", nA1)

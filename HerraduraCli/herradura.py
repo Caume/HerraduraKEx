@@ -2498,7 +2498,7 @@ def cmd_encfile(args):
 
     n        = 256
     blen     = _HKX_BLOCK          # 32 bytes
-    steps    = n // 4              # 64 NL-FSCX v1 steps per block
+    steps    = 3 * n // 4          # 192 NL-FSCX v1 steps per block (TODO #347)
     iv_const = int.from_bytes(_HFSCX256_IV_BYTES, 'big')
 
     K       = BitArray(n, key_int)
@@ -2568,7 +2568,7 @@ def cmd_decfile(args):
 
     n        = 256
     blen     = _HKX_BLOCK
-    steps    = n // 4
+    steps    = 3 * n // 4          # 192 (TODO #347)
     iv_const = int.from_bytes(_HFSCX256_IV_BYTES, 'big')
 
     K       = BitArray(n, key_int)

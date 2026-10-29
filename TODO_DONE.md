@@ -23946,3 +23946,81 @@ done: `v2_v3_rating_review.py` §1 now checks three standard rows plus the three
 this finding.  The fix, the linear axis and a full search are TODO #347.
 
 Status: **DONE v9.5.67** — NL-FSCX v1's 1/4-per-round iterative characteristic: HFSCX-256, WOTS, XMSS demoted; HSKE-NL-A1 held under a 2^64-block limit.
+
+### #347: restore a margin under NL-FSCX v1's modes — HFSCX-256 first
+
+**Why.**  TODO #346 (v9.5.67) found that NL-FSCX v1 has an iterative differential holding
+with probability exactly 1/4 per round, for every key and at every width.  With beta =
+2^(n-2) + 1 and alpha = M(2^(n-1)), the addition's output difference is 0.  So v1 costs at
+most 2 bits per round.  HFSCX-256's 64-round compression function therefore has a
+semi-free-start collision characteristic at exactly the birthday bound.  HFSCX-256 / -DS,
+HPKS-WOTS and HPKS-XMSS were demoted, and HSKE-NL-A1 was held only under a per-key limit of
+2^64 blocks.  No measurement can lift a proven ceiling; only a construction change can.
+
+**Before choosing a fix:**
+1. **A fuller search for cheaper characteristics.**  The 2-bit core is the least that
+   #346's bounded searches saw, not a proven least.  A cheaper one would lower every
+   figure below.  Candidates must be checked exactly on the real cipher, because the
+   Markov model fails for v1.
+2. **v1's linear axis in both modes**, which #346 did not measure.
+3. **The cost of a real hash collision through the core:** 128 bits plus entry plus exit.
+   No entry or exit of weight <= 22 within 3 rounds exists at n = 256, but longer ones
+   were not searched.
+
+**First pass (v9.5.68), `SecurityProofsCode/v1_mode_floor.py`, SecurityProofs-10.md §11.70.**
+All three items above were answered in the trail-weight model at n = 256:
+1. *Cheaper characteristics:* none outside a residual family of 538 betas.  Two lemmas
+   prove it: LM validity puts beta's transitions inside S u (S+1), and consecutive rounds
+   must cover beta ^ ROL(beta, n/4).  Inside the residual, an exhaustive search over
+   characteristics whose rounds each cost <= 4 bits finds no cycle below 2 bits per round.
+   It does find a second 2-bit core, beta = 2^255 + 2^253, at exactly 1/4 per round.
+2. *Linear:* every R-round linear trail weighs >= R - 1, because T = M o ROL^(n/4) + I
+   has branch number 5.  So 64 rounds give a squared correlation <= 2^-126.  The hull is
+   not measured.
+3. *Hash collision:* a one-block collision characteristic costs >= 129 outside the
+   residual, and none exists inside the residual's class.
+The ratings do not move.  Still open before a fix: the exact probability (the model is
+not the cipher for v1), the linear hull, and rounds of > 4 bits inside the residual.  The
+2-bit-per-round floor means the round count can now be sized from the table in §11.70.
+
+**Second pass (v9.5.69), `SecurityProofsCode/v1_core_break.py`, SecurityProofs-10.md §11.71.**
+The third fix ("breaking the core directly") is now measured:
+- *Round constants are ruled out.*  B ^ RC_r, A ^ RC_r or a constant inside the addition
+  leave both cores exactly where they are: each holds at exactly 1/4 for every B, and its
+  event A + B = A' + B' does not see a constant.  Checked on the real round.
+- *A rotating key schedule B_r = ROL(B, r s) breaks both cores*, at probability exactly 0
+  once the key has rotated by 3.  For s >= 3 it also kills the whole alpha ^ beta = 2^j
+  family; at s = 1 that family rotates along at 3 bits per round (190 over 64 rounds).
+  Under s = 3 no beta in a 135-member family per rotation keeps a characteristic of
+  rounds <= 3 bits.  But Lemma 1 holds round by round, so the proven floor stays 2 bits
+  per round: nothing above it is proven until the residual argument is redone.
+So more rounds remain the only fix sized by a proof in the v1 round.  A rotating schedule
+can be added to them, but does not replace them.
+
+**Candidate fixes, each a wire-format break:**
+- **More rounds.**  The core costs 2 bits per round, so the collision bar n/2 needs more
+  than n/4 rounds with margin.  At 3n/4 = 192 rounds the core costs 384 bits.  Every
+  digest, MAC, WOTS/XMSS key, signature and `.hkx` file changes.
+- **The hash on the v3 round**, whose chi layer has a proven differential floor of 1.678
+  bits per round (§11.52).  The same breaks apply, plus a new primitive dependency.
+- **Breaking the core directly**, with a round-dependent B or a nonzero constant in the
+  addition, so that (alpha, beta -> 0) stops iterating.  This must be re-measured: a
+  different core may exist.
+Whichever is chosen is a **MAJOR** version under CLAUDE.md's policy and needs a
+MIGRATING.md entry.  HSKE-NL-A1's data limit can be lifted only by the same change applied
+to the keystream generator.
+
+**Closed (v10.0.0), `SecurityProofsCode/v1_mode_rounds.py`, SecurityProofs-10.md §11.72.**
+The fix is the sized one: **more rounds**.  The HFSCX-256 compression function, HSKE-NL-A1's
+keystream and MAC key, and the WOTS chain step now run `V1_MODE_STEPS = 3n/4 = 192` rounds
+in all four ports.  In the trail-weight model every differential characteristic costs >= 384
+(3x the collision bar, 1.5x A1's full-codebook bar) and every linear trail >= 191; inside
+the residual the class search at 192 rounds finds 384 as the least, no collision
+characteristic and no entry from the nonce.  HFSCX-256 / -DS, HPKS-WOTS and HPKS-XMSS return
+to production-track (conjectured); HSKE-NL-A1's 2^64-block data limit is lifted.  **This
+is a MAJOR version (10.0.0): every digest, signature, password-protected key, `.hkx` file,
+A1 ciphertext and WOTS/XMSS key changes** -- MIGRATING.md section 24.  Not done: the exact
+probability, the linear hull, and the 32-bit assembly / Arduino demo targets, which keep
+their n/4 round counts and share no wire format with the four ports.
+
+Status: **DONE v10.0.0** — NL-FSCX v1's three modes at 3n/4 = 192 rounds; 384-bit trail floor; four rows restored.
