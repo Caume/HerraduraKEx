@@ -513,10 +513,10 @@ public final class SelfTest {
             java.util.Arrays.fill(resEntropy, (byte) 0xa5);
             dk.reseed(resEntropy);
             String kat2 = toHex(dk.generate(32));
-            boolean katOk = kat1.equals("cd3e576bee89501a3760fb96fc05b6a3029c26f405e8667c71f311fc39ab1b23"
-                    + "90620f2641a2a2dabf28cf35ae991d6b9fc254509a7720de24cbd9c603cd718e"
-                    + "089ea95dc62208133b3475fadb10ef6d")
-                && kat2.equals("bd5324b039a98172fae214390fe9bcc928f3bd65231213efd9162664b5e756bf");
+            boolean katOk = kat1.equals("bf6348e1070b480769a1721992048128133a137557f8614d903cd354461269f7"
+                    + "471b2beb6344ffe10d74a0d3f46561b29c2b982d62d9eddda6494adabd73de23"
+                    + "222e9b8f664b83b6186854bae1f3b4c9")
+                && kat2.equals("af68c161903caa96091f10591f957481c8be537d037d6dce785e4805f777049e");
 
             byte[] entropy = "self-test-hdrbg-entropy-01234567".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             Hdrbg d1 = Hdrbg.seed(entropy, "pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));

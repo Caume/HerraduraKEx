@@ -343,13 +343,15 @@ def section_5():
 def section_6():
     rule("§6  The documents")
     todo = open(os.path.join(ROOT, "TODO.md")).read()
-    m = re.search(r"### #347:.*?(?=^### |\Z)", todo, re.S | re.M)
+    done = open(os.path.join(ROOT, "TODO_DONE.md")).read()
+    m = (re.search(r"### #347:.*?(?=^### |\Z)", todo, re.S | re.M) or
+         re.search(r"### #347:.*?(?=^### |\Z)", done, re.S | re.M))
     body = m.group(0) if m else ""
 
     def ok(b):
         return "Second pass (v9.5.69)" in b and "v1_core_break.py" in b
-    check(ok(body) and "Status: **OPEN**" in body,
-          "TODO #347 records the second pass and stays OPEN for the choice")
+    check(ok(body) and ("Status: **OPEN**" in body or "Status: **DONE v10.0.0**" in body),
+          "TODO #347 records the second pass (OPEN for the choice, or closed by v10.0.0)")
     check(not ok(body.replace("Second pass", "Later pass")),
           "CONTROL: the check FIRES on an entry without the second pass")
 

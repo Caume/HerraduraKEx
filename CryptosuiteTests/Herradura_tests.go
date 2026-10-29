@@ -576,7 +576,7 @@ func testNlFscxV2BijectiveInverse() {
 func testHskeNlA1Correctness() {
 	fmt.Println("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]")
 	for _, size := range sizes {
-		iv := iVal(size)
+		iv := 3 * size / 4 // 3n/4 since v10.0.0 (TODO #347)
 		ok, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for trial := 0; trial < N; trial++ {
@@ -706,22 +706,22 @@ func testHpkeNlCorrectness() {
 func testHfscx256KAV() {
 	fmt.Println("[19] HFSCX-256-DM known-answer vectors  [NL-FSCX HASH]")
 	expEmpty := []byte{
-		0xe7, 0x08, 0x2e, 0x7f, 0x03, 0x8a, 0x6e, 0x32,
-		0xe4, 0x80, 0xb5, 0xf1, 0xd9, 0x69, 0xea, 0x2c,
-		0x19, 0x56, 0x5d, 0x32, 0x7d, 0xef, 0xb0, 0xf8,
-		0x50, 0x0f, 0x6f, 0xac, 0x8f, 0xe2, 0x46, 0xcc,
+		0xe9, 0x9d, 0xc5, 0xa4, 0xf9, 0xeb, 0x50, 0xcf,
+		0x90, 0x6f, 0x85, 0xc3, 0xcd, 0x55, 0xde, 0xdd,
+		0x97, 0x92, 0xdf, 0x6a, 0xf3, 0xac, 0x7a, 0x83,
+		0x8e, 0xb8, 0x69, 0x8f, 0xed, 0xc1, 0xa0, 0xca,
 	}
 	expA := []byte{
-		0x73, 0xb2, 0xd9, 0x1b, 0xbd, 0xf0, 0xfc, 0x00,
-		0x0d, 0xe7, 0xcd, 0x16, 0xac, 0x45, 0xd7, 0xf3,
-		0xf4, 0x1b, 0xe5, 0x60, 0x95, 0x24, 0xdb, 0xeb,
-		0xa3, 0x06, 0x05, 0xa8, 0x9d, 0x13, 0x8e, 0xc5,
+		0x2a, 0x0e, 0x93, 0x29, 0xeb, 0x6a, 0xf5, 0x49,
+		0xa2, 0xc0, 0xda, 0x36, 0x4a, 0x4d, 0xcb, 0xbf,
+		0x9b, 0xa8, 0x87, 0x0e, 0x94, 0xd8, 0x99, 0x89,
+		0x36, 0xe8, 0xe0, 0x62, 0xfb, 0xf8, 0x5a, 0x86,
 	}
 	exp33A := []byte{
-		0x96, 0x25, 0x19, 0x76, 0x47, 0x09, 0xbc, 0x00,
-		0x80, 0xce, 0x8a, 0x1e, 0x52, 0x66, 0x0b, 0xec,
-		0x8e, 0x33, 0x9e, 0xa4, 0xc3, 0x49, 0xf4, 0xd8,
-		0xd1, 0xb9, 0xac, 0x2b, 0xfd, 0x68, 0x3f, 0xda,
+		0xef, 0x26, 0x6f, 0xa4, 0x02, 0x14, 0x8f, 0x40,
+		0x85, 0x32, 0x5c, 0x88, 0xc8, 0x90, 0x32, 0x67,
+		0x3d, 0xae, 0x64, 0x33, 0x8a, 0xae, 0x00, 0x49,
+		0x45, 0xa4, 0x91, 0xff, 0xa2, 0x85, 0xee, 0x0d,
 	}
 	type kav struct {
 		msg    []byte
@@ -963,7 +963,7 @@ func benchNlFscxRevolve() {
 func benchHskeNlA1RoundTrip() {
 	fmt.Println("[38] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
 	for _, size := range sizes {
-		iv   := iVal(size)
+		iv   := 3 * size / 4 // 3n/4 since v10.0.0 (TODO #347)
 		sink := randBA(size)
 		ops, elapsed := bench("", func() {
 			K     := randBA(size)
@@ -1497,9 +1497,9 @@ func testHskeNlAead() {
 	katPt := []byte("HSKE-NL-AEAD cross-language vector, 41 bytes!")
 	katCt, katTag := HskeNlAeadEncrypt(katKey, katNonce, []byte("hdr"), katPt)
 	okKat := fmt.Sprintf("%x", katCt) ==
-		"75fe38c5204d65381fc11f084181ee0cce44940c4b62b697ab85178f20022ce4cfbad25099f9e16d5ad7abf73d" &&
+		"d6f79a7caf75d073b25eb5107199f6fce5a29cd6428acc4537a2d2f3820ac4b6ee086d6b657734a37af5228e93" &&
 		fmt.Sprintf("%x", katTag) ==
-			"b9bc7eb9cf31ec444a50ef670750d62a189f4518908a42d16ec6872eb710d022"
+			"49539eb688d37f3f23fcc63ec38b370f2d139def31d76203b80a74670dab54bc"
 
 	// Round-trip + tamper rejection over random inputs of irregular lengths
 	trials := testRounds(50)
@@ -1554,9 +1554,9 @@ func testHdrbg() {
 	d := DrbgSeed(ent, []byte("HDRBG-KAT"))
 	out, _ := d.DrbgGenerate(80)
 	okKat := fmt.Sprintf("%x", out) ==
-		"cd3e576bee89501a3760fb96fc05b6a3029c26f405e8667c71f311fc39ab1b23"+
-			"90620f2641a2a2dabf28cf35ae991d6b9fc254509a7720de24cbd9c603cd718e"+
-			"089ea95dc62208133b3475fadb10ef6d"
+		"bf6348e1070b480769a1721992048128133a137557f8614d903cd354461269f7"+
+			"471b2beb6344ffe10d74a0d3f46561b29c2b982d62d9eddda6494adabd73de23"+
+			"222e9b8f664b83b6186854bae1f3b4c9"
 	re := make([]byte, 16)
 	for i := range re {
 		re[i] = 0xa5
@@ -1564,7 +1564,7 @@ func testHdrbg() {
 	d.DrbgReseed(re)
 	out2, _ := d.DrbgGenerate(32)
 	okKat = okKat && fmt.Sprintf("%x", out2) ==
-		"bd5324b039a98172fae214390fe9bcc928f3bd65231213efd9162664b5e756bf"
+		"af68c161903caa96091f10591f957481c8be537d037d6dce785e4805f777049e"
 
 	// Determinism + personalization divergence + reseed separation
 	d1 := DrbgSeed([]byte("ent-A"), []byte("p1"))

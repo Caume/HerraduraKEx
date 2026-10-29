@@ -403,7 +403,7 @@ int main(void)
         ba_xor(&base_a1, &preshared, &N_a1);          /* base = K XOR N             */
         BitArray seed_a1 = BA_INIT;
         ba_rnl_kdf_seed(&seed_a1, &base_a1);           /* seed = ROL(base,n/8)^DC    */
-        nl_fscx_revolve_v1_ba(&ks_nl1, &seed_a1, &base_a1, I_VALUE); /* counter=0  */
+        nl_fscx_revolve_v1_ba(&ks_nl1, &seed_a1, &base_a1, V1_MODE_STEPS); /* counter=0 */
         ba_xor(&E_nl1, &plaintext, &ks_nl1);
         ba_xor(&D_nl1, &E_nl1,    &ks_nl1);
         ba_print_hex("N (nonce) : ", &N_a1);

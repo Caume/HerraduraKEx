@@ -52,6 +52,14 @@
 #define KEYBYTES (KEYBITS / 8)
 #define I_VALUE  (KEYBITS / 4)       /* 64  for 256-bit */
 #define R_VALUE  (3 * KEYBITS / 4)   /* 192 for 256-bit */
+/* NL-FSCX v1's step count in its three n/4-round modes until v10.0.0: the
+ * HFSCX-256 compression function, HSKE-NL-A1's keystream and MAC key, and the
+ * WOTS chain step (TODO #347).  v1 costs at most 2 bits per round (an exact
+ * 1/4-per-round core, TODO #346), so n/4 = 64 rounds sat exactly at the
+ * 128-bit collision bar.  3n/4 puts the proven trail floor at 384, 3x that
+ * bar (SecurityProofs-10.md §11.70-§11.72).  Width-variable callers use
+ * 3 * nbits / 4. */
+#define V1_MODE_STEPS (3 * KEYBITS / 4)  /* 192 for 256-bit */
 
 #if KEYBYTES < 2
 #  error "KEYBITS must be >= 16"
@@ -1642,7 +1650,7 @@ static BaStatus ba_try_gf_pow(BitArray *dst, const BitArray *base, uint64_t e)
 }
 
 /* HFSCX-256-DM: Merkle-Damgård hash built on NL-FSCX v1 with Davies-Meyer feed-forward.
- * Compression: C_DM(s,m) = F_1^{64}(s,m) ⊕ s.
+ * Compression: C_DM(s,m) = F_1^{192}(s,m) ⊕ s (V1_MODE_STEPS, TODO #347).
  * Bare hash: iv = NULL.  Keyed MAC: iv = key XOR _HFSCX256_IV (32 bytes). */
 static void hfscx_256(const uint8_t *data, size_t len,
                       const uint8_t *iv, uint8_t out[32])
@@ -1677,11 +1685,11 @@ static void hfscx_256(const uint8_t *data, size_t len,
             lb[24 + i] ^= (uint8_t)((bit_len >> (56 - 8 * i)) & 0xFF);
     }
 
-    /* Chain each 32-byte block: C_DM(s,m) = F_1^{64}(s,m) ⊕ s (Davies-Meyer) */
+    /* Chain each 32-byte block: C_DM(s,m) = F_1^{192}(s,m) ⊕ s (Davies-Meyer) */
     for (off = 0; off < padded_len; off += 32) {
         BitArray prev = state;
         memcpy(block.b, padded + off, 32);
-        nl_fscx_revolve_v1_ba(&state, &state, &block, 64);
+        nl_fscx_revolve_v1_ba(&state, &state, &block, V1_MODE_STEPS);
         ba_xor(&state, &state, &prev);
     }
 
@@ -1739,7 +1747,7 @@ static void hske_nla1_ks_block(const BitArray *seed, const BitArray *base,
     base_i.b[KEYBYTES-3] ^= (uint8_t)((i >> 16) & 0xFF);
     base_i.b[KEYBYTES-2] ^= (uint8_t)((i >>  8) & 0xFF);
     base_i.b[KEYBYTES-1] ^= (uint8_t)( i        & 0xFF);
-    nl_fscx_revolve_v1_ba(ks_out, seed, &base_i, I_VALUE);
+    nl_fscx_revolve_v1_ba(ks_out, seed, &base_i, V1_MODE_STEPS);
 }
 
 static void hske_nla1_mac_key(const BitArray *seed, const BitArray *base,
@@ -1747,7 +1755,7 @@ static void hske_nla1_mac_key(const BitArray *seed, const BitArray *base,
 {
     BitArray seed2 = BA_INIT;
     ba_rol_k(&seed2, seed, KEYBITS / 4);
-    nl_fscx_revolve_v1_ba(mac_key_out, &seed2, base, I_VALUE);
+    nl_fscx_revolve_v1_ba(mac_key_out, &seed2, base, V1_MODE_STEPS);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1811,7 +1819,7 @@ static void _hske_nl_aead_xor_ks(const BitArray *seed, const BitArray *base,
 
 /* HSKE-NL-A1's plain (unauthenticated) counter mode:
  *   base = K XOR nonce;  seed = ba_rnl_kdf_seed(base);
- *   ks   = nl_fscx_revolve_v1(seed, base, I_VALUE);  E = P XOR ks
+ *   ks   = nl_fscx_revolve_v1(seed, base, 3n/4);  E = P XOR ks
  * Java's HerraduraNl.hskeNlA1Encrypt has always been a suite function; C, Go
  * and Python transcribed it in their CLIs (enc AND dec) until TODO #312, while
  * calling the suite for its AEAD sibling in the same branch of the same
@@ -1829,10 +1837,10 @@ static void hske_nla1_encrypt(BitArray *ct_out, const BitArray *pt,
     BitArray base = BA_INIT, seed = BA_INIT, ks = BA_INIT;
     ba_xor(&base, key, nonce);
     ba_rnl_kdf_seed(&seed, &base);
-    /* n/4 steps at the operand's OWN width, not the build's I_VALUE: Go,
-       Python and Java have always written n/4 here, and the constant is what
-       made this path 256-only in C (TODO #314 pass 6). */
-    nl_fscx_revolve_v1_ba(&ks, &seed, &base, base.nbits / 4);
+    /* 3n/4 steps (TODO #347; n/4 until v10.0.0) at the operand's OWN width,
+       not the build's V1_MODE_STEPS: a build constant is what made this path
+       256-only in C (TODO #314 pass 6). */
+    nl_fscx_revolve_v1_ba(&ks, &seed, &base, 3 * base.nbits / 4);
     ba_xor(ct_out, pt, &ks);
 }
 
@@ -5442,7 +5450,7 @@ static int hpkst_verify(const BitArray *C_agg, const BitArray *R,
 /* ─────────────────────────────────────────────────────────────────────────────
  * 97 — HPKS-WOTS-F / HPKS-XMSS-F — Hash-based signatures (TODO #97/#102)
  *
- * Hash chain step: h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, n/4)
+ * Hash chain step: h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, 3n/4)  (TODO #347)
  * Winternitz w=16: ℓ_msg=64 nibbles, ℓ_cs=3, ℓ=67 total chains.
  * XMSS: 2^H Merkle leaves; leaf = haccum_leaf(pk_0 || … || pk_{ℓ-1}).
  * ─────────────────────────────────────────────────────────────────────────── */
@@ -5459,12 +5467,12 @@ static int hpkst_verify(const BitArray *C_agg, const BitArray *R,
 #define WOTS_L2     3   /* checksum digits in base-16 */
 #define WOTS_L     67   /* total chain count */
 
-/* Single hash-chain step: h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, n/4). */
+/* Single hash-chain step: h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, 3n/4). */
 static inline void _wots_h_ba(BitArray *out, const BitArray *x)
 {
     BitArray rotx = BA_INIT;
     ba_rol_k(&rotx, x, KEYBITS / 8);
-    nl_fscx_revolve_v1_ba(out, &rotx, x, KEYBITS / 4);
+    nl_fscx_revolve_v1_ba(out, &rotx, x, V1_MODE_STEPS);
 }
 
 /* Apply _wots_h_ba `steps` times in-place. */

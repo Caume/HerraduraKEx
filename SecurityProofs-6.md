@@ -13,12 +13,14 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.71** (SecurityProofs-10.md): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores
+> - **Part 10 — §11.43–§11.72** (SecurityProofs-10.md): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds
 
 ---
 
 ## 11.9 HFSCX-256-DM — Hash function on NL-FSCX v1
 
+> **TODO #347 (v10.0.0), SecurityProofs-10.md §11.72:** the compression function now runs NL-FSCX v1 for 3n/4 = 192 rounds, not the 64 written in this section's formulas, which describe the construction through v9.5.69. In the trail-weight model every differential characteristic now costs at least 384 bits, 3× the birthday bar, and HFSCX-256 is production-track (conjectured) again. Read 64 as 192 below wherever the round count of the deployed hash is meant.
+>
 > **TODO #346 (v9.5.67), SecurityProofs-10.md §11.69:** NL-FSCX v1 has an iterative differential holding with probability exactly 1/4 per round at every width, so this compression function has a semi-free-start collision characteristic at exactly 2^−128 over its 64 rounds. That is zero margin against the birthday bound. It is not a collision of the hash. HFSCX-256 is demo-only since; the analysis below is the record that preceded it.
 
 HFSCX-256-DM (deployed v1.9.0; originally HFSCX-256 from v1.5.24) is a 256-bit Merkle-Damgård hash built on NL-FSCX v1 with Davies-Meyer feed-forward compression.

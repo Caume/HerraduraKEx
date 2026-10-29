@@ -1209,6 +1209,14 @@ R3_VALUE = 5 * KEYBITS // 8   # 160 for 256-bit
 # 107 bits — see SecurityProofs-8.md §11.34.8.
 I3_VALUE = 5 * KEYBITS // 16  # 80 for 256-bit
 
+# NL-FSCX v1's step count in its three n/4-round modes until v10.0.0: the
+# HFSCX-256 compression function, HSKE-NL-A1's keystream and MAC key, and the
+# WOTS chain step (TODO #347).  v1 costs at most 2 bits per round (an exact
+# 1/4-per-round core, TODO #346), so n/4 = 64 rounds sat exactly at the 128-bit
+# collision bar; 3n/4 puts the proven trail floor at 384, 3x that bar
+# (SecurityProofs-10.md §11.70-§11.72).  Width-variable callers use 3 * n // 4.
+V1_MODE_STEPS = 3 * KEYBITS // 4  # 192 for 256-bit
+
 
 def v3_rows(n: int = KEYBITS) -> tuple[int, ...]:
     """chi row partition for width *n*: 5-bit rows then 7-bit rows.
@@ -1348,7 +1356,7 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
     """HFSCX-256-DM: 256-bit Merkle-Damgård hash built on NL-FSCX v1, Davies-Meyer compression.
 
     Compression function (Davies-Meyer):
-        state_{i+1} = nl_fscx_revolve_v1(state_i, block_i, 64) ⊕ state_i
+        state_{i+1} = nl_fscx_revolve_v1(state_i, block_i, 192) ⊕ state_i
 
     Padding (ISO 7816-4 + Merkle-Damgård strengthening):
         1. Append 0x80 to the message.
@@ -1386,8 +1394,8 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
     len_raw  = int.from_bytes(b'\x00' * (blen - 8) + (len(data) * 8).to_bytes(8, 'big'), 'big')
     padded  += (len_raw ^ init_int).to_bytes(blen, 'big')
 
-    # Chain blocks: C_DM(s, m) = F_1^{64}(s, m) ⊕ s (Davies-Meyer feed-forward)
-    steps = n // 4  # 64
+    # Chain blocks: C_DM(s, m) = F_1^{192}(s, m) ⊕ s (Davies-Meyer feed-forward)
+    steps = V1_MODE_STEPS  # 192 (TODO #347; n/4 = 64 until v10.0.0)
     for off in range(0, len(padded), blen):
         prev = state
         block = BitArray(n, int.from_bytes(padded[off:off + blen], 'big'))
@@ -4433,9 +4441,9 @@ _XMSS_H    = 10           # default tree height (1024 leaves)
 
 
 def _wots_h(x: BitArray) -> BitArray:
-    """Single WOTS-F hash chain step: h(x) = nl_fscx_revolve_v1(ROL(x,n/8), x, n/4)."""
+    """Single WOTS-F hash chain step: h(x) = nl_fscx_revolve_v1(ROL(x,n/8), x, 3n/4)."""
     n = x.size
-    return nl_fscx_revolve_v1(x.rotated(n // 8), x, n // 4)
+    return nl_fscx_revolve_v1(x.rotated(n // 8), x, 3 * n // 4)
 
 
 def _wots_chain(x: BitArray, steps: int) -> BitArray:
@@ -4865,10 +4873,10 @@ def rnl_kdf_seed(k: BitArray) -> BitArray:
 
 
 def hske_nla1_encrypt(pt: BitArray, key: BitArray, nonce: BitArray) -> BitArray:
-    """HSKE-NL-A1 counter-mode encrypt: E = P XOR nl_fscx_revolve_v1(seed, base, n/4)."""
+    """HSKE-NL-A1 counter-mode encrypt: E = P XOR nl_fscx_revolve_v1(seed, base, 3n/4)."""
     n    = key.size
     base = BitArray(n, key.uint ^ nonce.uint)
-    ks   = nl_fscx_revolve_v1(rnl_kdf_seed(base), base, n // 4)
+    ks   = nl_fscx_revolve_v1(rnl_kdf_seed(base), base, 3 * n // 4)
     return BitArray(n, pt.uint ^ ks.uint)
 
 
@@ -4903,7 +4911,7 @@ def _hske_nl_aead_streams(key: BitArray, nonce: BitArray) -> tuple:
     """Derive (base, seed, mac_iv) for one (key, nonce) pair."""
     base    = BitArray(KEYBITS, key.uint ^ nonce.uint)
     seed    = rnl_kdf_seed(base)
-    mac_key = nl_fscx_revolve_v1(seed.rotated(KEYBITS // 4), base, I_VALUE)
+    mac_key = nl_fscx_revolve_v1(seed.rotated(KEYBITS // 4), base, V1_MODE_STEPS)
     mac_iv  = BitArray(KEYBITS, mac_key.uint ^ int.from_bytes(_HFSCX256_IV_BYTES, 'big'))
     return base, seed, mac_iv
 
@@ -4914,7 +4922,7 @@ def _hske_nl_aead_xor_keystream(seed: BitArray, base: BitArray, data: bytes) -> 
     out  = bytearray()
     for i in range((len(data) + blen - 1) // blen):
         chunk = data[i * blen:(i + 1) * blen]
-        ks    = nl_fscx_revolve_v1(seed, BitArray(KEYBITS, base.uint ^ i), I_VALUE)
+        ks    = nl_fscx_revolve_v1(seed, BitArray(KEYBITS, base.uint ^ i), V1_MODE_STEPS)
         out  += bytes(d ^ k for d, k in zip(chunk, ks.uint.to_bytes(blen, 'big')))
     return bytes(out)
 
@@ -5341,7 +5349,7 @@ PQC-HARDENED PROTOCOLS (v1.5.0, C3 hybrid — see SecurityProofs-4.md §11)
 HSKE-NL-A1 (counter-mode HSKE with NL-FSCX v1):
   Nonce:    N = random(n bits)   [per-session; transmitted alongside ciphertext]
   base      = K XOR N            [session key base]
-  keystream[i] = nl_fscx_revolve_v1(ROL(base, n/8), base XOR i, n/4)
+  keystream[i] = nl_fscx_revolve_v1(ROL(base, n/8), base XOR i, 3n/4)
   Encrypt:  C = (N, P XOR keystream[0])
   Decrypt:  base = K XOR N; P = C XOR keystream[0]
   Security: per-session nonce ensures distinct keystreams across sessions;
@@ -5490,7 +5498,7 @@ def main():
     ks_a1      = nl_fscx_revolve_v1(
                     rnl_kdf_seed(base_a1),
                     BitArray(KEYBITS, base_a1.uint ^ counter),
-                    KEYBITS // 4)
+                    V1_MODE_STEPS)
     E_a1 = BitArray(KEYBITS, plaintext.uint ^ ks_a1.uint)
     D_a1 = BitArray(KEYBITS, E_a1.uint ^ ks_a1.uint)
     print(f"N (nonce) : {N_a1.hex}")

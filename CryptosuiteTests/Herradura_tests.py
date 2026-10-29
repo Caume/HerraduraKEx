@@ -463,8 +463,8 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
     len_raw = int.from_bytes(b'\x00' * (blen - 8) + (len(data) * 8).to_bytes(8, 'big'), 'big')
     padded += (len_raw ^ init_int).to_bytes(blen, 'big')
 
-    # Chain blocks: C_DM(s, m) = F_1^{64}(s, m) ⊕ s (Davies-Meyer feed-forward)
-    steps = n // 4  # 64
+    # Chain blocks: C_DM(s, m) = F_1^{192}(s, m) ⊕ s (Davies-Meyer feed-forward)
+    steps = 3 * n // 4  # 192 (TODO #347; n/4 until v10.0.0)
     for off in range(0, len(padded), blen):
         prev = state
         block = BitArray(n, int.from_bytes(padded[off:off + blen], 'big'))
@@ -1669,10 +1669,10 @@ def test_nl_fscx_v2_bijective_inverse():
 
 def test_hske_nl_a1_correctness():
     # HSKE-NL-A1 counter-mode with per-session nonce: N random; base = K XOR N.
-    # keystream[i] = nl_fscx_revolve_v1(ROL(base, n/8), base XOR i, n/4).
+    # keystream[i] = nl_fscx_revolve_v1(ROL(base, n/8), base XOR i, 3n/4).
     print("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]")
     for size in SIZES:
-        iv = i_val(size); ok = 0; n_run = 0
+        iv = 3 * size // 4; ok = 0; n_run = 0   # 3n/4 since v10.0.0 (TODO #347)
         for trial in _trange(_iters(1000)):
             n_run += 1
             K    = BitArray.random(size)
@@ -1911,17 +1911,17 @@ def test_hfscx_256():
     # Known-answer tests (KAT) — pre-computed from the reference implementation
     KAT = [
         (b'',
-         'e7082e7f038a6e32e480b5f1d969ea2c'
-         '19565d327defb0f8500f6fac8fe246cc'),
+         'e99dc5a4f9eb50cf906f85c3cd55dedd'
+         '9792df6af3ac7a838eb8698fedc1a0ca'),
         (b'a',
-         '73b2d91bbdf0fc000de7cd16ac45d7f3'
-         'f41be5609524dbeba30605a89d138ec5'),
+         '2a0e9329eb6af549a2c0da364a4dcbbf'
+         '9ba8870e94d8998936e8e062fbf85a86'),
         (b'abc',
-         '394e2176329b94f4f6704730a01083be'
-         'c51a49584bbb54abf05e5fa19cd05bb2'),
+         '755685f69bbffd1cf3bf5e2b8a86dc09'
+         '001166b2663e437de66b60c2cae0db5c'),
         (b'a' * 33,
-         '49aee3b6126e44beff589d8288da6ec3'
-         'f92f1f763368dfb85fb6b9664bc30adb'),
+         '6df2706d96feffa6ca58eae02f0c8f4e'
+         '6d0ef33ab047e84f93c544d70fa6c01d'),
     ]
     kat_ok = True
     for msg, expected in KAT:
@@ -2255,7 +2255,7 @@ def test_ratchet_forward_secrecy():
     print()
 
 
-_AEAD_N, _AEAD_BLEN, _AEAD_STEPS = 256, 32, 64
+_AEAD_N, _AEAD_BLEN, _AEAD_STEPS = 256, 32, 192   # 3n/4 (TODO #347)
 _AEAD_DS = b'HSKE-NL-AEAD-v1'
 
 
@@ -2307,10 +2307,10 @@ def test_hske_nl_aead():
     kat_nonce = BitArray(n, int.from_bytes(bytes(0xA0 ^ i for i in range(32)), 'big'))
     kat_pt    = b'HSKE-NL-AEAD cross-language vector, 41 bytes!'
     kat_ct, kat_tag = aead_encrypt(kat_key, kat_nonce, b'hdr', kat_pt)
-    kat_ok = (kat_ct.hex() == '75fe38c5204d65381fc11f084181ee0cce44940c4b62b697'
-                              'ab85178f20022ce4cfbad25099f9e16d5ad7abf73d'
-              and kat_tag.hex() == 'b9bc7eb9cf31ec444a50ef670750d62a'
-                                   '189f4518908a42d16ec6872eb710d022')
+    kat_ok = (kat_ct.hex() == 'd6f79a7caf75d073b25eb5107199f6fce5a29cd6428acc45'
+                              '37a2d2f3820ac4b6ee086d6b657734a37af5228e93'
+              and kat_tag.hex() == '49539eb688d37f3f23fcc63ec38b370f'
+                                   '2d139def31d76203b80a74670dab54bc')
 
     # Round-trip + tamper rejection over random inputs of irregular lengths
     trials = min(_iters(50), 50)
@@ -2370,12 +2370,12 @@ def test_hdrbg():
     # Cross-language KAT (must match C/Go/Python suite outputs)
     d = seed(bytes(range(32)), b'HDRBG-KAT')
     kat_ok = (generate(d, 80).hex() ==
-              'cd3e576bee89501a3760fb96fc05b6a3029c26f405e8667c71f311fc39ab1b23'
-              '90620f2641a2a2dabf28cf35ae991d6b9fc254509a7720de24cbd9c603cd718e'
-              '089ea95dc62208133b3475fadb10ef6d')
+              'bf6348e1070b480769a1721992048128133a137557f8614d903cd354461269f7'
+              '471b2beb6344ffe10d74a0d3f46561b29c2b982d62d9eddda6494adabd73de23'
+              '222e9b8f664b83b6186854bae1f3b4c9')
     reseed(d, b'\xa5' * 16)
     kat_ok = kat_ok and (generate(d, 32).hex() ==
-              'bd5324b039a98172fae214390fe9bcc928f3bd65231213efd9162664b5e756bf')
+              'af68c161903caa96091f10591f957481c8be537d037d6dce785e4805f777049e')
 
     # Determinism + personalization divergence + reseed separation
     d1, d2 = seed(b'ent-A', b'p1'), seed(b'ent-A', b'p1')
@@ -2472,7 +2472,7 @@ _WOTS_L     = _WOTS_L1 + _WOTS_L2      # 67
 
 def _wots_h_t(x: BitArray) -> BitArray:
     n = x.size
-    return nl_fscx_revolve_v1(x.rotated(n // 8), x, n // 4)
+    return nl_fscx_revolve_v1(x.rotated(n // 8), x, 3 * n // 4)
 
 def _wots_chain_t(x: BitArray, steps: int) -> BitArray:
     for _ in range(steps):
@@ -3891,7 +3891,7 @@ def bench_nl_fscx_revolve():
 def bench_hske_nl_a1_roundtrip():
     print("[38] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
     for size in SIZES:
-        iv = i_val(size); sink = BitArray(size, 0)
+        iv = 3 * size // 4; sink = BitArray(size, 0)   # 3n/4 (TODO #347)
         def fn(size=size, iv=iv):
             nonlocal sink
             K    = BitArray.random(size); P = BitArray.random(size)

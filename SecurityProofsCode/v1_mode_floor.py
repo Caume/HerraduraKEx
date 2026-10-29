@@ -633,10 +633,13 @@ def section_9():
           "and its linear floor")
     check("TODO #347" in hf and "≥ 129" in hf, "SECURITY.md's HFSCX-256 row records that a "
           "one-block collision costs >= 129 in the model: at the bar, still demo-only")
-    m = re.search(r"### #347:.*?(?=^### |\Z)", todo, re.S | re.M)
+    done = open(os.path.join(ROOT, "TODO_DONE.md")).read()
+    m = (re.search(r"### #347:.*?(?=^### |\Z)", todo, re.S | re.M) or
+         re.search(r"### #347:.*?(?=^### |\Z)", done, re.S | re.M))
     body = m.group(0) if m else ""
-    check("First pass (v9.5.68)" in body and "Status: **OPEN**" in body,
-          "TODO #347 records the first pass and stays OPEN for the fix")
+    check("First pass (v9.5.68)" in body and ("Status: **OPEN**" in body or
+                                              "Status: **DONE v10.0.0**" in body),
+          "TODO #347 records the first pass (OPEN for the fix, or closed by v10.0.0)")
     check(not a1_ok(a1.replace("TODO #347", "TODO #346")),
           "CONTROL: the row check FIRES on a row that does not cite TODO #347")
 

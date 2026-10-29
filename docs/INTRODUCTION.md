@@ -521,15 +521,18 @@ LNCS 435, pp. 416–427.
 ### 4.5.3 NL-FSCX v1 as the compression function
 
 **HFSCX-256** instantiates the Merkle-Damgård construction with NL-FSCX v1 as the
-compression function, iterated 64 steps (= n/4):
+compression function, iterated 192 steps (= 3n/4; 64 = n/4 until v10.0.0):
 
 ```
-compress(state, block) = nl_fscx_revolve_v1(state, block, 64)
+compress(state, block) = nl_fscx_revolve_v1(state, block, 192) XOR state
 ```
 
 NL-FSCX v1 is already used as a one-way function in HPKS-NL and HKEX-RNL: recovering
-the input from the output requires inverting 64 steps of a non-linear mixing
-operation — a property that makes it a sound compression function.
+the input from the output requires inverting 192 steps of a non-linear mixing
+operation — a property that makes it a sound compression function.  The round count is
+3n/4 because v1 costs at most 2 bits per round against differential attack (TODO #346),
+so n/4 rounds left the hash exactly at its 128-bit birthday bar; 192 rounds put the
+proven trail floor at 384 (TODO #347).
 
 The IV is the ASCII constant `HFSCX-256/HERRADURA-SUITE` zero-padded to 32 bytes.
 Starting from a public, fixed IV means the hash is deterministic and domain-separated

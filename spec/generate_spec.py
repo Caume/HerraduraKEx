@@ -522,15 +522,15 @@ SECURITY = {
     "nl-zkbpp":  dict(status="demo-only", quantum_resistant="conjectured",
                        notes="ZKB++ variant of the same construction; same demo-rounds caveat as nl-zkboo.",
                        source=["herradura.h:2386-2392"]),
-    "hpks-wots": dict(status="demo-only", quantum_resistant="conjectured",
-                       notes="Winternitz one-time signature (hash-based). Strictly one-time -- reuse of a WOTS "
+    "hpks-wots": dict(status="production", quantum_resistant="conjectured",
+                       notes="RESTORED by TODO #347 (v10.0.0): NL-FSCX v1's modes now run 3n/4 = 192 rounds, where every differential characteristic costs >= 384 bits in the trail-weight model (3x the 128-bit collision bar) and every linear trail >= 191; the model is not exact for v1 and the hull is not measured (SecurityProofsCode/v1_mode_rounds.py, SecurityProofs-10.md 11.72). The chain step is 192 rounds too. Winternitz one-time signature (hash-based). Strictly one-time -- reuse of a WOTS "
                              "key is refused by the CLI. Demoted with hfscx-256 by TODO #346 (v9.5.67): its "
                              "security is that hash's, whose compression function has zero proven margin "
                              "against semi-free-start collisions; see hfscx-256.",
                        source=["herradura.h WOTS_* constants", "TODO_DONE.md #346",
                                "SecurityProofsCode/v1_mode_criterion.py"]),
-    "hpks-xmss": dict(status="demo-only", quantum_resistant="conjectured",
-                       notes="Demoted with hfscx-256 and hpks-wots by TODO #346 (v9.5.67); see "
+    "hpks-xmss": dict(status="production", quantum_resistant="conjectured",
+                       notes="RESTORED by TODO #347 (v10.0.0): NL-FSCX v1's modes now run 3n/4 = 192 rounds, where every differential characteristic costs >= 384 bits in the trail-weight model (3x the 128-bit collision bar) and every linear trail >= 191; the model is not exact for v1 and the hull is not measured (SecurityProofsCode/v1_mode_rounds.py, SecurityProofs-10.md 11.72). Earlier: demoted with hfscx-256 and hpks-wots by TODO #346 (v9.5.67); see "
                              "hfscx-256. Stateful hash-based signature (XMSS over the WOTS chains of hpks-wots), "
                               "with the next-unused leaf index kept in a <keyfile>.idx sidecar. Security "
                               "rests on HFSCX-256's collision resistance and on that state being "
@@ -569,7 +569,11 @@ SECURITY = {
                              "(SecurityProofs-1.md 1.3.1, W9). Use hske-nla1/hske-nla2 instead.",
                        source=["TODO_DONE.md #210"]),
     "hske-nla1": dict(status="production", quantum_resistant="conjectured",
-                       notes="NL-FSCX v1 counter-mode; supports --aead authenticated encryption. Unlike "
+                       notes="TODO #347 (v10.0.0) runs the keystream generator and MAC key at 3n/4 = 192 "
+                             "rounds: every differential characteristic costs >= 384 bits in the trail-weight "
+                             "model, 1.5x the full-codebook bar of 256, and every linear trail >= 191, so the "
+                             "PER-KEY DATA LIMIT OF 2^64 BLOCKS set by TODO #346 IS LIFTED. CONJECTURE: v1 at "
+                             "3n/4 rounds is a PRF. The record before v10.0.0 follows. NL-FSCX v1 counter-mode; supports --aead authenticated encryption. Unlike "
                              "classical hske, a known-plaintext pair does NOT break this construction: it "
                              "yields that one block's keystream and nothing else, which is inherent to "
                              "counter mode rather than a weakness. The classical 1-pair attack works by "
@@ -591,7 +595,8 @@ SECURITY = {
                              "under an unknown key, so it does not break the tag, but the tag inherits no "
                              "production rating from this row.",
                        source=["TODO.md #237", "TODO_DONE.md #210", "TODO_DONE.md #346",
-                               "SecurityProofsCode/v1_mode_criterion.py"]),
+                               "SecurityProofsCode/v1_mode_criterion.py", "TODO_DONE.md #347",
+                               "SecurityProofsCode/v1_mode_rounds.py"]),
     "hske-nla2": dict(status="production", quantum_resistant="conjectured",
                        notes="NL-FSCX v2 revolve-mode symmetric encryption -- a keyed bijection, not a stream "
                              "cipher. CONJECTURE (TODO #345): the key-averaged per-round trail cost of NL-FSCX"
@@ -628,12 +633,12 @@ SECURITY = {
                              "\"v1 is a PRF\" assumption instead.",
                        source=["TODO.md #237", "herradura.h HSKE-NL-V2-Duplex banner",
                                "SecurityProofs-6.md 11.9"]),
-    "hfscx-256": dict(status="demo-only", quantum_resistant="conjectured",
+    "hfscx-256": dict(status="production", quantum_resistant="conjectured",
                        classical_security_bits="256-bit digest; 128-bit collision resistance in the "
-                                                 "ideal-random-function model, with ZERO margin on the "
-                                                 "compression function's semi-free-start collisions "
-                                                 "(TODO #346)",
-                       notes="DEMOTED to demo-only by TODO #346 (v9.5.67): NL-FSCX v1 has a key- and width-independent iterative differential (beta = 2^254 + 1, alpha = 2^255 + 2^254 + 1) holding with probability exactly 1/4 per round, so the compression function has a semi-free-start collision characteristic (Delta h = alpha, Delta m = beta) at 2^-128 over its 64 rounds -- exactly the birthday bound, zero margin, and a ceiling since other paths only add probability. It is not a collision of the hash, which needs Delta h = 0 (no entry into or exit from the core of weight <= 22 within 3 rounds was found). 256-bit Merkle-Damgard hash on NL-FSCX v1 with Davies-Meyer feed-forward, "
+                                                 "ideal-random-function model; >= 384-bit differential "
+                                                 "trail floor on the 192-round compression function "
+                                                 "(TODO #347)",
+                       notes="RESTORED by TODO #347 (v10.0.0): NL-FSCX v1's modes now run 3n/4 = 192 rounds, where every differential characteristic costs >= 384 bits in the trail-weight model (3x the 128-bit collision bar) and every linear trail >= 191; the model is not exact for v1 and the hull is not measured (SecurityProofsCode/v1_mode_rounds.py, SecurityProofs-10.md 11.72). Earlier: DEMOTED to demo-only by TODO #346 (v9.5.67): NL-FSCX v1 has a key- and width-independent iterative differential (beta = 2^254 + 1, alpha = 2^255 + 2^254 + 1) holding with probability exactly 1/4 per round, so the compression function has a semi-free-start collision characteristic (Delta h = alpha, Delta m = beta) at 2^-128 over its 64 rounds -- exactly the birthday bound, zero margin, and a ceiling since other paths only add probability. It is not a collision of the hash, which needs Delta h = 0 (no entry into or exit from the core of weight <= 22 within 3 rounds was found). 256-bit Merkle-Damgard hash on NL-FSCX v1 with Davies-Meyer feed-forward, "
                              "re-derived in the ideal-random-function model under TODO #215. The generic "
                              "Merkle-Damgard weaknesses apply and are not defects of this construction: "
                              "Joux multicollisions and Kelsey-Schneier expandable-message second "
@@ -643,11 +648,14 @@ SECURITY = {
                        source=["SecurityProofs-6.md 11.9", "TODO_DONE.md #215",
                                "SecurityProofsCode/hfscx_dm_rf_model.py", "TODO_DONE.md #346",
                                "SecurityProofsCode/v1_mode_criterion.py",
-                               "SecurityProofs-10.md 11.69"]),
-    "hfscx-256-ds": dict(status="demo-only", quantum_resistant="conjectured",
+                               "SecurityProofs-10.md 11.69", "TODO_DONE.md #347",
+                               "SecurityProofsCode/v1_mode_rounds.py", "SecurityProofs-10.md 11.72"]),
+    "hfscx-256-ds": dict(status="production", quantum_resistant="conjectured",
                        notes="hfscx-256 with an explicit domain-separation parameter; same construction, "
-                             "same caveats, distinct digests per tag. Demoted with hfscx-256 by TODO #346.",
-                       source=["SecurityProofs-6.md 11.9", "TODO_DONE.md #215", "TODO_DONE.md #346"]),
+                             "same caveats, distinct digests per tag. Demoted with hfscx-256 by TODO #346, "
+                             "restored with it by TODO #347 (v10.0.0).",
+                       source=["SecurityProofs-6.md 11.9", "TODO_DONE.md #215", "TODO_DONE.md #346",
+                               "TODO_DONE.md #347"]),
     "oprf":      dict(status="pedagogical", quantum_resistant=False,
                        classical_security_bits="~36.5 (n=256)",
                        notes="2HashDH OPRF over GF(2^n)*. oprf_eval is gf_pow(alpha, k), the same "

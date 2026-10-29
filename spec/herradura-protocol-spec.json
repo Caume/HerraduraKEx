@@ -153,17 +153,20 @@
         "java": true
       },
       "security": {
-        "status": "demo-only",
+        "status": "production",
         "quantum_resistant": "conjectured",
-        "classical_security_bits": "256-bit digest; 128-bit collision resistance in the ideal-random-function model, with ZERO margin on the compression function's semi-free-start collisions (TODO #346)",
-        "notes": "DEMOTED to demo-only by TODO #346 (v9.5.67): NL-FSCX v1 has a key- and width-independent iterative differential (beta = 2^254 + 1, alpha = 2^255 + 2^254 + 1) holding with probability exactly 1/4 per round, so the compression function has a semi-free-start collision characteristic (Delta h = alpha, Delta m = beta) at 2^-128 over its 64 rounds -- exactly the birthday bound, zero margin, and a ceiling since other paths only add probability. It is not a collision of the hash, which needs Delta h = 0 (no entry into or exit from the core of weight <= 22 within 3 rounds was found). 256-bit Merkle-Damgard hash on NL-FSCX v1 with Davies-Meyer feed-forward, re-derived in the ideal-random-function model under TODO #215. The generic Merkle-Damgard weaknesses apply and are not defects of this construction: Joux multicollisions and Kelsey-Schneier expandable-message second preimages both work against it as against any MD hash without a wide pipe. The compression function's own differential profile rests on the NL-FSCX v1 PRF conjecture, so treat the classification as conditional on that.",
+        "classical_security_bits": "256-bit digest; 128-bit collision resistance in the ideal-random-function model; >= 384-bit differential trail floor on the 192-round compression function (TODO #347)",
+        "notes": "RESTORED by TODO #347 (v10.0.0): NL-FSCX v1's modes now run 3n/4 = 192 rounds, where every differential characteristic costs >= 384 bits in the trail-weight model (3x the 128-bit collision bar) and every linear trail >= 191; the model is not exact for v1 and the hull is not measured (SecurityProofsCode/v1_mode_rounds.py, SecurityProofs-10.md 11.72). Earlier: DEMOTED to demo-only by TODO #346 (v9.5.67): NL-FSCX v1 has a key- and width-independent iterative differential (beta = 2^254 + 1, alpha = 2^255 + 2^254 + 1) holding with probability exactly 1/4 per round, so the compression function has a semi-free-start collision characteristic (Delta h = alpha, Delta m = beta) at 2^-128 over its 64 rounds -- exactly the birthday bound, zero margin, and a ceiling since other paths only add probability. It is not a collision of the hash, which needs Delta h = 0 (no entry into or exit from the core of weight <= 22 within 3 rounds was found). 256-bit Merkle-Damgard hash on NL-FSCX v1 with Davies-Meyer feed-forward, re-derived in the ideal-random-function model under TODO #215. The generic Merkle-Damgard weaknesses apply and are not defects of this construction: Joux multicollisions and Kelsey-Schneier expandable-message second preimages both work against it as against any MD hash without a wide pipe. The compression function's own differential profile rests on the NL-FSCX v1 PRF conjecture, so treat the classification as conditional on that.",
         "source": [
           "SecurityProofs-6.md 11.9",
           "TODO_DONE.md #215",
           "SecurityProofsCode/hfscx_dm_rf_model.py",
           "TODO_DONE.md #346",
           "SecurityProofsCode/v1_mode_criterion.py",
-          "SecurityProofs-10.md 11.69"
+          "SecurityProofs-10.md 11.69",
+          "TODO_DONE.md #347",
+          "SecurityProofsCode/v1_mode_rounds.py",
+          "SecurityProofs-10.md 11.72"
         ]
       }
     },
@@ -185,13 +188,14 @@
         "java": true
       },
       "security": {
-        "status": "demo-only",
+        "status": "production",
         "quantum_resistant": "conjectured",
-        "notes": "hfscx-256 with an explicit domain-separation parameter; same construction, same caveats, distinct digests per tag. Demoted with hfscx-256 by TODO #346.",
+        "notes": "hfscx-256 with an explicit domain-separation parameter; same construction, same caveats, distinct digests per tag. Demoted with hfscx-256 by TODO #346, restored with it by TODO #347 (v10.0.0).",
         "source": [
           "SecurityProofs-6.md 11.9",
           "TODO_DONE.md #215",
-          "TODO_DONE.md #346"
+          "TODO_DONE.md #346",
+          "TODO_DONE.md #347"
         ]
       }
     },
@@ -628,9 +632,9 @@
         "java": true
       },
       "security": {
-        "status": "demo-only",
+        "status": "production",
         "quantum_resistant": "conjectured",
-        "notes": "Winternitz one-time signature (hash-based). Strictly one-time -- reuse of a WOTS key is refused by the CLI. Demoted with hfscx-256 by TODO #346 (v9.5.67): its security is that hash's, whose compression function has zero proven margin against semi-free-start collisions; see hfscx-256.",
+        "notes": "RESTORED by TODO #347 (v10.0.0): NL-FSCX v1's modes now run 3n/4 = 192 rounds, where every differential characteristic costs >= 384 bits in the trail-weight model (3x the 128-bit collision bar) and every linear trail >= 191; the model is not exact for v1 and the hull is not measured (SecurityProofsCode/v1_mode_rounds.py, SecurityProofs-10.md 11.72). The chain step is 192 rounds too. Winternitz one-time signature (hash-based). Strictly one-time -- reuse of a WOTS key is refused by the CLI. Demoted with hfscx-256 by TODO #346 (v9.5.67): its security is that hash's, whose compression function has zero proven margin against semi-free-start collisions; see hfscx-256.",
         "source": [
           "herradura.h WOTS_* constants",
           "TODO_DONE.md #346",
@@ -662,9 +666,9 @@
         "java": true
       },
       "security": {
-        "status": "demo-only",
+        "status": "production",
         "quantum_resistant": "conjectured",
-        "notes": "Demoted with hfscx-256 and hpks-wots by TODO #346 (v9.5.67); see hfscx-256. Stateful hash-based signature (XMSS over the WOTS chains of hpks-wots), with the next-unused leaf index kept in a <keyfile>.idx sidecar. Security rests on HFSCX-256's collision resistance and on that state being preserved: reusing a leaf index breaks the one-time property of the WOTS key at that leaf, so a restored-from-backup key must not be signed with again. Reclassified in TODO #238: this row said `pedagogical` because it was a Python-only prototype, which stopped being true at TODO #201/#208 -- all four implementations (C, Go, Python, Java) ship it and interoperate, proven per-release by CliTest/test_cross_lang_matrix.sh. Nothing checked the claim, which is what this item was filed about.",
+        "notes": "RESTORED by TODO #347 (v10.0.0): NL-FSCX v1's modes now run 3n/4 = 192 rounds, where every differential characteristic costs >= 384 bits in the trail-weight model (3x the 128-bit collision bar) and every linear trail >= 191; the model is not exact for v1 and the hull is not measured (SecurityProofsCode/v1_mode_rounds.py, SecurityProofs-10.md 11.72). Earlier: demoted with hfscx-256 and hpks-wots by TODO #346 (v9.5.67); see hfscx-256. Stateful hash-based signature (XMSS over the WOTS chains of hpks-wots), with the next-unused leaf index kept in a <keyfile>.idx sidecar. Security rests on HFSCX-256's collision resistance and on that state being preserved: reusing a leaf index breaks the one-time property of the WOTS key at that leaf, so a restored-from-backup key must not be signed with again. Reclassified in TODO #238: this row said `pedagogical` because it was a Python-only prototype, which stopped being true at TODO #201/#208 -- all four implementations (C, Go, Python, Java) ship it and interoperate, proven per-release by CliTest/test_cross_lang_matrix.sh. Nothing checked the claim, which is what this item was filed about.",
         "source": [
           "TODO_DONE.md #208",
           "TODO_DONE.md #201",
@@ -813,12 +817,14 @@
       "security": {
         "status": "production",
         "quantum_resistant": "conjectured",
-        "notes": "NL-FSCX v1 counter-mode; supports --aead authenticated encryption. Unlike classical hske, a known-plaintext pair does NOT break this construction: it yields that one block's keystream and nothing else, which is inherent to counter mode rather than a weakness. The classical 1-pair attack works by solving E = M^i.P XOR T_i.K for T_i.K and reusing it on other ciphertexts; the v1 carry non-linearity makes the keystream non-affine in base, so that step has no analogue here (TODO #210, #237). Security rests on the conjecture that NL-FSCX v1 is a PRF (SecurityProofs-4.md 11.3.1) -- an assumption, not a proof. TODO #346 (v9.5.67) bounds it: v1's per-round differential cost is at most 2 bits at every width (an exact 1/4-per-round iterative characteristic), so over the n/4 = 64 rounds the full-codebook bar of 256 bits hske-nla2 is held to cannot be met. The rating holds only under a PER-KEY DATA LIMIT OF 2^64 BLOCKS: rekey before encrypting more under one key. CONJECTURE (TODO #346): no differential or linear distinguisher on the 64-round keystream generator has probability or squared correlation above 2^-64; the cheapest characteristic known costs 128 bits in its core alone (2x that bar), with no entry from a nonce difference of weight <= 22 within 3 rounds -- the best found, not a proven least. The --aead tag is keyed hfscx-256, demo-only since #346; the finding behind that needs a chaining difference an attacker cannot set under an unknown key, so it does not break the tag, but the tag inherits no production rating from this row.",
+        "notes": "TODO #347 (v10.0.0) runs the keystream generator and MAC key at 3n/4 = 192 rounds: every differential characteristic costs >= 384 bits in the trail-weight model, 1.5x the full-codebook bar of 256, and every linear trail >= 191, so the PER-KEY DATA LIMIT OF 2^64 BLOCKS set by TODO #346 IS LIFTED. CONJECTURE: v1 at 3n/4 rounds is a PRF. The record before v10.0.0 follows. NL-FSCX v1 counter-mode; supports --aead authenticated encryption. Unlike classical hske, a known-plaintext pair does NOT break this construction: it yields that one block's keystream and nothing else, which is inherent to counter mode rather than a weakness. The classical 1-pair attack works by solving E = M^i.P XOR T_i.K for T_i.K and reusing it on other ciphertexts; the v1 carry non-linearity makes the keystream non-affine in base, so that step has no analogue here (TODO #210, #237). Security rests on the conjecture that NL-FSCX v1 is a PRF (SecurityProofs-4.md 11.3.1) -- an assumption, not a proof. TODO #346 (v9.5.67) bounds it: v1's per-round differential cost is at most 2 bits at every width (an exact 1/4-per-round iterative characteristic), so over the n/4 = 64 rounds the full-codebook bar of 256 bits hske-nla2 is held to cannot be met. The rating holds only under a PER-KEY DATA LIMIT OF 2^64 BLOCKS: rekey before encrypting more under one key. CONJECTURE (TODO #346): no differential or linear distinguisher on the 64-round keystream generator has probability or squared correlation above 2^-64; the cheapest characteristic known costs 128 bits in its core alone (2x that bar), with no entry from a nonce difference of weight <= 22 within 3 rounds -- the best found, not a proven least. The --aead tag is keyed hfscx-256, demo-only since #346; the finding behind that needs a chaining difference an attacker cannot set under an unknown key, so it does not break the tag, but the tag inherits no production rating from this row.",
         "source": [
           "TODO.md #237",
           "TODO_DONE.md #210",
           "TODO_DONE.md #346",
-          "SecurityProofsCode/v1_mode_criterion.py"
+          "SecurityProofsCode/v1_mode_criterion.py",
+          "TODO_DONE.md #347",
+          "SecurityProofsCode/v1_mode_rounds.py"
         ]
       }
     },

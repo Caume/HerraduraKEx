@@ -117,8 +117,14 @@ def _consistent(A_cand, e, vp1, vp2, B, n, prg):
     se = (A_cand ^ s1 ^ s2) & ((1 << n) - 1)
     sh = {e: se, p1: s1, p2: s2}
     # Does the hidden party's tape still buy any freedom?  Asked of the PRG
-    # itself rather than assumed, so the control needs no separate flag.
-    free_re = prg(b"\x00" * 32, 0) != prg(b"\x11" * 32, 0)
+    # itself rather than assumed, so the control needs no separate flag.  Over
+    # 64 gate indices, not one: a single output BIT of two fixed tapes agrees
+    # with probability 1/2 for a PRG that does depend on the tape, and that coin
+    # landed the wrong way when HFSCX-256's round count changed (TODO #347,
+    # v10.0.0), turning the hiding check into its own negative control.  A PRG
+    # that ignores the tape (§3) agrees on all 64; one that uses it misses that
+    # with probability 2^-64.
+    free_re = any(prg(b"\x00" * 32, g) != prg(b"\x11" * 32, g) for g in range(64))
     carry = {0: {e: 0, p1: 0, p2: 0}}
     for i in range(n - 1):
         ai = {p: (sh[p] >> i) & 1 for p in (e, p1, p2)}

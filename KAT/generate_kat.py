@@ -996,9 +996,15 @@ def gen_sampler_replay() -> dict:
     # 2^32 and a 4-byte draw is always below it.  Worth knowing before widening
     # the type -- a threshold held in a uint32 would wrap to 0 here and reject
     # every draw forever.  All four ports compute it in 64 bits.
-    stream = det_bytes(b"replay-weightt-2", 256)
+    # Re-chosen at v10.0.0 (TODO #347): det_bytes is HFSCX-256, whose round
+    # count changed, and label -2's stream stopped drawing a duplicate at all.
+    # Asserted below since then, so the next change cannot lose it silently.
+    stream = det_bytes(b"replay-weightt-11", 256)
     with _replay(stream) as st:
         e_int = suite._csprng_weight_t(KEYBITS, suite.SDFT)
+    assert st.pos == 4 * (suite.SDFT + 2), \
+        ("sampler replay: the stern_weight_t stream must draw exactly two "
+         "duplicate positions (consumed %d, want %d)" % (st.pos, 4 * (suite.SDFT + 2)))
     rows.append({
         "name": "stern_weight_t",
         "calls": {"c": "stern_rand_error", "go": "SternRandError",
@@ -1020,12 +1026,17 @@ def gen_sampler_replay() -> dict:
     # branch (it needs a 256-bit draw of 0 or 1, p = 2^-255), so a vector built
     # only from det_bytes leaves the repaired code unguarded: deleting the
     # rejection again would still pass.  With r = 1 leading, it does not.
-    # The gcd rejection is exercised too, by the det_bytes tail: the accepted
-    # scalar is the third draw, so two are refused for gcd(r, ORD) != 1.
+    # The gcd rejection is exercised too, by the det_bytes tail: since v10.0.0
+    # (TODO #347) the accepted scalar is the tenth draw, so after r = 1 eight
+    # are refused for gcd(r, ORD) != 1 (it was the third draw before).  At least
+    # one such refusal is asserted below.
     stream = (b"\x00" * 31 + b"\x01") + det_bytes(b"replay-oprf", 32 * 16)
     oprf_input = b"HerraduraKEx sampler replay"
     with _replay(stream) as st:
         r_val, alpha_val = suite.oprf_blind(oprf_input)
+    assert st.pos >= 3 * 32, \
+        ("sampler replay: the oprf_blind stream must refuse at least one draw "
+         "for gcd(r, ORD) != 1 after r = 1 (consumed %d bytes)" % st.pos)
     rows.append({
         "name": "oprf_blind_scalar",
         "calls": {"c": "oprf_blind", "go": "OprfBlind",
@@ -1378,12 +1389,13 @@ def gen_operation_replay() -> dict:
                               RNLQ, RNLP)
     gamma, sig_t = suite._sigma_params(RNLN)
     sig_msg = (b"HerraduraKEx operation replay" + b"\x00" * 32)[:32]
-    # v24 is the first label whose FIRST attempt clears the norm bound; see
-    # the header on why any other label would produce a three-port vector.
+    # v1 is the first label whose FIRST attempt clears the norm bound (v24
+    # until v10.0.0, when det_bytes's HFSCX-256 changed, TODO #347); see the
+    # header on why any other label would produce a three-port vector.
     # The stream is exactly one block long, so a retry cannot silently pass
     # either: it exhausts the stream before the assertion is reached.
     blk = 3 * (RNLN + (RNLN >> 6) + 8)
-    stream = det_bytes(b"op-sigma-v24", blk)
+    stream = det_bytes(b"op-sigma-v1", blk)
     with _replay(stream) as st:
         w, c, z = suite.rnl_sigma_sign(s_poly, m_poly, C_poly, RNLN, sig_msg)
     assert st.pos == blk, \
@@ -1461,7 +1473,7 @@ def gen_operation_replay() -> dict:
     # Exactly M roots of 32 bytes, read one per emulation in all four ports --
     # no rejection anywhere -- so `consumed` is exact here where the sigma row's
     # is null, and a port that reads one byte more runs off the end and says so.
-    stream = det_bytes(b"op-kkw-v2", kkw_m * 32)
+    stream = det_bytes(b"op-kkw-v3", kkw_m * 32)  # v3 since v10.0.0 (TODO #347)
     with _replay(stream) as st:
         kkw_proof = suite.hcred_prove_kkw(
             kkw_s, kkw_m_poly, kkw_C, kkw_seed_H, kkw_y, kkw_n,
@@ -1535,7 +1547,7 @@ def gen_operation_replay() -> dict:
     # namely the weak-key screen's REJECT branch, which is otherwise reached by
     # about one draw in 550 (37 rejections in 20 219 measured at BIKE-128) and
     # would never be exercised by a stream chosen at random.
-    qk_stream = det_bytes(b"op-qcmdpc-keygen-1137", 32)
+    qk_stream = det_bytes(b"op-qcmdpc-keygen-2624", 32)  # 1137 until v10.0.0 (TODO #347)
     with _replay(qk_stream) as st:
         qk_sup0, qk_sup1, _qk_h0, _qk_h1, qk_hpub = suite.qcmdpc_keygen()
     qr = suite._QCMDPC_R
