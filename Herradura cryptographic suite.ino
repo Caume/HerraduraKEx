@@ -28,6 +28,7 @@
 #define KEYBITS  32
 #define I_VALUE  (KEYBITS / 4)        /* 8  */
 #define R_VALUE  (3 * KEYBITS / 4)    /* 24 */
+#define V1_MODE_STEPS (3 * KEYBITS / 4) /* 24: NL-FSCX v1's modes, as the four ports (TODO #349) */
 
 /* GF(2^32) polynomial: x^32 + x^22 + x^2 + x + 1 */
 #define GF_POLY32 0x00400007UL
@@ -376,11 +377,11 @@ static uint32 rnl_agree(const long *s, const long *C_other,
 #define SDF_ROUNDS 4
 
 /* HFSCX-32-DM: two-step MD hash at 32-bit word size, Davies-Meyer compression (v1.9.0).
- * C_DM(s,m)=nl(s,m,8)^s; IV=0xA3C5E7B9, LB=0xA3C5E799 */
+ * C_DM(s,m)=nl(s,m,24)^s; IV=0xA3C5E7B9, LB=0xA3C5E799 */
 static uint32 hfscx_32(uint32 x) {
     uint32 prev = 0xA3C5E7B9UL;
-    uint32 s = nl_fscx_revolve_v1(prev, x, 8) ^ prev;
-    return nl_fscx_revolve_v1(s, 0xA3C5E799UL, 8) ^ s;
+    uint32 s = nl_fscx_revolve_v1(prev, x, V1_MODE_STEPS) ^ prev;
+    return nl_fscx_revolve_v1(s, 0xA3C5E799UL, V1_MODE_STEPS) ^ s;
 }
 
 static uint32 stern_hash1_32(uint32 ds, uint32 v) {
@@ -1108,7 +1109,7 @@ void loop() {
     {
         uint32 N    = lcg_next();              /* per-session nonce            */
         uint32 base = K ^ N;                   /* session key base = K XOR N   */
-        uint32 ks   = nl_fscx_revolve_v1(_rol32(base, 4) ^ RNL_KDF_DC, base, I_VALUE);
+        uint32 ks   = nl_fscx_revolve_v1(_rol32(base, 4) ^ RNL_KDF_DC, base, V1_MODE_STEPS);
         uint32 E    = PLAIN ^ ks;
         uint32 D    = E ^ ks;
         printHexLine("N (nonce) : ", N);

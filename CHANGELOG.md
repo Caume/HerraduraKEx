@@ -2,6 +2,28 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [10.0.2] - 2026-10-29
+
+### TODO #349, closed — the 32-bit targets run v1's modes at 3n/4; an ARM NTT bug fixed
+
+- **The ARM Thumb-2, NASM i386 and Arduino targets now follow v10.0.0.**  `V1_MODE_STEPS =
+  3n/4 = 24` at `KEYBITS = 32`.  It is used by `hfscx_32`'s two Davies–Meyer blocks (their
+  HFSCX-256) and by the HSKE-NL-A1 demo's keystream.  Their other v1 uses stay at n/4 with the
+  four ports' (TODO #348).  These targets share no wire format with the four ports, so no
+  artifact changes.  `SecurityProofsCode/v1_mode_rounds.py` §1 now checks all five files,
+  with a control that fires.
+- **Fixed: ZKP-RNL never verified on ARM.**  `rnl_poly_mul` and `rnl_ntt` reduced mod
+  q = 65537 with `sub; it mi; addmi #q`.  Under `.syntax unified`, `sub` is `sub.w` and sets
+  no flags, so `addmi` read stale ones.  The Σ-protocol signer exhausted all 200 attempts and
+  the demo printed `- ZKP-RNL verify FAILED`.  HKEX-RNL's two parties share the multiply,
+  so they still agreed.  The fix is `subs` at the 12 sites (suite and harness).
+  `build_arm.sh` now rejects a flagless arithmetic instruction directly before an `it`,
+  unless the line is marked `FLAGS-OK`; it fires on the old source.  The NASM build was
+  never affected.
+- **Filed TODO #350:** the 32-bit suite demos are outside TODO #234's `[FAIL]` gate, which is
+  how a failing demo went unseen.
+- SecurityProofs-10.md §11.74.
+
 ## [10.0.1] - 2026-10-28
 
 ### TODO #348, first pass — NL-FSCX v1's remaining n/4 sites, censused and judged

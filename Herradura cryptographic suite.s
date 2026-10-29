@@ -33,6 +33,7 @@
 /* ------------------------------------------------------------------ */
     .equ I_VALUE,  8
     .equ R_VALUE,  24
+    .equ V1_MODE_STEPS, 24   @ 3n/4: NL-FSCX v1's modes, as the four ports (TODO #349)
     .equ RNL_KDF_DC, 0x6A09E667     @ SHA-256 H0 — domain constant for KDF seed
     @ RNL_N stays 32 on this target: DEMO ONLY.  The C/Go/Python/Java builds moved
     @ to RNL_N = 1024 in TODO #223 because n = 256 is worth only ~32 Core-SVP bits;
@@ -683,7 +684,7 @@ hpke_done:
 
     /* ================================================================
        HSKE-NL-A1  (counter-mode with NL-FSCX v1)
-       N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(ROL(base,4), base, I_VALUE)
+       N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(ROL(base,4) ^ DC, base, V1_MODE_STEPS)
        E = plain XOR ks;  D = E XOR ks  (must == plain)
        ================================================================ */
     ldr     r0, =fmt_hske_nl1_hdr
@@ -699,7 +700,7 @@ hpke_done:
     ror     r0, r0, #28             @ r0 = ROL(base, 4)         [n=32, n/8=4]
     ldr     r2, =RNL_KDF_DC
     eor     r0, r0, r2              @ r0 = seed = ROL(base,4) XOR DC
-    mov     r2, #I_VALUE
+    mov     r2, #V1_MODE_STEPS      @ 3n/4 (TODO #349)
     bl      nl_fscx_revolve_v1      @ r0 = ks  (A=seed, B=base)
     ldr     r3, =val_ks_nl1
     str     r0, [r3]
@@ -2732,7 +2733,7 @@ ntt_bf:
     add     r0, r0, r12            @ r0 += r12 (since 2^32 ≡ 1)
     lsr     r12, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r12
+    subs    r0, r0, r12         @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q         @ r0 = v (mod q)
 
@@ -2783,7 +2784,7 @@ ntt_scale:
     add     r0, r0, r1
     lsr     r1, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r1
+    subs    r0, r0, r1          @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     str     r0, [r4, r6, lsl #2]
@@ -2820,7 +2821,7 @@ rpm_twist:
     add     r0, r0, r1
     lsr     r1, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r1
+    subs    r0, r0, r1          @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     str     r0, [r6, r9, lsl #2]
@@ -2830,7 +2831,7 @@ rpm_twist:
     add     r0, r0, r1
     lsr     r1, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r1
+    subs    r0, r0, r1          @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     str     r0, [r7, r9, lsl #2]
@@ -2861,7 +2862,7 @@ rpm_pw:
     add     r0, r0, r1
     lsr     r1, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r1
+    subs    r0, r0, r1          @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     str     r0, [r6, r9, lsl #2]
@@ -2889,7 +2890,7 @@ rpm_untwist:
     add     r0, r0, r1
     lsr     r1, r0, #16
     uxth    r0, r0
-    sub     r0, r0, r1
+    subs    r0, r0, r1          @ S: the IT MI below reads these flags (TODO #349)
     it      mi
     addmi   r0, r0, #RNL_Q
     str     r0, [r3, r9, lsl #2]
@@ -3284,8 +3285,8 @@ rnl_agree_recv:
 
 /* ------------------------------------------------------------------ */
 /* hfscx_32: r0=x -> r0=hfscx_32(x)  (DM, v1.9.0)                   */
-/* C_DM(s,m)=nl(s,m,8)^s; IV=0xA3C5E7B9, LB=0xA3C5E799              */
-/* s=nl(IV,x,8)^IV; return nl(s,LB,8)^s                              */
+/* C_DM(s,m)=nl(s,m,24)^s; IV=0xA3C5E7B9, LB=0xA3C5E799              */
+/* s=nl(IV,x,24)^IV; return nl(s,LB,24)^s                            */
 /* ------------------------------------------------------------------ */
     .thumb_func
 hfscx_32:
@@ -3294,13 +3295,13 @@ hfscx_32:
     ldr     r5, .LHIV           @ r5 = IV_32 (prev for block 1)
     ldr     r0, .LHIV           @ A = IV_32
     mov     r1, r4              @ B = x
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1  @ r0 = nl(IV, x, 8)
+    mov     r2, #V1_MODE_STEPS
+    bl      nl_fscx_revolve_v1  @ r0 = nl(IV, x, 24)
     eor     r0, r0, r5          @ s = result ^ IV  (DM block 1)
     mov     r5, r0              @ r5 = s  (prev for block 2)
     ldr     r1, .LHLB           @ B = LB
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1  @ r0 = nl(s, LB, 8)
+    mov     r2, #V1_MODE_STEPS
+    bl      nl_fscx_revolve_v1  @ r0 = nl(s, LB, 24)
     eor     r0, r0, r5          @ result ^ s  (DM block 2)
     pop     {r4, r5, pc}
 .LHIV: .word 0xA3C5E7B9

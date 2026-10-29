@@ -54,6 +54,29 @@ if [ -n "${UNGATED}" ]; then
     exit 1
 fi
 
+# ── TODO #349 IT-flag guard ───────────────────────────────────────────────────
+# Under .syntax unified a plain `sub` / `add` / ... assembles to the .W form,
+# which does NOT set the flags, so an IT block straight after it tests whatever
+# an earlier instruction left.  rnl_poly_mul's and rnl_ntt's `sub; it mi; addmi #q`
+# reductions did exactly that: c*s came out wrong and the ZKP-RNL signer rejected
+# all 200 attempts, while HKEX-RNL -- both parties sharing the same multiply --
+# still agreed.  Use the S form, or mark the line FLAGS-OK if the flags an IT
+# reads really are an earlier instruction's.
+for SRC in "${SUITE_SRC}" "${TESTS_SRC}"; do
+    STALE=$(awk -v F="${SRC}" '
+        prev ~ /^[[:space:]]+(add|sub|rsb|adc|sbc|and|orr|eor|bic|lsl|lsr|asr|ror|mul|mov|mvn|uxth|uxtb|ldr|str)[[:space:]]/ &&
+        prev !~ /FLAGS-OK/ && $0 ~ /^[[:space:]]+it[te]*[[:space:]]+[a-z][a-z]/ {
+            print F ":" NR-1 ": " prev
+        }
+        { prev = $0 }' "${SRC}")
+    if [ -n "${STALE}" ]; then
+        echo "ERROR: an IT block reads flags the instruction before it does not set:"
+        echo "${STALE}"
+        echo "  Use the flag-setting form (subs, adds, ...) or mark it FLAGS-OK (TODO #349)."
+        exit 1
+    fi
+done
+
 echo "  Compiling suite..."
 "${ARM_CC}" -O2 \
     -L"${ARM_SYSROOT_LIB}" \

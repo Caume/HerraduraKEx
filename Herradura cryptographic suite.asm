@@ -29,6 +29,7 @@
 %define STDOUT     1
 %define I_VALUE    8
 %define R_VALUE    24
+%define V1_MODE_STEPS 24   ; 3n/4: NL-FSCX v1's modes, as the four ports (TODO #349)
 %define GF_POLY    0x00400007
 ; RNL_N stays 32 on this target: DEMO ONLY.  The C/Go/Python/Java builds moved to
 ; RNL_N = 1024 in TODO #223 because n = 256 is worth only ~32 Core-SVP bits; 32 is far
@@ -755,14 +756,14 @@ _start:
     mov  ecx, hske_nl1_hdr_l
     call print_str
 
-    ; N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(ROL(base,4), base, I_VALUE)
+    ; N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(ROL(base,4) ^ DC, base, V1_MODE_STEPS)
     call prng_next              ; eax = nonce N
     mov  [val_nonce_nl1], eax
     xor  eax, [val_key]         ; eax = base = N XOR key
     mov  ebx, eax               ; ebx = B = base (counter=0)
     rol  eax, 4                 ; eax = ROL(base, 4)         [n=32, n/8=4]
     xor  eax, RNL_KDF_DC        ; eax = seed = ROL(base,4) XOR DC
-    mov  ecx, I_VALUE
+    mov  ecx, V1_MODE_STEPS     ; 3n/4 (TODO #349)
     call nl_fscx_revolve_v1     ; eax = ks  (A=seed, B=base)
     mov  [val_ks_nl1], eax
 
@@ -3450,8 +3451,8 @@ rnl_agree_recv:
 
 ; ============================================================
 ; hfscx_32: EAX=x -> EAX=hfscx_32(x)  (DM, v1.9.0)
-; C_DM(s,m)=nl(s,m,8)^s; IV=0xA3C5E7B9, LB=0xA3C5E799
-; s=nl(IV,x,8)^IV; return nl(s,LB,8)^s
+; C_DM(s,m)=nl(s,m,24)^s; IV=0xA3C5E7B9, LB=0xA3C5E799
+; s=nl(IV,x,24)^IV; return nl(s,LB,24)^s
 ; ============================================================
 hfscx_32:
     push ecx
@@ -3460,13 +3461,13 @@ hfscx_32:
     mov  ebx, eax          ; B = x
     mov  edi, 0xA3C5E7B9   ; prev = IV_32
     mov  eax, 0xA3C5E7B9   ; A = IV_32
-    mov  ecx, 8
-    call nl_fscx_revolve_v1 ; eax = nl(IV, x, 8)
+    mov  ecx, V1_MODE_STEPS
+    call nl_fscx_revolve_v1 ; eax = nl(IV, x, 24)
     xor  eax, edi           ; eax ^= IV  (DM block 1)
     mov  edi, eax           ; prev = s
     mov  ebx, 0xA3C5E799   ; B = LB = 0x20 ^ IV_32
-    mov  ecx, 8
-    call nl_fscx_revolve_v1 ; eax = nl(s, LB, 8)
+    mov  ecx, V1_MODE_STEPS
+    call nl_fscx_revolve_v1 ; eax = nl(s, LB, 24)
     xor  eax, edi           ; eax ^= s  (DM block 2)
     pop  edi
     pop  ebx
