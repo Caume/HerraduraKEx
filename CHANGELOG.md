@@ -2,6 +2,22 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [10.0.4] - 2026-10-29
+
+### TODO #309, closed as ACKNOWLEDGED — no entropy-injection seam for the CLIs
+
+- **No shipped surface is added.**  #309 proposed an env var and a flag to replace each
+  CLI's CSPRNG with a stream file, so the CLIs' randomness draws could be pinned.
+  TODO #311 (v8.2.1) had already demoted it.  It was to come back only if a new
+  `cli_only` draw appeared that was neither parameter-fed nor movable.
+- **That condition was re-checked and does not hold.**  `CLI_DRAW_COVERAGE` holds the
+  same nine `cli_only` roles.  Seven are single uniform draws a fixed stream would pin
+  as the identity.  HSKE-NL-A1's operation became a suite function in #312 (v8.3.0), and
+  HPKS-T's commitment nonce is #311's considered no.
+- **The hazard analysis stays owed** if the idea is revived: fail-closed, loud on every
+  run, marked in the artifact, the compile-time question, and flag before env var.
+- `spec/check_language_parity.py`'s CLI-draw header comment now records the outcome.
+
 ## [10.0.3] - 2026-10-29
 
 ### TODO #350, closed — the 32-bit suite demos are [FAIL]-gated; the Arduino demo's stall fixed
