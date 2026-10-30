@@ -319,7 +319,7 @@ public final class Demo {
         }
 
         // ── Hash / proofs / credentials ──────────────────────────────────
-        out("\n--- HFSCX-256-DM [HASH — Merkle-Damgard over NL-FSCX v1, Davies-Meyer; 256-bit output]");
+        out("\n--- HFSCX-256 [HASH — Merkle-Damgard over NL-FSCX v1, Matyas-Meyer-Oseas; 256-bit output]");
         {
             byte[] tv = "HFSCX-256 test vector".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             byte[] bareOut = Hfscx256.hash(tv, null);

@@ -463,13 +463,12 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
     len_raw = int.from_bytes(b'\x00' * (blen - 8) + (len(data) * 8).to_bytes(8, 'big'), 'big')
     padded += (len_raw ^ init_int).to_bytes(blen, 'big')
 
-    # Chain blocks: C_DM(s, m) = F_1^{192}(s, m) ⊕ s (Davies-Meyer feed-forward)
+    # Chain blocks: C(s, m) = F_s^{192}(m) ⊕ m (Matyas-Meyer-Oseas, TODO #351)
     steps = 3 * n // 4  # 192 (TODO #347; n/4 until v10.0.0)
     for off in range(0, len(padded), blen):
-        prev = state
         block = BitArray(n, int.from_bytes(padded[off:off + blen], 'big'))
-        state = nl_fscx_revolve_v1(state, block, steps)
-        state = BitArray(n, state.uint ^ prev.uint)
+        state = nl_fscx_revolve_v1(block, state, steps)
+        state = BitArray(n, state.uint ^ block.uint)
 
     return state.uint.to_bytes(blen, 'big')
 
@@ -1911,17 +1910,17 @@ def test_hfscx_256():
     # Known-answer tests (KAT) — pre-computed from the reference implementation
     KAT = [
         (b'',
-         'e99dc5a4f9eb50cf906f85c3cd55dedd'
-         '9792df6af3ac7a838eb8698fedc1a0ca'),
+         'd792dc35810d35b9ceef7c769e3e4f04'
+         '2e687c92484a26204f7333c5c9b7df46'),
         (b'a',
-         '2a0e9329eb6af549a2c0da364a4dcbbf'
-         '9ba8870e94d8998936e8e062fbf85a86'),
+         'b6e2037cb2bff05ad287a88157b3b0d5'
+         'ca8a8805a3665de789b70098e1f37038'),
         (b'abc',
-         '755685f69bbffd1cf3bf5e2b8a86dc09'
-         '001166b2663e437de66b60c2cae0db5c'),
+         '48a823e80b4d0f86a319bbe5518ff5f1'
+         'ab8561a785b731328095b4efaccacf94'),
         (b'a' * 33,
-         '6df2706d96feffa6ca58eae02f0c8f4e'
-         '6d0ef33ab047e84f93c544d70fa6c01d'),
+         'df7157af2d044a299c8df3c652073ee8'
+         '1205c8299f407fb58fd9e59d515870b0'),
     ]
     kat_ok = True
     for msg, expected in KAT:
@@ -2309,8 +2308,8 @@ def test_hske_nl_aead():
     kat_ct, kat_tag = aead_encrypt(kat_key, kat_nonce, b'hdr', kat_pt)
     kat_ok = (kat_ct.hex() == 'd6f79a7caf75d073b25eb5107199f6fce5a29cd6428acc45'
                               '37a2d2f3820ac4b6ee086d6b657734a37af5228e93'
-              and kat_tag.hex() == '49539eb688d37f3f23fcc63ec38b370f'
-                                   '2d139def31d76203b80a74670dab54bc')
+              and kat_tag.hex() == '77f81d25cb1a4832a07a699839531025'
+                                   '654fa30343aa85b7d17738efd2361839')
 
     # Round-trip + tamper rejection over random inputs of irregular lengths
     trials = min(_iters(50), 50)
@@ -2370,12 +2369,12 @@ def test_hdrbg():
     # Cross-language KAT (must match C/Go/Python suite outputs)
     d = seed(bytes(range(32)), b'HDRBG-KAT')
     kat_ok = (generate(d, 80).hex() ==
-              'bf6348e1070b480769a1721992048128133a137557f8614d903cd354461269f7'
-              '471b2beb6344ffe10d74a0d3f46561b29c2b982d62d9eddda6494adabd73de23'
-              '222e9b8f664b83b6186854bae1f3b4c9')
+              '3415ea7851088150aaf313cee57af5108080fbc51484c0923df9c39e53425e54'
+              '3ab48f56ee04d43c7e4004542858b1f7860dde85e300306186f82651fcfbda36'
+              'c5aac4a98998ae88d202edf9a6d02750')
     reseed(d, b'\xa5' * 16)
     kat_ok = kat_ok and (generate(d, 32).hex() ==
-              'af68c161903caa96091f10591f957481c8be537d037d6dce785e4805f777049e')
+              '94a0a9e9b10adfb38f72383ab5658a15e535ae6879e11adb9bd476ef0af08072')
 
     # Determinism + personalization divergence + reseed separation
     d1, d2 = seed(b'ent-A', b'p1'), seed(b'ent-A', b'p1')

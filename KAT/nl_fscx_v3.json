@@ -94,8 +94,8 @@
     "nonce": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
     "ad": "6e6c2d76332d6475706c65782d6173736f6369617465642d64617461",
     "plaintext": "4865727261647572614b457820544f444f2023323535206475706c65782d7633204b415420766563746f72",
-    "ciphertext": "d6f9964dc455e615af6da1a2cc9bd7802f50647fa7cfbf32f3d31c1eca3be18efc248e9a0dbfcfbc8dd109",
-    "tag": "8cc69160d9f9154910ca2110d85d52b571f018f13866fb42b345ccc43d42c941"
+    "ciphertext": "45e20d0eb000380dd7cc116edd11d2ca5e09ced7c011e6290f5ba1384ecafe3d2e8a72828971367feb24d0",
+    "tag": "d9b4a4695d7352ce87352f840fe5fc47e0ce2998f4e45aa2740d051459a752d7"
   },
   "fpe_twk_v3": {
     "description": "fpe --v3 and twk --v3: subkey = HFSCX-256-DS(0x22 / 0x23, len(key)_be8 || key || tweak), single hash, NO rejection loop",
@@ -104,9 +104,9 @@
     "key": "cafebabedeadbeef0123456789abcdefcafebabedeadbeef0123456789abcdef",
     "plaintext": "00004e4c2d46534358207633204b41542d544f444f2032353520766563746f72",
     "fpe_context": "6865727261647572612d76332d6b61742d636f6e74657874",
-    "fpe_ciphertext": "08d070d37d75d3874960ecc0699e9e7766a275f3b93bf8c764659c6a51f0c1fd",
+    "fpe_ciphertext": "159a7a1041e611d733fd94e202e80805f8dafb3622d0ff02db7b80dc58947115",
     "twk_sector": "0123456789abcdef",
     "twk_bidx": "00c0ffee",
-    "twk_ciphertext": "cce9eec4dcbca73f73749d3bf7b82be28973ca507f60472bd45230b7a59904eb"
+    "twk_ciphertext": "bb2eec20d8015a1fba7704f6e3cd4ec85660ad3d893274fc0f19b9962a908c22"
   }
 }

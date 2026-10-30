@@ -7,7 +7,7 @@ import java.util.Arrays;
 
 /**
  * TODO #198: pure-Java port of the NL-FSCX v1 primitive, the HFSCX-256
- * Merkle-Damgard/Davies-Meyer hash built on it, and the HSKE-NL-A1
+ * Merkle-Damgard/Matyas-Meyer-Oseas hash built on it, and the HSKE-NL-A1
  * counter-mode AEAD used by the CLI's {@code encfile}/{@code decfile}.
  *
  * These are strictly NL/PQC-family building blocks (out of {@link Herradura}'s
@@ -61,8 +61,8 @@ public final class Hfscx256 {
     }
 
     // -----------------------------------------------------------------
-    // HFSCX-256-DM: Merkle-Damgard hash, Davies-Meyer compression over
-    // nl_fscx_revolve_v1
+    // HFSCX-256: Merkle-Damgard hash, Matyas-Meyer-Oseas compression over
+    // nl_fscx_revolve_v1 (TODO #351; Davies-Meyer until v11.0.0)
     // -----------------------------------------------------------------
 
     private static final int BLOCK = 32; // bytes
@@ -99,12 +99,14 @@ public final class Hfscx256 {
         BitArray lenXored = BitArray.fromBytes(lenBlock, N).xor(initState);
         System.arraycopy(lenXored.toBytes(), 0, padded, padLen, BLOCK);
 
+        // C(s, m) = F_s^{192}(m) XOR m (Matyas-Meyer-Oseas, TODO #351): the
+        // block is v1's A, the chaining value its B, which the message cannot
+        // choose.  Davies-Meyer let a zero block set B = 0, where v1 is constant
+        // past n/2 rounds (SecurityProofs-10.md §11.75).
         int steps = V1_MODE_STEPS; // 192
         for (int off = 0; off < padded.length; off += BLOCK) {
-            BitArray prev = state;
             BitArray block = BitArray.fromBytes(Arrays.copyOfRange(padded, off, off + BLOCK), N);
-            state = nlFscxRevolveV1(state, block, steps);
-            state = state.xor(prev);
+            state = nlFscxRevolveV1(block, state, steps).xor(block);
         }
         return state.toBytes();
     }

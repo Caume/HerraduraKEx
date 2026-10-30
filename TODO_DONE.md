@@ -24227,3 +24227,68 @@ loud on every run, marked in the artifact or argued, the compile-time question, 
 flag-before-env-var ordering.
 
 Status: **ACKNOWLEDGED** — no entropy-injection seam is added to the four CLIs; #311 showed it would teach nothing about 7 of the 9 `cli_only` draws and the other 2 were closed without one, and the hazard analysis stays owed if it is ever revived.
+
+### #351: HFSCX-256's Davies–Meyer compression lets a zero block erase itself — a free collision since v10.0.0
+
+**Found while starting TODO #348's second pass.**  NL-FSCX v1's round is
+F_B(A) = M(A ⊕ B) ⊕ ROL(A + B, n/4), iterated on A with B fixed.  A + B is GF(2)-affine in
+A exactly when B has no set bit below n − 2, i.e. for B ∈ W = {0, 2^(n−2), 2^(n−1),
+3·2^(n−2)}.  For B ∈ {0, 2^(n−1)} the linear part is L = M ⊕ ROL^(n/4), and since
+X^n + 1 = (X + 1)^n over GF(2), L = (X + 1)^2·u for a unit u.  **L is nilpotent**: rank L^k
+is n − 2k, and L^(n/2) = 0.  So v1(A, B, s) does not depend on A once s ≥ n/2, and for
+B = 0 it is 0.
+
+HFSCX-256's compression was Davies–Meyer, C_DM(s, m) = F_m^r(s) ⊕ s, with the message block
+as B.  TODO #347 (v10.0.0) raised r from 64 to 3n/4 = 192, past n/2.  From then on a zero
+block was the identity, C_DM(s, 0) = s, so **H(b ‖ 0^32) = H(0^32 ‖ b) for every 32-byte b**:
+a free collision between two same-length messages, in a hash rated production-track
+(conjectured).  It reproduced on v10.0.4.  At 64 rounds L^64 still has rank 128 and
+C_DM(s, 0) = L^64(s) ⊕ s is a bijection (TODO #159), so releases before v10.0.0 do not
+have it.  The trail-weight model behind #346/#347 prices differences.  A fixed input that
+switches the carries off is outside what it measures, which is why neither pass saw this.
+
+**Consequence for #348.**  Its planned raise would have put the HPKS-NL / HPKS-T challenge
+e = v1(R, msg) and the Stern chain hash at 3n/4.  With msg ∈ {0, 2^255}, e would not depend
+on R, so anyone could sign those messages.  A zero chain item would make B = 0 and erase
+every item before it, so a Stern commitment with a zero syndrome item would open to any
+permutation.  The #348 edits were parked unshipped.
+
+**Options.**  (a) Matyas–Meyer–Oseas, C(s, m) = F_s^r(m) ⊕ m: the chaining value is B,
+which no message chooses.  (b) Round constants so that no B makes the round affine; this
+changes every v1 site, not just this one.  (c) HFSCX-256 back to 64 rounds, which undoes
+#347's margin.
+
+**Resolution (v11.0.0).**  Option (a), in every implementation of the compression function:
+- **The four ports**: `herradura.h`'s `hfscx_256`, Go's `Hfscx256`, Java's
+  `Hfscx256.hash`, and the Python suite's and harness's `hfscx_256`.
+- **HFSCX-32**: the ARM and NASM suites and harnesses and the Arduino suite.  These went
+  from s = nl(IV, x, 24) ⊕ IV to s = nl(x, IV, 24) ⊕ x, and likewise for the length block.
+- **Regenerated**: every KAT, PEM vector and replay row; the pinned KKW transcript was
+  re-captured.  Harness test [19]'s three vectors and [28]/[29]'s AEAD tag and HDRBG output
+  were updated in the C, Go, Python and Java harnesses.  Six replay labels in
+  `KAT/generate_kat.py` were re-chosen because their streams come from HFSCX-256, and
+  their asserts did the choosing:
+  - `replay-weightt-5`
+  - `op-stern-sign-3`
+  - `op-sigma-v14`
+  - `op-qcmdpc-keygen-753`
+  - `op-zkbpp-3`
+  - `op-hcred-11`
+- **What MMO leaves**: W as a chaining value, which can only be reached by a 2^254-work
+  preimage.  Neither IV is in W.  The keyed form has four weak keys out of 2^256, and no
+  caller lets anyone choose an HFSCX key.
+- **The new one-block shape**: ΔB = 0, with the feed-forward cancelling Δm.  Under
+  `v1_mode_floor.py`'s complete class edges, the longest walk avoiding 0 is 2 edges at
+  every D ≤ 6.  So every 4 consecutive rounds include one costing ≥ D + 1, and 192 rounds
+  cost ≥ 336, 2.6× the bar.  A differing chaining value is β ≠ 0, which #347 already
+  bounds at ≥ 384.
+- **The gate**: `SecurityProofsCode/hfscx_mmo_compression.py`, with SecurityProofs-10.md
+  §11.75.
+- **Fixed on the way**: C harness test [19] reported through `puts()` with a bare `FAIL`.
+  The harness gate wraps `printf` only and looks for `[FAIL]`, so its HFSCX-256 vectors
+  could never fail a run, and it exited 0 on the stale vectors here.  It now prints
+  `[FAIL]` through `printf`.  A control with one corrupted vector byte exits 1.
+- **MAJOR**: every digest, MAC, signature, `.hkx` file, password-protected key, WOTS/XMSS
+  key and RNL session key derived through HFSCX-256 changes (MIGRATING.md §25).
+
+Status: **DONE v11.0.0** — HFSCX-256 (and HFSCX-32) use Matyas–Meyer–Oseas compression, so the chaining value is v1's B and no message block can make the round affine; v10.0.0–v10.0.4's zero-block collision H(b‖0^32) = H(0^32‖b) is gone.

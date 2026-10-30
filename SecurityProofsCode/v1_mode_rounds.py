@@ -124,13 +124,13 @@ def section_1():
     rule("§1  What ships: V1_MODE_STEPS = 3n/4 in the three modes, all four ports")
     sites = {
         "herradura.h": [r"#define V1_MODE_STEPS \(3 \* KEYBITS / 4\)",
-                        r"nl_fscx_revolve_v1_ba\(&state, &state, &block, V1_MODE_STEPS\)",
+                        r"nl_fscx_revolve_v1_ba\(&state, &block, &state, V1_MODE_STEPS\)",
                         r"nl_fscx_revolve_v1_ba\(ks_out, seed, &base_i, V1_MODE_STEPS\)",
                         r"nl_fscx_revolve_v1_ba\(mac_key_out, &seed2, base, V1_MODE_STEPS\)",
                         r"nl_fscx_revolve_v1_ba\(&ks, &seed, &base, 3 \* base\.nbits / 4\)",
                         r"nl_fscx_revolve_v1_ba\(out, &rotx, x, V1_MODE_STEPS\)"],
         "herradura/herradura.go": [r"const V1ModeSteps = 3 \* 256 / 4",
-                                   r"NlFscxRevolveV1\(state, block, V1ModeSteps\)",
+                                   r"NlFscxRevolveV1\(block, state, V1ModeSteps\)",
                                    r"NlFscxRevolveV1\(seed, baseI, V1ModeSteps\)",
                                    r"NlFscxRevolveV1\(seed2, base, V1ModeSteps\)",
                                    r"NlFscxRevolveV1\(RnlKdfSeed\(base\), base, v1ModeSteps\(n\)\)",
@@ -165,28 +165,30 @@ def section_1():
           "A1's keystream in the three suites (%s)" % bad32[:3])
     ctl = _check_32bit({"Herradura cryptographic suite.ino":
                         _src("Herradura cryptographic suite.ino").replace(
-                            "nl_fscx_revolve_v1(prev, x, V1_MODE_STEPS)",
-                            "nl_fscx_revolve_v1(prev, x, 8)")})
+                            "nl_fscx_revolve_v1(x, 0xA3C5E7B9UL, V1_MODE_STEPS)",
+                            "nl_fscx_revolve_v1(x, 0xA3C5E7B9UL, 8)")})
     check(ctl, "CONTROL: the 32-bit check FIRES on an hfscx_32 block put back at 8 rounds")
 
     BA, rv1 = H.BitArray, H.nl_fscx_revolve_v1
     iv = int.from_bytes(H._HFSCX256_IV_BYTES, "big")
 
-    def dm(msg, steps):
-        """HFSCX-256 by hand: pad, length block ^ IV, Davies-Meyer at `steps` rounds."""
+    def mmo(msg, steps):
+        """HFSCX-256 by hand: pad, length block ^ IV, Matyas-Meyer-Oseas at `steps`
+        rounds (the block is v1's A, the chaining value its B; TODO #351 -- it was
+        Davies-Meyer, B = the block, until v11.0.0)."""
         p = bytearray(msg) + b"\x80"
         p += b"\x00" * (-len(p) % 32)
         p += ((len(msg) * 8) ^ iv).to_bytes(32, "big")
         s = BA(256, iv)
         for o in range(0, len(p), 32):
-            s = BA(256, rv1(s, BA(256, int.from_bytes(p[o:o + 32], "big")), steps).uint
-                   ^ s.uint)
+            m = BA(256, int.from_bytes(p[o:o + 32], "big"))
+            s = BA(256, rv1(m, s, steps).uint ^ m.uint)
         return s.uint.to_bytes(32, "big")
     msgs = (b"", b"a", b"HerraduraKEx v10.0.0" * 3)
-    check(all(H.hfscx_256(m) == dm(m, ROUNDS) for m in msgs),
-          "hfscx_256 equals a hand-built Davies-Meyer chain at 192 rounds on 3 messages")
-    check(all(H.hfscx_256(m) != dm(m, 64) for m in msgs),
-          "CONTROL: it differs from the same chain at 64 rounds, the pre-v10.0.0 count")
+    check(all(H.hfscx_256(m) == mmo(m, ROUNDS) for m in msgs),
+          "hfscx_256 equals a hand-built Matyas-Meyer-Oseas chain at 192 rounds on 3 messages")
+    check(all(H.hfscx_256(m) != mmo(m, 64) for m in msgs),
+          "CONTROL: it differs from the same chain at 64 rounds")
     k, nn, pt = BA(256, 0x1234 << 200), BA(256, 0xabcd << 100), BA(256, 0x55)
     base = BA(256, k.uint ^ nn.uint)
     ks = rv1(H.rnl_kdf_seed(base), base, ROUNDS)

@@ -2,6 +2,47 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [11.0.0] - 2026-10-30
+
+### TODO #351, closed — HFSCX-256's compression is Matyas–Meyer–Oseas; a free collision since v10.0.0 removed
+
+**MAJOR: every HFSCX-256 output changes.**  See MIGRATING.md §25.
+
+- **Security fix: HFSCX-256 had a free collision from v10.0.0 to v10.0.4.**  For B = 0 or
+  B = 2^255, NL-FSCX v1's round is GF(2)-affine with a nilpotent linear part: rank L^k is
+  n − 2k, and L^(n/2) = 0.  So v1(A, B, s) does not depend on A once s ≥ 128.
+  - The Davies–Meyer compression made the message block B, so at v10.0.0's 192 rounds
+    (TODO #347) a zero block was the identity.  **H(b ‖ 0^32) = H(0^32 ‖ b)** for every
+    32-byte b.
+  - The 64-round hash before v10.0.0 does not have it.
+  - The trail-weight model behind #346/#347 prices differences, so it could not see an
+    input that turns the carries off.
+- **The fix is Matyas–Meyer–Oseas.**  The compression is now C(s, m) = F_s^192(m) ⊕ m, so
+  the chaining value is v1's B and no message chooses it.  Reaching an affine B from a
+  chaining value is a 2^254-work preimage.
+  - The new one-block shape (ΔB = 0) costs ≥ 336 bits over 192 rounds in the trail model,
+    2.6× the birthday bar.  Differing chaining values keep #347's ≥ 384.
+  - HFSCX-256 stays production-track (conjectured), now for the MMO construction.
+- **Where it changed:**
+  - `herradura.h`, the Go library, Java's `Hfscx256`, and the Python suite and harness;
+  - HFSCX-32 in the ARM, NASM i386 and Arduino suites and the ARM/NASM harnesses.
+- **Regenerated:**
+  - every KAT, PEM vector and replay row, with six replay labels re-chosen by their own
+    asserts;
+  - the pinned KKW transcript;
+  - harness vectors [19], [28] and [29] in C, Go, Python and Java.
+- **Fixed: C harness test [19] was ungated.**  It reported through `puts()` with a bare
+  `FAIL`, and the gate wraps `printf` and looks for `[FAIL]`.  So a wrong HFSCX-256 vector
+  exited 0, and it did so on the stale vectors here.  It now prints `[FAIL]` through
+  `printf`; a corrupted-vector control exits 1.
+- **TODO #348's second pass is parked.**  Raising the Schnorr challenge and the Stern chain
+  hash to 3n/4 would have let anyone sign msg ∈ {0, 2^255}, and let a zero chain item erase
+  everything before it.  #348 now records that its sites need a construction where nobody
+  chooses B.
+- New gate `SecurityProofsCode/hfscx_mmo_compression.py`; SecurityProofs-10.md §11.75;
+  supersession notes in §11.9 and §11.19.1; SECURITY.md and the spec record the
+  construction.
+
 ## [10.0.4] - 2026-10-29
 
 ### TODO #309, closed as ACKNOWLEDGED — no entropy-injection seam for the CLIs

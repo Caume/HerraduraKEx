@@ -3325,25 +3325,25 @@ rnl_agree_recv:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* hfscx_32: r0=x -> r0=hfscx_32(x)  (DM, v1.9.0)                   */
-/* C_DM(s,m)=nl(s,m,24)^s; IV=0xA3C5E7B9, LB=0xA3C5E799              */
-/* s=nl(IV,x,24)^IV; return nl(s,LB,24)^s                            */
+/* hfscx_32: r0=x -> r0=hfscx_32(x)  (MMO, v11.0.0, TODO #351)       */
+/* C(s,m)=nl(m,s,24)^m; IV=0xA3C5E7B9, LB=0xA3C5E799                 */
+/* s=nl(x,IV,24)^x; return nl(LB,s,24)^LB                            */
+/* The chaining value is v1's B: under DM (v1.9.0-v10.x) x was B,    */
+/* and x in {0, 2^31} made the round affine-nilpotent (§11.75).     */
 /* ------------------------------------------------------------------ */
     .thumb_func
 hfscx_32:
     push    {r4, r5, lr}
-    mov     r4, r0              @ save x
-    ldr     r5, .LHIV           @ r5 = IV_32 (prev for block 1)
-    ldr     r0, .LHIV           @ A = IV_32
-    mov     r1, r4              @ B = x
+    mov     r4, r0              @ r4 = x  (block 1, A)
+    ldr     r1, .LHIV           @ B = IV_32
     mov     r2, #V1_MODE_STEPS
-    bl      nl_fscx_revolve_v1  @ r0 = nl(IV, x, 24)
-    eor     r0, r0, r5          @ s = result ^ IV  (DM block 1)
-    mov     r5, r0              @ r5 = s  (prev for block 2)
-    ldr     r1, .LHLB           @ B = LB
+    bl      nl_fscx_revolve_v1  @ r0 = nl(x, IV, 24)
+    eor     r1, r0, r4          @ B = s = result ^ x  (MMO block 1)
+    ldr     r5, .LHLB           @ r5 = LB  (block 2, A)
+    mov     r0, r5              @ A = LB
     mov     r2, #V1_MODE_STEPS
-    bl      nl_fscx_revolve_v1  @ r0 = nl(s, LB, 24)
-    eor     r0, r0, r5          @ result ^ s  (DM block 2)
+    bl      nl_fscx_revolve_v1  @ r0 = nl(LB, s, 24)
+    eor     r0, r0, r5          @ result ^ LB  (MMO block 2)
     pop     {r4, r5, pc}
 .LHIV: .word 0xA3C5E7B9
 .LHLB: .word 0xA3C5E799

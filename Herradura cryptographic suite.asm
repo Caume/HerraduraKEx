@@ -3555,25 +3555,26 @@ rnl_agree_recv:
     ret
 
 ; ============================================================
-; hfscx_32: EAX=x -> EAX=hfscx_32(x)  (DM, v1.9.0)
-; C_DM(s,m)=nl(s,m,24)^s; IV=0xA3C5E7B9, LB=0xA3C5E799
-; s=nl(IV,x,24)^IV; return nl(s,LB,24)^s
+; hfscx_32: EAX=x -> EAX=hfscx_32(x)  (MMO, v11.0.0, TODO #351)
+; C(s,m)=nl(m,s,24)^m; IV=0xA3C5E7B9, LB=0xA3C5E799
+; s=nl(x,IV,24)^x; return nl(LB,s,24)^LB
+; The chaining value is v1's B: under DM (v1.9.0-v10.x) x was B,
+; and x in {0, 2^31} made the round affine-nilpotent (§11.75).
 ; ============================================================
 hfscx_32:
     push ecx
     push ebx
     push edi               ; save edi (callee-saved)
-    mov  ebx, eax          ; B = x
-    mov  edi, 0xA3C5E7B9   ; prev = IV_32
-    mov  eax, 0xA3C5E7B9   ; A = IV_32
+    mov  edi, eax          ; edi = x  (block 1, A)
+    mov  ebx, 0xA3C5E7B9   ; B = IV_32
     mov  ecx, V1_MODE_STEPS
-    call nl_fscx_revolve_v1 ; eax = nl(IV, x, 24)
-    xor  eax, edi           ; eax ^= IV  (DM block 1)
-    mov  edi, eax           ; prev = s
-    mov  ebx, 0xA3C5E799   ; B = LB = 0x20 ^ IV_32
+    call nl_fscx_revolve_v1 ; eax = nl(x, IV, 24)
+    xor  eax, edi           ; s = result ^ x  (MMO block 1)
+    mov  ebx, eax           ; B = s
+    mov  eax, 0xA3C5E799   ; A = LB = 0x20 ^ IV_32
     mov  ecx, V1_MODE_STEPS
-    call nl_fscx_revolve_v1 ; eax = nl(s, LB, 24)
-    xor  eax, edi           ; eax ^= s  (DM block 2)
+    call nl_fscx_revolve_v1 ; eax = nl(LB, s, 24)
+    xor  eax, 0xA3C5E799   ; eax ^= LB  (MMO block 2)
     pop  edi
     pop  ebx
     pop  ecx

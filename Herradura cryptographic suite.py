@@ -1340,7 +1340,8 @@ def nl_fscx_revolve_v3_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
 
 
 # ---------------------------------------------------------------------------
-# HFSCX-256-DM: Merkle-Damgård hash over NL-FSCX v1, Davies-Meyer compression (v1.9.0)
+# HFSCX-256: Merkle-Damgård hash over NL-FSCX v1, Matyas-Meyer-Oseas compression
+# (v11.0.0, TODO #351; Davies-Meyer from v1.9.0 to v10.x)
 # ---------------------------------------------------------------------------
 
 # 32-byte ASCII domain constant for the default IV.
@@ -1353,10 +1354,17 @@ _RNL_KDF_DC_256 = 0x6A09E667BB67AE853C6EF372A54FF53A510E527F9B05688C1F83D9AB5BE0
 
 
 def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
-    """HFSCX-256-DM: 256-bit Merkle-Damgård hash built on NL-FSCX v1, Davies-Meyer compression.
+    """HFSCX-256: 256-bit Merkle-Damgård hash built on NL-FSCX v1, Matyas-Meyer-Oseas compression.
 
-    Compression function (Davies-Meyer):
-        state_{i+1} = nl_fscx_revolve_v1(state_i, block_i, 192) ⊕ state_i
+    Compression function (Matyas-Meyer-Oseas, TODO #351):
+        state_{i+1} = nl_fscx_revolve_v1(block_i, state_i, 192) ⊕ block_i
+
+    The chaining value is v1's B input, so the message cannot choose it.  Until
+    v11.0.0 the compression was Davies-Meyer, nl_fscx_revolve_v1(state, block,
+    192) ⊕ state, which let a block choose B: for B in {0, 2^255} the round is
+    affine with a nilpotent linear part, v1 is constant past n/2 rounds, and a
+    zero block was the identity, so H(b || 0^32) == H(0^32 || b)
+    (SecurityProofs-10.md §11.75).
 
     Padding (ISO 7816-4 + Merkle-Damgård strengthening):
         1. Append 0x80 to the message.
@@ -1394,13 +1402,12 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
     len_raw  = int.from_bytes(b'\x00' * (blen - 8) + (len(data) * 8).to_bytes(8, 'big'), 'big')
     padded  += (len_raw ^ init_int).to_bytes(blen, 'big')
 
-    # Chain blocks: C_DM(s, m) = F_1^{192}(s, m) ⊕ s (Davies-Meyer feed-forward)
+    # Chain blocks: C(s, m) = F_s^{192}(m) ⊕ m (Matyas-Meyer-Oseas, TODO #351)
     steps = V1_MODE_STEPS  # 192 (TODO #347; n/4 = 64 until v10.0.0)
     for off in range(0, len(padded), blen):
-        prev = state
         block = BitArray(n, int.from_bytes(padded[off:off + blen], 'big'))
-        state = nl_fscx_revolve_v1(state, block, steps)
-        state = BitArray(n, state.uint ^ prev.uint)
+        state = nl_fscx_revolve_v1(block, state, steps)
+        state = BitArray(n, state.uint ^ block.uint)
 
     return state.uint.to_bytes(blen, 'big')
 
@@ -5686,7 +5693,7 @@ def main():
               f"ok2={_xmss_ok2} reuse={_xmss_reuse}")
 
     # ── HFSCX-256-DM ─────────────────────────────────────────────────────────
-    print("\n--- HFSCX-256-DM [HASH — Merkle-Damgård over NL-FSCX v1, Davies-Meyer; 256-bit output]")
+    print("\n--- HFSCX-256 [HASH — Merkle-Damgård over NL-FSCX v1, Matyas-Meyer-Oseas; 256-bit output]")
     _tv = b"HFSCX-256 test vector"
     _bare = hfscx_256(_tv)
     _mac_iv = BitArray(KEYBITS, preshared.uint ^ int.from_bytes(_HFSCX256_IV_BYTES, 'big'))

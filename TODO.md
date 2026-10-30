@@ -638,6 +638,22 @@ for an independent reason: Pohlig–Hellman for HPKS-NL and HPKS-T, N = 256 for 
 MIGRATING.md entry.  Since no rating depends on it, it can wait for the next major
 version rather than force one.
 
+**A constraint the raise must meet (TODO #351, v11.0.0).**  The raise as first written
+was implemented and then parked, because it would have made both sites worse.  For
+B ∈ {0, 2^(n−1)} v1's round is affine with a nilpotent linear part, and v1 does not depend
+on A once there are at least n/2 rounds (SecurityProofs-10.md §11.75).  Both owed sites let
+the attacker choose B:
+- **The Schnorr challenge**, e = v1(R, msg).  At 3n/4, msg ∈ {0, 2^255} gives e = 0 for
+  every R, so anyone could sign those messages.
+- **The Stern chain hash**, where B = ROL(item, n/8).  A zero item erases every earlier
+  item, so a commitment whose syndrome item is 0 opens to any permutation.  Even at n/4,
+  L^(n/4) has a 2^(n/2) kernel, which leaves about n/4 bits of binding for a zero item.
+
+So the second pass needs a construction in which no party chooses v1's B, as #351 did
+for HFSCX-256: B a chaining value or a domain constant, and the attacker's input in A with
+a feed-forward.  The parked edits are in `git stash` on devtest ("TODO #348 second pass,
+parked").  They only change the step counts and cannot be applied as they stand.
+
 Status: **OPEN**
 
 ---

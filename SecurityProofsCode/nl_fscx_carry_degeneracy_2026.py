@@ -31,6 +31,12 @@ RESULTS
     constant term 1 — a unit, therefore invertible.  The feed-forward is load-bearing
     here in a way the existing §11.9 analysis does not record.
 
+    SUPERSEDED at 3n/4 rounds (TODO #351, v11.0.0): L^{n/2} = 0, so from v10.0.0 (192
+    rounds) C(s,0) = s was the identity, and a zero block commuted with every block --
+    H(b || 0^32) = H(0^32 || b).  Bijective is not collision-resistant.  This section
+    still checks the n/4-round algebra as stated; hfscx_mmo_compression.py has the
+    finding, and HFSCX-256 is Matyas-Meyer-Oseas since v11.0.0.
+
 §2  NL-FSCX v2's offset delta(K) is added as a *constant*, and addition of a constant c
     is GF(2)-affine for every input exactly when c is 0 or 2^{n-1} (the top carry is
     discarded mod 2^n).  So whenever delta(K) lands on one of those two values the whole

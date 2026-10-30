@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.74** (SecurityProofs-10.md): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4
+> - **Part 10 — §11.43–§11.75** (SecurityProofs-10.md): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO
 
 ---
 
@@ -1203,6 +1203,8 @@ statement: for the all-zero block the underlying keyed map is not merely non-bij
 *linear with a kernel of dimension $n/2$*, and the feed-forward is precisely what
 prevents cheap zero-block collisions.  **No weakness — but the feed-forward is
 load-bearing, and removing it would be catastrophic rather than merely unproven.**
+
+*Superseded at 192 rounds (TODO #351, v11.0.0, SecurityProofs-10.md §11.75).* At 3n/4 = 192 > n/2 rounds the inner map is L^192 = 0, so C(s, 0) = s, the identity, and the bijection argument no longer protects anything: a zero block commuted with every block, so H(b ‖ 0^32) = H(0^32 ‖ b). That held from v10.0.0 to v10.0.4. HFSCX-256 is Matyas–Meyer–Oseas since v11.0.0.
 
 ### 11.19.2 NL-FSCX v2 — an affine weak-key class (TODO #168)
 
