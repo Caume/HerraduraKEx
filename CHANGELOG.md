@@ -2,6 +2,39 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [10.0.3] - 2026-10-29
+
+### TODO #350, closed — the 32-bit suite demos are [FAIL]-gated; the Arduino demo's stall fixed
+
+- **The ARM, NASM i386 and Arduino suite demos now fail a run on a wrong verdict.**  They
+  were the only shipped programs whose verdicts reached nothing, which is how the ARM demo
+  printed `- ZKP-RNL verify FAILED` on every run without failing anything (TODO #349).
+  Every failure line now carries `[FAIL]`, as in the four ports' demos (TODO #233), and is
+  counted:
+  - **ARM / NASM:** the suites carry the harness's TODO #234 gate (`hprintf` / `print_str`).
+    They end with `*** OK` / `*** FAILED: n` and exit non-zero on a nonzero count.  The
+    build scripts' call-site guards now cover the suite too.
+  - **Arduino:** the verdicts go through one `check()` helper, and each pass ends with the
+    harness's verdict line.  `run_arduino.sh suite` now gates on it, including a pass that
+    never finishes.
+- **CI runs the three demos:** `run_arm.sh suite` and `run_asm_i386.sh suite` in `arm-i386`,
+  and `run_arduino.sh suite` in `arduino`.
+- **Fixed: the Arduino demo hung in HKEX-RNL.**  This was a stack overflow, not slowness.  Its
+  string literals had no `F()`, so 3,398 bytes of them were copied to SRAM, which left 364 of
+  the ATmega2560's 8,192 bytes for the stack.  Every literal is now in flash: `.data` is
+  102 bytes, and a full pass takes about 2 s under simavr.  So the `hfscx_32` change from
+  v10.0.2 now runs (Stern-F, HPKE-Stern-F, the ring signature, ZKP-NL), and every pass is
+  clean.  `build_arduino.sh` now fails either firmware if it leaves under 2,048 bytes for
+  the stack.
+- **Every new check was shown to fire:**
+  - the #349 `sub` bug put back fails the ARM demo;
+  - an inverted OPRF verdict fails the i386 and Arduino runs;
+  - a bare `bl printf` / `call print_str_raw` in a suite is refused at build;
+  - the old Arduino source fails the RAM guard.
+- The HKEX-RNL "raw key disagrees" line stays untagged, as in the C demo.  It is a
+  reconciliation event, not a bug.
+- A resolution note was added to SecurityProofs-10.md §11.74.
+
 ## [10.0.2] - 2026-10-29
 
 ### TODO #349, closed — the 32-bit targets run v1's modes at 3n/4; an ARM NTT bug fixed

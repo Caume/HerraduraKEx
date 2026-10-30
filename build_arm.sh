@@ -41,18 +41,21 @@ fi
 
 echo "=== HerraduraKEx v${VERSION} — ARM Thumb-2 build ==="
 
-# ── TODO #234 gate guard ──────────────────────────────────────────────────────
-# The test harness counts "[FAIL]" markers inside hprintf, so every printf call
-# site has to route through it.  A bare `bl printf` silently leaves its output
-# ungated; the three that legitimately need one are marked GATE-EXEMPT.
-UNGATED=$(grep -n 'bl[[:space:]]\+printf' "${TESTS_SRC}" | grep -v 'GATE-EXEMPT' || true)
-if [ -n "${UNGATED}" ]; then
-    echo "ERROR: ungated printf call site(s) in ${TESTS_SRC}:"
-    echo "${UNGATED}"
-    echo "  Use 'bl hprintf' so the [FAIL] gate sees the output (TODO #234),"
-    echo "  or mark the line GATE-EXEMPT if it must bypass the counter."
-    exit 1
-fi
+# ── TODO #234 / #350 gate guard ───────────────────────────────────────────────
+# The test harness and (since TODO #350) the suite demo count "[FAIL]" markers
+# inside hprintf, so every printf call site has to route through it.  A bare
+# `bl printf` silently leaves its output ungated; the ones that legitimately
+# need one (the verdict lines, hprintf's own tail call) are marked GATE-EXEMPT.
+for SRC in "${SUITE_SRC}" "${TESTS_SRC}"; do
+    UNGATED=$(grep -n 'b\(l\)\?[[:space:]]\+printf\b' "${SRC}" | grep -v 'GATE-EXEMPT' || true)
+    if [ -n "${UNGATED}" ]; then
+        echo "ERROR: ungated printf call site(s) in ${SRC}:"
+        echo "${UNGATED}"
+        echo "  Use 'bl hprintf' so the [FAIL] gate sees the output (TODO #234/#350),"
+        echo "  or mark the line GATE-EXEMPT if it must bypass the counter."
+        exit 1
+    fi
+done
 
 # ── TODO #349 IT-flag guard ───────────────────────────────────────────────────
 # Under .syntax unified a plain `sub` / `add` / ... assembles to the .W form,

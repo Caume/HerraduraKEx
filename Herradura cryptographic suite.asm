@@ -198,11 +198,11 @@ section .data
 
     pass_msg    db "+ correct!", 10
     pass_l      equ $-pass_msg
-    fail_msg    db "- INCORRECT!", 10
+    fail_msg    db "[FAIL] INCORRECT!", 10
     fail_l      equ $-fail_msg
     eve_ok_msg  db "- Eve could not decrypt (CDH + NL protection)", 10
     eve_ok_l    equ $-eve_ok_msg
-    eve_fail_msg db "+ Eve decrypted (Eve wins)!", 10
+    eve_fail_msg db "[FAIL] Eve decrypted (Eve wins)!", 10
     eve_fail_l  equ $-eve_fail_msg
     rnl_agree_msg db "+ raw key bits agree!", 10
     rnl_agree_l equ $-rnl_agree_msg
@@ -220,69 +220,69 @@ section .data
     sdf_note_l   equ $-sdf_note
     sdf_ok_msg   db "+ HPKS-Stern-F signature verified", 10
     sdf_ok_l     equ $-sdf_ok_msg
-    sdf_fail_msg db "- HPKS-Stern-F verification FAILED", 10
+    sdf_fail_msg db "[FAIL] HPKS-Stern-F verification FAILED", 10
     sdf_fail_l   equ $-sdf_fail_msg
     hpke_sdf_ok  db "+ HPKE-Stern-F session keys agree", 10
     hpke_sdf_ok_l equ $-hpke_sdf_ok
-    hpke_sdf_fail db "- HPKE-Stern-F key agreement FAILED", 10
+    hpke_sdf_fail db "[FAIL] HPKE-Stern-F key agreement FAILED", 10
     hpke_sdf_fail_l equ $-hpke_sdf_fail
     eve_sdf_ok   db "- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)", 10
     eve_sdf_ok_l equ $-eve_sdf_ok
-    eve_sdf_fail_s db "+ Eve forged HPKS-Stern-F (Eve wins!)", 10
+    eve_sdf_fail_s db "[FAIL] Eve forged HPKS-Stern-F (Eve wins!)", 10
     eve_sdf_fail_l equ $-eve_sdf_fail_s
     eve_hpke_sdf_ok db "- Eve random guess does not match session key  (SD protection)", 10
     eve_hpke_sdf_ok_l equ $-eve_hpke_sdf_ok
-    eve_hpke_sdf_fail db "+ Eve guessed HPKE-Stern-F session key!", 10
+    eve_hpke_sdf_fail db "[FAIL] Eve guessed HPKE-Stern-F session key!", 10
     eve_hpke_sdf_fail_l equ $-eve_hpke_sdf_fail
     zkp_rnl_hdr    db 10, "--- ZKP-RNL [Ring-LWR Sigma-protocol; N=32, gamma=4096, t=4]", 10
     zkp_rnl_hdr_l  equ $-zkp_rnl_hdr
     zkp_rnl_ok     db "+ ZKP-RNL proof verified", 10
     zkp_rnl_ok_l   equ $-zkp_rnl_ok
-    zkp_rnl_fail   db "- ZKP-RNL verify FAILED", 10
+    zkp_rnl_fail   db "[FAIL] ZKP-RNL verify FAILED", 10
     zkp_rnl_fail_l equ $-zkp_rnl_fail
     ; 78.H / 78.C strings
     masked_hdr     db 10, "--- Masked HSKE (78.H) [GF(2)-linearity masking]", 10
     masked_hdr_l   equ $-masked_hdr
     masked_ok      db "- Masked HSKE encrypt/decrypt correct", 10
     masked_ok_l    equ $-masked_ok
-    masked_fail    db "+ Masked HSKE encrypt/decrypt failed!", 10
+    masked_fail    db "[FAIL] Masked HSKE encrypt/decrypt failed!", 10
     masked_fail_l  equ $-masked_fail
     ratch_hdr      db 10, "--- Ratchet (78.C) [forward-secret, 5 steps]", 10
     ratch_hdr_l    equ $-ratch_hdr
     ratch_ok       db "- Ratchet: 5 distinct message keys", 10
     ratch_ok_l     equ $-ratch_ok
-    ratch_fail     db "+ Ratchet: duplicate message keys!", 10
+    ratch_fail     db "[FAIL] Ratchet: duplicate message keys!", 10
     ratch_fail_l   equ $-ratch_fail
     ; 78.I ring signature strings
     zkp_nl_hdr     db 10, "-- ZKP-NL [NL-FSCX ZKBoo; n=8, R=4] --", 10
     zkp_nl_hdr_l   equ $-zkp_nl_hdr
     zkp_nl_ok      db "+ ZKP-NL proof verified", 10
     zkp_nl_ok_l    equ $-zkp_nl_ok
-    zkp_nl_fail    db "- ZKP-NL verify FAILED", 10
+    zkp_nl_fail    db "[FAIL] ZKP-NL verify FAILED", 10
     zkp_nl_fail_l  equ $-zkp_nl_fail
     fpe_hdr        db 10, "--- FPE (78.A) [format-preserving encrypt/decrypt; 32-bit]", 10
     fpe_hdr_l      equ $-fpe_hdr
     fpe_ok         db "+ FPE round-trip correct", 10
     fpe_ok_l       equ $-fpe_ok
-    fpe_fail       db "- FPE round-trip FAILED", 10
+    fpe_fail       db "[FAIL] FPE round-trip FAILED", 10
     fpe_fail_l     equ $-fpe_fail
     twk_hdr        db 10, "--- Tweakable cipher (78.B) [sector/block tweak; 32-bit]", 10
     twk_hdr_l      equ $-twk_hdr
     twk_ok         db "+ Tweakable cipher correct", 10
     twk_ok_l       equ $-twk_ok
-    twk_fail       db "- Tweakable cipher FAILED", 10
+    twk_fail       db "[FAIL] Tweakable cipher FAILED", 10
     twk_fail_l     equ $-twk_fail
     acc_hdr        db 10, "--- Accumulator (78.J) [Merkle root + membership; 32-bit]", 10
     acc_hdr_l      equ $-acc_hdr
     acc_ok         db "+ Accumulator proof correct", 10
     acc_ok_l       equ $-acc_ok
-    acc_fail       db "- Accumulator proof FAILED", 10
+    acc_fail       db "[FAIL] Accumulator proof FAILED", 10
     acc_fail_l     equ $-acc_fail
     oprf_hdr       db 10, "--- OPRF (80) [DEMO n=32 -- NOT PRODUCTION SECURE]", 10
     oprf_hdr_l     equ $-oprf_hdr
     oprf_ok        db "+ OPRF blind/eval/unblind correct", 10
     oprf_ok_l      equ $-oprf_ok
-    oprf_fail      db "- OPRF round-trip FAILED", 10
+    oprf_fail      db "[FAIL] OPRF round-trip FAILED", 10
     oprf_fail_l    equ $-oprf_fail
     lbl_oprf_hx    db "H(x)   : "
     lbl_oprf_hx_l  equ $-lbl_oprf_hx
@@ -315,11 +315,11 @@ section .data
     ring_hdr_l     equ $-ring_hdr
     ring_ok        db "+ HPKS-Stern-Ring signature verified (k=2, signer=1)", 10
     ring_ok_l      equ $-ring_ok
-    ring_fail      db "- HPKS-Stern-Ring verification FAILED", 10
+    ring_fail      db "[FAIL] HPKS-Stern-Ring verification FAILED", 10
     ring_fail_l    equ $-ring_fail
     eve_ring_ok    db "- Eve cannot forge ring sig: challenge-sum mismatch  (SD + PRF protection)", 10
     eve_ring_ok_l  equ $-eve_ring_ok
-    eve_ring_fail  db "+ Eve forged HPKS-Stern-Ring (Eve wins!)", 10
+    eve_ring_fail  db "[FAIL] Eve forged HPKS-Stern-Ring (Eve wins!)", 10
     eve_ring_fail_l equ $-eve_ring_fail
     ratchet_domain_32 dd 0x4E4C2D46   ; 'N','L','-','F' (first 4 of NL-FSCX-RATCHET-V1)
     val_ratch_first_key dd 0           ; stores first msg_key for collision check
@@ -337,8 +337,24 @@ section .data
     val_sdf_e_prime dd 0
     val_sdf_ct   dd 0
 
+    ; TODO #350 gate -- the suite's copy of the harness's TODO #234 gate.
+    ; print_str is the single write path, so it counts the "[FAIL]" markers
+    ; going through it, and the exit status follows the count.  The verdict
+    ; messages below carry the marker themselves and so go out via
+    ; print_str_raw, which skips the counter.
+    gate_marker      db "[FAIL]"
+    gate_ok_msg      db 10, "*** OK: no check reported [FAIL] ***", 10
+    gate_ok_msg_l    equ $-gate_ok_msg
+    gate_fail_pre    db 10, "*** FAILED: "
+    gate_fail_pre_l  equ $-gate_fail_pre
+    gate_fail_post   db " check(s) reported [FAIL] ***", 10
+    gate_fail_post_l equ $-gate_fail_post
+
 section .bss
     hex_buf     resb 12
+    g_failures  resd 1        ; TODO #350: [FAIL] count, see print_str
+    numbuf      resb 12
+    numbuf_end  equ $
 
     ; HKEX-RNL polynomial arrays (RNL_N * 4 = 128 bytes each)
     rnl_m_base  resd RNL_N
@@ -1625,9 +1641,26 @@ _start:
     call print_str
 .oprf_done:
 
-    ; ------------------------------------------------------------------ exit
+    ; ---------------------------------------- TODO #350: aggregate exit status
+    cmp  dword [g_failures], 0
+    jne  .gate_failed
+    mov  eax, gate_ok_msg
+    mov  ecx, gate_ok_msg_l
+    call print_str_raw     ; GATE-EXEMPT: verdict text carries the marker
     mov  eax, SYS_EXIT
     xor  ebx, ebx
+    int  0x80
+.gate_failed:
+    mov  eax, gate_fail_pre
+    mov  ecx, gate_fail_pre_l
+    call print_str_raw     ; GATE-EXEMPT: verdict text carries the marker
+    mov  eax, [g_failures]
+    call print_uint
+    mov  eax, gate_fail_post
+    mov  ecx, gate_fail_post_l
+    call print_str_raw     ; GATE-EXEMPT: verdict text carries the marker
+    mov  eax, SYS_EXIT
+    mov  ebx, 1
     int  0x80
 
 ; ============================================================
@@ -2270,6 +2303,14 @@ prng_next:
 ; print_str: EAX = pointer, ECX = length
 ; ============================================================
 print_str:
+    push eax
+    push ecx
+    call gate_note
+    pop  ecx
+    pop  eax
+    ; fall through to the writer
+
+print_str_raw:
     push ebx
     push edx
     mov  edx, ecx
@@ -2278,6 +2319,70 @@ print_str:
     mov  ebx, STDOUT
     int  0x80
     pop  edx
+    pop  ebx
+    ret
+
+; gate_note: EAX=buf, ECX=len -- ++g_failures if the buffer contains "[FAIL]".
+; Counts at most once per write, matching one [FAIL] per printf in C.
+gate_note:
+    push ebx
+    push edx
+    push esi
+    push edi
+    cmp  ecx, 6
+    jb   .gn_done
+    mov  esi, eax
+    sub  ecx, 5                 ; number of candidate start offsets
+.gn_outer:
+    xor  edi, edi
+.gn_inner:
+    mov  bl, [esi + edi]
+    cmp  bl, [gate_marker + edi]
+    jne  .gn_next
+    inc  edi
+    cmp  edi, 6
+    jb   .gn_inner
+    inc  dword [g_failures]
+    jmp  .gn_done
+.gn_next:
+    inc  esi
+    dec  ecx
+    jnz  .gn_outer
+.gn_done:
+    pop  edi
+    pop  esi
+    pop  edx
+    pop  ebx
+    ret
+
+; print_uint: EAX=value -- writes it in decimal (no libc here).
+print_uint:
+    push ebx
+    push ecx
+    push edx
+    mov  ecx, numbuf_end
+    mov  ebx, 10
+    test eax, eax
+    jnz  .pu_loop
+    dec  ecx
+    mov  byte [ecx], '0'
+    jmp  .pu_out
+.pu_loop:
+    test eax, eax
+    jz   .pu_out
+    xor  edx, edx
+    div  ebx
+    add  dl, '0'
+    dec  ecx
+    mov  [ecx], dl
+    jmp  .pu_loop
+.pu_out:
+    mov  eax, ecx
+    mov  ecx, numbuf_end
+    sub  ecx, eax
+    call print_str_raw     ; GATE-EXEMPT: verdict text carries the marker
+    pop  edx
+    pop  ecx
     pop  ebx
     ret
 

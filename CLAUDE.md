@@ -221,12 +221,15 @@ themselves, and **any `[FAIL]` fails the build**.
   output (`#define printf hprintf` in C, a `print` shadow in Python, an `os.Stdout` scanning
   pipe in Go) and exits non-zero, closing with `*** OK: ... ***` or `*** FAILED: n ... ***`.
   There is no allow-list and nothing to register: a new test is gated by printing `[FAIL]`.
-- **ARM / NASM i386 (TODO #234):** route output through `bl hprintf` / `call print_str`.
-  `build_arm.sh` and `build_asm_i386.sh` fail the build on a call site that bypasses the
-  wrapper without a `GATE-EXEMPT` marker.
-- **Arduino:** all verdicts go through one `verdict(bool)` helper (the marker is split
-  across two `Serial` calls, so output scanning cannot work).  The firmware never exits, so
-  `run_arduino.sh` fails on a `*** FAILED:` line **or on the OK line never arriving**.
+- **ARM / NASM i386 (TODO #234, #350):** harness AND suite demo route output through
+  `bl hprintf` / `call print_str`.  `build_arm.sh` and `build_asm_i386.sh` fail the build on
+  a call site in either file that bypasses the wrapper without a `GATE-EXEMPT` marker.
+- **Arduino:** the harness's verdicts go through one `verdict(bool)` helper (the marker is
+  split across two `Serial` calls, so output scanning cannot work), the suite's through
+  `check(ok, pass, fail)`.  The firmware never exits, so `run_arduino.sh` (both modes) fails
+  on a `*** FAILED:` line **or on the OK line never arriving**.  Put every string literal in
+  flash with `F()`: `build_arduino.sh` fails a firmware leaving under 2 KB of SRAM for the
+  stack, which is what hung the suite in HKEX-RNL until #350.
 - **Java:** `SelfTest` asserts; `Demo` is `[FAIL]`-gated like the C/Go/Python demos.
 - **Findings gates (TODO #289, #291):** `SecurityProofsCode/run_findings_gates.py`
   DISCOVERS every script whose exit status is its verdict; there is no list to add to.

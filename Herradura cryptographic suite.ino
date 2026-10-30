@@ -128,9 +128,25 @@ static void printHex(uint32 val) {
     Serial.println(buf);
 }
 
-static void printHexLine(const char *label, uint32 val) {
+/* Labels live in flash (F()): with them in .data the strings alone took 3.4 KB
+   of the ATmega2560's 8 KB, leaving ~360 bytes of stack, and the demo hung in
+   its first rnl_poly_mul (TODO #350). */
+static void printHexLine(const __FlashStringHelper *label, uint32 val) {
     Serial.print(label);
     printHex(val);
+}
+
+/* TODO #350: the demo's single verdict point, the analogue of the four ports'
+   [FAIL] gate (TODO #233) and of the AVR harness's verdict() (TODO #234).  A
+   failing branch prints a line carrying "[FAIL]" and is counted; loop() prints
+   *** OK / *** FAILED at the end of each pass, which run_arduino.sh's
+   gate_check() reads back -- a pass that never finishes fails it too. */
+static int g_failures = 0;
+
+static void check(bool ok, const __FlashStringHelper *pass,
+                  const __FlashStringHelper *fail) {
+    if (!ok) g_failures++;
+    Serial.println(ok ? pass : fail);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1029,45 +1045,49 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("=== Herradura Cryptographic Suite v1.9.16 (Arduino, 32-bit) ===");
+    Serial.println(F("=== Herradura Cryptographic Suite v1.9.16 (Arduino, 32-bit) ==="));
     Serial.println();
 
-    printHexLine("a_priv : ", A_PRIV);
-    printHexLine("b_priv : ", B_PRIV);
-    printHexLine("K      : ", K);
-    printHexLine("PLAIN  : ", PLAIN);
+    printHexLine(F("a_priv : "), A_PRIV);
+    printHexLine(F("b_priv : "), B_PRIV);
+    printHexLine(F("K      : "), K);
+    printHexLine(F("PLAIN  : "), PLAIN);
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* HKEX-GF [CLASSICAL]                                              */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HKEX-GF [CLASSICAL -- not PQC; Shor breaks DLP]");
+    Serial.println(F("--- HKEX-GF [CLASSICAL -- not PQC; Shor breaks DLP]"));
     uint32 C    = gf_pow_32(GF_GEN, A_PRIV);
     uint32 C2   = gf_pow_32(GF_GEN, B_PRIV);
     uint32 skeyA = gf_pow_32(C2, A_PRIV);
     uint32 skeyB = gf_pow_32(C,  B_PRIV);
-    printHexLine("C        : ", C);
-    printHexLine("C2       : ", C2);
-    printHexLine("skeyA    : ", skeyA);
-    printHexLine("skeyB    : ", skeyB);
-    Serial.println(skeyA == skeyB ? "+ session keys agree!" : "- session keys differ!");
+    printHexLine(F("C        : "), C);
+    printHexLine(F("C2       : "), C2);
+    printHexLine(F("skeyA    : "), skeyA);
+    printHexLine(F("skeyB    : "), skeyB);
+    check(skeyA == skeyB,
+          F("+ session keys agree!"),
+          F("[FAIL] session keys differ!"));
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* HSKE [CLASSICAL]                                                 */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HSKE [CLASSICAL -- not PQC; linear key recovery]");
+    Serial.println(F("--- HSKE [CLASSICAL -- not PQC; linear key recovery]"));
     uint32 hskeE = fscx_revolve(PLAIN, K, I_VALUE);
     uint32 hskeD = fscx_revolve(hskeE, K, R_VALUE);
-    printHexLine("E (Alice) : ", hskeE);
-    printHexLine("D (Bob)   : ", hskeD);
-    Serial.println(hskeD == PLAIN ? "+ plaintext correctly decrypted" : "- decryption failed!");
+    printHexLine(F("E (Alice) : "), hskeE);
+    printHexLine(F("D (Bob)   : "), hskeD);
+    check(hskeD == PLAIN,
+          F("+ plaintext correctly decrypted"),
+          F("[FAIL] decryption failed!"));
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* HPKS Schnorr [CLASSICAL]                                        */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HPKS Schnorr [CLASSICAL -- not PQC; DLP + linear challenge]");
+    Serial.println(F("--- HPKS Schnorr [CLASSICAL -- not PQC; DLP + linear challenge]"));
     {
         uint32 k   = lcg_next() | 1;
         uint32 R   = gf_pow_32(GF_GEN, k);
@@ -1077,17 +1097,19 @@ void loop() {
         uint32 gs  = gf_pow_32(GF_GEN, s);
         uint32 Ce  = gf_pow_32(C, e);
         uint32 lhs = gf_mul_32(gs, Ce);
-        printHexLine("R (g^k)   : ", R);
-        printHexLine("s (resp)  : ", s);
-        printHexLine("g^s*C^e   : ", lhs);
-        Serial.println(lhs == R ? "+ HPKS Schnorr verified!" : "- HPKS Schnorr FAILED!");
+        printHexLine(F("R (g^k)   : "), R);
+        printHexLine(F("s (resp)  : "), s);
+        printHexLine(F("g^s*C^e   : "), lhs);
+        check(lhs == R,
+          F("+ HPKS Schnorr verified!"),
+          F("[FAIL] HPKS Schnorr FAILED!"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* HPKE El Gamal [CLASSICAL]                                       */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HPKE El Gamal [CLASSICAL -- not PQC; DLP + linear HSKE]");
+    Serial.println(F("--- HPKE El Gamal [CLASSICAL -- not PQC; DLP + linear HSKE]"));
     {
         uint32 r        = lcg_next() | 1;
         uint32 R        = gf_pow_32(GF_GEN, r);
@@ -1095,27 +1117,31 @@ void loop() {
         uint32 hpkeE    = fscx_revolve(PLAIN, enc_key, I_VALUE);
         uint32 dec_key  = gf_pow_32(R, A_PRIV);
         uint32 hpkeD    = fscx_revolve(hpkeE, dec_key, R_VALUE);
-        printHexLine("R (g^r)   : ", R);
-        printHexLine("E (Bob)   : ", hpkeE);
-        printHexLine("D (Alice) : ", hpkeD);
-        Serial.println(hpkeD == PLAIN ? "+ plaintext correctly decrypted" : "- decryption failed!");
+        printHexLine(F("R (g^r)   : "), R);
+        printHexLine(F("E (Bob)   : "), hpkeE);
+        printHexLine(F("D (Alice) : "), hpkeD);
+        check(hpkeD == PLAIN,
+          F("+ plaintext correctly decrypted"),
+          F("[FAIL] decryption failed!"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1]      */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1]");
+    Serial.println(F("--- HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1]"));
     {
         uint32 N    = lcg_next();              /* per-session nonce            */
         uint32 base = K ^ N;                   /* session key base = K XOR N   */
         uint32 ks   = nl_fscx_revolve_v1(_rol32(base, 4) ^ RNL_KDF_DC, base, V1_MODE_STEPS);
         uint32 E    = PLAIN ^ ks;
         uint32 D    = E ^ ks;
-        printHexLine("N (nonce) : ", N);
-        printHexLine("E (Alice) : ", E);
-        printHexLine("D (Bob)   : ", D);
-        Serial.println(D == PLAIN ? "+ plaintext correctly decrypted" : "- decryption failed!");
+        printHexLine(F("N (nonce) : "), N);
+        printHexLine(F("E (Alice) : "), E);
+        printHexLine(F("D (Bob)   : "), D);
+        check(D == PLAIN,
+          F("+ plaintext correctly decrypted"),
+          F("[FAIL] decryption failed!"));
     }
     Serial.println();
 
@@ -1123,20 +1149,22 @@ void loop() {
     /* HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2]      */
     /* CAUTION: deterministic -- same (P, K) always yields the same E. */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2]");
+    Serial.println(F("--- HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2]"));
     {
         uint32 E = nl_fscx_revolve_v2(PLAIN, K, R_VALUE);
         uint32 D = nl_fscx_revolve_v2_inv(E, K, R_VALUE);
-        printHexLine("E (Alice) : ", E);
-        printHexLine("D (Bob)   : ", D);
-        Serial.println(D == PLAIN ? "+ plaintext correctly decrypted" : "- decryption failed!");
+        printHexLine(F("E (Alice) : "), E);
+        printHexLine(F("D (Bob)   : "), D);
+        check(D == PLAIN,
+          F("+ plaintext correctly decrypted"),
+          F("[FAIL] decryption failed!"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* HKEX-RNL [PQC -- Ring-LWR key exchange, N=32]                  */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HKEX-RNL [PQC -- Ring-LWR key exchange; N=32, q=65537]");
+    Serial.println(F("--- HKEX-RNL [PQC -- Ring-LWR key exchange; N=32, q=65537]"));
     uint32 sk_rnl_saved = 0;
     static long m_base[RNL_N], a_rand[RNL_N], m_blind[RNL_N];
     static long s_A[RNL_N], s_B[RNL_N], C_A[RNL_N], C_B[RNL_N];
@@ -1151,12 +1179,12 @@ void loop() {
         uint32 KB = rnl_agree(s_B, C_A, &hint_A, NULL);   /* receiver */
         uint32 skA = nl_fscx_revolve_v1(_rol32(KA, 4) ^ RNL_KDF_DC, KA, I_VALUE);
         uint32 skB = nl_fscx_revolve_v1(_rol32(KB, 4) ^ RNL_KDF_DC, KB, I_VALUE);
-        printHexLine("sk (Alice): ", skA);
-        printHexLine("sk (Bob)  : ", skB);
+        printHexLine(F("sk (Alice): "), skA);
+        printHexLine(F("sk (Bob)  : "), skB);
         if (KA == KB) {
-            Serial.println("+ raw key bits agree; session key established!");
+            Serial.println(F("+ raw key bits agree; session key established!"));
         } else {
-            Serial.println("- raw key disagrees (rounding noise -- retry)");
+            Serial.println(F("- raw key disagrees (rounding noise -- retry)"));
         }
         sk_rnl_saved = skA;
     }
@@ -1165,7 +1193,7 @@ void loop() {
     /* ---------------------------------------------------------------- */
     /* HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge]          */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge]");
+    Serial.println(F("--- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge]"));
     {
         uint32 k_nl = lcg_next();
         uint32 R_nl = gf_pow_32(GF_GEN, k_nl);
@@ -1175,17 +1203,19 @@ void loop() {
         uint32 gs_nl = gf_pow_32(GF_GEN, s_nl);
         uint32 Ce_nl = gf_pow_32(C, e_nl);
         uint32 lhs_nl = gf_mul_32(gs_nl, Ce_nl);
-        printHexLine("R (g^k)   : ", R_nl);
-        printHexLine("s (resp)  : ", s_nl);
-        printHexLine("g^s*C^e   : ", lhs_nl);
-        Serial.println(lhs_nl == R_nl ? "+ HPKS-NL verified!" : "- HPKS-NL FAILED!");
+        printHexLine(F("R (g^k)   : "), R_nl);
+        printHexLine(F("s (resp)  : "), s_nl);
+        printHexLine(F("g^s*C^e   : "), lhs_nl);
+        check(lhs_nl == R_nl,
+          F("+ HPKS-NL verified!"),
+          F("[FAIL] HPKS-NL FAILED!"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* HPKE-NL [NL-hardened El Gamal -- NL-FSCX v2 encryption]        */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HPKE-NL [NL-hardened El Gamal -- NL-FSCX v2 encryption]");
+    Serial.println(F("--- HPKE-NL [NL-hardened El Gamal -- NL-FSCX v2 encryption]"));
     uint32 E_nl_saved = 0, R_nl2_saved = 0;
     {
         uint32 r_nl    = lcg_next() | 1;
@@ -1194,9 +1224,11 @@ void loop() {
         uint32 E_nl    = nl_fscx_revolve_v2(PLAIN, enc_nl, I_VALUE);
         uint32 dec_nl  = gf_pow_32(R_nl2, A_PRIV);
         uint32 D_nl    = nl_fscx_revolve_v2_inv(E_nl, dec_nl, I_VALUE);
-        printHexLine("E (Bob)   : ", E_nl);
-        printHexLine("D (Alice) : ", D_nl);
-        Serial.println(D_nl == PLAIN ? "+ plaintext correctly decrypted" : "- decryption failed!");
+        printHexLine(F("E (Bob)   : "), E_nl);
+        printHexLine(F("D (Alice) : "), D_nl);
+        check(D_nl == PLAIN,
+          F("+ plaintext correctly decrypted"),
+          F("[FAIL] decryption failed!"));
         E_nl_saved  = E_nl;
         R_nl2_saved = R_nl2;
     }
@@ -1205,7 +1237,7 @@ void loop() {
     /* ---------------------------------------------------------------- */
     /* HPKS-Stern-F [PQC -- Fiat-Shamir Stern ZKP signature, N=32]     */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HPKS-Stern-F [PQC -- Fiat-Shamir Stern ZKP, N=32, t=2, rounds=4]");
+    Serial.println(F("--- HPKS-Stern-F [PQC -- Fiat-Shamir Stern ZKP, N=32, t=2, rounds=4]"));
     uint32 sf_seed = 0, sf_synd = 0, sf_e = 0;
     {
         static SternSig32 sf_sig;
@@ -1214,54 +1246,56 @@ void loop() {
         sf_synd = stern_syndrome_32(sf_seed, sf_e);
         hpks_stern_f_sign_32(&sf_sig, PLAIN, sf_e, sf_seed);
         int ok = hpks_stern_f_verify_32(&sf_sig, PLAIN, sf_seed, sf_synd);
-        printHexLine("seed     : ", sf_seed);
-        printHexLine("error e  : ", sf_e);
-        printHexLine("syndrome : ", sf_synd);
-        Serial.println(ok ? "+ HPKS-Stern-F verified!" : "- HPKS-Stern-F FAILED!");
+        printHexLine(F("seed     : "), sf_seed);
+        printHexLine(F("error e  : "), sf_e);
+        printHexLine(F("syndrome : "), sf_synd);
+        check(ok,
+          F("+ HPKS-Stern-F verified!"),
+          F("[FAIL] HPKS-Stern-F FAILED!"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* HPKE-Stern-F [PQC -- Niederreiter KEM, N=32, t=2]               */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HPKE-Stern-F [PQC -- Niederreiter KEM, N=32, t=2]");
+    Serial.println(F("--- HPKE-Stern-F [PQC -- Niederreiter KEM, N=32, t=2]"));
     uint32 sf_K_enc_saved = 0;
     {
         uint32 e_prime, ct;
         sf_K_enc_saved = hpke_stern_f_encap_32(sf_seed, &ct, &e_prime);
         uint32 K_dec   = hpke_stern_f_decap_32(sf_seed, e_prime);
-        printHexLine("ct       : ", ct);
-        printHexLine("K (enc)  : ", sf_K_enc_saved);
-        printHexLine("K (dec)  : ", K_dec);
-        Serial.println(sf_K_enc_saved == K_dec
-            ? "+ HPKE-Stern-F KEM keys agree!"
-            : "- HPKE-Stern-F KEM keys differ!");
+        printHexLine(F("ct       : "), ct);
+        printHexLine(F("K (enc)  : "), sf_K_enc_saved);
+        printHexLine(F("K (dec)  : "), K_dec);
+        check(sf_K_enc_saved == K_dec,
+          F("+ HPKE-Stern-F KEM keys agree!"),
+          F("[FAIL] HPKE-Stern-F KEM keys differ!"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* EVE bypass tests                                                 */
     /* ---------------------------------------------------------------- */
-    Serial.println("*** EVE bypass TESTS ***");
+    Serial.println(F("*** EVE bypass TESTS ***"));
 
-    Serial.println("*** HPKE-NL -- Eve uses wrong key (C XOR R instead of C^r)");
+    Serial.println(F("*** HPKE-NL -- Eve uses wrong key (C XOR R instead of C^r)"));
     {
         uint32 eve_key = C ^ R_nl2_saved;
         uint32 D_eve   = nl_fscx_revolve_v2_inv(E_nl_saved, eve_key, I_VALUE);
-        Serial.println(D_eve == PLAIN
-            ? "+ Eve decrypted (Eve wins)!"
-            : "- Eve could not decrypt (CDH + NL protection)");
+        check(!(D_eve == PLAIN),
+          F("- Eve could not decrypt (CDH + NL protection)"),
+          F("[FAIL] Eve decrypted (Eve wins)!"));
     }
 
-    Serial.println("*** HKEX-RNL -- Eve random guess does not match shared key");
+    Serial.println(F("*** HKEX-RNL -- Eve random guess does not match shared key"));
     {
         uint32 eve_guess = lcg_next();
-        Serial.println(eve_guess == sk_rnl_saved
-            ? "+ Eve guessed HKEX-RNL key (astronomically unlikely)!"
-            : "- Eve random guess does not match shared key (Ring-LWR protection)");
+        check(!(eve_guess == sk_rnl_saved),
+          F("- Eve random guess does not match shared key (Ring-LWR protection)"),
+          F("[FAIL] Eve guessed HKEX-RNL key (astronomically unlikely)!"));
     }
 
-    Serial.println("*** HPKS-Stern-F -- Eve forges signature (random data)");
+    Serial.println(F("*** HPKS-Stern-F -- Eve forges signature (random data)"));
     {
         static SternSig32 eve_sig;
         for (int i = 0; i < SDF_ROUNDS; i++) {
@@ -1270,24 +1304,24 @@ void loop() {
             eve_sig.respA[i] = lcg_next(); eve_sig.respB[i] = lcg_next();
         }
         int ok = hpks_stern_f_verify_32(&eve_sig, PLAIN, sf_seed, sf_synd);
-        Serial.println(ok
-            ? "+ Eve forged signature (soundness failure)!"
-            : "- Eve forge rejected (SD soundness)");
+        check(!(ok),
+          F("- Eve forge rejected (SD soundness)"),
+          F("[FAIL] Eve forged signature (soundness failure)!"));
     }
 
-    Serial.println("*** HPKE-Stern-F -- Eve random guess vs KEM key");
+    Serial.println(F("*** HPKE-Stern-F -- Eve random guess vs KEM key"));
     {
         uint32 eve_K = lcg_next();
-        Serial.println(eve_K == sf_K_enc_saved
-            ? "+ Eve guessed KEM key (astronomically unlikely)!"
-            : "- Eve random K does not match KEM key (SD protection)");
+        check(!(eve_K == sf_K_enc_saved),
+          F("- Eve random K does not match KEM key (SD protection)"),
+          F("[FAIL] Eve guessed KEM key (astronomically unlikely)!"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* HPKS-Stern-Ring [PQC -- k=2 ring sig, signer=member1, N=32]     */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- HPKS-Stern-Ring [PQC -- OR-composition, k=2, N=32, rounds=4]");
+    Serial.println(F("--- HPKS-Stern-Ring [PQC -- OR-composition, k=2, N=32, rounds=4]"));
     {
         SternRingSig2_32 rsig;
         uint32 ring0_seed = lcg_next();
@@ -1296,12 +1330,12 @@ void loop() {
         hpks_stern_ring2_sign_32(&rsig, PLAIN, sf_e, sf_seed);
         int ok = hpks_stern_ring2_verify_32(&rsig, PLAIN,
             ring0_seed, ring0_synd, sf_seed, sf_synd);
-        Serial.println(ok
-            ? "+ HPKS-Stern-Ring verified (k=2, signer=member1)"
-            : "- HPKS-Stern-Ring FAILED");
+        check(ok,
+          F("+ HPKS-Stern-Ring verified (k=2, signer=member1)"),
+          F("[FAIL] HPKS-Stern-Ring FAILED"));
     }
 
-    Serial.println("*** HPKS-Stern-Ring -- Eve forge (random ring sig fails challenge-sum check)");
+    Serial.println(F("*** HPKS-Stern-Ring -- Eve forge (random ring sig fails challenge-sum check)"));
     {
         SternRingSig2_32 eve_rsig;
         for (int i = 0; i < SDF_ROUNDS; i++) {
@@ -1315,75 +1349,83 @@ void loop() {
         uint32 dummy_seed = lcg_next();
         int ok = hpks_stern_ring2_verify_32(&eve_rsig, PLAIN,
             dummy_seed, 0, dummy_seed, 0);
-        Serial.println(ok
-            ? "+ Eve forged ring sig (failure)!"
-            : "- Eve cannot forge ring sig: challenge-sum mismatch");
+        check(!(ok),
+          F("- Eve cannot forge ring sig: challenge-sum mismatch"),
+          F("[FAIL] Eve forged ring sig (failure)!"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* ZKP-RNL [Lyubashevsky Ring-LWR Sigma-protocol; n=32, t=4]       */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- ZKP-RNL [Ring-LWR Sigma-protocol; N=32, gamma=4096, t=4]");
+    Serial.println(F("--- ZKP-RNL [Ring-LWR Sigma-protocol; N=32, gamma=4096, t=4]"));
     {
         int ok = rnl_sigma_sign(m_blind, s_A, C_A, PLAIN);
         if (ok) ok = rnl_sigma_verify(m_blind, C_A, PLAIN);
-        Serial.println(ok ? "+ ZKP-RNL proof verified!" : "- ZKP-RNL FAILED");
+        check(ok,
+          F("+ ZKP-RNL proof verified!"),
+          F("[FAIL] ZKP-RNL FAILED"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* ZKP-NL [ZKBoo MPC-in-the-head; n=8 bits, R=4 rounds]            */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- ZKP-NL [ZKBoo concept demo; n=8, R=4 rounds]");
+    Serial.println(F("--- ZKP-NL [ZKBoo concept demo; n=8, R=4 rounds]"));
     {
         uint32 A_nl = lcg_next() & 0xFFu;
         uint32 B_nl = lcg_next() & 0xFFu;
         uint32 y_nl = zkp_nl_f1_8(A_nl, B_nl);
         zkp_nl_prove_8(A_nl, B_nl, y_nl, PLAIN);
         int ok = zkp_nl_verify_8(B_nl, y_nl, PLAIN);
-        printHexLine("A (wit)   : ", A_nl);
-        printHexLine("B (pub)   : ", B_nl);
-        printHexLine("y=F1(A,B) : ", y_nl);
-        Serial.println(ok ? "+ ZKP-NL proof verified!" : "- ZKP-NL FAILED");
+        printHexLine(F("A (wit)   : "), A_nl);
+        printHexLine(F("B (pub)   : "), B_nl);
+        printHexLine(F("y=F1(A,B) : "), y_nl);
+        check(ok,
+          F("+ ZKP-NL proof verified!"),
+          F("[FAIL] ZKP-NL FAILED"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* FPE (78.A)                                                       */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- FPE (78.A) [format-preserving encrypt/decrypt; 32-bit]");
+    Serial.println(F("--- FPE (78.A) [format-preserving encrypt/decrypt; 32-bit]"));
     {
         uint32 fpe_key = 0xABCD1234UL;
         uint32 fpe_ctx = 0x00000042UL; /* record 66 */
         uint32 fpe_ct  = fpe_encrypt_32(PLAIN, fpe_key, fpe_ctx);
         uint32 fpe_rec = fpe_decrypt_32(fpe_ct, fpe_key, fpe_ctx);
-        printHexLine("plain  : ", PLAIN);
-        printHexLine("cipher : ", fpe_ct);
-        printHexLine("recover: ", fpe_rec);
-        Serial.println(fpe_rec == PLAIN ? "+ FPE round-trip correct" : "- FPE round-trip FAILED");
+        printHexLine(F("plain  : "), PLAIN);
+        printHexLine(F("cipher : "), fpe_ct);
+        printHexLine(F("recover: "), fpe_rec);
+        check(fpe_rec == PLAIN,
+          F("+ FPE round-trip correct"),
+          F("[FAIL] FPE round-trip FAILED"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* Tweakable cipher (78.B)                                          */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- Tweakable cipher (78.B) [sector/block tweak; 32-bit]");
+    Serial.println(F("--- Tweakable cipher (78.B) [sector/block tweak; 32-bit]"));
     {
         uint32 twk_key = 0x12345678UL;
         uint32 twk_ct  = twk_encrypt_32(PLAIN, twk_key, 7, 3);
         uint32 twk_rec = twk_decrypt_32(twk_ct, twk_key, 7, 3);
-        printHexLine("plain  : ", PLAIN);
-        printHexLine("cipher : ", twk_ct);
-        printHexLine("recover: ", twk_rec);
-        Serial.println(twk_rec == PLAIN ? "+ Tweakable cipher correct" : "- Tweakable cipher FAILED");
+        printHexLine(F("plain  : "), PLAIN);
+        printHexLine(F("cipher : "), twk_ct);
+        printHexLine(F("recover: "), twk_rec);
+        check(twk_rec == PLAIN,
+          F("+ Tweakable cipher correct"),
+          F("[FAIL] Tweakable cipher FAILED"));
     }
     Serial.println();
 
     /* ---------------------------------------------------------------- */
     /* Accumulator (78.J)                                               */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- Accumulator (78.J) [Merkle root + membership; 32-bit]");
+    Serial.println(F("--- Accumulator (78.J) [Merkle root + membership; 32-bit]"));
     {
         uint32 leaves[4] = {
             haccum_leaf_32(0xAAAAAAAAUL),
@@ -1397,30 +1439,34 @@ void loop() {
         uint32 sib1 = haccum_node_32(leaves[0], leaves[1]);
         uint32 cur  = haccum_node_32(leaves[2], sib0);
         cur         = haccum_node_32(sib1, cur);
-        printHexLine("root         : ", root);
-        printHexLine("verify (idx2): ", cur);
-        Serial.println(cur == root ? "+ Accumulator proof correct" : "- Accumulator proof FAILED");
+        printHexLine(F("root         : "), root);
+        printHexLine(F("verify (idx2): "), cur);
+        check(cur == root,
+          F("+ Accumulator proof correct"),
+          F("[FAIL] Accumulator proof FAILED"));
     }
     Serial.println();
 
     /* Masked HSKE (78.H)                                               */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- Masked HSKE (78.H) [GF(2)-linearity masking; 32-bit]");
+    Serial.println(F("--- Masked HSKE (78.H) [GF(2)-linearity masking; 32-bit]"));
     {
         uint32 plain32 = 0xDEADC0DEUL;
         uint32 key32   = 0xCAFEBABEUL;
         uint32 mask32  = 0xA5A5A5A5UL;
         uint32 ct32    = hske_encrypt_masked_32(plain32, key32, mask32);
         uint32 rec32   = hske_decrypt_masked_32(ct32,    key32, mask32);
-        printHexLine("cipher : ", ct32);
-        printHexLine("recover: ", rec32);
-        Serial.println(rec32 == plain32 ? "+ Masked HSKE correct" : "- Masked HSKE FAILED");
+        printHexLine(F("cipher : "), ct32);
+        printHexLine(F("recover: "), rec32);
+        check(rec32 == plain32,
+          F("+ Masked HSKE correct"),
+          F("[FAIL] Masked HSKE FAILED"));
     }
     Serial.println();
 
     /* Ratchet (78.C)                                                   */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- Ratchet (78.C) [forward-secret; 32-bit; 5 steps]");
+    Serial.println(F("--- Ratchet (78.C) [forward-secret; 32-bit; 5 steps]"));
     {
         uint32 state32 = 0x12345678UL;
         uint32 mk0 = 0, mk;
@@ -1430,14 +1476,15 @@ void loop() {
             if (i == 0) mk0 = mk;
             else if (mk == mk0) unique = false;
         }
-        Serial.println(unique ? "- Ratchet: 5 distinct message keys"
-                              : "+ Ratchet: duplicate message keys!");
+        check(unique,
+          F("- Ratchet: 5 distinct message keys"),
+          F("[FAIL] Ratchet: duplicate message keys!"));
     }
     Serial.println();
 
     /* OPRF (80) — blind / eval / unblind round-trip                     */
     /* ---------------------------------------------------------------- */
-    Serial.println("--- OPRF (80) [DEMO n=32 -- NOT PRODUCTION SECURE]");
+    Serial.println(F("--- OPRF (80) [DEMO n=32 -- NOT PRODUCTION SECURE]"));
     {
         /* Fixed params: x = 0x50415353 ("PASS"), k = 0x13579BDF,        */
         /*               r = 7, r_inv = 0x49249249 = 7^{-1} mod 2^32-1  */
@@ -1452,15 +1499,24 @@ void loop() {
         uint32 F      = oprf_unblind_32(beta,   oprf_r_inv);
         uint32 F_direct = oprf_direct_32(oprf_x, oprf_k);
 
-        printHexLine("H(x)  : ", hx);
-        printHexLine("alpha : ", alpha);
-        printHexLine("beta  : ", beta);
-        printHexLine("F     : ", F);
-        Serial.println(F == F_direct
-            ? "+ OPRF blind/eval/unblind correct"
-            : "- OPRF round-trip FAILED");
+        printHexLine(F("H(x)  : "), hx);
+        printHexLine(F("alpha : "), alpha);
+        printHexLine(F("beta  : "), beta);
+        printHexLine(F("F     : "), F);
+        check(F == F_direct,
+          F("+ OPRF blind/eval/unblind correct"),
+          F("[FAIL] OPRF round-trip FAILED"));
     }
     Serial.println();
+
+    if (g_failures) {
+        Serial.print(F("*** FAILED: "));
+        Serial.print(g_failures);
+        Serial.println(F(" check(s) reported [FAIL] ***"));
+    } else {
+        Serial.println(F("*** OK: no check reported [FAIL] ***"));
+    }
+    g_failures = 0;   /* loop() repeats; score each pass on its own */
 
     delay(10000);
 }

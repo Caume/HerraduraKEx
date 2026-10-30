@@ -1577,3 +1577,5 @@ The fix is `subs` at all twelve sites, six in the suite and six in the test harn
 That the failure went unseen for so long is a second defect, and it is filed as TODO #350. TODO #234's `[FAIL]` gate covers the 32-bit test harnesses only. The suite demos print `- … FAILED` with no marker, and CI runs only the harnesses (`run_arm.sh tests`). No demo failure on these targets can fail a build.
 
 **Not done:** gating the suite demos (TODO #350). The Arduino suite's `hfscx_32` change compiles but has not been executed. Under simavr the suite demo never gets past HKEX-RNL, in this build or in the unmodified one, and its test harness has no `hfscx_32`.
+
+*Resolved in v10.0.3 (TODO #350).* The three suite demos are now `[FAIL]`-gated and run in CI. The Arduino stall was a stack overflow: the demo's string literals took 3.4 KB of the ATmega2560's 8 KB of SRAM, leaving about 360 bytes of stack. With the strings in flash, every Arduino `hfscx_32` caller now runs, and every pass is clean.

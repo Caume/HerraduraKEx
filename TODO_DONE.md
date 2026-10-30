@@ -24064,3 +24064,54 @@ guard that fires on the old source.  Why nothing caught it is TODO #350.  Securi
 §11.74.
 
 Status: **DONE v10.0.2** — the 32-bit targets run hfscx_32 and the A1 keystream at 3n/4 = 24; ARM's NTT reduction fixed.
+
+### #350: the 32-bit suite demos are ungated — a failing demo cannot fail a build
+
+**Found by TODO #349.**  The ARM suite printed `- ZKP-RNL verify FAILED` on every run,
+because of a reduction bug in `rnl_poly_mul` / `rnl_ntt`.  Nothing failed, and this had gone
+unseen until #349.  TODO #234's `[FAIL]` gate covers the 32-bit TEST HARNESSES only: their
+output goes through `hprintf` / `print_str` / `verdict()`, and `build_arm.sh` /
+`build_asm_i386.sh` reject a bypassing call site.  The SUITE demos are outside it on three
+counts:
+- they print failures as `- … FAILED`, with no `[FAIL]` marker.  The ARM and NASM suites each
+  have nine such strings (Stern-F sign and KEM, ZKP-RNL, ZKP-NL, FPE, tweak, accumulator, OPRF,
+  ring), and the Arduino suite has eleven;
+- the ARM suite calls `bl printf` directly, not `hprintf`;
+- CI runs only `run_arm.sh tests`, `run_asm_i386.sh tests` and `run_arduino.sh tests`.
+
+The four ports' demos are `[FAIL]`-gated (TODO #233).  The 32-bit demos are the only
+shipped programs whose verdicts reach nothing.
+
+**Options.**  (a) Mark the failure strings `[FAIL]`, route the suite's output through the
+same counter as the harness, and add the suite runs to the `arm-i386` and `arduino` CI jobs.
+(b) Move each demo verdict that has no harness counterpart into the harness: ZKP-RNL,
+for one, is not among the 32-bit harness's tests `[1]`–`[18]`.  Whichever is chosen,
+the Arduino suite is the hard case.  Under simavr it never gets past its HKEX-RNL
+section.  #349 watched it for 15 minutes, and the unmodified v10.0.1 build for 5, and both
+stalled there, so this predates #349 and may be a hang rather than slowness.  Everything after
+that section has gone unexecuted, including every Arduino `hfscx_32` caller.  Find out why
+before choosing a timeout.
+
+**Resolution (v10.0.3).**  Option (a), on all three targets.
+- **ARM / NASM:** every failure string carries `[FAIL]` (16 per suite), and the suites have
+  their own copy of the harness gate: `hprintf` / `print_str` count the marker, the run ends
+  with `*** OK` / `*** FAILED: n`, and the exit status follows the count.  `build_arm.sh` and
+  `build_asm_i386.sh` apply the TODO #234 call-site guard to the suite as well as the harness.
+- **Arduino:** the 24 verdict ternaries go through one `check(ok, pass, fail)` helper, which
+  counts.  `loop()` prints `*** OK` / `*** FAILED` at the end of every pass, and
+  `run_arduino.sh suite` now uses the harness's `gate_check`.
+- **The stall was a stack overflow, not slowness.**  The string literals had no `F()`, so all
+  3,398 bytes of them were copied to SRAM at boot.  With 4,430 bytes of `.bss`, that left
+  364 of the ATmega2560's 8,192 bytes for the stack, and the first `rnl_poly_mul` ran into
+  `.bss`.  With every literal in flash, `.data` is 102 bytes, 3,658 bytes are left, and a
+  pass takes about 2 s under simavr (28 clean passes in 200 s).  `build_arduino.sh` now
+  fails a firmware that leaves under 2,048 bytes of stack; it fires on the old source.
+- **CI:** `arm-i386` runs `run_arm.sh suite` and `run_asm_i386.sh suite`; `arduino` runs
+  `run_arduino.sh suite`.
+- **Controls, all shown to fire:** the #349 `sub` bug put back (ARM: `[FAIL] ZKP-RNL`,
+  exit 1), the OPRF verdict inverted (i386 exit 1; Arduino `*** FAILED`, run exit 1), a bare
+  `bl printf` / `call print_str_raw` in each suite (build refused).
+- **Left untagged, as in the C demo:** the HKEX-RNL "raw key disagrees" line, a
+  reconciliation event at nonzero DFR rather than a bug.
+
+Status: **DONE v10.0.3** — the three 32-bit suite demos are [FAIL]-gated and run in CI; the Arduino HKEX-RNL stall was a stack overflow, fixed by moving its strings to flash.

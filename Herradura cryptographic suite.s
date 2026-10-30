@@ -80,46 +80,46 @@ fmt_sdf_sign_hdr:  .asciz "\n-- HPKS-Stern-F [CODE-BASED PQC -- EUF-CMA; N=32, t
 fmt_sdf_enc_hdr:   .asciz "\n-- HPKE-Stern-F [CODE-BASED PQC -- Niederreiter KEM, N=32] --\n"
 fmt_sdf_note:      .asciz "    (demo: decap uses known e'; production needs QC-MDPC decoder)\n"
 fmt_sdf_ok:        .asciz "+ HPKS-Stern-F signature verified\n"
-fmt_sdf_fail_msg:  .asciz "- HPKS-Stern-F verification FAILED\n"
+fmt_sdf_fail_msg:  .asciz "[FAIL] HPKS-Stern-F verification FAILED\n"
 fmt_hpke_sdf_ok:   .asciz "+ HPKE-Stern-F session keys agree\n"
-fmt_hpke_sdf_fail: .asciz "- HPKE-Stern-F key agreement FAILED\n"
+fmt_hpke_sdf_fail: .asciz "[FAIL] HPKE-Stern-F key agreement FAILED\n"
 fmt_eve_sdf_ok:    .asciz "- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)\n"
-fmt_eve_sdf_fail:  .asciz "+ Eve forged HPKS-Stern-F (Eve wins!)\n"
+fmt_eve_sdf_fail:  .asciz "[FAIL] Eve forged HPKS-Stern-F (Eve wins!)\n"
 fmt_eve_hpke_sdf_ok:  .asciz "- Eve random guess does not match session key  (SD protection)\n"
-fmt_eve_hpke_sdf_fail: .asciz "+ Eve guessed HPKE-Stern-F session key!\n"
+fmt_eve_hpke_sdf_fail: .asciz "[FAIL] Eve guessed HPKE-Stern-F session key!\n"
 fmt_zkp_rnl_hdr: .asciz "\n-- ZKP-RNL [Ring-LWR Sigma-protocol; N=32, gamma=4096, t=4] --\n"
 fmt_zkp_rnl_ok:  .asciz "+ ZKP-RNL proof verified\n"
-fmt_zkp_rnl_fail:.asciz "- ZKP-RNL verify FAILED\n"
+fmt_zkp_rnl_fail:.asciz "[FAIL] ZKP-RNL verify FAILED\n"
 fmt_masked_hdr:  .asciz "\n-- Masked HSKE (78.H) [GF(2)-linearity masking] --\n"
 fmt_masked_ok:   .asciz "- Masked HSKE encrypt/decrypt correct\n"
-fmt_masked_fail: .asciz "+ Masked HSKE encrypt/decrypt failed!\n"
+fmt_masked_fail: .asciz "[FAIL] Masked HSKE encrypt/decrypt failed!\n"
 fmt_ratch_hdr:   .asciz "\n-- Ratchet (78.C) [forward-secret, 5 steps] --\n"
 fmt_ratch_ok:    .asciz "- Ratchet: 5 distinct message keys\n"
-fmt_ratch_fail:  .asciz "+ Ratchet: duplicate message keys!\n"
+fmt_ratch_fail:  .asciz "[FAIL] Ratchet: duplicate message keys!\n"
 fmt_zkp_nl_hdr: .asciz "\n-- ZKP-NL [NL-FSCX ZKBoo; n=8, R=4] --\n"
 fmt_zkp_nl_ok:  .asciz "+ ZKP-NL proof verified\n"
-fmt_zkp_nl_fail:.asciz "- ZKP-NL verify FAILED\n"
+fmt_zkp_nl_fail:.asciz "[FAIL] ZKP-NL verify FAILED\n"
 fmt_fpe_hdr:    .asciz "\n-- FPE (78.A) [format-preserving encrypt/decrypt; 32-bit] --\n"
 fmt_fpe_ok:     .asciz "+ FPE round-trip correct\n"
-fmt_fpe_fail:   .asciz "- FPE round-trip FAILED\n"
+fmt_fpe_fail:   .asciz "[FAIL] FPE round-trip FAILED\n"
 fmt_twk_hdr:    .asciz "\n-- Tweakable cipher (78.B) [sector/block tweak; 32-bit] --\n"
 fmt_twk_ok:     .asciz "+ Tweakable cipher correct\n"
-fmt_twk_fail:   .asciz "- Tweakable cipher FAILED\n"
+fmt_twk_fail:   .asciz "[FAIL] Tweakable cipher FAILED\n"
 fmt_acc_hdr:    .asciz "\n-- Accumulator (78.J) [Merkle root + membership; 32-bit] --\n"
 fmt_acc_ok:     .asciz "+ Accumulator proof correct\n"
-fmt_acc_fail:   .asciz "- Accumulator proof FAILED\n"
+fmt_acc_fail:   .asciz "[FAIL] Accumulator proof FAILED\n"
 fmt_oprf_hdr:   .asciz "\n-- OPRF (80) [DEMO n=32 -- NOT PRODUCTION SECURE] --\n"
 fmt_oprf_ok:    .asciz "+ OPRF blind/eval/unblind correct\n"
-fmt_oprf_fail:  .asciz "- OPRF round-trip FAILED\n"
+fmt_oprf_fail:  .asciz "[FAIL] OPRF round-trip FAILED\n"
 lbl_oprf_hx:    .asciz "H(x)   "
 lbl_oprf_alpha: .asciz "alpha  "
 lbl_oprf_beta:  .asciz "beta   "
 lbl_oprf_F:     .asciz "F      "
 fmt_ring_hdr:    .asciz "\n-- HPKS-Stern-Ring (78.I) [CODE-BASED RING SIG -- OR-composed Stern, k=2] --\n"
 fmt_ring_ok:     .asciz "+ HPKS-Stern-Ring signature verified (k=2, signer=1)\n"
-fmt_ring_fail:   .asciz "- HPKS-Stern-Ring verification FAILED\n"
+fmt_ring_fail:   .asciz "[FAIL] HPKS-Stern-Ring verification FAILED\n"
 fmt_eve_ring_ok: .asciz "- Eve cannot forge ring sig: challenge-sum mismatch  (SD + PRF protection)\n"
-fmt_eve_ring_fail:.asciz "+ Eve forged HPKS-Stern-Ring (Eve wins!)\n"
+fmt_eve_ring_fail:.asciz "[FAIL] Eve forged HPKS-Stern-Ring (Eve wins!)\n"
     .balign 4
 ratchet_domain_32: .word 0x4E4C2D46   @ 'N','L','-','F' (first 4 bytes of NL-FSCX-RATCHET-V1)
 lbl_sigma_msg:   .asciz "msg (sigma) "
@@ -128,9 +128,17 @@ sigma_demo_msg:  .word 0xDEADB00B
 
 /* result strings */
 fmt_ok:          .asciz "+ correct!\n"
-fmt_fail:        .asciz "- INCORRECT!\n"
+fmt_fail:        .asciz "[FAIL] INCORRECT!\n"
+
+/* TODO #350 gate -- the suite's copy of the harness's TODO #234 gate.  hprintf
+   counts every "[FAIL]" that passes through it, and main() exits non-zero on a
+   nonzero count.  Call hprintf, never the libc entry point directly:
+   build_arm.sh rejects a bare call that is not marked GATE-EXEMPT. */
+str_fail_marker: .asciz "[FAIL]"
+fmt_gate_fail:   .asciz "\n*** FAILED: %d check(s) reported [FAIL] ***\n"
+fmt_gate_ok:     .asciz "\n*** OK: no check reported [FAIL] ***\n"
 fmt_eve_ok:      .asciz "- Eve could not decrypt (CDH + NL protection)\n"
-fmt_eve_fail:    .asciz "+ Eve decrypted (Eve wins!)\n"
+fmt_eve_fail:    .asciz "[FAIL] Eve decrypted (Eve wins!)\n"
 fmt_rnl_agree:   .asciz "+ raw key bits agree!\n"
 fmt_rnl_noagree: .asciz "- raw key disagrees (rounding noise)\n"
 fmt_eve_rnl_ok:  .asciz "- Eve random guess does not match (Ring-LWR protection)\n"
@@ -262,6 +270,7 @@ rnl_bit_rev_tab:
 /* ------------------------------------------------------------------ */
     .section .bss
     .balign 4
+g_failures:  .space 4
 rnl_m_base:  .space 128
 rnl_a_rand:  .space 128
 rnl_m_blind: .space 128
@@ -358,34 +367,34 @@ main:
 prng_seeded:
 
     ldr     r0, =fmt_header
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_apriv
     ldr     r2, =val_a_priv
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_bpriv
     ldr     r2, =val_b_priv
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_key
     ldr     r2, =val_key
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_plain
     ldr     r2, =val_plain
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================ HKEX-GF */
     ldr     r0, =fmt_hkex_hdr
-    bl      printf
+    bl      hprintf
 
     mov     r0, #3
     ldr     r1, =val_a_priv
@@ -421,22 +430,22 @@ prng_seeded:
     ldr     r1, =lbl_C
     ldr     r2, =val_C
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_C2
     ldr     r2, =val_C2
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_skeyA
     ldr     r2, =val_sk
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_skeyB
     ldr     r2, =val_skB
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =val_sk
     ldr     r0, [r0]
@@ -445,18 +454,18 @@ prng_seeded:
     cmp     r0, r1
     bne     hkex_fail
     ldr     r0, =fmt_ok
-    bl      printf
+    bl      hprintf
     b       hkex_done
 hkex_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 hkex_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================ HSKE */
     ldr     r0, =fmt_hske_hdr
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =val_plain
     ldr     r0, [r0]
@@ -480,12 +489,12 @@ hkex_done:
     ldr     r1, =lbl_E_hske
     ldr     r2, =val_E_hske
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_D_hske
     ldr     r2, =val_D_hske
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =val_D_hske
     ldr     r0, [r0]
@@ -494,18 +503,18 @@ hkex_done:
     cmp     r0, r1
     bne     hske_fail
     ldr     r0, =fmt_ok
-    bl      printf
+    bl      hprintf
     b       hske_done
 hske_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 hske_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================ HPKS Schnorr */
     ldr     r0, =fmt_hpks_hdr
-    bl      printf
+    bl      hprintf
 
     bl      prng_next
     ldr     r3, =val_k_hpks
@@ -568,22 +577,22 @@ hske_done:
     ldr     r1, =lbl_k_hpks
     ldr     r2, =val_k_hpks
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_R_hpks
     ldr     r2, =val_R_hpks
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_e_hpks
     ldr     r2, =val_e_hpks
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_s_hpks
     ldr     r2, =val_s_hpks
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
 
     pop     {r4}
     ldr     r5, =val_R_hpks
@@ -591,18 +600,18 @@ hske_done:
     cmp     r4, r5
     bne     hpks_fail
     ldr     r0, =fmt_ok
-    bl      printf
+    bl      hprintf
     b       hpks_done
 hpks_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 hpks_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================ HPKE El Gamal */
     ldr     r0, =fmt_hpke_hdr
-    bl      printf
+    bl      hprintf
 
     bl      prng_next
     orr     r0, r0, #1
@@ -654,17 +663,17 @@ hpks_done:
     ldr     r1, =lbl_R_hpke
     ldr     r2, =val_R_hpke
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_E_hpke
     ldr     r2, =val_E_hpke
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_D_hpke
     ldr     r2, =val_D_hpke
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =val_D_hpke
     ldr     r0, [r0]
@@ -673,14 +682,14 @@ hpks_done:
     cmp     r0, r1
     bne     hpke_fail
     ldr     r0, =fmt_ok
-    bl      printf
+    bl      hprintf
     b       hpke_done
 hpke_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 hpke_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================
        HSKE-NL-A1  (counter-mode with NL-FSCX v1)
@@ -688,7 +697,7 @@ hpke_done:
        E = plain XOR ks;  D = E XOR ks  (must == plain)
        ================================================================ */
     ldr     r0, =fmt_hske_nl1_hdr
-    bl      printf
+    bl      hprintf
 
     bl      prng_next               @ r0 = nonce N
     ldr     r3, =val_nonce_nl1
@@ -720,17 +729,17 @@ hpke_done:
     ldr     r1, =lbl_N_nl1
     ldr     r2, =val_nonce_nl1
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_E_nl1
     ldr     r2, =val_E_nl1
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_D_nl1
     ldr     r2, =val_D_nl1
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =val_D_nl1
     ldr     r0, [r0]
@@ -739,14 +748,14 @@ hpke_done:
     cmp     r0, r1
     bne     hske_nl1_fail
     ldr     r0, =fmt_ok
-    bl      printf
+    bl      hprintf
     b       hske_nl1_done
 hske_nl1_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 hske_nl1_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================
        HSKE-NL-A2  (revolve-mode with NL-FSCX v2)
@@ -755,7 +764,7 @@ hske_nl1_done:
        CAUTION: deterministic — same (plain, key) always yields same E.
        ================================================================ */
     ldr     r0, =fmt_hske_nl2_hdr
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =val_plain
     ldr     r0, [r0]
@@ -779,12 +788,12 @@ hske_nl1_done:
     ldr     r1, =lbl_E_nl2
     ldr     r2, =val_E_nl2
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_D_nl2
     ldr     r2, =val_D_nl2
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =val_D_nl2
     ldr     r0, [r0]
@@ -793,20 +802,20 @@ hske_nl1_done:
     cmp     r0, r1
     bne     hske_nl2_fail
     ldr     r0, =fmt_ok
-    bl      printf
+    bl      hprintf
     b       hske_nl2_done
 hske_nl2_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 hske_nl2_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================
        HKEX-RNL  (Ring-LWR key exchange)
        ================================================================ */
     ldr     r0, =fmt_hkex_rnl_hdr
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =rnl_m_base
     bl      rnl_m_poly
@@ -867,17 +876,17 @@ hske_nl2_done:
     ldr     r1, =lbl_Ka
     ldr     r2, =val_KA
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_Kb
     ldr     r2, =val_KB
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_sk_a
     ldr     r2, =val_sk_rnl
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =val_KA
     ldr     r0, [r0]
@@ -886,20 +895,20 @@ hske_nl2_done:
     cmp     r0, r1
     bne     hkex_rnl_noagree
     ldr     r0, =fmt_rnl_agree
-    bl      printf
+    bl      hprintf
     b       hkex_rnl_done
 hkex_rnl_noagree:
     ldr     r0, =fmt_rnl_noagree
-    bl      printf
+    bl      hprintf
 hkex_rnl_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================
        HPKS-NL  (NL-hardened Schnorr: NL-FSCX v1 challenge)
        ================================================================ */
     ldr     r0, =fmt_hpks_nl_hdr
-    bl      printf
+    bl      hprintf
 
     bl      prng_next
     ldr     r3, =val_k_hpks
@@ -962,17 +971,17 @@ hkex_rnl_done:
     ldr     r1, =lbl_R_hpks
     ldr     r2, =val_R_hpks
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_s_hpks
     ldr     r2, =val_s_hpks
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_lhs
     pop     {r2}
     push    {r2}
-    bl      printf
+    bl      hprintf
 
     pop     {r4}
     ldr     r5, =val_R_hpks
@@ -980,20 +989,20 @@ hkex_rnl_done:
     cmp     r4, r5
     bne     hpks_nl_fail
     ldr     r0, =fmt_ok
-    bl      printf
+    bl      hprintf
     b       hpks_nl_done
 hpks_nl_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 hpks_nl_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================
        HPKE-NL  (NL-hardened El Gamal: NL-FSCX v2 encrypt)
        ================================================================ */
     ldr     r0, =fmt_hpke_nl_hdr
-    bl      printf
+    bl      hprintf
 
     bl      prng_next
     orr     r0, r0, #1
@@ -1045,12 +1054,12 @@ hpks_nl_done:
     ldr     r1, =lbl_E_nl2
     ldr     r2, =val_E_nl2
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_D_nl2
     ldr     r2, =val_D_nl2
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =val_D_nl2
     ldr     r0, [r0]
@@ -1059,21 +1068,21 @@ hpks_nl_done:
     cmp     r0, r1
     bne     hpke_nl_fail
     ldr     r0, =fmt_ok
-    bl      printf
+    bl      hprintf
     b       hpke_nl_done
 hpke_nl_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 hpke_nl_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================
        HPKS-Stern-F  (code-based PQC: Syndrome Decoding ZKP, EUF-CMA)
        N=32, t=2, rounds=4; seed and e generated via prng_next
        ================================================================ */
     ldr     r0, =fmt_sdf_sign_hdr
-    bl      printf
+    bl      hprintf
 
     @ key generation: seed = prng_next()
     bl      prng_next
@@ -1102,14 +1111,14 @@ hpke_nl_done:
     cmp     r0, #1
     bne     hpks_sdf_fail
     ldr     r0, =fmt_sdf_ok
-    bl      printf
+    bl      hprintf
     b       hpks_sdf_done
 hpks_sdf_fail:
     ldr     r0, =fmt_sdf_fail_msg
-    bl      printf
+    bl      hprintf
 hpks_sdf_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================
        HPKE-Stern-F  (Niederreiter KEM, N=32, t=2)
@@ -1117,9 +1126,9 @@ hpks_sdf_done:
        Decap (known e'): K' = hash(seed, e')  [demo]
        ================================================================ */
     ldr     r0, =fmt_sdf_enc_hdr
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_sdf_note
-    bl      printf
+    bl      hprintf
 
     @ encap: fills val_sdf_K_enc, val_sdf_ct, val_sdf_e_prime
     bl      hpke_stern_f_encap_32
@@ -1135,12 +1144,12 @@ hpks_sdf_done:
     ldr     r1, =lbl_K_enc
     ldr     r2, =val_sdf_K_enc
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_K_dec
     ldr     r2, =val_sdf_K_dec
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =val_sdf_K_enc
     ldr     r0, [r0]
@@ -1149,14 +1158,14 @@ hpks_sdf_done:
     cmp     r0, r1
     bne     hpke_sdf_fail
     ldr     r0, =fmt_hpke_sdf_ok
-    bl      printf
+    bl      hprintf
     b       hpke_sdf_done
 hpke_sdf_fail:
     ldr     r0, =fmt_hpke_sdf_fail
-    bl      printf
+    bl      hprintf
 hpke_sdf_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================
        HPKS-Stern-Ring (78.I)  k=2, N=32, t=2, rounds=4
@@ -1164,7 +1173,7 @@ hpke_sdf_done:
        Member 1: real signer (uses val_sdf_seed / val_sdf_e / val_sdf_syn)
        ================================================================ */
     ldr     r0, =fmt_ring_hdr
-    bl      printf
+    bl      hprintf
 
     @ sign as member 1 (index 1 in ring of 2)
     bl      hpks_stern_ring2_sign_32
@@ -1174,18 +1183,18 @@ hpke_sdf_done:
     cmp     r0, #1
     bne     hpks_ring_fail
     ldr     r0, =fmt_ring_ok
-    bl      printf
+    bl      hprintf
     b       hpks_ring_done
 hpks_ring_fail:
     ldr     r0, =fmt_ring_fail
-    bl      printf
+    bl      hprintf
 hpks_ring_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ================================================================ EVE tests */
     ldr     r0, =fmt_eve_hdr
-    bl      printf
+    bl      hprintf
 
     /* Eve uses wrong key: C XOR R_nl instead of C^r */
     ldr     r4, =val_C
@@ -1203,11 +1212,11 @@ hpks_ring_done:
     cmp     r0, r1
     beq     eve_hpke_fail
     ldr     r0, =fmt_eve_ok
-    bl      printf
+    bl      hprintf
     b       eve_hpke_done
 eve_hpke_fail:
     ldr     r0, =fmt_eve_fail
-    bl      printf
+    bl      hprintf
 eve_hpke_done:
 
     /* Eve random guess for HKEX-RNL */
@@ -1217,11 +1226,11 @@ eve_hpke_done:
     cmp     r0, r1
     beq     eve_rnl_fail
     ldr     r0, =fmt_eve_rnl_ok
-    bl      printf
+    bl      hprintf
     b       eve_rnl_done
 eve_rnl_fail:
     ldr     r0, =fmt_eve_fail
-    bl      printf
+    bl      hprintf
 eve_rnl_done:
 
     /* Eve tries to forge HPKS-Stern-F: flip respA[0] to trigger mismatch */
@@ -1235,11 +1244,11 @@ eve_rnl_done:
     cmp     r6, #1
     beq     eve_sdf_forge_fail
     ldr     r0, =fmt_eve_sdf_ok
-    bl      printf
+    bl      hprintf
     b       eve_sdf_forge_done
 eve_sdf_forge_fail:
     ldr     r0, =fmt_eve_sdf_fail
-    bl      printf
+    bl      hprintf
 eve_sdf_forge_done:
 
     /* Eve guesses HPKE-Stern-F session key */
@@ -1249,11 +1258,11 @@ eve_sdf_forge_done:
     cmp     r0, r1
     beq     eve_hpke_sdf_fail
     ldr     r0, =fmt_eve_hpke_sdf_ok
-    bl      printf
+    bl      hprintf
     b       eve_hpke_sdf_done
 eve_hpke_sdf_fail:
     ldr     r0, =fmt_eve_hpke_sdf_fail
-    bl      printf
+    bl      hprintf
 eve_hpke_sdf_done:
 
     /* Eve tries to forge HPKS-Stern-Ring: flip ring0_respA[0] to break c1 check */
@@ -1267,11 +1276,11 @@ eve_hpke_sdf_done:
     cmp     r6, #1
     beq     eve_ring_forge_fail
     ldr     r0, =fmt_eve_ring_ok
-    bl      printf
+    bl      hprintf
     b       eve_ring_forge_done
 eve_ring_forge_fail:
     ldr     r0, =fmt_eve_ring_fail
-    bl      printf
+    bl      hprintf
 eve_ring_forge_done:
 
     /* ================================================================
@@ -1279,13 +1288,13 @@ eve_ring_forge_done:
        Reuses rnl_s_A / rnl_m_blind / rnl_C_A from the HKEX-RNL section.
        ================================================================ */
     ldr     r0, =fmt_zkp_rnl_hdr
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_sigma_msg
     ldr     r2, =sigma_demo_msg
     ldr     r2, [r2]
-    bl      printf
+    bl      hprintf
 
     ldr     r0, =sigma_demo_msg
     ldr     r0, [r0]
@@ -1299,22 +1308,22 @@ eve_ring_forge_done:
     cmp     r0, #1
     bne     zkp_rnl_verify_fail
     ldr     r0, =fmt_zkp_rnl_ok
-    bl      printf
+    bl      hprintf
     b       zkp_rnl_done
 zkp_rnl_sign_fail:
     ldr     r0, =fmt_zkp_rnl_fail
-    bl      printf
+    bl      hprintf
     b       zkp_rnl_done
 zkp_rnl_verify_fail:
     ldr     r0, =fmt_zkp_rnl_fail
-    bl      printf
+    bl      hprintf
 zkp_rnl_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ── 78.H — Masked HSKE demo ──────────────────────────────────── */
     ldr     r0, =fmt_masked_hdr
-    bl      printf
+    bl      hprintf
     bl      prng_next
     mov     r4, r0          @ plain
     bl      prng_next
@@ -1348,16 +1357,16 @@ zkp_rnl_done:
     cmp     r8, r4
     beq     masked_ok
     ldr     r0, =fmt_masked_fail
-    bl      printf
+    bl      hprintf
     b       masked_done
 masked_ok:
     ldr     r0, =fmt_masked_ok
-    bl      printf
+    bl      hprintf
 masked_done:
 
     /* ── 78.C — Ratchet demo (5 steps) ───────────────────────────── */
     ldr     r0, =fmt_ratch_hdr
-    bl      printf
+    bl      hprintf
     @ seed state: prng_next as initial state
     bl      prng_next
     mov     r4, r0          @ state
@@ -1394,18 +1403,18 @@ ratch_continue:
     cmp     r10, #1
     beq     ratch_unique_ok
     ldr     r0, =fmt_ratch_fail
-    bl      printf
+    bl      hprintf
     b       ratch_done
 ratch_unique_ok:
     ldr     r0, =fmt_ratch_ok
-    bl      printf
+    bl      hprintf
 ratch_done:
     ldr     r0, =fmt_nl
-    bl      printf
+    bl      hprintf
 
     /* ── ZKP-NL demo (NL-FSCX ZKBoo; n=8, R=4) ───────────────────── */
     ldr     r0, =fmt_zkp_nl_hdr
-    bl      printf
+    bl      hprintf
     bl      prng_next
     and     r4, r0, #0xFF       @ A
     bl      prng_next
@@ -1428,16 +1437,16 @@ ratch_done:
     cmp     r0, #1
     beq     .zkp_nl_suite_ok
     ldr     r0, =fmt_zkp_nl_fail
-    bl      printf
+    bl      hprintf
     b       .zkp_nl_suite_done
 .zkp_nl_suite_ok:
     ldr     r0, =fmt_zkp_nl_ok
-    bl      printf
+    bl      hprintf
 .zkp_nl_suite_done:
 
     /* ── FPE (78.A): B = hfscx_32(hfscx_32(key) ^ ctx); enc/dec via nl_fscx_revolve_v2 */
     ldr     r0, =fmt_fpe_hdr
-    bl      printf
+    bl      hprintf
     bl      prng_next
     mov     r4, r0                  @ plain (random)
     ldr     r5, =0xABCD1234         @ key
@@ -1459,16 +1468,16 @@ ratch_done:
     cmp     r0, r4
     beq     fpe_suite_ok
     ldr     r0, =fmt_fpe_fail
-    bl      printf
+    bl      hprintf
     b       fpe_suite_done
 fpe_suite_ok:
     ldr     r0, =fmt_fpe_ok
-    bl      printf
+    bl      hprintf
 fpe_suite_done:
 
     /* ── Tweakable cipher (78.B): B = hfscx_32(hfscx_32(key^sector) ^ bidx) */
     ldr     r0, =fmt_twk_hdr
-    bl      printf
+    bl      hprintf
     bl      prng_next
     mov     r4, r0                  @ block (random)
     ldr     r5, =0x12345678         @ key
@@ -1492,16 +1501,16 @@ fpe_suite_done:
     cmp     r0, r4
     beq     twk_suite_ok
     ldr     r0, =fmt_twk_fail
-    bl      printf
+    bl      hprintf
     b       twk_suite_done
 twk_suite_ok:
     ldr     r0, =fmt_twk_ok
-    bl      printf
+    bl      hprintf
 twk_suite_done:
 
     /* ── Accumulator (78.J): leaf = hfscx_32(data); node = hfscx_32(hfscx_32(0x01000000^L)^R) */
     ldr     r0, =fmt_acc_hdr
-    bl      printf
+    bl      hprintf
     @ compute 4 leaves
     ldr     r0, =0xAAAAAAAA
     bl      hfscx_32
@@ -1551,17 +1560,17 @@ twk_suite_done:
     cmp     r0, r10
     beq     acc_suite_ok
     ldr     r0, =fmt_acc_fail
-    bl      printf
+    bl      hprintf
     b       acc_suite_done
 acc_suite_ok:
     ldr     r0, =fmt_acc_ok
-    bl      printf
+    bl      hprintf
 acc_suite_done:
 
     /* ── OPRF (80) demo — blind/eval/unblind, n=32 ──────────────────── */
     /* Key k=0x13579BDF; blinding scalar r=7; r_inv=0x49249249 (7^{-1} mod 2^32-1) */
     ldr     r0, =fmt_oprf_hdr
-    bl      printf
+    bl      hprintf
 
     @ H(x) = hfscx_32(0x50415353)  ["PASS" as 32-bit word]
     ldr     r0, =0x50415353
@@ -1575,7 +1584,7 @@ acc_suite_done:
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_oprf_hx
     mov     r2, r4
-    bl      printf
+    bl      hprintf
 
     @ alpha = H(x)^r,  r = 7  (client blind)
     mov     r0, r4
@@ -1587,7 +1596,7 @@ acc_suite_done:
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_oprf_alpha
     mov     r2, r5
-    bl      printf
+    bl      hprintf
 
     @ beta = alpha^k,  k = 0x13579BDF  (server eval)
     mov     r0, r5
@@ -1599,7 +1608,7 @@ acc_suite_done:
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_oprf_beta
     mov     r2, r6
-    bl      printf
+    bl      hprintf
 
     @ F = beta^r_inv,  r_inv = 0x49249249 = 7^{-1} mod (2^32-1)  (client unblind)
     mov     r0, r6
@@ -1611,7 +1620,7 @@ acc_suite_done:
     ldr     r0, =fmt_hex
     ldr     r1, =lbl_oprf_F
     mov     r2, r7
-    bl      printf
+    bl      hprintf
 
     @ F_direct = H(x)^k  (should equal F — verifies blind/eval/unblind correctness)
     mov     r0, r4
@@ -1623,16 +1632,48 @@ acc_suite_done:
     cmp     r0, r7
     beq     oprf_suite_ok
     ldr     r0, =fmt_oprf_fail
-    bl      printf
+    bl      hprintf
     b       oprf_suite_done
 oprf_suite_ok:
     ldr     r0, =fmt_oprf_ok
-    bl      printf
+    bl      hprintf
 oprf_suite_done:
 
+    /* ---- TODO #350: aggregate exit status -------------------------- */
+    ldr     r0, =g_failures
+    ldr     r4, [r0]
+    cmp     r4, #0
+    beq     suite_gate_ok
+    ldr     r0, =fmt_gate_fail
+    mov     r1, r4
+    bl      printf              @ GATE-EXEMPT: this line carries the marker
+    mov     r0, #1
+    bl      exit
+suite_gate_ok:
+    ldr     r0, =fmt_gate_ok
+    bl      printf              @ GATE-EXEMPT: this line carries the marker
     mov     r0, #0
     bl      exit
 
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* hprintf: printf that counts "[FAIL]" (TODO #350; harness: #234)    */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hprintf:
+    push    {r0-r3, r4, lr}     @ 6 words keeps sp 8-byte aligned
+    ldr     r1, =str_fail_marker
+    bl      strstr              @ r0 already holds the haystack
+    cmp     r0, #0
+    beq     hprintf_emit
+    ldr     r0, =g_failures
+    ldr     r1, [r0]
+    add     r1, r1, #1
+    str     r1, [r0]
+hprintf_emit:
+    pop     {r0-r3, r4, lr}
+    b       printf              @ GATE-EXEMPT: tail call to the real printf
     .ltorg
 
 /* ================================================================== */
