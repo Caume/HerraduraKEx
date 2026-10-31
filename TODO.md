@@ -563,13 +563,21 @@ now this item's:
   * **A larger n = 22 sample**, if its fail share (1.9% +/- 0.8%, six keys) matters.
   * **The gap-bit cost** past n = 20 (§11.66.2: flat from 20 to 23 within its error).
 
-**Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
-other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,
-HFSCX-256 and everything inheriting the hash -- left the scope of a trail bound entirely
-in §11.36.8, because in both those modes the attacked input is the round CONSTANT, which
-enters every round at once, so there is no trail to bound.  This item can therefore move
-no rating in either direction, and is filed as an outstanding proof obligation behind
-figures already published, not as a gate on anything.
+**Reach (restated in v12.0.1; the earlier text predated #345 and #351).**  Four
+production-track rows rest on this item: HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3`,
+each under the conjecture named in the "Ratings now rest on this item" block above, and
+a measurement failing one of those conjectures reopens all four
+(`SecurityProofsCode/v2_v3_rating_review.py` holds SECURITY.md to that verdict).  No other row does.  The v1
+rows fall outside it, each for its own reason.  HSKE-NL-A1's attacked input is v1's round
+CONSTANT (`K xor ctr`), which enters every round at once, so there is no trail to bound
+(§11.36.8); its 3n/4 criterion was #346/#347's.  HFSCX-256 has carried the message in v1's
+first input since its Matyas-Meyer-Oseas compression (#351, v11.0.0), so a trail does exist
+there, but it is bounded directly at n = 256 (§11.75.4: at least 336 over 192 rounds), not
+by extrapolating a width series.  The rows inheriting the hash (HPKS-WOTS, HPKS-XMSS,
+ZKP-RNL and, since v12.0.0, the HPKS-NL challenge and the Stern hash) inherit that bound.
+This item can therefore DEMOTE those four rows but cannot promote anything: their
+ratings are already production-track (conjectured), and no measurement short of a bound
+at n = 256 would remove the conjecture.
 
 Status: **OPEN**
 

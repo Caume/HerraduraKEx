@@ -2,6 +2,23 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [12.0.1] - 2026-10-31
+
+### TODO #257 — the entry's "Reach" paragraph restated (documentation only)
+
+- **The old paragraph contradicted the entry and SECURITY.md.**  It said no
+  production-track row rests on #257 and that the item "can move no rating in either
+  direction".  Since TODO #345 (v9.5.66) four rows do: HSKE-NL-A2, `twk`, HSKE-NL-A3 and
+  `twk --v3`, each production-track (conjectured) under a conjecture #257 measures.  The
+  entry's own "Ratings now rest on this item" block already said so.
+- **It also described HFSCX-256's pre-v11 shape.**  It said the hash's attacked input is
+  v1's round constant.  Since the Matyas–Meyer–Oseas compression (TODO #351, v11.0.0) the
+  message is v1's first input and a trail exists.  That trail is bounded directly at
+  n = 256 (SecurityProofs-10.md §11.75.4), so the hash, and the rows inheriting it, still
+  lie outside #257.  HSKE-NL-A1 stays outside for the original reason (§11.36.8).
+- **The restatement:** #257 can demote those four rows but cannot promote anything.
+  #257 stays OPEN; no code, artifact, rating or gate changes.
+
 ## [12.0.0] - 2026-10-31
 
 ### TODO #348, closed — the Schnorr challenge and the Stern chain hash move from NL-FSCX v1 to HFSCX-256-DS
