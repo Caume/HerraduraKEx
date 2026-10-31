@@ -581,4 +581,71 @@ at n = 256 would remove the conjecture.
 
 Status: **OPEN**
 
+### #352: who chooses NL-FSCX v2's and v3's B? — the #348 audit for the other two rounds
+
+**Why now.**  #348 (v12.0.0) and #351 (v11.0.0) both came from one question the trail
+model cannot ask: an input FIXED at a degenerate value is not a trail, so a
+trail-weight floor says nothing about it.  For v1 the answer is now recorded:
+`SecurityProofsCode/v1_remaining_sites.py`'s `B_SETTER` table names who sets B at every
+remaining v1 call, and its census fails on a new one.  Nothing does the same for v2 and
+v3, which back four production-track rows (HSKE-NL-A2, `twk`, HSKE-NL-A3, `twk --v3`,
+TODO #345) besides the demo and research rows.  **This is a gap to check, not a known
+flaw.**
+
+**What is known about v2's B.**  Both of v2's degenerate classes are classes of B:
+- **the affine class**, `delta(B) in {0, 2^(n-1)}` (about 2^-129 at n = 256), refused by
+  `nl_v2_key_is_valid` (herradura.h, TODO #159/#168);
+- **the zero-weight-trail class**, every B with `tz(delta(B)) >= 4` (TODO #253,
+  SecurityProofs-7.md §11.28.3), accepted ON PURPOSE.  The reason is in
+  `nl_v2_key_is_valid`'s SCOPE comment: "a random key loses at most 3 rounds with
+  probability 1/16".  **That argument holds only where B is a random key.**  Where a party
+  can steer B, or can try many B and keep the cheap ones, it is not the argument that
+  applies, and this item asks whether any site lets them.
+
+v3 is documented as having no weak class (SecurityProofs-8.md §11.34.4), which is why
+`fpe_twk_v3_derive_b` and `hske-nla3` skip the check.  §11.34.4 is about the AFFINE
+class; whether chi also removes the `tz(delta(B)) >= 4` zero-weight trail is part of this
+item.
+
+**The sites, and who sets B** (C reference; the other ports and 32-bit targets must agree):
+
+| site | B | who sets it | screened |
+|---|---|---|---|
+| HSKE-NL-A2 (`hske-nla2`) | the key itself | key holder | affine class, in the CLI |
+| HPKE-NL (`hpke-nl`), decrypt | `R^a`, R read from the ciphertext | **the sender**, through R | affine class, in the CLI; refusal is a `die` |
+| FPE / `twk` (v2) | HFSCX-256-DS(len‖key‖ctx or sector‖bidx) | key holder; the attacker chooses the tweak | affine class, rehash loop in `fpe_twk_derive_b` |
+| FPE-V3 / `twk --v3` | the same, tags 0x22/0x23 | as above | none, by design (§11.34.4) |
+| HSKE-NL-A3 (`hske-nla3`) | the key itself | key holder | none, by design |
+| HSKE-Duplex / -V3 | HFSCX-256(DS‖key‖nonce) | key holder; nonce public | none |
+
+Three rows need a real answer rather than a table entry:
+1. **HPKE-NL decrypt.**  The sender picks R.  A small-order R confines `R^a` to a small set
+   (the Pohlig–Hellman exposure SECURITY.md already cites).  Can a sender also steer `R^a`
+   into `tz(delta) >= 4` more often than 1/16?  And is the CLI's refusal on the affine
+   class a one-bit oracle on `a`?  The row is demo-only, so the likely outcome is a
+   documented note, not a change.
+2. **`twk` / FPE tweaks.**  In the STPRP model the attacker chooses the tweak.  Without the
+   key they cannot compute B, so they cannot pick the cheap tweaks.  But about 1/16 of all
+   tweaks land in the zero-weight class anyway, so a many-tweak attacker always has
+   cheap-B blocks to work with.  Check that the rating's conjecture is stated over a
+   random tweak's B and survives the attacker averaging over tweaks.
+3. **v3 and the zero-weight class** (above).
+
+**Work.**
+1. A gate `SecurityProofsCode/v2_v3_b_setter.py` in `v1_remaining_sites.py`'s shape:
+   - a census of every v2/v3 call in the four ports, the four CLIs and the 32-bit targets,
+     failing on a new one;
+   - a `B_SETTER` table naming who sets each site's B and which check applies;
+   - controls showing it fires on a planted call and on a site whose screen is removed.
+2. Answer questions 1–3 with measurements where possible: steer rates for (1), a
+   per-tweak fraction for (2), an exact zero-weight search on v3 at small width for (3).
+3. Write up as a new SecurityProofs-10.md subsection.  Change SECURITY.md only if an answer
+   moves a row.
+
+**Reach.**  Expected PATCH: a gate and a write-up.  If an answer moves a row, or calls for a
+new refusal, that is a separate decision: a new refusal makes an existing `--algo` accept
+less, which CLAUDE.md treats as MAJOR.
+
+Status: **OPEN**
+
 ---
