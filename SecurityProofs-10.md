@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.76** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO · Schnorr and Stern Leave v1
+> - **Part 10 — §11.43–§11.77** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO · Schnorr and Stern Leave v1 · Who Sets v2's Key
 
 ---
 
@@ -1681,3 +1681,71 @@ The attacker's input reaches v1 only as A, and reaching an affine B from a chain
 **Cost:** one HFSCX-256 call per challenge or Stern hash, at 192 rounds per 32-byte block. A Stern signature's Fiat–Shamir hash costs about three times what it did. **Wire format:** MAJOR, MIGRATING.md section 26. Keys do not change.
 
 **Not done:** the exact probability and the linear hull of the remaining n/4 sites (§11.73).
+
+---
+
+## 11.77 Who sets NL-FSCX v2's and v3's B — TODO #352, closed (v12.0.2)
+
+§11.75 and §11.76 came from one question the trail model cannot ask: an input fixed at a degenerate value is not a trail, so a trail-weight floor says nothing about it. `v1_remaining_sites.py` answers it for every v1 call. This section asks it of v2 and v3, which back four production-track rows (HSKE-NL-A2, `twk`, HSKE-NL-A3, `twk --v3`; §11.68). The gate is `SecurityProofsCode/v2_v3_b_setter.py`.
+
+v2's two degenerate classes are both classes of B, through δ(B) = ROL(P, n/4) with P = B · ⌊(B+1)/2⌋ mod 2^n. The **affine class**, δ ∈ {0, 2^(n−1)}, is refused by `nl_v2_key_is_valid`. The **zero-weight-trail class**, tz(δ) ≥ 4 (§11.28.3), is accepted on purpose, because "a random key loses at most 3 rounds with probability 1/16" (§11.28.4). That argument is about a random key, so the question at each site is whether B is one.
+
+### 11.77.1 The sites
+
+The census covers 120 calls in 16 files (the files `v1_remaining_sites.py` covers), keyed by enclosing function and B argument and held in both directions, plus the 32-bit suites' call counts:
+
+| site | calls | who sets B | screen | answered in |
+|---|---|---|---|---|
+| HSKE-NL-A2 | 14 | the key holder (the key itself) | affine class refused at enc and dec, all four CLIs | random key |
+| HSKE-NL-A3 | 8 | the key holder | none, by design | §11.77.5 |
+| HPKE-NL | 19 | **the sender**, through R (decrypt: B = R^a) | encrypt redraws r past the affine class; decrypt refuses it | §11.77.4 |
+| HPKE-NL3 | 8 | the sender, through R | none, by design | §11.77.5 |
+| FPE / `twk` | 16 | HFSCX-256-DS(len ‖ key ‖ tweak); the attacker picks the tweak | affine class rehashed away | §11.77.3 |
+| FPE-V3 / `twk --v3` | 16 | the same, tags 0x22/0x23 | none, by design | §11.77.3, §11.77.5 |
+| duplex, -V3 | 8 | HFSCX-256(DS ‖ key ‖ nonce); the nonce is public | none (research row; the affine class is about 2^−129) | §11.77.3 |
+
+The rest are round internals (v3 = χ ∘ v2, revolve = rounds), pinned KAT vectors and one SelfTest control. The screens are checked in the source of all four ports, and a control removes one from a copy of `herradura.h` to show the check fires. The 32-bit suites are fixed-width demos whose B is a preshared key, a DH key or `hfscx_32` of key and tweak.
+
+### 11.77.2 The tz tail, corrected
+
+§11.28.4 took Pr[tz(δ) ≥ k] to be 2^−k. That holds to k = n/4 and no further. The low n/4 bits of δ are P's top n/4 bits, which behave as uniform. Above that, tz(δ) ≥ k also needs P's low k − n/4 bits zero, and those are structured. For even B = 2m, P = 2m², whose 2-adic valuation is 1 + 2·v2(m), so the zero bits come in pairs. The tail halves its slope past k = 64.
+
+A case-split model (branch and valuation, each case's bits forced or uniform) agrees with exhaustive enumeration over all keys to within 0.049, 0.029 and 0.014 bits at n = 16, 20 and 24, and the error shrinks with width. At n = 256, for the keys the check accepts, with the exact free-round counts of §11.28.3 and §11.30.5 computed for every k:
+
+| tz(δ) ≥ k | 4 | 16 | 64 | 128 | 190 | 253 | 254 |
+|---|---|---|---|---|---|---|---|
+| accepted density | 2^−4 | 2^−16 | 2^−64 | **2^−97** | **2^−128** | **2^−160** | 2^−256 |
+| free rounds, differential | 3 | 9 | 33 | 65 | 96 | 127 | 192 |
+| free rounds, linear | 3 | 9 | 33 | 65 | 96 | 127 | 192 |
+
+A witness: **B = 2^95** has δ = 2^253, tz 253, 127 free rounds of 192, and passes `nl_v2_key_is_valid`; B = 2^96 has δ = 2^255 and is refused. §11.28.4's "losing all 192 requires tz = 254, one key in 2^254" stands as written, since the model puts tz = 254 at about 2^−256. But 127 free rounds come at about 2^−160, not at the 2^−253 the 2^−k reading gives. For a single random key this changes nothing. Where an attacker can try many B, it does.
+
+### 11.77.3 Question 2: many tweaks
+
+`twk` and FPE derive B = HFSCX-256-DS(len ‖ key ‖ tweak), and in the STPRP model the attacker chooses the tweak. Without the key they cannot compute B, so they cannot pick a cheap tweak. They can query many, though, and the best of 2^T has the tz whose accepted density is about 2^−T. The gate gives the attacker one extra bit. Exploiting that tweak needs data on every tweak queried, so at least
+
+C(T) = T + s · (192 − g(k(T)))
+
+bits, where g is the free-round count and s is the conjectured per-round cost: 1.71 differential, and 2 × 0.865 linear, since linear data is twice the weight. The comparison is the generic multi-target cost max(T, 256 − T): 2^T online instances leave a 2^(256−T) offline search for one of their keys.
+
+| T | 0 | 64 | 79 | 96 | 128 | 160 | 255 |
+|---|---|---|---|---|---|---|---|
+| C(T), differential | 326.6 | 335.9 | 325.2 | 313.2 | 292.2 | 271.1 | 255.0 |
+| C(T), linear | 330.4 | 339.1 | 328.1 | 315.7 | 294.1 | 272.4 | 255.0 |
+| generic | 256 | 192 | 177 | 160 | 128 | 160 | 255 |
+
+Up to T = 64 spreading gains under one bit, because each tweak bit buys half a free round, worth s/2 < 1. Past T = 64 each tweak bit buys about a whole round, so from T = 79 the differential C(T) is below the single-key figure. **§11.28.4's "a random key loses at most 3 rounds" is therefore not the many-tweak floor.** But on both axes C(T) stays at or above the generic cost for every T, meeting it only near T = 255, where both are exhaustion. It also stays above 256 across `twk`'s whole 96-bit tweak space (sector 64 bits, block index 32), with a minimum of 313. FPE's ctx and the duplex's nonce are unbounded, so for them the generic comparison is the one that applies, and it holds. A control at a bar of 1.0 fails the tweak-space check.
+
+### 11.77.4 Question 1: HPKE-NL's decrypt-side refusal
+
+The decryptor computes B = R^a from an R the sender chose, and all four CLIs refuse the affine class with an error, while the encryptor redraws r so that an honest R never triggers the refusal. Could the refusal be an oracle on a? A sender who picks R of small order d confines R^a to d values. The gate enumerates every element of each prime-order subgroup of GF(2^256)* of order 3, 5, 17, 257, 641, 65537 and 274177, and none lies in the affine class. So the refusal never fires on a small-order R. Outside a small subgroup it fires with probability about 2^−129 per query. Steering B into the zero-weight class needs the same small subgroup, where the key is already down to d candidates: the Pohlig–Hellman exposure behind HPKE-NL's demo-only rating. No change.
+
+### 11.77.5 Question 3: v3 — already answered
+
+#352's entry asked whether v3's χ removes the zero-weight class, on the reading that §11.34.4 covered only the affine one. **That reading was wrong.** §11.34.4(b) treats the zero-weight class explicitly: v3's worst one-round probability over it is 5/16, the floor every key sits on, so the class does not exist for v3. The gate holds that answer in place rather than re-deriving it. `nl_fscx_v3_weak_keys.py` is still a findings gate and still asserts the 5/16. χ on 5- and 7-bit rows is a bijection with no probability-1 differential and no correlation-1 mask, and v2 is a bijection in A, so no B can make a v3 round free.
+
+### 11.77.6 What it means
+
+**No rating moves, and no code changes.** Every v2/v3 B is set by the key holder, by a hash of the key, by the sender of an HPKE-NL ciphertext, or by a pinned vector. The two non-holder routes are answered: the HPKE-NL refusal is no oracle, and spreading over tweaks never beats the generic multi-target cost. The one correction is to §11.28.4: the tz tail is 2^−k only to k = 64, and the single-key "3 rounds at 1/16" is not what a many-tweak attacker faces.
+
+**Caveats.** The bound is in the trail-weight model: a free-round prefix plus the conjectured per-round cost of §11.68, so it is no stronger than that conjecture, and it is not a bound on hulls. The density is a model, checked exactly only at n ≤ 24. The data count assumes a cheap tweak cannot be recognised without paying for its trail, which holds because tz(δ) is a function of the secret B.

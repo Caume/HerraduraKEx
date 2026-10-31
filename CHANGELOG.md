@@ -2,6 +2,33 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [12.0.2] - 2026-10-31
+
+### TODO #352 — who chooses NL-FSCX v2's and v3's B?
+
+- **The #348 question, asked of the other two rounds.**  #348 and #351 came from inputs
+  fixed at a degenerate value, which a trail-weight floor cannot see.  v2's two weak
+  classes are both classes of B.  The affine class is refused.  The zero-weight-trail
+  class (tz(delta(B)) >= 4) is accepted on a random-key argument, so each site needs a B
+  that really is random.
+- **New gate `SecurityProofsCode/v2_v3_b_setter.py`.**  It holds a census of 120 v2/v3
+  calls in 16 files, keyed by function and B argument and held in both directions, plus
+  the 32-bit suites' call counts.  It also holds a table of who sets each B, and checks
+  the screens each site relies on in all four ports.  Controls for each.
+- **Correction to SecurityProofs-7.md §11.28.4.**  The tz tail is 2^-k only to k = 64.
+  Past that it halves its slope: tz >= 128 at about 2^-97, and tz = 253 (127 free rounds
+  of 192) at about 2^-160.  For example B = 2^95, which `nl_v2_key_is_valid` accepts.
+  The model is checked against exhaustive enumeration at n = 16, 20 and 24.
+- **The three questions:**
+  - **HPKE-NL's decrypt-side refusal** is no oracle: no element of any prime-order
+    subgroup up to 274177 is in the affine class.
+  - **Spreading over `twk`/FPE tweaks** beats the single-key figure past 2^79 tweaks, but
+    on both axes, at the conjectured bars, it never beats the generic multi-target cost.
+    It stays above 256 bits across `twk`'s 96-bit tweak space.
+  - **v3** has no weak class.  SecurityProofs-8.md §11.34.4(b) already settled this
+    (TODO #255); the entry's premise missed it.
+- **No rating moves and no code changes.**  SecurityProofs-10.md §11.77.
+
 ## [12.0.1] - 2026-10-31
 
 ### TODO #257 — the entry's "Reach" paragraph restated (documentation only)
