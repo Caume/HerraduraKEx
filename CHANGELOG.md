@@ -2,6 +2,46 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [12.0.0] - 2026-10-31
+
+### TODO #348, closed — the Schnorr challenge and the Stern chain hash move from NL-FSCX v1 to HFSCX-256-DS
+
+**MAJOR: every HPKS-NL / HPKS-T signature, HPKS-Stern-F and ring signature, HCRED
+credential and HPKE-Stern-F session key changes.**  Keys do not.  See MIGRATING.md §26.
+
+- **Why.**  #348's first pass (v10.0.1) found two NL-FSCX v1 sites owed at the 128 bar,
+  both at n/4 rounds, and both with an attacker-chosen v1 B:
+  - the Schnorr challenge e = v1(R, msg, n/4) (HPKS-NL, HPKS-T), where msg is B;
+  - the Stern chain hash h ← v1(h ⊕ v, ROL(v, n/8), n/4), where the item is B.
+  #351 showed that B ∈ {0, 2^(n−1)} makes v1 forget A after n/2 rounds.  So the round
+  raise #348 planned would have made both worse: at 3n/4, msg ∈ {0, 2^255} gives one
+  challenge for every R, and a zero item erases the chain.  The raise is dropped.
+- **The fix: both sites hash with HFSCX-256-DS**, whose v1 B is the MMO chaining value,
+  so the attacker's input is only ever v1's A.
+  - The challenge is e = HFSCX-256-DS(0x30, R ‖ msg), truncated to the key width.  It is
+    one helper per port (`hpks_nl_challenge` / `HpksNlChallenge` /
+    `HerraduraNl.hpksNlChallenge`).  The suite demos, the four CLIs (sign, verify,
+    threshold-aggregate) and harness test [15] use it.
+  - The Stern hash is HFSCX-256-DS(0x31, ds ‖ item_0 ‖ … ‖ item_{k−1}).  The Fiat–Shamir
+    and ring challenges, which were the same chain with ds = 0, call it too.
+  - The 32-bit targets (ARM, NASM i386, Arduino; suites and harnesses) use HFSCX-32's
+    MMO step word by word: a tag word (0x30000000, or 0x31000000 | ds), then the items,
+    then the LB block.
+- **Fixed along the way: stale harness models of the Stern hash.**
+  - The C harness's `stern_fs_challenges_t` had no HFSCX-256 finalizer.  Its 256-bit copy
+    now calls the library, and its 64- and 128-bit models chain HFSCX-256(h ‖ v).
+  - The Arduino harness's copy had no domain tag and no HFSCX-32.
+- **Regenerated:** `KAT/operation_replay.json` (the Stern sign and ring-sign replays) and
+  the PEM vectors.
+- `SecurityProofsCode/v1_remaining_sites.py` gains §7:
+  - controls showing both retired shapes degenerate at 3n/4;
+  - the shipped functions checked against a hand-built HFSCX-256 at four widths;
+  - the tags checked in all four ports and the 32-bit form in all six files;
+  - a check that no remaining v1 site lets a party choose its B.
+  The census drops from 102 calls to 58.  SecurityProofs-10.md §11.76.
+- **No rating moves.**  HPKS-NL and HPKS-T fall to Pohlig–Hellman, and Stern-F sits at
+  N = 256, independently of this.
+
 ## [11.0.0] - 2026-10-30
 
 ### TODO #351, closed — HFSCX-256's compression is Matyas–Meyer–Oseas; a free collision since v10.0.0 removed

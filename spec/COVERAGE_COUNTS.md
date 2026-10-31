@@ -13,7 +13,7 @@ named tool prints.
 | count | value | emitted by |
 |---|---|---|
 | suite-internal primitive manifest | 202 | `spec/check_language_parity.py` (`PRIMITIVES`, four cells each) |
-| PARAMETERS table | 86 | `spec/check_language_parity.py` (TODO #278, four cells each) |
+| PARAMETERS table | 88 | `spec/check_language_parity.py` (TODO #278, four cells each) |
 | findings-gating analysis scripts | 111 | `SecurityProofsCode/run_findings_gates.py --list` (TODO #289) |
 | fresh-sampling findings gates | 29 | `SecurityProofsCode/run_findings_gates.py --list` (`SAMPLED_GATES`, TODO #300) |
 | nominal job false-failure rate | 6.4e-05 | `SecurityProofsCode/run_findings_gates.py --list` (per `analysis-findings` run, TODO #304) |

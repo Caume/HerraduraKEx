@@ -333,13 +333,36 @@ static uint32 rnl_agree(const long *s, const long *C_other,
 #define SDF_NROWS  16
 #define SDF_ROUNDS 4
 
-static uint32 stern_hash1_32(uint32 v) {
-    return nl_fscx_revolve_v1(v, _rol32(v, 4), I_VALUE);
+/* The suite's HFSCX-32 MMO chain, one word at a time (TODO #348, v12.0.0):
+ * absorb(s, w) = nl(w, s, 24) ^ w from s = IV, then nl(LB, s, 24) ^ LB.  The
+ * Stern hash is HFSCX-32(TAG|ds, items...).  Until v11.x this harness modelled
+ * it as an NL-FSCX v1 chain with the item as v1's B and no domain tag. */
+#define HFSCX32_STEPS 24             /* 3n/4 at n = 32 */
+#define HFSCX32_IV    0xA3C5E7B9UL
+#define HFSCX32_LB    0xA3C5E799UL
+#define HPKS_NL32_TAG 0x30000000UL
+#define STERN32_TAG   0x31000000UL
+static uint32 hfscx32_absorb(uint32 s, uint32 w) {
+    return nl_fscx_revolve_v1(w, s, HFSCX32_STEPS) ^ w;
+}
+static uint32 hfscx32_final(uint32 s) {
+    return nl_fscx_revolve_v1(HFSCX32_LB, s, HFSCX32_STEPS) ^ HFSCX32_LB;
+}
+static uint32 hpks_nl_challenge_32(uint32 R, uint32 msg) {
+    uint32 h = hfscx32_absorb(HFSCX32_IV, HPKS_NL32_TAG);
+    h = hfscx32_absorb(h, R);
+    return hfscx32_final(hfscx32_absorb(h, msg));
 }
 
-static uint32 stern_hash2_32(uint32 a, uint32 b) {
-    uint32 h = nl_fscx_revolve_v1(a, _rol32(a, 4), I_VALUE);
-    return nl_fscx_revolve_v1(h ^ b, _rol32(b, 4), I_VALUE);
+static uint32 stern_hash1_32(uint32 ds, uint32 v) {
+    uint32 h = hfscx32_absorb(HFSCX32_IV, STERN32_TAG | ds);
+    return hfscx32_final(hfscx32_absorb(h, v));
+}
+
+static uint32 stern_hash2_32(uint32 ds, uint32 a, uint32 b) {
+    uint32 h = hfscx32_absorb(HFSCX32_IV, STERN32_TAG | ds);
+    h = hfscx32_absorb(h, a);
+    return hfscx32_final(hfscx32_absorb(h, b));
 }
 
 static uint32 stern_matrix_row_32(uint32 seed, int row) {
@@ -395,13 +418,14 @@ static void stern_fs_challenges_32(uint32 *chals, uint32 msg,
                                     const uint32 *c0,
                                     const uint32 *c1,
                                     const uint32 *c2) {
-    uint32 h = 0;
-    h = nl_fscx_revolve_v1(h ^ msg, _rol32(msg, 4), I_VALUE);
+    uint32 h = hfscx32_absorb(HFSCX32_IV, STERN32_TAG);   /* ds = 0 */
+    h = hfscx32_absorb(h, msg);
     for (int i = 0; i < SDF_ROUNDS; i++) {
-        h = nl_fscx_revolve_v1(h ^ c0[i], _rol32(c0[i], 4), I_VALUE);
-        h = nl_fscx_revolve_v1(h ^ c1[i], _rol32(c1[i], 4), I_VALUE);
-        h = nl_fscx_revolve_v1(h ^ c2[i], _rol32(c2[i], 4), I_VALUE);
+        h = hfscx32_absorb(h, c0[i]);
+        h = hfscx32_absorb(h, c1[i]);
+        h = hfscx32_absorb(h, c2[i]);
     }
+    h = hfscx32_final(h);
     for (int i = 0; i < SDF_ROUNDS; i++) {
         h = nl_fscx_v1(h, (uint32)i);
         chals[i] = h % 3;
@@ -430,9 +454,9 @@ static void hpks_stern_f_sign_32(SternSig32 *sig, uint32 msg,
         uint32 sr = stern_apply_perm_32(perm, r);
         uint32 sy = stern_apply_perm_32(perm, y);
         uint32 hr = stern_syndrome_32(seed, r);
-        sig->c0[i] = stern_hash2_32(pi, hr);
-        sig->c1[i] = stern_hash1_32(sr);
-        sig->c2[i] = stern_hash1_32(sy);
+        sig->c0[i] = stern_hash2_32(1, pi, hr);
+        sig->c1[i] = stern_hash1_32(2, sr);
+        sig->c2[i] = stern_hash1_32(3, sy);
         r_tmp[i] = r;  y_tmp[i] = y;
         pi_tmp[i] = pi; sr_tmp[i] = sr; sy_tmp[i] = sy;
     }
@@ -455,20 +479,20 @@ static int hpks_stern_f_verify_32(const SternSig32 *sig, uint32 msg,
     for (int i = 0; i < SDF_ROUNDS; i++) {
         uint32 bv = sig->b[i], ra = sig->respA[i], rb = sig->respB[i];
         if (bv == 0) {
-            if (stern_hash1_32(ra) != sig->c1[i]) return 0;
-            if (stern_hash1_32(rb) != sig->c2[i]) return 0;
+            if (stern_hash1_32(2, ra) != sig->c1[i]) return 0;
+            if (stern_hash1_32(3, rb) != sig->c2[i]) return 0;
             /* wt(sigma(r) ^ sigma(y)) = wt(e) -- TODO #298 */
             if (!stern_wt_is_t_32(ra ^ rb)) return 0;
         } else if (bv == 1) {
             uint32 hr = stern_syndrome_32(seed, rb);
-            if (stern_hash2_32(ra, hr) != sig->c0[i]) return 0;
+            if (stern_hash2_32(1, ra, hr) != sig->c0[i]) return 0;
             stern_gen_perm_32(perm, ra);
-            if (stern_hash1_32(stern_apply_perm_32(perm, rb)) != sig->c1[i]) return 0;
+            if (stern_hash1_32(2, stern_apply_perm_32(perm, rb)) != sig->c1[i]) return 0;
         } else {
             uint32 hy = stern_syndrome_32(seed, rb);
-            if (stern_hash2_32(ra, hy ^ synd) != sig->c0[i]) return 0;
+            if (stern_hash2_32(1, ra, hy ^ synd) != sig->c0[i]) return 0;
             stern_gen_perm_32(perm, ra);
-            if (stern_hash1_32(stern_apply_perm_32(perm, rb)) != sig->c2[i]) return 0;
+            if (stern_hash1_32(3, stern_apply_perm_32(perm, rb)) != sig->c2[i]) return 0;
         }
     }
     return 1;
@@ -478,11 +502,11 @@ static uint32 hpke_stern_f_encap_32(uint32 seed, uint32 *ct_out, uint32 *e_out) 
     uint32 e_p  = stern_rand_error_32();
     *e_out  = e_p;
     *ct_out = stern_syndrome_32(seed, e_p);
-    return stern_hash2_32(seed, e_p);
+    return stern_hash2_32(4, seed, e_p);
 }
 
 static uint32 hpke_stern_f_decap_32(uint32 seed, uint32 e_p) {
-    return stern_hash2_32(seed, e_p);
+    return stern_hash2_32(4, seed, e_p);
 }
 
 /* ------------------------------------------------------------------ */
@@ -504,14 +528,16 @@ static void stern_ring_challenges_32(int *joint, uint32 msg,
                                        const uint32 c0[RING_K][SDF_ROUNDS],
                                        const uint32 c1[RING_K][SDF_ROUNDS],
                                        const uint32 c2[RING_K][SDF_ROUNDS]) {
-    uint32 h = nl_fscx_revolve_v1(msg, _rol32(msg, 4), I_VALUE);
+    uint32 h = hfscx32_absorb(HFSCX32_IV, STERN32_TAG);   /* ds = 0 */
+    h = hfscx32_absorb(h, msg);
     for (int i = 0; i < RING_K; i++) {
         for (int r = 0; r < SDF_ROUNDS; r++) {
-            h = nl_fscx_revolve_v1(h ^ c0[i][r], _rol32(c0[i][r], 4), I_VALUE);
-            h = nl_fscx_revolve_v1(h ^ c1[i][r], _rol32(c1[i][r], 4), I_VALUE);
-            h = nl_fscx_revolve_v1(h ^ c2[i][r], _rol32(c2[i][r], 4), I_VALUE);
+            h = hfscx32_absorb(h, c0[i][r]);
+            h = hfscx32_absorb(h, c1[i][r]);
+            h = hfscx32_absorb(h, c2[i][r]);
         }
     }
+    h = hfscx32_final(h);
     for (int r = 0; r < SDF_ROUNDS; r++) {
         h = nl_fscx_v1(h, (uint32)r);
         joint[r] = (int)(h % 3);
@@ -524,9 +550,9 @@ static void stern_ring_simulate_32(SternRingSig32 *sig, int i, int r, int b,
     if (b == 0) {
         uint32 sr = prng_next();
         uint32 sy = sr ^ stern_rand_error_32();   /* TODO #298 */
-        sig->c0[i][r] = stern_hash2_32(0, 0);   /* dummy: not checked when b==0 */
-        sig->c1[i][r] = stern_hash1_32(sr);
-        sig->c2[i][r] = stern_hash1_32(sy);
+        sig->c0[i][r] = stern_hash2_32(1, 0, 0);   /* dummy: not checked when b==0 */
+        sig->c1[i][r] = stern_hash1_32(2, sr);
+        sig->c2[i][r] = stern_hash1_32(3, sy);
         sig->b[i][r] = 0; sig->respA[i][r] = sr; sig->respB[i][r] = sy;
     } else if (b == 1) {
         uint32 pi    = prng_next();
@@ -535,9 +561,9 @@ static void stern_ring_simulate_32(SternRingSig32 *sig, int i, int r, int b,
         uint32 hr = stern_syndrome_32(seed, r_sim);
         uint32 sr = stern_apply_perm_32(perm, r_sim);
         uint32 sy = prng_next();
-        sig->c0[i][r] = stern_hash2_32(pi, hr);
-        sig->c1[i][r] = stern_hash1_32(sr);
-        sig->c2[i][r] = stern_hash1_32(sy);     /* dummy: not checked when b==1 */
+        sig->c0[i][r] = stern_hash2_32(1, pi, hr);
+        sig->c1[i][r] = stern_hash1_32(2, sr);
+        sig->c2[i][r] = stern_hash1_32(3, sy);     /* dummy: not checked when b==1 */
         sig->b[i][r] = 1; sig->respA[i][r] = pi; sig->respB[i][r] = r_sim;
     } else {
         uint32 pi    = prng_next();
@@ -546,9 +572,9 @@ static void stern_ring_simulate_32(SternRingSig32 *sig, int i, int r, int b,
         uint32 hy = stern_syndrome_32(seed, y_sim) ^ synd;
         uint32 sy = stern_apply_perm_32(perm, y_sim);
         uint32 sr = stern_rand_error_32();
-        sig->c0[i][r] = stern_hash2_32(pi, hy);
-        sig->c1[i][r] = stern_hash1_32(sr);      /* dummy: not checked when b==2 */
-        sig->c2[i][r] = stern_hash1_32(sy);
+        sig->c0[i][r] = stern_hash2_32(1, pi, hy);
+        sig->c1[i][r] = stern_hash1_32(2, sr);      /* dummy: not checked when b==2 */
+        sig->c2[i][r] = stern_hash1_32(3, sy);
         sig->b[i][r] = 2; sig->respA[i][r] = pi; sig->respB[i][r] = y_sim;
     }
 }
@@ -576,9 +602,9 @@ static void stern_ring_sign_32(SternRingSig32 *sig, uint32 msg, uint32 e, int j,
         uint32 hr = stern_syndrome_32(seeds[j], rr);
         uint32 sr = stern_apply_perm_32(perm, rr);
         uint32 sy = stern_apply_perm_32(perm, yy);
-        sig->c0[j][r] = stern_hash2_32(pi, hr);
-        sig->c1[j][r] = stern_hash1_32(sr);
-        sig->c2[j][r] = stern_hash1_32(sy);
+        sig->c0[j][r] = stern_hash2_32(1, pi, hr);
+        sig->c1[j][r] = stern_hash1_32(2, sr);
+        sig->c2[j][r] = stern_hash1_32(3, sy);
         r_tmp[r] = rr; y_tmp[r] = yy;
         pi_tmp[r] = pi; sr_tmp[r] = sr; sy_tmp[r] = sy;
     }
@@ -612,19 +638,19 @@ static int stern_ring_verify_32(const SternRingSig32 *sig, uint32 msg,
             int bv = sig->b[i][r];
             uint32 ra = sig->respA[i][r], rb = sig->respB[i][r];
             if (bv == 0) {
-                if (stern_hash1_32(ra) != sig->c1[i][r]) return 0;
-                if (stern_hash1_32(rb) != sig->c2[i][r]) return 0;
+                if (stern_hash1_32(2, ra) != sig->c1[i][r]) return 0;
+                if (stern_hash1_32(3, rb) != sig->c2[i][r]) return 0;
                 if (!stern_wt_is_t_32(ra ^ rb)) return 0;   /* wt(e), #298 */
             } else if (bv == 1) {
                 uint32 hr = stern_syndrome_32(seeds[i], rb);
-                if (stern_hash2_32(ra, hr) != sig->c0[i][r]) return 0;
+                if (stern_hash2_32(1, ra, hr) != sig->c0[i][r]) return 0;
                 stern_gen_perm_32(perm, ra);
-                if (stern_hash1_32(stern_apply_perm_32(perm, rb)) != sig->c1[i][r]) return 0;
+                if (stern_hash1_32(2, stern_apply_perm_32(perm, rb)) != sig->c1[i][r]) return 0;
             } else {
                 uint32 hy = stern_syndrome_32(seeds[i], rb) ^ synds[i];
-                if (stern_hash2_32(ra, hy) != sig->c0[i][r]) return 0;
+                if (stern_hash2_32(1, ra, hy) != sig->c0[i][r]) return 0;
                 stern_gen_perm_32(perm, ra);
-                if (stern_hash1_32(stern_apply_perm_32(perm, rb)) != sig->c2[i][r]) return 0;
+                if (stern_hash1_32(3, stern_apply_perm_32(perm, rb)) != sig->c2[i][r]) return 0;
             }
         }
     }
@@ -1023,7 +1049,7 @@ void test_hpks_nl() {
         uint32 k  = prng_next();
         uint32 C  = gf_pow_32(GF_GEN, a);
         uint32 R  = gf_pow_32(GF_GEN, k);
-        uint32 e  = nl_fscx_revolve_v1(R, p, I_VALUE);  /* NL challenge */
+        uint32 e  = hpks_nl_challenge_32(R, p);  /* NL challenge (TODO #348) */
         uint64_t ae = ((uint64_t)a * (uint64_t)e) % 0xFFFFFFFFULL;
         uint32 s  = (uint32)(((uint64_t)k + 0xFFFFFFFFULL - ae) % 0xFFFFFFFFULL);
         uint32 gs = gf_pow_32(GF_GEN, s);
@@ -1063,7 +1089,7 @@ void test_hpks_nl_eve() {
         uint32 C     = gf_pow_32(GF_GEN, a);
         uint32 decoy = prng_next();
         uint32 R_eve = gf_pow_32(GF_GEN, prng_next());
-        uint32 e_eve = nl_fscx_revolve_v1(R_eve, decoy, I_VALUE);
+        uint32 e_eve = hpks_nl_challenge_32(R_eve, decoy);
         uint32 s_eve = prng_next();
         uint32 gs    = gf_pow_32(GF_GEN, s_eve);
         uint32 Ce    = gf_pow_32(C, e_eve);

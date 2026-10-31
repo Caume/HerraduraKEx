@@ -262,7 +262,7 @@ GF(2^n)* discrete-log assumption, not on FSCX's non-linearity. NL-FSCX
 replaces the affine step with two deliberately non-linear constructions,
 each used by a different family of "-NL" protocols (§9).
 
-### 8.1. NL-FSCX v1 (used by HSKE-NL-A1, HPKS-NL's challenge hash, HFSCX-256)
+### 8.1. NL-FSCX v1 (used by HSKE-NL-A1 and HFSCX-256; HPKS-NL's challenge hash through HFSCX-256)
 
 ```
 NL_FSCX_v1(A, B) = FSCX(A, B) ⊕ ROL64((A + B) mod 2^n)
@@ -394,8 +394,14 @@ Two independent constructions, both requiring a pre-shared `n`-bit key
 
 **PEM labels:** `HERRADURA HPKS-NL PRIVATE KEY` / `HERRADURA HPKS-NL
 PUBLIC KEY`. Identical to HPKS (§6) except the challenge hash in signing
-step 3 / verification step 2 is `e = NL_FSCX_REVOLVE_v1(R, msg_digest,
-i)` (§8.1) instead of plain FSCX-REVOLVE. **Classical only** — the
+step 3 / verification step 2 is `e = HFSCX-256-DS(0x30, R ‖ msg_digest)`,
+truncated to the key width n (its high n bits), instead of plain
+FSCX-REVOLVE. `R` and `msg_digest` are each n/8 big-endian octets, and
+HFSCX-256-DS(t, d) = HFSCX-256(t ‖ d). Until v11.x the challenge was
+`NL_FSCX_REVOLVE_v1(R, msg_digest, i)` (§8.1). That put the signer's
+message in v1's B, which TODO #348 (v12.0.0) removed: for B in
+{0, 2^(n−1)} v1 ignores A after n/2 rounds. HPKS-T (threshold) uses
+the same challenge. **Classical only** — the
 underlying key pair is still a GF(2^n)* discrete-log key pair (§4.1), so
 this variant is not quantum-resistant; NL-FSCX only strengthens the
 challenge-derivation step against classical algebraic attacks that

@@ -421,8 +421,8 @@ assert h.hpks_verify(msg, alice_pub.uint, R, s, poly, n)
 `hpks_sign` returns only `(R, s)`; the challenge `e` is a function of `R` and the message,
 so recompute it with `h.fscx_revolve(R, msg, n // 4)` if you need it on the wire (the CLI
 does, because it travels in the signature PEM).  `hpks_nl_sign` is the HPKS-NL counterpart
-— same arithmetic, `nl_fscx_revolve_v1` as the challenge hash.  Both were added in v8.1.0
-(TODO #308).
+— same arithmetic, `hpks_nl_challenge(R, msg)` as the challenge hash.  Both were added in
+v8.1.0 (TODO #308).
 
 #### One-time signatures (HPKS-WOTS-F)
 
@@ -531,8 +531,10 @@ sub-protocol is hardened; they are not fully post-quantum. See
 
 ### HPKS-NL Schnorr signature
 
-Same key type as HPKS. The only difference is the challenge hash: NL-FSCX v1
-replaces the linear FSCX revolve, hardening the challenge against preimage attacks.
+Same key type as HPKS. The only difference is the challenge hash:
+`hpks_nl_challenge(R, msg)` = HFSCX-256-DS(0x30, R ‖ msg), truncated to n bits, replaces
+the linear FSCX revolve.  Until v11.x it was `nl_fscx_revolve_v1(R, msg, n/4)`; v12.0.0
+moved it onto the hash so the signer's message never becomes NL-FSCX v1's B (TODO #348).
 
 #### C
 
@@ -542,14 +544,14 @@ ba_rand(&msg_nl, urnd);
 ba_rand(&k_nl,   urnd);                              /* per-signature nonce */
 
 gf_pow_ba(&R_nl, &GF_GEN, &k_nl);                   /* R = g^k             */
-nl_fscx_revolve_v1_ba(&e_nl, &R_nl, &msg_nl, I_VALUE); /* NL challenge e   */
+hpks_nl_challenge(&e_nl, &R_nl, &msg_nl);          /* NL challenge e      */
 BitArray ae_nl, s_nl2;
 ba_mul_mod_ord(&ae_nl, &alice_priv, &e_nl);
 ba_sub_mod_ord(&s_nl2, &k_nl, &ae_nl);              /* s = k - a·e mod ord */
 
 /* Verify: g^s · C^e == R (same check as HPKS; challenge recomputed with NL) */
 BitArray e_v, gs, Ce, lhs;
-nl_fscx_revolve_v1_ba(&e_v, &R_nl, &msg_nl, I_VALUE);
+hpks_nl_challenge(&e_v, &R_nl, &msg_nl);
 gf_pow_ba(&gs, &GF_GEN, &s_nl2);
 gf_pow_ba(&Ce, &alice_pub, &e_v);
 gf_mul_ba(&lhs, &gs, &Ce);
@@ -566,11 +568,11 @@ msgNl := NewRandBitArray(n)
 kNl   := NewRandBitArray(n)                                          /* per-signature nonce */
 
 RNl  := GfPow(g, kNl)                             /* R = g^k             */
-eNl  := NlFscxRevolveV1(RNl, msgNl, n/4)          /* NL challenge e      */
+eNl  := HpksNlChallenge(RNl, msgNl)              /* NL challenge e      */
 sNl  := kNl.SubModOrd(alicePriv.MulModOrd(eNl))   /* s = k - a·e mod 2^n-1 */
 
 /* Verify: g^s · C^e == R */
-eV  := NlFscxRevolveV1(RNl, msgNl, n/4)
+eV  := HpksNlChallenge(RNl, msgNl)
 lhs := GfMul(GfPow(g, sNl), GfPow(alicePub, eV))
 okNl := lhs.Equal(RNl)
 ```
@@ -585,11 +587,11 @@ msg_nl = h.BitArray.random(n)
 k_nl   = h.BitArray.random(n)                    # per-signature nonce
 
 R_nl   = h.BitArray(n, h.gf_pow(h.GF_GEN, k_nl.uint, poly, n))   # R = g^k
-e_nl   = h.nl_fscx_revolve_v1(R_nl, msg_nl, h.I_VALUE)            # NL challenge
+e_nl   = h.hpks_nl_challenge(R_nl, msg_nl)                      # NL challenge
 s_nl   = (k_nl.uint - alice_priv.uint * e_nl.uint) % ord_         # s = k - a·e
 
 # Verify: g^s · C^e == R
-e_v   = h.nl_fscx_revolve_v1(R_nl, msg_nl, h.I_VALUE)
+e_v   = h.hpks_nl_challenge(R_nl, msg_nl)
 lhs   = h.gf_mul(h.gf_pow(h.GF_GEN, s_nl, poly, n),
                  h.gf_pow(alice_pub.uint, e_v.uint, poly, n), poly, n)
 assert lhs == R_nl.uint
@@ -2006,8 +2008,9 @@ compatible with all other CLIs. The test `CliTest/test_threshold_interop.sh` ver
   full set L via HFSCX-256(L ‖ C_j), preventing a rogue-key attack.
 - **n-of-n only.** HPKS-T requires all n signers; threshold-of-n (t < n) is not
   supported.
-- **NL-FSCX challenge.** The challenge hash uses `nl_fscx_revolve_v1(R, msg, n/4)`,
-  giving the same security properties as HPKS-NL single-party signing.
+- **The HPKS-NL challenge.** The challenge hash is `hpks_nl_challenge(R, msg)` =
+  HFSCX-256-DS(0x30, R ‖ msg) (TODO #348, v12.0.0), the same one HPKS-NL single-party
+  signing uses.
 
 ### Library API
 
@@ -2400,7 +2403,7 @@ tool or script needs the exact wire-format string or algo tag, read the JSON, no
 | HSKE-NL-A2 | `nl_fscx_revolve_v2` / `_inv` | revolve-mode (invertible) |
 | HSKE-NL-AEAD | HSKE-NL-A1 + HFSCX-256 MAC | authenticated encryption (recommended) |
 | HKEX-RNL | Ring-LWR polynomial arithmetic | key exchange |
-| HPKS-NL | `nl_fscx_revolve_v1` as Schnorr challenge | signature |
+| HPKS-NL | HFSCX-256-DS as Schnorr challenge (NL-FSCX v1 until v11.x) | signature |
 | HPKE-NL | `nl_fscx_revolve_v2` / `_inv` | El Gamal encryption |
 
 ### Code-based PQC

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""v1_remaining_sites.py — TODO #348, first pass: every NL-FSCX v1 call still at n/4.
+"""v1_remaining_sites.py — TODO #348: every NL-FSCX v1 call still at n/4, and the two
+that are gone.
 
 TODO #347 (v10.0.0) raised three of NL-FSCX v1's modes to V1_MODE_STEPS = 3n/4 = 192
 rounds: the HFSCX-256 compression function, HSKE-NL-A1's keystream and MAC key, and the
 WOTS chain step.  Every other v1 call kept n/4 = 64 rounds (the ratchet keeps 1).  In
 #347's trail-weight model a round costs >= 2 bits outside B1 (v1_mode_floor.py Lemma 1),
-so 64 rounds is about 128: the collision bar with no margin, the condition #346 and
-#347 treated as inadequate for HFSCX-256.  This script asks the same question of each
-remaining site.
+so 64 rounds is about 128: the collision bar with no margin.  The first pass (v10.0.1)
+asked that question of each remaining site and found two OWED: the Schnorr challenge
+e = v1(R, msg, n/4) (HPKS-NL, HPKS-T) and the Stern chain hash
+h <- v1(h ^ v, ROL(v, n/8), n/4).  The second pass (v12.0.0) removed both from v1.
 
   §1  THE CENSUS.  Every nl_fscx_revolve_v1 call in the shipped code — the library,
       the suite demos, the four CLIs, the Java port, the KAT generator and consumers,
@@ -19,25 +21,29 @@ remaining site.
   §2  THE SITES, each with its bar and who controls a difference into it.  Verdicts:
         3n/4     raised by #347
         adequate no chosen difference reaches it, so a trail bound is not its bar
-        owed     an attacker sets the difference, and the n/4 floor sits at the bar
         n/a      a one-way-ness question (the ratchet), not a trail question
+      No site is owed any more.
 
-  §3  THE CHOSEN-DIFFERENCE SITES, measured at 64 rounds in the model.
-        Schnorr challenge e = v1(R, msg, n/4) (HPKS-NL, HPKS-T): a forger fixes
-        m and m ^ beta, and wins when e collides for the signer's fresh R.  That is
-        Delta A = 0, Delta B = beta -> 0: v1_mode_floor.py §5's shape, >= 129 outside
-        the residual and absent from its class.  Bar: 128.  Margin: 1 bit.
-        Stern chain hash h <- v1(h ^ v, ROL(v, n/8), n/4) (commitments, Fiat-Shamir
-        and ring challenges): the first differing item enters with Delta h = 0, so
-        Delta A = ROR(beta, n/8), Delta B = beta.  Lemma 1 holds for that item's 64
-        rounds whatever follows, so >= 128 outside B1.  The residual's class is
-        searched here.  Bar: 128 (binding / collision).  Margin: none.
+  §3  THE RETIRED CONSTRUCTIONS, measured at 64 rounds in the model: the record of
+      why the first pass called them owed.
+        Schnorr challenge: Delta A = 0, Delta B = beta -> 0, v1_mode_floor.py §5's
+        shape, >= 129 outside the residual and absent from its class.  Bar 128.
+        Stern chain: the first differing item enters as Delta A = ROR(beta, n/8),
+        Delta B = beta; >= 128 outside B1.  Bar 128.
+
+  §7  THE SECOND PASS.  Raising both sites to 3n/4, as first written, made them
+      worse, because in both the attacker chooses v1's B (SecurityProofs-10.md
+      §11.75): at msg in {0, 2^255} the challenge ignores R, and a zero item erases
+      the chain.  Both now go through HFSCX-256-DS (tags 0x30 and 0x31), whose v1 B is
+      the MMO chaining value.  Checked: those two degeneracies as CONTROLS against
+      the retired shapes, the shipped functions against a hand-built HFSCX-256 at
+      four widths, the tags in all four ports, the 32-bit targets' HFSCX-32 form,
+      and that no remaining site lets a party choose its B.
 
   §4  WHAT IT MEANS (prose).  §5  THE DOCUMENTS.  §6  VERDICT.
 
 Every bound is in the trail-weight model (#346 §3: it is not the exact probability for
-v1).  NOT DONE: the round raise for the owed sites, which is wire-format breaking and
-MAJOR, and is TODO #348's second pass.
+v1).
 
 Pure Python, deterministic.  About 35 s with --quick (D = 3), 9 min without (D = 4),
 on an aarch64 SBC.  Exits non-zero if a finding stops reproducing.
@@ -185,13 +191,7 @@ EXPECTED = {
     ("herradura.h", "hske_nla1_encrypt", "3 * base.nbits / 4"): (1, "a1"),
     ("herradura.h", "_wots_h_ba", "V1_MODE_STEPS"): (1, "wots"),
     ("herradura.h", "drbg_generate", "I_VALUE"): (1, "drbg"),
-    ("herradura.h", "stern_hash", "I_VALUE"): (1, "stern_chain"),
-    ("herradura.h", "_SFS", "I_VALUE"): (1, "stern_chain"),
-    ("herradura.h", "stern_ring_challenges", "I_VALUE"): (2, "stern_chain"),
     ("herradura.h", "stern_matrix_row", "I_VALUE"): (1, "stern_matrix"),
-    ("herradura.h", "hpks_nl_sign", "I_VALUE"): (1, "schnorr_nl"),
-    ("herradura.h", "hpkst_sign", "I_VALUE"): (1, "schnorr_nl"),
-    ("herradura.h", "hpkst_verify", "I_VALUE"): (1, "schnorr_nl"),
     ("herradura.h", "ratchet_advance", "1"): (1, "ratchet"),
     ("herradura.h", "_hpake_rnl_kdf", "KEYBITS / 4"): (1, "rnl_kdf"),
     ("herradura.h", "qcprf_refill", "I_VALUE"): (1, "qcprf"),
@@ -202,13 +202,7 @@ EXPECTED = {
     ("herradura/herradura.go", "HskeNlA1Encrypt", "v1ModeSteps(n)"): (1, "a1"),
     ("herradura/herradura.go", "wotsH", "v1ModeSteps(n)"): (1, "wots"),
     ("herradura/herradura.go", "DrbgGenerate", "64"): (1, "drbg"),
-    ("herradura/herradura.go", "SternHash", "n/4"): (1, "stern_chain"),
-    ("herradura/herradura.go", "sternFsChallenges", "n/4"): (1, "stern_chain"),
-    ("herradura/herradura.go", "sternRingChallenges", "n/4"): (1, "stern_chain"),
     ("herradura/herradura.go", "SternMatrixRow", "n/4"): (1, "stern_matrix"),
-    ("herradura/herradura.go", "HpksNlSign", "n/4"): (1, "schnorr_nl"),
-    ("herradura/herradura.go", "HpkstSign", "64"): (1, "schnorr_nl"),
-    ("herradura/herradura.go", "HpkstVerify", "64"): (1, "schnorr_nl"),
     ("herradura/herradura.go", "RatchetAdvance", "1"): (1, "ratchet"),
     ("herradura/herradura.go", "hpakeRnlKdf", "kRaw.Size()/4"): (1, "rnl_kdf"),
     ("herradura/herradura.go", "word", "256/4"): (1, "qcprf"),
@@ -226,32 +220,13 @@ def _fill_expected():
         (py, "_hske_nl_aead_xor_keystream", "V1_MODE_STEPS"): (1, "a1"),
         (py, "_wots_h", "3 * n // 4"): (1, "wots"),
         (py, "drbg_generate", "I_VALUE"): (1, "drbg"),
-        (py, "_stern_hash", "n // 4"): (1, "stern_chain"),
         (py, "_stern_matrix_row", "n // 4"): (1, "stern_matrix"),
-        (py, "hpks_nl_sign", "n // 4"): (1, "schnorr_nl"),
-        (py, "hpkst_sign", "I_VALUE"): (1, "schnorr_nl"),
-        (py, "hpkst_verify", "I_VALUE"): (1, "schnorr_nl"),
         (py, "ratchet_advance", "1"): (1, "ratchet"),
         (py, "_hpake_rnl_kdf", "KEYBITS // 4"): (1, "rnl_kdf"),
         (py, "_qcprf_refill", "KEYBITS // 4"): (1, "qcprf"),
         (py, "main", "V1_MODE_STEPS"): (1, "a1"),
-        (py, "main", "I_VALUE"): (3, "schnorr_nl"),
         (suite + ".c", "main", "V1_MODE_STEPS"): (1, "a1"),
-        (suite + ".c", "main", "I_VALUE"): (3, "schnorr_nl"),
         (suite + ".go", "main", "V1ModeSteps"): (1, "a1"),
-        (suite + ".go", "main", "iValue"): (3, "schnorr_nl"),
-        ("HerraduraCli/herradura_cli.c", "cmd_sign", "I_VALUE"): (1, "schnorr_nl"),
-        ("HerraduraCli/herradura_cli.c", "cmd_verify", "I_VALUE"): (1, "schnorr_nl"),
-        ("HerraduraCli/herradura_cli.c", "cmd_threshold_aggregate", "I_VALUE"):
-            (1, "schnorr_nl"),
-        ("HerraduraCli/herradura_cli.go", "cmdSign", "n/4"): (1, "schnorr_nl"),
-        ("HerraduraCli/herradura_cli.go", "cmdVerify", "n/4"): (1, "schnorr_nl"),
-        ("HerraduraCli/herradura_cli.go", "cmdThresholdAggregate", "n/4"):
-            (1, "schnorr_nl"),
-        ("HerraduraCli/herradura.py", "cmd_sign", "nbits // 4"): (1, "schnorr_nl"),
-        ("HerraduraCli/herradura.py", "cmd_verify", "nbits // 4"): (1, "schnorr_nl"),
-        ("HerraduraCli/herradura.py", "cmd_threshold_aggregate", "nbits // 4"):
-            (1, "schnorr_nl"),
         ("HerraduraCli/herradura.py", "cmd_encfile", "steps"): (2, "a1"),
         ("HerraduraCli/herradura.py", "cmd_decfile", "steps"): (2, "a1"),
         ("KAT/generate_kat.py", "rnl_kdf", "KEYBITS // 4"): (1, "rnl_kdf"),
@@ -262,26 +237,17 @@ def _fill_expected():
     }
     J = "bindings/java/herradurakex/"
     rows.update({
-        (J + "Demo.java", "main", "Herradura.I_STEPS"): (2, "schnorr_nl"),
         (J + "Hdrbg.java", "generate", "I_VALUE"): (1, "drbg"),
-        (J + "HerraduraCli.java", "cmdSign", "Herradura.I_STEPS"): (1, "schnorr_nl"),
-        (J + "HerraduraCli.java", "cmdThresholdAggregate", "Herradura.I_STEPS"):
-            (1, "schnorr_nl"),
         (J + "HerraduraNl.java", "hskeNlA1Encrypt", "3 * base.size() / 4"): (1, "a1"),
         (J + "HerraduraNl.java", "hskeNlAeadStreams", "Hfscx256.V1_MODE_STEPS"):
             (1, "a1"),
         (J + "HerraduraNl.java", "hskeNlAeadXorKs", "Hfscx256.V1_MODE_STEPS"): (1, "a1"),
-        (J + "HerraduraNl.java", "hpksNlSign", "N / 4"): (1, "schnorr_nl"),
-        (J + "HerraduraNl.java", "hpksNlVerify", "N / 4"): (1, "schnorr_nl"),
         (J + "Hfscx256.java", "hash", "steps"): (1, "hfscx"),
         (J + "Hfscx256.java", "encFile", "steps"): (2, "a1"),
         (J + "Hfscx256.java", "decFile", "steps"): (2, "a1"),
         (J + "Hpake.java", "rnlKdf", "Herradura.N / 4"): (1, "rnl_kdf"),
-        (J + "HpksT.java", "sign", "I_STEPS"): (1, "schnorr_nl"),
-        (J + "HpksT.java", "verify", "I_STEPS"): (1, "schnorr_nl"),
         (J + "KatVerify.java", "verifyRnl", "keyBits / 4"): (1, "rnl_kdf"),
         (J + "Ratchet.java", "advance", "1"): (1, "ratchet"),
-        (J + "Stern.java", "sternHash", "N / 4"): (1, "stern_chain"),
         (J + "Stern.java", "sternMatrixRow", "N / 4"): (1, "stern_matrix"),
         (J + "Stern.java", "refill", "N / 4"): (1, "qcprf"),
         (J + "Wots.java", "h", "Hfscx256.V1_MODE_STEPS"): (1, "wots"),
@@ -296,11 +262,6 @@ SITES = {
     "hfscx": ("3n/4", "3n/4", "128 collision", "the message", "HFSCX-256, -DS, HDRBG output"),
     "a1": ("3n/4", "3n/4", "256 codebook", "the nonce", "HSKE-NL-A1, AEAD, encfile"),
     "wots": ("3n/4", "3n/4", "128 collision", "the chain input", "HPKS-WOTS, HPKS-XMSS"),
-    "schnorr_nl": ("owed", "n/4", "128 (per signing query)",
-                   "the forger (msg; R is the signer's)", "HPKS-NL, HPKS-T"),
-    "stern_chain": ("owed", "n/4", "128 binding / collision",
-                    "the prover (items) and the message",
-                    "HPKS-Stern-F, HPKS-Ring, HPKE-Stern-F (KEM key), HCRED"),
     "drbg": ("adequate", "n/4", "one-way state walk", "nobody (secret state, fixed B)",
              "HDRBG"),
     "stern_matrix": ("adequate", "n/4", "uniform rows", "nobody (public seed, row "
@@ -310,6 +271,20 @@ SITES = {
     "rnl_kdf": ("adequate", "n/4", "KDF of a secret", "nobody (K is the ring secret)",
                 "HPAKE's RNL KDF, the suite-level HKEX-RNL session KDF (KAT, examples)"),
     "ratchet": ("n/a", "1", "one-way-ness (Theorem 16)", "nobody", "Ratchet"),
+}
+
+# Who sets each remaining site's v1 B (the input #351 showed must not be chosen:
+# for B in {0, 2^(n-2), 2^(n-1), 3*2^(n-2)} the round is affine, and for 0 and
+# 2^(n-1) its linear part is nilpotent, so v1 forgets A after n/2 rounds).
+B_SETTER = {
+    "hfscx": "the chaining value (MMO since v11.0.0)",
+    "a1": "the secret base K ^ nonce",
+    "wots": "the secret chain value",
+    "drbg": "a fixed domain constant",
+    "stern_matrix": "the public seed (its owner's own key)",
+    "qcprf": "the secret seed",
+    "rnl_kdf": "the ring secret K",
+    "ratchet": "a fixed domain constant",
 }
 
 N4 = {"I_VALUE", "64", "n/4", "n // 4", "nbits // 4", "N / 4", "KEYBITS / 4",
@@ -331,7 +306,7 @@ def section_1():
     check(not gone, "every tabled call is still there (%d gone: %s)" % (len(gone), gone[:4]))
     check(not moved, "every row's call count holds (%s)" % moved[:4])
     ports = {f.split("/")[0] if f.startswith("bindings") else f for f, _, _ in got}
-    check(len(rows) >= 90 and {"herradura.h", "herradura/herradura.go",
+    check(len(rows) >= 50 and {"herradura.h", "herradura/herradura.go",
                                "Herradura cryptographic suite.py", "bindings"} <= ports,
           "the census reaches all four ports (%d calls)" % len(rows))
     bad = [(k, v[1]) for k, v in EXPECTED.items()
@@ -379,13 +354,13 @@ def section_2(rows):
 
   n/a.  The ratchet's single round is a one-way-ness question (Theorem 16,
   SecurityProofs-5 §11.8.3), not a trail bound.  This item makes no claim on it.""")
-    for s in ("schnorr_nl", "stern_chain"):
-        check(SITES[s][0] == "owed", "%s is owed: the attacker sets the difference "
-              "and the site runs n/4" % s)
+    check("owed" not in {v[0] for v in SITES.values()},
+          "no v1 site is owed: the two the first pass found (the Schnorr challenge "
+          "and the Stern chain) no longer call v1 (§7)")
 
 
 def section_3():
-    rule("§3  The chosen-difference sites at 64 rounds, in the model")
+    rule("§3  The retired constructions at 64 rounds, in the model (first pass)")
     FL = _load("_v1_floor", os.path.join(HERE, "v1_mode_floor.py"))
     FL.D = D
     w, t0 = FL.W(256), time.time()
@@ -421,47 +396,125 @@ def section_3():
           % len(FL.tr(w, nb)))
 
 
+def section_7():
+    rule("§7  The second pass: the two owed sites leave v1 for HFSCX-256-DS")
+    S = _load("_suite348", os.path.join(ROOT, "Herradura cryptographic suite.py"))
+    BA, n = S.BitArray, 256
+    W = {0, 1 << (n - 2), 1 << (n - 1), 3 << (n - 2)}
+    check(set(B_SETTER) == set(SITES) and not any(
+        w in B_SETTER[k] for k in B_SETTER for w in ("the forger", "the prover",
+                                                     "the message", "the signer")),
+          "no remaining v1 site lets a party choose its B (%d sites)" % len(SITES))
+    consts = {"_DRBG_DOMAIN": S._DRBG_DOMAIN, "_RATCHET_DOMAIN": S._RATCHET_DOMAIN}
+    check(all(c.uint not in W for c in consts.values()),
+          "the fixed-B sites' constants are outside W (%s)" % ", ".join(consts))
+    rng = __import__("random").Random(348)
+    R1, R2 = (BA(n, rng.getrandbits(n)) for _ in range(2))
+    for m in (0, 1 << (n - 1)):
+        old = {S.nl_fscx_revolve_v1(R, BA(n, m), 3 * n // 4).uint for R in (R1, R2)}
+        check(len(old) == 1, "CONTROL: the v1 challenge raised as first written, "
+              "v1(R, msg, 3n/4), ignores R at msg = %s: one value for two R" %
+              ("0" if m == 0 else "2^255"))
+        new = {S.hpks_nl_challenge(R, BA(n, m)).uint for R in (R1, R2)}
+        check(len(new) == 2, "the shipped challenge depends on R at that msg")
+    x1, x2, z = BA(n, rng.getrandbits(n)), BA(n, rng.getrandbits(n)), BA(n, 0)
+
+    def old_chain(*items):
+        h = BA(n, 0)
+        for v in items:
+            h = S.nl_fscx_revolve_v1(h ^ v, v.rotated(n // 8), 3 * n // 4)
+        return h.uint
+    check(old_chain(x1, z) == old_chain(x2, z),
+          "CONTROL: the Stern chain at 3n/4 with a zero item forgets every earlier "
+          "item (two first items, one state)")
+    check(S._stern_hash(n, x1, z, ds=1) != S._stern_hash(n, x2, z, ds=1),
+          "the shipped Stern hash does not")
+    ok = True
+    for w in (32, 64, 128, 256):
+        Rw, mw = BA(w, rng.getrandbits(w)), BA(w, rng.getrandbits(w))
+        d = S.hfscx_256(bytes([0x30]) + Rw.bytes + mw.bytes)
+        ok &= S.hpks_nl_challenge(Rw, mw).uint == int.from_bytes(d, "big") >> (256 - w)
+    check(ok, "hpks_nl_challenge is HFSCX-256(0x30 || R || msg), high n bits, at n = "
+          "32, 64, 128 and 256")
+    d = S.hfscx_256(bytes([0x31, 4]) + x1.bytes + x2.bytes)
+    check(S._stern_hash(n, x1, x2, ds=4).uint == int.from_bytes(d, "big"),
+          "_stern_hash is HFSCX-256(0x31 || ds || items)")
+    src = {k: _src(k) for k in ("herradura.h", "herradura/herradura.go",
+                                "Herradura cryptographic suite.py",
+                                "bindings/java/herradurakex/HerraduraNl.java",
+                                "bindings/java/herradurakex/Stern.java")}
+    check("hfscx_256_ds(HPKS_NL_DS_CHALLENGE," in src["herradura.h"]
+          and "hfscx_256_ds(STERN_DS_HASH," in src["herradura.h"]
+          and "Hfscx256DS(hpksNlDsChallenge," in src["herradura/herradura.go"]
+          and "Hfscx256DS(sternDsHash," in src["herradura/herradura.go"]
+          and "hfscx_256_ds(_HPKS_NL_DS_CHALLENGE," in src["Herradura cryptographic suite.py"]
+          and "hfscx_256_ds(_STERN_DS_HASH," in src["Herradura cryptographic suite.py"]
+          and "hashDs(HPKS_NL_DS_CHALLENGE," in src["bindings/java/herradurakex/HerraduraNl.java"]
+          and "hashDs(HerraduraNl.STERN_DS_HASH," in src["bindings/java/herradurakex/Stern.java"],
+          "all four ports hash both sites with HFSCX-256-DS under tags 0x30 / 0x31")
+    T32 = ["Herradura cryptographic suite.s", "CryptosuiteTests/Herradura_tests.s",
+           "Herradura cryptographic suite.asm", "CryptosuiteTests/Herradura_tests.asm",
+           "Herradura cryptographic suite.ino", "CryptosuiteTests/Herradura_tests.ino"]
+    bad = []
+    for f in T32:
+        t = _src(f)
+        if not ("hpks_nl_challenge_32" in t and "hfscx32_absorb" in t
+                and "0x31000000" in t and "0x30000000" in t):
+            bad.append(f + " (helpers)")
+        if re.search(r"ror\s+r1, r5, #28|rol\s+ebx, 4\n(?:\s+mov\s+ecx, 8\n)?\s+call "
+                     r"nl_fscx_revolve_v1|_rol32\((?:v|a|b|msg|c[012]\w*\[[^]]*\]*), 4\), I_VALUE", t):
+            bad.append(f + " (old chain)")
+    check(not bad, "the six 32-bit files run both sites through HFSCX-32's MMO step "
+          "and keep no v1 chain with the item as B (%s)" % bad)
+
+
 def section_4():
     rule("§4  What it means")
     print("""
-      site           bar                         floor at n/4 (model)   margin
-      Schnorr e      128 per signing query       129                    1 bit
-      Stern chain    128 binding / collision     128                    none
-  Both owed sites are the condition #346 called inadequate for HFSCX-256: a floor at
-  the bar.  Neither moves a rating, because every protocol they serve is already
+      site           bar                         floor at n/4 (model)   now
+      Schnorr e      128 per signing query       129                    HFSCX-256-DS
+      Stern chain    128 binding / collision     128                    HFSCX-256-DS
+  The first pass found both sites at the condition #346 called inadequate for
+  HFSCX-256: a floor at the bar.  Raising their round count was not the fix, because
+  in both the attacker chooses v1's B, and #351 showed that B in {0, 2^(n-1)} makes
+  v1 forget A after n/2 rounds.  So both moved onto the hash, where the attacker's
+  input is v1's A and B is the MMO chaining value, reachable in W only through a
+  2^254-work preimage (§11.75).  No rating moves: every protocol they serve is
   Demo-only or Research for an independent reason -- HPKS-NL and HPKS-T fall to
   Pohlig-Hellman over GF(2^256)* (~2^36.5), Stern-F and its ring / KEM / credential
-  uses sit at N = 256 (~30-40 bits).  The raise is owed so that no v1 hash in the
-  suite sits at its own bar, not to repair a rating.  It is MAJOR
-  (every HPKS-NL / HPKS-T / Stern-F signature, ring signature and credential changes)
-  and is TODO #348's second pass.""")
+  uses sit at N = 256 (~30-40 bits).  The change is MAJOR: every HPKS-NL / HPKS-T /
+  Stern-F signature, ring signature, credential and HPKE-Stern-F key changes.""")
 
 
 def section_5():
     rule("§5  The documents")
-    todo = _src("TODO.md")
-    m = re.search(r"### #348:.*?(?=^### |\Z)", todo, re.S | re.M)
-    check(m and "v10.0.1" in m.group(0) and "Status: **OPEN**" in m.group(0),
-          "TODO #348 records this pass (v10.0.1) and stays OPEN for the raise")
+    done = _src("TODO_DONE.md")
+    m = re.search(r"### #348:.*?(?=^### |\Z)", done, re.S | re.M)
+    check(m and "v10.0.1" in m.group(0) and "Status: **DONE v12.0.0**" in m.group(0),
+          "TODO #348 records both passes and is DONE v12.0.0 in TODO_DONE.md")
+    check("### #348:" not in _src("TODO.md"), "and has left TODO.md")
     sp = _src("SecurityProofs-10.md")
-    check("11.73" in sp and "v1_remaining_sites.py" in sp,
-          "SecurityProofs-10.md §11.73 reports it")
+    check("11.73" in sp and "11.76" in sp and "v1_remaining_sites.py" in sp,
+          "SecurityProofs-10.md §11.73 and §11.76 report it")
     ch = _src("CHANGELOG.md")
-    check("## [10.0.1]" in ch and "TODO #348" in ch, "CHANGELOG has the 10.0.1 entry")
+    check("## [10.0.1]" in ch and "## [12.0.0]" in ch and "TODO #348" in ch,
+          "CHANGELOG has the 10.0.1 and 12.0.0 entries")
+    mg = _src("MIGRATING.md")
+    check("## 26." in mg and "TODO #348" in mg, "MIGRATING.md §26 covers the MAJOR change")
 
 
 def section_6():
     rule("§6  Verdict")
-    print("""**Of the six sites NL-FSCX v1 still runs at n/4, two are owed; the other four are not
-trail questions.**
+    print("""**No NL-FSCX v1 call left in the suite lets a party choose its B.**
 
-  Owed: the Schnorr challenge (HPKS-NL, HPKS-T) and the Stern chain hash (commitments,
-  Fiat-Shamir and ring challenges), both attacker-differenced and at the 128 bar.
-  Adequate: HDRBG's walk, the QC-MDPC PRF, the Stern matrix rows and the RNL KDFs.
-  Out of scope: the ratchet's one round.  No rating moves.
+  The two sites the first pass found owed -- the Schnorr challenge (HPKS-NL, HPKS-T)
+  and the Stern chain hash (commitments, Fiat-Shamir and ring challenges, HPKE-Stern-F's
+  key) -- now hash with HFSCX-256-DS in all four ports, and with HFSCX-32's MMO step
+  on the 32-bit targets.  Adequate at n/4: HDRBG's walk, the QC-MDPC PRF, the Stern
+  matrix rows and the RNL KDFs.  Out of scope: the ratchet's one round.  No rating
+  moves.
 
-  NOT DONE.  The raise (MAJOR, TODO #348's second pass), the exact probability, and
-  the linear hull.""")
+  NOT DONE.  The exact probability and the linear hull of the remaining n/4 sites.""")
 
 
 def main():
@@ -471,6 +524,7 @@ def main():
     section_2(rows)
     section_3()
     section_4()
+    section_7()
     section_5()
     section_6()
     rule("Summary")

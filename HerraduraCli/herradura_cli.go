@@ -3889,7 +3889,7 @@ func cmdSign(args []string) {
 			e = FscxRevolve(R, msg, n/4)
 		} else {
 			R, sBa = HpksNlSign(msg, priv)
-			e = NlFscxRevolveV1(R, msg, n/4)
+			e = HpksNlChallenge(R, msg)
 		}
 		pem, err := encodeSchnorrSig(sBa.BigInt(), R.BigInt(), e.BigInt(), n)
 		if err != nil {
@@ -4221,7 +4221,7 @@ func cmdVerify(args []string) {
 		if *algo == "hpks" {
 			eV = FscxRevolve(NewBitArray(n, R), msg, n/4)
 		} else {
-			eV = NlFscxRevolveV1(NewBitArray(n, R), msg, n/4)
+			eV = HpksNlChallenge(NewBitArray(n, R), msg)
 		}
 		// Verify: g^s * pub^(e_recomputed) == R  (matches Python verify)
 		lhs := GfMul(GfPow(GfGenBA(n), NewBitArray(n, sInt)), GfPow(pub, eV))
@@ -5150,7 +5150,7 @@ func cmdThresholdAggregate(args []string) {
 	msg   := msgPad(inBytes, n/8)
 	RBa   := NewBitArray(n, R)
 	msgBa := NewBitArray(n, new(big.Int).SetBytes(msg))
-	eBa   := NlFscxRevolveV1(RBa, msgBa, n/4)
+	eBa   := HpksNlChallenge(RBa, msgBa)
 	eBig  := new(big.Int).SetBytes(eBa.Bytes())
 
 	Cagg, _ := HpkstAggregatePublickeys(pubs)

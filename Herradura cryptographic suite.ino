@@ -401,14 +401,41 @@ static uint32 hfscx_32(uint32 x) {
     return nl_fscx_revolve_v1(0xA3C5E799UL, s, V1_MODE_STEPS) ^ 0xA3C5E799UL;
 }
 
+/* HFSCX-32's MMO chain one word at a time (TODO #348, v12.0.0):
+ * absorb(s, w) = nl(w, s, 24) ^ w from s = IV, then final(s) = nl(LB, s, 24) ^ LB.
+ * hfscx_32(x) is final(absorb(IV, x)).  Every input below starts with a tag word
+ * and has a fixed word count at its call site.  The item is v1's A and the
+ * chaining value its B, so no party chooses B (§11.75). */
+#define HFSCX32_IV    0xA3C5E7B9UL
+#define HFSCX32_LB    0xA3C5E799UL
+#define HPKS_NL32_TAG 0x30000000UL   /* HPKS-NL Schnorr challenge          */
+#define STERN32_TAG   0x31000000UL   /* Stern-F chain hash; low byte = ds   */
+static uint32 hfscx32_absorb(uint32 s, uint32 w) {
+    return nl_fscx_revolve_v1(w, s, V1_MODE_STEPS) ^ w;
+}
+static uint32 hfscx32_final(uint32 s) {
+    return nl_fscx_revolve_v1(HFSCX32_LB, s, V1_MODE_STEPS) ^ HFSCX32_LB;
+}
+
+/* HPKS-NL challenge e = HFSCX-32(TAG, R, msg).  NL-FSCX v1(R, msg, n/4) until
+ * v11.x, with the signer's msg as v1's B (TODO #348). */
+static uint32 hpks_nl_challenge_32(uint32 R, uint32 msg) {
+    uint32 h = hfscx32_absorb(HFSCX32_IV, HPKS_NL32_TAG);
+    h = hfscx32_absorb(h, R);
+    return hfscx32_final(hfscx32_absorb(h, msg));
+}
+
+/* Stern chain hash = HFSCX-32(TAG|ds, items...).  Until v11.x each item was
+ * absorbed as v1(h ^ v, ROL(v, 4), n/4), with the item as v1's B (TODO #348). */
 static uint32 stern_hash1_32(uint32 ds, uint32 v) {
-    uint32 h = nl_fscx_revolve_v1(ds ^ v, _rol32(v, 4), I_VALUE);
-    return hfscx_32(h);
+    uint32 h = hfscx32_absorb(HFSCX32_IV, STERN32_TAG | ds);
+    return hfscx32_final(hfscx32_absorb(h, v));
 }
 
 static uint32 stern_hash2_32(uint32 ds, uint32 a, uint32 b) {
-    uint32 h = nl_fscx_revolve_v1(ds ^ a, _rol32(a, 4), I_VALUE);
-    return hfscx_32(nl_fscx_revolve_v1(h ^ b, _rol32(b, 4), I_VALUE));
+    uint32 h = hfscx32_absorb(HFSCX32_IV, STERN32_TAG | ds);
+    h = hfscx32_absorb(h, a);
+    return hfscx32_final(hfscx32_absorb(h, b));
 }
 
 static uint32 stern_matrix_row_32(uint32 seed, int row) {
@@ -478,13 +505,14 @@ static void stern_fs_challenges_32(uint32 *chals, uint32 msg,
                                     const uint32 *c0,
                                     const uint32 *c1,
                                     const uint32 *c2) {
-    uint32 h = 0;
-    h = nl_fscx_revolve_v1(h ^ msg, _rol32(msg, 4), I_VALUE);
+    uint32 h = hfscx32_absorb(HFSCX32_IV, STERN32_TAG);   /* ds = 0 */
+    h = hfscx32_absorb(h, msg);
     for (int i = 0; i < SDF_ROUNDS; i++) {
-        h = nl_fscx_revolve_v1(h ^ c0[i], _rol32(c0[i], 4), I_VALUE);
-        h = nl_fscx_revolve_v1(h ^ c1[i], _rol32(c1[i], 4), I_VALUE);
-        h = nl_fscx_revolve_v1(h ^ c2[i], _rol32(c2[i], 4), I_VALUE);
+        h = hfscx32_absorb(h, c0[i]);
+        h = hfscx32_absorb(h, c1[i]);
+        h = hfscx32_absorb(h, c2[i]);
     }
+    h = hfscx32_final(h);
     for (int i = 0; i < SDF_ROUNDS; i++) {
         h = nl_fscx_v1(h, (uint32)i);
         chals[i] = h % 3;
@@ -577,18 +605,19 @@ static void ring_fs_challenges2_32(uint32 *joint_out,
                                     uint32 msg,
                                     const uint32 *c0_0, const uint32 *c1_0, const uint32 *c2_0,
                                     const uint32 *c0_1, const uint32 *c1_1, const uint32 *c2_1) {
-    uint32 h = 0;
-    h = nl_fscx_revolve_v1(h ^ msg, _rol32(msg, 4), I_VALUE);
+    uint32 h = hfscx32_absorb(HFSCX32_IV, STERN32_TAG);   /* ds = 0 */
+    h = hfscx32_absorb(h, msg);
     for (int i = 0; i < SDF_ROUNDS; i++) {
-        h = nl_fscx_revolve_v1(h ^ c0_0[i], _rol32(c0_0[i], 4), I_VALUE);
-        h = nl_fscx_revolve_v1(h ^ c1_0[i], _rol32(c1_0[i], 4), I_VALUE);
-        h = nl_fscx_revolve_v1(h ^ c2_0[i], _rol32(c2_0[i], 4), I_VALUE);
+        h = hfscx32_absorb(h, c0_0[i]);
+        h = hfscx32_absorb(h, c1_0[i]);
+        h = hfscx32_absorb(h, c2_0[i]);
     }
     for (int i = 0; i < SDF_ROUNDS; i++) {
-        h = nl_fscx_revolve_v1(h ^ c0_1[i], _rol32(c0_1[i], 4), I_VALUE);
-        h = nl_fscx_revolve_v1(h ^ c1_1[i], _rol32(c1_1[i], 4), I_VALUE);
-        h = nl_fscx_revolve_v1(h ^ c2_1[i], _rol32(c2_1[i], 4), I_VALUE);
+        h = hfscx32_absorb(h, c0_1[i]);
+        h = hfscx32_absorb(h, c1_1[i]);
+        h = hfscx32_absorb(h, c2_1[i]);
     }
+    h = hfscx32_final(h);
     for (int i = 0; i < SDF_ROUNDS; i++) {
         h = nl_fscx_v1(h, (uint32)i);
         joint_out[i] = h % 3;
@@ -1192,13 +1221,13 @@ void loop() {
     Serial.println();
 
     /* ---------------------------------------------------------------- */
-    /* HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge]          */
+    /* HPKS-NL [NL-hardened Schnorr -- HFSCX-32 challenge]          */
     /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge]"));
+    Serial.println(F("--- HPKS-NL [NL-hardened Schnorr -- HFSCX-32 challenge]"));
     {
         uint32 k_nl = lcg_next();
         uint32 R_nl = gf_pow_32(GF_GEN, k_nl);
-        uint32 e_nl = nl_fscx_revolve_v1(R_nl, PLAIN, I_VALUE);
+        uint32 e_nl = hpks_nl_challenge_32(R_nl, PLAIN);
         uint64_t ae_nl = ((uint64_t)A_PRIV * (uint64_t)e_nl) % 0xFFFFFFFFULL;
         uint32 s_nl = (uint32)(((uint64_t)k_nl + 0xFFFFFFFFULL - ae_nl) % 0xFFFFFFFFULL);
         uint32 gs_nl = gf_pow_32(GF_GEN, s_nl);

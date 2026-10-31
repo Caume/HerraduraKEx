@@ -24292,3 +24292,124 @@ changes every v1 site, not just this one.  (c) HFSCX-256 back to 64 rounds, whic
   key and RNL session key derived through HFSCX-256 changes (MIGRATING.md §25).
 
 Status: **DONE v11.0.0** — HFSCX-256 (and HFSCX-32) use Matyas–Meyer–Oseas compression, so the chaining value is v1's B and no message block can make the round affine; v10.0.0–v10.0.4's zero-block collision H(b‖0^32) = H(0^32‖b) is gone.
+
+### #348: NL-FSCX v1's remaining n/4-round uses — audit each against #347's criterion
+
+**#347 raised three of NL-FSCX v1's modes to `V1_MODE_STEPS = 3n/4` rounds: the HFSCX-256
+compression function, HSKE-NL-A1's keystream and MAC key, and the WOTS chain step.  Every
+other v1 call in the four ports still runs `I_VALUE = n/4` (64 at n = 256), or fewer.**
+#347's trail-weight model gives about 2 bits per round outside B1 (Lemma 1).  At 64 rounds
+that is about 128 bits, which is the collision bar with no margin.  The model has not been
+applied to any of these sites.  The C sites in `herradura.h` (Go, Python and Java
+mirror them):
+
+| site | function | rounds | who controls the inputs |
+|---|---|---|---|
+| HDRBG generate | `drbg_generate` | n/4 | neither input, after seeding: state ← v1(state, DRBG_DOMAIN) |
+| HPAKE's RNL KDF | `_hpake_rnl_kdf` (`nl_fscx_revolve_v1(ba_rnl_kdf_seed(K), K, n/4)`) | n/4 | K is the shared ring secret; no attacker choice |
+| HPKS-NL challenge | `hpks_nl_sign` / verify | n/4 | **the signer and forger choose `msg`, and R through k** |
+| HPKS-T challenge | `hpkst_sign` / `hpkst_verify` | n/4 | the same, aggregated R |
+| Stern hash / commitments | `stern_hash`, `_SFS` | n/4 | the prover, the message |
+| Stern matrix rows | `stern_matrix_row` | n/4 | public seed |
+| Stern-Ring challenges | `stern_ring_challenges` | n/4 | the prover, the message |
+| QC-MDPC PRF | `qcprf_refill` | n/4 | the seed |
+| Ratchet | `ratchet_advance` | 1 | neither input |
+
+**The question for each row is the one #346 asked of A1 and HFSCX:** what does an attacker
+get from a differential or linear characteristic, and is the bar collision (128),
+second preimage, or distinguishing?  Some rows are probably fine at n/4 and need only the
+argument written down.  A KDF or DRBG over a secret state has no chosen difference to
+start a trail from.  Others are not obviously fine.  The HPKS-NL challenge is a hash of
+`(R, msg)` that a forger controls, so a challenge collision lets them reuse one
+signature for two messages.  The Stern commitments are hiding and binding only as far as
+the hash holds.  The ratchet's 1 round is deliberate (forward secrecy comes from
+one-wayness over the state, not from mixing), but that should also be argued rather than
+assumed.
+
+**Deliverable, in two passes.**  (1) A gate (`SecurityProofsCode/v1_remaining_sites.py`)
+that pins every v1 call site in all four ports with its step count, so a new site or a
+changed count fails it.  It also records each site's verdict: `adequate at n/4` with the
+argument, or `owed`.  (2) For each `owed` row, either the argument or the round raise.
+The raise is **MAJOR** under CLAUDE.md's policy: HPKS-NL, HPKS-T and Stern-F signatures,
+Stern-F/QC-MDPC keys and HPAKE session keys would all change, and it needs a
+MIGRATING.md entry.  Batch every raise into one major version rather than one per site.
+
+**First pass (v10.0.1), `SecurityProofsCode/v1_remaining_sites.py`, SecurityProofs-10.md
+§11.73.**  The census covers 102 calls in 23 files, with each call's enclosing function and step
+argument.  It is held both ways: a new call, a vanished call or a changed count fails.
+Python is parsed with `ast`.  The census found two sites the table above missed: the
+suite-level HKEX-RNL session KDF that `KAT/generate_kat.py`, `verify_kat.go` and `KatVerify`
+transcribe, and `docs/examples`.  Verdicts:
+- **owed:** the Schnorr challenge (HPKS-NL, HPKS-T) and the Stern chain hash (commitments,
+  Fiat–Shamir and ring challenges, and HPKE-Stern-F's key).  Both are attacker-differenced
+  and both sit at the 128 bar.  The challenge is v1_mode_floor.py §5's ΔA = 0 shape,
+  ≥ 129.  The chain's first differing item enters at ROR(β, n/8), which Lemma 1 puts at
+  ≥ 128, and the residual's class has no characteristic leaving that entry.
+- **adequate:** HDRBG's walk, the QC-MDPC PRF, the Stern matrix rows and the RNL KDFs.
+  No party can difference their inputs.
+- **n/a:** the ratchet's one round, which is Theorem 16's one-way-ness question.
+
+**No rating moves.** Every protocol an owed site serves is already Demo-only or Research
+for an independent reason: Pohlig–Hellman for HPKS-NL and HPKS-T, N = 256 for Stern-F.
+**Second pass, still owed:** raise the two owed sites to `V1_MODE_STEPS`.  That is MAJOR
+(HPKS-NL, HPKS-T and Stern-F signatures, ring signatures and credentials) and needs a
+MIGRATING.md entry.  Since no rating depends on it, it can wait for the next major
+version rather than force one.
+
+**A constraint the raise must meet (TODO #351, v11.0.0).**  The raise as first written
+was implemented and then parked, because it would have made both sites worse.  For
+B ∈ {0, 2^(n−1)} v1's round is affine with a nilpotent linear part, and v1 does not depend
+on A once there are at least n/2 rounds (SecurityProofs-10.md §11.75).  Both owed sites let
+the attacker choose B:
+- **The Schnorr challenge**, e = v1(R, msg).  At 3n/4, msg ∈ {0, 2^255} gives e = 0 for
+  every R, so anyone could sign those messages.
+- **The Stern chain hash**, where B = ROL(item, n/8).  A zero item erases every earlier
+  item, so a commitment whose syndrome item is 0 opens to any permutation.  Even at n/4,
+  L^(n/4) has a 2^(n/2) kernel, which leaves about n/4 bits of binding for a zero item.
+
+So the second pass needs a construction in which no party chooses v1's B, as #351 did
+for HFSCX-256: B a chaining value or a domain constant, and the attacker's input in A with
+a feed-forward.  The parked edits are in `git stash` on devtest ("TODO #348 second pass,
+parked").  They only change the step counts and cannot be applied as they stand.
+
+**Second pass (v12.0.0): both owed sites leave v1 instead of raising it.**  The parked
+round raise was dropped (and the stash with it).  Both sites now hash with HFSCX-256-DS,
+whose NL-FSCX v1 B is the MMO chaining value from #351, so the attacker's input is only
+ever v1's A:
+- **The Schnorr challenge** (HPKS-NL, HPKS-T) is `e = HFSCX-256-DS(0x30, R || msg)`,
+  truncated to the key width (its high bits).  It is one helper per port
+  (`hpks_nl_challenge`, `HpksNlChallenge`, `hpks_nl_challenge`,
+  `HerraduraNl.hpksNlChallenge`), and every inline copy in the demos, the four CLIs and
+  the harnesses' test [15] now calls it or transcribes it.
+- **The Stern chain hash** is `HFSCX-256-DS(0x31, ds || item_0 || ... || item_{k-1})`.
+  The Fiat-Shamir and ring challenges were the same chain with ds = 0 and now go
+  through `stern_hash` too.  The commitments, the challenges, HPKE-Stern-F's key and
+  HCRED's issuer signature all change.
+- **The 32-bit targets** (ARM, NASM, Arduino; suite and harness) do the same over
+  HFSCX-32: `absorb(s, w) = v1(w, s, 24) ^ w` from the IV, a tag word first
+  (`0x30000000` or `0x31000000 | ds`), and the existing LB final block.
+  `hfscx_32(x)` is the one-word case.
+- The C harness's own copies were stale models.  `stern_fs_challenges_t` had no
+  HFSCX-256 finalizer at all.  Its 64- and 128-bit Stern models now chain
+  `HFSCX-256(h || v)`, and its 256-bit copy calls the library.  The Arduino harness's
+  copy had neither a domain tag nor HFSCX-32.
+
+`SecurityProofsCode/v1_remaining_sites.py` §7 (SecurityProofs-10.md §11.76) gates it:
+- **CONTROLS against the retired shapes at 3n/4.**  `v1(R, msg, 192)` gives one value for
+  two R at msg = 0 and at msg = 2^255.  The chain with a zero item gives one state for
+  two first items.
+- **The shipped functions** depend on R and on the earlier items, and equal a hand-built
+  HFSCX-256 at n = 32, 64, 128 and 256.
+- **Source checks:** the tags in all four ports, and the six 32-bit files' MMO form.
+- **No remaining v1 site lets a party choose its B.**  Its constant-B sites' constants
+  are outside W.
+
+The census drops from 102 calls to 58.  **MAJOR**:
+- **Changed:** every HPKS-NL / HPKS-T signature and aggregate, HPKS-Stern-F and ring
+  signature, HCRED credential, and HPKE-Stern-F (`--algo hpke-stern`) session key.
+- **Unchanged:** keys, `hpke-stern-kem`, and everything else.
+- MIGRATING.md §26.
+- No rating moves.  Every affected protocol is Demo-only or Research for an independent
+  reason.
+
+Status: **DONE v12.0.0** — the Schnorr challenge and the Stern chain hash moved from NL-FSCX v1 to HFSCX-256-DS (HFSCX-32 on the 32-bit targets), so no v1 call lets a party choose its B.

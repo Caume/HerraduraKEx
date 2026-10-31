@@ -357,9 +357,9 @@ def section_7():
     check("## [11.0.0]" in _src("CHANGELOG.md"), "CHANGELOG.md has [11.0.0]")
     check(re.search(r"^## \d+\. .*\(v11\.0\.0\)", _src("MIGRATING.md"), re.M) is not None,
           "MIGRATING.md has a v11.0.0 section")
-    todo = _src("TODO.md")
+    todo = _src("TODO_DONE.md")    # #348 closed in v12.0.0 and moved here
     m = re.search(r"^### #348:.*?(?=^### |\Z)", todo, re.S | re.M)
-    check(bool(m) and "#351" in m.group(0), "TODO.md's #348 records #351's constraint")
+    check(bool(m) and "#351" in m.group(0), "TODO_DONE.md's #348 records #351's constraint")
 
 
 def main():

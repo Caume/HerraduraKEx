@@ -647,10 +647,9 @@ func testHkexRnlCorrectness() {
 }
 
 func testHpksNlCorrectness() {
-	fmt.Println("[15] HPKS-NL correctness: g^s · C^e == R (NL-FSCX v1 challenge)  [PQC-EXT]")
+	fmt.Println("[15] HPKS-NL correctness: g^s · C^e == R (HFSCX-256-DS challenge)  [PQC-EXT]")
 	for _, size := range gfSizes {
 		g := GfGenBA(size)
-		iv := iVal(size)
 		ok, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
@@ -660,7 +659,7 @@ func testHpksNlCorrectness() {
 			k := randBA(size)
 			rInt := GfPow(g, k)
 			rB := rInt
-			e := NlFscxRevolveV1(rB, pt, iv)
+			e := HpksNlChallenge(rB, pt)
 			s := k.SubModOrd(a.MulModOrd(e))
 			lhs := GfMul(GfPow(g, s), GfPow(cVal, e))
 			if lhs.Equal(rInt) { ok++ }

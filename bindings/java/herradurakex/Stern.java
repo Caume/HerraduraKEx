@@ -88,20 +88,23 @@ public final class Stern {
         return result;
     }
 
-    /** Chain-hashes items via NL-FSCX v1, domain-separated by {@code ds}
-     * (0=challenge/default, 1=c0, 2=c1, 3=c2, 4=KEM-key), finalized with
-     * HFSCX-256-DM. Matches Python's {@code _stern_hash}. */
+    /** Stern-F chain hash (TODO #348, v12.0.0):
+     * HFSCX-256-DS(0x31, ds || item_0 || ... || item_{k-1}), domain-separated by
+     * {@code ds} (0=challenge/default, 1=c0, 2=c1, 3=c2, 4=KEM-key).  Until v11.x
+     * each item went through an NL-FSCX v1 chain as v1's B, where a zero item
+     * made the round affine-nilpotent (SecurityProofs-10.md §11.75).  Matches
+     * Python's {@code _stern_hash}. */
     static BigInteger sternHash(int ds, BigInteger... items) {
         // Stern's syndromes and error vectors are INTEGER objects by the
         // protocol's own definition — as they are in Go (*big.Int) and Python
         // (int) — so this layer keeps its BigInteger surface and crosses at the
         // named boundary for the bit-string work (TODO #314 pass 5).
-        BitArray h = BitArray.fromUint(ds, N);
-        for (BigInteger item : items) {
-            BitArray v = BitArray.fromBigInteger(item, N);
-            h = Hfscx256.nlFscxRevolveV1(h.xor(v), v.rotLeft(N / 8), N / 4);
-        }
-        return new BigInteger(1, Hfscx256.hash(h.toBytes()));
+        byte[] buf = new byte[1 + items.length * (N / 8)];
+        buf[0] = (byte) ds;
+        for (int i = 0; i < items.length; i++)
+            System.arraycopy(BitArray.fromBigInteger(items[i], N).toBytes(), 0,
+                             buf, 1 + i * (N / 8), N / 8);
+        return new BigInteger(1, Hfscx256.hashDs(HerraduraNl.STERN_DS_HASH, buf));
     }
 
     /** Row `row` of the public parity-check matrix H, via NL-FSCX v1 PRF

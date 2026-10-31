@@ -676,8 +676,7 @@ t8_loop:
     ldr     r0, [r0]
     ldr     r1, =t_val
     ldr     r1, [r1]
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v1
+    bl      hpks_nl_challenge_32    @ e = HFSCX-32(TAG, R, msg)  (TODO #348)
     ldr     r3, =t_e_sc
     str     r0, [r3]
     ldr     r4, =t_a_priv
@@ -837,8 +836,7 @@ t10_loop:
     ldr     r0, [r0]
     ldr     r1, =t_val
     ldr     r1, [r1]
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v1
+    bl      hpks_nl_challenge_32    @ e = HFSCX-32(TAG, R, msg)  (TODO #348)
     ldr     r3, =t_e_sc
     str     r0, [r3]
     /* s_fake = prng_next() -- random forgery */
@@ -2832,39 +2830,82 @@ hfscx_32:
 .LHLB2: .word 0xA3C5E799
 
 /* ------------------------------------------------------------------ */
-/* stern_hash1_32: r0=ds, r1=v -> r0=sternHash(ds,v)                 */
+/* The suite's HFSCX-32 MMO chain one word at a time (TODO #348):     */
+/* hfscx32_absorb: r0=s, r1=w -> nl(w, s, 24) ^ w                     */
+/* hfscx32_final:  r0=s       -> nl(LB, s, 24) ^ LB                   */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hfscx32_absorb:
+    push    {r4, lr}
+    mov     r4, r1              @ r4 = w
+    mov     r1, r0              @ B = s
+    mov     r0, r4              @ A = w
+    mov     r2, #V1_MODE_STEPS
+    bl      nl_fscx_revolve_v1
+    eor     r0, r0, r4
+    pop     {r4, pc}
+
+    .thumb_func
+hfscx32_final:
+    push    {r4, lr}
+    mov     r1, r0              @ B = s
+    ldr     r4, .LHLB2
+    mov     r0, r4              @ A = LB
+    mov     r2, #V1_MODE_STEPS
+    bl      nl_fscx_revolve_v1
+    eor     r0, r0, r4
+    pop     {r4, pc}
+
+/* ------------------------------------------------------------------ */
+/* hpks_nl_challenge_32: r0=R, r1=msg -> HFSCX-32(0x30000000, R, msg) */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hpks_nl_challenge_32:
+    push    {r4-r6, lr}
+    mov     r4, r0
+    mov     r5, r1
+    ldr     r0, .LHIV2
+    mov     r1, #0x30000000
+    bl      hfscx32_absorb
+    mov     r1, r4
+    bl      hfscx32_absorb
+    mov     r1, r5
+    bl      hfscx32_absorb
+    bl      hfscx32_final
+    pop     {r4-r6, pc}
+
+/* ------------------------------------------------------------------ */
+/* stern_hash1_32: r0=ds, r1=v -> HFSCX-32(0x31000000|ds, v)          */
 /* ------------------------------------------------------------------ */
     .thumb_func
 stern_hash1_32:
     push    {r4, lr}
-    ror     r4, r1, #28         @ r4 = ROL(v,4)
-    eor     r0, r0, r1          @ r0 = ds ^ v
-    mov     r1, r4              @ r1 = ROL(v,4)
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
-    bl      hfscx_32
+    mov     r4, r1
+    orr     r1, r0, #0x31000000
+    ldr     r0, .LHIV2
+    bl      hfscx32_absorb
+    mov     r1, r4
+    bl      hfscx32_absorb
+    bl      hfscx32_final
     pop     {r4, pc}
 
-    .ltorg
-
 /* ------------------------------------------------------------------ */
-/* stern_hash2_32: r0=ds, r1=a, r2=b -> r0=sternHash(ds,a,b)        */
+/* stern_hash2_32: r0=ds, r1=a, r2=b -> HFSCX-32(0x31000000|ds, a, b) */
 /* ------------------------------------------------------------------ */
     .thumb_func
 stern_hash2_32:
-    push    {r4-r5, lr}
-    ror     r4, r1, #28         @ r4 = ROL(a,4)
-    mov     r5, r2              @ r5 = b
-    eor     r0, r0, r1          @ r0 = ds ^ a
-    mov     r1, r4              @ r1 = ROL(a,4)
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1  @ r0 = h
-    eor     r0, r0, r5          @ h ^ b
-    ror     r1, r5, #28         @ ROL(b,4)
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1  @ r0 = raw
-    bl      hfscx_32
-    pop     {r4-r5, pc}
+    push    {r4-r6, lr}
+    mov     r4, r1
+    mov     r5, r2
+    orr     r1, r0, #0x31000000
+    ldr     r0, .LHIV2
+    bl      hfscx32_absorb
+    mov     r1, r4
+    bl      hfscx32_absorb
+    mov     r1, r5
+    bl      hfscx32_absorb
+    bl      hfscx32_final
+    pop     {r4-r6, pc}
 
     .ltorg
 
@@ -3058,13 +3099,15 @@ tsre_init_done:
 stern_fs_challenges_32:
     push    {r4-r9, lr}
     mov     r9, r0
-    mov     r4, #0
+    ldr     r0, =0xA3C5E7B9     @ chSt = absorb(IV, TAG|0)  (TODO #348)
+    mov     r1, #0x31000000
+    bl      hfscx32_absorb
+    mov     r4, r0
     ldr     r5, =t_sdf_msg
     ldr     r5, [r5]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     mov     r8, #0
 tsfc_round_loop:
@@ -3072,28 +3115,28 @@ tsfc_round_loop:
     bge     tsfc_round_done
     ldr     r5, =sdf_c0
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =sdf_c1
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =sdf_c2
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     add     r8, r8, #1
     b       tsfc_round_loop
 tsfc_round_done:
+    mov     r0, r4
+    bl      hfscx32_final       @ HFSCX-32 final block (TODO #348)
+    mov     r4, r0
     mov     r8, #0
 tsfc_chal_loop:
     cmp     r8, #SDF_ROUNDS
@@ -3397,13 +3440,15 @@ hpke_stern_f_decap_known_32:
 ring_fs_challenges_32:
     push    {r4-r9, lr}
     mov     r9, r0
-    mov     r4, #0
+    ldr     r0, =0xA3C5E7B9     @ chSt = absorb(IV, TAG|0)  (TODO #348)
+    mov     r1, #0x31000000
+    bl      hfscx32_absorb
+    mov     r4, r0
     ldr     r5, =t_sdf_msg
     ldr     r5, [r5]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     mov     r8, #0
 trfc_m0_loop:
@@ -3411,24 +3456,21 @@ trfc_m0_loop:
     bge     trfc_m0_done
     ldr     r5, =ring0_c0
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =ring0_c1
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =ring0_c2
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     add     r8, r8, #1
     b       trfc_m0_loop
@@ -3439,28 +3481,28 @@ trfc_m1_loop:
     bge     trfc_m1_done
     ldr     r5, =sdf_c0
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =sdf_c1
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =sdf_c2
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     add     r8, r8, #1
     b       trfc_m1_loop
 trfc_m1_done:
+    mov     r0, r4
+    bl      hfscx32_final       @ HFSCX-32 final block (TODO #348)
+    mov     r4, r0
     mov     r8, #0
 trfc_chal_loop:
     cmp     r8, #SDF_ROUNDS

@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.75** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO
+> - **Part 10 — §11.43–§11.76** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO · Schnorr and Stern Leave v1
 
 ---
 
@@ -1515,6 +1515,8 @@ The 32-bit assembly and Arduino demo targets kept n/4 in this release. They carr
 
 ## 11.73 v1's remaining sites — TODO #348, first pass (v10.0.1)
 
+> **Closed by §11.76 (v12.0.0).** The two owed sites below no longer call v1. The planned round raise was dropped, because in both sites the attacker chooses v1's B (§11.75).
+
 §11.72 raised three of NL-FSCX v1's modes to 3n/4 rounds. Every other v1 call kept n/4 = 64 rounds, and the ratchet kept one. At 64 rounds Lemma 1's floor of 2 bits per round is 128, which is the collision bar with no margin. §11.69 called that inadequate for HFSCX-256. This pass asks each remaining site the same question. The gate is `SecurityProofsCode/v1_remaining_sites.py`.
 
 ### 11.73.1 The census
@@ -1631,3 +1633,51 @@ A round costing at most D needs an input with at most D low bits. So in a run of
 **Cost:** none; MMO runs the same 192 rounds. **Wire format:** MAJOR, MIGRATING.md section 25.
 
 **Not done:** the exact probability (§11.69.2), the linear hull, and rounds above 6 bits in the β = 0 class.
+
+## 11.76 The Schnorr challenge and the Stern hash leave NL-FSCX v1 — TODO #348, closed (v12.0.0)
+
+§11.73 found two v1 sites owed at the 128 bar: the HPKS-NL / HPKS-T Schnorr challenge e = v1(R, msg, n/4), and the Stern-F chain hash h ← v1(h ⊕ v, ROL(v, n/8), n/4). Its plan was to raise both to 3n/4. §11.75 showed that this would have made both worse. v12.0.0 moves them onto HFSCX-256-DS instead. The gate is `SecurityProofsCode/v1_remaining_sites.py` §7.
+
+### 11.76.1 Why the raise was dropped
+
+In both sites the attacker chooses v1's B: the message in the challenge, the item in the chain. For B ∈ {0, 2^(n−1)} the round is affine with a nilpotent linear part, so v1 forgets A after n/2 rounds (§11.75.1). At 3n/4 rounds:
+
+- **The challenge** v1(R, msg, 192) takes one value for every R when msg = 0 or msg = 2^255. Anyone could sign those messages: pick s, set R = g^s · C^e for the constant e.
+- **The chain**, after a zero item, is in a state that does not depend on any earlier item. A commitment to (x, 0) would open to every x.
+
+The gate reproduces both as **controls** against transcriptions of the retired shapes: two random R give one challenge, and two first items give one chain state. Even at n/4, L^(n/4) has a 2^(n/2) kernel, which leaves about n/4 bits of binding for a zero item. That is below §11.73's 128 bar, independently of the trail model.
+
+### 11.76.2 The constructions
+
+Both sites now hash with HFSCX-256-DS, whose compression since §11.75 puts the chaining value in v1's B and the input in A, with a feed-forward:
+
+| site | 11.x | 12.0.0 |
+|---|---|---|
+| Schnorr challenge | v1(R, msg, n/4) | HFSCX-256-DS(0x30, R ‖ msg), high n bits |
+| Stern chain hash | v1 chain, item as B, then HFSCX-256 | HFSCX-256-DS(0x31, ds ‖ item_0 ‖ … ‖ item_(k−1)) |
+
+The Fiat–Shamir and ring challenges were the same chain with ds = 0, so they go through the one function. Tags 0x30 and 0x31 extend `hfscx_256_ds`'s namespace, where 0x01–0x03, 0x05, 0x06, 0x10–0x12, 0x20 and 0x21 are taken.
+
+The 32-bit targets use HFSCX-32's step word by word:
+- absorb(s, w) = v1(w, s, 24) ⊕ w, starting from the IV;
+- a tag word first: 0x30000000 for the challenge, 0x31000000 | ds for the Stern hash;
+- then the items, then the existing LB final block.
+
+hfscx_32(x) is the one-word case.
+
+### 11.76.3 What the gate checks
+
+- **No remaining v1 site lets a party choose its B.** In each of the eight remaining sites, B is a chaining value, a secret, a public seed its owner chose, or a fixed constant. The fixed constants (HDRBG's and the ratchet's domains) are outside W.
+- **The shipped functions are the spec.** The challenge equals a hand-built HFSCX-256(0x30 ‖ R ‖ msg) at n = 32, 64, 128 and 256, and the Stern hash equals HFSCX-256(0x31 ‖ ds ‖ items). Both depend on R and on every earlier item at the inputs where the retired shapes did not.
+- **All four ports use the tags,** and all six 32-bit files use the HFSCX-32 form with no v1 chain left.
+- **The census holds in both directions.** It now has 58 calls, down from 102.
+
+### 11.76.4 What it means
+
+The attacker's input reaches v1 only as A, and reaching an affine B from a chaining value is a 2^254-work preimage (§11.75.3). Both sites inherit HFSCX-256's analysis: the one-block shape is β = 0 at ≥ 336 and differing chaining values are at ≥ 384, both in the trail model (§11.75.4).
+
+**No rating moves.** HPKS-NL and HPKS-T fall to Pohlig–Hellman over GF(2^256)* at about 2^36.5. Stern-F and its ring, KEM and credential uses sit at N = 256, about 30–40 bits. The change makes no hash in the suite rest on an input the attacker controls.
+
+**Cost:** one HFSCX-256 call per challenge or Stern hash, at 192 rounds per 32-byte block. A Stern signature's Fiat–Shamir hash costs about three times what it did. **Wire format:** MAJOR, MIGRATING.md section 26. Keys do not change.
+
+**Not done:** the exact probability and the linear hull of the remaining n/4 sites (§11.73).

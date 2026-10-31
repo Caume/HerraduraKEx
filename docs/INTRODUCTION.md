@@ -527,7 +527,7 @@ compression function, iterated 192 steps (= 3n/4; 64 = n/4 until v10.0.0):
 compress(state, block) = nl_fscx_revolve_v1(state, block, 192) XOR state
 ```
 
-NL-FSCX v1 is already used as a one-way function in HPKS-NL and HKEX-RNL: recovering
+NL-FSCX v1 is already used as a one-way function in HKEX-RNL's KDF: recovering
 the input from the output requires inverting 192 steps of a non-linear mixing
 operation — a property that makes it a sound compression function.  The round count is
 3n/4 because v1 costs at most 2 bits per round against differential attack (TODO #346),
@@ -714,8 +714,9 @@ e = Hash(R ‖ msg)
 Now the entire signature is (R, s) and anyone can verify offline using the same hash.
 
 **HPKS** replaces the hash with `fscx_revolve(R, msg, i)` — the FSCX orbit depth
-serves as a hash-like mixing step.  **HPKS-NL** uses `nl_fscx_revolve_v1(R, msg, i)`
-to ensure the challenge computation is non-linear and harder to manipulate.
+serves as a hash-like mixing step.  **HPKS-NL** hashes `R ‖ msg` with HFSCX-256-DS, a
+non-linear hash built on NL-FSCX v1.  Until v11.x it used `nl_fscx_revolve_v1(R, msg, i)`
+directly, which let the signer's message choose v1's B (TODO #348).
 
 → SP2 §5–§6 for the formal Schnorr security proof and Fiat-Shamir reduction.
 → TUT §HPKS for API usage.

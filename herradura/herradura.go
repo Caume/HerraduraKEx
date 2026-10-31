@@ -1215,13 +1215,13 @@ func HpksSign(msg, priv *BitArray) (*BitArray, *BitArray) {
 }
 
 // HpksNlSign is the NL counterpart of HpksSign: the challenge hash is
-// NlFscxRevolveV1 in place of FscxRevolve, and the Schnorr arithmetic is
+// HpksNlChallenge (NlFscxRevolveV1 until v11.x, TODO #348) in place of FscxRevolve, and the Schnorr arithmetic is
 // identical (TODO #308).
 func HpksNlSign(msg, priv *BitArray) (*BitArray, *BitArray) {
 	n := priv.Size()
 	k := NewRandBitArray(n)
 	R := GfPow(GfGenBA(n), k)
-	e := NlFscxRevolveV1(R, msg, n/4)
+	e := HpksNlChallenge(R, msg)
 	// s = (k - priv*e) mod (2^n - 1).  Written out rather than shared with
 	// HpksSign through a helper: a suite-internal Go-only function is exactly
 	// what the internal-surface census refuses, and the other three ports
@@ -1706,6 +1706,29 @@ func Hfscx256DS(ds byte, data []byte, iv []byte) []byte {
 	buf[0] = ds
 	copy(buf[1:], data)
 	return Hfscx256(buf, iv)
+}
+
+// Hfscx256DS tags for the two sites TODO #348's second pass moved onto the
+// hash (v12.0.0).  0x01-0x03, 0x05, 0x06, 0x10-0x12, 0x20 and 0x21 are taken.
+const (
+	hpksNlDsChallenge = 0x30 // HPKS-NL / HPKS-T Schnorr challenge
+	sternDsHash       = 0x31 // Stern-F chain hash (one ds byte follows)
+)
+
+// HpksNlChallenge is the HPKS-NL / HPKS-T Schnorr challenge (TODO #348,
+// v12.0.0): e = HFSCX-256-DS(0x30, R || msg), truncated to R's width (its high
+// bits).  Until v11.x it was NlFscxRevolveV1(R, msg, n/4), which put the
+// signer's msg in v1's B; for B in {0, 2^(n-1)} v1's round is affine with a
+// nilpotent linear part, so at >= n/2 rounds e would not depend on R
+// (SecurityProofs-10.md §11.75).
+func HpksNlChallenge(R, msg *BitArray) *BitArray {
+	n := R.Size()
+	if msg.Size() != n {
+		panic(fmt.Sprintf("HpksNlChallenge: E_MIXED_WIDTH (%d vs %d)", n, msg.Size()))
+	}
+	buf := append(append([]byte{}, R.Bytes()...), msg.Bytes()...)
+	digest := Hfscx256DS(hpksNlDsChallenge, buf, nil)
+	return NewFromBytes(digest[:n/8], 0, n)
 }
 
 // HmacHfscx256 is the HMAC-HFSCX-256-DM construction (§11.9.6).
@@ -2532,19 +2555,26 @@ const (
 func sternT(n int) int     { return n * SdfT / 256 }
 func sternNRows(n int) int { return n * SdfNRows / 256 }
 
-// SternHash computes the Fiat-Shamir chain hash over items using NL-FSCX v1,
-// then applies HFSCX-256 to eliminate range compression (TODO #43, v1.6.0).
-// ds is the domain-separation tag (0=challenge, 1=c0, 2=c1, 3=c2, 4=KEM) (TODO #36, v1.6.1).
+// SternHash is the Stern-F chain hash (TODO #348, v12.0.0):
+// HFSCX-256-DS(0x31, ds || item_0 || ... || item_{k-1}), truncated to the items'
+// width.  ds is the domain-separation tag (0=challenge, 1=c0, 2=c1, 3=c2, 4=KEM)
+// (TODO #36, v1.6.1).  Until v11.x each item was absorbed as
+// h <- NlFscxRevolveV1(h ^ v, ROL(v, n/8), n/4) and the result finalized with
+// HFSCX-256 (TODO #43); that put the item in v1's B, where a zero item made the
+// round affine-nilpotent (SecurityProofs-10.md §11.75).
 func SternHash(ds int, items ...*BitArray) *BitArray {
 	n := 256
 	if len(items) > 0 {
 		n = items[0].Size()
 	}
-	h := NewFromUint(uint64(ds), n)
+	buf := []byte{byte(ds)}
 	for _, v := range items {
-		h = NlFscxRevolveV1(h.Xor(v), v.RotateLeft(n/8), n/4)
+		if v.Size() != n {
+			panic(fmt.Sprintf("SternHash: E_MIXED_WIDTH (%d vs %d)", n, v.Size()))
+		}
+		buf = append(buf, v.Bytes()...)
 	}
-	digest := Hfscx256(h.Bytes(), nil)
+	digest := Hfscx256DS(sternDsHash, buf, nil)
 	return NewFromBytes(digest[:n/8], 0, n)
 }
 
@@ -2691,18 +2721,12 @@ func SternFKeygen(n int) (*BitArray, *BitArray, *big.Int) {
 
 func sternFsChallenges(rounds int, msg *BitArray, c0, c1, c2 []*BitArray) []int {
 	n := msg.Size()
-	chSt := NewZero(n)
-	sfs := func(item *BitArray) {
-		chSt = NlFscxRevolveV1(chSt.Xor(item), item.RotateLeft(n/8), n/4)
-	}
-	sfs(msg)
+	// chSt = SternHash(0, msg, c0[0], c1[0], c2[0], ...) (TODO #348)
+	flat := []*BitArray{msg}
 	for i := 0; i < rounds; i++ {
-		sfs(c0[i])
-		sfs(c1[i])
-		sfs(c2[i])
+		flat = append(flat, c0[i], c1[i], c2[i])
 	}
-	digest := Hfscx256(chSt.Bytes(), nil)
-	chSt = NewFromBytes(digest[:n/8], 0, n)
+	chSt := SternHash(0, flat...)
 	chals := make([]int, rounds)
 	for i := 0; i < rounds; i++ {
 		idxBA := NewBitArray(n, big.NewInt(int64(i&0xFF)))
@@ -2884,21 +2908,15 @@ func sternRingChallenges(rounds, k int, msg *BitArray,
 	members []SternSig) []int {
 
 	n := msg.Size()
-	chSt := NewZero(n)
-	sfs := func(item *BitArray) {
-		chSt = NlFscxRevolveV1(chSt.Xor(item), item.RotateLeft(n/8), n/4)
-	}
-	sfs(msg)
+	// chSt = SternHash(0, msg, member-major (c0,c1,c2) ...) (TODO #348)
+	flat := []*BitArray{msg}
 	for i := 0; i < k; i++ {
 		for r := 0; r < rounds; r++ {
 			rnd := members[i].Rounds[r]
-			sfs(rnd.C0)
-			sfs(rnd.C1)
-			sfs(rnd.C2)
+			flat = append(flat, rnd.C0, rnd.C1, rnd.C2)
 		}
 	}
-	digest := Hfscx256(chSt.Bytes(), nil)
-	chSt = NewFromBytes(digest[:n/8], 0, n)
+	chSt := SternHash(0, flat...)
 	joint := make([]int, rounds)
 	for r := 0; r < rounds; r++ {
 		idxBA := NewBitArray(n, big.NewInt(int64(r&0xFF)))
@@ -4821,10 +4839,10 @@ func RatchetAdvance(state *BitArray) (*BitArray, []byte) {
 // ---------------------------------------------------------------------------
 // 98 — HPKS-T: Threshold / Aggregate Schnorr over GF(2^n)* (TODO #98)
 //
-// n-of-n MuSig2-style key aggregation with NL-FSCX v1 challenge.
+// n-of-n MuSig2-style key aggregation with HFSCX-256-DS challenge.
 // μ_j = HFSCX-256(L || C_j_bytes) mod ord  (rogue-key binding)
 // C_agg = Π C_j^{μ_j}
-// Sign:   R = Π R_j;  e = NlFscxRevolveV1(R, msg, n/4);
+// Sign:   R = Π R_j;  e = HpksNlChallenge(R, msg);
 //         s_j = (k_j − a_j·μ_j·e) mod ord;  s = Σ s_j mod ord
 // Verify: g^s · C_agg^e == R
 // ---------------------------------------------------------------------------
@@ -4903,10 +4921,10 @@ func HpkstSign(secrets, pubkeys []*big.Int, msg []byte) (*big.Int, *big.Int, *bi
 		R = gfMulBig(R, Rj, hpkstN)
 	}
 
-	// e = NlFscxRevolveV1(R_ba, msg_ba, 64)
+	// e = HpksNlChallenge(R, msg) = HFSCX-256-DS(0x30, R || msg) (TODO #348)
 	RBa := NewBitArray(256, R)
 	msgBa := NewBitArray(256, new(big.Int).SetBytes(msg))
-	eBa := NlFscxRevolveV1(RBa, msgBa, 64)
+	eBa := HpksNlChallenge(RBa, msgBa)
 	eBig := new(big.Int).SetBytes(eBa.Bytes())
 
 	// s = Σ (k_j - a_j·μ_j·e) mod ord
@@ -4932,7 +4950,7 @@ func HpkstVerify(cAgg, R, s *big.Int, msg []byte) bool {
 	gGen := big.NewInt(3)
 	RBa := NewBitArray(256, R)
 	msgBa := NewBitArray(256, new(big.Int).SetBytes(msg))
-	eBa := NlFscxRevolveV1(RBa, msgBa, 64)
+	eBa := HpksNlChallenge(RBa, msgBa)
 	eBig := new(big.Int).SetBytes(eBa.Bytes())
 	gs := gfPowBig(gGen, s, hpkstN)
 	Ce := gfPowBig(cAgg, eBig, hpkstN)

@@ -1477,7 +1477,7 @@ public final class HerraduraCli {
         } else {
             Herradura.Signature sig = HerraduraNl.hpksNlSign(BitArray.fromBigInteger(msgInt, pk.nbits), BitArray.fromBigInteger(pk.priv, pk.nbits), RNG);
             writeString(out, Codec.encodeSchnorrSig(sig.s.toBigInteger(), sig.r.toBigInteger(),
-                Hfscx256.nlFscxRevolveV1(sig.r, BitArray.fromBigInteger(msgInt, pk.nbits), Herradura.I_STEPS).toBigInteger(), pk.nbits));
+                HerraduraNl.hpksNlChallenge(sig.r, BitArray.fromBigInteger(msgInt, pk.nbits)).toBigInteger(), pk.nbits));
         }
     }
 
@@ -1835,8 +1835,8 @@ public final class HerraduraCli {
                                    BitArray.fromBigInteger(c.rJ, Herradura.N)).toBigInteger();
             pubkeys.add(c.cJ);
         }
-        BigInteger e = Hfscx256.nlFscxRevolveV1(BitArray.fromBigInteger(rVal, Herradura.N),
-                BitArray.fromBigInteger(msg, Herradura.N), Herradura.I_STEPS).toBigInteger();
+        BigInteger e = HerraduraNl.hpksNlChallenge(BitArray.fromBigInteger(rVal, Herradura.N),
+                BitArray.fromBigInteger(msg, Herradura.N)).toBigInteger();
         HpksT.Aggregate agg = HpksT.aggregatePublicKeys(pubkeys);
         writeString(req(opt, "out", "threshold-aggregate"), Codec.encodeHpkstAggregate(rVal, agg.cAgg, e, nbits));
     }

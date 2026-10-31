@@ -6371,6 +6371,15 @@ PARAMETERS = {
                      "wire", "Sigma rounds in the aPAKE transcript"),
     "hpake-zkp-n": (["HPAKE_ZKP_N", "HpakeZkpN", "_HPAKE_ZKP_N", "Hpake.ZKP_N"], "wire",
                     "statement width inside the aPAKE proof"),
+    # ── the two sites TODO #348's second pass moved onto HFSCX-256-DS ──
+    "hpks-nl-ds-challenge": (["HPKS_NL_DS_CHALLENGE", "hpksNlDsChallenge",
+                              "_HPKS_NL_DS_CHALLENGE", "HerraduraNl.HPKS_NL_DS_CHALLENGE"],
+                             "wire", "domain separator for the HPKS-NL / HPKS-T "
+                             "Schnorr challenge (TODO #348)"),
+    "stern-ds-hash": (["STERN_DS_HASH", "sternDsHash", "_STERN_DS_HASH",
+                       "HerraduraNl.STERN_DS_HASH"], "wire",
+                      "domain separator for the Stern-F chain hash; the ds byte "
+                      "follows it (TODO #348)"),
     # ── fpe / twk domain separators (TODO #242, #255) ──
     "fpe-ds": (["FPE_DS", "fpeDS", "_FPE_DS", "FpeTwk.FPE_DS"], "wire",
                "fpe subkey domain separator"),

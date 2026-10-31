@@ -3480,8 +3480,8 @@ static void cmd_threshold_aggregate(int argc, char **argv)
         BitArray tmp = BA_INIT; gf_mul_ba(&tmp, &R, &R_parts[j]); R = tmp;
     }
 
-    /* e = nl_fscx_revolve_v1(R, msg, I_VALUE) */
-    BitArray e = BA_INIT; nl_fscx_revolve_v1_ba(&e, &R, &msg, I_VALUE);
+    /* e = HFSCX-256-DS(0x30, R || msg) (TODO #348; v1(R, msg, n/4) until v11.x) */
+    BitArray e = BA_INIT; hpks_nl_challenge(&e, &R, &msg);
 
     /* C_agg via _hpkst helpers */
     size_t llen;
@@ -3891,7 +3891,7 @@ static void cmd_sign(int argc, char **argv)
             ba_fscx_revolve(&e, &R, &msg, I_VALUE);
         } else {
             hpks_nl_sign(&msg, &priv, &R, &s_ba, urnd);
-            nl_fscx_revolve_v1_ba(&e, &R, &msg, I_VALUE);
+            hpks_nl_challenge(&e, &R, &msg);
         }
 
         uint8_t is[DER_INT_LEN(KEYBYTES)], iR[DER_INT_LEN(KEYBYTES)];
@@ -4222,12 +4222,12 @@ static void cmd_verify(int argc, char **argv)
         ba_from_ra(&e_stored, sig_k.vals[2], sig_k.vlens[2]);
         pem_key_free(&sig_k);
 
-        /* Recompute e_v = revolve(R, msg, I_VALUE) */
+        /* Recompute e_v: fscx_revolve for hpks, hpks_nl_challenge for hpks-nl */
         BitArray e_v = BA_INIT;
         if (strcmp(algo, "hpks") == 0)
             ba_fscx_revolve(&e_v, &R, &msg, I_VALUE);
         else
-            nl_fscx_revolve_v1_ba(&e_v, &R, &msg, I_VALUE);
+            hpks_nl_challenge(&e_v, &R, &msg);
 
         /* lhs = g^s * pub^e_v; OK if lhs == R */
         BitArray lhs1 = BA_INIT, lhs2 = BA_INIT, lhs = BA_INIT;

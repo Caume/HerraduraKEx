@@ -75,7 +75,7 @@ SecurityProofs-6.md        — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md        — §11.10–§11.13, §11.15–§11.33: ZKP extensions · research reviews (698 math expressions)
 SecurityProofs-8.md        — §11.34–§11.36: NL-FSCX v3 · asymptotic slopes (436 math expressions)
 SecurityProofs-9.md        — §11.37–§11.42: width residue · annealed / quenched / exact ladders (726 math expressions)
-SecurityProofs-10.md       — §11.43–§11.75: local certificate · linear hull · coupled ladder · period series · v3 trail criterion · v3 linear slope · v2 measurement audit · key-sampled series · implicit solver · transient over keys · quantiles over keys · short-window class · discount share · long-window keys · series at n = 22 · tail and arc · arc curve · gap curve · gap at n = 23 · series at n = 23 · rating review · v1 modes · v1 floor · v1 core break · v1 at 3n/4 · v1 remaining sites · 32-bit at 3n/4 · HFSCX at MMO (126 math expressions)
+SecurityProofs-10.md       — §11.43–§11.76: local certificate · linear hull · coupled ladder · period series · v3 trail criterion · v3 linear slope · v2 measurement audit · key-sampled series · implicit solver · transient over keys · quantiles over keys · short-window class · discount share · long-window keys · series at n = 22 · tail and arc · arc curve · gap curve · gap at n = 23 · series at n = 23 · rating review · v1 modes · v1 floor · v1 core break · v1 at 3n/4 · v1 remaining sites · 32-bit at 3n/4 · HFSCX at MMO · Schnorr/Stern off v1 (126 math expressions)
 spec/                      — machine-readable protocol spec (generate_spec.py; --check gates
                              it) and the cross-document / cross-language checkers; see
                              spec/README.md:
@@ -394,7 +394,7 @@ NL-FSCX primitives + Ring-LWR
 ├── HSKE-NL-A1 — counter-mode: ks = nl_fscx_revolve_v1(K, K⊕ctr, 3n/4); E = P ⊕ ks
 ├── HSKE-NL-A2 — revolve-mode: E = nl_fscx_revolve_v2(P, K, r); D = inverse
 ├── HKEX-RNL   — Ring-LWR key exchange (conjectured quantum-resistant)
-├── HPKS-NL    — Schnorr with NL-FSCX v1 challenge: e = nl_fscx_revolve_v1(R, msg, i)
+├── HPKS-NL    — Schnorr with e = HFSCX-256-DS(0x30, R ‖ msg) (v1(R, msg, i) until v11.x, #348)
 └── HPKE-NL    — El Gamal with NL-FSCX v2: E = nl_fscx_revolve_v2(P, enc_key, i)
 ```
 
@@ -409,7 +409,8 @@ Stern identification protocol (ZKP for syndrome decoding)
 │                  its own SDF_ROUNDS, which remains only the signing default.
 │                  assembly/Arduino: N=32, t=2, rounds=4)
 │                  commit: c0=hash(π,H·r^T), c1=hash(σ(r)), c2=hash(σ(y))
-│                  challenge b∈{0,1,2} via NL-FSCX hash of msg+commitments
+│                  hash = HFSCX-256-DS(0x31, ds ‖ items) (#348); challenge b∈{0,1,2}
+│                  via that hash of msg+commitments
 │                  response reveals permuted r, y=e⊕r, or permutation π
 └── HPKE-Stern-F — Niederreiter KEM: ct=H·e'^T; K=hash(seed,e')
                    (`--algo hpke-stern`: demo, decap uses known e'; `--algo hpke-stern-kem`:
