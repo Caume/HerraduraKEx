@@ -741,11 +741,10 @@ _start:
     call gf_pow_32
     mov  [t_R_sc], eax
 
-    ; e = nl_fscx_revolve_v1(R, plain, I_VALUE)  -- NL challenge
+    ; e = HFSCX-32(TAG, R, plain)  -- NL challenge (TODO #348)
     mov  eax, [t_R_sc]
     mov  ebx, [t_val]
-    mov  ecx, I_VALUE
-    call nl_fscx_revolve_v1
+    call hpks_nl_challenge_32
     mov  [t_e_sc], eax
 
     ; ae = a * e mod ORD
@@ -909,11 +908,10 @@ _start:
     call gf_pow_32
     mov  [t_R_sc], eax
 
-    ; e = nl_fscx_revolve_v1(R, plain, I_VALUE)
+    ; e = HFSCX-32(TAG, R, plain)  -- NL challenge (TODO #348)
     mov  eax, [t_R_sc]
     mov  ebx, [t_val]
-    mov  ecx, I_VALUE
-    call nl_fscx_revolve_v1
+    call hpks_nl_challenge_32
     mov  [t_e_sc], eax
 
     ; s_fake = prng_next()  (random forgery, not k - a*e)
@@ -3143,44 +3141,89 @@ hfscx_32:
     ret
 
 ; ============================================================
-; stern_hash1_32: EAX=ds, EBX=v -> EAX=sternHash(ds,v)
+; hfscx32_absorb: EAX=s, EBX=w -> EAX = nl(w, s, 24) ^ w
+; hfscx32_final:  EAX=s        -> EAX = nl(LB, s, 24) ^ LB
+; HFSCX-32's MMO chain one word at a time (TODO #348, v12.0.0);
+; hfscx_32(x) = final(absorb(IV, x)).  The word is v1's A and the
+; chaining value its B, so no party chooses B (§11.75).
+; Both preserve EBX and ECX.
 ; ============================================================
-stern_hash1_32:
+hfscx32_absorb:
+    push ecx
+    push ebx               ; [esp] = w
+    mov  ecx, eax
+    mov  eax, ebx          ; A = w
+    mov  ebx, ecx          ; B = s
+    mov  ecx, V1_MODE_STEPS
+    call nl_fscx_revolve_v1
+    pop  ebx               ; w
+    xor  eax, ebx          ; feed-forward
+    pop  ecx
+    ret
+
+hfscx32_final:
     push ecx
     push ebx
-    xor  eax, ebx           ; eax = ds ^ v  (ebx = v)
-    rol  ebx, 4             ; ebx = ROL(v,4)
-    mov  ecx, 8
+    mov  ebx, eax          ; B = s
+    mov  eax, 0xA3C5E799   ; A = LB
+    mov  ecx, V1_MODE_STEPS
     call nl_fscx_revolve_v1
+    xor  eax, 0xA3C5E799
     pop  ebx
     pop  ecx
-    jmp  hfscx_32
+    ret
 
 ; ============================================================
-; stern_hash2_32: EAX=ds, EBX=a, ECX=b -> EAX=sternHash(ds,a,b)
+; hpks_nl_challenge_32: EAX=R, EBX=msg -> EAX = HFSCX-32(0x30000000, R, msg)
+; NL-FSCX v1(R, msg, n/4) until v11.x, with the signer's msg as v1's B
+; (TODO #348).  Preserves EBX and ECX.
+; ============================================================
+hpks_nl_challenge_32:
+    push ebx               ; msg
+    push eax               ; R
+    mov  eax, 0xA3C5E7B9
+    mov  ebx, 0x30000000
+    call hfscx32_absorb
+    pop  ebx               ; R
+    call hfscx32_absorb
+    mov  ebx, [esp]        ; msg
+    call hfscx32_absorb
+    call hfscx32_final
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_hash1_32: EAX=ds, EBX=v -> EAX = HFSCX-32(0x31000000|ds, v)
+; Until v11.x: h=nl(ds^v,ROL(v,4),8); hfscx_32(h) (TODO #348)
+; ============================================================
+stern_hash1_32:
+    push ebx               ; v
+    mov  ebx, eax
+    or   ebx, 0x31000000   ; TAG | ds
+    mov  eax, 0xA3C5E7B9
+    call hfscx32_absorb
+    mov  ebx, [esp]        ; v
+    call hfscx32_absorb
+    call hfscx32_final
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_hash2_32: EAX=ds, EBX=a, ECX=b -> EAX = HFSCX-32(0x31000000|ds, a, b)
 ; ============================================================
 stern_hash2_32:
-    push esi
-    push edi
-    push ecx
-    push ebx
-    mov  esi, ebx           ; esi = a
-    mov  edi, ecx           ; edi = b
-    xor  eax, esi           ; eax = ds ^ a
-    mov  ebx, esi
-    rol  ebx, 4             ; ebx = ROL(a,4)
-    mov  ecx, 8
-    call nl_fscx_revolve_v1 ; eax = h
-    xor  eax, edi           ; h ^ b
-    mov  ebx, edi
-    rol  ebx, 4             ; ebx = ROL(b,4)
-    mov  ecx, 8
-    call nl_fscx_revolve_v1 ; eax = raw
+    push ebx               ; a
+    mov  ebx, eax
+    or   ebx, 0x31000000   ; TAG | ds
+    mov  eax, 0xA3C5E7B9
+    call hfscx32_absorb
+    mov  ebx, [esp]        ; a
+    call hfscx32_absorb
+    mov  ebx, ecx          ; b
+    call hfscx32_absorb
+    call hfscx32_final
     pop  ebx
-    pop  ecx
-    pop  edi
-    pop  esi
-    jmp  hfscx_32
+    ret
 
 ; ============================================================
 ; stern_matrix_row_32: EAX=seed, EBX=row -> EAX=H[row]
@@ -3406,40 +3449,36 @@ stern_fs_challenges_32:
     push edi
     push ecx
     push edx
-    xor  esi, esi
-    mov  eax, [t_sdf_msg]
-    xor  eax, esi
+    mov  eax, 0xA3C5E7B9   ; chSt = absorb(IV, TAG|0)  (TODO #348)
+    mov  ebx, 0x31000000
+    call hfscx32_absorb
+    mov  esi, eax
+    mov  eax, esi
     mov  ebx, [t_sdf_msg]
-    rol  ebx, 4
-    mov  ecx, 8
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
     xor  edi, edi
 .tsfc_round_loop:
     cmp  edi, SDF_ROUNDS
     jge  .tsfc_round_done
-    mov  eax, [sdf_c0 + edi*4]
-    xor  eax, esi
+    mov  eax, esi
     mov  ebx, [sdf_c0 + edi*4]
-    rol  ebx, 4
-    mov  ecx, 8
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
-    mov  eax, [sdf_c1 + edi*4]
-    xor  eax, esi
+    mov  eax, esi
     mov  ebx, [sdf_c1 + edi*4]
-    rol  ebx, 4
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
-    mov  eax, [sdf_c2 + edi*4]
-    xor  eax, esi
+    mov  eax, esi
     mov  ebx, [sdf_c2 + edi*4]
-    rol  ebx, 4
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
     inc  edi
     jmp  .tsfc_round_loop
 .tsfc_round_done:
+    mov  eax, esi
+    call hfscx32_final     ; HFSCX-32 final block (TODO #348)
+    mov  esi, eax
     xor  edi, edi
 .tsfc_chal_loop:
     cmp  edi, SDF_ROUNDS
@@ -3712,36 +3751,29 @@ ring_fs_challenges_32:
     push edi
     push ecx
     push edx
-    xor  esi, esi
-    mov  eax, [t_sdf_msg]
-    xor  eax, esi
+    mov  eax, 0xA3C5E7B9   ; chSt = absorb(IV, TAG|0)  (TODO #348)
+    mov  ebx, 0x31000000
+    call hfscx32_absorb
+    mov  esi, eax
+    mov  eax, esi
     mov  ebx, [t_sdf_msg]
-    rol  ebx, 4
-    mov  ecx, 8
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
     xor  edi, edi
 .trfc_m0_loop:
     cmp  edi, SDF_ROUNDS
     jge  .trfc_m0_done
-    mov  eax, [ring0_c0 + edi*4]
-    xor  eax, esi
+    mov  eax, esi
     mov  ebx, [ring0_c0 + edi*4]
-    rol  ebx, 4
-    mov  ecx, 8
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
-    mov  eax, [ring0_c1 + edi*4]
-    xor  eax, esi
+    mov  eax, esi
     mov  ebx, [ring0_c1 + edi*4]
-    rol  ebx, 4
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
-    mov  eax, [ring0_c2 + edi*4]
-    xor  eax, esi
+    mov  eax, esi
     mov  ebx, [ring0_c2 + edi*4]
-    rol  ebx, 4
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
     inc  edi
     jmp  .trfc_m0_loop
@@ -3750,28 +3782,24 @@ ring_fs_challenges_32:
 .trfc_m1_loop:
     cmp  edi, SDF_ROUNDS
     jge  .trfc_m1_done
-    mov  eax, [sdf_c0 + edi*4]
-    xor  eax, esi
+    mov  eax, esi
     mov  ebx, [sdf_c0 + edi*4]
-    rol  ebx, 4
-    mov  ecx, 8
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
-    mov  eax, [sdf_c1 + edi*4]
-    xor  eax, esi
+    mov  eax, esi
     mov  ebx, [sdf_c1 + edi*4]
-    rol  ebx, 4
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
-    mov  eax, [sdf_c2 + edi*4]
-    xor  eax, esi
+    mov  eax, esi
     mov  ebx, [sdf_c2 + edi*4]
-    rol  ebx, 4
-    call nl_fscx_revolve_v1
+    call hfscx32_absorb
     mov  esi, eax
     inc  edi
     jmp  .trfc_m1_loop
 .trfc_m1_done:
+    mov  eax, esi
+    call hfscx32_final     ; HFSCX-32 final block (TODO #348)
+    mov  esi, eax
     xor  edi, edi
 .trfc_chal_loop:
     cmp  edi, SDF_ROUNDS

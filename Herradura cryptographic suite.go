@@ -32,7 +32,7 @@
       HSKE-NL-A1   — counter-mode HSKE with NL-FSCX v1 keystream [PQC-hardened]
       HSKE-NL-A2   — revolve-mode HSKE with NL-FSCX v2 [PQC-hardened]
       HKEX-RNL     — Ring-LWR key exchange [conjectured quantum-resistant, n=1024]
-      HPKS-NL      — Schnorr with NL-FSCX v1 challenge [NL-hardened]
+      HPKS-NL      — Schnorr with HFSCX-256-DS challenge [NL-hardened]
       HPKE-NL      — El Gamal with NL-FSCX v2 [NL-hardened]
       HPKS-Stern-F — Stern ZKP signature [code-based PQC]
       HPKE-Stern-F — Niederreiter KEM [code-based PQC]
@@ -257,13 +257,13 @@ func main() {
 			diffBits.Popcount())
 	}
 
-	fmt.Println("\n--- HPKS-NL [NL-hardened Schnorr — NL-FSCX v1 challenge]")
+	fmt.Println("\n--- HPKS-NL [NL-hardened Schnorr — HFSCX-256-DS challenge]")
 	fmt.Println("    (GF DLP still present; NL hardens linear challenge preimage)")
 	kNl   := NewRandBitArray(n)
 	RNl   := GfPow(g, kNl)
-	eNl   := NlFscxRevolveV1(RNl, plaintext, iValue)
+	eNl   := HpksNlChallenge(RNl, plaintext)
 	sNl   := kNl.SubModOrd(a.MulModOrd(eNl))
-	eNlV  := NlFscxRevolveV1(RNl, plaintext, iValue)
+	eNlV  := HpksNlChallenge(RNl, plaintext)
 	lhsNl := GfMul(GfPow(g, sNl), GfPow(C, eNlV))
 	fmt.Printf("P (msg)        : %x\n", plaintext)
 	fmt.Printf("R [Alice,sign] : %x\n", RNl)
@@ -594,7 +594,7 @@ func main() {
 
 	fmt.Println("*** HPKS-NL — Eve cannot forge Schnorr without knowing private key a")
 	REve   := GfPow(g, NewRandBitArray(n))
-	eEve   := NlFscxRevolveV1(REve, decoy, iValue)
+	eEve   := HpksNlChallenge(REve, decoy)
 	sEve   := NewRandBitArray(n)
 	lhsEve := GfMul(GfPow(g, sEve), GfPow(C, eEve))
 	if lhsEve.Equal(REve) {

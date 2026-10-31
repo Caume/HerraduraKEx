@@ -108,7 +108,7 @@
       HSKE-NL-A1  — counter-mode HSKE with NL-FSCX v1 keystream
       HSKE-NL-A2  — revolve-mode HSKE with NL-FSCX v2 (invertible)
       HKEX-RNL    — Ring-LWR key exchange (conjectured quantum-resistant; n=1024)
-      HPKS-NL     — Schnorr with NL-FSCX v1 challenge (linear preimage hardened)
+      HPKS-NL     — Schnorr with HFSCX-256-DS challenge (linear preimage hardened)
       HPKE-NL     — El Gamal with NL-FSCX v2 encryption/decryption
 
     Classical protocols (not PQC — kept for reference and comparison):
@@ -975,12 +975,12 @@ def hpks_sign(msg: 'BitArray', priv: int, poly: int, n: int):
 
 
 def hpks_nl_sign(msg: 'BitArray', priv: int, poly: int, n: int):
-    """NL counterpart of hpks_sign: the challenge hash is nl_fscx_revolve_v1 in
-    place of fscx_revolve, and the Schnorr arithmetic is identical (TODO
+    """NL counterpart of hpks_sign: the challenge hash is hpks_nl_challenge
+    (nl_fscx_revolve_v1 until v11.x, TODO #348) in place of fscx_revolve, and the Schnorr arithmetic is identical (TODO
     #308).  Returns (R, s)."""
     k = BitArray.random(n).uint
     R = BitArray(n, gf_pow(GF_GEN, k, poly, n))
-    e = nl_fscx_revolve_v1(R, msg, n // 4)
+    e = hpks_nl_challenge(R, msg)
     return R, (k - priv * e.uint) % ((1 << n) - 1)
 
 
@@ -1421,6 +1421,28 @@ def hfscx_256_ds(ds: int, data: bytes, *, iv: 'BitArray | None' = None) -> bytes
     return hfscx_256(bytes([ds & 0xFF]) + data, iv=iv)
 
 
+# hfscx_256_ds tags for the two sites TODO #348's second pass moved onto the
+# hash (v12.0.0).  0x01-0x03, 0x05, 0x06, 0x10-0x12, 0x20 and 0x21 are taken.
+_HPKS_NL_DS_CHALLENGE = 0x30   # HPKS-NL / HPKS-T Schnorr challenge
+_STERN_DS_HASH        = 0x31   # Stern-F chain hash (one ds byte follows)
+
+
+def hpks_nl_challenge(R: 'BitArray', msg: 'BitArray') -> 'BitArray':
+    """HPKS-NL / HPKS-T Schnorr challenge (TODO #348, v12.0.0):
+    e = HFSCX-256-DS(0x30, R || msg), truncated to R's width (its high bits).
+
+    Until v11.x it was nl_fscx_revolve_v1(R, msg, n/4), which put the signer's
+    msg in v1's B.  For B in {0, 2^(n-1)} v1's round is affine with a nilpotent
+    linear part, so at >= n/2 rounds e would not depend on R at all
+    (SecurityProofs-10.md §11.75).  Here msg reaches only HFSCX-256's message
+    input, whose v1 B is the MMO chaining value."""
+    n = R.size
+    if msg.size != n:
+        raise ValueError(f"hpks_nl_challenge: E_MIXED_WIDTH ({n} vs {msg.size})")
+    digest = hfscx_256_ds(_HPKS_NL_DS_CHALLENGE, R.bytes + msg.bytes)
+    return BitArray(n, int.from_bytes(digest, 'big') >> (256 - n))
+
+
 def hmac_hfscx_256(key: bytes, data: bytes) -> bytes:
     """HMAC-HFSCX-256-DM: HMAC construction over HFSCX-256-DM (§11.9.6).
 
@@ -1719,15 +1741,21 @@ def _csprng_weight_t(n: int, t: int) -> int:
 
 
 def _stern_hash(n: int, *items: 'BitArray', ds: int = 0) -> 'BitArray':
-    """Chain-hash items to n bits via NL-FSCX v1, finalized with HFSCX-256 (v1.6.0).
-    ds: domain-separation tag initialising the chain state (0=challenge/default,
-        1=c0, 2=c1, 3=c2, 4=KEM-key).  Prevents cross-slot collisions (TODO #36)."""
+    """Stern-F chain hash to n bits (TODO #348, v12.0.0):
+    HFSCX-256-DS(0x31, ds || item_0 || ... || item_{k-1}), high n bits.
+    ds: domain-separation tag (0=challenge/default, 1=c0, 2=c1, 3=c2, 4=KEM-key).
+        Prevents cross-slot collisions (TODO #36).
+    Until v11.x each item was absorbed as h = nl_fscx_revolve_v1(h ^ v, ROL(v, n/8), n/4)
+    and the result finalized with HFSCX-256 (v1.6.0).  That put the item in v1's B,
+    where a zero item made the round affine-nilpotent (SecurityProofs-10.md §11.75)."""
     mask = (1 << n) - 1
-    h = BitArray(n, ds & mask)
+    data = bytes([ds & 0xFF])
     for item in items:
         v = item if isinstance(item, BitArray) else BitArray(n, int(item) & mask)
-        h = nl_fscx_revolve_v1(h ^ v, v.rotated(n // 8), n // 4)
-    digest = hfscx_256(h.bytes)
+        if v.size != n:
+            raise ValueError(f"_stern_hash: E_MIXED_WIDTH ({n} vs {v.size})")
+        data += v.bytes
+    digest = hfscx_256_ds(_STERN_DS_HASH, data)
     return BitArray(n, int.from_bytes(digest, 'big') >> (256 - n))
 
 
@@ -4350,10 +4378,10 @@ def haccum_verify(root: bytes, leaf_hash: bytes, proof: list, idx: int) -> bool:
 # ---------------------------------------------------------------------------
 # 98 — HPKS-T: Threshold / Aggregate Schnorr over GF(2^n)* (TODO #98)
 #
-# n-of-n MuSig2-style key aggregation with NL-FSCX v1 challenge.
+# n-of-n MuSig2-style key aggregation with HFSCX-256-DS challenge.
 # Rogue-key binding: μ_j = H(L || C_j) mod ord  where L = sorted pubkeys.
 # Aggregate key:     C_agg = Π C_j^{μ_j}
-# Sign:              R = Π R_j;  e = NL-FSCX v1(R, msg);
+# Sign:              R = Π R_j;  e = hpks_nl_challenge(R, msg);
 #                    s_j = (k_j − a_j·μ_j·e) mod ord;  s = Σ s_j
 # Verify:            g^s · C_agg^e == R  (identical to single-party verify)
 # ---------------------------------------------------------------------------
@@ -4401,7 +4429,7 @@ def hpkst_sign(secrets: 'list[int]', pubkeys: 'list[BitArray]', msg: 'BitArray')
     for R_j in R_parts:
         R_val = gf_mul(R_val, R_j.uint, _poly, KEYBITS)
     R = BitArray(KEYBITS, R_val)
-    e = nl_fscx_revolve_v1(R, msg, I_VALUE)
+    e = hpks_nl_challenge(R, msg)
     s_val = 0
     for a_j, k_j, mu_j in zip(secrets, nonces, coeffs):
         s_j = (k_j.uint - a_j * mu_j * e.uint) % ORD
@@ -4412,10 +4440,10 @@ def hpkst_sign(secrets: 'list[int]', pubkeys: 'list[BitArray]', msg: 'BitArray')
 def hpkst_verify(C_agg: 'BitArray', R: 'BitArray', s: 'BitArray', msg: 'BitArray') -> bool:
     """
     Verify a threshold HPKS-NL signature.  Identical to single-party HPKS-NL verify:
-    g^s · C_agg^e == R   where e = nl_fscx_revolve_v1(R, msg, I_VALUE).
+    g^s · C_agg^e == R   where e = hpks_nl_challenge(R, msg).
     """
     _poly = GF_POLY[KEYBITS]
-    e   = nl_fscx_revolve_v1(R, msg, I_VALUE)
+    e   = hpks_nl_challenge(R, msg)
     lhs = gf_mul(gf_pow(GF_GEN, s.uint, _poly, KEYBITS),
                  gf_pow(C_agg.uint, e.uint, _poly, KEYBITS),
                  _poly, KEYBITS)
@@ -5387,8 +5415,8 @@ HKEX-RNL (Ring-LWR key exchange — conjectured quantum-resistant):
   MIGRATION: keys generated before v2.7.19 used n=256 and are worth only ~32/~29
             bits (TODO #216) — regenerate them; see MIGRATING.md section 4.
 
-HPKS-NL (Schnorr + NL-FSCX v1 challenge):
-  Sign:    k random; R=g^k; e=nl_fscx_revolve_v1(R,P,I); s=(k-a*e) mod ord
+HPKS-NL (Schnorr + HFSCX-256-DS challenge):
+  Sign:    k random; R=g^k; e=hpks_nl_challenge(R,P); s=(k-a*e) mod ord
   Verify:  g^s * C^e == R;  C = g^a
   Note:    GF(2^n)* DLP still applies (Shor's); NL challenge hardens the
            fscx-specific linear preimage attack on e.
@@ -5554,13 +5582,13 @@ def main():
         bits_diff = bin(sk_rnl_A.uint ^ sk_rnl_B.uint).count('1')
         print(f"- session key disagrees ({bits_diff} bit(s)) — reconciliation failed!")
 
-    print("\n--- HPKS-NL [NL-hardened Schnorr — NL-FSCX v1 challenge]")
+    print("\n--- HPKS-NL [NL-hardened Schnorr — HFSCX-256-DS challenge]")
     print("    (GF DLP still present; NL hardens linear challenge preimage)")
     k_nl   = BitArray.random(KEYBITS)
     R_nl   = BitArray(KEYBITS, gf_pow(GF_GEN, k_nl.uint, poly, KEYBITS))
-    e_nl   = nl_fscx_revolve_v1(R_nl, plaintext, I_VALUE)
+    e_nl   = hpks_nl_challenge(R_nl, plaintext)
     s_nl   = (k_nl.uint - a.uint * e_nl.uint) % ORD
-    e_nl_v = nl_fscx_revolve_v1(R_nl, plaintext, I_VALUE)
+    e_nl_v = hpks_nl_challenge(R_nl, plaintext)
     lhs_nl = gf_mul(gf_pow(GF_GEN, s_nl, poly, KEYBITS),
                     gf_pow(C.uint, e_nl_v.uint, poly, KEYBITS), poly, KEYBITS)
     print(f"P (msg)        : {plaintext.hex}")
@@ -5792,7 +5820,7 @@ def main():
     print(f"*** HPKS-NL — Eve cannot forge Schnorr without knowing private key a")
     R_eve   = BitArray(KEYBITS, gf_pow(GF_GEN,
                                        BitArray.random(KEYBITS).uint, poly, KEYBITS))
-    e_eve   = nl_fscx_revolve_v1(R_eve, decoy, I_VALUE)
+    e_eve   = hpks_nl_challenge(R_eve, decoy)
     s_eve   = BitArray.random(KEYBITS).uint
     lhs_eve = gf_mul(gf_pow(GF_GEN, s_eve,     poly, KEYBITS),
                      gf_pow(C.uint,  e_eve.uint, poly, KEYBITS), poly, KEYBITS)

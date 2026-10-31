@@ -1719,6 +1719,34 @@ static void hfscx_256_ds(uint8_t ds, const uint8_t *data, size_t len,
     free(buf);
 }
 
+/* hfscx_256_ds tags for the two sites TODO #348's second pass moved onto the
+ * hash (v12.0.0).  0x01-0x03, 0x05, 0x06, 0x10-0x12, 0x20 and 0x21 are taken. */
+#define HPKS_NL_DS_CHALLENGE 0x30   /* HPKS-NL / HPKS-T Schnorr challenge      */
+#define STERN_DS_HASH        0x31   /* Stern-F chain hash (one ds byte follows) */
+
+/* HPKS-NL / HPKS-T Schnorr challenge (TODO #348, v12.0.0):
+ *   e = HFSCX-256-DS(0x30, R || msg), truncated to R's width (its high bits).
+ * Until v11.x it was nl_fscx_revolve_v1(R, msg, n/4), which put the signer's
+ * msg in v1's B.  For B in {0, 2^(n-1)} v1's round is affine with a nilpotent
+ * linear part, so at >= n/2 rounds e would not depend on R at all (§11.75).
+ * Here msg reaches only HFSCX-256's message input, whose v1 B is the MMO
+ * chaining value. */
+static void hpks_nl_challenge(BitArray *e, const BitArray *R, const BitArray *msg)
+{
+    uint8_t buf[2 * BA_MAX_BYTES], d[32];
+    BitArray out;
+    int nb;
+    BaStatus st = ba_same_width(R, msg);
+    if (st != BA_OK) BA_FAIL(st, "hpks_nl_challenge");
+    nb = ba_nbytes_unchecked(R);   /* ba_same_width just validated */
+    memcpy(buf, R->b, (size_t)nb);
+    memcpy(buf + nb, msg->b, (size_t)nb);
+    hfscx_256_ds(HPKS_NL_DS_CHALLENGE, buf, (size_t)(2 * nb), NULL, d);
+    ba_zero_w(&out, R->nbits);
+    memcpy(out.b, d, (size_t)nb);
+    *e = out;
+}
+
 /* HMAC-HFSCX-256-DM: HMAC construction over HFSCX-256-DM (§11.9.6).
  * Recommended for cross-protocol key reuse.
  * HMAC(K, D) = HFSCX-256((K^opad) || HFSCX-256((K^ipad) || D))
@@ -2631,25 +2659,30 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
     "redefine SDF_ROUNDS to SDF_PRODUCTION_ROUNDS before including this header.")
 #endif
 
-/* Chain-hash + HFSCX-256 finalizer: h <- NL-FSCX_v1^I(h XOR v, ROL(v,n/8)) for each
- * item, then h <- HFSCX-256(h) to eliminate range compression (TODO #43, v1.6.0).
- * ds: domain-separation tag (0=challenge, 1=c0, 2=c1, 3=c2, 4=KEM) (TODO #36, v1.6.1). */
+/* Stern-F chain hash (TODO #348, v12.0.0):
+ *   h = HFSCX-256-DS(0x31, ds || item_0 || ... || item_{k-1})
+ * ds: domain-separation tag (0=challenge, 1=c0, 2=c1, 3=c2, 4=KEM) (TODO #36, v1.6.1).
+ * Until v11.x each item was absorbed as h <- NL-FSCX_v1^{n/4}(h XOR v, ROL(v, n/8))
+ * and the result finalized with HFSCX-256 (TODO #43).  That put the item in v1's
+ * B, and a zero item (B = 0) made the round affine-nilpotent: it shrank the
+ * chain state's image to 2^(n/2) points and left a commitment to a zero item
+ * about n/4 bits of binding (§11.75).  The items now reach only HFSCX-256's
+ * message input.  Every item is KEYBITS wide. */
 static void stern_hash(BitArray *out, const BitArray *items, int n_items, unsigned ds)
 {
-    BitArray h = { KEYBITS, {0} };
-    h.b[KEYBYTES - 1] = (uint8_t)(ds & 0xFF); /* DS in LSB (big-endian) */
+    size_t len = 1 + (size_t)n_items * KEYBYTES;
+    uint8_t *buf = (uint8_t *)malloc(len), digest[32];
+    BitArray h = BA_INIT;
     int i;
+    if (!buf) { fprintf(stderr, "stern_hash: out of memory\n"); exit(1); }
+    buf[0] = (uint8_t)(ds & 0xFF);
     for (i = 0; i < n_items; i++) {
-        BitArray hxv = BA_INIT, rotv = BA_INIT;
-        ba_xor(&hxv, &h, &items[i]);
-        ba_rol_k(&rotv, &items[i], KEYBITS / 8);
-        nl_fscx_revolve_v1_ba(&h, &hxv, &rotv, I_VALUE);
+        if (ba_nbytes(&items[i]) != KEYBYTES) BA_FAIL(BA_E_MIXED_WIDTH, "stern_hash");
+        memcpy(buf + 1 + (size_t)i * KEYBYTES, items[i].b, KEYBYTES);
     }
-    {
-        uint8_t digest[32];
-        hfscx_256(h.b, KEYBYTES, NULL, digest);
-        memcpy(h.b, digest, KEYBYTES);
-    }
+    hfscx_256_ds(STERN_DS_HASH, buf, len, NULL, digest);
+    free(buf);
+    memcpy(h.b, digest, KEYBYTES);
     *out = h;
 }
 
@@ -2841,25 +2874,18 @@ static void stern_fs_challenges(int *chals, int rounds,
                                  const BitArray *c1,
                                  const BitArray *c2)
 {
-    BitArray ch_st = { KEYBITS, {0} };
+    BitArray ch_st = BA_INIT, *flat;
     int i;
 
-#define _SFS(item) do { \
-    BitArray _hxv = BA_INIT, _rotv = BA_INIT; \
-    ba_xor(&_hxv, &ch_st, &(item)); \
-    ba_rol_k(&_rotv, &(item), KEYBITS / 8); \
-    nl_fscx_revolve_v1_ba(&ch_st, &_hxv, &_rotv, I_VALUE); \
-} while (0)
-
-    _SFS(*msg);
-    for (i = 0; i < rounds; i++) { _SFS(c0[i]); _SFS(c1[i]); _SFS(c2[i]); }
-#undef _SFS
-
-    {
-        uint8_t digest[32];
-        hfscx_256(ch_st.b, KEYBYTES, NULL, digest);
-        memcpy(ch_st.b, digest, KEYBYTES);
+    /* ch_st = stern_hash(msg || c0[0] c1[0] c2[0] || ...), ds = 0 (TODO #348) */
+    flat = (BitArray *)malloc((size_t)(1 + 3 * rounds) * sizeof(BitArray));
+    if (!flat) { fprintf(stderr, "stern_fs_challenges: oom\n"); exit(1); }
+    flat[0] = *msg;
+    for (i = 0; i < rounds; i++) {
+        flat[1 + 3 * i] = c0[i]; flat[2 + 3 * i] = c1[i]; flat[3 + 3 * i] = c2[i];
     }
+    stern_hash(&ch_st, flat, 1 + 3 * rounds, 0);
+    free(flat);
 
     for (i = 0; i < rounds; i++) {
         BitArray idx_ba = { KEYBITS, {0} };
@@ -3122,34 +3148,23 @@ static void stern_ring_challenges(int *joint_out, int rounds, int k,
                                     const BitArray *c2)
 {
     BitArray ch_st = BA_INIT, idx_ba = BA_INIT;
-    uint8_t digest[KEYBYTES];
     uint32_t v;
     int i, r;
 
-    memset(ch_st.b, 0, KEYBYTES);
-    /* sfs(msg) */
+    /* ch_st = stern_hash(msg || member 0 round 0 (c0,c1,c2) || ...), ds = 0.
+     * Until v11.x the same items went through the v1 chain (TODO #348). */
     {
-        BitArray rotm = BA_INIT;
-        ba_rol_k(&rotm, msg, KEYBITS / 8);
-        ba_xor(&ch_st, &ch_st, msg);
-        nl_fscx_revolve_v1_ba(&ch_st, &ch_st, &rotm, I_VALUE);
-    }
-    /* for each member i, round r: sfs(c0), sfs(c1), sfs(c2) */
-    for (i = 0; i < k; i++) {
-        for (r = 0; r < rounds; r++) {
-            int idx = i * rounds + r;
-            const BitArray *cx[3] = { &c0[idx], &c1[idx], &c2[idx] };
-            int ci;
-            for (ci = 0; ci < 3; ci++) {
-                BitArray rotc = BA_INIT;
-                ba_rol_k(&rotc, cx[ci], KEYBITS / 8);
-                ba_xor(&ch_st, &ch_st, cx[ci]);
-                nl_fscx_revolve_v1_ba(&ch_st, &ch_st, &rotc, I_VALUE);
+        BitArray *flat = (BitArray *)malloc((size_t)(1 + 3 * k * rounds) * sizeof(BitArray));
+        if (!flat) { fprintf(stderr, "stern_ring_challenges: oom\n"); exit(1); }
+        flat[0] = *msg;
+        for (i = 0; i < k; i++)
+            for (r = 0; r < rounds; r++) {
+                int idx = i * rounds + r, at = 1 + 3 * idx;
+                flat[at] = c0[idx]; flat[at + 1] = c1[idx]; flat[at + 2] = c2[idx];
             }
-        }
+        stern_hash(&ch_st, flat, 1 + 3 * k * rounds, 0);
+        free(flat);
     }
-    hfscx_256(ch_st.b, KEYBYTES, NULL, digest);
-    memcpy(ch_st.b, digest, KEYBYTES);
     /* derive one joint challenge per round */
     for (r = 0; r < rounds; r++) {
         memset(idx_ba.b, 0, KEYBYTES);
@@ -3482,7 +3497,7 @@ static void hpke_stern_f_decap_known(BitArray *K_out,
  *   hkex_gf_pubkey / hkex_gf_agree   — HKEX-GF key exchange
  *   hske_encrypt   / hske_decrypt     — HSKE symmetric encryption
  *   hpks_sign      / hpks_verify      — HPKS Schnorr signature
- *   hpks_nl_sign                      — HPKS-NL Schnorr (NL-FSCX v1 challenge)
+ *   hpks_nl_sign                      — HPKS-NL Schnorr (HFSCX-256-DS challenge)
  *   hpke_encrypt   / hpke_decrypt     — HPKE El Gamal encryption
  *
  * For PQC-hardened protocols use: hpks_stern_f_sign / hpks_stern_f_verify
@@ -3539,8 +3554,9 @@ static inline void hpks_sign(const BitArray *msg, const BitArray *priv,
     ba_sub_mod_ord(s_out, &k, &ae);
 }
 
-/* HPKS-NL: sign msg with private key priv, using the NL-FSCX v1 challenge
- * hash in place of the classical fscx_revolve one.  Same Schnorr arithmetic
+/* HPKS-NL: sign msg with private key priv, using hpks_nl_challenge (HFSCX-256-DS
+ * over R || msg since v12.0.0, TODO #348; NL-FSCX v1 until v11.x) in place of
+ * the classical fscx_revolve one.  Same Schnorr arithmetic
  * as hpks_sign; only the derivation of e differs.  TODO #308 added it so the
  * `sign --algo hpks-nl` path in herradura_cli.c calls a named suite operation
  * instead of transcribing the signer (and its nonce draw) inline. */
@@ -3550,7 +3566,7 @@ static inline void hpks_nl_sign(const BitArray *msg, const BitArray *priv,
     BitArray k = BA_INIT, e = BA_INIT, ae = BA_INIT;
     ba_rand(&k, urnd);
     gf_pow_ba(R_out, &GF_GEN, &k);
-    nl_fscx_revolve_v1_ba(&e, R_out, msg, I_VALUE);
+    hpks_nl_challenge(&e, R_out, msg);
     ba_mul_mod_ord(&ae, priv, &e);
     ba_sub_mod_ord(s_out, &k, &ae);
 }
@@ -5292,10 +5308,10 @@ static void ba_add_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
 /* ─────────────────────────────────────────────────────────────────────────────
  * 98 — HPKS-T: Threshold / Aggregate Schnorr over GF(2^n)* (TODO #98)
  *
- * n-of-n MuSig2-style key aggregation with NL-FSCX v1 challenge.
+ * n-of-n MuSig2-style key aggregation with HFSCX-256-DS challenge.
  * μ_j = HFSCX-256(L || C_j_bytes) mod ord  (rogue-key binding)
  * C_agg = Π C_j^{μ_j}
- * Sign:   R = Π R_j;  e = nl_fscx_revolve_v1(R, msg, n/4);
+ * Sign:   R = Π R_j;  e = hpks_nl_challenge(R, msg) = HFSCX-256-DS(0x30, R || msg);
  *         s_j = (k_j − a_j·μ_j·e) mod ord;  s = Σ s_j mod ord
  * Verify: g^s · C_agg^e == R  (identical to single-party HPKS-NL verify)
  * ─────────────────────────────────────────────────────────────────────────── */
@@ -5360,7 +5376,7 @@ static uint8_t *_hpkst_build_L(const BitArray *pubkeys, size_t n, size_t *llen_o
 /* HPKS-T n-of-n sign.
  * secrets[n]: private scalars (BitArray, each < ord).
  * pubkeys[n]: corresponding public keys C_j = g^{a_j}.
- * msg:        message BitArray (NL-FSCX v1 challenge input).
+ * msg:        message BitArray (HFSCX-256-DS challenge input).
  * Outputs: C_agg, R, s.
  * Caller must supply per-signer random nonces in nonces[n] (fresh BitArrays).
  * Pass NULL for nonces to generate internally from /dev/urandom. */
@@ -5393,9 +5409,9 @@ static void hpkst_sign(const BitArray *secrets, const BitArray *pubkeys, size_t 
         gf_mul_ba(R_out, R_out, &R_j);
     }
 
-    /* e = nl_fscx_revolve_v1(R, msg, I_VALUE) */
+    /* e = HFSCX-256-DS(0x30, R || msg) (TODO #348; v1(R, msg, n/4) until v11.x) */
     BitArray e = BA_INIT;
-    nl_fscx_revolve_v1_ba(&e, R_out, msg, I_VALUE);
+    hpks_nl_challenge(&e, R_out, msg);
 
     /* s = Σ (k_j − a_j·μ_j·e) mod ord */
     /* Use 512-bit intermediate to avoid overflow: keep mod ord per step */
@@ -5448,7 +5464,7 @@ static int hpkst_verify(const BitArray *C_agg, const BitArray *R,
                          const BitArray *s, const BitArray *msg)
 {
     BitArray e = BA_INIT, gs = BA_INIT, Ce = BA_INIT, lhs = BA_INIT;
-    nl_fscx_revolve_v1_ba(&e, R, msg, I_VALUE);
+    hpks_nl_challenge(&e, R, msg);
     gf_pow_ba(&gs, &GF_GEN_BA, s);
     gf_pow_ba(&Ce, C_agg, &e);
     gf_mul_ba(&lhs, &gs, &Ce);

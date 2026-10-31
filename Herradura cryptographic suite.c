@@ -76,7 +76,7 @@
       - HSKE-NL-A2: revolve-mode symmetric encryption with NL-FSCX v2 (invertible).
       - HKEX-RNL: Ring-LWR key exchange (n=RNL_N=1024; conjectured
         quantum-resistant, ~206 classical / ~187 quantum Core-SVP bits).
-      - HPKS-NL: NL-hardened Schnorr signature using NL-FSCX v1 challenge.
+      - HPKS-NL: NL-hardened Schnorr signature using HFSCX-256-DS challenge.
       - HPKE-NL: NL-hardened El Gamal encryption using NL-FSCX v2.
 
     All protocols operate at KEYBITS=256 by default.
@@ -487,18 +487,18 @@ int main(void)
         explicit_bzero(rnl_n_B.b, KEYBYTES);
     }
 
-    /* --- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge] */
-    printf("\n--- HPKS-NL [NL-hardened Schnorr \xe2\x80\x94 NL-FSCX v1 challenge]\n");
+    /* --- HPKS-NL [NL-hardened Schnorr -- HFSCX-256-DS challenge since v12.0.0 (TODO #348)] */
+    printf("\n--- HPKS-NL [NL-hardened Schnorr \xe2\x80\x94 HFSCX-256-DS challenge]\n");
     puts("    (GF DLP still present; NL hardens linear challenge preimage)");
     {
         BitArray k_nl = BA_INIT, R_nl = BA_INIT, e_nl = BA_INIT, ae_nl = BA_INIT, s_nl = BA_INIT, gs_nl = BA_INIT, Ce_nl = BA_INIT, lhs_nl = BA_INIT;
         ba_rand(&k_nl, urnd);
         gf_pow_ba(&R_nl, &GF_GEN, &k_nl);
-        nl_fscx_revolve_v1_ba(&e_nl, &R_nl, &plaintext, I_VALUE);
+        hpks_nl_challenge(&e_nl, &R_nl, &plaintext);
         ba_mul_mod_ord(&ae_nl, &a, &e_nl);
         ba_sub_mod_ord(&s_nl, &k_nl, &ae_nl);
         /* verify */
-        nl_fscx_revolve_v1_ba(&e_nl, &R_nl, &plaintext, I_VALUE);
+        hpks_nl_challenge(&e_nl, &R_nl, &plaintext);
         gf_pow_ba(&gs_nl, &GF_GEN, &s_nl);
         gf_pow_ba(&Ce_nl, &C, &e_nl);
         gf_mul_ba(&lhs_nl, &gs_nl, &Ce_nl);
@@ -879,7 +879,7 @@ int main(void)
         BitArray rand_exp = BA_INIT, R_eve = BA_INIT, e_eve = BA_INIT, s_eve = BA_INIT, gs_eve = BA_INIT, Ce_eve = BA_INIT, lhs_eve = BA_INIT;
         ba_rand(&rand_exp, urnd);
         gf_pow_ba(&R_eve, &GF_GEN, &rand_exp);
-        nl_fscx_revolve_v1_ba(&e_eve, &R_eve, &decoy, I_VALUE);
+        hpks_nl_challenge(&e_eve, &R_eve, &decoy);
         ba_rand(&s_eve, urnd);
         gf_pow_ba(&gs_eve,  &GF_GEN, &s_eve);
         gf_pow_ba(&Ce_eve,  &C,      &e_eve);

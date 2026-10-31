@@ -7,7 +7,7 @@ import java.security.SecureRandom;
 /**
  * TODO #199: pure-Java port of the NL/PQC (v1.5.0+) quartet — HKEX-RNL
  * (Ring-LWR key exchange), HSKE-NL-A1 (counter-mode) / HSKE-NL-A2
- * (revolve-mode), HPKS-NL (Schnorr with NL-FSCX v1 challenge), and HPKE-NL
+ * (revolve-mode), HPKS-NL (Schnorr with HFSCX-256-DS challenge), and HPKE-NL
  * (El Gamal with NL-FSCX v2) — plus the NL-FSCX v2 primitive and the
  * Ring-LWR ring arithmetic (negacyclic NTT over Z_65537) underlying
  * HKEX-RNL. NL-FSCX v1 already lives in {@link Hfscx256} (TODO #198,
@@ -710,13 +710,35 @@ public final class HerraduraNl {
     }
 
     // -----------------------------------------------------------------
-    // HPKS-NL (Schnorr with NL-FSCX v1 challenge): same key/shape as
-    // classical HPKS, only e = nl_fscx_revolve_v1(R, msg, n/4).
+    // HPKS-NL (Schnorr with the HFSCX-256-DS challenge): same key/shape as
+    // classical HPKS, only e = hpksNlChallenge(R, msg).
     // -----------------------------------------------------------------
+
+    /** Hfscx256.hashDs tags for the two sites TODO #348's second pass moved onto
+     * the hash (v12.0.0).  0x01-0x03, 0x05, 0x06, 0x10-0x12, 0x20 and 0x21 are taken. */
+    static final int HPKS_NL_DS_CHALLENGE = 0x30;
+    static final int STERN_DS_HASH        = 0x31;
+
+    /** HPKS-NL / HPKS-T Schnorr challenge (TODO #348, v12.0.0):
+     * e = HFSCX-256-DS(0x30, R || msg), truncated to R's width (its high bits).
+     * Until v11.x it was nl_fscx_revolve_v1(R, msg, n/4), which put the signer's
+     * msg in v1's B; for B in {0, 2^(n-1)} v1's round is affine with a nilpotent
+     * linear part, so at >= n/2 rounds e would not depend on R
+     * (SecurityProofs-10.md §11.75). */
+    public static BitArray hpksNlChallenge(BitArray r, BitArray msg) {
+        int n = r.size();
+        if (msg.size() != n)
+            throw new BaException(BaException.E_MIXED_WIDTH, "hpks_nl_challenge");
+        byte[] rb = r.toBytes(), mb = msg.toBytes(), buf = new byte[rb.length + mb.length];
+        System.arraycopy(rb, 0, buf, 0, rb.length);
+        System.arraycopy(mb, 0, buf, rb.length, mb.length);
+        byte[] d = Hfscx256.hashDs(HPKS_NL_DS_CHALLENGE, buf);
+        return BitArray.fromBytes(java.util.Arrays.copyOf(d, n / 8), n);
+    }
 
     public static Herradura.Signature hpksNlSign(BitArray msg, BitArray priv, BitArray k) {
         BitArray r = Herradura.gfPow(Herradura.GF_GEN, k);
-        BitArray e = Hfscx256.nlFscxRevolveV1(r, msg, N / 4);
+        BitArray e = hpksNlChallenge(r, msg);
         // The Schnorr scalar is an integer by the protocol's own definition and
         // crosses at the named boundary (BitArray.toBigInteger/fromBigInteger).
         BigInteger s = k.toBigInteger()
@@ -731,7 +753,7 @@ public final class HerraduraNl {
 
     public static boolean hpksNlVerify(BitArray msg, BitArray pub, BitArray r, BitArray s) {
         if (!Herradura.gfPubIsValid(pub)) return false;
-        BitArray e = Hfscx256.nlFscxRevolveV1(r, msg, N / 4);
+        BitArray e = hpksNlChallenge(r, msg);
         BitArray lhs = Herradura.gfMul(Herradura.gfPow(Herradura.GF_GEN, s), Herradura.gfPow(pub, e));
         return lhs.equals(r);
     }

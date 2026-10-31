@@ -64,7 +64,7 @@ from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, nl_v2_key_is_valid, gf_mul, gf_pow,
     nl_fscx_revolve_v3, nl_fscx_revolve_v3_inv, v3_rows,
-    hfscx_256, hfscx_256_ds, hmac_hfscx_256, _HFSCX256_IV_BYTES,
+    hfscx_256, hfscx_256_ds, hmac_hfscx_256, _HFSCX256_IV_BYTES, hpks_nl_challenge,
     rnl_kdf_seed, hske_nla1_encrypt, hske_nla1_decrypt,
     hske_nl_aead_encrypt, hske_nl_aead_decrypt,
     hske_nl_v2_duplex_encrypt, hske_nl_v2_duplex_decrypt,
@@ -2038,7 +2038,7 @@ def cmd_sign(args):
             e = fscx_revolve(R, msg, nbits // 4)
         else:
             R, s = hpks_nl_sign(msg, priv_int, poly, nbits)
-            e = nl_fscx_revolve_v1(R, msg, nbits // 4)
+            e = hpks_nl_challenge(R, msg)
         _write_file(args.out, _encode_schnorr_sig(s, R.uint, e.uint, nbits))
 
     elif algo == 'hpks-stern':
@@ -2234,7 +2234,7 @@ def cmd_threshold_aggregate(args):
 
     R     = BitArray(nbits, R_val)
     msg   = BitArray(nbits, int.from_bytes(in_bytes[:nbits // 8].ljust(nbits // 8, b'\x00'), 'big'))
-    e     = nl_fscx_revolve_v1(R, msg, nbits // 4)
+    e     = hpks_nl_challenge(R, msg)
 
     C_agg, _coeffs = hpkst_aggregate_pubkeys(pubkeys)
     _write_file(args.out, encode_hpkst_aggregate(R.uint, C_agg.uint, e.uint, nbits).encode())
@@ -2358,7 +2358,7 @@ def cmd_verify(args):
         R    = BitArray(nbits, R_int)
         e_v  = (fscx_revolve(R, msg, nbits // 4)
                 if algo == 'hpks'
-                else nl_fscx_revolve_v1(R, msg, nbits // 4))
+                else hpks_nl_challenge(R, msg))
         lhs  = gf_mul(gf_pow(GF_GEN, s_int, poly, nbits),
                       gf_pow(pub_int, e_v.uint, poly, nbits), poly, nbits)
         if lhs == R_int:

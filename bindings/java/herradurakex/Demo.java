@@ -222,12 +222,12 @@ public final class Demo {
                   + "event this demo does not retry -- not a bug)");
         }
 
-        out("\n--- HPKS-NL [NL-hardened Schnorr — NL-FSCX v1 challenge]");
+        out("\n--- HPKS-NL [NL-hardened Schnorr — HFSCX-256-DS challenge]");
         System.out.println("    (GF DLP still present; NL hardens linear challenge preimage)");
         BigInteger RNl2 = null; // captured for the HPKE-NL Eve section below
         {
             Herradura.Signature sig = HerraduraNl.hpksNlSign(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(a, Herradura.N), rng);
-            BitArray e = Hfscx256.nlFscxRevolveV1(sig.r, BitArray.fromBigInteger(plaintext, Herradura.N), Herradura.I_STEPS);
+            BitArray e = HerraduraNl.hpksNlChallenge(sig.r, BitArray.fromBigInteger(plaintext, Herradura.N));
             boolean verified = HerraduraNl.hpksNlVerify(BitArray.fromBigInteger(plaintext, Herradura.N), BitArray.fromBigInteger(C, Herradura.N), sig.r, sig.s);
             System.out.println("P (msg)        : " + hex(plaintext, n / 8));
             System.out.println("R [Alice,sign] : " + hex(sig.r.toBigInteger(), n / 8));
@@ -569,7 +569,7 @@ public final class Demo {
         out("*** HPKS-NL — Eve cannot forge Schnorr without knowing private key a");
         {
             BigInteger rEve = Herradura.gfPow(Herradura.GF_GEN, BitArray.fromBigInteger(rand(rng), Herradura.N)).toBigInteger();
-            BigInteger eEve = Hfscx256.nlFscxRevolveV1(BitArray.fromBigInteger(rEve, Herradura.N), BitArray.fromBigInteger(decoy, Herradura.N), Herradura.I_STEPS).toBigInteger();
+            BigInteger eEve = HerraduraNl.hpksNlChallenge(BitArray.fromBigInteger(rEve, Herradura.N), BitArray.fromBigInteger(decoy, Herradura.N)).toBigInteger();
             BigInteger sEve = rand(rng);
             BigInteger lhs = Herradura.gfMul(Herradura.gfPow(Herradura.GF_GEN, BitArray.fromBigInteger(sEve, Herradura.N)), Herradura.gfPow(BitArray.fromBigInteger(C, Herradura.N), BitArray.fromBigInteger(eEve, Herradura.N))).toBigInteger();
             out(lhs.equals(rEve) ? "[FAIL] Eve forged HPKS-NL signature (Eve wins)!"

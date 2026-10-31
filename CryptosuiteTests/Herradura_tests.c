@@ -77,7 +77,7 @@
       [12] HSKE-NL-A1 counter-mode correctness: D == P.
       [13] HSKE-NL-A2 revolve-mode correctness: D == P.
       [14] HKEX-RNL key agreement: K_A == K_B (Ring-LWR).
-      [15] HPKS-NL correctness: g^s * C^e == R (NL-FSCX v1 challenge).
+      [15] HPKS-NL correctness: g^s * C^e == R (HFSCX-256-DS challenge).
       [16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt).
       [17] HPKS-Stern-F correctness: sign+verify  [CODE-BASED PQC].
       [18] HPKE-Stern-F correctness: encap+decap (brute-force for n=32)  [CODE-BASED PQC].
@@ -1476,28 +1476,6 @@ static void bn_m_inv_n(uint8_t *dst, const uint8_t *src, int nb)
     }
 }
 
-/* NL-FSCX v1: fscx(a,b) ^ ROL(a+b, n/4) */
-static void bn_nl_fscx_v1_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
-{
-    uint8_t f[BN_MAX_BYTES], s[BN_MAX_BYTES], m[BN_MAX_BYTES];
-    bn_fscx_n(f, a, b, nb);
-    bn_add_n(s, a, b, nb);
-    bn_rol_k_n(m, s, nb/4, nb);
-    bn_xor_n(dst, f, m, nb);
-}
-
-static void bn_nl_fscx_revolve_v1_n(uint8_t *dst, const uint8_t *a,
-                                     const uint8_t *b, int steps, int nb)
-{
-    uint8_t buf[2][BN_MAX_BYTES];
-    int idx = 0, i, n = nb / 8;
-    bn_copy(buf[0], a, nb);
-    for (i = 0; i < steps; i++) {
-        bn_nl_fscx_v1_n(buf[1-idx], buf[idx], b, nb); idx ^= 1;
-    }
-    bn_copy(dst, buf[idx], nb);
-}
-
 /* delta(b) = ROL(b * ((b+1)/2), n/4) */
 static void bn_nl_delta_v2_n(uint8_t *delta, const uint8_t *b, int nb)
 {
@@ -2416,13 +2394,14 @@ static void test_hkex_rnl_correctness(void)
     putchar('\n');
 }
 
-/* [15] HPKS-NL correctness: g^s * C^e == R (NL-FSCX v1) — bn_* layer, {32,64,128,256} */
+/* [15] HPKS-NL correctness: g^s * C^e == R (HFSCX-256-DS challenge since v12.0.0,
+ * TODO #348; NL-FSCX v1 until v11.x) — bn_* layer, {32,64,128,256} */
 static void test_hpks_nl_correctness(void)
 {
     static const int sizes[] = {32, 64, 128, 256};
     int si, i, ok, N, size;
     struct timespec t0;
-    printf("[15] HPKS-NL correctness: g^s · C^e == R (NL-FSCX v1 challenge)  [PQC-EXT]\n");
+    printf("[15] HPKS-NL correctness: g^s · C^e == R (HFSCX-256-DS challenge)  [PQC-EXT]\n");
     for (si = 0; si < 4; si++) {
         size = sizes[si]; ok = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -2437,7 +2416,12 @@ static void test_hpks_nl_correctness(void)
             bn_set_gen(g, size);
             bn_gf_pow_n(C, g, a, size);
             bn_gf_pow_n(R, g, k, size);
-            bn_nl_fscx_revolve_v1_n(e, R, plain, size/4, size);
+            {   /* e = HFSCX-256-DS(0x30, R || P), high size bits (TODO #348) */
+                uint8_t cb[2 * BN_MAX_BYTES], d[32];
+                memcpy(cb, R, (size_t)n); memcpy(cb + n, plain, (size_t)n);
+                hfscx_256_ds(HPKS_NL_DS_CHALLENGE, cb, (size_t)(2 * n), NULL, d);
+                memcpy(e, d, (size_t)n);
+            }
             bn_mul_mod_ord_n(ae, a, e, size);
             bn_sub_mod_ord_n(s, k, ae, size);
             bn_gf_pow_n(gs, g, s, size);
@@ -2519,25 +2503,12 @@ static void test_hpke_nl_correctness(void)
 
 #define SDF_TEST_ROUNDS 8              /* reduced rounds for test speed  */
 
-/* Chain-hash + HFSCX-256 finalizer (TODO #43, v1.6.0).
+/* The library's chain hash, HFSCX-256-DS(0x31, ds || items) since v12.0.0
+ * (TODO #348; an NL-FSCX v1 chain with the item as v1's B until v11.x).
  * ds: domain-separation tag (0=challenge, 1=c0, 2=c1, 3=c2, 4=KEM) (TODO #36, v1.6.1). */
 static void stern_hash_ba(BitArray *out, const BitArray *items, int n_items, unsigned ds)
 {
-    BitArray h = { KEYBITS, {0} };
-    h.b[KEYBYTES - 1] = (uint8_t)(ds & 0xFF);
-    int i;
-    for (i = 0; i < n_items; i++) {
-        BitArray hxv = BA_INIT, rotv = BA_INIT;
-        ba_xor(&hxv, &h, &items[i]);
-        ba_rol_k(&rotv, &items[i], KEYBITS / 8);
-        nl_fscx_revolve_v1_ba(&h, &hxv, &rotv, I_VALUE);
-    }
-    {
-        uint8_t digest[32];
-        hfscx_256(h.b, KEYBYTES, NULL, digest);
-        memcpy(h.b, digest, KEYBYTES);
-    }
-    *out = h;
+    stern_hash(out, items, n_items, ds);
 }
 
 /* H[row] = HFSCX-256(NL-FSCX_v1^I(ROL(seed XOR row, n/8), seed)) (TODO #88) */
@@ -2644,17 +2615,17 @@ static void stern_fs_challenges_t(int *chals, int rounds,
                                    const BitArray *c1,
                                    const BitArray *c2)
 {
-    BitArray ch_st = { KEYBITS, {0} };
+    BitArray ch_st = BA_INIT, *flat;
     int i;
-#define _SFS_T(item) do { \
-    BitArray _hxv = BA_INIT, _rotv = BA_INIT; \
-    ba_xor(&_hxv, &ch_st, &(item)); \
-    ba_rol_k(&_rotv, &(item), KEYBITS / 8); \
-    nl_fscx_revolve_v1_ba(&ch_st, &_hxv, &_rotv, I_VALUE); \
-} while (0)
-    _SFS_T(*msg);
-    for (i = 0; i < rounds; i++) { _SFS_T(c0[i]); _SFS_T(c1[i]); _SFS_T(c2[i]); }
-#undef _SFS_T
+    /* ch_st = stern_hash(msg || c0[0] c1[0] c2[0] || ...), ds = 0 (TODO #348) */
+    flat = (BitArray *)malloc((size_t)(1 + 3 * rounds) * sizeof(BitArray));
+    if (!flat) { fprintf(stderr, "stern_fs_challenges_t: oom\n"); exit(1); }
+    flat[0] = *msg;
+    for (i = 0; i < rounds; i++) {
+        flat[1 + 3 * i] = c0[i]; flat[2 + 3 * i] = c1[i]; flat[3 + 3 * i] = c2[i];
+    }
+    stern_hash(&ch_st, flat, 1 + 3 * rounds, 0);
+    free(flat);
     for (i = 0; i < rounds; i++) {
         BitArray idx_ba = { KEYBITS, {0} };
         uint32_t v;
@@ -3009,20 +2980,21 @@ static int hpks_stern_f_verify_32(const SternSig32T *sig, uint32_t msg,
 #define SDF64_SYNBYTES     4
 #define SDF64_TEST_ROUNDS  8
 
+/* One chain step at N = 64: h' = HFSCX-256(h || v) truncated to 64 bits.  The
+ * item reaches only HFSCX-256's message input (TODO #348, v12.0.0); until v11.x
+ * it was NL-FSCX v1's B, h' = HFSCX-256(v1(h ^ v, ROL(v, 8), 16)). */
 static uint64_t stern_hash_64(uint64_t h, uint64_t v)
 {
-    uint64_t key = (v << 8) | (v >> 56);
-    uint64_t raw = nl_fscx_revolve_v1_64(h ^ v, key, 16);
-    uint8_t buf[8], digest[32];
-    buf[0]=(uint8_t)(raw>>56); buf[1]=(uint8_t)(raw>>48);
-    buf[2]=(uint8_t)(raw>>40); buf[3]=(uint8_t)(raw>>32);
-    buf[4]=(uint8_t)(raw>>24); buf[5]=(uint8_t)(raw>>16);
-    buf[6]=(uint8_t)(raw>> 8); buf[7]=(uint8_t)(raw);
-    hfscx_256(buf, 8, NULL, digest);
-    return ((uint64_t)digest[0]<<56)|((uint64_t)digest[1]<<48)|
-           ((uint64_t)digest[2]<<40)|((uint64_t)digest[3]<<32)|
-           ((uint64_t)digest[4]<<24)|((uint64_t)digest[5]<<16)|
-           ((uint64_t)digest[6]<< 8)| (uint64_t)digest[7];
+    uint8_t buf[16], digest[32];
+    uint64_t out = 0;
+    int i;
+    for (i = 0; i < 8; i++) {
+        buf[i]     = (uint8_t)(h >> (56 - 8 * i));
+        buf[8 + i] = (uint8_t)(v >> (56 - 8 * i));
+    }
+    hfscx_256(buf, 16, NULL, digest);
+    for (i = 0; i < 8; i++) out = (out << 8) | digest[i];
+    return out;
 }
 
 static uint64_t stern_hash_64_n(const uint64_t *items, int n)
@@ -3235,17 +3207,20 @@ static uint64_t hpke_stern_f_decap_known_64(uint64_t seed, uint64_t e_prime)
 #define SDF128_SYNBYTES      8
 #define SDF128_TEST_ROUNDS   8
 
+/* One chain step at N = 128: h' = HFSCX-256(h || v) truncated to 128 bits
+ * (TODO #348, v12.0.0; see stern_hash_64). */
 static __uint128_t stern_hash_128(__uint128_t h, __uint128_t v)
 {
-    __uint128_t key = (v << 16) | (v >> 112);
-    __uint128_t raw = nl_fscx_revolve_v1_128(h ^ v, key, NL_I128);
-    uint8_t buf[16], digest[32];
+    uint8_t buf[32], digest[32];
+    __uint128_t out = 0;
     int i;
-    for (i = 0; i < 16; i++) buf[i] = (uint8_t)(raw >> (120 - 8*i));
-    hfscx_256(buf, 16, NULL, digest);
-    { __uint128_t out = 0;
-      for (i = 0; i < 16; i++) out = (out << 8) | digest[i];
-      return out; }
+    for (i = 0; i < 16; i++) {
+        buf[i]      = (uint8_t)(h >> (120 - 8 * i));
+        buf[16 + i] = (uint8_t)(v >> (120 - 8 * i));
+    }
+    hfscx_256(buf, 32, NULL, digest);
+    for (i = 0; i < 16; i++) out = (out << 8) | digest[i];
+    return out;
 }
 
 static __uint128_t stern_hash_128_n(const __uint128_t *items, int n)

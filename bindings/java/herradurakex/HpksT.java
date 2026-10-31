@@ -6,7 +6,7 @@ import java.util.List;
 
 /**
  * TODO #260: pure-Java port of TODO #98 — HPKS-T, n-of-n MuSig2-style
- * threshold/aggregate Schnorr over GF(2^n)*, with an NL-FSCX v1 challenge.
+ * threshold/aggregate Schnorr over GF(2^n)*, with an HFSCX-256-DS challenge.
  * C/Go/Python have carried this since it was added ("Herradura
  * cryptographic suite.{c,go,py}"'s #98 section); Java had neither the
  * primitive nor a demo/test for it until this file.
@@ -15,7 +15,7 @@ import java.util.List;
  *   mu_j    = HFSCX-256(L || C_j_bytes) mod ord, or 1 if that is 0   (rogue-key binding)
  *   L       = sorted 32-byte big-endian pubkeys, concatenated
  *   C_agg   = prod C_j^{mu_j}
- *   Sign:    R = prod g^{k_j};  e = nl_fscx_revolve_v1(R, msg, n/4);
+ *   Sign:    R = prod g^{k_j};  e = hpksNlChallenge(R, msg);
  *            s_j = (k_j - a_j*mu_j*e) mod ord;  s = sum s_j mod ord
  *   Verify:  g^s * C_agg^e == R          (identical to single-party HPKS-NL verify)
  * </pre>
@@ -116,7 +116,7 @@ public final class HpksT {
             rVal = Herradura.gfMul(ba(rVal), ba(rj)).toBigInteger();
         }
 
-        BigInteger e = Hfscx256.nlFscxRevolveV1(ba(rVal), ba(msg), I_STEPS).toBigInteger();
+        BigInteger e = HerraduraNl.hpksNlChallenge(ba(rVal), ba(msg)).toBigInteger();
 
         BigInteger sAcc = BigInteger.ZERO;
         for (int j = 0; j < n; j++) {
@@ -128,10 +128,10 @@ public final class HpksT {
         return new Signature(agg.cAgg, rVal, sAcc);
     }
 
-    /** Verify: g^s * C_agg^e == R, e = nl_fscx_revolve_v1(R, msg, n/4) —
+    /** Verify: g^s * C_agg^e == R, e = hpksNlChallenge(R, msg) —
      * structurally identical to single-party HPKS-NL verify. */
     public static boolean verify(BigInteger cAgg, BigInteger r, BigInteger s, BigInteger msg) {
-        BigInteger e = Hfscx256.nlFscxRevolveV1(ba(r), ba(msg), I_STEPS).toBigInteger();
+        BigInteger e = HerraduraNl.hpksNlChallenge(ba(r), ba(msg)).toBigInteger();
         BigInteger lhs = Herradura.gfMul(Herradura.gfPow(ba(GEN), ba(s)),
                                          Herradura.gfPow(ba(cAgg), ba(e))).toBigInteger();
         return lhs.equals(r);

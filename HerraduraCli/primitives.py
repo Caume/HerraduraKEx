@@ -32,6 +32,7 @@ gf_pow                 = _s.gf_pow
 hfscx_256              = _s.hfscx_256
 hfscx_256_ds           = _s.hfscx_256_ds
 hmac_hfscx_256         = _s.hmac_hfscx_256
+hpks_nl_challenge      = _s.hpks_nl_challenge     # TODO #348
 rnl_kdf_seed           = _s.rnl_kdf_seed
 hske_nla1_encrypt      = _s.hske_nla1_encrypt
 hske_nla1_decrypt      = _s.hske_nla1_decrypt

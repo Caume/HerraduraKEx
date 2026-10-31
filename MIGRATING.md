@@ -56,6 +56,13 @@ Matyas–Meyer–Oseas. Every HFSCX-256 output changes, but plain `hske-nla1` ci
 key pairs do not. **Decrypt and re-export with a 10.x build before upgrading**; nothing
 in this break fails silently. See [section 25](#25-hfscx-256s-compression-is-matyasmeyeroseas-v1100).
 
+The twenty-sixth is the reason the version is **12.0.0**. The HPKS-NL / HPKS-T Schnorr
+challenge and the Stern-F chain hash stop feeding attacker-chosen input to NL-FSCX v1's B
+and hash with HFSCX-256-DS instead. Every `hpks-nl`, threshold, `hpks-stern`, ring and
+credential signature changes, and so does the `hpke-stern` session key. **Keys do not
+change; re-sign on 12.0.0+.** Old signatures are refused, not misread. See
+[section 26](#26-the-schnorr-challenge-and-the-stern-hash-use-hfscx-256-ds-v1200).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -92,6 +99,7 @@ trusting any signature made by an earlier build.
 | [`hske-nla1` refuses any width but 256](#19-hske-nla1-refuses-any-width-but-256-v900) | v9.0.0 | `enc`/`dec`/`encfile`/`decfile --algo hske-nla1` with a session key narrower than 256 bits | **Nothing at the default 256 bits.** A narrow-width ciphertext was only ever readable by the port that wrote it — decrypt it with a pre-9.0.0 build of THAT language and re-encrypt at 256 |
 | [NL-FSCX v1's modes run 3n/4 rounds](#24-nl-fscx-v1s-modes-run-3n4-rounds-v1000) | v10.0.0 | Every HFSCX-256 digest and MAC, so every signature, password-protected private key, `.hkx` file, `--aead` tag and hash-derived session secret; every `hske-nla1` ciphertext; every `hpks-wots` / `hpks-xmss` key | **Decrypt and re-export with a pre-10.0.0 build before upgrading; regenerate WOTS/XMSS keys and re-sign.** Plain `hske-nla1` fails silently |
 | [HFSCX-256's compression is Matyas–Meyer–Oseas](#25-hfscx-256s-compression-is-matyasmeyeroseas-v1100) | v11.0.0 | Every HFSCX-256 digest and MAC, so every signature, password-protected private key, `.hkx` file, `--aead` tag and hash-derived session secret; every `hpks-wots` / `hpks-xmss` key | **Decrypt and re-export with a 10.x build before upgrading; regenerate WOTS/XMSS keys and re-sign.** Plain `hske-nla1` is unchanged |
+| [The Schnorr challenge and the Stern hash use HFSCX-256-DS](#26-the-schnorr-challenge-and-the-stern-hash-use-hfscx-256-ds-v1200) | v12.0.0 | Every `hpks-nl` signature and HPKS-T aggregate / signature; every `hpks-stern`, ring and HCRED credential signature; `hpke-stern` session keys | **Re-sign on 12.0.0+, and redo `hpke-stern` exchanges.** Keys, `hpke-stern-kem` and everything else are unchanged |
 
 ---
 
@@ -1453,3 +1461,47 @@ know that two different messages of the same length could share one digest. Rech
 anything whose integrity mattered.
 
 **Cost.** None: MMO runs the same 192 rounds.
+
+## 26. The Schnorr challenge and the Stern hash use HFSCX-256-DS (v12.0.0)
+
+**This is the reason the version is 12.0.0.** It changes what `sign --algo hpks-nl`,
+`threshold-*`, `sign --algo hpks-stern`, the ring signature, `cred-issue` and
+`--algo hpke-stern` produce.
+
+**Why.** Both constructions put attacker-chosen input in NL-FSCX v1's B, which section 25
+showed is the one input v1 must not let anyone choose. For B = 0 or 2^255 the round is
+affine with a nilpotent linear part, so v1 forgets A after 128 rounds:
+- The challenge was e = v1(R, msg, 64), with msg as B.
+- The Stern chain absorbed each item as h = v1(h ⊕ v, ROL(v, 32), 64), with the item as B.
+
+At 64 rounds that cost binding margin, and the 192-round raise TODO #348 had planned would
+have made it total. A message of 0 would have had one challenge for every R, and a zero item
+would have erased the chain (TODO #348, `SecurityProofsCode/v1_remaining_sites.py` §7,
+SecurityProofs-10.md §11.76).
+
+**What changed.** Two constructions, in all four ports (C, Go, Python, Java):
+
+| | 11.x | 12.0.0+ |
+|---|---|---|
+| HPKS-NL / HPKS-T challenge | `e = v1(R, msg, n/4)` | `e = HFSCX-256-DS(0x30, R ‖ msg)`, high n bits |
+| Stern-F chain hash (commitments, Fiat–Shamir and ring challenges, HPKE-Stern-F key) | `h ← v1(h ⊕ v, ROL(v, n/8), n/4)`, then HFSCX-256 | `HFSCX-256-DS(0x31, ds ‖ item_0 ‖ … ‖ item_{k−1})` |
+
+The 32-bit targets make the same change over HFSCX-32. They are demo-only and share no wire
+format with the 256-bit CLIs.
+
+**Who is affected, and what to do:**
+
+| artifact | effect | action |
+|---|---|---|
+| `hpks-nl` signatures | does not verify (the stored `e` no longer matches) | re-sign on 12.0.0+ |
+| HPKS-T threshold aggregates and signatures | does not verify | redo the round on 12.0.0+ (all signers on the same side) |
+| `hpks-stern` and ring signatures | does not verify | re-sign on 12.0.0+ |
+| HCRED credentials (the issuer's Stern signature) | does not verify | re-issue on 12.0.0+ |
+| `hpke-stern` (demo KEM) session keys | derived key differs | both peers on the same side of the upgrade |
+| every key pair (`hpks-nl`, `hpks-stern`, all others) | **unchanged** | none |
+| `hpke-stern-kem`, `hybrid-rnl-stern`, HFSCX-256 digests, every other `--algo` | **unchanged** | none |
+
+**Cost.** One HFSCX-256 call (192 rounds per 32-byte block) per challenge or Stern hash,
+in place of 64 v1 rounds per item. A Stern signature's Fiat–Shamir hash costs about three
+times what it did.
+

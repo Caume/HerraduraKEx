@@ -384,8 +384,12 @@ SECURITY = {
                              "#238, which conflated the withdrawn PQC *claim* with the algo being "
                              "superseded: it is neither superseded nor removed -- it still ships in all "
                              "four implementations and is covered by the cross-language matrix. "
-                             "`pedagogical` is what SECURITY.md has always said, and matches hpks.",
-                       source=["SECURITY.md", "TODO_DONE.md #212", "SecurityProofs-4.md 11.7"]),
+                             "`pedagogical` is what SECURITY.md has always said, and matches hpks. "
+                             "Since v12.0.0 (TODO #348) the challenge is HFSCX-256-DS(0x30, R || msg) "
+                             "truncated to n bits, not nl_fscx_revolve_v1(R, msg, n/4), which put the "
+                             "signer's msg in v1's B.",
+                       source=["SECURITY.md", "TODO_DONE.md #212", "SecurityProofs-4.md 11.7",
+                               "TODO_DONE.md #348"]),
     "hpke-nl":   dict(status="pedagogical", quantum_resistant=False,
                        classical_security_bits="~36.5 (n=256)",
                        notes="NL-FSCX-hardened El Gamal over the same GF(2^n)* group as hpke, with the same "

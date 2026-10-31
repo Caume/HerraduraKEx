@@ -620,13 +620,15 @@ def ratchet_advance_test(state: BitArray):
 # ---------------------------------------------------------------------------
 
 def _stern_hash(n: int, *items, ds: int = 0) -> 'BitArray':
-    """Chain-hash + HFSCX-256 finalizer (v1.6.0). ds: domain-sep tag (TODO #36, v1.6.1)."""
+    """HFSCX-256-DS(0x31, ds || items), high n bits (TODO #348, v12.0.0; an
+    NL-FSCX v1 chain with the item as v1's B until v11.x).  ds: domain-sep tag
+    (TODO #36, v1.6.1)."""
     mask = (1 << n) - 1
-    h = BitArray(n, ds & mask)
+    data = bytes([ds & 0xFF])
     for item in items:
         v = item if isinstance(item, BitArray) else BitArray(n, int(item) & mask)
-        h = nl_fscx_revolve_v1(h ^ v, v.rotated(n // 8), n // 4)
-    digest = hfscx_256(h.bytes)
+        data += v.bytes
+    digest = _hfscx_256_ds(0x31, data)
     return BitArray(n, int.from_bytes(digest, 'big') >> (256 - n))
 
 def _stern_matrix_row(seed_int: int, row: int, n: int) -> 'BitArray':
@@ -1740,10 +1742,12 @@ def test_hkex_rnl_correctness():
 
 
 def test_hpks_nl_correctness():
-    # HPKS-NL: Schnorr with NL-FSCX v1 challenge.
-    # Sign:   k random; R=g^k; e=nl_fscx_revolve_v1(R,P,I); s=(k-a*e) mod ord
+    # HPKS-NL: Schnorr with the HFSCX-256-DS challenge (TODO #348, v12.0.0;
+    # NL-FSCX v1 until v11.x).
+    # Sign:   k random; R=g^k; e=HFSCX-256-DS(0x30, R || P), high n bits;
+    #         s=(k-a*e) mod ord
     # Verify: g^s * C^e == R
-    print("[15] HPKS-NL correctness: g^s · C^e == R (NL-FSCX v1 challenge)  [PQC-EXT]")
+    print("[15] HPKS-NL correctness: g^s · C^e == R (HFSCX-256-DS challenge)  [PQC-EXT]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); ord_ = (1 << size) - 1; ok = 0; n_run = 0
         for _ in _trange(_iters(GF_TRIALS)):
@@ -1754,7 +1758,8 @@ def test_hpks_nl_correctness():
             k     = BitArray.random(size)
             R_int = gf_pow(GF_GEN, k.uint, poly, size)
             R_b   = BitArray(size, R_int)
-            e     = nl_fscx_revolve_v1(R_b, pt, iv)
+            e     = BitArray(size, int.from_bytes(
+                _hfscx_256_ds(0x30, R_b.bytes + pt.bytes), 'big') >> (256 - size))
             s     = (k.uint - a.uint * e.uint) % ord_
             lhs   = gf_mul(gf_pow(GF_GEN, s,      poly, size),
                            gf_pow(C_int,  e.uint,  poly, size), poly, size)
@@ -2579,7 +2584,8 @@ def _hpkst_sign_t(secrets: list[int], pubkeys: list[int], msg: bytes) -> tuple[i
     for k in nonces:
         R = gf_mul(R, gf_pow(GF_GEN, k, _poly, _KEYBITS), _poly, _KEYBITS)
     msg_ba = BitArray(_KEYBITS, int.from_bytes(msg[:_KEYBITS//8].ljust(_KEYBITS//8, b'\x00'), 'big'))
-    e = nl_fscx_revolve_v1(BitArray(_KEYBITS, R), msg_ba, _KEYBITS // 4)
+    e = BitArray(_KEYBITS, int.from_bytes(            # HFSCX-256-DS(0x30, R || msg), TODO #348
+        _hfscx_256_ds(0x30, BitArray(_KEYBITS, R).bytes + msg_ba.bytes), 'big'))
     e_val = e.uint
     s = 0
     for a_j, k_j, mu_j in zip(secrets, nonces, coeffs):
@@ -2590,7 +2596,8 @@ def _hpkst_sign_t(secrets: list[int], pubkeys: list[int], msg: bytes) -> tuple[i
 def _hpkst_verify_t(cagg: int, R: int, s: int, msg: bytes) -> bool:
     _poly = GF_POLY[_KEYBITS]
     msg_ba = BitArray(_KEYBITS, int.from_bytes(msg[:_KEYBITS//8].ljust(_KEYBITS//8, b'\x00'), 'big'))
-    e = nl_fscx_revolve_v1(BitArray(_KEYBITS, R), msg_ba, _KEYBITS // 4)
+    e = BitArray(_KEYBITS, int.from_bytes(            # HFSCX-256-DS(0x30, R || msg), TODO #348
+        _hfscx_256_ds(0x30, BitArray(_KEYBITS, R).bytes + msg_ba.bytes), 'big'))
     e_val = e.uint
     lhs = gf_mul(gf_pow(GF_GEN, s, _poly, _KEYBITS),
                  gf_pow(cagg, e_val, _poly, _KEYBITS), _poly, _KEYBITS)

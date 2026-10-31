@@ -73,7 +73,7 @@ fmt_hpke_hdr:      .asciz "-- HPKE El Gamal --\n"
 fmt_hske_nl1_hdr:  .asciz "-- HSKE-NL-A1 [PQC-HARDENED -- counter-mode, NL-FSCX v1] --\n"
 fmt_hske_nl2_hdr:  .asciz "-- HSKE-NL-A2 [PQC-HARDENED -- revolve-mode, NL-FSCX v2] --\n"
 fmt_hkex_rnl_hdr:  .asciz "-- HKEX-RNL [PQC -- Ring-LWR; N=32, q=65537] --\n"
-fmt_hpks_nl_hdr:   .asciz "-- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge] --\n"
+fmt_hpks_nl_hdr:   .asciz "-- HPKS-NL [NL-hardened Schnorr -- HFSCX-32 challenge] --\n"
 fmt_hpke_nl_hdr:   .asciz "-- HPKE-NL [NL-hardened El Gamal -- NL-FSCX v2 encrypt] --\n"
 fmt_eve_hdr:       .asciz "*** EVE bypass TESTS ***\n"
 fmt_sdf_sign_hdr:  .asciz "\n-- HPKS-Stern-F [CODE-BASED PQC -- EUF-CMA; N=32, t=2, rounds=4] --\n"
@@ -905,7 +905,7 @@ hkex_rnl_done:
     bl      hprintf
 
     /* ================================================================
-       HPKS-NL  (NL-hardened Schnorr: NL-FSCX v1 challenge)
+       HPKS-NL  (NL-hardened Schnorr: HFSCX-32 challenge)
        ================================================================ */
     ldr     r0, =fmt_hpks_nl_hdr
     bl      hprintf
@@ -925,8 +925,7 @@ hkex_rnl_done:
     ldr     r0, [r0]
     ldr     r1, =val_plain
     ldr     r1, [r1]
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v1
+    bl      hpks_nl_challenge_32    @ e = HFSCX-32(TAG, R, P)  (TODO #348)
     ldr     r3, =val_e_hpks
     str     r0, [r3]
 
@@ -3349,41 +3348,87 @@ hfscx_32:
 .LHLB: .word 0xA3C5E799
 
 /* ------------------------------------------------------------------ */
-/* stern_hash1_32: r0=ds, r1=v -> r0=sternHash(ds,v)                 */
-/* h = nl(ds^v, ROL(v,4), 8); return hfscx_32(h)                     */
+/* hfscx32_absorb: r0=s, r1=w -> r0 = nl(w, s, 24) ^ w               */
+/* hfscx32_final:  r0=s       -> r0 = nl(LB, s, 24) ^ LB             */
+/* HFSCX-32's MMO chain one word at a time (TODO #348, v12.0.0);     */
+/* hfscx_32(x) = final(absorb(IV, x)).  The word is v1's A and the   */
+/* chaining value its B, so no party chooses B (§11.75).             */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hfscx32_absorb:
+    push    {r4, lr}
+    mov     r4, r1              @ r4 = w
+    mov     r1, r0              @ B = s
+    mov     r0, r4              @ A = w
+    mov     r2, #V1_MODE_STEPS
+    bl      nl_fscx_revolve_v1
+    eor     r0, r0, r4          @ ^ w  (feed-forward)
+    pop     {r4, pc}
+
+    .thumb_func
+hfscx32_final:
+    push    {r4, lr}
+    mov     r1, r0              @ B = s
+    ldr     r4, .LHLB
+    mov     r0, r4              @ A = LB
+    mov     r2, #V1_MODE_STEPS
+    bl      nl_fscx_revolve_v1
+    eor     r0, r0, r4          @ ^ LB
+    pop     {r4, pc}
+
+/* ------------------------------------------------------------------ */
+/* hpks_nl_challenge_32: r0=R, r1=msg -> r0 = HFSCX-32(TAG, R, msg)   */
+/* TAG = 0x30000000.  NL-FSCX v1(R, msg, n/4) until v11.x, with the  */
+/* signer's msg as v1's B (TODO #348).                               */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hpks_nl_challenge_32:
+    push    {r4-r6, lr}
+    mov     r4, r0              @ R
+    mov     r5, r1              @ msg
+    ldr     r0, .LHIV
+    mov     r1, #0x30000000
+    bl      hfscx32_absorb
+    mov     r1, r4
+    bl      hfscx32_absorb
+    mov     r1, r5
+    bl      hfscx32_absorb
+    bl      hfscx32_final
+    pop     {r4-r6, pc}
+
+/* ------------------------------------------------------------------ */
+/* stern_hash1_32: r0=ds, r1=v -> r0 = HFSCX-32(0x31000000|ds, v)     */
+/* Until v11.x: h = nl(ds^v, ROL(v,4), 8); hfscx_32(h) (TODO #348)   */
 /* ------------------------------------------------------------------ */
     .thumb_func
 stern_hash1_32:
     push    {r4, lr}
-    ror     r4, r1, #28         @ r4 = ROL(v,4)
-    eor     r0, r0, r1          @ r0 = ds ^ v
-    mov     r1, r4              @ r1 = ROL(v,4)
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
-    bl      hfscx_32
+    mov     r4, r1              @ v
+    orr     r1, r0, #0x31000000 @ TAG | ds
+    ldr     r0, .LHIV
+    bl      hfscx32_absorb
+    mov     r1, r4
+    bl      hfscx32_absorb
+    bl      hfscx32_final
     pop     {r4, pc}
 
-    .ltorg
-
 /* ------------------------------------------------------------------ */
-/* stern_hash2_32: r0=ds, r1=a, r2=b -> r0=sternHash(ds,a,b)        */
-/* h=nl(ds^a,ROL(a,4),8); return hfscx_32(nl(h^b,ROL(b,4),8))       */
+/* stern_hash2_32: r0=ds, r1=a, r2=b -> HFSCX-32(0x31000000|ds, a, b) */
 /* ------------------------------------------------------------------ */
     .thumb_func
 stern_hash2_32:
-    push    {r4-r5, lr}
-    ror     r4, r1, #28         @ r4 = ROL(a,4)
-    mov     r5, r2              @ r5 = b
-    eor     r0, r0, r1          @ r0 = ds ^ a
-    mov     r1, r4              @ r1 = ROL(a,4)
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1  @ r0 = h
-    eor     r0, r0, r5          @ h ^ b
-    ror     r1, r5, #28         @ ROL(b,4)
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1  @ r0 = raw
-    bl      hfscx_32
-    pop     {r4-r5, pc}
+    push    {r4-r6, lr}
+    mov     r4, r1              @ a
+    mov     r5, r2              @ b
+    orr     r1, r0, #0x31000000 @ TAG | ds
+    ldr     r0, .LHIV
+    bl      hfscx32_absorb
+    mov     r1, r4
+    bl      hfscx32_absorb
+    mov     r1, r5
+    bl      hfscx32_absorb
+    bl      hfscx32_final
+    pop     {r4-r6, pc}
 
     .ltorg
 
@@ -3594,14 +3639,16 @@ sre_init_done:
 stern_fs_challenges_32:
     push    {r4-r9, lr}
     mov     r9, r0              @ out_ptr
-    mov     r4, #0              @ chSt = 0
+    ldr     r0, =0xA3C5E7B9     @ chSt = absorb(IV, TAG|0)  (TODO #348)
+    mov     r1, #0x31000000
+    bl      hfscx32_absorb
+    mov     r4, r0
     @ sfs(msg): chSt = nl_fscx_revolve_v1(chSt ^ msg, ROL(msg,4), 8)
     ldr     r5, =val_plain
     ldr     r5, [r5]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     @ for i=0..3: sfs(c0[i]), sfs(c1[i]), sfs(c2[i])
     mov     r8, #0
@@ -3610,28 +3657,28 @@ sfc_round_loop:
     bge     sfc_round_done
     ldr     r5, =sdf_c0
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =sdf_c1
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =sdf_c2
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     add     r8, r8, #1
     b       sfc_round_loop
 sfc_round_done:
+    mov     r0, r4
+    bl      hfscx32_final       @ HFSCX-32 final block (TODO #348)
+    mov     r4, r0
     @ extract per-round challenges: chSt = nl_fscx_v1(chSt, i); out[i] = chSt % 3
     mov     r8, #0
 sfc_chal_loop:
@@ -4428,14 +4475,16 @@ sv_fail:
 ring_fs_challenges_32:
     push    {r4-r9, lr}
     mov     r9, r0              @ out_ptr
-    mov     r4, #0              @ chSt = 0
+    ldr     r0, =0xA3C5E7B9     @ chSt = absorb(IV, TAG|0)  (TODO #348)
+    mov     r1, #0x31000000
+    bl      hfscx32_absorb
+    mov     r4, r0
     @ sfs(msg)
     ldr     r5, =val_plain
     ldr     r5, [r5]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     @ member 0 commits
     mov     r8, #0
@@ -4444,24 +4493,21 @@ rfc_m0_loop:
     bge     rfc_m0_done
     ldr     r5, =ring0_c0
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =ring0_c1
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =ring0_c2
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     add     r8, r8, #1
     b       rfc_m0_loop
@@ -4473,28 +4519,28 @@ rfc_m1_loop:
     bge     rfc_m1_done
     ldr     r5, =sdf_c0
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =sdf_c1
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     ldr     r5, =sdf_c2
     ldr     r5, [r5, r8, lsl #2]
-    eor     r0, r4, r5
-    ror     r1, r5, #28
-    mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    mov     r0, r4
+    mov     r1, r5
+    bl      hfscx32_absorb
     mov     r4, r0
     add     r8, r8, #1
     b       rfc_m1_loop
 rfc_m1_done:
+    mov     r0, r4
+    bl      hfscx32_final       @ HFSCX-32 final block (TODO #348)
+    mov     r4, r0
     @ extract per-round joint challenges: chSt = nl_fscx_v1(chSt, i); out[i] = chSt % 3
     mov     r8, #0
 rfc_chal_loop:
