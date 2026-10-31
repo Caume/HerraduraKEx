@@ -49,6 +49,13 @@ every stored artifact changes: digests, signatures, password-protected private k
 with a pre-10.0.0 build before upgrading**; plain `hske-nla1` ciphertexts fail silently.
 See [section 24](#24-nl-fscx-v1s-modes-run-3n4-rounds-v1000).
 
+The twenty-fifth is the reason the version is **11.0.0**, and it is a **security fix**.
+From 10.0.0 to 10.0.4, HFSCX-256 had a free collision, H(b ‖ 0^32) = H(0^32 ‖ b) for every
+32-byte b. 11.0.0 changes its compression function from Davies–Meyer to
+Matyas–Meyer–Oseas. Every HFSCX-256 output changes, but plain `hske-nla1` ciphertexts and
+key pairs do not. **Decrypt and re-export with a 10.x build before upgrading**; nothing
+in this break fails silently. See [section 25](#25-hfscx-256s-compression-is-matyasmeyeroseas-v1100).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -84,6 +91,7 @@ trusting any signature made by an earlier build.
 | [HPKS-Stern-F binds the witness weight](#18-hpks-stern-f-binds-the-witness-weight-v800) | v8.0.0 | Every `hpks-stern` signature, and every HPKS-Stern-Ring, HCRED-issuance and `hybrid-rnl-stern` artifact carrying one | **Re-sign on v8.0.0+, and treat every pre-8.0.0 signature as unverified.** Keys are unchanged and still valid; the old verification rule bound nothing, so it accepted forgeries |
 | [`hske-nla1` refuses any width but 256](#19-hske-nla1-refuses-any-width-but-256-v900) | v9.0.0 | `enc`/`dec`/`encfile`/`decfile --algo hske-nla1` with a session key narrower than 256 bits | **Nothing at the default 256 bits.** A narrow-width ciphertext was only ever readable by the port that wrote it — decrypt it with a pre-9.0.0 build of THAT language and re-encrypt at 256 |
 | [NL-FSCX v1's modes run 3n/4 rounds](#24-nl-fscx-v1s-modes-run-3n4-rounds-v1000) | v10.0.0 | Every HFSCX-256 digest and MAC, so every signature, password-protected private key, `.hkx` file, `--aead` tag and hash-derived session secret; every `hske-nla1` ciphertext; every `hpks-wots` / `hpks-xmss` key | **Decrypt and re-export with a pre-10.0.0 build before upgrading; regenerate WOTS/XMSS keys and re-sign.** Plain `hske-nla1` fails silently |
+| [HFSCX-256's compression is Matyas–Meyer–Oseas](#25-hfscx-256s-compression-is-matyasmeyeroseas-v1100) | v11.0.0 | Every HFSCX-256 digest and MAC, so every signature, password-protected private key, `.hkx` file, `--aead` tag and hash-derived session secret; every `hpks-wots` / `hpks-xmss` key | **Decrypt and re-export with a 10.x build before upgrading; regenerate WOTS/XMSS keys and re-sign.** Plain `hske-nla1` is unchanged |
 
 ---
 
@@ -1403,3 +1411,45 @@ targets are unchanged too: they share no wire format with the four ports.
 them; a password-protected key at the production PBKDF2 count takes about 3x longer to
 unlock.
 
+## 25. HFSCX-256's compression is Matyas–Meyer–Oseas (v11.0.0)
+
+**This is the reason the version is 11.0.0.** It changes what every `--algo` that hashes
+produces, which is the surface the 2.0.0 tag froze.
+
+**Why: a free collision in 10.0.0–10.0.4.** NL-FSCX v1's round is affine in A when B is
+0 or 2^255, and its linear part is nilpotent, so past 128 rounds the output does not depend
+on A at all. The Davies–Meyer compression, `C_DM(s, m) = F_m^192(s) ⊕ s`, made the message
+block B. A zero block was therefore the identity, and **H(b ‖ 0^32) = H(0^32 ‖ b) for every
+32-byte b**. Section 24's raise to 192 rounds is what crossed 128. Before 10.0.0 the hash
+ran 64 rounds and has no such collision (TODO #351, `SecurityProofsCode/hfscx_mmo_compression.py`,
+SecurityProofs-10.md §11.75).
+
+**What changed.** One construction, in all four ports (C, Go, Python, Java) and the 32-bit
+targets' HFSCX-32:
+
+| | 10.x | 11.0.0+ |
+|---|---|---|
+| HFSCX-256 compression | `C_DM(s, m) = F_m^192(s) ⊕ s` (block is B) | `C(s, m) = F_s^192(m) ⊕ m` (chaining value is B) |
+
+The IV, padding, length block, round count, keyed form (`iv = key ⊕ IV`), `-DS` prefix and
+HMAC are unchanged. So is every use of v1 that does not go through HFSCX-256, in particular
+HSKE-NL-A1's keystream.
+
+**Who is affected, and what to do:**
+
+| artifact | effect | action |
+|---|---|---|
+| `dgst` digests and HMACs | different values | recompute |
+| signatures made with `sign --digest hfscx-256`, and every `hpks-stern`, ring, `hpks-wots`, `hpks-xmss`, ZKP and credential proof (all hash with HFSCX-256 internally) | does not verify | re-sign on 11.0.0+ |
+| `hpks-wots` / `hpks-xmss` keys | public key changes (leaf seeds and tree hash) | **regenerate the keys**, keeping the `.idx` discipline for the new ones |
+| password-protected private keys (PBKDF2-HMAC-HFSCX-256) | refuse to unlock | re-export unencrypted with a 10.x build, then re-protect on 11.0.0+ |
+| `.hkx` files (`encfile`) and `--aead` ciphertexts | tag check fails | decrypt with a 10.x build first |
+| plain `enc --algo hske-nla1` ciphertexts | **unchanged** | none |
+| HKEX-RNL sessions, `hpke-stern-kem` and hybrid shared secrets | derived secret differs | both peers on the same side of the upgrade |
+| HKEX-GF, HKEX-RNL and QC-MDPC key pairs themselves | unchanged | none |
+
+**If you relied on 10.x digests for integrity** (for example, comparing `dgst` outputs),
+know that two different messages of the same length could share one digest. Recheck
+anything whose integrity mattered.
+
+**Cost.** None: MMO runs the same 192 rounds.

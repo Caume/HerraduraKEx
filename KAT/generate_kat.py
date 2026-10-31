@@ -999,7 +999,9 @@ def gen_sampler_replay() -> dict:
     # Re-chosen at v10.0.0 (TODO #347): det_bytes is HFSCX-256, whose round
     # count changed, and label -2's stream stopped drawing a duplicate at all.
     # Asserted below since then, so the next change cannot lose it silently.
-    stream = det_bytes(b"replay-weightt-11", 256)
+    # Re-chosen again at v11.0.0 (TODO #351, HFSCX-256's compression changed):
+    # -11 drew one duplicate; -5 is the first label drawing two.
+    stream = det_bytes(b"replay-weightt-5", 256)
     with _replay(stream) as st:
         e_int = suite._csprng_weight_t(KEYBITS, suite.SDFT)
     assert st.pos == 4 * (suite.SDFT + 2), \
@@ -1247,7 +1249,9 @@ def gen_operation_replay() -> dict:
     # UNIFORM blinding value changed what each stream produces, so -1 had to be
     # re-chosen as well.  The assert below is what makes that a re-choice
     # rather than a silent loss of coverage.
-    stream = det_bytes(b"op-stern-sign-2", 1024)
+    # -3 since v11.0.0 (TODO #351): HFSCX-256's compression changed and -2
+    # gave challenges {0, 2} only.
+    stream = det_bytes(b"op-stern-sign-3", 1024)
     with _replay(stream) as st:
         with warnings.catch_warnings():
             # rounds < 219 warns by design (production soundness).  A vector is
@@ -1389,13 +1393,14 @@ def gen_operation_replay() -> dict:
                               RNLQ, RNLP)
     gamma, sig_t = suite._sigma_params(RNLN)
     sig_msg = (b"HerraduraKEx operation replay" + b"\x00" * 32)[:32]
-    # v1 is the first label whose FIRST attempt clears the norm bound (v24
-    # until v10.0.0, when det_bytes's HFSCX-256 changed, TODO #347); see the
+    # v14 is the first label whose FIRST attempt clears the norm bound (v24
+    # until v10.0.0 and v1 until v11.0.0: det_bytes's HFSCX-256 changed each
+    # time, TODO #347 and #351); see the
     # header on why any other label would produce a three-port vector.
     # The stream is exactly one block long, so a retry cannot silently pass
     # either: it exhausts the stream before the assertion is reached.
     blk = 3 * (RNLN + (RNLN >> 6) + 8)
-    stream = det_bytes(b"op-sigma-v1", blk)
+    stream = det_bytes(b"op-sigma-v14", blk)
     with _replay(stream) as st:
         w, c, z = suite.rnl_sigma_sign(s_poly, m_poly, C_poly, RNLN, sig_msg)
     assert st.pos == blk, \
@@ -1547,7 +1552,7 @@ def gen_operation_replay() -> dict:
     # namely the weak-key screen's REJECT branch, which is otherwise reached by
     # about one draw in 550 (37 rejections in 20 219 measured at BIKE-128) and
     # would never be exercised by a stream chosen at random.
-    qk_stream = det_bytes(b"op-qcmdpc-keygen-2624", 32)  # 1137 until v10.0.0 (TODO #347)
+    qk_stream = det_bytes(b"op-qcmdpc-keygen-753", 32)  # 1137 until v10.0.0, 2624 until v11.0.0 (TODO #347, #351)
     with _replay(qk_stream) as st:
         qk_sup0, qk_sup1, _qk_h0, _qk_h1, qk_hpub = suite.qcmdpc_keygen()
     qr = suite._QCMDPC_R
@@ -1632,7 +1637,9 @@ def gen_operation_replay() -> dict:
     ppmsg = b"HerraduraKEx operation replay"
     # Exact: three seeds per round, no rejection anywhere, so a port that reads
     # one byte more runs off the end and says so rather than diverging quietly.
-    stream = det_bytes(b"op-zkbpp", pprounds * 3 * suite._ZKPP_SEED_BYTES)
+    # -3 since v11.0.0 (TODO #351): under the new HFSCX-256 the bare label's
+    # challenges were {0, 1} only.
+    stream = det_bytes(b"op-zkbpp-3", pprounds * 3 * suite._ZKPP_SEED_BYTES)
     with _replay(stream) as st:
         ppproof = suite.zkp_nl_prove_pp(ppA, ppB, ppy, ppn, pprounds, ppmsg)
     assert st.pos == pprounds * 3 * suite._ZKPP_SEED_BYTES, \
@@ -1700,7 +1707,9 @@ def gen_operation_replay() -> dict:
         hc_s, hc_C, hc_e = suite.hcred_user_keygen(hc_m_poly, hc_n)
     hc_y = suite.hcred_syndrome(hc_seed_H, hc_e, hc_n)
     hc_rows_, hc_row_bits, _hc_wmax = suite._hcred_params(hc_n)
-    stream = det_bytes(b"op-hcred-10", hc_rounds * 3 * 32)
+    # -11 since v11.0.0 (TODO #351): under the new HFSCX-256, -10 opened party 2
+    # in both rounds.
+    stream = det_bytes(b"op-hcred-11", hc_rounds * 3 * 32)
     with _replay(stream) as st:
         hc_proof = suite.hcred_prove(hc_s, hc_m_poly, hc_C, hc_seed_H, hc_y,
                                      hc_n, hc_rounds, hc_msg)

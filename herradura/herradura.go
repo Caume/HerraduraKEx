@@ -1613,7 +1613,8 @@ func NlFscxRevolveV3Inv(y, b *BitArray, steps int) *BitArray {
 }
 
 // ---------------------------------------------------------------------------
-// HFSCX-256-DM: Merkle-Damgård hash on NL-FSCX v1 with Davies-Meyer compression (v1.9.0)
+// HFSCX-256: Merkle-Damgård hash on NL-FSCX v1 with Matyas-Meyer-Oseas compression
+// (v11.0.0, TODO #351; Davies-Meyer from v1.9.0 to v10.x)
 // ---------------------------------------------------------------------------
 
 // Hfscx256IV is the 32-byte domain separation constant (ASCII + zero padding).
@@ -1651,8 +1652,11 @@ func RnlKdfSeed(k *BitArray) *BitArray {
 	return k.RotateLeft(n / 8).Xor(dc.Truncate(n))
 }
 
-// Hfscx256 computes the HFSCX-256-DM hash of data (Davies-Meyer compression).
-// Compression: C_DM(s,m) = F_1^{192}(s,m) ⊕ s (V1ModeSteps, TODO #347).
+// Hfscx256 computes the HFSCX-256 hash of data (Matyas-Meyer-Oseas compression).
+// Compression: C(s,m) = F_s^{192}(m) ⊕ m, i.e. NlFscxRevolveV1(m, s, V1ModeSteps) ⊕ m
+// (TODO #351).  The chaining value is v1's B input, so the message cannot choose
+// it: under Davies-Meyer (until v11.0.0) a zero block made B = 0, where v1 is
+// constant past n/2 rounds, and H(b || 0^32) = H(0^32 || b) (SecurityProofs-10.md §11.75).
 // iv==nil uses the standard domain IV (bare hash).
 // A non-nil iv (32 bytes, caller sets iv = key XOR Hfscx256IV[:]) selects the keyed-MAC variant.
 func Hfscx256(data []byte, iv []byte) []byte {
@@ -1683,12 +1687,11 @@ func Hfscx256(data []byte, iv []byte) []byte {
 	}
 	padded = append(padded, lb...)
 
-	// Chain each 32-byte block: C_DM(s,m) = F_1^{192}(s,m) ⊕ s (Davies-Meyer)
+	// Chain each 32-byte block: C(s,m) = F_s^{192}(m) ⊕ m (Matyas-Meyer-Oseas,
+	// TODO #351): the block is v1's A, the chaining value its B.
 	for off := 0; off < len(padded); off += 32 {
-		prev := state.Copy()
 		block := NewFromBytes(padded[off:off+32], 0, 256)
-		state = NlFscxRevolveV1(state, block, V1ModeSteps)
-		state = state.Xor(prev)
+		state = NlFscxRevolveV1(block, state, V1ModeSteps).Xor(block)
 	}
 
 	return state.Bytes()

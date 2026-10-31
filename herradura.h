@@ -1408,7 +1408,8 @@ static void nl_fscx_revolve_v3_inv_ba(BitArray *result, const BitArray *y,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * HFSCX-256-DM: Merkle-Damgård hash on NL-FSCX v1, Davies-Meyer compression (v1.9.0)
+ * HFSCX-256: Merkle-Damgård hash on NL-FSCX v1, Matyas-Meyer-Oseas compression
+ * (v11.0.0, TODO #351; Davies-Meyer from v1.9.0 to v10.x)
  * ───────────────────────────────────────────────────────────────────────────── */
 
 /* IV: "HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0" (32 bytes) */
@@ -1649,8 +1650,15 @@ static BaStatus ba_try_gf_pow(BitArray *dst, const BitArray *base, uint64_t e)
     return BA_OK;
 }
 
-/* HFSCX-256-DM: Merkle-Damgård hash built on NL-FSCX v1 with Davies-Meyer feed-forward.
- * Compression: C_DM(s,m) = F_1^{192}(s,m) ⊕ s (V1_MODE_STEPS, TODO #347).
+/* HFSCX-256: Merkle-Damgård hash built on NL-FSCX v1 with Matyas-Meyer-Oseas
+ * compression: C(s,m) = F_s^{192}(m) ⊕ m, i.e. nl_fscx_revolve_v1(m, s,
+ * V1_MODE_STEPS) ⊕ m (TODO #351).  The chaining value is v1's B input and the
+ * message block its A input.  Until v11.0.0 it was the other way round
+ * (Davies-Meyer, C_DM(s,m) = F_m^{192}(s) ⊕ s), and that let the message choose
+ * B: for B in {0, 2^255} the round is affine with a nilpotent linear part, so
+ * past n/2 rounds F_B is constant and a zero block was the identity --
+ * H(b || 0^32) = H(0^32 || b) (SecurityProofs-10.md §11.75).  Nobody chooses
+ * the chaining value.
  * Bare hash: iv = NULL.  Keyed MAC: iv = key XOR _HFSCX256_IV (32 bytes). */
 static void hfscx_256(const uint8_t *data, size_t len,
                       const uint8_t *iv, uint8_t out[32])
@@ -1685,12 +1693,12 @@ static void hfscx_256(const uint8_t *data, size_t len,
             lb[24 + i] ^= (uint8_t)((bit_len >> (56 - 8 * i)) & 0xFF);
     }
 
-    /* Chain each 32-byte block: C_DM(s,m) = F_1^{192}(s,m) ⊕ s (Davies-Meyer) */
+    /* Chain each 32-byte block: C(s,m) = F_s^{192}(m) ⊕ m (Matyas-Meyer-Oseas,
+     * TODO #351): the block is v1's A, the chaining value its B. */
     for (off = 0; off < padded_len; off += 32) {
-        BitArray prev = state;
         memcpy(block.b, padded + off, 32);
-        nl_fscx_revolve_v1_ba(&state, &state, &block, V1_MODE_STEPS);
-        ba_xor(&state, &state, &prev);
+        nl_fscx_revolve_v1_ba(&state, &block, &state, V1_MODE_STEPS);
+        ba_xor(&state, &state, &block);
     }
 
     memcpy(out, state.b, 32);

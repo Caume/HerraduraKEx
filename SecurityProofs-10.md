@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.74** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4
+> - **Part 10 — §11.43–§11.75** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO
 
 ---
 
@@ -1579,3 +1579,55 @@ That the failure went unseen for so long is a second defect, and it is filed as 
 **Not done:** gating the suite demos (TODO #350). The Arduino suite's `hfscx_32` change compiles but has not been executed. Under simavr the suite demo never gets past HKEX-RNL, in this build or in the unmodified one, and its test harness has no `hfscx_32`.
 
 *Resolved in v10.0.3 (TODO #350).* The three suite demos are now `[FAIL]`-gated and run in CI. The Arduino stall was a stack overflow: the demo's string literals took 3.4 KB of the ATmega2560's 8 KB of SRAM, leaving about 360 bytes of stack. With the strings in flash, every Arduino `hfscx_32` caller now runs, and every pass is clean.
+
+## 11.75 HFSCX-256's compression moves to Matyas–Meyer–Oseas — TODO #351, closed (v11.0.0)
+
+§11.72 raised HFSCX-256's compression function to 192 rounds and rated the hash production-track (conjectured) on the trail-weight model's floor of 384. That rating was wrong from v10.0.0 to v10.0.4. The compression had a free collision that the model, which prices differences, cannot see. v11.0.0 changes the compression from Davies–Meyer to Matyas–Meyer–Oseas. The gate is `SecurityProofsCode/hfscx_mmo_compression.py`.
+
+### 11.75.1 The affine B values
+
+The round is F_B(A) = M(A ⊕ B) ⊕ ROL(A + B, n/4), iterated on A with B fixed. The addition is the round's only non-linearity, and A + B is GF(2)-affine in A exactly when B has no set bit below n − 2. That gives four values: W = {0, 2^(n−2), 2^(n−1), 3·2^(n−2)}. Each carry is then a product with a constant, except the top carry, which falls off the word. The gate checks this exhaustively at n = 8, 10 and 12.
+
+For B = 0 or B = 2^(n−1) the linear part is L = M ⊕ ROL^(n/4), the polynomial 1 + X + X^(n−1) + X^(n/4) in GF(2)[X]/(X^n + 1). Since X^n + 1 = (X + 1)^n, the ring is local, and L = (X + 1)^2·u for a unit u. **L is nilpotent:** rank L^k = n − 2k, and L^(n/2) = 0. The gate computes the ranks at n = 32 and n = 256. So v1(A, B, s) does not depend on A once s ≥ n/2; for B = 0 it is identically 0. TODO #159 had found the rank n/2 at n/4 rounds, where the Davies–Meyer feed-forward still made the zero-block compression a bijection (SecurityProofs-7.md §11.19.1). The other two values in W, and B = 1, do not collapse.
+
+### 11.75.2 The collision
+
+Davies–Meyer, C_DM(s, m) = F_m^r(s) ⊕ s, makes the **message block** v1's B. At r = 192 > n/2, a zero block gives C_DM(s, 0) = 0 ⊕ s = s, the identity, so
+
+    H(b ‖ 0^32) = H(0^32 ‖ b)   for every 32-byte b.
+
+These are two different messages of the same length, so the padding and the length block do not separate them. This is a free collision, reproduced on v10.0.4 and on a transcription in the gate. The block 2^255 likewise makes C_DM(s, 2^255) equal to s ⊕ a constant. **Control:** at r = 64, before v10.0.0, the collision is absent.
+
+### 11.75.3 The fix
+
+Matyas–Meyer–Oseas, C(s, m) = F_s^192(m) ⊕ m: the **chaining value** is B, the block is A, and the block is fed forward. The bare hash starts at the IV and the keyed form at key ⊕ IV, and neither IV is in W. From any other chaining value, W is reached only by solving F_s(m) ⊕ m = w for one of four targets, a preimage of about 2^254 work. The keyed form has four weak keys out of 2^256 (key = IV gives C(0, m) = m). No shipped caller lets anyone choose an HFSCX key: HMAC puts its key in a block, and the AEAD and `.hkx` MAC keys are v1 outputs under a secret. HFSCX-32 on the 32-bit targets moves the same way.
+
+### 11.75.4 The new shape, in the trail-weight model
+
+A one-block collision under one chaining value is now ΔB = 0, with ΔA = Δm, and needs v1's output difference to equal Δm, so the feed-forward cancels it. A path that reaches the zero difference stays there and cannot end on Δm. So the characteristic runs 192 rounds over nonzero differences under β = 0. β = 0 lies in §11.70's residual, where Lemmas 1–2 give nothing, so the gate measures it with `v1_mode_floor.py`'s complete class edges:
+
+| D (class: every round ≤ D bits) | class edges | longest walk avoiding 0 |
+|---|---|---|
+| 3 | 31 | 2 |
+| 4 | 242 | 2 |
+| 5 | 2 795 | 2 |
+| 6 | 27 598 | 2 |
+
+A round costing at most D needs an input with at most D low bits. So in a run of m cheap rounds the first m − 1 form a walk of class edges, and m ≤ 3. Every 4 consecutive rounds therefore include one costing at least D + 1, and 192 rounds cost at least (D + 1)·48: **336 at D = 6**, 2.6× the 128-bit bar (288 under `--quick`). The cheap rounds are not credited. A differing chaining value is β ≠ 0, which §11.72 bounds at 384 outside the residual whichever input carries the message. **Control:** the same instrument finds #347's 128-bit core over 64 rounds at β = 2^255 + 2^253.
+
+### 11.75.5 What it means
+
+| quantity | v10.0.0–v10.0.4 (DM) | v11.0.0 (MMO) |
+|---|---|---|
+| zero-block collision | **free** | none: B is the chaining value |
+| affine B reachable by the message | 4 blocks | a 2^254 preimage |
+| one-block shape, trail-model floor | β = Δm ≠ 0: 384 | β = 0: **336** |
+| differing chaining values | β = Δs: 384 | β = Δs: 384 |
+
+**The rating stays production-track (conjectured)**, now for the MMO construction, which has no known attack. The lesson for the model is the one TODO #168 learned for v2: a trail bound says nothing about inputs that switch the carries off, and every v1 site must be asked who chooses B. Of the four ports' other 3n/4 sites, A1's keystream and MAC key put B behind the secret key, and the WOTS chain step's B is a secret or a chain output. TODO #348's owed sites let the attacker choose B, so its second pass needs a construction in which nobody does, not just more rounds.
+
+**Fixed on the way:** C harness test [19] reported through `puts()` with a bare `FAIL`. The gate wraps `printf` and looks for `[FAIL]`, so the test's HFSCX-256 vectors could never fail a run, and it exited 0 on the stale vectors here. It now uses `printf` and `[FAIL]`, and a corrupted-vector control exits 1.
+
+**Cost:** none; MMO runs the same 192 rounds. **Wire format:** MAJOR, MIGRATING.md section 25.
+
+**Not done:** the exact probability (§11.69.2), the linear hull, and rounds above 6 bits in the β = 0 class.

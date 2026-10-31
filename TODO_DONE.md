@@ -24115,3 +24115,180 @@ before choosing a timeout.
   reconciliation event at nonzero DFR rather than a bug.
 
 Status: **DONE v10.0.3** — the three 32-bit suite demos are [FAIL]-gated and run in CI; the Arduino HKEX-RNL stall was a stack overflow, fixed by moving its strings to flash.
+
+### #309: an entropy-injection seam for the four CLIs — env var and explicit flag
+
+**TODO #306 stated this limit in `CLI_DRAW_COVERAGE`'s header rather than after the fact,
+and deliberately did not act on it.**  59 raw-entropy draws sit in the four CLIs across 17
+roles, 9 of them `cli_only` -- drawn nowhere but the CLI, so no suite-level pin can reach
+them however much pinning is done.  The reason is one sentence: **no CLI takes an entropy
+source as a parameter in any of the four languages.**  Closing that is a change to the
+shipped surface, not to a checker, which is why it is its own item.
+
+**The machinery already exists in every language; it is the CLI that has no seam.**  Each
+of the four KAT consumers #296 and #297 built injects a fixed stream today:
+
+| language | how the CLI draws now | seam that already works elsewhere |
+|---|---|---|
+| C | `fopen("/dev/urandom", "rb")`, once per subcommand (8+ call sites in `herradura_cli.c`) | `fmemopen` over a byte array — `verify_kat_c.c:140`; every suite sampler already takes `FILE *urnd` |
+| Go | `rand.Read` inside `NewRandBitArray` | `rand.Reader = <fixed>`, a documented package variable — `verify_kat.go:576` |
+| Python | `os.urandom`, `BitArray.random`, `secrets.token_bytes` — three spellings, no chokepoint | `generate_kat.py --check`'s regenerate-and-diff IS the replay |
+| Java | `private static final SecureRandom RNG` in `HerraduraCli.java:88` | `FixedRandom extends SecureRandom` — `KatVerify.java:387` |
+
+So the work is not inventing a mechanism.  It is (a) giving each CLI ONE entropy
+chokepoint where it currently has many, and (b) letting that chokepoint be pointed at a
+file.  C's is the largest change and the most mechanical: replace the per-subcommand
+`fopen` with a single accessor.  Python's is the subtlest, because three spellings have to
+converge before there is anything to point.
+
+**What it buys, concretely.**  Every `cli_only` role in `CLI_DRAW_COVERAGE` becomes
+pinnable, and two of them are the ones worth pinning: `hske_nla1_nonce` (A1 is
+`E = P ^ ks` — a repeated nonce under one key is a two-time pad outright) and
+`threshold_commit_nonce` (`s_j = k_j - a_j.e`, so a repeat recovers that signer's share).
+Both are drawn in all four CLIs with nothing comparing the four draws.  The axis would
+then report a `pinned` status beside `suite` / `cli_only` / `owed`, and rows would retire
+into it the way #305's `transitive` rows retire when an operation row is added.
+
+**THE HAZARD, and it is the reason this item needs arguing rather than implementing.**  An
+environment variable that replaces the CSPRNG in a shipped binary is the sharpest footgun
+this repo could add.  Set it by accident -- in a Dockerfile, a CI job, a systemd unit, a
+shell profile -- and `genpkey` emits a deterministic private key that looks exactly like a
+real one, with no artifact recording that it was produced under a fixed stream.  That is
+strictly worse than the gap it closes.  Any design must answer all of these IN THE ITEM,
+not in review:
+
+* **Fail-closed, not fail-open.**  #274's and #287's finding was the same shape twice: an
+  unrecognised input silently taking the weaker branch.  A named stream file that is
+  missing, short, or unreadable must ABORT, never fall back to `/dev/urandom`.
+* **Loud, on stderr, every invocation.**  Not once, not behind `--verbose`.
+* **Marked in the artifact, or argued why not.**  A key produced under a fixed stream and
+  a key produced from `/dev/urandom` are currently indistinguishable on disk.  The
+  strongest version refuses to write private key material at all under injection and only
+  serves the operations a replay vector needs; the weakest stamps the PEM.  Neither is
+  obviously right and the choice belongs in this item.
+* **Compile-time gating is on the table and is not free.**  `#ifdef`-ing it out of release
+  builds makes the CLI under test a different binary from the CLI that ships, which is the
+  defect `CliTest/test_param_bounds.sh` exists because of -- a bound that is declared but
+  not enforced on the path people actually run.  Argue it either way; do not assume it.
+* **Env var AND flag, and they are not the same hazard.**  A flag (`--entropy-file`) is
+  visible in `ps` and in shell history and cannot be inherited by a child process; an env
+  var (`HERRADURA_TEST_ENTROPY`) is what a harness sets without rewriting argv and is
+  exactly what leaks into every subprocess. If both ship, the flag should be the primary
+  and the env var should require the flag, or the env var should be dropped.
+
+**Scope note.**  This is a new public surface with nothing existing changed, so **MINOR**,
+not MAJOR -- no PEM label, no `--algo` value and no existing flag moves.  It touches all
+four CLIs and `spec/check_docs_consistency.py`'s `cli_flag_matrix` / `cli_flag_value_gaps`
+axes, which will see a new flag in four ports and fail until it is in all four or a
+`CLI_FLAG_PARITY` row explains the gap.
+
+**Ordering against #308.**  #308 moves the classical Schnorr nonce OUT of the CLI and into
+a suite operation, where the existing replay already reaches it.  Doing #308 first shrinks
+this item's target -- `schnorr_nonce` leaves `CLI_DRAW_COVERAGE` entirely -- and settles
+whether the remaining `cli_only` roles are best closed by a seam or by the same move.  If
+most of them turn out to be #308-shaped (a draw that belongs in a suite function the CLI
+should be calling), this item is smaller than it looks and possibly unnecessary; that
+question should be answered before any shipped surface is added.
+
+**What must NOT happen.**  Shipping the seam and then treating the `cli_only` rows as
+closed without actually adding vectors.  The seam is a precondition for pinning, not
+pinning -- #296's own diagnosis of #294 was a harness built and then thrown away while the
+documents went on asserting in the present tense that the check existed.
+
+**DEMOTED by TODO #311 (v8.2.1), which answered the ordering question above.**  The nine
+`cli_only` roles split 7 / 2, and the split is adverse to this item.  Seven --
+`pem_envelope_salt`, `classical_privkey`, `rnl_kex_nonce_a`, `rnl_kex_nonce_b`,
+`hybrid_kex_nonce_b`, `hcred_seed_h`, `hash_sig_master_seed` -- are a single uniform draw
+of one fixed width handed straight to a function that already takes it as an argument,
+with no loop, no rejection and no second draw, so **a fixed stream pins the identity
+function and the seam would teach nothing about any of them**.  The remaining two are
+`hske_nla1_nonce` and `threshold_commit_nonce` -- which are exactly the two this item
+nominates above as "the ones worth pinning", and are also the only two where the CLI
+transcribes a multi-step operation rather than drawing a parameter.  One of them
+(`hske_nla1_nonce`) is #308-shaped outright and is now **TODO #312**; the other was
+examined and filed as a considered no.
+
+So the seam's whole remaining target is a case the #308 move reaches more cheaply and
+without adding a shipped surface.  **This item is not closed** -- the hazard analysis it
+owes is owed in full if it is ever revived, and nothing above is withdrawn -- but it is
+not next, and it should not be implemented as posed.  Revisit only if a future `cli_only`
+role appears that is neither parameter-fed nor movable.
+
+**Closed without a seam (v10.0.4).**  The revival condition above was checked against
+`CLI_DRAW_COVERAGE` as it stands: the same nine `cli_only` roles #311 triaged and no new
+one.  The seven parameter-fed rows are still single uniform draws a fixed stream would
+pin as the identity.  `hske_nla1_nonce`'s operation is a suite function since #312
+(v8.3.0), and `threshold_commit_nonce` is #311's considered no.  So nothing a seam could
+reach would be worth its hazard, and none is added: the four CLIs keep exactly one
+entropy source each, the system CSPRNG.  **Nothing above is withdrawn.**  If a future
+`cli_only` role is neither parameter-fed nor movable, reopen this item under a new number
+that cites #309.  It then owes every hazard bullet above before any code: fail-closed,
+loud on every run, marked in the artifact or argued, the compile-time question, and the
+flag-before-env-var ordering.
+
+Status: **ACKNOWLEDGED** — no entropy-injection seam is added to the four CLIs; #311 showed it would teach nothing about 7 of the 9 `cli_only` draws and the other 2 were closed without one, and the hazard analysis stays owed if it is ever revived.
+
+### #351: HFSCX-256's Davies–Meyer compression lets a zero block erase itself — a free collision since v10.0.0
+
+**Found while starting TODO #348's second pass.**  NL-FSCX v1's round is
+F_B(A) = M(A ⊕ B) ⊕ ROL(A + B, n/4), iterated on A with B fixed.  A + B is GF(2)-affine in
+A exactly when B has no set bit below n − 2, i.e. for B ∈ W = {0, 2^(n−2), 2^(n−1),
+3·2^(n−2)}.  For B ∈ {0, 2^(n−1)} the linear part is L = M ⊕ ROL^(n/4), and since
+X^n + 1 = (X + 1)^n over GF(2), L = (X + 1)^2·u for a unit u.  **L is nilpotent**: rank L^k
+is n − 2k, and L^(n/2) = 0.  So v1(A, B, s) does not depend on A once s ≥ n/2, and for
+B = 0 it is 0.
+
+HFSCX-256's compression was Davies–Meyer, C_DM(s, m) = F_m^r(s) ⊕ s, with the message block
+as B.  TODO #347 (v10.0.0) raised r from 64 to 3n/4 = 192, past n/2.  From then on a zero
+block was the identity, C_DM(s, 0) = s, so **H(b ‖ 0^32) = H(0^32 ‖ b) for every 32-byte b**:
+a free collision between two same-length messages, in a hash rated production-track
+(conjectured).  It reproduced on v10.0.4.  At 64 rounds L^64 still has rank 128 and
+C_DM(s, 0) = L^64(s) ⊕ s is a bijection (TODO #159), so releases before v10.0.0 do not
+have it.  The trail-weight model behind #346/#347 prices differences.  A fixed input that
+switches the carries off is outside what it measures, which is why neither pass saw this.
+
+**Consequence for #348.**  Its planned raise would have put the HPKS-NL / HPKS-T challenge
+e = v1(R, msg) and the Stern chain hash at 3n/4.  With msg ∈ {0, 2^255}, e would not depend
+on R, so anyone could sign those messages.  A zero chain item would make B = 0 and erase
+every item before it, so a Stern commitment with a zero syndrome item would open to any
+permutation.  The #348 edits were parked unshipped.
+
+**Options.**  (a) Matyas–Meyer–Oseas, C(s, m) = F_s^r(m) ⊕ m: the chaining value is B,
+which no message chooses.  (b) Round constants so that no B makes the round affine; this
+changes every v1 site, not just this one.  (c) HFSCX-256 back to 64 rounds, which undoes
+#347's margin.
+
+**Resolution (v11.0.0).**  Option (a), in every implementation of the compression function:
+- **The four ports**: `herradura.h`'s `hfscx_256`, Go's `Hfscx256`, Java's
+  `Hfscx256.hash`, and the Python suite's and harness's `hfscx_256`.
+- **HFSCX-32**: the ARM and NASM suites and harnesses and the Arduino suite.  These went
+  from s = nl(IV, x, 24) ⊕ IV to s = nl(x, IV, 24) ⊕ x, and likewise for the length block.
+- **Regenerated**: every KAT, PEM vector and replay row; the pinned KKW transcript was
+  re-captured.  Harness test [19]'s three vectors and [28]/[29]'s AEAD tag and HDRBG output
+  were updated in the C, Go, Python and Java harnesses.  Six replay labels in
+  `KAT/generate_kat.py` were re-chosen because their streams come from HFSCX-256, and
+  their asserts did the choosing:
+  - `replay-weightt-5`
+  - `op-stern-sign-3`
+  - `op-sigma-v14`
+  - `op-qcmdpc-keygen-753`
+  - `op-zkbpp-3`
+  - `op-hcred-11`
+- **What MMO leaves**: W as a chaining value, which can only be reached by a 2^254-work
+  preimage.  Neither IV is in W.  The keyed form has four weak keys out of 2^256, and no
+  caller lets anyone choose an HFSCX key.
+- **The new one-block shape**: ΔB = 0, with the feed-forward cancelling Δm.  Under
+  `v1_mode_floor.py`'s complete class edges, the longest walk avoiding 0 is 2 edges at
+  every D ≤ 6.  So every 4 consecutive rounds include one costing ≥ D + 1, and 192 rounds
+  cost ≥ 336, 2.6× the bar.  A differing chaining value is β ≠ 0, which #347 already
+  bounds at ≥ 384.
+- **The gate**: `SecurityProofsCode/hfscx_mmo_compression.py`, with SecurityProofs-10.md
+  §11.75.
+- **Fixed on the way**: C harness test [19] reported through `puts()` with a bare `FAIL`.
+  The harness gate wraps `printf` only and looks for `[FAIL]`, so its HFSCX-256 vectors
+  could never fail a run, and it exited 0 on the stale vectors here.  It now prints
+  `[FAIL]` through `printf`.  A control with one corrupted vector byte exits 1.
+- **MAJOR**: every digest, MAC, signature, `.hkx` file, password-protected key, WOTS/XMSS
+  key and RNL session key derived through HFSCX-256 changes (MIGRATING.md §25).
+
+Status: **DONE v11.0.0** — HFSCX-256 (and HFSCX-32) use Matyas–Meyer–Oseas compression, so the chaining value is v1's B and no message block can make the round affine; v10.0.0–v10.0.4's zero-block collision H(b‖0^32) = H(0^32‖b) is gone.

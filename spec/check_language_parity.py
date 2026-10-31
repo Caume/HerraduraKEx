@@ -2318,7 +2318,7 @@ _VERDICT_FINGERPRINTS = {
     ("c", 13): "158d13ae58", ("c", 14): "42037b4080",
     ("c", 15): "158d13ae58", ("c", 16): "158d13ae58",
     ("c", 17): "8965f8a720", ("c", 18): "c4ffefcf1b",
-    ("c", 19): "c0593494da", ("c", 20): "83b3091774",
+    ("c", 19): "feaf67a743", ("c", 20): "83b3091774",
     ("c", 21): "de94a6f57c", ("c", 22): "e38188098b",
     ("c", 23): "6e34b5a147", ("c", 24): "6e34b5a147",
     ("c", 25): "49b930b7b4", ("c", 26): "5f0407f2d7",
@@ -7400,10 +7400,11 @@ RANDOMNESS_RAW_PATTERNS = {
 # /dev/urandom, Go uses crypto/rand, Python os.urandom, Java a static
 # SecureRandom.  So a fixed-stream replay does NOT reach this layer without a
 # new shipped surface (an injection env var), and that is a change to the
-# product, not to a checker -- deliberately not made here, and filed as TODO
-# #309, which has to argue the hazard before it adds the seam: a CSPRNG that an
-# environment variable can replace is a deterministic `genpkey` away from a
-# private key nothing on disk distinguishes from a real one.  What IS available is
+# product, not to a checker -- deliberately not made here.  It was TODO #309,
+# ACKNOWLEDGED in v10.0.4 without a seam (TODO #311 found it would teach nothing
+# about seven of the nine `cli_only` rows): a CSPRNG that an environment
+# variable can replace is a deterministic `genpkey` away from a private key
+# nothing on disk distinguishes from a real one.  What IS available is
 # the accounting, and the accounting is the thing that was missing: which draw,
 # in which ports, and what -- if anything -- compares it across them.
 CLI_CORPUS = {

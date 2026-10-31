@@ -392,12 +392,13 @@ static uint32 rnl_agree(const long *s, const long *C_other,
 #define SDF_NROWS  16
 #define SDF_ROUNDS 4
 
-/* HFSCX-32-DM: two-step MD hash at 32-bit word size, Davies-Meyer compression (v1.9.0).
- * C_DM(s,m)=nl(s,m,24)^s; IV=0xA3C5E7B9, LB=0xA3C5E799 */
+/* HFSCX-32: two-step MD hash at 32-bit word size, Matyas-Meyer-Oseas compression
+ * (v11.0.0, TODO #351; Davies-Meyer from v1.9.0 to v10.x).
+ * C(s,m)=nl(m,s,24)^m; IV=0xA3C5E7B9, LB=0xA3C5E799.  The chaining value is v1's
+ * B: under DM x was B, and x in {0, 2^31} made the round affine-nilpotent (§11.75). */
 static uint32 hfscx_32(uint32 x) {
-    uint32 prev = 0xA3C5E7B9UL;
-    uint32 s = nl_fscx_revolve_v1(prev, x, V1_MODE_STEPS) ^ prev;
-    return nl_fscx_revolve_v1(s, 0xA3C5E799UL, V1_MODE_STEPS) ^ s;
+    uint32 s = nl_fscx_revolve_v1(x, 0xA3C5E7B9UL, V1_MODE_STEPS) ^ x;
+    return nl_fscx_revolve_v1(0xA3C5E799UL, s, V1_MODE_STEPS) ^ 0xA3C5E799UL;
 }
 
 static uint32 stern_hash1_32(uint32 ds, uint32 v) {
