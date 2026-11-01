@@ -10,6 +10,41 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
+### #353: bound CI's package-install steps, so a stalled mirror fails in minutes, not six hours
+
+**The incident.**  The push-triggered CI run for v12.0.2 (run 41250281934, attempt 1)
+lost two jobs, `native-go` and `native-interop`, to the runner, not to the repo.  Both
+hung in "Install dependencies" right after `apt-get update` fetched `noble-security`'s
+InRelease (22:55:28 UTC) and printed nothing more until GitHub's default 360-minute job
+limit cancelled them (04:55 UTC).  `cross-lang-compat`, which needs `native-go`, was
+skipped.  No build or test step ran.  `gh run rerun --failed` passed all three (Go 7 min,
+interop 61 min, matrix 20 min), and the same jobs had passed in the PR's own run.  The
+cost was six hours of a red-pending PR for a fault that a bounded step would have
+reported within minutes.
+
+**What to do.**
+  * Give every package-install step a step-level `timeout-minutes` (about 10-15; the
+    steps normally take 1-2 min).  Twelve of the thirteen `ci.yml` jobs run
+    `apt-get update` / `install`: `native-c`, `native-go`, `native-python`,
+    `native-interop`, `native-java`, `cross-lang-compat`, `arm-i386`, `arduino`,
+    `fuzz-smoke`, `sanitizers`, `analysis-findings` and `docker`.  `katex`'s
+    `npm install katex` is the same kind of step and gets the same bound.
+  * Consider making apt fail rather than hang: `-o Acquire::Retries=3` plus an
+    `Acquire::http::Timeout` / `Acquire::https::Timeout`, so a dead mirror becomes a
+    retry and then an error inside the step's bound.  A timeout is still a red run;
+    it only shortens it.  Do NOT add `continue-on-error` (CLAUDE.md, Testing).
+  * Hold it in CI the way the other guards are held: a check (in `check_fast.sh`'s list,
+    or beside the coverage guards) that fails when a step running `apt-get` or
+    `npm install` has no `timeout-minutes`, so a new job cannot drop the bound.  Show it
+    firing on a copy of `ci.yml` with one bound removed.
+  * Leave the job-level limits alone: `analysis-findings`' 240 minutes is sized for its
+    heavy tail, and the other jobs' long steps (interop about an hour) are tests, not
+    installs.
+
+Status: **OPEN**
+
+---
+
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
