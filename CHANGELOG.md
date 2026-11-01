@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [12.0.3] - 2026-11-01
+
+### TODO #353 — bound CI's package-install steps
+
+- **Why.**  In the v12.0.2 push run, `native-go` and `native-interop` hung in "Install
+  dependencies" after `apt-get update` fetched `noble-security`'s InRelease.  They sat
+  until GitHub's 360-minute job default cancelled them, with no build or test step run,
+  and a rerun passed.
+- **The bound.**  Every package-install step now carries `timeout-minutes: 20`: 13 in
+  `ci.yml` (12 apt, plus `katex`'s `npm install`) and the apt step in `codeql.yml`.
+  Sized from the 40 runs before the change: over 512 successful installs the median was
+  12 s, the 99th percentile 97 s and the slowest 821 s, during the same mirror incident.
+- **New check `tools/check_ci_install_bounds.py`**, in `native-python` and
+  `tools/check_fast.sh`.  It fails on an install step with no bound or a bound over 30
+  minutes, and on an installer line it cannot place in a step.  Four controls run first
+  and must fire.  It refuses all 14 steps of the workflows as they were before.
+- **Not changed:** the job-level limits, and apt's own retry/timeout options, which ended
+  neither the stall nor the slow run.
+
 ## [12.0.2] - 2026-10-31
 
 ### TODO #352 — who chooses NL-FSCX v2's and v3's B?

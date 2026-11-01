@@ -46,6 +46,7 @@ jobs:
       # build_c.sh flags) — build just the sources CodeQL should scan.
       - name: Manual build (C)
         if: matrix.build-mode == 'manual'
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc libc6-dev
