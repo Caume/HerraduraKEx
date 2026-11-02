@@ -575,8 +575,10 @@ class (arcs <= 12 fail 6 of 13, longer ones 3 of 143).  n = 23's 1.7% / 2.6% hav
 understatement (Jeffreys SE about 3.75%; fall from n = 19 1.4 / 1.9 SE), not yet
 re-drawn.  E[mu] = 2.726 / 1.413, under one SE from the 76-key value and 1.59x / 1.63x the
 bars; lambda within 0.015 of pooled.  No rating moves: the conjecture is on E[mu].
-SECURITY.md's A2 row still says the short arc is "what makes a key weak" and that the n = 23
-failures all have short windows; both are now slightly too strong.
+SECURITY.md's A2 row said the short arc is "what makes a key weak" and that the n = 23
+failures all have short windows; both were slightly too strong, and v12.0.5 restated them
+there (strongest predictor, not the whole class; "in this 50-key sample") and added the
+corrected n = 22 share.
 
 **Reach (restated in v12.0.1; the earlier text predated #345 and #351).**  Four
 production-track rows rest on this item: HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3`,
