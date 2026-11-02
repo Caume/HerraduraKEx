@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.77** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO · Schnorr and Stern Leave v1 · Who Sets v2's Key
+> - **Part 10 — §11.43–§11.78** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO · Schnorr and Stern Leave v1 · Who Sets v2's Key · The n = 22 Fail Share
 
 ---
 
@@ -1081,6 +1081,8 @@ The gate prints the class increments of E[μ] and does not score them. They are 
 
 ### 11.63.1 The tail at n = 22
 
+> **Correction (§11.78, v12.0.4).** The 0.8% below is the plain stratified error, which gives a stratum with no failure no variance. With each stratum's variance at its Jeffreys-smoothed share it is 3.3%, and 156 keys put the share at 3.1% ± 1.1%. The differential fall from n = 19 is then 1.7 standard errors, not 2.6, and a key with an arc of 19 bits fails, so §11.63.3's short arc is the strongest predictor of a weak key, not the whole class.
+
 | 76 keys at n = 22 | differential | linear |
 |---|---|---|
 | E[μ] (43 keys: 2.757, 1.430) | 2.754 ± 0.030 | 1.429 ± 0.022 |
@@ -1255,7 +1257,7 @@ W is superadditive and c(r) ≤ 0 at every round of every key, on both axes (680
 - The gate prints and does not score the class increments of E[μ]: +0.37, +0.38, +0.16, +0.22 differential and +0.21, +0.20, +0.13, +0.15 linear. The last step is larger than the one before, as in n = 22's class, so no level can be read off them. E[μ] per bit from n = 22 to 23 is +0.056 and +0.052.
 - **The linear share is shrinking, not noisy.** The second replicate left λ(23) on the linear axis where the first put it, 0.158, now 3.7 standard errors below the pooled value. With λ(22) = 0.161, the linear discount looks to shrink with the width, which is the favourable direction.
 
-**Established:** at n = 23 E[μ] still rises, λ stays near 0.17, and the fail share falls, on both axes. Both residue classes the samples reach, n = 22 and n = 23, now say the same.
+**Established:** at n = 23 E[μ] still rises, λ stays near 0.17, and the fail share falls, on both axes. *(§11.78: the fail shares' plain errors leave out the large strata; with Jeffreys errors the fall from n = 19 is 1.4 and 1.9 standard errors.)* Both residue classes the samples reach, n = 22 and n = 23, now say the same.
 
 **Not established:** whether E[μ] levels. Two classes with alternating increments do not show a limit.
 
@@ -1749,3 +1751,57 @@ The decryptor computes B = R^a from an R the sender chose, and all four CLIs ref
 **No rating moves, and no code changes.** Every v2/v3 B is set by the key holder, by a hash of the key, by the sender of an HPKE-NL ciphertext, or by a pinned vector. The two non-holder routes are answered: the HPKE-NL refusal is no oracle, and spreading over tweaks never beats the generic multi-target cost. The one correction is to §11.28.4: the tz tail is 2^−k only to k = 64, and the single-key "3 rounds at 1/16" is not what a many-tweak attacker faces.
 
 **Caveats.** The bound is in the trail-weight model: a free-round prefix plus the conjectured per-round cost of §11.68, so it is no stronger than that conjecture, and it is not a bound on hulls. The density is a model, checked exactly only at n ≤ 24. The data count assumes a cheap tweak cannot be recognised without paying for its trail, which holds because tz(δ) is a function of the secret B.
+
+## 11.78 The share of keys below the bar at n = 22, with an honest error — TODO #257, twelfth pass (v12.0.4)
+
+§11.63 put the share of n = 22 keys below the deployed criterion at 1.9% ± 0.8% over 76 keys, and read it as falling from n = 19 by 2.6 standard errors differential and 3.4 linear. That error is the plain stratified one. A stratum with no failure in its sample adds no variance to it, however few keys it holds. Strata t = 0–3 hold 84% of the keys and had no failure in 36, so the 0.8% measured only the tail strata. The gate is `SecurityProofsCode/v2_fail_n22.py`. It reads three pinned files, so its verdicts cannot flake.
+
+### 11.78.1 The draw
+
+Each stratum's variance is put at its Jeffreys-smoothed share, (f + ½)/(k + 1), which is never zero. On the 76 keys that error is 3.3%, not 0.8%. This pass draws 80 more keys, Neyman-allocated to minimise that error, as a third seeded sample that does not overlap the first two. Most go to the large strata:
+
+| stratum t | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | ≥ 8 |
+|---|---|---|---|---|---|---|---|---|---|
+| keys before | 8 | 12 | 8 | 8 | 8 | 8 | 8 | 8 | 8 |
+| new keys | 28 | 33 | 1 | 14 | 0 | 2 | 0 | 0 | 2 |
+| below the bar, of all | 0/36 | **1/45** | 0/9 | 0/22 | 1/8 | 0/10 | 1/8 | 1/8 | 5/10 |
+
+The union of disjoint simple random samples of a stratum is itself one, so the stratified estimators carry over. The run took 14 h 50 min at seven solves in parallel, with a median of 59 min per key and a slowest of 231. c(r) ≤ 0 holds on every round of every new key, on both axes.
+
+### 11.78.2 The share at n = 22
+
+| n = 22 | 76 keys (§11.63) | 156 keys |
+|---|---|---|
+| below the bar, both axes | 1.9% | **3.1%** |
+| plain SE | 0.8% | 1.1% |
+| Jeffreys SE | 3.3% | 1.5% |
+
+- **The share is 3.1% ± 1.1%** on both axes, 1.1 of its standard errors above §11.63's 1.9%. The old point was not far off; the old error was the understatement. A control clears the one t = 1 failure and the share falls by exactly that stratum's weight per key, 0.83%.
+- **Correction to §11.63.3.** A key in t = 1, the largest stratum, fails on both axes with an arc of 19 of 22 bits: B = 802195, 0.30 below the differential bar and 0.50 below the linear one. The arc still predicts, since arcs of 12 bits or less fail 6 times in 13 and longer ones 3 times in 143. But a short arc is the strongest predictor of a weak key, not the whole weak class.
+- The closest key to clear sits 0.004 above the differential bar. It is printed, not scored.
+
+### 11.78.3 The fall from n = 19, re-read
+
+| fall from n = 19 | differential | linear |
+|---|---|---|
+| §11.63: 76 keys, plain SE | 2.6 SE | 3.4 SE |
+| 76 keys, Jeffreys SE | 1.5 SE | 2.2 SE |
+| **156 keys, Jeffreys SE** | **1.7 SE** | **2.5 SE** |
+| n = 23 (§11.67), Jeffreys SE | 1.4 SE | 1.9 SE |
+
+- **Correction to §11.63.1.** On the differential axis the fall from 8.3% to 3.1% is 1.7 standard errors, so it is not established at 2. The linear fall, from 11.7% to 3.1%, survives at 2.5. A control holds §11.63's own reading, which clears 2 on both axes, so the change comes from the error, not the gate.
+- **§11.67's n = 23 shares have the same understatement.** Their plain errors are 0.95% and 0.83%, against Jeffreys errors of 3.76% and 3.74%, and their fall from n = 19 is 1.4 and 1.9 standard errors. These are printed, not re-measured.
+
+### 11.78.4 E[μ] and λ
+
+E[μ] is 2.726 ± 0.023 differential and 1.413 ± 0.015 linear, less than one of §11.63's standard errors below its 76-key value, and 1.59× and 1.63× SECURITY.md's conjectured bars of 1.71 and 0.865. λ stays within §11.62's 0.015 of the pooled value, at +0.007 and −0.007. The linear λ moved up by 1.1 of §11.63's standard errors, toward the pooled value.
+
+### 11.78.5 What it changes
+
+**Established:** at n = 22 the share of keys below the bar is about 3%, with an error of about 1–1.5%. A short arc predicts failure but does not define it: one long-arc key fails.
+
+**Corrected:** "the share falls from n = 19" holds on the linear axis and is not established on the differential one. The fail shares at n = 22 and n = 23 carried errors that left out the large strata.
+
+**Unchanged:** every rating. The conjecture behind the four production-track rows (§11.68.3) is on the key-averaged E[μ], which moved by less than one standard error and stays near 1.6× its bar. The share below the bar is evidence about the trend, not the conjecture.
+
+**Caveats:** the Jeffreys prior is one choice of smoothing, conservative where a stratum truly has no failure; the gate prints it beside the plain error, not in place of it. n = 23's fail share would need a similar draw to firm it up. This is a measurement at n = 22, not a bound at n = 256.

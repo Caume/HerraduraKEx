@@ -44,6 +44,13 @@ flake.
   CAVEATS.  The arc is a per-key regularity read off a sample stratified on t, not on the
   arc, so §3's counts are unweighted.  The fail share at n = 22 still rests on six keys.
 
+  CORRECTED IN PART by v2_fail_n22.py (TODO #257, v12.0.4, §11.78).  §2(b)'s SE is the
+  plain one, which gives strata t = 0..3 (no failure in 36 keys) no variance; with
+  Jeffreys-smoothed strata it is 3.3%, and on 156 keys the share is 3.1% +/- 1.1%, its
+  differential fall from n = 19 1.7 SE.  A long-arc key (arc 19) fails, so §3/§4's arc
+  is the strongest predictor of a weak key, not the whole class.  The checks below still
+  hold on this file's own 76 keys, which is all they claim.
+
 Exits non-zero if a finding stops reproducing.
 
 Run:  python3 SecurityProofsCode/v2_tail_n22.py [--regenerate]
