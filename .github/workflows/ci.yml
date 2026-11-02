@@ -12,6 +12,13 @@ name: CI
 # while the Dockerfile went on advertising a language count it did not build,
 # naming neither Java nor a reason. A sentence promising two things cannot drift
 # apart is #287's withdrawn trust-model sentence unless something compares them.
+#
+# TODO #353: every step that installs packages (apt-get, npm, pip) carries
+# `timeout-minutes: 20`. A stalled mirror once held two jobs here for the full
+# 360-minute default, with no build or test step run. Over 512 successful
+# install steps in 40 runs the median was 12 s and the slowest 821 s, during
+# that same mirror incident; 20 minutes sits above it. The bound is held by
+# tools/check_ci_install_bounds.py in native-python.
 
 on:
   push:
@@ -35,6 +42,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc libc6-dev
@@ -117,6 +125,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           # TODO #325 added gcc/libc6-dev: the FFI step below builds the shared
@@ -198,6 +207,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           # python3-jsonschema is for the spec gate below and nothing else -- the
@@ -291,6 +301,13 @@ jobs:
       - name: tools/check_fast.sh mirrors CI's consistency checks
         run: bash tools/check_fast.sh --verify-ci
 
+      # TODO #353. A package-install step with no bound inherits the 360-minute
+      # job default, which is what a stalled apt mirror cost two jobs once. This
+      # fails on any install step (here or in codeql.yml) without a
+      # timeout-minutes of at most 30, and shows its controls firing first.
+      - name: CI install steps are time-bounded
+        run: python3 tools/check_ci_install_bounds.py
+
       # TODO #285. About 34 of the SecurityProofsCode/ scripts advertise "exits
       # non-zero if a finding stops reproducing" and until now NO job collected
       # that status, so the promise was untested. That is how
@@ -375,6 +392,7 @@ jobs:
       # the Java column is the point -- it is the script that exists
       # because those five tags were Java-shaped holes.
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3 default-jdk-headless
@@ -654,6 +672,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends default-jdk-headless python3
@@ -710,6 +729,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3 default-jdk-headless
@@ -782,6 +802,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -822,6 +843,7 @@ jobs:
           node-version: '20'
 
       - name: Install katex
+        timeout-minutes: 20
         run: npm install katex --no-save
 
       - name: Validate math spans in README.md and SecurityProofs*.md
@@ -843,6 +865,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-avr avr-libc arduino-core simavr
@@ -866,6 +889,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -886,6 +910,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -986,6 +1011,7 @@ jobs:
       # externally-managed runner python3; the plain form is tried first so
       # this keeps working either way.
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3 python3-pip
@@ -1072,6 +1098,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3

@@ -35,6 +35,7 @@ COMMANDS=(
   "python3 tools/check_runnable_coverage.py"
   "python3 tools/check_docker_mirror.py"
   "python3 tools/check_rate_format.py"
+  "python3 tools/check_ci_install_bounds.py"
   "python3 KAT/generate_kat.py --check"
   "python3 KAT/generate_pem_kat.py --check"
   "python3 KAT/generate_bitarray_kat.py --check"

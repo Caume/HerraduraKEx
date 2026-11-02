@@ -24505,3 +24505,61 @@ SecurityProofs-10.md §11.77.  No rating moves and no code changes.
   for every key).  The gate holds that answer in place instead of re-deriving it.
 
 Status: **DONE v12.0.2** — every v2/v3 B setter recorded and gated; the HPKE-NL refusal is no oracle, spreading over `twk` tweaks never beats the generic multi-target cost, v3 has no weak class (TODO #255); §11.28.4's tz tail corrected past k = 64.
+
+### #353: bound CI's package-install steps, so a stalled mirror fails in minutes, not six hours
+
+**The incident.**  The push-triggered CI run for v12.0.2 (run 41250281934, attempt 1)
+lost two jobs, `native-go` and `native-interop`, to the runner, not to the repo.  Both
+hung in "Install dependencies" right after `apt-get update` fetched `noble-security`'s
+InRelease (22:55:28 UTC) and printed nothing more until GitHub's default 360-minute job
+limit cancelled them (04:55 UTC).  `cross-lang-compat`, which needs `native-go`, was
+skipped.  No build or test step ran.  `gh run rerun --failed` passed all three (Go 7 min,
+interop 61 min, matrix 20 min), and the same jobs had passed in the PR's own run.  The
+cost was six hours of a red-pending PR for a fault that a bounded step would have
+reported within minutes.
+
+**What to do.**
+  * Give every package-install step a step-level `timeout-minutes` (about 10-15; the
+    steps normally take 1-2 min).  Twelve of the thirteen `ci.yml` jobs run
+    `apt-get update` / `install`: `native-c`, `native-go`, `native-python`,
+    `native-interop`, `native-java`, `cross-lang-compat`, `arm-i386`, `arduino`,
+    `fuzz-smoke`, `sanitizers`, `analysis-findings` and `docker`.  `katex`'s
+    `npm install katex` is the same kind of step and gets the same bound.
+  * Consider making apt fail rather than hang: `-o Acquire::Retries=3` plus an
+    `Acquire::http::Timeout` / `Acquire::https::Timeout`, so a dead mirror becomes a
+    retry and then an error inside the step's bound.  A timeout is still a red run;
+    it only shortens it.  Do NOT add `continue-on-error` (CLAUDE.md, Testing).
+  * Hold it in CI the way the other guards are held: a check (in `check_fast.sh`'s list,
+    or beside the coverage guards) that fails when a step running `apt-get` or
+    `npm install` has no `timeout-minutes`, so a new job cannot drop the bound.  Show it
+    firing on a copy of `ci.yml` with one bound removed.
+  * Leave the job-level limits alone: `analysis-findings`' 240 minutes is sized for its
+    heavy tail, and the other jobs' long steps (interop about an hour) are tests, not
+    installs.
+
+**Resolution (v12.0.3).**
+  * **The bound.**  Each of the 14 package-install steps carries `timeout-minutes: 20`:
+    the 13 in `ci.yml` (twelve apt steps and `katex`'s `npm install`) and the apt step in
+    `codeql.yml`'s manual C build.  The figure comes from the 40 runs before the change:
+    over 512 successful install steps the median was 12 s, the 99th percentile 97 s and the
+    slowest 821 s.  That 821 s came from the same mirror incident, with one download at
+    35.9 kB/s, and it recovered, so 15 minutes would have nearly cut off a run that was
+    still finishing; 20 sits above it.
+  * **The guard.**  `tools/check_ci_install_bounds.py` reads both workflows with a line
+    scanner (no PyYAML).  It fails on an install step without `timeout-minutes`, on a
+    bound over 30 minutes, and on an installer line it cannot place inside a step, so a
+    misread layout cannot pass by finding nothing.  Its controls run first and must fire:
+    the committed files are accepted; one bound removed, one raised to 360, a new
+    unbounded apt step, and a stray installer line are each refused.  On the workflows as
+    they were before this change it refuses all 14 steps.  It runs in `native-python` and
+    in `tools/check_fast.sh`, whose `--verify-ci` holds the two lists together.
+  * **Not done: apt's `Acquire::Retries` / `Acquire::http(s)::Timeout`.**  The stall
+    printed nothing after `noble-security`'s InRelease, and the slow recovering run
+    already sat 497 s on one download before apt fell back, so apt's own timeouts did not
+    end either one.  The step bound is what ends a hang; retries would add 24 edits to
+    the install lines for a case the bound already turns into a quick rerun.
+  * **Known limit.**  The guard sees installer calls in `run:` text only.  The docker
+    job's `docker build` runs the Dockerfile's apt inside the image build and stays under
+    the job's limit.  The job-level limits are unchanged.
+
+Status: **DONE v12.0.3** — every CI package-install step (13 in ci.yml, 1 in codeql.yml) is bounded at 20 minutes, sized from 512 measured installs, and tools/check_ci_install_bounds.py fails a new unbounded step, with four controls.
