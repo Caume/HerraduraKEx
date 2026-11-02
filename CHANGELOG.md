@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [12.0.4] - 2026-11-02
+
+### TODO #257 (twelfth pass) — the n = 22 fail share, with an honest error
+
+- **The error was the understatement.**  §11.63's 1.9% +/- 0.8% of n = 22 keys below the
+  bar used the plain stratified SE, which gives a stratum with no failure no variance.
+  Strata t = 0..3 hold 84% of keys and had no failure in 36.  With Jeffreys-smoothed
+  strata the SE was 3.3%.
+- **80 more keys**, Neyman-allocated for that SE and drawn disjoint from the first two
+  samples (14 h 50 min at seven solves in parallel): the share is **3.1% +/- 1.1%** on both
+  axes (Jeffreys 1.5%).
+- **Two corrections.**  The differential fall from n = 19 is 1.7 SE, not established at 2
+  (the linear one survives at 2.5).  A key in t = 1 fails with an arc of 19 of 22 bits, so
+  the short arc predicts a weak key but does not define the class.  n = 23's fail shares
+  carry the same understatement.
+- **E[mu] holds**: 2.726 / 1.413, under one SE from the 76-key value, 1.59x / 1.63x the
+  conjectured bars.  **No rating moves.**
+- **New gate `SecurityProofsCode/v2_fail_n22.py`** with pinned `v2_fail_n22.json`;
+  SecurityProofs-10.md §11.78, with correction notes in §11.63 and §11.67.
+
 ## [12.0.3] - 2026-11-01
 
 ### TODO #353 — bound CI's package-install steps

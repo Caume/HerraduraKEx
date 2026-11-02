@@ -560,8 +560,23 @@ now this item's:
   * **The linear share check is near its edge.**  `v2_series_n23.py` holds lambda(23)
     within 0.015 of the pooled value; it passes by 0.001, drifting in the FAVOURABLE
     direction.  If a later width fails it that way, restate the check, do not loosen it.
-  * **A larger n = 22 sample**, if its fail share (1.9% +/- 0.8%, six keys) matters.
+  * **A larger n = 22 sample** -- done in the twelfth pass below (v12.0.4).
   * **The gap-bit cost** past n = 20 (§11.66.2: flat from 20 to 23 within its error).
+
+**Twelfth pass (v12.0.4, SecurityProofs-10.md §11.78, `v2_fail_n22.py`): the n = 22 fail
+share with an honest error.**  The 1.9% +/- 0.8% above used the plain stratified SE, which
+gives a stratum with no failure no variance; strata t = 0..3 (84% of keys) had none in 36
+keys.  With Jeffreys-smoothed strata the SE was 3.3%.  80 more keys, Neyman-allocated for
+that SE (14 h 50 min at JOBS = 7), put the share at 3.1% +/- 1.1% (Jeffreys 1.5%) on both
+axes.  Two corrections follow.  The differential fall from n = 19 is 1.7 SE, not
+established at 2; the linear one survives at 2.5.  And a key in t = 1 fails with an arc of
+19 of 22 bits, so a short arc is the strongest predictor of a weak key, not the whole
+class (arcs <= 12 fail 6 of 13, longer ones 3 of 143).  n = 23's 1.7% / 2.6% have the same
+understatement (Jeffreys SE about 3.75%; fall from n = 19 1.4 / 1.9 SE), not yet
+re-drawn.  E[mu] = 2.726 / 1.413, under one SE from the 76-key value and 1.59x / 1.63x the
+bars; lambda within 0.015 of pooled.  No rating moves: the conjecture is on E[mu].
+SECURITY.md's A2 row still says the short arc is "what makes a key weak" and that the n = 23
+failures all have short windows; both are now slightly too strong.
 
 **Reach (restated in v12.0.1; the earlier text predated #345 and #351).**  Four
 production-track rows rest on this item: HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3`,
