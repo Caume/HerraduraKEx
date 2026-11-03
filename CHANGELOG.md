@@ -2,6 +2,19 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [12.0.5] - 2026-11-02
+
+### TODO #257 — SECURITY.md's A2 row restated to §11.78
+
+- **Two claims softened.**  The row said a short arc is "what makes a key weak"; it now
+  says the short arc is the strongest predictor, since a key with a 19-bit arc fails at
+  n = 22.  "All with short windows" for n = 23's failures is now scoped to that 50-key
+  sample.
+- **The corrected n = 22 share added**: 3.1% +/- 1.1% (Jeffreys 1.5%), the differential
+  fall from n = 19 at 1.7 SE, not established, and n = 23's shares noted as carrying the
+  same understatement.  §11.78 joins the row's references.  **No rating moves**: the
+  conjecture rests on E[mu].
+
 ## [12.0.4] - 2026-11-02
 
 ### TODO #257 (twelfth pass) — the n = 22 fail share, with an honest error
