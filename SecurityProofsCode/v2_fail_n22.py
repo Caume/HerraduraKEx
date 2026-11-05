@@ -2,6 +2,10 @@
 """v2_fail_n22.py — TODO #257: the share of v2 keys below the bar at n = 22, with an
 honest SE.
 
+CORRECTED IN PART by v2_fail_n23.py (§11.79): §3(a)'s "not established" came from n = 19's
+113 keys.  With 450 n = 19 keys the differential fall to n = 22 is 2.7 SE, and the fall to
+n = 23 (150 keys) is 4.0 / 3.7.  §3 still reproduces on the samples it names.
+
 §11.63 (v2_tail_n22.py) put the share of n = 22 keys below the deployed criterion at
 1.9% +/- 0.8% over 76 keys, and read it as falling from n = 19 by 2.6 / 3.4 SE.  That SE
 is the plain stratified one, and a stratum with no failure in its sample contributes NO
