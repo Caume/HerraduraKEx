@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [12.0.6] - 2026-11-05
+
+### TODO #257 (thirteenth pass) — the fall of the fail share, with honest errors at both ends
+
+- **Why both widths.**  §11.78 found the n = 23 fail share's error understated, but
+  re-drawing n = 23 alone could not settle its fall from n = 19: n = 19's own Jeffreys SE,
+  2.7% / 3.0% on 113 keys, capped it near 2.4 SE.
+- **Neyman draws at both ends**, seeded and disjoint from every earlier sample: n = 19 to
+  450 keys, n = 23 to 150 (about 2 days 9 h at six solves in parallel).
+- **The fall is established.**  8.4% / 10.3% at n = 19 to 1.6% / 3.1% at n = 23, 4.0 / 3.7
+  SE with Jeffreys errors at both ends.  **Correction to §11.78.3:** the differential fall to
+  n = 22 is 2.7 SE with the larger n = 19 sample, so it is established; the thin end was
+  n = 19.  From n = 22 to 23 the share does not fall.
+- **The arc, again.**  An n = 23 key in t = 1 fails linear with a 17-bit arc, so §11.67's
+  "every failure has tz(p) >= 6" held for its sample only.
+- **E[mu] at n = 23 holds**: 2.794 / 1.464, 1.63x / 1.69x the conjectured bars; the linear
+  lambda's margin to its 0.015 tolerance widens from 0.001 to 0.003.  **No rating moves.**
+- **New gate `SecurityProofsCode/v2_fail_n23.py`** with pinned `v2_fail_n23.json`;
+  SecurityProofs-10.md §11.79, correction notes in §11.67 and §11.78, SECURITY.md's A2 row.
+
 ## [12.0.5] - 2026-11-02
 
 ### TODO #257 — SECURITY.md's A2 row restated to §11.78

@@ -2,6 +2,9 @@
 """v2_series_n23.py — TODO #343 (fifteenth and sixteenth passes): NL-FSCX v2 over keys at
 n = 23, the next width of the class n = 2 (mod 3).
 
+CORRECTED IN PART by v2_fail_n23.py (§11.79): §3(d)'s "every sampled key below the bar
+has tz(p) >= 6" holds for these 50 keys only; with 150, a t = 1 key fails linear.
+
 §11.62 (v2_series_n22.py) measured E[mu] and the discount's share lambda over a key
 sample at n = 22; §11.66 solved n = 23 keys drawn by gap, which estimates neither.  Since
 TODO #344 an n = 23 solve fits in ~1.5-2 GB, so this gate draws a KEY sample at n = 23:

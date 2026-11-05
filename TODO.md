@@ -558,7 +558,7 @@ now this item's:
     linear, so a 12-15 key sample is ~11-14 days serial on a 16 GB host; two n = 25 keys
     clear the criterion (mu 2.97 / 1.60 and 3.01 / 1.58).
   * **The linear share check is near its edge.**  `v2_series_n23.py` holds lambda(23)
-    within 0.015 of the pooled value; it passes by 0.001, drifting in the FAVOURABLE
+    within 0.015 of the pooled value; it passes by 0.001 (0.003 on 150 keys, v12.0.6), drifting in the FAVOURABLE
     direction.  If a later width fails it that way, restate the check, do not loosen it.
   * **A larger n = 22 sample** -- done in the twelfth pass below (v12.0.4).
   * **The gap-bit cost** past n = 20 (§11.66.2: flat from 20 to 23 within its error).
@@ -579,6 +579,18 @@ SECURITY.md's A2 row said the short arc is "what makes a key weak" and that the 
 failures all have short windows; both were slightly too strong, and v12.0.5 restated them
 there (strongest predictor, not the whole class; "in this 50-key sample") and added the
 corrected n = 22 share.
+
+**Thirteenth pass (v12.0.6, SecurityProofs-10.md §11.79, `v2_fail_n23.py`): the fall of
+the fail share, with honest errors at both ends.**  Re-drawing n = 23 alone could not settle
+the fall: n = 19's Jeffreys SE (2.7% / 3.0% on 113 keys) capped it near 2.4 SE.  Neyman draws
+took n = 19 to 450 keys (about 2.2 min each) and n = 23 to 150 (median 165 min; the run was
+about 2 days 9 h at JOBS = 6).  The share is 8.4% / 10.3% at n = 19 and 1.6% / 3.1% at
+n = 23 (Jeffreys SE 1.2% and 1.3% / 1.5%); the fall from 19 to 23 is 4.0 / 3.7 SE, and the
+twelfth pass's "not established" differential fall to n = 22 is 2.7 SE with the larger n = 19
+sample.  From n = 22 to 23 the share does not fall (0.8 / 0.0 SE).  An n = 23 key in t = 1
+fails linear with a 17-bit arc, as at n = 22.  E[mu] at n = 23 is 2.794 / 1.464 (1.63x /
+1.69x the bars); the linear lambda's margin to the 0.015 tolerance widened from 0.001 to
+0.003.  No rating moves.
 
 **Reach (restated in v12.0.1; the earlier text predated #345 and #351).**  Four
 production-track rows rest on this item: HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3`,
