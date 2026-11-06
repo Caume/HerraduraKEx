@@ -592,6 +592,16 @@ fails linear with a 17-bit arc, as at n = 22.  E[mu] at n = 23 is 2.794 / 1.464 
 1.69x the bars); the linear lambda's margin to the 0.015 tolerance widened from 0.001 to
 0.003.  No rating moves.
 
+**Fourteenth pass (v12.0.7, SecurityProofs-10.md §11.80, `v2_fail_n20.py`): the fail
+share at n = 20, and the fall within each residue class.**  The thirteenth pass's flat step
+from n = 22 to 23 crosses residue classes of n mod 3.  A Neyman draw took n = 20, n = 23's
+class, from 107 to 450 keys (about 6 h 15 min at JOBS = 7).  Its share is 6.4% / 7.7%
+(Jeffreys SE 1.0% / 1.1%), not §11.57's 3.8% / 5.2%: the old point was low, by 2.2 / 1.8
+plain SEs.  Within each class the share falls: n = 20 -> 23 by 3.1 / 2.5 SE, n = 19 -> 22
+by 2.7 / 3.6.  So the flat 22 -> 23 step is the class, and §11.57.4's n = 19 -> 20 fall is
+1.3 / 1.5 SE, not established.  Long arcs fail at n = 20 too (up to 16 / 18 of 20 bits).
+E[mu] at n = 20 is unchanged within one SE.  No rating moves.
+
 **Reach (restated in v12.0.1; the earlier text predated #345 and #351).**  Four
 production-track rows rest on this item: HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3`,
 each under the conjecture named in the "Ratings now rest on this item" block above, and
