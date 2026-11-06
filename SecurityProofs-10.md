@@ -1845,7 +1845,7 @@ At both widths the draw more than halves the Jeffreys error and moves the share 
 
 - **The fall from n = 19 to 23 is established on both axes**, from 8.4% to 1.6% differential and from 10.3% to 3.1% linear. A control holds the old samples' reading, under 2 on both axes, so the change comes from the new keys.
 - **Correction to §11.78.3.** With 450 n = 19 keys the differential fall from n = 19 to 22 is 2.7 standard errors, so it is established after all. §11.78's 1.7 came from n = 19's 113 keys, not from n = 22.
-> **Corrected in §11.80.3 (v12.0.7).** The flat step below is the residue class changing: within n = 23's class the share falls from n = 20 to 23 by 3.1 and 2.5 standard errors.
+> **Corrected in §11.80.3 (v12.0.7).** The flat step below is one bit wide, too small to resolve a fall, not the fall stopping: over a three-bit step within n = 23's class the share falls from n = 20 to 23 by 3.1 and 2.5 standard errors.
 
 - Printed, not scored: from n = 22 to 23 the share moves 0.8 standard errors differential and none linear. The fall is from n = 19; the step after n = 22, which crosses residue classes, shows no further fall.
 
@@ -1872,7 +1872,7 @@ E[μ] is 2.794 ± 0.019 differential and 1.464 ± 0.013 linear, less than one of
 
 **Unchanged:** every rating. The conjecture is on the key-averaged E[μ], which moved by less than one standard error. The fall is evidence about the trend, not the conjecture.
 
-**Caveats:** n = 22 and n = 23 sit in different residue classes, and the share shows no fall between them; whether it keeps falling, levels near a few per cent, or is an artefact of the class is not measured. *(§11.80: it is the class; within each class the share falls.)* This is a measurement at n ≤ 23, not a bound at n = 256.
+**Caveats:** n = 22 and n = 23 sit in different residue classes, and the share shows no fall between them; whether it keeps falling, levels near a few per cent, or is an artefact of the class is not measured. *(§11.80: over three-bit steps within each class the share falls; the one-bit step is too small to resolve, and no class effect is shown.)* This is a measurement at n ≤ 23, not a bound at n = 256.
 
 ## 11.80 The fail share at n = 20, and the fall within each residue class — TODO #257, fourteenth pass (v12.0.7)
 
@@ -1909,7 +1909,7 @@ E[μ] is 2.794 ± 0.019 differential and 1.464 ± 0.013 linear, less than one of
 | across classes: 19 → 20, 20 → 22, 22 → 23 | 1.3, 1.8, 0.8 SE | 1.5, 2.4, 0.0 SE |
 
 - **Within each class the share falls**, by 2.5 standard errors or more on both axes. A control holds §11.57's sample's reading, under 1, so the new keys are what establish it.
-- **Correction to §11.79.3.** The flat step from n = 22 to 23 is the class changing, not the fall stopping: each class falls over its own three-bit step.
+- **Correction to §11.79.3.** The flat step from n = 22 to 23 does not show the fall stopping. It is one bit wide, and so are 19 → 20 (1.3 and 1.5 standard errors): one-bit steps are too small to resolve the fall at these sample sizes, while each class falls over its three-bit step.
 - **Correction to §11.57.4.** Its fall from 8.3% to 3.8% between n = 19 and 20 is 1.3 standard errors with these samples (8.4% to 6.4%), not established. Adjacent widths cross classes.
 
 ### 11.80.4 The arc
@@ -1928,4 +1928,4 @@ E[μ] is 2.578 ± 0.017 differential and 1.318 ± 0.010 linear, within one of §
 
 **Unchanged:** every rating. The conjecture is on the key-averaged E[μ], which did not move. The fail share is evidence about the trend, not the conjecture.
 
-**Caveats:** two classes with two widths each give a direction, not a rate. The class effect itself, why n ≡ 2 (mod 3) fails more than n ≡ 1 at nearby widths, is not explained. This is a measurement at n ≤ 23, not a bound at n = 256.
+**Caveats:** two classes with two widths each give a direction, not a rate. No class effect is shown either way: n = 20 fails less than n = 19 and more than n = 22, as a share falling with the width would, so the four widths are consistent with one fall read through two classes. This is a measurement at n ≤ 23, not a bound at n = 256.

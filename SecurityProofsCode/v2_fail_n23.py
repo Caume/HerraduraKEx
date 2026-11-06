@@ -3,7 +3,7 @@
 n = 19 to n = 23, with an honest SE at both ends.
 
 CORRECTED IN PART by v2_fail_n20.py (§11.80): §3's printed flat step from n = 22 to 23
-is the residue class changing; within n = 23's class the share falls from n = 20 (450
+is one bit wide, too small to resolve the fall, not the fall stopping; within n = 23's class the share falls from n = 20 (450
 keys) to 23 by 3.1 / 2.5 SE.
 
 §11.78 (v2_fail_n22.py) found that the plain stratified SE of the share of keys below the

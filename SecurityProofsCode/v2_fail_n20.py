@@ -26,7 +26,8 @@ The draw added 343 keys (median 6.9 min per key at seven in parallel, slowest 26
       6.4% -> 1.6% and 7.7% -> 3.1%, 3.1 / 2.5 SE Jeffreys.  CONTROL: on §11.57's 107 keys
       that fall is 0.9 / 0.8.  Class n = 1: n = 19 -> 22, 2.7 / 3.6 SE (§11.79).  PRINTED:
       across classes 19 -> 20 1.3 / 1.5 SE, 20 -> 22 1.8 / 2.4, 22 -> 23 0.8 / 0.0; so
-      §11.79's flat step from n = 22 to 23 is the class changing, not the fall stopping.
+      one-bit steps are too small to resolve the fall, so §11.79's flat step from n = 22
+      to 23 is not the fall stopping.  No class effect is shown either way.
 
   §4  THE ARC.  Short arcs fail over 10x as often as long ones (39 / 43 of 70 against
       9 / 12 of 380), and long arcs fail too, up to 16 / 18 of 20 bits.

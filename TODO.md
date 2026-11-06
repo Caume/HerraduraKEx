@@ -598,7 +598,7 @@ from n = 22 to 23 crosses residue classes of n mod 3.  A Neyman draw took n = 20
 class, from 107 to 450 keys (about 6 h 15 min at JOBS = 7).  Its share is 6.4% / 7.7%
 (Jeffreys SE 1.0% / 1.1%), not §11.57's 3.8% / 5.2%: the old point was low, by 2.2 / 1.8
 plain SEs.  Within each class the share falls: n = 20 -> 23 by 3.1 / 2.5 SE, n = 19 -> 22
-by 2.7 / 3.6.  So the flat 22 -> 23 step is the class, and §11.57.4's n = 19 -> 20 fall is
+by 2.7 / 3.6.  So the flat 22 -> 23 step is a one-bit step too small to resolve, and §11.57.4's n = 19 -> 20 fall is
 1.3 / 1.5 SE, not established.  Long arcs fail at n = 20 too (up to 16 / 18 of 20 bits).
 E[mu] at n = 20 is unchanged within one SE.  No rating moves.
 
@@ -621,3 +621,53 @@ at n = 256 would remove the conjecture.
 Status: **OPEN**
 
 ---
+
+---
+
+### #354: screen v2 keys by the arc of delta(B)? Cost, threshold, and compatibility
+
+**Question (from the #257 passes v12.0.4–v12.0.7).**  Can the suite detect and refuse the
+weakest key families, at negligible cost?  "Families" has two readings, and only one of
+them is a choice the suite can make.
+
+**Width residue class n mod 3: not a lever.**  n = 256 is fixed by the wire format, and
+256 ≡ 1 (mod 3), the class of n = 19 and 22.  The §11.79/§11.80 data do not show either
+class to be safer: within each class the share below the bar falls over a three-bit step,
+and the one-bit steps between classes (19 → 20, 22 → 23) are too small to resolve, not a
+class penalty.  Changing the width would be a MAJOR break with no measured benefit.  Not
+pursued here.  (n = 20 fails less than n = 19 and more than n = 22: the four widths read as
+one fall with the width, §11.80.6.)
+
+**Key families: a short-arc screen is cheap, its value is not established.**  The weak keys
+are mostly those whose delta(B) has its nonzero bits in a short cyclic arc (arc = n minus
+delta's longest cyclic zero run; §11.63, §11.78–§11.80: arcs <= 12 fail about half the time
+at n = 19–23, longer arcs 0–3%).  `nl_v2_key_is_valid` (herradura.h, TODO #253) already
+computes delta(B) and rejects only the affine class {0, 2^(n-1)}; an arc test is one more
+O(n) pass over 256 bits at key load, nanoseconds, and at arc <= 12 it rejects about 2^-123
+of keys, so key generation would not measurably resample.  To settle:
+
+  1. **The threshold at n = 256.**  §11.59 showed arcs <= 12 stay weak at every width;
+     §11.61 that 13–20-bit windows behave like ordinary keys of that many bits, i.e. their
+     per-round cost is set by the arc, not n.  So an arc of a bits at n = 256 is roughly a
+     width-a key: which a falls below the conjectured bar (1.71 / 0.865 per round) at
+     3n/4 = 192 rounds?  Measure constructed keys at arcs 12–40 and the largest n the
+     solver reaches; derive A and its density at n = 256.
+  2. **Whether it is worth it.**  At any A that keeps the density far below 2^-128 a
+     uniformly drawn key never hits the class, so the gain is only against keys that are
+     NOT uniform: low-entropy or structured secrets, an attacker who can influence B.
+     Inventory who chooses B per protocol (HSKE-NL-A2: the shared key; HPKE-NL: a DH
+     output; `twk`: a hash output, already unreachable), and decide per protocol.
+  3. **What it cannot catch.**  The long-arc failures (up to 19 of 22 bits, §11.78) have no
+     cheap signature, so the screen removes the bulk of the weak class, not all of it.
+     Quantify the fraction removed on the pinned n = 19–23 samples (e.g. at n = 23, 5 of 5
+     differential and 7 of 8 linear failures have arcs <= 12).
+  4. **Compatibility.**  Rejecting more keys at load changes what an existing --algo
+     accepts: MAJOR under CLAUDE.md, with a MIGRATING.md entry.  A keygen-only screen
+     (resample, still accept on load) is not breaking.  Choose, and say which.
+  5. **If shipped:** four-port parity (C/Go/Python/Java, the spec primitive manifest and
+     PARAMETERS), a CONSTRUCTED short-arc key test with an accept-control first, a KAT,
+     and SECURITY.md's "documented rather than screened" wording for the A2 row.  Check
+     whether v3 (HSKE-NL-A3, `twk --v3`) has an analogous class (nl_fscx_v3_weak_keys.py)
+     or needs none.
+
+Status: **OPEN**
