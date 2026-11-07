@@ -643,8 +643,9 @@ are mostly those whose delta(B) has its nonzero bits in a short cyclic arc (arc 
 delta's longest cyclic zero run; §11.63, §11.78–§11.80: arcs <= 12 fail about half the time
 at n = 19–23, longer arcs 0–3%).  `nl_v2_key_is_valid` (herradura.h, TODO #253) already
 computes delta(B) and rejects only the affine class {0, 2^(n-1)}; an arc test is one more
-O(n) pass over 256 bits at key load, nanoseconds, and at arc <= 12 it rejects about 2^-123
-of keys, so key generation would not measurably resample.  To settle:
+O(n) pass over 256 bits at key load, nanoseconds, and at arc <= 12 it rejects about 2^-121
+of keys (§11.63's extrapolation; the 2^-123 first written here is the short-WINDOW class),
+so key generation would not measurably resample.  To settle:
 
   1. **The threshold at n = 256.**  §11.59 showed arcs <= 12 stay weak at every width;
      §11.61 that 13–20-bit windows behave like ordinary keys of that many bits, i.e. their
@@ -652,12 +653,14 @@ of keys, so key generation would not measurably resample.  To settle:
      width-a key: which a falls below the conjectured bar (1.71 / 0.865 per round) at
      3n/4 = 192 rounds?  Measure constructed keys at arcs 12–40 and the largest n the
      solver reaches; derive A and its density at n = 256.
-  2. **Whether it is worth it.**  At any A that keeps the density far below 2^-128 a
+  2. **Whether it is worth it.**  *Done in v12.0.8 (§11.81.2, `v2_arc_screen.py`); see the
+     pass below.*  At any A that keeps the density far below 2^-128 a
      uniformly drawn key never hits the class, so the gain is only against keys that are
      NOT uniform: low-entropy or structured secrets, an attacker who can influence B.
      Inventory who chooses B per protocol (HSKE-NL-A2: the shared key; HPKE-NL: a DH
      output; `twk`: a hash output, already unreachable), and decide per protocol.
-  3. **What it cannot catch.**  The long-arc failures (up to 19 of 22 bits, §11.78) have no
+  3. **What it cannot catch.**  *Done in v12.0.8 (§11.81.1); the counts below are raw and
+     overstate it.*  The long-arc failures (up to 19 of 22 bits, §11.78) have no
      cheap signature, so the screen removes the bulk of the weak class, not all of it.
      Quantify the fraction removed on the pinned n = 19–23 samples (e.g. at n = 23, 5 of 5
      differential and 7 of 8 linear failures have arcs <= 12).
@@ -669,5 +672,74 @@ of keys, so key generation would not measurably resample.  To settle:
      and SECURITY.md's "documented rather than screened" wording for the A2 row.  Check
      whether v3 (HSKE-NL-A3, `twk --v3`) has an analogous class (nl_fscx_v3_weak_keys.py)
      or needs none.
+
+**Items 2 and 3 (v12.0.8, SecurityProofs-10.md §11.81, `v2_arc_screen.py`).**  The pinned
+samples are Neyman-allocated, so short arcs are over-drawn and raw counts overstate the
+catch.  Weighted by stratum, a screen at arc <= 12 removes 59-100% of the differential share
+below the bar and 59-82% of the linear share over n = 19-23 (bootstrap SE 5-8% at n = 19
+and 20, about 19% at 22 and 23), and leaves 0-2.4% of keys failing with long arcs.  n = 23's
+"5 of 5 / 7 of 8" above are raw; weighted they are 100% / 73%.  No cut transfers across
+widths: arc <= 14 catches every n = 19 failure but rejects 39% of n = 19 keys, and at n = 22
+and 23 no cut up to 16 bits catches every linear failure.  Who can make B non-uniform:
+HSKE-NL-A2's key file, by hand (a SESSION KEY PEM anyone can write, or the raw `0x` hex the
+Python and Go CLIs read; 0x8000...0001 has arc 3 and passes nl_v2_key_is_valid); the
+HPKE-NL sender, only to its own cost (R = 1 gives B = 1, arc 1, and a public key); and for
+`twk` / FPE / duplex only by search (`twk`'s 2^96 tweaks expect 2^-25 class keys).  A
+decrypt-side HPKE-NL screen is no oracle: off the identity no element of a subgroup of
+order up to 274177 has an arc under 194.  **So a keygen-only screen protects nothing, and a
+load-time screen protects only HSKE-NL-A2 against a hand-chosen key (MAJOR).**  Item 1
+narrows: FPE's ctx and the duplex nonce are unbounded, and a 2^121-query search beats the
+generic max(T, 256 - T) = 135 only if exploiting a short-arc key at n = 256 costs under
+256 - 2 * 121 = 14 bits.  Item 1 now needs only that cost, not the cut A.
+
+Status: **OPEN**
+
+---
+
+### #355: raw `0x` hex session keys: read by the Python and Go CLIs only, width set by the value
+
+**Found by #354's item 2 (v12.0.8, §11.81.2).**  `enc`/`dec --key` in the Python CLI
+(`_load_key`) and the Go CLI (`loadKey`) accept a file holding a plain `0x...` hex string as
+well as a SESSION KEY / RESPONSE PEM; the C (`load_sym_key_n`) and Java (`loadKey`) CLIs read
+only PEM.  The difference is not listed in spec/'s `cli_surface_gaps`, so
+`check_language_parity.py` does not see it.  The hex form also takes the key's width from
+the value: `nbits = max(32, ceil(bit_length / 32) * 32)`, so a 256-bit key whose top 32 bits
+happen to be zero (about 1 in 2^32) silently runs at 224 bits, and `0x1` runs at 32.
+
+To settle: (1) decide whether the hex form is supported surface or a leftover; (2) if
+supported, add it to C and Java (MINOR) with an explicit width rule (e.g. the digit count,
+not the value) and a cross-CLI test; if not, remove it from Python and Go (MAJOR: an
+existing key file stops loading, MIGRATING.md entry); either way (3) list or close the
+`cli_surface_gaps` entry, and (4) a test with a leading-zero hex key, with an accept-control
+first.
+
+Status: **OPEN**
+
+---
+
+### #356: HSKE-NL-A2/A3 silently produce undecryptable ciphertext at non-power-of-two widths
+
+**Found while checking #355 (v12.0.8).**  `_m_inv` (the Python suite; the other ports to be
+checked) computes M^-1 as M^(n/2 - 1), which assumes ord(M) = n/2.  That holds at powers of
+two only: on 20 random (P, K) each, `nl_fscx_revolve_v2_inv(nl_fscx_revolve_v2(P, K, n/4),
+K, n/4) != P` every time at n = 96, 160, 192 and 224, and never at 32, 64, 128, 256.  v3's
+inverse fails the same way at 160 and 224.  At n divisible by 3 (96, 192) M = I + ROL + ROR
+is singular, so v2 is not a bijection at all and no inverse exists.
+
+It reaches the CLIs.  A SESSION KEY PEM declaring 224 bits (or, in Python and Go, a `0x` hex
+key whose top 32 bits are zero, #355): `enc` then `dec --algo hske-nla2` and `hske-nla3`
+exit 0 and return garbage in the Python and Go CLIs; the C CLI round-trips; the Java CLI
+refuses (A2 as "degenerate ... affine-weak class", A3 as "requires a 256-bit key").  So the
+four ports disagree, and two of them lose data without an error.
+
+To settle: (1) the legal widths for v2 and v3 (refuse every other width at enc AND dec, as
+`_nla1_width_ok` does for A1, with one readable message in all four CLIs), or a correct
+M^-1 at every width where M is invertible; (2) whether C really runs at 224 or widens the
+key (read `load_sym_key_n`'s caller); (3) the Java A2 message, which names the wrong cause;
+(4) a cross-CLI test at a non-power-of-two width with an accept-control at 256, and a
+verifier-side invariant (CLAUDE.md: "cross-port checks cannot see a property all four ports
+get wrong"); (5) whether refusing a width that encrypts today is MAJOR (it changes what an
+--algo accepts, though what it accepts cannot be decrypted).  CLAUDE.md's "order of M is
+n/2" holds for powers of two only; say so there.
 
 Status: **OPEN**
