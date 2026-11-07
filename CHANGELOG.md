@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [12.0.7] - 2026-11-06
+
+### TODO #257 (fourteenth pass) — the fail share at n = 20, and the fall within each residue class
+
+- **Why n = 20.**  §11.79's flat step from n = 22 to 23 crosses residue classes of n mod 3;
+  n = 20 is n = 23's class, and its 3.8% / 5.2% carried only the plain SE.
+- **A Neyman draw to 450 keys** (343 new, about 6 h 15 min at seven solves in parallel).
+- **Correction to §11.57: the share was low.**  6.4% / 7.7% (Jeffreys SE 1.0% / 1.1%), up
+  2.2 / 1.8 of the old plain SEs; unlike n = 19, 22 and 23, the old point itself moved.
+- **Within each class the share falls**: n = 20 -> 23 by 3.1 / 2.5 SE, n = 19 -> 22 by
+  2.7 / 3.6.  One-bit steps are too small to resolve: §11.79's flat step is not the fall
+  stopping, no class effect is shown, and §11.57.4's n = 19 -> 20 fall is 1.3 / 1.5 SE,
+  not established.
+- **E[mu] at n = 20 holds** within one SE.  **No rating moves.**
+- **TODO #354 filed**: whether to screen v2 keys by the arc of delta(B) (cost, threshold at
+  n = 256, what it cannot catch, compatibility).  The width residue class is not a lever.
+- **New gate `SecurityProofsCode/v2_fail_n20.py`** with pinned `v2_fail_n20.json`;
+  SecurityProofs-10.md §11.80, correction notes in §11.57, §11.67 and §11.79, SECURITY.md's
+  A2 row.
+
 ## [12.0.6] - 2026-11-05
 
 ### TODO #257 (thirteenth pass) — the fall of the fail share, with honest errors at both ends
