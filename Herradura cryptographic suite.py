@@ -1025,6 +1025,12 @@ def _m_inv(X: BitArray) -> BitArray:
         unit = BitArray(n, 1)
         zero = BitArray(n, 0)
         v = fscx_revolve(unit, zero, n // 2 - 1)
+        # M^(n/2-1) is M^-1 only where ord(M) divides n/2, i.e. at powers of two;
+        # at n = 224 it is not, and at n divisible by 3 M has no inverse at all.
+        # Check M(v) = 1 instead of assuming it (TODO #356).
+        if fscx_revolve(v, zero, 1).uint != 1:
+            raise ValueError(f"NL-FSCX v2: M = I + ROL + ROR has no inverse of the "
+                             f"form M^(n/2-1) at n = {n} (powers of two only)")
         _m_inv_rotations[n] = tuple(k for k in range(n) if (v.uint >> k) & 1)
     result = BitArray(n, 0)
     for k in _m_inv_rotations[n]:

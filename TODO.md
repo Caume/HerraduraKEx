@@ -622,8 +622,6 @@ Status: **OPEN**
 
 ---
 
----
-
 ### #354: screen v2 keys by the arc of delta(B)? Cost, threshold, and compatibility
 
 **Question (from the #257 passes v12.0.4–v12.0.7).**  Can the suite detect and refuse the
@@ -695,51 +693,3 @@ generic max(T, 256 - T) = 135 only if exploiting a short-arc key at n = 256 cost
 Status: **OPEN**
 
 ---
-
-### #355: raw `0x` hex session keys: read by the Python and Go CLIs only, width set by the value
-
-**Found by #354's item 2 (v12.0.8, §11.81.2).**  `enc`/`dec --key` in the Python CLI
-(`_load_key`) and the Go CLI (`loadKey`) accept a file holding a plain `0x...` hex string as
-well as a SESSION KEY / RESPONSE PEM; the C (`load_sym_key_n`) and Java (`loadKey`) CLIs read
-only PEM.  The difference is not listed in spec/'s `cli_surface_gaps`, so
-`check_language_parity.py` does not see it.  The hex form also takes the key's width from
-the value: `nbits = max(32, ceil(bit_length / 32) * 32)`, so a 256-bit key whose top 32 bits
-happen to be zero (about 1 in 2^32) silently runs at 224 bits, and `0x1` runs at 32.
-
-To settle: (1) decide whether the hex form is supported surface or a leftover; (2) if
-supported, add it to C and Java (MINOR) with an explicit width rule (e.g. the digit count,
-not the value) and a cross-CLI test; if not, remove it from Python and Go (MAJOR: an
-existing key file stops loading, MIGRATING.md entry); either way (3) list or close the
-`cli_surface_gaps` entry, and (4) a test with a leading-zero hex key, with an accept-control
-first.
-
-Status: **OPEN**
-
----
-
-### #356: HSKE-NL-A2/A3 silently produce undecryptable ciphertext at non-power-of-two widths
-
-**Found while checking #355 (v12.0.8).**  `_m_inv` (the Python suite; the other ports to be
-checked) computes M^-1 as M^(n/2 - 1), which assumes ord(M) = n/2.  That holds at powers of
-two only: on 20 random (P, K) each, `nl_fscx_revolve_v2_inv(nl_fscx_revolve_v2(P, K, n/4),
-K, n/4) != P` every time at n = 96, 160, 192 and 224, and never at 32, 64, 128, 256.  v3's
-inverse fails the same way at 160 and 224.  At n divisible by 3 (96, 192) M = I + ROL + ROR
-is singular, so v2 is not a bijection at all and no inverse exists.
-
-It reaches the CLIs.  A SESSION KEY PEM declaring 224 bits (or, in Python and Go, a `0x` hex
-key whose top 32 bits are zero, #355): `enc` then `dec --algo hske-nla2` and `hske-nla3`
-exit 0 and return garbage in the Python and Go CLIs; the C CLI round-trips; the Java CLI
-refuses (A2 as "degenerate ... affine-weak class", A3 as "requires a 256-bit key").  So the
-four ports disagree, and two of them lose data without an error.
-
-To settle: (1) the legal widths for v2 and v3 (refuse every other width at enc AND dec, as
-`_nla1_width_ok` does for A1, with one readable message in all four CLIs), or a correct
-M^-1 at every width where M is invertible; (2) whether C really runs at 224 or widens the
-key (read `load_sym_key_n`'s caller); (3) the Java A2 message, which names the wrong cause;
-(4) a cross-CLI test at a non-power-of-two width with an accept-control at 256, and a
-verifier-side invariant (CLAUDE.md: "cross-port checks cannot see a property all four ports
-get wrong"); (5) whether refusing a width that encrypts today is MAJOR (it changes what an
---algo accepts, though what it accepts cannot be decrypted).  CLAUDE.md's "order of M is
-n/2" holds for powers of two only; say so there.
-
-Status: **OPEN**

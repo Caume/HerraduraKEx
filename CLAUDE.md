@@ -370,7 +370,7 @@ python3 SecurityProofsCode/run_findings_gates.py            # all gates, --quick
 ```
 C = A ⊕ B ⊕ ROL(A) ⊕ ROL(B) ⊕ ROR(A) ⊕ ROR(B)
 ```
-Linear map M = I ⊕ ROL ⊕ ROR; order of M is n/2. Iterating FSCX creates periodic orbits of length P or P/2 (P = bit size).
+Linear map M = I ⊕ ROL ⊕ ROR; order of M is n/2 when n is a power of two (elsewhere M^(n/2−1) is not M⁻¹, and at n divisible by 3 M is singular; TODO #356). Iterating FSCX creates periodic orbits of length P or P/2 (P = bit size).
 
 **FSCX_REVOLVE(A, B, n):** Iterates FSCX n times, keeping B constant.
 

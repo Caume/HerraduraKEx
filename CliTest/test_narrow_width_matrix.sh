@@ -59,9 +59,12 @@
 #      Go and Java refused there long before #313.  A relaxation that reached
 #      this path would be writing a container that cannot describe itself.
 #   5. THE SCOPE CONTROL SURVIVES THE RELAXATION and is now pointing the other
-#      way.  #313's guard was scoped to `hske-nla1`; `--algo hske` at a narrow
-#      width was never in scope and must still behave as it did.  A relaxation
-#      that quietly widened is as much a scope error as a guard that did.
+#      way.  The relaxation is `hske-nla1`'s alone.  `--algo hske` at a narrow
+#      width was accepted by three ports until TODO #356 found it decrypting to
+#      garbage across them, and since v13.0.0 it is REFUSED in all four
+#      (test_sym_width.sh holds that contract); here it guards against the A1
+#      relaxation leaking to it.  A relaxation that quietly widened is as much a
+#      scope error as a guard that did.
 #   6. BOTH COUNTS ARE ASSERTED INDEPENDENTLY of the per-case results — the
 #      narrow round-trips and the refusals — so a loop that silently stopped
 #      iterating, or one port quietly losing a check, cannot pass.
@@ -279,20 +282,19 @@ for l in "${LANGS[@]}"; do
 done
 
 # ── 5. SCOPE CONTROL: the relaxation is `hske-nla1`'s, not every algo's ──────
-# #313's guard was scoped to hske-nla1 and so is its relaxation.  `--algo hske`
-# at a narrow width was never in scope: it must behave exactly as it did.  Java
-# is excluded because it was ALREADY 256-fixed for `hske` before either item —
-# a pre-existing per-language scope decision.
+# #314's relaxation is scoped to hske-nla1.  `--algo hske` is 256-only since
+# TODO #356 (v13.0.0) in all four CLIs, so the same narrow key that A1 accepted
+# above must be refused here: an A1 relaxation that leaked would show up as
+# hske accepting it.
 echo ""
-echo "=== scope control: --algo hske at a narrow width is unaffected ==="
+echo "=== scope control: --algo hske at a narrow width is refused (TODO #356) ==="
 for l in "${LANGS[@]}"; do
-    [ "$l" = java ] && continue
     # shellcheck disable=SC2086
     if ${CLI[$l]} enc --algo hske --key "$TMP/sk128.pem" \
                       --in "$MSG" --out "$TMP/h.pem" >/dev/null 2>&1; then
-        pass "scope: $l enc --algo hske still accepts a narrow key"
+        fail "scope: $l enc --algo hske ACCEPTS a narrow key — the A1 relaxation leaked"
     else
-        fail "scope: $l enc --algo hske now REFUSES a narrow key — the scope moved"
+        pass "scope: $l enc --algo hske refuses a narrow key"
     fi
 done
 

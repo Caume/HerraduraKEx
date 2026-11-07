@@ -451,6 +451,7 @@ jobs:
             case "$f" in test_kdf_matrix.sh) continue ;; esac         # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_param_bounds.sh) continue ;; esac       # claimed by cross-lang-compat (TODO #278)
             case "$f" in test_narrow_width_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #313)
+            case "$f" in test_sym_width.sh) continue ;; esac          # claimed by cross-lang-compat (TODO #356)
             case "$f" in lib_*.sh) continue ;; esac                   # sourced helpers, not runnable tests (TODO #221)
             claimed=0
             for pattern in $declared; do
@@ -794,6 +795,12 @@ jobs:
       # Read its header before touching the expectation table.
       - name: narrow-width (n != 256) A1 matrix
         run: bash CliTest/test_narrow_width_matrix.sh
+      # TODO #355 / #356: hske, hske-nla2, hske-nla3, fpe, twk and the duplexes
+      # are 256-only in all four CLIs -- below 256 they never interoperated, and at
+      # 224 A2/A3 could not read their own ciphertexts back -- and the 0x hex key
+      # form, now read by all four, takes its width from its digit count.
+      - name: 256-fixed symmetric widths and hex keys
+        run: bash CliTest/test_sym_width.sh
 
   arm-i386:
     name: ARM Thumb-2 / NASM i386 (build + tests)

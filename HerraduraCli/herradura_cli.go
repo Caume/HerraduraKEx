@@ -2030,6 +2030,10 @@ func cmdRand(args []string) {
 
 // loadKey loads a session key from a SESSION KEY PEM, HKEX-RNL RESPONSE PEM,
 // or a plain-text 0x... hex string.  Returns (key, nbits).
+//
+// The hex form's width is set by its DIGIT COUNT, rounded up to a multiple of
+// 32 (at least 32), never by its value (TODO #355): 64 hex digits are a 256-bit
+// key even when the top digits are zero.  All four CLIs apply the same rule.
 func loadKey(path string) (*big.Int, int, error) {
 	data, err := readFile(path)
 	if err != nil {
@@ -2037,15 +2041,18 @@ func loadKey(path string) (*big.Int, int, error) {
 	}
 	s := strings.TrimSpace(string(data))
 	if strings.HasPrefix(strings.ToLower(s), "0x") {
-		v, ok := new(big.Int).SetString(s[2:], 16)
-		if !ok {
-			return nil, 0, fmt.Errorf("invalid hex key %q", s)
+		digits := s[2:]
+		if digits == "" || strings.Trim(digits, "0123456789abcdefABCDEF") != "" {
+			return nil, 0, fmt.Errorf("%s: invalid hex key (expected 0x followed by hex digits)", path)
 		}
-		nb := v.BitLen()
+		v, _ := new(big.Int).SetString(digits, 16)
+		nb := ((4*len(digits) + 31) / 32) * 32
 		if nb < 32 {
 			nb = 32
 		}
-		nb = ((nb + 31) / 32) * 32
+		if nb > BAMaxBits {
+			return nil, 0, fmt.Errorf("%s: hex key is %d-bit; the maximum is %d", path, nb, BAMaxBits)
+		}
 		return v, nb, nil
 	}
 	label, der, err := PemUnwrap(s)
@@ -2463,6 +2470,17 @@ const (
 	nla1MinWidth = 16
 	nla1MaxWidth = BAMaxBits
 )
+
+// sym256OK exits unless n is 256 (TODO #356).  hske, hske-nla2, hske-nla3, fpe
+// and twk agree across the four CLIs at 256 bits only: below it C zero-extended
+// the key while Go and Python ran at its width, and NL-FSCX v2's inverse
+// M^(n/2 - 1) is M^-1 only at powers of two.  MIGRATING.md §27.
+func sym256OK(n int, ctx, what string) {
+	if n != 256 {
+		fmt.Fprintf(os.Stderr, "%s: requires a 256-bit %s; got %d-bit\n", ctx, what, n)
+		os.Exit(1)
+	}
+}
 
 // nla1WidthOK exits unless n is a legal BitArray width.  what names the carrier.
 func nla1WidthOK(n int, ctx, what string) {
@@ -3362,6 +3380,9 @@ func cmdEnc(args []string) {
 		if err != nil {
 			die("enc", err)
 		}
+		if *algo != "hske-nla1" {
+			sym256OK(n, "enc "+*algo, "key")
+		}
 		nb := n / 8
 		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
 		K := NewBitArray(n, keyInt)
@@ -3537,10 +3558,11 @@ func cmdDec(args []string) {
 			fmt.Fprintf(os.Stderr, "dec: --key required for %s\n", *algo)
 			os.Exit(1)
 		}
-		keyInt, _, err := loadKey(*key)
+		keyInt, keyBits, err := loadKey(*key)
 		if err != nil {
 			die("dec", err)
 		}
+		sym256OK(keyBits, "dec "+*algo, "key")
 		_, ctInts, err := readPEMInts(*in)
 		if err != nil {
 			die("dec", err)
@@ -3604,6 +3626,9 @@ func cmdDec(args []string) {
 		if err != nil {
 			die("dec", err)
 		}
+		if *algo != "hske-nla1" {
+			sym256OK(keyBits, "dec "+*algo, "key")
+		}
 		_, ctInts, err := readPEMInts(*in)
 		if err != nil {
 			die("dec", err)
@@ -3642,6 +3667,9 @@ func cmdDec(args []string) {
 		} else {
 			EInt = new(big.Int).SetBytes(ctInts[1])
 			n    = bytesToInt(ctInts[2])
+		}
+		if *algo != "hske-nla1" {
+			sym256OK(n, "dec "+*algo, "ciphertext")
 		}
 		K := NewBitArray(n, keyInt)
 		E := NewBitArray(n, EInt)
@@ -4530,10 +4558,11 @@ func cmdFpe(args []string) {
 		fmt.Fprintln(os.Stderr, "fpe: --key required")
 		os.Exit(1)
 	}
-	keyBig, _, err := loadKey(*keyPath)
+	keyBig, keyBits, err := loadKey(*keyPath)
 	if err != nil {
 		die("fpe", err)
 	}
+	sym256OK(keyBits, "fpe", "key")
 	K := NewBitArray(256, keyBig)
 
 	data, err := readFile(*in)
@@ -4581,10 +4610,11 @@ func cmdTwk(args []string) {
 		fmt.Fprintln(os.Stderr, "twk: --key required")
 		os.Exit(1)
 	}
-	keyBig, _, err := loadKey(*keyPath)
+	keyBig, keyBits, err := loadKey(*keyPath)
 	if err != nil {
 		die("twk", err)
 	}
+	sym256OK(keyBits, "twk", "key")
 	K := NewBitArray(256, keyBig)
 
 	data, err := readFile(*in)

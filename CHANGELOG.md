@@ -2,6 +2,39 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [13.0.0] - 2026-11-07
+
+### TODO #356 + #355 — the 256-fixed symmetric algos refuse other widths; hex keys in all four CLIs (BREAKING, MIGRATING.md §27)
+
+- **The defect, measured wider than filed.**  A 4 x 4 writer x reader matrix at 128, 224 and
+  256 bits.  At 256 every cell of `hske`, `hske-nla2` and `hske-nla3` round-trips.  At 128
+  about half exit 0 with garbage: C zero-extends the key to 256 while Python and Go run at
+  128, and Java runs some algos and refuses others.  At 224, A2/A3 fail even within Python
+  and within Go, because NL-FSCX v2's inverse M^(n/2-1) is M^-1 only at powers of two.
+  `fpe` and `twk` split two against two at 128, and C's duplexes accepted a narrow key the
+  other three refuse.
+- **The fix is #313's route 2, for all of them.**  `hske`, `hske-nla2`, `hske-nla3`,
+  `hske-duplex`, `hske-duplex3`, `fpe` and `twk` refuse any key width but 256 in all four
+  CLIs, and `dec` refuses a ciphertext declaring another width.  `hske-nla1` keeps its
+  multi-width contract (#314).  Java's A2 width refusal now names the width.
+- **The suites check the inverse.**  Python's `_m_inv` and the Go package's `MInv` verify
+  M(M^-1(1)) = 1 when they build the table, and refuse at a width where it fails (96, 160,
+  192, 224).
+- **#355: the `0x` hex key form is read by all four CLIs** (it was Python and Go only),
+  with the width set by the digit count, not the value.  A 64-digit key with a zero top
+  word was a 224-bit key before.  Non-hex digits are refused.
+- **New test `CliTest/test_sym_width.sh`** (cross-lang-compat, 181 checks):
+  - the 256-bit matrix as accept-control, plus a wrong-key control;
+  - 88 refusals, including a length-preserving relabel to 224 whose source decrypts;
+  - the hex form, byte-identical to the PEM key and a 4 x 4 matrix at 256 and 32 bits;
+  - counts asserted independently.
+
+  It fails 92 checks on master's CLIs.  `test_narrow_width_matrix.sh`'s scope control now
+  asserts `hske` refuses a narrow key in all four CLIs.
+- **MAJOR**: it changes what existing `--algo` values accept, and what a hex key file
+  means.  At 256 bits from a PEM key nothing changes.  CLAUDE.md now says M's order is n/2
+  at powers of two only.
+
 ## [12.0.8] - 2026-11-07
 
 ### TODO #354 (items 2 and 3) — would a short-arc screen on v2's B help?

@@ -2215,9 +2215,53 @@ static void write_binary_file(const char *path, const uint8_t *buf, size_t len)
  * size — which is what the other three CLIs' _rnl_session_bits() returns — so
  * those labels report KEYBITS here rather than a field that does not mean
  * what the caller is about to ask. */
+/* A file holding a plain 0x... hex string is a key too (TODO #355; Python and
+ * Go always read it).  Its width is set by its DIGIT COUNT, rounded up to a
+ * multiple of 32 (at least 32), never by its value: 64 hex digits are a 256-bit
+ * key even when the top digits are zero.  Returns 0 if the file is not one. */
+static int load_hex_key(BitArray *K, const char *path, uint64_t *nbits_out)
+{
+    size_t len, i, s = 0, e, nd;
+    uint8_t *raw = read_binary_file(path, &len);
+    uint8_t v[KEYBYTES];
+    uint64_t nbits;
+    e = len;
+    while (s < e && (raw[s] == ' ' || raw[s] == '\t' || raw[s] == '\r' || raw[s] == '\n')) s++;
+    while (e > s && (raw[e-1] == ' ' || raw[e-1] == '\t' || raw[e-1] == '\r' || raw[e-1] == '\n')) e--;
+    if (e - s < 2 || raw[s] != '0' || (raw[s+1] != 'x' && raw[s+1] != 'X')) {
+        free(raw);
+        return 0;
+    }
+    s += 2;
+    nd = e - s;
+    if (nd == 0) dief("%s: invalid hex key (expected 0x followed by hex digits)", path);
+    for (i = s; i < e; i++)
+        if (!((raw[i] >= '0' && raw[i] <= '9') || (raw[i] >= 'a' && raw[i] <= 'f') ||
+              (raw[i] >= 'A' && raw[i] <= 'F')))
+            dief("%s: invalid hex key (expected 0x followed by hex digits)", path);
+    nbits = ((4 * (uint64_t)nd + 31) / 32) * 32;
+    if (nbits < 32) nbits = 32;
+    if (nbits > (uint64_t)KEYBITS) {
+        fprintf(stderr, "%s: hex key is %llu-bit; the maximum is %d\n", path,
+                (unsigned long long)nbits, KEYBITS);
+        exit(1);
+    }
+    memset(v, 0, sizeof v);
+    for (i = 0; i < nd; i++) {   /* digit i from the right is nibble i */
+        uint8_t c = raw[e - 1 - i];
+        uint8_t d = (uint8_t)(c <= '9' ? c - '0' : (c | 0x20) - 'a' + 10);
+        v[KEYBYTES - 1 - i / 2] |= (uint8_t)(d << (4 * (i % 2)));
+    }
+    free(raw);
+    ba_from_ra(K, v, KEYBYTES);
+    if (nbits_out) *nbits_out = nbits;
+    return 1;
+}
+
 static void load_sym_key_n(BitArray *K, const char *path, uint64_t *nbits_out)
 {
     PemKey sk;
+    if (load_hex_key(K, path, nbits_out)) return;
     pem_key_load(&sk, path);
     if (sk.n_items < 1) die("key: malformed session key PEM");
     ba_from_ra(K, sk.vals[0], sk.vlens[0]);
@@ -2234,9 +2278,27 @@ static void load_sym_key_n(BitArray *K, const char *path, uint64_t *nbits_out)
     pem_key_free(&sk);
 }
 
-static void load_sym_key(BitArray *K, const char *path)
+/* TODO #356: hske, hske-nla2, hske-nla3, fpe, twk and the duplexes agree across
+ * the four CLIs at 256 bits only.  This CLI is compiled for one KEYBITS and
+ * used to zero-extend a narrower key into it while Python and Go ran at the
+ * key's width, so cells of the cross-CLI matrix decrypted to garbage with exit
+ * 0.  Every one of them now refuses any other width, as #313 did for
+ * hske-nla1 before #314.  MIGRATING.md §27. */
+static void sym256_ok(uint64_t got, const char *what, const char *carrier)
 {
-    load_sym_key_n(K, path, NULL);
+    if (got != (uint64_t)KEYBITS) {
+        fprintf(stderr, "%s: requires a %d-bit %s; got %llu-bit\n",
+                what, KEYBITS, carrier, (unsigned long long)got);
+        exit(1);
+    }
+}
+
+/* For the algos fixed at KEYBITS: load, and refuse any other declared width. */
+static void load_sym_key(BitArray *K, const char *path, const char *what)
+{
+    uint64_t nbits;
+    load_sym_key_n(K, path, &nbits);
+    sym256_ok(nbits, what, "key");
 }
 
 /* HSKE-NL-A1's plain mode ran at ANY width but 256 only by accident until TODO
@@ -2765,7 +2827,7 @@ static void cmd_enc(int argc, char **argv)
         const int dplex_v3 = (strcmp(algo, "hske-duplex3") == 0);
         if (!key_path) dief("enc: --key required for %s", algo);
         BitArray K = BA_INIT, N_nonce = BA_INIT;
-        load_sym_key(&K, key_path);
+        load_sym_key(&K, key_path, dplex_v3 ? "enc hske-duplex3" : "enc hske-duplex");
         const char *ad = get_arg(argc, argv, "--ad");
         FILE *urnd = fopen("/dev/urandom", "rb");
         if (!urnd) die("cannot open /dev/urandom");
@@ -2818,6 +2880,11 @@ static void cmd_enc(int argc, char **argv)
         BitArray K = BA_INIT;
         uint64_t key_nbits;
         load_sym_key_n(&K, key_path, &key_nbits);
+        if (strcmp(algo, "hske-nla1") != 0) {
+            char what[32];
+            snprintf(what, sizeof what, "enc %s", algo);
+            sym256_ok(key_nbits, what, "key");
+        }
 
         if (strcmp(algo, "hske") == 0) {
             BitArray E = BA_INIT;
@@ -3072,7 +3139,7 @@ static void cmd_dec(int argc, char **argv)
         const uint8_t want_fmt = dplex_v3 ? 4 : 3;
         if (!key_path) dief("dec: --key required for %s", algo);
         BitArray K = BA_INIT, N_nonce = BA_INIT;
-        load_sym_key(&K, key_path);
+        load_sym_key(&K, key_path, dplex_v3 ? "dec hske-duplex3" : "dec hske-duplex");
         if (ct.n_items < 6 || ct.vlens[0] < 1 || ct.vals[0][0] != want_fmt)
             die(dplex_v3 ? "dec: not a V3-Duplex (format 4) ciphertext"
                          : "dec: not a V2-Duplex (format 3) ciphertext");
@@ -3126,6 +3193,11 @@ static void cmd_dec(int argc, char **argv)
         BitArray K = BA_INIT;
         uint64_t key_nbits;
         load_sym_key_n(&K, key_path, &key_nbits);
+        if (strcmp(algo, "hske-nla1") != 0) {
+            char what[32];
+            snprintf(what, sizeof what, "dec %s", algo);
+            sym256_ok(key_nbits, what, "key");
+        }
 
         /* fmt_tag is vals[0][0]; E follows; for nla1 nonce is between them. */
         int fmt = (ct.vlens[0] >= 1) ? ct.vals[0][0] : 0;
@@ -3175,6 +3247,15 @@ static void cmd_dec(int argc, char **argv)
             }
         } else {
             if (ct.n_items < 3) die("dec: bad symmetric ciphertext");
+            {   /* The ciphertext's declared width, item[2]: this path used to
+                   ignore it and read any artifact at KEYBITS (TODO #356). */
+                uint64_t ct_nbits = 0; size_t i;
+                char what[32];
+                for (i = 0; i < ct.vlens[2] && i < 8; i++)
+                    ct_nbits = (ct_nbits << 8) | ct.vals[2][i];
+                snprintf(what, sizeof what, "dec %s", algo);
+                sym256_ok(ct_nbits, what, "ciphertext");
+            }
             ba_from_ra(&E, ct.vals[1], ct.vlens[1]);
             pem_key_free(&ct);
             if (strcmp(algo, "hske") == 0)
@@ -4491,7 +4572,7 @@ static void cmd_decfile(int argc, char **argv)
 /* ─────────────────────────────────────────────────────────────────────────────
  * fpe — format-preserving encrypt / decrypt (78.A)
  *   --encrypt | --decrypt  --key SK --context CTX --in FILE [--out FILE]
- *   Input/output: raw 32-byte block.  Key: HERRADURA SESSION KEY PEM.
+ *   Input/output: raw 32-byte block.  Key: HERRADURA SESSION KEY PEM or 0x hex, 256-bit.
  * ───────────────────────────────────────────────────────────────────────────── */
 
 static void cmd_fpe(int argc, char **argv)
@@ -4508,7 +4589,7 @@ static void cmd_fpe(int argc, char **argv)
     if (!ctx_str)  ctx_str = "";
 
     BitArray K = BA_INIT;
-    load_sym_key(&K, key_path);
+    load_sym_key(&K, key_path, "fpe");
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
@@ -4533,7 +4614,7 @@ static void cmd_fpe(int argc, char **argv)
 /* ─────────────────────────────────────────────────────────────────────────────
  * twk — tweakable wide-block cipher encrypt / decrypt (78.B)
  *   --encrypt | --decrypt  --key SK --sector N --bidx N --in FILE [--out FILE]
- *   Input/output: raw 32-byte block.  Key: HERRADURA SESSION KEY PEM.
+ *   Input/output: raw 32-byte block.  Key: HERRADURA SESSION KEY PEM or 0x hex, 256-bit.
  * ───────────────────────────────────────────────────────────────────────────── */
 
 static void cmd_twk(int argc, char **argv)
@@ -4552,7 +4633,7 @@ static void cmd_twk(int argc, char **argv)
     uint32_t bidx   = bidx_str   ? (uint32_t)strtoul(bidx_str,   NULL, 10) : 0;
 
     BitArray K = BA_INIT;
-    load_sym_key(&K, key_path);
+    load_sym_key(&K, key_path, "twk");
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
@@ -5127,7 +5208,10 @@ static void usage(void)
 "    Both sides must use the same --kdf flag to derive the same final key.\n"
 "\n"
 "  enc --algo ALGO (--key SK | --pubkey PUB) --in FILE\n"
-"    Symmetric algorithms take --key (a SESSION KEY PEM), asymmetric ones --pubkey.\n"
+"    Symmetric algorithms take --key (a SESSION KEY PEM, or a file holding 0x and\n"
+"    hex digits, whose DIGIT COUNT sets the width), asymmetric ones --pubkey.\n"
+"    hske, hske-nla2, hske-nla3 and hske-duplex(3) need a 256-bit key, as do fpe\n"
+"    and twk; hske-nla1 takes any multiple of 8 from 16 to 256 (TODO #356).\n"
 "    --aead (hske-nla1 only): HSKE-NL-AEAD authenticated encryption; --ad binds\n"
 "    optional associated data into the tag (must match at dec).\n"
 "    hske-duplex: arbitrary-length single-pass AEAD (256-bit key; --ad supported).\n"
@@ -5136,7 +5220,7 @@ static void usage(void)
 "    the v2 ones, and their artifacts do not interoperate with them.\n"
 "\n"
 "  dec --algo ALGO --key KEY --in CT_FILE\n"
-"    Symmetric: key=SESSION KEY PEM.  Asymmetric: key=PRIVATE KEY PEM.\n"
+"    Symmetric: key=SESSION KEY PEM or 0x hex.  Asymmetric: key=PRIVATE KEY PEM.\n"
 "    AEAD ciphertexts (format tag 2) are verified before decryption.\n"
 "\n"
 "  encfile / decfile --algo hske-nla1 --key SK --in FILE --out FILE\n"
