@@ -2,6 +2,32 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [12.0.8] - 2026-11-07
+
+### TODO #354 (items 2 and 3) — would a short-arc screen on v2's B help?
+
+- **New findings gate `SecurityProofsCode/v2_arc_screen.py`, SecurityProofs-10.md §11.81.**
+  It reads the pinned n = 19-23 samples (no new solves; about 80 s).
+- **Item 3, what a screen at arc <= 12 catches**, weighted by stratum: 59-100% of the
+  differential share below the bar and 59-82% of the linear share, leaving 0-2.4% of keys
+  failing with long arcs.  A long-arc linear failure exists at every width.  No cut
+  transfers: arc <= 14 catches every n = 19 failure but rejects 39% of n = 19 keys.
+- **Correction to TODO #354:** its n = 23 "5 of 5 / 7 of 8" were raw counts, which overstate
+  the catch under Neyman allocation (weighted: 100% / 73%); its 2^-123 is the short-window
+  class, the short-arc class being about 2^-121 (§11.63).
+- **Item 2, who can make B non-uniform:** only HSKE-NL-A2's key file, by hand (0x8000...0001
+  has arc 3 and passes `nl_v2_key_is_valid`); the HPKE-NL sender, only to its own cost; and
+  `twk` / FPE / duplex only by search.  A decrypt-side HPKE-NL screen is no oracle (shortest
+  small-subgroup arc off the identity: 194).  So a keygen-only screen protects nothing, and a
+  load-time screen protects only A2 against a hand-chosen key.  Item 1 narrows to one
+  question: does a short-arc key at n = 256 cost under 14 bits to exploit?
+- **TODO #355 filed:** the Python and Go CLIs read a raw `0x` hex key, C and Java do not, the
+  gap is not in `cli_surface_gaps`, and the hex value's bit length sets the width.
+- **TODO #356 filed:** `_m_inv` assumes ord(M) = n/2, true at powers of two only, so
+  HSKE-NL-A2/A3 at 224 bits encrypt and then decrypt to garbage with exit 0 in the Python
+  and Go CLIs (C round-trips, Java refuses).
+- No rating moves and no shipped code changes.
+
 ## [12.0.7] - 2026-11-06
 
 ### TODO #257 (fourteenth pass) — the fail share at n = 20, and the fall within each residue class

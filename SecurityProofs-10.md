@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.80** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO · Schnorr and Stern Leave v1 · Who Sets v2's Key · The n = 22 Fail Share · The Fail-Share Fall · The Fall Within a Class
+> - **Part 10 — §11.43–§11.81** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO · Schnorr and Stern Leave v1 · Who Sets v2's Key · The n = 22 Fail Share · The Fail-Share Fall · The Fall Within a Class · Would an Arc Screen Help?
 
 ---
 
@@ -1929,3 +1929,49 @@ E[μ] is 2.578 ± 0.017 differential and 1.318 ± 0.010 linear, within one of §
 **Unchanged:** every rating. The conjecture is on the key-averaged E[μ], which did not move. The fail share is evidence about the trend, not the conjecture.
 
 **Caveats:** two classes with two widths each give a direction, not a rate. No class effect is shown either way: n = 20 fails less than n = 19 and more than n = 22, as a share falling with the width would, so the four widths are consistent with one fall read through two classes. This is a measurement at n ≤ 23, not a bound at n = 256.
+
+## 11.81 Would a short-arc screen help? — TODO #354, items 2 and 3 (v12.0.8)
+
+§11.78–§11.80 found most of the keys below the deployed criterion in the short-arc class, arc(δ(B)) ≤ 12, and TODO #354 asks whether `nl_v2_key_is_valid` should refuse that class as well as the affine one. Its item 1, the cut at n = 256, needs new solves. Items 2 and 3 need none, and they decide whether item 1 is worth running. The gate is `SecurityProofsCode/v2_arc_screen.py`; it reads the pinned samples, so its verdicts cannot flake.
+
+### 11.81.1 What a screen catches (item 3)
+
+The samples are Neyman-allocated, so the short-arc strata are over-drawn, and a raw count of caught failures overstates the catch. Weighted by stratum, on the pinned samples:
+
+| width (keys) | below the bar, diff / lin | caught by arc ≤ 12, diff / lin | raw count, diff / lin | left, share of keys | all keys the cut rejects |
+|---|---|---|---|---|---|
+| n = 19 (450) | 8.4% / 10.3% | 82% / 82% | 41 of 48 / 49 of 58 | 1.5% / 1.9% | 14.7% |
+| n = 20 (450) | 6.4% / 7.7% | 72% / 68% | 39 of 48 / 43 of 55 | 1.8% / 2.4% | 9.0% |
+| n = 22 (156) | 3.1% / 3.1% | 59% / 59% | 6 of 9 / 6 of 9 | 1.3% / 1.3% | 3.9% |
+| n = 23 (150) | 1.6% / 3.1% | 100% / 73% | 5 of 5 / 7 of 8 | 0.0% / 0.9% | 2.7% |
+
+The stratified bootstrap errors on the caught fraction are 5–8% at n = 19 and 20 and about 19% at n = 22 and 23, where 150–156 keys hold 5–9 failures. Like the plain error of the share, the bootstrap gives a stratum with no failure in its sample no variance, so it is printed, not scored.
+
+- **A screen at arc ≤ 12 removes most of the weak share, not all of it:** 59–100% differential, 59–82% linear. On the linear axis a long-arc failure exists at every width, so there is no width at which it catches everything.
+- **Correction to TODO #354.** Its "5 of 5 differential and 7 of 8 linear at n = 23" are raw counts. Weighted, they are 100% and 73%.
+- **No cut transfers across widths.** The first cut that catches every n = 19 failure, arc ≤ 14, rejects 39% of all n = 19 keys. At n = 22 and 23, no cut up to 16 bits catches every linear failure (73% at both). A cut is a fraction of the width at small n and a negligible class at n = 256, so the small widths cannot pick it.
+- **Controls.** A cut at arc ≤ n catches exactly all failures, and a cut at 0 none. Weighting each stratum by its own sample size returns the raw count, and the stratified catch differs from it.
+
+### 11.81.2 Who can make B non-uniform (item 2)
+
+§11.77's census lists every v2 call and who sets its B. For a uniform B the class is out of reach: about 2^−121 of keys at n = 256 (§11.63's extrapolation from exhaustive counts, not a count). So the question at each site is whether B can be non-uniform.
+
+| site | who sets B | can B be short-arc? | what a screen would do |
+|---|---|---|---|
+| HSKE-NL-A2 | the key file | **yes, by hand.** A SESSION KEY PEM is two DER integers anyone can write, and the Python and Go CLIs also read a raw `0x…` hex key. 0x8000…0001 has arc 3 and passes `nl_v2_key_is_valid` | refuse a hand-chosen key: misuse protection |
+| HPKE-NL | the sender, through R | yes, but only to the sender's cost: R = 1 gives B = R^a = 1, arc 1, accepted, and the key is then public whatever its arc | nothing to protect |
+| `twk` / FPE / duplex | a hash of the key and the context | by search only: `twk`'s 2^96 tweaks expect 2^−25 keys in the class | see below |
+
+- **A decrypt-side screen in HPKE-NL would not be an oracle on a.** Off the identity, no element of a subgroup of GF(2^256)* of order 3, 5, 17, 257, 641, 65537 or 274177 has an arc under 194. A refusal at any cut below that never fires on a small-order R, so it cannot reveal a mod d.
+- **Unbounded contexts.** FPE's ctx and the duplex nonce are unbounded, so 2^121 queries find one key in the class. In §11.77.3's terms, that beats the generic multi-target cost max(T, 256 − T) = 135 only if exploiting the key costs under 256 − 2 · 121 = **14 bits**. This is item 1's question in a sharper form. It no longer needs the cut A at n = 256. It needs only whether a short-arc key costs under 14 bits there.
+- **A parity gap, found on the way.** Only the Python and Go CLIs read a raw hex key, the gap is not in `cli_surface_gaps`, and the key's width is set by the hex value's bit length. TODO #355.
+
+### 11.81.3 What it changes
+
+**Established:** a keygen-only screen protects nothing, because every key the suite mints is a DH output, a kex output or a hash. A load-time screen acts at one site, HSKE-NL-A2, and only against a hand-chosen key. There it removes 59–100% of the weak share, not the long-arc failures. Refusing on load changes what `--algo hske-nla2` accepts, which is MAJOR with a MIGRATING.md entry.
+
+**Corrected:** TODO #354's n = 23 catch (raw counts, now weighted), and its 2^−123 (that is the short-window class; the short-arc class is about 2^−121, §11.63).
+
+**Unchanged:** every rating, and every line of shipped code.
+
+**Caveats:** the weighted catch at n = 22 and 23 rests on 5–9 failures. The 2^−121 density is extrapolated. The 14-bit break-even uses §11.77.3's data model, which is no stronger than the trail-weight conjecture it sits on.
