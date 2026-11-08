@@ -23,6 +23,8 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 - **#355: the `0x` hex key form is read by all four CLIs** (it was Python and Go only),
   with the width set by the digit count, not the value.  A 64-digit key with a zero top
   word was a 224-bit key before.  Non-hex digits are refused.
+  `v2_arc_screen.py` §2 asserted the gap, as #354 left it; it now asserts all four CLIs
+  read the form, and §11.81's note records the gap closed.
 - **New test `CliTest/test_sym_width.sh`** (cross-lang-compat, 181 checks):
   - the 256-bit matrix as accept-control, plus a wrong-key control;
   - 88 refusals, including a length-preserving relabel to 224 whose source decrypts;
