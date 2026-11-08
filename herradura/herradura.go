@@ -1283,6 +1283,13 @@ func computeMInvRotations(n int) []int {
 	unit := NewFromUint(1, n)
 	zero := NewZero(n)
 	v := FscxRevolve(unit, zero, n/2-1)
+	// M^(n/2-1) is M^-1 only where ord(M) divides n/2, i.e. at powers of two;
+	// at n = 224 it is not, and at n divisible by 3 M has no inverse at all.
+	// Check M(v) = 1 instead of assuming it (TODO #356).
+	if !FscxRevolve(v, zero, 1).Equal(unit) {
+		panic(fmt.Sprintf("NL-FSCX v2: M = I + ROL + ROR has no inverse of the "+
+			"form M^(n/2-1) at n = %d (powers of two only)", n))
+	}
 	var rotations []int
 	for k := 0; k < n; k++ {
 		if v.Bit(k) == 1 {

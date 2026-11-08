@@ -1358,14 +1358,42 @@ def _load_ring_pubkeys(ring_arg):
 # ---------------------------------------------------------------------------
 
 def _load_key(path):
-    """Return (key_int, nbits) from a session key PEM or hex string."""
+    """Return (key_int, nbits) from a session key PEM or a 0x... hex string.
+
+    The hex form's width is set by its DIGIT COUNT, rounded up to a multiple
+    of 32 (at least 32), never by its value (TODO #355): 64 hex digits are a
+    256-bit key even when the top digits are zero.  The value rule this
+    replaced ran such a key at 224 bits, about one random key in 2^32.  All
+    four CLIs apply the same rule."""
     raw = _read_file(path)
     key_str = raw.decode('ascii', errors='replace').strip()
     if key_str.startswith('0x') or key_str.startswith('0X'):
-        key_int = int(key_str, 16)
-        nbits   = max(32, ((key_int.bit_length() + 31) // 32) * 32)
-        return key_int, nbits
+        digits = key_str[2:]
+        if not digits or any(c not in '0123456789abcdefABCDEF' for c in digits):
+            sys.exit(f"{path}: invalid hex key (expected 0x followed by hex digits)")
+        nbits = max(32, ((4 * len(digits) + 31) // 32) * 32)
+        if nbits > _suite_mod.BA_MAX_BITS:
+            sys.exit(f"{path}: hex key is {nbits}-bit; the maximum is "
+                     f"{_suite_mod.BA_MAX_BITS}")
+        return int(digits, 16), nbits
     return _decode_session_key(path)
+
+
+# TODO #356: hske, hske-nla2, hske-nla3, fpe and twk agree across the four CLIs
+# at 256 bits only.  Below it C zero-extends the key to 256 while Python and Go
+# ran at the key's width, so cells of the cross-CLI matrix decrypted to garbage
+# with exit 0; and NL-FSCX v2's inverse M^(n/2 - 1) is M^-1 only at powers of
+# two, so at 224 bits even a port reading its own ciphertext got garbage.  So
+# every one of them refuses any other width, on the key and (at dec) on the
+# ciphertext, as #313 did for hske-nla1 before #314 gave it a width contract.
+# MIGRATING.md §27.
+_SYM_256_ALGOS = ('hske', 'hske-nla2', 'hske-nla3')
+
+
+def _sym256_ok(nbits, ctx, what='key'):
+    """sys.exit unless *nbits* is 256 (TODO #356)."""
+    if nbits != 256:
+        sys.exit(f"{ctx}: requires a 256-bit {what}; got {nbits}-bit")
 
 
 # ---------------------------------------------------------------------------
@@ -1762,6 +1790,8 @@ def cmd_enc(args):
         if not key_path:
             sys.exit(f"--key required for {algo}")
         key_int, nbits = _load_key(key_path)
+        if algo in _SYM_256_ALGOS:
+            _sym256_ok(nbits, f"enc {algo}")
         nbytes  = nbits // 8
         in_padded = in_bytes[:nbytes].ljust(nbytes, b'\x00')
         P = BitArray(nbits, int.from_bytes(in_padded, 'big'))
@@ -1909,9 +1939,13 @@ def cmd_dec(args):
         if not key_path:
             sys.exit(f"--key required for {algo}")
         key_int, nbits = _load_key(key_path)
+        if algo in _SYM_256_ALGOS:
+            _sym256_ok(nbits, f"dec {algo}")
         K = BitArray(nbits, key_int)
 
         E_int, ct_nbits, nonce_int, tag_int = _decode_sym_ct(getattr(args, 'in'))
+        if algo in _SYM_256_ALGOS:
+            _sym256_ok(ct_nbits, f"dec {algo}", what='ciphertext')
         E = BitArray(nbits, E_int)
 
         if algo == 'hske-nla1' and tag_int is not None:
@@ -2687,6 +2721,7 @@ def cmd_rand(args):
 
 def cmd_fpe(args):
     key_int, nbits = _load_key(args.key)
+    _sym256_ok(nbits, 'fpe')
     key_bytes = key_int.to_bytes(nbits // 8, 'big')
     ctx_bytes = args.context.encode() if args.context else b''
     in_bytes  = _read_file(getattr(args, 'in'))
@@ -2714,6 +2749,7 @@ def cmd_fpe(args):
 
 def cmd_twk(args):
     key_int, nbits = _load_key(args.key)
+    _sym256_ok(nbits, 'twk')
     key_bytes = key_int.to_bytes(nbits // 8, 'big')
     in_bytes  = _read_file(getattr(args, 'in'))
     if len(in_bytes) < 32:
@@ -3184,7 +3220,7 @@ def build_parser():
     fp = sub.add_parser('fpe',
                         help='Encrypt/decrypt a 256-bit block with a key+context tweak (78.A). NOT format-preserving in the FF1/FF3-1 sense: no radix, no domain — 32 bytes in, 32 raw bytes out. See SECURITY.md.')
     fp.add_argument('--key',     required=True,
-                    help='Session key PEM')
+                    help='256-bit session key: a SESSION KEY PEM or a 0x hex file')
     fp.add_argument('--context', default='',
                     help='Context/tweak string (optional)')
     fp.add_argument('--in',     required=True, dest='in',
@@ -3203,7 +3239,7 @@ def build_parser():
     tw = sub.add_parser('twk',
                         help='Tweakable wide-block encrypt/decrypt a 256-bit block (78.B)')
     tw.add_argument('--key',    required=True,
-                    help='Session key PEM')
+                    help='256-bit session key: a SESSION KEY PEM or a 0x hex file')
     tw.add_argument('--sector', type=int, default=0,
                     help='Sector number (default 0)')
     tw.add_argument('--bidx',   type=int, default=0,

@@ -21,7 +21,7 @@ running.
       strata all carry the same weight is the raw count.
   §2  ITEM 2 -- WHO CAN MAKE B NON-UNIFORM, site by site (§11.77's census):
         HSKE-NL-A2  the key file.  A SESSION KEY PEM is two DER integers anyone can
-                    write, and the Python and Go CLIs also read a raw 0x... hex key; a
+                    write, and all four CLIs also read a raw 0x... hex key (#355); a
                     hand-chosen B such as 2^255 + 1 has arc 3 and passes
                     nl_v2_key_is_valid.  The ONE site where a screen would act, against
                     misuse.  A kex-derived key is uniform and never meets the class.
@@ -240,13 +240,11 @@ def section_2():
     jv = BS._src("bindings/java/herradurakex/HerraduraCli.java")
     hexpy = "if key_str.startswith('0x') or key_str.startswith('0X'):" in py
     hexgo = 'if strings.HasPrefix(strings.ToLower(s), "0x") {' in go
-    check(hexpy and hexgo, "the Python and Go CLIs read a raw 0x... hex key (_load_key, "
-          "loadKey), a route for a human-chosen B")
-    check("0x" not in cc[cc.index("static void load_sym_key_n"):
-                         cc.index("static void load_sym_key(")] and
-          "0x" not in jv[jv.index("private static BitArray loadKey"):
-                         jv.index("private static BitArray loadKey") + 2500],
-          "the C and Java CLIs read only PEM: an undocumented parity gap (TODO #355)")
+    hexc = "if (load_hex_key(K, path, nbits_out)) return;" in cc
+    hexjv = 'if (t.startsWith("0x") || t.startsWith("0X")) {' in jv
+    check(hexpy and hexgo and hexc and hexjv,
+          "all four CLIs read a raw 0x... hex key (_load_key, loadKey, load_hex_key, "
+          "loadKey; TODO #355, v13.0.0), a route for a human-chosen B")
 
     print("\n  HPKE-NL: the sender sets B = R^a.")
     check(ok(1) and arc(1) == 1, "R = 1 gives B = 1: arc %d, accepted.  The key is then "

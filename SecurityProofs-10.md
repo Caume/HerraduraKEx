@@ -1964,7 +1964,7 @@ The stratified bootstrap errors on the caught fraction are 5–8% at n = 19 and 
 
 - **A decrypt-side screen in HPKE-NL would not be an oracle on a.** Off the identity, no element of a subgroup of GF(2^256)* of order 3, 5, 17, 257, 641, 65537 or 274177 has an arc under 194. A refusal at any cut below that never fires on a small-order R, so it cannot reveal a mod d.
 - **Unbounded contexts.** FPE's ctx and the duplex nonce are unbounded, so 2^121 queries find one key in the class. In §11.77.3's terms, that beats the generic multi-target cost max(T, 256 − T) = 135 only if exploiting the key costs under 256 − 2 · 121 = **14 bits**. This is item 1's question in a sharper form. It no longer needs the cut A at n = 256. It needs only whether a short-arc key costs under 14 bits there.
-- **A parity gap, found on the way.** Only the Python and Go CLIs read a raw hex key, the gap is not in `cli_surface_gaps`, and the key's width is set by the hex value's bit length. TODO #355.
+- **A parity gap, found on the way.** Only the Python and Go CLIs read a raw hex key, the gap is not in `cli_surface_gaps`, and the key's width is set by the hex value's bit length. TODO #355, closed in v13.0.0: all four CLIs now read the hex form, and its width is set by the digit count.
 
 ### 11.81.3 What it changes
 

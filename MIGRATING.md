@@ -63,6 +63,14 @@ credential signature changes, and so does the `hpke-stern` session key. **Keys d
 change; re-sign on 12.0.0+.** Old signatures are refused, not misread. See
 [section 26](#26-the-schnorr-challenge-and-the-stern-hash-use-hfscx-256-ds-v1200).
 
+The twenty-seventh is the reason the version is **13.0.0**. `hske`, `hske-nla2`,
+`hske-nla3`, `fpe` and `twk` now refuse any key width but 256 in all four CLIs, as the
+duplexes already did in three. Below 256 they never interoperated, and at 224 `hske-nla2`
+and `hske-nla3` could not even read their own ciphertexts back. A raw `0x` hex key file
+takes its width from its digit count. **At 256 bits from a PEM key nothing changes.**
+Decrypt narrow artifacts with the 12.x build that wrote them first. See
+[section 27](#27-the-256-fixed-symmetric-algos-refuse-other-widths-and-hex-keys-take-their-width-from-the-digit-count-v1300).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -1504,4 +1512,57 @@ format with the 256-bit CLIs.
 **Cost.** One HFSCX-256 call (192 rounds per 32-byte block) per challenge or Stern hash,
 in place of 64 v1 rounds per item. A Stern signature's Fiat–Shamir hash costs about three
 times what it did.
+
+## 27. The 256-fixed symmetric algos refuse other widths, and hex keys take their width from the digit count (v13.0.0)
+
+**This is the reason the version is 13.0.0.** It changes what existing `--algo` values
+accept, and what a `0x` hex key file means, which is the surface the 2.0.0 tag froze.
+
+**Who is affected:**
+- anyone who ran `enc`/`dec` with `--algo hske`, `hske-nla2` or `hske-nla3`, or ran `fpe`
+  or `twk`, with a key narrower than 256 bits. Such a key comes from `genpkey --algo
+  hkex-gf --bits N` with N < 256 followed by `kex`, from a hand-written SESSION KEY PEM, or
+  from a hex key file with fewer than 64 digits;
+- anyone with a `0x` hex key file of 64 digits whose top 8 or more digits are zero (about
+  one random key in 2^32), whatever the algo.
+
+**At 256 bits from a PEM key nothing changes.** Every key and every ciphertext is
+byte-for-byte unaffected, and the four CLIs interoperate as before. `hske-nla1` keeps its
+own multi-width contract (section 23).
+
+**What was wrong (TODO #356).** Below 256 the four ports did four different things. The C
+CLI is compiled for one `KEYBITS` and zero-extended a narrow key into it; Python and Go ran
+at the key's width; Java refused some algos and ran others. At 128 bits about half the
+writer × reader cells of `hske`, `hske-nla2` and `hske-nla3` decrypted to garbage with exit 0,
+and `fpe` and `twk` split two against two. At 224 bits it was worse: NL-FSCX v2's inverse
+is computed as M^(n/2−1), which is M⁻¹ only at powers of two, so `hske-nla2` and `hske-nla3`
+in Python and Go wrote ciphertexts that **they themselves** decrypted to garbage, still with
+exit 0. See `CliTest/test_sym_width.sh`.
+
+**What changed.**
+1. All four CLIs refuse a key of any width but 256 for `hske`, `hske-nla2`, `hske-nla3`,
+   `hske-duplex`, `hske-duplex3`, `fpe` and `twk`, and at `dec` they also refuse a
+   ciphertext declaring a width other than 256:
+   ```
+   enc hske-nla2: requires a 256-bit key; got 128-bit
+   dec hske-nla2: requires a 256-bit ciphertext; got 224-bit
+   ```
+   (Python's and Go's duplex messages keep their earlier wording.)
+2. **The `0x` hex key form works in all four CLIs** (TODO #355); it was Python and Go only.
+   Its width is the **digit count** rounded up to a multiple of 32, at least 32, never the
+   value. Under the old value rule, `0x` + 64 digits with a zero top word was a 224-bit key.
+   Digits must be hex: Python used to accept `_` separators, and that input is now refused.
+3. The Python suite's `_m_inv` and the Go package's `MInv` check that the table they build
+   inverts M, and refuse (`ValueError` / panic) at a width where it does not (96, 160,
+   192, 224, …), so a library caller cannot reach the 224-bit failure either.
+
+**What to do:**
+
+| artifact | effect | action |
+|---|---|---|
+| `hske` / `hske-nla2` / `hske-nla3` ciphertext written below 256 bits | refused at `dec` | decrypt with the 12.x build of the **same** CLI that wrote it (no other port could read it), re-encrypt with a 256-bit key |
+| `hske-nla2` / `hske-nla3` ciphertext written by Python or Go at a width that is not a power of two (96, 160, 192, 224) | was never decryptable | none possible: the plaintext was not recoverable on 12.x either |
+| `fpe` / `twk` output made with a narrow key | refused | invert with the 12.x build that produced it, redo with a 256-bit key |
+| a 64-digit hex key file with a zero top word | now a 256-bit key; artifacts made with it at 224 bits are refused as a mixed width | decrypt with 12.x first, or re-encrypt |
+| every key pair, every 256-bit artifact, `hske-nla1` at any legal width | **unchanged** | none |
 

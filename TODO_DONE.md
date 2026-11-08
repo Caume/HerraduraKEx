@@ -24563,3 +24563,91 @@ reported within minutes.
     the job's limit.  The job-level limits are unchanged.
 
 Status: **DONE v12.0.3** — every CI package-install step (13 in ci.yml, 1 in codeql.yml) is bounded at 20 minutes, sized from 512 measured installs, and tools/check_ci_install_bounds.py fails a new unbounded step, with four controls.
+
+---
+
+### #355: raw `0x` hex session keys: read by the Python and Go CLIs only, width set by the value
+
+**Found by #354's item 2 (v12.0.8, §11.81.2).**  `enc`/`dec --key` in the Python CLI
+(`_load_key`) and the Go CLI (`loadKey`) accept a file holding a plain `0x...` hex string as
+well as a SESSION KEY / RESPONSE PEM; the C (`load_sym_key_n`) and Java (`loadKey`) CLIs read
+only PEM.  The difference is not listed in spec/'s `cli_surface_gaps`, so
+`check_language_parity.py` does not see it.  The hex form also takes the key's width from
+the value: `nbits = max(32, ceil(bit_length / 32) * 32)`, so a 256-bit key whose top 32 bits
+happen to be zero (about 1 in 2^32) silently runs at 224 bits, and `0x1` runs at 32.
+
+To settle: (1) decide whether the hex form is supported surface or a leftover; (2) if
+supported, add it to C and Java (MINOR) with an explicit width rule (e.g. the digit count,
+not the value) and a cross-CLI test; if not, remove it from Python and Go (MAJOR: an
+existing key file stops loading, MIGRATING.md entry); either way (3) list or close the
+`cli_surface_gaps` entry, and (4) a test with a leading-zero hex key, with an accept-control
+first.
+
+**Resolution (v13.0.0).**  (1) Supported surface: the hex form is read by all four CLIs
+(C `load_hex_key` ahead of `load_sym_key_n`, Java `loadKey`).  (2) The width is the DIGIT
+COUNT rounded up to a multiple of 32, at least 32, in all four; the value rule, which made
+a 64-digit key with a zero top word a 224-bit key, is gone, and a non-hex digit (Python
+used to accept `_`) is refused.  Changing what an existing key file means is MAJOR, so the
+item ships with #356 in 13.0.0, MIGRATING.md §27.  (3) No `cli_surface_gaps` entry is
+needed: the four now agree.  (4) `CliTest/test_sym_width.sh` §3: a 64-digit hex key with a
+zero top word reproduces the 256-bit PEM key's ciphertext byte for byte in each CLI, the
+hex-key 4 x 4 matrix at 256 (hske-nla2) and at 32 bits (hske-nla1, 8 digits) round-trips,
+and `0x1` (32-bit) and `0x12zz` are refused, with the 256-bit PEM matrix as the
+accept-control.  Shown to fire: on master's CLIs the script fails 92 checks.
+
+Status: **DONE v13.0.0** — the 0x hex key form is read by all four CLIs, its width set by the digit count (not the value); test_sym_width.sh §3; MIGRATING.md §27.
+
+---
+
+### #356: HSKE-NL-A2/A3 silently produce undecryptable ciphertext at non-power-of-two widths
+
+**Found while checking #355 (v12.0.8).**  `_m_inv` (the Python suite; the other ports to be
+checked) computes M^-1 as M^(n/2 - 1), which assumes ord(M) = n/2.  That holds at powers of
+two only: on 20 random (P, K) each, `nl_fscx_revolve_v2_inv(nl_fscx_revolve_v2(P, K, n/4),
+K, n/4) != P` every time at n = 96, 160, 192 and 224, and never at 32, 64, 128, 256.  v3's
+inverse fails the same way at 160 and 224.  At n divisible by 3 (96, 192) M = I + ROL + ROR
+is singular, so v2 is not a bijection at all and no inverse exists.
+
+It reaches the CLIs.  A SESSION KEY PEM declaring 224 bits (or, in Python and Go, a `0x` hex
+key whose top 32 bits are zero, #355): `enc` then `dec --algo hske-nla2` and `hske-nla3`
+exit 0 and return garbage in the Python and Go CLIs; the C CLI round-trips; the Java CLI
+refuses (A2 as "degenerate ... affine-weak class", A3 as "requires a 256-bit key").  So the
+four ports disagree, and two of them lose data without an error.
+
+To settle: (1) the legal widths for v2 and v3 (refuse every other width at enc AND dec, as
+`_nla1_width_ok` does for A1, with one readable message in all four CLIs), or a correct
+M^-1 at every width where M is invertible; (2) whether C really runs at 224 or widens the
+key (read `load_sym_key_n`'s caller); (3) the Java A2 message, which names the wrong cause;
+(4) a cross-CLI test at a non-power-of-two width with an accept-control at 256, and a
+verifier-side invariant (CLAUDE.md: "cross-port checks cannot see a property all four ports
+get wrong"); (5) whether refusing a width that encrypts today is MAJOR (it changes what an
+--algo accepts, though what it accepts cannot be decrypted).  CLAUDE.md's "order of M is
+n/2" holds for powers of two only; say so there.
+
+**Measured before the fix (v13.0.0), which widened the item.**  It is not only A2/A3 and
+not only 224.  A 4 x 4 writer x reader matrix at 128, 224 and 256 bits: at 256 every cell
+of `hske`, `hske-nla2` and `hske-nla3` round-trips; at 128 about half do, and the rest exit
+0 with garbage (C zero-extends the key to 256 and stamps 256 into its ciphertext, Python
+and Go run at 128, Java refuses A2/A3 and runs `hske`); at 224 A2/A3 fail even within
+Python and within Go, and Java's own `hske` fails too.  `fpe` and `twk` at 128 split
+Python/Java against C/Go; C's duplexes accepted a narrow key the other three refuse.
+This is #313's shape for every 256-fixed symmetric algo, and C's `MINV256_TBL` (256 only)
+answers item (2): C ran at 256, widening the key.
+
+**Resolution (v13.0.0): #313's route 2 for all of them.**  (1) `hske`, `hske-nla2`,
+`hske-nla3`, `hske-duplex`, `hske-duplex3`, `fpe` and `twk` refuse any key width but 256 in
+all four CLIs, and `dec` refuses a ciphertext declaring another width (`sym256_ok` /
+`_sym256_ok` / `sym256OK`; C's `load_sym_key` now takes the caller's name and refuses).
+A correct M^-1 at every invertible width was not chosen: no port but Python and Go can
+run v2 below 256, and C cannot at all.  `hske-nla1` keeps #314's contract.  (3) Java's A2
+width refusal now names the width, not the affine class.  (4) `CliTest/test_sym_width.sh`
+(cross-lang-compat): the 48-cell 256-bit matrix as accept-control, a wrong-key control,
+88 refusals at 128 and 224 bits including a length-preserving relabel to 224 whose
+source is shown to decrypt, and the counts asserted independently; it fails 92 checks
+on master's CLIs.  `test_narrow_width_matrix.sh`'s scope control now asserts that `hske`
+REFUSES a narrow key in all four.  The verifier-side invariant is in the suites: Python's
+`_m_inv` and the Go package's `MInv` check M(M^-1(1)) = 1 when they build the table and
+refuse (ValueError / panic) at 96, 160, 192, 224, while 32, 64, 128 and 256 pass.
+(5) MAJOR: it changes what existing `--algo` values accept; MIGRATING.md §27.
+
+Status: **DONE v13.0.0** — the 256-fixed symmetric algos (hske, A2, A3, duplexes, fpe, twk) refuse every other width in all four CLIs, on the key and the ciphertext; the v2 inverse checks itself; test_sym_width.sh; MIGRATING.md §27.

@@ -897,6 +897,25 @@ public final class HerraduraCli {
     private static final int NLA1_MIN_WIDTH = 16;
     private static final int NLA1_MAX_WIDTH = BitArray.BA_MAX_BITS;
 
+    /**
+     * Throws unless {@code nbits} is 256 (TODO #356).  hske, hske-nla2,
+     * hske-nla3, fpe and twk agree across the four CLIs at 256 bits only: below
+     * it C zero-extended the key while Go and Python ran at its width, and
+     * NL-FSCX v2's inverse M^(n/2 - 1) is M^-1 only at powers of two.
+     * MIGRATING.md §27.
+     */
+    private static void sym256OK(int nbits, String ctx, String carrier) {
+        if (nbits != Herradura.N) {
+            throw new CliError(ctx + ": requires a " + Herradura.N + "-bit " + carrier
+                + "; got " + nbits + "-bit");
+        }
+    }
+
+    /** The ciphertext's declared width as an int, saturating (a DER INTEGER is unbounded). */
+    private static int declaredWidth(BigInteger nbits) {
+        return nbits.min(BigInteger.valueOf(Integer.MAX_VALUE)).intValue();
+    }
+
     /** Throws unless {@code nbits} is a legal BitArray width (BITARRAY.md §2). */
     private static void nla1WidthOK(int nbits, String ctx, String carrier) {
         if (nbits % 8 != 0 || nbits < NLA1_MIN_WIDTH || nbits > NLA1_MAX_WIDTH) {
@@ -1000,6 +1019,7 @@ public final class HerraduraCli {
         } else if (algo.equals("hske")) {
             BitArray key = loadKey(req(opt, "key", "enc"));
             int nbits = key.size();
+            sym256OK(nbits, "enc hske", "key");
             int nbytes = nbits / 8;
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), nbits);
             BitArray e = Herradura.hskeEncrypt(p, key);
@@ -1030,7 +1050,8 @@ public final class HerraduraCli {
         } else if (algo.equals("hske-nla2")) {
             BitArray key = loadKey(req(opt, "key", "enc"));
             int nbits = key.size();
-            if (nbits != Herradura.N || !HerraduraNl.nlV2KeyIsValid(key)) {
+            sym256OK(nbits, "enc hske-nla2", "key");
+            if (!HerraduraNl.nlV2KeyIsValid(key)) {
                 throw new CliError("enc hske-nla2: key is degenerate for NL-FSCX v2 (affine-weak class)");
             }
             int nbytes = nbits / 8;
@@ -1041,9 +1062,7 @@ public final class HerraduraCli {
             // No key check: v3 has no weak class (TODO #255).
             BitArray key = loadKey(req(opt, "key", "enc"));
             int nbits = key.size();
-            if (nbits != Herradura.N) {
-                throw new CliError("enc hske-nla3: requires a 256-bit key");
-            }
+            sym256OK(nbits, "enc hske-nla3", "key");
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbits / 8), nbits);
             writeString(out, encodeSymCt(HerraduraNl.hskeNlA3Encrypt(p, key).toBigInteger(), nbits));
         } else if (algo.equals("hpke")) {
@@ -1121,7 +1140,9 @@ public final class HerraduraCli {
         } else if (algo.equals("hske")) {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
+            sym256OK(nbits, "dec hske", "key");
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
+            sym256OK(declaredWidth(ct[1]), "dec hske", "ciphertext");
             BitArray d = Herradura.hskeDecrypt(BitArray.fromBytes(toFixedBytes(ct[0], nbits / 8), nbits), key);
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hske-nla1")) {
@@ -1157,20 +1178,21 @@ public final class HerraduraCli {
         } else if (algo.equals("hske-nla2")) {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
-            if (nbits != Herradura.N || !HerraduraNl.nlV2KeyIsValid(key)) {
+            sym256OK(nbits, "dec hske-nla2", "key");
+            if (!HerraduraNl.nlV2KeyIsValid(key)) {
                 throw new CliError("dec hske-nla2: key is degenerate for NL-FSCX v2 (affine-weak class)");
             }
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
+            sym256OK(declaredWidth(ct[1]), "dec hske-nla2", "ciphertext");
             BitArray d = HerraduraNl.hskeNlA2Decrypt(BitArray.fromBytes(toFixedBytes(ct[0], nbits / 8), nbits), key);
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hske-nla3")) {
             // No key check: v3 has no weak class (TODO #255).
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
-            if (nbits != Herradura.N) {
-                throw new CliError("dec hske-nla3: requires a 256-bit key");
-            }
+            sym256OK(nbits, "dec hske-nla3", "key");
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
+            sym256OK(declaredWidth(ct[1]), "dec hske-nla3", "ciphertext");
             writeBytes(out, toFixedBytes(
                 HerraduraNl.hskeNlA3Decrypt(
                     BitArray.fromBytes(toFixedBytes(ct[0], nbits / 8), nbits), key).toBigInteger(), nbits / 8));
@@ -1239,6 +1261,23 @@ public final class HerraduraCli {
      */
     private static BitArray loadKey(String path) throws IOException {
         String pem = readString(path);
+        // A plain 0x... hex string is a key too (TODO #355; Python and Go always
+        // read it).  Its width is set by its DIGIT COUNT, rounded up to a
+        // multiple of 32 (at least 32), never by its value: 64 hex digits are a
+        // 256-bit key even when the top digits are zero.
+        String t = pem.trim();
+        if (t.startsWith("0x") || t.startsWith("0X")) {
+            String digits = t.substring(2);
+            if (digits.isEmpty() || !digits.matches("[0-9a-fA-F]+")) {
+                throw new CliError(path + ": invalid hex key (expected 0x followed by hex digits)");
+            }
+            int nb = Math.max(32, ((4 * digits.length() + 31) / 32) * 32);
+            if (digits.length() > BitArray.BA_MAX_BITS / 4 || nb > BitArray.BA_MAX_BITS) {
+                throw new CliError(path + ": hex key is " + (4L * digits.length())
+                    + "-bit or more; the maximum is " + BitArray.BA_MAX_BITS);
+            }
+            return BitArray.fromBigInteger(new BigInteger(digits, 16), nb);
+        }
         Codec.PemBlock block = Codec.pemUnwrap(pem);
         // FAIL CLOSED (TODO #268), as cmdPkey does: an envelope parses as a
         // valid DER SEQUENCE, so it must be named rather than misread.
@@ -1894,6 +1933,7 @@ public final class HerraduraCli {
         boolean doDec = opt.containsKey("decrypt");
         if (doEnc == doDec) throw new CliError("fpe: exactly one of --encrypt or --decrypt required");
         BitArray key = loadKey(req(opt, "key", "fpe"));
+        sym256OK(key.size(), "fpe", "key");
         byte[] keyBytes = key.toBytes();
         byte[] ctx = opt.getOrDefault("context", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
         byte[] inBytes = readBytes(req(opt, "in", "fpe"));
@@ -1911,6 +1951,7 @@ public final class HerraduraCli {
         boolean doDec = opt.containsKey("decrypt");
         if (doEnc == doDec) throw new CliError("twk: exactly one of --encrypt or --decrypt required");
         BitArray key = loadKey(req(opt, "key", "twk"));
+        sym256OK(key.size(), "twk", "key");
         byte[] keyBytes = key.toBytes();
         long sector = opt.containsKey("sector") ? Long.parseLong(opt.get("sector")) : 0L;
         int bidx = opt.containsKey("bidx") ? Integer.parseInt(opt.get("bidx")) : 0;
