@@ -300,7 +300,7 @@ keys (tz(delta) <= 1, excluding the weak class TODO #253 characterised).\n""")
 
     def delta(n, B):
         m = (1 << n) - 1
-        return G['ops'](n)[1]((B * ((B + 1) >> 1)) & m, n // 4)
+        return G['ops'](n)[1]((B * (((B + 1) & m) >> 1)) & m, n // 4)
 
     widths = [(7, 8), (8, 8)] + ([] if quick else [(10, 6)])
     print(f"      {'primitive':<26}{'n':>3}   " + "".join(f"r={r:<6}" for r in (2, 4, 6))

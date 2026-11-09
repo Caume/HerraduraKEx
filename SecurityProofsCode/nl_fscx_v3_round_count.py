@@ -250,7 +250,7 @@ miss it entirely.\n""")
 
     n, N = 8, 256
     m, rol, ror = G['ops'](n)
-    delta = lambda B: rol((B * ((B + 1) >> 1)) & m, n // 4)
+    delta = lambda B: rol((B * (((B + 1) & m) >> 1)) & m, n // 4)
 
     print("""      §4a  EXHAUSTIVE over all 256 keys at n = 8, both placements of the 3-row.
       A key is counted weak if the round has a CORRELATION-1 linear

@@ -28,7 +28,8 @@
 # SHAPE.  §0 is the control that lets the matrix fail (a wrong key must not
 # recover); §1 the 256-bit matrix, which is the accept-control for every
 # refusal below; §2 the refusals, each against a fixture shown to be genuine;
-# §3 the hex form; §4 the counts, asserted independently.
+# §3 the hex form, and the all-ones key (TODO #357); §4 the counts, asserted
+# independently.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -282,15 +283,38 @@ for l in "${LANGS[@]}"; do
     fi
 done
 
+# B = 2^256 - 1 (TODO #357): SPEC.md 8.2 takes B + 1 mod 2^n, so delta = 0, the affine
+# class, and every CLI refuses it.  Python's suite once computed B + 1 unbounded, got
+# delta = 2^63 and ACCEPTED it.  Accept-control first: 2^256 - 2 is an ordinary key.
+printf '0x%s\n' "$(printf 'f%.0s' $(seq 64))" > "$TMP/hexones.txt"
+printf '0x%se\n' "$(printf 'f%.0s' $(seq 63))" > "$TMP/hexfe.txt"
+for l in "${LANGS[@]}"; do
+    # shellcheck disable=SC2086
+    if ${CLI[$l]} enc --algo hske-nla2 --key "$TMP/hexfe.txt" --in "$MSG" --out "$TMP/o.pem" \
+           >/dev/null 2>&1; then
+        pass "$l: CONTROL: 0xff..fe is accepted by hske-nla2"; HEX=$((HEX+1))
+    else
+        fail "$l: CONTROL: 0xff..fe was refused by hske-nla2"
+    fi
+    # shellcheck disable=SC2086
+    if ${CLI[$l]} enc --algo hske-nla2 --key "$TMP/hexones.txt" --in "$MSG" --out "$TMP/o.pem" \
+           >/dev/null 2>&1; then
+        fail "$l: 0xff..ff (delta = 0 mod 2^n) was accepted by hske-nla2"
+    else
+        pass "$l: 0xff..ff has delta = 0 mod 2^n, and hske-nla2 refuses it"; refused
+    fi
+done
+
 # ── 4. The counts, asserted independently ────────────────────────────────────
-# Round-trips: 3 algos x 4 x 4 = 48.  Hex: 4 + 16 + 16 = 36.  Refusals:
-# 2 widths x 4 CLIs x 7 ops = 56, + 12 narrow-key dec, + 12 relabelled, + 8 hex = 88.
+# Round-trips: 3 algos x 4 x 4 = 48.  Hex: 4 + 16 + 16 + 4 = 40.  Refusals:
+# 2 widths x 4 CLIs x 7 ops = 56, + 12 narrow-key dec, + 12 relabelled, + 8 hex,
+# + 4 all-ones = 92.
 echo ""
 echo "256-bit round-trips: $TRIPS   hex-key checks: $HEX   refusals: $REFUSALS"
 if [ "${#LANGS[@]}" -eq 4 ]; then
     [ "$TRIPS" -eq 48 ]    || fail "expected 48 round-trips with all four CLIs, saw $TRIPS"
-    [ "$HEX" -eq 36 ]      || fail "expected 36 hex-key checks with all four CLIs, saw $HEX"
-    [ "$REFUSALS" -eq 88 ] || fail "expected 88 refusals with all four CLIs, saw $REFUSALS"
+    [ "$HEX" -eq 40 ]      || fail "expected 40 hex-key checks with all four CLIs, saw $HEX"
+    [ "$REFUSALS" -eq 92 ] || fail "expected 92 refusals with all four CLIs, saw $REFUSALS"
 fi
 
 echo ""

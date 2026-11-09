@@ -80,7 +80,7 @@ def nl_fscx_v1(A, B, n):
 
 def delta(K, n):
     """NL-FSCX v2 key offset: ROL(K * floor((K+1)/2) mod 2^n, n/4)."""
-    return rotl((K * ((K + 1) >> 1)) & ((1 << n) - 1), n // 4, n)
+    return rotl((K * (((K + 1) & ((1 << n) - 1)) >> 1)) & ((1 << n) - 1), n // 4, n)
 
 
 def pi(A, K, n):

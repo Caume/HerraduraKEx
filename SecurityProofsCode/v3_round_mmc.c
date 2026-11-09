@@ -347,7 +347,7 @@ int main(int argc, char **argv)
         if (!W[k].col || !W[k].nw || !W[k].nv) die("out of memory");
     }
 
-    uint32_t d = rol((uint32_t)(((uint64_t)B * ((B + 1) >> 1)) & MASK), n / 4);
+    uint32_t d = rol((uint32_t)(((uint64_t)B * (((B + 1) & MASK) >> 1)) & MASK), n / 4);
     for (uint32_t x = 0; x < N; x++) {
         uint32_t y = x ^ B;
         T[x] = chi(((y ^ rol(y, 1) ^ ror(y, 1)) + d) & MASK);

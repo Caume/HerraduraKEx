@@ -67,7 +67,7 @@ def M(x, n):
 
 def delta(K, n):
     m = (1 << n) - 1
-    return rol((K * ((K + 1) >> 1)) & m, n >> 2, n)
+    return rol((K * (((K + 1) & m) >> 1)) & m, n >> 2, n)
 
 def f2(A, K, n):
     m = (1 << n) - 1

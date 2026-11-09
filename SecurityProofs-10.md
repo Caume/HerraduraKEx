@@ -913,7 +913,7 @@ The bottom of the distribution is therefore a class set by the window, not by n.
 
 ### 11.59.1 The construction
 
-The two branches of tz(p) give keys directly. An even key B = odd · 2^s has tz(p) = 2s − 1, and an odd key B = odd · 2^(t+1) − 1 has tz(p) = t. For each width n = 10, 11, 13, 14, 16, 17, 19 and 20, and each window w = 1 to min(12, n − 2), the gate builds up to six keys with distinct δ. Affine δ are left out, which gives 409 keys. Both axes are solved exactly with §11.57.1's trail mode.
+The two branches of tz(p) give keys directly. An even key B = odd · 2^s has tz(p) = 2s − 1, and an odd key B = odd · 2^(t+1) − 1 has tz(p) = t. For each width n = 10, 11, 13, 14, 16, 17, 19 and 20, and each window w = 1 to min(12, n − 2), the gate builds up to six keys with distinct δ. Affine δ are left out, which gives 405 keys. Four cells, w = 1 at n = 11, 13, 17 and 19, are empty: their one key was B = 2^n − 1, whose δ is 0 once B + 1 is taken mod 2^n as SPEC.md §8.2 says (TODO #357). Both axes are solved exactly with §11.57.1's trail mode.
 
 **Check:** every row is the seeded construction and has the window it claims. A prefix re-solves to the recorded values.
 
@@ -998,7 +998,7 @@ Each of these spans 79 periods, and assumes the share holds over 237 bits more t
 
 ## 11.61 The long-window keys — TODO #343, ninth pass
 
-§11.59 constructed keys with windows w = n − tz(p) of at most 12 bits, and left longer windows unmeasured. Those need no construction. §11.55's sampler stratifies on t = tz(p) exactly, so each stratum t < 8 of the pinned random sample is a uniform sample of the keys with window w = n − t. The 1243 keys pinned for §11.57 hold at least 8 keys in every (w, n) cell with w = 13–20 that the plan reaches. This pass reads them together with §11.59's 409 constructed keys and solves nothing. The gate is `SecurityProofsCode/v2_long_window.py`.
+§11.59 constructed keys with windows w = n − tz(p) of at most 12 bits, and left longer windows unmeasured. Those need no construction. §11.55's sampler stratifies on t = tz(p) exactly, so each stratum t < 8 of the pinned random sample is a uniform sample of the keys with window w = n − t. The 1243 keys pinned for §11.57 hold at least 8 keys in every (w, n) cell with w = 13–20 that the plan reaches. This pass reads them together with §11.59's 405 constructed keys and solves nothing. The gate is `SecurityProofsCode/v2_long_window.py`.
 
 ### 11.61.1 Mostly the window, not quite only
 

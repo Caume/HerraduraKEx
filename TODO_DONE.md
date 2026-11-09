@@ -24651,3 +24651,35 @@ refuse (ValueError / panic) at 96, 160, 192, 224, while 32, 64, 128 and 256 pass
 (5) MAJOR: it changes what existing `--algo` values accept; MIGRATING.md §27.
 
 Status: **DONE v13.0.0** — the 256-fixed symmetric algos (hske, A2, A3, duplexes, fpe, twk) refuse every other width in all four CLIs, on the key and the ciphertext; the v2 inverse checks itself; test_sym_width.sh; MIGRATING.md §27.
+
+---
+
+### #357: the Python suite computes NL-FSCX v2's B + 1 unbounded, so the all-ones key diverges
+
+**Found while prototyping #354's screen (v13.0.0).**  Cross-checking a δ-based predicate
+in all four ports on 24,021 keys, C, Go and Java agreed on every key and Python disagreed
+on one: B = 2^256 − 1.  SPEC.md §8.2 says δ(B) = ROL(B · ((B + 1) / 2) mod 2^n, n/4) with
+"all arithmetic mod 2^n", so B + 1 wraps to 0 and δ = 0, the affine class.  C, Go and Java
+do this.  Python's suite wrote `(B.uint * ((B.uint + 1) >> 1)) & mask`, whose B + 1 is an
+unbounded integer, and got δ = 2^63.  On the live CLIs, `enc --algo hske-nla2` with the
+all-ones key succeeded in Python and was refused by the other three.  The same formula was
+copied into the Python test harness and into 25 analysis-script sites, and into two C
+helpers whose `uint64_t` never wraps at n < 64.
+
+**Resolution (v13.0.1).**  Every copy takes B + 1 mod 2^n before the shift: the suite's
+seven sites (v2 and v3), the harness's four, the 25 analysis sites and `hull_exact.c` /
+`v3_round_mmc.c`.  `CliTest/test_sym_width.sh` gains an all-ones check in all four CLIs,
+with 0xff…fe as accept-control first; it fails on the unfixed suite (Python accepts) and
+passes on the fixed one.  `v2_short_window.json` is regenerated: its construction had
+picked B = 2^n − 1 as the w = 1 key at n = 10, 11, 13, 14, 17 and 19, and under the
+spec those keys are affine.  It now holds 405 keys (403 unchanged; at n = 10 and 14 another
+key fills the cell).  The four cells w = 1 at n = 11, 13, 17 and 19 are empty and named
+rather than scored, and every finding reproduces with the same figures.  Three more
+gates had encoded the old value.  `v2_key_quantiles.py`'s closed form for P(tz(p) ≥ t)
+counted B = 2^n − 1 at p = 2^(n−1), and `v2_measurement_audit.py`'s preimage count let
+its odd branch reach B + 1 = 2^n; both now put that key at p = 0.
+`v2_transient_series.json`'s stratified sample drops the key from its strata and shifts
+at n = 10 (1 key) and n = 11 (3 keys), which were re-solved; the other 1,239 rows are
+unchanged.  MIGRATING.md §28; PATCH, on §15/§16's precedent.
+
+Status: **DONE v13.0.1** — Python takes B + 1 mod 2^n in v2/v3's delta, as the spec and the other three ports do; the all-ones key is refused in all four CLIs.

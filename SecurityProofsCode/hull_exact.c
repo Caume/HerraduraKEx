@@ -48,7 +48,7 @@ static uint32_t Mx(uint32_t x) { return (x ^ rol(x, 1) ^ rol(x, n - 1)) & MASK; 
 
 static uint32_t delta_of(uint32_t B)
 {
-    uint64_t p = (uint64_t)B * (uint64_t)((B + 1) >> 1);
+    uint64_t p = (uint64_t)B * (uint64_t)(((B + 1) & MASK) >> 1);
     return rol((uint32_t)(p & MASK), n / 4);
 }
 

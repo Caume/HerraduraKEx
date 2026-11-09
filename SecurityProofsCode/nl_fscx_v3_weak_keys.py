@@ -142,7 +142,7 @@ class Width:
         return ((x >> k) | (x << (self.n - k))) & self.M
 
     def delta(self, B):
-        return self.rol((B * ((B + 1) >> 1)) & self.M, self.n // 4)
+        return self.rol((B * (((B + 1) & self.M) >> 1)) & self.M, self.n // 4)
 
     def chi(self, x):
         out, off = 0, 0

@@ -79,7 +79,7 @@ G = _load()
 def delta(n, B):
     """The additive constant the deployed round derives from the key."""
     m = (1 << n) - 1
-    return G['ops'](n)[1]((B * ((B + 1) >> 1)) & m, n // 4)
+    return G['ops'](n)[1]((B * (((B + 1) & m) >> 1)) & m, n // 4)
 
 
 def m_tab(n):
@@ -410,7 +410,7 @@ random B rather than assumed uniform.\n""")
     cnt = [0] * (n + 2)
     for _ in range(S):
         B = rng.randrange(1 << n)
-        d = (B * ((B + 1) >> 1)) & m
+        d = (B * (((B + 1) & m) >> 1)) & m
         d = ((d << (n // 4)) | (d >> (n - n // 4))) & m
         cnt[(d & -d).bit_length() - 1 if d else n] += 1
     ge = [0] * (n + 3)
