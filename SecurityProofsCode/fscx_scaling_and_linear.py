@@ -71,7 +71,7 @@ G = BB.G
 
 def delta(n, B):
     m = (1 << n) - 1
-    return G['ops'](n)[1]((B * ((B + 1) >> 1)) & m, n // 4)
+    return G['ops'](n)[1]((B * (((B + 1) & m) >> 1)) & m, n // 4)
 
 
 def corr_add_const(n, d, w, v):

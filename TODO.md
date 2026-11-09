@@ -693,3 +693,36 @@ generic max(T, 256 - T) = 135 only if exploiting a short-arc key at n = 256 cost
 Status: **OPEN**
 
 ---
+
+### #358: zkbpp_kkw_view_hiding.py §2 failed on a full gate run, against a rated 1e-5
+
+**Found while verifying #357 (v13.0.1).**  A full `run_findings_gates.py --quick` run on
+an aarch64 SBC failed `zkbpp_kkw_view_hiding.py` at "§2 the seed-budget law holds"; an
+immediate rerun passed.  The gate is unrelated to #357: its prover runs the NL-FSCX v1
+circuit, which no line of #357's diff reaches.  `run_findings_gates.py` classifies it
+`follows` at 1e-5 per run (TODO #304: 200 000 bootstrap replications, zero exceedances
+of the 1-bit band).  Two things don't fit that figure:
+
+- **One failure in a handful of local full runs** is far likelier than 1e-5 allows.
+- **Zero in 200 000 isn't an upper bound of 1e-5.**  The 95% bound is about 1.5e-5 per
+  replication, and the per-run rate also depends on how many cells and rounds one run
+  draws.  The passing rerun had the n = 8 seeded cell at ratio 0.655, 0.61 bits off.
+  That is well past the 1.126 mean (0.17 bits) #304 recorded, so this cell's spread may
+  be wider than the bootstrap's pooled runs showed, or depend on the host or `--quick`.
+
+The gate runner keeps only a failing script's tail, so the failing run's §2 table (which
+cell, how many bits off) was lost.
+
+To do, under CLAUDE.md's rule "if a gate flakes, fix that gate's threshold" (replicate
+per #299); never loosen it by hand or add `continue-on-error`:
+1. Have §2 print its table into the tail the runner keeps, or have the runner keep the
+   failing section, so the next failure names its cell.
+2. Re-measure §2's statistic per cell over many `--quick` runs on this host (not pooled),
+   and record the per-run false-failure rate with its confidence bound.
+3. Derive the band from that distribution (or replicate the cell per #299), keeping the
+   2n − 1 against n − 1 exponent separation that is the finding.  Update the `follows`
+   entry's rate and reason to match.
+
+Status: **OPEN**
+
+---

@@ -147,7 +147,7 @@ def rol(x, k, n):
 
 def delta(n, B):
     m = (1 << n) - 1
-    return rol((B * ((B + 1) >> 1)) & m, n // 4, n)
+    return rol((B * (((B + 1) & m) >> 1)) & m, n // 4, n)
 
 
 def Mx(x, n):

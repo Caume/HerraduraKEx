@@ -84,7 +84,7 @@ def chi_rows(x, rows):
 def mk_v2(n, B):
     """The deployed round, post-#245: M(a ^ i ^ B) + delta(B)."""
     m, rol, ror = ops(n)
-    d = rol((B * ((B + 1) >> 1)) & m, n // 4)
+    d = rol((B * (((B + 1) & m) >> 1)) & m, n // 4)
     return lambda a, i: (((a ^ i ^ B) ^ rol(a ^ i ^ B, 1) ^ ror(a ^ i ^ B, 1)) + d) & m
 
 

@@ -15,7 +15,7 @@ This pass CONSTRUCTS them.
       tz(p): B = (odd << s) gives tz(p) = 2s - 1, and B = (odd << (t+1)) - 1 gives
       tz(p) = t.  Affine deltas (§11.54.3) are left out.  Both axes, exact W(floor(3n/4))
       by certified_cycle_mean.c's trail mode (§11.57.1), pinned in
-      v2_short_window.json (409 keys).  CHECK: every row is the seeded construction
+      v2_short_window.json (405 keys).  CHECK: every row is the seeded construction
       and has the window it claims; a prefix re-solves to the recorded values.
 
   §2  THE WINDOW, NOT THE WIDTH.  Over n = 10..20, with the window held fixed, mu does
@@ -287,10 +287,17 @@ def section_3(rec):
             print("  %4d  %s" % (w, "".join(
                 "  %.2f [%.2f]" % (st.mean(y[(n, w)]), min(y[(n, w)])) if (n, w) in y
                 else " " * 13 for n in PLAN)))
-        top = max(st.mean(y[(n, w)]) for n in PLAN for w in range(1, WWEAK + 1))
-        check(top < 0.75, "%s: every window w <= %d has mean y below 0.75 at every width "
-              "(at most %.2f) -- far below the bar" % (nm, WWEAK, top))
-        lo = [min(min(y[(n, w)]) for w in range(1, WWEAK + 1)) for n in PLAN]
+        # A cell is empty only where its sole key was B = 2^n - 1, whose delta is 0
+        # mod 2^n (TODO #357): the affine class, left out.  Empty cells are named,
+        # never scored.
+        cells = [(n, w) for n in PLAN for w in range(1, WWEAK + 1)]
+        empty = [c for c in cells if c not in y]
+        print("  cells with no non-affine key: %s" % (", ".join(
+            "n = %d, w = %d" % c for c in empty) or "none"))
+        top = max(st.mean(y[c]) for c in cells if c in y)
+        check(top < 0.75, "%s: every window w <= %d that holds a key has mean y below "
+              "0.75 at every width (at most %.2f) -- far below the bar" % (nm, WWEAK, top))
+        lo = [min(min(y[(n, w)]) for w in range(1, WWEAK + 1) if (n, w) in y) for n in PLAN]
         check(max(lo) < 0.25, "%s: at every width some key with w <= %d has y < 0.25 "
               "(%s)" % (nm, WWEAK, ", ".join("%.2f" % x for x in lo)))
 

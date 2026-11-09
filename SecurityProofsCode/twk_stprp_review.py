@@ -70,7 +70,7 @@ def make_round(n, B):
         k %= n
         return ((x >> k) | (x << (n - k))) & mask
 
-    delta = rol((B * ((B + 1) >> 1)) & mask, n // 4)
+    delta = rol((B * (((B + 1) & mask) >> 1)) & mask, n // 4)
 
     def F(a):
         v = a ^ B

@@ -2,6 +2,29 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [13.0.1] - 2026-11-08
+
+### TODO #357 — the Python suite takes B + 1 mod 2^n in NL-FSCX v2's delta
+
+- **The defect.**  SPEC.md §8.2 computes δ(B) with "all arithmetic mod 2^n", so at
+  B = 2^n − 1, B + 1 wraps to 0 and δ = 0, the affine class.  C, Go and Java do this.
+  Python's suite computed B + 1 unbounded and got δ = 2^63, so `enc --algo hske-nla2`
+  with the all-ones key succeeded in Python and was refused by the other three CLIs.
+  Found while cross-checking a prototype of TODO #354's screen in all four ports.
+- **The fix.**  Every copy wraps: the suite's seven sites (v2 and v3), the Python
+  harness's four, 25 analysis-script sites and two C helpers (`hull_exact.c`,
+  `v3_round_mmc.c`).
+- **Test.**  `CliTest/test_sym_width.sh` now checks the all-ones key in all four CLIs,
+  with 0xff…fe as accept-control (189 checks).  It fails on the unfixed suite.
+- **Pinned data.**  `v2_short_window.json` is regenerated (405 keys; it had used
+  B = 2^n − 1 as a w = 1 key).  Four now-empty cells are named, not scored; every
+  finding reproduces with the same figures.  §11.59 updated.
+- **Three more gates had the old value built in.**  The closed forms in `v2_key_quantiles.py`
+  (P(tz(p) ≥ t)) and `v2_measurement_audit.py` (δ preimage count) now put B = 2^n − 1 at
+  p = 0.  `v2_transient_series.json` re-solves the 4 keys its seeded sample now draws
+  at n = 10 and 11; the other 1,239 rows are unchanged.
+- MIGRATING.md §28.  PATCH: one port now agrees with the spec and the other three.
+
 ## [13.0.0] - 2026-11-07
 
 ### TODO #356 + #355 — the 256-fixed symmetric algos refuse other widths; hex keys in all four CLIs (BREAKING, MIGRATING.md §27)

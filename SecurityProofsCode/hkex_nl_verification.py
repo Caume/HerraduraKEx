@@ -533,7 +533,7 @@ def nl_fscx_v2(A, B, n=N):
     """
     mask   = (1 << n) - 1
     xmix   = fscx(A, B, n)
-    offset = rol((B * ((B + 1) >> 1)) & mask, n >> 2, n)  # B-only NL term
+    offset = rol((B * (((B + 1) & mask) >> 1)) & mask, n >> 2, n)  # B-only NL term
     return (xmix + offset) & mask
 
 def nl_fscx_v2_inv(Y, B, n=N):
@@ -543,7 +543,7 @@ def nl_fscx_v2_inv(Y, B, n=N):
     so A = B XOR M^{-1}(Y - offset).
     """
     mask   = (1 << n) - 1
-    offset = rol((B * ((B + 1) >> 1)) & mask, n >> 2, n)
+    offset = rol((B * (((B + 1) & mask) >> 1)) & mask, n >> 2, n)
     Z      = (Y - offset) & mask          # strip offset → fscx(A, B)
     # Invert fscx(A, B) = M(A XOR B): A XOR B = M^{-1}(Z), so A = B XOR M^{-1}(Z)
     return B ^ M_inv(Z, n)

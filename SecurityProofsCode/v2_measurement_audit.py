@@ -130,7 +130,7 @@ def rol(x, k, n):
 
 
 def p_of(B, n):
-    return (B * ((B + 1) >> 1)) & ((1 << n) - 1)
+    return (B * (((B + 1) & ((1 << n) - 1)) >> 1)) & ((1 << n) - 1)
 
 
 def delta(B, n):
@@ -154,13 +154,14 @@ def preimages(d, n):
     """#{B < 2^n : delta(B) = d}, without enumerating B.
 
     p = ROR(d, n/4).  p = 0 is reached by B = 0 and by every B = 2^j u with
-    2j - 1 >= n, or odd B with tz(B+1) > n; those are counted directly.
+    2j - 1 >= n, or B = 2^n - 1 (B + 1 = 0 mod 2^n, TODO #357); those are counted
+    directly.
     Otherwise k = tz(p), w = p >> k, m = n - k:
       even B = 2^j u:  p = 2^(2j-1) u^2  ->  needs k = 2j - 1 odd and u^2 = w mod
                        2^m; each root mod 2^m lifts to 2^(j-1) odd u < 2^(n-j).
       odd B, B+1 = 2^(k+1) v (v odd):  p / 2^k = v (2^(k+1) v - 1) mod 2^m, a
                        bijection on odd v (its derivative is odd), so one v0 mod
-                       2^m; it counts iff v0 <= 2^(n-k-1), i.e. B < 2^n.
+                       2^m; it counts iff v0 < 2^(n-k-1), i.e. B + 1 < 2^n.
     """
     p = rol(d, n - n // 4, n)
     if p == 0:
@@ -176,7 +177,7 @@ def preimages(d, n):
     for i in range(1, m):
         if (((v * ((v << (k + 1)) - 1)) - w) >> i) & 1:
             v |= 1 << i
-    if ((v * ((v << (k + 1)) - 1)) - w) % (1 << m) == 0 and v <= 1 << (n - k - 1):
+    if ((v * ((v << (k + 1)) - 1)) - w) % (1 << m) == 0 and v < 1 << (n - k - 1):
         cnt += 1
     return cnt
 

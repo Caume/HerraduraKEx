@@ -331,7 +331,7 @@ def nl_fscx_v2(A: BitArray, B: BitArray) -> BitArray:
     delta(B) = ROL(B*(B+1)//2 mod 2^n, n/4).  Bijective in A; exact inverse."""
     n     = A.size
     mask  = A._mask
-    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    delta = BitArray(n, (B.uint * (((B.uint + 1) & mask) >> 1)) & mask).rotated(n // 4)
     return BitArray(n, (fscx(A, B).uint + delta.uint) & mask)
 
 
@@ -339,7 +339,7 @@ def nl_fscx_v2_inv(Y: BitArray, B: BitArray) -> BitArray:
     """Exact inverse of one nl_fscx_v2 step: A = B XOR M^{-1}((Y-delta(B)) mod 2^n)."""
     n     = Y.size
     mask  = Y._mask
-    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    delta = BitArray(n, (B.uint * (((B.uint + 1) & mask) >> 1)) & mask).rotated(n // 4)
     Z     = BitArray(n, (Y.uint - delta.uint) & mask)
     return B ^ _m_inv(Z)
 
@@ -359,7 +359,7 @@ def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
 def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
     n     = Y.size
     mask  = Y._mask
-    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    delta = BitArray(n, (B.uint * (((B.uint + 1) & mask) >> 1)) & mask).rotated(n // 4)
     result = Y.copy()
     for i in range(steps, 0, -1):
         z      = BitArray(n, (result.uint - delta.uint) & mask)
@@ -3023,7 +3023,7 @@ def nl_v2_key_is_valid(K_int: int, n: int) -> bool:
     """NL-FSCX v2 affine weak-key check (mirrors the suite's nl_v2_key_is_valid).
     pi_K is GF(2)-affine iff delta(K) in {0, 2^(n-1)} -- TODO #168."""
     mask  = (1 << n) - 1
-    prod  = (K_int * ((K_int + 1) >> 1)) & mask
+    prod  = (K_int * (((K_int + 1) & mask) >> 1)) & mask
     r     = n // 4
     delta = ((prod << r) | (prod >> (n - r))) & mask
     return delta not in (0, 1 << (n - 1))

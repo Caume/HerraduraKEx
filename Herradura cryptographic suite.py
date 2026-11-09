@@ -1065,12 +1065,16 @@ def nl_fscx_v2(A: BitArray, B: BitArray) -> BitArray:
     delta(B) = ROL(B * floor((B+1)/2) mod 2^n, n/4)
     nl_fscx_v2(A,B) = (fscx(A,B) + delta(B)) mod 2^n
 
+    B + 1 is taken mod 2^n BEFORE the shift (SPEC.md 8.2, "all arithmetic mod
+    2^n"), as the C, Go and Java ports do: at B = 2^n - 1 it wraps to 0, so
+    delta = 0.  An unbounded B + 1 gave delta = 2^(n/4 - 1) there (TODO #357).
+
     Properties: non-linear over GF(2); bijective in A for all B; exact inverse.
     Use for: HSKE revolve-mode encryption/decryption, HPKE-NL encryption.
     """
     n     = A.size
     mask  = A._mask
-    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    delta = BitArray(n, (B.uint * (((B.uint + 1) & mask) >> 1)) & mask).rotated(n // 4)
     return BitArray(n, (fscx(A, B).uint + delta.uint) & mask)
 
 
@@ -1082,7 +1086,7 @@ def nl_fscx_v2_inv(Y: BitArray, B: BitArray) -> BitArray:
     """
     n     = Y.size
     mask  = Y._mask
-    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    delta = BitArray(n, (B.uint * (((B.uint + 1) & mask) >> 1)) & mask).rotated(n // 4)
     Z     = BitArray(n, (Y.uint - delta.uint) & mask)
     return B ^ _m_inv(Z)
 
@@ -1096,7 +1100,7 @@ def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
     """
     n     = A.size
     mask  = A._mask
-    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    delta = BitArray(n, (B.uint * (((B.uint + 1) & mask) >> 1)) & mask).rotated(n // 4)
     result = A.copy()
     for i in range(1, steps + 1):
         # Round constant (TODO #245): XOR the 1-based round index into the state
@@ -1147,7 +1151,7 @@ def nl_v2_key_is_valid(B: BitArray) -> bool:
     SecurityProofsCode/nl_fscx_v2_fixed_key.py (TODO #159, #168, #253).
     """
     n     = B.size
-    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & B._mask).rotated(n // 4).uint
+    delta = BitArray(n, (B.uint * (((B.uint + 1) & B._mask) >> 1)) & B._mask).rotated(n // 4).uint
     return delta not in (0, 1 << (n - 1))
 
 
@@ -1156,7 +1160,7 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
     delta(B) is precomputed once — B is constant throughout the revolve."""
     n     = Y.size
     mask  = Y._mask
-    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    delta = BitArray(n, (B.uint * (((B.uint + 1) & mask) >> 1)) & mask).rotated(n // 4)
     result = Y.copy()
     for i in range(steps, 0, -1):
         z      = BitArray(n, (result.uint - delta.uint) & mask)
@@ -1314,7 +1318,7 @@ def nl_fscx_revolve_v3(A: BitArray, B: BitArray, steps: int) -> BitArray:
     invariant (TODO #245), and chi does not interact with that argument."""
     n     = A.size
     mask  = A._mask
-    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    delta = BitArray(n, (B.uint * (((B.uint + 1) & mask) >> 1)) & mask).rotated(n // 4)
     rows  = v3_rows(n)
     result = A.copy()
     for i in range(1, steps + 1):
@@ -1331,7 +1335,7 @@ def nl_fscx_revolve_v3_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
     """Invert nl_fscx_revolve_v3: apply nl_fscx_v3_inv *steps* times."""
     n     = Y.size
     mask  = Y._mask
-    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    delta = BitArray(n, (B.uint * (((B.uint + 1) & mask) >> 1)) & mask).rotated(n // 4)
     rows  = v3_rows(n)
     result = Y.copy()
     for i in range(steps, 0, -1):

@@ -614,7 +614,7 @@ every case.  So the linear ladder runs on {2,4,...} and brackets rather than clo
 def delta_of(n, B):
     m = (1 << n) - 1
     k = n // 4
-    x = (B * ((B + 1) >> 1)) & m
+    x = (B * (((B + 1) & m) >> 1)) & m
     return (((x << k) | (x >> (n - k))) & m) if k else x
 
 

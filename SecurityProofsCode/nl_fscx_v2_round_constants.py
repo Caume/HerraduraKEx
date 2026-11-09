@@ -84,7 +84,7 @@ def M_is_singular(n):
 
 def round_step(n, B, rc_index=0):
     mask, rol, ror = _ops(n)
-    d = rol((B * ((B + 1) >> 1)) & mask, n // 4)
+    d = rol((B * (((B + 1) & mask) >> 1)) & mask, n // 4)
 
     def F(a):
         v = (a ^ rc_index) ^ B

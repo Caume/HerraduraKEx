@@ -84,7 +84,7 @@ def fscx(A: int, B: int, n: int) -> int:
 
 def delta_v2(K: int, n: int) -> int:
     """delta(K) = ROL(K * ceil(K/2) mod 2^n, n/4)."""
-    return rol((K * ((K + 1) >> 1)) & ((1 << n) - 1), n >> 2, n)
+    return rol((K * (((K + 1) & ((1 << n) - 1)) >> 1)) & ((1 << n) - 1), n >> 2, n)
 
 def m_step(X: int, n: int) -> int:
     """One application of M = I XOR ROL XOR ROR."""

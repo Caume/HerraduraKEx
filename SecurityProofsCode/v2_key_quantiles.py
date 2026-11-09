@@ -108,7 +108,7 @@ def p_tail(n, t):
     for s in range(1, n):
         P += 2.0 ** -(s + 1) * ((min(2 * s - 1, n) >= t) + (s - 1 >= t))
     P += 2.0 ** -n                       # B = 0: p = 0
-    P += 2.0 ** -n * (n - 1 >= t)        # B = 2^n - 1: p = B * 2^(n-1)
+    P += 2.0 ** -n                       # B = 2^n - 1: B + 1 = 0 mod 2^n, p = 0 (TODO #357)
     return P
 
 

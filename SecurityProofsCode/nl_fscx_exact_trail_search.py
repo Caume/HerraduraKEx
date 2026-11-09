@@ -162,7 +162,7 @@ are one addition per round, so both are covered by the same model.
         return (Mmap(A ^ B, n)) ^ rol((A + B) & mask, rot, n)
 
     def v2(A, B):
-        d = rol((B * ((B + 1) >> 1)) & mask, rot, n)
+        d = rol((B * (((B + 1) & mask) >> 1)) & mask, rot, n)
         return (Mmap(A ^ B, n) + d) & mask
 
     # first, that the local reimplementation is the deployed primitive
@@ -185,7 +185,7 @@ are one addition per round, so both are covered by the same model.
             if (v1(A, B) ^ v1(A ^ a, B)) != (Mmap(a, n) ^ rol(add_d, rot, n)):
                 bad1 += 1
             u = Mmap(A ^ B, n)
-            d = rol((B * ((B + 1) >> 1)) & mask, rot, n)
+            d = rol((B * (((B + 1) & mask) >> 1)) & mask, rot, n)
             if (v2(A, B) ^ v2(A ^ a, B)) != (((u + d) & mask) ^ (((u ^ Mmap(a, n)) + d) & mask)):
                 bad2 += 1
     print('  reduction holds              : v1 %d mismatches, v2 %d mismatches'
@@ -508,12 +508,12 @@ becomes deterministic and the round contributes zero weight.
     for n in (8, 16):
         mask = (1 << n) - 1
         affine = [B for B in range(1 << n)
-                  if (rol((B * ((B + 1) >> 1)) & mask, n // 4, n)) in (0, 1 << (n - 1))]
+                  if (rol((B * (((B + 1) & mask) >> 1)) & mask, n // 4, n)) in (0, 1 << (n - 1))]
         # in the trail model an affine key means the addition is difference-transparent
         transparent = 0
         rnd = random.Random(9)
         for B in affine[:64]:
-            d = rol((B * ((B + 1) >> 1)) & mask, n // 4, n)
+            d = rol((B * (((B + 1) & mask) >> 1)) & mask, n // 4, n)
             bad = 0
             for _ in range(60):
                 A, a = rnd.getrandbits(n), rnd.randrange(1, 1 << n)

@@ -1566,3 +1566,27 @@ exit 0. See `CliTest/test_sym_width.sh`.
 | a 64-digit hex key file with a zero top word | now a 256-bit key; artifacts made with it at 224 bits are refused as a mixed width | decrypt with 12.x first, or re-encrypt |
 | every key pair, every 256-bit artifact, `hske-nla1` at any legal width | **unchanged** | none |
 
+
+---
+
+## 28. The Python suite takes B + 1 mod 2^n in NL-FSCX v2's delta (v13.0.1)
+
+**Who is affected:** anyone who used the all-ones key, B = 2^256 − 1, with `hske-nla2`
+through the **Python** CLI or the Python suite. No other key changes, and nothing changes
+in C, Go or Java.
+
+**What changed.** SPEC.md §8.2 defines δ(B) = ROL(B · ((B + 1) / 2) mod 2^n, n/4) with "all
+arithmetic mod 2^n". C, Go and Java wrap B + 1 before the shift, so at B = 2^n − 1 it is 0
+and δ = 0: the affine class, which `nl_v2_key_is_valid` refuses. The Python suite computed
+B + 1 as an unbounded integer, got δ = 2^63 at n = 256, and **accepted** the key. So
+`enc --algo hske-nla2` with that key succeeded in Python and was refused by the other three
+CLIs. Python now wraps too, and all four refuse it with the same weak-key message.
+
+**What to do.** Nothing, unless a Python-written `hske-nla2` ciphertext under the all-ones
+key exists. It was never readable by C, Go or Java. Decrypt it with a pre-13.0.1 Python
+build and re-encrypt under any other key.
+
+**Why this is not a MAJOR bump.** No wire format, PEM label, CLI flag or `--algo` behaviour
+of the specification changed: one port that disagreed with the spec and with the other
+three now agrees with them. That is the class of sections 15 and 16, and follows their
+precedent. For a uniformly drawn key the case has probability 2^−256.

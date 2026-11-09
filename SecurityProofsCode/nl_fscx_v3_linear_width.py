@@ -243,7 +243,7 @@ LOCALS = []          # (n, key, full linear slope, LSB-row value), from §3-§4;
 def d_low(n, B, L):
     """delta(B) mod 2^L at width n -- Width.delta(), low L bits."""
     M = (1 << n) - 1
-    p = (B * ((B + 1) >> 1)) & M
+    p = (B * (((B + 1) & M) >> 1)) & M
     k = n // 4
     return (((p << k) | (p >> (n - k))) & M) & ((1 << L) - 1)
 
