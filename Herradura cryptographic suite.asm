@@ -2492,9 +2492,10 @@ nl_fscx_delta_v2:
     ret
 
 ; ============================================================
-; nl_v2_key_is_valid: EAX=B --> EAX=1 if delta(B) not in {0,2^31}, else 0
-; Rejects NL-FSCX v2 keys for which the permutation degenerates to
-; affine (see herradura.h's nl_v2_key_is_valid, TODO #169).
+; nl_v2_key_is_valid: EAX=B --> EAX=1 if arc(delta(B)) > n/4 = 8, else 0
+; Refuses NL-FSCX v2 keys whose delta(B) has a short cyclic arc, which
+; contains the affine class {0, 2^31} (see herradura.h's
+; nl_v2_key_is_valid, TODO #169, #354).  Refuses about 2^-12 of keys.
 ; Failure-mode convention (item 3): no CLI/keygen boundary exists on
 ; this target, so this is a plain 0/1 predicate, uncalled from the
 ; nl_fscx_v2/revolve_v2 hot path -- same as C/Go/Python, which only
@@ -2503,10 +2504,20 @@ nl_fscx_delta_v2:
 ; ============================================================
 nl_v2_key_is_valid:
     call nl_fscx_delta_v2   ; eax = delta(B)
+    push ecx
+    push edx
+    not  eax                ; z = ~delta(B)
+    mov  ecx, 23            ; 3n/4 - 1 erosion passes (TODO #354)
+.kv_erode:
+    mov  edx, eax
+    rol  edx, 1
+    and  eax, edx           ; z &= ROL(z, 1): every run of ones shrinks by 1
+    dec  ecx
+    jnz  .kv_erode
+    pop  edx
+    pop  ecx
     test eax, eax
-    jz   .kv_invalid
-    cmp  eax, 0x80000000
-    je   .kv_invalid
+    jnz  .kv_invalid        ; a zero run of delta >= 24, i.e. arc <= 8
     mov  eax, 1
     ret
 .kv_invalid:

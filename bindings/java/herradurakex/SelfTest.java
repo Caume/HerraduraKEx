@@ -178,7 +178,18 @@ public final class SelfTest {
             BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
             BigInteger ct = HerraduraNl.hskeNlA2Encrypt(BitArray.fromBigInteger(pt, Herradura.N), BitArray.fromBigInteger(key, Herradura.N)).toBigInteger();
             BigInteger recovered = HerraduraNl.hskeNlA2Decrypt(BitArray.fromBigInteger(ct, Herradura.N), BitArray.fromBigInteger(key, Herradura.N)).toBigInteger();
-            if (!recovered.equals(pt)) {
+            // TODO #354: the key screen refuses arc(delta(K)) <= n/4.  C/Go/Python
+            // [45]'s constructed keys: arc 65 accepted (the accept-control, first),
+            // arc 64, K = 1 and K = 2^95 (both arc 1) and K = 2^129 (delta 0) refused.
+            boolean screen = HerraduraNl.nlV2KeyIsValid(BitArray.fromHex("8770eab9d82da8c8911f5a4efcbc92d37239911f000000000000000000000000", Herradura.N))
+                    && !HerraduraNl.nlV2KeyIsValid(BitArray.fromHex("611bb1869a63e203dca5a88338b4bebfd0afcff7000000000000000000000000", Herradura.N))
+                    && !HerraduraNl.nlV2KeyIsValid(BitArray.fromBigInteger(BigInteger.ONE, Herradura.N))
+                    && !HerraduraNl.nlV2KeyIsValid(BitArray.fromBigInteger(BigInteger.ONE.shiftLeft(95), Herradura.N))
+                    && !HerraduraNl.nlV2KeyIsValid(BitArray.fromBigInteger(BigInteger.ONE.shiftLeft(129), Herradura.N));
+            if (!screen) {
+                System.out.println("FAIL [7] hske_nl_a2 key screen (TODO #354)");
+                fails++;
+            } else if (!recovered.equals(pt)) {
                 System.out.println("FAIL [7] hske_nl_a2 round-trip");
                 fails++;
             } else {

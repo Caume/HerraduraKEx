@@ -1049,42 +1049,55 @@ static void nl_fscx_delta_v2_ba(BitArray *delta, const BitArray *b)
     ba_rol_quarter(delta, &prod);
 }
 
-/* Rejects NL-FSCX v2 keys for which the permutation degenerates to affine.
+/* arc(d) = n - (longest cyclic run of zero bits in d); arc(0) = 0.  The length of
+ * the shortest cyclic window holding every set bit of d (TODO #354). */
+static int nl_v2_delta_arc(const BitArray *d)
+{
+    int n = d->nbits, f = -1, run = 0, best = 0, i;
+#define NL_ARC_BIT(i) ((d->b[n / 8 - 1 - (i) / 8] >> ((i) % 8)) & 1)
+    for (i = 0; i < n; i++) if (NL_ARC_BIT(i)) { f = i; break; }
+    if (f < 0) return 0;
+    for (i = 1; i <= n; i++) {        /* walk once round the ring from a set bit */
+        if (NL_ARC_BIT((f + i) % n)) run = 0;
+        else if (++run > best) best = run;
+    }
+#undef NL_ARC_BIT
+    return n - best;
+}
+
+/* Refuses NL-FSCX v2 keys whose delta(B) has a short arc (TODO #354, v14.0.0):
  *
- * This is the affine class only — NOT the full set of differentially weak keys;
- * see SCOPE below.
+ *     valid  <=>  arc(delta(B)) > n/4
  *
- * delta(B) enters nl_fscx_v2 as an additive *constant*, and addition of a constant
- * c is GF(2)-affine for every input exactly when c == 0 or c == 2^(n-1) (the top
- * carry is discarded mod 2^n, making the addition pure XOR).  Since M is invertible
- * at every power-of-two n:
+ * arc(d) is the shortest cyclic window holding every set bit of d.  The screen
+ * contains the affine class TODO #168 refused until v14.0.0: delta(B) in
+ * {0, 2^(n-1)} has arc 0 or 1, and for exactly those keys the permutation
  *
- *     pi_B(A) = (fscx(A,B) + delta(B)) mod 2^n  is GF(2)-affine
- *         <=>  delta(B) in {0, 2^(n-1)}
+ *     pi_B(A) = (fscx(A,B) + delta(B)) mod 2^n
  *
- * For such a key HSKE-NL-A2 / HPKE-NL collapse to an affine map recoverable from a
- * handful of known plaintexts by linear algebra.  Class density is ~2^-129 at
- * n=256, so a random key is not at risk, but the check is one comparison.
+ * is GF(2)-affine (adding c is XOR iff c == 0 or c == 2^(n-1)), so HSKE-NL-A2 /
+ * HPKE-NL collapse to a map a handful of known plaintexts recover.
  *
- * SCOPE (TODO #253).  This is an exact characterisation of the AFFINE class and
- * nothing wider.  The keys admitting a zero-weight differential trail are a
- * strictly larger family — every B with tz(delta(B)) >= 4, at every width
- * including n=256 — and this check accepts all of it except the two endpoints.
- * That is deliberate: at n=256 such a key forfeits about tz/2 of 192 rounds
- * with probability ~2^-tz, so a random key loses at most 3 rounds with
- * probability 1/16, and screening it would change the key distribution for no
- * meaningful gain.
+ * The wider cut is the weak class TODO #257 measured: keys whose delta has its set
+ * bits in a short cyclic arc fail the per-round bar about half the time at
+ * n = 19-23, longer arcs 0-3% (SecurityProofs-10.md §11.63, §11.78-§11.81).  A
+ * uniformly drawn key has arc <= n/4 with probability about 2^-(3n/8), 2^-96 at
+ * n = 256, so the screen never refuses a generated key in practice; what it
+ * refuses is a key chosen by hand (a SESSION KEY PEM or a hex key, which anyone
+ * can write), e.g. B = 1 (delta = 2^64, arc 1) or B = 2^95 (delta = 2^253).
  *
- * See SecurityProofs-7.md §11.19.2 and §11.28 (TODO #159, #168, #253). */
+ * SCOPE.  Long-arc weak keys remain (§11.81.1: 0-2.4% of keys at n = 19-23 fail
+ * with long arcs), and so do keys with tz(delta) >= 4 whose arc is long (the
+ * zero-weight 3-round trails of §11.28.3: a random key loses at most 3 rounds with
+ * probability 1/16).  Neither has a cheap signature.
+ *
+ * See SecurityProofs-7.md §11.19.2 and §11.28, SecurityProofs-10.md §11.81
+ * (TODO #159, #168, #253, #354). */
 static int nl_v2_key_is_valid(const BitArray *b)
 {
-    BitArray d = BA_INIT, msb = BA_INIT;
+    BitArray d = BA_INIT;
     nl_fscx_delta_v2_ba(&d, b);
-    if (ba_is_zero(&d)) return 0;
-    memset(msb.b, 0, KEYBYTES);
-    msb.b[0] = 0x80;                 /* 2^(n-1): b[0] is the most significant byte */
-    if (ba_equal(&d, &msb)) return 0;
-    return 1;
+    return nl_v2_delta_arc(&d) > b->nbits / 4;
 }
 
 /* NL-FSCX v2: (fscx(A,B) + delta(B)) mod 2^n */

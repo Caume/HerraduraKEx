@@ -104,7 +104,7 @@ section .data
     t16_hdr_l   equ $-t16_hdr
     t17_hdr     db "[17] Accumulator (78.J): 4-leaf Merkle proof (1 trial)", 10
     t17_hdr_l   equ $-t17_hdr
-    t18_hdr     db "[18] v2_weak_key_reject: NL-FSCX v2 affine weak-key guard (n=32, 1 trial)", 10
+    t18_hdr     db "[18] v2_weak_key_reject: NL-FSCX v2 short-arc weak-key screen (n=32, 1 trial)", 10
     t18_hdr_l   equ $-t18_hdr
     pass1w      db "    1 / 1 weak-key checks correct  [PASS]", 10
     pass1w_l    equ $-pass1w
@@ -1268,14 +1268,26 @@ _start:
     mov  eax, t18_hdr
     mov  ecx, t18_hdr_l
     call print_str
+    mov  eax, 0x5A5A5A5A        ; accept-control: ordinary key, arc 30
+    call nl_v2_key_is_valid
+    cmp  eax, 1
+    jne  .t18_fail
+    mov  eax, 0xB8C5D000        ; accept-control: arc(delta) = 9, just above n/4 (TODO #354)
+    call nl_v2_key_is_valid
+    cmp  eax, 1
+    jne  .t18_fail
     mov  eax, 0x00020000        ; 2^17: delta(K)=0 at n=32 (TODO #169)
     call nl_v2_key_is_valid
     test eax, eax
     jnz  .t18_fail
-    mov  eax, 0x5A5A5A5A        ; ordinary key: must be accepted
+    mov  eax, 1                 ; B = 1: delta = 2^8, arc 1 (TODO #354)
     call nl_v2_key_is_valid
-    cmp  eax, 1
-    jne  .t18_fail
+    test eax, eax
+    jnz  .t18_fail
+    mov  eax, 0x5CF46C00        ; arc(delta) = 8 = n/4: refused (TODO #354)
+    call nl_v2_key_is_valid
+    test eax, eax
+    jnz  .t18_fail
     mov  eax, pass1w
     mov  ecx, pass1w_l
     call print_str
@@ -2100,15 +2112,25 @@ nl_fscx_delta_v2:
     ret
 
 ; ============================================================
-; nl_v2_key_is_valid: EAX=B --> EAX=1 if delta(B) not in {0,2^31}, else 0
-; (TODO #169 item 4 test copy of the suite's guard, item 2)
+; nl_v2_key_is_valid: EAX=B --> EAX=1 if arc(delta(B)) > 8, else 0
+; (test copy of the suite's guard, TODO #169 item 2, #354)
 ; ============================================================
 nl_v2_key_is_valid:
     call nl_fscx_delta_v2   ; eax = delta(B)
+    push ecx
+    push edx
+    not  eax                ; z = ~delta(B)
+    mov  ecx, 23            ; 3n/4 - 1 erosion passes (TODO #354)
+.kv_erode:
+    mov  edx, eax
+    rol  edx, 1
+    and  eax, edx           ; z &= ROL(z, 1): every run of ones shrinks by 1
+    dec  ecx
+    jnz  .kv_erode
+    pop  edx
+    pop  ecx
     test eax, eax
-    jz   .kv_invalid
-    cmp  eax, 0x80000000
-    je   .kv_invalid
+    jnz  .kv_invalid        ; a zero run of delta >= 24, i.e. arc <= 8
     mov  eax, 1
     ret
 .kv_invalid:

@@ -71,6 +71,15 @@ takes its width from its digit count. **At 256 bits from a PEM key nothing chang
 Decrypt narrow artifacts with the 12.x build that wrote them first. See
 [section 27](#27-the-256-fixed-symmetric-algos-refuse-other-widths-and-hex-keys-take-their-width-from-the-digit-count-v1300).
 
+The twenty-ninth is the reason the version is **14.0.0**. `nl_v2_key_is_valid` now
+refuses every NL-FSCX v2 key whose δ(K) has its set bits in a cyclic arc of n/4 bits or
+fewer, not only the two affine values. So `hske-nla2` refuses more keys at `enc` and
+`dec`. A key minted by `genpkey`, `kex` or any other generator is refused with
+probability about 2^−96. In practice only hand-written keys are affected: a SESSION KEY
+PEM or a `0x` hex key such as 1, 2^95 or 0xff…fe. **Decrypt anything under such a key
+with a 13.x build before upgrading.** See
+[section 29](#29-nl-fscx-v2-keys-are-screened-by-the-arc-of-delta-v1400).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -108,6 +117,7 @@ trusting any signature made by an earlier build.
 | [NL-FSCX v1's modes run 3n/4 rounds](#24-nl-fscx-v1s-modes-run-3n4-rounds-v1000) | v10.0.0 | Every HFSCX-256 digest and MAC, so every signature, password-protected private key, `.hkx` file, `--aead` tag and hash-derived session secret; every `hske-nla1` ciphertext; every `hpks-wots` / `hpks-xmss` key | **Decrypt and re-export with a pre-10.0.0 build before upgrading; regenerate WOTS/XMSS keys and re-sign.** Plain `hske-nla1` fails silently |
 | [HFSCX-256's compression is Matyas–Meyer–Oseas](#25-hfscx-256s-compression-is-matyasmeyeroseas-v1100) | v11.0.0 | Every HFSCX-256 digest and MAC, so every signature, password-protected private key, `.hkx` file, `--aead` tag and hash-derived session secret; every `hpks-wots` / `hpks-xmss` key | **Decrypt and re-export with a 10.x build before upgrading; regenerate WOTS/XMSS keys and re-sign.** Plain `hske-nla1` is unchanged |
 | [The Schnorr challenge and the Stern hash use HFSCX-256-DS](#26-the-schnorr-challenge-and-the-stern-hash-use-hfscx-256-ds-v1200) | v12.0.0 | Every `hpks-nl` signature and HPKS-T aggregate / signature; every `hpks-stern`, ring and HCRED credential signature; `hpke-stern` session keys | **Re-sign on 12.0.0+, and redo `hpke-stern` exchanges.** Keys, `hpke-stern-kem` and everything else are unchanged |
+| [NL-FSCX v2 keys are screened by the arc of delta](#29-nl-fscx-v2-keys-are-screened-by-the-arc-of-delta-v1400) | v14.0.0 | `hske-nla2` keys with arc(δ(K)) ≤ 64: hand-written keys only (a generated key is affected with probability about 2^−96) | **Decrypt with a 13.x build and re-encrypt under a generated key.** Nothing else changes |
 
 ---
 
@@ -1590,3 +1600,29 @@ build and re-encrypt under any other key.
 of the specification changed: one port that disagreed with the spec and with the other
 three now agrees with them. That is the class of sections 15 and 16, and follows their
 precedent. For a uniformly drawn key the case has probability 2^−256.
+
+## 29. NL-FSCX v2 keys are screened by the arc of delta (v14.0.0)
+
+**Who is affected:** anyone with an `hske-nla2` key whose δ(K) has a short arc. In
+practice that means a hand-written key. Every key the suite generates is affected with
+probability about 2^−96. `hpke-nl`, `fpe` and `twk` derive their v2 key from a DH output
+or a hash, so for them nothing changes in practice: `hpke-nl` encrypt and the `fpe`/`twk`
+derivations already redraw past a refused key, and `hpke-nl` decrypt refuses one as before.
+
+**What changed.** Write arc(d) for n minus the longest cyclic run of zero bits in d (arc(0)
+= 0), and δ(K) = ROL(K · ⌊(K + 1)/2⌋ mod 2^n, n/4) as in SPEC.md §8.2. Until 13.x,
+`nl_v2_key_is_valid` refused δ(K) ∈ {0, 2^(n−1)}, the affine class. From 14.0.0 it
+refuses **arc(δ(K)) ≤ n/4**, which contains the affine class (arc 0 or 1) and the
+short-arc keys TODO #257 measured weak (SecurityProofs-10.md §11.81). The rule is the
+same in all seven ports. Examples now refused: K = 1 (δ = 2^64), K = 2^95 (δ = 2^253),
+0x8000…0001 (arc 3), and every key from 2^256 − 2 down to 2^256 − 39. `enc` and `dec
+--algo hske-nla2` fail with "NL-FSCX v2 weak key" in all four CLIs.
+
+**What to do.** For each `hske-nla2` key you wrote by hand, try `enc` with a 14.0.0 build.
+If it is refused, decrypt the ciphertexts with a 13.x build and re-encrypt them under a
+key from `genpkey` or `kex`. A key that 14.0.0 accepts reads its old ciphertexts
+unchanged: no wire format, PEM label or CLI flag moved.
+
+**Why this is a MAJOR bump.** It changes what an existing `--algo` accepts, which is the
+2.0.0 surface. That is the reading behind sections 5 and 19, however few keys it reaches.
+

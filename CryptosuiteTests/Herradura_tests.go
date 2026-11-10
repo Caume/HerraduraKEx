@@ -2912,9 +2912,17 @@ func testWeakKeyRejection() {
 		weak96 := NewBitArray(256, new(big.Int).Lsh(big.NewInt(1), 96))
 		weakZero := NewBitArray(256, big.NewInt(0))
 		goodKey := NewBitArray(256, new(big.Int).Or(NewRandBitArray(256).BigInt(), big.NewInt(1)))
-		if !NlV2KeyIsValid(weak129) && !NlV2KeyIsValid(weak130) &&
-			!NlV2KeyIsValid(weak96) && !NlV2KeyIsValid(weakZero) &&
-			NlV2KeyIsValid(goodKey) {
+		// TODO #354: the refusal is arc(delta(K)) <= n/4.  K = 1 (delta 2^64) and
+		// K = 2^95 (delta 2^253) have arc 1; the two constructed keys sit either
+		// side of the cut.  The accept-controls come first.
+		arc65 := MustFromHex("8770eab9d82da8c8911f5a4efcbc92d37239911f000000000000000000000000", 256)
+		arc64 := MustFromHex("611bb1869a63e203dca5a88338b4bebfd0afcff7000000000000000000000000", 256)
+		one := NewBitArray(256, big.NewInt(1))
+		weak95 := NewBitArray(256, new(big.Int).Lsh(big.NewInt(1), 95))
+		if NlV2KeyIsValid(goodKey) && NlV2KeyIsValid(arc65) &&
+			!NlV2KeyIsValid(arc64) && !NlV2KeyIsValid(one) && !NlV2KeyIsValid(weak95) &&
+			!NlV2KeyIsValid(weak129) && !NlV2KeyIsValid(weak130) &&
+			!NlV2KeyIsValid(weak96) && !NlV2KeyIsValid(weakZero) {
 			okV2Weak++
 		}
 

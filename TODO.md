@@ -622,73 +622,21 @@ Status: **OPEN**
 
 ---
 
-### #354: screen v2 keys by the arc of delta(B)? Cost, threshold, and compatibility
+### #359: screen the v2 duplex's tweak by the same arc rule?
 
-**Question (from the #257 passes v12.0.4–v12.0.7).**  Can the suite detect and refuse the
-weakest key families, at negligible cost?  "Families" has two readings, and only one of
-them is a choice the suite can make.
+**Found closing #354 (v14.0.0).**  `nl_v2_key_is_valid` now refuses arc(delta(B)) <= n/4.
+HSKE-NL-A2 and HPKE-NL apply it at load, and FPE / `twk` rehash their derived subkey until
+it passes.  The v2 duplex (`hske-duplex`) derives its tweak from HFSCX-256 of the key and
+nonce without the check.  For a uniform nonce that is harmless, since about 2^-96 of
+tweaks are in the class.  But the nonce is public and unbounded, so a search over nonces
+reaches the class, and §11.81.2's unbounded-context question stands for this one site.
 
-**Width residue class n mod 3: not a lever.**  n = 256 is fixed by the wire format, and
-256 ≡ 1 (mod 3), the class of n = 19 and 22.  The §11.79/§11.80 data do not show either
-class to be safer: within each class the share below the bar falls over a three-bit step,
-and the one-bit steps between classes (19 → 20, 22 → 23) are too small to resolve, not a
-class penalty.  Changing the width would be a MAJOR break with no measured benefit.  Not
-pursued here.  (n = 20 fails less than n = 19 and more than n = 22: the four widths read as
-one fall with the width, §11.80.6.)
-
-**Key families: a short-arc screen is cheap, its value is not established.**  The weak keys
-are mostly those whose delta(B) has its nonzero bits in a short cyclic arc (arc = n minus
-delta's longest cyclic zero run; §11.63, §11.78–§11.80: arcs <= 12 fail about half the time
-at n = 19–23, longer arcs 0–3%).  `nl_v2_key_is_valid` (herradura.h, TODO #253) already
-computes delta(B) and rejects only the affine class {0, 2^(n-1)}; an arc test is one more
-O(n) pass over 256 bits at key load, nanoseconds, and at arc <= 12 it rejects about 2^-121
-of keys (§11.63's extrapolation; the 2^-123 first written here is the short-WINDOW class),
-so key generation would not measurably resample.  To settle:
-
-  1. **The threshold at n = 256.**  §11.59 showed arcs <= 12 stay weak at every width;
-     §11.61 that 13–20-bit windows behave like ordinary keys of that many bits, i.e. their
-     per-round cost is set by the arc, not n.  So an arc of a bits at n = 256 is roughly a
-     width-a key: which a falls below the conjectured bar (1.71 / 0.865 per round) at
-     3n/4 = 192 rounds?  Measure constructed keys at arcs 12–40 and the largest n the
-     solver reaches; derive A and its density at n = 256.
-  2. **Whether it is worth it.**  *Done in v12.0.8 (§11.81.2, `v2_arc_screen.py`); see the
-     pass below.*  At any A that keeps the density far below 2^-128 a
-     uniformly drawn key never hits the class, so the gain is only against keys that are
-     NOT uniform: low-entropy or structured secrets, an attacker who can influence B.
-     Inventory who chooses B per protocol (HSKE-NL-A2: the shared key; HPKE-NL: a DH
-     output; `twk`: a hash output, already unreachable), and decide per protocol.
-  3. **What it cannot catch.**  *Done in v12.0.8 (§11.81.1); the counts below are raw and
-     overstate it.*  The long-arc failures (up to 19 of 22 bits, §11.78) have no
-     cheap signature, so the screen removes the bulk of the weak class, not all of it.
-     Quantify the fraction removed on the pinned n = 19–23 samples (e.g. at n = 23, 5 of 5
-     differential and 7 of 8 linear failures have arcs <= 12).
-  4. **Compatibility.**  Rejecting more keys at load changes what an existing --algo
-     accepts: MAJOR under CLAUDE.md, with a MIGRATING.md entry.  A keygen-only screen
-     (resample, still accept on load) is not breaking.  Choose, and say which.
-  5. **If shipped:** four-port parity (C/Go/Python/Java, the spec primitive manifest and
-     PARAMETERS), a CONSTRUCTED short-arc key test with an accept-control first, a KAT,
-     and SECURITY.md's "documented rather than screened" wording for the A2 row.  Check
-     whether v3 (HSKE-NL-A3, `twk --v3`) has an analogous class (nl_fscx_v3_weak_keys.py)
-     or needs none.
-
-**Items 2 and 3 (v12.0.8, SecurityProofs-10.md §11.81, `v2_arc_screen.py`).**  The pinned
-samples are Neyman-allocated, so short arcs are over-drawn and raw counts overstate the
-catch.  Weighted by stratum, a screen at arc <= 12 removes 59-100% of the differential share
-below the bar and 59-82% of the linear share over n = 19-23 (bootstrap SE 5-8% at n = 19
-and 20, about 19% at 22 and 23), and leaves 0-2.4% of keys failing with long arcs.  n = 23's
-"5 of 5 / 7 of 8" above are raw; weighted they are 100% / 73%.  No cut transfers across
-widths: arc <= 14 catches every n = 19 failure but rejects 39% of n = 19 keys, and at n = 22
-and 23 no cut up to 16 bits catches every linear failure.  Who can make B non-uniform:
-HSKE-NL-A2's key file, by hand (a SESSION KEY PEM anyone can write, or the raw `0x` hex the
-Python and Go CLIs read; 0x8000...0001 has arc 3 and passes nl_v2_key_is_valid); the
-HPKE-NL sender, only to its own cost (R = 1 gives B = 1, arc 1, and a public key); and for
-`twk` / FPE / duplex only by search (`twk`'s 2^96 tweaks expect 2^-25 class keys).  A
-decrypt-side HPKE-NL screen is no oracle: off the identity no element of a subgroup of
-order up to 274177 has an arc under 194.  **So a keygen-only screen protects nothing, and a
-load-time screen protects only HSKE-NL-A2 against a hand-chosen key (MAJOR).**  Item 1
-narrows: FPE's ctx and the duplex nonce are unbounded, and a 2^121-query search beats the
-generic max(T, 256 - T) = 135 only if exploiting a short-arc key at n = 256 costs under
-256 - 2 * 121 = 14 bits.  Item 1 now needs only that cost, not the cut A.
+The duplex is rated research ("do not deploy").  To decide:
+1. Whether to rehash the tweak past the class, as FPE / `twk` do.  It would change the
+   output only for nonces whose tweak is refused, so it is wire-format-breaking at about
+   2^-96 per message.  It needs a MIGRATING.md note, and a MAJOR bump if it lands
+   outside a research row's latitude.
+2. If not, record the gap in SECURITY.md's duplex row.
 
 Status: **OPEN**
 

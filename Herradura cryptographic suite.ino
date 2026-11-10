@@ -187,8 +187,10 @@ uint32 nl_fscx_revolve_v1(uint32 a, uint32 b, int steps) {
     return a;
 }
 
-/* Rejects NL-FSCX v2 keys for which the permutation degenerates to affine
- * (delta(B) in {0, 2^31} — see herradura.h's nl_v2_key_is_valid, TODO #169).
+/* Refuses NL-FSCX v2 keys whose delta(B) has a short cyclic arc,
+ * arc(delta(B)) <= n/4 = 8, which contains the affine class delta(B) in
+ * {0, 2^31} (see herradura.h's nl_v2_key_is_valid, TODO #169, #354).  About
+ * 2^-12 of keys at n = 32.
  *
  * Failure-mode convention (TODO #169 item 3): this target has no CLI, so
  * there is no keygen boundary to reject at. Mirroring the C/Go/Python
@@ -201,8 +203,12 @@ uint32 nl_fscx_revolve_v1(uint32 a, uint32 b, int steps) {
  * across all three unguarded targets without adding a new abort-in-hot-path
  * behavior that doesn't exist even at the reference (C/Go/Python) layer. */
 uint8_t nl_v2_key_is_valid(uint32 b) {
-    uint32 d = nl_fscx_delta_v2(b);
-    return d != 0 && d != 0x80000000UL;
+    /* valid iff arc(delta(B)) > n/4 = 8 (TODO #354): z = ~delta, and each pass
+     * z &= ROL(z, 1) shortens every cyclic run of ones by one, so z survives the
+     * 3n/4 - 1 = 23 passes iff delta has a zero run of 24 or more. */
+    uint32 z = ~nl_fscx_delta_v2(b);
+    for (uint8_t i = 0; i < 23; i++) z &= (z << 1) | (z >> 31);
+    return z == 0;
 }
 
 /* NL-FSCX v2: (fscx(A,B) + delta(B)) mod 2^32 */

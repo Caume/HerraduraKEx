@@ -3443,8 +3443,8 @@ func cmdEnc(args []string) {
 		pubBA := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
 		nb := n / 8
 		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
-		// r is ours to choose, so for hpke-nl resample past the ~2^-129 affine
-		// weak-key class (TODO #168) rather than failing an honest encryption.
+		// r is ours to choose, so for hpke-nl resample past the ~2^-96 short-arc
+		// weak-key class (TODO #168, #354) rather than failing an honest encryption.
 		var r *BitArray
 		var Rba *BitArray
 		var encKey *BitArray
@@ -4874,12 +4874,13 @@ func cmdPakeDemo(args []string) {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
-// errWeakV2Key is returned when an NL-FSCX v2 key falls in the affine weak-key
-// class delta(K) in {0, 2^(n-1)} (SecurityProofs-7.md 11.19.2, TODO #168).
+// errWeakV2Key is returned when an NL-FSCX v2 key falls in the short-arc weak-key
+// class arc(delta(K)) <= n/4 (SecurityProofs-10.md 11.81, TODO #168, #354).
 var errWeakV2Key = errors.New(
-	"NL-FSCX v2 affine weak key - delta(K) is 0 or 2^(n-1), which makes the " +
-		"permutation GF(2)-affine and the ciphertext recoverable by linear algebra " +
-		"(SecurityProofs-7.md 11.19.2, TODO #168)")
+	"NL-FSCX v2 weak key - the set bits of delta(K) lie in a cyclic arc of at " +
+		"most n/4 bits (this includes delta(K) = 0 and 2^(n-1), which make the " +
+		"permutation GF(2)-affine); use a uniformly random key " +
+		"(SecurityProofs-10.md 11.81, TODO #168, #354)")
 
 func die(prefix string, err error) {
 	fmt.Fprintln(os.Stderr, prefix+":", err)

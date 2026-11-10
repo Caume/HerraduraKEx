@@ -12,7 +12,7 @@ named tool prints.
 
 | count | value | emitted by |
 |---|---|---|
-| suite-internal primitive manifest | 202 | `spec/check_language_parity.py` (`PRIMITIVES`, four cells each) |
+| suite-internal primitive manifest | 203 | `spec/check_language_parity.py` (`PRIMITIVES`, four cells each) |
 | PARAMETERS table | 88 | `spec/check_language_parity.py` (TODO #278, four cells each) |
 | findings-gating analysis scripts | 116 | `SecurityProofsCode/run_findings_gates.py --list` (TODO #289) |
 | fresh-sampling findings gates | 29 | `SecurityProofsCode/run_findings_gates.py --list` (`SAMPLED_GATES`, TODO #300) |

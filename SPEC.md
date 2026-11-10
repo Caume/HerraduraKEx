@@ -296,12 +296,21 @@ NL_FSCX_v2_inv(Y, B) = B ⊕ M^{-1}((Y − delta(B)) mod 2^n)
 where `M^{-1}` is the inverse of the linear map from §3.1 (well-defined
 since `M` is invertible — it has finite multiplicative order `n/2`).
 `NL_FSCX_REVOLVE_v2(A, B, steps)` / `..._inv(Y, B, steps)` iterate the
-forward/inverse map `steps` times; a key `B` for which `A + delta(B)`
-would overflow the top bit is rejected by `nl_v2_key_is_valid` (see
-`herradura.h`) to keep the construction bijective — implementations
-**MUST** perform this check before use. See `SecurityProofs-4.md` §11.8
-for the bijectivity proof (v2 replaces v1's one-wayness with an explicit
-invertibility argument, at the cost of the extra validity check).
+forward/inverse map `steps` times.  v2 is a bijection in `A` for every
+`B`; what `nl_v2_key_is_valid` (see `herradura.h`) refuses is a WEAK key.
+Write `arc(d)` for `n` minus the longest cyclic run of zero bits in `d`
+(`arc(0) = 0`): the shortest cyclic window holding every set bit.  Since
+v14.0.0 (TODO #354) a key is valid iff
+
+```
+arc(delta(B)) > n/4
+```
+
+which contains the affine class `delta(B) ∈ {0, 2^(n−1)}` refused until
+then (for those keys `NL_FSCX_v2` is GF(2)-affine), and refuses about
+`2^(−3n/8)` of uniform keys, `2^−96` at `n = 256`.  Implementations
+**MUST** perform this check before use.  See `SecurityProofs-4.md` §11.8
+for the bijectivity proof and `SecurityProofs-10.md` §11.81 for the screen.
 
 ## 9. NL/PQC Protocol Variants
 

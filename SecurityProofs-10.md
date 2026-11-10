@@ -1958,7 +1958,7 @@ The stratified bootstrap errors on the caught fraction are 5–8% at n = 19 and 
 
 | site | who sets B | can B be short-arc? | what a screen would do |
 |---|---|---|---|
-| HSKE-NL-A2 | the key file | **yes, by hand.** A SESSION KEY PEM is two DER integers anyone can write, and the Python and Go CLIs also read a raw `0x…` hex key. 0x8000…0001 has arc 3 and passes `nl_v2_key_is_valid` | refuse a hand-chosen key: misuse protection |
+| HSKE-NL-A2 | the key file | **yes, by hand.** A SESSION KEY PEM is two DER integers anyone can write, and the Python and Go CLIs also read a raw `0x…` hex key. 0x8000…0001 has arc 3 and passed `nl_v2_key_is_valid` until v14.0.0 | refuse a hand-chosen key: misuse protection (shipped in v14.0.0, §11.81.4) |
 | HPKE-NL | the sender, through R | yes, but only to the sender's cost: R = 1 gives B = R^a = 1, arc 1, accepted, and the key is then public whatever its arc | nothing to protect |
 | `twk` / FPE / duplex | a hash of the key and the context | by search only: `twk`'s 2^96 tweaks expect 2^−25 keys in the class | see below |
 
@@ -1975,3 +1975,32 @@ The stratified bootstrap errors on the caught fraction are 5–8% at n = 19 and 
 **Unchanged:** every rating, and every line of shipped code.
 
 **Caveats:** the weighted catch at n = 22 and 23 rests on 5–9 failures. The 2^−121 density is extrapolated. The 14-bit break-even uses §11.77.3's data model, which is no stronger than the trail-weight conjecture it sits on.
+
+### 11.81.4 The screen ships (v14.0.0, TODO #354 items 4 and 5)
+
+**The rule.** `nl_v2_key_is_valid` accepts B iff arc(δ(B)) > n/4. It replaces the affine-class check, which it contains: δ ∈ {0, 2^(n−1)} has arc 0 or 1. The cut is deliberately far wider than the 12 bits §11.59–§11.80 measured weak. At n = 256 an arc of 64 bits is about a width-64 key, and a uniform key falls at or below it with probability about 2^−(3n/8) = 2^−96. So no key the suite mints is refused in practice. What the cut refuses is a hand-chosen key: B = 1 (δ = 2^64), B = 2^95 (δ = 2^253, §11.77's witness), 0x8000…0001 (arc 3), and every key from 2^256 − 2 down to 2^256 − 39 (arcs of 11 or less).
+
+**The measure, in every port.** C, Go and Java walk the ring once from a set bit. Python erodes z = ~δ by z &= ROL(z, 1) until it is zero, which counts δ's longest zero run. The ARM, NASM and Arduino ports run the erosion for a fixed 3n/4 − 1 = 23 passes and accept iff z is then 0. Before shipping:
+
+- C, Go, Java and an independent Python reference agree byte for byte on every key at n = 16 and 24.
+- Python alone ran n = 20, a width the BitArray ports refuse.
+- The four 256-bit ports agree on 24,021 keys, 3,000 of them constructed near the cut.
+- The 32-bit erosion equals the run walk on all 2^32 keys, and the ARM and NASM routines (under qemu) and the Arduino function agree with it on millions more.
+- The measured refusal rate is 2^−5.92, 2^−7.38, 2^−8.98 and 2^−12.00 at n = 16, 20, 24 and 32, against 2^−6, 2^−7.5, 2^−9 and 2^−12 predicted.
+
+The check costs 2–3 µs in C, Go and Java and about 4 µs in Python. That is under 1.5% of one 192-round encryption, once per key.
+
+**Who it acts on.**
+
+| site | effect |
+|---|---|
+| HSKE-NL-A2 | `enc` and `dec` refuse a short-arc key in all four CLIs. This is the MAJOR change: a key file accepted before can now be refused (MIGRATING.md). |
+| HPKE-NL encrypt | redraws r past the class, about 2^−96 per draw |
+| HPKE-NL decrypt | refuses a short-arc B = R^a. In a subgroup of order d, only the identity (B = 1, arc 1) is refused, so a refusal shows R^a = 1, i.e. d divides a. The public key already shows that, since C^((2^n − 1)/d) = 1, so the refusal is still no oracle (`v2_v3_b_setter.py` §6, `v2_arc_screen.py` §2). |
+| FPE / `twk` | rehash the subkey until it passes, so a context search can no longer land on a short-arc subkey |
+| the v2 duplex | derives its tweak without the check; §11.81.2's unbounded-nonce question stands for it |
+| HSKE-NL-A3, `twk --v3` | no check, by design: v3 has no weak class (§11.34, TODO #255) |
+
+**Tests.** C/Go/Python [45] and Java [7] refuse constructed keys at arc 64, at arc 1 (B = 1 and B = 2^95) and at δ = 0. They accept a constructed key at arc 65 and a random key, with those accept-controls checked first. The 32-bit [18] does the same at n = 32: arc 9 is accepted, while arc 8 and B = 1 are refused. `CliTest/test_sym_width.sh` refuses 0xff…fe in all four CLIs and accepts an ordinary hex key first.
+
+**Unchanged:** every rating; every pinned KAT and PEM artifact (none has a short-arc key); the long-arc failures (§11.81.1), which no cheap test sees.

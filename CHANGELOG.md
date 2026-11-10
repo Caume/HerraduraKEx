@@ -2,6 +2,48 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [14.0.0] - 2026-11-09
+
+### TODO #354 — NL-FSCX v2 keys are screened by the arc of delta (BREAKING, MIGRATING.md §29)
+
+- **The rule.**  `nl_v2_key_is_valid` accepts B iff arc(δ(B)) > n/4, where arc(d) is
+  n minus d's longest cyclic run of zero bits.  It replaces the affine-class check
+  δ ∈ {0, 2^(n−1)}, which it contains (arc 0 or 1).  The cut is 64 bits at n = 256,
+  against the 12 that §11.59–§11.80 measured weak.  It refuses about 2^−(3n/8) = 2^−96
+  of uniform keys, so in practice it acts only on hand-written keys: B = 1, B = 2^95,
+  0x8000…0001, and every key from 2^256 − 2 down to 2^256 − 39.
+- **All seven ports.**  C, Go, Java and Python get a new `nl_v2_delta_arc` primitive
+  (spec manifest row `nl-v2-delta-arc`).  ARM, NASM and Arduino erode ~δ for a fixed
+  23 passes; on those targets only the harness calls the predicate, as before.
+  Prototyped in the scratchpad before any shipped edit:
+  - The ports agree exhaustively at n = 16 and 24, on 24,021 keys at 256, and on all
+    2^32 keys for the 32-bit form.
+  - Measured refusal rates are 2^−5.92 to 2^−12.00 at n = 16–32, as predicted.
+  - The check costs 2–4 µs per key, under 1.5% of one encryption.
+- **Where it acts.**
+  - `hske-nla2` `enc` / `dec` refuse a short-arc key in all four CLIs, with a new
+    "NL-FSCX v2 weak key" message.
+  - `hpke-nl` encrypt redraws past the class; decrypt refuses it.  In a small subgroup
+    only the identity is refused, i.e. exactly when d | a, which the public key already
+    shows, so the refusal is still no oracle.
+  - FPE / `twk` rehash past the class.
+  - The v2 duplex's tweak is not screened (TODO #359 filed).
+- **Tests.**  C/Go/Python [45] and Java [7] check constructed keys at arc 64 / 65,
+  B = 1 and B = 2^95; the 32-bit [18] checks arc 8 / 9 and B = 1.  Accept-controls come
+  first in both.
+- **Gates restated, none loosened.**
+  - `CliTest/test_sym_width.sh`: 0xff…fe becomes a refusal, 96 refusals in all; its
+    accept-control is now an ordinary key.
+  - `v2_arc_screen.py`: its two "passes / accepted" findings become refusals; it adds
+    the arc-64 / 65 boundary and the d | a check.
+  - `v2_v3_b_setter.py`: the 2^95 witness is refused, and §6 asserts "only the
+    identity, i.e. d | a".
+- **Docs.**  SPEC.md §8.2 states the rule; its old "overflow" wording was wrong, since
+  v2 is bijective for every B.  Also updated: SECURITY.md's A2 row (no longer
+  "documented rather than screened"), SecurityProofs-10.md §11.81.4, SecurityProofs-8.md
+  §11.35.3's note, and the spec notes.
+- MAJOR: it changes what `--algo hske-nla2` accepts.  MIGRATING.md §29.
+
 ## [13.0.1] - 2026-11-08
 
 ### TODO #357 — the Python suite takes B + 1 mod 2^n in NL-FSCX v2's delta
