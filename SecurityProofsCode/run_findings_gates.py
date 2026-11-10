@@ -231,10 +231,12 @@ NON_GATING = {
 # false-failure probability; None means the entry rests on its argument.
 # A red run must be worth believing.  At 1e-3 a failure is 99.9% likely to be
 # real, which is the standard the rest of this job is built to; the measured
-# total is currently 6.4e-5 (5.4e-5 before TODO #304 derived the three `follows`
-# rates this sum had been missing), and it is dominated by two gates -- #299's
-# replicated chi-square in hfscx_256_analysis.py §3 at 5e-5 and #302's
-# seed-budget gate at 1e-5.  Everything else in the table sums to about 4e-6.
+# total is currently 5.4e-5, and it is dominated by #299's replicated
+# chi-square in hfscx_256_analysis.py §3 at 5e-5.  Everything else in the table
+# sums to about 4e-6.  It read 6.4e-5 until TODO #358, which found #302's
+# seed-budget gate -- rated 1e-5 by #304 -- running at 7.4e-4 on its --quick
+# path, 12x the whole table, and moved it to 3e-11.  A rate is only as good as
+# the null it was measured against.
 # If this budget is ever approached, replicate the largest contributor; raising
 # the number is how the premise rots.
 _FLAKE_BUDGET = 1e-3
@@ -343,36 +345,38 @@ SAMPLED_GATES = {
         "pass only at the protocol's own soundness error (2^-lambda per "
         "repetition); completeness (`assert ok`) is exact"),
     # ── found by TODO #301's widening: sampling through the SUITE ───────────
-    "zkbpp_kkw_view_hiding.py": ("follows", 1e-5,
-        "MEASURED null (TODO #304), and the one `follows` entry that turned out "
-        "sound: 200 000 bootstrap replications of §2's statistic over 60 pooled "
-        "runs gave ZERO exceedances of the shipped 1-bit band, so the rate is "
-        "an upper bound rather than an estimate.  Two things the measurement "
-        "settled that the argument could not.  The unit of observation really "
-        "is the ROUND -- rounds inside one call share the witness, and the "
-        "between-call to within-call variance ratio is 0.88 (seeded) and 1.27 "
-        "(derived), i.e. no detectable correlation -- and the n = 8 seeded cell "
-        "sits at a mean of 1.126, a 0.17-bit bias that eats a sixth of the band "
-        "and is the thing to watch if the ladder ever moves.  An analytic "
-        "estimate said this cell ran at ~7e-3 and a wider band was drafted on "
-        "the strength of it; the bootstrap refuted that and the change was "
-        "dropped, which is the same discipline the other two entries got.  "
-        "Five of its six sections are exact for zkboo_view_hiding.py's reason "
+    "zkbpp_kkw_view_hiding.py": ("negligible", 3e-11,
+        "MEASURED, and measured twice, because the first measurement was wrong.  "
+        "TODO #304 bootstrapped §2 to 0 exceedances in 200 000 and rated it "
+        "1e-5; it then failed a full gate run (TODO #358).  The statistic "
+        "DROPPED zero-hit rounds before averaging, which conditions the mean on "
+        "its own sample: at n = 8 the seeded regime expects 1.98 hits a round, "
+        "14% of rounds score none, and the kept mean read 1.19 where the true "
+        "one is 1.03 -- the '0.17-bit bias' #304 recorded was this filter, not "
+        "small-width combinatorics.  #358 re-measured on an aarch64 SBC: 6000 "
+        "independent calls (4000 at n = 8, 1000 each at n = 4 and 6; 24 000 "
+        "rounds at n = 8), per-round hits near Poisson (zero share 0.1377 vs "
+        "0.1375, variance 1.07x), between/within-call variance 1.05-1.15.  "
+        "The shipped --quick rule then failed 7.4e-4 per run by exact "
+        "convolution of the measured hit law -- regrouping the real calls into "
+        "--quick-sized runs gave 1 in 1333 -- and left a cell thin, i.e. "
+        "unscored, 2.6e-3 of runs.  Now zeros are kept and both modes run "
+        "20 x 6 rounds per width (--quick drops a WIDTH, never rounds), and "
+        "the rate is a Chernoff bound from each cell's EMPIRICAL moment "
+        "generating function summed over the Binomial regime count: 3.0e-11, "
+        "all of it the n = 8 seeded cell (exact convolution 2e-12); the "
+        "derived cells sit at their 4e-16 thin floor.  The empirical MGF "
+        "cannot see a tail past the largest observation, which is why the "
+        "Poisson fit is recorded beside it.  The bar is still on the "
+        "EXPONENT, to within 1 bit, where the two candidate exponents (2n-1 "
+        "against n-1) differ by n bits; the CONSTANT is not gated.  "
+        "Observations are per ROUND, not per candidate: a round's candidates "
+        "meet one enumerated seed multiset and move together.  A failing run "
+        "reprints §2's table at its end, so the runner's tail keeps the cell.  "
+        "The other five sections are exact for zkboo_view_hiding.py's reason "
         "(TODO #302): §1 and §3 enumerate every candidate against a fresh "
         "transcript, §4's u' - u == -rho.(residual) is an identity mod q, §5 "
-        "is an equality, §6 reads source.  §2 is the one sampled section, and "
-        "the bar FOLLOWS the statistic rather than sitting at a fixed level: "
-        "it gates the EXPONENT of the seed-budget law to within 1 bit, where "
-        "the two candidate exponents (2n-1 against n-1) differ by n bits, so "
-        "the band is ~n-1 bits clear of the alternative at every width it "
-        "measures.  The CONSTANT is deliberately not gated -- small-width "
-        "combinatorics move it by 0.2-0.6 bits and gating that would be "
-        "gating an artifact.  Observations are per ROUND, not per candidate: "
-        "a round's candidates meet one enumerated seed multiset and move "
-        "together, and a draft that banded them as independent cells was an "
-        "order of magnitude too tight and flaked at 1 run in 3.  A cell with "
-        "fewer than 5 rounds is reported and NOT scored, because a threshold "
-        "a thin statistic always clears is #234's vacuous pass"),
+        "is an equality, §6 reads source"),
     "zkboo_view_hiding.py": ("exact", None,
         "Draws a fresh ZKBoo keypair and proof every run, and the verdict is a "
         "COUNT over that proof: all 2^n candidates for the witness survive the "

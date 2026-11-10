@@ -2,6 +2,32 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [14.0.1] - 2026-11-09
+
+### TODO #358 — zkbpp_kkw_view_hiding.py §2 kept its zero-hit rounds; measured flake 7.4e-4 → 3e-11
+
+- **The cause.**  §2 averaged its per-round seed-hit ratio over rounds with at least one hit
+  (`x > 0`), which conditions the statistic on its own sample.  At n = 8 the seeded regime
+  expects 1.98 hits a round and 13.77% of rounds score none, so the mean read 1.19
+  against a true 1.03.  That is the "0.17-bit bias" TODO #304 recorded.  #304's bootstrap
+  resampled the already-filtered pool, so it could not see the filter, and rated the
+  gate 1e-5.
+- **The measurement.**  6000 independent calls on the aarch64 SBC, not pooled.  The
+  shipped `--quick` rule failed 7.4e-4 of runs by exact convolution of the measured hit
+  law; regrouping the real calls into `--quick`-sized runs gave 1 in 1333.  A further
+  2.6e-3 of runs left the cell thin and unscored.
+- **The fix.**  Zeros are kept, and both modes run 20 × 6 rounds per width (`--quick` drops
+  a width, never rounds).  This is affordable because the per-seed (share, tape) table is
+  now built once per (seed length, n) instead of every round.  A call fell from 54 s to
+  1.6 s with identical output, and the `--quick` gate takes 228 s.  The 1-bit band on the
+  exponent is unchanged.
+- **The rate.**  A Chernoff bound from each cell's empirical moment-generating function
+  gives 3.0e-11 per run (the exact convolution for n = 8 seeded gives 2e-12).
+  `run_findings_gates.py` rates the script `negligible` at 3e-11.  The job's nominal
+  false-failure total falls from 6.4e-5 to 5.4e-5 (`spec/COVERAGE_COUNTS.md`).
+- **Diagnosability.**  A failing run reprints §2's table after its summary, inside the
+  runner's 40-line tail.  This was shown to fire with the seeded ratios forced ×4.
+
 ## [14.0.0] - 2026-11-09
 
 ### TODO #354 — NL-FSCX v2 keys are screened by the arc of delta (BREAKING, MIGRATING.md §29)
