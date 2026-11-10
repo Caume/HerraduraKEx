@@ -24790,3 +24790,66 @@ v13.0.0.)
 
 Status: **DONE v14.0.0** — nl_v2_key_is_valid refuses arc(delta(B)) <= n/4 in all seven ports (MAJOR, MIGRATING.md §29); three gates restated, none loosened.
 
+---
+
+### #358: zkbpp_kkw_view_hiding.py §2 failed on a full gate run, against a rated 1e-5
+
+**Found while verifying #357 (v13.0.1).**  A full `run_findings_gates.py --quick` run on
+an aarch64 SBC failed `zkbpp_kkw_view_hiding.py` at "§2 the seed-budget law holds"; an
+immediate rerun passed.  The gate is unrelated to #357: its prover runs the NL-FSCX v1
+circuit, which no line of #357's diff reaches.  `run_findings_gates.py` classifies it
+`follows` at 1e-5 per run (TODO #304: 200 000 bootstrap replications, zero exceedances
+of the 1-bit band).  Two things don't fit that figure:
+
+- **One failure in a handful of local full runs** is far likelier than 1e-5 allows.
+- **Zero in 200 000 isn't an upper bound of 1e-5.**  The 95% bound is about 1.5e-5 per
+  replication, and the per-run rate also depends on how many cells and rounds one run
+  draws.  The passing rerun had the n = 8 seeded cell at ratio 0.655, 0.61 bits off.
+  That is well past the 1.126 mean (0.17 bits) #304 recorded, so this cell's spread may
+  be wider than the bootstrap's pooled runs showed, or depend on the host or `--quick`.
+
+The gate runner keeps only a failing script's tail, so the failing run's §2 table (which
+cell, how many bits off) was lost.
+
+To do, under CLAUDE.md's rule "if a gate flakes, fix that gate's threshold" (replicate
+per #299); never loosen it by hand or add `continue-on-error`:
+1. Have §2 print its table into the tail the runner keeps, or have the runner keep the
+   failing section, so the next failure names its cell.
+2. Re-measure §2's statistic per cell over many `--quick` runs on this host (not pooled),
+   and record the per-run false-failure rate with its confidence bound.
+3. Derive the band from that distribution (or replicate the cell per #299), keeping the
+   2n − 1 against n − 1 exponent separation that is the finding.  Update the `follows`
+   entry's rate and reason to match.
+
+**Resolution (v14.0.1).**  Re-measured on the aarch64 SBC, not pooled: 6000 independent
+`_zkbpp_survivors` calls (4000 at n = 8, 1000 each at n = 4 and 6).
+
+- **The cause was a filter, not the band.**  §2 dropped zero-hit rounds before averaging
+  (`x > 0`), which conditions the statistic on its own sample.  The n = 8 seeded cell
+  expects 255·255/2^15 = 1.98 hits a round; 13.77% of rounds score none (Poisson:
+  13.75%).  Dropping them read the mean as 1.19 against a kept-zeros 1.03.  That is
+  #304's "0.17-bit bias", and it is where #304's bootstrap went wrong: resampling a
+  pool that has already been filtered cannot see the filter.
+- **The shipped `--quick` rate.**  Exact convolution of the measured hit law at
+  3 × 6 rounds gives 7.4e-4 per run (74× the rated 1e-5), plus 2.6e-3 of runs in which
+  the cell came out thin and unscored.  Regrouping the real calls into `--quick`-sized runs
+  gave 1 failure in 1333, which agrees.  Keeping zeros at that depth alone would have been
+  worse (3.0e-3).
+- **The fix.**  Zeros are kept, and both modes run 20 × 6 rounds per width (`--quick`
+  drops the n = 6 width, never rounds).  That became affordable by caching the per-seed
+  (share, tape) table, which depends only on (seed length, n), never on the round.
+  Re-deriving it per round was ~95% of §2's time; a call fell from 54 s to 1.6 s, with
+  identical output, and the whole `--quick` gate runs in 228 s.
+- **The rate.**  A Chernoff bound from each cell's empirical moment-generating function,
+  summed over the Binomial regime count, gives 3.0e-11 per run, all of it from n = 8 seeded
+  (the exact convolution gives 2e-12).  The derived cells are overdispersed, with variance
+  ~30× Poisson's, but they sit at their 4e-16 thin floor.  `run_findings_gates.py` now
+  rates the script `negligible` at 3e-11; the job total falls from 6.4e-5 to 5.4e-5.
+- **Diagnosability.**  A failing run reprints §2's table after the summary, so it lands in
+  the runner's 40-line tail.  Shown to fire: with seeded ratios forced ×4, the run exits 1
+  and the tail names both seeded cells at 2.0–2.1 bits off.
+- **Not loosened.**  The 1-bit band on the exponent, and the n-bit separation of 2n − 1
+  from n − 1, are unchanged.  The constant's residue measured 0.02–0.04 bits in every cell,
+  not the "0.2–0.6 at n = 4" the section's text had said.
+
+Status: **DONE v14.0.1** — §2 kept its zero-hit rounds and runs 20 × 6 rounds per width; measured rate 7.4e-4 → 3e-11, band unchanged.

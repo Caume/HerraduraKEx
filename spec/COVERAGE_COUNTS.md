@@ -16,7 +16,7 @@ named tool prints.
 | PARAMETERS table | 88 | `spec/check_language_parity.py` (TODO #278, four cells each) |
 | findings-gating analysis scripts | 116 | `SecurityProofsCode/run_findings_gates.py --list` (TODO #289) |
 | fresh-sampling findings gates | 29 | `SecurityProofsCode/run_findings_gates.py --list` (`SAMPLED_GATES`, TODO #300) |
-| nominal job false-failure rate | 6.4e-05 | `SecurityProofsCode/run_findings_gates.py --list` (per `analysis-findings` run, TODO #304) |
+| nominal job false-failure rate | 5.4e-05 | `SecurityProofsCode/run_findings_gates.py --list` (per `analysis-findings` run, TODO #304, #358) |
 | numbered-test flake budget | 1.0e-05 | `spec/check_language_parity.py` (summed over sampled numbered tests, TODO #316/#319) |
 | rates evaluated from source | 8 | `spec/check_language_parity.py` (`_SAMPLED_TEST_RATES`, TODO #319) |
 | rate mechanisms measured | 8 | `spec/check_language_parity.py` (`_RATE_MECHANISMS`, TODO #320) |

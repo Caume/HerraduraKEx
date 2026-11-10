@@ -150,19 +150,37 @@ def _seed_supply(e, seed_bytes, sp1, sp2, nb, mask, n):
     share -> the tape patterns reachable alongside it (or, when the hidden
     party is party 2, the tape patterns alone -- its share is not seeded)."""
     supply, free = {}, {}
-    for k in range(1 << (8 * seed_bytes)):
-        sd = k.to_bytes(seed_bytes, 'big')
-        te = H._zkp_nl_h(sd, b'tape')
-        pat = 0
-        for i in range(n - 1):
-            pat |= H._zkp_nl_prg_bit(te, i) << i
+    for se, pat in _seed_table(seed_bytes, n, nb, mask):
         if e == 2:
             free[pat] = free.get(pat, 0) + 1
         else:
-            se = int.from_bytes(H._zkp_nl_h(sd, b'share')[:nb], 'big') & mask
             supply.setdefault((se ^ sp1 ^ sp2) & mask, {}).setdefault(pat, 0)
             supply[(se ^ sp1 ^ sp2) & mask][pat] += 1
     return supply, free
+
+
+_SEED_TABLES = {}
+
+
+def _seed_table(seed_bytes, n, nb, mask):
+    """Every seed's (share, tape pattern), computed once per (seed length, n).
+    Neither depends on the round -- a round only XORs the share with the two
+    opened shares -- and re-deriving it per round was ~95% of §2's run time
+    (TODO #358), which is what kept §2 at too few rounds to be clear of its
+    band."""
+    key = (seed_bytes, n)
+    if key not in _SEED_TABLES:
+        tab = []
+        for k in range(1 << (8 * seed_bytes)):
+            sd = k.to_bytes(seed_bytes, 'big')
+            te = H._zkp_nl_h(sd, b'tape')
+            pat = 0
+            for i in range(n - 1):
+                pat |= H._zkp_nl_prg_bit(te, i) << i
+            se = int.from_bytes(H._zkp_nl_h(sd, b'share')[:nb], 'big') & mask
+            tab.append((se, pat))
+        _SEED_TABLES[key] = tab
+    return _SEED_TABLES[key]
 
 
 def _zkbpp_survivors(n, rounds, seed_bytes=None):
@@ -242,7 +260,13 @@ def section1(n=8, rounds=8):
     return ok
 
 
-def section2(widths=(4, 6, 8), rounds=6, trials=4, seed_bytes=1):
+# §2's table, kept for main() to reprint at the end of a failing run: the gate
+# runner keeps only a failing script's last 40 lines, and §3-§6 print well over
+# that after §2, so #358's one failure lost the cell that caused it.
+_S2_TABLE = []
+
+
+def section2(widths=(4, 6, 8), rounds=6, trials=20, seed_bytes=1):
     print(SEP)
     print("§2 — ZKB++: the seed budget, and where it runs out")
     print(SEP)
@@ -261,13 +285,24 @@ def section2(widths=(4, 6, 8), rounds=6, trials=4, seed_bytes=1):
     print("  THE GATE IS ON THE EXPONENT, and that is a deliberate limit.  The")
     print("  CONSTANT carries small-width combinatorics this file does not model")
     print("  in full -- the certain-hit term below is one piece of it, and the")
-    print("  residue is worth 0.2-0.6 bits at n = 4 -- so gating it would be")
+    print("  residue measured 0.02-0.04 bits in every cell over 6000 calls")
+    print("  (TODO #358) -- small, but not modelled, so gating it would be")
     print("  gating an artifact.  The exponent is what the claim rests on, and")
     print("  the two candidate exponents (2n-1 against n-1) differ by n BITS, so")
     print("  a 1-bit band separates them with room to spare.")
     print()
-    print(f"  {'n':>3}  {'regime':<8} {'c':>3}  {'rounds':>6}  {'ratio':>7}"
-          f"  {'bits off':>9}  verdict")
+    print("  ZERO-HIT ROUNDS ARE OBSERVATIONS (TODO #358).  At n = 8 the seeded")
+    print("  regime expects 255*255/2^15 = 1.98 hits a round, so 14% of rounds")
+    print("  score none.  Dropping them conditioned the mean on its own sample:")
+    print("  it read 1.19 where the kept-zeros mean is 1.03, and with 12-odd")
+    print("  rounds the cell failed 7e-4 of runs against a rated 1e-5.  Zeros are")
+    print("  kept and every width runs 20 x 6 rounds, which puts the worst cell")
+    print("  ~1e-12 from its band; the measurement is in run_findings_gates.py.")
+    print()
+    hdr = (f"  {'n':>3}  {'regime':<8} {'c':>3}  {'rounds':>6}  {'ratio':>7}"
+           f"  {'bits off':>9}  verdict")
+    print(hdr)
+    _S2_TABLE[:] = [hdr]
     ok = True
     for n in widths:
         agg = {'seeded': [], 'derived': []}
@@ -276,17 +311,22 @@ def section2(widths=(4, 6, 8), rounds=6, trials=4, seed_bytes=1):
             for key in agg:
                 agg[key].extend(obs[key])
         for key, c in (('seeded', 2 * n - 1), ('derived', n - 1)):
-            r = [x for x in agg[key] if x == x and x > 0]
+            # NaN only where a round expects nothing; a zero is a measurement.
+            r = [x for x in agg[key] if x == x]
             if len(r) < 5:
-                print(f"  {n:>3}  {key:<8} {c:>3}  {len(r):>6}  {'—':>7}"
-                      f"  {'—':>9}  thin")
+                row = (f"  {n:>3}  {key:<8} {c:>3}  {len(r):>6}  {'—':>7}"
+                       f"  {'—':>9}  thin (n/a, not scored)")
+                print(row)
+                _S2_TABLE.append(row)
                 continue
             mean = sum(r) / len(r)
-            bits = abs(math.log2(mean))
+            bits = abs(math.log2(mean)) if mean > 0 else float('inf')
             good = bits <= 1.0
             ok &= good
-            print(f"  {n:>3}  {key:<8} {c:>3}  {len(r):>6}  {mean:>7.3f}"
-                  f"  {bits:>9.2f}  {'PASS' if good else 'FAIL'}")
+            row = (f"  {n:>3}  {key:<8} {c:>3}  {len(r):>6}  {mean:>7.3f}"
+                   f"  {bits:>9.2f}  {'PASS' if good else 'FAIL'}")
+            print(row)
+            _S2_TABLE.append(row)
     print()
     K_SHIPPED = 8 * H._ZKPP_SEED_BYTES
     print(f"  CONSEQUENCE at the shipped seed length (k = {K_SHIPPED}):")
@@ -743,8 +783,10 @@ def main():
           "an emulation")
     print()
     widths = (4, 8) if args.quick else (4, 6, 8)
-    rounds2 = 6 if args.quick else 6
-    trials = 3 if args.quick else 5
+    # Same depth in both modes (TODO #358): --quick drops a WIDTH, never rounds,
+    # because the round count is what the flake rate is computed at.
+    rounds2 = 6
+    trials = 20
     perts = 2 if args.quick else 4
     findings = [
         ("§1 ZKB++ seeds do not determine A", section1()),
@@ -760,6 +802,10 @@ def main():
     bad = [name for name, ok in findings if not ok]
     for name, ok in findings:
         print(f"  {name:<42} {'PASS' if ok else 'FAIL'}")
+    if not findings[1][1]:
+        print("\n  §2's table (reprinted so the runner's tail keeps it, TODO #358):")
+        for row in _S2_TABLE:
+            print(row)
     if bad:
         print("\n*** FAILED: %d finding(s) stopped reproducing: %s ***"
               % (len(bad), ", ".join(bad)))
