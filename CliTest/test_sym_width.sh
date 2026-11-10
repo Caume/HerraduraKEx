@@ -28,7 +28,7 @@
 # SHAPE.  §0 is the control that lets the matrix fail (a wrong key must not
 # recover); §1 the 256-bit matrix, which is the accept-control for every
 # refusal below; §2 the refusals, each against a fixture shown to be genuine;
-# §3 the hex form, and the all-ones key (TODO #357); §4 the counts, asserted
+# §3 the hex form, and the keys at the top of the range (TODO #357, #354); §4 the counts, asserted
 # independently.
 set -euo pipefail
 
@@ -285,16 +285,27 @@ done
 
 # B = 2^256 - 1 (TODO #357): SPEC.md 8.2 takes B + 1 mod 2^n, so delta = 0, the affine
 # class, and every CLI refuses it.  Python's suite once computed B + 1 unbounded, got
-# delta = 2^63 and ACCEPTED it.  Accept-control first: 2^256 - 2 is an ordinary key.
+# delta = 2^63 and ACCEPTED it.  2^256 - 2 has delta = 2^65, arc 1, and the short-arc
+# screen (TODO #354) refuses it too: near the top, B * floor((B+1)/2) mod 2^n is small,
+# so every key from 2^256 - 2 down to 2^256 - 39 has an arc of 11 or less.  The
+# accept-control is therefore an ordinary key (arc 250), checked first.
 printf '0x%s\n' "$(printf 'f%.0s' $(seq 64))" > "$TMP/hexones.txt"
 printf '0x%se\n' "$(printf 'f%.0s' $(seq 63))" > "$TMP/hexfe.txt"
+printf '0x009a4c211950d98217698f961f892503becd244837df76e599eb39664241d42c\n' > "$TMP/hexctl.txt"
 for l in "${LANGS[@]}"; do
+    # shellcheck disable=SC2086
+    if ${CLI[$l]} enc --algo hske-nla2 --key "$TMP/hexctl.txt" --in "$MSG" --out "$TMP/o.pem" \
+           >/dev/null 2>&1; then
+        pass "$l: CONTROL: an ordinary hex key (arc 250) is accepted by hske-nla2"; HEX=$((HEX+1))
+    else
+        fail "$l: CONTROL: an ordinary hex key (arc 250) was refused by hske-nla2"
+    fi
     # shellcheck disable=SC2086
     if ${CLI[$l]} enc --algo hske-nla2 --key "$TMP/hexfe.txt" --in "$MSG" --out "$TMP/o.pem" \
            >/dev/null 2>&1; then
-        pass "$l: CONTROL: 0xff..fe is accepted by hske-nla2"; HEX=$((HEX+1))
+        fail "$l: 0xff..fe (arc 1) was accepted by hske-nla2"
     else
-        fail "$l: CONTROL: 0xff..fe was refused by hske-nla2"
+        pass "$l: 0xff..fe has arc 1, and hske-nla2 refuses it"; refused
     fi
     # shellcheck disable=SC2086
     if ${CLI[$l]} enc --algo hske-nla2 --key "$TMP/hexones.txt" --in "$MSG" --out "$TMP/o.pem" \
@@ -308,13 +319,13 @@ done
 # ── 4. The counts, asserted independently ────────────────────────────────────
 # Round-trips: 3 algos x 4 x 4 = 48.  Hex: 4 + 16 + 16 + 4 = 40.  Refusals:
 # 2 widths x 4 CLIs x 7 ops = 56, + 12 narrow-key dec, + 12 relabelled, + 8 hex,
-# + 4 all-ones = 92.
+# + 4 all-ones + 4 ff..fe = 96.
 echo ""
 echo "256-bit round-trips: $TRIPS   hex-key checks: $HEX   refusals: $REFUSALS"
 if [ "${#LANGS[@]}" -eq 4 ]; then
     [ "$TRIPS" -eq 48 ]    || fail "expected 48 round-trips with all four CLIs, saw $TRIPS"
     [ "$HEX" -eq 40 ]      || fail "expected 40 hex-key checks with all four CLIs, saw $HEX"
-    [ "$REFUSALS" -eq 92 ] || fail "expected 92 refusals with all four CLIs, saw $REFUSALS"
+    [ "$REFUSALS" -eq 96 ] || fail "expected 96 refusals with all four CLIs, saw $REFUSALS"
 fi
 
 echo ""

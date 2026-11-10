@@ -22,14 +22,17 @@ running.
   §2  ITEM 2 -- WHO CAN MAKE B NON-UNIFORM, site by site (§11.77's census):
         HSKE-NL-A2  the key file.  A SESSION KEY PEM is two DER integers anyone can
                     write, and all four CLIs also read a raw 0x... hex key (#355); a
-                    hand-chosen B such as 2^255 + 1 has arc 3 and passes
-                    nl_v2_key_is_valid.  The ONE site where a screen would act, against
-                    misuse.  A kex-derived key is uniform and never meets the class.
-        HPKE-NL     the sender sets B outright: R = 1 gives B = R^a = 1, arc 1, accepted.
-                    But then the key is public, weak or not: the sender harms only its own
-                    ciphertext.  A decrypt-side screen is no oracle on a: off the identity
-                    no element of a subgroup of order 3 .. 65537 (274177 without --quick)
-                    has an arc under 194.
+                    hand-chosen B such as 2^255 + 1 has arc 3, and passed
+                    nl_v2_key_is_valid until v14.0.0, which refuses arc <= n/4 (#354).
+                    The ONE site where a screen acts, against misuse.  A kex-derived key
+                    is uniform and never meets the class.
+        HPKE-NL     the sender sets B outright: R = 1 gives B = R^a = 1, arc 1, accepted
+                    until v14.0.0 and refused since.  Either way the key is public: the
+                    sender harms only its own ciphertext.  A decrypt-side screen is no
+                    oracle on a: off the identity no element of a subgroup of order
+                    3 .. 65537 (274177 without --quick) has an arc under 194, so decrypt
+                    refuses an R of order d exactly when R^a = 1, i.e. d | a, which the
+                    public key already shows (C^((2^n - 1)/d) = 1).
         twk / FPE   B is a hash of the key and context.  Reaching the class (density about
         / duplex    2^-121, §11.63's extrapolation) takes about 2^121 contexts; `twk`'s 96-bit
                     tweak space expects 2^-25 such keys.  For FPE's ctx and the duplex's
@@ -38,6 +41,8 @@ running.
                     under 256 - 2 * 121 = 14 bits.  That is item 1's question, sharpened.
   §3  VERDICT.  A keygen-only screen protects nothing (every key the suite mints is
       uniform).  A load-time screen protects HSKE-NL-A2 against hand-chosen keys only.
+      v14.0.0 ships one, at arc <= n/4 (TODO #354): far wider than the 12 bits measured
+      weak, and it refuses about 2^-96 of uniform keys (2^-(3n/8)).
 
 Every statement about cost is in the trail-weight model; the 2^-121 density is §11.63's
 extrapolation, not a count.  The n = 256 cost of a short-arc key is not measured here.
@@ -231,9 +236,15 @@ def section_2():
 
     print("\n  HSKE-NL-A2: B is the key file's integer.")
     w = (1 << 255) + 1
-    check(ok(w) and arc(w) == 3, "a hand-chosen 256-bit key, 0x8000...0001, has arc %d and "
-          "passes nl_v2_key_is_valid" % arc(w))
-    check(not ok(1 << 255), "CONTROL: 0x8000...0000 is in the affine class and is refused")
+    a65 = 0x8770eab9d82da8c8911f5a4efcbc92d37239911f << 96
+    a64 = 0x611bb1869a63e203dca5a88338b4bebfd0afcff7 << 96
+    check(ok(a65) and arc(a65) == N // 4 + 1, "CONTROL: a constructed key with arc %d = n/4 + 1 "
+          "passes nl_v2_key_is_valid" % arc(a65))
+    check(not ok(a64) and arc(a64) == N // 4, "a constructed key with arc %d = n/4 is refused: "
+          "the cut is arc <= n/4 (TODO #354, v14.0.0)" % arc(a64))
+    check(not ok(w) and arc(w) == 3, "a hand-chosen 256-bit key, 0x8000...0001, has arc %d and "
+          "is refused by nl_v2_key_is_valid since v14.0.0 (it passed before)" % arc(w))
+    check(not ok(1 << 255), "0x8000...0000 is in the affine class and is refused")
     py = BS._src("HerraduraCli/herradura.py")
     go = BS._src("HerraduraCli/herradura_cli.go")
     cc = BS._src("HerraduraCli/herradura_cli.c")
@@ -247,8 +258,9 @@ def section_2():
           "loadKey; TODO #355, v13.0.0), a route for a human-chosen B")
 
     print("\n  HPKE-NL: the sender sets B = R^a.")
-    check(ok(1) and arc(1) == 1, "R = 1 gives B = 1: arc %d, accepted.  The key is then "
-          "public, so a weak B harms only the sender's own ciphertext" % arc(1))
+    check(not ok(1) and arc(1) == 1, "R = 1 gives B = 1: arc %d, refused since v14.0.0 "
+          "(accepted before).  The key is public either way, so a weak B harms only the "
+          "sender's own ciphertext" % arc(1))
     poly, order = S.GF_POLY[N], (1 << N) - 1
     worst = N
     for d in ((3, 5, 17, 257, 641, 65537) if QUICK else
@@ -262,6 +274,24 @@ def section_2():
         worst = min(worst, mn)
     check(worst >= 194, "no small-subgroup element but the identity has an arc under %d: a "
           "decrypt-side arc screen at any cut below it is no oracle on a mod d" % worst)
+    # What decrypt's refusal does reveal: R of order d, B = R^a, refused iff B = 1 iff
+    # d | a -- and C = g^a shows that already.  Multiples of d are forced in, so both
+    # outcomes occur (the control fires).
+    rng = random.Random(354)
+    agree = fired = 0
+    for d in (3, 5, 17, 257):
+        h = S.gf_pow(S.GF_GEN, order // d, poly, N)
+        for t in range(8):
+            a = rng.getrandbits(N) % order
+            if t < 2:
+                a -= a % d
+            refused = not ok(S.gf_pow(h, a, poly, N))
+            public = S.gf_pow(S.gf_pow(S.GF_GEN, a, poly, N), order // d, poly, N) == 1
+            agree += refused == public == (a % d == 0)
+            fired += refused
+    check(agree == 32 and fired >= 8, "decrypt refuses an R of order d exactly when d | a "
+          "(%d of 32 agree, %d refused): the public key C = g^a already shows d | a, so the "
+          "refusal is no oracle" % (agree, fired))
 
     print("\n  twk / FPE / duplex: B is a hash of the key and the context.")
     exp = TWK_TWEAK_BITS - LOG2_DENSITY
@@ -284,10 +314,11 @@ def main():
   A keygen-only screen protects nothing: every key the suite mints (a kex output, a DH
   output, a hash) is pseudo-uniform and meets the class with probability about 2^-121.  A
   load-time screen acts at one site, HSKE-NL-A2, and only against a hand-chosen key; it
-  would catch most of the weak class there but not the long-arc failures.  Refusing on
-  load changes what --algo hske-nla2 accepts (MAJOR, MIGRATING.md).  Whether the
-  unbounded-context search matters is item 1's: does a short-arc key cost under 14 bits
-  at n = 256?""")
+  catches most of the weak class there but not the long-arc failures.  v14.0.0 ships it
+  at arc <= n/4 (TODO #354), which changed what --algo hske-nla2 accepts (MAJOR,
+  MIGRATING.md).  FPE and `twk` rehash their subkey until it passes, so a context search
+  can no longer land either on a short-arc key.  The v2 duplex derives its tweak without
+  the check, so for it the unbounded-nonce question above stands as item 1 put it.""")
     rule("Summary")
     if FAIL:
         print("*** FAILED: %d finding(s) did not reproduce ***" % len(FAIL))

@@ -27,9 +27,12 @@ P = B * floor((B+1)/2) mod 2^n:
       past that the low bits of P come in pairs (v2(2m^2) = 1 + 2 v2(m)) and the
       tail halves its slope.  A case-split model, checked against exhaustive
       enumeration at n = 16 and 20 (24 without --quick), gives the n = 256 tail
-      for the keys the check accepts.  Witness: B = 2^95 has tz(delta) = 253,
-      127 free rounds of 192, and passes nl_v2_key_is_valid.  CONTROL: B = 2^96 is
-      the affine class and is refused.
+      for the keys the affine check accepted.  Witness: B = 2^95 has tz(delta) =
+      253, 127 free rounds of 192, and passed nl_v2_key_is_valid until v14.0.0.
+      Since then the check refuses arc(delta) <= n/4 (TODO #354), and every
+      tz >= 3n/4 key has its bits in the top n/4, so the tail past k = 191 is
+      refused; the model keeps the old accepted set, an upper bound on the new one.
+      CONTROL: B = 2^96 is the affine class and is refused.
   §5  QUESTION 2 — MANY TWEAKS.  `twk` and FPE derive B = HFSCX-256-DS(key || tweak)
       and the attacker chooses the tweak.  Over 2^T tweaks the best has the tz
       whose accepted tail is 2^-T, and the data to exploit it is at least
@@ -38,9 +41,11 @@ P = B * floor((B+1)/2) mod 2^n:
       above 256 throughout `twk`'s 96-bit tweak space.  CONTROL: a bar of 1.0
       fails the second check.
   §6  QUESTION 1 — HPKE-NL DECRYPT.  B = R^a with R from the ciphertext; the CLIs
-      refuse the affine class with an error.  Every element of each prime-order
-      subgroup of GF(2^256)* up to 65537 (274177 without --quick) is tested: none
-      is in the affine class, so the refusal is no oracle on a mod d.
+      refuse a weak B with an error.  Every element of each prime-order subgroup of
+      GF(2^256)* up to 65537 (274177 without --quick) is tested: since v14.0.0 the
+      identity (B = 1, delta = 2^64, arc 1) is refused and no other element is, so
+      a refusal shows R^a = 1, i.e. d | a -- which the public key already shows
+      (C^((2^n - 1)/d) = 1).  The refusal is no oracle on a mod d.
   §7  QUESTION 3 — v3.  Already answered by TODO #255's nl_fscx_v3_weak_keys.py
       §4(b): the zero-weight class dissolves (worst one-round probability 5/16 for
       every key).  Held here: that gate is still a gate, and chi on 5- and 7-bit
@@ -60,6 +65,7 @@ import ast
 import importlib.util
 import math
 import os
+import random
 import re
 import sys
 from fractions import Fraction
@@ -317,14 +323,15 @@ SITES = {
     "round": ("the caller (a round composing another: v3 = chi . v2, revolve = rounds)",
               "inherited from the caller", "-"),
     "a2": ("the key holder (the key itself)",
-           "affine class refused at enc and dec in all four CLIs", "random key: §3-§4"),
+           "short-arc class (arc <= n/4) refused at enc and dec in all four CLIs",
+           "random key: §3-§4"),
     "a3": ("the key holder (the key itself)", "none, by design (v3 has no weak class)",
            "§7"),
     "hpke_nl": ("the SENDER, through R (decrypt: B = R^a)",
-                "encrypt redraws r past the affine class; decrypt refuses it", "§6"),
+                "encrypt redraws r past the short-arc class; decrypt refuses it", "§6"),
     "hpke_nl3": ("the SENDER, through R", "none, by design", "§7"),
     "fpe_twk": ("HFSCX-256-DS(len || key || tweak): the attacker picks the tweak",
-                "affine class rehashed away in the derivation", "§5"),
+                "short-arc class rehashed away in the derivation", "§5"),
     "fpe_twk3": ("HFSCX-256-DS(len || key || tweak), tags 0x22/0x23",
                  "none, by design", "§5, §7"),
     "duplex": ("HFSCX-256(DS || key || nonce): the nonce is public",
@@ -576,8 +583,8 @@ def section_4():
     print("  n = 256, accepted keys:  k = 16: 2^-%.1f   64: 2^-%.1f   128: 2^-%.1f   "
           "190: 2^-%.1f   253: 2^-%.1f   254: 2^-%.1f"
           % tuple(la[k] for k in (16, 64, 128, 190, 253, 254)))
-    check(abs(math.log2(p0) + 129) < 1e-9, "delta = 0 has density 2^-129, as "
-          "nl_v2_key_is_valid's docstring says")
+    check(abs(math.log2(p0) + 129) < 1e-9, "delta = 0 has density 2^-129, the bulk "
+          "of the affine class")
     check(all(abs(la[k] - k) < 1e-6 for k in range(1, 65)),
           "for k <= 64 the accepted tail is 2^-k, as §11.28.4 assumed")
     check(abs(la[128] - 97) < 0.5 and abs(la[253] - 160) < 0.5,
@@ -585,8 +592,13 @@ def section_4():
           "(not 2^-253)")
     S = _load("suite", os.path.join(ROOT, PY))
     w = 1 << 95
-    check(tz(N, delta(N, w)) == 253 and S.nl_v2_key_is_valid(S.BitArray(N, w)),
-          "WITNESS: B = 2^95 has delta = 2^253, tz 253, and passes nl_v2_key_is_valid")
+    check(tz(N, delta(N, w)) == 253 and not S.nl_v2_key_is_valid(S.BitArray(N, w)),
+          "WITNESS: B = 2^95 has delta = 2^253, tz 253, and is refused by "
+          "nl_v2_key_is_valid since v14.0.0 (arc 1; it passed the affine check)")
+    hi = [(1 << 255) | (1 << 192), (1 << 250) | (1 << 200) | (1 << 193)]
+    check(all(S.nl_v2_delta_arc(d, N) <= N // 4 for d in hi),
+          "a delta whose set bits all lie at or above bit 192 (tz >= 3n/4) has arc <= "
+          "n/4 and is refused: the tail past k = 191 is screened out")
     check(delta(N, 1 << 96) == 1 << 255 and not S.nl_v2_key_is_valid(S.BitArray(N, 1 << 96)),
           "CONTROL: B = 2^96 has delta = 2^255 and is refused")
     return la
@@ -660,25 +672,43 @@ def section_6():
     for d in ((3, 5, 17, 257, 641, 65537) if QUICK else
               (3, 5, 17, 257, 641, 65537, 274177)):
         h = S.gf_pow(S.GF_GEN, order // d, poly, N)
-        x, aff, mt, seen = 1, 0, 0, set()
+        x, refused, mt, seen = 1, [], 0, set()
         for i in range(d):
             if not S.nl_v2_key_is_valid(S.BitArray(N, x)):
-                aff += 1
+                refused.append(x)
             if i:
                 mt = max(mt, tz(N, delta(N, x)))
             seen.add(x)
             x = S.gf_mul(x, h, poly, N)
         worst = max(worst, mt)
-        check(order % d == 0 and x == 1 and len(seen) == d and aff == 0,
-              "order-%d subgroup: %d elements, none in the affine class (largest tz "
+        check(order % d == 0 and x == 1 and len(seen) == d and refused == [1],
+              "order-%d subgroup: %d elements, only the identity refused (largest tz "
               "off the identity: %d)" % (d, d, mt))
+    # So decrypt refuses an R of order d iff R^a = 1 iff d | a, and C = g^a shows
+    # that already.  Multiples of d are forced in, so the refusal fires (CONTROL).
+    rng = random.Random(352)
+    agree = fired = 0
+    for d in (3, 5, 17, 257):
+        h = S.gf_pow(S.GF_GEN, order // d, poly, N)
+        for t in range(8):
+            a = rng.getrandbits(N) % order
+            if t < 2:
+                a -= a % d
+            ref = not S.nl_v2_key_is_valid(S.BitArray(N, S.gf_pow(h, a, poly, N)))
+            pub = S.gf_pow(S.gf_pow(S.GF_GEN, a, poly, N), order // d, poly, N) == 1
+            agree += ref == pub == (a % d == 0)
+            fired += ref
+    check(agree == 32 and fired >= 8, "a refusal of R of order d is exactly d | a (%d of "
+          "32 agree, %d refused, the forced multiples among them), which C^((2^n - 1)/d) "
+          "= 1 already reveals: no oracle" % (agree, fired))
     print("""
   A sender who picks R of small order d already confines R^a to d values, which is
   the Pohlig-Hellman exposure SECURITY.md cites for HPKE-NL's demo-only rating.  The
-  refusal would add an oracle only if some subgroup element fell in the affine
-  class; none does, and outside a small subgroup the refusal fires with probability
-  about 2^-129 per query.  Steering B into the zero-weight class needs the same
-  small subgroup, where the key is already down to d candidates.  No change.""")
+  refusal would add an oracle only if it split the subgroup by something the public
+  key does not show.  Since v14.0.0 it refuses the identity alone (B = 1 has arc 1),
+  i.e. exactly when d | a, which C = g^a shows; outside a small subgroup it fires
+  with probability about 2^-96 per query.  Steering B into the zero-weight class
+  needs the same small subgroup, where the key is already down to d candidates.""")
     return worst
 
 
@@ -746,7 +776,8 @@ def main():
     print("""
   Who sets B, for every v2/v3 call: the key holder (A2, A3), a hash of the key
   (twk, FPE, the duplex), the sender (HPKE-NL, -NL3), or a pinned vector.
-    Q1  HPKE-NL: the refusal is no oracle; no small subgroup reaches the class.
+    Q1  HPKE-NL: the refusal is no oracle; in a small subgroup it fires at the
+        identity alone, i.e. on d | a, which the public key shows.
     Q2  twk/FPE: spreading over tweaks never beats the generic multi-target cost,
         and stays above 256 in twk's tweak space, on both axes at the bars.
     Q3  v3: no weak class (TODO #255), held.

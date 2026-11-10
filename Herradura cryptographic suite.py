@@ -1118,41 +1118,55 @@ def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
 
 
 def nl_v2_key_is_valid(B: BitArray) -> bool:
-    """Rejects NL-FSCX v2 keys for which the permutation degenerates to affine.
+    """Refuses NL-FSCX v2 keys whose delta(B) has a short arc (TODO #354, v14.0.0):
 
-    This is the affine class only — NOT the full set of differentially weak keys;
-    see SCOPE below.
+        valid  <=>  arc(delta(B)) > n/4
 
-    delta(B) enters nl_fscx_v2 as an additive *constant*, and addition of a constant
-    c is GF(2)-affine for every input exactly when c == 0 or c == 2^(n-1) (the top
-    carry is discarded mod 2^n, making the addition pure XOR).  Since M is invertible
-    at every power-of-two n, this gives the exact characterisation
+    arc(d) is the shortest cyclic window holding every set bit of d
+    (nl_v2_delta_arc).  The screen contains the affine class TODO #168 refused until
+    v14.0.0: delta(B) in {0, 2^(n-1)} has arc 0 or 1, and for exactly those keys
 
-        pi_B(A) = (fscx(A,B) + delta(B)) mod 2^n  is GF(2)-affine
-            <=>  delta(B) in {0, 2^(n-1)}
+        pi_B(A) = (fscx(A,B) + delta(B)) mod 2^n
 
-    For such a key HSKE-NL-A2 and HPKE-NL collapse to an affine map recoverable in
-    full from a handful of known plaintexts by linear algebra.  At n=256 the class
-    is every B divisible by 2^129 (delta=0), plus e.g. B=2^96 (delta=2^255) — about
-    2^-129 of the key space, so a uniformly random key is not at risk, but the check
-    is cheap and the class is otherwise silently accepted.
+    is GF(2)-affine (adding c is XOR iff c == 0 or c == 2^(n-1)), so HSKE-NL-A2 and
+    HPKE-NL collapse to a map a handful of known plaintexts recover.
 
-    SCOPE (TODO #253).  This is an exact characterisation of the AFFINE class and
-    nothing wider.  The keys admitting a zero-weight differential trail are a
-    strictly larger family — every B with tz(delta(B)) >= 4, at every width
-    including n=256 — and this check accepts all of it except the two endpoints.
-    That is deliberate: at n=256 such a key forfeits about tz/2 of 192 rounds
-    with probability ~2^-tz, so a random key loses at most 3 rounds with
-    probability 1/16, and screening it would change the key distribution for no
-    meaningful gain.  See SecurityProofs-7.md §11.28.3-§11.28.4.
+    The wider cut is the weak class TODO #257 measured: keys whose delta has its set
+    bits in a short cyclic arc fail the per-round bar about half the time at
+    n = 19-23, longer arcs 0-3% (SecurityProofs-10.md §11.63, §11.78-§11.81).  A
+    uniformly drawn key has arc <= n/4 with probability about 2^-(3n/8), 2^-96 at
+    n = 256, so the screen never refuses a generated key in practice; what it
+    refuses is a key chosen by hand (a SESSION KEY PEM or a hex key, which anyone
+    can write), e.g. B = 1 (delta = 2^64, arc 1) or B = 2^95 (delta = 2^253).
 
-    See SecurityProofs-7.md §11.19.2 and §11.28,
-    SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py and
-    SecurityProofsCode/nl_fscx_v2_fixed_key.py (TODO #159, #168, #253).
+    SCOPE.  Long-arc weak keys remain (§11.81.1: 0-2.4% of keys at n = 19-23 fail
+    with long arcs), and so do keys with tz(delta) >= 4 whose arc is long (the
+    zero-weight 3-round trails of SecurityProofs-7.md §11.28.3: a random key loses
+    at most 3 rounds with probability 1/16).  Neither has a cheap signature.
+
+    See SecurityProofs-7.md §11.19.2 and §11.28, SecurityProofs-10.md §11.81,
+    SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py,
+    SecurityProofsCode/nl_fscx_v2_fixed_key.py and
+    SecurityProofsCode/v2_arc_screen.py (TODO #159, #168, #253, #354).
     """
     n     = B.size
     delta = BitArray(n, (B.uint * (((B.uint + 1) & B._mask) >> 1)) & B._mask).rotated(n // 4).uint
-    return delta not in (0, 1 << (n - 1))
+    return nl_v2_delta_arc(delta, n) > n // 4
+
+
+def nl_v2_delta_arc(d: int, n: int) -> int:
+    """arc(d) = n - (longest cyclic run of zero bits in d); arc(0) = 0 (TODO #354).
+
+    Erosion: z = ~d, and each pass z &= ROL(z, 1) shortens every cyclic run of ones
+    in z by one, so the number of passes to reach 0 is the longest zero run of d."""
+    if d == 0:
+        return 0
+    mask = (1 << n) - 1
+    z, run = ~d & mask, 0
+    while z:
+        z &= ((z << 1) | (z >> (n - 1))) & mask
+        run += 1
+    return n - run
 
 
 def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:

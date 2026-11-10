@@ -151,10 +151,14 @@ uint32 nl_fscx_revolve_v1(uint32 a, uint32 b, int steps) {
     return a;
 }
 
-/* TODO #169 item 4 test copy of the suite's guard, item 2 */
+/* test copy of the suite's guard (TODO #169 item 2, #354) */
 uint8_t nl_v2_key_is_valid(uint32 b) {
-    uint32 d = nl_fscx_delta_v2(b);
-    return d != 0 && d != 0x80000000UL;
+    /* valid iff arc(delta(B)) > n/4 = 8 (TODO #354): z = ~delta, and each pass
+     * z &= ROL(z, 1) shortens every cyclic run of ones by one, so z survives the
+     * 3n/4 - 1 = 23 passes iff delta has a zero run of 24 or more. */
+    uint32 z = ~nl_fscx_delta_v2(b);
+    for (uint8_t i = 0; i < 23; i++) z &= (z << 1) | (z >> 31);
+    return z == 0;
 }
 
 uint32 nl_fscx_v2(uint32 a, uint32 b) {
@@ -1238,9 +1242,12 @@ void test_accumulator() {
 }
 
 void test_v2_weak_key_reject() {
-    Serial.println("[18] v2_weak_key_reject: NL-FSCX v2 affine weak-key guard (n=32, 1 trial)  [NEW]");
-    int ok = !nl_v2_key_is_valid(0x00020000UL)   /* 2^17: delta(K)=0 at n=32 (TODO #169) */
-             && nl_v2_key_is_valid(0x5A5A5A5AUL); /* ordinary key: must be accepted */
+    Serial.println("[18] v2_weak_key_reject: NL-FSCX v2 short-arc weak-key screen (n=32, 1 trial)  [NEW]");
+    int ok = nl_v2_key_is_valid(0x5A5A5A5AUL)     /* accept-control: ordinary key, arc 30 */
+             && nl_v2_key_is_valid(0xB8C5D000UL)  /* accept-control: arc 9, just above n/4 (#354) */
+             && !nl_v2_key_is_valid(0x00020000UL) /* 2^17: delta(K)=0 at n=32 (TODO #169) */
+             && !nl_v2_key_is_valid(1UL)          /* B = 1: delta = 2^8, arc 1 (#354) */
+             && !nl_v2_key_is_valid(0x5CF46C00UL);/* arc 8 = n/4: refused (#354) */
     Serial.print("    "); Serial.print(ok ? 1 : 0); Serial.print(" / 1 weak-key checks correct  [");
     verdict(ok);
     Serial.println();

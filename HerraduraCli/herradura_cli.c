@@ -24,11 +24,12 @@
 
 static void die(const char *msg) { fputs(msg, stderr); fputc('\n', stderr); exit(1); }
 
-/* NL-FSCX v2 affine weak-key class delta(K) in {0, 2^(n-1)} (TODO #168). */
+/* NL-FSCX v2 short-arc weak-key class arc(delta(K)) <= n/4 (TODO #168, #354). */
 #define WEAK_V2_KEY_MSG \
-    "NL-FSCX v2 affine weak key - delta(K) is 0 or 2^(n-1), which makes the " \
-    "permutation GF(2)-affine and the ciphertext recoverable by linear algebra " \
-    "(SecurityProofs-7.md 11.19.2, TODO #168)"
+    "NL-FSCX v2 weak key - the set bits of delta(K) lie in a cyclic arc of at " \
+    "most n/4 bits (this includes delta(K) = 0 and 2^(n-1), which make the " \
+    "permutation GF(2)-affine); use a uniformly random key " \
+    "(SecurityProofs-10.md 11.81, TODO #168, #354)"
 static void dief(const char *fmt, const char *s)
 { fprintf(stderr, fmt, s); fputc('\n', stderr); exit(1); }
 
@@ -3004,8 +3005,8 @@ static void cmd_enc(int argc, char **argv)
 
         FILE *urnd = fopen("/dev/urandom", "rb");
         if (!urnd) die("cannot open /dev/urandom");
-        /* r is ours to choose, so for hpke-nl resample past the ~2^-129 affine
-         * weak-key class (TODO #168) rather than failing an honest encryption. */
+        /* r is ours to choose, so for hpke-nl resample past the ~2^-96 short-arc
+         * weak-key class (TODO #168, #354) rather than failing an honest encryption. */
         {
             int attempt;
             for (attempt = 0; attempt < 64; attempt++) {

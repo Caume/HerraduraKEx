@@ -5776,11 +5776,21 @@ int main(int argc, char *argv[])
                 memset(w130.b,  0, KEYBYTES); w130.b[KEYBYTES - 1 - 16] = 0x04; /* 2^130 */
                 memset(w96.b,   0, KEYBYTES); w96.b[KEYBYTES - 1 - 12] = 0x01;  /* 2^96  */
                 memset(wzero.b, 0, KEYBYTES);
+                BitArray a65 = BA_INIT, a64 = BA_INIT, one = BA_INIT, w95 = BA_INIT;
                 ba_rand(&good, urnd_fp);
                 good.b[KEYBYTES - 1] |= 1;
-                if (!nl_v2_key_is_valid(&w129) && !nl_v2_key_is_valid(&w130)
-                    && !nl_v2_key_is_valid(&w96) && !nl_v2_key_is_valid(&wzero)
-                    && nl_v2_key_is_valid(&good))
+                /* TODO #354: the refusal is arc(delta(K)) <= n/4.  K = 1 (delta 2^64)
+                 * and K = 2^95 (delta 2^253) have arc 1; the two constructed keys
+                 * sit either side of the cut.  The accept-controls come first. */
+                ba_try_from_hex(&a65, "8770eab9d82da8c8911f5a4efcbc92d37239911f000000000000000000000000", 256);
+                ba_try_from_hex(&a64, "611bb1869a63e203dca5a88338b4bebfd0afcff7000000000000000000000000", 256);
+                memset(one.b, 0, KEYBYTES); one.b[KEYBYTES - 1] = 0x01;        /* 1    */
+                memset(w95.b, 0, KEYBYTES); w95.b[KEYBYTES - 1 - 11] = 0x80;   /* 2^95 */
+                if (nl_v2_key_is_valid(&good) && nl_v2_key_is_valid(&a65)
+                    && !nl_v2_key_is_valid(&a64) && !nl_v2_key_is_valid(&one)
+                    && !nl_v2_key_is_valid(&w95)
+                    && !nl_v2_key_is_valid(&w129) && !nl_v2_key_is_valid(&w130)
+                    && !nl_v2_key_is_valid(&w96) && !nl_v2_key_is_valid(&wzero))
                     ok_v2_weak++;
             }
 

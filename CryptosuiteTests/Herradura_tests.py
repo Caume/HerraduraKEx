@@ -3020,13 +3020,18 @@ def test_hcred():
 
 
 def nl_v2_key_is_valid(K_int: int, n: int) -> bool:
-    """NL-FSCX v2 affine weak-key check (mirrors the suite's nl_v2_key_is_valid).
-    pi_K is GF(2)-affine iff delta(K) in {0, 2^(n-1)} -- TODO #168."""
+    """NL-FSCX v2 short-arc weak-key screen (mirrors the suite's nl_v2_key_is_valid):
+    valid iff arc(delta(K)) > n/4, arc = n - longest cyclic zero run (TODO #354).
+    Contains the affine class delta(K) in {0, 2^(n-1)} of TODO #168."""
     mask  = (1 << n) - 1
     prod  = (K_int * (((K_int + 1) & mask) >> 1)) & mask
     r     = n // 4
     delta = ((prod << r) | (prod >> (n - r))) & mask
-    return delta not in (0, 1 << (n - 1))
+    if delta == 0:
+        return False
+    bits = format(delta, '0%db' % n)
+    zero_run = max(len(z) for z in (bits + bits).split('1'))
+    return n - zero_run > n // 4
 
 
 def gf_pub_is_valid(pub_int: int) -> bool:
@@ -3793,11 +3798,19 @@ def test_weak_key_rejection():
         # NL-FSCX v2 (TODO #168): keys with delta(K) in {0, 2^(n-1)} make
         # pi_K GF(2)-affine, collapsing HSKE-NL-A2/HPKE-NL to a linear map.
         # At n=256 that is every K divisible by 2^129, plus e.g. K=2^96.
-        if (not nl_v2_key_is_valid(1 << 129, 256)
+        # TODO #354 widens the refusal to arc(delta(K)) <= n/4: K = 1 (delta
+        # 2^64) and K = 2^95 (delta 2^253) have arc 1, and the two constructed
+        # keys sit either side of the cut (arc 64 refused, arc 65 accepted).
+        # The accept-controls come first, so a screen refusing everything fails.
+        if (nl_v2_key_is_valid(BitArray.random(256).uint | 1, 256)
+                and nl_v2_key_is_valid(0x8770eab9d82da8c8911f5a4efcbc92d37239911f000000000000000000000000, 256)
+                and not nl_v2_key_is_valid(0x611bb1869a63e203dca5a88338b4bebfd0afcff7000000000000000000000000, 256)
+                and not nl_v2_key_is_valid(1, 256)
+                and not nl_v2_key_is_valid(1 << 95, 256)
+                and not nl_v2_key_is_valid(1 << 129, 256)
                 and not nl_v2_key_is_valid(1 << 130, 256)
                 and not nl_v2_key_is_valid(1 << 96, 256)
-                and not nl_v2_key_is_valid(0, 256)
-                and nl_v2_key_is_valid(BitArray.random(256).uint | 1, 256)):
+                and not nl_v2_key_is_valid(0, 256)):
             ok_v2_weak += 1
 
     if N == 0:

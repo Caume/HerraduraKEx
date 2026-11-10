@@ -1052,7 +1052,7 @@ public final class HerraduraCli {
             int nbits = key.size();
             sym256OK(nbits, "enc hske-nla2", "key");
             if (!HerraduraNl.nlV2KeyIsValid(key)) {
-                throw new CliError("enc hske-nla2: key is degenerate for NL-FSCX v2 (affine-weak class)");
+                throw new CliError("enc hske-nla2: NL-FSCX v2 weak key (delta(K) has a cyclic arc of at most n/4 bits; TODO #354)");
             }
             int nbytes = nbits / 8;
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), nbits);
@@ -1180,7 +1180,7 @@ public final class HerraduraCli {
             int nbits = key.size();
             sym256OK(nbits, "dec hske-nla2", "key");
             if (!HerraduraNl.nlV2KeyIsValid(key)) {
-                throw new CliError("dec hske-nla2: key is degenerate for NL-FSCX v2 (affine-weak class)");
+                throw new CliError("dec hske-nla2: NL-FSCX v2 weak key (delta(K) has a cyclic arc of at most n/4 bits; TODO #354)");
             }
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
             sym256OK(declaredWidth(ct[1]), "dec hske-nla2", "ciphertext");
@@ -1208,7 +1208,7 @@ public final class HerraduraCli {
             int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
             BitArray d = HerraduraNl.hpkeNlDecrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
-            if (d == null) throw new CliError("dec: ephemeral public value is degenerate or key is affine-weak");
+            if (d == null) throw new CliError("dec: ephemeral public value is degenerate or the derived key is NL-FSCX v2 weak (TODO #354)");
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-nl3")) {
             BitArray key = loadKey(req(opt, "key", "dec"));

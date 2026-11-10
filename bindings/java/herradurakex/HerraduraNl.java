@@ -84,22 +84,35 @@ public final class HerraduraNl {
         return result;
     }
 
-    /** Rejects NL-FSCX v2 keys for which delta(B) collapses the permutation to
-     * affine (delta in {0, 2^(n-1)}) — TODO #159/#168.
+    /** Refuses NL-FSCX v2 keys whose delta(B) has a short arc (TODO #354,
+     * v14.0.0): valid iff arc(delta(B)) &gt; n/4, where arc(d) is the shortest
+     * cyclic window holding every set bit of d.
      *
-     * <p>SCOPE (TODO #253): the affine class only, NOT the full set of
-     * differentially weak keys.  Keys admitting a zero-weight differential
-     * trail are a strictly larger family — every B with tz(delta(B)) &gt;= 4,
-     * at every width including n=256 — and this check accepts all of it
-     * except the two endpoints.  Deliberate: at n=256 such a key forfeits
-     * about tz/2 of 192 rounds with probability ~2^-tz, so a random key loses
-     * at most 3 rounds with probability 1/16.  See SecurityProofs-7.md
-     * §11.28.3-§11.28.4. */
+     * <p>The screen contains the affine class TODO #159/#168 refused until
+     * v14.0.0 (delta in {0, 2^(n-1)}, arc 0 or 1), and the wider short-arc class
+     * TODO #257 measured weak (SecurityProofs-10.md §11.63, §11.78-§11.81).  A
+     * uniformly drawn key has arc &lt;= n/4 with probability about 2^-(3n/8),
+     * 2^-96 at n = 256; what it refuses is a key chosen by hand, e.g. B = 1
+     * (delta = 2^64, arc 1) or B = 2^95 (delta = 2^253).
+     *
+     * <p>SCOPE: long-arc weak keys remain (§11.81.1), and so do keys with
+     * tz(delta) &gt;= 4 whose arc is long (SecurityProofs-7.md §11.28.3-§11.28.4:
+     * a random key loses at most 3 rounds with probability 1/16). */
     public static boolean nlV2KeyIsValid(BitArray b) {
-        BitArray d = delta(b);
-        // 2^(n-1): the one set bit is the top one, i.e. the high bit of octet 0.
-        BitArray msb = BitArray.zero(N).not().shr(N - 1).rotLeft(N - 1);
-        return !d.isZero() && !d.equals(msb);
+        return nlV2DeltaArc(delta(b)) > b.size() / 4;
+    }
+
+    /** n - (longest cyclic run of zero bits in d); 0 for d = 0 (TODO #354). */
+    static int nlV2DeltaArc(BitArray d) {
+        int n = d.size(), f = -1;
+        for (int i = 0; i < n; i++) if (d.bit(i) == 1) { f = i; break; }
+        if (f < 0) return 0;
+        int run = 0, best = 0;
+        for (int i = 1; i <= n; i++) {          // walk once round the ring from a set bit
+            if (d.bit((f + i) % n) == 1) run = 0;
+            else if (++run > best) best = run;
+        }
+        return n - best;
     }
 
     // -----------------------------------------------------------------

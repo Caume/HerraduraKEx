@@ -841,7 +841,7 @@ have doubled that surface.
 
 ```bash
 # Symmetric block encryption.  No key check: any 256-bit key is accepted,
-# including ones hske-nla2 refuses as affine-weak.
+# including ones hske-nla2 refuses as weak (short-arc delta, TODO #354).
 herradura enc --algo hske-nla3 --key sk.pem --in msg.bin --out ct.pem
 herradura dec --algo hske-nla3 --key sk.pem --in ct.pem  --out out.bin
 

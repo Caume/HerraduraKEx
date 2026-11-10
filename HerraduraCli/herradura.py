@@ -342,9 +342,10 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
 # ---------------------------------------------------------------------------
 
 _WEAK_V2_KEY_MSG = (
-    "NL-FSCX v2 affine weak key — delta(K) is 0 or 2^(n-1), which makes the "
-    "permutation GF(2)-affine and the ciphertext recoverable by linear algebra "
-    "(SecurityProofs-7.md \u00a711.19.2, TODO #168)")
+    "NL-FSCX v2 weak key — the set bits of delta(K) lie in a cyclic arc of at "
+    "most n/4 bits (this includes delta(K) = 0 and 2^(n-1), which make the "
+    "permutation GF(2)-affine); use a uniformly random key "
+    "(SecurityProofs-10.md \u00a711.81, TODO #168, #354)")
 
 _CLASSICAL_GF_ALGOS = {'hkex-gf', 'hpks', 'hpks-nl', 'hpke', 'hpke-nl',
                        'hpke-nl3'}
@@ -1853,8 +1854,8 @@ def cmd_enc(args):
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         nbytes  = nbits // 8
         P       = BitArray(nbits, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
-        # r is ours to choose, so resample past the ~2^-129 affine-weak-key class
-        # (TODO #168) rather than failing an honest encryption.
+        # r is ours to choose, so resample past the ~2^-96 short-arc weak-key
+        # class (TODO #168, #354) rather than failing an honest encryption.
         for _ in range(64):
             r       = BitArray.random(nbits)
             R       = BitArray(nbits, gf_pow(GF_GEN, r.uint, poly, nbits))

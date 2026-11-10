@@ -2467,9 +2467,10 @@ nl_fscx_delta_v2:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* nl_v2_key_is_valid: r0=B -> r0=1 if delta(B) not in {0,2^31}, else 0 */
-/* Rejects NL-FSCX v2 keys for which the permutation degenerates to    */
-/* affine (see herradura.h's nl_v2_key_is_valid, TODO #169).           */
+/* nl_v2_key_is_valid: r0=B -> r0=1 if arc(delta(B)) > n/4 = 8, else 0 */
+/* Refuses NL-FSCX v2 keys whose delta(B) has a short cyclic arc,      */
+/* which contains the affine class {0, 2^31} (see herradura.h's        */
+/* nl_v2_key_is_valid, TODO #169, #354).  Refuses about 2^-12 of keys. */
 /* Failure-mode convention (item 3): no CLI/keygen boundary exists on  */
 /* this target, so this is a plain 0/1 predicate, uncalled from the    */
 /* nl_fscx_v2/revolve_v2 hot path -- same as C/Go/Python, which only   */
@@ -2480,10 +2481,13 @@ nl_fscx_delta_v2:
 nl_v2_key_is_valid:
     push    {lr}
     bl      nl_fscx_delta_v2
-    cbz     r0, kv_invalid
-    ldr     r1, =0x80000000
-    cmp     r0, r1
-    beq     kv_invalid
+    mvns    r0, r0                  @ z = ~delta(B)
+    movs    r1, #23                 @ 3n/4 - 1 erosion passes (TODO #354)
+kv_erode:
+    and     r0, r0, r0, ror #31     @ z &= ROL(z, 1): every run of ones shrinks by 1
+    subs    r1, r1, #1
+    bne     kv_erode
+    cbnz    r0, kv_invalid          @ a zero run of delta >= 24, i.e. arc <= 8
     movs    r0, #1
     pop     {pc}
 kv_invalid:

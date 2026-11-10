@@ -619,11 +619,13 @@ SECURITY = {
                              "the same E, so embed a nonce or prefer hske-nla1 when several messages share a "
                              "key (SecurityProofs-4.md 11.3.2). (2) Keys with delta(K) in {0, 2^(n-1)} "
                              "collapse the permutation to GF(2)-affine; about 2^-129 of the key space, refused"
-                             " by all four CLIs via nl_v2_key_is_valid. The short-arc weak class (about 2^-123"
-                             " of keys at n = 256) is documented rather than screened, since a new refusal "
-                             "would make an existing --algo accept less. The self-similarity TODO #244 "
+                             " by all four CLIs via nl_v2_key_is_valid. Since v14.0.0 (TODO #354) that check "
+                             "refuses every key with arc(delta(K)) <= n/4, the short-arc weak class (about "
+                             "2^-121 of keys at n = 256 with arcs of 12 bits or fewer) and the affine class "
+                             "inside it; about 2^-96 of uniform keys, so it acts against hand-chosen keys "
+                             "(SecurityProofs-10.md 11.81.4). The self-similarity TODO #244 "
                              "downgraded the row for was removed by TODO #245's round constants (v5.0.0).",
-                       source=["TODO_DONE.md #345", "TODO_DONE.md #343", "TODO_DONE.md #244", "TODO_DONE.md #248", "SecurityProofsCode/hske_nl_a2_rating_review.py", "SecurityProofs-7.md 11.25, 11.26", "SecurityProofsCode/v2_v3_rating_review.py", "SecurityProofs-10.md 11.68", "SECURITY.md"]),
+                       source=["TODO_DONE.md #345", "TODO_DONE.md #343", "TODO_DONE.md #244", "TODO_DONE.md #248", "SecurityProofsCode/hske_nl_a2_rating_review.py", "SecurityProofs-7.md 11.25, 11.26", "SecurityProofsCode/v2_v3_rating_review.py", "SecurityProofs-10.md 11.68", "SecurityProofs-10.md 11.81", "SECURITY.md"]),
     "hske-duplex": dict(status="research", quantum_resistant="conjectured",
                        notes="Arbitrary-length single-pass AEAD: a MonkeyDuplex-style sponge using "
                              "nl_fscx_revolve_v2 as the permutation (TODO #95 Option 2). Reclassified from "

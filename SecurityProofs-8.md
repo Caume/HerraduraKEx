@@ -200,7 +200,7 @@ $\mu$ for every distinct additive constant $\delta(B)$ a key can produce, weight
 | 10 | 120 | 197 | 0.340 | 1.717 | 1.615 | 2.320 | 1.087 | 35.5% |
 | 11 | 60 | 110 | 0.650 | 1.903 | 1.813 | 2.523 | 1.165 | 27.3% |
 
-Every constant in the table **already passes the deployed check**: `nl_v2_key_is_valid` rejects $\delta = 0$ and $\delta = 2^{n-1}$ and nothing else, and both are excluded.  These are the slopes of keys the shipped code accepts.
+Every constant in the table **already passes the deployed check**: `nl_v2_key_is_valid` rejects $\delta = 0$ and $\delta = 2^{n-1}$ and nothing else, and both are excluded.  These are the slopes of keys the shipped code accepts.  (That was the check through v13.x.  Since v14.0.0 it refuses every key whose delta has a cyclic arc of n/4 bits or fewer, TODO #354, so at these widths some of the table's keys are now refused.  The table measures the v2 round, not the screen; SecurityProofs-10.md §11.81.4.)
 
 ### 11.35.4 Against the `4/3` criterion
 

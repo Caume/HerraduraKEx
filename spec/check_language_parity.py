@@ -2400,7 +2400,7 @@ _VERDICT_FINGERPRINTS = {
     ("java", 1): "41d245afc5", ("java", 2): "2755b3f41c",
     ("java", 3): "1d765f8693", ("java", 4): "d21830647b",
     ("java", 5): "c42cc8d201", ("java", 6): "2bb016ca62",
-    ("java", 7): "40932ed6ff", ("java", 8): "0cdd893ca8",
+    ("java", 7): "c13b1ea49c", ("java", 8): "0cdd893ca8",
     ("java", 9): "58be83bc77", ("java", 10): "6080dac6bd",
     ("java", 11): "1a3c42a1a2", ("java", 12): "210c79f102",
     ("java", 13): "939693a3b4", ("java", 14): "9e690571c1",
@@ -4089,17 +4089,29 @@ PRIMITIVES = {
         "java": r"public static boolean gfPubIsValid\(",
     },
     "nl-v2-key-is-valid": {
-        # Rejects NL-FSCX v2 keys whose permutation degenerates to affine,
-        # i.e. delta(B) in {0, 2^(n-1)} -- an exact characterisation of the
-        # AFFINE class only, not of every differentially weak key (TODO #253
-        # found a wider class this deliberately does not screen). C fixes the
-        # width at 256 where Go carries b.size; that is the same
+        # Refuses NL-FSCX v2 keys whose delta(B) has a short cyclic arc,
+        # arc(delta(B)) <= n/4 (TODO #354, v14.0.0).  That contains the affine
+        # class delta(B) in {0, 2^(n-1)} TODO #168 refused until then, but not
+        # every differentially weak key (long-arc failures remain; TODO #253's
+        # tz >= 4 class is screened only where its arc is short).  C's delta
+        # fixes the width at 256 where Go carries b.size; that is the same
         # compile-time-vs-runtime split TODO #266 recorded for HCRED_N, and
         # is harmless here because C's whole suite is 256-bit.
         "c": r"static int nl_v2_key_is_valid\(",
         "go": r"func NlV2KeyIsValid\(",
         "python": r"^def nl_v2_key_is_valid\(",
         "java": r"public static boolean nlV2KeyIsValid\(",
+    },
+    "nl-v2-delta-arc": {
+        # arc(d) = n - (longest cyclic run of zero bits in d), arc(0) = 0: the
+        # measure nl-v2-key-is-valid cuts at n/4 (TODO #354).  C, Go and Java
+        # walk the ring once from a set bit; Python erodes ~d (z &= ROL(z, 1)),
+        # the form the 32-bit ports use with a fixed 23 passes.  All four agree
+        # with an independent reference exhaustively at n = 16 and 24.
+        "c": r"static int nl_v2_delta_arc\(",
+        "go": r"func nlV2DeltaArc\(",
+        "python": r"^def nl_v2_delta_arc\(",
+        "java": r"static int nlV2DeltaArc\(",
     },
     "qcmdpc-key-is-strong": {
         # QC-MDPC weak-key screen (TODO #235 Part 1): rejects and redraws any
