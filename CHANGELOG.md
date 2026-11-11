@@ -2,6 +2,19 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [14.0.2] - 2026-11-10
+
+### TODO #359 — the v2 duplex's unscreened tweak is recorded, not fixed
+
+- HSKE-Duplex's sponge permutation takes tweak = HFSCX-256(DS ‖ key ‖ nonce) as its B
+  without `nl_v2_key_is_valid`, unlike HSKE-NL-A2, HPKE-NL, FPE and `twk` since v14.0.0.
+- **Left unscreened.**  Encrypt draws the nonce, so only a chosen-nonce decrypt querier
+  can search, and blindly, at about 2^121 queries per short-arc tweak.  That beats the
+  generic attack only under §11.81.2's 14-bit break-even.  A rehash would change the wire
+  format of a do-not-deploy row.
+- Recorded in SECURITY.md's HSKE-Duplex row, the `hske-duplex` spec notes (regenerated)
+  and SecurityProofs-10.md §11.81.4.  No code, KAT or wire-format change.
+
 ## [14.0.1] - 2026-11-09
 
 ### TODO #358 — zkbpp_kkw_view_hiding.py §2 kept its zero-hit rounds; measured flake 7.4e-4 → 3e-11

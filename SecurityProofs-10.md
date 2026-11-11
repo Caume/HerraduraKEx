@@ -1998,7 +1998,7 @@ The check costs 2–3 µs in C, Go and Java and about 4 µs in Python. That is u
 | HPKE-NL encrypt | redraws r past the class, about 2^−96 per draw |
 | HPKE-NL decrypt | refuses a short-arc B = R^a. In a subgroup of order d, only the identity (B = 1, arc 1) is refused, so a refusal shows R^a = 1, i.e. d divides a. The public key already shows that, since C^((2^n − 1)/d) = 1, so the refusal is still no oracle (`v2_v3_b_setter.py` §6, `v2_arc_screen.py` §2). |
 | FPE / `twk` | rehash the subkey until it passes, so a context search can no longer land on a short-arc subkey |
-| the v2 duplex | derives its tweak without the check; §11.81.2's unbounded-nonce question stands for it |
+| the v2 duplex | **not screened, by decision** (TODO #359, v14.0.2). Its tweak, HFSCX-256 of the key and nonce, is used as B without the check. Encrypt draws the nonce, so a search is open only to a chosen-nonce decrypt querier, and it is blind: about 2^121 queries per short-arc tweak (2^96 per tweak below the cut), worthwhile only under §11.81.2's 14-bit break-even. Rehashing would change the wire format of a do-not-deploy row, so the gap is recorded in SECURITY.md instead |
 | HSKE-NL-A3, `twk --v3` | no check, by design: v3 has no weak class (§11.34, TODO #255) |
 
 **Tests.** C/Go/Python [45] and Java [7] refuse constructed keys at arc 64, at arc 1 (B = 1 and B = 2^95) and at δ = 0. They accept a constructed key at arc 65 and a random key, with those accept-controls checked first. The 32-bit [18] does the same at n = 32: arc 9 is accepted, while arc 8 and B = 1 are refused. `CliTest/test_sym_width.sh` refuses 0xff…fe in all four CLIs and accepts an ordinary hex key first.
