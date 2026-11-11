@@ -621,24 +621,3 @@ at n = 256 would remove the conjecture.
 Status: **OPEN**
 
 ---
-
-### #359: screen the v2 duplex's tweak by the same arc rule?
-
-**Found closing #354 (v14.0.0).**  `nl_v2_key_is_valid` now refuses arc(delta(B)) <= n/4.
-HSKE-NL-A2 and HPKE-NL apply it at load, and FPE / `twk` rehash their derived subkey until
-it passes.  The v2 duplex (`hske-duplex`) derives its tweak from HFSCX-256 of the key and
-nonce without the check.  For a uniform nonce that is harmless, since about 2^-96 of
-tweaks are in the class.  But the nonce is public and unbounded, so a search over nonces
-reaches the class, and §11.81.2's unbounded-context question stands for this one site.
-
-The duplex is rated research ("do not deploy").  To decide:
-1. Whether to rehash the tweak past the class, as FPE / `twk` do.  It would change the
-   output only for nonces whose tweak is refused, so it is wire-format-breaking at about
-   2^-96 per message.  It needs a MIGRATING.md note, and a MAJOR bump if it lands
-   outside a research row's latitude.
-2. If not, record the gap in SECURITY.md's duplex row.
-
-Status: **OPEN**
-
-
----

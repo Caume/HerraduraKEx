@@ -24853,3 +24853,39 @@ per #299); never loosen it by hand or add `continue-on-error`:
   not the "0.2–0.6 at n = 4" the section's text had said.
 
 Status: **DONE v14.0.1** — §2 kept its zero-hit rounds and runs 20 × 6 rounds per width; measured rate 7.4e-4 → 3e-11, band unchanged.
+
+---
+
+### #359: screen the v2 duplex's tweak by the same arc rule?
+
+**Found closing #354 (v14.0.0).**  `nl_v2_key_is_valid` now refuses arc(delta(B)) <= n/4.
+HSKE-NL-A2 and HPKE-NL apply it at load, and FPE / `twk` rehash their derived subkey until
+it passes.  The v2 duplex (`hske-duplex`) derives its tweak from HFSCX-256 of the key and
+nonce without the check.  For a uniform nonce that is harmless, since about 2^-96 of
+tweaks are in the class.  But the nonce is public and unbounded, so a search over nonces
+reaches the class, and §11.81.2's unbounded-context question stands for this one site.
+
+The duplex is rated research ("do not deploy").  To decide:
+1. Whether to rehash the tweak past the class, as FPE / `twk` do.  It would change the
+   output only for nonces whose tweak is refused, so it is wire-format-breaking at about
+   2^-96 per message.  It needs a MIGRATING.md note, and a MAJOR bump if it lands
+   outside a research row's latitude.
+2. If not, record the gap in SECURITY.md's duplex row.
+
+**Resolution (v14.0.2): option 2.**  The tweak stays unscreened, and the gap is recorded in
+SECURITY.md's HSKE-Duplex row, in the spec's `hske-duplex` notes and in SecurityProofs-10.md
+§11.81.4's site table.  Why not rehash:
+
+- **Who can search.**  `encfile`/`enc` draw the nonce, so only someone submitting
+  chosen-nonce ciphertexts to a decrypter can choose one.  The tweak is a hash of the key,
+  so that search is blind.  About 2^−96 of tweaks fall below the screen's cut, and about
+  2^−121 in the short-arc class measured weak (§11.63), so a hit costs about 2^121 queries.
+  §11.81.2 shows that beats the generic multi-target cost only if exploiting a short-arc
+  tweak costs under 14 bits.
+- **What a fix would cost.**  A rehash changes the output for each refused tweak, so it is a
+  wire-format change to a row rated "research — do not deploy".  The same numbers argue
+  for leaving it.
+- **What would reopen it.**  Moving the duplex off the research track (TODO #99), or a
+  short-arc exploit under 14 bits.
+
+Status: **DONE v14.0.2** — duplex tweak left unscreened by decision; the gap is recorded in SECURITY.md, the spec and §11.81.4.

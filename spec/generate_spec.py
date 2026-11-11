@@ -636,9 +636,15 @@ SECURITY = {
                              "CONSTRUCTION -- not for production use without further cryptanalysis\". "
                              "Bijectivity of v2 is proven; its standalone sponge profile is not. Use "
                              "hske-nla1 --aead, whose encrypt-then-MAC tag rests on the studied "
-                             "\"v1 is a PRF\" assumption instead.",
+                             "\"v1 is a PRF\" assumption instead. Its tweak (the v2 permutation's B, "
+                             "HFSCX-256 of the key and nonce) is NOT screened by nl_v2_key_is_valid "
+                             "(TODO #359): about 2^-96 of tweaks fall below the screen's cut and 2^-121 "
+                             "in the short-arc class measured weak, and only a chosen-nonce decrypt "
+                             "querier can search for one, blind, at about 2^121 queries a hit (SecurityProofs-10.md 11.81.2, 11.81.4). Recorded "
+                             "rather than fixed, since a rehash would change this research row's wire "
+                             "format.",
                        source=["TODO.md #237", "herradura.h HSKE-NL-V2-Duplex banner",
-                               "SecurityProofs-6.md 11.9"]),
+                               "SecurityProofs-6.md 11.9", "TODO_DONE.md #359"]),
     "hfscx-256": dict(status="production", quantum_resistant="conjectured",
                        classical_security_bits="256-bit digest; 128-bit collision resistance in the "
                                                  "ideal-random-function model; >= 336-bit differential "
