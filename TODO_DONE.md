@@ -24889,3 +24889,43 @@ SECURITY.md's HSKE-Duplex row, in the spec's `hske-duplex` notes and in Security
   short-arc exploit under 14 bits.
 
 Status: **DONE v14.0.2** — duplex tweak left unscreened by decision; the gap is recorded in SECURITY.md, the spec and §11.81.4.
+
+---
+
+### #360: audit the remaining `follows` gates for #358's defect
+
+**Found closing #358 (v14.0.1).**  #358 found that a rate #304 had "measured" was 74× low,
+because the gate filtered its own observations and #304's bootstrap resampled the filtered
+pool.  #304 rated two other `follows` entries the same way: `hybrid_credential_phi.py` §5.4
+(2.2e-7) and `zkp_pqc_exploration.py` §3.5 (6.6e-8).  For each: (1) does the gate drop or
+condition on observations? (2) was its rate measured on CI's reduced-sample path? (3) does
+the rate survive a direct re-measurement?
+
+**Result (v14.0.3): both are sound; no gate changes.**
+
+- **(1) No outcome conditioning.**  §5.4 counts every trial.  §3.5 discards a trial only
+  when its fixed "wrong" witness is a genuine preimage.  That is decided from the instance
+  before any proof is built, so it is independent of the outcome, unlike #358's
+  `x > 0` filter.
+- **(2) The CI path.**  Both run with `--fast` in CI, at 100 trials, the size #304 measured.
+- **(3) Direct re-measurement.**  2 million trials each, in 20 000 chunks of 100, so every
+  chunk is one real `--fast` first sample:
+
+  | gate | p measured | model | first-sample exceedances | replicated rate | stated |
+  |---|---|---|---|---|---|
+  | `hybrid_credential_phi.py` §5.4 | 0.03714 ± 0.00013 | 1/27 = 0.03704 (+0.8 SE) | 9 / 20 000 (predicted 6.9) | 1.2e-7 (1.4e-7 at 95% upper p) | 2.2e-7 |
+  | `zkp_pqc_exploration.py` §3.5 | 0.01233 ± 0.00008 | 1/81 = 0.01235 (−0.3 SE) | 8 / 20 000 (predicted 4.9) | 5.9e-8 (6.9e-8 at 95% upper p) | 6.6e-8 |
+
+- **One correction to the record.**  §3.5's entry cited a measured survival of 0.01305
+  (518/39 695), which would put its replicated rate at 1.2e-7.  At 50× the sample, that
+  figure was 1.2 SE of noise, so the model needs no residue term and the stated 6.6e-8
+  stands.
+- **The siblings are exact, as rated.**  Both files' completeness checks, §3.7's
+  `cheat == 0`, and `hybrid`'s §5.2 and §5.3 are deterministic.  An honest prover's output
+  shares sum to φ(s), so a flipped e fails the sum check every round, and a coefficient of
+  2 makes the ternary `o1` sum nonzero every round.
+
+Both runner entries now carry this re-measurement.  `follows` has no entry left that
+rests on #304's original bootstrap.
+
+Status: **DONE v14.0.3** — both remaining follows gates re-measured over 2M trials each and found sound; entries restated, no gate changed.
