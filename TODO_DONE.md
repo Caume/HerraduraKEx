@@ -24929,3 +24929,59 @@ Both runner entries now carry this re-measurement.  `follows` has no entry left 
 rests on #304's original bootstrap.
 
 Status: **DONE v14.0.3** — both remaining follows gates re-measured over 2M trials each and found sound; entries restated, no gate changed.
+
+---
+
+### #361: audit every derived rate in run_findings_gates.py against CI's sample sizes
+
+**Found closing #360 (v14.0.3).**  #358's failure had two parts: the gate filtered its own
+observations, and its rate had been worked out at a sample size other than the one CI
+runs.  #360 cleared the `follows` entries.  This item checks the 13 other entries with a
+derived rate (`negligible` and `replicated`).  For each: read the constants on the
+path CI runs (`--quick` / `--fast`, or the defaults when the script declares no flag),
+recompute the rate, and look for outcome conditioning and for gates that cannot fail.
+
+**Result (v14.0.4).**  Three code defects, five restatements, five entries confirmed.
+
+- **A real flake: `stern_f_weight_binding.py` §2**, #337's defect a second time in the same
+  file.  The identification bar is `(trials*3)//4`, replicated, and `main()` passed
+  `--quick`'s 8 trials, so CI ran P(Bin(8, 1/4) ≥ 6)² = 1.8e-5 against a listed 1e-10
+  (computed at 20 trials).  The job's true total had therefore been about 7.2e-5, not the
+  5.4e-5 printed.  §2 now owns `SECTION2_TRIALS = 20` (1.5e-11), keeping `--quick`'s round
+  count, since the 1/k null does not depend on it.  The `--quick` run takes 197 s instead
+  of 123 s.
+- **A gate that could not fail: `hkex_rnl_sparse_hybrid_2026.py`, "the Hamming weight
+  follows Binomial(n, 1/2)"**.  `section2()` returned the analytic mean and SD, so the
+  gate compared n/2 with n/2.  The 1000 sampled weights were printed and never tested.
+  The runner's entry had read it as "slack".  The gate now tests the sample: mean within
+  5.5 SE of n/2 and SD within 5.5 of its sampling SE (3.8e-8 each).  Shown to fire: a
+  sampler dropping 10% of nonzero coefficients reads a mean of 460 and fails it.
+- **A skipped section counted as a pass: `hfscx_256_analysis.py` §4** returned `True`
+  without `--full`, so CI's summary read "all 7 findings reproduce" over a section it never
+  ran.  It now returns `None` and is reported as n/a ("6 findings that ran reproduce,
+  1 n/a").  The wrong `-> None` annotations on §5–§7 now say `-> bool`.
+- **Restated rates.**
+  - `qc_mdpc_bgf_prototype.py`: 4.6e-9 → **3.5e-8**.  The old figure used normal tails
+    for z.  The exact χ²(522) tails are 2.17e-3 and 1.60e-5.  Distinct support positions
+    only lower that.
+  - `nl_fscx_v2_kex.py`: 1e-9 → **7e-8**.  A K1 = K2 pair always commutes, and there are
+    300 draws at n = 32.  The 1e-9 had no derivation behind it.
+  - `hkex_nl_proposal.py`: 1.2e-6 → **9.3e-7**.  Its loops run 2000 trials, not 5000.
+  - `hkex_rnl_sparse_hybrid_2026.py`: 5.7e-7 → **5.0e-7**.  The density band is 5.06 true
+    SE (20 480 coefficients); the weight-law gates are new.
+  - `nl_fscx_v1_ratchet_collision.py`: `negligible` 1e-12 → **`exact`**.  Its findings
+    read exhaustive scans over fixed domains, and the old argument concerned an ungated
+    n = 64 Monte Carlo estimate.
+- **Confirmed as stated.**
+  - `hfscx_256_analysis.py` 5e-5: the critical values and one-sided product are right,
+    and CI runs the full size.
+  - `hkex_gf_test.py` and `hkex_cy_test.py`: 5000 · 2^−32, with loops over n ∈ {32, 64}
+    only.
+  - `nl_fscx_ligero.py`: 3 · 2^−40, so 1e-9 is conservative.
+  - `qcmdpc_bgf_failure_rate.py` and `hkex_rnl_failure_rate.py`: the reconciled error is
+    110+ SD inside q/4 at every width.
+
+The printed job total stays 5.4e-5.  Since the hidden 1.8e-5 is gone, it is now also the
+true total.
+
+Status: **DONE v14.0.4** — rate table audited at CI's sample sizes; stern §2 flake (1.8e-5) fixed, a vacuous gate and an unrun-as-pass fixed, five rates restated.
