@@ -286,7 +286,15 @@ SAMPLED_GATES = {
         "correction.  A correct 4-sigma band on a mean of 3.7 nevertheless "
         "fires at P(X >= 12) = 4.7e-4, which is what it did in TODO #302's "
         "gate run and is 8.8x what the whole job then advertised; #299's "
-        "replication takes it to 2.2e-7 for one extra second"),
+        "replication takes it to 2.2e-7 for one extra second.  RE-MEASURED by "
+        "TODO #360's audit of the follows entries, after #358 found #304's "
+        "seed-budget rate 74x low: 2 000 000 cheats at --fast's 100-trial "
+        "size give p = 0.03714 +- 0.00013 against (1/3)^3 = 0.03704 (+0.8 SE), "
+        "per-sample variance 3.52, and 9 first-sample exceedances in 20 000 "
+        "(predicted 6.9).  The exact binomial rate is 3.5e-4 first-sample, "
+        "1.2e-7 replicated, and 1.4e-7 at the 95% upper p; the Poisson-based "
+        "2.2e-7 stays as the stated, conservative figure.  No filtering: every "
+        "trial is a cheat and is counted"),
     "zkp_pqc_exploration.py": ("follows", 6.6e-8,
         "§3.5 gates ZKBoo soundness the same way -- `passed <= "
         "int(expected*4)+2` around the expected (1/3)^R survivors -- and TODO "
@@ -302,7 +310,15 @@ SAMPLED_GATES = {
         "claim that ZKB++ soundness is also (1/3)^R is FALSE (0 survivors in "
         "39 708 genuine cheats; ZKB++ rebinds out_e to y, so a wrong witness "
         "dies every round), and its old bar of 6 was slack enough to absorb a "
-        "real regression.  §3/§3.7 completeness is exact (`fail == 0`)"),
+        "real regression.  §3/§3.7 completeness is exact (`fail == 0`).  "
+        "RE-MEASURED by TODO #360: 1 984 696 cheats at --fast's size give "
+        "p = 0.01233 +- 0.00008, on (1/3)^4 = 0.01235 (-0.3 SE).  The "
+        "0.01305 above was 1.2 SE of noise, and the model needs no residue "
+        "term.  Rate 2.4e-4 first-sample, 5.9e-8 replicated, 6.9e-8 at the "
+        "95% upper p; 8 first-sample exceedances in 20 000 (predicted 4.9).  "
+        "The discard is NOT #358's conditioning: whether the fixed 'wrong' "
+        "witness is a genuine preimage is decided from the instance before "
+        "any proof is built, independent of the outcome"),
     # ── negligible, with the rate derived ───────────────────────────────────
     "hkex_gf_test.py": ("negligible", 1.2e-6,
         "Test 3 gates `hits == 0` where Eve's linear attack succeeds only by "

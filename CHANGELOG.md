@@ -2,6 +2,20 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [14.0.3] - 2026-11-11
+
+### TODO #360 — audit of the remaining `follows` gates: both sound
+
+- After #358 found one of #304's "measured" rates 74× low, the two other `follows` entries
+  were re-measured directly: 2 million cheats each, in 20 000 `--fast`-sized samples.
+- `hybrid_credential_phi.py` §5.4: p = 0.03714 ± 0.00013 against 1/27, replicated rate
+  1.2e-7, inside the stated 2.2e-7.
+- `zkp_pqc_exploration.py` §3.5: p = 0.01233 ± 0.00008 against 1/81, replicated rate
+  5.9e-8, inside the stated 6.6e-8.  The 0.01305 survival its entry cited was noise.
+- Neither gate conditions on its outcome.  §3.5's discard is decided from the instance
+  before proving.  Their sibling gates are exact, as rated.
+- Text-only: `run_findings_gates.py` entries restated; no threshold, gate or rate changed.
+
 ## [14.0.2] - 2026-11-10
 
 ### TODO #359 — the v2 duplex's unscreened tweak is recorded, not fixed
