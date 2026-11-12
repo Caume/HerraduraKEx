@@ -157,9 +157,16 @@ def section2():
     obs = [hamming_weight(_rnl_cbd_poly(N, ETA, Q), Q)
            for _ in range(TRIALS // 20)]
     print(f"Empirical over {len(obs)} sampled secrets (deployed sampler):")
-    print(f"    min HW = {min(obs)}   mean HW = {sum(obs) / len(obs):.1f}   max HW = {max(obs)}")
+    m = len(obs)
+    obs_mean = sum(obs) / m
+    obs_sd = (sum((h - obs_mean) ** 2 for h in obs) / (m - 1)) ** 0.5
+    print(f"    min HW = {min(obs)}   mean HW = {obs_mean:.1f}   max HW = {max(obs)}"
+          f"   sd HW = {obs_sd:.2f}")
     print()
-    return mean, sd
+    # The SAMPLE is what the finding gates (TODO #361).  This used to return the
+    # analytic mean and sd above, so the gate compared N/2 with N/2 and could not
+    # fail; the sampled weights were printed and never tested.
+    return obs_mean, obs_sd, m
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -283,7 +290,7 @@ def main():
     print(SEP)
     print()
     nz = section1()
-    mean, sd = section2()
+    obs_mean, obs_sd, m = section2()
     loosest = section3()
     cbd_bits = section4()
     section5()
@@ -293,9 +300,15 @@ def main():
         # density is within five standard errors of 1/2).
         ("CBD(eta=1) is 50% dense as sampled",
          abs(nz - 0.5) < 5 * (0.5 / (TRIALS ** 0.5))),
-        # The exact law agrees with the binomial the argument rests on.
+        # The SAMPLED weights agree with the binomial the argument rests on:
+        # mean within 5.5 SE of n/2, and sd within 5.5 of its own sampling SE,
+        # sigma/sqrt(2(m-1)) (Binomial(1024, 1/2) has excess kurtosis -0.002, so
+        # the normal-theory SE applies).  Two-sided 5.5 sigma is 3.8e-8 each.  A
+        # sampler off density by even 1% moves the mean 10 SE.
         ("the Hamming weight follows Binomial(n, 1/2)",
-         abs(mean - N / 2) < 5 * sd and abs(sd - (N ** 0.5) / 2) < 1.0),
+         abs(obs_mean - N / 2) < 5.5 * ((N ** 0.5) / 2) / m ** 0.5
+         and abs(obs_sd - (N ** 0.5) / 2)
+             < 5.5 * ((N ** 0.5) / 2) / (2 * (m - 1)) ** 0.5),
         # The threshold-independent result: no sparse-regime threshold is
         # reachable with probability above the security target.
         ("no sparsity threshold below 12% density is reachable",

@@ -2,6 +2,27 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [14.0.4] - 2026-11-11
+
+### TODO #361 — rate-table audit at CI's sample sizes
+
+- **`stern_f_weight_binding.py` §2 flaked at 1.8e-5 under `--quick`**, against a listed
+  1e-10.  Its bar is `(trials*3)//4`, replicated, and CI passed 8 trials.  §2 now owns
+  `SECTION2_TRIALS = 20` (1.5e-11).  The job's true total had been about 7.2e-5.
+- **`hkex_rnl_sparse_hybrid_2026.py`'s weight-law gate could not fail**, because it
+  compared the analytic mean with n/2.  It now gates the 1000 sampled weights, and a
+  biased sampler fails it.
+- **`hfscx_256_analysis.py` §4 counted a skipped section as reproduced.**  It is now
+  reported n/a without `--full`.
+- **Restated in `run_findings_gates.py`:**
+  - `qc_mdpc_bgf_prototype.py`: 3.5e-8, from exact χ² tails.
+  - `nl_fscx_v2_kex.py`: 7e-8, because a K1 = K2 pair always commutes.
+  - `hkex_nl_proposal.py`: 9.3e-7, at 2000 trials.
+  - `hkex_rnl_sparse_hybrid_2026.py`: 5.0e-7.
+  - `nl_fscx_v1_ratchet_collision.py`: now `exact`.
+- **Confirmed:** the `hfscx` 5e-5, the `hkex_gf`/`hkex_cy` 5000 · 2^−32, Ligero, and both
+  failure-rate gates.
+
 ## [14.0.3] - 2026-11-11
 
 ### TODO #360 — audit of the remaining `follows` gates: both sound

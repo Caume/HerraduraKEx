@@ -237,12 +237,12 @@ def section3(trials: int = 5_000) -> bool:
 
 # §4 — Collision sanity (no accidental collisions far below birthday bound)
 # ═══════════════════════════════════════════════════════════════════════════
-def section4(full: bool) -> bool:
+def section4(full: bool):
     print(SEP)
     if not full:
         print("§4 — Collision sanity  (run with --full for 2^17 trials)")
         print(SEP)
-        return True   # not run is not a failed finding
+        return None   # not run: n/a -- neither a failure nor a pass (TODO #361)
     trials = 1 << 17  # 131 072 — birthday at n=256 is 2^128; expected: 0
     print(f"§4 — Collision sanity  ({trials} trials, expected 0 collisions)")
     print(SEP)
@@ -267,7 +267,7 @@ def section4(full: bool) -> bool:
 # ═══════════════════════════════════════════════════════════════════════════
 # §5 — Length-extension resistance: naive forgery from published digest fails
 # ═══════════════════════════════════════════════════════════════════════════
-def section5(trials: int = 200) -> None:
+def section5(trials: int = 200) -> bool:
     print(SEP)
     print(f"§5 — Length-extension resistance  ({trials} naive forgery trials)")
     print(SEP)
@@ -299,7 +299,7 @@ def section5(trials: int = 200) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 # §6 — Domain separation: unkeyed vs keyed yield different outputs
 # ═══════════════════════════════════════════════════════════════════════════
-def section6(trials: int = 1_000) -> None:
+def section6(trials: int = 1_000) -> bool:
     print(SEP)
     print(f"§6 — Domain separation: unkeyed vs keyed  ({trials} trials)")
     print(SEP)
@@ -327,7 +327,7 @@ def section6(trials: int = 1_000) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 # §7 — Fixed-point search on the compression function (best-effort)
 # ═══════════════════════════════════════════════════════════════════════════
-def section7(trials: int = 200) -> None:
+def section7(trials: int = 200) -> bool:
     print(SEP)
     print(f"§7 — Fixed-point search on C_DM(s, m) = F1^64(s, m) ⊕ s  "
           f"({trials} (s, m) pairs)")
@@ -371,12 +371,20 @@ def main() -> int:
                 ("§7 no DM fixed points", section7())]
     print()
     print(SEP)
-    bad = [name for name, ok in findings if not ok]
+    # A section that did not run is n/a, never a pass (CLAUDE.md, TODO #291).
+    # §4 returned True without --full until TODO #361, so CI's summary read
+    # "all 7 findings reproduce" over a section it had skipped.
+    na = [name for name, ok in findings if ok is None]
+    bad = [name for name, ok in findings if ok is False]
+    ran = len(findings) - len(na)
+    for name in na:
+        print(f"  n/a (not run): {name}")
     if bad:
         print("*** FAILED: %d finding(s) stopped reproducing: %s ***"
               % (len(bad), ", ".join(bad)))
     else:
-        print("*** OK: all %d findings reproduce ***" % len(findings))
+        print("*** OK: all %d findings that ran reproduce (%d n/a) ***"
+              % (ran, len(na)))
     print("END hfscx_256_analysis.py")
     print(SEP)
     return 1 if bad else 0

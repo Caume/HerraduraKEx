@@ -236,7 +236,11 @@ NON_GATING = {
 # sums to about 4e-6.  It read 6.4e-5 until TODO #358, which found #302's
 # seed-budget gate -- rated 1e-5 by #304 -- running at 7.4e-4 on its --quick
 # path, 12x the whole table, and moved it to 3e-11.  A rate is only as good as
-# the null it was measured against.
+# the null it was measured against.  TODO #361 then audited every derived rate
+# against the sample sizes CI actually runs and found the same shape once more:
+# stern_f_weight_binding.py §2 ran at 1.8e-5 under --quick against a listed
+# 1e-10, so the job's TRUE total had been about 7.2e-5, not the 5.4e-5 printed.
+# Compute a rate at the CI flag's constants, not at the script's defaults.
 # If this budget is ever approached, replicate the largest contributor; raising
 # the number is how the premise rots.
 _FLAKE_BUDGET = 1e-3
@@ -248,13 +252,24 @@ SAMPLED_GATES = {
         "0.001 confirmation, 5e-5).  §1 and §2 were 3.SE one-shot SAC gates at "
         "2.7e-3 each until #300 and are now the same shape at 1.9e-8, so §3 "
         "dominates.  The null was measured over 24 blocks: z in [-1.50, +1.84], "
-        "median 0.33, none past 2 sigma"),
-    "qc_mdpc_bgf_prototype.py": ("replicated", 4.6e-9,
+        "median 0.33, none past 2 sigma.  TODO #361 re-derived both: the "
+        "chi-square critical values (293.2, 330.5 at df 255) and the one-sided "
+        "0.05 x 0.001 are right, CI runs the full 5 000 trials (no reduced "
+        "flag), and §1/§2 are 2.7e-3 x 6.8e-6 each.  §4 (collisions) runs only "
+        "under --full and used to return True when skipped, so CI's summary "
+        "counted it as reproduced; it is now reported n/a"),
+    "qc_mdpc_bgf_prototype.py": ("replicated", 3.5e-8,
         "§3's PRF support uniformity, made ONE-SIDED and replicated by #300.  "
         "Only an over-large chi-square is evidence against uniformity, and the "
         "measured null (200 samples) fired once, at z = -3.66 -- the left tail, "
         "i.e. the sampler looking too good.  Negative control: a sampler missing "
-        "10% of positions scores z = +20.85 in both samples"),
+        "10% of positions scores z = +20.85 in both samples.  TODO #361: the "
+        "4.6e-9 used NORMAL tails for z, which is not a bound -- chi-square at "
+        "522 dof is right-skewed, and its exact tails are 2.17e-3 (z > 3) and "
+        "1.60e-5 (z > 4.5), 3.5e-8 replicated.  Each keygen's d positions are "
+        "distinct, which shrinks the statistic by about (1-d/r)/(1-1/r) = 0.973 "
+        "and only LOWERS that (~8e-10 if the scaling held exactly), so 3.5e-8 "
+        "is stated as the bound"),
     "stern_f_weight_binding.py": ("replicated", 1e-10,
         "§2's signer-identification rate over k signatures, built on #299's "
         "pattern from the start (TODO #298).  §1 and §3 are exact, and §1 only "
@@ -275,7 +290,10 @@ SAMPLED_GATES = {
         "is TRUE: until v9.5.32 main() passed the --quick round count (16) "
         "into §1, so the 64 was a dead default and CI ran the section at "
         "(2/3)^16 = 1.5e-3, 23x this whole job's advertised rate.  The negative controls "
-        "score 20/20 and 32/33"),
+        "score 20/20 and 32/33.  §2 had the SAME defect, found by TODO #361: its "
+        "identification bar is (trials*3)//4, replicated, and --quick passed 8 "
+        "trials, so CI ran P(Bin(8, 1/4) >= 6)^2 = 1.8e-5 against the 1e-10 "
+        "computed at 20.  §2 now owns SECTION2_TRIALS = 20: 1.5e-11"),
     # ── follows ─────────────────────────────────────────────────────────────
     "hybrid_credential_phi.py": ("follows", 2.2e-7,
         "§5.4 gates a SOUNDNESS ERROR, so the bar follows the statistic: "
@@ -328,15 +346,21 @@ SAMPLED_GATES = {
         "Same shape and the same 5000 * 2^-32 at n = 32: `hits == 0` for the "
         "linear attack, and `matched <= 2` for HKEX-CY agreement, where the "
         "accidental rate is 2^-n so three hits is far past astronomical"),
-    "hkex_nl_proposal.py": ("negligible", 1.2e-6,
-        "`hits == 0` for the classical attack at 5000 * 2^-32, as hkex_gf_test; "
-        "its `passed == TRIALS`, `errors == 0` and `matched < TRIALS` gates are "
-        "exact"),
-    "hkex_rnl_sparse_hybrid_2026.py": ("negligible", 5.7e-7,
-        "`abs(nz - 0.5) < 5 * SE` on the CBD(eta=1) density -- a two-sided "
-        "5-sigma test, 5.7e-7.  The weight-law gate beside it compares the mean "
-        "to 5 sample STANDARD DEVIATIONS rather than standard errors, which is "
-        "slack rather than flaky and is why this entry is not `exact`"),
+    "hkex_nl_proposal.py": ("negligible", 9.3e-7,
+        "`hits == 0` for the classical attack, twice (I-C on HKEX-GF, II-D on "
+        "FSCX-CY), each at TRIALS_EVE = 2000 and n = 32 (I-C's n = 64 pass adds "
+        "nothing): 2 * 2000 * 2^-32.  This entry said 5000 * 2^-32 'as "
+        "hkex_gf_test' until TODO #361 read the counts.  Its `passed == "
+        "TRIALS`, `errors == 0` and `matched < TRIALS` gates are exact"),
+    "hkex_rnl_sparse_hybrid_2026.py": ("negligible", 5.0e-7,
+        "`abs(nz - 0.5) < 5 * 0.5/sqrt(TRIALS)` on the CBD(eta=1) density over "
+        "20 x 1024 = 20 480 coefficients, i.e. 5.06 true SE two-sided: 4.2e-7.  "
+        "The weight-law gate beside it COULD NOT FAIL until TODO #361: "
+        "section2() returned the ANALYTIC mean and sd, so it compared n/2 with "
+        "n/2, and the 1000 sampled weights were printed and never tested (this "
+        "entry had called it 'slack').  It now gates the sample -- mean within "
+        "5.5 SE of n/2, sd within 5.5 of its sampling SE -- at 3.8e-8 each, and "
+        "a sampler dropping 10% of nonzero coefficients fails it (mean 460)"),
     "qcmdpc_bgf_failure_rate.py": ("negligible", 1e-36,
         "`failures == 0` over 400 trials, the gate #300 added to a main() that "
         "previously had a single `return 0`.  At BIKE-128 the DFR is ~2^-128 "
@@ -347,15 +371,21 @@ SAMPLED_GATES = {
         "rate is percent-scale by construction -- P(f1 == 0) is (1-p)^10000.  "
         "`f7 == 0 and t7 >= 200` at the deployed ring is the reconciled DFR, "
         "which no sample of 200 can make fire"),
-    "nl_fscx_v1_ratchet_collision.py": ("negligible", 1e-12,
-        "The image fraction is a 50 000-sample coverage estimate with SE ~ 0.002 "
-        "against a band of [0.55, 0.72] centred on 1 - 1/e -- about 40 SE of "
-        "headroom.  n = 8 is excluded from the band by the entry's own comment "
-        "because the asymptotic figure does not apply at 256 points"),
-    "nl_fscx_v2_kex.py": ("negligible", 1e-9,
-        "`comm_ex is None` fails only if a randomly drawn key pair happens to "
-        "commute, which is the property the script exists to refute; the "
-        "non-abelian gate beside it is a constructive witness and exact"),
+    "nl_fscx_v1_ratchet_collision.py": ("exact", None,
+        "Both findings read the EXHAUSTIVE image fraction at n = 8 and 16 (and "
+        "32 under FULL_SWEEP, which --quick turns off) over the fixed "
+        "DOMAIN_BYTES constants, so every run gets the same numbers.  The "
+        "script's fresh entropy goes to the n = 64 Monte Carlo and the Brent "
+        "walks, which are printed and not gated.  Rated `negligible` at 1e-12 "
+        "until TODO #361, on an argument about the 50 000-sample n = 64 "
+        "estimate -- a statistic the gate does not read"),
+    "nl_fscx_v2_kex.py": ("negligible", 7e-8,
+        "`comm_ex is None` fails if any of §3 Test B's 300 random key pairs at "
+        "n = 32 commutes on 4 random points.  K1 == K2 always commutes, so the "
+        "rate is at least 300 * 2^-32 = 7.0e-8 -- TODO #361's figure; the 1e-9 "
+        "stated before was an argument with no derivation behind it.  Distinct "
+        "pairs that commute by structure would add to it and none is known; "
+        "the non-abelian gate beside it is a constructive witness and exact"),
     "nl_fscx_ligero.py": ("negligible", 1e-9,
         "§3's soundness asserts are rejections of a wrong statement, which can "
         "pass only at the protocol's own soundness error (2^-lambda per "

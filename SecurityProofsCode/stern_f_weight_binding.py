@@ -348,7 +348,19 @@ def _identification_rate(trials, k, rounds, retired):
     return hits
 
 
-def section2(k=4, rounds=32, trials=20):
+# §2's identification gate owns its trial count, for the reason §1 owns its
+# round count (TODO #337), and found the same way (TODO #361's rate-table
+# audit).  Its bar is (trials * 3) // 4 against a Binomial(trials, 1/k) null,
+# replicated.  main() used to pass --quick's 8 here, which puts the bar at 6/8:
+# P(Bin(8, 1/4) >= 6) = 4.2e-3 per sample, 1.8e-5 replicated -- 1.8e5 times
+# the 1e-10 the gate runner listed, which had been computed at 20.  At 20 it
+# is 3.8e-6 per sample and 1.5e-11 replicated.  The null is exactly 1/k at any
+# round count (j is drawn uniformly and independently of the transcript), so
+# §2 keeps the shared --quick ROUND count and only the trial count is fixed.
+SECTION2_TRIALS = 20
+
+
+def section2(k=4, rounds=32, trials=SECTION2_TRIALS):
     print("\n§2  Ring anonymity — does any structural marker name the signer?")
     keys, secrets = _ring_keys(k)
     j = 1
@@ -436,12 +448,12 @@ def main():
     print("=" * 74)
     print("TODO #298 — Stern-F witness binding and Stern-Ring anonymity")
     print(f"  n = {N}, t = {T}, rounds = {rounds} "
-          f"(§1: {SECTION1_ROUNDS}), trials = {trials}")
+          f"(§1: {SECTION1_ROUNDS}), trials = {trials} (§2: {SECTION2_TRIALS})")
     print("=" * 74)
 
     results = [
         ("§1 witness-weight binding", section1()),
-        ("§2 ring anonymity", section2(rounds=rounds, trials=trials)),
+        ("§2 ring anonymity", section2(rounds=rounds)),
         ("§3 negative controls", section3(rounds=rounds, trials=trials)),
     ]
     print("\n" + "=" * 74)
