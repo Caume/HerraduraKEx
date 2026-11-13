@@ -72,44 +72,44 @@ fi
 
 # C prove → C verify
 check "C prove → C verify"  \
-    "$CLI_C" cred-verify --proof "$TMP/c_proof.pem" \
+    "$CLI_C" cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
     --pubkey "$TMP/c_user_pub.pem" --msg "interop"
 
 # C prove → Python verify
 check "C prove → Py verify" \
-    $CLI_PY cred-verify --proof "$TMP/c_proof.pem" \
+    $CLI_PY cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
     --pubkey "$TMP/c_user_pub.pem" --msg "interop"
 
 # Python prove → C verify
 check "Py prove → C verify" \
-    "$CLI_C" cred-verify --proof "$TMP/py_proof.pem" \
+    "$CLI_C" cred-verify --min-rounds 16 --proof "$TMP/py_proof.pem" \
     --pubkey "$TMP/py_user_pub.pem" --msg "interop"
 
 # Python prove → Python verify
 check "Py prove → Py verify" \
-    $CLI_PY cred-verify --proof "$TMP/py_proof.pem" \
+    $CLI_PY cred-verify --min-rounds 16 --proof "$TMP/py_proof.pem" \
     --pubkey "$TMP/py_user_pub.pem" --msg "interop"
 
 if [ "$HAVE_GO" -eq 1 ]; then
     # Go prove → Go verify
     check "Go prove → Go verify" \
-        "$CLI_GO" cred-verify --proof "$TMP/go_proof.pem" \
+        "$CLI_GO" cred-verify --min-rounds 16 --proof "$TMP/go_proof.pem" \
         --pubkey "$TMP/go_user_pub.pem" --msg "interop"
 
     # Go prove → C verify, Go prove → Py verify
     check "Go prove → C verify" \
-        "$CLI_C" cred-verify --proof "$TMP/go_proof.pem" \
+        "$CLI_C" cred-verify --min-rounds 16 --proof "$TMP/go_proof.pem" \
         --pubkey "$TMP/go_user_pub.pem" --msg "interop"
     check "Go prove → Py verify" \
-        $CLI_PY cred-verify --proof "$TMP/go_proof.pem" \
+        $CLI_PY cred-verify --min-rounds 16 --proof "$TMP/go_proof.pem" \
         --pubkey "$TMP/go_user_pub.pem" --msg "interop"
 
     # C prove → Go verify, Py prove → Go verify
     check "C prove → Go verify" \
-        "$CLI_GO" cred-verify --proof "$TMP/c_proof.pem" \
+        "$CLI_GO" cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
         --pubkey "$TMP/c_user_pub.pem" --msg "interop"
     check "Py prove → Go verify" \
-        "$CLI_GO" cred-verify --proof "$TMP/py_proof.pem" \
+        "$CLI_GO" cred-verify --min-rounds 16 --proof "$TMP/py_proof.pem" \
         --pubkey "$TMP/py_user_pub.pem" --msg "interop"
 fi
 
@@ -125,22 +125,22 @@ $CLI_PY  cred-issue --our "$TMP/py_issuer.pem" --in "$TMP/c_user_pub.pem" \
                     --out "$TMP/py2c_cred.pem" 2>/dev/null
 
 check "C cred → C verify"  \
-    "$CLI_C" cred-verify --proof "$TMP/c_proof.pem" \
+    "$CLI_C" cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
     --pubkey "$TMP/c_user_pub.pem" --msg "interop" \
     --cred "$TMP/c2c_cred.pem" --issuer "$TMP/c_issuer_pub.pem"
 
 check "C cred → Py verify" \
-    $CLI_PY cred-verify --proof "$TMP/c_proof.pem" \
+    $CLI_PY cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
     --pubkey "$TMP/c_user_pub.pem" --msg "interop" \
     --cred "$TMP/c2c_cred.pem" --issuer "$TMP/c_issuer_pub.pem"
 
 check "Py cred → C verify" \
-    "$CLI_C" cred-verify --proof "$TMP/c_proof.pem" \
+    "$CLI_C" cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
     --pubkey "$TMP/c_user_pub.pem" --msg "interop" \
     --cred "$TMP/py2c_cred.pem" --issuer "$TMP/py_issuer_pub.pem"
 
 check "Py cred → Py verify" \
-    $CLI_PY cred-verify --proof "$TMP/c_proof.pem" \
+    $CLI_PY cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
     --pubkey "$TMP/c_user_pub.pem" --msg "interop" \
     --cred "$TMP/py2c_cred.pem" --issuer "$TMP/py_issuer_pub.pem"
 
@@ -151,17 +151,17 @@ if [ "$HAVE_GO" -eq 1 ]; then
                         --out "$TMP/go2c_cred.pem" 2>/dev/null
 
     check "Go cred → C verify" \
-        "$CLI_C" cred-verify --proof "$TMP/c_proof.pem" \
+        "$CLI_C" cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
         --pubkey "$TMP/c_user_pub.pem" --msg "interop" \
         --cred "$TMP/go2c_cred.pem" --issuer "$TMP/go_issuer_pub.pem"
 
     check "Go cred → Py verify" \
-        $CLI_PY cred-verify --proof "$TMP/c_proof.pem" \
+        $CLI_PY cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
         --pubkey "$TMP/c_user_pub.pem" --msg "interop" \
         --cred "$TMP/go2c_cred.pem" --issuer "$TMP/go_issuer_pub.pem"
 
     check "Go cred → Go verify" \
-        "$CLI_GO" cred-verify --proof "$TMP/c_proof.pem" \
+        "$CLI_GO" cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
         --pubkey "$TMP/c_user_pub.pem" --msg "interop" \
         --cred "$TMP/go2c_cred.pem" --issuer "$TMP/go_issuer_pub.pem"
 
@@ -169,23 +169,23 @@ if [ "$HAVE_GO" -eq 1 ]; then
     "$CLI_C" cred-issue --our "$TMP/c_issuer.pem" --in "$TMP/go_user_pub.pem" \
                         --out "$TMP/c2go_cred.pem" 2>/dev/null
     check "C cred (over Go key) → Go verify" \
-        "$CLI_GO" cred-verify --proof "$TMP/go_proof.pem" \
+        "$CLI_GO" cred-verify --min-rounds 16 --proof "$TMP/go_proof.pem" \
         --pubkey "$TMP/go_user_pub.pem" --msg "interop" \
         --cred "$TMP/c2go_cred.pem" --issuer "$TMP/c_issuer_pub.pem"
 fi
 
 # Wrong-message rejection
 check_fail "wrong-msg reject (C verifier)" \
-    "$CLI_C" cred-verify --proof "$TMP/c_proof.pem" \
+    "$CLI_C" cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
     --pubkey "$TMP/c_user_pub.pem" --msg "wrong"
 
 check_fail "wrong-msg reject (Py verifier)" \
-    $CLI_PY cred-verify --proof "$TMP/c_proof.pem" \
+    $CLI_PY cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
     --pubkey "$TMP/c_user_pub.pem" --msg "wrong"
 
 if [ "$HAVE_GO" -eq 1 ]; then
     check_fail "wrong-msg reject (Go verifier)" \
-        "$CLI_GO" cred-verify --proof "$TMP/c_proof.pem" \
+        "$CLI_GO" cred-verify --min-rounds 16 --proof "$TMP/c_proof.pem" \
         --pubkey "$TMP/c_user_pub.pem" --msg "wrong"
 fi
 

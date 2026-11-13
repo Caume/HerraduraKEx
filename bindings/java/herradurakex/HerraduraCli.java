@@ -1427,7 +1427,7 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
+            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : STERN_CLI_ROUNDS;
 
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1455,7 +1455,7 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
+            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : STERN_CLI_ROUNDS;
 
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1550,8 +1550,9 @@ public final class HerraduraCli {
             boolean ok;
             if (algo.equals("nl-zkboo")) {
                 Codec.ZkpNlProof pr = Codec.decodeZkpNlProof(readString(sigPath));
+                requireRounds(pr.rounds.size(), minRounds(opt, "verify"), "nl-zkboo proof", "verify");
                 // The round count travels in the PEM, as it does for Stern-F
-                // (TODO #236): a verifier accepts whatever the signer used.
+                // (TODO #236); the verifier holds it to --min-rounds (TODO #364).
                 // The WIDTH is different -- a proof about another n is not a
                 // proof about this key, and nb aliasing hides it (TODO #275).
                 if (pr.n != pub.n)
@@ -1561,6 +1562,7 @@ public final class HerraduraCli {
                                   padTrunc(msg, 32), pr.rounds);
             } else {
                 Codec.ZkpNlPpProof pr = Codec.decodeZkpNlPpProof(readString(sigPath));
+                requireRounds(pr.rounds.size(), minRounds(opt, "verify"), "nl-zkbpp proof", "verify");
                 if (pr.n != pub.n)
                     throw new CliError("verify: proof n mismatch with pubkey n ("
                                        + pr.n + " vs " + pub.n + ")");
@@ -1601,6 +1603,8 @@ public final class HerraduraCli {
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.SternPubKey pub = Codec.decodeSternPubKey(pubPem, pubBlock.label);
             Codec.SternSigDecoded sig = Codec.decodeSternSig(readString(sigPath));
+            requireRounds(sig.sig.challenges.length, minRounds(opt, "verify"),
+                          "hpks-stern signature", "verify");
             BigInteger msgInt = new BigInteger(1, padTrunc(msg, pub.nbits / 8));
 
             boolean ok = Stern.hpksSternFVerify(msgInt, sig.sig, pub.seed, pub.syndrome);
@@ -1639,6 +1643,7 @@ public final class HerraduraCli {
         if (algo.equals("hpks-ring")) {
             List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "verify"));
             Codec.RingSigDecoded sig = Codec.decodeRingSig(readString(req(opt, "sig", "verify")));
+            requireRounds(sig.sig.rounds(), minRounds(opt, "verify"), "hpks-ring signature", "verify");
             if (sig.nbits != Herradura.N) {
                 throw new CliError("hpks-ring verify: signature n=" + sig.nbits + " != ring n=" + Herradura.N);
             }
@@ -2063,6 +2068,8 @@ public final class HerraduraCli {
         Codec.HcredPubKey pub = loadHcredPubkey(req(opt, "pubkey", "cred-verify"));
         byte[] msg = opt.getOrDefault("msg", "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
         int rounds = proof.rounds.size();
+        int floor = minRounds(opt, "cred-verify");
+        requireRounds(rounds, floor, "HCRED proof", "cred-verify");
 
         boolean okProof = Hcred.verify(pub.m, pub.c, pub.seedH, pub.syndr, proof, rounds, msg);
         if (!okProof) {
@@ -2072,6 +2079,7 @@ public final class HerraduraCli {
 
         if (opt.containsKey("cred")) {
             Codec.SternSigDecoded credSig = Codec.decodeHcredCredential(readString(opt.get("cred")));
+            requireRounds(credSig.sig.challenges.length, floor, "HCRED credential", "cred-verify");
             String issuerPem = readString(req(opt, "issuer", "cred-verify"));
             Codec.PemBlock issuerBlock = Codec.pemUnwrap(issuerPem);
             if (!issuerBlock.label.equals(Codec.PEM_HPKS_STERN_PUB) && !issuerBlock.label.equals(Codec.PEM_HPKE_STERN_PUB)) {
@@ -2157,9 +2165,40 @@ public final class HerraduraCli {
      *  herradura_cli.go), so all four now reject the same value set; this
      *  paragraph is kept because the divergence is the reason the value-set axis
      *  in spec/generate_spec.py exists, not because it is still live. */
+    /** TODO #364: the verifier's round-count floor.  The round count travels in
+     *  the artifact (TODO #236), so a verifier taking it from there let the
+     *  SIGNER choose the verifier's soundness: one Stern-F or ZKBoo-(2,3) round
+     *  can be answered without the witness for two of its three challenges, and
+     *  under Fiat-Shamir a forger grinds the commitment until the challenge is
+     *  one of those.  219 is the 128-bit count ((2/3)^219 < 2^-128);
+     *  `verify` / `cred-verify --min-rounds N` lowers it. */
+    private static final int MIN_VERIFY_ROUNDS = 219; // == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS
+    /** sign --algo hpks-stern / hpks-ring default; was Stern.SDFR (32 demo). */
+    private static final int STERN_CLI_ROUNDS = 219;
+
+    private static int minRounds(Map<String, String> opt, String cmd) {
+        String v = opt.get("min-rounds");
+        if (v == null) return MIN_VERIFY_ROUNDS;
+        int r;
+        try { r = Integer.parseInt(v); } catch (NumberFormatException e) { r = -1; }
+        if (r < 1 || r > 4096)
+            throw new CliError(cmd + ": --min-rounds must be between 1 and 4096");
+        return r;
+    }
+
+    private static void requireRounds(int rounds, int floor, String what, String cmd) {
+        if (rounds >= floor) return;
+        throw new CliError(cmd + ": " + what + " declares " + rounds + " rounds, below the "
+            + "--min-rounds floor of " + floor + " (" + MIN_VERIFY_ROUNDS + " = 128-bit "
+            + "Fiat-Shamir soundness); pass --min-rounds " + rounds + " to accept it anyway");
+    }
+
     private static byte[] readMessage(Map<String, String> opt, String cmd) throws IOException {
         byte[] msg = readBytes(req(opt, "in", cmd));
-        String digest = opt.getOrDefault("digest", "none");
+        // TODO #365: an absent --digest means hfscx-256.  The old default, none,
+        // padded/truncated the message to the key width, so a signature on one
+        // file verified for every file sharing its first 32 bytes.
+        String digest = opt.getOrDefault("digest", "hfscx-256");
         if (digest.equals("hfscx-256")) return Hfscx256.hash(msg);
         if (!digest.equals("none")) {
             throw new CliError(cmd + ": unsupported --digest " + digest

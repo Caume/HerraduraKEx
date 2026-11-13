@@ -1832,6 +1832,12 @@
         "java": true,
         "python": true
       },
+      "--min-rounds": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
       "--msg": {
         "c": true,
         "go": true,
@@ -2557,6 +2563,12 @@
         "python": true
       },
       "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--min-rounds": {
         "c": true,
         "go": true,
         "java": true,

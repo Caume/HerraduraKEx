@@ -24985,3 +24985,103 @@ The printed job total stays 5.4e-5.  Since the hidden 1.8e-5 is gone, it is now 
 true total.
 
 Status: **DONE v14.0.4** — rate table audited at CI's sample sizes; stern §2 flake (1.8e-5) fixed, a vacuous gate and an unrun-as-pass fixed, five rates restated.
+
+---
+
+### #364: verifiers accept any round count the artifact declares -- enforce a minimum (MAJOR)
+
+Found in the v14.0.4 exploratory pass (with #362).  **This is a MAJOR change:** it changes
+what an existing `verify --algo` / `cred-verify` accepts, so artifacts made at low round
+counts stop verifying.  It needs a `MIGRATING.md` entry.
+
+**The finding.**  Since TODO #236 the round count travels in the PEM and every reader
+accepts any count in `[1, max]`, so the SIGNER chooses the verifier's soundness.  Measured
+with honestly produced `--rounds 1` artifacts:
+
+| artifact | C | Go | Java | Python |
+|---|---|---|---|---|
+| `hpks-stern` signature | OK | OK | OK | OK |
+| `hpks-ring` signature | OK | OK | OK | OK |
+| `nl-zkboo` proof | OK | OK | OK | OK |
+| `cred-verify` proof (n = 32) | rejected on width | OK | rejected on width | OK |
+
+One Stern / ZKBoo-(2,3) round can be answered without the witness for two of its three
+challenges, and under Fiat-Shamir the forger grinds the commitment until the challenge is
+one it can answer.  So a 1-round artifact is forgeable for any public key in a few hash
+evaluations, far below the ~30-40-bit instance hardness SECURITY.md quotes for these rows.
+TODO #236 treated the round count as an interop question only.  `rnl-sigma` carries no
+round count and is not affected.
+
+**A related default.**  The C CLI's `cred-prove` uses `HCRED_DEMO_ROUNDS = 4`
+(`herradura_cli.c:5051`, `herradura.h:5711`); Python, Go and Java use 219.  Its proofs are
+accepted by all four (measured: a 4-round n = 256 C proof verifies in Java).  Move C to 219.
+
+**Impact.**  Rows affected: HPKS-Stern-F, HPKS-Ring, ZKBoo/ZKB++, HCRED -- all Demo-only
+or Research, so no production-track rating moves, but SECURITY.md's figures for them
+describe a check no verifier performs.
+
+**Work.**  A verifier-side floor in all four ports (219, the 128-bit Fiat-Shamir count, or
+a `--min-rounds N` flag defaulting to it); reject below it with an error naming the declared
+count.  Update the CI scripts that sign at reduced rounds (the assembly-width `rounds=4`
+harnesses are not CLI verifiers and are out of scope).  Rejection tests need an
+accept-control at the floor and a negative control below it, in every port.
+
+**Resolution (v15.0.0).**  All four CLIs' `verify` (hpks-stern, hpks-ring, nl-zkboo,
+nl-zkbpp) and `cred-verify` (proof and credential) refuse an artifact declaring fewer than
+`--min-rounds N` rounds, default 219, with "<what> declares R rounds, below the
+--min-rounds floor of F ...".  `--min-rounds` takes 1..4096.  Every signing default is
+now 219: `sign --algo hpks-stern` / `hpks-ring` (was the 32-round SDF_ROUNDS in all four),
+C `cred-issue` (was 32) and C `cred-prove` (was HCRED_DEMO_ROUNDS = 4).  The C CLI also
+stops ignoring `--rounds` for `nl-zkboo` / `nl-zkbpp` (the #367 sub-item) and for
+`hpks-ring`.  CliTest scripts that sign at reduced rounds pass `--min-rounds` on the verify
+side, and `test_c_sign.sh` / `test_cred.sh` / `test_c_cred.sh` / `test_round_floor.sh`
+carry floor refusals matched on the floor's message, each beside an accept-control at
+the same artifact.  MCP's verify tool exposes no `--min-rounds`, so it always enforces
+219.  MIGRATING.md section 30.
+
+Status: **DONE v15.0.0** — verifiers refuse fewer than --min-rounds (default 219) Fiat-Shamir rounds; every CLI signs at 219 by default.
+
+---
+
+### #365: sign pre-hashes by default -- make `--digest hfscx-256` the default (MAJOR)
+
+Found with #364.  **This is a MAJOR change** (decision: option (a), the user's call on
+v14.0.4): it changes what an existing `sign`/`verify --algo` produces and accepts, so every
+signature made in the default mode stops verifying.  It needs a `MIGRATING.md` entry.
+
+**The finding.**  With the default `--digest none`, the message is padded/truncated to 32
+bytes (TODO #261), so a signature on file A verifies for any file B sharing A's first 32
+bytes.  Measured for `hpks`, `hpks-nl`, `hpks-stern` and `rnl-sigma` in all four CLIs (two
+47-byte payment strings differing after byte 32: "Signature OK"); with
+`--digest hfscx-256` the same pair fails, as it should.  `rnl-sigma` is production-track
+(conjectured), so this reaches a production row through its CLI.  The default is
+deliberate (TODO_DONE: "Default `--digest none` preserves the existing truncating
+behavior") and `--help` says so, but the TUTORIAL's signing examples use it with no
+warning.
+
+**Work.**  Default `--digest` to `hfscx-256` in `sign`, `verify` and
+`threshold-aggregate` / `threshold-verify` in all four CLIs (and the MCP server's tools);
+keep `--digest none` as an explicit opt-in for 32-byte inputs and for verifying old
+signatures.  Regenerate any KAT/PEM vectors that pin a default-mode signature.  Check
+whether `rnl-sigma`, `nl-zkboo`, `nl-zkbpp`, `hpks-ring`, `hpks-wots` and `hpks-xmss`
+route through the same `--digest` path or truncate separately, and bring each to the same
+rule.  Update the TUTORIAL, SPEC.md and llms.txt.
+
+**Out of scope, related.**  The single-block `enc` algorithms (`hske`, `hske-nla1`,
+`hske-nla2`, `hske-nla3`, `hpke`, `hpke-nl`, `hpke-nl3`) also drop everything past byte 32
+and exit 0, and return 32 bytes for a shorter input.  Refusing over-32-byte input there
+is a separate decision; file it if wanted.
+
+**Resolution (v15.0.0).**  An absent `--digest` means `hfscx-256` in `sign`, `verify`,
+`threshold-aggregate` and `threshold-verify` in all four CLIs (C `digest_value`, Go
+`digestValue`, Java `readMessage`, Python argparse defaults); `--digest none` keeps the
+pad/truncate behaviour as an explicit opt-in.  Every `--algo` goes through that one
+pre-hash site in each CLI, including rnl-sigma, nl-zkboo, nl-zkbpp, hpks-ring, hpks-wots
+and hpks-xmss, so there was no separate truncation path to fix.  Go's `verify --algo
+hpks-t` forwarded `--digest` only when non-empty, which after the change would have
+silently turned `none` into the default; it now forwards it explicitly.  No KAT/ or
+KAT/pem vector pins a CLI signature, so none needed regenerating.  The MCP tools inherit
+the default.  `test_digest_matrix.sh` now pins "flag omitted == hfscx-256" and "a
+`none` signature does not verify by default".  MIGRATING.md section 30.
+
+Status: **DONE v15.0.0** — sign/verify/threshold default to --digest hfscx-256 in all four CLIs; none is opt-in.

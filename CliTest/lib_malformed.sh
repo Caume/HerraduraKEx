@@ -458,7 +458,7 @@ hkx_mal_suite_packed() {
     # HCRED PROOF: n at 0, W at 4, rounds at 8.  rounds=0 is the same vacuous
     # acceptance as the ZKBoo case above, in a second protocol.
     if _hkx_mal_control "[$lang] hcred: genuine proof verifies" \
-        "${CLI[@]}" cred-verify --cred "$hcred" --issuer "$d/rm1_pub.pem" \
+        "${CLI[@]}" cred-verify --min-rounds 4 --cred "$hcred" --issuer "$d/rm1_pub.pem" \
         --pubkey "$hpub" --proof "$hprf" --msg nonce; then
         for case in "0 0 n=0" "0 33 n=33" "0 4294967295 n=2^32-1" \
                     "4 0 W=0" "4 4294967295 W=2^32-1" \
@@ -467,7 +467,7 @@ hkx_mal_suite_packed() {
             off="$1" val="$2"; shift 2
             hkx_mal_poke "$hprf" "$bad" "$off" 4 "$val"
             _hkx_mal_expect "[$lang] hcred proof rejects $*" \
-                "${CLI[@]}" cred-verify --cred "$hcred" \
+                "${CLI[@]}" cred-verify --min-rounds 4 --cred "$hcred" \
                 --issuer "$d/rm1_pub.pem" --pubkey "$hpub" \
                 --proof "$bad" --msg nonce
         done

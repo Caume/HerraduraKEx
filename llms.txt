@@ -175,13 +175,21 @@ cli_surface_gaps.
     versions.
   sign --algo {hpks,hpks-nl,hpks-stern,rnl-sigma,nl-zkboo,nl-zkbpp,hpks-xmss,hpks-wots,hpks-ring}
        --key FILE [--ring FILE1,FILE2,...] --in FILE --out FILE
-       [--digest {none,hfscx-256}] [--rounds N]
+       [--digest {hfscx-256,none}] [--rounds N]
+    --digest defaults to hfscx-256 (TODO #365, v15.0.0): the whole input is
+    hashed and the 32-byte digest signed.  none pads/truncates the input to 32
+    bytes, so only its first 32 bytes are signed; pass it on BOTH sides.
+    --rounds (hpks-stern, hpks-ring, nl-zkboo, nl-zkbpp) defaults to 219 in all
+    four CLIs, the 128-bit Fiat-Shamir count.
     hpks-wots / hpks-xmss keep one-time-use / leaf-index state in a <keyfile>.idx
     sidecar; reusing a WOTS key or an XMSS leaf breaks the signature.
   verify --algo {sign algos + hpks-t} --pubkey FILE [--ring ...] --in FILE --sig FILE
-         [--digest {none,hfscx-256}]
+         [--digest {hfscx-256,none}] [--min-rounds N]
+    The round count travels in the artifact, so the verifier sets a floor:
+    hpks-stern, hpks-ring, nl-zkboo and nl-zkbpp artifacts declaring fewer than
+    --min-rounds (default 219) are refused (TODO #364, v15.0.0).
   threshold-commit --key FILE --commit-out FILE --nonce-out FILE
-  threshold-aggregate --commits FILE... --in FILE --out FILE [--digest ...]
+  threshold-aggregate --commits FILE... --in FILE --out FILE [--digest {hfscx-256,none}]
   threshold-respond --key FILE --commits FILE... --aggregate FILE --nonce FILE --out FILE
   threshold-combine --aggregate FILE --partials FILE... --out FILE
     Since TODO #270 (v6.4.0) all four CLIs accept BOTH spellings of these list
@@ -192,7 +200,7 @@ cli_surface_gaps.
     command line did not port.  MIXING the two names in one invocation is
     refused: the list order is consensus-critical (threshold-respond must see the
     order threshold-aggregate did), so there is no defensible interleaving.
-  threshold-verify --sig FILE --in FILE [--digest {none,hfscx-256}]
+  threshold-verify --sig FILE --in FILE [--digest {hfscx-256,none}]
     (HPKS-T 4-phase flow: commit -> aggregate -> respond -> combine, then verify.
      threshold-verify is a directly-invokable top-level subcommand in GO ONLY.
      C dispatches `verify` and delegates internally to cmd_threshold_verify;
@@ -221,7 +229,10 @@ cli_surface_gaps.
   pake-demo --key FILE [--username U] [--password P]
   cred-issue --our FILE --in FILE [--rounds N] --out FILE
   cred-prove --in FILE [--msg STR] [--rounds N] --out FILE
-  cred-verify (see docs/TUTORIAL.md for full HCRED flow)
+  cred-verify --proof FILE --pubkey FILE [--msg STR] [--cred FILE --issuer FILE]
+              [--min-rounds N]
+    Refuses a proof or credential declaring fewer than --min-rounds (default 219)
+    rounds (TODO #364).  See docs/TUTORIAL.md for the full HCRED flow.
 
 ## Language-specific notes for integrators
 - C: `#include "herradura.h"` directly; no separate compilation unit needed.

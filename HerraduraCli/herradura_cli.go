@@ -3241,7 +3241,10 @@ func cmdCredVerify(args []string) {
 	issuerPath := fs.String("issuer", "", "Issuer hpks-stern/hpke-stern public key PEM (required with --cred)")
 	msg := fs.String("msg", "", "Message bound into the proof")
 	rounds := fs.Int("rounds", 0, "Rounds to verify (default: proof's own round count)")
+	minR := fs.Int("min-rounds", cliMinVerifyRounds,
+		"Refuse a proof or credential declaring fewer rounds (TODO #364)")
 	fs.Parse(args)
+	minRounds := minRoundsValue("cred-verify", *minR)
 
 	if *proofPath == "" {
 		fmt.Fprintln(os.Stderr, "cred-verify: --proof required")
@@ -3261,6 +3264,7 @@ func cmdCredVerify(args []string) {
 		die("cred-verify", derr)
 	}
 
+	requireRounds(len(proof.Rounds), minRounds, "HCRED proof", "cred-verify")
 	r := len(proof.Rounds)
 	if *rounds > 0 {
 		r = *rounds
@@ -3291,6 +3295,7 @@ func cmdCredVerify(args []string) {
 		if uerr != nil {
 			die("cred-verify", uerr)
 		}
+		requireRounds(len(credSig.Rounds), minRounds, "HCRED credential", "cred-verify")
 
 		issLabel, issInts, ierr := readPEMInts(*issuerPath)
 		if ierr != nil {
@@ -3800,12 +3805,12 @@ func cmdSign(args []string) {
 	algo   := fs.String("algo", "", "Signature algorithm (hpks|hpks-nl|hpks-stern)")
 	key    := fs.String("key", "", "Private key file")
 	in     := fs.String("in", "-", "Message input file")
-	digest := fs.String("digest", "", "Pre-hash algorithm (hfscx-256)")
+	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	out    := fs.String("out", "-", "Signature PEM output file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
 	rounds := fs.Int("rounds", 0, "ZKP/Stern-F rounds (nl-zkboo, nl-zkbpp, hpks-stern, hpks-ring; "+
-		"default: 219 for nl-zkboo/nl-zkbpp, 32 demo for hpks-stern/hpks-ring; "+
-		"production soundness needs >= 219 for all)")
+		"default: 219, the 128-bit count every verifier requires unless it passes "+
+		"--min-rounds; TODO #364)")
 	fs.Parse(args)
 	digestValue("sign", digest)
 
@@ -3826,7 +3831,9 @@ func cmdSign(args []string) {
 	if *rounds > 0 {
 		zkpRounds = *rounds
 	}
-	sternRounds := SdfRounds
+	// The CLI default is the 128-bit count, not the suite's SdfRounds demo
+	// value: verifiers refuse fewer unless asked (TODO #364).
+	sternRounds := SdfProductionRounds
 	if *rounds > 0 {
 		sternRounds = *rounds
 	}
@@ -4076,11 +4083,14 @@ func cmdVerify(args []string) {
 	algo   := fs.String("algo", "", "Signature algorithm")
 	pubkey := fs.String("pubkey", "", "Public key file")
 	in     := fs.String("in", "-", "Message input file")
-	digest := fs.String("digest", "", "Pre-hash algorithm (hfscx-256)")
+	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	sig    := fs.String("sig", "", "Signature PEM file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
+	minR   := fs.Int("min-rounds", cliMinVerifyRounds,
+		"Refuse hpks-stern/hpks-ring/nl-zkboo/nl-zkbpp artifacts declaring fewer rounds (TODO #364)")
 	fs.Parse(args)
 	digestValue("verify", digest)
+	minRounds := minRoundsValue("verify", *minR)
 
 	if *algo == "" || *sig == "" {
 		fmt.Fprintln(os.Stderr, "verify: --algo and --sig required")
@@ -4107,6 +4117,7 @@ func cmdVerify(args []string) {
 		}
 		ringKeys, n := loadRingPubkeys(*ring)
 		rsig, sigN := decodeRingSig(*sig)
+		requireRounds(rsig.Rounds, minRounds, "hpks-ring signature", "verify")
 		if sigN != n {
 			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sigN, n)
 			os.Exit(1)
@@ -4129,7 +4140,13 @@ func cmdVerify(args []string) {
 	if *algo == "hpks-t" {
 		// Pass --in, --sig, --digest directly from parsed values.
 		tvArgs := []string{"--sig", *sig, "--in", *in}
-		if *digest != "" { tvArgs = append(tvArgs, "--digest", *digest) }
+		// digestValue normalised none to "", which threshold-verify would now
+		// read as the hfscx-256 default (TODO #365): forward it explicitly.
+		fwd := *digest
+		if fwd == "" {
+			fwd = "none"
+		}
+		tvArgs = append(tvArgs, "--digest", fwd)
 		cmdThresholdVerify(tvArgs)
 		return
 	}
@@ -4159,6 +4176,7 @@ func cmdVerify(args []string) {
 		if prfN != zkpN {
 			die("verify", fmt.Errorf("proof n mismatch with pubkey n (%d vs %d)", prfN, zkpN))
 		}
+		requireRounds(len(proof), minRounds, "nl-zkboo proof", "verify")
 		if ZkpNlVerify(B, y, zkpN, len(proof), msgPad(inBytes, 32), proof) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
@@ -4188,6 +4206,7 @@ func cmdVerify(args []string) {
 		if uerr != nil {
 			die("verify", uerr)
 		}
+		requireRounds(len(proof), minRounds, "nl-zkbpp proof", "verify")
 		if ZkpNlVerifypp(B, y, zkpN, len(proof), msgPad(inBytes, 32), proof) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
@@ -4276,6 +4295,7 @@ func cmdVerify(args []string) {
 		if err != nil {
 			die("verify", err)
 		}
+		requireRounds(len(sternSig.Rounds), minRounds, "hpks-stern signature", "verify")
 		if HpksSternFVerify(msg, sternSig, seed, synInt) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
@@ -4887,6 +4907,33 @@ func die(prefix string, err error) {
 	os.Exit(1)
 }
 
+// cliMinVerifyRounds is the verifier's round-count floor (TODO #364).  The
+// round count travels in the artifact (TODO #236), so a verifier taking it from
+// there let the SIGNER choose the verifier's soundness: one Stern-F or
+// ZKBoo-(2,3) round can be answered without the witness for two of its three
+// challenges, and under Fiat-Shamir a forger grinds the commitment until the
+// challenge is one of those.  219 is the 128-bit count ((2/3)^219 < 2^-128);
+// `verify` / `cred-verify --min-rounds N` lowers it.
+const cliMinVerifyRounds = 219 // == SdfProductionRounds == ZkpNlProdRounds
+
+func minRoundsValue(cmd string, v int) int {
+	if v < 1 || v > SdfMaxRounds {
+		fmt.Fprintf(os.Stderr, "%s: --min-rounds must be between 1 and %d\n", cmd, SdfMaxRounds)
+		os.Exit(1)
+	}
+	return v
+}
+
+func requireRounds(rounds, floor int, what, cmd string) {
+	if rounds >= floor {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s: %s declares %d rounds, below the --min-rounds floor of %d "+
+		"(%d = 128-bit Fiat-Shamir soundness); pass --min-rounds %d to accept it anyway\n",
+		cmd, what, rounds, floor, cliMinVerifyRounds, rounds)
+	os.Exit(1)
+}
+
 // digestValue validates --digest's value set in one place (TODO #269).
 //
 // Every call site tests `*digest == "hfscx-256"` and falls through to the
@@ -4897,7 +4944,16 @@ func die(prefix string, err error) {
 // only that the flag exists. Python rejects via argparse choices= and Java by
 // name; this makes Go agree. `none` is normalised to "" so the call sites are
 // unchanged.
+//
+// TODO #365: an absent --digest means hfscx-256.  The old default, none,
+// padded/truncated the message to the key width, so a signature on one file
+// verified for every file sharing its first 32 bytes.  The flags are declared
+// with "" so that this function, not four declarations, owns the default.
 func digestValue(cmd string, digest *string) {
+	if *digest == "" {
+		*digest = "hfscx-256"
+		return
+	}
 	if *digest == "none" {
 		*digest = ""
 		return
@@ -4936,7 +4992,8 @@ own parser by spec/generate_spec.py; the notes below say which are
 required):
   cred-issue           --in --our --out --rounds
   cred-prove           --in --msg --out --rounds
-  cred-verify          --cred --issuer --msg --proof --pubkey --rounds
+  cred-verify          --cred --issuer --min-rounds --msg --proof --pubkey
+                       --rounds
   dec                  --ad --algo --in --key --out
                        --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex
                                hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern
@@ -4977,7 +5034,7 @@ required):
   threshold-verify     --digest --in --sig
   twk                  --bidx --decrypt --encrypt --in --key --out --sector
                        --v3
-  verify               --algo --digest --in --pubkey --ring --sig
+  verify               --algo --digest --in --min-rounds --pubkey --ring --sig
                        --algo: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo
                                nl-zkbpp hpks-xmss hpks-wots hpks-ring hpks-t
 `
@@ -5151,7 +5208,7 @@ func cmdThresholdAggregate(args []string) {
 	fs     := flag.NewFlagSet("threshold-aggregate", flag.ExitOnError)
 	in     := fs.String("in", "-", "Message input file")
 	out    := fs.String("out", "-", "Output aggregate PEM")
-	digest := fs.String("digest", "", "Pre-hash (hfscx-256)")
+	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	fs.Parse(filterMultiFlags(args, "--commits", "--commit"))
 	digestValue("threshold-aggregate", digest)
 	if len(commitPaths) == 0 {
@@ -5345,7 +5402,7 @@ func cmdThresholdVerify(args []string) {
 	fs     := flag.NewFlagSet("threshold-verify", flag.ExitOnError)
 	in     := fs.String("in", "-", "Message input file")
 	sig    := fs.String("sig", "", "HPKST SIGNATURE PEM file")
-	digest := fs.String("digest", "", "Pre-hash (hfscx-256)")
+	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	fs.Parse(args)
 	digestValue("threshold-verify", digest)
 	if *sig == "" {

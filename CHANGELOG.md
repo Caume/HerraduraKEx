@@ -2,6 +2,56 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [15.0.0] - 2026-11-12
+
+**MAJOR: a security fix in two parts.** Both parts change what an existing `--algo`
+produces and accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md section 30.
+
+### TODO #364 — verifiers enforce a Fiat-Shamir round floor
+
+- **The finding.** The round count travels in the artifact (TODO #236), and every
+  verifier accepted any count from 1 to 4096. So the signer chose the verifier's
+  soundness. An honestly made 1-round `hpks-stern`, `hpks-ring`, `nl-zkboo` or HCRED
+  artifact verified in all four CLIs, and one round is forgeable by grinding the
+  Fiat-Shamir commitment.
+- **The floor.** `verify` (`hpks-stern`, `hpks-ring`, `nl-zkboo`, `nl-zkbpp`) and
+  `cred-verify` (proof and credential) refuse fewer than `--min-rounds N` rounds, with a
+  default of 219 ((2/3)^219 < 2^−128). The new flag takes 1..4096 and exists in all four
+  CLIs.
+- **The signing defaults** are 219 everywhere. `sign --algo hpks-stern` and `hpks-ring`
+  move from 32 in all four CLIs; C `cred-issue` moves from 32 and C `cred-prove` from 4.
+  The C CLI now honours `sign --rounds` for `nl-zkboo`, `nl-zkbpp` and `hpks-ring`, which
+  it used to ignore (the #367 sub-item).
+- **Cost at 219 rounds** (`hpks-stern`, n = 256, aarch64 SBC): sign / verify takes
+  0.3 / 0.2 s in C, 1.0 / 0.8 s in Java, 3.4 / 2.7 s in Go and 5.5 / 3.9 s in Python.
+  The signature is 47.5 KB.
+- **Tests.** The new `CliTest/test_round_floor.sh` (cross-lang-compat) runs a 4×4 matrix
+  of 224 assertions. Each refusal is matched on the floor's own message, beside an
+  accept-control on the same artifact. `test_c_sign.sh`, `test_cred.sh` and
+  `test_c_cred.sh` gain floor refusals. Scripts that sign at reduced rounds now pass
+  `--min-rounds` when they verify, and `test_cross_lang_matrix.sh` checks `hpks-stern`
+  interop at the 219-round default.
+- **Spec.** `extract_flags_c` follows the new `rounds_arg` helper.
+
+### TODO #365 — `sign` pre-hashes by default
+
+- **The finding.** With the default `--digest none`, the message was padded or truncated
+  to 32 bytes, so a signature on one file verified for every file that shared its first
+  32 bytes. This was measured for `hpks`, `hpks-nl`, `hpks-stern` and `rnl-sigma` in all
+  four CLIs.
+- **The change.** An absent `--digest` means `hfscx-256` in `sign`, `verify`,
+  `threshold-aggregate` and `threshold-verify`. `--digest none` remains as an explicit
+  opt-in. Every `--algo` goes through the one pre-hash site in each CLI, so there was no
+  separate truncation path to fix.
+- **A Go bug the change would have caused.** Go's `verify --algo hpks-t` forwarded
+  `--digest` only when it was set, which would have turned an explicit `none` into the
+  new default. It now always forwards the value.
+- **Vectors.** No KAT/ or KAT/pem vector pins a CLI signature, so none were regenerated.
+- **Tests.** `test_digest_matrix.sh` now pins two rules: an omitted flag means
+  hfscx-256, and a `none` signature fails to verify under the default.
+- **Docs.** The MCP tool schemas, llms.txt, README, TUTORIAL, INTRODUCTION and CLAUDE.md
+  describe the new defaults.
+
 ## [14.0.4] - 2026-11-11
 
 ### TODO #361 — rate-table audit at CI's sample sizes

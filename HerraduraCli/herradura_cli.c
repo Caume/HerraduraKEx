@@ -173,10 +173,50 @@ static void check_unknown_flags(const char *cmd, int argc, char **argv)
  * "no pre-hash", so the `if (digest && ...)` sites are unchanged. */
 static const char *digest_value(const char *cmd, const char *digest)
 {
-    if (!digest || strcmp(digest, "none") == 0) return NULL;
+    /* TODO #365: an absent --digest means hfscx-256.  The old default, none,
+     * padded/truncated the message to KEYBYTES, so a signature on one file
+     * verified for every file sharing its first 32 bytes. */
+    if (!digest) return "hfscx-256";
+    if (strcmp(digest, "none") == 0) return NULL;
     if (strcmp(digest, "hfscx-256") == 0) return digest;
     fprintf(stderr, "%s: unsupported --digest %s (choices: none, hfscx-256)\n",
             cmd, digest);
+    exit(1);
+}
+
+/* Fiat-Shamir round counts on the command line (TODO #364).
+ *
+ * The round count travels in the artifact (TODO #236), so a verifier that takes
+ * it from there lets the SIGNER choose the verifier's soundness: one Stern-F or
+ * ZKBoo-(2,3) round can be answered without the witness for two of its three
+ * challenges, and under Fiat-Shamir a forger grinds the commitment until the
+ * challenge is one of those.  `verify` and `cred-verify` therefore refuse an
+ * artifact declaring fewer than CLI_MIN_VERIFY_ROUNDS rounds, the 128-bit count
+ * ((2/3)^219 < 2^-128), unless the verifier asks for less with --min-rounds.
+ * Every signing default meets the floor, so default flags interoperate. */
+#define CLI_MIN_VERIFY_ROUNDS 219   /* == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS */
+
+static int rounds_arg(int argc, char **argv, const char *flag, const char *cmd,
+                      int deflt)
+{
+    const char *a = get_arg(argc, argv, flag);
+    if (!a) return deflt;
+    char *end = NULL;
+    long v = strtol(a, &end, 10);
+    if (!*a || *end || v < 1 || v > SDF_MAX_ROUNDS) {
+        fprintf(stderr, "%s: %s must be between 1 and %d\n", cmd, flag, SDF_MAX_ROUNDS);
+        exit(1);
+    }
+    return (int)v;
+}
+
+static void require_rounds(int rounds, int floor, const char *what, const char *cmd)
+{
+    if (rounds >= floor) return;
+    fprintf(stderr, "%s: %s declares %d rounds, below the --min-rounds floor of %d "
+                    "(%d = 128-bit Fiat-Shamir soundness); pass --min-rounds %d to "
+                    "accept it anyway\n",
+            cmd, what, rounds, floor, CLI_MIN_VERIFY_ROUNDS, rounds);
     exit(1);
 }
 
@@ -3908,12 +3948,15 @@ static void cmd_sign(int argc, char **argv)
         for (ki=0;ki<nb;ki++) zkB=(zkB<<8)|kbody[4+nb+ki];
         for (ki=0;ki<nb;ki++) zky=(zky<<8)|kbody[4+2*nb+ki];
         free(kbody);
-        ZkpNlRound *zk_proof = zkp_nl_prove(zkA, zkB, zky, nl_n, ZKP_NL_PROD_ROUNDS,
+        /* --rounds was parsed by the other CLIs and ignored here (TODO #367);
+         * with a verifier floor (TODO #364) the count has to be the one asked for. */
+        int zk_rounds = rounds_arg(argc, argv, "--rounds", "sign", ZKP_NL_PROD_ROUNDS);
+        ZkpNlRound *zk_proof = zkp_nl_prove(zkA, zkB, zky, nl_n, zk_rounds,
                                              msg_bytes, KEYBYTES, urnd2);
         fclose(urnd2);
         size_t pack_len;
-        uint8_t *pack = zkp_nl_pack_proof(zk_proof, ZKP_NL_PROD_ROUNDS, nl_n, &pack_len);
-        zkp_nl_proof_free(zk_proof, ZKP_NL_PROD_ROUNDS);
+        uint8_t *pack = zkp_nl_pack_proof(zk_proof, zk_rounds, nl_n, &pack_len);
+        zkp_nl_proof_free(zk_proof, zk_rounds);
         if (pem_write_file(out_path ? out_path : "-", PEM_ZKP_NL_PROOF, pack, pack_len) != 0)
             die("cannot write ZKP-NL proof");
         free(pack);
@@ -3938,12 +3981,13 @@ static void cmd_sign(int argc, char **argv)
         for (ki=0;ki<nb;ki++) zkB=(zkB<<8)|kbody[4+nb+ki];
         for (ki=0;ki<nb;ki++) zky=(zky<<8)|kbody[4+2*nb+ki];
         free(kbody);
-        ZkpNlPpRound *pp_proof = zkp_nl_pp_prove(zkA, zkB, zky, nl_n, ZKP_NL_PROD_ROUNDS,
+        int pp_rounds = rounds_arg(argc, argv, "--rounds", "sign", ZKP_NL_PROD_ROUNDS);
+        ZkpNlPpRound *pp_proof = zkp_nl_pp_prove(zkA, zkB, zky, nl_n, pp_rounds,
                                                   msg_bytes, KEYBYTES, urnd2);
         fclose(urnd2);
         size_t pack_len;
-        uint8_t *pack = zkp_nl_pp_pack_proof(pp_proof, ZKP_NL_PROD_ROUNDS, nl_n, &pack_len);
-        zkp_nl_pp_proof_free(pp_proof, ZKP_NL_PROD_ROUNDS);
+        uint8_t *pack = zkp_nl_pp_pack_proof(pp_proof, pp_rounds, nl_n, &pack_len);
+        zkp_nl_pp_proof_free(pp_proof, pp_rounds);
         if (pem_write_file(out_path ? out_path : "-", PEM_ZKP_NL_PP_SIG, pack, pack_len) != 0)
             die("cannot write ZKP-NL-PP signature");
         free(pack);
@@ -3994,21 +4038,14 @@ static void cmd_sign(int argc, char **argv)
         ba_from_ra(&seed_ba, priv_k.vals[1], priv_k.vlens[1]);
         pem_key_free(&priv_k);
 
-        /* --rounds selects the Fiat-Shamir round count; SDF_ROUNDS is the
-         * build default.  Matches the Go and Python CLIs (TODO #236). */
-        const char *sr_arg = get_arg(argc, argv, "--rounds");
-        int sr_rounds = SDF_ROUNDS;
-        if (sr_arg) {
-            sr_rounds = atoi(sr_arg);
-            if (sr_rounds < 1 || sr_rounds > SDF_MAX_ROUNDS) {
-                fprintf(stderr, "sign: --rounds must be between 1 and %d\n",
-                        SDF_MAX_ROUNDS);
-                exit(1);
-            }
-        }
+        /* --rounds selects the Fiat-Shamir round count (TODO #236).  The CLI
+         * default is the 128-bit count, not the suite's SDF_ROUNDS demo value,
+         * because verifiers refuse fewer unless asked (TODO #364). */
+        int sr_rounds = rounds_arg(argc, argv, "--rounds", "sign", SDF_PRODUCTION_ROUNDS);
         if (sr_rounds < SDF_PRODUCTION_ROUNDS)
             fprintf(stderr, "WARNING: signing at %d rounds; %d are needed for "
-                            "128-bit Fiat-Shamir soundness ((2/3)^r).\n",
+                            "128-bit Fiat-Shamir soundness ((2/3)^r), and a verifier "
+                            "refuses fewer unless given --min-rounds.\n",
                     sr_rounds, SDF_PRODUCTION_ROUNDS);
 
         SternSig sig;
@@ -4041,7 +4078,9 @@ static void cmd_sign(int argc, char **argv)
                 "(run pkey --pubout on the signer key and include it)");
 
         SternRingSig rsig;
-        stern_ring_alloc(&rsig, k, SDF_ROUNDS);
+        /* Honours --rounds like Python/Go/Java; it used SDF_ROUNDS (32) always. */
+        stern_ring_alloc(&rsig, k,
+                         rounds_arg(argc, argv, "--rounds", "sign", SDF_PRODUCTION_ROUNDS));
         stern_ring_sign(&rsig, &msg, &e_ba, j, seeds, syndrs, urnd);
         ring_sig_pack_and_write(&rsig, out_path);
         stern_ring_free(&rsig);
@@ -4107,6 +4146,8 @@ static void cmd_verify(int argc, char **argv)
     const char *sig_path    = get_arg(argc, argv, "--sig");
     const char *digest      = get_arg(argc, argv, "--digest");
     digest = digest_value("verify", digest);
+    const int   min_rounds  = rounds_arg(argc, argv, "--min-rounds", "verify",
+                                         CLI_MIN_VERIFY_ROUNDS);
     if (!algo)    die("verify: --algo required");
     if (!in_path) die("verify: --in required");
     if (!sig_path) die("verify: --sig required");
@@ -4215,6 +4256,9 @@ static void cmd_verify(int argc, char **argv)
         int k = ring_load_members(ring_arg, seeds, syndrs);
         SternRingSig rsig;
         int sig_k = ring_sig_load(sig_path, &rsig);
+        { int rr = rsig.rounds;
+          if (rr < min_rounds) stern_ring_free(&rsig);
+          require_rounds(rr, min_rounds, "hpks-ring signature", "verify"); }
         if (sig_k != k) {
             stern_ring_free(&rsig);
             fprintf(stderr, "hpks-ring verify: signature ring size %d != %d "
@@ -4247,6 +4291,7 @@ static void cmd_verify(int argc, char **argv)
         int prf_n, prf_rounds;
         ZkpNlRound *zk_proof = zkp_nl_unpack_proof(prfbuf, prflen, &prf_n, &prf_rounds);
         free(prfbuf);
+        require_rounds(prf_rounds, min_rounds, "nl-zkboo proof", "verify");
         if (prf_n != nl_n) die("verify: proof n mismatch with pubkey n");
         int ok = zkp_nl_verify(zkB, zky, nl_n, prf_rounds, msg.b, KEYBYTES, zk_proof);
         zkp_nl_proof_free(zk_proof, prf_rounds);
@@ -4274,6 +4319,7 @@ static void cmd_verify(int argc, char **argv)
         int prf_n, prf_rounds;
         ZkpNlPpRound *pp_proof = zkp_nl_pp_unpack_proof(prfbuf, prflen, &prf_n, &prf_rounds);
         free(prfbuf);
+        require_rounds(prf_rounds, min_rounds, "nl-zkbpp proof", "verify");
         if (prf_n != nl_n) die("verify: proof n mismatch with pubkey n");
         int ok = zkp_nl_pp_verify(zkB, zky, nl_n, prf_rounds, msg.b, KEYBYTES, pp_proof);
         zkp_nl_pp_proof_free(pp_proof, prf_rounds);
@@ -4343,6 +4389,7 @@ static void cmd_verify(int argc, char **argv)
         SternSig sig;
         if (stern_sig_load(sig_path, &sig) != 0)
             die("verify: cannot load Stern signature");
+        require_rounds(sig.rounds, min_rounds, "hpks-stern signature", "verify");
 
         int ok = hpks_stern_f_verify(&sig, &msg, &seed_ba, syndr);
         stern_sig_free(&sig);
@@ -5019,16 +5066,8 @@ static void cmd_cred_issue(int argc, char **argv)
      * matching the Go and Python CLIs (TODO #236).  Before that item a C
      * issuer was locked to its build's SDF_ROUNDS, and CI compensated by
      * asking the Python and Go issuers for --rounds 32. */
-    const char *ci_rnd = get_arg(argc, argv, "--rounds");
-    int ci_rounds = SDF_ROUNDS;
-    if (ci_rnd) {
-        ci_rounds = atoi(ci_rnd);
-        if (ci_rounds < 1 || ci_rounds > SDF_MAX_ROUNDS) {
-            fprintf(stderr, "cred-issue: --rounds must be between 1 and %d\n",
-                    SDF_MAX_ROUNDS);
-            exit(1);
-        }
-    }
+    /* Default: the 128-bit count, as in the other three CLIs (TODO #364). */
+    int ci_rounds = rounds_arg(argc, argv, "--rounds", "cred-issue", SDF_PRODUCTION_ROUNDS);
 
     SternSig sig;
     stern_sig_alloc(&sig, ci_rounds);
@@ -5045,12 +5084,11 @@ static void cmd_cred_prove(int argc, char **argv)
     const char *in_path  = get_arg(argc, argv, "--in");
     const char *out_path = get_arg(argc, argv, "--out");
     const char *msg_arg  = get_arg(argc, argv, "--msg");
-    const char *rnd_arg  = get_arg(argc, argv, "--rounds");
     if (!in_path) die("cred-prove: --in (HCRED private key) required");
 
-    int rounds = HCRED_DEMO_ROUNDS;
-    if (rnd_arg) rounds = atoi(rnd_arg);
-    if (rounds < 1) die("cred-prove: --rounds must be >= 1");
+    /* Default: 219, as in the other three CLIs; it was HCRED_DEMO_ROUNDS (4),
+     * which the verifier floor now refuses (TODO #364). */
+    int rounds = rounds_arg(argc, argv, "--rounds", "cred-prove", ZKP_NL_PROD_ROUNDS);
 
     size_t blen;
     uint8_t *body = zkp_raw_pem_read(in_path, PEM_HCRED_PRIV, &blen);
@@ -5098,6 +5136,8 @@ static void cmd_cred_verify(int argc, char **argv)
     const char *issuer_path = get_arg(argc, argv, "--issuer");
     const char *msg_arg     = get_arg(argc, argv, "--msg");
     const char *rnd_arg     = get_arg(argc, argv, "--rounds");
+    const int   min_rounds  = rounds_arg(argc, argv, "--min-rounds", "cred-verify",
+                                         CLI_MIN_VERIFY_ROUNDS);
     if (!proof_path)  die("cred-verify: --proof required");
     if (!pubkey_path) die("cred-verify: --pubkey required");
 
@@ -5114,6 +5154,7 @@ static void cmd_cred_verify(int argc, char **argv)
 
     int rounds = proof.rounds;
     if (rnd_arg) rounds = atoi(rnd_arg);
+    require_rounds(proof.rounds, min_rounds, "HCRED proof", "cred-verify");
 
     /* Load public key */
     int32_t C_poly[HCRED_N], m_poly[HCRED_N];
@@ -5143,6 +5184,7 @@ static void cmd_cred_verify(int argc, char **argv)
         SternSig cred_sig;
         if (stern_sig_load_label(cred_path, PEM_HCRED_CRED, &cred_sig) != 0)
             die("cred-verify: cannot load credential from --cred");
+        require_rounds(cred_sig.rounds, min_rounds, "HCRED credential", "cred-verify");
 
         /* Load issuer hpks-stern public key: DER SEQ(syndr_int, seed, n) */
         PemKey iss_k;

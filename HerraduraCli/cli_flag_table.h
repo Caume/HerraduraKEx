@@ -7,8 +7,8 @@ static const char *const hkx_flags_cred_issue[] = {"--in", "--our", "--out", "--
 static const char *const hkx_valued_cred_issue[] = {"--in", "--our", "--out", "--rounds"};
 static const char *const hkx_flags_cred_prove[] = {"--in", "--msg", "--out", "--rounds"};
 static const char *const hkx_valued_cred_prove[] = {"--in", "--msg", "--out", "--rounds"};
-static const char *const hkx_flags_cred_verify[] = {"--cred", "--issuer", "--msg", "--proof", "--pubkey", "--rounds"};
-static const char *const hkx_valued_cred_verify[] = {"--cred", "--issuer", "--msg", "--proof", "--pubkey", "--rounds"};
+static const char *const hkx_flags_cred_verify[] = {"--cred", "--issuer", "--min-rounds", "--msg", "--proof", "--pubkey", "--rounds"};
+static const char *const hkx_valued_cred_verify[] = {"--cred", "--issuer", "--min-rounds", "--msg", "--proof", "--pubkey", "--rounds"};
 static const char *const hkx_flags_dec[] = {"--ad", "--algo", "--in", "--key", "--out"};
 static const char *const hkx_valued_dec[] = {"--ad", "--algo", "--in", "--key", "--out"};
 static const char *const hkx_flags_decfile[] = {"--algo", "--in", "--key", "--out"};
@@ -51,8 +51,8 @@ static const char *const hkx_flags_threshold_respond[] = {"--aggregate", "--comm
 static const char *const hkx_valued_threshold_respond[] = {"--aggregate", "--commit", "--commits", "--key", "--nonce", "--out"};
 static const char *const hkx_flags_twk[] = {"--bidx", "--decrypt", "--encrypt", "--in", "--key", "--out", "--sector", "--v3"};
 static const char *const hkx_valued_twk[] = {"--bidx", "--in", "--key", "--out", "--sector"};
-static const char *const hkx_flags_verify[] = {"--algo", "--digest", "--in", "--pubkey", "--ring", "--sig"};
-static const char *const hkx_valued_verify[] = {"--algo", "--digest", "--in", "--pubkey", "--ring", "--sig"};
+static const char *const hkx_flags_verify[] = {"--algo", "--digest", "--in", "--min-rounds", "--pubkey", "--ring", "--sig"};
+static const char *const hkx_valued_verify[] = {"--algo", "--digest", "--in", "--min-rounds", "--pubkey", "--ring", "--sig"};
 
 typedef struct { const char *cmd; const char *const *flags; int n;
                  const char *const *valued; int nv; } HkxFlagSet;
@@ -60,7 +60,7 @@ typedef struct { const char *cmd; const char *const *flags; int n;
 static const HkxFlagSet HKX_FLAG_SETS[] = {
     {"cred-issue", hkx_flags_cred_issue, 4, hkx_valued_cred_issue, 4},
     {"cred-prove", hkx_flags_cred_prove, 4, hkx_valued_cred_prove, 4},
-    {"cred-verify", hkx_flags_cred_verify, 6, hkx_valued_cred_verify, 6},
+    {"cred-verify", hkx_flags_cred_verify, 7, hkx_valued_cred_verify, 7},
     {"dec", hkx_flags_dec, 5, hkx_valued_dec, 5},
     {"decfile", hkx_flags_decfile, 4, hkx_valued_decfile, 4},
     {"dgst", hkx_flags_dgst, 3, hkx_valued_dgst, 3},
@@ -82,7 +82,7 @@ static const HkxFlagSet HKX_FLAG_SETS[] = {
     {"threshold-commit", hkx_flags_threshold_commit, 3, hkx_valued_threshold_commit, 3},
     {"threshold-respond", hkx_flags_threshold_respond, 6, hkx_valued_threshold_respond, 6},
     {"twk", hkx_flags_twk, 8, hkx_valued_twk, 5},
-    {"verify", hkx_flags_verify, 6, hkx_valued_verify, 6},
+    {"verify", hkx_flags_verify, 7, hkx_valued_verify, 7},
 };
 static const int HKX_FLAG_SETS_N = (int)(sizeof(HKX_FLAG_SETS) / sizeof(HKX_FLAG_SETS[0]));
 
@@ -93,7 +93,8 @@ static const char HKX_HELP_SYNOPSIS[] =
     "required):\n"
     "  cred-issue           --in --our --out --rounds\n"
     "  cred-prove           --in --msg --out --rounds\n"
-    "  cred-verify          --cred --issuer --msg --proof --pubkey --rounds\n"
+    "  cred-verify          --cred --issuer --min-rounds --msg --proof --pubkey\n"
+    "                       --rounds\n"
     "  dec                  --ad --algo --in --key --out\n"
     "                       --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex\n"
     "                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern\n"
@@ -132,7 +133,7 @@ static const char HKX_HELP_SYNOPSIS[] =
     "  threshold-respond    --aggregate --commit --commits --key --nonce --out\n"
     "  twk                  --bidx --decrypt --encrypt --in --key --out --sector\n"
     "                       --v3\n"
-    "  verify               --algo --digest --in --pubkey --ring --sig\n"
+    "  verify               --algo --digest --in --min-rounds --pubkey --ring --sig\n"
     "                       --algo: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo\n"
     "                               nl-zkbpp hpks-xmss hpks-wots hpks-ring hpks-t\n";
 

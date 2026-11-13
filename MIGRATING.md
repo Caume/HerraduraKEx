@@ -80,6 +80,15 @@ PEM or a `0x` hex key such as 1, 2^95 or 0xff…fe. **Decrypt anything under suc
 with a 13.x build before upgrading.** See
 [section 29](#29-nl-fscx-v2-keys-are-screened-by-the-arc-of-delta-v1400).
 
+The thirtieth is the reason the version is **15.0.0**, and it is a **security fix** in
+two parts. `sign` and `verify` now pre-hash with HFSCX-256 by default, where the old
+default signed only the first 32 bytes of the input. And `verify` / `cred-verify` refuse
+a Stern-F, ring, ZKBoo, ZKB++ or HCRED artifact that declares fewer than 219
+Fiat-Shamir rounds, which a forger could otherwise grind. **Keys do not change.
+Re-sign on 15.0.0+, or pass `--digest none` / `--min-rounds N` on the verify side to
+check an old artifact.** Nothing fails silently. See
+[section 30](#30-sign-pre-hashes-by-default-and-verifiers-enforce-a-round-floor-v1500).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -118,6 +127,7 @@ trusting any signature made by an earlier build.
 | [HFSCX-256's compression is Matyas–Meyer–Oseas](#25-hfscx-256s-compression-is-matyasmeyeroseas-v1100) | v11.0.0 | Every HFSCX-256 digest and MAC, so every signature, password-protected private key, `.hkx` file, `--aead` tag and hash-derived session secret; every `hpks-wots` / `hpks-xmss` key | **Decrypt and re-export with a 10.x build before upgrading; regenerate WOTS/XMSS keys and re-sign.** Plain `hske-nla1` is unchanged |
 | [The Schnorr challenge and the Stern hash use HFSCX-256-DS](#26-the-schnorr-challenge-and-the-stern-hash-use-hfscx-256-ds-v1200) | v12.0.0 | Every `hpks-nl` signature and HPKS-T aggregate / signature; every `hpks-stern`, ring and HCRED credential signature; `hpke-stern` session keys | **Re-sign on 12.0.0+, and redo `hpke-stern` exchanges.** Keys, `hpke-stern-kem` and everything else are unchanged |
 | [NL-FSCX v2 keys are screened by the arc of delta](#29-nl-fscx-v2-keys-are-screened-by-the-arc-of-delta-v1400) | v14.0.0 | `hske-nla2` keys with arc(δ(K)) ≤ 64: hand-written keys only (a generated key is affected with probability about 2^−96) | **Decrypt with a 13.x build and re-encrypt under a generated key.** Nothing else changes |
+| [`sign` pre-hashes by default, and verifiers enforce a round floor](#30-sign-pre-hashes-by-default-and-verifiers-enforce-a-round-floor-v1500) | v15.0.0 | Every signature made with the default `--digest` (none) by an earlier build, and every `hpks-stern` / `hpks-ring` / `nl-zkboo` / `nl-zkbpp` / HCRED artifact below 219 rounds, which includes the old 32-round `hpks-stern` / `hpks-ring` default and C's 4-round `cred-prove` | **Re-sign on 15.0.0+.** To check an old signature, verify with `--digest none` and/or `--min-rounds N`. Keys are unchanged |
 
 ---
 
@@ -1625,4 +1635,56 @@ unchanged: no wire format, PEM label or CLI flag moved.
 
 **Why this is a MAJOR bump.** It changes what an existing `--algo` accepts, which is the
 2.0.0 surface. That is the reading behind sections 5 and 19, however few keys it reaches.
+
+## 30. `sign` pre-hashes by default, and verifiers enforce a round floor (v15.0.0)
+
+**Who is affected:** anyone holding a signature made by an earlier build, if either:
+
+- it was made without `--digest` (the old default, `none`), with any `sign --algo`, or
+  with `threshold-aggregate`; or
+- it is an `hpks-stern`, `hpks-ring`, `nl-zkboo` or `nl-zkbpp` signature, or an HCRED
+  proof or credential, made at fewer than 219 rounds. That includes every `hpks-stern` and
+  `hpks-ring` signature made with default flags, which used 32 rounds, and every C
+  `cred-prove` proof made with default flags, which used 4.
+
+Keys, ciphertexts and every other artifact are unchanged.
+
+**What changed: the pre-hash (TODO #365).** An absent `--digest` now means `hfscx-256`
+in `sign`, `verify`, `threshold-aggregate` and `threshold-verify`, in all four CLIs: the
+whole input is hashed and the 32-byte digest signed. The old default padded or truncated
+the input to 32 bytes, so a signature on one file verified for every file that shared its
+first 32 bytes. `--digest none` keeps that behaviour as an explicit opt-in, for 32-byte
+inputs and for checking old signatures. It must be passed on both sides.
+
+**What changed: the round floor (TODO #364).** The round count of a Stern-F, ring,
+ZKBoo, ZKB++ or HCRED artifact is carried in the artifact (TODO #236), and until 14.x
+every verifier accepted any count from 1 to 4096. So the signer chose the verifier's
+soundness. A cheater answers two of each round's three challenges without the witness,
+and under Fiat-Shamir can grind until the challenge is one of those. A 1-round artifact
+was therefore forgeable for any public key with a few hash evaluations. `verify` and
+`cred-verify` now refuse an artifact declaring fewer than `--min-rounds N` rounds
+(default 219, since (2/3)^219 < 2^−128), with "… declares R rounds, below the
+--min-rounds floor of 219 …". Every signing default is now 219. `sign --algo hpks-stern`
+and `hpks-ring` move from 32 in all four CLIs; C `cred-issue` moves from 32 and C
+`cred-prove` from 4. The C CLI also stops ignoring `sign --rounds` for `nl-zkboo`,
+`nl-zkbpp` and `hpks-ring`. The MCP server's verify tool has no `--min-rounds`, so it
+always enforces 219.
+
+**What to do.** Re-sign with a 15.0.0 build. To check a signature made by an earlier
+build:
+
+```bash
+# made without --digest:
+herradura verify --algo hpks-nl --pubkey pub.pem --in msg --sig sig.pem --digest none
+# an hpks-stern signature at the old 32-round default (also made without --digest):
+herradura verify --algo hpks-stern --pubkey pub.pem --in msg --sig sig.pem \
+    --digest none --min-rounds 32
+```
+
+Lowering `--min-rounds` lowers the soundness of that check to (2/3)^N. Do it only for an
+artifact whose signer you already trust for other reasons.
+
+**Why this is a MAJOR bump.** It changes what an existing `--algo` produces (the
+pre-hash, the round counts) and accepts (the floor), which is the 2.0.0 surface. Nothing
+in this break fails silently: an old signature is refused, not misread.
 

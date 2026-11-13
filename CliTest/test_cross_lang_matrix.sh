@@ -231,10 +231,10 @@ matrix_sign() {
 }
 matrix_sign hpks
 matrix_sign hpks-nl
-# The C CLI hardcodes Stern-F signing/verification to its compile-time
-# SDF_ROUNDS (32) with no override (same constraint as hcred above), so all
-# signers must use 32 rounds for a C-verifiable (or C-produced) signature.
-matrix_sign hpks-stern --rounds 32
+# Default flags on both sides: since TODO #364 every CLI signs Stern-F at 219
+# rounds and every verifier refuses fewer, so this cell is the production-count
+# interop check (it ran at a 32-round demo count before).
+matrix_sign hpks-stern
 
 # ── HPKS-XMSS-F sign/verify matrix (TODO #208) — h=3 (8 leaves) keeps
 #    4-language keygen fast; each signer uses leaf 0 only, so the matrix
@@ -289,12 +289,11 @@ done
 
 # ── HCRED: NxN issuer/user-CLI x verifier-CLI matrix (rounds=8 for speed) ──
 echo "=== hcred issue/prove/verify matrix ==="
-# cred-issue's --rounds controls the issuer's Stern-F signature; the C CLI
-# hardcodes this to its compile-time SDF_ROUNDS (32) with no override, so
-# all producers must use 32 here for a C-issued/verified credential to be
-# readable. cred-prove's --rounds controls the ZKBoo presentation-proof
-# repetition count instead and is independently configurable everywhere;
-# use a small demo value (matching C's HCRED_DEMO_ROUNDS default) for speed.
+# cred-issue's --rounds controls the issuer's Stern-F signature and
+# cred-prove's the ZKBoo presentation proof; both are configurable in all four
+# CLIs (TODO #236) and default to 219.  Small demo values keep the n = 256
+# matrix affordable, so the verifier passes --min-rounds to accept them
+# (TODO #364); test_round_floor.sh checks that it refuses them otherwise.
 HCRED_ISSUE_ROUNDS=32
 HCRED_PROVE_ROUNDS=4
 for who in "${LANGS[@]}"; do
@@ -349,7 +348,8 @@ for who in "${LANGS[@]}"; do
     fi
     for vf in "${LANGS[@]}"; do
         set +e
-        ${CLI[$vf]} cred-verify --proof "$TMP/hc_proof_$who.pem" --pubkey "$TMP/hc_u_${who}_pub.pem" \
+        ${CLI[$vf]} cred-verify --min-rounds $HCRED_PROVE_ROUNDS \
+            --proof "$TMP/hc_proof_$who.pem" --pubkey "$TMP/hc_u_${who}_pub.pem" \
             --cred "$TMP/hc_cred_$who.pem" --issuer "$TMP/hc_i_${who}_pub.pem" \
             --msg "matrix-presentation-$who" >/dev/null 2>&1
         rc=$?

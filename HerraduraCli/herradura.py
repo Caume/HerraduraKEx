@@ -228,6 +228,33 @@ _SDF_MAX_ROUNDS = 4096    # herradura.h SDF_MAX_ROUNDS (TODO #236)
 _XMSS_MAX_H     = 20      # herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
 _STERN_MAX_N    = KEYBITS # no implementation here emits a wider Stern instance
 
+# TODO #364: the verifier's round-count floor.  The round count travels in the
+# artifact (TODO #236), so without a floor the SIGNER chose the verifier's
+# soundness: a 1-round Stern-F / ZKBoo artifact is forgeable without the witness
+# by grinding the Fiat-Shamir commitment until the challenge is one of the two
+# (of three) a cheater can answer.  219 rounds is the 128-bit count
+# ((2/3)^219 < 2^-128); `verify` / `cred-verify --min-rounds N` lowers it, so a
+# weaker check is something the VERIFIER asks for.  The signing defaults below
+# meet it, so an artifact made with default flags verifies with default flags.
+_MIN_VERIFY_ROUNDS = 219  # == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS
+_STERN_CLI_ROUNDS  = 219  # sign --algo hpks-stern / hpks-ring default (was SDFR = 32)
+
+
+def _round_floor(args, where):
+    """The --min-rounds floor this run enforces, bounded like a wire round count."""
+    v = getattr(args, 'min_rounds', None)
+    if v is None:
+        return _MIN_VERIFY_ROUNDS
+    return _bounded(v, 1, _SDF_MAX_ROUNDS, '--min-rounds', where)
+
+
+def _require_rounds(rounds, floor, what, where):
+    """Refuse an artifact declaring fewer rounds than the floor (TODO #364)."""
+    if rounds < floor:
+        sys.exit(f"{where}: {what} declares {rounds} rounds, below the --min-rounds "
+                 f"floor of {floor} ({_MIN_VERIFY_ROUNDS} = 128-bit Fiat-Shamir "
+                 f"soundness); pass --min-rounds {rounds} to accept it anyway")
+
 
 def _bounded(value, lo, hi, what, where):
     """Return int(value), or exit(1) if it falls outside [lo, hi].
@@ -2082,7 +2109,7 @@ def cmd_sign(args):
         seed   = BitArray(n, seed_int)
         syn    = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
         msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        rounds = getattr(args, 'rounds', None) or SDFR
+        rounds = getattr(args, 'rounds', None) or _STERN_CLI_ROUNDS
         sig    = hpks_stern_f_sign(msg, e_int, seed, syn, n, rounds)
         _write_file(args.out, _pack_stern_sig(sig, n))
 
@@ -2111,7 +2138,7 @@ def cmd_sign(args):
             sys.exit("hpks-ring sign: signer's public key is not in --ring "
                      "(run pkey --pubout on the signer key and include it)")
         msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        rounds = getattr(args, 'rounds', None) or SDFR
+        rounds = getattr(args, 'rounds', None) or _STERN_CLI_ROUNDS
         sig    = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
         _write_file(args.out, _pack_ring_sig(sig, n))
         print(f"Ring signature created (k={len(ring_keys)}); signer index is hidden.",
@@ -2367,6 +2394,7 @@ def cmd_verify(args):
             sys.exit("hpks-ring verify: --ring (comma-separated member public keys) required")
         ring_keys, n = _load_ring_pubkeys(args.ring)
         sig, k, rounds, sig_n = _unpack_ring_sig(sig_path)
+        _require_rounds(rounds, _round_floor(args, 'verify'), 'hpks-ring signature', 'verify')
         if sig_n != n:
             sys.exit(f"hpks-ring verify: signature n={sig_n} != ring n={n}")
         if k != len(ring_keys):
@@ -2409,6 +2437,8 @@ def cmd_verify(args):
         seed = BitArray(n, seed_int)
         msg  = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
         commits, challenges, responses, _n = _unpack_stern_sig(sig_path)
+        _require_rounds(len(commits), _round_floor(args, 'verify'),
+                        'hpks-stern signature', 'verify')
         sig  = (commits, challenges, responses)
         ok   = hpks_stern_f_verify(msg, sig, seed, syn_int, n)
         if ok:
@@ -2449,6 +2479,7 @@ def cmd_verify(args):
         if proof_n != n:
             raise ValueError(f"proof n mismatch with pubkey n ({proof_n} vs {n})")
         rounds = len(proof_rounds)
+        _require_rounds(rounds, _round_floor(args, 'verify'), 'nl-zkboo proof', 'verify')
         # Pad/truncate to 32 bytes to match C/Go behavior (TODO #261; see the
         # sign branch above for why this was missing).
         msg = (in_bytes + b'\x00' * 32)[:32]
@@ -2468,6 +2499,7 @@ def cmd_verify(args):
         sig_pem = _read_file(sig_path).decode('ascii')
         proof_rounds, _n = decode_zkp_nl_pp_proof(sig_pem)
         rounds = len(proof_rounds)
+        _require_rounds(rounds, _round_floor(args, 'verify'), 'nl-zkbpp proof', 'verify')
         # Pad/truncate to 32 bytes to match C/Go behavior
         msg = (in_bytes + b'\x00' * 32)[:32]
         ok = zkp_nl_verify_pp(B, y, n, rounds, msg, proof_rounds)
@@ -2961,6 +2993,8 @@ def cmd_cred_verify(args):
 
     msg    = (args.msg or '').encode()
     rounds = len(proof['rounds'])
+    floor  = _round_floor(args, 'cred-verify')
+    _require_rounds(rounds, floor, 'HCRED proof', 'cred-verify')
 
     ok_proof = hcred_verify(m, C, seed_H, syndr, proof, n=pub_n,
                             rounds=rounds, msg_bytes=msg)
@@ -2972,6 +3006,7 @@ def cmd_cred_verify(args):
     if args.cred:
         raw_cred = _read_file(args.cred).decode('ascii')
         commits_raw, challenges, responses, issuer_n = decode_hcred_credential(raw_cred)
+        _require_rounds(len(challenges), floor, 'HCRED credential', 'cred-verify')
         # Wrap commit integers as BitArrays for hpks_stern_f_verify
         commits = [(BitArray(issuer_n, c0), BitArray(issuer_n, c1), BitArray(issuer_n, c2))
                    for c0, c1, c2 in commits_raw]
@@ -3101,13 +3136,14 @@ def build_parser():
                     help='hpks-ring: comma-separated member public-key PEM paths')
     sg.add_argument('--in',  required=True, dest='in')
     sg.add_argument('--out', required=True)
-    sg.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
-                    help='Pre-hash: none=truncate input to block size (default), '
-                         'hfscx-256=hash full input then sign the 32-byte digest')
+    sg.add_argument('--digest', default='hfscx-256', choices=['none', 'hfscx-256'],
+                    help='Pre-hash: hfscx-256=hash full input then sign the 32-byte '
+                         'digest (default; TODO #365), none=pad/truncate input to '
+                         'the block size, so only its first bytes are signed')
     sg.add_argument('--rounds', type=int, default=None,
                     help='ZKP/Stern-F rounds (nl-zkboo, hpks-stern, hpks-ring; '
-                         'default: 32 demo for hpks-stern/hpks-ring, 219 for nl-zkboo; '
-                         'production soundness needs >= 219 for all three)')
+                         'default: 219, the 128-bit count every verifier requires '
+                         'unless it passes --min-rounds; TODO #364)')
 
     # verify
     vf = sub.add_parser('verify', help='Verify a signature or ZKP proof')
@@ -3119,8 +3155,12 @@ def build_parser():
                     help='hpks-ring: comma-separated member public-key PEM paths')
     vf.add_argument('--in',  required=True, dest='in')
     vf.add_argument('--sig', required=True)
-    vf.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
-                    help='Pre-hash algorithm: must match the value used during signing')
+    vf.add_argument('--digest', default='hfscx-256', choices=['none', 'hfscx-256'],
+                    help='Pre-hash: must match the value used during signing '
+                         '(default: hfscx-256; none = pad/truncate to 32 bytes)')
+    vf.add_argument('--min-rounds', type=int, default=None, dest='min_rounds',
+                    help='Refuse hpks-stern/hpks-ring/nl-zkboo/nl-zkbpp artifacts declaring fewer Fiat-Shamir rounds '
+                         '(default: 219, 128-bit soundness; TODO #364)')
 
     # threshold-commit
     tc = sub.add_parser('threshold-commit',
@@ -3141,8 +3181,9 @@ def build_parser():
                          'and both syntaxes work in all four CLIs')
     ta.add_argument('--in',  required=True, dest='in', help='Message file to sign')
     ta.add_argument('--out', required=True, help='Output aggregate PEM (broadcast to all signers)')
-    ta.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
-                    help='Pre-hash: must match the value used during combine/verify')
+    ta.add_argument('--digest', default='hfscx-256', choices=['none', 'hfscx-256'],
+                    help='Pre-hash: must match the value used during combine/verify '
+                         '(default: hfscx-256)')
 
     # threshold-respond
     tr = sub.add_parser('threshold-respond',
@@ -3344,6 +3385,9 @@ def build_parser():
                     help='Issuer hpks-stern PUBLIC KEY PEM (required with --cred)')
     cv.add_argument('--msg',     default='',
                     help='Presentation nonce / message (must match cred-prove --msg)')
+    cv.add_argument('--min-rounds', type=int, default=None, dest='min_rounds',
+                    help='Refuse a proof or credential declaring fewer Fiat-Shamir rounds '
+                         '(default: 219, 128-bit soundness; TODO #364)')
 
     return p
 

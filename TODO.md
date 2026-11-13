@@ -698,81 +698,6 @@ Status: **OPEN**
 
 ---
 
-### #364: verifiers accept any round count the artifact declares -- enforce a minimum (MAJOR)
-
-Found in the v14.0.4 exploratory pass (with #362).  **This is a MAJOR change:** it changes
-what an existing `verify --algo` / `cred-verify` accepts, so artifacts made at low round
-counts stop verifying.  It needs a `MIGRATING.md` entry.
-
-**The finding.**  Since TODO #236 the round count travels in the PEM and every reader
-accepts any count in `[1, max]`, so the SIGNER chooses the verifier's soundness.  Measured
-with honestly produced `--rounds 1` artifacts:
-
-| artifact | C | Go | Java | Python |
-|---|---|---|---|---|
-| `hpks-stern` signature | OK | OK | OK | OK |
-| `hpks-ring` signature | OK | OK | OK | OK |
-| `nl-zkboo` proof | OK | OK | OK | OK |
-| `cred-verify` proof (n = 32) | rejected on width | OK | rejected on width | OK |
-
-One Stern / ZKBoo-(2,3) round can be answered without the witness for two of its three
-challenges, and under Fiat-Shamir the forger grinds the commitment until the challenge is
-one it can answer.  So a 1-round artifact is forgeable for any public key in a few hash
-evaluations, far below the ~30-40-bit instance hardness SECURITY.md quotes for these rows.
-TODO #236 treated the round count as an interop question only.  `rnl-sigma` carries no
-round count and is not affected.
-
-**A related default.**  The C CLI's `cred-prove` uses `HCRED_DEMO_ROUNDS = 4`
-(`herradura_cli.c:5051`, `herradura.h:5711`); Python, Go and Java use 219.  Its proofs are
-accepted by all four (measured: a 4-round n = 256 C proof verifies in Java).  Move C to 219.
-
-**Impact.**  Rows affected: HPKS-Stern-F, HPKS-Ring, ZKBoo/ZKB++, HCRED -- all Demo-only
-or Research, so no production-track rating moves, but SECURITY.md's figures for them
-describe a check no verifier performs.
-
-**Work.**  A verifier-side floor in all four ports (219, the 128-bit Fiat-Shamir count, or
-a `--min-rounds N` flag defaulting to it); reject below it with an error naming the declared
-count.  Update the CI scripts that sign at reduced rounds (the assembly-width `rounds=4`
-harnesses are not CLI verifiers and are out of scope).  Rejection tests need an
-accept-control at the floor and a negative control below it, in every port.
-
-Status: **OPEN**
-
----
-
-### #365: sign pre-hashes by default -- make `--digest hfscx-256` the default (MAJOR)
-
-Found with #364.  **This is a MAJOR change** (decision: option (a), the user's call on
-v14.0.4): it changes what an existing `sign`/`verify --algo` produces and accepts, so every
-signature made in the default mode stops verifying.  It needs a `MIGRATING.md` entry.
-
-**The finding.**  With the default `--digest none`, the message is padded/truncated to 32
-bytes (TODO #261), so a signature on file A verifies for any file B sharing A's first 32
-bytes.  Measured for `hpks`, `hpks-nl`, `hpks-stern` and `rnl-sigma` in all four CLIs (two
-47-byte payment strings differing after byte 32: "Signature OK"); with
-`--digest hfscx-256` the same pair fails, as it should.  `rnl-sigma` is production-track
-(conjectured), so this reaches a production row through its CLI.  The default is
-deliberate (TODO_DONE: "Default `--digest none` preserves the existing truncating
-behavior") and `--help` says so, but the TUTORIAL's signing examples use it with no
-warning.
-
-**Work.**  Default `--digest` to `hfscx-256` in `sign`, `verify` and
-`threshold-aggregate` / `threshold-verify` in all four CLIs (and the MCP server's tools);
-keep `--digest none` as an explicit opt-in for 32-byte inputs and for verifying old
-signatures.  Regenerate any KAT/PEM vectors that pin a default-mode signature.  Check
-whether `rnl-sigma`, `nl-zkboo`, `nl-zkbpp`, `hpks-ring`, `hpks-wots` and `hpks-xmss`
-route through the same `--digest` path or truncate separately, and bring each to the same
-rule.  Update the TUTORIAL, SPEC.md and llms.txt.
-
-**Out of scope, related.**  The single-block `enc` algorithms (`hske`, `hske-nla1`,
-`hske-nla2`, `hske-nla3`, `hpke`, `hpke-nl`, `hpke-nl3`) also drop everything past byte 32
-and exit 0, and return 32 bytes for a shorter input.  Refusing over-32-byte input there
-is a separate decision; file it if wanted.
-
-Status: **OPEN**
-
----
-
 ### #366: check the PEM label against `--algo`
 
 Found with #364.  Probably **MAJOR** under the "what an existing `--algo` accepts" rule,
@@ -815,8 +740,8 @@ unbounded width feeding `make` in `HerraduraCli/herradura_cli.go` (around lines 
 robustness, not a security hole, but a service wrapping the Go CLI gets a crash and stack
 dump from an untrusted peer.
 
-**Also here.**  The C CLI accepts `--rounds` for `sign --algo nl-zkboo` but ignores it
-(always 219 rounds, exit 0); Go, Java and Python honour it.  Honour it or reject it.
+**Also here (closed by #364, v15.0.0).**  The C CLI accepted `--rounds` for `sign --algo
+nl-zkboo` and ignored it; with #364's verifier floor it had to be honoured, and now is.
 
 **Work.**  An arity/bounds check in each decoder before indexing, with the same error
 text across ports; "valid DER, wrong arity" seeds for the Fuzz/ harnesses; matrix cases

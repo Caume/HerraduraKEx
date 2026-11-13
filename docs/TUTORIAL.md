@@ -1863,11 +1863,13 @@ python3 HerraduraCli/herradura.py verify  --algo rnl-sigma --pubkey pub.pem \
 # ZKP-NL — key type: hpks-zkp-nl, algo: nl-zkboo
 python3 HerraduraCli/herradura.py genpkey --algo hpks-zkp-nl --out zkpnl.pem
 python3 HerraduraCli/herradura.py pkey    --in zkpnl.pem --pubout --out zkpnl_pub.pem
-# Python CLI accepts --rounds; C CLI hardcodes 219 rounds; Go CLI hardcodes 4 rounds
+# All four CLIs take --rounds and default to 219.  A verifier refuses fewer
+# rounds than 219 unless it passes --min-rounds (TODO #364), so a 4-round demo
+# proof needs --min-rounds 4 on the verify side:
 python3 HerraduraCli/herradura.py sign   --algo nl-zkboo --key zkpnl.pem \
         --rounds 4 --in msg.bin --out proof.pem
 python3 HerraduraCli/herradura.py verify --algo nl-zkboo --pubkey zkpnl_pub.pem \
-        --in msg.bin --sig proof.pem
+        --in msg.bin --sig proof.pem --min-rounds 4
 ./HerraduraCli/herradura_cli sign    --algo nl-zkboo --key zkpnl.pem --in msg.bin --out proof.pem
 ./HerraduraCli/herradura_cli verify  --algo nl-zkboo --pubkey zkpnl_pub.pem --in msg.bin --sig proof.pem
 ```
@@ -2596,8 +2598,9 @@ models that exclude quantum adversaries.
   public key — if the same proof is accepted by multiple verifiers, unlinkability
   holds only if different nonces are used.
 - **Demo parameter interop:** C is fixed at `HCRED_N = 256`. Python defaults to
-  `n = 32`. Cross-language interop requires `--bits 256` in Python `genpkey` and
-  `--rounds 32` in Python `cred-issue` (to match C's `SDF_ROUNDS = 32`).
+  `n = 32`. Cross-language interop requires `--bits 256` in Python `genpkey`.
+  All four CLIs default `cred-issue` and `cred-prove` to 219 rounds, and
+  `cred-verify` refuses fewer unless given `--min-rounds N` (TODO #364).
 
 ### OPRF and aPAKE
 
