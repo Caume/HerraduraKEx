@@ -449,6 +449,7 @@ jobs:
             case "$f" in test_malformed_pem_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #240)
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_round_floor.sh) continue ;; esac        # claimed by cross-lang-compat (TODO #364)
+            case "$f" in test_key_label_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #366)
             case "$f" in test_kdf_matrix.sh) continue ;; esac         # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_param_bounds.sh) continue ;; esac       # claimed by cross-lang-compat (TODO #278)
             case "$f" in test_narrow_width_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #313)
@@ -766,6 +767,13 @@ jobs:
       # message beside an accept-control on the same artifact.
       - name: Fiat-Shamir round-floor matrix
         run: bash CliTest/test_round_floor.sh
+
+      # TODO #366: every CLI refuses a key whose PEM label the operation does not
+      # accept, per the spec's generated key_label_acceptance table.  Each row is
+      # run in every CLI with an accept-control and two refusals matched on the
+      # check's own message; the templates are held to the spec rows both ways.
+      - name: Key-label acceptance matrix
+        run: bash CliTest/test_key_label_matrix.sh
 
       # TODO #269: `kex --kdf`, for two reasons. Java had no --kdf until v6.5.0,
       # and -- the one that is easy to miss -- `--kdf hfscx-256` had never been

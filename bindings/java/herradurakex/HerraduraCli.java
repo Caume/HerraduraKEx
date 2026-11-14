@@ -123,6 +123,7 @@ public final class HerraduraCli {
         String cmd = args[0];
         Map<String, String> opt = parseOpts(args, 1);
         checkUnknownFlags(cmd, opt);
+        checkKeyLabels(cmd, opt);   // TODO #366
         switch (cmd) {
             case "genpkey": cmdGenpkey(opt); break;
             case "pkey":    cmdPkey(opt);    break;
@@ -162,6 +163,54 @@ public final class HerraduraCli {
      *  list, since all four CLIs now accept both. */
     private static final java.util.Set<String> REPEATABLE = new java.util.HashSet<>(
         java.util.Arrays.asList("commits", "commit", "partials", "partial"));
+
+    /** TODO #366: refuse a key whose PEM label this operation does not accept.
+     *
+     *  KeyLabelTable is generated from spec/generate_spec.py's KEY_LABEL_SITES,
+     *  which holds the reasoning; C, Go and Python carry the same rows.  Only KEY
+     *  labels are judged (ending in PRIVATE KEY or PUBLIC KEY, other than the
+     *  passphrase envelope): a response, session key or hex key goes on to the
+     *  loader, whose own message is the more specific one.  The message is
+     *  printed bare, without the "error: " prefix, so it reads the same in all
+     *  four CLIs. */
+    private static void checkKeyLabels(String cmd, Map<String, String> opt) {
+        String algo = opt.getOrDefault("algo", "");
+        for (String[] r : KeyLabelTable.SITES) {
+            if (!r[0].equals(cmd) || !r[1].equals(algo)) continue;
+            String v = opt.get(r[2].substring(2));
+            if (v == null || v.isEmpty()) continue;
+            String[] paths = r[2].equals("--ring") ? v.split(",", -1) : new String[] { v };
+            for (String p : paths) {
+                String label = pemFileLabel(p.trim());
+                if (label == null || label.equals("HERRADURA ENCRYPTED PRIVATE KEY")
+                        || !(label.endsWith("PRIVATE KEY") || label.endsWith("PUBLIC KEY")))
+                    continue;
+                boolean ok = false;
+                for (int k = 4; k < r.length; k++) if (r[k].equals(label)) ok = true;
+                if (!ok) {
+                    String where = algo.isEmpty() ? cmd : cmd + " --algo " + algo;
+                    System.err.println(where + ": wrong key type: " + r[2] + " holds '"
+                        + label + "'; accepted: " + r[3]);
+                    System.exit(1);
+                }
+            }
+        }
+    }
+
+    /** The first PEM BEGIN label in path, or null (unreadable, or not PEM). */
+    private static String pemFileLabel(String path) {
+        String text;
+        try {
+            text = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)),
+                              java.nio.charset.StandardCharsets.ISO_8859_1);
+        } catch (Exception e) {
+            return null;
+        }
+        int i = text.indexOf("-----BEGIN ");
+        if (i < 0) return null;
+        int j = text.indexOf("-----", i + 11);
+        return j > i + 11 ? text.substring(i + 11, j) : null;
+    }
 
     /** TODO #274: refuse a flag this subcommand does not read.
      *

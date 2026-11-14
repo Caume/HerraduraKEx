@@ -4,8 +4,9 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [15.0.0] - 2026-11-12
 
-**MAJOR: a security fix in two parts.** Both parts change what an existing `--algo`
-produces and accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md section 30.
+**MAJOR: security fixes in three parts.** All three change what an existing `--algo`
+produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections 30
+and 31.
 
 ### TODO #364 — verifiers enforce a Fiat-Shamir round floor
 
@@ -51,6 +52,44 @@ produces and accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md s
   hfscx-256, and a `none` signature fails to verify under the default.
 - **Docs.** The MCP tool schemas, llms.txt, README, TUTORIAL, INTRODUCTION and CLAUDE.md
   describe the new defaults.
+
+### TODO #366 — every CLI checks a key's PEM label against the operation
+
+- **The finding.** No CLI compared a key's label with the `--algo` using it; each read
+  whatever integers the file held. Over 15 key types and 47 key slots, C accepted 127
+  mismatched combinations, Go 100, Python 49 and Java 47. Among them:
+  - `sign --algo hpks` and `hpks-stern` with each other's keys, in all four CLIs. A DH
+    exponent was used as a Stern error vector of the wrong weight, which may leak it.
+  - `enc` / `dec --algo hpke-nl3` with an `hpke-nl` key, in all four CLIs.
+  - `sign --algo hpks-wots` with an HKEX-GF key, in Go.
+  - Private keys passed as `--pubkey`, which every CLI mis-parsed.
+- **The table.** `spec/generate_spec.py`'s `KEY_LABEL_SITES` states which key types each
+  (subcommand, `--algo`, key flag) accepts. Two families are shared on purpose:
+  - **GF:** `hkex-gf`, `hpks`, `hpks-nl`, `hpke` and `hpke-nl`, one GF(2^n)* key pair
+    (SPEC.md §7).
+  - **Stern:** `hpks-stern` and `hpke-stern`, one error vector and seed.
+
+  Everything else accepts only its own type. `hpke-nl3` is outside the GF family.
+  Public-key slots take PUBLIC labels only, except HCRED's two, whose loaders derive the
+  public fields from the private key, a tested feature. `pkey` reads any key.
+- **One table, four CLIs.** The table is emitted into `HerraduraCli/key_label_table.h`,
+  `bindings/java/herradurakex/KeyLabelTable.java`, and generated regions of
+  `herradura_cli.go` and `herradura.py`; `--check` fails if any is stale. It is also in
+  the spec as `key_label_acceptance`. Each CLI checks it once, before the command runs,
+  with one message: "`<cmd> --algo <algo>: wrong key type: <flag> holds '<label>';
+  accepted: <types>`". Only KEY labels are judged, so a passphrase-encrypted key, an
+  HKEX-RNL response or a hex key still reaches its loader's more specific error.
+- **Measured:** after the change all four CLIs accept the same keys in all 47 slots. No
+  combination is newly accepted.
+- **Tests.** The new `CliTest/test_key_label_matrix.sh` (cross-lang-compat) runs every
+  spec row in every CLI:
+  - an accept-control on the row's own key;
+  - each other key in the row's family, which must not be refused;
+  - the HCRED private key in HCRED's two public slots, which must be accepted;
+  - two refusals matched on the check's message: the same key in the other role, and
+    the nearest foreign type (`hpke-nl3` for GF rows, `hkex-gf` for Stern rows).
+
+  The script's templates must cover the spec's rows exactly, in both directions.
 
 ## [14.0.4] - 2026-11-11
 

@@ -128,6 +128,94 @@ _PUB_ALGOS = {k: v.replace('PRIVATE', 'PUBLIC') for k, v in _PRIV_ALGOS.items()}
 _LABEL_TO_ALGO = {v: k for k, v in _PRIV_ALGOS.items()}
 _LABEL_TO_ALGO.update({v: k for k, v in _PUB_ALGOS.items()})
 
+# TODO #366: which key labels each (subcommand, --algo, key flag) accepts.  The
+# table is generated from spec/generate_spec.py's KEY_LABEL_SITES, which holds
+# the reasoning; C, Go and Java carry the same rows.
+# BEGIN GENERATED key-label table (spec/generate_spec.py, TODO #366) -- DO NOT EDIT.
+_KEY_SITES = {
+    ('kex', 'hkex-gf', '--our'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
+    ('kex', 'hkex-gf', '--their'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
+    ('kex', 'hkex-rnl', '--our'): ('hkex-rnl', ('HERRADURA HKEX-RNL PRIVATE KEY',)),
+    ('kex', 'hkex-rnl', '--their'): ('hkex-rnl', ('HERRADURA HKEX-RNL PUBLIC KEY',)),
+    ('kex', 'hybrid-rnl-stern', '--our'): ('hkex-rnl', ('HERRADURA HKEX-RNL PRIVATE KEY',)),
+    ('kex', 'hybrid-rnl-stern', '--their'): ('hkex-rnl', ('HERRADURA HKEX-RNL PUBLIC KEY',)),
+    ('kex', 'hybrid-rnl-stern', '--our-kem'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PRIVATE KEY',)),
+    ('kex', 'hybrid-rnl-stern', '--their-kem'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PUBLIC KEY',)),
+    ('enc', 'hpke', '--pubkey'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
+    ('dec', 'hpke', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
+    ('enc', 'hpke-nl', '--pubkey'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
+    ('dec', 'hpke-nl', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
+    ('enc', 'hpke-nl3', '--pubkey'): ('hpke-nl3', ('HERRADURA HPKE-NL3 PUBLIC KEY',)),
+    ('dec', 'hpke-nl3', '--key'): ('hpke-nl3', ('HERRADURA HPKE-NL3 PRIVATE KEY',)),
+    ('enc', 'hpke-stern', '--pubkey'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
+    ('dec', 'hpke-stern', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
+    ('enc', 'hpke-stern-kem', '--pubkey'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PUBLIC KEY',)),
+    ('dec', 'hpke-stern-kem', '--key'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PRIVATE KEY',)),
+    ('sign', 'hpks', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
+    ('verify', 'hpks', '--pubkey'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
+    ('sign', 'hpks-nl', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
+    ('verify', 'hpks-nl', '--pubkey'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
+    ('sign', 'hpks-stern', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
+    ('verify', 'hpks-stern', '--pubkey'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
+    ('sign', 'hpks-ring', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
+    ('verify', 'hpks-ring', '--ring'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
+    ('sign', 'rnl-sigma', '--key'): ('hkex-rnl', ('HERRADURA HKEX-RNL PRIVATE KEY',)),
+    ('verify', 'rnl-sigma', '--pubkey'): ('hkex-rnl', ('HERRADURA HKEX-RNL PUBLIC KEY',)),
+    ('sign', 'nl-zkboo', '--key'): ('hpks-zkp-nl', ('HERRADURA ZKP-NL PRIVATE KEY',)),
+    ('verify', 'nl-zkboo', '--pubkey'): ('hpks-zkp-nl', ('HERRADURA ZKP-NL PUBLIC KEY',)),
+    ('sign', 'nl-zkbpp', '--key'): ('hpks-zkp-nl', ('HERRADURA ZKP-NL PRIVATE KEY',)),
+    ('verify', 'nl-zkbpp', '--pubkey'): ('hpks-zkp-nl', ('HERRADURA ZKP-NL PUBLIC KEY',)),
+    ('sign', 'hpks-xmss', '--key'): ('hpks-xmss', ('HERRADURA HPKS-XMSS PRIVATE KEY',)),
+    ('verify', 'hpks-xmss', '--pubkey'): ('hpks-xmss', ('HERRADURA HPKS-XMSS PUBLIC KEY',)),
+    ('sign', 'hpks-wots', '--key'): ('hpks-wots', ('HERRADURA HPKS-WOTS PRIVATE KEY',)),
+    ('verify', 'hpks-wots', '--pubkey'): ('hpks-wots', ('HERRADURA HPKS-WOTS PUBLIC KEY',)),
+    ('threshold-commit', '', '--key'): ('hpks, hpks-nl', ('HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY',)),
+    ('threshold-respond', '', '--key'): ('hpks, hpks-nl', ('HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY',)),
+    ('oprf-eval', '', '--key'): ('oprf', ('HERRADURA OPRF PRIVATE KEY',)),
+    ('pake-register', '', '--key'): ('oprf', ('HERRADURA OPRF PRIVATE KEY',)),
+    ('pake-demo', '', '--key'): ('oprf', ('HERRADURA OPRF PRIVATE KEY',)),
+    ('cred-issue', '', '--our'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
+    ('cred-issue', '', '--in'): ('hcred', ('HERRADURA HCRED PUBLIC KEY', 'HERRADURA HCRED PRIVATE KEY',)),
+    ('cred-prove', '', '--in'): ('hcred', ('HERRADURA HCRED PRIVATE KEY',)),
+    ('cred-verify', '', '--pubkey'): ('hcred', ('HERRADURA HCRED PUBLIC KEY', 'HERRADURA HCRED PRIVATE KEY',)),
+    ('cred-verify', '', '--issuer'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
+}
+# END GENERATED key-label table
+
+
+def _pem_file_label(path):
+    """The first PEM BEGIN label in *path*, or None (unreadable, or not PEM)."""
+    try:
+        with open(path, 'rb') as f:
+            text = f.read().decode('ascii', errors='replace')
+    except OSError:
+        return None
+    i = text.find('-----BEGIN ')
+    j = text.find('-----', i + 11) if i >= 0 else -1
+    return text[i + 11:j] if j > 0 else None
+
+
+def _check_key_labels(cmd, algo, values):
+    """TODO #366: refuse a key whose PEM label this operation does not accept.
+
+    *values* maps each key flag to its argument.  Only KEY labels are judged
+    (ending in PRIVATE KEY or PUBLIC KEY, other than the passphrase envelope):
+    a response, session key or hex key goes on to the loader, whose own
+    message is the more specific one."""
+    for (c, a, flag), (tags, labels) in _KEY_SITES.items():
+        if c != cmd or a != (algo or '') or not values.get(flag):
+            continue
+        paths = values[flag].split(',') if flag == '--ring' else [values[flag]]
+        for path in paths:
+            label = _pem_file_label(path.strip())
+            if (label is None or label == _LABEL_ENC_PRIV or
+                    not label.endswith(('PRIVATE KEY', 'PUBLIC KEY'))):
+                continue
+            if label not in labels:
+                where = f"{cmd} --algo {algo}" if algo else cmd
+                sys.exit(f"{where}: wrong key type: {flag} holds '{label}'; "
+                         f"accepted: {tags}")
+
 _LABEL_SESSION     = 'HERRADURA SESSION KEY'
 _LABEL_RNL_RESP    = 'HERRADURA HKEX-RNL RESPONSE'
 _LABEL_SIG         = 'HERRADURA SIGNATURE'
@@ -3424,6 +3512,10 @@ _DISPATCH = {
 def main():
     parser = build_parser()
     args   = parser.parse_args()
+    # TODO #366: every key flag's label, against the generated table.
+    _check_key_labels(args.cmd, getattr(args, 'algo', '') or '',
+                      {'--' + k.replace('_', '-'): v for k, v in vars(args).items()
+                       if isinstance(v, str)})
     try:
         _DISPATCH[args.cmd](args)
     except ValueError as e:

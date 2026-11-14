@@ -1576,6 +1576,7 @@ func cmdKex(args []string) {
 	theirKem := fs.String("their-kem", "", "hybrid-rnl-stern: Alice's HPKE-Stern-KEM public key (Bob step)")
 	ourKem   := fs.String("our-kem", "", "hybrid-rnl-stern: Alice's own HPKE-Stern-KEM private key (Alice step)")
 	fs.Parse(args)
+	checkKeyLabels("kex", fs) // TODO #366
 
 	if *algo == "" || *our == "" || *their == "" {
 		fmt.Fprintln(os.Stderr, "kex: --algo, --our, --their required")
@@ -3152,6 +3153,7 @@ func cmdCredIssue(args []string) {
 	out := fs.String("out", "-", "HCRED CREDENTIAL PEM output")
 	rounds := fs.Int("rounds", 0, "Stern-F rounds (default: 219 for 128-bit soundness)")
 	fs.Parse(args)
+	checkKeyLabels("cred-issue", fs) // TODO #366
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "cred-issue: --in (HCRED public/private key) required")
@@ -3202,6 +3204,7 @@ func cmdCredProve(args []string) {
 	msg := fs.String("msg", "", "Message to bind into the proof")
 	rounds := fs.Int("rounds", 0, "ZKBoo rounds (default: 219 for 128-bit soundness)")
 	fs.Parse(args)
+	checkKeyLabels("cred-prove", fs) // TODO #366
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "cred-prove: --in (HCRED private key) required")
@@ -3244,6 +3247,7 @@ func cmdCredVerify(args []string) {
 	minR := fs.Int("min-rounds", cliMinVerifyRounds,
 		"Refuse a proof or credential declaring fewer rounds (TODO #364)")
 	fs.Parse(args)
+	checkKeyLabels("cred-verify", fs) // TODO #366
 	minRounds := minRoundsValue("cred-verify", *minR)
 
 	if *proofPath == "" {
@@ -3332,6 +3336,7 @@ func cmdEnc(args []string) {
 	aead   := fs.Bool("aead", false, "HSKE-NL-AEAD authenticated encryption (hske-nla1 only)")
 	ad     := fs.String("ad", "", "Associated data bound into the AEAD tag (requires --aead)")
 	fs.Parse(args)
+	checkKeyLabels("enc", fs) // TODO #366
 
 	if *algo == "" {
 		fmt.Fprintln(os.Stderr, "enc: --algo required")
@@ -3549,6 +3554,7 @@ func cmdDec(args []string) {
 	out  := fs.String("out", "-", "Plaintext output file")
 	ad   := fs.String("ad", "", "Associated data for AEAD ciphertexts (must match enc --ad)")
 	fs.Parse(args)
+	checkKeyLabels("dec", fs) // TODO #366
 
 	if *algo == "" {
 		fmt.Fprintln(os.Stderr, "dec: --algo required")
@@ -3812,6 +3818,7 @@ func cmdSign(args []string) {
 		"default: 219, the 128-bit count every verifier requires unless it passes "+
 		"--min-rounds; TODO #364)")
 	fs.Parse(args)
+	checkKeyLabels("sign", fs) // TODO #366
 	digestValue("sign", digest)
 
 	if *algo == "" || *key == "" {
@@ -4089,6 +4096,7 @@ func cmdVerify(args []string) {
 	minR   := fs.Int("min-rounds", cliMinVerifyRounds,
 		"Refuse hpks-stern/hpks-ring/nl-zkboo/nl-zkbpp artifacts declaring fewer rounds (TODO #364)")
 	fs.Parse(args)
+	checkKeyLabels("verify", fs) // TODO #366
 	digestValue("verify", digest)
 	minRounds := minRoundsValue("verify", *minR)
 
@@ -4700,6 +4708,7 @@ func cmdOprfEval(args []string) {
 	inF   := fs.String("in", "", "OPRF CLIENT STATE PEM")
 	outF  := fs.String("out", "-", "Output OPRF EVALUATION PEM")
 	fs.Parse(args)
+	checkKeyLabels("oprf-eval", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "oprf-eval: --key required")
 		os.Exit(1)
@@ -4811,6 +4820,7 @@ func cmdPakeRegister(args []string) {
 	pwF   := fs.String("password", "", "Password (default: demo-password)")
 	outF  := fs.String("out",      "-", "Output PAKE RECORD PEM")
 	fs.Parse(args)
+	checkKeyLabels("pake-register", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-register: --key required")
 		os.Exit(1)
@@ -4855,6 +4865,7 @@ func cmdPakeDemo(args []string) {
 	keyF := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
 	pwF  := fs.String("password", "demo-password", "Password")
 	fs.Parse(args)
+	checkKeyLabels("pake-demo", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-demo: --key required")
 		os.Exit(1)
@@ -4984,6 +4995,130 @@ Notes:
        32 bytes in, 32 raw bytes out. See SECURITY.md.
   PEM output goes to stdout when --out is absent or '-'.
 `)
+}
+
+// TODO #366: which key labels each (subcommand, --algo, key flag) accepts.  The
+// table is generated from spec/generate_spec.py's KEY_LABEL_SITES, which holds
+// the reasoning; C, Python and Java carry the same rows.
+type keySite struct {
+	cmd, algo, flag, tags string
+	labels                []string
+}
+
+// BEGIN GENERATED key-label table (spec/generate_spec.py, TODO #366) -- DO NOT EDIT.
+var keySites = []keySite{
+	{"kex", "hkex-gf", "--our", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
+	{"kex", "hkex-gf", "--their", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
+	{"kex", "hkex-rnl", "--our", "hkex-rnl", []string{"HERRADURA HKEX-RNL PRIVATE KEY"}},
+	{"kex", "hkex-rnl", "--their", "hkex-rnl", []string{"HERRADURA HKEX-RNL PUBLIC KEY"}},
+	{"kex", "hybrid-rnl-stern", "--our", "hkex-rnl", []string{"HERRADURA HKEX-RNL PRIVATE KEY"}},
+	{"kex", "hybrid-rnl-stern", "--their", "hkex-rnl", []string{"HERRADURA HKEX-RNL PUBLIC KEY"}},
+	{"kex", "hybrid-rnl-stern", "--our-kem", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PRIVATE KEY"}},
+	{"kex", "hybrid-rnl-stern", "--their-kem", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PUBLIC KEY"}},
+	{"enc", "hpke", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
+	{"dec", "hpke", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
+	{"enc", "hpke-nl", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
+	{"dec", "hpke-nl", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
+	{"enc", "hpke-nl3", "--pubkey", "hpke-nl3", []string{"HERRADURA HPKE-NL3 PUBLIC KEY"}},
+	{"dec", "hpke-nl3", "--key", "hpke-nl3", []string{"HERRADURA HPKE-NL3 PRIVATE KEY"}},
+	{"enc", "hpke-stern", "--pubkey", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
+	{"dec", "hpke-stern", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
+	{"enc", "hpke-stern-kem", "--pubkey", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PUBLIC KEY"}},
+	{"dec", "hpke-stern-kem", "--key", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PRIVATE KEY"}},
+	{"sign", "hpks", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
+	{"verify", "hpks", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
+	{"sign", "hpks-nl", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
+	{"verify", "hpks-nl", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
+	{"sign", "hpks-stern", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
+	{"verify", "hpks-stern", "--pubkey", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
+	{"sign", "hpks-ring", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
+	{"verify", "hpks-ring", "--ring", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
+	{"sign", "rnl-sigma", "--key", "hkex-rnl", []string{"HERRADURA HKEX-RNL PRIVATE KEY"}},
+	{"verify", "rnl-sigma", "--pubkey", "hkex-rnl", []string{"HERRADURA HKEX-RNL PUBLIC KEY"}},
+	{"sign", "nl-zkboo", "--key", "hpks-zkp-nl", []string{"HERRADURA ZKP-NL PRIVATE KEY"}},
+	{"verify", "nl-zkboo", "--pubkey", "hpks-zkp-nl", []string{"HERRADURA ZKP-NL PUBLIC KEY"}},
+	{"sign", "nl-zkbpp", "--key", "hpks-zkp-nl", []string{"HERRADURA ZKP-NL PRIVATE KEY"}},
+	{"verify", "nl-zkbpp", "--pubkey", "hpks-zkp-nl", []string{"HERRADURA ZKP-NL PUBLIC KEY"}},
+	{"sign", "hpks-xmss", "--key", "hpks-xmss", []string{"HERRADURA HPKS-XMSS PRIVATE KEY"}},
+	{"verify", "hpks-xmss", "--pubkey", "hpks-xmss", []string{"HERRADURA HPKS-XMSS PUBLIC KEY"}},
+	{"sign", "hpks-wots", "--key", "hpks-wots", []string{"HERRADURA HPKS-WOTS PRIVATE KEY"}},
+	{"verify", "hpks-wots", "--pubkey", "hpks-wots", []string{"HERRADURA HPKS-WOTS PUBLIC KEY"}},
+	{"threshold-commit", "", "--key", "hpks, hpks-nl", []string{"HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"}},
+	{"threshold-respond", "", "--key", "hpks, hpks-nl", []string{"HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"}},
+	{"oprf-eval", "", "--key", "oprf", []string{"HERRADURA OPRF PRIVATE KEY"}},
+	{"pake-register", "", "--key", "oprf", []string{"HERRADURA OPRF PRIVATE KEY"}},
+	{"pake-demo", "", "--key", "oprf", []string{"HERRADURA OPRF PRIVATE KEY"}},
+	{"cred-issue", "", "--our", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
+	{"cred-issue", "", "--in", "hcred", []string{"HERRADURA HCRED PUBLIC KEY", "HERRADURA HCRED PRIVATE KEY"}},
+	{"cred-prove", "", "--in", "hcred", []string{"HERRADURA HCRED PRIVATE KEY"}},
+	{"cred-verify", "", "--pubkey", "hcred", []string{"HERRADURA HCRED PUBLIC KEY", "HERRADURA HCRED PRIVATE KEY"}},
+	{"cred-verify", "", "--issuer", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
+}
+// END GENERATED key-label table
+
+// pemFileLabel returns the first PEM BEGIN label in path, or "" (unreadable or
+// not PEM).
+func pemFileLabel(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	text := string(raw)
+	i := strings.Index(text, "-----BEGIN ")
+	if i < 0 {
+		return ""
+	}
+	j := strings.Index(text[i+11:], "-----")
+	if j <= 0 {
+		return ""
+	}
+	return text[i+11 : i+11+j]
+}
+
+// checkKeyLabels refuses a key whose PEM label this operation does not accept
+// (TODO #366).  Only KEY labels are judged (ending in PRIVATE KEY or PUBLIC KEY,
+// other than the passphrase envelope): a response, session key or hex key goes
+// on to the loader, whose own message is the more specific one.
+func checkKeyLabels(cmd string, fs *flag.FlagSet) {
+	algo := ""
+	if f := fs.Lookup("algo"); f != nil {
+		algo = f.Value.String()
+	}
+	for _, r := range keySites {
+		if r.cmd != cmd || r.algo != algo {
+			continue
+		}
+		f := fs.Lookup(strings.TrimPrefix(r.flag, "--"))
+		if f == nil || f.Value.String() == "" {
+			continue
+		}
+		paths := []string{f.Value.String()}
+		if r.flag == "--ring" {
+			paths = strings.Split(paths[0], ",")
+		}
+		for _, p := range paths {
+			label := pemFileLabel(strings.TrimSpace(p))
+			if label == "" || label == "HERRADURA ENCRYPTED PRIVATE KEY" ||
+				!(strings.HasSuffix(label, "PRIVATE KEY") || strings.HasSuffix(label, "PUBLIC KEY")) {
+				continue
+			}
+			ok := false
+			for _, l := range r.labels {
+				if l == label {
+					ok = true
+				}
+			}
+			if !ok {
+				where := cmd
+				if algo != "" {
+					where = cmd + " --algo " + algo
+				}
+				fmt.Fprintf(os.Stderr, "%s: wrong key type: %s holds '%s'; accepted: %s\n",
+					where, r.flag, label, r.tags)
+				os.Exit(1)
+			}
+		}
+	}
 }
 
 // BEGIN GENERATED help synopsis (spec/generate_spec.py, TODO #339) -- DO NOT EDIT.
@@ -5185,6 +5320,7 @@ func cmdThresholdCommit(args []string) {
 	commitOut := fs.String("commit-out", "", "Output commitment PEM")
 	nonceOut  := fs.String("nonce-out",  "", "Output nonce PEM")
 	fs.Parse(args)
+	checkKeyLabels("threshold-commit", fs) // TODO #366
 	if *key == "" || *commitOut == "" || *nonceOut == "" {
 		fmt.Fprintln(os.Stderr, "threshold-commit: --key, --commit-out, --nonce-out required")
 		os.Exit(1)
@@ -5285,6 +5421,7 @@ func cmdThresholdRespond(args []string) {
 	nonce     := fs.String("nonce", "", "Nonce PEM from threshold-commit")
 	out       := fs.String("out", "-", "Output partial signature PEM")
 	fs.Parse(rest)
+	checkKeyLabels("threshold-respond", fs) // TODO #366
 	if *key == "" || *aggregate == "" || *nonce == "" {
 		fmt.Fprintln(os.Stderr, "threshold-respond: --key, --aggregate, --nonce required")
 		os.Exit(1)

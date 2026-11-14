@@ -2742,5 +2742,661 @@
       "k_max": 64
     },
     "_note": "Assembly/Arduino targets use reduced demo parameters: Stern-F N=32 t=2 rounds=4 (vs. the C/Go/Python values above), GF arithmetic on 32-bit operands instead of 256-bit. See CLAUDE.md 'Protocol Stack' and TODO.md #133."
-  }
+  },
+  "key_label_acceptance": [
+    {
+      "subcommand": "kex",
+      "algo": "hkex-gf",
+      "flag": "--our",
+      "role": "priv",
+      "accepts": [
+        "hkex-gf",
+        "hpks",
+        "hpks-nl",
+        "hpke",
+        "hpke-nl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-GF PRIVATE KEY",
+        "HERRADURA HPKS PRIVATE KEY",
+        "HERRADURA HPKS-NL PRIVATE KEY",
+        "HERRADURA HPKE PRIVATE KEY",
+        "HERRADURA HPKE-NL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "kex",
+      "algo": "hkex-gf",
+      "flag": "--their",
+      "role": "pub",
+      "accepts": [
+        "hkex-gf",
+        "hpks",
+        "hpks-nl",
+        "hpke",
+        "hpke-nl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-GF PUBLIC KEY",
+        "HERRADURA HPKS PUBLIC KEY",
+        "HERRADURA HPKS-NL PUBLIC KEY",
+        "HERRADURA HPKE PUBLIC KEY",
+        "HERRADURA HPKE-NL PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "kex",
+      "algo": "hkex-rnl",
+      "flag": "--our",
+      "role": "priv",
+      "accepts": [
+        "hkex-rnl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-RNL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "kex",
+      "algo": "hkex-rnl",
+      "flag": "--their",
+      "role": "pub",
+      "accepts": [
+        "hkex-rnl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-RNL PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "kex",
+      "algo": "hybrid-rnl-stern",
+      "flag": "--our",
+      "role": "priv",
+      "accepts": [
+        "hkex-rnl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-RNL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "kex",
+      "algo": "hybrid-rnl-stern",
+      "flag": "--their",
+      "role": "pub",
+      "accepts": [
+        "hkex-rnl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-RNL PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "kex",
+      "algo": "hybrid-rnl-stern",
+      "flag": "--our-kem",
+      "role": "priv",
+      "accepts": [
+        "hpke-stern-kem"
+      ],
+      "labels": [
+        "HERRADURA HPKE-STERN-KEM PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "kex",
+      "algo": "hybrid-rnl-stern",
+      "flag": "--their-kem",
+      "role": "pub",
+      "accepts": [
+        "hpke-stern-kem"
+      ],
+      "labels": [
+        "HERRADURA HPKE-STERN-KEM PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "enc",
+      "algo": "hpke",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hkex-gf",
+        "hpks",
+        "hpks-nl",
+        "hpke",
+        "hpke-nl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-GF PUBLIC KEY",
+        "HERRADURA HPKS PUBLIC KEY",
+        "HERRADURA HPKS-NL PUBLIC KEY",
+        "HERRADURA HPKE PUBLIC KEY",
+        "HERRADURA HPKE-NL PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "dec",
+      "algo": "hpke",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hkex-gf",
+        "hpks",
+        "hpks-nl",
+        "hpke",
+        "hpke-nl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-GF PRIVATE KEY",
+        "HERRADURA HPKS PRIVATE KEY",
+        "HERRADURA HPKS-NL PRIVATE KEY",
+        "HERRADURA HPKE PRIVATE KEY",
+        "HERRADURA HPKE-NL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "enc",
+      "algo": "hpke-nl",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hkex-gf",
+        "hpks",
+        "hpks-nl",
+        "hpke",
+        "hpke-nl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-GF PUBLIC KEY",
+        "HERRADURA HPKS PUBLIC KEY",
+        "HERRADURA HPKS-NL PUBLIC KEY",
+        "HERRADURA HPKE PUBLIC KEY",
+        "HERRADURA HPKE-NL PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "dec",
+      "algo": "hpke-nl",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hkex-gf",
+        "hpks",
+        "hpks-nl",
+        "hpke",
+        "hpke-nl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-GF PRIVATE KEY",
+        "HERRADURA HPKS PRIVATE KEY",
+        "HERRADURA HPKS-NL PRIVATE KEY",
+        "HERRADURA HPKE PRIVATE KEY",
+        "HERRADURA HPKE-NL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "enc",
+      "algo": "hpke-nl3",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hpke-nl3"
+      ],
+      "labels": [
+        "HERRADURA HPKE-NL3 PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "dec",
+      "algo": "hpke-nl3",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpke-nl3"
+      ],
+      "labels": [
+        "HERRADURA HPKE-NL3 PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "enc",
+      "algo": "hpke-stern",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hpks-stern",
+        "hpke-stern"
+      ],
+      "labels": [
+        "HERRADURA HPKS-STERN PUBLIC KEY",
+        "HERRADURA HPKE-STERN PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "dec",
+      "algo": "hpke-stern",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpks-stern",
+        "hpke-stern"
+      ],
+      "labels": [
+        "HERRADURA HPKS-STERN PRIVATE KEY",
+        "HERRADURA HPKE-STERN PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "enc",
+      "algo": "hpke-stern-kem",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hpke-stern-kem"
+      ],
+      "labels": [
+        "HERRADURA HPKE-STERN-KEM PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "dec",
+      "algo": "hpke-stern-kem",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpke-stern-kem"
+      ],
+      "labels": [
+        "HERRADURA HPKE-STERN-KEM PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "sign",
+      "algo": "hpks",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hkex-gf",
+        "hpks",
+        "hpks-nl",
+        "hpke",
+        "hpke-nl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-GF PRIVATE KEY",
+        "HERRADURA HPKS PRIVATE KEY",
+        "HERRADURA HPKS-NL PRIVATE KEY",
+        "HERRADURA HPKE PRIVATE KEY",
+        "HERRADURA HPKE-NL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "verify",
+      "algo": "hpks",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hkex-gf",
+        "hpks",
+        "hpks-nl",
+        "hpke",
+        "hpke-nl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-GF PUBLIC KEY",
+        "HERRADURA HPKS PUBLIC KEY",
+        "HERRADURA HPKS-NL PUBLIC KEY",
+        "HERRADURA HPKE PUBLIC KEY",
+        "HERRADURA HPKE-NL PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "sign",
+      "algo": "hpks-nl",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hkex-gf",
+        "hpks",
+        "hpks-nl",
+        "hpke",
+        "hpke-nl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-GF PRIVATE KEY",
+        "HERRADURA HPKS PRIVATE KEY",
+        "HERRADURA HPKS-NL PRIVATE KEY",
+        "HERRADURA HPKE PRIVATE KEY",
+        "HERRADURA HPKE-NL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "verify",
+      "algo": "hpks-nl",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hkex-gf",
+        "hpks",
+        "hpks-nl",
+        "hpke",
+        "hpke-nl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-GF PUBLIC KEY",
+        "HERRADURA HPKS PUBLIC KEY",
+        "HERRADURA HPKS-NL PUBLIC KEY",
+        "HERRADURA HPKE PUBLIC KEY",
+        "HERRADURA HPKE-NL PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "sign",
+      "algo": "hpks-stern",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpks-stern",
+        "hpke-stern"
+      ],
+      "labels": [
+        "HERRADURA HPKS-STERN PRIVATE KEY",
+        "HERRADURA HPKE-STERN PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "verify",
+      "algo": "hpks-stern",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hpks-stern",
+        "hpke-stern"
+      ],
+      "labels": [
+        "HERRADURA HPKS-STERN PUBLIC KEY",
+        "HERRADURA HPKE-STERN PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "sign",
+      "algo": "hpks-ring",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpks-stern",
+        "hpke-stern"
+      ],
+      "labels": [
+        "HERRADURA HPKS-STERN PRIVATE KEY",
+        "HERRADURA HPKE-STERN PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "verify",
+      "algo": "hpks-ring",
+      "flag": "--ring",
+      "role": "pub",
+      "accepts": [
+        "hpks-stern",
+        "hpke-stern"
+      ],
+      "labels": [
+        "HERRADURA HPKS-STERN PUBLIC KEY",
+        "HERRADURA HPKE-STERN PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "sign",
+      "algo": "rnl-sigma",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hkex-rnl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-RNL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "verify",
+      "algo": "rnl-sigma",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hkex-rnl"
+      ],
+      "labels": [
+        "HERRADURA HKEX-RNL PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "sign",
+      "algo": "nl-zkboo",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpks-zkp-nl"
+      ],
+      "labels": [
+        "HERRADURA ZKP-NL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "verify",
+      "algo": "nl-zkboo",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hpks-zkp-nl"
+      ],
+      "labels": [
+        "HERRADURA ZKP-NL PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "sign",
+      "algo": "nl-zkbpp",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpks-zkp-nl"
+      ],
+      "labels": [
+        "HERRADURA ZKP-NL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "verify",
+      "algo": "nl-zkbpp",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hpks-zkp-nl"
+      ],
+      "labels": [
+        "HERRADURA ZKP-NL PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "sign",
+      "algo": "hpks-xmss",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpks-xmss"
+      ],
+      "labels": [
+        "HERRADURA HPKS-XMSS PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "verify",
+      "algo": "hpks-xmss",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hpks-xmss"
+      ],
+      "labels": [
+        "HERRADURA HPKS-XMSS PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "sign",
+      "algo": "hpks-wots",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpks-wots"
+      ],
+      "labels": [
+        "HERRADURA HPKS-WOTS PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "verify",
+      "algo": "hpks-wots",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hpks-wots"
+      ],
+      "labels": [
+        "HERRADURA HPKS-WOTS PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "threshold-commit",
+      "algo": "",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpks",
+        "hpks-nl"
+      ],
+      "labels": [
+        "HERRADURA HPKS PRIVATE KEY",
+        "HERRADURA HPKS-NL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "threshold-respond",
+      "algo": "",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "hpks",
+        "hpks-nl"
+      ],
+      "labels": [
+        "HERRADURA HPKS PRIVATE KEY",
+        "HERRADURA HPKS-NL PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "oprf-eval",
+      "algo": "",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "oprf"
+      ],
+      "labels": [
+        "HERRADURA OPRF PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "pake-register",
+      "algo": "",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "oprf"
+      ],
+      "labels": [
+        "HERRADURA OPRF PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "pake-demo",
+      "algo": "",
+      "flag": "--key",
+      "role": "priv",
+      "accepts": [
+        "oprf"
+      ],
+      "labels": [
+        "HERRADURA OPRF PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "cred-issue",
+      "algo": "",
+      "flag": "--our",
+      "role": "priv",
+      "accepts": [
+        "hpks-stern",
+        "hpke-stern"
+      ],
+      "labels": [
+        "HERRADURA HPKS-STERN PRIVATE KEY",
+        "HERRADURA HPKE-STERN PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "cred-issue",
+      "algo": "",
+      "flag": "--in",
+      "role": "either",
+      "accepts": [
+        "hcred"
+      ],
+      "labels": [
+        "HERRADURA HCRED PUBLIC KEY",
+        "HERRADURA HCRED PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "cred-prove",
+      "algo": "",
+      "flag": "--in",
+      "role": "priv",
+      "accepts": [
+        "hcred"
+      ],
+      "labels": [
+        "HERRADURA HCRED PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "cred-verify",
+      "algo": "",
+      "flag": "--pubkey",
+      "role": "either",
+      "accepts": [
+        "hcred"
+      ],
+      "labels": [
+        "HERRADURA HCRED PUBLIC KEY",
+        "HERRADURA HCRED PRIVATE KEY"
+      ]
+    },
+    {
+      "subcommand": "cred-verify",
+      "algo": "",
+      "flag": "--issuer",
+      "role": "pub",
+      "accepts": [
+        "hpks-stern",
+        "hpke-stern"
+      ],
+      "labels": [
+        "HERRADURA HPKS-STERN PUBLIC KEY",
+        "HERRADURA HPKE-STERN PUBLIC KEY"
+      ]
+    }
+  ]
 }

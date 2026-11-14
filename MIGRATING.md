@@ -89,6 +89,13 @@ Re-sign on 15.0.0+, or pass `--digest none` / `--min-rounds N` on the verify sid
 check an old artifact.** Nothing fails silently. See
 [section 30](#30-sign-pre-hashes-by-default-and-verifiers-enforce-a-round-floor-v1500).
 
+The thirty-first ships in the same release. Every CLI now refuses a key whose PEM label
+the operation does not accept, such as an HKEX-GF key passed to `sign --algo
+hpks-stern`. The GF keys (`hkex-gf`, `hpks`, `hpks-nl`, `hpke`, `hpke-nl`) stay
+interchangeable, as do the two Stern keys. Only mismatched keys stop working, and they
+fail with "wrong key type". See
+[section 31](#31-every-cli-checks-a-keys-label-against-the-operation-v1500).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -128,6 +135,7 @@ trusting any signature made by an earlier build.
 | [The Schnorr challenge and the Stern hash use HFSCX-256-DS](#26-the-schnorr-challenge-and-the-stern-hash-use-hfscx-256-ds-v1200) | v12.0.0 | Every `hpks-nl` signature and HPKS-T aggregate / signature; every `hpks-stern`, ring and HCRED credential signature; `hpke-stern` session keys | **Re-sign on 12.0.0+, and redo `hpke-stern` exchanges.** Keys, `hpke-stern-kem` and everything else are unchanged |
 | [NL-FSCX v2 keys are screened by the arc of delta](#29-nl-fscx-v2-keys-are-screened-by-the-arc-of-delta-v1400) | v14.0.0 | `hske-nla2` keys with arc(δ(K)) ≤ 64: hand-written keys only (a generated key is affected with probability about 2^−96) | **Decrypt with a 13.x build and re-encrypt under a generated key.** Nothing else changes |
 | [`sign` pre-hashes by default, and verifiers enforce a round floor](#30-sign-pre-hashes-by-default-and-verifiers-enforce-a-round-floor-v1500) | v15.0.0 | Every signature made with the default `--digest` (none) by an earlier build, and every `hpks-stern` / `hpks-ring` / `nl-zkboo` / `nl-zkbpp` / HCRED artifact below 219 rounds, which includes the old 32-round `hpks-stern` / `hpks-ring` default and C's 4-round `cred-prove` | **Re-sign on 15.0.0+.** To check an old signature, verify with `--digest none` and/or `--min-rounds N`. Keys are unchanged |
+| [Every CLI checks a key's label against the operation](#31-every-cli-checks-a-keys-label-against-the-operation-v1500) | v15.0.0 | Any command given a key of the wrong type, e.g. an `hpke-nl` key for `hpke-nl3`, a Stern key for `hpks`, or a private key as `--pubkey` | **Pass the key the operation names** (`genpkey --algo <that algo>`). The GF keys stay interchangeable with each other, as do the two Stern keys |
 
 ---
 
@@ -1688,3 +1696,54 @@ artifact whose signer you already trust for other reasons.
 pre-hash, the round counts) and accepts (the floor), which is the 2.0.0 surface. Nothing
 in this break fails silently: an old signature is refused, not misread.
 
+## 31. Every CLI checks a key's label against the operation (v15.0.0)
+
+**Who is affected:** anyone passing a key of one type to an operation of another. For
+example:
+
+- an `hpke-nl` key to `enc` / `dec --algo hpke-nl3`;
+- an HKEX-GF, HPKS or HPKE key to `sign --algo hpks-stern`, or a Stern key to `sign
+  --algo hpks`;
+- an HKEX-GF key to `sign --algo hpks-wots` (Go only);
+- a private key as `--pubkey`, `--their`, `--ring` or `--issuer` (HCRED's
+  `cred-verify --pubkey` still takes one).
+
+Keys, signatures and ciphertexts are unchanged. Every key keeps working with the
+operations its type names.
+
+**What changed (TODO #366).** Until 14.x no CLI compared a key's PEM label with the
+`--algo` using it: each read whatever integers the file held. Over 15 key types and 47
+key slots, C accepted 127 mismatched combinations, Go 100, Python 49 and Java 47. That
+is cross-protocol key reuse. In the sharpest case, an HKEX-GF private exponent was used
+as a Stern error vector of the wrong weight, which may leak the exponent. Now one table
+(spec `key_label_acceptance`, emitted into all four CLIs) says which key types each
+slot accepts:
+
+| operation | accepted key types |
+|---|---|
+| `kex hkex-gf`; `enc` / `dec` `hpke`, `hpke-nl`; `sign` / `verify` `hpks`, `hpks-nl` | `hkex-gf`, `hpks`, `hpks-nl`, `hpke`, `hpke-nl` (one GF key pair) |
+| `sign` / `verify` `hpks-stern`, `hpks-ring`; `enc` / `dec hpke-stern`; `cred-issue --our`; `cred-verify --issuer` | `hpks-stern`, `hpke-stern` (one Stern key) |
+| `enc` / `dec hpke-nl3` | `hpke-nl3` |
+| `kex hkex-rnl`, `kex hybrid-rnl-stern --our/--their`, `rnl-sigma` | `hkex-rnl` |
+| `hpke-stern-kem`, `kex --our-kem/--their-kem` | `hpke-stern-kem` |
+| `nl-zkboo`, `nl-zkbpp` | `hpks-zkp-nl` |
+| `hpks-xmss`, `hpks-wots`; `oprf-eval`, `pake-*`; `cred-*` (HCRED) | their own type |
+| `threshold-commit`, `threshold-respond` | `hpks`, `hpks-nl` (unchanged) |
+
+Public-key slots accept public keys only, except HCRED's (`cred-verify --pubkey`,
+`cred-issue --in`), which also take the HCRED private key, as they always have. A
+refused key fails with:
+
+```
+sign --algo hpks-stern: wrong key type: --key holds 'HERRADURA HKEX-GF PRIVATE KEY'; accepted: hpks-stern, hpke-stern
+```
+
+A passphrase-encrypted key, an HKEX-RNL response, a session key and a `0x` hex key are
+not judged by the table, and get the same errors as before.
+
+**What to do.** Generate a key of the type the operation names (`genpkey --algo
+hpks-stern`, `genpkey --algo hpke-nl3`, …) and pass that. Derive public keys with `pkey
+--pubout` rather than passing the private key. Nothing that used matching keys changes.
+
+**Why this is a MAJOR bump.** It changes what an existing `--algo` accepts, which is the
+2.0.0 surface. Only misuse stops working, and it fails loudly.

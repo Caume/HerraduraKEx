@@ -150,6 +150,12 @@ PEM files from any one are byte-for-byte readable by the others.  Per-CLI suppor
 for every --algo tag and flag is in spec/herradura-protocol-spec.json
 (cli_support, cli_flag_matrix); deliberate per-CLI differences are in its
 cli_surface_gaps.
+Every key flag is checked against that file's key_label_acceptance table: a key of
+the wrong type fails with "wrong key type: <flag> holds '<label>'; accepted: ...".
+The GF keys (hkex-gf, hpks, hpks-nl, hpke, hpke-nl) are interchangeable, as are
+hpks-stern and hpke-stern; every other key serves only its own --algo, and a
+--pubkey / --their / --ring / --issuer slot takes public keys only (HCRED's
+cred-verify --pubkey and cred-issue --in also take the HCRED private key).
 
   genpkey --algo <ID> [--bits N] [--xmss-height N] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,

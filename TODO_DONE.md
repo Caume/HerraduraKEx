@@ -25085,3 +25085,49 @@ the default.  `test_digest_matrix.sh` now pins "flag omitted == hfscx-256" and "
 `none` signature does not verify by default".  MIGRATING.md section 30.
 
 Status: **DONE v15.0.0** — sign/verify/threshold default to --digest hfscx-256 in all four CLIs; none is opt-in.
+
+---
+
+### #366: check the PEM label against `--algo`
+
+Found with #364.  Probably **MAJOR** under the "what an existing `--algo` accepts" rule,
+though only misuse stops working.
+
+**The finding.**  No CLI checks a key's PEM label against `--algo`; each reads whatever
+integers the file holds.  Measured: `sign --algo hpks-stern --key <HKEX-GF private key>`
+succeeds in all four CLIs; `enc --algo hpke-nl3 --pubkey <HPKE-NL key>` and the matching
+`dec` round-trip in all four, though HPKE-NL3 has its own labels (SPEC.md) and the
+TUTORIAL says the keys differ.  The C confusion matrix (14 key types x 13 commands)
+accepted 88 of 221 combinations, many of them mismatched.
+
+**Impact.**  Cross-protocol key reuse.  The sharpest case: an HKEX-GF private exponent
+used as a Stern error vector of the wrong weight.  Stern's zero-knowledge argument assumes
+weight t, so such signatures may leak information about the DH exponent (not measured).
+HPKS/HPKE sharing the GF key type is documented and stays allowed, via an explicit
+allow-list rather than by not checking.
+
+**Work.**  A label-to-`--algo` acceptance table in `spec/` (generated, like the flag
+tables), enforced identically by all four CLIs; a parity row; cases in
+`test_malformed_pem_matrix.sh`.  Each rejection test with an accept-control.  Restate the
+TUTORIAL line #362 touches once this lands.
+
+**Resolution (v15.0.0).**  Shipped in the same MAJOR release as #364/#365 (MIGRATING.md
+section 31).  `spec/generate_spec.py`'s `KEY_LABEL_SITES` is the table: 47 (subcommand,
+`--algo`, key flag) slots, each with the key types it accepts.  GF (`hkex-gf`, `hpks`,
+`hpks-nl`, `hpke`, `hpke-nl`) and Stern (`hpks-stern`, `hpke-stern`) are shared families
+by the owner's decision; everything else, `hpke-nl3` included, accepts only its own type,
+and public-key slots take PUBLIC labels only -- except HCRED's two (role `either`), whose
+loaders take the private key on purpose and under test.  The table is emitted into
+`key_label_table.h`, `KeyLabelTable.java` and generated regions of `herradura_cli.go` and
+`herradura.py`, and into the spec as `key_label_acceptance`.  Each CLI checks it once
+before dispatch, with one message ("wrong key type: <flag> holds '<label>'; accepted:
+…"), judging only KEY labels so encrypted keys, RNL responses and hex keys reach their
+own loaders' errors.  Measured: mismatches accepted before -- C 127, Go 100, Python 49,
+Java 47 -- are all refused, nothing is newly accepted, and the four agree on all 47
+slots.  The parity row is `CliTest/test_key_label_matrix.sh` (accept-control, family,
+opposite-role and foreign-type refusal per row per CLI, templates held to the spec rows
+in both directions) rather than `test_malformed_pem_matrix.sh`, whose cases are
+malformed artifacts, not well-formed keys of the wrong type.  The TUTORIAL line is
+#362's.
+
+Status: **DONE v15.0.0** — every CLI refuses a key whose PEM label the operation does not accept, from one generated table.

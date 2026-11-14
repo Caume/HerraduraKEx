@@ -17,6 +17,7 @@
 #include "../herradura.h"
 #include "herradura_codec.h"
 #include "cli_flag_table.h"
+#include "key_label_table.h"   /* TODO #366 */
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * I/O helpers
@@ -158,6 +159,80 @@ static void check_unknown_flags(const char *cmd, int argc, char **argv)
         }
         fprintf(stderr, "%s: unrecognised flag %s\n", cmd, a);
         exit(2);
+    }
+}
+
+/* TODO #366: refuse a key whose PEM label this operation does not accept.
+ *
+ * HKX_KEY_SITES is generated from spec/generate_spec.py's KEY_LABEL_SITES, which
+ * holds the reasoning; Python, Go and Java carry the same rows.  Only KEY labels
+ * are judged (ending in PRIVATE KEY or PUBLIC KEY, other than the passphrase
+ * envelope): a response, session key or hex key goes on to the loader, whose
+ * own message is the more specific one.  pem_file_label writes "" when *path*
+ * is unreadable or not PEM. */
+static void pem_file_label(const char *path, char *out, size_t cap)
+{
+    char buf[512];
+    out[0] = '\0';
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    const char *b = strstr(buf, "-----BEGIN ");
+    if (!b) return;
+    b += 11;
+    const char *e = strstr(b, "-----");
+    if (!e || e == b || (size_t)(e - b) >= cap) return;
+    memcpy(out, b, (size_t)(e - b));
+    out[e - b] = '\0';
+}
+
+static int ends_with(const char *s, const char *suffix)
+{
+    size_t ls = strlen(s), lx = strlen(suffix);
+    return ls >= lx && strcmp(s + ls - lx, suffix) == 0;
+}
+
+static void check_key_label(const HkxKeySite *r, const char *cmd, const char *algo,
+                            const char *path)
+{
+    char label[128];
+    pem_file_label(path, label, sizeof(label));
+    if (!label[0] || strcmp(label, PEM_ENC_PRIV) == 0 ||
+        !(ends_with(label, "PRIVATE KEY") || ends_with(label, "PUBLIC KEY")))
+        return;
+    for (int k = 0; r->labels[k]; k++)
+        if (strcmp(r->labels[k], label) == 0) return;
+    if (algo[0])
+        fprintf(stderr, "%s --algo %s: wrong key type: %s holds '%s'; accepted: %s\n",
+                cmd, algo, r->flag, label, r->tags);
+    else
+        fprintf(stderr, "%s: wrong key type: %s holds '%s'; accepted: %s\n",
+                cmd, r->flag, label, r->tags);
+    exit(1);
+}
+
+static void check_key_labels(const char *cmd, int argc, char **argv)
+{
+    const char *algo = get_arg(argc, argv, "--algo");
+    if (!algo) algo = "";
+    for (int i = 0; i < HKX_KEY_SITES_N; i++) {
+        const HkxKeySite *r = &HKX_KEY_SITES[i];
+        if (strcmp(r->cmd, cmd) != 0 || strcmp(r->algo, algo) != 0) continue;
+        const char *v = get_arg(argc, argv, r->flag);
+        if (!v || !*v) continue;
+        if (strcmp(r->flag, "--ring") != 0) { check_key_label(r, cmd, algo, v); continue; }
+        char path[4096];
+        for (const char *p = v; *p; ) {
+            const char *c = strchr(p, ',');
+            size_t len = c ? (size_t)(c - p) : strlen(p);
+            if (len < sizeof(path)) {
+                memcpy(path, p, len); path[len] = '\0';
+                check_key_label(r, cmd, algo, path);
+            }
+            p += len + (c ? 1 : 0);
+        }
     }
 }
 
@@ -5339,6 +5414,7 @@ int main(int argc, char **argv)
 
     const char *cmd = argv[1];
     check_unknown_flags(cmd, argc, argv);
+    check_key_labels(cmd, argc, argv);   /* TODO #366 */
     if (strcmp(cmd, "genpkey") == 0) { cmd_genpkey(argc, argv); return 0; }
     if (strcmp(cmd, "pkey")    == 0) { cmd_pkey(argc, argv);    return 0; }
     if (strcmp(cmd, "kex")     == 0) { cmd_kex(argc, argv);     return 0; }

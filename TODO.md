@@ -698,33 +698,6 @@ Status: **OPEN**
 
 ---
 
-### #366: check the PEM label against `--algo`
-
-Found with #364.  Probably **MAJOR** under the "what an existing `--algo` accepts" rule,
-though only misuse stops working.
-
-**The finding.**  No CLI checks a key's PEM label against `--algo`; each reads whatever
-integers the file holds.  Measured: `sign --algo hpks-stern --key <HKEX-GF private key>`
-succeeds in all four CLIs; `enc --algo hpke-nl3 --pubkey <HPKE-NL key>` and the matching
-`dec` round-trip in all four, though HPKE-NL3 has its own labels (SPEC.md) and the
-TUTORIAL says the keys differ.  The C confusion matrix (14 key types x 13 commands)
-accepted 88 of 221 combinations, many of them mismatched.
-
-**Impact.**  Cross-protocol key reuse.  The sharpest case: an HKEX-GF private exponent
-used as a Stern error vector of the wrong weight.  Stern's zero-knowledge argument assumes
-weight t, so such signatures may leak information about the DH exponent (not measured).
-HPKS/HPKE sharing the GF key type is documented and stays allowed, via an explicit
-allow-list rather than by not checking.
-
-**Work.**  A label-to-`--algo` acceptance table in `spec/` (generated, like the flag
-tables), enforced identically by all four CLIs; a parity row; cases in
-`test_malformed_pem_matrix.sh`.  Each rejection test with an accept-control.  Restate the
-TUTORIAL line #362 touches once this lands.
-
-Status: **OPEN**
-
----
-
 ### #367: wrong-type or malformed keys crash the Go and Python CLIs
 
 Found with #364.  PATCH.

@@ -280,6 +280,55 @@
           }
         }
       }
+    },
+    "key_label_acceptance": {
+      "type": "array",
+      "description": "Which key PEM labels each (subcommand, --algo, key flag) accepts (TODO #366). Curated policy in spec/generate_spec.py, emitted into all four CLIs (HerraduraCli/key_label_table.h, bindings/java/herradurakex/KeyLabelTable.java, and generated regions of herradura_cli.go and herradura.py). A key whose label is not listed is refused with 'wrong key type'. Public-key slots accept PUBLIC labels only. `algo` is empty for subcommands without --algo; `pkey` reads any key and has no row.",
+      "items": {
+        "type": "object",
+        "required": [
+          "subcommand",
+          "algo",
+          "flag",
+          "role",
+          "accepts",
+          "labels"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "subcommand": {
+            "type": "string"
+          },
+          "algo": {
+            "type": "string"
+          },
+          "flag": {
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "priv",
+              "pub",
+              "either"
+            ],
+            "description": "Which half of the key the slot takes. `either` accepts the private key too, where the loader derives the public fields from it (HCRED)."
+          },
+          "accepts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          }
+        }
+      }
     }
   },
   "$defs": {

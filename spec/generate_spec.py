@@ -62,6 +62,9 @@ OUT_PATH = os.path.join(REPO, "spec", "herradura-protocol-spec.json")
 C_FLAG_TABLE = os.path.join(REPO, "HerraduraCli", "cli_flag_table.h")
 JAVA_FLAG_TABLE = os.path.join(REPO, "bindings", "java", "herradurakex", "CliFlagTable.java")
 SCHEMA_PATH = os.path.join(REPO, "spec", "herradura-protocol-spec.schema.json")
+# TODO #366: the key-label acceptance table, emitted into each CLI.
+C_KEY_TABLE = os.path.join(REPO, "HerraduraCli", "key_label_table.h")
+JAVA_KEY_TABLE = os.path.join(REPO, "bindings", "java", "herradurakex", "KeyLabelTable.java")
 
 SPEC_VERSION = "1.0.0"
 
@@ -1624,6 +1627,7 @@ def generate():
             for sc in subcommands if sc in UNFILED_CLI_SURFACE
         ],
         "parameters": build_parameters(),
+        "key_label_acceptance": build_key_label_acceptance(priv_algos, pem_labels_all),
     }
     return spec
 
@@ -1813,6 +1817,162 @@ def emit_go_help_region(go_src, lines):
     return pat.sub(lambda _m: region, go_src, count=1)
 
 
+# ── Key-label acceptance (TODO #366) ──────────────────────────────────────
+#
+# Until v15.0.0 no CLI compared a key's PEM label with the operation using it:
+# each read whatever integers the file held, so `sign --algo hpks-stern` signed
+# with an HKEX-GF private exponent, and Go signed HPKS-WOTS with one.  This table
+# is the one statement of which key labels each (subcommand, --algo, key flag)
+# accepts.  It is CURATED, not extracted -- it is policy -- and emitted into all
+# four CLIs below, so they enforce one table rather than four.
+#
+# Two families are deliberately shared.  GF: hkex-gf, hpks, hpks-nl, hpke and
+# hpke-nl are the same GF(2^n)* key pair (SPEC.md §7: "HPKE reuses HKEX-GF key
+# pairs").  STERN: hpks-stern and hpke-stern hold the same error vector + seed.
+# hpke-nl3 is NOT in the GF family: it has its own labels (TUTORIAL: "an
+# hpke-nl key is not an hpke-nl3 key").  Public-key slots accept PUBLIC labels
+# only; a private key passed as --pubkey was mis-parsed by every CLI before.
+# The exception is role "either": HCRED's public-key loaders take the private
+# key too, deliberately and correctly (it carries the public fields), in all
+# four CLIs and under test (test_cred.sh "proof verify (privkey)").
+# `pkey` is absent on purpose: it reads any key.  The threshold rows keep the
+# hpks/hpks-nl restriction all four CLIs already applied.
+#
+# CliTest/test_key_label_matrix.sh runs every row against every key label in
+# every CLI, so a row a CLI forgets to enforce fails there.
+
+_KF_GF = ["hkex-gf", "hpks", "hpks-nl", "hpke", "hpke-nl"]
+_KF_STERN = ["hpks-stern", "hpke-stern"]
+_KF_RNL = ["hkex-rnl"]
+_KF_KEM = ["hpke-stern-kem"]
+
+# (subcommand, --algo or "", key flag, "priv" | "pub" | "either", accepted key tags)
+KEY_LABEL_SITES = (
+    [("kex", "hkex-gf", "--our", "priv", _KF_GF),
+     ("kex", "hkex-gf", "--their", "pub", _KF_GF),
+     ("kex", "hkex-rnl", "--our", "priv", _KF_RNL),
+     ("kex", "hkex-rnl", "--their", "pub", _KF_RNL),
+     ("kex", "hybrid-rnl-stern", "--our", "priv", _KF_RNL),
+     ("kex", "hybrid-rnl-stern", "--their", "pub", _KF_RNL),
+     ("kex", "hybrid-rnl-stern", "--our-kem", "priv", _KF_KEM),
+     ("kex", "hybrid-rnl-stern", "--their-kem", "pub", _KF_KEM)]
+    + [(sub, algo, flag, role, fam)
+       for algo, fam in (("hpke", _KF_GF), ("hpke-nl", _KF_GF), ("hpke-nl3", ["hpke-nl3"]),
+                         ("hpke-stern", _KF_STERN), ("hpke-stern-kem", _KF_KEM))
+       for sub, flag, role in (("enc", "--pubkey", "pub"), ("dec", "--key", "priv"))]
+    + [(sub, algo, flag, role, fam)
+       for algo, fam in (("hpks", _KF_GF), ("hpks-nl", _KF_GF), ("hpks-stern", _KF_STERN),
+                         ("hpks-ring", _KF_STERN), ("rnl-sigma", _KF_RNL),
+                         ("nl-zkboo", ["hpks-zkp-nl"]), ("nl-zkbpp", ["hpks-zkp-nl"]),
+                         ("hpks-xmss", ["hpks-xmss"]), ("hpks-wots", ["hpks-wots"]))
+       for sub, flag, role in (("sign", "--key", "priv"),
+                               ("verify", "--ring" if algo == "hpks-ring" else "--pubkey", "pub"))]
+    + [("threshold-commit", "", "--key", "priv", ["hpks", "hpks-nl"]),
+       ("threshold-respond", "", "--key", "priv", ["hpks", "hpks-nl"]),
+       ("oprf-eval", "", "--key", "priv", ["oprf"]),
+       ("pake-register", "", "--key", "priv", ["oprf"]),
+       ("pake-demo", "", "--key", "priv", ["oprf"]),
+       ("cred-issue", "", "--our", "priv", _KF_STERN),
+       ("cred-issue", "", "--in", "either", ["hcred"]),
+       ("cred-prove", "", "--in", "priv", ["hcred"]),
+       ("cred-verify", "", "--pubkey", "either", ["hcred"]),
+       ("cred-verify", "", "--issuer", "pub", _KF_STERN)])
+
+
+def key_tag_labels(priv_algos, pem_labels):
+    """tag -> (PRIVATE label, PUBLIC label) for every key type a CLI can generate."""
+    out = {t: (l, l.replace("PRIVATE", "PUBLIC")) for t, l in priv_algos.items()}
+    out["hcred"] = (pem_labels["PEM_HCRED_PRIV"], pem_labels["PEM_HCRED_PUB"])
+    return out
+
+
+def build_key_label_acceptance(priv_algos, pem_labels):
+    labels = key_tag_labels(priv_algos, pem_labels)
+    rows, seen = [], set()
+    for sub, algo, flag, role, tags in KEY_LABEL_SITES:
+        key = (sub, algo, flag)
+        if key in seen:
+            raise RuntimeError("duplicate key-label site %r" % (key,))
+        seen.add(key)
+        unknown = [t for t in tags if t not in labels]
+        if unknown:
+            raise RuntimeError("key-label site %r names unknown key tags %r" % (key, unknown))
+        rows.append({"subcommand": sub, "algo": algo, "flag": flag, "role": role,
+                     "accepts": list(tags),
+                     "labels": [labels[t][i] for t in tags
+                                for i in ((0,) if role == "priv" else (1,) if role == "pub"
+                                          else (1, 0))]})
+    return rows
+
+
+def emit_c_key_table(rows):
+    width = max(len(r["labels"]) for r in rows) + 1
+    out = ["/* " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n * ") + " */",
+           "#ifndef HKX_KEY_LABEL_TABLE_H",
+           "#define HKX_KEY_LABEL_TABLE_H", "",
+           "/* Which key PEM labels each (subcommand, --algo, key flag) accepts. */",
+           "typedef struct { const char *cmd, *algo, *flag, *tags;",
+           "                 const char *labels[%d]; } HkxKeySite;" % width, "",
+           "static const HkxKeySite HKX_KEY_SITES[] = {"]
+    for r in rows:
+        labs = ", ".join('"%s"' % l for l in r["labels"]) + ", 0"
+        out.append('    {"%s", "%s", "%s", "%s",\n     {%s}},'
+                   % (r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"]), labs))
+    out += ["};",
+            "static const int HKX_KEY_SITES_N ="
+            " (int)(sizeof(HKX_KEY_SITES) / sizeof(HKX_KEY_SITES[0]));", "",
+            "#endif /* HKX_KEY_LABEL_TABLE_H */", ""]
+    return "\n".join(out)
+
+
+def emit_java_key_table(rows):
+    out = ["package herradurakex;", "",
+           "/** " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n *  ") + " */",
+           "final class KeyLabelTable {",
+           "    private KeyLabelTable() { }", "",
+           "    /** {subcommand, algo, flag, accepted tags, label...} per key site. */",
+           "    static final String[][] SITES = {"]
+    for r in rows:
+        cells = [r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"])] + r["labels"]
+        out.append("        {" + ", ".join('"%s"' % c for c in cells) + "},")
+    out += ["    };", "}", ""]
+    return "\n".join(out)
+
+
+GO_KEY_BEGIN = "// BEGIN GENERATED key-label table (spec/generate_spec.py, TODO #366) -- DO NOT EDIT."
+GO_KEY_END = "// END GENERATED key-label table"
+PY_KEY_BEGIN = "# BEGIN GENERATED key-label table (spec/generate_spec.py, TODO #366) -- DO NOT EDIT."
+PY_KEY_END = "# END GENERATED key-label table"
+
+
+def _replace_region(src, begin, end, body, what):
+    pat = re.compile(re.escape(begin) + r".*?" + re.escape(end), re.DOTALL)
+    if not pat.search(src):
+        raise RuntimeError("%s has no generated key-label region; restore the "
+                           "BEGIN/END GENERATED key-label table markers" % what)
+    return pat.sub(lambda _m: "\n".join([begin] + body + [end]), src, count=1)
+
+
+def emit_go_key_region(go_src, rows):
+    body = ["var keySites = []keySite{"]
+    for r in rows:
+        body.append('\t{"%s", "%s", "%s", "%s", []string{%s}},'
+                    % (r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"]),
+                       ", ".join('"%s"' % l for l in r["labels"])))
+    body.append("}")
+    return _replace_region(go_src, GO_KEY_BEGIN, GO_KEY_END, body, "herradura_cli.go")
+
+
+def emit_py_key_region(py_src, rows):
+    body = ["_KEY_SITES = {"]
+    for r in rows:
+        body.append("    (%r, %r, %r): (%r, (%s)),"
+                    % (r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"]),
+                       " ".join("%r," % l for l in r["labels"])))
+    body.append("}")
+    return _replace_region(py_src, PY_KEY_BEGIN, PY_KEY_END, body, "herradura.py")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
@@ -1834,7 +1994,13 @@ def main():
         (JAVA_FLAG_TABLE, emit_java_flag_table(extract_flags_java(read(CLI_JAVA)),
                                                build_help_synopsis(spec, "java"))),
         # TODO #339: Go's synopsis lives in a marked region of the CLI itself.
-        (CLI_GO, emit_go_help_region(read(CLI_GO), build_help_synopsis(spec, "go"))),
+        (CLI_GO, emit_go_key_region(
+            emit_go_help_region(read(CLI_GO), build_help_synopsis(spec, "go")),
+            spec["key_label_acceptance"])),
+        # TODO #366: the key-label acceptance table, in all four CLIs.
+        (C_KEY_TABLE, emit_c_key_table(spec["key_label_acceptance"])),
+        (JAVA_KEY_TABLE, emit_java_key_table(spec["key_label_acceptance"])),
+        (HERRADURA_PY, emit_py_key_region(read(HERRADURA_PY), spec["key_label_acceptance"])),
     ]
 
     if args.check:

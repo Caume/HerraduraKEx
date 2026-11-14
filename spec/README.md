@@ -156,6 +156,20 @@ Python CLI's subparser list, which made a subcommand only another CLI defines
 structurally invisible — Go's top-level `threshold-verify` was. Each entry now carries
 `implementations`, and the union appears in `cli_flag_matrix`.
 
+## Key-label acceptance (TODO #366)
+
+`key_label_acceptance` is the one curated table here that the CLIs ENFORCE rather than
+describe. Each row is a (subcommand, `--algo`, key flag) slot and the key types it
+accepts, with their PEM labels. It is policy, not extraction, so it lives as
+`KEY_LABEL_SITES` in `generate_spec.py`, with the reasoning beside it. Two families are
+shared on purpose: GF (`hkex-gf`, `hpks`, `hpks-nl`, `hpke`, `hpke-nl`) and Stern
+(`hpks-stern`, `hpke-stern`). Public-key slots list PUBLIC labels only, except role
+`either` (HCRED's two, whose loaders take the private key too). The generator
+emits the table into `HerraduraCli/key_label_table.h`, `KeyLabelTable.java` and marked
+regions of `herradura_cli.go` and `herradura.py`; `--check` fails if any of the four
+is stale. `CliTest/test_key_label_matrix.sh` runs every row in every CLI, and fails if
+its templates and these rows differ.
+
 ## Protocols without an `--algo` tag
 
 `protocols` is keyed on a stable protocol id, which for most entries is also the `--algo`
