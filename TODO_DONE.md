@@ -25131,3 +25131,53 @@ malformed artifacts, not well-formed keys of the wrong type.  The TUTORIAL line 
 #362's.
 
 Status: **DONE v15.0.0** — every CLI refuses a key whose PEM label the operation does not accept, from one generated table.
+
+---
+
+### #367: wrong-type or malformed keys crash the Go and Python CLIs
+
+Found with #364.  PATCH.
+
+**The finding.**  Over 14 key types x 13 commands (221 cases per CLI): Go panics in 25,
+Python prints a traceback in 10; C and Java fail cleanly in all.  A malformed PEER public
+key -- the remotely supplied input -- does the same in `kex`: a well-formed DER SEQUENCE
+with too few INTEGERs (0 for `hkex-gf`, 1 for `hkex-rnl`) panics Go
+(`index out of range`) and raises in Python.  Sites: unchecked `ints[k]` indexing and an
+unbounded width feeding `make` in `HerraduraCli/herradura_cli.go` (around lines 509, 1617,
+2253, 2307, 3933); in Python, uncaught `IndexError`, `OverflowError`, `AttributeError` and
+`BaError`.  Every case exits non-zero, so nothing is accepted that should not be: this is
+robustness, not a security hole, but a service wrapping the Go CLI gets a crash and stack
+dump from an untrusted peer.
+
+**Also here (closed by #364, v15.0.0).**  The C CLI accepted `--rounds` for `sign --algo
+nl-zkboo` and ignored it; with #364's verifier floor it had to be honoured, and now is.
+
+**Work.**  An arity/bounds check in each decoder before indexing, with the same error
+text across ports; "valid DER, wrong arity" seeds for the Fuzz/ harnesses; matrix cases
+in `test_malformed_pem_matrix.sh` (with accept-controls).
+
+**Resolution (v15.0.0).**  The sweep was redone at the shipped state (after #366, which
+already turned every wrong-TYPE key into a clean refusal) over 90 (command, artifact)
+cells and 1794 malformed variants: Go crashed in 365 and Python in 299; C and Java in
+none.  Three changes:
+
+  * `PEM_DER_ITEMS` (spec `pem_der_items`) gives every DER-SEQUENCE label's item count;
+    each CLI checks it in its one PEM-to-integers loader with the same text, "malformed
+    PEM '<label>': <k> DER items, expected <n>".  `CIPHERTEXT` and `SIGNATURE` carry the
+    union and their decoders check the exact count.
+  * Every width and size field is bounded where it is read: Go's `rnlWireN`,
+    `sternWireN`, `fitBytes`, a non-panicking `derIntBig`, and the peer ring check it
+    never had; Python's `_WIRE_FIELDS` / `_fit` and `ValueError` from the codec; Java's
+    ring and hint bounds.
+  * Tests: `CliTest/test_der_items_matrix.sh` (every label in every CLI, both-way
+    coverage, 552 failures against the pre-fix build); `lib_malformed.sh` now scores a Go
+    panic as a crash; `Fuzz/fuzz_cli_args.py` flags crash traces on any exit code and
+    aims a third of its trials at wrong-arity files.
+
+After: 0 crashes and 0 timeouts in all four CLIs across the 1794 variants.  Fields some
+CLIs never read (C sizes most from compiled widths) still exit 0 there and are
+TODO #371.  MAJOR inside v15.0.0, MIGRATING.md section 32: C, Go and Java accepted
+extra items, C some missing ones.
+
+Status: **DONE v15.0.0** — every CLI checks each DER label's item count from one generated table and bounds its width and size fields; no malformed variant crashes any CLI.
+

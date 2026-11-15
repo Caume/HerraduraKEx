@@ -3398,5 +3398,232 @@
         "HERRADURA HPKE-STERN PUBLIC KEY"
       ]
     }
+  ],
+  "pem_der_items": [
+    {
+      "label": "HERRADURA CIPHERTEXT",
+      "min": 3,
+      "max": 6
+    },
+    {
+      "label": "HERRADURA DIGEST",
+      "min": 1,
+      "max": 1
+    },
+    {
+      "label": "HERRADURA ENCRYPTED PRIVATE KEY",
+      "min": 6,
+      "max": 6
+    },
+    {
+      "label": "HERRADURA HCRED CREDENTIAL",
+      "min": 5,
+      "max": 5
+    },
+    {
+      "label": "HERRADURA HDRBG STATE",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HKEX-GF PRIVATE KEY",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HKEX-GF PUBLIC KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HKEX-RNL PRIVATE KEY",
+      "min": 3,
+      "max": 4
+    },
+    {
+      "label": "HERRADURA HKEX-RNL PUBLIC KEY",
+      "min": 3,
+      "max": 4
+    },
+    {
+      "label": "HERRADURA HKEX-RNL RESPONSE",
+      "min": 5,
+      "max": 6
+    },
+    {
+      "label": "HERRADURA HPKE PRIVATE KEY",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HPKE PUBLIC KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKE-NL PRIVATE KEY",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HPKE-NL PUBLIC KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKE-NL3 PRIVATE KEY",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HPKE-NL3 PUBLIC KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKE-STERN PRIVATE KEY",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HPKE-STERN PUBLIC KEY",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HPKE-STERN-KEM PRIVATE KEY",
+      "min": 6,
+      "max": 6
+    },
+    {
+      "label": "HERRADURA HPKE-STERN-KEM PUBLIC KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKS PRIVATE KEY",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HPKS PUBLIC KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKS-NL PRIVATE KEY",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HPKS-NL PUBLIC KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKS-RING SIGNATURE",
+      "min": 4,
+      "max": 4
+    },
+    {
+      "label": "HERRADURA HPKS-STERN PRIVATE KEY",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HPKS-STERN PUBLIC KEY",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HPKS-WOTS PRIVATE KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKS-WOTS PUBLIC KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKS-WOTS SIGNATURE",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKS-XMSS PRIVATE KEY",
+      "min": 4,
+      "max": 4
+    },
+    {
+      "label": "HERRADURA HPKS-XMSS PUBLIC KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKS-XMSS SIGNATURE",
+      "min": 5,
+      "max": 5
+    },
+    {
+      "label": "HERRADURA HPKST AGGREGATE",
+      "min": 4,
+      "max": 4
+    },
+    {
+      "label": "HERRADURA HPKST COMMITMENT",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA HPKST NONCE",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKST PARTIAL",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA HPKST SIGNATURE",
+      "min": 4,
+      "max": 4
+    },
+    {
+      "label": "HERRADURA HYBRID-RNL-STERN RESPONSE",
+      "min": 8,
+      "max": 8
+    },
+    {
+      "label": "HERRADURA OPRF CLIENT STATE",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA OPRF EVALUATION",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA OPRF PRIVATE KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA PAKE RECORD",
+      "min": 3,
+      "max": 3
+    },
+    {
+      "label": "HERRADURA SESSION KEY",
+      "min": 2,
+      "max": 2
+    },
+    {
+      "label": "HERRADURA SIGNATURE",
+      "min": 4,
+      "max": 5
+    }
   ]
 }

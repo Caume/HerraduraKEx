@@ -1628,6 +1628,9 @@ def generate():
         ],
         "parameters": build_parameters(),
         "key_label_acceptance": build_key_label_acceptance(priv_algos, pem_labels_all),
+        "pem_der_items": build_pem_der_items(
+            list(pem_labels_all.values())
+            + [l for t in key_tag_labels(priv_algos, pem_labels_all).values() for l in t]),
     }
     return spec
 
@@ -1878,6 +1881,74 @@ KEY_LABEL_SITES = (
        ("cred-verify", "", "--pubkey", "either", ["hcred"]),
        ("cred-verify", "", "--issuer", "pub", _KF_STERN)])
 
+# TODO #367: how many DER INTEGER items each DER-SEQUENCE PEM label carries, as
+# (min, max).  Every CLI checks this in its one PEM-to-integers loader, before
+# any decoder indexes the list, so "valid DER, wrong arity" is a one-line
+# refusal everywhere instead of an index panic (Go) or a traceback (Python).
+# A label used by several algorithms (CIPHERTEXT, SIGNATURE) gets the union
+# here; the decoder for each algorithm then checks its exact count.  A range
+# wider than one marks a documented optional trailing field (the HKEX-RNL
+# contributory nonce, whose absence reads as a zero nonce).
+PEM_DER_ITEMS = {
+    "HERRADURA HKEX-GF PRIVATE KEY": (3, 3),
+    "HERRADURA HKEX-GF PUBLIC KEY": (2, 2),
+    "HERRADURA HPKS PRIVATE KEY": (3, 3),
+    "HERRADURA HPKS PUBLIC KEY": (2, 2),
+    "HERRADURA HPKS-NL PRIVATE KEY": (3, 3),
+    "HERRADURA HPKS-NL PUBLIC KEY": (2, 2),
+    "HERRADURA HPKE PRIVATE KEY": (3, 3),
+    "HERRADURA HPKE PUBLIC KEY": (2, 2),
+    "HERRADURA HPKE-NL PRIVATE KEY": (3, 3),
+    "HERRADURA HPKE-NL PUBLIC KEY": (2, 2),
+    "HERRADURA HPKE-NL3 PRIVATE KEY": (3, 3),
+    "HERRADURA HPKE-NL3 PUBLIC KEY": (2, 2),
+    "HERRADURA HKEX-RNL PRIVATE KEY": (3, 4),
+    "HERRADURA HKEX-RNL PUBLIC KEY": (3, 4),
+    "HERRADURA HKEX-RNL RESPONSE": (5, 6),
+    "HERRADURA HYBRID-RNL-STERN RESPONSE": (8, 8),
+    "HERRADURA HPKS-STERN PRIVATE KEY": (3, 3),
+    "HERRADURA HPKS-STERN PUBLIC KEY": (3, 3),
+    "HERRADURA HPKE-STERN PRIVATE KEY": (3, 3),
+    "HERRADURA HPKE-STERN PUBLIC KEY": (3, 3),
+    "HERRADURA HPKE-STERN-KEM PRIVATE KEY": (6, 6),
+    "HERRADURA HPKE-STERN-KEM PUBLIC KEY": (2, 2),
+    "HERRADURA HPKS-WOTS PRIVATE KEY": (2, 2),
+    "HERRADURA HPKS-WOTS PUBLIC KEY": (2, 2),
+    "HERRADURA HPKS-WOTS SIGNATURE": (2, 2),
+    "HERRADURA HPKS-XMSS PRIVATE KEY": (4, 4),
+    "HERRADURA HPKS-XMSS PUBLIC KEY": (2, 2),
+    "HERRADURA HPKS-XMSS SIGNATURE": (5, 5),
+    "HERRADURA HPKS-RING SIGNATURE": (4, 4),
+    "HERRADURA OPRF PRIVATE KEY": (2, 2),
+    "HERRADURA OPRF CLIENT STATE": (3, 3),
+    "HERRADURA OPRF EVALUATION": (2, 2),
+    "HERRADURA PAKE RECORD": (3, 3),
+    "HERRADURA HPKST COMMITMENT": (3, 3),
+    "HERRADURA HPKST NONCE": (2, 2),
+    "HERRADURA HPKST AGGREGATE": (4, 4),
+    "HERRADURA HPKST PARTIAL": (2, 2),
+    "HERRADURA HPKST SIGNATURE": (4, 4),
+    "HERRADURA HCRED CREDENTIAL": (5, 5),
+    "HERRADURA SESSION KEY": (2, 2),
+    "HERRADURA DIGEST": (1, 1),
+    "HERRADURA HDRBG STATE": (2, 2),
+    "HERRADURA ENCRYPTED PRIVATE KEY": (6, 6),
+    "HERRADURA CIPHERTEXT": (3, 6),
+    "HERRADURA SIGNATURE": (4, 5),
+}
+
+
+def build_pem_der_items(all_labels):
+    unknown = sorted(set(PEM_DER_ITEMS) - set(all_labels))
+    if unknown:
+        raise RuntimeError("PEM_DER_ITEMS names labels no CLI defines: %r" % unknown)
+    rows = []
+    for label, (lo, hi) in sorted(PEM_DER_ITEMS.items()):
+        if not 0 < lo <= hi <= 16:
+            raise RuntimeError("PEM_DER_ITEMS[%r] = %r is not 1 <= min <= max <= 16" % (label, (lo, hi)))
+        rows.append({"label": label, "min": lo, "max": hi})
+    return rows
+
 
 def key_tag_labels(priv_algos, pem_labels):
     """tag -> (PRIVATE label, PUBLIC label) for every key type a CLI can generate."""
@@ -1905,7 +1976,7 @@ def build_key_label_acceptance(priv_algos, pem_labels):
     return rows
 
 
-def emit_c_key_table(rows):
+def emit_c_key_table(rows, items):
     width = max(len(r["labels"]) for r in rows) + 1
     out = ["/* " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n * ") + " */",
            "#ifndef HKX_KEY_LABEL_TABLE_H",
@@ -1921,11 +1992,19 @@ def emit_c_key_table(rows):
     out += ["};",
             "static const int HKX_KEY_SITES_N ="
             " (int)(sizeof(HKX_KEY_SITES) / sizeof(HKX_KEY_SITES[0]));", "",
+            "/* TODO #367: DER INTEGER items each DER-SEQUENCE label carries (min, max). */",
+            "typedef struct { const char *label; int min, max; } HkxDerItems;", "",
+            "static const HkxDerItems HKX_DER_ITEMS[] = {"]
+    for r in items:
+        out.append('    {"%s", %d, %d},' % (r["label"], r["min"], r["max"]))
+    out += ["};",
+            "static const int HKX_DER_ITEMS_N ="
+            " (int)(sizeof(HKX_DER_ITEMS) / sizeof(HKX_DER_ITEMS[0]));", "",
             "#endif /* HKX_KEY_LABEL_TABLE_H */", ""]
     return "\n".join(out)
 
 
-def emit_java_key_table(rows):
+def emit_java_key_table(rows, items):
     out = ["package herradurakex;", "",
            "/** " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n *  ") + " */",
            "final class KeyLabelTable {",
@@ -1935,6 +2014,11 @@ def emit_java_key_table(rows):
     for r in rows:
         cells = [r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"])] + r["labels"]
         out.append("        {" + ", ".join('"%s"' % c for c in cells) + "},")
+    out += ["    };", "",
+            "    /** TODO #367: {label, min, max} DER INTEGER items per DER-SEQUENCE label. */",
+            "    static final String[][] DER_ITEMS = {"]
+    for r in items:
+        out.append('        {"%s", "%d", "%d"},' % (r["label"], r["min"], r["max"]))
     out += ["    };", "}", ""]
     return "\n".join(out)
 
@@ -1953,22 +2037,34 @@ def _replace_region(src, begin, end, body, what):
     return pat.sub(lambda _m: "\n".join([begin] + body + [end]), src, count=1)
 
 
-def emit_go_key_region(go_src, rows):
+def emit_go_key_region(go_src, rows, items):
     body = ["var keySites = []keySite{"]
     for r in rows:
         body.append('\t{"%s", "%s", "%s", "%s", []string{%s}},'
                     % (r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"]),
                        ", ".join('"%s"' % l for l in r["labels"])))
     body.append("}")
+    body.append("")
+    body.append("// TODO #367: DER INTEGER items each DER-SEQUENCE label carries (min, max).")
+    body.append("var derItems = map[string][2]int{")
+    for r in items:
+        body.append('\t"%s": {%d, %d},' % (r["label"], r["min"], r["max"]))
+    body.append("}")
     return _replace_region(go_src, GO_KEY_BEGIN, GO_KEY_END, body, "herradura_cli.go")
 
 
-def emit_py_key_region(py_src, rows):
+def emit_py_key_region(py_src, rows, items):
     body = ["_KEY_SITES = {"]
     for r in rows:
         body.append("    (%r, %r, %r): (%r, (%s)),"
                     % (r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"]),
                        " ".join("%r," % l for l in r["labels"])))
+    body.append("}")
+    body.append("")
+    body.append("# TODO #367: DER INTEGER items each DER-SEQUENCE label carries (min, max).")
+    body.append("_DER_ITEMS = {")
+    for r in items:
+        body.append("    %r: (%d, %d)," % (r["label"], r["min"], r["max"]))
     body.append("}")
     return _replace_region(py_src, PY_KEY_BEGIN, PY_KEY_END, body, "herradura.py")
 
@@ -1996,11 +2092,12 @@ def main():
         # TODO #339: Go's synopsis lives in a marked region of the CLI itself.
         (CLI_GO, emit_go_key_region(
             emit_go_help_region(read(CLI_GO), build_help_synopsis(spec, "go")),
-            spec["key_label_acceptance"])),
+            spec["key_label_acceptance"], spec["pem_der_items"])),
         # TODO #366: the key-label acceptance table, in all four CLIs.
-        (C_KEY_TABLE, emit_c_key_table(spec["key_label_acceptance"])),
-        (JAVA_KEY_TABLE, emit_java_key_table(spec["key_label_acceptance"])),
-        (HERRADURA_PY, emit_py_key_region(read(HERRADURA_PY), spec["key_label_acceptance"])),
+        (C_KEY_TABLE, emit_c_key_table(spec["key_label_acceptance"], spec["pem_der_items"])),
+        (JAVA_KEY_TABLE, emit_java_key_table(spec["key_label_acceptance"], spec["pem_der_items"])),
+        (HERRADURA_PY, emit_py_key_region(read(HERRADURA_PY), spec["key_label_acceptance"],
+                                                     spec["pem_der_items"])),
     ]
 
     if args.check:

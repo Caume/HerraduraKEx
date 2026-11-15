@@ -450,6 +450,7 @@ jobs:
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_round_floor.sh) continue ;; esac        # claimed by cross-lang-compat (TODO #364)
             case "$f" in test_key_label_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #366)
+            case "$f" in test_der_items_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #367)
             case "$f" in test_kdf_matrix.sh) continue ;; esac         # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_param_bounds.sh) continue ;; esac       # claimed by cross-lang-compat (TODO #278)
             case "$f" in test_narrow_width_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #313)
@@ -774,6 +775,14 @@ jobs:
       # check's own message; the templates are held to the spec rows both ways.
       - name: Key-label acceptance matrix
         run: bash CliTest/test_key_label_matrix.sh
+
+      # TODO #367: every DER-SEQUENCE label's item count (spec pem_der_items)
+      # and the width / fixed-size fields that sized buffers.  Genuine artifact
+      # first, then 0 / min-1 / max+1 items matched on the loaders' shared
+      # message, and out-of-range fields refused without a panic, a traceback,
+      # an out-of-memory abort or a timeout.
+      - name: DER item-count and field-bound matrix
+        run: bash CliTest/test_der_items_matrix.sh
 
       # TODO #269: `kex --kdf`, for two reasons. Java had no --kdf until v6.5.0,
       # and -- the one that is easy to miss -- `--kdf hfscx-256` had never been

@@ -96,6 +96,12 @@ interchangeable, as do the two Stern keys. Only mismatched keys stop working, an
 fail with "wrong key type". See
 [section 31](#31-every-cli-checks-a-keys-label-against-the-operation-v1500).
 
+The thirty-second ships in the same release too. A PEM file with the wrong number of
+DER items, or a width or size field out of range, is now refused with one line by every
+CLI, where Go used to panic and Python to print a traceback. Files the CLIs write are
+unaffected. See
+[section 32](#32-malformed-artifacts-are-refused-not-crashed-on-v1500).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -136,6 +142,7 @@ trusting any signature made by an earlier build.
 | [NL-FSCX v2 keys are screened by the arc of delta](#29-nl-fscx-v2-keys-are-screened-by-the-arc-of-delta-v1400) | v14.0.0 | `hske-nla2` keys with arc(δ(K)) ≤ 64: hand-written keys only (a generated key is affected with probability about 2^−96) | **Decrypt with a 13.x build and re-encrypt under a generated key.** Nothing else changes |
 | [`sign` pre-hashes by default, and verifiers enforce a round floor](#30-sign-pre-hashes-by-default-and-verifiers-enforce-a-round-floor-v1500) | v15.0.0 | Every signature made with the default `--digest` (none) by an earlier build, and every `hpks-stern` / `hpks-ring` / `nl-zkboo` / `nl-zkbpp` / HCRED artifact below 219 rounds, which includes the old 32-round `hpks-stern` / `hpks-ring` default and C's 4-round `cred-prove` | **Re-sign on 15.0.0+.** To check an old signature, verify with `--digest none` and/or `--min-rounds N`. Keys are unchanged |
 | [Every CLI checks a key's label against the operation](#31-every-cli-checks-a-keys-label-against-the-operation-v1500) | v15.0.0 | Any command given a key of the wrong type, e.g. an `hpke-nl` key for `hpke-nl3`, a Stern key for `hpks`, or a private key as `--pubkey` | **Pass the key the operation names** (`genpkey --algo <that algo>`). The GF keys stay interchangeable with each other, as do the two Stern keys |
+| [Malformed artifacts are refused, not crashed on](#32-malformed-artifacts-are-refused-not-crashed-on-v1500) | v15.0.0 | Only hand-built or damaged PEM files: a DER SEQUENCE with missing or extra items, or an out-of-range width / ring / size field | **Nothing**, for files the CLIs wrote. A damaged file now fails with "malformed PEM '<label>': <k> DER items, expected <n>" or a one-line bound error |
 
 ---
 
@@ -1747,3 +1754,37 @@ hpks-stern`, `genpkey --algo hpke-nl3`, …) and pass that. Derive public keys w
 
 **Why this is a MAJOR bump.** It changes what an existing `--algo` accepts, which is the
 2.0.0 surface. Only misuse stops working, and it fails loudly.
+
+## 32. Malformed artifacts are refused, not crashed on (v15.0.0)
+
+**Who is affected:** nobody using files the CLIs write. Only hand-built, damaged or
+hostile PEM files behave differently, and they now fail on purpose:
+
+- a DER SEQUENCE with fewer or more INTEGER items than its label carries;
+- an HKEX-RNL ring dimension that is not a power of two from 8 to 1024, or that differs
+  from the other party's (Go accepted a peer of any ring size);
+- a Stern, GF or session-key width out of range, a QC-MDPC `r` or `d` out of range, or
+  a value too large for the fixed-size field it fills.
+
+**What changed (TODO #367).** Every CLI checks each DER-SEQUENCE label's item count
+(spec `pem_der_items`) in its PEM loader, and bounds the width and size fields before
+using them. Before 15.0.0, over 1794 malformed variants of 90 artifact slots, Go
+panicked or ran out of memory in 365 and Python printed a traceback in 299. A peer's
+public key and an HKEX-RNL response were among them. C and Java failed cleanly, but C,
+Go and Java ignored extra trailing items, and C accepted some keys with fields missing.
+Now all four refuse with one line:
+
+```
+kex: malformed PEM 'HERRADURA HKEX-GF PUBLIC KEY': 1 DER items, expected 2
+```
+
+The HKEX-RNL keys and response still may omit their contributory nonce (3..4 and 5..6
+items), which reads as a zero nonce, as before.
+
+**What to do.** Nothing, for files any CLI wrote. If a file you built by hand is refused,
+regenerate it with the CLI. A wrapper that parsed a Go panic or a Python traceback now
+gets exit 1 and one line on stderr.
+
+**Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface:
+C, Go and Java took files with extra items, and C took some with missing ones. It ships
+inside 15.0.0 so there is one migration.

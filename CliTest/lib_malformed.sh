@@ -127,7 +127,9 @@ _hkx_mal_expect() {
     out=$(_hkx_mal_run "$@") && rc=0 || rc=$?
     if [ "$rc" -eq 0 ]; then
         fail "$desc: CLI exited 0"
-    elif echo "$out" | grep -qE 'Traceback \(most recent call last\)|fatal error: out of memory|MemoryError|Exception in thread|OutOfMemoryError|java.lang.[A-Za-z]*Error'; then
+    # TODO #367: a Go panic exits 2 with a goroutine dump, and that non-zero
+    # exit used to score as a clean rejection here; so did runtime OOM.
+    elif echo "$out" | grep -qE 'Traceback \(most recent call last\)|fatal error: out of memory|runtime: out of memory|^panic: |^goroutine [0-9]+ \[|MemoryError|Exception in thread|OutOfMemoryError|java.lang.[A-Za-z]*Error'; then
         fail "$desc: crashed instead of rejecting — $(echo "$out" | head -1)"
     elif [ "$(echo "$out" | tail -1)" = "Verification FAILED" ]; then
         fail "$desc: reached the verifier instead of being rejected"

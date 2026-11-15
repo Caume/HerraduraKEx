@@ -180,6 +180,55 @@ _KEY_SITES = {
     ('cred-verify', '', '--pubkey'): ('hcred', ('HERRADURA HCRED PUBLIC KEY', 'HERRADURA HCRED PRIVATE KEY',)),
     ('cred-verify', '', '--issuer'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
 }
+
+# TODO #367: DER INTEGER items each DER-SEQUENCE label carries (min, max).
+_DER_ITEMS = {
+    'HERRADURA CIPHERTEXT': (3, 6),
+    'HERRADURA DIGEST': (1, 1),
+    'HERRADURA ENCRYPTED PRIVATE KEY': (6, 6),
+    'HERRADURA HCRED CREDENTIAL': (5, 5),
+    'HERRADURA HDRBG STATE': (2, 2),
+    'HERRADURA HKEX-GF PRIVATE KEY': (3, 3),
+    'HERRADURA HKEX-GF PUBLIC KEY': (2, 2),
+    'HERRADURA HKEX-RNL PRIVATE KEY': (3, 4),
+    'HERRADURA HKEX-RNL PUBLIC KEY': (3, 4),
+    'HERRADURA HKEX-RNL RESPONSE': (5, 6),
+    'HERRADURA HPKE PRIVATE KEY': (3, 3),
+    'HERRADURA HPKE PUBLIC KEY': (2, 2),
+    'HERRADURA HPKE-NL PRIVATE KEY': (3, 3),
+    'HERRADURA HPKE-NL PUBLIC KEY': (2, 2),
+    'HERRADURA HPKE-NL3 PRIVATE KEY': (3, 3),
+    'HERRADURA HPKE-NL3 PUBLIC KEY': (2, 2),
+    'HERRADURA HPKE-STERN PRIVATE KEY': (3, 3),
+    'HERRADURA HPKE-STERN PUBLIC KEY': (3, 3),
+    'HERRADURA HPKE-STERN-KEM PRIVATE KEY': (6, 6),
+    'HERRADURA HPKE-STERN-KEM PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS PRIVATE KEY': (3, 3),
+    'HERRADURA HPKS PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS-NL PRIVATE KEY': (3, 3),
+    'HERRADURA HPKS-NL PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS-RING SIGNATURE': (4, 4),
+    'HERRADURA HPKS-STERN PRIVATE KEY': (3, 3),
+    'HERRADURA HPKS-STERN PUBLIC KEY': (3, 3),
+    'HERRADURA HPKS-WOTS PRIVATE KEY': (2, 2),
+    'HERRADURA HPKS-WOTS PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS-WOTS SIGNATURE': (2, 2),
+    'HERRADURA HPKS-XMSS PRIVATE KEY': (4, 4),
+    'HERRADURA HPKS-XMSS PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS-XMSS SIGNATURE': (5, 5),
+    'HERRADURA HPKST AGGREGATE': (4, 4),
+    'HERRADURA HPKST COMMITMENT': (3, 3),
+    'HERRADURA HPKST NONCE': (2, 2),
+    'HERRADURA HPKST PARTIAL': (2, 2),
+    'HERRADURA HPKST SIGNATURE': (4, 4),
+    'HERRADURA HYBRID-RNL-STERN RESPONSE': (8, 8),
+    'HERRADURA OPRF CLIENT STATE': (3, 3),
+    'HERRADURA OPRF EVALUATION': (2, 2),
+    'HERRADURA OPRF PRIVATE KEY': (2, 2),
+    'HERRADURA PAKE RECORD': (3, 3),
+    'HERRADURA SESSION KEY': (2, 2),
+    'HERRADURA SIGNATURE': (4, 5),
+}
 # END GENERATED key-label table
 
 
@@ -290,9 +339,94 @@ def _read_pem(path):
     return pem_unwrap(raw.decode('ascii') if isinstance(raw, bytes) else raw)
 
 
+# TODO #367: the width and fixed-size fields of each DER-SEQUENCE label, checked
+# once in _der_items so no decoder sizes a buffer, a polynomial or a GF(2^n)
+# exponentiation from an unbounded wire value.  Go bounds the same fields at
+# its call sites (rnlWireN, sternWireN, gfWidth, fitBytes); C and Java already
+# did.  Kinds: 'gf' = 32/64/128/256; 'rnl' = a power of two 8..RNLN; 'stern' =
+# _bounded_n; 'kem_r' = _QCMDPC_R exactly; 'kem_d' = 1.._QCMDPC_D; an int = the
+# field's value must fit that many bytes.
+_GF_LABELS = [(_PRIV_ALGOS[a], _PUB_ALGOS[a]) for a in
+              ('hkex-gf', 'hpks', 'hpks-nl', 'hpke', 'hpke-nl', 'hpke-nl3')]
+_WIRE_FIELDS = {}
+for _pr, _pu in _GF_LABELS:
+    # The width first: ('fitn', i) then holds the other fields to n bits.
+    _WIRE_FIELDS[_pr] = [(2, 'gf'), (0, ('fitn', 2)), (1, ('fitn', 2))]
+    _WIRE_FIELDS[_pu] = [(1, 'gf'), (0, ('fitn', 1))]
+for _a in ('hpks-stern', 'hpke-stern'):
+    _WIRE_FIELDS[_PRIV_ALGOS[_a]] = [(2, 'stern')]
+    _WIRE_FIELDS[_PUB_ALGOS[_a]] = [(2, 'stern')]
+_WIRE_FIELDS[_PRIV_ALGOS['hkex-rnl']] = [(2, 'rnl'), (3, 32)]
+_WIRE_FIELDS[_PUB_ALGOS['hkex-rnl']] = [(2, 'rnl'), (3, 32)]
+_WIRE_FIELDS[_PRIV_ALGOS['hpke-stern-kem']] = [(4, 'kem_r'), (5, 'kem_d'),
+                                               (0, (_QCMDPC_R + 7) // 8),
+                                               (1, (_QCMDPC_R + 7) // 8),
+                                               (2, 2 * _QCMDPC_D), (3, 2 * _QCMDPC_D)]
+_WIRE_FIELDS[_PUB_ALGOS['hpke-stern-kem']] = [(1, 'kem_r'), (0, (_QCMDPC_R + 7) // 8)]
+_WIRE_FIELDS[_PRIV_ALGOS['hpks-wots']] = [(0, 32)]
+_WIRE_FIELDS[_PRIV_ALGOS['hpks-xmss']] = [(0, 32)]
+_WIRE_FIELDS[_LABEL_RNL_RESP] = [(3, 'rnl'), (5, 32)]
+_WIRE_FIELDS[_LABEL_HYBRID_RESP] = [(3, 'rnl'), (5, 32), (6, (_QCMDPC_R + 7) // 8), (7, 'kem_r')]
+_WIRE_FIELDS[_LABEL_SESSION] = [(1, 'sym')]
+del _pr, _pu, _a
+
+
+def _fit(v, nbytes, what, where):
+    """v.to_bytes(nbytes), or exit(1) when v does not fit (TODO #367): an
+    oversized wire field raised OverflowError, i.e. a traceback."""
+    if _int_nbytes(v) > nbytes:
+        sys.exit(f"{where}: {what} is {_int_nbytes(v)} bytes (expected at most {nbytes})")
+    return int(v).to_bytes(nbytes, 'big')
+
+
+def _check_wire_fields(label, ints, fields=None):
+    for idx, kind in (fields if fields is not None else _WIRE_FIELDS.get(label, ())):
+        if idx >= len(ints):
+            continue
+        v = ints[idx]
+        if isinstance(kind, tuple):          # ('fitn', width index)
+            nb = ints[kind[1]] // 8
+            if _int_nbytes(v) > nb:
+                sys.exit(f"{label}: field {idx} is {_int_nbytes(v)} bytes (expected at most {nb})")
+        elif isinstance(kind, int):
+            if _int_nbytes(v) > kind:
+                sys.exit(f"{label}: field {idx} is {_int_nbytes(v)} bytes (expected at most {kind})")
+        elif kind == 'gf':
+            if v not in (32, 64, 128, 256):
+                sys.exit(f"{label}: n is {v} (expected 32, 64, 128 or 256)")
+        elif kind == 'rnl':
+            _bounded(v, 8, RNLN, 'ring dimension n', label)
+            if v & (v - 1):
+                sys.exit(f"{label}: ring dimension n is {v} (expected a power of two)")
+        elif kind == 'sym':
+            if v % 8 or not 16 <= v <= _suite_mod.BA_MAX_BITS:
+                sys.exit(f"{label}: session key width is {v} (expected a multiple of 8, "
+                         f"16..{_suite_mod.BA_MAX_BITS})")
+        elif kind == 'stern':
+            _bounded_n(v, label)
+        elif kind == 'kem_r':
+            _bounded(v, _QCMDPC_R, _QCMDPC_R, 'QC-MDPC r', label)
+        elif kind == 'kem_d':
+            _bounded(v, 1, _QCMDPC_D, 'QC-MDPC row weight d', label)
+
+
+def _der_items(label, der):
+    """Parse a DER SEQUENCE of INTEGERs and check its item count against the
+    generated _DER_ITEMS table (TODO #367), so a decoder never indexes past the
+    end of a short list.  ValueError is the codec's "malformed artifact" signal,
+    which main() reports as one line."""
+    ints = der_parse_seq(der)
+    lim = _DER_ITEMS.get(label)
+    if lim is not None and not lim[0] <= len(ints) <= lim[1]:
+        want = str(lim[0]) if lim[0] == lim[1] else f'{lim[0]}..{lim[1]}'
+        raise ValueError(f"malformed PEM '{label}': {len(ints)} DER items, expected {want}")
+    _check_wire_fields(label, ints)
+    return ints
+
+
 def _read_pem_ints(path):
     label, der = _read_pem(path)
-    return label, der_parse_seq(der)
+    return label, _der_items(label, der)
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +486,8 @@ def _bounded(value, lo, hi, what, where):
     """
     v = int(value)
     if v < lo or v > hi:
-        sys.exit(f"{where}: {what} is {v} (expected {lo}..{hi})")
+        shown = v if v.bit_length() <= 64 else f"a {v.bit_length()}-bit value"
+        sys.exit(f"{where}: {what} is {shown} (expected {lo}..{hi})")
     return v
 
 
@@ -430,7 +565,7 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
     label, der = pem_unwrap(enc_pem_text)
     if label != _LABEL_ENC_PRIV:
         raise ValueError(f"Expected {_LABEL_ENC_PRIV!r} PEM, got {label!r}")
-    salt_int, iterations, nonce_int, ct_int, tag_int, pt_len = der_parse_seq(der)
+    salt_int, iterations, nonce_int, ct_int, tag_int, pt_len = _der_items(label, der)
     # pt_len comes off the wire and sizes the allocation below: `to_bytes` of a
     # declared 2^62 raised MemoryError before TODO #280, with no bound anywhere
     # on this path.  The ciphertext cannot be longer than the envelope carrying
@@ -440,9 +575,9 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
         raise ValueError("declared plaintext length does not match ciphertext")
     if ct_int.bit_length() > 8 * pt_len:
         raise ValueError("declared plaintext length does not match ciphertext")
-    salt = salt_int.to_bytes(_PBKDF2_SALT_BYTES, 'big')
-    ct   = ct_int.to_bytes(pt_len, 'big')
-    tag  = tag_int.to_bytes(32, 'big')
+    salt = _fit(salt_int, _PBKDF2_SALT_BYTES, 'salt', 'pem')
+    ct   = _fit(ct_int, pt_len, 'ct', 'pem')
+    tag  = _fit(tag_int, 32, 'tag', 'pem')
     key_bytes = _pbkdf2_hfscx256(passphrase.encode('utf-8'), salt, iterations)
     key = BitArray(KEYBITS, int.from_bytes(key_bytes, 'big'))
     nonce = BitArray(KEYBITS, nonce_int)
@@ -565,7 +700,7 @@ def _decode_rnl_privkey(ints):
     """Return (s_poly, m_poly, n, n_a_bytes) from parsed private key integers."""
     if len(ints) >= 4:
         s_packed, m_packed, n, na_int = ints[0], ints[1], ints[2], ints[3]
-        n_a = na_int.to_bytes(32, 'big')
+        n_a = _fit(na_int, 32, 'na', 'pem')
     else:
         s_packed, m_packed, n = ints[0], ints[1], ints[2]
         n_a = bytes(32)
@@ -578,7 +713,7 @@ def _decode_rnl_pubkey(ints):
     """Return (C_poly, m_poly, n, n_a_bytes) from parsed public key integers."""
     if len(ints) >= 4:
         C_packed, m_packed, n, na_int = ints[0], ints[1], ints[2], ints[3]
-        n_a = na_int.to_bytes(32, 'big')
+        n_a = _fit(na_int, 32, 'na', 'pem')
     else:
         C_packed, m_packed, n = ints[0], ints[1], ints[2]
         n_a = bytes(32)
@@ -674,13 +809,13 @@ def _encode_xmss_privkey(master_seed: bytes, h: int, next_idx: int,
 def _decode_xmss_privkey(path):
     """Returns (master_seed, h, next_idx, leaf_hashes, root)."""
     label, der = _read_pem(path)
-    ints = der_parse_seq(der)
+    ints = _der_items(label, der)
     seed_int, h_int, next_idx, blob_int = ints
-    master_seed = seed_int.to_bytes(32, 'big')
+    master_seed = _fit(seed_int, 32, 'seed', 'pem')
     # h sizes `1 << h` leaves and the 32-bytes-per-leaf blob behind them.
     h = _bounded(h_int, 1, _XMSS_MAX_H, 'XMSS height', 'pkey')
     num_leaves = 1 << h
-    blob = blob_int.to_bytes(32 * num_leaves, 'big')
+    blob = _fit(blob_int, 32 * num_leaves, 'XMSS leaf blob', 'pkey')
     leaf_hashes = [blob[i*32:(i+1)*32] for i in range(num_leaves)]
     from primitives import haccum_root as _haccum_root
     root = _haccum_root(leaf_hashes)
@@ -696,8 +831,8 @@ def _encode_xmss_pubkey(root: bytes, h: int) -> str:
 def _decode_xmss_pubkey(path):
     """Returns (root, h)."""
     label, der = _read_pem(path)
-    root_int, h_int = der_parse_seq(der)
-    return root_int.to_bytes(32, 'big'), int(h_int)
+    root_int, h_int = _der_items(label, der)
+    return _fit(root_int, 32, 'root', 'pem'), int(h_int)
 
 
 def _pack_xmss_sig(sig: dict, n: int) -> str:
@@ -723,13 +858,13 @@ def _pack_xmss_sig(sig: dict, n: int) -> str:
 def _unpack_xmss_sig(path: str):
     """Returns sig dict for hpks_xmss_verify (pk is recovered during verify)."""
     label, der = _read_pem(path)
-    leaf_idx, sig_int, path_int, h_int, n_int = der_parse_seq(der)
+    leaf_idx, sig_int, path_int, h_int, n_int = _der_items(label, der)
     leaf_idx  = int(leaf_idx)
     n         = _bounded_n(n_int, 'verify')
     h         = _bounded(h_int, 1, _XMSS_MAX_H, 'XMSS signature depth', 'verify')
     nbytes    = n // 8
-    sig_blob  = sig_int.to_bytes(_WOTS_L * nbytes, 'big')
-    path_blob = path_int.to_bytes(h * 32, 'big')
+    sig_blob  = _fit(sig_int, _WOTS_L * nbytes, 'sig', 'pem')
+    path_blob = _fit(path_int, h * 32, 'path', 'pem')
     wots_sig  = [BitArray(n, int.from_bytes(sig_blob[i*nbytes:(i+1)*nbytes], 'big'))
                  for i in range(_WOTS_L)]
     auth_path = [path_blob[i*32:(i+1)*32] for i in range(h)]
@@ -777,8 +912,8 @@ def _decode_wots_privkey(path):
     label, der = _read_pem(path)
     if label != _PRIV_ALGOS['hpks-wots']:
         raise ValueError(f"Expected HPKS-WOTS private key, got {label!r}")
-    seed_int, leaf_idx = der_parse_seq(der)
-    return seed_int.to_bytes(32, 'big'), int(leaf_idx)
+    seed_int, leaf_idx = _der_items(label, der)
+    return seed_int.to_bytes(32, 'big'), _bounded(leaf_idx, 0, 0xFFFFFFFF, 'WOTS leaf index', 'sign')
 
 
 def _encode_wots_pubkey(pk: list) -> str:
@@ -795,12 +930,12 @@ def _decode_wots_pubkey(path):
     label, der = _read_pem(path)
     if label != _PUB_ALGOS['hpks-wots']:
         raise ValueError(f"Expected HPKS-WOTS public key, got {label!r}")
-    blob_int, ell = der_parse_seq(der)
+    blob_int, ell = _der_items(label, der)
     # The shipped parameters fix the chain count, so anything else is malformed
     # rather than merely large.
     ell = _bounded(ell, _WOTS_L, _WOTS_L, 'WOTS chain count', 'verify')
     nbytes = KEYBITS // 8
-    blob = blob_int.to_bytes(ell * nbytes, 'big')
+    blob = _fit(blob_int, ell * nbytes, 'blob', 'pem')
     return [BitArray(KEYBITS, int.from_bytes(blob[i*nbytes:(i+1)*nbytes], 'big'))
             for i in range(ell)]
 
@@ -819,12 +954,12 @@ def _unpack_wots_sig(path: str):
     label, der = _read_pem(path)
     if label != _LABEL_WOTS_SIG:
         raise ValueError(f"Expected HPKS-WOTS signature, got {label!r}")
-    blob_int, ell = der_parse_seq(der)
+    blob_int, ell = _der_items(label, der)
     # The shipped parameters fix the chain count, so anything else is malformed
     # rather than merely large.
     ell = _bounded(ell, _WOTS_L, _WOTS_L, 'WOTS chain count', 'verify')
     nbytes = KEYBITS // 8
-    blob = blob_int.to_bytes(ell * nbytes, 'big')
+    blob = _fit(blob_int, ell * nbytes, 'blob', 'pem')
     return [BitArray(KEYBITS, int.from_bytes(blob[i*nbytes:(i+1)*nbytes], 'big'))
             for i in range(ell)]
 
@@ -964,6 +1099,8 @@ def _decode_rnl_response(path):
     if label != _LABEL_RNL_RESP:
         raise ValueError(f"Expected HKEX-RNL RESPONSE PEM, got {label!r}")
     K_int, C_packed, hint_int, n, hint_len = ints[0], ints[1], ints[2], ints[3], ints[4]
+    # TODO #367: hint_len sized a list comprehension; the encoder caps it at n//2.
+    hint_len = _bounded(hint_len, 0, n // 2, 'hint length', 'kex')
     C_B_poly = unpack_poly(C_packed, n, 2)
     hint = [(hint_int >> (2 * i)) & 3 for i in range(hint_len)]
     n_b = ints[5].to_bytes(32, 'big') if len(ints) >= 6 else bytes(32)
@@ -995,8 +1132,8 @@ def _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B, hint_used, h_pub, s
     # same number until TODO #223 moved the ring to 1024 while the derived key
     # stayed 256 bits; using n here writes 128 zero-padded bytes where C's
     # combiner writes KEYBYTES (32), so the two sides derive different keys.
-    data = (K1_int.to_bytes(_rnl_session_bits(n) // 8, 'big')
-            + K2_int.to_bytes(KEYBITS // 8, 'big')
+    data = (_fit(K1_int, _rnl_session_bits(n) // 8, 'K1', 'pem')
+            + _fit(K2_int, KEYBITS // 8, 'K2', 'pem')
             + C_A_packed.to_bytes(C_A_nb, 'big')
             + m_A_packed.to_bytes(m_A_nb, 'big')
             + C_B_packed.to_bytes(C_B_nb, 'big')
@@ -1024,7 +1161,7 @@ def _hkex_rnl_sp800227_kdf(K_int, n, C_A, m_A, C_B, hint_used):
     C_A_packed, C_A_nb = pack_poly(C_A, 2)
     m_A_packed, m_A_nb = pack_poly(m_A, 4)
     C_B_packed, C_B_nb = pack_poly(C_B, 2)
-    data = (K_int.to_bytes(n // 8, 'big')
+    data = (_fit(K_int, n // 8, 'K', 'pem')
             + C_A_packed.to_bytes(C_A_nb, 'big')
             + m_A_packed.to_bytes(m_A_nb, 'big')
             + C_B_packed.to_bytes(C_B_nb, 'big')
@@ -1061,9 +1198,10 @@ def _decode_hybrid_response(path):
         raise ValueError(f"Expected HYBRID-RNL-STERN RESPONSE PEM, got {label!r}")
     (K_int, C_packed, hint_int, n, hint_len,
      nb_int, syn, r_qc) = ints
+    hint_len = _bounded(hint_len, 0, n // 2, 'hint length', 'kex')   # TODO #367
     C_B_poly = unpack_poly(C_packed, n, 2)
     hint = [(hint_int >> (2 * i)) & 3 for i in range(hint_len)]
-    n_b = nb_int.to_bytes(32, 'big')
+    n_b = _fit(nb_int, 32, 'nb', 'pem')
     return K_int, C_B_poly, hint, n, n_b, syn, r_qc
 
 
@@ -1135,7 +1273,7 @@ def _encode_duplex_ct(nonce_int, ct_bytes, tag_int, nbits, v3=False):
 def _decode_duplex_ct(path, v3=False):
     """Return (nonce_int, ct_bytes, tag_int, nbits)."""
     label, der = _read_pem(path)
-    ints = der_parse_seq(der)
+    ints = _der_items(label, der)
     if label != _LABEL_CT:
         raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
     want = 4 if v3 else 3
@@ -1143,6 +1281,7 @@ def _decode_duplex_ct(path, v3=False):
         raise ValueError(f"Expected {'V3' if v3 else 'V2'}-Duplex ciphertext "
                          f"(format {want}), got {ints[0]}")
     _, nonce_int, ct_len, ct_int, tag_int, nbits = ints
+    _fit(tag_int, 32, 'authentication tag', 'dec')     # TODO #367
     # The declared length sizes the buffer.  It cannot exceed the DER actually
     # read, and the payload cannot be longer than the length claiming to
     # describe it; shorter is legal (DER strips leading zero bytes) and is
@@ -1151,7 +1290,7 @@ def _decode_duplex_ct(path, v3=False):
     if _int_nbytes(ct_int) > ct_len:
         sys.exit(f"dec: V2-Duplex ciphertext declares {ct_len} bytes but "
                  f"carries {_int_nbytes(ct_int)}")
-    ct_bytes = ct_int.to_bytes(ct_len, 'big') if ct_len else b''
+    ct_bytes = _fit(ct_int, ct_len, 'ct', 'pem') if ct_len else b''
     return nonce_int, ct_bytes, tag_int, nbits
 
 
@@ -1229,10 +1368,10 @@ def _decode_kem_privkey(path):
     r  = _bounded(r, 1, _QCMDPC_R, 'QC-MDPC block length r', 'pkey')
     d  = _bounded(d, 1, _QCMDPC_D, 'QC-MDPC row weight d',   'pkey')
     rb = (r + 7) // 8
-    h0 = int.from_bytes(h0_int.to_bytes(rb, 'big'), 'little')
-    h1 = int.from_bytes(h1_int.to_bytes(rb, 'big'), 'little')
-    s0b = s0_int.to_bytes(d * 2, 'big')
-    s1b = s1_int.to_bytes(d * 2, 'big')
+    h0 = int.from_bytes(_fit(h0_int, rb, 'h0', 'pem'), 'little')
+    h1 = int.from_bytes(_fit(h1_int, rb, 'h1', 'pem'), 'little')
+    s0b = _fit(s0_int, d * 2, 'QC-MDPC support', 'pkey')
+    s1b = _fit(s1_int, d * 2, 'QC-MDPC support', 'pkey')
     sup0 = {int.from_bytes(s0b[k*2:k*2+2], 'big') for k in range(d)}
     sup1 = {int.from_bytes(s1b[k*2:k*2+2], 'big') for k in range(d)}
     return sup0, sup1, h0, h1
@@ -1253,7 +1392,7 @@ def _decode_kem_pubkey(path):
         raise ValueError(f"Expected HPKE-Stern-KEM public key, got {label!r}")
     hpb_int, r = ints
     rb = (r + 7) // 8
-    h_pub = int.from_bytes(hpb_int.to_bytes(rb, 'big'), 'little')
+    h_pub = int.from_bytes(_fit(hpb_int, rb, 'hpb', 'pem'), 'little')
     return h_pub, r
 
 
@@ -1272,9 +1411,12 @@ def _decode_kem_ct(path):
     label, ints = _read_pem_ints(path)
     if label != _LABEL_CT:
         raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
+    if len(ints) != 3:
+        raise ValueError(f"malformed PEM '{label}': {len(ints)} DER items, expected 3")
     syn_int, E_int, r = ints
+    r  = _bounded(r, _QCMDPC_R, _QCMDPC_R, 'QC-MDPC r', 'dec')
     rb = (r + 7) // 8
-    syn = int.from_bytes(syn_int.to_bytes(rb, 'big'), 'little')
+    syn = int.from_bytes(_fit(syn_int, rb, 'QC-MDPC syndrome', 'dec'), 'little')
     return syn, E_int, r
 
 
@@ -1349,7 +1491,7 @@ def _unpack_stern_sig(path):
     rounds = _bounded(rounds, 1, _SDF_MAX_ROUNDS, 'round count', 'verify')
     nbytes = n // 8
 
-    commits_ba = c_int.to_bytes(3 * rounds * nbytes, 'big')
+    commits_ba = _fit(c_int, 3 * rounds * nbytes, 'c', 'pem')
     commits = []
     for i in range(rounds):
         off = i * 3 * nbytes
@@ -1359,10 +1501,10 @@ def _unpack_stern_sig(path):
         commits.append((c0, c1, c2))
 
     chal_nb    = (rounds + 3) // 4
-    chal_bytes = ch_int.to_bytes(chal_nb, 'big')
+    chal_bytes = _fit(ch_int, chal_nb, 'ch', 'pem')
     challenges = [(chal_bytes[i // 4] >> ((i % 4) * 2)) & 3 for i in range(rounds)]
 
-    resp_ba   = r_int.to_bytes(2 * rounds * nbytes, 'big')
+    resp_ba   = _fit(r_int, 2 * rounds * nbytes, 'r', 'pem')
     responses = []
     for i in range(rounds):
         off = i * 2 * nbytes
@@ -1428,7 +1570,7 @@ def _unpack_ring_sig(path):
         sys.exit(f"verify: HPKS-RING signature payload is "
                  f"{_int_nbytes(blob_int)} bytes, but k={k} rounds={rounds} "
                  f"n={n} describe {blen}")
-    blob   = blob_int.to_bytes(blen, 'big')
+    blob   = _fit(blob_int, blen, 'blob', 'pem')
 
     all_commits    = [[None] * rounds for _ in range(k)]
     all_challenges = [[0]    * rounds for _ in range(k)]
@@ -1736,7 +1878,7 @@ def cmd_kex(args):
     def _apply_kdf(k_int, nbits):
         if kdf_mode != 'hfscx-256':
             return k_int
-        raw = k_int.to_bytes(nbits // 8, 'big')
+        raw = _fit(k_int, nbits // 8, 'k', 'pem')
         return int.from_bytes(hfscx_256(raw), 'big')
 
     if algo == 'hkex-gf':
@@ -2042,7 +2184,7 @@ def cmd_dec(args):
         ad = (getattr(args, 'ad', None) or '').encode()
         dec_fn = hske_nl_v3_duplex_decrypt if v3 else hske_nl_v2_duplex_decrypt
         pt = dec_fn(K, BitArray(nbits, nonce_int), ct_bytes,
-                    tag_int.to_bytes(32, 'big'), ad)
+                    _fit(tag_int, 32, 'tag', 'pem'), ad)
         if pt is None:
             sys.exit("dec: authentication tag mismatch — "
                      "ciphertext corrupt, wrong key, or wrong --ad")
@@ -2068,8 +2210,8 @@ def cmd_dec(args):
             # HSKE-NL-AEAD (TODO #95): verify-then-decrypt
             ad = (getattr(args, 'ad', None) or '').encode()
             pt = hske_nl_aead_decrypt(K, BitArray(nbits, nonce_int),
-                                      E_int.to_bytes(nbits // 8, 'big'),
-                                      tag_int.to_bytes(32, 'big'), ad)
+                                      _fit(E_int, nbits // 8, 'E', 'pem'),
+                                      _fit(tag_int, 32, 'tag', 'pem'), ad)
             if pt is None:
                 sys.exit("dec: authentication tag mismatch — "
                          "ciphertext corrupt, wrong key, or wrong --ad")
@@ -2315,6 +2457,9 @@ def _load_hpks_privkey_for_threshold(key_path):
     algo, ints = _decode_privkey(key_path)
     if algo not in ('hpks', 'hpks-nl'):
         sys.exit(f"threshold: expected hpks or hpks-nl key, got {algo!r}")
+    priv_int, pub_int, nbits = ints   # nbits already held to the GF widths (_WIRE_FIELDS)
+    _fit(priv_int, nbits // 8, 'private key', 'threshold')
+    _fit(pub_int, nbits // 8, 'public key', 'threshold')
     return ints  # (priv_int, pub_int, nbits)
 
 
@@ -2843,7 +2988,7 @@ def cmd_rand(args):
 def cmd_fpe(args):
     key_int, nbits = _load_key(args.key)
     _sym256_ok(nbits, 'fpe')
-    key_bytes = key_int.to_bytes(nbits // 8, 'big')
+    key_bytes = _fit(key_int, nbits // 8, 'key', 'pem')
     ctx_bytes = args.context.encode() if args.context else b''
     in_bytes  = _read_file(getattr(args, 'in'))
     if len(in_bytes) < 32:
@@ -2871,7 +3016,7 @@ def cmd_fpe(args):
 def cmd_twk(args):
     key_int, nbits = _load_key(args.key)
     _sym256_ok(nbits, 'twk')
-    key_bytes = key_int.to_bytes(nbits // 8, 'big')
+    key_bytes = _fit(key_int, nbits // 8, 'key', 'pem')
     in_bytes  = _read_file(getattr(args, 'in'))
     if len(in_bytes) < 32:
         in_bytes = in_bytes.ljust(32, b'\x00')
@@ -2901,6 +3046,10 @@ def _load_oprf_key(path):
     if label != _PRIV_ALGOS['oprf']:
         sys.exit(f"Expected OPRF PRIVATE KEY PEM, got {label!r}")
     k_int, nbits = ints
+    # TODO #367: the OPRF runs at KEYBITS only (Go and C ignore the field);
+    # an unbounded width reached der_int's to_bytes as an OverflowError.
+    nbits = _bounded(nbits, KEYBITS, KEYBITS, 'n', 'oprf')
+    _fit(k_int, nbits // 8, 'OPRF key', 'oprf')
     return k_int, nbits
 
 
@@ -2981,7 +3130,7 @@ def _load_pake_record(path):
     salt_int, B_int, y_int = ints
     return {
         'username': '',            # not stored in the PEM for simplicity
-        'salt':     salt_int.to_bytes(32, 'big'),
+        'salt':     _fit(salt_int, 32, 'salt', 'pem'),
         'B':        B_int,
         'y':        y_int,
     }
@@ -3525,6 +3674,11 @@ def main():
         # narrow: every other exception still surfaces with its traceback, so
         # this cannot tidy away a genuine bug.
         print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except OSError as e:
+        # A missing or unreadable input file is the user's mistake, not a bug:
+        # one line, like the other three CLIs (TODO #367).
+        print(f"error: {e.filename or ''}: {e.strerror or e}", file=sys.stderr)
         sys.exit(1)
 
 

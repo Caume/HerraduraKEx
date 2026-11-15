@@ -90,6 +90,25 @@ def der_seq(*items: bytes) -> bytes:
     return b'\x30' + _encode_length(len(body)) + body
 
 
+def _der_count(label: str, data: bytes, want: int, gf_idx: int = None) -> list:
+    """der_parse_seq plus the item count TODO #367 checks in every CLI loader;
+    the message is the one HerraduraCli's _DER_ITEMS check prints.  gf_idx
+    names a GF(2^n) width field, which must be one of the widths with a
+    primitive polynomial (BITARRAY.md 4.6), and every other field must then
+    fit n bits."""
+    ints = der_parse_seq(data)
+    if len(ints) != want:
+        raise ValueError(f"malformed PEM '{label}': {len(ints)} DER items, expected {want}")
+    if gf_idx is not None:
+        n = ints[gf_idx]
+        if n not in (32, 64, 128, 256):
+            raise ValueError(f"{label}: n is {n} (expected 32, 64, 128 or 256)")
+        for i, v in enumerate(ints):
+            if i != gf_idx and v.bit_length() > n:
+                raise ValueError(f"{label}: field {i} is wider than n = {n} bits")
+    return ints
+
+
 def der_parse_seq(data: bytes) -> list:
     """Decode a DER SEQUENCE of INTEGERs; return list of Python ints.
 
@@ -148,6 +167,11 @@ def pack_poly(coeffs: list, bytes_per_coeff: int) -> tuple:
 def unpack_poly(packed_int: int, n: int, bytes_per_coeff: int) -> list:
     """Unpack a big integer back to a coefficient list (inverse of pack_poly)."""
     total = n * bytes_per_coeff
+    # TODO #367: a polynomial longer than its declared n (a key whose n field
+    # was edited) raised OverflowError here, i.e. a traceback.
+    if packed_int.bit_length() > 8 * total:
+        raise ValueError(f"packed polynomial is wider than n = {n} coefficients "
+                         f"of {bytes_per_coeff} bytes")
     raw = packed_int.to_bytes(total, 'big')
     return [int.from_bytes(raw[i * bytes_per_coeff:(i + 1) * bytes_per_coeff], 'big')
             for i in range(n)]
@@ -647,10 +671,22 @@ def decode_hcred_credential(pem_text):
     label, data = pem_unwrap(pem_text)
     if label != _HCRED_CRED_LBL:
         raise ValueError(f"Expected {_HCRED_CRED_LBL!r}, got {label!r}")
-    ints = der_parse_seq(data)
+    ints = _der_count(label, data, 5)
     issuer_n, rounds, c_int, ch_int, r_int = (int(ints[0]), int(ints[1]),
                                                ints[2], ints[3], ints[4])
+    # TODO #367: n and rounds size every to_bytes below; an out-of-range one
+    # (or a blob wider than they describe) was an OverflowError traceback.
+    if issuer_n % 8 or not 8 <= issuer_n <= 256:
+        raise ValueError(f"{label}: n is {issuer_n} (expected a multiple of 8, 8..256)")
+    if not 1 <= rounds <= 4096:
+        shown = rounds if rounds.bit_length() <= 64 else f"a {rounds.bit_length()}-bit value"
+        raise ValueError(f"{label}: round count is {shown} (expected 1..4096)")
     nbytes = issuer_n // 8
+    for what, v, nb in (("commitments", c_int, 3 * rounds * nbytes),
+                        ("challenges", ch_int, (rounds + 3) // 4),
+                        ("responses", r_int, 2 * rounds * nbytes)):
+        if v.bit_length() > 8 * nb:
+            raise ValueError(f"{label}: {what} field is wider than {nb} bytes")
 
     commits_ba = c_int.to_bytes(3 * rounds * nbytes, 'big')
     commits = []
@@ -777,7 +813,7 @@ def decode_hpkst_commit(pem_text: str) -> tuple:
     label, data = pem_unwrap(pem_text)
     if label != _HPKST_COMMIT_LBL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    R_j, C_j, n = der_parse_seq(data)
+    R_j, C_j, n = _der_count(label, data, 3, 2)
     return R_j, C_j, n
 
 
@@ -792,7 +828,7 @@ def decode_hpkst_nonce(pem_text: str) -> tuple:
     label, data = pem_unwrap(pem_text)
     if label != _HPKST_NONCE_LBL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    k_j, n = der_parse_seq(data)
+    k_j, n = _der_count(label, data, 2, 1)
     return k_j, n
 
 
@@ -807,7 +843,7 @@ def decode_hpkst_aggregate(pem_text: str) -> tuple:
     label, data = pem_unwrap(pem_text)
     if label != _HPKST_AGGREGATE_LBL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    R, C_agg, e, n = der_parse_seq(data)
+    R, C_agg, e, n = _der_count(label, data, 4, 3)
     return R, C_agg, e, n
 
 
@@ -822,7 +858,7 @@ def decode_hpkst_partial(pem_text: str) -> tuple:
     label, data = pem_unwrap(pem_text)
     if label != _HPKST_PARTIAL_LBL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    s_j, n = der_parse_seq(data)
+    s_j, n = _der_count(label, data, 2, 1)
     return s_j, n
 
 
@@ -837,7 +873,7 @@ def decode_hpkst_sig(pem_text: str) -> tuple:
     label, data = pem_unwrap(pem_text)
     if label != _HPKST_SIG_LBL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    C_agg, R, s, n = der_parse_seq(data)
+    C_agg, R, s, n = _der_count(label, data, 4, 3)
     return C_agg, R, s, n
 
 

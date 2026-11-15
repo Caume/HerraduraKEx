@@ -170,6 +170,22 @@ regions of `herradura_cli.go` and `herradura.py`; `--check` fails if any of the 
 is stale. `CliTest/test_key_label_matrix.sh` runs every row in every CLI, and fails if
 its templates and these rows differ.
 
+## DER item counts (TODO #367)
+
+`pem_der_items` gives, for every DER-SEQUENCE PEM label, how many DER INTEGER items it
+carries, as `min..max`. It is curated as `PEM_DER_ITEMS` in `generate_spec.py` and
+emitted beside the key-label table into the same four files. Every CLI checks it in its
+one PEM-to-integers loader, before any decoder indexes the list, and refuses a mismatch
+with one message: "`malformed PEM '<label>': <k> DER items, expected <min>[..<max>]`".
+Before this, a valid SEQUENCE with too few items, a peer's public key among them, panicked
+the Go CLI and raised a traceback in Python. Two labels serve several algorithms
+(`CIPHERTEXT`, `SIGNATURE`), so their row is the union and each decoder checks its exact
+count. One label has a range: the HKEX-RNL keys and response may omit the contributory
+nonce, which then reads as zero (a documented backward-compatibility rule). The raw,
+non-DER labels (ZKP-NL, ZKP-RNL, HCRED keys and proofs) have their own length checks
+(TODO #275) and no row here. `CliTest/test_der_items_matrix.sh` covers every row in
+every CLI, and fails if its templates and these rows differ.
+
 ## Protocols without an `--algo` tag
 
 `protocols` is keyed on a stable protocol id, which for most entries is also the `--algo`

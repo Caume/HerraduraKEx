@@ -281,6 +281,20 @@
         }
       }
     },
+    "pem_der_items": {
+      "type": "array",
+      "description": "How many DER INTEGER items each DER-SEQUENCE PEM label carries, as min..max (TODO #367). Curated in spec/generate_spec.py's PEM_DER_ITEMS and emitted beside the key-label table into all four CLIs, each of which checks it in its PEM-to-integers loader before any decoder indexes the list. A label shared by several algorithms (CIPHERTEXT, SIGNATURE) carries the union; its decoders check the exact count.",
+      "items": {
+        "type": "object",
+        "required": ["label", "min", "max"],
+        "additionalProperties": false,
+        "properties": {
+          "label": {"type": "string"},
+          "min": {"type": "integer", "minimum": 1},
+          "max": {"type": "integer", "minimum": 1, "maximum": 16}
+        }
+      }
+    },
     "key_label_acceptance": {
       "type": "array",
       "description": "Which key PEM labels each (subcommand, --algo, key flag) accepts (TODO #366). Curated policy in spec/generate_spec.py, emitted into all four CLIs (HerraduraCli/key_label_table.h, bindings/java/herradurakex/KeyLabelTable.java, and generated regions of herradura_cli.go and herradura.py). A key whose label is not listed is refused with 'wrong key type'. Public-key slots accept PUBLIC labels only. `algo` is empty for subcommands without --algo; `pkey` reads any key and has no row.",

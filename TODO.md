@@ -698,32 +698,6 @@ Status: **OPEN**
 
 ---
 
-### #367: wrong-type or malformed keys crash the Go and Python CLIs
-
-Found with #364.  PATCH.
-
-**The finding.**  Over 14 key types x 13 commands (221 cases per CLI): Go panics in 25,
-Python prints a traceback in 10; C and Java fail cleanly in all.  A malformed PEER public
-key -- the remotely supplied input -- does the same in `kex`: a well-formed DER SEQUENCE
-with too few INTEGERs (0 for `hkex-gf`, 1 for `hkex-rnl`) panics Go
-(`index out of range`) and raises in Python.  Sites: unchecked `ints[k]` indexing and an
-unbounded width feeding `make` in `HerraduraCli/herradura_cli.go` (around lines 509, 1617,
-2253, 2307, 3933); in Python, uncaught `IndexError`, `OverflowError`, `AttributeError` and
-`BaError`.  Every case exits non-zero, so nothing is accepted that should not be: this is
-robustness, not a security hole, but a service wrapping the Go CLI gets a crash and stack
-dump from an untrusted peer.
-
-**Also here (closed by #364, v15.0.0).**  The C CLI accepted `--rounds` for `sign --algo
-nl-zkboo` and ignored it; with #364's verifier floor it had to be honoured, and now is.
-
-**Work.**  An arity/bounds check in each decoder before indexing, with the same error
-text across ports; "valid DER, wrong arity" seeds for the Fuzz/ harnesses; matrix cases
-in `test_malformed_pem_matrix.sh` (with accept-controls).
-
-Status: **OPEN**
-
----
-
 ### #368: `.hkx` decfile ignores bytes after the tag
 
 Found with #364.  PATCH (no valid file changes).
@@ -782,3 +756,39 @@ if it has none.  Show the guard firing (negative control) for one script of each
 Status: **OPEN**
 
 ---
+
+---
+
+### #371: the CLIs disagree about which malformed artifacts they accept
+
+Found with #367.  Not a crash (#367 made every case a clean exit); a parity and
+validation question, and some of it is security-relevant.
+
+**The finding.**  Over #367's 1794 malformed variants of 90 (command, artifact) cells,
+at v15.0.0 the four CLIs agree on 1349 and disagree on 445, i.e. some CLI exits 0 on an
+artifact another refuses.  By who accepts: C alone 146; C+Go 86; C+Java 83; C+Go+Java
+59; C+Go+Python 50; C+Java+Python 8; C+Python 7; Go+Python 3; Go+Java+Python 3.  The
+main causes:
+
+  * **Fields a CLI never reads.**  C sizes most fields from its compiled widths
+    (KEYBITS, RNL_N, QCMDPC_R), so it ignores a key's or ciphertext's declared Stern /
+    GF / QC-MDPC width; Go ignores the OPRF width and the QC-MDPC `r`; Java ignores the
+    Stern width and QC-MDPC `r`.  `CliTest/test_der_items_matrix.sh` prints these as 33
+    NOTEs (C 17, Java 10, Go 6).
+  * **Values wider than their field**, silently masked to the width (Go's NewBitArray,
+    C's fixed buffers) in some CLIs and refused in others.
+  * **Trailing data**: an HCRED key or proof with a byte appended is accepted by all four
+    (the #368 class); the cross-CLI cases are where only some do.
+  * **Degenerate peer values (security-relevant):** a peer HKEX-GF public key of 0, and
+    an HPKE public key of 0, are accepted by Go and Python (C and Java refuse).  With
+    C = 0 the shared secret is a constant, so this is a key-validation gap, not just
+    parity.
+
+**Work.**  Decide per class whether the field is checked (refuse) or explicitly
+ignored, write it into the spec so the four agree, and turn the matrix's NOTEs into
+strict cases.  The peer-value item first: refuse a GF public key outside
+[2, 2^n - 2] in every CLI, with an accept-control.  This changes what existing
+`--algo`s accept (MAJOR); prototype across the four ports and report before editing.
+
+Status: **OPEN**
+

@@ -572,15 +572,20 @@ static void encrypt_pem_text_to_file(const char *pem_text, const char *passphras
 /* Read an envelope and return the recovered cleartext PEM text (heap, NUL-
  * terminated).  Exits with a one-line diagnostic on a wrong passphrase or a
  * tampered envelope -- never returns unverified bytes. */
+static void check_der_items(const char *label, int n_items);   /* TODO #367 */
+
 static char *decrypt_pem_file(const char *in_path, const char *passphrase)
 {
     size_t blen;
     uint8_t *body = zkp_raw_pem_read(in_path, PEM_ENC_PRIV, &blen);
-    const uint8_t *vals[6];
-    size_t vlens[6];
+    /* Room for more than six, so a seventh item is SEEN and refused rather
+     * than silently dropped by der_parse_seq's max_items cap (TODO #367). */
+    const uint8_t *vals[16];
+    size_t vlens[16];
     int n_out = 0;
-    if (der_parse_seq(body, blen, vals, vlens, 6, &n_out) != 0 || n_out != 6)
+    if (der_parse_seq(body, blen, vals, vlens, 16, &n_out) != 0)
         die("decrypt: malformed ENCRYPTED PRIVATE KEY envelope");
+    check_der_items(PEM_ENC_PRIV, n_out);
     /* The salt, nonce, ciphertext and tag are FIXED-WIDTH byte strings carried
      * as DER INTEGERs, and a DER INTEGER has no leading zero to carry: a field
      * whose first byte is 0x00 encodes one significant byte SHORT, and
@@ -713,6 +718,26 @@ static void stern_require_n(const void *pkv, int idx, const char *what)
     }
 }
 
+/* TODO #367: a DER SEQUENCE's item count, against the generated table, before
+ * any reader indexes it.  Same text in all four CLIs. */
+static void check_der_items(const char *label, int n_items)
+{
+    for (int i = 0; i < HKX_DER_ITEMS_N; i++) {
+        const HkxDerItems *r = &HKX_DER_ITEMS[i];
+        if (strcmp(r->label, label) != 0) continue;
+        if (n_items < r->min || n_items > r->max) {
+            if (r->min == r->max)
+                fprintf(stderr, "malformed PEM '%s': %d DER items, expected %d\n",
+                        label, n_items, r->min);
+            else
+                fprintf(stderr, "malformed PEM '%s': %d DER items, expected %d..%d\n",
+                        label, n_items, r->min, r->max);
+            exit(1);
+        }
+        return;
+    }
+}
+
 static void pem_key_load(PemKey *k, const char *path)
 {
     size_t raw_len;
@@ -732,6 +757,7 @@ static void pem_key_load(PemKey *k, const char *path)
              "`pkey --decrypt --passphrase ... --in <file> --out plain.pem`", path);
     if (der_parse_seq(k->der, k->der_len, k->vals, k->vlens, 16, &k->n_items) != 0)
         dief("cannot parse DER from: %s", path);
+    check_der_items(k->label, k->n_items);
 }
 static void pem_key_free(PemKey *k) { free(k->der); k->der = NULL; }
 

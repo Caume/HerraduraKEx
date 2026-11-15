@@ -988,7 +988,7 @@ public final class HerraduraCli {
         if (!b.label.equals(Codec.PEM_CIPHERTEXT)) {
             throw new CliError("expected " + Codec.PEM_CIPHERTEXT + ", got " + b.label);
         }
-        List<BigInteger> ints = Codec.derParseSeq(b.der);
+        List<BigInteger> ints = Codec.derParseSeq(b);
         int formatTag = ints.get(0).intValueExact();
         if (formatTag == 0) {
             return new BigInteger[] { ints.get(1), ints.get(2), null, null };
@@ -1035,7 +1035,7 @@ public final class HerraduraCli {
         if (!b.label.equals(Codec.PEM_CIPHERTEXT)) {
             throw new CliError("expected " + Codec.PEM_CIPHERTEXT + ", got " + b.label);
         }
-        List<BigInteger> ints = Codec.derParseSeq(b.der);
+        List<BigInteger> ints = Codec.derParseSeq(b);
         int want = v3 ? 4 : 3;
         int got = ints.get(0).intValueExact();
         if (got != want) {
@@ -2354,7 +2354,7 @@ public final class HerraduraCli {
             throw new CliError("pkey --decrypt: expected " + Codec.PEM_ENC_PRIV
                 + ", got " + b.label);
         }
-        List<BigInteger> it = Codec.derParseSeq(b.der);
+        List<BigInteger> it = Codec.derParseSeq(b);
         if (it.size() != 6) {
             throw new CliError("pkey --decrypt: malformed envelope ("
                 + it.size() + " fields, want 6)");

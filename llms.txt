@@ -156,6 +156,9 @@ The GF keys (hkex-gf, hpks, hpks-nl, hpke, hpke-nl) are interchangeable, as are
 hpks-stern and hpke-stern; every other key serves only its own --algo, and a
 --pubkey / --their / --ring / --issuer slot takes public keys only (HCRED's
 cred-verify --pubkey and cred-issue --in also take the HCRED private key).
+A DER-SEQUENCE PEM with the wrong number of items fails with "malformed PEM
+'<label>': <k> DER items, expected <n>" (pem_der_items in the same file), and an
+out-of-range width, ring dimension or field size fails with a one-line bound error.
 
   genpkey --algo <ID> [--bits N] [--xmss-height N] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,

@@ -122,6 +122,62 @@ func wireInt(b []byte, what, where string) int {
 	return bytesToInt(b)
 }
 
+// rnlWireN bounds a wire-supplied HKEX-RNL ring dimension: a power of two from
+// 8 to the deployed RnlN (TODO #367).  It sizes every polynomial unpacked
+// after it, so an unbounded one panicked or ran the process out of memory.
+// C is compiled for RnlN alone and requires it exactly (rnl_require_n).
+func rnlWireN(b []byte, where string) int {
+	v := bounded(wireInt(b, "ring dimension n", where), 8, RnlN, "ring dimension n", where)
+	if v&(v-1) != 0 {
+		fmt.Fprintf(os.Stderr, "%s: ring dimension n is %d (expected a power of two)\n", where, v)
+		os.Exit(1)
+	}
+	return v
+}
+
+// sternWireN bounds a wire-supplied Stern / HPKE-Stern key width (TODO #367).
+// rnlSameRing refuses a peer artifact whose ring dimension is not ours.  Go
+// used to read only its own key's n and ignore the peer's (TODO #367); Python
+// and Java refused the mismatch, and C requires RnlN of both.
+func rnlSameRing(ours int, theirs []byte, where string) {
+	if t := rnlWireN(theirs, where); t != ours {
+		fmt.Fprintf(os.Stderr, "%s: ring size mismatch (ours=%d, theirs=%d)\n", where, ours, t)
+		os.Exit(1)
+	}
+}
+
+func sternWireN(b []byte, where string) int {
+	return boundedN(wireInt(b, "n", where), where)
+}
+
+// checkDerItemsExact reports a shared-label artifact (CIPHERTEXT, SIGNATURE)
+// whose item count is not the one this algorithm's decoder reads (TODO #367).
+func checkDerItemsExact(label string, ints [][]byte, want int) error {
+	return fmt.Errorf("malformed PEM '%s': %d DER items, expected %d", label, len(ints), want)
+}
+
+// wireIntZ is wireInt for a field whose legitimate value may be 0, which DER
+// carries as an empty INTEGER body here (leading zero bytes are stripped).
+func wireIntZ(b []byte, what, where string) int {
+	if len(b) == 0 {
+		return 0
+	}
+	return wireInt(b, what, where)
+}
+
+// fitBytes returns a wire integer's bytes right-aligned in a width-byte field,
+// or refuses it when it does not fit.  big.Int.FillBytes PANICS on an
+// oversized value, which is what a crafted field reached before TODO #367.
+func fitBytes(b []byte, width int, what, where string) []byte {
+	v := new(big.Int).SetBytes(b)
+	if (v.BitLen()+7)/8 > width {
+		fmt.Fprintf(os.Stderr, "%s: %s is %d bytes (expected at most %d)\n",
+			where, what, (v.BitLen()+7)/8, width)
+		os.Exit(1)
+	}
+	return v.FillBytes(make([]byte, width))
+}
+
 // ── PEM label constants (must match Python and C exactly) ───────────────────
 
 const (
@@ -382,8 +438,8 @@ func decryptPEMFile(path, passphrase string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(items) != 6 {
-		return "", fmt.Errorf("malformed ENCRYPTED PRIVATE KEY envelope (%d fields, want 6)", len(items))
+	if err := checkDerItems(lblEncPriv, items); err != nil {   // TODO #367
+		return "", err
 	}
 	salt, iterB, nonceB, ct, tag, ptLenB := items[0], items[1], items[2], items[3], items[4], items[5]
 	// The salt, nonce, ciphertext and tag are FIXED-WIDTH byte strings carried
@@ -458,12 +514,35 @@ func readPEMInts(path string) (string, [][]byte, error) {
 			"first with `pkey --decrypt --passphrase ... --in %s --out plain.pem`", path, path)
 	}
 	ints, err := DerParseSeq(der)
+	if err == nil {
+		err = checkDerItems(label, ints)
+	}
 	return label, ints, err
+}
+
+// checkDerItems holds a parsed DER SEQUENCE to the generated derItems table
+// (TODO #367), so no decoder indexes past the end of a short list.
+func checkDerItems(label string, ints [][]byte) error {
+	lim, ok := derItems[label]
+	if !ok || (len(ints) >= lim[0] && len(ints) <= lim[1]) {
+		return nil
+	}
+	want := fmt.Sprint(lim[0])
+	if lim[0] != lim[1] {
+		want = fmt.Sprintf("%d..%d", lim[0], lim[1])
+	}
+	return fmt.Errorf("malformed PEM '%s': %d DER items, expected %s", label, len(ints), want)
 }
 
 // ── DER encoding helpers ─────────────────────────────────────────────────────
 
 func derIntBig(v *big.Int, width int) ([]byte, error) {
+	// FillBytes panics on a value wider than the field; a key read from a
+	// crafted PEM reaches here with one (TODO #367).
+	if (v.BitLen()+7)/8 > width {
+		return nil, fmt.Errorf("value is %d bytes, wider than its %d-byte field",
+			(v.BitLen()+7)/8, width)
+	}
 	return DerIntEnc(v.FillBytes(make([]byte, width)))
 }
 
@@ -926,7 +1005,7 @@ func encodeHybridResponse(K *big.Int, C_B []int, hintUsedLen int, hint []byte, n
 func decodeHybridResponse(ints [][]byte) (K *big.Int, C_B []int, hintPacked []byte,
 	n int, nB []byte, syn *big.Int, rQC int) {
 	K = new(big.Int).SetBytes(ints[0])
-	n = bytesToInt(ints[3])
+	n = rnlWireN(ints[3], "kex hybrid-rnl-stern")
 
 	C_B = unpackPolyRaw(ints[1], n, 2)
 
@@ -943,7 +1022,8 @@ func decodeHybridResponse(ints [][]byte) (K *big.Int, C_B []int, hintPacked []by
 	}
 
 	nB = padLeftN(ints[5], 32)
-	rQC = bytesToInt(ints[7])
+	rQC = bounded(wireInt(ints[7], "QC-MDPC r", "kex hybrid-rnl-stern"), QcMdpcR, QcMdpcR,
+		"QC-MDPC r", "kex hybrid-rnl-stern")
 	rb := (rQC + 7) / 8
 	syn = new(big.Int).SetBytes(padLeftN(ints[6], rb))
 	return K, C_B, hintBuf, n, nB, syn, rQC
@@ -1054,7 +1134,7 @@ func loadRingPubkeys(ringArg string) ([]RingKeypair, int) {
 			fmt.Fprintf(os.Stderr, "hpks-ring: ring member %q is %q, expected hpks-stern public key\n", p, label)
 			os.Exit(1)
 		}
-		n := bytesToInt(ints[2])
+		n := sternWireN(ints[2], "hpks-ring")
 		if ringN < 0 {
 			ringN = n
 		} else if n != ringN {
@@ -1453,12 +1533,12 @@ func cmdPkey(args []string) {
 
 		switch {
 		case classicalAlgos[algo]:
-			n := bytesToInt(ints[2])
+			n := gfWidth(bytesToInt(ints[2]), "pkey")
 			pub := new(big.Int).SetBytes(ints[1])
 			pem, err = encodeClassicalPub(pub, n, algo)
 
 		case algo == "hkex-rnl":
-			n := bytesToInt(ints[2])
+			n := rnlWireN(ints[2], "pkey")
 			s      := unpackPolyRaw(ints[0], n, 4)
 			mBlind := unpackPolyRaw(ints[1], n, 4)
 			ms     := RnlPolyMul(mBlind, s, RnlQ, n)
@@ -1470,18 +1550,17 @@ func cmdPkey(args []string) {
 			pem, err = encodeRNLPub(C, mBlind, n, nA)
 
 		case sternAlgos[algo]:
-			n    := bytesToInt(ints[2])
+			n    := sternWireN(ints[2], "pkey")
 			e    := NewBitArray(n, new(big.Int).SetBytes(ints[0]))
 			seed := NewBitArray(n, new(big.Int).SetBytes(ints[1]))
 			syn  := SternSyndrome(seed, e)
 			pem, err = encodeSternPub(syn, seed, n, algo)
 
 		case algo == "hpks-wots":
-			seed := make([]byte, 32)
-			new(big.Int).SetBytes(ints[0]).FillBytes(seed)
+			seed := fitBytes(ints[0], 32, "WOTS seed", "pkey")
 			var leafIdx uint32
 			if len(ints) >= 2 {
-				leafIdx = uint32(bytesToInt(ints[1]))
+				leafIdx = uint32(wireInt(ints[1], "WOTS leaf index", "pkey"))
 			}
 			_, pk := HpksWotsKeygen(seed, leafIdx)
 			pem = encodeWotsBlobPEM(pk, lblHpksWotsPub)
@@ -1531,7 +1610,7 @@ func cmdPkey(args []string) {
 	// --text
 	switch {
 	case classicalAlgos[algo]:
-		n    := bytesToInt(ints[2])
+		n    := gfWidth(bytesToInt(ints[2]), "pkey")
 		priv := new(big.Int).SetBytes(ints[0])
 		pub  := new(big.Int).SetBytes(ints[1])
 		fmt.Printf("algorithm : %s\n", algo)
@@ -1540,7 +1619,7 @@ func cmdPkey(args []string) {
 		fmt.Printf("public    : %0*x\n", n/4, pub)
 
 	case algo == "hkex-rnl":
-		n      := bytesToInt(ints[2])
+		n      := rnlWireN(ints[2], "pkey")
 		s      := unpackPolyRaw(ints[0], n, 4)
 		mBlind := unpackPolyRaw(ints[1], n, 4)
 		ms     := RnlPolyMul(mBlind, s, RnlQ, n)
@@ -1554,7 +1633,7 @@ func cmdPkey(args []string) {
 		}
 
 	case sternAlgos[algo]:
-		n    := bytesToInt(ints[2])
+		n    := sternWireN(ints[2], "pkey")
 		eBig := new(big.Int).SetBytes(ints[0])
 		sBig := new(big.Int).SetBytes(ints[1])
 		fmt.Printf("algorithm : %s\n", algo)
@@ -1641,7 +1720,8 @@ func cmdKex(args []string) {
 			if err != nil {
 				die("kex", err)
 			}
-			n   := bytesToInt(ourInts[2])
+			n   := rnlWireN(ourInts[2], "kex")
+			rnlSameRing(n, theirInts[2], "kex")
 			s_B := unpackPolyRaw(ourInts[0], n, 4)
 			C_A := unpackPolyRaw(theirInts[0], n, 2)
 			m_A := unpackPolyRaw(theirInts[1], n, 4)
@@ -1687,7 +1767,8 @@ func cmdKex(args []string) {
 			if err != nil {
 				die("kex", err)
 			}
-			n   := bytesToInt(ourInts[2])
+			n   := rnlWireN(ourInts[2], "kex")
+			rnlSameRing(n, theirInts[3], "kex")
 			s_A := unpackPolyRaw(ourInts[0], n, 4)
 			C_B := unpackPolyRaw(theirInts[1], n, 2)
 
@@ -1759,7 +1840,8 @@ func cmdKex(args []string) {
 			if err != nil {
 				die("kex", err)
 			}
-			n   := bytesToInt(ourInts[2])
+			n   := rnlWireN(ourInts[2], "kex")
+			rnlSameRing(n, theirInts[2], "kex")
 			s_B := unpackPolyRaw(ourInts[0], n, 4)
 			C_A := unpackPolyRaw(theirInts[0], n, 2)
 			m_A := unpackPolyRaw(theirInts[1], n, 4)
@@ -1814,7 +1896,7 @@ func cmdKex(args []string) {
 			if err != nil {
 				die("kex", err)
 			}
-			n   := bytesToInt(ourInts[2])
+			n   := rnlWireN(ourInts[2], "kex")
 			s_A := unpackPolyRaw(ourInts[0], n, 4)
 			m_A := unpackPolyRaw(ourInts[1], n, 4)
 
@@ -1951,8 +2033,7 @@ func loadHdrbgState(path string) *HDrbg {
 		fmt.Fprintln(os.Stderr, "rand: malformed HDRBG state")
 		os.Exit(1)
 	}
-	state := make([]byte, 32)
-	new(big.Int).SetBytes(ints[0]).FillBytes(state)
+	state := fitBytes(ints[0], 32, "HDRBG state", "rand")
 	return DrbgFromState(state, uint64(bytesToInt(ints[1])))
 }
 
@@ -2061,12 +2142,22 @@ func loadKey(path string) (*big.Int, int, error) {
 		return nil, 0, err
 	}
 	ints, err := DerParseSeq(der)
+	if err == nil {
+		err = checkDerItems(label, ints)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
 	switch label {
 	case lblSession:
-		return new(big.Int).SetBytes(ints[0]), bytesToInt(ints[1]), nil
+		// TODO #367: the width sizes every BitArray the key builds; 0 or 7
+		// panicked in NewZero (E_WIDTH).
+		bits := new(big.Int).SetBytes(ints[1])
+		if !bits.IsInt64() || bits.Int64() < 16 || bits.Int64() > BAMaxBits || bits.Int64()%8 != 0 {
+			return nil, 0, fmt.Errorf("%s: session key width is %s (expected a multiple of 8, 16..%d)",
+				path, bits, BAMaxBits)
+		}
+		return new(big.Int).SetBytes(ints[0]), int(bits.Int64()), nil
 	case lblRnlResp:
 		// ints[3] is the RING dimension, which since TODO #223 is no longer the
 		// key width — the ring is 1024 while the derived key stays 256 bits.
@@ -2250,8 +2341,7 @@ func polyToDerInt(poly *big.Int, width int) *big.Int {
 
 // polyFromDerInt inverts polyToDerInt.
 func polyFromDerInt(v *big.Int, width int) *big.Int {
-	le := make([]byte, width)
-	v.FillBytes(le) // this is the little-endian byte view of the poly
+	le := fitBytes(v.Bytes(), width, "QC-MDPC polynomial", "hpke-stern-kem") // little-endian view
 	return new(big.Int).SetBytes(reverseBytes(le))
 }
 
@@ -2272,8 +2362,7 @@ func supToDerInt(sup []int, d int) *big.Int {
 }
 
 func supFromDerInt(v *big.Int, d int) []int {
-	buf := make([]byte, d*2)
-	v.FillBytes(buf)
+	buf := fitBytes(v.Bytes(), d*2, "QC-MDPC support", "hpke-stern-kem")
 	sup := make([]int, d)
 	for i := 0; i < d; i++ {
 		sup[i] = int(buf[i*2])<<8 | int(buf[i*2+1])
@@ -2424,6 +2513,9 @@ func packSternSigLabel(sig *SternSig, n int, label string) (string, error) {
 
 // unpackSternSig deserialises a *SternSig from DER-parsed integer fields.
 func unpackSternSig(ints [][]byte) (*SternSig, int, error) {
+	if len(ints) != 5 {
+		return nil, 0, checkDerItemsExact(lblSig, ints, 5)
+	}
 	n := boundedN(wireInt(ints[0], "n", "verify"), "verify")
 	rounds := bounded(wireInt(ints[1], "round count", "verify"), 1, SdfMaxRounds,
 		"round count", "verify")
@@ -3178,7 +3270,7 @@ func cmdCredIssue(args []string) {
 		fmt.Fprintf(os.Stderr, "cred-issue: --our must be an hpks-stern or hpke-stern private key, got %q\n", label)
 		os.Exit(1)
 	}
-	issuerN := bytesToInt(ourInts[2])
+	issuerN := sternWireN(ourInts[2], "cred-issue")
 	issuerE := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[0]))
 	issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[1]))
 
@@ -3309,7 +3401,7 @@ func cmdCredVerify(args []string) {
 			fmt.Fprintf(os.Stderr, "cred-verify: --issuer must be an hpks-stern or hpke-stern public key, got %q\n", issLabel)
 			os.Exit(1)
 		}
-		issuerN := bytesToInt(issInts[2])
+		issuerN := sternWireN(issInts[2], "cred-verify")
 		issuerSyn := new(big.Int).SetBytes(issInts[0])
 		issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(issInts[1]))
 
@@ -3502,7 +3594,7 @@ func cmdEnc(args []string) {
 		if err != nil {
 			die("enc", err)
 		}
-		n    := bytesToInt(theirInts[2])
+		n    := sternWireN(theirInts[2], "enc")
 		seed := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
 		nb   := n / 8
 		P    := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
@@ -3588,6 +3680,7 @@ func cmdDec(args []string) {
 			os.Exit(1)
 		}
 		n := bytesToInt(ctInts[5])
+		sym256OK(n, "dec "+*algo, "ciphertext")
 		K := NewBitArray(n, keyInt)
 		nonce := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
 		// The declared length sizes the buffer.  It cannot exceed the payload
@@ -3609,8 +3702,7 @@ func cmdDec(args []string) {
 		if ctLen > 0 {
 			new(big.Int).SetBytes(ctInts[3]).FillBytes(ct)
 		}
-		authTag := make([]byte, 32)
-		new(big.Int).SetBytes(ctInts[4]).FillBytes(authTag)
+		authTag := fitBytes(ctInts[4], 32, "authentication tag", "dec")
 		var pt []byte
 		var ok bool
 		if dplexV3 {
@@ -3651,13 +3743,15 @@ func cmdDec(args []string) {
 				fmt.Fprintln(os.Stderr, "dec: AEAD ciphertext requires --algo hske-nla1")
 				os.Exit(1)
 			}
-			n := bytesToInt(ctInts[4])
+			if len(ctInts) != 5 {
+				die("dec", checkDerItemsExact(lblCT, ctInts, 5))
+			}
+			n := wireInt(ctInts[4], "n", "dec")
+			nla1WidthOK(n, "dec", "ciphertext")
 			K := NewBitArray(n, keyInt)
 			nonce := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
-			ct := make([]byte, n/8)
-			new(big.Int).SetBytes(ctInts[2]).FillBytes(ct)
-			authTag := make([]byte, 32)
-			new(big.Int).SetBytes(ctInts[3]).FillBytes(authTag)
+			ct := fitBytes(ctInts[2], n/8, "ciphertext", "dec")
+			authTag := fitBytes(ctInts[3], 32, "authentication tag", "dec")
 			pt, ok := HskeNlAeadDecrypt(K, nonce, []byte(*ad), ct, authTag)
 			if !ok {
 				fmt.Fprintln(os.Stderr, "dec: authentication tag mismatch — "+
@@ -3672,15 +3766,23 @@ func cmdDec(args []string) {
 		var EInt, nonceInt *big.Int
 		var n int
 		if fmtTag == 1 {
+			if len(ctInts) != 4 {
+				die("dec", checkDerItemsExact(lblCT, ctInts, 4))
+			}
 			EInt    = new(big.Int).SetBytes(ctInts[2])
-			n       = bytesToInt(ctInts[3])
+			n       = wireInt(ctInts[3], "n", "dec")
 			nonceInt = new(big.Int).SetBytes(ctInts[1])
 		} else {
+			if len(ctInts) != 3 {
+				die("dec", checkDerItemsExact(lblCT, ctInts, 3))
+			}
 			EInt = new(big.Int).SetBytes(ctInts[1])
-			n    = bytesToInt(ctInts[2])
+			n    = wireInt(ctInts[2], "n", "dec")
 		}
 		if *algo != "hske-nla1" {
 			sym256OK(n, "dec "+*algo, "ciphertext")
+		} else {
+			nla1WidthOK(n, "dec", "ciphertext")
 		}
 		K := NewBitArray(n, keyInt)
 		E := NewBitArray(n, EInt)
@@ -3762,7 +3864,10 @@ func cmdDec(args []string) {
 		if err != nil {
 			die("dec", err)
 		}
-		n       := bytesToInt(ourInts[2])
+		if len(ctInts) != 5 {
+			die("dec", checkDerItemsExact(lblCT, ctInts, 5))
+		}
+		n       := sternWireN(ourInts[2], "dec")
 		seed    := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
 		ePrime  := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
 		EInt    := new(big.Int).SetBytes(ctInts[3])
@@ -3897,7 +4002,7 @@ func cmdSign(args []string) {
 	switch *algo {
 	case "rnl-sigma":
 		// derive Cp from stored s and m_blind
-		zkpN := bytesToInt(ourInts[2])
+		zkpN := rnlWireN(ourInts[2], "sign")
 		zkpS := unpackPolyRaw(ourInts[0], zkpN, 4)
 		zkpM := unpackPolyRaw(ourInts[1], zkpN, 4)
 		ms   := RnlPolyMul(zkpM, zkpS, RnlQ, zkpN)
@@ -3943,7 +4048,7 @@ func cmdSign(args []string) {
 
 	case "hpks-stern":
 		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
-		n    := bytesToInt(ourInts[2])
+		n    := sternWireN(ourInts[2], "sign")
 		e    := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		seed := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
 		msg  := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
@@ -3962,7 +4067,7 @@ func cmdSign(args []string) {
 			fmt.Fprintln(os.Stderr, "hpks-ring sign: --ring (comma-separated member public keys) required")
 			os.Exit(1)
 		}
-		n := bytesToInt(ourInts[2])
+		n := sternWireN(ourInts[2], "sign")
 		e := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		signerSeed := new(big.Int).SetBytes(ourInts[1])
 		ringKeys, ringN := loadRingPubkeys(*ring)
@@ -4005,11 +4110,10 @@ func cmdSign(args []string) {
 				"are ONE-TIME. Generate a fresh key (genpkey --algo hpks-wots).")
 			os.Exit(1)
 		}
-		seed := make([]byte, 32)
-		new(big.Int).SetBytes(ourInts[0]).FillBytes(seed)
+		seed := fitBytes(ourInts[0], 32, "WOTS seed", "sign")
 		var leafIdx uint32
 		if len(ourInts) >= 2 {
-			leafIdx = uint32(bytesToInt(ourInts[1]))
+			leafIdx = uint32(wireInt(ourInts[1], "WOTS leaf index", "sign"))
 		}
 		sig := HpksWotsSign(inBytes, seed, leafIdx)
 		pem := encodeWotsBlobPEM(sig, lblHpksWotsSig)
@@ -4028,8 +4132,7 @@ func cmdSign(args []string) {
 			fmt.Fprintf(os.Stderr, "sign: expected HPKS-XMSS private key, got %q\n", label)
 			os.Exit(1)
 		}
-		seed := make([]byte, 32)
-		new(big.Int).SetBytes(xmssInts[0]).FillBytes(seed)
+		seed := fitBytes(xmssInts[0], 32, "XMSS seed", "sign")
 		h := bounded(wireInt(xmssInts[1], "XMSS height", "sign"), 1, xmssMaxH,
 			"XMSS height", "sign")
 		numLeaves := 1 << uint(h)
@@ -4232,7 +4335,7 @@ func cmdVerify(args []string) {
 	switch *algo {
 	case "rnl-sigma":
 		// HKEX-RNL public key: theirInts[0]=C (2B/coeff), theirInts[1]=mBlind (4B/coeff), theirInts[2]=n
-		zkpN  := bytesToInt(theirInts[2])
+		zkpN  := rnlWireN(theirInts[2], "verify")
 		zkpCp := unpackPolyRaw(theirInts[0], zkpN, 2)
 		zkpM  := unpackPolyRaw(theirInts[1], zkpN, 4)
 
@@ -4291,7 +4394,7 @@ func cmdVerify(args []string) {
 	case "hpks-stern":
 		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
 		synInt  := new(big.Int).SetBytes(theirInts[0])
-		n       := bytesToInt(theirInts[2])
+		n       := sternWireN(theirInts[2], "verify")
 		seed    := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
 		msg     := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
 
@@ -4318,7 +4421,7 @@ func cmdVerify(args []string) {
 		if serr != nil {
 			die("verify", serr)
 		}
-		leafIdx := int(bytesToInt(sigInts[0]))
+		leafIdx := wireIntZ(sigInts[0], "XMSS leaf index", "verify")
 		depth := bounded(wireInt(sigInts[3], "XMSS signature depth", "verify"),
 			1, xmssMaxH, "XMSS signature depth", "verify")
 		sig := &HpksXmssSig{
@@ -5054,6 +5157,55 @@ var keySites = []keySite{
 	{"cred-verify", "", "--pubkey", "hcred", []string{"HERRADURA HCRED PUBLIC KEY", "HERRADURA HCRED PRIVATE KEY"}},
 	{"cred-verify", "", "--issuer", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
 }
+
+// TODO #367: DER INTEGER items each DER-SEQUENCE label carries (min, max).
+var derItems = map[string][2]int{
+	"HERRADURA CIPHERTEXT": {3, 6},
+	"HERRADURA DIGEST": {1, 1},
+	"HERRADURA ENCRYPTED PRIVATE KEY": {6, 6},
+	"HERRADURA HCRED CREDENTIAL": {5, 5},
+	"HERRADURA HDRBG STATE": {2, 2},
+	"HERRADURA HKEX-GF PRIVATE KEY": {3, 3},
+	"HERRADURA HKEX-GF PUBLIC KEY": {2, 2},
+	"HERRADURA HKEX-RNL PRIVATE KEY": {3, 4},
+	"HERRADURA HKEX-RNL PUBLIC KEY": {3, 4},
+	"HERRADURA HKEX-RNL RESPONSE": {5, 6},
+	"HERRADURA HPKE PRIVATE KEY": {3, 3},
+	"HERRADURA HPKE PUBLIC KEY": {2, 2},
+	"HERRADURA HPKE-NL PRIVATE KEY": {3, 3},
+	"HERRADURA HPKE-NL PUBLIC KEY": {2, 2},
+	"HERRADURA HPKE-NL3 PRIVATE KEY": {3, 3},
+	"HERRADURA HPKE-NL3 PUBLIC KEY": {2, 2},
+	"HERRADURA HPKE-STERN PRIVATE KEY": {3, 3},
+	"HERRADURA HPKE-STERN PUBLIC KEY": {3, 3},
+	"HERRADURA HPKE-STERN-KEM PRIVATE KEY": {6, 6},
+	"HERRADURA HPKE-STERN-KEM PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS PRIVATE KEY": {3, 3},
+	"HERRADURA HPKS PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS-NL PRIVATE KEY": {3, 3},
+	"HERRADURA HPKS-NL PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS-RING SIGNATURE": {4, 4},
+	"HERRADURA HPKS-STERN PRIVATE KEY": {3, 3},
+	"HERRADURA HPKS-STERN PUBLIC KEY": {3, 3},
+	"HERRADURA HPKS-WOTS PRIVATE KEY": {2, 2},
+	"HERRADURA HPKS-WOTS PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS-WOTS SIGNATURE": {2, 2},
+	"HERRADURA HPKS-XMSS PRIVATE KEY": {4, 4},
+	"HERRADURA HPKS-XMSS PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS-XMSS SIGNATURE": {5, 5},
+	"HERRADURA HPKST AGGREGATE": {4, 4},
+	"HERRADURA HPKST COMMITMENT": {3, 3},
+	"HERRADURA HPKST NONCE": {2, 2},
+	"HERRADURA HPKST PARTIAL": {2, 2},
+	"HERRADURA HPKST SIGNATURE": {4, 4},
+	"HERRADURA HYBRID-RNL-STERN RESPONSE": {8, 8},
+	"HERRADURA OPRF CLIENT STATE": {3, 3},
+	"HERRADURA OPRF EVALUATION": {2, 2},
+	"HERRADURA OPRF PRIVATE KEY": {2, 2},
+	"HERRADURA PAKE RECORD": {3, 3},
+	"HERRADURA SESSION KEY": {2, 2},
+	"HERRADURA SIGNATURE": {4, 5},
+}
 // END GENERATED key-label table
 
 // pemFileLabel returns the first PEM BEGIN label in path, or "" (unreadable or
@@ -5189,9 +5341,9 @@ func loadHpksPrivForThreshold(path string) (*big.Int, *big.Int, int) {
 		fmt.Fprintf(os.Stderr, "threshold: expected hpks or hpks-nl key, got %q\n", label)
 		os.Exit(1)
 	}
-	priv := new(big.Int).SetBytes(ints[0])
-	pub  := new(big.Int).SetBytes(ints[1])
-	n    := bytesToInt(ints[2])
+	n    := gfWidth(wireInt(ints[2], "n", "threshold"), "threshold")
+	priv := new(big.Int).SetBytes(fitBytes(ints[0], n/8, "private key", "threshold"))
+	pub  := new(big.Int).SetBytes(fitBytes(ints[1], n/8, "public key", "threshold"))
 	return priv, pub, n
 }
 
@@ -5366,9 +5518,9 @@ func cmdThresholdAggregate(args []string) {
 			fmt.Fprintf(os.Stderr, "threshold-aggregate: invalid commitment PEM: %s\n", cp)
 			os.Exit(1)
 		}
-		Rj := new(big.Int).SetBytes(ints[0])
+		Rj := new(big.Int).SetBytes(fitBytes(ints[0], n/8, "commitment R", "threshold-aggregate"))
 		R   = GfMul(NewBitArray(n, R), NewBitArray(n, Rj)).BigInt()
-		pubs[i] = new(big.Int).SetBytes(ints[1])
+		pubs[i] = new(big.Int).SetBytes(fitBytes(ints[1], n/8, "public key", "threshold-aggregate"))
 	}
 
 	msg   := msgPad(inBytes, n/8)

@@ -4,9 +4,9 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [15.0.0] - 2026-11-12
 
-**MAJOR: security fixes in three parts.** All three change what an existing `--algo`
-produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections 30
-and 31.
+**MAJOR: security fixes in four parts.** All four change what an existing `--algo`
+produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections
+30, 31 and 32.
 
 ### TODO #364 — verifiers enforce a Fiat-Shamir round floor
 
@@ -90,6 +90,67 @@ and 31.
     the nearest foreign type (`hpke-nl3` for GF rows, `hkex-gf` for Stern rows).
 
   The script's templates must cover the spec's rows exactly, in both directions.
+
+### TODO #367 — malformed artifacts are refused, not crashed on
+
+- **The finding.** A malformed variant sweep covered 90 (command, artifact slot) cells:
+  keys, peer keys, HKEX-RNL and hybrid responses, ciphertexts, signatures, threshold,
+  OPRF and HCRED artifacts. It used 1794 variants: a valid DER SEQUENCE with too few or
+  too many items, one item set to 0, -1, 7, 2^16, 2^31 or 2^4096+1, a truncated
+  SEQUENCE, an empty body. Go crashed in 365 (356 panics, 9 out-of-memory aborts) across
+  72 cells. Python printed a traceback in 299 across 59 cells, and several more ran
+  unbounded work (a 65536-bit GF exponentiation, a 2^31-entry hint list). C and Java
+  failed cleanly in all. The peer's public key and the HKEX-RNL response were among the
+  crashing cells. Those come from the other party, so a service wrapping the Go CLI got
+  a panic and stack dump from an untrusted peer.
+- **Item counts, from one table.** `spec/generate_spec.py`'s `PEM_DER_ITEMS` gives each
+  DER-SEQUENCE label's item count. It is emitted beside the #366 key-label table into
+  `key_label_table.h`, `KeyLabelTable.java` and the generated Go and Python regions, and
+  is in the spec as `pem_der_items`. Every CLI checks it in its one PEM-to-integers
+  loader, before any decoder indexes the list. All four print one message:
+  "`malformed PEM '<label>': <k> DER items, expected <n>`". Labels shared by several
+  algorithms (`CIPHERTEXT`, `SIGNATURE`) carry the union, and their decoders check the
+  exact count. The HKEX-RNL keys and response keep their documented optional nonce
+  (3..4 and 5..6 items). Extra items are refused too; C, Go and Java used to ignore them.
+- **Field bounds.**
+  - **Go:** every wire width now goes through a bound (`rnlWireN`, `sternWireN`,
+    `gfWidth`). Every value copied into a fixed buffer goes through `fitBytes`, because
+    `big.Int.FillBytes` panics on an oversized value, and `derIntBig` returns an error
+    instead of panicking. The session-key width is bounded, and so are the QC-MDPC
+    support, polynomial and `r` fields.
+  - **Go peer ring.** Go read only its own key's ring dimension and ignored the peer's,
+    so a 512-ring peer key or response exited 0. It is now refused, as Python and Java
+    did.
+  - **Python:** each label's width and fixed-size fields are checked once, in
+    `_der_items` (`_WIRE_FIELDS`). Every `to_bytes` of a decoded integer goes through
+    `_fit`, and `codec.unpack_poly`, the HPKST decoders and the HCRED credential decoder
+    raise `ValueError` instead of `OverflowError`. The hint length is bounded by n/2, and
+    a missing or unreadable input file is one line rather than a traceback.
+  - **Java:** the HKEX-RNL ring dimension and hint length are bounded. Java never
+    crashed, but a 65536 ring ran past the sweep's time cap.
+- **Measured after:** across all 1794 variants, all four CLIs crash in 0 and time out in
+  0. No variant that any CLI refused before is accepted now. One Python case that timed
+  out before now verifies: an HCRED proof with a byte appended, which the other three
+  accepted already. That is the trailing-bytes class of #368, listed in #371.
+- **Not changed here: fields a CLI never reads.** Several CLIs size a field from their
+  own compiled width and never read the wire value. C, for example, ignores the Stern
+  and GF width fields and the QC-MDPC `r`. Such a CLI exits 0 on an out-of-range value
+  that the others refuse. That is a cross-CLI acceptance difference, not a crash, and is
+  filed as TODO #371 with the measured list.
+- **Tests.**
+  - The new `CliTest/test_der_items_matrix.sh` (cross-lang-compat) covers every
+    `pem_der_items` label in every CLI. It runs the genuine artifact, then 0, min-1 and
+    max+1 items, matched on the shared message. It also has 25 field-bound cases: 8
+    strict, which all four CLIs must refuse, and 17 that must only not crash. It fails if
+    its templates and the spec rows differ. Against the pre-fix build it fails 552
+    cases, 97 of them crashes.
+  - `CliTest/lib_malformed.sh` now counts a Go `panic:` or goroutine dump as a crash.
+    Before, the panic's exit code 2 was scored as a clean rejection.
+  - `Fuzz/fuzz_cli_args.py` now counts a crash trace on any exit code, not only a
+    signal. Its file pool has wrong-arity PEMs for every `pem_der_items` label. A third
+    of its trials are well-formed `kex` / `enc` / `dec` / `sign` / `verify` / `pkey`
+    calls aimed at those files. Against the pre-fix build it finds 11 crashes or
+    timeouts in 60 s, all in Go; random argv alone found none in 2 minutes.
 
 ## [14.0.4] - 2026-11-11
 
