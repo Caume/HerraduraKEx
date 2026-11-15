@@ -749,6 +749,12 @@ scripts (`bindings`, `codec`, `hcred_interop`, `interop`, `keygen`, `nl_interop`
 not affected (every job builds first and has a JDK); a local run can be green with nothing
 tested.
 
+A second shape, found with #371: `CliTest/test_cross_lang_matrix.sh` runs under
+`set -e`, and in its HKEX-RNL section a refused `kex` aborts the whole script with no
+FAIL line -- CI showed the step red after "PASS hkex-rnl py-alice/c-bob agree" and
+nothing else, so the failing pair had to be inferred.  Each command whose failure is the
+thing being tested must be run with its status captured (`|| rc=$?`) and scored.
+
 **Work.**  Source `lib_build.sh` and use `hkx_require_built`, so an all-skipped run exits 2
 unless `HKX_ALLOW_SKIP=1`.  The Java scripts need a "javac absent" branch in the library
 if it has none.  Show the guard firing (negative control) for one script of each kind.
@@ -759,36 +765,26 @@ Status: **OPEN**
 
 ---
 
-### #371: the CLIs disagree about which malformed artifacts they accept
+---
 
-Found with #367.  Not a crash (#367 made every case a clean exit); a parity and
-validation question, and some of it is security-relevant.
+### #372: over-wide values and trailing data that some CLIs accept
 
-**The finding.**  Over #367's 1794 malformed variants of 90 (command, artifact) cells,
-at v15.0.0 the four CLIs agree on 1349 and disagree on 445, i.e. some CLI exits 0 on an
-artifact another refuses.  By who accepts: C alone 146; C+Go 86; C+Java 83; C+Go+Java
-59; C+Go+Python 50; C+Java+Python 8; C+Python 7; Go+Python 3; Go+Java+Python 3.  The
-main causes:
+Split from #371.  Not a wrong answer and not forgeable; a parity and strictness
+question.
 
-  * **Fields a CLI never reads.**  C sizes most fields from its compiled widths
-    (KEYBITS, RNL_N, QCMDPC_R), so it ignores a key's or ciphertext's declared Stern /
-    GF / QC-MDPC width; Go ignores the OPRF width and the QC-MDPC `r`; Java ignores the
-    Stern width and QC-MDPC `r`.  `CliTest/test_der_items_matrix.sh` prints these as 33
-    NOTEs (C 17, Java 10, Go 6).
-  * **Values wider than their field**, silently masked to the width (Go's NewBitArray,
-    C's fixed buffers) in some CLIs and refused in others.
-  * **Trailing data**: an HCRED key or proof with a byte appended is accepted by all four
-    (the #368 class); the cross-CLI cases are where only some do.
-  * **Degenerate peer values (security-relevant):** a peer HKEX-GF public key of 0, and
-    an HPKE public key of 0, are accepted by Go and Python (C and Java refuse).  With
-    C = 0 the shared secret is a constant, so this is a key-validation gap, not just
-    parity.
+**The finding.**  After #371, `CliTest/test_der_items_matrix.sh` still prints 13
+"unread-field" NOTEs: a value wider than the fixed-size field it fills, which some CLIs
+truncate or ignore and others refuse.  The RNL contributory nonce wider than 32 bytes
+(C, Go, Java accept); the HKEX-RNL response hint length 2^31 − 1 (C, Go); the QC-MDPC
+private support wider than its field (C, Java); the threshold key's public value wider
+than n (C); the WOTS seed wider than 32 bytes (C, Java); the XMSS leaf blob wider than
+its field (C, Go, Java).  Separately, an HCRED key or proof with a byte appended after
+the DER SEQUENCE is accepted by all four (#367's sweep) -- the same class #368 tracks for
+`.hkx` files.
 
-**Work.**  Decide per class whether the field is checked (refuse) or explicitly
-ignored, write it into the spec so the four agree, and turn the matrix's NOTEs into
-strict cases.  The peer-value item first: refuse a GF public key outside
-[2, 2^n - 2] in every CLI, with an accept-control.  This changes what existing
-`--algo`s accept (MAJOR); prototype across the four ports and report before editing.
+**Work.**  Decide per field whether an over-wide value is refused (the default, and what
+Python does) or documented as truncated; make the matrix's remaining NOTEs strict.
+Refuse data after the outer DER SEQUENCE in every CLI, with an accept-control, and fold
+the result into #368's decision.  Changes what an existing `--algo` accepts (MAJOR).
 
 Status: **OPEN**
-

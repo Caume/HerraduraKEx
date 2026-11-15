@@ -25181,3 +25181,78 @@ extra items, C some missing ones.
 
 Status: **DONE v15.0.0** — every CLI checks each DER label's item count from one generated table and bounds its width and size fields; no malformed variant crashes any CLI.
 
+---
+
+### #371: the CLIs disagree about which malformed artifacts they accept
+
+Found with #367.  Not a crash (#367 made every case a clean exit); a parity and
+validation question, and some of it is security-relevant.
+
+**The finding.**  Over #367's 1794 malformed variants of 90 (command, artifact) cells,
+at v15.0.0 the four CLIs agree on 1349 and disagree on 445, i.e. some CLI exits 0 on an
+artifact another refuses.  By who accepts: C alone 146; C+Go 86; C+Java 83; C+Go+Java
+59; C+Go+Python 50; C+Java+Python 8; C+Python 7; Go+Python 3; Go+Java+Python 3.  The
+main causes:
+
+  * **Fields a CLI never reads.**  C sizes most fields from its compiled widths
+    (KEYBITS, RNL_N, QCMDPC_R), so it ignores a key's or ciphertext's declared Stern /
+    GF / QC-MDPC width; Go ignores the OPRF width and the QC-MDPC `r`; Java ignores the
+    Stern width and QC-MDPC `r`.  `CliTest/test_der_items_matrix.sh` prints these as 33
+    NOTEs (C 17, Java 10, Go 6).
+  * **Values wider than their field**, silently masked to the width (Go's NewBitArray,
+    C's fixed buffers) in some CLIs and refused in others.
+  * **Trailing data**: an HCRED key or proof with a byte appended is accepted by all four
+    (the #368 class); the cross-CLI cases are where only some do.
+  * **Degenerate peer values (security-relevant):** a peer HKEX-GF public key of 0, and
+    an HPKE public key of 0, are accepted by Go and Python (C and Java refuse).  With
+    C = 0 the shared secret is a constant, so this is a key-validation gap, not just
+    parity.
+
+**Work.**  Decide per class whether the field is checked (refuse) or explicitly
+ignored, write it into the spec so the four agree, and turn the matrix's NOTEs into
+strict cases.  The peer-value item first: refuse a GF public key outside
+[2, 2^n - 2] in every CLI, with an accept-control.  This changes what existing
+`--algo`s accept (MAJOR); prototype across the four ports and report before editing.
+
+**Resolution (v15.0.0).**  Done for the classes that give a wrong or forgeable answer;
+the rest is split out as #372.
+
+  * **Degenerate GF values.**  Go and Python bypassed the suites' `gf_pub_is_valid` at
+    every CLI site; C did at `dec`.  Measured before: Go and Python exited 0 on a peer
+    HKEX-GF / HPKE key of 0 or 1, and printed "Signature OK" under an HPKS / HPKS-NL key
+    of 1 for a signature anyone can make (R = g^s); C, Go and Python decrypted under a
+    ciphertext R of 0 or 1.  All four now refuse at `kex hkex-gf`, `enc`/`dec` (`hpke`,
+    `hpke-nl`, `hpke-nl3`) and `verify` (`hpks`, `hpks-nl`), with C's wording, which
+    Java now uses too.  The planned bound of [2, 2^n − 2] was not used: in GF(2^n) the
+    all-ones element is an ordinary non-zero element, and the test accepts it as a
+    control.
+  * **Degenerate RNL values.**  An all-zero peer C or C_B was accepted by all four
+    (K_raw constant; the key then rests on the public nonces).  New suite function
+    `rnl_validate_pub` / `RnlValidatePub` / `rnlValidatePub`: the m_blind guard's two
+    tests over Z_p.  It runs at the four agreement sites in every CLI.  Honest margin:
+    >= 1022 of 1024 non-zero and range >= 4056 over 300 genuine keys and responses,
+    against 256 and 1024.  Parity-manifest row `rnl-validate-pub`, tested by [49] (f) /
+    Java [27] (f).
+  * **Widths a CLI does not run.**  The "fields a CLI never reads" class was a wrong
+    answer, not only a parity gap: C read a valid 128-bit Go / Python key at 256 bits and
+    exited 0 with a different shared key, an undecryptable ciphertext and a valid
+    signature refused; Java failed in its arithmetic.  C (one table in its PEM loader,
+    plus the shared CIPHERTEXT / SIGNATURE sites) and Java (its decoders) refuse any
+    declared width they do not run; Go now checks the QC-MDPC `r` and a threshold
+    commitment's n.  `test_der_items_matrix.sh`'s eleven width cases became strict and
+    its NOTEs fell from 33 to 13.
+  * **Not changed.**  A zero QC-MDPC public key or Stern syndrome does not make the
+    secret a constant (the KEM key still depends on unrevealed error bits), so it is
+    left alone.  The over-wide-value class (the 13 NOTEs) and trailing data are #372;
+    `.hkx` trailing bytes stay #368.
+  * **Tests.**  `CliTest/test_peer_value_matrix.sh` (cross-lang-compat), 257 assertions
+    with accept-controls first, each refusal matched on the new check's own message, and
+    a control showing the forged signature really satisfies the Schnorr equation.
+    Against the pre-#371 build it fails 136 of 257 and no accept-control.
+    `test_weak_key_rejection.sh` stays as the C / sanitizer run; this is its four-CLI
+    counterpart.
+
+MAJOR inside v15.0.0, MIGRATING.md section 33.
+
+Status: **DONE v15.0.0** — every CLI refuses a degenerate GF or RNL peer value and a width it does not run; Go and Python no longer verify a forgeable signature under a public key of 1.
+

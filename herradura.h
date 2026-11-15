@@ -2560,6 +2560,28 @@ static int rnl_validate_m_blind(const rnl_poly_t poly, int n)
     return 1;
 }
 
+/* TODO #371: the peer PUBLIC-VALUE guard -- the same two tests as
+ * rnl_validate_m_blind, over Z_p instead of Z_q, applied to a peer's C (Alice's
+ * public key, or C_B in Bob's response).  C = round_p(m_blind * s) is uniform
+ * over Z_p for an honest party; an all-zero C makes s * C = 0 for every s, so
+ * K_raw is a constant and the session key depends only on the two public
+ * nonces.  A sparse or clustered C is the same collapse by degrees.  Honest
+ * values clear both bounds by a wide margin (TODO #371 measured 300 genuine
+ * keys and responses: >= 1022 of 1024 coefficients non-zero, range >= 4056). */
+static int rnl_validate_pub(const rnl_poly_t poly, int n)
+{
+    int i, nz = 0;
+    int32_t mn = poly[0], mx = poly[0];
+    for (i = 0; i < n; i++) {
+        if (poly[i] != 0) nz++;
+        if (poly[i] < mn) mn = poly[i];
+        if (poly[i] > mx) mx = poly[i];
+    }
+    if (nz < n / 4) return 0;
+    if (mx - mn < (int32_t)(RNL_P / 4)) return 0;
+    return 1;
+}
+
 /* Derive the HKEX-RNL session key via contributory KDF.
  * final_key = HFSCX-256(K_raw || n_A || n_B) where n_A and n_B are
  * the per-session nonces contributed by Alice and Bob respectively.

@@ -1697,6 +1697,9 @@ func cmdKex(args []string) {
 		n    := gfWidth(bytesToInt(ourInts[2]), "kex")
 		priv := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		pub  := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
+		if !GfPubIsValid(pub) {
+			die("kex", errors.New("their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
+		}
 
 		skBA := applyKDF(GfPow(pub, priv), n)
 		pem, err := encodeSessionKey(skBA, n)
@@ -1744,6 +1747,9 @@ func cmdKex(args []string) {
 			C_B := RnlRound(ms, RnlQ, RnlP)
 
 			// Compute K_B and reconciliation hint
+			if !RnlValidatePub(C_A) {
+				die("kex hkex-rnl", errors.New("peer C failed entropy check (rejected: degenerate key)"))
+			}
 			K_B_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), nil)
 
 			// Bob's contributory nonce n_B
@@ -1801,6 +1807,9 @@ func cmdKex(args []string) {
 				hintBuf[i], hintBuf[j] = hintBuf[j], hintBuf[i]
 			}
 
+			if !RnlValidatePub(C_B) {
+				die("kex hkex-rnl", errors.New("peer C failed entropy check (rejected: degenerate key)"))
+			}
 			K_A_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), hintBuf)
 
 			// Contributory KDF: final_key = HFSCX-256(K_A_raw || n_A || n_B)
@@ -1868,6 +1877,9 @@ func cmdKex(args []string) {
 			ms  := RnlPolyMul(m_A, s_B, RnlQ, n)
 			C_B := RnlRound(ms, RnlQ, RnlP)
 
+			if !RnlValidatePub(C_A) {
+				die("kex hybrid-rnl-stern", errors.New("peer C failed entropy check (rejected: degenerate key)"))
+			}
 			K1_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), nil)
 			n_B := NewRandBitArray(256).Bytes()
 			K1_ba := rnlContributoryKDF(K1_raw, rnlKeyBits(n), n_A, n_B)
@@ -1928,6 +1940,9 @@ func cmdKex(args []string) {
 			ms  := RnlPolyMul(m_A, s_A, RnlQ, n)
 			C_A := RnlRound(ms, RnlQ, RnlP)
 
+			if !RnlValidatePub(C_B) {
+				die("kex hybrid-rnl-stern", errors.New("peer C failed entropy check (rejected: degenerate key)"))
+			}
 			K1_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), hintPacked)
 			K1_ba := rnlContributoryKDF(K1_raw, rnlKeyBits(n), n_A, n_B)
 			K1_ba = applyKDF(K1_ba, rnlSessionBits(n))
@@ -2421,6 +2436,11 @@ func encodeKemPub(hPub *big.Int) (string, error) {
 }
 
 func decodeKemPub(ints [][]byte) *big.Int {
+	// TODO #371: the declared r must be the one this CLI runs (it was ignored).
+	if len(ints) > 1 {
+		bounded(wireInt(ints[1], "QC-MDPC r", "QC-MDPC public key"), QcMdpcR, QcMdpcR,
+			"QC-MDPC r", "QC-MDPC public key")
+	}
 	return polyFromDerInt(new(big.Int).SetBytes(ints[0]), QcMdpcRBytes)
 }
 
@@ -2442,6 +2462,10 @@ func encodeKemCT(syn *big.Int, E *big.Int) (string, error) {
 }
 
 func decodeKemCT(ints [][]byte) (syn, E *big.Int) {
+	if len(ints) > 2 {   // TODO #371, as decodeKemPub
+		bounded(wireInt(ints[2], "QC-MDPC r", "QC-MDPC ciphertext"), QcMdpcR, QcMdpcR,
+			"QC-MDPC r", "QC-MDPC ciphertext")
+	}
 	syn = polyFromDerInt(new(big.Int).SetBytes(ints[0]), QcMdpcRBytes)
 	E = new(big.Int).SetBytes(ints[1])
 	return syn, E
@@ -3543,6 +3567,9 @@ func cmdEnc(args []string) {
 		}
 		n := gfWidth(bytesToInt(theirInts[1]), "enc")
 		pubBA := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
+		if !GfPubIsValid(pubBA) {
+			die("enc", errors.New("public key is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
+		}
 		nb := n / 8
 		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
 		// r is ours to choose, so for hpke-nl resample past the ~2^-96 short-arc
@@ -3830,6 +3857,9 @@ func cmdDec(args []string) {
 		n    := gfWidth(bytesToInt(ourInts[2]), "dec")
 		priv := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		R    := NewBitArray(n, new(big.Int).SetBytes(ctInts[0]))
+		if !GfPubIsValid(R) {
+			die("dec", errors.New("ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
+		}
 		EInt := new(big.Int).SetBytes(ctInts[1])
 		decKey := GfPow(R, priv)
 		E      := NewBitArray(n, EInt)
@@ -4364,6 +4394,9 @@ func cmdVerify(args []string) {
 	case "hpks", "hpks-nl":
 		n   := gfWidth(bytesToInt(theirInts[1]), "verify")
 		pub := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
+		if !GfPubIsValid(pub) {
+			die("verify", errors.New("public key is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
+		}
 		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
 
 		_, sigInts, err := readPEMInts(*sig)
@@ -5518,6 +5551,9 @@ func cmdThresholdAggregate(args []string) {
 			fmt.Fprintf(os.Stderr, "threshold-aggregate: invalid commitment PEM: %s\n", cp)
 			os.Exit(1)
 		}
+		if len(ints) > 2 {   // TODO #371: a commitment at another width was read at ours
+			bounded(wireInt(ints[2], "commitment n", "threshold-aggregate"), n, n, "commitment n", "threshold-aggregate")
+		}
 		Rj := new(big.Int).SetBytes(fitBytes(ints[0], n/8, "commitment R", "threshold-aggregate"))
 		R   = GfMul(NewBitArray(n, R), NewBitArray(n, Rj)).BigInt()
 		pubs[i] = new(big.Int).SetBytes(fitBytes(ints[1], n/8, "public key", "threshold-aggregate"))
@@ -5611,6 +5647,9 @@ func cmdThresholdRespond(args []string) {
 		if label != lblHpkstCommit || len(ints) < 2 {
 			fmt.Fprintf(os.Stderr, "threshold-respond: invalid commitment PEM: %s\n", cp)
 			os.Exit(1)
+		}
+		if len(ints) > 2 {   // TODO #371: a commitment at another width was read at ours
+			bounded(wireInt(ints[2], "commitment n", "threshold-respond"), n, n, "commitment n", "threshold-respond")
 		}
 		pubs[i] = new(big.Int).SetBytes(ints[1])
 	}

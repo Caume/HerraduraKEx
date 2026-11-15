@@ -738,6 +738,77 @@ static void check_der_items(const char *label, int n_items)
     }
 }
 
+/* TODO #371: the width a key or exchange artifact DECLARES must be the width
+ * this build runs.  This CLI is compiled for one width per family (KEYBITS,
+ * RNL_N, QCMDPC_R) and sized every operation from it, so a 128-bit key from
+ * the Go or Python CLI -- which do run 32/64/128 -- used to be read as 256 bits
+ * and exit 0 with a wrong answer: a different shared key, a ciphertext nobody
+ * could decrypt, a valid signature refused.  item < 0 counts from the end.
+ * CIPHERTEXT and SIGNATURE are shared labels whose width sits in different
+ * places per algorithm; their sites check it themselves. */
+typedef struct { const char *label; int item; long want; const char *what; } HkxWidthRow;
+static const HkxWidthRow HKX_WIDTH[] = {
+    { PEM_HKEX_GF_PRIV, -1, KEYBITS, "n" },   { PEM_HKEX_GF_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKS_PRIV, -1, KEYBITS, "n" },      { PEM_HPKS_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKS_NL_PRIV, -1, KEYBITS, "n" },   { PEM_HPKS_NL_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKE_PRIV, -1, KEYBITS, "n" },      { PEM_HPKE_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKE_NL_PRIV, -1, KEYBITS, "n" },   { PEM_HPKE_NL_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKE_NL3_PRIV, -1, KEYBITS, "n" },  { PEM_HPKE_NL3_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKS_STERN_PRIV, -1, KEYBITS, "n" }, { PEM_HPKS_STERN_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKE_STERN_PRIV, -1, KEYBITS, "n" }, { PEM_HPKE_STERN_PUB, -1, KEYBITS, "n" },
+    { PEM_OPRF_PRIV, -1, KEYBITS, "n" },      { PEM_OPRF_STATE, -1, KEYBITS, "n" },
+    { PEM_OPRF_EVAL, -1, KEYBITS, "n" },
+    { PEM_HPKST_COMMIT, -1, KEYBITS, "n" },   { PEM_HPKST_NONCE, -1, KEYBITS, "n" },
+    { PEM_HPKST_PARTIAL, -1, KEYBITS, "n" },  { PEM_HPKST_AGGREGATE, -1, KEYBITS, "n" },
+    { PEM_HPKST_SIG, -1, KEYBITS, "n" },
+    { PEM_HPKE_STERN_KEM_PUB, 1, QCMDPC_R, "r" },
+    { PEM_HPKE_STERN_KEM_PRIV, 4, QCMDPC_R, "r" },
+    { PEM_HPKE_STERN_KEM_CT, 2, QCMDPC_R, "r" },
+    { PEM_HYBRID_RESPONSE, 3, RNL_N, "n" },   { PEM_HYBRID_RESPONSE, 7, QCMDPC_R, "r" },
+};
+
+/* A DER INTEGER's value bytes as a width, or -1 if it is too wide to be one. */
+static long der_small(const uint8_t *v, size_t len)
+{
+    long x = 0;
+    while (len > 0 && *v == 0) { v++; len--; }
+    if (len > 4) return -1;
+    while (len--) x = (x << 8) | *v++;
+    return x;
+}
+
+static void width_refuse(const char *label, const char *what, long got, long want)
+{
+    if (got < 0)
+        fprintf(stderr, "PEM '%s': %s is wider than 32 bits (this CLI runs %s = %ld)\n",
+                label, what, what, want);
+    else
+        fprintf(stderr, "PEM '%s': %s is %ld (this CLI runs %s = %ld)\n",
+                label, what, got, what, want);
+    exit(1);
+}
+
+static void check_der_width(const PemKey *k)
+{
+    for (size_t i = 0; i < sizeof HKX_WIDTH / sizeof HKX_WIDTH[0]; i++) {
+        const HkxWidthRow *r = &HKX_WIDTH[i];
+        if (strcmp(r->label, k->label) != 0) continue;
+        int idx = r->item < 0 ? k->n_items + r->item : r->item;
+        if (idx < 0 || idx >= k->n_items) continue;   /* arity is check_der_items' job */
+        long got = der_small(k->vals[idx], k->vlens[idx]);
+        if (got != r->want) width_refuse(k->label, r->what, got, r->want);
+    }
+}
+
+/* The same check for a site that knows where its width sits (CIPHERTEXT,
+ * SIGNATURE, and the KEM ciphertext's r). */
+static void check_item_width(const PemKey *k, int idx, long want, const char *what)
+{
+    if (idx < 0 || idx >= k->n_items) return;
+    long got = der_small(k->vals[idx], k->vlens[idx]);
+    if (got != want) width_refuse(k->label, what, got, want);
+}
+
 static void pem_key_load(PemKey *k, const char *path)
 {
     size_t raw_len;
@@ -758,6 +829,7 @@ static void pem_key_load(PemKey *k, const char *path)
     if (der_parse_seq(k->der, k->der_len, k->vals, k->vlens, 16, &k->n_items) != 0)
         dief("cannot parse DER from: %s", path);
     check_der_items(k->label, k->n_items);
+    check_der_width(k);
 }
 static void pem_key_free(PemKey *k) { free(k->der); k->der = NULL; }
 
@@ -1986,6 +2058,8 @@ static void cmd_kex(int argc, char **argv)
             /* Compute K_B and hint via Peikert reconciliation */
             BitArray K_B = BA_INIT;
             uint8_t hint[RNL_N / 8];
+            if (!rnl_validate_pub(C_A, RNL_N))
+                die("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
             rnl_agree(&K_B, s_B, C_A, NULL, hint);
 
             /* Bob's contributory nonce n_B */
@@ -2082,6 +2156,8 @@ static void cmd_kex(int argc, char **argv)
             pem_key_free(&our); pem_key_free(&their);
 
             BitArray K_A = BA_INIT;
+            if (!rnl_validate_pub(C_B, RNL_N))
+                die("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
             rnl_agree(&K_A, s_A, C_B, hint, NULL);
 
             /* rnl_agree output is LSB-first; reverse to big-endian for Python compat */
@@ -2160,6 +2236,8 @@ static void cmd_kex(int argc, char **argv)
 
             BitArray K1 = BA_INIT;
             uint8_t hint[RNL_N / 8];
+            if (!rnl_validate_pub(C_A, RNL_N))
+                die("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
             rnl_agree(&K1, s_B, C_A, NULL, hint);
 
             uint8_t n_B[KEYBYTES];
@@ -2278,6 +2356,8 @@ static void cmd_kex(int argc, char **argv)
             rnl_round(C_A, ms, RNL_Q, RNL_P);
 
             BitArray K1 = BA_INIT;
+            if (!rnl_validate_pub(C_B, RNL_N))
+                die("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
             rnl_agree(&K1, s_A, C_B, hint, NULL);
             uint8_t K1_rev[KEYBYTES]; int ri2;
             for (ri2 = 0; ri2 < KEYBYTES; ri2++) K1_rev[ri2] = K1.b[KEYBYTES-1-ri2];
@@ -3423,12 +3503,15 @@ static void cmd_dec(int argc, char **argv)
         strcmp(algo, "hpke-nl3") == 0) {
         /* CT: vals[0]=R, vals[1]=E, vals[2]=nbits (no format tag) */
         if (ct.n_items < 2) die("dec: malformed HPKE ciphertext");
+        check_item_width(&ct, 2, KEYBITS, "n");   /* TODO #371 */
         if (priv_k.n_items < 1) die("dec: malformed private key");
         BitArray priv = BA_INIT, R = BA_INIT, E = BA_INIT, dec_key = BA_INIT, D = BA_INIT;
         ba_from_ra(&priv, priv_k.vals[0], priv_k.vlens[0]);
         ba_from_ra(&R,    ct.vals[0],     ct.vlens[0]);
         ba_from_ra(&E,    ct.vals[1],     ct.vlens[1]);
         pem_key_free(&ct); pem_key_free(&priv_k);
+        if (!gf_pub_is_valid(&R))
+            die("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
         gf_pow_ba(&dec_key, &R, &priv);
         if (strcmp(algo, "hpke") == 0)
             ba_fscx_revolve(&D, &E, &dec_key, R_VALUE);
@@ -3443,6 +3526,7 @@ static void cmd_dec(int argc, char **argv)
     } else if (strcmp(algo, "hpke-stern-kem") == 0) {
         /* CT: SEQUENCE(syn[66], E[32], r).  Priv: SEQUENCE(h0,h1,sup0,sup1,r,d). */
         if (ct.n_items < 3) die("dec: malformed HPKE-Stern-KEM ciphertext");
+        check_item_width(&ct, 2, QCMDPC_R, "r");   /* TODO #371 */
         if (priv_k.n_items < 6) die("dec: malformed HPKE-Stern-KEM private key");
         int i, k;
         QcMdpcPriv priv;
@@ -4445,6 +4529,7 @@ static void cmd_verify(int argc, char **argv)
         pem_key_load(&sig_k, sig_path);
         if (strcmp(sig_k.label, PEM_SIGNATURE) != 0 || sig_k.n_items < 3)
             die("verify: invalid signature PEM");
+        check_item_width(&sig_k, 3, KEYBITS, "n");   /* TODO #371 */
         BitArray s_ba = BA_INIT, R = BA_INIT, e_stored = BA_INIT;
         ba_from_ra(&s_ba,     sig_k.vals[0], sig_k.vlens[0]);
         ba_from_ra(&R,        sig_k.vals[1], sig_k.vlens[1]);

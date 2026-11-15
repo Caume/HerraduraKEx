@@ -2384,6 +2384,15 @@ func RnlValidateMBlind(poly []int, q int) bool {
 	return nz >= n/4 && mx-mn >= q/4
 }
 
+// RnlValidatePub is the peer PUBLIC-VALUE guard (TODO #371): RnlValidateMBlind's
+// two tests over Z_p, applied to a peer's C (Alice's public key, or C_B in Bob's
+// response).  An all-zero C makes s*C = 0 for every s, so K_raw is a constant and
+// the session key depends only on the two public nonces.  Honest values clear
+// both bounds by a wide margin.
+func RnlValidatePub(poly []int) bool {
+	return RnlValidateMBlind(poly, RnlP)
+}
+
 // RnlContributoryKdf derives the HKEX-RNL session key: HFSCX-256(K_raw || nA ||
 // nB).  rawBits is the width K_raw is serialised at; nA and nB are the
 // per-session nonces contributed by Alice and Bob, each exactly 32 bytes (pass

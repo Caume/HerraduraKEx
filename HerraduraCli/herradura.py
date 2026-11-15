@@ -72,6 +72,7 @@ from primitives import (
     HDrbg, drbg_seed, drbg_generate, drbg_reseed,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul, rnl_validate_m_blind as _rnl_validate_m_blind,
+    rnl_validate_pub as _rnl_validate_pub, gf_pub_is_valid,
     rnl_contributory_kdf as _rnl_contributory_kdf,
     hpks_sign, hpks_nl_sign,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
@@ -1099,8 +1100,10 @@ def _decode_rnl_response(path):
     if label != _LABEL_RNL_RESP:
         raise ValueError(f"Expected HKEX-RNL RESPONSE PEM, got {label!r}")
     K_int, C_packed, hint_int, n, hint_len = ints[0], ints[1], ints[2], ints[3], ints[4]
-    # TODO #367: hint_len sized a list comprehension; the encoder caps it at n//2.
-    hint_len = _bounded(hint_len, 0, n // 2, 'hint length', 'kex')
+    # TODO #367: hint_len sized a list comprehension.  The bound is n, not n//2:
+    # C and this encoder write n//2, but Go's has always written n, and a
+    # genuine Go response must stay readable.
+    hint_len = _bounded(hint_len, 0, n, 'hint length', 'kex')
     C_B_poly = unpack_poly(C_packed, n, 2)
     hint = [(hint_int >> (2 * i)) & 3 for i in range(hint_len)]
     n_b = ints[5].to_bytes(32, 'big') if len(ints) >= 6 else bytes(32)
@@ -1198,7 +1201,7 @@ def _decode_hybrid_response(path):
         raise ValueError(f"Expected HYBRID-RNL-STERN RESPONSE PEM, got {label!r}")
     (K_int, C_packed, hint_int, n, hint_len,
      nb_int, syn, r_qc) = ints
-    hint_len = _bounded(hint_len, 0, n // 2, 'hint length', 'kex')   # TODO #367
+    hint_len = _bounded(hint_len, 0, n, 'hint length', 'kex')   # TODO #367 (Go writes n)
     C_B_poly = unpack_poly(C_packed, n, 2)
     hint = [(hint_int >> (2 * i)) & 3 for i in range(hint_len)]
     n_b = _fit(nb_int, 32, 'nb', 'pem')
@@ -1886,6 +1889,8 @@ def cmd_kex(args):
         their_algo, their_ints = _decode_pubkey(their_path)
         priv_int, _, nbits = our_ints
         pub_int = their_ints[0]
+        if not gf_pub_is_valid(pub_int):
+            sys.exit("kex: their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         sk_int  = _apply_kdf(gf_pow(pub_int, priv_int, poly, nbits), nbits)
         _write_file(args.out, _encode_session_key(sk_int, nbits))
@@ -1907,6 +1912,8 @@ def cmd_kex(args):
             if not _rnl_validate_m_blind(m_A):
                 sys.exit("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack")
             C_B       = _rnl_derive_C(m_A, s_B, n)
+            if not _rnl_validate_pub(C_A):
+                sys.exit("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)")
             K_B, hint = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n))
             n_b       = os.urandom(32)
             K_B_int   = _rnl_contributory_kdf(K_B.uint, _rnl_key_bits(n), n_a, n_b)
@@ -1925,6 +1932,8 @@ def cmd_kex(args):
             _, C_B, hint, n_resp, n_b = _decode_rnl_response(their_path)
             if n != n_resp:
                 sys.exit(f"Ring size mismatch: ours n={n}, response n={n_resp}")
+            if not _rnl_validate_pub(C_B):
+                sys.exit("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)")
             K_A     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n), hint)
             K_A_int = _rnl_contributory_kdf(K_A.uint, _rnl_key_bits(n), n_a, n_b)
             if kdf_mode == 'sp800227':
@@ -1962,6 +1971,8 @@ def cmd_kex(args):
             h_pub, r_qc = _decode_kem_pubkey(args.their_kem)
 
             C_B         = _rnl_derive_C(m_A, s_B, n)
+            if not _rnl_validate_pub(C_A):
+                sys.exit("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)")
             K1, hint    = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n))
             n_b         = os.urandom(32)
             K1_int      = _rnl_contributory_kdf(K1.uint, _rnl_key_bits(n), n_a, n_b)
@@ -1991,6 +2002,8 @@ def cmd_kex(args):
             h_pub  = _qcp_mul(h1, h0_inv, r_qc)
             C_A    = _rnl_derive_C(m_A, s_A, n)
 
+            if not _rnl_validate_pub(C_B):
+                sys.exit("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)")
             K1     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n), hint_used)
             K1_int = _rnl_contributory_kdf(K1.uint, _rnl_key_bits(n), n_a, n_b)
             K1_int = _apply_kdf(K1_int, _rnl_session_bits(n))
@@ -2094,6 +2107,8 @@ def cmd_enc(args):
     if not pubkey_path:
         sys.exit(f"--pubkey required for {algo}")
     their_algo, their_ints = _decode_pubkey(pubkey_path)
+    if algo in ('hpke', 'hpke-nl', 'hpke-nl3') and not gf_pub_is_valid(their_ints[0]):
+        sys.exit("enc: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
 
     if algo == 'hpke':
         pub_int, nbits = their_ints
@@ -2249,6 +2264,8 @@ def cmd_dec(args):
         priv_int, _, nbits = our_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if not gf_pub_is_valid(R_int):
+            sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
         dec_key = BitArray(nbits, gf_pow(R_int, priv_int, poly, nbits))
         D       = fscx_revolve(E, dec_key, 3 * nbits // 4)
@@ -2258,6 +2275,8 @@ def cmd_dec(args):
         priv_int, _, nbits = our_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if not gf_pub_is_valid(R_int):
+            sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
         dec_key = BitArray(nbits, gf_pow(R_int, priv_int, poly, nbits))
         if not nl_v2_key_is_valid(dec_key):
@@ -2270,6 +2289,8 @@ def cmd_dec(args):
         _v3_width_ok(nbits, 'dec hpke-nl3')
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if not gf_pub_is_valid(R_int):
+            sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
         dec_key = BitArray(nbits, gf_pow(R_int, priv_int, poly, nbits))
         D       = nl_fscx_revolve_v3_inv(E, dec_key, _r3(nbits))
@@ -2648,6 +2669,8 @@ def cmd_verify(args):
 
     if algo in ('hpks', 'hpks-nl'):
         pub_int, nbits = their_ints
+        if not gf_pub_is_valid(pub_int):
+            sys.exit("verify: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         poly = GF_POLY.get(nbits, GF_POLY[256])
         msg  = BitArray(nbits, int.from_bytes(in_bytes[:nbits // 8].ljust(nbits // 8, b'\x00'), 'big'))
         s_int, R_int, e_int, _nb = _decode_schnorr_sig(sig_path)

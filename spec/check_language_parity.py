@@ -4273,6 +4273,17 @@ PRIMITIVES = {
         "python": r"^def rnl_validate_m_blind\(",
         "java": r"public static boolean rnlValidateMBlind\(",
     },
+    "rnl-validate-pub": {
+        # TODO #371: the peer PUBLIC-VALUE guard -- rnl-validate-m-blind's two
+        # tests over Z_p, applied to a peer's C (Alice's public key, or C_B in
+        # Bob's response) before agreement.  An all-zero C made K_raw a constant
+        # in all four CLIs.  In the suites, beside m_blind's guard, for the same
+        # placement reason that entry gives; tested by [49] (f) / Java [27] (f).
+        "c": r"static int rnl_validate_pub\(",
+        "go": r"func RnlValidatePub\(",
+        "python": r"^def rnl_validate_pub\(",
+        "java": r"public static boolean rnlValidatePub\(",
+    },
     "hpake-contributory-kdf": {
         # TODO #263: aPAKE's ephemeral HKEX-RNL exchange inside
         # hpake_login_demo binds K_raw to per-session nonces from both

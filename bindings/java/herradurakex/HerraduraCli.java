@@ -87,6 +87,15 @@ public final class HerraduraCli {
 
     private static final SecureRandom RNG = new SecureRandom();
 
+    /** TODO #371: one refusal for a degenerate GF(2^n)* peer value, worded as in
+     * the C, Go and Python CLIs, checked before the suite call so the message
+     * names the value rather than a generic failure. */
+    private static void gfPeerOK(BigInteger v, int nbits, String what) {
+        if (!Herradura.gfPubIsValid(BitArray.fromBigInteger(v, nbits))) {
+            throw new CliError(what + " is the GF(2^n)* identity/zero element (rejected: degenerate key)");
+        }
+    }
+
     public static void main(String[] args) {
         try {
             run(args);
@@ -720,7 +729,7 @@ public final class HerraduraCli {
         BitArray sk = Herradura.hkexGfAgree(BitArray.fromBigInteger(our.priv, our.nbits),
                                             BitArray.fromBigInteger(their.pub, their.nbits));
         if (sk == null) {
-            throw new CliError("kex: peer public key is degenerate (identity or zero)");
+            throw new CliError("kex: their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)");
         }
         BigInteger skInt = applyKdf(sk.toBigInteger(), our.nbits, kdfOn);
         String pem = Codec.encodeSessionKey(skInt, our.nbits);
@@ -756,6 +765,9 @@ public final class HerraduraCli {
                 throw new CliError("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack");
             }
             int[] cB = HerraduraNl.hkexRnlDeriveC(their.mBlind, our.s, our.n);
+            if (!HerraduraNl.rnlValidatePub(their.c)) {
+                throw new CliError("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
+            }
             HerraduraNl.RnlAgreeResult agree = HerraduraNl.rnlAgree(
                 our.s, their.c, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
                 our.n, rnlKeyBits(our.n));
@@ -769,6 +781,9 @@ public final class HerraduraCli {
             Codec.RnlResponse resp = Codec.decodeRnlResponse(theirPem);
             if (our.n != resp.n) {
                 throw new CliError("kex hkex-rnl: ring size mismatch (ours=" + our.n + ", response=" + resp.n + ")");
+            }
+            if (!HerraduraNl.rnlValidatePub(resp.cB)) {
+                throw new CliError("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
             }
             BigInteger kA = HerraduraNl.rnlAgree(
                 our.s, resp.cB, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
@@ -837,6 +852,9 @@ public final class HerraduraCli {
             Codec.KemPubKey kemPub = Codec.decodeKemPubKey(readString(theirKem));
 
             int[] cB = HerraduraNl.hkexRnlDeriveC(their.mBlind, our.s, our.n);
+            if (!HerraduraNl.rnlValidatePub(their.c)) {
+                throw new CliError("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
+            }
             HerraduraNl.RnlAgreeResult agree = HerraduraNl.rnlAgree(
                 our.s, their.c, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
                 our.n, rnlKeyBits(our.n));
@@ -871,6 +889,9 @@ public final class HerraduraCli {
             BigInteger hPub = Stern.qcmdpcPubFromPriv(kemPriv.h0, kemPriv.h1);
             int[] cA = HerraduraNl.hkexRnlDeriveC(our.mBlind, our.s, our.n);
 
+            if (!HerraduraNl.rnlValidatePub(resp.cB)) {
+                throw new CliError("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
+            }
             BigInteger k1raw = HerraduraNl.rnlAgree(
                 our.s, resp.cB, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
                 our.n, rnlKeyBits(our.n), resp.hint);
@@ -1121,8 +1142,9 @@ public final class HerraduraCli {
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             int nbytes = pub.nbits / 8;
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), pub.nbits);
+            gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = Herradura.hpkeEncrypt(p, BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
-            if (ct == null) throw new CliError("enc: recipient public key is degenerate");
+            if (ct == null) throw new CliError("enc: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
         } else if (algo.equals("hpke-nl")) {
             String pubPath = req(opt, "pubkey", "enc");
@@ -1131,6 +1153,7 @@ public final class HerraduraCli {
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             int nbytes = pub.nbits / 8;
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), pub.nbits);
+            gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = HerraduraNl.hpkeNlEncrypt(p, BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
             if (ct == null) throw new CliError("enc: could not sample a non-degenerate ephemeral key");
             writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
@@ -1139,8 +1162,9 @@ public final class HerraduraCli {
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
+            gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(BitArray.fromBytes(padTrunc(inBytes, pub.nbits / 8), pub.nbits), BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
-            if (ct == null) throw new CliError("enc: recipient public key is degenerate");
+            if (ct == null) throw new CliError("enc: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
         } else if (algo.equals("hpke-stern")) {
             sternDemoWarning();
@@ -1249,22 +1273,25 @@ public final class HerraduraCli {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            gfPeerOK(ct.r, nbits, "dec: ciphertext R");
             BitArray d = Herradura.hpkeDecrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
-            if (d == null) throw new CliError("dec: ephemeral public value is degenerate");
+            if (d == null) throw new CliError("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-nl")) {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            gfPeerOK(ct.r, nbits, "dec: ciphertext R");
             BitArray d = HerraduraNl.hpkeNlDecrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
-            if (d == null) throw new CliError("dec: ephemeral public value is degenerate or the derived key is NL-FSCX v2 weak (TODO #354)");
+            if (d == null) throw new CliError("dec: the derived key is NL-FSCX v2 weak (TODO #354)");
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-nl3")) {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            gfPeerOK(ct.r, nbits, "dec: ciphertext R");
             BitArray d = HerraduraNl.hpkeNl3Decrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
-            if (d == null) throw new CliError("dec: ephemeral public value is degenerate");
+            if (d == null) throw new CliError("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-stern")) {
             sternDemoWarning();
@@ -1718,6 +1745,7 @@ public final class HerraduraCli {
         String pubPem = readString(pubPath);
         Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
         Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
+        gfPeerOK(pub.pub, pub.nbits, "verify: public key");
         Codec.SchnorrSig sig = Codec.decodeSchnorrSig(readString(sigPath));
         BigInteger msgInt = new BigInteger(1, padTrunc(msg, pub.nbits / 8));
 

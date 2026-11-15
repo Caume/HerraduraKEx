@@ -102,6 +102,13 @@ CLI, where Go used to panic and Python to print a traceback. Files the CLIs writ
 unaffected. See
 [section 32](#32-malformed-artifacts-are-refused-not-crashed-on-v1500).
 
+The thirty-third ships in the same release as well. Every CLI now refuses a peer value
+that makes the secret a constant: a GF(2^n)\* public key or ciphertext R of 0 or 1, or an
+HKEX-RNL peer C that is zero, sparse or clustered. Go and Python accepted the GF ones,
+and verified a forgeable signature under a public key of 1. The C and Java CLIs now also
+refuse a key width they do not run, where C used to compute a wrong answer and exit 0.
+See [section 33](#33-degenerate-peer-values-and-unsupported-widths-are-refused-v1500).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -143,6 +150,7 @@ trusting any signature made by an earlier build.
 | [`sign` pre-hashes by default, and verifiers enforce a round floor](#30-sign-pre-hashes-by-default-and-verifiers-enforce-a-round-floor-v1500) | v15.0.0 | Every signature made with the default `--digest` (none) by an earlier build, and every `hpks-stern` / `hpks-ring` / `nl-zkboo` / `nl-zkbpp` / HCRED artifact below 219 rounds, which includes the old 32-round `hpks-stern` / `hpks-ring` default and C's 4-round `cred-prove` | **Re-sign on 15.0.0+.** To check an old signature, verify with `--digest none` and/or `--min-rounds N`. Keys are unchanged |
 | [Every CLI checks a key's label against the operation](#31-every-cli-checks-a-keys-label-against-the-operation-v1500) | v15.0.0 | Any command given a key of the wrong type, e.g. an `hpke-nl` key for `hpke-nl3`, a Stern key for `hpks`, or a private key as `--pubkey` | **Pass the key the operation names** (`genpkey --algo <that algo>`). The GF keys stay interchangeable with each other, as do the two Stern keys |
 | [Malformed artifacts are refused, not crashed on](#32-malformed-artifacts-are-refused-not-crashed-on-v1500) | v15.0.0 | Only hand-built or damaged PEM files: a DER SEQUENCE with missing or extra items, or an out-of-range width / ring / size field | **Nothing**, for files the CLIs wrote. A damaged file now fails with "malformed PEM '<label>': <k> DER items, expected <n>" or a one-line bound error |
+| [Degenerate peer values and unsupported widths are refused](#33-degenerate-peer-values-and-unsupported-widths-are-refused-v1500) | v15.0.0 | A GF public key or ciphertext R of 0 or 1; an HKEX-RNL peer C or C_B that is zero, sparse or clustered; in C and Java, any key or artifact whose declared width is not 256 (or the compiled RNL n / QC-MDPC r) | **Nothing**, for files a CLI generated at its default width. For a 32/64/128-bit GF key, use the Go or Python CLI, which run those widths |
 
 ---
 
@@ -1788,3 +1796,53 @@ gets exit 1 and one line on stderr.
 **Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface:
 C, Go and Java took files with extra items, and C took some with missing ones. It ships
 inside 15.0.0 so there is one migration.
+
+## 33. Degenerate peer values and unsupported widths are refused (v15.0.0)
+
+**Who is affected:** nobody exchanging keys a CLI generated at the default width. What
+now fails:
+
+- a GF(2^n)\* value of 0 or 1 supplied by the other party: a peer public key for
+  `kex --algo hkex-gf`, a recipient key for `enc --algo hpke`/`hpke-nl`/`hpke-nl3`, the
+  R of a ciphertext for `dec` of those three, a public key for `verify --algo
+  hpks`/`hpks-nl`;
+- an HKEX-RNL peer value C (Alice's public key, or C_B in Bob's response, for
+  `hkex-rnl` and `hybrid-rnl-stern`) with fewer than n/4 non-zero coefficients or a
+  coefficient range under p/4;
+- in the C and Java CLIs, a key or artifact whose declared width is not the one the
+  CLI runs: GF, Stern, OPRF and HPKST n other than 256, a QC-MDPC `r` other than 12323,
+  a hybrid response's ring n other than 1024. In Go, a QC-MDPC `r` other than 12323,
+  and a threshold commitment whose n differs from the key's.
+
+**What changed (TODO #371).** Each of these produced an answer before:
+
+- **The GF values.** C and Java refused them, but Go and Python accepted them. A peer
+  value of 0 or 1 makes the shared secret or the HPKE key 0 or 1. Under a public key of
+  1, Go and Python printed "Signature OK" for a signature anyone can make: R = g^s for
+  any s verifies against any message.
+- **The RNL values.** All four CLIs accepted an all-zero C. It makes K_raw a constant,
+  so the session key depends only on the two nonces, which travel in the clear.
+- **The widths.** C read a valid 128-bit key from the Go or Python CLI at 256 bits and
+  exited 0 with a different shared key, a ciphertext the recipient could not decrypt,
+  or a valid signature refused. Java failed inside its arithmetic.
+
+Now all four refuse, with one line:
+
+```
+kex: their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)
+kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)
+PEM 'HERRADURA HKEX-GF PRIVATE KEY': n is 128 (this CLI runs n = 256)
+```
+
+Honest values clear the RNL bounds by a wide margin: over 300 genuine keys and
+responses, at least 1022 of 1024 coefficients were non-zero and the range was at least
+4056, against bounds of 256 and 1024. The suites gain the check as `rnl_validate_pub` /
+`RnlValidatePub` / `rnlValidatePub`.
+
+**What to do.** Nothing, for keys a CLI generated at its default width. A peer whose
+key is refused here has a broken key generator or is not an honest peer. For GF keys at
+32, 64 or 128 bits, use the Go or Python CLI; C and Java now say so instead of
+computing a wrong answer.
+
+**Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface.
+It ships inside 15.0.0 so there is one migration.

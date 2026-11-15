@@ -4,9 +4,9 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [15.0.0] - 2026-11-12
 
-**MAJOR: security fixes in four parts.** All four change what an existing `--algo`
+**MAJOR: security fixes in five parts.** All five change what an existing `--algo`
 produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections
-30, 31 and 32.
+30, 31, 32 and 33.
 
 ### TODO #364 — verifiers enforce a Fiat-Shamir round floor
 
@@ -124,10 +124,15 @@ produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md se
   - **Python:** each label's width and fixed-size fields are checked once, in
     `_der_items` (`_WIRE_FIELDS`). Every `to_bytes` of a decoded integer goes through
     `_fit`, and `codec.unpack_poly`, the HPKST decoders and the HCRED credential decoder
-    raise `ValueError` instead of `OverflowError`. The hint length is bounded by n/2, and
+    raise `ValueError` instead of `OverflowError`. The hint length is bounded by n, and
     a missing or unreadable input file is one line rather than a traceback.
   - **Java:** the HKEX-RNL ring dimension and hint length are bounded. Java never
     crashed, but a 65536 ring ran past the sweep's time cap.
+  - **The hint bound is n, not n/2.** Go writes the hint length as n; C and Python write
+    n/2. The first devtest push of this work bounded it at n/2 in Python and Java, which
+    refused every genuine Go response, so `hkex-rnl` and `hybrid-rnl-stern` with a Go
+    responder and a Python or Java initiator failed. `test_cross_lang_matrix.sh` caught
+    it in CI. It was fixed before release.
 - **Measured after:** across all 1794 variants, all four CLIs crash in 0 and time out in
   0. No variant that any CLI refused before is accepted now. One Python case that timed
   out before now verifies: an HCRED proof with a byte appended, which the other three
@@ -151,6 +156,61 @@ produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md se
     of its trials are well-formed `kex` / `enc` / `dec` / `sign` / `verify` / `pkey`
     calls aimed at those files. Against the pre-fix build it finds 11 crashes or
     timeouts in 60 s, all in Go; random argv alone found none in 2 minutes.
+
+### TODO #371 — degenerate peer values and unsupported widths are refused
+
+- **Degenerate GF(2^n)\* peer values.** Go and Python used the raw arithmetic where C
+  and Java call the suite's `gf_pub_is_valid`. So they accepted a peer HKEX-GF or HPKE
+  public key of 0 or 1, which makes the shared secret 0 or 1. For an HPKS or HPKS-NL
+  public key of 1 they printed "Signature OK" for a signature anyone can make: with
+  pub^e = 1, any R = g^s verifies against any message. C, Go and Python also decrypted
+  an HPKE ciphertext whose R is 0 or 1, under a constant key; only Java refused it.
+  Now all four refuse a peer value of 0 or 1 at `kex hkex-gf`, `enc` and `dec`
+  (`hpke`, `hpke-nl`, `hpke-nl3`) and `verify` (`hpks`, `hpks-nl`), with one message:
+  "`<cmd>: <value> is the GF(2^n)* identity/zero element (rejected: degenerate key)`".
+  Java's texts were reworded to match. Other elements, 2 and 2^n − 1 among them, are
+  accepted as before.
+- **Degenerate HKEX-RNL peer values.** All four CLIs accepted an all-zero peer C:
+  Alice's public key, or C_B in Bob's response, plain or hybrid. s · 0 = 0, so K_raw is
+  a constant, and the session key then depends only on the two nonces, which travel in
+  the clear. The suites gain `rnl_validate_pub` (C, Python), `RnlValidatePub` (Go) and
+  `rnlValidatePub` (Java). It applies the two tests the m_blind guard (#261) applies,
+  over Z_p instead of Z_q: at least n/4 non-zero coefficients, and a range of at least
+  p/4. Every CLI runs it on the peer's C before each of the four agreement sites. Over
+  300 genuine keys and responses the minimum was 1022 of 1024 non-zero and a range of
+  4056, against bounds of 256 and 1024.
+- **Widths a CLI does not run.** Go and Python run GF at 32, 64, 128 and 256 bits; C and
+  Java only at 256. Given a valid 128-bit Python key, C read it at 256 bits and exited 0
+  with a wrong answer: a different shared key, a ciphertext the recipient could not
+  decrypt, a valid signature refused. Java failed inside its arithmetic
+  (`E_MIXED_WIDTH`, `E_RANGE`). Both now refuse any declared width they do not run,
+  naming it: "`PEM '<label>': n is 128 (this CLI runs n = 256)`". C checks one table in
+  its PEM loader (GF, Stern, OPRF and HPKST n; QC-MDPC r; the hybrid response's ring n
+  and r), plus the shared CIPHERTEXT and SIGNATURE labels at their sites. Java checks in
+  its decoders. Go now checks the QC-MDPC `r` of a public key and ciphertext, and a
+  threshold commitment's `n`, which it ignored.
+- **Not changed: a zero QC-MDPC public key or Stern syndrome.** Neither makes the secret
+  a constant: the encapsulated key still depends on secret error bits that the
+  ciphertext does not reveal. Over-wide values in fixed-size fields (a nonce, hint
+  length, support or blob wider than its field) and trailing data are left to TODO #372
+  and #368.
+- **Tests.**
+  - The new `CliTest/test_peer_value_matrix.sh` (cross-lang-compat) runs 257 assertions
+    over the four CLIs. Accept-controls come first: the genuine artifact, and the
+    elements 2 and 2^n − 1. Then 0 and 1 at nine GF slots, plus the forged
+    signature under pub = 1, which a control proves really satisfies the Schnorr
+    equation. Then zero, sparse, clustered and both sides of the count boundary at the
+    four RNL slots, and 128-bit keys: Go and Python must agree with each other, C and
+    Java must refuse. Every refusal must carry the new check's own message. Against the
+    pre-#371 build it fails 136 of 257, and no accept-control.
+  - `test_der_items_matrix.sh`'s eleven width cases (GF, Stern, QC-MDPC, hybrid
+    response, threshold commitment) change from "must not crash" to "every CLI
+    refuses". Its unread-field NOTEs fall from 33 to 13, all of the over-wide-value
+    class.
+  - Suite test [49] (C, Go, Python) and Java [27] gain case (f), the Z_p guard. Its
+    accept-control is (a)'s draw reduced mod p, so the test draws nothing new. A mutant
+    `rnl_validate_pub` that accepts everything fails [49] with 12 bad accepts in 3
+    rounds.
 
 ## [14.0.4] - 2026-11-11
 

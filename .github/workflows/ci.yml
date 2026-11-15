@@ -451,6 +451,7 @@ jobs:
             case "$f" in test_round_floor.sh) continue ;; esac        # claimed by cross-lang-compat (TODO #364)
             case "$f" in test_key_label_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #366)
             case "$f" in test_der_items_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #367)
+            case "$f" in test_peer_value_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #371)
             case "$f" in test_kdf_matrix.sh) continue ;; esac         # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_param_bounds.sh) continue ;; esac       # claimed by cross-lang-compat (TODO #278)
             case "$f" in test_narrow_width_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #313)
@@ -783,6 +784,14 @@ jobs:
       # an out-of-memory abort or a timeout.
       - name: DER item-count and field-bound matrix
         run: bash CliTest/test_der_items_matrix.sh
+
+      # TODO #371: a degenerate value from the OTHER party -- a GF(2^n)* public
+      # key or ciphertext R of 0 or 1, an HKEX-RNL C or C_B that is zero, sparse
+      # or clustered -- and a width the CLI does not run, refused by all four
+      # CLIs with the check's own message.  Go and Python printed "Signature OK"
+      # for a signature anyone can make under a public key of 1.
+      - name: Degenerate peer value and width matrix
+        run: bash CliTest/test_peer_value_matrix.sh
 
       # TODO #269: `kex --kdf`, for two reasons. Java had no --kdf until v6.5.0,
       # and -- the one that is easy to miss -- `--kdf hfscx-256` had never been

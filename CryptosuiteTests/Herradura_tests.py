@@ -3292,8 +3292,26 @@ def test_rnl_m_blind_guard():
         n_run += 1
         # (a) accept-control: a genuine uniform draw must pass, or every
         #     rejection case below is vacuous.
-        if not v(_rnl_rand_poly(n, RNLQ)):
+        uniform = _rnl_rand_poly(n, RNLQ)
+        if not v(uniform):
             bad_reject += 1
+        # (f) TODO #371: rnl_validate_pub is the same two tests over Z_p, for a
+        #     peer's public value C.  (a)'s draw reduced mod p is the accept-
+        #     control (no new draw); then all-zero, sparse at full range,
+        #     clustered at full count, and both sides of the count boundary.
+        #     The suite's own function is cross-checked on these below.
+        pub_shapes = [([c % RNLP for c in uniform], True), ([0] * n, False),
+                      ([RNLP - 1] * (n // 8) + [0] * (n - n // 8), False),
+                      ([1 + j % (RNLP // 8 - 1) for j in range(n)], False),
+                      ([RNLP - 1] * (n // 4) + [0] * (n - n // 4), True),
+                      ([RNLP - 1] * (n // 4 - 1) + [0] * (n - n // 4 + 1), False)]
+        for poly, want in pub_shapes:
+            got = v(poly, RNLP)
+            if got != want:
+                if got:
+                    bad_accept += 1
+                else:
+                    bad_reject += 1
         # (b) the all-zero polynomial
         if v([0] * n):
             bad_accept += 1
@@ -3342,6 +3360,9 @@ def test_rnl_m_blind_guard():
             else:
                 poly = [RNLQ - 1 if i < random.randrange(n) else 0 for i in range(n)]
             if _m.rnl_validate_m_blind(poly, RNLQ) != v(poly, RNLQ):
+                mism += 1
+            pp = [c % RNLP for c in poly]          # TODO #371: the Z_p guard too
+            if _m.rnl_validate_pub(pp) != v(pp, RNLP):
                 mism += 1
         drift = str(mism)
     except Exception as e:                      # noqa: BLE001 - reported, not raised

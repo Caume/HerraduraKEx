@@ -209,6 +209,10 @@ BOUNDS=(
     #           sizes most fields from its compiled widths) and exit 0 on it;
     #           that is printed as a NOTE, and is the cross-CLI acceptance
     #           question TODO #367 measured and left to its own TODO.
+    #   TODO #371 made every WIDTH field strict: each CLI now refuses a width it
+    #   does not run instead of reading the artifact at its own.  What is left
+    #   as safe is the masking / over-wide-value class (a nonce, hint length,
+    #   support or blob wider than its field), still recorded as NOTEs.
     "hkex-rnl.pem|2|7|HERRADURA HKEX-RNL PRIVATE KEY|our RNL ring n=7|strict"
     "hkex-rnl.pem|2|2147483647|HERRADURA HKEX-RNL PRIVATE KEY|our RNL ring n=2^31-1|strict"
     "hkex-rnl.pem|3|$HUGE|HERRADURA HKEX-RNL PRIVATE KEY|RNL nonce wider than 32 bytes|safe"
@@ -217,23 +221,23 @@ BOUNDS=(
     "hkex-rnl_pub.pem|2|2147483647|HERRADURA HKEX-RNL PUBLIC KEY|peer RNL ring n=2^31-1|strict"
     "rnl_resp.pem|3|512|HERRADURA HKEX-RNL RESPONSE|response ring n=512 (not ours)|strict"
     "rnl_resp.pem|4|2147483647|HERRADURA HKEX-RNL RESPONSE|response hint length 2^31-1|safe"
-    "hyb_resp.pem|3|7|HERRADURA HYBRID-RNL-STERN RESPONSE|hybrid response ring n=7|safe"
-    "hyb_resp.pem|7|7|HERRADURA HYBRID-RNL-STERN RESPONSE|hybrid response QC-MDPC r=7|safe"
-    "hpks-stern.pem|2|7|HERRADURA HPKS-STERN PRIVATE KEY|Stern key n=7|safe"
-    "hpks-stern.pem|2|2147483647|HERRADURA HPKS-STERN PRIVATE KEY|Stern key n=2^31-1|safe"
-    "hpke-stern_pub.pem|2|7|HERRADURA HPKE-STERN PUBLIC KEY|HPKE-Stern public key n=7|safe"
+    "hyb_resp.pem|3|7|HERRADURA HYBRID-RNL-STERN RESPONSE|hybrid response ring n=7|strict"
+    "hyb_resp.pem|7|7|HERRADURA HYBRID-RNL-STERN RESPONSE|hybrid response QC-MDPC r=7|strict"
+    "hpks-stern.pem|2|7|HERRADURA HPKS-STERN PRIVATE KEY|Stern key n=7|strict"
+    "hpks-stern.pem|2|2147483647|HERRADURA HPKS-STERN PRIVATE KEY|Stern key n=2^31-1|strict"
+    "hpke-stern_pub.pem|2|7|HERRADURA HPKE-STERN PUBLIC KEY|HPKE-Stern public key n=7|strict"
     "hpke-stern-kem.pem|2|$HUGE|HERRADURA HPKE-STERN-KEM PRIVATE KEY|QC-MDPC support wider than its field|safe"
-    "hpke-stern-kem_pub.pem|1|7|HERRADURA HPKE-STERN-KEM PUBLIC KEY|QC-MDPC public key r=7|safe"
-    "ct_hpke-stern-kem.pem|2|7|HPKE-STERN-KEM CT|QC-MDPC ciphertext r=7|safe"
-    "hkex-gf.pem|2|7|HERRADURA HKEX-GF PRIVATE KEY|GF key n=7|safe"
-    "hkex-gf.pem|2|65536|HERRADURA HKEX-GF PRIVATE KEY|GF key n=65536|safe"
-    "hpke_pub.pem|1|7|HERRADURA HPKE PUBLIC KEY|GF public key n=7|safe"
+    "hpke-stern-kem_pub.pem|1|7|HERRADURA HPKE-STERN-KEM PUBLIC KEY|QC-MDPC public key r=7|strict"
+    "ct_hpke-stern-kem.pem|2|7|HPKE-STERN-KEM CT|QC-MDPC ciphertext r=7|strict"
+    "hkex-gf.pem|2|7|HERRADURA HKEX-GF PRIVATE KEY|GF key n=7|strict"
+    "hkex-gf.pem|2|65536|HERRADURA HKEX-GF PRIVATE KEY|GF key n=65536|strict"
+    "hpke_pub.pem|1|7|HERRADURA HPKE PUBLIC KEY|GF public key n=7|strict"
     "hpks.pem|1|$HUGE|HPKS THRESHOLD|threshold key: public value wider than n|safe"
     "hpks-wots.pem|0|$HUGE|HERRADURA HPKS-WOTS PRIVATE KEY|WOTS seed wider than 32 bytes|safe"
     "hpks-xmss.pem|3|$HUGE|HERRADURA HPKS-XMSS PRIVATE KEY|XMSS leaf blob wider than its field|safe"
     "sk.pem|1|7|HERRADURA SESSION KEY|session key width 7|strict"
     "sk.pem|1|0|SESSION KEY NLA1|session key width 0 (hske-nla1)|strict"
-    "c1.pem|2|7|HERRADURA HPKST COMMITMENT|threshold commitment n=7|safe"
+    "c1.pem|2|7|HERRADURA HPKST COMMITMENT|threshold commitment n=7|strict"
 )
 T["HPKE-STERN-KEM CT"]="ct_hpke-stern-kem.pem|dec --algo hpke-stern-kem --key {F}/hpke-stern-kem.pem --in {X} --out {O}"
 T["HPKS THRESHOLD"]="hpks.pem|threshold-commit --key {X} --commit-out {O} --nonce-out {O}.n"

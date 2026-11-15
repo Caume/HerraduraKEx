@@ -63,6 +63,8 @@ _rnl_poly_mul       = _s._rnl_poly_mul
 # suite; Python had only a private copy in the CLI, so it is re-exported here
 # rather than reimplemented there.
 rnl_validate_m_blind = _s.rnl_validate_m_blind
+rnl_validate_pub     = _s.rnl_validate_pub       # TODO #371
+gf_pub_is_valid      = _s.gf_pub_is_valid        # TODO #371
 # TODO #261 (v6.1.0): the HKEX-RNL session KDF, the same placement asymmetry one
 # release later — C and Java had it in the suite, Go and Python only in their CLIs.
 rnl_contributory_kdf = _s.rnl_contributory_kdf

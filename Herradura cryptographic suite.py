@@ -1633,6 +1633,16 @@ def rnl_validate_m_blind(poly, q=None):
         return False
     return (max(poly) - min(poly)) >= q // 4
 
+
+def rnl_validate_pub(poly):
+    """The peer PUBLIC-VALUE guard (TODO #371): rnl_validate_m_blind's two tests
+    over Z_p, applied to a peer's C (Alice's public key, or C_B in Bob's
+    response).  An all-zero C makes s*C = 0 for every s, so K_raw is a constant
+    and the session key depends only on the two public nonces.  Honest values
+    clear both bounds by a wide margin (>= 1022 of 1024 non-zero, range >= 4056
+    over 300 genuine keys and responses)."""
+    return rnl_validate_m_blind(poly, RNLP)
+
 def rnl_contributory_kdf(k_raw_int, n_bits, n_a, n_b):
     """Derive the HKEX-RNL session key: HFSCX-256(K_raw || n_A || n_B).
 
