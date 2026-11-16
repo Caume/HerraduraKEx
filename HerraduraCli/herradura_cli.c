@@ -40,6 +40,22 @@ static void die_der_trailing(const char *label, long trail)
     fprintf(stderr, "malformed PEM '%s': %ld bytes after the DER SEQUENCE\n", label, trail);
     exit(1);
 }
+/* TODO #373: a SEQUENCE's lengths and signs have one encoding each.  Fills
+ * ew / lz (see der_seq_scan) for the field checks. */
+static void der_scan_or_die(const char *label, const uint8_t *der, size_t len,
+                            size_t *ew, unsigned char *lz)
+{
+    int bad = 0, rc = der_seq_scan(der, len, ew, lz, 16, &bad);
+    if (rc == 1)
+        fprintf(stderr, "malformed PEM '%s': DER length not in its shortest form\n", label);
+    else if (rc == 2)
+        fprintf(stderr, "malformed PEM '%s': field %d is a negative INTEGER\n", label, bad);
+    else if (rc == 3)
+        fprintf(stderr, "malformed PEM '%s': field %d is an empty INTEGER\n", label, bad);
+    else
+        return;
+    exit(1);
+}
 /* The same rule for a raw-body PEM (ZKP-NL, ZKP-RNL, HCRED): its body ends at
  * its last field. */
 static void die_raw_trailing(const char *label, size_t extra)
@@ -588,7 +604,8 @@ static void encrypt_pem_text_to_file(const char *pem_text, const char *passphras
  * tampered envelope -- never returns unverified bytes. */
 static void check_der_items(const char *label, int n_items);   /* TODO #367 */
 static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
-                           const size_t *vlens);                 /* TODO #372 */
+                           const size_t *vlens, const size_t *ew,
+                           const unsigned char *lz);             /* TODO #372, #373 */
 
 static char *decrypt_pem_file(const char *in_path, const char *passphrase)
 {
@@ -597,15 +614,17 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     /* Room for more than six, so a seventh item is SEEN and refused rather
      * than silently dropped by der_parse_seq's max_items cap (TODO #367). */
     const uint8_t *vals[16];
-    size_t vlens[16];
+    size_t vlens[16], ew[16];
+    unsigned char lz[16];
     int n_out = 0;
     long trail = der_seq_trailing(body, blen);
     if (trail > 0)                                   /* TODO #372 */
         die_der_trailing(PEM_ENC_PRIV, trail);
+    der_scan_or_die(PEM_ENC_PRIV, body, blen, ew, lz);   /* TODO #373 */
     if (der_parse_seq(body, blen, vals, vlens, 16, &n_out) != 0)
         die("decrypt: malformed ENCRYPTED PRIVATE KEY envelope");
     check_der_items(PEM_ENC_PRIV, n_out);
-    check_der_caps(PEM_ENC_PRIV, n_out, vals, vlens);
+    check_der_caps(PEM_ENC_PRIV, n_out, vals, vlens, ew, lz);
     /* The salt, nonce, ciphertext and tag are FIXED-WIDTH byte strings carried
      * as DER INTEGERs, and a DER INTEGER has no leading zero to carry: a field
      * whose first byte is 0x00 encodes one significant byte SHORT, and
@@ -693,6 +712,8 @@ typedef struct {
     size_t   der_len;
     const uint8_t *vals[16];
     size_t   vlens[16];
+    size_t   ew[16];      /* TODO #373: encoded width of each item */
+    unsigned char lz[16]; /* TODO #373: item carries an unneeded 0x00 */
     int      n_items;
 } PemKey;
 
@@ -761,15 +782,13 @@ static void check_der_items(const char *label, int n_items)
 /* TODO #372: no field wider than its writer pads it to (the generated
  * PEM_DER_FIELD_CAPS table, hkx_der_field_caps); same text in all four CLIs. */
 static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
-                           const size_t *vlens)
+                           const size_t *vlens, const size_t *ew,
+                           const unsigned char *lz)
 {
-    int bad = 0;
-    long long cap = 0;
-    if (!hkx_der_field_caps(label, n, vals, vlens, &bad, &cap)) return;
-    size_t got = vlens[bad];
-    const uint8_t *v = vals[bad];
-    while (got > 0 && *v == 0) { v++; got--; }
-    fprintf(stderr, "%s: field %d is %zu bytes (expected at most %lld)\n", label, bad, got, cap);
+    /* TODO #372 widths, #373 encodings and value rules: one generated check. */
+    char msg[256];
+    if (!hkx_der_field_check(label, n, vals, vlens, ew, lz, msg, sizeof msg)) return;
+    fprintf(stderr, "%s\n", msg);
     exit(1);
 }
 
@@ -864,11 +883,12 @@ static void pem_key_load(PemKey *k, const char *path)
     long trail = der_seq_trailing(k->der, k->der_len);
     if (trail > 0)                                   /* TODO #372 */
         die_der_trailing(k->label, trail);
+    der_scan_or_die(k->label, k->der, k->der_len, k->ew, k->lz);   /* TODO #373 */
     if (der_parse_seq(k->der, k->der_len, k->vals, k->vlens, 16, &k->n_items) != 0)
         dief("cannot parse DER from: %s", path);
     check_der_items(k->label, k->n_items);
     check_der_width(k);
-    check_der_caps(k->label, k->n_items, k->vals, k->vlens);
+    check_der_caps(k->label, k->n_items, k->vals, k->vlens, k->ew, k->lz);
 }
 static void pem_key_free(PemKey *k) { free(k->der); k->der = NULL; }
 

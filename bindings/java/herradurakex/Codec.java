@@ -272,6 +272,7 @@ public final class Codec {
                 + trail + " bytes after the DER SEQUENCE");
         }
         List<BigInteger> ints = derParseSeq(b.der);
+        DerEnc enc = derSeqScan(b.der, b.label);              // TODO #373
         for (String[] r : KeyLabelTable.DER_ITEMS) {
             if (!r[0].equals(b.label)) continue;
             int lo = Integer.parseInt(r[1]), hi = Integer.parseInt(r[2]);
@@ -281,14 +282,62 @@ public final class Codec {
             }
             break;
         }
-        // TODO #372: no field wider than its writer pads it to.
-        long[] bad = KeyLabelTable.fieldCaps(b.label, ints);
-        if (bad != null) {
-            int i = (int) bad[0];
-            throw new IllegalArgumentException(b.label + ": field " + i + " is "
-                + ((ints.get(i).bitLength() + 7) / 8) + " bytes (expected at most " + bad[1] + ")");
-        }
+        // TODO #372: no field wider than its writer pads it to; #373: each
+        // field encoded the one way its writer does, and its value in range.
+        String msg = KeyLabelTable.fieldCheck(b.label, ints, enc.width, enc.lead);
+        if (msg != null) throw new IllegalArgumentException(msg);
         return ints;
+    }
+
+    /** TODO #373: how each INTEGER is ENCODED, which derParseSeq forgets:
+     *  width[i] is its encoded width (content length less a 0x00 the set top
+     *  bit needs), lead[i] 1 when it starts with a 0x00 the sign does not
+     *  need, 2 when with a sign byte. */
+    static final class DerEnc {
+        final int[] width;
+        final int[] lead;
+        DerEnc(int[] w, int[] z) { width = w; lead = z; }
+    }
+
+    private static boolean derLenMinimal(byte[] d, int off) {
+        int b = d[off] & 0xff;
+        if (b < 0x80) return true;
+        int nb = b & 0x7f;
+        if (nb == 0 || off + nb >= d.length || d[off + 1] == 0) return false;
+        return nb > 1 || (d[off + 1] & 0xff) >= 0x80;
+    }
+
+    /** The encodings of a SEQUENCE derParseSeq has accepted.  Throws, in the
+     *  text every CLI prints, on a length not in its shortest form or a
+     *  negative or empty INTEGER: a SEQUENCE has one encoding of its lengths
+     *  and signs (TODO #373). */
+    static DerEnc derSeqScan(byte[] der, String label) {
+        String where = "malformed PEM '" + label + "': ";
+        if (!derLenMinimal(der, 1)) throw new IllegalArgumentException(where + "DER length not in its shortest form");
+        Len l = derDecLen(der, 1);
+        int offset = 1 + l.consumed, end = offset + l.length;
+        List<int[]> items = new ArrayList<>();
+        while (offset < end) {
+            offset++;
+            if (!derLenMinimal(der, offset)) {
+                throw new IllegalArgumentException(where + "DER length not in its shortest form");
+            }
+            Len vl = derDecLen(der, offset);
+            offset += vl.consumed;
+            int n = items.size();
+            if (vl.length == 0) throw new IllegalArgumentException(where + "field " + n + " is an empty INTEGER");
+            int c0 = der[offset] & 0xff;
+            if ((c0 & 0x80) != 0) throw new IllegalArgumentException(where + "field " + n + " is a negative INTEGER");
+            int c1 = vl.length > 1 ? der[offset + 1] & 0xff : 0;
+            boolean sign = vl.length > 1 && c0 == 0 && (c1 & 0x80) != 0;
+            boolean lz = vl.length > 1 && c0 == 0 && (c1 & 0x80) == 0;
+            items.add(new int[]{vl.length - (sign ? 1 : 0), sign ? 2 : lz ? 1 : 0});
+            offset += vl.length;
+        }
+        int[] w = new int[items.size()];
+        int[] z = new int[items.size()];
+        for (int i = 0; i < w.length; i++) { w[i] = items.get(i)[0]; z[i] = items.get(i)[1]; }
+        return new DerEnc(w, z);
     }
 
     /** A raw-body PEM (ZKP-NL, ZKP-RNL, HCRED) ends at its last field

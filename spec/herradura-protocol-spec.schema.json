@@ -297,10 +297,10 @@
     },
     "pem_der_field_caps": {
       "type": "array",
-      "description": "How wide each field of each DER-SEQUENCE PEM label may be, in significant bytes (TODO #372). One row per (label, item count), optionally narrowed by `when`, a test on field 0 that separates two layouts with the same count. A cap is an integer expression over decimal constants and fK, the value of field K; every field an expression reads has a constant cap of at most 6 bytes and is checked first. Curated in spec/generate_spec.py's PEM_DER_FIELD_CAPS and emitted beside pem_der_items into all four CLIs, each of which checks it in its PEM-to-integers loader.",
+      "description": "How wide each field of each DER-SEQUENCE PEM label may be, in significant bytes (TODO #372), how it is encoded and what values it may hold (TODO #373). One row per (label, item count), optionally narrowed by `when`, a test on field 0 that separates two layouts with the same count. A cap is an integer expression over decimal constants and fK, the value of field K; every field an expression reads has a constant cap of at most 6 bytes and is checked first. Curated in spec/generate_spec.py's PEM_DER_FIELD_CAPS and emitted beside pem_der_items into all four CLIs, each of which checks it in its PEM-to-integers loader.",
       "items": {
         "type": "object",
-        "required": ["label", "min_items", "max_items", "when", "caps"],
+        "required": ["label", "min_items", "max_items", "when", "caps", "rules"],
         "additionalProperties": false,
         "properties": {
           "label": {"type": "string"},
@@ -311,11 +311,32 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["field", "cap"],
+              "required": ["field", "cap", "exact"],
               "additionalProperties": false,
               "properties": {
                 "field": {"type": "integer", "minimum": 0},
-                "cap": {"type": "string"}
+                "cap": {"type": "string"},
+                "exact": {"type": "boolean", "description": "true: a fixed-width field, encoded in exactly `cap` bytes (plus a needed sign byte); false: a scalar or minimal value, encoded with no leading zero the sign does not need (TODO #373)."}
+              }
+            }
+          },
+          "rules": {
+            "type": "array",
+            "description": "Value rules run once the widths hold (TODO #373): coef_below / coef_cbd (width, count, bound), le_bits / bits (r), support (d, r), le_poly_of (support, d, r), equals (value). count, d, r and value are cap expressions.",
+            "items": {
+              "type": "object",
+              "required": ["kind", "field"],
+              "additionalProperties": false,
+              "properties": {
+                "kind": {"enum": ["coef_below", "coef_cbd", "le_bits", "bits", "support", "le_poly_of", "equals"]},
+                "field": {"type": "integer", "minimum": 0},
+                "width": {"type": "integer", "minimum": 1},
+                "count": {"type": "string"},
+                "bound": {"type": "integer", "minimum": 1},
+                "r": {"type": "string"},
+                "d": {"type": "string"},
+                "support": {"type": "integer", "minimum": 0},
+                "value": {"type": "string"}
               }
             }
           }

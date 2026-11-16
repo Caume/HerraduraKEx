@@ -97,10 +97,52 @@ def der_seq(*items: bytes) -> bytes:
     return b'\x30' + _encode_length(len(body)) + body
 
 
-# Set by HerraduraCli/herradura.py to its generated field-width check (TODO
-# #372), so the decoders here hold each field to the same caps as the CLI's own
-# loader.  None when codec is used on its own.
+# Set by HerraduraCli/herradura.py to its generated field check (TODO #372
+# widths, #373 encodings and value rules), so the decoders here hold each
+# field to the same rules as the CLI's own loader.  Called as
+# FIELD_CAPS_CHECK(label, ints, enc), enc from der_scan.  None when codec is
+# used on its own.
 FIELD_CAPS_CHECK = None
+
+
+def _der_len_minimal(data: bytes, offset: int) -> bool:
+    b = data[offset]
+    if b < 0x80:
+        return True
+    nb = b & 0x7f
+    if nb == 0 or offset + nb >= len(data) or data[offset + 1] == 0:
+        return False
+    return nb > 1 or data[offset + 1] >= 0x80
+
+
+def der_scan(data: bytes, label: str) -> list:
+    """TODO #373: how each INTEGER of a DER SEQUENCE that der_parse_seq has
+    accepted is ENCODED, which its sign-byte strip forgets: one (encoded width,
+    lead) pair per item -- the content length less a 0x00 the set top bit
+    needs, and lead 1 when it starts with a 0x00 the sign does not need, 2
+    when with a sign byte.
+    Raises ValueError, in the text every CLI prints, on a length not in its
+    shortest form or a negative or empty INTEGER: a SEQUENCE has one encoding
+    of its lengths and signs."""
+    where = f"malformed PEM '{label}'"
+    if not _der_len_minimal(data, 1):
+        raise ValueError(f"{where}: DER length not in its shortest form")
+    length, offset = _read_length(data, 1)
+    end, enc = offset + length, []
+    while offset < end:
+        offset += 1
+        if not _der_len_minimal(data, offset):
+            raise ValueError(f"{where}: DER length not in its shortest form")
+        vlen, offset = _read_length(data, offset)
+        c = data[offset:offset + vlen]
+        if not c:
+            raise ValueError(f"{where}: field {len(enc)} is an empty INTEGER")
+        if c[0] & 0x80:
+            raise ValueError(f"{where}: field {len(enc)} is a negative INTEGER")
+        sign = len(c) > 1 and c[0] == 0 and c[1] & 0x80
+        enc.append((len(c) - (1 if sign else 0), 2 if sign else 1 if len(c) > 1 and c[0] == 0 else 0))
+        offset += vlen
+    return enc
 
 
 def _der_count(label: str, data: bytes, want: int, gf_idx: int = None) -> list:
@@ -110,10 +152,11 @@ def _der_count(label: str, data: bytes, want: int, gf_idx: int = None) -> list:
     primitive polynomial (BITARRAY.md 4.6), and every other field must then
     fit n bits."""
     ints = der_parse_seq(data, label)
+    enc = der_scan(data, label)            # TODO #373
     if len(ints) != want:
         raise ValueError(f"malformed PEM '{label}': {len(ints)} DER items, expected {want}")
-    if FIELD_CAPS_CHECK is not None:       # TODO #372: the CLI's generated caps
-        FIELD_CAPS_CHECK(label, ints)
+    if FIELD_CAPS_CHECK is not None:       # TODO #372, #373: the CLI's generated check
+        FIELD_CAPS_CHECK(label, ints, enc)
     if gf_idx is not None:
         n = ints[gf_idx]
         if n not in (32, 64, 128, 256):

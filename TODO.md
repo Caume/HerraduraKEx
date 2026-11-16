@@ -737,29 +737,3 @@ unless `HKX_ALLOW_SKIP=1`.  The Java scripts need a "javac absent" branch in the
 if it has none.  Show the guard firing (negative control) for one script of each kind.
 
 Status: **OPEN**
-
----
-
----
-
-### #373: DER INTEGER padding and in-cap values that some CLIs accept
-
-Split from #372.  A parity and strictness question; neither is a wrong answer.
-
-  * **Padding.**  #372's caps count SIGNIFICANT bytes, because every writer pads a
-    fixed-width field with leading zeros (`der_int(v, nbytes)`) and C's reader strips
-    only one sign byte.  So a field re-encoded shorter, or with extra leading zero bytes,
-    is still accepted: one more encoding of the same artifact.  Pinning each field's
-    content length to the writer's width would close it, but #280 found C reading one
-    envelope in 64 one byte short; measure every writer first.
-  * **Values inside the cap.**  A value within its field's width but outside its range
-    is accepted by all four: an HKEX-RNL private or public polynomial with a coefficient
-    of q or more, a QC-MDPC private support or public key holding 2^4096+1 (513 bytes,
-    under the 1541-byte cap), the hybrid response's syndrome.  These are the 8 fields
-    #372's probe still reports at 2^4096+1.
-
-**Work.**  Per field, decide refuse (with a coefficient-range or exact-length check) or
-document; an accept-control and a negative control for each, all four CLIs.  Changes
-what an existing `--algo` accepts (MAJOR).
-
-Status: **OPEN**

@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [15.0.0] - 2026-11-12
 
-**MAJOR: security fixes in six parts.** All six change what an existing `--algo`
+**MAJOR: security fixes in seven parts.** All seven change what an existing `--algo`
 produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections
 30, 31, 32, 33 and 34.
 
@@ -261,9 +261,9 @@ produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md se
   bytes: the HKEX-RNL key polynomials (4096 bytes), the QC-MDPC keys, ciphertext and
   the hybrid syndrome (1541). `test_der_items_matrix.sh`'s unread-field NOTEs fall from
   13 to 0.
-- **Not changed (TODO #373):** a field encoded with extra leading zero bytes, or
-  shorter than its writer's width, is still accepted, because the caps count significant
-  bytes. A value inside its cap but outside its range is also accepted, such as a
+- **Left for TODO #373 (below, same release):** a field encoded with extra leading
+  zero bytes, or shorter than its writer's width, was still accepted, because the caps
+  count significant bytes. So was a value inside its cap but outside its range, such as a
   polynomial coefficient of q or more.
 - **CI.** The DFR guard had been failing `native-interop` since #366. The three
   malformed-artifact matrices decapsulate `hpke-stern-kem` without `lib_dfr.sh`, so the
@@ -281,6 +281,113 @@ produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md se
     `.hkx` abort and the Go panic.
   - The DER matrix's fixtures and templates move to `CliTest/lib_der_fixtures.sh`,
     which both scripts source.
+
+### TODO #373 — one encoding per field, and values in range
+
+- **The finding, measured before any change.** The scratchpad prototype generated every
+  DER artifact with each of the four CLIs and classified each field by how it was written.
+  Every writer agrees, in three kinds:
+  - **Fixed-width fields**, padded to exactly their width W with leading zeros, plus a
+    sign byte when the top bit is set. These are keys, nonces, seeds, polynomials,
+    ciphertexts and tags.
+  - **Scalars**, written as minimal DER: n, rounds, counts, lengths, indices and format
+    tags.
+  - **Three minimal values with a maximum width:** the session key, and K in the
+    HKEX-RNL and hybrid responses.
+
+  Sampling cannot see a 1-in-256 leading zero, so every write site in the four CLIs was
+  also read. That is how the three minimal values were found: C's response writer strips
+  K's leading zeros, and Python, Go and Java size K from its bit length. Every reader
+  accepted any other encoding of all three kinds. All four also accepted DER lengths in
+  long form when the short form fits (`81 21` for `21`, `82 00 27` for a SEQUENCE).
+- **One writer bug.** Go's plain HKEX-RNL response wrote the hint length (field 4) as n.
+  C, Python, Java and Go's own hybrid writer all write n/2, the coefficients the hint
+  covers. Python bounded the field by n to stay compatible. Go now writes n/2.
+- **Out-of-range values, probed in all four CLIs.** For deterministic operations the
+  outputs were compared:
+  - An HKEX-RNL private coefficient of 2^32−1 was reduced mod q by C, Go and Python, but
+    Java read it as −1 and derived a different session key. Coefficients of q or q+1
+    were reduced mod q by all four.
+  - A response's C_B coefficient of p or more was masked to 12 bits by all four, so
+    2^16−1 acted as p−1. A public key's C or m_blind out of range was accepted everywhere.
+  - A QC-MDPC syndrome with a bit at or above r: C refused it with an internal error, and
+    Go decapsulated a different key from Python and Java. A KEM public h with such a bit
+    was accepted by all but C. The hybrid response's syndrome bits above r were ignored.
+  - A KEM private key's h0 and h1 were ignored by `dec` in all four, so they were freely
+    rewritable, like HPKS's e before #372. Every writer sets them to the polynomials of the
+    two supports.
+  - A support index of 0xffff panicked Go and failed Python with "negative shift count".
+    C and Java decapsulated two different keys from it. An index of r, or a repeated
+    index, made C disagree with the other three.
+- **Encoding, from the same table.** In `PEM_DER_FIELD_CAPS` a cap written `=E` marks a
+  fixed-width field. Its content must be exactly E bytes, or E+1 when the extra byte is a
+  needed sign byte. Every other field must be minimal. Each parser gains a scan that keeps
+  what its sign-byte strip forgets: each item's encoded width, and whether it starts with
+  a 0x00 or a sign byte. The scans are `der_seq_scan` in C, `DerSeqScan` in Go,
+  `codec.der_scan` in Python and `Codec.derSeqScan` in Java. The scan also refuses a
+  length not in its shortest form, and a negative or empty INTEGER. A field of E bytes
+  whose leading 0x00 reads as a sign byte is the same bytes as the padded form, and is
+  accepted. Messages:
+  "`<label>: field <i> is encoded in <k> bytes (expected exactly <w>)`",
+  "`<label>: field <i> is encoded with a leading zero byte (expected minimal)`",
+  "`malformed PEM '<label>': DER length not in its shortest form`" and
+  "`malformed PEM '<label>': field <i> is a negative INTEGER`" (or "an empty INTEGER").
+- **Value rules, from the same table.** A row may list rules of seven kinds:
+  `coef_below`, `coef_cbd`, `le_bits`, `bits`, `support`, `le_poly_of` and `equals`. One
+  helper per kind is emitted into each CLI's generated region, so the four cannot
+  diverge. The rules:
+  - **HKEX-RNL coefficients:** s in {0, 1, q−1}, the CBD(1) support; m_blind below q;
+    C and C_B below p.
+  - **Response hint length:** exactly n/2.
+  - **QC-MDPC bits:** the KEM public h and ciphertext syndrome have no bit at or above
+    r, and nor does the hybrid response's syndrome.
+  - **QC-MDPC supports:** each index below r, no two equal, in any order. C writes them
+    in draw order and the other CLIs sort them, so requiring sorted order would refuse
+    every C-written KEM key.
+  - **QC-MDPC h0 and h1:** each equals the polynomial of its support.
+
+  Each rule's text names the field, the coefficient or index, and the bound.
+- **Rows.** The 3-item CIPHERTEXT row splits by layout: the KEM (`f2 == 12323`, E is a
+  32-byte hash), hske format 0 (`f0 == 0`) and HPKE. The response's hint width becomes
+  `=f3/8`, which no longer reads field 4.
+- **Measured after.** Every artifact the four writers produced in the prototype is
+  accepted: 937 of them, from 2–3 runs of each CLI over every label. The only refusals
+  are Go responses written before the hint-length fix. The pinned KAT PEM corpus reads
+  back unchanged (40/0).
+- **Tests.** `test_canonical_encoding_matrix.sh` gains part E, generated from the spec.
+  - Every exact field gets one extra leading 0x00, and a short form: its top byte zeroed
+    and the value written minimally.
+  - Every minimal field gets a 0x00 it does not need.
+  - Every cell gets a long-form SEQUENCE length and item length, and a negative and an
+    empty INTEGER.
+  - Every value rule is violated, with its exact text, beside a control just inside the
+    bound that must not trip it.
+  - A KEM private key with two support indices swapped must be accepted.
+
+  The matrix now runs 3421 checks with 0 failures, up from 1409. Against the
+  pre-#373 build it fails 1975, none of them an accept-control or a control inside a
+  bound. 1968 of those are part E's violations, every one it has (part E also runs 44
+  controls), and 1650 of the 1968 were simply accepted:
+  - every long-form length (408), and every needless leading zero on a minimal field
+    (284);
+  - 384 of 404 padded exact fields and 268 of 396 short ones;
+  - 133 of 204 negative and 112 of 204 empty INTEGERs, which the rest refused with other
+    text;
+  - 49 of 52 value-rule violations, every repeated KEM support index (8), and 4 of 8
+    wrong hint lengths.
+
+  The other 7 are #372 cap cells that the split CIPHERTEXT rows tightened: a 2-byte
+  hske format-0 tag, and a 33-byte KEM E under the old 1541-byte cap.
+
+  Two older tests crafted values the new checks now catch first, so each was moved
+  onto the check it is about. `test_peer_value_matrix.sh` writes its degenerate values
+  at each field's width from `pem_der_field_caps`, which is how a writer would. It used
+  to write them minimally, and now they reach the peer-value screen.
+  `test_passphrase_envelope.sh` accepts the field-3 refusal for a declared plaintext
+  length of 2^32−1: the ciphertext must now be exactly that long, which is refused
+  before any allocation.
+- **Not changed.** A QC-MDPC public h is checked for range only. Whether it is a usable
+  key is a peer-value question, like #371's screens.
 
 ## [14.0.4] - 2026-11-11
 

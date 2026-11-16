@@ -120,8 +120,23 @@ n = 256
 def load(fx):
     label, der = pem_unwrap(open(os.path.join(F, fx)).read())
     return label, der_parse_seq(der)
+import json, re
+ROWS = json.load(open(os.path.join(sys.argv[1], '..', 'spec', 'herradura-protocol-spec.json')))['pem_der_field_caps']
+def widths(label, f):
+    """TODO #373: each field's fixed width from pem_der_field_caps (None for a
+    minimal field), so a crafted value is encoded the way its writer encodes
+    it and reaches the peer-value screen rather than the encoding check."""
+    ev = lambda e: eval(re.sub(r'f(\d+)', lambda m: 'F[%s]' % m.group(1), e).replace('/', '//'),
+                        {'min': min, 'F': f})
+    for r in ROWS:
+        if r['label'] == label and r['min_items'] <= len(f) <= r['max_items'] and (not r['when'] or ev(r['when'])):
+            w = {c['field']: ev(c['cap']) for c in r['caps'] if c['exact']}
+            return [w.get(i) for i in range(len(f))]
+    return [None] * len(f)
 def write(name, label, items):
-    open(os.path.join(F, name), 'w').write(pem_wrap(label, der_seq(*[der_int(x) for x in items])))
+    ws = widths(label, items)
+    open(os.path.join(F, name), 'w').write(pem_wrap(label, der_seq(
+        *[der_int(x, w) if w else der_int(x) for x, w in zip(items, ws)])))
 GF = {'zero': 0, 'one': 1, 'two': 2, 'allones': (1 << n) - 1}
 for fx in ('hkex-gf_pub', 'hpke_pub', 'hpke-nl_pub', 'hpke-nl3_pub', 'hpks_pub', 'hpks-nl_pub',
            'ct_hpke', 'ct_hpke-nl', 'ct_hpke-nl3'):

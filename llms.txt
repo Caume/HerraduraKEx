@@ -166,7 +166,11 @@ declared width ("n is 128 (this CLI runs n = 256)").  Each artifact has one enco
 bytes after a DER SEQUENCE, a raw-body PEM's last field or an .hkx tag are refused, a
 field wider than its writer pads it to fails with "<label>: field <i> is <k> bytes
 (expected at most <cap>)" (pem_der_field_caps), and an HPKS signature whose stored
-challenge e is not the recomputed one is refused.
+challenge e is not the recomputed one is refused.  A fixed-width field must be exactly
+its width ("is encoded in <k> bytes (expected exactly <w>)"), any other field minimal
+("encoded with a leading zero byte"), every DER length in its shortest form, and
+HKEX-RNL coefficients and QC-MDPC values in range ("field <i> coefficient <j> is <v>
+(expected below <b>)", "has bits at or above r = <r>").
 
   genpkey --algo <ID> [--bits N] [--xmss-height N] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,

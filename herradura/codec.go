@@ -234,6 +234,90 @@ func DerSeqTrailing(der []byte) (int, error) {
 	return len(der) - 1 - consumed - bodyLen, nil
 }
 
+// DerEnc is how each INTEGER of a DER SEQUENCE is ENCODED (TODO #373), which
+// DerParseSeq's sign-byte strip forgets: Width[i] is item i's encoded width
+// (content length less a 0x00 the set top bit needs) and Lead[i] is 1 when it
+// starts with a 0x00 the sign does not need, 2 when with a sign byte.
+type DerEnc struct {
+	Width []int
+	Lead  []uint8
+}
+
+func derLenMinimal(buf []byte) bool {
+	if len(buf) == 0 || buf[0] < 0x80 {
+		return true
+	}
+	nb := int(buf[0] & 0x7f)
+	if nb == 0 || nb+1 > len(buf) || buf[1] == 0 {
+		return false
+	}
+	return nb > 1 || buf[1] >= 0x80
+}
+
+// DerSeqScan reports the first encoding fault of a DER SEQUENCE of INTEGERs
+// (TODO #373): kind 1 a length not in its shortest form, 2 item bad negative
+// (top bit set, no sign byte), 3 item bad empty; kind -1 a structure
+// DerParseSeq refuses anyway.  Every CLI refuses 1-3, so a SEQUENCE has one
+// encoding of its lengths and signs.
+func DerSeqScan(der []byte) (enc DerEnc, kind int, bad int) {
+	if len(der) == 0 || der[0] != 0x30 {
+		return enc, -1, 0
+	}
+	bodyLen, consumed, err := derDecLen(der[1:])
+	if err != nil {
+		return enc, -1, 0
+	}
+	if !derLenMinimal(der[1:]) {
+		return enc, 1, 0
+	}
+	offset := 1 + consumed
+	if bodyLen > len(der)-offset {
+		return enc, -1, 0
+	}
+	end := offset + bodyLen
+	for n := 0; offset < end; n++ {
+		if der[offset] != 0x02 {
+			return enc, -1, 0
+		}
+		offset++
+		if offset >= end {
+			return enc, -1, 0
+		}
+		vlen, c, err := derDecLen(der[offset:end])
+		if err != nil {
+			return enc, -1, 0
+		}
+		if !derLenMinimal(der[offset:end]) {
+			return enc, 1, 0
+		}
+		offset += c
+		if vlen > end-offset {
+			return enc, -1, 0
+		}
+		if vlen == 0 {
+			return enc, 3, n
+		}
+		if der[offset]&0x80 != 0 {
+			return enc, 2, n
+		}
+		sign := vlen > 1 && der[offset] == 0 && der[offset+1]&0x80 != 0
+		w := vlen
+		if sign {
+			w--
+		}
+		enc.Width = append(enc.Width, w)
+		var lead uint8
+		if sign {
+			lead = 2
+		} else if vlen > 1 && der[offset] == 0 {
+			lead = 1
+		}
+		enc.Lead = append(enc.Lead, lead)
+		offset += vlen
+	}
+	return enc, 0, 0
+}
+
 // DerParseSeq parses a DER SEQUENCE of INTEGERs.
 // Each returned slice points into der; leading 0x00 sign bytes are stripped
 // so callers receive the true unsigned big-endian bytes (matching Python

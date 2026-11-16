@@ -434,14 +434,14 @@ func decryptPEMFile(path, passphrase string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	items, err := derParseLabeled(lblEncPriv, body)
+	items, enc, err := derParseLabeled(lblEncPriv, body)
 	if err != nil {
 		return "", err
 	}
 	if err := checkDerItems(lblEncPriv, items); err != nil {   // TODO #367
 		return "", err
 	}
-	if err := checkDerCaps(lblEncPriv, items); err != nil {   // TODO #372
+	if err := checkDerCaps(lblEncPriv, items, enc); err != nil {   // TODO #372, #373
 		return "", err
 	}
 	salt, iterB, nonceB, ct, tag, ptLenB := items[0], items[1], items[2], items[3], items[4], items[5]
@@ -516,12 +516,12 @@ func readPEMInts(path string) (string, [][]byte, error) {
 		return "", nil, fmt.Errorf("%s is a passphrase-encrypted private key; decrypt it "+
 			"first with `pkey --decrypt --passphrase ... --in %s --out plain.pem`", path, path)
 	}
-	ints, err := derParseLabeled(label, der)
+	ints, enc, err := derParseLabeled(label, der)
 	if err == nil {
 		err = checkDerItems(label, ints)
 	}
 	if err == nil {
-		err = checkDerCaps(label, ints)
+		err = checkDerCaps(label, ints, enc)
 	}
 	return label, ints, err
 }
@@ -537,16 +537,16 @@ func rawEnd(label string, body []byte, off int) error {
 
 // checkDerCaps holds each field to the generated PEM_DER_FIELD_CAPS width
 // (TODO #372): no field wider than its writer pads it to.
-func checkDerCaps(label string, ints [][]byte) error {
-	bad, capB, hit := derFieldCaps(label, ints)
-	if !hit {
-		return nil
+// checkDerCaps runs the generated field check: #372's widths, #373's
+// encodings and value rules.
+func checkDerCaps(label string, ints [][]byte, enc DerEnc) error {
+	if len(enc.Width) != len(ints) {
+		return fmt.Errorf("malformed PEM '%s': cannot parse DER", label)
 	}
-	b := ints[bad]
-	for len(b) > 0 && b[0] == 0 {
-		b = b[1:]
+	if msg := derFieldCheck(label, ints, enc.Width, enc.Lead); msg != "" {
+		return errors.New(msg)
 	}
-	return fmt.Errorf("%s: field %d is %d bytes (expected at most %d)", label, bad, len(b), capB)
+	return nil
 }
 
 func hkxMin(a, b int64) int64 {
@@ -558,11 +558,22 @@ func hkxMin(a, b int64) int64 {
 
 // derParseLabeled is DerParseSeq with the PEM label in the trailing-data
 // message every CLI prints (TODO #372).
-func derParseLabeled(label string, der []byte) ([][]byte, error) {
+func derParseLabeled(label string, der []byte) ([][]byte, DerEnc, error) {
 	if t, err := DerSeqTrailing(der); err == nil && t > 0 {
-		return nil, fmt.Errorf("malformed PEM '%s': %d bytes after the DER SEQUENCE", label, t)
+		return nil, DerEnc{}, fmt.Errorf("malformed PEM '%s': %d bytes after the DER SEQUENCE", label, t)
 	}
-	return DerParseSeq(der)
+	// TODO #373: one encoding of the lengths and signs.
+	enc, kind, bad := DerSeqScan(der)
+	switch kind {
+	case 1:
+		return nil, enc, fmt.Errorf("malformed PEM '%s': DER length not in its shortest form", label)
+	case 2:
+		return nil, enc, fmt.Errorf("malformed PEM '%s': field %d is a negative INTEGER", label, bad)
+	case 3:
+		return nil, enc, fmt.Errorf("malformed PEM '%s': field %d is an empty INTEGER", label, bad)
+	}
+	ints, err := DerParseSeq(der)
+	return ints, enc, err
 }
 
 // checkDerItems holds a parsed DER SEQUENCE to the generated derItems table
@@ -836,12 +847,13 @@ func encodeRNLResponse(K_B *BitArray, C_B []int, hint []byte, n int, nB []byte) 
 		return "", err
 	}
 
-	// n and hint_len (= n, number of coefficients)
+	// n and hint_len: n/2, the coefficients the hint covers, as the other three
+	// CLIs and encodeHybridResponse write (this wrote n until TODO #373).
 	nDer, err := derIntSmall(n)
 	if err != nil {
 		return "", err
 	}
-	hlDer, err := derIntSmall(n)
+	hlDer, err := derIntSmall(n / 2)
 	if err != nil {
 		return "", err
 	}
@@ -2201,12 +2213,12 @@ func loadKey(path string) (*big.Int, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	ints, err := derParseLabeled(label, der)
+	ints, enc, err := derParseLabeled(label, der)
 	if err == nil {
 		err = checkDerItems(label, ints)
 	}
 	if err == nil {
-		err = checkDerCaps(label, ints)
+		err = checkDerCaps(label, ints, enc)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -5329,9 +5341,11 @@ var derItems = map[string][2]int{
 	"HERRADURA SIGNATURE": {4, 5},
 }
 
-// TODO #372: field width caps (significant bytes) per DER-SEQUENCE label.
-// Returns the first field wider than its cap, and that cap, or ok = false.
-func derFieldCaps(label string, v [][]byte) (bad int, capB int64, ok bool) {
+// TODO #372 / #373: per DER-SEQUENCE label, each field's width cap
+// (significant bytes), its encoding (exactly its width, or minimal) and the
+// value rules.  ew[k] is field k's encoded width, lz[k] 1 when it starts with
+// a 0x00 the sign does not need, 2 with a sign byte.  Returns the refusal, or "".
+func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 	n := len(v)
 	L := func(k int) int64 {
 		b := v[k]
@@ -5355,698 +5369,1368 @@ func derFieldCaps(label string, v [][]byte) (bad int, capB int64, ok bool) {
 	case "HERRADURA HKEX-GF PRIVATE KEY":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HKEX-GF PUBLIC KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS PRIVATE KEY":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS PUBLIC KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-NL PRIVATE KEY":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-NL PUBLIC KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKE PRIVATE KEY":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKE PUBLIC KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKE-NL PRIVATE KEY":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKE-NL PUBLIC KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKE-NL3 PRIVATE KEY":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKE-NL3 PUBLIC KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HKEX-RNL PRIVATE KEY":
 		if n >= 3 && n <= 4 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(32); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(F(2) * 4); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2) * 4); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if c := int64(F(2) * 4); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2) * 4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if e := hkxRuleCoef(label, 0, v[0], 4, int64(F(2)), 65537, true); e != "" {
+				return e
+			}
+			if e := hkxRuleCoef(label, 1, v[1], 4, int64(F(2)), 65537, false); e != "" {
+				return e
+			}
+			return ""
 		}
 	case "HERRADURA HKEX-RNL PUBLIC KEY":
 		if n >= 3 && n <= 4 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(32); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(F(2) * 2); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2) * 4); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if c := int64(F(2) * 2); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2) * 4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if e := hkxRuleCoef(label, 0, v[0], 2, int64(F(2)), 4096, false); e != "" {
+				return e
+			}
+			if e := hkxRuleCoef(label, 1, v[1], 4, int64(F(2)), 65537, false); e != "" {
+				return e
+			}
+			return ""
 		}
 	case "HERRADURA HKEX-RNL RESPONSE":
 		if n >= 5 && n <= 6 {
 			if c := int64(32); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(2); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(2); n > 4 && L(4) > c {
-				return 4, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
 			if c := int64(32); n > 5 && L(5) > c {
-				return 5, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 5, L(5), c)
 			}
 			if c := int64(F(3) * 2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64((2 * F(4) + 7)/8); n > 2 && L(2) > c {
-				return 2, c, true
+			if c := int64(F(3)/8); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			return 0, 0, false
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if c := int64(32); n > 5 && !(int64(ew[5]) == c || (lz[5] == 2 && int64(ew[5])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 5, ew[5], c)
+			}
+			if c := int64(F(3) * 2); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if e := hkxRuleCoef(label, 1, v[1], 2, int64(F(3)), 4096, false); e != "" {
+				return e
+			}
+			if e := hkxRuleEquals(label, 4, F(4), int64(F(3)/2)); e != "" {
+				return e
+			}
+			return ""
 		}
 	case "HERRADURA HYBRID-RNL-STERN RESPONSE":
 		if n >= 8 && n <= 8 {
 			if c := int64(32); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(2); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(2); n > 4 && L(4) > c {
-				return 4, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
 			if c := int64(32); n > 5 && L(5) > c {
-				return 5, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 5, L(5), c)
 			}
 			if c := int64(2); n > 7 && L(7) > c {
-				return 7, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 7, L(7), c)
 			}
 			if c := int64(F(3) * 2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64((2 * F(4) + 7)/8); n > 2 && L(2) > c {
-				return 2, c, true
+			if c := int64(F(3)/8); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64((F(7) + 7)/8); n > 6 && L(6) > c {
-				return 6, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 6, L(6), c)
 			}
-			return 0, 0, false
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if c := int64(32); n > 5 && !(int64(ew[5]) == c || (lz[5] == 2 && int64(ew[5])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 5, ew[5], c)
+			}
+			if n > 7 && lz[7] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 7)
+			}
+			if c := int64(F(3) * 2); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64((F(7) + 7)/8); n > 6 && !(int64(ew[6]) == c || (lz[6] == 2 && int64(ew[6])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 6, ew[6], c)
+			}
+			if e := hkxRuleCoef(label, 1, v[1], 2, int64(F(3)), 4096, false); e != "" {
+				return e
+			}
+			if e := hkxRuleEquals(label, 4, F(4), int64(F(3)/2)); e != "" {
+				return e
+			}
+			if e := hkxRuleBits(label, 6, v[6], int64(F(7)), false); e != "" {
+				return e
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-STERN PRIVATE KEY":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-STERN PUBLIC KEY":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKE-STERN PRIVATE KEY":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKE-STERN PUBLIC KEY":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKE-STERN-KEM PRIVATE KEY":
 		if n >= 6 && n <= 6 {
 			if c := int64(2); n > 4 && L(4) > c {
-				return 4, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
 			if c := int64(2); n > 5 && L(5) > c {
-				return 5, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 5, L(5), c)
 			}
 			if c := int64((F(4) + 7)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64((F(4) + 7)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(5) * 2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(5) * 2); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
-			return 0, 0, false
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if n > 5 && lz[5] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5)
+			}
+			if c := int64((F(4) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64((F(4) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(5) * 2); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64(F(5) * 2); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if e := hkxRuleSupport(label, 2, v[2], int64(F(5)), int64(F(4))); e != "" {
+				return e
+			}
+			if e := hkxRuleSupport(label, 3, v[3], int64(F(5)), int64(F(4))); e != "" {
+				return e
+			}
+			if e := hkxRuleLePolyOf(label, 0, v[0], 2, v[2], int64(F(5)), int64(F(4))); e != "" {
+				return e
+			}
+			if e := hkxRuleLePolyOf(label, 1, v[1], 3, v[3], int64(F(5)), int64(F(4))); e != "" {
+				return e
+			}
+			return ""
 		}
 	case "HERRADURA HPKE-STERN-KEM PUBLIC KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64((F(1) + 7)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64((F(1) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if e := hkxRuleBits(label, 0, v[0], int64(F(1)), true); e != "" {
+				return e
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-WOTS PRIVATE KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(32); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(4); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-WOTS PUBLIC KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1) * 32); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1) * 32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-WOTS SIGNATURE":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1) * 32); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1) * 32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-XMSS PRIVATE KEY":
 		if n >= 4 && n <= 4 {
 			if c := int64(32); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(1); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(4); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(32 * (1 << hkxMin(F(1), 32))); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
-			return 0, 0, false
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(32 * (1 << hkxMin(F(1), 32))); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-XMSS PUBLIC KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(32); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(1); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-XMSS SIGNATURE":
 		if n >= 5 && n <= 5 {
 			if c := int64(4); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(1); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(2); n > 4 && L(4) > c {
-				return 4, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
 			if c := int64(67 * (F(4)/8)); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(3) * 32); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			return 0, 0, false
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if c := int64(67 * (F(4)/8)); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3) * 32); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKS-RING SIGNATURE":
 		if n >= 4 && n <= 4 {
 			if c := int64(1); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
-			return 0, 0, false
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			return ""
 		}
 	case "HERRADURA OPRF PRIVATE KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA OPRF CLIENT STATE":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA OPRF EVALUATION":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA PAKE RECORD":
 		if n >= 3 && n <= 3 {
 			if c := int64(32); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(4); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(4); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			return 0, 0, false
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(4); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKST COMMITMENT":
 		if n >= 3 && n <= 3 {
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(2)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(2)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKST NONCE":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKST AGGREGATE":
 		if n >= 4 && n <= 4 {
 			if c := int64(2); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(F(3)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(3)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(3)/8); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			return 0, 0, false
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKST PARTIAL":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HPKST SIGNATURE":
 		if n >= 4 && n <= 4 {
 			if c := int64(2); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(F(3)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(3)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(3)/8); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			return 0, 0, false
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
 		}
 	case "HERRADURA HCRED CREDENTIAL":
 		if n >= 5 && n <= 5 {
 			if c := int64(2); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64((F(1) + 3)/4); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && L(4) > c {
-				return 4, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
-			return 0, 0, false
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
+			}
+			return ""
 		}
 	case "HERRADURA SESSION KEY":
 		if n >= 2 && n <= 2 {
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			return ""
 		}
 	case "HERRADURA DIGEST":
 		if n >= 1 && n <= 1 {
 			if c := int64(32); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			return 0, 0, false
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
 		}
 	case "HERRADURA HDRBG STATE":
 		if n >= 2 && n <= 2 {
 			if c := int64(32); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			return ""
 		}
 	case "HERRADURA ENCRYPTED PRIVATE KEY":
 		if n >= 6 && n <= 6 {
 			if c := int64(16); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(4); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(32); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(32); n > 4 && L(4) > c {
-				return 4, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
 			if c := int64(4); n > 5 && L(5) > c {
-				return 5, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 5, L(5), c)
 			}
 			if c := int64(F(5)); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
-			return 0, 0, false
+			if c := int64(16); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(32); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64(32); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
+			}
+			if n > 5 && lz[5] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5)
+			}
+			if c := int64(F(5)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			return ""
 		}
 	case "HERRADURA CIPHERTEXT":
-		if n >= 3 && n <= 3 {
+		if n >= 3 && n <= 3 && (F(2) == 12323) {
+			if c := int64(32); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
 			if c := int64(2); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64((F(2) + 7)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(32); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64((F(2) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if e := hkxRuleBits(label, 0, v[0], int64(F(2)), true); e != "" {
+				return e
+			}
+			return ""
+		}
+		if n >= 3 && n <= 3 && (F(0) == 0) {
+			if c := int64(1); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64((F(2) + 7)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			return 0, 0, false
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64((F(2) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64((F(2) + 7)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64((F(2) + 7)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64((F(2) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64((F(2) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
 		}
 		if n >= 4 && n <= 4 {
 			if c := int64(1); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(2); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64((F(3) + 7)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64((F(3) + 7)/8); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			return 0, 0, false
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if c := int64((F(3) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64((F(3) + 7)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
 		}
 		if n >= 5 && n <= 5 && (F(0) == 2) {
 			if c := int64(1); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(32); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(2); n > 4 && L(4) > c {
-				return 4, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
 			if c := int64((F(4) + 7)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64((F(4) + 7)/8); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			return 0, 0, false
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if c := int64((F(4) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64((F(4) + 7)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
 		}
 		if n >= 5 && n <= 5 {
 			if c := int64(2); n > 4 && L(4) > c {
-				return 4, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
 			if c := int64(F(4)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(4)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(4)/8); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(F(4)/8); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
-			return 0, 0, false
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if c := int64(F(4)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(4)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(4)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64(F(4)/8); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			return ""
 		}
 		if n >= 6 && n <= 6 {
 			if c := int64(1); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(6); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64(32); n > 4 && L(4) > c {
-				return 4, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
 			if c := int64(2); n > 5 && L(5) > c {
-				return 5, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 5, L(5), c)
 			}
 			if c := int64((F(5) + 7)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(2)); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
-			return 0, 0, false
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(32); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
+			}
+			if n > 5 && lz[5] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5)
+			}
+			if c := int64((F(5) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(2)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			return ""
 		}
 	case "HERRADURA SIGNATURE":
 		if n >= 4 && n <= 4 {
 			if c := int64(2); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(F(3)/8); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(F(3)/8); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(3)/8); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			return 0, 0, false
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
 		}
 		if n >= 5 && n <= 5 {
 			if c := int64(2); n > 0 && L(0) > c {
-				return 0, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(2); n > 1 && L(1) > c {
-				return 1, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
 			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && L(2) > c {
-				return 2, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64((F(1) + 3)/4); n > 3 && L(3) > c {
-				return 3, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && L(4) > c {
-				return 4, c, true
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
-			return 0, 0, false
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
+			}
+			return ""
 		}
 	}
-	return 0, 0, false
+	return ""
+}
+
+// TODO #373: the value rules.  Each returns the refusal, or "".  A rule reads
+// a fixed-width field, which the encoding check has already held to its exact
+// width; hkxPad reads it at that width (DerParseSeq drops one leading 0x00).
+func hkxPad(b []byte, w int64) []byte {
+	out := make([]byte, w)
+	if int64(len(b)) > w {
+		b = b[int64(len(b))-w:]
+	}
+	copy(out[w-int64(len(b)):], b)
+	return out
+}
+
+func hkxRuleCoef(label string, k int, x []byte, w int, cnt, bound int64, cbd bool) string {
+	b := hkxPad(x, int64(w)*cnt)
+	for j := int64(0); j < cnt; j++ {
+		var c int64
+		for i := 0; i < w; i++ {
+			c = c<<8 | int64(b[j*int64(w)+int64(i)])
+		}
+		if cbd && !(c == 0 || c == 1 || c == bound-1) {
+			return fmt.Sprintf("%s: field %d coefficient %d is %d (expected 0, 1 or %d)", label, k, j, c, bound-1)
+		}
+		if !cbd && c >= bound {
+			return fmt.Sprintf("%s: field %d coefficient %d is %d (expected below %d)", label, k, j, c, bound)
+		}
+	}
+	return ""
+}
+
+// le: an R-bit little-endian byte string (spare bits in the LAST byte);
+// otherwise a plain integer below 2^R (spare bits in the FIRST).
+func hkxRuleBits(label string, k int, x []byte, r int64, le bool) string {
+	w := (r + 7) / 8
+	i := int64(0)
+	if le {
+		i = w - 1
+	}
+	if w > 0 && r%8 != 0 && hkxPad(x, w)[i]>>(r%8) != 0 {
+		return fmt.Sprintf("%s: field %d has bits at or above r = %d", label, k, r)
+	}
+	return ""
+}
+
+func hkxRuleSupport(label string, k int, x []byte, d, r int64) string {
+	b := hkxPad(x, 2*d)
+	seen := make(map[int64]bool, d)
+	for j := int64(0); j < d; j++ {
+		idx := int64(b[2*j])<<8 | int64(b[2*j+1])
+		if idx >= r {
+			return fmt.Sprintf("%s: field %d index %d is %d (expected below r = %d)", label, k, j, idx, r)
+		}
+		if seen[idx] {
+			return fmt.Sprintf("%s: field %d repeats index %d", label, k, idx)
+		}
+		seen[idx] = true
+	}
+	return ""
+}
+
+func hkxRuleLePolyOf(label string, k int, x []byte, s int, sup []byte, d, r int64) string {
+	w := (r + 7) / 8
+	want := make([]byte, w)
+	b := hkxPad(sup, 2*d)
+	for j := int64(0); j < d; j++ {
+		idx := int64(b[2*j])<<8 | int64(b[2*j+1])
+		if idx < r {
+			want[idx>>3] |= 1 << uint(idx&7)
+		}
+	}
+	got := hkxPad(x, w)
+	for i := range want {
+		if got[i] != want[i] {
+			return fmt.Sprintf("%s: field %d is not the polynomial of field %d", label, k, s)
+		}
+	}
+	return ""
+}
+
+func hkxRuleEquals(label string, k int, x, want int64) string {
+	if x == want {
+		return ""
+	}
+	return fmt.Sprintf("%s: field %d is %d (expected %d)", label, k, x, want)
 }
 // END GENERATED key-label table
 

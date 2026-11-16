@@ -30,6 +30,26 @@
 #      must be matched by some cell, so a new layout without a fixture fails.
 #   D. HPKS: a signature whose stored e is not the recomputed one, and one whose
 #      n is not the public key's, are refused.
+#   E. TODO #373 -- one encoding per field and values in range.  The same rows
+#      say whether a field is fixed-width ("exact") or minimal:
+#        E1  an exact field one leading 0x00 longer, and one byte short (its top
+#            byte zeroed and the value written minimally):
+#                <label>: field <i> is encoded in <k> bytes (expected exactly <w>)
+#            a minimal field with a 0x00 it does not need:
+#                <label>: field <i> is encoded with a leading zero byte (expected minimal)
+#        E2  per cell, a SEQUENCE length and an item length in long form when the
+#            short form fits, a negative INTEGER and an empty one:
+#                malformed PEM '<label>': DER length not in its shortest form
+#                malformed PEM '<label>': field <i> is a negative INTEGER
+#                malformed PEM '<label>': field <i> is an empty INTEGER
+#        E3  every value rule a cell's row carries, violated (its exact text),
+#            with a control just inside the bound that must NOT trip the rule,
+#            and a KEM private key with two support indices swapped, which must
+#            be accepted (any order is the rule).
+#    Before #373 every CLI accepted all of E1 and E2, and the probe found Java
+#    reading an out-of-range HKEX-RNL coefficient as negative, Go decapsulating
+#    a different key from an over-wide syndrome, and Go panicking on a support
+#    index of 0xffff.
 #
 # Not a crash, not a timeout, and the exact text where one is given.
 # Claimed by ci.yml's cross-lang-compat job (all four CLIs built).
@@ -193,6 +213,110 @@ for i, line in enumerate(open(raw_f).read().splitlines()):
     d = os.path.join(V, "raw%d" % i); os.makedirs(d, exist_ok=True)
     open(os.path.join(d, "r1.pem"), "w").write(pem_wrap(plabel, body + b"\x00"))
 
+# ── E (TODO #373) ──
+#   V/<n>/e_<name>.pem and plan lines E|<n>|<name>|<want> (refused, exact text),
+#   N|<n>|<name>|<text that must not appear> (a control inside the bound) and
+#   A|<n>|<name>| (must be accepted).
+def ln_short(n):
+    return bytes([n]) if n < 128 else bytes([0x80 | ((n.bit_length() + 7) // 8)]) + n.to_bytes((n.bit_length() + 7) // 8, "big")
+def ln_long(n):        # one byte longer than the shortest form
+    if n < 128:
+        return bytes([0x81, n])
+    k = (n.bit_length() + 7) // 8
+    return bytes([0x80 | (k + 1), 0]) + n.to_bytes(k, "big")
+def content(raw):
+    _, off = _read_length(raw, 1)
+    return raw[off:]
+def iraw(c, long_len=False):
+    return b"\x02" + (ln_long if long_len else ln_short)(len(c)) + c
+def emit(d, i, kind, name, plabel, raws, want, seq_long=False):
+    body = b"".join(raws)
+    der = b"\x30" + (ln_long if seq_long else ln_short)(len(body)) + body
+    open(os.path.join(d, "e_%s.pem" % name), "w").write(pem_wrap(plabel, der))
+    print("%s|%d|%s|%s" % (kind, i, name, want))
+for i, line in enumerate(open(cells_f).read().splitlines()):
+    label, fx, _ = line.split("|", 2)
+    plabel, der = pem_unwrap(open(os.path.join(F, fx)).read())
+    d = os.path.join(V, str(i))
+    its = items(der)
+    f = [v for _, v in its]
+    r = match(plabel, f)
+    if r is None:
+        continue
+    raws0 = [raw for raw, _ in its]
+    cs = [content(x) for x in raws0]
+    # E1
+    for c in r["caps"]:
+        k = c["field"]
+        if k >= len(f):
+            continue
+        w = ev(c["cap"], f)
+        raws = list(raws0)
+        if c["exact"]:
+            raws[k] = iraw(b"\x00" + cs[k])
+            emit(d, i, "E", "pad%d" % k, plabel, raws,
+                 "%s: field %d is encoded in %d bytes (expected exactly %d)" % (plabel, k, len(cs[k]) + 1, w))
+            if w >= 2:
+                # Below 2^(8(w-1)-1), so the minimal encoding is at most w-1
+                # bytes with no sign byte: 00 8x.. at w bytes IS the padded form.
+                v = f[k] & ((1 << (8 * (w - 1) - 1)) - 1)
+                raws = list(raws0)
+                raws[k] = der_int(v)
+                emit(d, i, "E", "short%d" % k, plabel, raws,
+                     "%s: field %d is encoded in %d bytes (expected exactly %d)"
+                     % (plabel, k, max(1, (v.bit_length() + 7) // 8), w))
+        else:
+            raws[k] = iraw(b"\x00" + cs[k])
+            emit(d, i, "E", "lz%d" % k, plabel, raws,
+                 "%s: field %d is encoded with a leading zero byte (expected minimal)" % (plabel, k))
+    # E2
+    emit(d, i, "E", "seqlen", plabel, raws0, "malformed PEM '%s': DER length not in its shortest form" % plabel, True)
+    raws = list(raws0); raws[0] = iraw(cs[0], True)
+    emit(d, i, "E", "itemlen", plabel, raws, "malformed PEM '%s': DER length not in its shortest form" % plabel)
+    raws = list(raws0); raws[0] = iraw(b"\x80")
+    emit(d, i, "E", "neg", plabel, raws, "malformed PEM '%s': field 0 is a negative INTEGER" % plabel)
+    raws = list(raws0); raws[0] = b"\x02\x00"
+    emit(d, i, "E", "empty", plabel, raws, "malformed PEM '%s': field 0 is an empty INTEGER" % plabel)
+    # E3
+    widths = {c["field"]: ev(c["cap"], f) for c in r["caps"]}
+    for j, rule in enumerate(r["rules"]):
+        k, kind = rule["field"], rule["kind"]
+        W = widths[k]
+        def put(val, nm, kd, want, k=k):
+            raws = list(raws0); raws[k] = der_int(val, widths[k])
+            emit(d, i, kd, "%s%d" % (nm, j), plabel, raws, want)
+        if kind in ("coef_below", "coef_cbd"):
+            cw, B = rule["width"], rule["bound"]
+            sh = 8 * (W - cw)                       # coefficient 0 is the top cw bytes
+            base = f[k] & ((1 << sh) - 1)
+            bad, okv = (B, B - 1) if kind == "coef_below" else (2, B - 1)
+            tail = "(expected below %d)" % B if kind == "coef_below" else "(expected 0, 1 or %d)" % (B - 1)
+            put(base | (bad << sh), "v", "E", "%s: field %d coefficient 0 is %d %s" % (plabel, k, bad, tail))
+            put(base | (okv << sh), "c", "N", "%s: field %d coefficient" % (plabel, k))
+        elif kind in ("le_bits", "bits"):
+            R = ev(rule["r"], f)
+            def bit(x, b):
+                return x | (1 << (8 * (W - 1 - b // 8) + b % 8)) if kind == "le_bits" else x | (1 << b)
+            put(bit(f[k], R), "v", "E", "%s: field %d has bits at or above r = %d" % (plabel, k, R))
+            put(bit(f[k], R - 1), "c", "N", "%s: field %d has bits at or above" % (plabel, k))
+        elif kind == "support":
+            R, D = ev(rule["r"], f), ev(rule["d"], f)
+            b = bytearray(f[k].to_bytes(W, "big"))
+            v = bytearray(b); v[0:2] = R.to_bytes(2, "big")
+            put(int.from_bytes(v, "big"), "v", "E", "%s: field %d index 0 is %d (expected below r = %d)" % (plabel, k, R, R))
+            v = bytearray(b); v[2:4] = v[0:2]
+            put(int.from_bytes(v, "big"), "dup", "E", "%s: field %d repeats index %d" % (plabel, k, int.from_bytes(b[0:2], "big")))
+            v = bytearray(b); v[0:4] = b[2:4] + b[0:2]
+            put(int.from_bytes(v, "big"), "swap", "A", "")
+        elif kind == "le_poly_of":
+            put(f[k] ^ (1 << (8 * (W - 1))), "v", "E",
+                "%s: field %d is not the polynomial of field %d" % (plabel, k, rule["support"]))
+        elif kind == "equals":
+            want = ev(rule["value"], f)
+            raws = list(raws0); raws[k] = der_int(2 * want + 1 if want else 1)
+            emit(d, i, "E", "eq%d" % j, plabel, raws,
+                 "%s: field %d is %d (expected %d)" % (plabel, k, 2 * want + 1 if want else 1, want))
+
 raw = open(os.path.join(F, "f.hkx"), "rb").read()
 open(os.path.join(V, "f_t1.hkx"), "wb").write(raw + b"\x00")
 for pl in (2**64 - 32, 2**63, 2**32):
@@ -255,9 +379,31 @@ for lang in "${LANGS[@]}"; do
         refused "[$lang] $label ($fx): an INTEGER after the SEQUENCE" \
             "malformed PEM '$label': 3 bytes after the DER SEQUENCE"
         while IFS='|' read -r kind ci k want; do
-            [ "$kind" = CAP ] && [ "$ci" = "$i" ] || continue
-            run "$lang" "$fx" "$V/$i/c$k.pem" "$tpl"
-            refused "[$lang] $label ($fx): field $k one byte past its cap${want:+ (exact text)}" "$want"
+            [ "$ci" = "$i" ] || continue
+            case "$kind" in
+                CAP)
+                    run "$lang" "$fx" "$V/$i/c$k.pem" "$tpl"
+                    refused "[$lang] $label ($fx): field $k one byte past its cap${want:+ (exact text)}" "$want" ;;
+                E)  # TODO #373
+                    run "$lang" "$fx" "$V/$i/e_$k.pem" "$tpl"
+                    refused "[$lang] $label ($fx): $k (exact text)" "$want" ;;
+                N)
+                    run "$lang" "$fx" "$V/$i/e_$k.pem" "$tpl"
+                    if [ "$RC" -eq 124 ] || echo "$OUT" | grep -qE "$CRASH_RE"; then
+                        fail "[$lang] $label ($fx): $k (inside the bound) crashed or timed out"
+                    elif echo "$OUT" | grep -qF -- "$want"; then
+                        fail "[$lang] $label ($fx): $k is inside the bound but tripped the rule — $(echo "$OUT" | grep -F -- "$want" | head -1)"
+                    else
+                        pass "[$lang] $label ($fx): $k inside the bound does not trip the rule"
+                    fi ;;
+                A)
+                    run "$lang" "$fx" "$V/$i/e_$k.pem" "$tpl"
+                    if [ "$RC" -eq 0 ]; then
+                        pass "[$lang] $label ($fx): $k accepted"
+                    else
+                        fail "[$lang] $label ($fx): $k refused (exit $RC) — $(echo "$OUT" | grep -v -i warning | head -1)"
+                    fi ;;
+            esac
         done < "$PLAN"
         i=$((i+1))
     done

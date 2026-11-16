@@ -111,9 +111,11 @@ See [section 33](#33-degenerate-peer-values-and-unsupported-widths-are-refused-v
 
 The thirty-fourth ships in the same release too. Every CLI now refuses a second encoding
 of a valid artifact: bytes after a PEM's DER SEQUENCE, after a raw-body PEM's last field
-or after an `.hkx` file's tag; a field wider than its writer pads it to; and an HPKS
-signature whose stored challenge is not the recomputed one. Files the CLIs write are
-unaffected. See [section 34](#34-one-encoding-per-artifact-v1500).
+or after an `.hkx` file's tag; a field wider than its writer pads it to, or encoded at any
+other width than the one its writer uses; and an HPKS signature whose stored challenge is
+not the recomputed one. It also refuses HKEX-RNL and QC-MDPC values out of range. Files
+the CLIs write are unaffected, except an HKEX-RNL response from an older Go CLI. See
+[section 34](#34-one-encoding-per-artifact-v1500).
 
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
@@ -157,7 +159,7 @@ trusting any signature made by an earlier build.
 | [Every CLI checks a key's label against the operation](#31-every-cli-checks-a-keys-label-against-the-operation-v1500) | v15.0.0 | Any command given a key of the wrong type, e.g. an `hpke-nl` key for `hpke-nl3`, a Stern key for `hpks`, or a private key as `--pubkey` | **Pass the key the operation names** (`genpkey --algo <that algo>`). The GF keys stay interchangeable with each other, as do the two Stern keys |
 | [Malformed artifacts are refused, not crashed on](#32-malformed-artifacts-are-refused-not-crashed-on-v1500) | v15.0.0 | Only hand-built or damaged PEM files: a DER SEQUENCE with missing or extra items, or an out-of-range width / ring / size field | **Nothing**, for files the CLIs wrote. A damaged file now fails with "malformed PEM '<label>': <k> DER items, expected <n>" or a one-line bound error |
 | [Degenerate peer values and unsupported widths are refused](#33-degenerate-peer-values-and-unsupported-widths-are-refused-v1500) | v15.0.0 | A GF public key or ciphertext R of 0 or 1; an HKEX-RNL peer C or C_B that is zero, sparse or clustered; in C and Java, any key or artifact whose declared width is not 256 (or the compiled RNL n / QC-MDPC r) | **Nothing**, for files a CLI generated at its default width. For a 32/64/128-bit GF key, use the Go or Python CLI, which run those widths |
-| [One encoding per artifact](#34-one-encoding-per-artifact-v1500) | v15.0.0 | Bytes after a DER SEQUENCE, a raw-body PEM's last field or an `.hkx` tag; a DER field wider than its writer's width; an HPKS signature whose stored e or n does not match | **Nothing**, for files a CLI wrote. Regenerate any artifact a tool edited by hand |
+| [One encoding per artifact](#34-one-encoding-per-artifact-v1500) | v15.0.0 | Bytes after a DER SEQUENCE, a raw-body PEM's last field or an `.hkx` tag; a DER field wider than its writer's width or encoded another way; a non-shortest DER length; an HKEX-RNL or QC-MDPC value out of range; an HPKS signature whose stored e or n does not match | **Nothing**, for files a CLI wrote. Re-run an HKEX-RNL exchange whose response came from a pre-15.0.0 Go CLI; regenerate any artifact a tool edited by hand |
 
 ---
 
@@ -1865,7 +1867,20 @@ It ships inside 15.0.0 so there is one migration.
   over n/8, a polynomial over its coefficient count, a width field over 2 bytes, and so
   on, per `pem_der_field_caps` in `spec/herradura-protocol-spec.json`;
 - an HPKS or HPKS-NL signature whose stored challenge e is not the one the verifier
-  recomputes, or whose n differs from the public key's.
+  recomputes, or whose n differs from the public key's;
+- a DER field encoded at any width but its writer's (TODO #373). A fixed-width field
+  (a key, nonce, seed, polynomial, ciphertext or tag) must be exactly its width. A scalar
+  (n, rounds, a length or index) or a minimal value (a session key, a response's K) must
+  carry no 0x00 its sign does not need. A DER length must be in its shortest form, and an
+  INTEGER may not be negative or empty;
+- a value out of range (TODO #373):
+  - an HKEX-RNL private coefficient outside {0, 1, q−1}, an m_blind coefficient of q or
+    more, a C or C_B coefficient of p or more, or a response hint length other than n/2;
+  - a QC-MDPC public key, KEM ciphertext or hybrid syndrome with a bit at or above r;
+  - a KEM private key whose support repeats an index or holds one of r or more, or whose
+    h0 or h1 is not the polynomial of its support;
+- an HKEX-RNL response written by a Go CLI before 15.0.0, which wrote the hint length as
+  n where every other writer writes n/2 (TODO #373).
 
 **What changed (TODO #372, #368).** All of these were accepted before, by some or all
 CLIs. A trailing byte or a rewritten e left the signature, key or ciphertext working, so
@@ -1883,10 +1898,33 @@ HERRADURA HKEX-RNL PRIVATE KEY: field 3 is 33 bytes (expected at most 32)
 verify: signature challenge e is not the recomputed one (rejected: non-canonical signature)
 ```
 
+**What changed (TODO #373).** #372's caps counted significant bytes, so a field
+re-encoded with extra leading zeros, or shorter than its writer's width, still worked.
+Every writer in all four CLIs was measured and agrees on how each field is written;
+`pem_der_field_caps` now records it, and every loader holds each field to it. The same
+table carries value rules. Before them the CLIs disagreed on out-of-range values. Java
+read an HKEX-RNL coefficient of 2^32−1 as −1 and derived a different session key. Go
+decapsulated a different key from a syndrome with bits above r, and panicked on a KEM
+support index of 0xffff. A KEM private key's h0 and h1 were never read, so they could be
+rewritten freely. Now:
+
+```
+HERRADURA SIGNATURE: field 1 is encoded in 33 bytes (expected exactly 32)
+HERRADURA HKEX-GF PUBLIC KEY: field 1 is encoded with a leading zero byte (expected minimal)
+malformed PEM 'HERRADURA HPKE PUBLIC KEY': DER length not in its shortest form
+HERRADURA HKEX-RNL PRIVATE KEY: field 0 coefficient 0 is 2 (expected 0, 1 or 65536)
+HERRADURA HPKE-STERN-KEM PRIVATE KEY: field 2 repeats index 1503
+HERRADURA HKEX-RNL RESPONSE: field 4 is 1024 (expected 512)
+```
+
+The supports of a KEM private key may be in any order: the C CLI writes them in draw
+order, the others sorted, and both stay readable.
+
 **What to do.** Nothing, for files a CLI wrote: every writer already produces exactly
-these widths, and the pinned KAT PEM corpus reads back unchanged. A file that a tool
-appended to, re-encoded or edited is refused; regenerate it from its source. A field
-re-encoded with extra leading zero bytes is still accepted (TODO #373).
+these widths and encodings, and the pinned KAT PEM corpus reads back unchanged. A file
+that a tool appended to, re-encoded or edited is refused; regenerate it from its source.
+An HKEX-RNL response is single-use, so a refused one from an older Go CLI means re-running
+that exchange with a 15.0.0+ CLI on Bob's side.
 
 **Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface.
 It ships inside 15.0.0 so there is one migration.

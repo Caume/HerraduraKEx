@@ -177,7 +177,9 @@ hostile = c.der_seq(c.der_int(salt, 16), c.der_int(it), c.der_int(nonce, 32),
 open(tmp + "/hostile_ptlen.pem", "w").write(
     c.pem_wrap("HERRADURA ENCRYPTED PRIVATE KEY", hostile))
 # TODO #372: 2^62 is now refused by the generic field cap (4 bytes) before the
-# bound above is reached, so a length inside the cap keeps that bound tested.
+# bound above is reached.  A length inside the cap is refused too: since #373 the
+# ciphertext must be exactly the declared length, so that check names field 3
+# before any allocation (the #280 bound, now behind it, still guards C and Go).
 hostile32 = c.der_seq(c.der_int(salt, 16), c.der_int(it), c.der_int(nonce, 32),
                       c.der_int(ct, ptlen), c.der_int(tag, 32), c.der_int((1 << 32) - 1))
 open(tmp + "/hostile_ptlen32.pem", "w").write(
@@ -185,7 +187,7 @@ open(tmp + "/hostile_ptlen32.pem", "w").write(
 PYEOF
 for r in $LANGS; do
   for case in "2^62:hostile_ptlen:plaintext length|field 5 is 8 bytes \\(expected at most 4\\)" \
-              "2^32-1:hostile_ptlen32:plaintext length"; do
+              "2^32-1:hostile_ptlen32:plaintext length|field 3 is encoded in [0-9]+ bytes \\(expected exactly 4294967295\\)"; do
     what=${case%%:*}; rest=${case#*:}; f=${rest%%:*}; want=${rest#*:}
     out=$(timeout 30 ${CLI[$r]} pkey --decrypt --passphrase "$KAT_PHRASE" \
               --in "$TMP/$f.pem" --out "$TMP/never.pem" 2>&1) && rc=0 || rc=$?
