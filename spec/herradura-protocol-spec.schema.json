@@ -295,6 +295,33 @@
         }
       }
     },
+    "pem_der_field_caps": {
+      "type": "array",
+      "description": "How wide each field of each DER-SEQUENCE PEM label may be, in significant bytes (TODO #372). One row per (label, item count), optionally narrowed by `when`, a test on field 0 that separates two layouts with the same count. A cap is an integer expression over decimal constants and fK, the value of field K; every field an expression reads has a constant cap of at most 6 bytes and is checked first. Curated in spec/generate_spec.py's PEM_DER_FIELD_CAPS and emitted beside pem_der_items into all four CLIs, each of which checks it in its PEM-to-integers loader.",
+      "items": {
+        "type": "object",
+        "required": ["label", "min_items", "max_items", "when", "caps"],
+        "additionalProperties": false,
+        "properties": {
+          "label": {"type": "string"},
+          "min_items": {"type": "integer", "minimum": 1},
+          "max_items": {"type": "integer", "minimum": 1, "maximum": 16},
+          "when": {"type": "string"},
+          "caps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["field", "cap"],
+              "additionalProperties": false,
+              "properties": {
+                "field": {"type": "integer", "minimum": 0},
+                "cap": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    },
     "key_label_acceptance": {
       "type": "array",
       "description": "Which key PEM labels each (subcommand, --algo, key flag) accepts (TODO #366). Curated policy in spec/generate_spec.py, emitted into all four CLIs (HerraduraCli/key_label_table.h, bindings/java/herradurakex/KeyLabelTable.java, and generated regions of herradura_cli.go and herradura.py). A key whose label is not listed is refused with 'wrong key type'. Public-key slots accept PUBLIC labels only. `algo` is empty for subcommands without --algo; `pkey` reads any key and has no row.",

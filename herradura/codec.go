@@ -216,6 +216,24 @@ func DerSeqEnc(items ...[]byte) ([]byte, error) {
 	return out, nil
 }
 
+// DerSeqTrailing returns the number of bytes after the outer DER SEQUENCE in
+// der, or an error when der does not start with a well-formed SEQUENCE header
+// whose body fits.  Every CLI refuses a non-zero count (TODO #372), so an
+// artifact has exactly one encoding.
+func DerSeqTrailing(der []byte) (int, error) {
+	if len(der) == 0 || der[0] != 0x30 {
+		return 0, errors.New("DER: not a SEQUENCE")
+	}
+	bodyLen, consumed, err := derDecLen(der[1:])
+	if err != nil {
+		return 0, fmt.Errorf("DER SEQUENCE length: %w", err)
+	}
+	if bodyLen > len(der)-1-consumed {
+		return 0, errors.New("DER: SEQUENCE body truncated")
+	}
+	return len(der) - 1 - consumed - bodyLen, nil
+}
+
 // DerParseSeq parses a DER SEQUENCE of INTEGERs.
 // Each returned slice points into der; leading 0x00 sign bytes are stripped
 // so callers receive the true unsigned big-endian bytes (matching Python
@@ -232,6 +250,9 @@ func DerParseSeq(der []byte) ([][]byte, error) {
 	end := offset + bodyLen
 	if end > len(der) {
 		return nil, errors.New("DER: SEQUENCE body truncated")
+	}
+	if end < len(der) { // TODO #372: nothing may follow the SEQUENCE
+		return nil, fmt.Errorf("DER: %d bytes after the DER SEQUENCE", len(der)-end)
 	}
 
 	var out [][]byte

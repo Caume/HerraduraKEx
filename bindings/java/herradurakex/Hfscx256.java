@@ -257,11 +257,21 @@ public final class Hfscx256 {
                 String.format("decfile: unsupported algo byte 0x%02x", raw[4] & 0xff));
         }
         long plaintextLen = readBe64(raw, 5);
+        // Bound the wire length by the file before the int arithmetic: a value
+        // past 2^31 (or negative as a long) wrapped nBlocks and ctEnd, and the
+        // decoder then tried to allocate the whole claimed length (TODO #368).
+        if (plaintextLen < 0 || plaintextLen > raw.length) {
+            throw new IllegalArgumentException("decfile: file truncated (ciphertext blocks or auth tag missing)");
+        }
         byte[] nonceBytes = Arrays.copyOfRange(raw, 13, 13 + HKX_BLOCK);
         int nBlocks = (int) ((plaintextLen + HKX_BLOCK - 1) / HKX_BLOCK);
         int ctEnd = 45 + nBlocks * HKX_BLOCK;
         if (raw.length < ctEnd + 32) {
             throw new IllegalArgumentException("decfile: file truncated (ciphertext blocks or auth tag missing)");
+        }
+        // TODO #368: exactly one encoding per file -- nothing after the tag.
+        if (raw.length > ctEnd + 32) {
+            throw new IllegalArgumentException("decfile: " + (raw.length - ctEnd - 32) + " bytes after the auth tag");
         }
         byte[] ctBytes = Arrays.copyOfRange(raw, 45, ctEnd);
         byte[] tagStored = Arrays.copyOfRange(raw, ctEnd, ctEnd + 32);

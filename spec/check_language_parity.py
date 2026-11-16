@@ -3884,6 +3884,9 @@ def check_shared_numbering(errors, numbers):
 JAVA_NON_SUITE = {
     "HerraduraCli.java",   # CLI layer; C/Go/Python's equivalents live in HerraduraCli/
     "Codec.java",          # PEM/DER wire format; ditto (herradura_codec.h, codec.py)
+    "KeyLabelTable.java",  # generated CLI tables (key labels, DER items, field
+                           # caps -- TODO #366/#367/#372); C's key_label_table.h
+                           # and Go/Python's generated regions are CLI-layer too
     "SelfTest.java",       # test driver, counted by Part 1 instead
     "Bench.java",          # benchmark driver (TODO #333), counted by Part 1
                            # instead -- the Java counterpart of

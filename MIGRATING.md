@@ -109,6 +109,12 @@ and verified a forgeable signature under a public key of 1. The C and Java CLIs 
 refuse a key width they do not run, where C used to compute a wrong answer and exit 0.
 See [section 33](#33-degenerate-peer-values-and-unsupported-widths-are-refused-v1500).
 
+The thirty-fourth ships in the same release too. Every CLI now refuses a second encoding
+of a valid artifact: bytes after a PEM's DER SEQUENCE, after a raw-body PEM's last field
+or after an `.hkx` file's tag; a field wider than its writer pads it to; and an HPKS
+signature whose stored challenge is not the recomputed one. Files the CLIs write are
+unaffected. See [section 34](#34-one-encoding-per-artifact-v1500).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -151,6 +157,7 @@ trusting any signature made by an earlier build.
 | [Every CLI checks a key's label against the operation](#31-every-cli-checks-a-keys-label-against-the-operation-v1500) | v15.0.0 | Any command given a key of the wrong type, e.g. an `hpke-nl` key for `hpke-nl3`, a Stern key for `hpks`, or a private key as `--pubkey` | **Pass the key the operation names** (`genpkey --algo <that algo>`). The GF keys stay interchangeable with each other, as do the two Stern keys |
 | [Malformed artifacts are refused, not crashed on](#32-malformed-artifacts-are-refused-not-crashed-on-v1500) | v15.0.0 | Only hand-built or damaged PEM files: a DER SEQUENCE with missing or extra items, or an out-of-range width / ring / size field | **Nothing**, for files the CLIs wrote. A damaged file now fails with "malformed PEM '<label>': <k> DER items, expected <n>" or a one-line bound error |
 | [Degenerate peer values and unsupported widths are refused](#33-degenerate-peer-values-and-unsupported-widths-are-refused-v1500) | v15.0.0 | A GF public key or ciphertext R of 0 or 1; an HKEX-RNL peer C or C_B that is zero, sparse or clustered; in C and Java, any key or artifact whose declared width is not 256 (or the compiled RNL n / QC-MDPC r) | **Nothing**, for files a CLI generated at its default width. For a 32/64/128-bit GF key, use the Go or Python CLI, which run those widths |
+| [One encoding per artifact](#34-one-encoding-per-artifact-v1500) | v15.0.0 | Bytes after a DER SEQUENCE, a raw-body PEM's last field or an `.hkx` tag; a DER field wider than its writer's width; an HPKS signature whose stored e or n does not match | **Nothing**, for files a CLI wrote. Regenerate any artifact a tool edited by hand |
 
 ---
 
@@ -1843,6 +1850,43 @@ responses, at least 1022 of 1024 coefficients were non-zero and the range was at
 key is refused here has a broken key generator or is not an honest peer. For GF keys at
 32, 64 or 128 bits, use the Go or Python CLI; C and Java now say so instead of
 computing a wrong answer.
+
+**Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface.
+It ships inside 15.0.0 so there is one migration.
+
+## 34. One encoding per artifact (v15.0.0)
+
+**Who is affected:** nobody whose files came from a CLI unchanged. What now fails:
+
+- a PEM with bytes after its DER SEQUENCE (all 45 DER labels), or after the last field
+  of a raw-body PEM (ZKP-NL keys and proofs, ZKP-RNL proofs, HCRED keys and proofs);
+- an `.hkx` file with bytes after its auth tag, or a header length longer than the file;
+- a DER field wider than its writer pads it to: a nonce or seed over 32 bytes, a GF value
+  over n/8, a polynomial over its coefficient count, a width field over 2 bytes, and so
+  on, per `pem_der_field_caps` in `spec/herradura-protocol-spec.json`;
+- an HPKS or HPKS-NL signature whose stored challenge e is not the one the verifier
+  recomputes, or whose n differs from the public key's.
+
+**What changed (TODO #372, #368).** All of these were accepted before, by some or all
+CLIs. A trailing byte or a rewritten e left the signature, key or ciphertext working, so
+one artifact had unboundedly many byte-different encodings. Anything that deduplicates,
+caches or identifies artifacts by hash could be confused. An over-wide field was
+truncated by one CLI, ignored by another and refused by a third. The `.hkx` length check
+could also be bypassed: a crafted length sent the C CLI past its buffer and panicked Go.
+Now each is one line:
+
+```
+malformed PEM 'HERRADURA HPKE PUBLIC KEY': 1 bytes after the DER SEQUENCE
+malformed PEM 'HERRADURA ZKP-NL PROOF': 1 bytes after its last field
+decfile: 1 bytes after the auth tag
+HERRADURA HKEX-RNL PRIVATE KEY: field 3 is 33 bytes (expected at most 32)
+verify: signature challenge e is not the recomputed one (rejected: non-canonical signature)
+```
+
+**What to do.** Nothing, for files a CLI wrote: every writer already produces exactly
+these widths, and the pinned KAT PEM corpus reads back unchanged. A file that a tool
+appended to, re-encoded or edited is refused; regenerate it from its source. A field
+re-encoded with extra leading zero bytes is still accepted (TODO #373).
 
 **Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface.
 It ships inside 15.0.0 so there is one migration.

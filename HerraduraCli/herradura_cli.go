@@ -434,11 +434,14 @@ func decryptPEMFile(path, passphrase string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	items, err := DerParseSeq(body)
+	items, err := derParseLabeled(lblEncPriv, body)
 	if err != nil {
 		return "", err
 	}
 	if err := checkDerItems(lblEncPriv, items); err != nil {   // TODO #367
+		return "", err
+	}
+	if err := checkDerCaps(lblEncPriv, items); err != nil {   // TODO #372
 		return "", err
 	}
 	salt, iterB, nonceB, ct, tag, ptLenB := items[0], items[1], items[2], items[3], items[4], items[5]
@@ -513,11 +516,53 @@ func readPEMInts(path string) (string, [][]byte, error) {
 		return "", nil, fmt.Errorf("%s is a passphrase-encrypted private key; decrypt it "+
 			"first with `pkey --decrypt --passphrase ... --in %s --out plain.pem`", path, path)
 	}
-	ints, err := DerParseSeq(der)
+	ints, err := derParseLabeled(label, der)
 	if err == nil {
 		err = checkDerItems(label, ints)
 	}
+	if err == nil {
+		err = checkDerCaps(label, ints)
+	}
 	return label, ints, err
+}
+
+// rawEnd refuses bytes after a raw-body PEM's last field (TODO #372); the text
+// is the one every CLI prints.
+func rawEnd(label string, body []byte, off int) error {
+	if off < len(body) {
+		return fmt.Errorf("malformed PEM '%s': %d bytes after its last field", label, len(body)-off)
+	}
+	return nil
+}
+
+// checkDerCaps holds each field to the generated PEM_DER_FIELD_CAPS width
+// (TODO #372): no field wider than its writer pads it to.
+func checkDerCaps(label string, ints [][]byte) error {
+	bad, capB, hit := derFieldCaps(label, ints)
+	if !hit {
+		return nil
+	}
+	b := ints[bad]
+	for len(b) > 0 && b[0] == 0 {
+		b = b[1:]
+	}
+	return fmt.Errorf("%s: field %d is %d bytes (expected at most %d)", label, bad, len(b), capB)
+}
+
+func hkxMin(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// derParseLabeled is DerParseSeq with the PEM label in the trailing-data
+// message every CLI prints (TODO #372).
+func derParseLabeled(label string, der []byte) ([][]byte, error) {
+	if t, err := DerSeqTrailing(der); err == nil && t > 0 {
+		return nil, fmt.Errorf("malformed PEM '%s': %d bytes after the DER SEQUENCE", label, t)
+	}
+	return DerParseSeq(der)
 }
 
 // checkDerItems holds a parsed DER SEQUENCE to the generated derItems table
@@ -2156,9 +2201,12 @@ func loadKey(path string) (*big.Int, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	ints, err := DerParseSeq(der)
+	ints, err := derParseLabeled(label, der)
 	if err == nil {
 		err = checkDerItems(label, ints)
+	}
+	if err == nil {
+		err = checkDerCaps(label, ints)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -2698,6 +2746,7 @@ func decodeZkpRnlProof(body []byte) (w, c, z []int, n int, err error) {
 	for i := 0; i < n; i++ {
 		z[i] = int(int32(binary.BigEndian.Uint32(body[4+n*8+i*4:])))
 	}
+	err = rawEnd(lblZkpRnlProof, body, 4+n*12)
 	return
 }
 
@@ -2739,6 +2788,7 @@ func decodeZkpNlPriv(body []byte) (A, B, y uint64, n int, err error) {
 	for i := 0; i < nb; i++ {
 		y = (y << 8) | uint64(body[4+2*nb+i])
 	}
+	err = rawEnd(lblZkpNlPriv, body, 4+3*nb)
 	return
 }
 
@@ -2774,6 +2824,7 @@ func decodeZkpNlPub(body []byte) (B, y uint64, n int, err error) {
 	for i := 0; i < nb; i++ {
 		y = (y << 8) | uint64(body[4+nb+i])
 	}
+	err = rawEnd(lblZkpNlPub, body, 4+2*nb)
 	return
 }
 
@@ -2839,6 +2890,7 @@ func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
 		}
 		proof[j].ViewP2 = body[off : off+l2]; off += l2
 	}
+	err = rawEnd(lblZkpNlProof, body, off)
 	return
 }
 
@@ -2916,6 +2968,7 @@ func decodeZkpNlPpProof(body []byte) (proof []ZkpNlPpRound, n int, err error) {
 			copy(proof[j].Share2, body[off:off+nb]); off += nb
 		}
 	}
+	err = rawEnd(lblZkpNlPpSig, body, off)
 	return
 }
 
@@ -3059,6 +3112,10 @@ func decodeHcredPriv(body []byte) (sPoly, cPoly, mPoly []int, seedH *BitArray, s
 	// The layout is fixed, so the body length is EXACTLY what n implies.  A
 	// ">=" test only catches an n too LARGE; an n too small parses a prefix
 	// and succeeds, which is how a poked n=33 passed at n=256 (TODO #275).
+	if e := rawEnd(lblHcredPriv, body, 4+8*n+n/8+(n/2+7)/8); e != nil { // TODO #372
+		err = e
+		return
+	}
 	if len(body) != 4+8*n+n/8+(n/2+7)/8 {
 		return nil, nil, nil, nil, nil, 0, fmt.Errorf("HCRED private key: body length does not match n=%d", n)
 	}
@@ -3102,6 +3159,10 @@ func decodeHcredPub(body []byte) (cPoly, mPoly []int, seedH *BitArray, syndr *bi
 	// The layout is fixed, so the body length is EXACTLY what n implies.  A
 	// ">=" test only catches an n too LARGE; an n too small parses a prefix
 	// and succeeds, which is how a poked n=33 passed at n=256 (TODO #275).
+	if e := rawEnd(lblHcredPub, body, 4+5*n+n/8+(n/2+7)/8); e != nil { // TODO #372
+		err = e
+		return
+	}
 	if len(body) != 4+5*n+n/8+(n/2+7)/8 {
 		return nil, nil, nil, nil, 0, fmt.Errorf("HCRED public key: body length does not match n=%d", n)
 	}
@@ -3256,6 +3317,9 @@ func decodeHcredProof(body []byte) (*HcredProof, int, error) {
 			}
 		}
 		proof.Rounds[j] = rd
+	}
+	if e := rawEnd(lblHcredProof, body, off); e != nil {
+		return nil, 0, e
 	}
 	return proof, n, nil
 }
@@ -4403,9 +4467,15 @@ func cmdVerify(args []string) {
 		if err != nil {
 			die("verify", err)
 		}
+		if len(sigInts) != 4 {
+			die("verify", fmt.Errorf("malformed PEM '%s': %d DER items, expected 4", lblSig, len(sigInts)))
+		}
 		sInt := new(big.Int).SetBytes(sigInts[0])
 		R    := new(big.Int).SetBytes(sigInts[1])
-		_     = sigInts[2] // e stored in sig; recomputed below for verification
+		eStored := new(big.Int).SetBytes(sigInts[2])
+		if sn := new(big.Int).SetBytes(sigInts[3]); !sn.IsInt64() || sn.Int64() != int64(n) {
+			die("verify", fmt.Errorf("signature n is %s, public key n is %d", sn, n))
+		}
 
 		// e_v = challenge recomputed from R and msg
 		var eV *BitArray
@@ -4416,13 +4486,20 @@ func cmdVerify(args []string) {
 		}
 		// Verify: g^s * pub^(e_recomputed) == R  (matches Python verify)
 		lhs := GfMul(GfPow(GfGenBA(n), NewBitArray(n, sInt)), GfPow(pub, eV))
-		if lhs.BigInt().Cmp(R) == 0 {
-			fmt.Println("Signature OK")
-			os.Exit(0)
-		} else {
+		if lhs.BigInt().Cmp(R) != 0 {
 			fmt.Println("Verification FAILED")
 			os.Exit(1)
 		}
+		// TODO #372: the stored challenge is part of the signature's bytes, so
+		// one that is not the recomputed e is a second encoding of the same
+		// signature -- refused, as every CLI does.  Checked only once the
+		// algebra holds: a wrong message or key changes e too, and stays an
+		// ordinary "Verification FAILED".
+		if eV.BigInt().Cmp(eStored) != 0 {
+			die("verify", errors.New("signature challenge e is not the recomputed one (rejected: non-canonical signature)"))
+		}
+		fmt.Println("Signature OK")
+		os.Exit(0)
 
 	case "hpks-stern":
 		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
@@ -4647,13 +4724,25 @@ func cmdDecfile(args []string) {
 		os.Exit(1)
 	}
 
-	ptLen    := int(binary.BigEndian.Uint64(raw[5:13]))
+	// Bound the wire length by the file before converting it: a value past
+	// 2^63 became a negative int and panicked the slice below (TODO #368).
+	ptLen64  := binary.BigEndian.Uint64(raw[5:13])
+	if ptLen64 > uint64(len(raw)) {
+		fmt.Fprintln(os.Stderr, "decfile: file truncated (ciphertext blocks or auth tag missing)")
+		os.Exit(1)
+	}
+	ptLen    := int(ptLen64)
 	nonceBuf := raw[13:45]
 	nBlocks  := (ptLen + hkxBlock - 1) / hkxBlock
 	ctEnd    := hkxHdrSize + nBlocks*hkxBlock
 
 	if len(raw) < ctEnd+hkxBlock {
 		fmt.Fprintln(os.Stderr, "decfile: file truncated (ciphertext blocks or auth tag missing)")
+		os.Exit(1)
+	}
+	// TODO #368: exactly one encoding per file -- nothing after the tag.
+	if len(raw) > ctEnd+hkxBlock {
+		fmt.Fprintf(os.Stderr, "decfile: %d bytes after the auth tag\n", len(raw)-ctEnd-hkxBlock)
 		os.Exit(1)
 	}
 
@@ -5238,6 +5327,726 @@ var derItems = map[string][2]int{
 	"HERRADURA PAKE RECORD": {3, 3},
 	"HERRADURA SESSION KEY": {2, 2},
 	"HERRADURA SIGNATURE": {4, 5},
+}
+
+// TODO #372: field width caps (significant bytes) per DER-SEQUENCE label.
+// Returns the first field wider than its cap, and that cap, or ok = false.
+func derFieldCaps(label string, v [][]byte) (bad int, capB int64, ok bool) {
+	n := len(v)
+	L := func(k int) int64 {
+		b := v[k]
+		for len(b) > 0 && b[0] == 0 {
+			b = b[1:]
+		}
+		return int64(len(b))
+	}
+	F := func(k int) int64 {
+		if L(k) > 6 {
+			return -1
+		}
+		var x int64
+		for _, c := range v[k] {
+			x = x<<8 | int64(c)
+		}
+		return x
+	}
+	_ = F
+	switch label {
+	case "HERRADURA HKEX-GF PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HKEX-GF PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-NL PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-NL PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKE PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKE PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKE-NL PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKE-NL PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKE-NL3 PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKE-NL3 PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HKEX-RNL PRIVATE KEY":
+		if n >= 3 && n <= 4 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(32); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(F(2) * 4); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2) * 4); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HKEX-RNL PUBLIC KEY":
+		if n >= 3 && n <= 4 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(32); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(F(2) * 2); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2) * 4); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HKEX-RNL RESPONSE":
+		if n >= 5 && n <= 6 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(2); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(2); n > 4 && L(4) > c {
+				return 4, c, true
+			}
+			if c := int64(32); n > 5 && L(5) > c {
+				return 5, c, true
+			}
+			if c := int64(F(3) * 2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64((2 * F(4) + 7)/8); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HYBRID-RNL-STERN RESPONSE":
+		if n >= 8 && n <= 8 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(2); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(2); n > 4 && L(4) > c {
+				return 4, c, true
+			}
+			if c := int64(32); n > 5 && L(5) > c {
+				return 5, c, true
+			}
+			if c := int64(2); n > 7 && L(7) > c {
+				return 7, c, true
+			}
+			if c := int64(F(3) * 2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64((2 * F(4) + 7)/8); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64((F(7) + 7)/8); n > 6 && L(6) > c {
+				return 6, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-STERN PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-STERN PUBLIC KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKE-STERN PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKE-STERN PUBLIC KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKE-STERN-KEM PRIVATE KEY":
+		if n >= 6 && n <= 6 {
+			if c := int64(2); n > 4 && L(4) > c {
+				return 4, c, true
+			}
+			if c := int64(2); n > 5 && L(5) > c {
+				return 5, c, true
+			}
+			if c := int64((F(4) + 7)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64((F(4) + 7)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(5) * 2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(5) * 2); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKE-STERN-KEM PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64((F(1) + 7)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-WOTS PRIVATE KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(4); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-WOTS PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1) * 32); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-WOTS SIGNATURE":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1) * 32); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-XMSS PRIVATE KEY":
+		if n >= 4 && n <= 4 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(1); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(4); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(32 * (1 << hkxMin(F(1), 32))); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-XMSS PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(1); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-XMSS SIGNATURE":
+		if n >= 5 && n <= 5 {
+			if c := int64(4); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(1); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(2); n > 4 && L(4) > c {
+				return 4, c, true
+			}
+			if c := int64(67 * (F(4)/8)); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(3) * 32); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKS-RING SIGNATURE":
+		if n >= 4 && n <= 4 {
+			if c := int64(1); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA OPRF PRIVATE KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA OPRF CLIENT STATE":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA OPRF EVALUATION":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA PAKE RECORD":
+		if n >= 3 && n <= 3 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(4); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(4); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKST COMMITMENT":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKST NONCE":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKST AGGREGATE":
+		if n >= 4 && n <= 4 {
+			if c := int64(2); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(F(3)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(3)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(3)/8); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKST PARTIAL":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HPKST SIGNATURE":
+		if n >= 4 && n <= 4 {
+			if c := int64(2); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(F(3)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(3)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(3)/8); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HCRED CREDENTIAL":
+		if n >= 5 && n <= 5 {
+			if c := int64(2); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64((F(1) + 3)/4); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && L(4) > c {
+				return 4, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA SESSION KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA DIGEST":
+		if n >= 1 && n <= 1 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA HDRBG STATE":
+		if n >= 2 && n <= 2 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA ENCRYPTED PRIVATE KEY":
+		if n >= 6 && n <= 6 {
+			if c := int64(16); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(4); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(32); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(32); n > 4 && L(4) > c {
+				return 4, c, true
+			}
+			if c := int64(4); n > 5 && L(5) > c {
+				return 5, c, true
+			}
+			if c := int64(F(5)); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA CIPHERTEXT":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64((F(2) + 7)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64((F(2) + 7)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			return 0, 0, false
+		}
+		if n >= 4 && n <= 4 {
+			if c := int64(1); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(2); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64((F(3) + 7)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64((F(3) + 7)/8); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			return 0, 0, false
+		}
+		if n >= 5 && n <= 5 && (F(0) == 2) {
+			if c := int64(1); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(32); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(2); n > 4 && L(4) > c {
+				return 4, c, true
+			}
+			if c := int64((F(4) + 7)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64((F(4) + 7)/8); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			return 0, 0, false
+		}
+		if n >= 5 && n <= 5 {
+			if c := int64(2); n > 4 && L(4) > c {
+				return 4, c, true
+			}
+			if c := int64(F(4)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(4)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(4)/8); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(F(4)/8); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			return 0, 0, false
+		}
+		if n >= 6 && n <= 6 {
+			if c := int64(1); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(6); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64(32); n > 4 && L(4) > c {
+				return 4, c, true
+			}
+			if c := int64(2); n > 5 && L(5) > c {
+				return 5, c, true
+			}
+			if c := int64((F(5) + 7)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(2)); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			return 0, 0, false
+		}
+	case "HERRADURA SIGNATURE":
+		if n >= 4 && n <= 4 {
+			if c := int64(2); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(F(3)/8); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(F(3)/8); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(3)/8); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			return 0, 0, false
+		}
+		if n >= 5 && n <= 5 {
+			if c := int64(2); n > 0 && L(0) > c {
+				return 0, c, true
+			}
+			if c := int64(2); n > 1 && L(1) > c {
+				return 1, c, true
+			}
+			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && L(2) > c {
+				return 2, c, true
+			}
+			if c := int64((F(1) + 3)/4); n > 3 && L(3) > c {
+				return 3, c, true
+			}
+			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && L(4) > c {
+				return 4, c, true
+			}
+			return 0, 0, false
+		}
+	}
+	return 0, 0, false
 }
 // END GENERATED key-label table
 

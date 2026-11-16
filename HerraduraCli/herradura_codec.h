@@ -262,6 +262,18 @@ static int der_seq_enc(const uint8_t **items, const size_t *item_lens,
     return 0;
 }
 
+/* Bytes after the outer DER SEQUENCE in der[0..len-1]: >= 0, or -1 when der
+ * does not start with a well-formed SEQUENCE header whose body fits.  Every
+ * CLI refuses a non-zero count (TODO #372), so an artifact has one encoding. */
+static long der_seq_trailing(const uint8_t *der, size_t len)
+{
+    size_t consumed, body_len;
+    if (!len || der[0] != 0x30) return -1;
+    if (_der_dec_len(der + 1, len - 1, &body_len, &consumed) < 0) return -1;
+    if (body_len > len - 1 - consumed) return -1;
+    return (long)(len - 1 - consumed - body_len);
+}
+
 /* Parse a DER SEQUENCE of INTEGERs into pointer+length pairs.
  * vals[i] points into der (no copy); leading 0x00 sign bytes are skipped so
  * each val_lens[i] gives the true unsigned byte width (matching Python).
@@ -280,6 +292,8 @@ static int der_parse_seq(const uint8_t *der, size_t len,
      * without this check `end` is attacker-controlled and every access below
      * (der[offset], vp[0], etc.) can read out of bounds. */
     if (body_len > len - offset) return -1;
+    /* Nothing may follow the SEQUENCE (TODO #372). */
+    if (body_len != len - offset) return -1;
     size_t end = offset + body_len;
     while (offset < end && n < max_items) {
         if (der[offset] != 0x02) return -1;

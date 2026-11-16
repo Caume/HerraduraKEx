@@ -25256,3 +25256,83 @@ MAJOR inside v15.0.0, MIGRATING.md section 33.
 
 Status: **DONE v15.0.0** — every CLI refuses a degenerate GF or RNL peer value and a width it does not run; Go and Python no longer verify a forgeable signature under a public key of 1.
 
+---
+
+### #368: `.hkx` decfile ignores bytes after the tag
+
+Found with #364.  PATCH (no valid file changes).
+
+**The finding.**  All four CLIs check only that the file is at least
+`45 + 32*blocks + 32` bytes (`len(raw) < ct_end + 32` in Python), so anything appended after
+the tag is ignored: a 100-byte file with 1 or 503 trailing bytes decrypts to the original
+plaintext with exit 0 in C, Go, Java and Python.  Every single-byte flip and every
+truncation is rejected, and no plaintext is written on failure.
+
+**Impact.**  Each `.hkx` file has unboundedly many byte-different encodings of the same
+plaintext.  Confidentiality and integrity are unaffected; anything that deduplicates,
+caches or identifies ciphertexts by hash can be confused.
+
+**Work.**  Require `len(raw) == ct_end + 32` in all four `decfile` implementations; a
+trailing-byte rejection case (with an accept-control on the exact file) in the cross-CLI
+encfile tests.  This is a property all four get wrong, so a cross-port check cannot see
+it: assert it per implementation.
+
+**Resolution (v15.0.0).**  Done with #372.  All four `decfile`s require the file to
+end at the tag ("decfile: <k> bytes after the auth tag").  Fixing it showed the
+length check could be bypassed: C computed `45 + n_blocks*32` from a `plaintext_len`
+near 2^64, which wrapped, so the check passed and the block loop read past the buffer
+(an abort under FORTIFY).  Go panicked on a length past 2^63, and Java wrapped and
+reported a tag failure.  Each now bounds `plaintext_len` by the file size before any
+arithmetic on it.  `CliTest/test_canonical_encoding_matrix.sh` asserts the exact file
+round-trips, one trailing byte is refused, and three overflowing lengths are refused
+cleanly, per implementation.  MAJOR inside v15.0.0, MIGRATING.md section 34.
+
+Status: **DONE v15.0.0** — `.hkx` files must end at the tag; a header length past the file is refused before the arithmetic that crashed C and Go.
+
+---
+
+### #372: over-wide values and trailing data that some CLIs accept
+
+Split from #371.  Not a wrong answer and not forgeable; a parity and strictness
+question.
+
+**The finding.**  After #371, `CliTest/test_der_items_matrix.sh` still prints 13
+"unread-field" NOTEs: a value wider than the fixed-size field it fills, which some CLIs
+truncate or ignore and others refuse.  The RNL contributory nonce wider than 32 bytes
+(C, Go, Java accept); the HKEX-RNL response hint length 2^31 − 1 (C, Go); the QC-MDPC
+private support wider than its field (C, Java); the threshold key's public value wider
+than n (C); the WOTS seed wider than 32 bytes (C, Java); the XMSS leaf blob wider than
+its field (C, Go, Java).  Separately, an HCRED key or proof with a byte appended after
+the DER SEQUENCE is accepted by all four (#367's sweep) -- the same class #368 tracks for
+`.hkx` files.
+
+**Work.**  Decide per field whether an over-wide value is refused (the default, and what
+Python does) or documented as truncated; make the matrix's remaining NOTEs strict.
+Refuse data after the outer DER SEQUENCE in every CLI, with an accept-control, and fold
+the result into #368's decision.  Changes what an existing `--algo` accepts (MAJOR).
+
+**Resolution (v15.0.0).**  Broader than filed.  The probes found:
+
+  * **Trailing data:** every CLI accepted it on all 45 DER labels, and C, Go and Java on
+    the 8 raw-body labels (Python and Go refused it only for the HCRED keys).  Each
+    port's DER parser now refuses it, with the label named by the loader, and each
+    raw-body decoder ends at its last field.
+  * **Over-wide fields:** 143 fields, set to 2^4096+1, were accepted in 33 (Python), 71
+    (C), 67 (Go) and 56 (Java).  `spec/generate_spec.py`'s `PEM_DER_FIELD_CAPS` gives
+    every field's width (the width its writer pads it to) as an expression over the
+    other fields, keyed by label, item count and, for CIPHERTEXT, the format tag.  It is
+    generated into all four CLIs beside #367's item counts and checked in every loader.
+    The six cases this entry listed are among them; the DER matrix's NOTEs are now 0.
+  * **HPKS:** every verifier ignored the stored challenge e (and Python and Go the
+    stored n), so a signature could be rewritten and still verify.  All four now refuse
+    a mismatch.
+  * **CI:** the DFR guard had been red since #366 on the three malformed-artifact
+    matrices; they are exempted by name with the reason (a fixed ciphertext, bytes
+    never read).
+
+Left as #373: extra leading-zero padding in a field (the caps count significant bytes),
+and values inside a cap but outside their range.  Test:
+`CliTest/test_canonical_encoding_matrix.sh`, 1409 checks; against the pre-#372 build it
+fails 921 of 1409, none an accept-control.  MAJOR inside v15.0.0, MIGRATING.md section 34.
+
+Status: **DONE v15.0.0** — one encoding per artifact: trailing data, over-wide fields and a rewritten HPKS challenge are refused by every CLI.

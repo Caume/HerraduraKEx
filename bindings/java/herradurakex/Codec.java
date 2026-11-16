@@ -266,6 +266,11 @@ public final class Codec {
     public static List<BigInteger> derParseSeq(PemBlock b) {
         // TODO #367: the item count, against the generated table, before any
         // decoder indexes the list.  Same text in all four CLIs.
+        int trail = derSeqTrailing(b.der);                    // TODO #372
+        if (trail > 0) {
+            throw new IllegalArgumentException("malformed PEM '" + b.label + "': "
+                + trail + " bytes after the DER SEQUENCE");
+        }
         List<BigInteger> ints = derParseSeq(b.der);
         for (String[] r : KeyLabelTable.DER_ITEMS) {
             if (!r[0].equals(b.label)) continue;
@@ -276,7 +281,38 @@ public final class Codec {
             }
             break;
         }
+        // TODO #372: no field wider than its writer pads it to.
+        long[] bad = KeyLabelTable.fieldCaps(b.label, ints);
+        if (bad != null) {
+            int i = (int) bad[0];
+            throw new IllegalArgumentException(b.label + ": field " + i + " is "
+                + ((ints.get(i).bitLength() + 7) / 8) + " bytes (expected at most " + bad[1] + ")");
+        }
         return ints;
+    }
+
+    /** A raw-body PEM (ZKP-NL, ZKP-RNL, HCRED) ends at its last field
+     * (TODO #372); same text in all four CLIs. */
+    static void rawEnd(String label, byte[] body, int off) {
+        if (off < body.length) {
+            throw new IllegalArgumentException("malformed PEM '" + label + "': "
+                + (body.length - off) + " bytes after its last field");
+        }
+    }
+
+    /** Bytes after the outer DER SEQUENCE, or -1 when der does not start with a
+     * well-formed SEQUENCE header whose body fits.  Every CLI refuses a non-zero
+     * count (TODO #372), so an artifact has exactly one encoding. */
+    public static int derSeqTrailing(byte[] der) {
+        if (der.length == 0 || der[0] != 0x30) return -1;
+        try {
+            Len l = derDecLen(der, 1);
+            if (l.length < 0) return -1;          // a 4-byte length past 2^31
+            long end = 1L + l.consumed + l.length;
+            return end > der.length ? -1 : (int) (der.length - end);
+        } catch (IllegalArgumentException e) {
+            return -1;
+        }
     }
 
     /** Parses a DER SEQUENCE of INTEGERs; {@link #derParseSeq(PemBlock)} also
@@ -287,8 +323,14 @@ public final class Codec {
         }
         Len l = derDecLen(der, 1);
         int offset = 1 + l.consumed;
+        if (l.length < 0 || l.length > der.length) {
+            throw new IllegalArgumentException("DER: SEQUENCE body truncated");
+        }
         int end = offset + l.length;
         if (end > der.length) throw new IllegalArgumentException("DER: SEQUENCE body truncated");
+        if (end < der.length) {   // TODO #372: nothing may follow the SEQUENCE
+            throw new IllegalArgumentException("DER: " + (der.length - end) + " bytes after the DER SEQUENCE");
+        }
 
         List<BigInteger> out = new ArrayList<>();
         while (offset < end) {
@@ -795,6 +837,7 @@ public final class Codec {
         int n = rd4(body, 0);
         if (n <= 0 || n > 1 << 20) throw new IllegalArgumentException("ZKP-NL: bad n " + n);
         int nb = (n + 7) / 8;
+        rawEnd(PEM_ZKP_NL_PRIV, body, 4 + 3 * nb);
         return new ZkpNlPrivKey(new BigInteger(1, sub(body, 4, nb)),
                                 new BigInteger(1, sub(body, 4 + nb, nb)),
                                 new BigInteger(1, sub(body, 4 + 2 * nb, nb)), n);
@@ -823,6 +866,7 @@ public final class Codec {
         int n = rd4(body, 0);
         if (n <= 0 || n > 1 << 20) throw new IllegalArgumentException("ZKP-NL: bad n " + n);
         int nb = (n + 7) / 8;
+        rawEnd(PEM_ZKP_NL_PUB, body, 4 + 2 * nb);
         return new ZkpNlPubKey(new BigInteger(1, sub(body, 4, nb)),
                                new BigInteger(1, sub(body, 4 + nb, nb)), n);
     }
@@ -877,6 +921,7 @@ public final class Codec {
             pr.viewP2 = sub(body, off, l2); off += l2;
             rounds.add(pr);
         }
+        rawEnd(PEM_ZKP_NL_PROOF, body, off);
         return new ZkpNlProof(rounds, n);
     }
 
@@ -937,6 +982,7 @@ public final class Codec {
             else pr.share2 = new byte[0];
             rounds.add(pr);
         }
+        rawEnd(PEM_ZKP_NL_PP_SIG, body, off);
         return new ZkpNlPpProof(rounds, n);
     }
 
@@ -981,6 +1027,7 @@ public final class Codec {
         for (int i = 0; i < n; i++) { w[i] = rd4(body, off); off += 4; }   // signed
         for (int i = 0; i < n; i++) { c[i] = rd4(body, off); off += 4; }   // unsigned (< 2^31)
         for (int i = 0; i < n; i++) { z[i] = rd4(body, off); off += 4; }   // signed
+        rawEnd(PEM_ZKP_RNL_PROOF, body, off);
         return new ZkpRnlProof(w, c, z, n);
     }
 
@@ -1731,6 +1778,7 @@ public final class Codec {
         int[] m = deser3(body, off, n); off += n * 3;
         BigInteger seedH = new BigInteger(1, slice(body, off, HCRED_SEED_NB)); off += HCRED_SEED_NB;
         BigInteger syndr = fromLE(body, off, HCRED_SYNDR_NB);
+        rawEnd(PEM_HCRED_PRIV, body, off + HCRED_SYNDR_NB);
         return new HcredPrivKey(s, c, m, seedH, syndr, n);
     }
 
@@ -1766,6 +1814,7 @@ public final class Codec {
         int[] m = deser3(body, off, n); off += n * 3;
         BigInteger seedH = new BigInteger(1, slice(body, off, HCRED_SEED_NB)); off += HCRED_SEED_NB;
         BigInteger syndr = fromLE(body, off, HCRED_SYNDR_NB);
+        rawEnd(PEM_HCRED_PUB, body, off + HCRED_SYNDR_NB);
         return new HcredPubKey(c, m, seedH, syndr, n);
     }
 
@@ -1899,6 +1948,7 @@ public final class Codec {
         }
         Hcred.Proof proof = new Hcred.Proof();
         proof.W = w; proof.rounds = rds;
+        rawEnd(PEM_HCRED_PROOF, body, off);
         return proof;
     }
 

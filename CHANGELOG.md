@@ -4,9 +4,9 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [15.0.0] - 2026-11-12
 
-**MAJOR: security fixes in five parts.** All five change what an existing `--algo`
+**MAJOR: security fixes in six parts.** All six change what an existing `--algo`
 produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections
-30, 31, 32 and 33.
+30, 31, 32, 33 and 34.
 
 ### TODO #364 — verifiers enforce a Fiat-Shamir round floor
 
@@ -211,6 +211,76 @@ produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md se
     accept-control is (a)'s draw reduced mod p, so the test draws nothing new. A mutant
     `rnl_validate_pub` that accepts everything fails [49] with 12 bad accepts in 3
     rounds.
+
+### TODO #372, #368 — one encoding per artifact
+
+- **The finding.** A valid artifact had many byte-different encodings that every CLI
+  accepted, and some fields held values no writer produces:
+  - **Trailing data.** All four CLIs accepted bytes after a PEM's DER SEQUENCE, on every
+    one of the 45 DER labels. They also accepted bytes after the last field of the raw
+    ZKP-NL, ZKP-RNL and HCRED bodies; only Python and Go refused them, and only for the
+    HCRED keys. And they accepted bytes after an `.hkx` file's auth tag (#368).
+  - **Over-wide fields.** Each of 143 DER fields was set to 2^4096+1. Python accepted it
+    in 33, C in 71, Go in 67 and Java in 56: truncated, ignored or used. All four
+    accepted it in 25, and they disagreed on 58.
+  - **The HPKS challenge.** Every HPKS and HPKS-NL verifier ignored the stored challenge
+    e, and Python and Go ignored the stored n. Anyone could rewrite either and keep
+    "Signature OK". This is not a forgery: no new message is signed.
+  - **`.hkx` length overflow.** A `plaintext_len` near 2^64 wrapped C's length
+    arithmetic, so the length check passed and the block loop read past the buffer. The
+    FORTIFY build aborted with "buffer overflow detected". Go panicked on a length past
+    2^63, and Java wrapped and misreported a tag failure.
+- **Trailing data refused.** Each port's DER parser refuses bytes after the SEQUENCE.
+  The loaders name the label: "`malformed PEM '<label>': <k> bytes after the DER
+  SEQUENCE`". Each raw-body decoder ends at its last field: "`malformed PEM '<label>': <k>
+  bytes after its last field`". `decfile` requires the exact length, "`decfile: <k> bytes
+  after the auth tag`". It first bounds `plaintext_len` by the file size, before any
+  arithmetic on it. `herradura.h`'s `hcred_proof_deserialize` gains a `used` argument:
+  NULL means the proof must fill the body exactly.
+- **Field caps, from one table.** `spec/generate_spec.py`'s `PEM_DER_FIELD_CAPS` says
+  how wide each field of each DER label may be, in significant bytes. That is the width
+  its writer pads it to. A row is keyed by label and item count, and may also be keyed by
+  a format tag: the CIPHERTEXT layouts. A cap is a small expression over the other
+  fields, such as `f2/8` or `f3*2`. The generator requires every field an expression
+  reads to have a constant cap of at most 6 bytes, so the arithmetic fits 64 bits. It is
+  emitted beside #367's item counts into `key_label_table.h`, `KeyLabelTable.java` and
+  the generated Go and Python regions, and is in the spec as `pem_der_field_caps`. Every
+  loader checks it right after the item count: "`<label>: field <i> is <k> bytes
+  (expected at most <cap>)`". Python's `codec.py` decoders (HPKST, the HCRED credential)
+  run it too.
+- **HPKS.** All four verifiers refuse a stored e that is not the recomputed one:
+  "`verify: signature challenge e is not the recomputed one (rejected: non-canonical
+  signature)`". The check runs only once the algebra holds, so a wrong message or
+  key still prints `Verification FAILED`, since e depends on the message and changes
+  with it. Placing it first broke that output in `test_c_sign.sh` and
+  `test_go_sign.sh`. They also refuse a signature whose n differs from the public key's.
+  `s + (2^n − 1)` was already refused everywhere, so e and n were the only rewritable
+  fields.
+- **Measured after:** no field accepts a value past its cap in any CLI. 8 fields still
+  take 2^4096+1, all four CLIs agreeing, because their caps are larger than its 513
+  bytes: the HKEX-RNL key polynomials (4096 bytes), the QC-MDPC keys, ciphertext and
+  the hybrid syndrome (1541). `test_der_items_matrix.sh`'s unread-field NOTEs fall from
+  13 to 0.
+- **Not changed (TODO #373):** a field encoded with extra leading zero bytes, or
+  shorter than its writer's width, is still accepted, because the caps count significant
+  bytes. A value inside its cap but outside its range is also accepted, such as a
+  polynomial coefficient of q or more.
+- **CI.** The DFR guard had been failing `native-interop` since #366. The three
+  malformed-artifact matrices decapsulate `hpke-stern-kem` without `lib_dfr.sh`, so the
+  guard flagged them. They only decapsulate a fixed ciphertext to show it is accepted or
+  refused, and never read the bytes. Implicit rejection makes `dec` exit 0 on a DFR
+  event, so a retry has nothing to retry. They are exempted by name, with that reason,
+  as `test_kat_pem.sh` is.
+- **Tests.**
+  - The new `CliTest/test_canonical_encoding_matrix.sh` (cross-lang-compat) runs every
+    DER template and 8 more CIPHERTEXT and SIGNATURE cells. It also runs the 8
+    raw-body labels, `.hkx` files and HPKS signatures, each after a genuine-artifact
+    accept-control. Exact texts are matched. Every `pem_der_field_caps` row must be
+    matched by some cell. It runs 1409 checks with 0 failures; against the pre-#372
+    build it fails 921 of 1409, no accept-control among them. They include the C
+    `.hkx` abort and the Go panic.
+  - The DER matrix's fixtures and templates move to `CliTest/lib_der_fixtures.sh`,
+    which both scripts source.
 
 ## [14.0.4] - 2026-11-11
 

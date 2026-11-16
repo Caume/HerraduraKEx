@@ -155,4 +155,485 @@ static const HkxDerItems HKX_DER_ITEMS[] = {
 };
 static const int HKX_DER_ITEMS_N = (int)(sizeof(HKX_DER_ITEMS) / sizeof(HKX_DER_ITEMS[0]));
 
+/* TODO #372: field width caps (significant bytes) per DER-SEQUENCE label.
+ * Returns 1 and fills *bad / *cap with the first field wider than its cap,
+ * else 0.  F(K) is field K's value, or -1 if it is wider than 6 bytes. */
+#define HKX_MIN(a, b) ((a) < (b) ? (a) : (b))
+static long long hkx_cap_val(const uint8_t *v, size_t n)
+{
+    long long x = 0; size_t i = 0;
+    while (i < n && v[i] == 0) i++;
+    if (n - i > 6) return -1;
+    for (; i < n; i++) x = (x << 8) | v[i];
+    return x;
+}
+static size_t hkx_cap_len(const uint8_t *v, size_t n)
+{
+    size_t i = 0;
+    while (i < n && v[i] == 0) i++;
+    return n - i;
+}
+#define F(k) hkx_cap_val(vals[k], lens[k])
+#define HKX_CAP(k, e) do { long long c_ = (e); \
+    if ((long long)hkx_cap_len(vals[k], lens[k]) > c_) { *bad = (k); *cap = c_; return 1; } \
+    } while (0)
+static int hkx_der_field_caps(const char *label, int n, const uint8_t *const *vals,
+                              const size_t *lens, int *bad, long long *cap)
+{
+    if (strcmp(label, "HERRADURA HKEX-GF PRIVATE KEY") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HKEX-GF PUBLIC KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS PRIVATE KEY") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS PUBLIC KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-NL PRIVATE KEY") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-NL PUBLIC KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKE PRIVATE KEY") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKE PUBLIC KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKE-NL PRIVATE KEY") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKE-NL PUBLIC KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKE-NL3 PRIVATE KEY") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKE-NL3 PUBLIC KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HKEX-RNL PRIVATE KEY") == 0) {
+        if (n >= 3 && n <= 4) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 3) HKX_CAP(3, 32LL);
+            if (n > 0) HKX_CAP(0, F(2) * 4LL);
+            if (n > 1) HKX_CAP(1, F(2) * 4LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HKEX-RNL PUBLIC KEY") == 0) {
+        if (n >= 3 && n <= 4) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 3) HKX_CAP(3, 32LL);
+            if (n > 0) HKX_CAP(0, F(2) * 2LL);
+            if (n > 1) HKX_CAP(1, F(2) * 4LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HKEX-RNL RESPONSE") == 0) {
+        if (n >= 5 && n <= 6) {
+            if (n > 0) HKX_CAP(0, 32LL);
+            if (n > 3) HKX_CAP(3, 2LL);
+            if (n > 4) HKX_CAP(4, 2LL);
+            if (n > 5) HKX_CAP(5, 32LL);
+            if (n > 1) HKX_CAP(1, F(3) * 2LL);
+            if (n > 2) HKX_CAP(2, (2LL * F(4) + 7LL)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HYBRID-RNL-STERN RESPONSE") == 0) {
+        if (n >= 8 && n <= 8) {
+            if (n > 0) HKX_CAP(0, 32LL);
+            if (n > 3) HKX_CAP(3, 2LL);
+            if (n > 4) HKX_CAP(4, 2LL);
+            if (n > 5) HKX_CAP(5, 32LL);
+            if (n > 7) HKX_CAP(7, 2LL);
+            if (n > 1) HKX_CAP(1, F(3) * 2LL);
+            if (n > 2) HKX_CAP(2, (2LL * F(4) + 7LL)/8LL);
+            if (n > 6) HKX_CAP(6, (F(7) + 7LL)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-STERN PRIVATE KEY") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-STERN PUBLIC KEY") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKE-STERN PRIVATE KEY") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKE-STERN PUBLIC KEY") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKE-STERN-KEM PRIVATE KEY") == 0) {
+        if (n >= 6 && n <= 6) {
+            if (n > 4) HKX_CAP(4, 2LL);
+            if (n > 5) HKX_CAP(5, 2LL);
+            if (n > 0) HKX_CAP(0, (F(4) + 7LL)/8LL);
+            if (n > 1) HKX_CAP(1, (F(4) + 7LL)/8LL);
+            if (n > 2) HKX_CAP(2, F(5) * 2LL);
+            if (n > 3) HKX_CAP(3, F(5) * 2LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKE-STERN-KEM PUBLIC KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, (F(1) + 7LL)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-WOTS PRIVATE KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 0) HKX_CAP(0, 32LL);
+            if (n > 1) HKX_CAP(1, 4LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-WOTS PUBLIC KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1) * 32LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-WOTS SIGNATURE") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1) * 32LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-XMSS PRIVATE KEY") == 0) {
+        if (n >= 4 && n <= 4) {
+            if (n > 0) HKX_CAP(0, 32LL);
+            if (n > 1) HKX_CAP(1, 1LL);
+            if (n > 2) HKX_CAP(2, 4LL);
+            if (n > 3) HKX_CAP(3, 32LL * (1LL << HKX_MIN(F(1), 32LL)));
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-XMSS PUBLIC KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 0) HKX_CAP(0, 32LL);
+            if (n > 1) HKX_CAP(1, 1LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-XMSS SIGNATURE") == 0) {
+        if (n >= 5 && n <= 5) {
+            if (n > 0) HKX_CAP(0, 4LL);
+            if (n > 3) HKX_CAP(3, 1LL);
+            if (n > 4) HKX_CAP(4, 2LL);
+            if (n > 1) HKX_CAP(1, 67LL * (F(4)/8LL));
+            if (n > 2) HKX_CAP(2, F(3) * 32LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKS-RING SIGNATURE") == 0) {
+        if (n >= 4 && n <= 4) {
+            if (n > 0) HKX_CAP(0, 1LL);
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 3) HKX_CAP(3, F(0) * F(1) * (5LL * (F(2)/8LL) + 1LL));
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA OPRF PRIVATE KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA OPRF CLIENT STATE") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA OPRF EVALUATION") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA PAKE RECORD") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 0) HKX_CAP(0, 32LL);
+            if (n > 1) HKX_CAP(1, 4LL);
+            if (n > 2) HKX_CAP(2, 4LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKST COMMITMENT") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, F(2)/8LL);
+            if (n > 1) HKX_CAP(1, F(2)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKST NONCE") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKST AGGREGATE") == 0) {
+        if (n >= 4 && n <= 4) {
+            if (n > 3) HKX_CAP(3, 2LL);
+            if (n > 0) HKX_CAP(0, F(3)/8LL);
+            if (n > 1) HKX_CAP(1, F(3)/8LL);
+            if (n > 2) HKX_CAP(2, F(3)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKST PARTIAL") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HPKST SIGNATURE") == 0) {
+        if (n >= 4 && n <= 4) {
+            if (n > 3) HKX_CAP(3, 2LL);
+            if (n > 0) HKX_CAP(0, F(3)/8LL);
+            if (n > 1) HKX_CAP(1, F(3)/8LL);
+            if (n > 2) HKX_CAP(2, F(3)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HCRED CREDENTIAL") == 0) {
+        if (n >= 5 && n <= 5) {
+            if (n > 0) HKX_CAP(0, 2LL);
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 2) HKX_CAP(2, F(1) * 3LL * (F(0)/8LL));
+            if (n > 3) HKX_CAP(3, (F(1) + 3LL)/4LL);
+            if (n > 4) HKX_CAP(4, F(1) * 2LL * (F(0)/8LL));
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA SESSION KEY") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 0) HKX_CAP(0, F(1)/8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA DIGEST") == 0) {
+        if (n >= 1 && n <= 1) {
+            if (n > 0) HKX_CAP(0, 32LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA HDRBG STATE") == 0) {
+        if (n >= 2 && n <= 2) {
+            if (n > 0) HKX_CAP(0, 32LL);
+            if (n > 1) HKX_CAP(1, 8LL);
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA ENCRYPTED PRIVATE KEY") == 0) {
+        if (n >= 6 && n <= 6) {
+            if (n > 0) HKX_CAP(0, 16LL);
+            if (n > 1) HKX_CAP(1, 4LL);
+            if (n > 2) HKX_CAP(2, 32LL);
+            if (n > 4) HKX_CAP(4, 32LL);
+            if (n > 5) HKX_CAP(5, 4LL);
+            if (n > 3) HKX_CAP(3, F(5));
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA CIPHERTEXT") == 0) {
+        if (n >= 3 && n <= 3) {
+            if (n > 2) HKX_CAP(2, 2LL);
+            if (n > 0) HKX_CAP(0, (F(2) + 7LL)/8LL);
+            if (n > 1) HKX_CAP(1, (F(2) + 7LL)/8LL);
+            return 0;
+        }
+        if (n >= 4 && n <= 4) {
+            if (n > 0) HKX_CAP(0, 1LL);
+            if (n > 3) HKX_CAP(3, 2LL);
+            if (n > 1) HKX_CAP(1, (F(3) + 7LL)/8LL);
+            if (n > 2) HKX_CAP(2, (F(3) + 7LL)/8LL);
+            return 0;
+        }
+        if (n >= 5 && n <= 5 && (F(0) == 2LL)) {
+            if (n > 0) HKX_CAP(0, 1LL);
+            if (n > 3) HKX_CAP(3, 32LL);
+            if (n > 4) HKX_CAP(4, 2LL);
+            if (n > 1) HKX_CAP(1, (F(4) + 7LL)/8LL);
+            if (n > 2) HKX_CAP(2, (F(4) + 7LL)/8LL);
+            return 0;
+        }
+        if (n >= 5 && n <= 5) {
+            if (n > 4) HKX_CAP(4, 2LL);
+            if (n > 0) HKX_CAP(0, F(4)/8LL);
+            if (n > 1) HKX_CAP(1, F(4)/8LL);
+            if (n > 2) HKX_CAP(2, F(4)/8LL);
+            if (n > 3) HKX_CAP(3, F(4)/8LL);
+            return 0;
+        }
+        if (n >= 6 && n <= 6) {
+            if (n > 0) HKX_CAP(0, 1LL);
+            if (n > 2) HKX_CAP(2, 6LL);
+            if (n > 4) HKX_CAP(4, 32LL);
+            if (n > 5) HKX_CAP(5, 2LL);
+            if (n > 1) HKX_CAP(1, (F(5) + 7LL)/8LL);
+            if (n > 3) HKX_CAP(3, F(2));
+            return 0;
+        }
+        return 0;
+    }
+    if (strcmp(label, "HERRADURA SIGNATURE") == 0) {
+        if (n >= 4 && n <= 4) {
+            if (n > 3) HKX_CAP(3, 2LL);
+            if (n > 0) HKX_CAP(0, F(3)/8LL);
+            if (n > 1) HKX_CAP(1, F(3)/8LL);
+            if (n > 2) HKX_CAP(2, F(3)/8LL);
+            return 0;
+        }
+        if (n >= 5 && n <= 5) {
+            if (n > 0) HKX_CAP(0, 2LL);
+            if (n > 1) HKX_CAP(1, 2LL);
+            if (n > 2) HKX_CAP(2, F(1) * 3LL * (F(0)/8LL));
+            if (n > 3) HKX_CAP(3, (F(1) + 3LL)/4LL);
+            if (n > 4) HKX_CAP(4, F(1) * 2LL * (F(0)/8LL));
+            return 0;
+        }
+        return 0;
+    }
+    return 0;
+}
+#undef F
+#undef HKX_CAP
+
 #endif /* HKX_KEY_LABEL_TABLE_H */

@@ -7633,7 +7633,11 @@ static uint8_t *hcred_proof_serialize(const HcredProof *proof, size_t *out_len)
 /* Deserialize an HcredProof from bytes.
  * Returns 0 on success; -1 on truncation or n mismatch.
  * On success, proof->rd is heap-allocated; free with hcred_proof_free(). */
-static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_t data_len)
+/* Nothing may follow the proof's last field (TODO #372).  With used == NULL a
+ * body longer than the proof is an error; otherwise *used receives the bytes
+ * the proof occupies, so the caller can name the excess. */
+static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data,
+                                   size_t data_len, size_t *used)
 {
     int ri, j, ii;
     if (data_len < 12) return -1;
@@ -7703,6 +7707,8 @@ static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_
 
 #undef _HPSER_NEED
 #undef _HPSER_D3
+    if (used) *used = off;
+    else if (off != data_len) { hcred_proof_free(proof); return -1; }
     return 0;
 }
 

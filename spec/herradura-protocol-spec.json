@@ -3625,5 +3625,1071 @@
       "min": 4,
       "max": 5
     }
+  ],
+  "pem_der_field_caps": [
+    {
+      "label": "HERRADURA HKEX-GF PRIVATE KEY",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HKEX-GF PUBLIC KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS PRIVATE KEY",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS PUBLIC KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-NL PRIVATE KEY",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-NL PUBLIC KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKE PRIVATE KEY",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKE PUBLIC KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKE-NL PRIVATE KEY",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKE-NL PUBLIC KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKE-NL3 PRIVATE KEY",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKE-NL3 PUBLIC KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HKEX-RNL PRIVATE KEY",
+      "min_items": 3,
+      "max_items": 4,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 3,
+          "cap": "32"
+        },
+        {
+          "field": 0,
+          "cap": "f2*4"
+        },
+        {
+          "field": 1,
+          "cap": "f2*4"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HKEX-RNL PUBLIC KEY",
+      "min_items": 3,
+      "max_items": 4,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 3,
+          "cap": "32"
+        },
+        {
+          "field": 0,
+          "cap": "f2*2"
+        },
+        {
+          "field": 1,
+          "cap": "f2*4"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HKEX-RNL RESPONSE",
+      "min_items": 5,
+      "max_items": 6,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "32"
+        },
+        {
+          "field": 3,
+          "cap": "2"
+        },
+        {
+          "field": 4,
+          "cap": "2"
+        },
+        {
+          "field": 5,
+          "cap": "32"
+        },
+        {
+          "field": 1,
+          "cap": "f3*2"
+        },
+        {
+          "field": 2,
+          "cap": "(2*f4+7)/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HYBRID-RNL-STERN RESPONSE",
+      "min_items": 8,
+      "max_items": 8,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "32"
+        },
+        {
+          "field": 3,
+          "cap": "2"
+        },
+        {
+          "field": 4,
+          "cap": "2"
+        },
+        {
+          "field": 5,
+          "cap": "32"
+        },
+        {
+          "field": 7,
+          "cap": "2"
+        },
+        {
+          "field": 1,
+          "cap": "f3*2"
+        },
+        {
+          "field": 2,
+          "cap": "(2*f4+7)/8"
+        },
+        {
+          "field": 6,
+          "cap": "(f7+7)/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-STERN PRIVATE KEY",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-STERN PUBLIC KEY",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKE-STERN PRIVATE KEY",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKE-STERN PUBLIC KEY",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKE-STERN-KEM PRIVATE KEY",
+      "min_items": 6,
+      "max_items": 6,
+      "when": "",
+      "caps": [
+        {
+          "field": 4,
+          "cap": "2"
+        },
+        {
+          "field": 5,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "(f4+7)/8"
+        },
+        {
+          "field": 1,
+          "cap": "(f4+7)/8"
+        },
+        {
+          "field": 2,
+          "cap": "f5*2"
+        },
+        {
+          "field": 3,
+          "cap": "f5*2"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKE-STERN-KEM PUBLIC KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "(f1+7)/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-WOTS PRIVATE KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "32"
+        },
+        {
+          "field": 1,
+          "cap": "4"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-WOTS PUBLIC KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1*32"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-WOTS SIGNATURE",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1*32"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-XMSS PRIVATE KEY",
+      "min_items": 4,
+      "max_items": 4,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "32"
+        },
+        {
+          "field": 1,
+          "cap": "1"
+        },
+        {
+          "field": 2,
+          "cap": "4"
+        },
+        {
+          "field": 3,
+          "cap": "32*(1<<min(f1, 32))"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-XMSS PUBLIC KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "32"
+        },
+        {
+          "field": 1,
+          "cap": "1"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-XMSS SIGNATURE",
+      "min_items": 5,
+      "max_items": 5,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "4"
+        },
+        {
+          "field": 3,
+          "cap": "1"
+        },
+        {
+          "field": 4,
+          "cap": "2"
+        },
+        {
+          "field": 1,
+          "cap": "67*(f4/8)"
+        },
+        {
+          "field": 2,
+          "cap": "f3*32"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKS-RING SIGNATURE",
+      "min_items": 4,
+      "max_items": 4,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "1"
+        },
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 3,
+          "cap": "f0*f1*(5*(f2/8)+1)"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA OPRF PRIVATE KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA OPRF CLIENT STATE",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA OPRF EVALUATION",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA PAKE RECORD",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "32"
+        },
+        {
+          "field": 1,
+          "cap": "4"
+        },
+        {
+          "field": 2,
+          "cap": "4"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKST COMMITMENT",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f2/8"
+        },
+        {
+          "field": 1,
+          "cap": "f2/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKST NONCE",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKST AGGREGATE",
+      "min_items": 4,
+      "max_items": 4,
+      "when": "",
+      "caps": [
+        {
+          "field": 3,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f3/8"
+        },
+        {
+          "field": 1,
+          "cap": "f3/8"
+        },
+        {
+          "field": 2,
+          "cap": "f3/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKST PARTIAL",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HPKST SIGNATURE",
+      "min_items": 4,
+      "max_items": 4,
+      "when": "",
+      "caps": [
+        {
+          "field": 3,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f3/8"
+        },
+        {
+          "field": 1,
+          "cap": "f3/8"
+        },
+        {
+          "field": 2,
+          "cap": "f3/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HCRED CREDENTIAL",
+      "min_items": 5,
+      "max_items": 5,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "2"
+        },
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 2,
+          "cap": "f1*3*(f0/8)"
+        },
+        {
+          "field": 3,
+          "cap": "(f1+3)/4"
+        },
+        {
+          "field": 4,
+          "cap": "f1*2*(f0/8)"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA SESSION KEY",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f1/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA DIGEST",
+      "min_items": 1,
+      "max_items": 1,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "32"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA HDRBG STATE",
+      "min_items": 2,
+      "max_items": 2,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "32"
+        },
+        {
+          "field": 1,
+          "cap": "8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA ENCRYPTED PRIVATE KEY",
+      "min_items": 6,
+      "max_items": 6,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "16"
+        },
+        {
+          "field": 1,
+          "cap": "4"
+        },
+        {
+          "field": 2,
+          "cap": "32"
+        },
+        {
+          "field": 4,
+          "cap": "32"
+        },
+        {
+          "field": 5,
+          "cap": "4"
+        },
+        {
+          "field": 3,
+          "cap": "f5"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA CIPHERTEXT",
+      "min_items": 3,
+      "max_items": 3,
+      "when": "",
+      "caps": [
+        {
+          "field": 2,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "(f2+7)/8"
+        },
+        {
+          "field": 1,
+          "cap": "(f2+7)/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA CIPHERTEXT",
+      "min_items": 4,
+      "max_items": 4,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "1"
+        },
+        {
+          "field": 3,
+          "cap": "2"
+        },
+        {
+          "field": 1,
+          "cap": "(f3+7)/8"
+        },
+        {
+          "field": 2,
+          "cap": "(f3+7)/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA CIPHERTEXT",
+      "min_items": 5,
+      "max_items": 5,
+      "when": "f0 == 2",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "1"
+        },
+        {
+          "field": 3,
+          "cap": "32"
+        },
+        {
+          "field": 4,
+          "cap": "2"
+        },
+        {
+          "field": 1,
+          "cap": "(f4+7)/8"
+        },
+        {
+          "field": 2,
+          "cap": "(f4+7)/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA CIPHERTEXT",
+      "min_items": 5,
+      "max_items": 5,
+      "when": "",
+      "caps": [
+        {
+          "field": 4,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f4/8"
+        },
+        {
+          "field": 1,
+          "cap": "f4/8"
+        },
+        {
+          "field": 2,
+          "cap": "f4/8"
+        },
+        {
+          "field": 3,
+          "cap": "f4/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA CIPHERTEXT",
+      "min_items": 6,
+      "max_items": 6,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "1"
+        },
+        {
+          "field": 2,
+          "cap": "6"
+        },
+        {
+          "field": 4,
+          "cap": "32"
+        },
+        {
+          "field": 5,
+          "cap": "2"
+        },
+        {
+          "field": 1,
+          "cap": "(f5+7)/8"
+        },
+        {
+          "field": 3,
+          "cap": "f2"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA SIGNATURE",
+      "min_items": 4,
+      "max_items": 4,
+      "when": "",
+      "caps": [
+        {
+          "field": 3,
+          "cap": "2"
+        },
+        {
+          "field": 0,
+          "cap": "f3/8"
+        },
+        {
+          "field": 1,
+          "cap": "f3/8"
+        },
+        {
+          "field": 2,
+          "cap": "f3/8"
+        }
+      ]
+    },
+    {
+      "label": "HERRADURA SIGNATURE",
+      "min_items": 5,
+      "max_items": 5,
+      "when": "",
+      "caps": [
+        {
+          "field": 0,
+          "cap": "2"
+        },
+        {
+          "field": 1,
+          "cap": "2"
+        },
+        {
+          "field": 2,
+          "cap": "f1*3*(f0/8)"
+        },
+        {
+          "field": 3,
+          "cap": "(f1+3)/4"
+        },
+        {
+          "field": 4,
+          "cap": "f1*2*(f0/8)"
+        }
+      ]
+    }
   ]
 }

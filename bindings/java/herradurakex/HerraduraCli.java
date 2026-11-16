@@ -1748,7 +1748,13 @@ public final class HerraduraCli {
         gfPeerOK(pub.pub, pub.nbits, "verify: public key");
         Codec.SchnorrSig sig = Codec.decodeSchnorrSig(readString(sigPath));
         BigInteger msgInt = new BigInteger(1, padTrunc(msg, pub.nbits / 8));
-
+        if (sig.nbits != pub.nbits) {
+            throw new CliError("verify: signature n is " + sig.nbits + ", public key n is " + pub.nbits);
+        }
+        BitArray rBa = BitArray.fromBigInteger(sig.r, pub.nbits);
+        BitArray mBa = BitArray.fromBigInteger(msgInt, pub.nbits);
+        BitArray eV = algo.equals("hpks") ? Herradura.fscxRevolve(rBa, mBa, pub.nbits / 4)
+                                          : HerraduraNl.hpksNlChallenge(rBa, mBa);
         boolean ok = algo.equals("hpks")
             ? Herradura.hpksVerify(BitArray.fromBigInteger(msgInt, pub.nbits),
                                    BitArray.fromBigInteger(pub.pub, pub.nbits),
@@ -1756,12 +1762,20 @@ public final class HerraduraCli {
             : HerraduraNl.hpksNlVerify(BitArray.fromBigInteger(msgInt, pub.nbits),
                                    BitArray.fromBigInteger(pub.pub, pub.nbits),
                                    BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sig.s, pub.nbits));
-        if (ok) {
-            System.out.println("Signature OK");
-        } else {
+        if (!ok) {
             System.out.println("Verification FAILED");
             System.exit(1);
         }
+        // TODO #372: the stored challenge is part of the signature's bytes, so
+        // one that is not the recomputed e is a second encoding of the same
+        // signature -- refused, as every CLI does.  Checked only once the
+        // algebra holds: a wrong message or key changes e too, and stays an
+        // ordinary "Verification FAILED".
+        if (!eV.toBigInteger().equals(sig.e)) {
+            throw new CliError("verify: signature challenge e is not the recomputed one "
+                + "(rejected: non-canonical signature)");
+        }
+        System.out.println("Signature OK");
     }
 
     // -----------------------------------------------------------------

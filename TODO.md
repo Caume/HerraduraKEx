@@ -698,29 +698,6 @@ Status: **OPEN**
 
 ---
 
-### #368: `.hkx` decfile ignores bytes after the tag
-
-Found with #364.  PATCH (no valid file changes).
-
-**The finding.**  All four CLIs check only that the file is at least
-`45 + 32*blocks + 32` bytes (`len(raw) < ct_end + 32` in Python), so anything appended after
-the tag is ignored: a 100-byte file with 1 or 503 trailing bytes decrypts to the original
-plaintext with exit 0 in C, Go, Java and Python.  Every single-byte flip and every
-truncation is rejected, and no plaintext is written on failure.
-
-**Impact.**  Each `.hkx` file has unboundedly many byte-different encodings of the same
-plaintext.  Confidentiality and integrity are unaffected; anything that deduplicates,
-caches or identifies ciphertexts by hash can be confused.
-
-**Work.**  Require `len(raw) == ct_end + 32` in all four `decfile` implementations; a
-trailing-byte rejection case (with an accept-control on the exact file) in the cross-CLI
-encfile tests.  This is a property all four get wrong, so a cross-port check cannot see
-it: assert it per implementation.
-
-Status: **OPEN**
-
----
-
 ### #369: HCRED defaults and cost differ across the four CLIs
 
 Found with #364.  PATCH.
@@ -765,26 +742,24 @@ Status: **OPEN**
 
 ---
 
----
+### #373: DER INTEGER padding and in-cap values that some CLIs accept
 
-### #372: over-wide values and trailing data that some CLIs accept
+Split from #372.  A parity and strictness question; neither is a wrong answer.
 
-Split from #371.  Not a wrong answer and not forgeable; a parity and strictness
-question.
+  * **Padding.**  #372's caps count SIGNIFICANT bytes, because every writer pads a
+    fixed-width field with leading zeros (`der_int(v, nbytes)`) and C's reader strips
+    only one sign byte.  So a field re-encoded shorter, or with extra leading zero bytes,
+    is still accepted: one more encoding of the same artifact.  Pinning each field's
+    content length to the writer's width would close it, but #280 found C reading one
+    envelope in 64 one byte short; measure every writer first.
+  * **Values inside the cap.**  A value within its field's width but outside its range
+    is accepted by all four: an HKEX-RNL private or public polynomial with a coefficient
+    of q or more, a QC-MDPC private support or public key holding 2^4096+1 (513 bytes,
+    under the 1541-byte cap), the hybrid response's syndrome.  These are the 8 fields
+    #372's probe still reports at 2^4096+1.
 
-**The finding.**  After #371, `CliTest/test_der_items_matrix.sh` still prints 13
-"unread-field" NOTEs: a value wider than the fixed-size field it fills, which some CLIs
-truncate or ignore and others refuse.  The RNL contributory nonce wider than 32 bytes
-(C, Go, Java accept); the HKEX-RNL response hint length 2^31 − 1 (C, Go); the QC-MDPC
-private support wider than its field (C, Java); the threshold key's public value wider
-than n (C); the WOTS seed wider than 32 bytes (C, Java); the XMSS leaf blob wider than
-its field (C, Go, Java).  Separately, an HCRED key or proof with a byte appended after
-the DER SEQUENCE is accepted by all four (#367's sweep) -- the same class #368 tracks for
-`.hkx` files.
-
-**Work.**  Decide per field whether an over-wide value is refused (the default, and what
-Python does) or documented as truncated; make the matrix's remaining NOTEs strict.
-Refuse data after the outer DER SEQUENCE in every CLI, with an accept-control, and fold
-the result into #368's decision.  Changes what an existing `--algo` accepts (MAJOR).
+**Work.**  Per field, decide refuse (with a coefficient-range or exact-length check) or
+document; an accept-control and a negative control for each, all four CLIs.  Changes
+what an existing `--algo` accepts (MAJOR).
 
 Status: **OPEN**

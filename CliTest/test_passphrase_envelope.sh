@@ -176,19 +176,29 @@ hostile = c.der_seq(c.der_int(salt, 16), c.der_int(it), c.der_int(nonce, 32),
                     c.der_int(ct, ptlen), c.der_int(tag, 32), c.der_int(1 << 62))
 open(tmp + "/hostile_ptlen.pem", "w").write(
     c.pem_wrap("HERRADURA ENCRYPTED PRIVATE KEY", hostile))
+# TODO #372: 2^62 is now refused by the generic field cap (4 bytes) before the
+# bound above is reached, so a length inside the cap keeps that bound tested.
+hostile32 = c.der_seq(c.der_int(salt, 16), c.der_int(it), c.der_int(nonce, 32),
+                      c.der_int(ct, ptlen), c.der_int(tag, 32), c.der_int((1 << 32) - 1))
+open(tmp + "/hostile_ptlen32.pem", "w").write(
+    c.pem_wrap("HERRADURA ENCRYPTED PRIVATE KEY", hostile32))
 PYEOF
 for r in $LANGS; do
+  for case in "2^62:hostile_ptlen:plaintext length|field 5 is 8 bytes \\(expected at most 4\\)" \
+              "2^32-1:hostile_ptlen32:plaintext length"; do
+    what=${case%%:*}; rest=${case#*:}; f=${rest%%:*}; want=${rest#*:}
     out=$(timeout 30 ${CLI[$r]} pkey --decrypt --passphrase "$KAT_PHRASE" \
-              --in "$TMP/hostile_ptlen.pem" --out "$TMP/never.pem" 2>&1) && rc=0 || rc=$?
+              --in "$TMP/$f.pem" --out "$TMP/never.pem" 2>&1) && rc=0 || rc=$?
     if [ "$rc" -eq 124 ]; then
-        fail "[$r] a declared 2^62 plaintext length hung — it must be bounded, not attempted"
+        fail "[$r] a declared $what plaintext length hung — it must be bounded, not attempted"
     elif [ "$rc" -eq 0 ]; then
-        fail "[$r] a declared 2^62 plaintext length was ACCEPTED"
-    elif printf '%s' "$out" | grep -qi 'plaintext length'; then
-        pass "[$r] refuses a declared 2^62 plaintext length, naming the field"
+        fail "[$r] a declared $what plaintext length was ACCEPTED"
+    elif printf '%s' "$out" | grep -qiE "$want"; then
+        pass "[$r] refuses a declared $what plaintext length, naming the field"
     else
-        fail "[$r] refused a 2^62 plaintext length but did not name the field: $(printf '%s' "$out" | tail -1)"
+        fail "[$r] refused a $what plaintext length but did not name the field: $(printf '%s' "$out" | tail -1)"
     fi
+  done
 done
 
 echo

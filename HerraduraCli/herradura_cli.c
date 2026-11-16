@@ -34,6 +34,20 @@ static void die(const char *msg) { fputs(msg, stderr); fputc('\n', stderr); exit
 static void dief(const char *fmt, const char *s)
 { fprintf(stderr, fmt, s); fputc('\n', stderr); exit(1); }
 
+/* TODO #372: nothing may follow a PEM's DER SEQUENCE; same text in all four CLIs. */
+static void die_der_trailing(const char *label, long trail)
+{
+    fprintf(stderr, "malformed PEM '%s': %ld bytes after the DER SEQUENCE\n", label, trail);
+    exit(1);
+}
+/* The same rule for a raw-body PEM (ZKP-NL, ZKP-RNL, HCRED): its body ends at
+ * its last field. */
+static void die_raw_trailing(const char *label, size_t extra)
+{
+    fprintf(stderr, "malformed PEM '%s': %zu bytes after its last field\n", label, extra);
+    exit(1);
+}
+
 static uint8_t *read_binary_file(const char *path, size_t *len_out)
 {
     FILE *f = (strcmp(path, "-") == 0) ? stdin : fopen(path, "rb");
@@ -573,6 +587,8 @@ static void encrypt_pem_text_to_file(const char *pem_text, const char *passphras
  * terminated).  Exits with a one-line diagnostic on a wrong passphrase or a
  * tampered envelope -- never returns unverified bytes. */
 static void check_der_items(const char *label, int n_items);   /* TODO #367 */
+static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
+                           const size_t *vlens);                 /* TODO #372 */
 
 static char *decrypt_pem_file(const char *in_path, const char *passphrase)
 {
@@ -583,9 +599,13 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     const uint8_t *vals[16];
     size_t vlens[16];
     int n_out = 0;
+    long trail = der_seq_trailing(body, blen);
+    if (trail > 0)                                   /* TODO #372 */
+        die_der_trailing(PEM_ENC_PRIV, trail);
     if (der_parse_seq(body, blen, vals, vlens, 16, &n_out) != 0)
         die("decrypt: malformed ENCRYPTED PRIVATE KEY envelope");
     check_der_items(PEM_ENC_PRIV, n_out);
+    check_der_caps(PEM_ENC_PRIV, n_out, vals, vlens);
     /* The salt, nonce, ciphertext and tag are FIXED-WIDTH byte strings carried
      * as DER INTEGERs, and a DER INTEGER has no leading zero to carry: a field
      * whose first byte is 0x00 encodes one significant byte SHORT, and
@@ -738,6 +758,21 @@ static void check_der_items(const char *label, int n_items)
     }
 }
 
+/* TODO #372: no field wider than its writer pads it to (the generated
+ * PEM_DER_FIELD_CAPS table, hkx_der_field_caps); same text in all four CLIs. */
+static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
+                           const size_t *vlens)
+{
+    int bad = 0;
+    long long cap = 0;
+    if (!hkx_der_field_caps(label, n, vals, vlens, &bad, &cap)) return;
+    size_t got = vlens[bad];
+    const uint8_t *v = vals[bad];
+    while (got > 0 && *v == 0) { v++; got--; }
+    fprintf(stderr, "%s: field %d is %zu bytes (expected at most %lld)\n", label, bad, got, cap);
+    exit(1);
+}
+
 /* TODO #371: the width a key or exchange artifact DECLARES must be the width
  * this build runs.  This CLI is compiled for one width per family (KEYBITS,
  * RNL_N, QCMDPC_R) and sized every operation from it, so a 128-bit key from
@@ -826,10 +861,14 @@ static void pem_key_load(PemKey *k, const char *path)
     if (strcmp(k->label, PEM_ENC_PRIV) == 0)
         dief("%s is a passphrase-encrypted private key; decrypt it first with "
              "`pkey --decrypt --passphrase ... --in <file> --out plain.pem`", path);
+    long trail = der_seq_trailing(k->der, k->der_len);
+    if (trail > 0)                                   /* TODO #372 */
+        die_der_trailing(k->label, trail);
     if (der_parse_seq(k->der, k->der_len, k->vals, k->vlens, 16, &k->n_items) != 0)
         dief("cannot parse DER from: %s", path);
     check_der_items(k->label, k->n_items);
     check_der_width(k);
+    check_der_caps(k->label, k->n_items, k->vals, k->vlens);
 }
 static void pem_key_free(PemKey *k) { free(k->der); k->der = NULL; }
 
@@ -862,6 +901,25 @@ static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, siz
         free(buf);
         fprintf(stderr, "expected PEM label '%s', got '%s'\n", expect_label, label);
         exit(1);
+    }
+    /* TODO #372: a fixed-layout body is exactly as long as its header says.
+     * A SHORT body is left to each reader's own truncation check; the
+     * variable-length proofs are checked where they are unpacked. */
+    if (cap >= 4) {
+        uint32_t hn = ((uint32_t)buf[0]<<24)|((uint32_t)buf[1]<<16)|
+                      ((uint32_t)buf[2]<<8)|buf[3];
+        size_t want = 0;
+        if (hn > 0 && hn <= ZKP_NL_MAX_N && strcmp(label, PEM_ZKP_NL_PRIV) == 0)
+            want = 4 + 3 * (size_t)((hn + 7) / 8);
+        else if (hn > 0 && hn <= ZKP_NL_MAX_N && strcmp(label, PEM_ZKP_NL_PUB) == 0)
+            want = 4 + 2 * (size_t)((hn + 7) / 8);
+        else if (hn == RNL_N && strcmp(label, PEM_ZKP_RNL_PROOF) == 0)
+            want = 4 + (size_t)hn * 12;
+        else if (hn == HCRED_N && strcmp(label, PEM_HCRED_PRIV) == 0)
+            want = 4 + (size_t)hn * 8 + hn / 8 + (hn / 2 + 7) / 8;
+        else if (hn == HCRED_N && strcmp(label, PEM_HCRED_PUB) == 0)
+            want = 4 + (size_t)hn * 5 + hn / 8 + (hn / 2 + 7) / 8;
+        if (want && cap > want) die_raw_trailing(label, cap - want);
     }
     *olen = cap;
     return buf;
@@ -948,6 +1006,7 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
         if (!proof[j].view_p2) die("out of memory");
         memcpy(proof[j].view_p2, p, l2); p += l2;
     }
+    if (p < buf + blen) die_raw_trailing(PEM_ZKP_NL_PROOF, (size_t)(buf + blen - p));
     return proof;
 }
 
@@ -1038,6 +1097,7 @@ static ZkpNlPpRound *zkp_nl_pp_unpack_proof(const uint8_t *buf, size_t blen,
             memset(proof[j].share2, 0, sizeof(proof[j].share2));
         }
     }
+    if (p < buf + blen) die_raw_trailing(PEM_ZKP_NL_PP_SIG, (size_t)(buf + blen - p));
     return proof;
 }
 
@@ -4542,15 +4602,23 @@ static void cmd_verify(int argc, char **argv)
             ba_fscx_revolve(&e_v, &R, &msg, I_VALUE);
         else
             hpks_nl_challenge(&e_v, &R, &msg);
-
         /* lhs = g^s * pub^e_v; OK if lhs == R */
         BitArray lhs1 = BA_INIT, lhs2 = BA_INIT, lhs = BA_INIT;
         gf_pow_ba(&lhs1, &GF_GEN, &s_ba);
         gf_pow_ba(&lhs2, &pub,    &e_v);
         gf_mul_ba(&lhs, &lhs1, &lhs2);
 
-        if (ba_equal(&lhs, &R)) { puts("Signature OK");          exit(0); }
-        else                    { puts("Verification FAILED");   exit(1); }
+        if (!ba_equal(&lhs, &R)) { puts("Verification FAILED");  exit(1); }
+        /* TODO #372: the stored challenge is part of the signature's bytes, so
+         * one that is not the recomputed e is a second encoding of the same
+         * signature -- refused, as every CLI does.  Checked only once the
+         * algebra holds: a wrong message or key changes e too, and stays an
+         * ordinary "Verification FAILED". */
+        if (!ba_equal(&e_v, &e_stored))
+            die("verify: signature challenge e is not the recomputed one "
+                "(rejected: non-canonical signature)");
+        puts("Signature OK");
+        exit(0);
 
     } else if (strcmp(algo, "hpks-stern") == 0) {
         fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
@@ -4749,9 +4817,20 @@ static void cmd_decfile(int argc, char **argv)
     uint64_t plaintext_len = 0;
     { int j; for (j = 0; j < 8; j++) plaintext_len = (plaintext_len << 8) | raw[5+j]; }
     const uint8_t *nonce_bytes = raw + 13;
+    /* Bound the wire length by the file BEFORE any arithmetic on it: a
+     * plaintext_len near 2^64 wrapped n_blocks * KEYBYTES, so ct_end came out
+     * small, the check below passed, and the block loop read past the buffer
+     * (TODO #368). */
+    if (plaintext_len > raw_len - 77)
+        die("decfile: file truncated (ciphertext or auth tag missing)");
     size_t n_blocks = (size_t)((plaintext_len + KEYBYTES - 1) / KEYBYTES);
     size_t ct_end   = 45 + n_blocks * KEYBYTES;
     if (raw_len < ct_end + 32) die("decfile: file truncated (ciphertext or auth tag missing)");
+    /* TODO #368: exactly one encoding per file -- nothing after the tag. */
+    if (raw_len > ct_end + 32) {
+        fprintf(stderr, "decfile: %zu bytes after the auth tag\n", raw_len - ct_end - 32);
+        exit(1);
+    }
     const uint8_t *ct_bytes   = raw + 45;
     const uint8_t *tag_stored = raw + ct_end;
 
@@ -5332,11 +5411,13 @@ static void cmd_cred_verify(int argc, char **argv)
     uint8_t *pbuf = zkp_raw_pem_read(proof_path, PEM_HCRED_PROOF, &plen);
     HcredProof proof;
     memset(&proof, 0, sizeof(proof));
-    if (hcred_proof_deserialize(&proof, pbuf, plen) != 0) {
+    size_t used = 0;
+    if (hcred_proof_deserialize(&proof, pbuf, plen, &used) != 0) {
         free(pbuf);
         die("cred-verify: cannot deserialize proof");
     }
     free(pbuf);
+    if (used != plen) die_raw_trailing(PEM_HCRED_PROOF, plen - used);   /* TODO #372 */
 
     int rounds = proof.rounds;
     if (rnd_arg) rounds = atoi(rnd_arg);

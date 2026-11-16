@@ -162,7 +162,11 @@ out-of-range width, ring dimension or field size fails with a one-line bound err
 A peer GF value (public key, ciphertext R) of 0 or 1, or an HKEX-RNL peer C that is
 zero, sparse or clustered, is refused as a degenerate key.  GF keys run at 32/64/128/256
 bits in the Go and Python CLIs and at 256 only in C and Java, which refuse any other
-declared width ("n is 128 (this CLI runs n = 256)").
+declared width ("n is 128 (this CLI runs n = 256)").  Each artifact has one encoding:
+bytes after a DER SEQUENCE, a raw-body PEM's last field or an .hkx tag are refused, a
+field wider than its writer pads it to fails with "<label>: field <i> is <k> bytes
+(expected at most <cap>)" (pem_der_field_caps), and an HPKS signature whose stored
+challenge e is not the recomputed one is refused.
 
   genpkey --algo <ID> [--bits N] [--xmss-height N] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,

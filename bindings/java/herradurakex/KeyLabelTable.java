@@ -103,4 +103,425 @@ final class KeyLabelTable {
         {"HERRADURA SESSION KEY", "2", "2"},
         {"HERRADURA SIGNATURE", "4", "5"},
     };
+
+    /** TODO #372: field width caps (significant bytes) per DER-SEQUENCE label.
+     *  Returns {field, cap} for the first field wider than its cap, else null. */
+    static long[] fieldCaps(String label, java.util.List<java.math.BigInteger> v) {
+        int n = v.size();
+        java.util.function.IntToLongFunction F0 = k -> {
+            java.math.BigInteger x = v.get(k);
+            return x.bitLength() > 48 ? -1L : x.longValue();
+        };
+        java.util.function.IntUnaryOperator L = k -> (v.get(k).bitLength() + 7) / 8;
+        switch (label) {
+        case "HERRADURA HKEX-GF PRIVATE KEY":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HKEX-GF PUBLIC KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS PRIVATE KEY":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS PUBLIC KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-NL PRIVATE KEY":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-NL PUBLIC KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKE PRIVATE KEY":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKE PUBLIC KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKE-NL PRIVATE KEY":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKE-NL PUBLIC KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKE-NL3 PRIVATE KEY":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKE-NL3 PUBLIC KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HKEX-RNL PRIVATE KEY":
+            if (n >= 3 && n <= 4) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 3) { long c = 32L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2) * 4L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2) * 4L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HKEX-RNL PUBLIC KEY":
+            if (n >= 3 && n <= 4) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 3) { long c = 32L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2) * 2L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2) * 4L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HKEX-RNL RESPONSE":
+            if (n >= 5 && n <= 6) {
+                if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 3) { long c = 2L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 4) { long c = 2L; if (L.applyAsInt(4) > c) return new long[]{4, c}; }
+                if (n > 5) { long c = 32L; if (L.applyAsInt(5) > c) return new long[]{5, c}; }
+                if (n > 1) { long c = F0.applyAsLong(3) * 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = (2L * F0.applyAsLong(4) + 7L)/8L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HYBRID-RNL-STERN RESPONSE":
+            if (n >= 8 && n <= 8) {
+                if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 3) { long c = 2L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 4) { long c = 2L; if (L.applyAsInt(4) > c) return new long[]{4, c}; }
+                if (n > 5) { long c = 32L; if (L.applyAsInt(5) > c) return new long[]{5, c}; }
+                if (n > 7) { long c = 2L; if (L.applyAsInt(7) > c) return new long[]{7, c}; }
+                if (n > 1) { long c = F0.applyAsLong(3) * 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = (2L * F0.applyAsLong(4) + 7L)/8L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 6) { long c = (F0.applyAsLong(7) + 7L)/8L; if (L.applyAsInt(6) > c) return new long[]{6, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-STERN PRIVATE KEY":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-STERN PUBLIC KEY":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKE-STERN PRIVATE KEY":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKE-STERN PUBLIC KEY":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKE-STERN-KEM PRIVATE KEY":
+            if (n >= 6 && n <= 6) {
+                if (n > 4) { long c = 2L; if (L.applyAsInt(4) > c) return new long[]{4, c}; }
+                if (n > 5) { long c = 2L; if (L.applyAsInt(5) > c) return new long[]{5, c}; }
+                if (n > 0) { long c = (F0.applyAsLong(4) + 7L)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = (F0.applyAsLong(4) + 7L)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = F0.applyAsLong(5) * 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 3) { long c = F0.applyAsLong(5) * 2L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKE-STERN-KEM PUBLIC KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = (F0.applyAsLong(1) + 7L)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-WOTS PRIVATE KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = 4L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-WOTS PUBLIC KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1) * 32L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-WOTS SIGNATURE":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1) * 32L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-XMSS PRIVATE KEY":
+            if (n >= 4 && n <= 4) {
+                if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = 1L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = 4L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 3) { long c = 32L * (1L << Math.min(F0.applyAsLong(1), 32L)); if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-XMSS PUBLIC KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = 1L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-XMSS SIGNATURE":
+            if (n >= 5 && n <= 5) {
+                if (n > 0) { long c = 4L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 3) { long c = 1L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 4) { long c = 2L; if (L.applyAsInt(4) > c) return new long[]{4, c}; }
+                if (n > 1) { long c = 67L * (F0.applyAsLong(4)/8L); if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = F0.applyAsLong(3) * 32L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-RING SIGNATURE":
+            if (n >= 4 && n <= 4) {
+                if (n > 0) { long c = 1L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 3) { long c = F0.applyAsLong(0) * F0.applyAsLong(1) * (5L * (F0.applyAsLong(2)/8L) + 1L); if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA OPRF PRIVATE KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA OPRF CLIENT STATE":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA OPRF EVALUATION":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA PAKE RECORD":
+            if (n >= 3 && n <= 3) {
+                if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = 4L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = 4L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKST COMMITMENT":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKST NONCE":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKST AGGREGATE":
+            if (n >= 4 && n <= 4) {
+                if (n > 3) { long c = 2L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 0) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKST PARTIAL":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKST SIGNATURE":
+            if (n >= 4 && n <= 4) {
+                if (n > 3) { long c = 2L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 0) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HCRED CREDENTIAL":
+            if (n >= 5 && n <= 5) {
+                if (n > 0) { long c = 2L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = F0.applyAsLong(1) * 3L * (F0.applyAsLong(0)/8L); if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 3) { long c = (F0.applyAsLong(1) + 3L)/4L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 4) { long c = F0.applyAsLong(1) * 2L * (F0.applyAsLong(0)/8L); if (L.applyAsInt(4) > c) return new long[]{4, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA SESSION KEY":
+            if (n >= 2 && n <= 2) {
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA DIGEST":
+            if (n >= 1 && n <= 1) {
+                if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA HDRBG STATE":
+            if (n >= 2 && n <= 2) {
+                if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = 8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA ENCRYPTED PRIVATE KEY":
+            if (n >= 6 && n <= 6) {
+                if (n > 0) { long c = 16L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = 4L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = 32L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 4) { long c = 32L; if (L.applyAsInt(4) > c) return new long[]{4, c}; }
+                if (n > 5) { long c = 4L; if (L.applyAsInt(5) > c) return new long[]{5, c}; }
+                if (n > 3) { long c = F0.applyAsLong(5); if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA CIPHERTEXT":
+            if (n >= 3 && n <= 3) {
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 0) { long c = (F0.applyAsLong(2) + 7L)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = (F0.applyAsLong(2) + 7L)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                return null;
+            }
+            if (n >= 4 && n <= 4) {
+                if (n > 0) { long c = 1L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 3) { long c = 2L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 1) { long c = (F0.applyAsLong(3) + 7L)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = (F0.applyAsLong(3) + 7L)/8L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                return null;
+            }
+            if (n >= 5 && n <= 5 && (F0.applyAsLong(0) == 2L)) {
+                if (n > 0) { long c = 1L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 3) { long c = 32L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 4) { long c = 2L; if (L.applyAsInt(4) > c) return new long[]{4, c}; }
+                if (n > 1) { long c = (F0.applyAsLong(4) + 7L)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = (F0.applyAsLong(4) + 7L)/8L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                return null;
+            }
+            if (n >= 5 && n <= 5) {
+                if (n > 4) { long c = 2L; if (L.applyAsInt(4) > c) return new long[]{4, c}; }
+                if (n > 0) { long c = F0.applyAsLong(4)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(4)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = F0.applyAsLong(4)/8L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 3) { long c = F0.applyAsLong(4)/8L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                return null;
+            }
+            if (n >= 6 && n <= 6) {
+                if (n > 0) { long c = 1L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 2) { long c = 6L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 4) { long c = 32L; if (L.applyAsInt(4) > c) return new long[]{4, c}; }
+                if (n > 5) { long c = 2L; if (L.applyAsInt(5) > c) return new long[]{5, c}; }
+                if (n > 1) { long c = (F0.applyAsLong(5) + 7L)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 3) { long c = F0.applyAsLong(2); if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                return null;
+            }
+            return null;
+        case "HERRADURA SIGNATURE":
+            if (n >= 4 && n <= 4) {
+                if (n > 3) { long c = 2L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 0) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                return null;
+            }
+            if (n >= 5 && n <= 5) {
+                if (n > 0) { long c = 2L; if (L.applyAsInt(0) > c) return new long[]{0, c}; }
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return new long[]{1, c}; }
+                if (n > 2) { long c = F0.applyAsLong(1) * 3L * (F0.applyAsLong(0)/8L); if (L.applyAsInt(2) > c) return new long[]{2, c}; }
+                if (n > 3) { long c = (F0.applyAsLong(1) + 3L)/4L; if (L.applyAsInt(3) > c) return new long[]{3, c}; }
+                if (n > 4) { long c = F0.applyAsLong(1) * 2L * (F0.applyAsLong(0)/8L); if (L.applyAsInt(4) > c) return new long[]{4, c}; }
+                return null;
+            }
+            return null;
+        default:
+            return null;
+        }
+    }
 }

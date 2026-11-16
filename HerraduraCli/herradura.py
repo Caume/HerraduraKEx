@@ -230,6 +230,492 @@ _DER_ITEMS = {
     'HERRADURA SESSION KEY': (2, 2),
     'HERRADURA SIGNATURE': (4, 5),
 }
+
+
+# TODO #372: field width caps (significant bytes) per DER-SEQUENCE label.
+def _der_field_caps(label, v):
+    """(field, cap) for the first field of v wider than its cap, else None."""
+    n = len(v)
+    F = [x if x.bit_length() <= 48 else -1 for x in v]
+    L = [(x.bit_length() + 7) // 8 for x in v]
+    if label == 'HERRADURA HKEX-GF PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HKEX-GF PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA HPKS PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HPKS PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA HPKS-NL PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HPKS-NL PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA HPKE PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HPKE PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA HPKE-NL PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HPKE-NL PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA HPKE-NL3 PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HPKE-NL3 PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA HKEX-RNL PRIVATE KEY':
+        if 3 <= n <= 4:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 3 and L[3] > (32):
+                return 3, 32
+            if n > 0 and L[0] > (F[2] * 4):
+                return 0, F[2] * 4
+            if n > 1 and L[1] > (F[2] * 4):
+                return 1, F[2] * 4
+            return None
+    elif label == 'HERRADURA HKEX-RNL PUBLIC KEY':
+        if 3 <= n <= 4:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 3 and L[3] > (32):
+                return 3, 32
+            if n > 0 and L[0] > (F[2] * 2):
+                return 0, F[2] * 2
+            if n > 1 and L[1] > (F[2] * 4):
+                return 1, F[2] * 4
+            return None
+    elif label == 'HERRADURA HKEX-RNL RESPONSE':
+        if 5 <= n <= 6:
+            if n > 0 and L[0] > (32):
+                return 0, 32
+            if n > 3 and L[3] > (2):
+                return 3, 2
+            if n > 4 and L[4] > (2):
+                return 4, 2
+            if n > 5 and L[5] > (32):
+                return 5, 32
+            if n > 1 and L[1] > (F[3] * 2):
+                return 1, F[3] * 2
+            if n > 2 and L[2] > ((2 * F[4] + 7)//8):
+                return 2, (2 * F[4] + 7)//8
+            return None
+    elif label == 'HERRADURA HYBRID-RNL-STERN RESPONSE':
+        if 8 <= n <= 8:
+            if n > 0 and L[0] > (32):
+                return 0, 32
+            if n > 3 and L[3] > (2):
+                return 3, 2
+            if n > 4 and L[4] > (2):
+                return 4, 2
+            if n > 5 and L[5] > (32):
+                return 5, 32
+            if n > 7 and L[7] > (2):
+                return 7, 2
+            if n > 1 and L[1] > (F[3] * 2):
+                return 1, F[3] * 2
+            if n > 2 and L[2] > ((2 * F[4] + 7)//8):
+                return 2, (2 * F[4] + 7)//8
+            if n > 6 and L[6] > ((F[7] + 7)//8):
+                return 6, (F[7] + 7)//8
+            return None
+    elif label == 'HERRADURA HPKS-STERN PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HPKS-STERN PUBLIC KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HPKE-STERN PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HPKE-STERN PUBLIC KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HPKE-STERN-KEM PRIVATE KEY':
+        if 6 <= n <= 6:
+            if n > 4 and L[4] > (2):
+                return 4, 2
+            if n > 5 and L[5] > (2):
+                return 5, 2
+            if n > 0 and L[0] > ((F[4] + 7)//8):
+                return 0, (F[4] + 7)//8
+            if n > 1 and L[1] > ((F[4] + 7)//8):
+                return 1, (F[4] + 7)//8
+            if n > 2 and L[2] > (F[5] * 2):
+                return 2, F[5] * 2
+            if n > 3 and L[3] > (F[5] * 2):
+                return 3, F[5] * 2
+            return None
+    elif label == 'HERRADURA HPKE-STERN-KEM PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > ((F[1] + 7)//8):
+                return 0, (F[1] + 7)//8
+            return None
+    elif label == 'HERRADURA HPKS-WOTS PRIVATE KEY':
+        if 2 <= n <= 2:
+            if n > 0 and L[0] > (32):
+                return 0, 32
+            if n > 1 and L[1] > (4):
+                return 1, 4
+            return None
+    elif label == 'HERRADURA HPKS-WOTS PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1] * 32):
+                return 0, F[1] * 32
+            return None
+    elif label == 'HERRADURA HPKS-WOTS SIGNATURE':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1] * 32):
+                return 0, F[1] * 32
+            return None
+    elif label == 'HERRADURA HPKS-XMSS PRIVATE KEY':
+        if 4 <= n <= 4:
+            if n > 0 and L[0] > (32):
+                return 0, 32
+            if n > 1 and L[1] > (1):
+                return 1, 1
+            if n > 2 and L[2] > (4):
+                return 2, 4
+            if n > 3 and L[3] > (32 * (1 << min(F[1], 32))):
+                return 3, 32 * (1 << min(F[1], 32))
+            return None
+    elif label == 'HERRADURA HPKS-XMSS PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 0 and L[0] > (32):
+                return 0, 32
+            if n > 1 and L[1] > (1):
+                return 1, 1
+            return None
+    elif label == 'HERRADURA HPKS-XMSS SIGNATURE':
+        if 5 <= n <= 5:
+            if n > 0 and L[0] > (4):
+                return 0, 4
+            if n > 3 and L[3] > (1):
+                return 3, 1
+            if n > 4 and L[4] > (2):
+                return 4, 2
+            if n > 1 and L[1] > (67 * (F[4]//8)):
+                return 1, 67 * (F[4]//8)
+            if n > 2 and L[2] > (F[3] * 32):
+                return 2, F[3] * 32
+            return None
+    elif label == 'HERRADURA HPKS-RING SIGNATURE':
+        if 4 <= n <= 4:
+            if n > 0 and L[0] > (1):
+                return 0, 1
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 3 and L[3] > (F[0] * F[1] * (5 * (F[2]//8) + 1)):
+                return 3, F[0] * F[1] * (5 * (F[2]//8) + 1)
+            return None
+    elif label == 'HERRADURA OPRF PRIVATE KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA OPRF CLIENT STATE':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA OPRF EVALUATION':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA PAKE RECORD':
+        if 3 <= n <= 3:
+            if n > 0 and L[0] > (32):
+                return 0, 32
+            if n > 1 and L[1] > (4):
+                return 1, 4
+            if n > 2 and L[2] > (4):
+                return 2, 4
+            return None
+    elif label == 'HERRADURA HPKST COMMITMENT':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > (F[2]//8):
+                return 0, F[2]//8
+            if n > 1 and L[1] > (F[2]//8):
+                return 1, F[2]//8
+            return None
+    elif label == 'HERRADURA HPKST NONCE':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA HPKST AGGREGATE':
+        if 4 <= n <= 4:
+            if n > 3 and L[3] > (2):
+                return 3, 2
+            if n > 0 and L[0] > (F[3]//8):
+                return 0, F[3]//8
+            if n > 1 and L[1] > (F[3]//8):
+                return 1, F[3]//8
+            if n > 2 and L[2] > (F[3]//8):
+                return 2, F[3]//8
+            return None
+    elif label == 'HERRADURA HPKST PARTIAL':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA HPKST SIGNATURE':
+        if 4 <= n <= 4:
+            if n > 3 and L[3] > (2):
+                return 3, 2
+            if n > 0 and L[0] > (F[3]//8):
+                return 0, F[3]//8
+            if n > 1 and L[1] > (F[3]//8):
+                return 1, F[3]//8
+            if n > 2 and L[2] > (F[3]//8):
+                return 2, F[3]//8
+            return None
+    elif label == 'HERRADURA HCRED CREDENTIAL':
+        if 5 <= n <= 5:
+            if n > 0 and L[0] > (2):
+                return 0, 2
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 2 and L[2] > (F[1] * 3 * (F[0]//8)):
+                return 2, F[1] * 3 * (F[0]//8)
+            if n > 3 and L[3] > ((F[1] + 3)//4):
+                return 3, (F[1] + 3)//4
+            if n > 4 and L[4] > (F[1] * 2 * (F[0]//8)):
+                return 4, F[1] * 2 * (F[0]//8)
+            return None
+    elif label == 'HERRADURA SESSION KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 0 and L[0] > (F[1]//8):
+                return 0, F[1]//8
+            return None
+    elif label == 'HERRADURA DIGEST':
+        if 1 <= n <= 1:
+            if n > 0 and L[0] > (32):
+                return 0, 32
+            return None
+    elif label == 'HERRADURA HDRBG STATE':
+        if 2 <= n <= 2:
+            if n > 0 and L[0] > (32):
+                return 0, 32
+            if n > 1 and L[1] > (8):
+                return 1, 8
+            return None
+    elif label == 'HERRADURA ENCRYPTED PRIVATE KEY':
+        if 6 <= n <= 6:
+            if n > 0 and L[0] > (16):
+                return 0, 16
+            if n > 1 and L[1] > (4):
+                return 1, 4
+            if n > 2 and L[2] > (32):
+                return 2, 32
+            if n > 4 and L[4] > (32):
+                return 4, 32
+            if n > 5 and L[5] > (4):
+                return 5, 4
+            if n > 3 and L[3] > (F[5]):
+                return 3, F[5]
+            return None
+    elif label == 'HERRADURA CIPHERTEXT':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return 2, 2
+            if n > 0 and L[0] > ((F[2] + 7)//8):
+                return 0, (F[2] + 7)//8
+            if n > 1 and L[1] > ((F[2] + 7)//8):
+                return 1, (F[2] + 7)//8
+            return None
+        if 4 <= n <= 4:
+            if n > 0 and L[0] > (1):
+                return 0, 1
+            if n > 3 and L[3] > (2):
+                return 3, 2
+            if n > 1 and L[1] > ((F[3] + 7)//8):
+                return 1, (F[3] + 7)//8
+            if n > 2 and L[2] > ((F[3] + 7)//8):
+                return 2, (F[3] + 7)//8
+            return None
+        if 5 <= n <= 5 and (F[0] == 2):
+            if n > 0 and L[0] > (1):
+                return 0, 1
+            if n > 3 and L[3] > (32):
+                return 3, 32
+            if n > 4 and L[4] > (2):
+                return 4, 2
+            if n > 1 and L[1] > ((F[4] + 7)//8):
+                return 1, (F[4] + 7)//8
+            if n > 2 and L[2] > ((F[4] + 7)//8):
+                return 2, (F[4] + 7)//8
+            return None
+        if 5 <= n <= 5:
+            if n > 4 and L[4] > (2):
+                return 4, 2
+            if n > 0 and L[0] > (F[4]//8):
+                return 0, F[4]//8
+            if n > 1 and L[1] > (F[4]//8):
+                return 1, F[4]//8
+            if n > 2 and L[2] > (F[4]//8):
+                return 2, F[4]//8
+            if n > 3 and L[3] > (F[4]//8):
+                return 3, F[4]//8
+            return None
+        if 6 <= n <= 6:
+            if n > 0 and L[0] > (1):
+                return 0, 1
+            if n > 2 and L[2] > (6):
+                return 2, 6
+            if n > 4 and L[4] > (32):
+                return 4, 32
+            if n > 5 and L[5] > (2):
+                return 5, 2
+            if n > 1 and L[1] > ((F[5] + 7)//8):
+                return 1, (F[5] + 7)//8
+            if n > 3 and L[3] > (F[2]):
+                return 3, F[2]
+            return None
+    elif label == 'HERRADURA SIGNATURE':
+        if 4 <= n <= 4:
+            if n > 3 and L[3] > (2):
+                return 3, 2
+            if n > 0 and L[0] > (F[3]//8):
+                return 0, F[3]//8
+            if n > 1 and L[1] > (F[3]//8):
+                return 1, F[3]//8
+            if n > 2 and L[2] > (F[3]//8):
+                return 2, F[3]//8
+            return None
+        if 5 <= n <= 5:
+            if n > 0 and L[0] > (2):
+                return 0, 2
+            if n > 1 and L[1] > (2):
+                return 1, 2
+            if n > 2 and L[2] > (F[1] * 3 * (F[0]//8)):
+                return 2, F[1] * 3 * (F[0]//8)
+            if n > 3 and L[3] > ((F[1] + 3)//4):
+                return 3, (F[1] + 3)//4
+            if n > 4 and L[4] > (F[1] * 2 * (F[0]//8)):
+                return 4, F[1] * 2 * (F[0]//8)
+            return None
+    return None
 # END GENERATED key-label table
 
 
@@ -416,13 +902,28 @@ def _der_items(label, der):
     generated _DER_ITEMS table (TODO #367), so a decoder never indexes past the
     end of a short list.  ValueError is the codec's "malformed artifact" signal,
     which main() reports as one line."""
-    ints = der_parse_seq(der)
+    ints = der_parse_seq(der, label)
     lim = _DER_ITEMS.get(label)
     if lim is not None and not lim[0] <= len(ints) <= lim[1]:
         want = str(lim[0]) if lim[0] == lim[1] else f'{lim[0]}..{lim[1]}'
         raise ValueError(f"malformed PEM '{label}': {len(ints)} DER items, expected {want}")
+    _check_field_caps(label, ints)
     _check_wire_fields(label, ints)
     return ints
+
+
+def _check_field_caps(label, ints):
+    """TODO #372: no field wider than its writer pads it to (the generated
+    PEM_DER_FIELD_CAPS table); same text in all four CLIs."""
+    bad = _der_field_caps(label, ints)
+    if bad is not None:
+        i, cap = bad
+        raise ValueError(f"{label}: field {i} is {(ints[i].bit_length() + 7) // 8} bytes "
+                         f"(expected at most {cap})")
+
+
+import codec as _codec_mod                   # noqa: E402  (the module the decoders live in)
+_codec_mod.FIELD_CAPS_CHECK = _check_field_caps
 
 
 def _read_pem_ints(path):
@@ -2673,19 +3174,28 @@ def cmd_verify(args):
             sys.exit("verify: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         poly = GF_POLY.get(nbits, GF_POLY[256])
         msg  = BitArray(nbits, int.from_bytes(in_bytes[:nbits // 8].ljust(nbits // 8, b'\x00'), 'big'))
-        s_int, R_int, e_int, _nb = _decode_schnorr_sig(sig_path)
+        s_int, R_int, e_int, sig_nb = _decode_schnorr_sig(sig_path)
+        if sig_nb != nbits:
+            sys.exit(f"verify: signature n is {sig_nb}, public key n is {nbits}")
         R    = BitArray(nbits, R_int)
         e_v  = (fscx_revolve(R, msg, nbits // 4)
                 if algo == 'hpks'
                 else hpks_nl_challenge(R, msg))
         lhs  = gf_mul(gf_pow(GF_GEN, s_int, poly, nbits),
                       gf_pow(pub_int, e_v.uint, poly, nbits), poly, nbits)
-        if lhs == R_int:
-            print("Signature OK")
-            sys.exit(0)
-        else:
+        if lhs != R_int:
             print("Verification FAILED")
             sys.exit(1)
+        # TODO #372: the stored challenge is part of the signature's bytes, so
+        # one that is not the recomputed e is a second encoding of the same
+        # signature -- refused, as every CLI does.  Checked only once the
+        # algebra holds: a wrong message or key changes e too, and stays an
+        # ordinary "Verification FAILED".
+        if e_int != e_v.uint:
+            sys.exit("verify: signature challenge e is not the recomputed one "
+                     "(rejected: non-canonical signature)")
+        print("Signature OK")
+        sys.exit(0)
 
     elif algo == 'hpks-stern':
         print(_STERN_DEMO_WARNING, file=sys.stderr)
@@ -2885,6 +3395,9 @@ def cmd_decfile(args):
 
     if len(raw) < ct_end + 32:
         sys.exit("decfile: file truncated (ciphertext blocks or auth tag missing)")
+    # TODO #368: exactly one encoding per file -- nothing after the tag.
+    if len(raw) > ct_end + 32:
+        sys.exit(f"decfile: {len(raw) - ct_end - 32} bytes after the auth tag")
 
     ct_bytes   = raw[45:ct_end]
     tag_stored = bytes(raw[ct_end:ct_end + 32])

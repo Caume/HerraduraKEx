@@ -1631,6 +1631,7 @@ def generate():
         "pem_der_items": build_pem_der_items(
             list(pem_labels_all.values())
             + [l for t in key_tag_labels(priv_algos, pem_labels_all).values() for l in t]),
+        "pem_der_field_caps": build_pem_der_field_caps(),
     }
     return spec
 
@@ -1950,6 +1951,327 @@ def build_pem_der_items(all_labels):
     return rows
 
 
+# TODO #372: how wide each field of each DER-SEQUENCE label may be, in
+# significant bytes.  The cap is what the writer pads that field to (Python's
+# der_int(v, nbytes) calls, which every CLI matches byte for byte): a value
+# wider than it cannot have come from a writer, and before this table some
+# CLIs truncated it, some ignored it and some refused it.  One row per (label,
+# item count), optionally narrowed by `when`, a test on field 0 that tells two
+# layouts with the same count apart (CIPHERTEXT format tags).  A cap is an
+# integer expression: decimal constants, fK (the value of field K), + - * /
+# (integer division), parentheses and min(a, b).  Every field an expression
+# names must itself have a constant cap of at most 6 bytes, so the arithmetic
+# fits a signed 64-bit integer in every language; the generated checks test
+# the constant caps first.  Each CLI runs these in its PEM-to-integers loader,
+# right after PEM_DER_ITEMS, and prints the same text:
+#     <label>: field <i> is <k> bytes (expected at most <cap>)
+_GF_N = {0: "f2/8", 1: "f2/8", 2: "2"}           # (priv, pub, n)
+_GF_PUB = {0: "f1/8", 1: "2"}                     # (pub, n)
+_STERN_KEY = {0: "f2/8", 1: "f2/8", 2: "2"}       # (e or syndrome, seed, n)
+_STERN_SIG = {0: "2", 1: "2", 2: "f1*3*(f0/8)", 3: "(f1+3)/4", 4: "f1*2*(f0/8)"}
+_RNL_RESP = {0: "32", 1: "f3*2", 2: "(2*f4+7)/8", 3: "2", 4: "2", 5: "32"}
+_QCMDPC_R = 12323     # "Herradura cryptographic suite.py" _QCMDPC_R
+_WOTS_L = 67          # parameters.wots.l_total
+PEM_DER_FIELD_CAPS = [
+    # label, (min items, max items), when, {field: cap}
+    ("HERRADURA HKEX-GF PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HKEX-GF PUBLIC KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKS PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HPKS PUBLIC KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKS-NL PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HPKS-NL PUBLIC KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKE PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HPKE PUBLIC KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKE-NL PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HPKE-NL PUBLIC KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKE-NL3 PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HPKE-NL3 PUBLIC KEY", (2, 2), None, _GF_PUB),
+    # s and m_blind are 4 bytes a coefficient, C 2; the optional nonce is 32.
+    ("HERRADURA HKEX-RNL PRIVATE KEY", (3, 4), None, {0: "f2*4", 1: "f2*4", 2: "2", 3: "32"}),
+    ("HERRADURA HKEX-RNL PUBLIC KEY", (3, 4), None, {0: "f2*2", 1: "f2*4", 2: "2", 3: "32"}),
+    # (K_B, C_B, hint, n, hint length[, n_B]): 2 hint bits a coefficient.
+    ("HERRADURA HKEX-RNL RESPONSE", (5, 6), None, _RNL_RESP),
+    ("HERRADURA HYBRID-RNL-STERN RESPONSE", (8, 8), None,
+     {**_RNL_RESP, 6: "(f7+7)/8", 7: "2"}),
+    ("HERRADURA HPKS-STERN PRIVATE KEY", (3, 3), None, _STERN_KEY),
+    ("HERRADURA HPKS-STERN PUBLIC KEY", (3, 3), None, _STERN_KEY),
+    ("HERRADURA HPKE-STERN PRIVATE KEY", (3, 3), None, _STERN_KEY),
+    ("HERRADURA HPKE-STERN PUBLIC KEY", (3, 3), None, _STERN_KEY),
+    # (h0, h1, support0, support1, r, d): 2 bytes a support index.
+    ("HERRADURA HPKE-STERN-KEM PRIVATE KEY", (6, 6), None,
+     {0: "(f4+7)/8", 1: "(f4+7)/8", 2: "f5*2", 3: "f5*2", 4: "2", 5: "2"}),
+    ("HERRADURA HPKE-STERN-KEM PUBLIC KEY", (2, 2), None, {0: "(f1+7)/8", 1: "2"}),
+    ("HERRADURA HPKS-WOTS PRIVATE KEY", (2, 2), None, {0: "32", 1: "4"}),
+    ("HERRADURA HPKS-WOTS PUBLIC KEY", (2, 2), None, {0: "f1*32", 1: "2"}),
+    ("HERRADURA HPKS-WOTS SIGNATURE", (2, 2), None, {0: "f1*32", 1: "2"}),
+    # (seed, h, next leaf, 32 bytes a leaf); min() keeps the shift in range
+    # for an h the decoder will refuse anyway.
+    ("HERRADURA HPKS-XMSS PRIVATE KEY", (4, 4), None,
+     {0: "32", 1: "1", 2: "4", 3: "32*(1<<min(f1, 32))"}),
+    ("HERRADURA HPKS-XMSS PUBLIC KEY", (2, 2), None, {0: "32", 1: "1"}),
+    # (leaf, %d WOTS values of n/8 bytes, h auth-path nodes of 32, h, n)
+    ("HERRADURA HPKS-XMSS SIGNATURE", (5, 5), None,
+     {0: "4", 1: "%d*(f4/8)" % _WOTS_L, 2: "f3*32", 3: "1", 4: "2"}),
+    # (k, rounds, n, k*rounds entries of c0 c1 c2 b ra rb)
+    ("HERRADURA HPKS-RING SIGNATURE", (4, 4), None,
+     {0: "1", 1: "2", 2: "2", 3: "f0*f1*(5*(f2/8)+1)"}),
+    ("HERRADURA OPRF PRIVATE KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA OPRF CLIENT STATE", (3, 3), None, _GF_N),
+    ("HERRADURA OPRF EVALUATION", (2, 2), None, _GF_PUB),
+    ("HERRADURA PAKE RECORD", (3, 3), None, {0: "32", 1: "4", 2: "4"}),
+    ("HERRADURA HPKST COMMITMENT", (3, 3), None, _GF_N),
+    ("HERRADURA HPKST NONCE", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKST AGGREGATE", (4, 4), None, {0: "f3/8", 1: "f3/8", 2: "f3/8", 3: "2"}),
+    ("HERRADURA HPKST PARTIAL", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKST SIGNATURE", (4, 4), None, {0: "f3/8", 1: "f3/8", 2: "f3/8", 3: "2"}),
+    ("HERRADURA HCRED CREDENTIAL", (5, 5), None, _STERN_SIG),
+    ("HERRADURA SESSION KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA DIGEST", (1, 1), None, {0: "32"}),
+    ("HERRADURA HDRBG STATE", (2, 2), None, {0: "32", 1: "8"}),
+    # (salt, iterations, nonce, ciphertext of plaintext-length bytes, tag, length)
+    ("HERRADURA ENCRYPTED PRIVATE KEY", (6, 6), None,
+     {0: "16", 1: "4", 2: "32", 3: "f5", 4: "32", 5: "4"}),
+    # Three items: HPKE (R, E, n), hske format 0 (0, E, n) and the QC-MDPC KEM
+    # (syndrome, E, r); the KEM's r makes (r+7)/8 the syndrome width.
+    ("HERRADURA CIPHERTEXT", (3, 3), None, {0: "(f2+7)/8", 1: "(f2+7)/8", 2: "2"}),
+    ("HERRADURA CIPHERTEXT", (4, 4), None, {0: "1", 1: "(f3+7)/8", 2: "(f3+7)/8", 3: "2"}),
+    # Five: hske-nla1 format 2 (2, nonce, E, tag, n), else HPKE-Stern (5 x n/8).
+    ("HERRADURA CIPHERTEXT", (5, 5), "f0 == 2",
+     {0: "1", 1: "(f4+7)/8", 2: "(f4+7)/8", 3: "32", 4: "2"}),
+    ("HERRADURA CIPHERTEXT", (5, 5), None,
+     {0: "f4/8", 1: "f4/8", 2: "f4/8", 3: "f4/8", 4: "2"}),
+    # Six: duplex (format 3 or 4, nonce, length, ciphertext, tag, n).
+    ("HERRADURA CIPHERTEXT", (6, 6), None,
+     {0: "1", 1: "(f5+7)/8", 2: "6", 3: "f2", 4: "32", 5: "2"}),
+    ("HERRADURA SIGNATURE", (4, 4), None, {0: "f3/8", 1: "f3/8", 2: "f3/8", 3: "2"}),
+    ("HERRADURA SIGNATURE", (5, 5), None, _STERN_SIG),
+]
+
+_CAP_TOKEN = re.compile(r"\s*(?:(\d+)|f(\d+)|(min)|(<<|[-+*/(),]|==))")
+
+
+def _cap_refs(expr):
+    """Field indices an expression reads; raises on anything outside the grammar."""
+    refs, pos = set(), 0
+    while pos < len(expr):
+        m = _CAP_TOKEN.match(expr, pos)
+        if not m or m.end() == pos:
+            raise RuntimeError("PEM_DER_FIELD_CAPS: bad token in %r at %d" % (expr, pos))
+        if m.group(2) is not None:
+            refs.add(int(m.group(2)))
+        pos = m.end()
+    return refs
+
+
+def build_pem_der_field_caps():
+    items = dict(PEM_DER_ITEMS)
+    rows, seen = [], set()
+    for label, (lo, hi), when, caps in PEM_DER_FIELD_CAPS:
+        if label not in items:
+            raise RuntimeError("PEM_DER_FIELD_CAPS row %r is not in PEM_DER_ITEMS" % label)
+        ilo, ihi = items[label]
+        if not ilo <= lo <= hi <= ihi:
+            raise RuntimeError("PEM_DER_FIELD_CAPS %r: items %d..%d outside PEM_DER_ITEMS %d..%d"
+                               % (label, lo, hi, ilo, ihi))
+        key = (label, lo, hi, when)
+        if key in seen:
+            raise RuntimeError("duplicate PEM_DER_FIELD_CAPS row %r" % (key,))
+        seen.add(key)
+        if sorted(caps) != list(range(hi)):
+            raise RuntimeError("PEM_DER_FIELD_CAPS %r: caps must name fields 0..%d" % (label, hi - 1))
+        const = {i: int(e) for i, e in caps.items() if e.strip().isdigit()}
+        for i, e in caps.items():
+            for r in _cap_refs(e) | (_cap_refs(when) if when else set()):
+                if r not in const or const[r] > 6:
+                    raise RuntimeError("PEM_DER_FIELD_CAPS %r field %d: %r reads f%d, which "
+                                       "needs a constant cap of at most 6 bytes" % (label, i, e, r))
+        # Check order: constant caps first, so every value an expression reads
+        # has already been bounded.
+        order = sorted(caps, key=lambda i: (i not in const, i))
+        rows.append({"label": label, "min_items": lo, "max_items": hi,
+                     "when": when or "",
+                     "caps": [{"field": i, "cap": caps[i].strip()} for i in order]})
+    # Every label with items has rows covering each count it allows.
+    for label, (ilo, ihi) in items.items():
+        for k in range(ilo, ihi + 1):
+            if not any(r["label"] == label and r["min_items"] <= k <= r["max_items"]
+                       and not r["when"] for r in rows):
+                raise RuntimeError("PEM_DER_FIELD_CAPS has no unconditional row for %r with "
+                                   "%d items" % (label, k))
+    return rows
+
+
+def _cap_code(expr, lang):
+    """Translate a cap expression; F(K) is each language's 'value of field K'."""
+    out, pos = [], 0
+    while pos < len(expr):
+        m = _CAP_TOKEN.match(expr, pos)
+        num, ref, mn, op = m.groups()
+        if num is not None:
+            out.append(num + ("LL" if lang == "c" else "L" if lang == "java" else ""))
+        elif ref is not None:
+            out.append({"py": "F[%s]", "c": "F(%s)", "go": "F(%s)", "java": "F(%s)"}[lang] % ref)
+        elif mn:
+            out.append({"py": "min", "c": "HKX_MIN", "go": "hkxMin", "java": "Math.min"}[lang])
+        elif op == "/" and lang == "py":
+            out.append("//")
+        elif op == ",":
+            out.append(", ")
+        elif op in ("+", "-", "*", "==", "<<"):
+            out.append(" %s " % op)
+        else:
+            out.append(op)
+        pos = m.end()
+    return "".join(out)
+
+
+def _cap_rows_by_label(caps):
+    by = {}
+    for r in caps:
+        by.setdefault(r["label"], []).append(r)
+    return by
+
+
+def emit_c_field_caps(caps):
+    out = ["/* TODO #372: field width caps (significant bytes) per DER-SEQUENCE label.",
+           " * Returns 1 and fills *bad / *cap with the first field wider than its cap,",
+           " * else 0.  F(K) is field K's value, or -1 if it is wider than 6 bytes. */",
+           "#define HKX_MIN(a, b) ((a) < (b) ? (a) : (b))",
+           "static long long hkx_cap_val(const uint8_t *v, size_t n)",
+           "{",
+           "    long long x = 0; size_t i = 0;",
+           "    while (i < n && v[i] == 0) i++;",
+           "    if (n - i > 6) return -1;",
+           "    for (; i < n; i++) x = (x << 8) | v[i];",
+           "    return x;",
+           "}",
+           "static size_t hkx_cap_len(const uint8_t *v, size_t n)",
+           "{",
+           "    size_t i = 0;",
+           "    while (i < n && v[i] == 0) i++;",
+           "    return n - i;",
+           "}",
+           "#define F(k) hkx_cap_val(vals[k], lens[k])",
+           "#define HKX_CAP(k, e) do { long long c_ = (e); \\",
+           "    if ((long long)hkx_cap_len(vals[k], lens[k]) > c_) { *bad = (k); *cap = c_; return 1; } \\",
+           "    } while (0)",
+           "static int hkx_der_field_caps(const char *label, int n, const uint8_t *const *vals,",
+           "                              const size_t *lens, int *bad, long long *cap)",
+           "{"]
+    for label, rows in _cap_rows_by_label(caps).items():
+        out.append('    if (strcmp(label, "%s") == 0) {' % label)
+        for r in rows:
+            cond = "n >= %d && n <= %d" % (r["min_items"], r["max_items"])
+            if r["when"]:
+                cond += " && (%s)" % _cap_code(r["when"], "c")
+            out.append("        if (%s) {" % cond)
+            for c in r["caps"]:
+                out.append("            if (n > %d) HKX_CAP(%d, %s);"
+                           % (c["field"], c["field"], _cap_code(c["cap"], "c")))
+            out.append("            return 0;")
+            out.append("        }")
+        out.append("        return 0;")
+        out.append("    }")
+    out += ["    return 0;", "}", "#undef F", "#undef HKX_CAP", ""]
+    return out
+
+
+def emit_java_field_caps(caps):
+    out = ["    /** TODO #372: field width caps (significant bytes) per DER-SEQUENCE label.",
+           "     *  Returns {field, cap} for the first field wider than its cap, else null. */",
+           "    static long[] fieldCaps(String label, java.util.List<java.math.BigInteger> v) {",
+           "        int n = v.size();",
+           "        java.util.function.IntToLongFunction F0 = k -> {",
+           "            java.math.BigInteger x = v.get(k);",
+           "            return x.bitLength() > 48 ? -1L : x.longValue();",
+           "        };",
+           "        java.util.function.IntUnaryOperator L = k -> (v.get(k).bitLength() + 7) / 8;",
+           "        switch (label) {"]
+    for label, rows in _cap_rows_by_label(caps).items():
+        out.append('        case "%s":' % label)
+        for r in rows:
+            cond = "n >= %d && n <= %d" % (r["min_items"], r["max_items"])
+            if r["when"]:
+                cond += " && (%s)" % _cap_code(r["when"], "java").replace("F(", "F0.applyAsLong(")
+            out.append("            if (%s) {" % cond)
+            for c in r["caps"]:
+                e = _cap_code(c["cap"], "java").replace("F(", "F0.applyAsLong(")
+                out.append("                if (n > %d) { long c = %s; if (L.applyAsInt(%d) > c) return new long[]{%d, c}; }"
+                           % (c["field"], e, c["field"], c["field"]))
+            out.append("                return null;")
+            out.append("            }")
+        out.append("            return null;")
+    out += ["        default:", "            return null;", "        }", "    }"]
+    return out
+
+
+def emit_go_field_caps(caps):
+    out = ["// TODO #372: field width caps (significant bytes) per DER-SEQUENCE label.",
+           "// Returns the first field wider than its cap, and that cap, or ok = false.",
+           "func derFieldCaps(label string, v [][]byte) (bad int, capB int64, ok bool) {",
+           "\tn := len(v)",
+           "\tL := func(k int) int64 {",
+           "\t\tb := v[k]",
+           "\t\tfor len(b) > 0 && b[0] == 0 {",
+           "\t\t\tb = b[1:]",
+           "\t\t}",
+           "\t\treturn int64(len(b))",
+           "\t}",
+           "\tF := func(k int) int64 {",
+           "\t\tif L(k) > 6 {",
+           "\t\t\treturn -1",
+           "\t\t}",
+           "\t\tvar x int64",
+           "\t\tfor _, c := range v[k] {",
+           "\t\t\tx = x<<8 | int64(c)",
+           "\t\t}",
+           "\t\treturn x",
+           "\t}",
+           "\t_ = F",
+           "\tswitch label {"]
+    for label, rows in _cap_rows_by_label(caps).items():
+        out.append('\tcase "%s":' % label)
+        for r in rows:
+            cond = "n >= %d && n <= %d" % (r["min_items"], r["max_items"])
+            if r["when"]:
+                cond += " && (%s)" % _cap_code(r["when"], "go")
+            out.append("\t\tif %s {" % cond)
+            for c in r["caps"]:
+                out.append("\t\t\tif c := int64(%s); n > %d && L(%d) > c {"
+                           % (_cap_code(c["cap"], "go"), c["field"], c["field"]))
+                out.append("\t\t\t\treturn %d, c, true" % c["field"])
+                out.append("\t\t\t}")
+            out.append("\t\t\treturn 0, 0, false")
+            out.append("\t\t}")
+    out += ["\t}", "\treturn 0, 0, false", "}"]
+    return out
+
+
+def emit_py_field_caps(caps):
+    out = ["# TODO #372: field width caps (significant bytes) per DER-SEQUENCE label.",
+           "def _der_field_caps(label, v):",
+           "    \"\"\"(field, cap) for the first field of v wider than its cap, else None.\"\"\"",
+           "    n = len(v)",
+           "    F = [x if x.bit_length() <= 48 else -1 for x in v]",
+           "    L = [(x.bit_length() + 7) // 8 for x in v]"]
+    first = True
+    for label, rows in _cap_rows_by_label(caps).items():
+        out.append("    %s label == %r:" % ("if" if first else "elif", label))
+        first = False
+        for r in rows:
+            cond = "%d <= n <= %d" % (r["min_items"], r["max_items"])
+            if r["when"]:
+                cond += " and (%s)" % _cap_code(r["when"], "py")
+            out.append("        if %s:" % cond)
+            for c in r["caps"]:
+                out.append("            if n > %d and L[%d] > (%s):" % (c["field"], c["field"],
+                                                                     _cap_code(c["cap"], "py")))
+                out.append("                return %d, %s" % (c["field"], _cap_code(c["cap"], "py")))
+            out.append("            return None")
+    out.append("    return None")
+    return out
+
+
 def key_tag_labels(priv_algos, pem_labels):
     """tag -> (PRIVATE label, PUBLIC label) for every key type a CLI can generate."""
     out = {t: (l, l.replace("PRIVATE", "PUBLIC")) for t, l in priv_algos.items()}
@@ -1976,7 +2298,7 @@ def build_key_label_acceptance(priv_algos, pem_labels):
     return rows
 
 
-def emit_c_key_table(rows, items):
+def emit_c_key_table(rows, items, caps):
     width = max(len(r["labels"]) for r in rows) + 1
     out = ["/* " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n * ") + " */",
            "#ifndef HKX_KEY_LABEL_TABLE_H",
@@ -1999,12 +2321,13 @@ def emit_c_key_table(rows, items):
         out.append('    {"%s", %d, %d},' % (r["label"], r["min"], r["max"]))
     out += ["};",
             "static const int HKX_DER_ITEMS_N ="
-            " (int)(sizeof(HKX_DER_ITEMS) / sizeof(HKX_DER_ITEMS[0]));", "",
-            "#endif /* HKX_KEY_LABEL_TABLE_H */", ""]
+            " (int)(sizeof(HKX_DER_ITEMS) / sizeof(HKX_DER_ITEMS[0]));", ""]
+    out += emit_c_field_caps(caps)
+    out += ["#endif /* HKX_KEY_LABEL_TABLE_H */", ""]
     return "\n".join(out)
 
 
-def emit_java_key_table(rows, items):
+def emit_java_key_table(rows, items, caps):
     out = ["package herradurakex;", "",
            "/** " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n *  ") + " */",
            "final class KeyLabelTable {",
@@ -2019,7 +2342,9 @@ def emit_java_key_table(rows, items):
             "    static final String[][] DER_ITEMS = {"]
     for r in items:
         out.append('        {"%s", "%d", "%d"},' % (r["label"], r["min"], r["max"]))
-    out += ["    };", "}", ""]
+    out += ["    };", ""]
+    out += emit_java_field_caps(caps)
+    out += ["}", ""]
     return "\n".join(out)
 
 
@@ -2037,7 +2362,7 @@ def _replace_region(src, begin, end, body, what):
     return pat.sub(lambda _m: "\n".join([begin] + body + [end]), src, count=1)
 
 
-def emit_go_key_region(go_src, rows, items):
+def emit_go_key_region(go_src, rows, items, caps):
     body = ["var keySites = []keySite{"]
     for r in rows:
         body.append('\t{"%s", "%s", "%s", "%s", []string{%s}},'
@@ -2050,10 +2375,12 @@ def emit_go_key_region(go_src, rows, items):
     for r in items:
         body.append('\t"%s": {%d, %d},' % (r["label"], r["min"], r["max"]))
     body.append("}")
+    body.append("")
+    body += emit_go_field_caps(caps)
     return _replace_region(go_src, GO_KEY_BEGIN, GO_KEY_END, body, "herradura_cli.go")
 
 
-def emit_py_key_region(py_src, rows, items):
+def emit_py_key_region(py_src, rows, items, caps):
     body = ["_KEY_SITES = {"]
     for r in rows:
         body.append("    (%r, %r, %r): (%r, (%s)),"
@@ -2066,6 +2393,9 @@ def emit_py_key_region(py_src, rows, items):
     for r in items:
         body.append("    %r: (%d, %d)," % (r["label"], r["min"], r["max"]))
     body.append("}")
+    body.append("")
+    body.append("")
+    body += emit_py_field_caps(caps)
     return _replace_region(py_src, PY_KEY_BEGIN, PY_KEY_END, body, "herradura.py")
 
 
@@ -2092,12 +2422,16 @@ def main():
         # TODO #339: Go's synopsis lives in a marked region of the CLI itself.
         (CLI_GO, emit_go_key_region(
             emit_go_help_region(read(CLI_GO), build_help_synopsis(spec, "go")),
-            spec["key_label_acceptance"], spec["pem_der_items"])),
-        # TODO #366: the key-label acceptance table, in all four CLIs.
-        (C_KEY_TABLE, emit_c_key_table(spec["key_label_acceptance"], spec["pem_der_items"])),
-        (JAVA_KEY_TABLE, emit_java_key_table(spec["key_label_acceptance"], spec["pem_der_items"])),
+            spec["key_label_acceptance"], spec["pem_der_items"], spec["pem_der_field_caps"])),
+        # TODO #366: the key-label acceptance table, in all four CLIs (with
+        # #367's item counts and #372's field caps).
+        (C_KEY_TABLE, emit_c_key_table(spec["key_label_acceptance"], spec["pem_der_items"],
+                                       spec["pem_der_field_caps"])),
+        (JAVA_KEY_TABLE, emit_java_key_table(spec["key_label_acceptance"], spec["pem_der_items"],
+                                             spec["pem_der_field_caps"])),
         (HERRADURA_PY, emit_py_key_region(read(HERRADURA_PY), spec["key_label_acceptance"],
-                                                     spec["pem_der_items"])),
+                                                     spec["pem_der_items"],
+                                                     spec["pem_der_field_caps"])),
     ]
 
     if args.check:

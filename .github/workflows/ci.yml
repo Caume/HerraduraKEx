@@ -452,6 +452,7 @@ jobs:
             case "$f" in test_key_label_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #366)
             case "$f" in test_der_items_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #367)
             case "$f" in test_peer_value_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #371)
+            case "$f" in test_canonical_encoding_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #372)
             case "$f" in test_kdf_matrix.sh) continue ;; esac         # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_param_bounds.sh) continue ;; esac       # claimed by cross-lang-compat (TODO #278)
             case "$f" in test_narrow_width_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #313)
@@ -651,6 +652,15 @@ jobs:
             # vector exists to produce.  An exemption must name a script and say
             # why; do not add one to silence a genuine exposure.
             case "$f" in test_kat_pem.sh) continue ;; esac
+            # EXEMPT (TODO #372): the malformed-artifact matrices decapsulate a
+            # FIXED ciphertext only to show a genuine artifact is accepted and a
+            # malformed one refused.  Neither verdict reads the decapsulated
+            # bytes, and implicit rejection makes `dec` exit 0 on a DFR event,
+            # so a decoding failure cannot change their result: there is nothing
+            # for a retry to retry.  lib_der_fixtures.sh holds those matrices'
+            # shared templates.
+            case "$f" in test_key_label_matrix.sh|test_der_items_matrix.sh|test_peer_value_matrix.sh|\
+                         test_canonical_encoding_matrix.sh|lib_der_fixtures.sh) continue ;; esac
             # A script is exposed if it decapsulates: `dec --algo hpke-stern-kem`
             # or a hybrid-rnl-stern completion (the step that takes --our-kem).
             if grep -qE 'dec --algo hpke-stern-kem|--our-kem' "$f"; then
@@ -792,6 +802,15 @@ jobs:
       # for a signature anyone can make under a public key of 1.
       - name: Degenerate peer value and width matrix
         run: bash CliTest/test_peer_value_matrix.sh
+
+      # TODO #372 / #368: a second encoding of a valid artifact, or a value no
+      # writer produces -- bytes after a DER SEQUENCE, a raw-body PEM's last
+      # field or an .hkx tag; any DER field one byte past its spec
+      # pem_der_field_caps width; an HPKS signature whose stored e is not the
+      # recomputed one -- refused by all four CLIs, each with an accept-control.
+      # Also the .hkx lengths that sent C past its buffer and panicked Go.
+      - name: Canonical encoding matrix
+        run: bash CliTest/test_canonical_encoding_matrix.sh
 
       # TODO #269: `kex --kdf`, for two reasons. Java had no --kdf until v6.5.0,
       # and -- the one that is easy to miss -- `--kdf hfscx-256` had never been
