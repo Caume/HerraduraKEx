@@ -1249,6 +1249,7 @@ _PBKDF2_HFSCX256_ITER_PROD = 200_000
 
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
 _ZKP_CLI_ROUNDS    = _ZKP_NL_PROD_ROUNDS   # CLI default: full 128-bit soundness
+_HCRED_CLI_N       = 256  # genpkey --algo hcred default width; == C's HCRED_N (TODO #369)
 
 # Binary container format for encfile / decfile (.hkx files)
 _HKX_MAGIC     = b'HKX1'   # 4-byte magic
@@ -2707,9 +2708,10 @@ def cmd_genpkey(args):
               file=sys.stderr)
 
     elif algo == 'hcred':
-        # args.bits is None when --bits is omitted → use _HCRED_DEFAULT_N (32, demo speed).
-        # --bits N uses N directly, including --bits 256 for C interop.
-        n = args.bits if args.bits is not None else _HCRED_DEFAULT_N
+        # TODO #369: an omitted --bits means n = 256 (_HCRED_CLI_N), as in C, Go
+        # and Java -- it meant the suite's demo width, 32, which C and Java
+        # refuse.  --bits N still chooses N; --bits 32 is the fast demo width.
+        n = args.bits if args.bits is not None else _HCRED_CLI_N
         m_base  = _suite_mod._rnl_m_poly(n)
         a_rand  = _suite_mod._rnl_rand_poly(n, RNLQ)
         m_blind = [(m_base[i] + a_rand[i]) % RNLQ for i in range(n)]

@@ -6,9 +6,9 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 **MAJOR: security fixes in seven parts.** All seven change what an existing `--algo`
 produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections
-30, 31, 32, 33 and 34. A test-tooling fix and two documentation fixes ride along (TODO #370, #362 and #363),
-and so does a CLI-surface fix with its own MIGRATING section 35 (TODO #374); they are the last four
-sections.
+30, 31, 32, 33 and 34. A test-tooling fix and two documentation fixes ride along (TODO #370, #362 and #363), and
+so do two CLI-surface fixes with their own MIGRATING sections 35 and 36 (TODO #374 and #369);
+they are the last five sections.
 
 ### TODO #364 — verifiers enforce a Fiat-Shamir round floor
 
@@ -536,6 +536,37 @@ sections.
 
   Run against the pre-#363 tree, the three report 23 failures: the 21 banners and the
   two llms.txt lines. F3 fires when the old note is put back.
+
+### TODO #369 — one HCRED default, and HFSCX-256 on 64-bit words
+
+- **Default width.** The Python CLI's `genpkey --algo hcred` wrote an n = 32 key, the
+  suite library's demo width, which C and Java refuse. C, Go and Java write n = 256.
+  Python now does too (`_HCRED_CLI_N`); `--bits 32` still gives the demo width
+  (MIGRATING section 36). n = 256 with 219 rounds is the strongest HCRED setting the
+  code supports, not a secure one: HCRED stays "Research — do not deploy"
+  (SECURITY.md), with a demo-sized Stern-F half and an n = 256 Ring-LWR half.
+- **Cost.** Profiling Go's prover put 90% of its time in HFSCX-256: the prover's
+  random tape and its commitments, each hash going through BitArray, which allocated
+  on every Xor and rotate. C, Java and Python had the same shape at lower cost. Every
+  port now runs HFSCX-256's Matyas-Meyer-Oseas compression on four 64-bit words (one
+  Python int), with no change to any digest. Each port was checked bit-exact against
+  its old BitArray path on random inputs, including all-0xFF data and IVs (Go and C
+  20,000 cases, Java 5,000, Python 3,000). The KAT vectors and the 4×4 digest matrix
+  hold the ports to each other.
+- **Measured** at n = 256 and 219 rounds on an aarch64 SBC (prove / verify): Java
+  6.8 s / 5.0 s, C 12.7 s / 8.9 s, Go 13.8 s / 9.9 s, Python 465 s / 300 s. Before,
+  Go needed 193 s for 16 rounds (about 45 min for 219), Java 494 s, and Python about
+  61 s a round at n = 256. Every CLI verifies every other CLI's 219-round proof
+  (16 of 16). A proof is about 12.7 MB. A 1 MB `dgst` now takes 0.2–0.3 s in C, Go
+  and Java, against 1.5 s and 6.4 s before in C and Java; Python is 5.8 s, down from
+  about 45 s.
+- **Spec.** `hfscx-256-compress` joins the primitive manifest (205 entries). The
+  parity checker's `hcred-n` divergence row notes that the four CLIs now agree; the
+  32 it records is the suite library's own default. `CliTest/test_pkey_text_matrix.sh`
+  now asserts n = 256 for every CLI's default hcred key.
+- **Docs.** The TUTORIAL's HCRED cost table is remeasured. Two stale claims went with
+  it: that the Go CLI lacks `cred-*` subcommands, and an "~18 KB (n=32, R=219)" proof
+  size. The ZKP-RNL row there now says n = 1024.
 
 ## [14.0.4] - 2026-11-11
 

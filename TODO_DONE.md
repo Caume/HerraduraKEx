@@ -25552,3 +25552,27 @@ against the flag matrix) and F3 (help-note key types). On the pre-fix tree they 
 23 failures.
 
 Status: **DONE v15.0.0** — help note, llms.txt synopses and version banners match the code; check_docs_consistency A5/F2/F3 hold them.
+
+### #369: HCRED defaults and cost differ across the four CLIs
+
+Found with #364.  PATCH.
+
+  * **Default width.**  `genpkey --algo hcred` gives n = 32 in Python and n = 256 in C,
+    Go and Java.  Same command, different key: align them, or record the difference as a
+    spec `cli_flag_value_gaps` row so the parity checker holds it.
+  * **Prover cost at n = 256** on this aarch64 host: C 2 s (but at 4 rounds, #364),
+    Java 494 s for 219 rounds (12.8 MB proof), Go unfinished after 21 min.  Java's proof
+    verifies in C (82 s) and C's in Java.  Profile Go's prover; at its current speed a
+    219-round credential is unusable there.  Re-measure C once #364 moves it to 219.
+    (Measured with #362, n = 256, 16 rounds: prove / verify C 8.8 s / 6.3 s, Java
+    37 s / 27 s, Go 193 s / 144 s -- Go is 20x C, so 219 rounds is about 45 min.)
+
+**Resolution.** Aligned rather than recorded. Python's CLI default is n = 256
+(MIGRATING section 36), the only width at which HCRED's constants are tuned and the
+only one C and Java accept. Go's prover was 90% HFSCX-256 over BitArray, and all four
+ports had the same shape. Each now runs the compression on 64-bit words, bit-exact
+with the old path. At n = 256 and 219 rounds, prove / verify takes Java 6.8 / 5.0 s,
+C 12.7 / 8.9 s, Go 13.8 / 9.9 s and Python 465 / 300 s. Every CLI verifies every
+other's proof.
+
+Status: **DONE v15.0.0** — every CLI defaults to n = 256; HFSCX-256 on 64-bit words in all four ports makes a 219-round HCRED proof 7–14 s compiled (Go was ~45 min).

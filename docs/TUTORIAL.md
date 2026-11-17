@@ -1358,9 +1358,9 @@ the credential to a specific institution.
 
 ```bash
 # ── User key generation ──────────────────────────────────────────────────────
-# Default width: n=32 in the Python CLI (a demo width), n=256 in C, Go and Java.
-# Python, Go and Java take --bits to choose (e.g. --bits 256 to match the C CLI);
-# C is compiled for n=256 and has no --bits.
+# Default width: n=256 in every CLI (TODO #369; Python's default was 32).
+# Python, Go and Java take --bits to choose another (--bits 32 is a fast demo
+# width that C and Java refuse); C is compiled for n=256 and has no --bits.
 $CLI genpkey --algo hcred --out user.pem
 
 # Extract public key (C and A receive this to verify/issue)
@@ -1405,19 +1405,19 @@ Go and Python, `CliTest/test_java_hcred_interop.sh` Java and Python).
 
 > **Rounds and cost.** `cred-issue` and `cred-prove` both default to 219 rounds in
 > every CLI (TODO #364), and `cred-verify` refuses fewer unless given
-> `--min-rounds N`.  `cred-issue` is cheap (0.3 s in C, 1.1 s in Java, 3.3 s in Go,
-> 5.6 s in Python).  The proof is not.  Measured on an aarch64 SBC:
+> `--min-rounds N`.  Measured on an aarch64 SBC at n=256 and 219 rounds, after
+> TODO #369 moved every port's HFSCX-256 off BitArray (it was 90% of a proof):
 >
-> | CLI, n | rounds | prove | verify | proof (PEM) |
-> |---|---|---|---|---|
-> | Python, n=32 | 16 | 29 s | 24 s | 105 KB |
-> | Python, n=32 | 219 | 391 s | 275 s | 1.44 MB |
-> | C, n=256 | 16 | 8.8 s | 6.3 s | 926 KB |
-> | Java, n=256 | 16 | 37 s | 27 s | 915 KB |
-> | Go, n=256 | 16 | 193 s | 144 s | 948 KB |
-> | Java, n=256 | 219 | 494 s | — | 12.8 MB |
+> | CLI | cred-issue | cred-prove | cred-verify (proof + credential) |
+> |---|---|---|---|
+> | Java | 0.4 s | 6.8 s | 5.0 s |
+> | C | 0.2 s | 12.7 s | 8.9 s |
+> | Go | 0.1 s | 13.8 s | 9.9 s |
+> | Python | 1.1 s | 465 s | 300 s |
 >
-> Go's prover is far slower than the others' (TODO #369).
+> A 219-round proof is about 12.7 MB of PEM, about 58 KB a round, from every
+> CLI, and every CLI verifies every other's.  Before #369, Go took about 193 s to
+> prove 16 rounds, Java 494 s for 219, and Python about 61 s a round.
 
 ### C
 
@@ -1482,9 +1482,9 @@ the `HERRADURA HCRED PROOF` PEM wire format. The CLI subcommands `cred-issue`,
 
 ### Go
 
-> **Note.** The Go CLI (`herradura_cli_go`) does not yet expose `cred-issue`,
-> `cred-prove`, `cred-verify` subcommands — use the Python or C CLI for those.
-> The underlying protocol functions are available via the `herradura` package.
+> **Note.** The Go CLI (`herradura_cli_go`) has `cred-issue`, `cred-prove` and
+> `cred-verify` like the other three; the calls below are the `herradura`
+> package functions behind them.
 
 ```go
 import (
@@ -2485,9 +2485,9 @@ tool or script needs the exact wire-format string or algo tag, read the JSON, no
 
 | Construction | Key type | Sign / prove | Verify | Proof size |
 |---|---|---|---|---|
-| ZKP-RNL (Ring-LWR Σ-protocol) | `hkex-rnl` | `rnl_sigma_sign` | `rnl_sigma_verify` | 12,292 B (n=256) |
+| ZKP-RNL (Ring-LWR Σ-protocol) | `hkex-rnl` | `rnl_sigma_sign` | `rnl_sigma_verify` | 12,292 B (n=1024) |
 | ZKP-NL (NL-FSCX ZKBoo) | `hpks-zkp-nl` | `zkp_nl_prove` | `zkp_nl_verify` | 40,085 B (n=8, R=219) |
-| HCRED (Ring-LWR + SDP hybrid) | `hcred` | `hcred_prove` / `cred-prove` | `hcred_verify` / `cred-verify` | ~18 KB (n=32, R=219); ~4 KB (R=4 demo) |
+| HCRED (Ring-LWR + SDP hybrid) | `hcred` | `hcred_prove` / `cred-prove` | `hcred_verify` / `cred-verify` | about 12.7 MB (n=256, R=219), about 58 KB a round |
 
 ### OPRF and aPAKE
 

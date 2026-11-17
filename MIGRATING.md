@@ -122,6 +122,10 @@ to write an n = 8 key and exit 0 in Python, Go and Java; it is now refused, beca
 n = 64 is the most the PEM can carry. See
 [section 35](#35-genpkey-hpks-zkp-nl---bits-means-what-it-says-v1500).
 
+The thirty-sixth ships in the same release. The Python CLI's `genpkey --algo hcred`
+writes an n = 256 key, as C, Go and Java always have; it wrote n = 32, which C and Java
+refuse. See [section 36](#36-python-genpkey-hcred-defaults-to-n--256-v1500).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -166,6 +170,7 @@ trusting any signature made by an earlier build.
 | [Degenerate peer values and unsupported widths are refused](#33-degenerate-peer-values-and-unsupported-widths-are-refused-v1500) | v15.0.0 | A GF public key or ciphertext R of 0 or 1; an HKEX-RNL peer C or C_B that is zero, sparse or clustered; in C and Java, any key or artifact whose declared width is not 256 (or the compiled RNL n / QC-MDPC r) | **Nothing**, for files a CLI generated at its default width. For a 32/64/128-bit GF key, use the Go or Python CLI, which run those widths |
 | [One encoding per artifact](#34-one-encoding-per-artifact-v1500) | v15.0.0 | Bytes after a DER SEQUENCE, a raw-body PEM's last field or an `.hkx` tag; a DER field wider than its writer's width or encoded another way; a non-shortest DER length; an HKEX-RNL or QC-MDPC value out of range; an HPKS signature whose stored e or n does not match | **Nothing**, for files a CLI wrote. Re-run an HKEX-RNL exchange whose response came from a pre-15.0.0 Go CLI; regenerate any artifact a tool edited by hand |
 | [`genpkey hpks-zkp-nl --bits` means what it says](#35-genpkey-hpks-zkp-nl---bits-means-what-it-says-v1500) | v15.0.0 | `genpkey --algo hpks-zkp-nl --bits 256` (Python, Go, Java), which wrote an n = 8 key | Drop `--bits 256`, or pass a width from 2 to 64; existing keys are unchanged |
+| [Python `genpkey hcred` defaults to n = 256](#36-python-genpkey-hcred-defaults-to-n--256-v1500) | v15.0.0 | `genpkey --algo hcred` with the Python CLI and no `--bits`, which wrote an n = 32 key | Nothing, unless you relied on n = 32: pass `--bits 32`. Existing keys still load |
 
 ---
 
@@ -1965,3 +1970,21 @@ pass an even width up to 64. Keys already on disk are unchanged and still load.
 
 **Why this is MAJOR.** It refuses an input an existing `--algo` accepted, the 2.0.0
 surface. It ships inside 15.0.0 so there is one migration.
+
+## 36. Python `genpkey hcred` defaults to n = 256 (v15.0.0)
+
+**Who is affected:** a script that runs `genpkey --algo hcred` with the Python CLI and no
+`--bits`. C, Go and Java are unchanged.
+
+**What changed (TODO #369).** The same command gave different keys: n = 32 in Python
+(the suite library's demo width) and n = 256 in C, Go and Java. C and Java support only
+n = 256 and refused Python's default key by name. Now all four write n = 256 by default.
+That is also the only width at which HCRED's other constants (row bits, ε bits, the
+weight bound) are tuned. HCRED remains a research protocol (SECURITY.md).
+
+**What to do.** Nothing, if you want keys every CLI reads. To keep the old, faster demo
+width, pass `--bits 32`; such a key still works with the Python and Go CLIs. Keys
+already on disk are unchanged and still load wherever they did.
+
+**Why this is MAJOR.** It changes what an existing `--algo` produces, the 2.0.0 surface.
+It ships inside 15.0.0 so there is one migration.

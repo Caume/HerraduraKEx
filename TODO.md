@@ -624,21 +624,5 @@ Status: **OPEN**
 
 ---
 
-### #369: HCRED defaults and cost differ across the four CLIs
-
-Found with #364.  PATCH.
-
-  * **Default width.**  `genpkey --algo hcred` gives n = 32 in Python and n = 256 in C,
-    Go and Java.  Same command, different key: align them, or record the difference as a
-    spec `cli_flag_value_gaps` row so the parity checker holds it.
-  * **Prover cost at n = 256** on this aarch64 host: C 2 s (but at 4 rounds, #364),
-    Java 494 s for 219 rounds (12.8 MB proof), Go unfinished after 21 min.  Java's proof
-    verifies in C (82 s) and C's in Java.  Profile Go's prover; at its current speed a
-    219-round credential is unusable there.  Re-measure C once #364 moves it to 219.
-    (Measured with #362, n = 256, 16 rounds: prove / verify C 8.8 s / 6.3 s, Java
-    37 s / 27 s, Go 193 s / 144 s -- Go is 20x C, so 219 rounds is about 45 min.)
-
-Status: **OPEN**
-
 ---
 

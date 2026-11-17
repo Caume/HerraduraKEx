@@ -15,8 +15,8 @@
 #
 # Sections:
 #   1. every producer x consumer x key type: --text exits 0 and its first line
-#      is `algorithm : <algo>`; for hkex-rnl and hpks-zkp-nl the `n` line also
-#      matches the key.
+#      is `algorithm : <algo>`; for hkex-rnl, hpks-zkp-nl and hcred the `n`
+#      line also matches the default width (hcred: TODO #369).
 #   2. oprf has no public half: every CLI refuses `pkey --pubout` on it, after
 #      an accept-control (--pubout on an hpks key succeeds).
 #   3. genpkey hpks-zkp-nl --bits: omitted -> n = 8, 64 -> n = 64 (accept-
@@ -56,14 +56,12 @@ for p in "${LANGS[@]}"; do
     for a in "${ALGOS[@]}"; do
         k="$TMP/${p}_$a.pem"; x=()
         [ "$a" = hpks-xmss ] && x=(--xmss-height 2)
-        # Python's HCRED default is n = 32; C and Java support n = 256 only and
-        # refuse it by name (the TUTORIAL's HCRED section).  Not this test's subject.
-        [ "$a" = hcred ] && [ "$p" = py ] && x=(--bits 256)
         if ! ${CLI[$p]} genpkey --algo "$a" "${x[@]}" --out "$k" >/dev/null 2>"$TMP/err"; then
             fail "genpkey $a ($p): $(head -c 200 "$TMP/err")"; continue
         fi
         want_n=""
-        case "$a" in hkex-rnl) want_n=1024 ;; hpks-zkp-nl) want_n=8 ;; esac
+        # TODO #369: hcred's default is n = 256 in all four (Python's was 32).
+        case "$a" in hkex-rnl) want_n=1024 ;; hpks-zkp-nl) want_n=8 ;; hcred) want_n=256 ;; esac
         for c in "${LANGS[@]}"; do
             out=$(${CLI[$c]} pkey --in "$k" --text 2>"$TMP/err"); rc=$?
             first=$(printf '%s\n' "$out" | head -1 | tr -s ' ')

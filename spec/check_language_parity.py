@@ -5136,6 +5136,16 @@ PRIMITIVES = {
         "python": r"^def ratchet_init\(",
         "java": r"Ratchet.java::public static BitArray init\(",
     },
+    # TODO #369: HFSCX-256's MMO compression on four 64-bit words.  Each port
+    # replaced its BitArray loop with it -- 90% of an HCRED proof's time in Go
+    # was BitArray allocation -- and each is held bit-exact by the HFSCX-256
+    # KAT vectors and CliTest/test_digest_matrix.sh.
+    "hfscx-256-compress": {
+        "c": r"static void _hfscx256_compress\(",
+        "go": r"^func hfscx256Compress\(",
+        "python": r"^def _hfscx256_compress\(",
+        "java": r"Hfscx256.java::private static void compress\(",
+    },
     "hmac-hfscx-256": {
         "c": r"static void hmac_hfscx_256\(",
         "go": r"^func HmacHfscx256\(",
@@ -5807,6 +5817,7 @@ CENSUS_EXEMPT = {
          "the xorshift and degree helpers). The five members that ARE protocol steps "
          "— qcp_mul, qcp_mul_sparse, qcp_inv, qcprf_refill, qcprf_idx_bytes — are "
          "excluded from this rule and carry manifest entries"),
+        (r"^_u256_(load|store)$", "load/store of hfscx-256-compress's four-word 256-bit value (TODO #369). Python holds it as one int and needs neither"),
         (r"_be64$", "big-endian 8-byte packing helper. Go has encoding/binary and "
                     "Python has int.to_bytes; there is nothing to port"),
         (r"^ct_eq", "constant-time comparison helper. Go uses crypto/subtle, Python "
@@ -5865,6 +5876,7 @@ CENSUS_EXEMPT = {
          "route those layers through the ONE GF implementation rather than a "
          "second one; the other three ports have no boundary to cross because "
          "their scalar type and their bit-string type are already the same"),
+        (r"^u256FromBytes$", "load/store of hfscx-256-compress's four-word 256-bit value (TODO #369). Python holds it as one int and needs neither"),
         (r"^(oprfOrd|rnlTwGet)$",
          "accessors for a value the other three keep as a constant or recompute: "
          "the OPRF group order, and one twiddle from the table C's exempted "
@@ -5892,6 +5904,7 @@ CENSUS_EXEMPT = {
          "static on BitArray that Herradura.fscx -- which the manifest DOES "
          "name -- delegates to, so the cross-language cell is carried by the "
          "stem"),
+        (r"^load$", "load/store of hfscx-256-compress's four-word 256-bit value (TODO #369). Python holds it as one int and needs neither"),
         (r"^ba$",
          "the one-line BigInteger->BitArray adapter inside the threshold signer "
          "(TODO #314 pass 5). HPKS-T's aggregate keys and scalars are integers "
@@ -6469,7 +6482,10 @@ PARAM_DIVERGENCE = {
             "RNL_ALT_N); HcredMaxN is a runtime MAXIMUM; _HCRED_DEFAULT_N is a runtime "
             "DEFAULT, and Python demos at 32.  So the four have never proved the same "
             "statement size, which KAT/hcred_kkw.json already records by shipping two "
-            "vector sets.  Deliberate per-language scope, not a defect.",
+            "vector sets.  Deliberate per-language scope, not a defect.  The CLIs "
+            "agree since TODO #369: Python's genpkey --algo hcred defaults to "
+            "_HCRED_CLI_N = 256 like the other three; the 32 here is the suite "
+            "library's default, which its own tests use.",
     },
 }
 

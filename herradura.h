@@ -1673,6 +1673,54 @@ static BaStatus ba_try_gf_pow(BitArray *dst, const BitArray *base, uint64_t e)
  * H(b || 0^32) = H(0^32 || b) (SecurityProofs-10.md §11.75).  Nobody chooses
  * the chaining value.
  * Bare hash: iv = NULL.  Keyed MAC: iv = key XOR _HFSCX256_IV (32 bytes). */
+/* TODO #369: HFSCX-256's compression on a 256-bit value held as four
+ * big-endian uint64 words (w[0] = most significant), matching BitArray's
+ * big-endian byte order.  NL-FSCX v1: v1(a, b) = fscx(a, b) ^ ROL(a + b, 64);
+ * a rotation by 64 is one word. */
+static void _u256_load(uint64_t w[4], const uint8_t b[32])
+{
+    int i, k;
+    for (i = 0; i < 4; i++) {
+        w[i] = 0;
+        for (k = 0; k < 8; k++) w[i] = (w[i] << 8) | b[8 * i + k];
+    }
+}
+
+static void _u256_store(uint8_t b[32], const uint64_t w[4])
+{
+    int i, k;
+    for (i = 0; i < 4; i++)
+        for (k = 0; k < 8; k++) b[8 * i + k] = (uint8_t)(w[i] >> (56 - 8 * k));
+}
+
+/* s <- F_s^{V1_MODE_STEPS}(m) ^ m, with v1's A = m and B = s. */
+static void _hfscx256_compress(uint64_t s[4], const uint8_t blk[32])
+{
+    uint64_t m[4], a[4], sb[4], t[4], f[4];
+    int i, step;
+    _u256_load(m, blk);
+    for (i = 0; i < 4; i++) {               /* B-side fscx terms are fixed */
+        int nx = (i + 1) & 3, pv = (i + 3) & 3;
+        sb[i] = s[i] ^ (s[i] << 1 | s[nx] >> 63) ^ (s[i] >> 1 | s[pv] << 63);
+        a[i] = m[i];
+    }
+    for (step = 0; step < V1_MODE_STEPS; step++) {
+        uint64_t carry = 0;
+        for (i = 3; i >= 0; i--) {
+            uint64_t x = a[i] + s[i];
+            uint64_t c1 = x < a[i];
+            t[i] = x + carry;
+            carry = c1 | (t[i] < x);
+        }
+        for (i = 0; i < 4; i++) {
+            int nx = (i + 1) & 3, pv = (i + 3) & 3;
+            f[i] = a[i] ^ (a[i] << 1 | a[nx] >> 63) ^ (a[i] >> 1 | a[pv] << 63) ^ sb[i];
+        }
+        for (i = 0; i < 4; i++) a[i] = f[i] ^ t[(i + 1) & 3];
+    }
+    for (i = 0; i < 4; i++) s[i] = a[i] ^ m[i];
+}
+
 static void hfscx_256(const uint8_t *data, size_t len,
                       const uint8_t *iv, uint8_t out[32])
 {
@@ -1707,14 +1755,19 @@ static void hfscx_256(const uint8_t *data, size_t len,
     }
 
     /* Chain each 32-byte block: C(s,m) = F_s^{192}(m) ⊕ m (Matyas-Meyer-Oseas,
-     * TODO #351): the block is v1's A, the chaining value its B. */
-    for (off = 0; off < padded_len; off += 32) {
-        memcpy(block.b, padded + off, 32);
-        nl_fscx_revolve_v1_ba(&state, &block, &state, V1_MODE_STEPS);
-        ba_xor(&state, &state, &block);
+     * TODO #351): the block is v1's A, the chaining value its B.
+     * TODO #369: on four uint64 words (_hfscx256_compress) rather than
+     * through BitArray -- bit-exact with nl_fscx_revolve_v1_ba(&state, &block,
+     * &state, V1_MODE_STEPS) then ba_xor(&state, &state, &block); the HFSCX-256
+     * KAT vectors and CliTest/test_digest_matrix.sh hold it to the other ports. */
+    (void)block;
+    {
+        uint64_t st[4];
+        _u256_load(st, state.b);
+        for (off = 0; off < padded_len; off += 32)
+            _hfscx256_compress(st, padded + off);
+        _u256_store(out, st);
     }
-
-    memcpy(out, state.b, 32);
     free(padded);
 }
 
