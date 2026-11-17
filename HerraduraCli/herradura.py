@@ -300,9 +300,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HKEX-GF PUBLIC KEY':
@@ -313,7 +313,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)):
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
             return None
     elif label == 'HERRADURA HPKS PRIVATE KEY':
@@ -326,9 +326,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HPKS PUBLIC KEY':
@@ -339,7 +339,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)):
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
             return None
     elif label == 'HERRADURA HPKS-NL PRIVATE KEY':
@@ -352,9 +352,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HPKS-NL PUBLIC KEY':
@@ -365,7 +365,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)):
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
             return None
     elif label == 'HERRADURA HPKE PRIVATE KEY':
@@ -378,9 +378,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HPKE PUBLIC KEY':
@@ -391,7 +391,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)):
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
             return None
     elif label == 'HERRADURA HPKE-NL PRIVATE KEY':
@@ -404,9 +404,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HPKE-NL PUBLIC KEY':
@@ -417,7 +417,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)):
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
             return None
     elif label == 'HERRADURA HPKE-NL3 PRIVATE KEY':
@@ -430,9 +430,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HPKE-NL3 PUBLIC KEY':
@@ -443,7 +443,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)):
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
             return None
     elif label == 'HERRADURA HKEX-RNL PRIVATE KEY':
@@ -458,11 +458,11 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2] * 4)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)):
+            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)) and not ((32) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], 32)
-            if n > 0 and enc[0][0] != (F[2] * 4) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2] * 4)):
+            if n > 0 and enc[0][0] != (F[2] * 4) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2] * 4)) and not ((F[2] * 4) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2] * 4)
-            if n > 1 and enc[1][0] != (F[2] * 4) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2] * 4)):
+            if n > 1 and enc[1][0] != (F[2] * 4) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2] * 4)) and not ((F[2] * 4) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2] * 4)
             e = _rule_coef(label, 0, v[0], 4, F[2], 65537, True)
             if e:
@@ -483,11 +483,11 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2] * 4)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)):
+            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)) and not ((32) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], 32)
-            if n > 0 and enc[0][0] != (F[2] * 2) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2] * 2)):
+            if n > 0 and enc[0][0] != (F[2] * 2) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2] * 2)) and not ((F[2] * 2) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2] * 2)
-            if n > 1 and enc[1][0] != (F[2] * 4) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2] * 4)):
+            if n > 1 and enc[1][0] != (F[2] * 4) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2] * 4)) and not ((F[2] * 4) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2] * 4)
             e = _rule_coef(label, 0, v[0], 2, F[2], 4096, False)
             if e:
@@ -516,11 +516,11 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
             if n > 4 and enc[4][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
-            if n > 5 and enc[5][0] != (32) and not (enc[5][1] == 2 and enc[5][0] + 1 == (32)):
+            if n > 5 and enc[5][0] != (32) and not (enc[5][1] == 2 and enc[5][0] + 1 == (32)) and not ((32) == 0 and enc[5][0] == 1 and L[5] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 5, enc[5][0], 32)
-            if n > 1 and enc[1][0] != (F[3] * 2) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3] * 2)):
+            if n > 1 and enc[1][0] != (F[3] * 2) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3] * 2)) and not ((F[3] * 2) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[3] * 2)
-            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)):
+            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3]//8)
             e = _rule_coef(label, 1, v[1], 2, F[3], 4096, False)
             if e:
@@ -553,15 +553,15 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
             if n > 4 and enc[4][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
-            if n > 5 and enc[5][0] != (32) and not (enc[5][1] == 2 and enc[5][0] + 1 == (32)):
+            if n > 5 and enc[5][0] != (32) and not (enc[5][1] == 2 and enc[5][0] + 1 == (32)) and not ((32) == 0 and enc[5][0] == 1 and L[5] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 5, enc[5][0], 32)
             if n > 7 and enc[7][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 7)
-            if n > 1 and enc[1][0] != (F[3] * 2) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3] * 2)):
+            if n > 1 and enc[1][0] != (F[3] * 2) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3] * 2)) and not ((F[3] * 2) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[3] * 2)
-            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)):
+            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3]//8)
-            if n > 6 and enc[6][0] != ((F[7] + 7)//8) and not (enc[6][1] == 2 and enc[6][0] + 1 == ((F[7] + 7)//8)):
+            if n > 6 and enc[6][0] != ((F[7] + 7)//8) and not (enc[6][1] == 2 and enc[6][0] + 1 == ((F[7] + 7)//8)) and not (((F[7] + 7)//8) == 0 and enc[6][0] == 1 and L[6] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 6, enc[6][0], (F[7] + 7)//8)
             e = _rule_coef(label, 1, v[1], 2, F[3], 4096, False)
             if e:
@@ -583,9 +583,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HPKS-STERN PUBLIC KEY':
@@ -598,9 +598,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HPKE-STERN PRIVATE KEY':
@@ -613,9 +613,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HPKE-STERN PUBLIC KEY':
@@ -628,9 +628,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HPKE-STERN-KEM PRIVATE KEY':
@@ -651,13 +651,13 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
             if n > 5 and enc[5][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 5)
-            if n > 0 and enc[0][0] != ((F[4] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[4] + 7)//8)):
+            if n > 0 and enc[0][0] != ((F[4] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[4] + 7)//8)) and not (((F[4] + 7)//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], (F[4] + 7)//8)
-            if n > 1 and enc[1][0] != ((F[4] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[4] + 7)//8)):
+            if n > 1 and enc[1][0] != ((F[4] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[4] + 7)//8)) and not (((F[4] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[4] + 7)//8)
-            if n > 2 and enc[2][0] != (F[5] * 2) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[5] * 2)):
+            if n > 2 and enc[2][0] != (F[5] * 2) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[5] * 2)) and not ((F[5] * 2) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[5] * 2)
-            if n > 3 and enc[3][0] != (F[5] * 2) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[5] * 2)):
+            if n > 3 and enc[3][0] != (F[5] * 2) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[5] * 2)) and not ((F[5] * 2) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[5] * 2)
             e = _rule_support(label, 2, v[2], F[5], F[4])
             if e:
@@ -680,7 +680,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], (F[1] + 7)//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != ((F[1] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[1] + 7)//8)):
+            if n > 0 and enc[0][0] != ((F[1] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[1] + 7)//8)) and not (((F[1] + 7)//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], (F[1] + 7)//8)
             e = _rule_bits(label, 0, v[0], F[1], True)
             if e:
@@ -692,7 +692,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
             if n > 1 and L[1] > (4):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 4)
-            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)):
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
@@ -705,7 +705,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1] * 32)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1] * 32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1] * 32)):
+            if n > 0 and enc[0][0] != (F[1] * 32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1] * 32)) and not ((F[1] * 32) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1] * 32)
             return None
     elif label == 'HERRADURA HPKS-WOTS SIGNATURE':
@@ -716,7 +716,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1] * 32)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1] * 32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1] * 32)):
+            if n > 0 and enc[0][0] != (F[1] * 32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1] * 32)) and not ((F[1] * 32) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1] * 32)
             return None
     elif label == 'HERRADURA HPKS-XMSS PRIVATE KEY':
@@ -729,13 +729,13 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 4)
             if n > 3 and L[3] > (32 * (1 << min(F[1], 32))):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 32 * (1 << min(F[1], 32)))
-            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)):
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 3 and enc[3][0] != (32 * (1 << min(F[1], 32))) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32 * (1 << min(F[1], 32)))):
+            if n > 3 and enc[3][0] != (32 * (1 << min(F[1], 32))) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32 * (1 << min(F[1], 32)))) and not ((32 * (1 << min(F[1], 32))) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], 32 * (1 << min(F[1], 32)))
             return None
     elif label == 'HERRADURA HPKS-XMSS PUBLIC KEY':
@@ -744,7 +744,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
             if n > 1 and L[1] > (1):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 1)
-            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)):
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
@@ -767,9 +767,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
             if n > 4 and enc[4][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
-            if n > 1 and enc[1][0] != (67 * (F[4]//8)) and not (enc[1][1] == 2 and enc[1][0] + 1 == (67 * (F[4]//8))):
+            if n > 1 and enc[1][0] != (67 * (F[4]//8)) and not (enc[1][1] == 2 and enc[1][0] + 1 == (67 * (F[4]//8))) and not ((67 * (F[4]//8)) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], 67 * (F[4]//8))
-            if n > 2 and enc[2][0] != (F[3] * 32) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3] * 32)):
+            if n > 2 and enc[2][0] != (F[3] * 32) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3] * 32)) and not ((F[3] * 32) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3] * 32)
             return None
     elif label == 'HERRADURA HPKS-RING SIGNATURE':
@@ -788,7 +788,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 3 and enc[3][0] != (F[0] * F[1] * (5 * (F[2]//8) + 1)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[0] * F[1] * (5 * (F[2]//8) + 1))):
+            if n > 3 and enc[3][0] != (F[0] * F[1] * (5 * (F[2]//8) + 1)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[0] * F[1] * (5 * (F[2]//8) + 1))) and not ((F[0] * F[1] * (5 * (F[2]//8) + 1)) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[0] * F[1] * (5 * (F[2]//8) + 1))
             return None
     elif label == 'HERRADURA OPRF PRIVATE KEY':
@@ -799,7 +799,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)):
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
             return None
     elif label == 'HERRADURA OPRF CLIENT STATE':
@@ -812,9 +812,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA OPRF EVALUATION':
@@ -825,7 +825,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)):
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
             return None
     elif label == 'HERRADURA PAKE RECORD':
@@ -836,11 +836,11 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 4)
             if n > 2 and L[2] > (4):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 4)
-            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)):
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
-            if n > 1 and enc[1][0] != (4) and not (enc[1][1] == 2 and enc[1][0] + 1 == (4)):
+            if n > 1 and enc[1][0] != (4) and not (enc[1][1] == 2 and enc[1][0] + 1 == (4)) and not ((4) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], 4)
-            if n > 2 and enc[2][0] != (4) and not (enc[2][1] == 2 and enc[2][0] + 1 == (4)):
+            if n > 2 and enc[2][0] != (4) and not (enc[2][1] == 2 and enc[2][0] + 1 == (4)) and not ((4) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], 4)
             return None
     elif label == 'HERRADURA HPKST COMMITMENT':
@@ -853,9 +853,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)):
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
-            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)):
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
             return None
     elif label == 'HERRADURA HPKST NONCE':
@@ -866,7 +866,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)):
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
             return None
     elif label == 'HERRADURA HPKST AGGREGATE':
@@ -881,11 +881,11 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[3]//8)
             if n > 3 and enc[3][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
-            if n > 0 and enc[0][0] != (F[3]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[3]//8)):
+            if n > 0 and enc[0][0] != (F[3]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[3]//8)
-            if n > 1 and enc[1][0] != (F[3]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3]//8)):
+            if n > 1 and enc[1][0] != (F[3]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[3]//8)
-            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)):
+            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3]//8)
             return None
     elif label == 'HERRADURA HPKST PARTIAL':
@@ -896,7 +896,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)):
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
             return None
     elif label == 'HERRADURA HPKST SIGNATURE':
@@ -911,11 +911,11 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[3]//8)
             if n > 3 and enc[3][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
-            if n > 0 and enc[0][0] != (F[3]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[3]//8)):
+            if n > 0 and enc[0][0] != (F[3]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[3]//8)
-            if n > 1 and enc[1][0] != (F[3]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3]//8)):
+            if n > 1 and enc[1][0] != (F[3]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[3]//8)
-            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)):
+            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3]//8)
             return None
     elif label == 'HERRADURA HCRED CREDENTIAL':
@@ -934,11 +934,11 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 2 and enc[2][0] != (F[1] * 3 * (F[0]//8)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * (F[0]//8))):
+            if n > 2 and enc[2][0] != (F[1] * 3 * (F[0]//8)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * (F[0]//8))) and not ((F[1] * 3 * (F[0]//8)) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * (F[0]//8))
-            if n > 3 and enc[3][0] != ((F[1] + 3)//4) and not (enc[3][1] == 2 and enc[3][0] + 1 == ((F[1] + 3)//4)):
+            if n > 3 and enc[3][0] != ((F[1] + 3)//4) and not (enc[3][1] == 2 and enc[3][0] + 1 == ((F[1] + 3)//4)) and not (((F[1] + 3)//4) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], (F[1] + 3)//4)
-            if n > 4 and enc[4][0] != (F[1] * 2 * (F[0]//8)) and not (enc[4][1] == 2 and enc[4][0] + 1 == (F[1] * 2 * (F[0]//8))):
+            if n > 4 and enc[4][0] != (F[1] * 2 * (F[0]//8)) and not (enc[4][1] == 2 and enc[4][0] + 1 == (F[1] * 2 * (F[0]//8))) and not ((F[1] * 2 * (F[0]//8)) == 0 and enc[4][0] == 1 and L[4] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 4, enc[4][0], F[1] * 2 * (F[0]//8))
             return None
     elif label == 'HERRADURA SESSION KEY':
@@ -956,7 +956,7 @@ def _der_field_check(label, v, enc):
         if 1 <= n <= 1:
             if n > 0 and L[0] > (32):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
-            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)):
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
             return None
     elif label == 'HERRADURA HDRBG STATE':
@@ -965,7 +965,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
             if n > 1 and L[1] > (8):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 8)
-            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)):
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
@@ -984,17 +984,17 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 5, L[5], 4)
             if n > 3 and L[3] > (F[5]):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[5])
-            if n > 0 and enc[0][0] != (16) and not (enc[0][1] == 2 and enc[0][0] + 1 == (16)):
+            if n > 0 and enc[0][0] != (16) and not (enc[0][1] == 2 and enc[0][0] + 1 == (16)) and not ((16) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 16)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 2 and enc[2][0] != (32) and not (enc[2][1] == 2 and enc[2][0] + 1 == (32)):
+            if n > 2 and enc[2][0] != (32) and not (enc[2][1] == 2 and enc[2][0] + 1 == (32)) and not ((32) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], 32)
-            if n > 4 and enc[4][0] != (32) and not (enc[4][1] == 2 and enc[4][0] + 1 == (32)):
+            if n > 4 and enc[4][0] != (32) and not (enc[4][1] == 2 and enc[4][0] + 1 == (32)) and not ((32) == 0 and enc[4][0] == 1 and L[4] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 4, enc[4][0], 32)
             if n > 5 and enc[5][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 5)
-            if n > 3 and enc[3][0] != (F[5]) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[5])):
+            if n > 3 and enc[3][0] != (F[5]) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[5])) and not ((F[5]) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[5])
             return None
     elif label == 'HERRADURA CIPHERTEXT':
@@ -1005,11 +1005,11 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
             if n > 0 and L[0] > ((F[2] + 7)//8):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], (F[2] + 7)//8)
-            if n > 1 and enc[1][0] != (32) and not (enc[1][1] == 2 and enc[1][0] + 1 == (32)):
+            if n > 1 and enc[1][0] != (32) and not (enc[1][1] == 2 and enc[1][0] + 1 == (32)) and not ((32) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], 32)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != ((F[2] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[2] + 7)//8)):
+            if n > 0 and enc[0][0] != ((F[2] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[2] + 7)//8)) and not (((F[2] + 7)//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], (F[2] + 7)//8)
             e = _rule_bits(label, 0, v[0], F[2], True)
             if e:
@@ -1026,7 +1026,7 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 1 and enc[1][0] != ((F[2] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[2] + 7)//8)):
+            if n > 1 and enc[1][0] != ((F[2] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[2] + 7)//8)) and not (((F[2] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[2] + 7)//8)
             return None
         if 3 <= n <= 3:
@@ -1038,9 +1038,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], (F[2] + 7)//8)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 0 and enc[0][0] != ((F[2] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[2] + 7)//8)):
+            if n > 0 and enc[0][0] != ((F[2] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[2] + 7)//8)) and not (((F[2] + 7)//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], (F[2] + 7)//8)
-            if n > 1 and enc[1][0] != ((F[2] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[2] + 7)//8)):
+            if n > 1 and enc[1][0] != ((F[2] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[2] + 7)//8)) and not (((F[2] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[2] + 7)//8)
             return None
         if 4 <= n <= 4:
@@ -1056,9 +1056,9 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 3 and enc[3][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
-            if n > 1 and enc[1][0] != ((F[3] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[3] + 7)//8)):
+            if n > 1 and enc[1][0] != ((F[3] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[3] + 7)//8)) and not (((F[3] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[3] + 7)//8)
-            if n > 2 and enc[2][0] != ((F[3] + 7)//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == ((F[3] + 7)//8)):
+            if n > 2 and enc[2][0] != ((F[3] + 7)//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == ((F[3] + 7)//8)) and not (((F[3] + 7)//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], (F[3] + 7)//8)
             return None
         if 5 <= n <= 5 and (F[0] == 2):
@@ -1074,13 +1074,13 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], (F[4] + 7)//8)
             if n > 0 and enc[0][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
-            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)):
+            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)) and not ((32) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], 32)
             if n > 4 and enc[4][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
-            if n > 1 and enc[1][0] != ((F[4] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[4] + 7)//8)):
+            if n > 1 and enc[1][0] != ((F[4] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[4] + 7)//8)) and not (((F[4] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[4] + 7)//8)
-            if n > 2 and enc[2][0] != ((F[4] + 7)//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == ((F[4] + 7)//8)):
+            if n > 2 and enc[2][0] != ((F[4] + 7)//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == ((F[4] + 7)//8)) and not (((F[4] + 7)//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], (F[4] + 7)//8)
             return None
         if 5 <= n <= 5:
@@ -1096,13 +1096,13 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[4]//8)
             if n > 4 and enc[4][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
-            if n > 0 and enc[0][0] != (F[4]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[4]//8)):
+            if n > 0 and enc[0][0] != (F[4]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[4]//8)
-            if n > 1 and enc[1][0] != (F[4]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[4]//8)):
+            if n > 1 and enc[1][0] != (F[4]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[4]//8)
-            if n > 2 and enc[2][0] != (F[4]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[4]//8)):
+            if n > 2 and enc[2][0] != (F[4]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[4]//8)
-            if n > 3 and enc[3][0] != (F[4]//8) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[4]//8)):
+            if n > 3 and enc[3][0] != (F[4]//8) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[4]//8)
             return None
         if 6 <= n <= 6:
@@ -1122,13 +1122,13 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 4 and enc[4][0] != (32) and not (enc[4][1] == 2 and enc[4][0] + 1 == (32)):
+            if n > 4 and enc[4][0] != (32) and not (enc[4][1] == 2 and enc[4][0] + 1 == (32)) and not ((32) == 0 and enc[4][0] == 1 and L[4] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 4, enc[4][0], 32)
             if n > 5 and enc[5][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 5)
-            if n > 1 and enc[1][0] != ((F[5] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[5] + 7)//8)):
+            if n > 1 and enc[1][0] != ((F[5] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[5] + 7)//8)) and not (((F[5] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[5] + 7)//8)
-            if n > 3 and enc[3][0] != (F[2]) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[2])):
+            if n > 3 and enc[3][0] != (F[2]) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[2])) and not ((F[2]) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[2])
             return None
     elif label == 'HERRADURA SIGNATURE':
@@ -1143,11 +1143,11 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[3]//8)
             if n > 3 and enc[3][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
-            if n > 0 and enc[0][0] != (F[3]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[3]//8)):
+            if n > 0 and enc[0][0] != (F[3]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[3]//8)
-            if n > 1 and enc[1][0] != (F[3]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3]//8)):
+            if n > 1 and enc[1][0] != (F[3]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[3]//8)
-            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)):
+            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3]//8)
             return None
         if 5 <= n <= 5:
@@ -1165,11 +1165,11 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 2 and enc[2][0] != (F[1] * 3 * (F[0]//8)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * (F[0]//8))):
+            if n > 2 and enc[2][0] != (F[1] * 3 * (F[0]//8)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * (F[0]//8))) and not ((F[1] * 3 * (F[0]//8)) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * (F[0]//8))
-            if n > 3 and enc[3][0] != ((F[1] + 3)//4) and not (enc[3][1] == 2 and enc[3][0] + 1 == ((F[1] + 3)//4)):
+            if n > 3 and enc[3][0] != ((F[1] + 3)//4) and not (enc[3][1] == 2 and enc[3][0] + 1 == ((F[1] + 3)//4)) and not (((F[1] + 3)//4) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], (F[1] + 3)//4)
-            if n > 4 and enc[4][0] != (F[1] * 2 * (F[0]//8)) and not (enc[4][1] == 2 and enc[4][0] + 1 == (F[1] * 2 * (F[0]//8))):
+            if n > 4 and enc[4][0] != (F[1] * 2 * (F[0]//8)) and not (enc[4][1] == 2 and enc[4][0] + 1 == (F[1] * 2 * (F[0]//8))) and not ((F[1] * 2 * (F[0]//8)) == 0 and enc[4][0] == 1 and L[4] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 4, enc[4][0], F[1] * 2 * (F[0]//8))
             return None
     return None

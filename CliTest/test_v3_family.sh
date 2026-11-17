@@ -245,7 +245,9 @@ python3 - "$ROOT" "$TMP/zero_sk.pem" <<'PY'
 import sys, os
 sys.path.insert(0, os.path.join(sys.argv[1], "HerraduraCli"))
 from codec import der_seq, der_int, pem_wrap
-der = der_seq(der_int(0, 32), der_int(256))
+# Minimal, as every writer encodes a session key: since TODO #373 a padded
+# der_int(0, 32) is refused as non-minimal before the key check is reached.
+der = der_seq(der_int(0), der_int(256))
 open(sys.argv[2], "w").write(pem_wrap("HERRADURA SESSION KEY", der))
 PY
 for l in $sym_langs; do

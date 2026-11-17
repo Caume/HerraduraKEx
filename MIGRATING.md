@@ -745,8 +745,13 @@ encoders as well as with C and Go.
 repo — a fixture, a hash, a signed manifest. Those pins need regenerating; the artifacts
 they pin are two bytes shorter — each label carries exactly one `n`, and the DER
 SEQUENCE header absorbs the change without widening. Ceremonies that span
-the upgrade are fine: a pre-6.5.1 aggregate is still accepted by every 6.5.1 CLI, which
-is asserted directly in `CliTest/test_threshold_interop.sh`.
+the upgrade are fine: a pre-6.5.1 aggregate is still accepted by every 6.5.1 CLI.
+
+**Since 15.0.0 (TODO #373) the 4-byte form is refused**, in all four CLIs, with
+`HERRADURA HPKST AGGREGATE: field 3 is encoded with a leading zero byte (expected
+minimal)`; `CliTest/test_threshold_interop.sh` now asserts that refusal.  Nothing usable
+is lost: a threshold round from before 12.0.0 no longer verifies anyway (section 26's
+table), so such an aggregate has to be redone regardless.
 
 **Why this is not a MAJOR bump.** No PEM label, flag name or `--algo` behaviour changed,
 and — the test the 2.0.0 surface actually sets — no existing key, signature or ciphertext
@@ -1869,7 +1874,8 @@ It ships inside 15.0.0 so there is one migration.
 - an HPKS or HPKS-NL signature whose stored challenge e is not the one the verifier
   recomputes, or whose n differs from the public key's;
 - a DER field encoded at any width but its writer's (TODO #373). A fixed-width field
-  (a key, nonce, seed, polynomial, ciphertext or tag) must be exactly its width. A scalar
+  (a key, nonce, seed, polynomial, ciphertext or tag) must be exactly its width; one of
+  width 0, such as an empty plaintext's body, is the INTEGER 0 in its one-byte form. A scalar
   (n, rounds, a length or index) or a minimal value (a session key, a response's K) must
   carry no 0x00 its sign does not need. A DER length must be in its shortest form, and an
   INTEGER may not be negative or empty;
@@ -1924,7 +1930,9 @@ order, the others sorted, and both stay readable.
 these widths and encodings, and the pinned KAT PEM corpus reads back unchanged. A file
 that a tool appended to, re-encoded or edited is refused; regenerate it from its source.
 An HKEX-RNL response is single-use, so a refused one from an older Go CLI means re-running
-that exchange with a 15.0.0+ CLI on Bob's side.
+that exchange with a 15.0.0+ CLI on Bob's side. A pre-6.5.1 HPKS-T artifact, whose
+trailing `n` Python and Java wrote in 4 bytes (section 12), is refused too; its round had
+to be redone on 12.0.0+ already.
 
 **Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface.
 It ships inside 15.0.0 so there is one migration.

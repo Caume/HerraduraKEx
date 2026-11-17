@@ -39,7 +39,8 @@ CliTest/                   — CLI integration + cross-language interop scripts.
                              hpke-stern-kem must source it (ci.yml DFR guard).  Implicit
                              rejection means `dec` always exits 0, so compare BYTES
   lib_build.sh             — "is the CLI built?"; run ./build_c.sh and ./build_go.sh first
-                             (compiled CLIs are not in git); a run asserting nothing exits 2
+                             (compiled CLIs are not in git); Java needs a JDK.  A run
+                             asserting nothing exits 2 (`hkx_require_built`, TODO #370)
   lib_malformed.sh         — malformed-PEM case table (test_weak_key_rejection.sh,
                              test_malformed_pem_matrix.sh)
 KAT/                       — Known-Answer-Test vectors and their consumers:

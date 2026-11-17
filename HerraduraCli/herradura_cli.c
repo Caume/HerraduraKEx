@@ -3452,18 +3452,23 @@ static void cmd_dec(int argc, char **argv)
          * used (TODO #239).  It cannot exceed the DER we actually read, and the
          * payload cannot be longer than the length claiming to describe it.
          * Shorter is legal — integer encoding may have dropped leading zero
-         * bytes — and is right-aligned into the zero-padded buffer below. */
-        if (ct.vlens[2] > 9 || ct_len > ct.der_len || ct.vlens[3] > ct_len) {
+         * bytes — and is right-aligned into the zero-padded buffer below.
+         * Compare SIGNIFICANT bytes: an empty payload is the INTEGER 0, whose
+         * one DER form is a single 00 byte, so its encoded length is 1 against
+         * a declared 0 (refused here from TODO #239 until #370). */
+        size_t vl = ct.vlens[3];
+        const uint8_t *vp = ct.vals[3];
+        while (vl > 0 && vp[0] == 0) { vp++; vl--; }
+        if (ct.vlens[2] > 9 || ct_len > ct.der_len || vl > ct_len) {
             fprintf(stderr, "dec: V%d-Duplex ciphertext declares %zu bytes but "
                             "carries %zu\n", dplex_v3 ? 3 : 2, ct_len,
-                    ct.vlens[3]);
+                    vl);
             exit(1);
         }
         uint8_t *ct_buf = calloc(ct_len ? ct_len : 1, 1);
         uint8_t *pt_buf = malloc(ct_len ? ct_len : 1);
         if (!ct_buf || !pt_buf) die("dec: out of memory");
-        size_t vl = ct.vlens[3];
-        memcpy(ct_buf + (ct_len - vl), ct.vals[3], vl);
+        if (vl) memcpy(ct_buf + (ct_len - vl), vp, vl);
         uint8_t tag_buf[32];
         BitArray tag_ba = BA_INIT;
         ba_from_ra(&tag_ba, ct.vals[4], ct.vlens[4]);

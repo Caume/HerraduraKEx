@@ -1968,7 +1968,9 @@ def build_pem_der_items(all_labels):
 # field: every writer emits exactly E bytes, leading zeros included, plus the
 # 0x00 a set top bit needs, so the encoded width (content length less that
 # sign byte) must be exactly E -- or E-1 when the content is E bytes whose
-# leading 0x00 reads as a sign byte, which is the same bytes.  Any other cap is a scalar or a minimal value
+# leading 0x00 reads as a sign byte, which is the same bytes.  An exact width
+# of 0 (an empty plaintext's body) is the INTEGER 0, whose one DER form is the
+# single byte 00 (an INTEGER cannot be empty).  Any other cap is a scalar or a minimal value
 # (the session key, a response's K): its encoding must be minimal, i.e. carry
 # no 0x00 the sign does not need.  Measured on every writer in all four CLIs
 # before the table was marked.  An optional fifth element lists VALUE rules,
@@ -2434,7 +2436,8 @@ def emit_c_field_caps(caps):
             "                 (long long)hkx_cap_len(vals[k], lens[k]), c_); return 1; } \\",
             "    } while (0)",
             "#define HKX_EXACT(k, e) do { long long c_ = (e); \\",
-            "    if (!((long long)ew[k] == c_ || (lz[k] == 2 && (long long)ew[k] + 1 == c_))) { \\",
+            "    if (!((long long)ew[k] == c_ || (lz[k] == 2 && (long long)ew[k] + 1 == c_) || \\",
+            "          (c_ == 0 && ew[k] == 1 && hkx_cap_len(vals[k], lens[k]) == 0))) { \\",
             '        snprintf(m, ms, "' + _MSG_EXACT + '", label, k, (long long)ew[k], c_); \\',
             "        return 1; } \\",
             "    } while (0)",
@@ -2573,9 +2576,9 @@ def emit_java_field_caps(caps):
             for c in r["caps"]:
                 e = _cap_code(c["cap"], "java").replace("F(", "F0.applyAsLong(")
                 if c["exact"]:
-                    out.append('                if (n > %d) { long c = %s; if (!(ew[%d] == c || (lz[%d] == 2 && ew[%d] + 1 == c))) '
+                    out.append('                if (n > %d) { long c = %s; if (!(ew[%d] == c || (lz[%d] == 2 && ew[%d] + 1 == c) || (c == 0 && ew[%d] == 1 && L.applyAsInt(%d) == 0))) '
                                'return String.format("%s", label, %d, (long) ew[%d], c); }'
-                               % (c["field"], e, c["field"], c["field"], c["field"],
+                               % (c["field"], e, c["field"], c["field"], c["field"], c["field"], c["field"],
                                   _MSG_EXACT.replace("%lld", "%d"), c["field"], c["field"]))
                 else:
                     out.append('                if (n > %d && lz[%d] == 1) return String.format("%s", label, %d);'
@@ -2717,8 +2720,8 @@ def emit_go_field_caps(caps):
                 out.append("\t\t\t}")
             for c in r["caps"]:
                 if c["exact"]:
-                    out.append("\t\t\tif c := int64(%s); n > %d && !(int64(ew[%d]) == c || (lz[%d] == 2 && int64(ew[%d])+1 == c)) {"
-                               % (_cap_code(c["cap"], "go"), c["field"], c["field"], c["field"], c["field"]))
+                    out.append("\t\t\tif c := int64(%s); n > %d && !(int64(ew[%d]) == c || (lz[%d] == 2 && int64(ew[%d])+1 == c) || (c == 0 && ew[%d] == 1 && L(%d) == 0)) {"
+                               % (_cap_code(c["cap"], "go"), c["field"], c["field"], c["field"], c["field"], c["field"], c["field"]))
                     out.append('\t\t\t\treturn fmt.Sprintf("%s", label, %d, ew[%d], c)'
                                % (_MSG_EXACT.replace("%lld", "%d"), c["field"], c["field"]))
                 else:
@@ -2813,9 +2816,9 @@ def emit_py_field_caps(caps):
                            % (py(_MSG_WIDE), c["field"], c["field"], _cap_code(c["cap"], "py")))
             for c in r["caps"]:
                 if c["exact"]:
-                    out.append("            if n > %d and enc[%d][0] != (%s) and not (enc[%d][1] == 2 and enc[%d][0] + 1 == (%s)):"
+                    out.append("            if n > %d and enc[%d][0] != (%s) and not (enc[%d][1] == 2 and enc[%d][0] + 1 == (%s)) and not ((%s) == 0 and enc[%d][0] == 1 and L[%d] == 0):"
                                % (c["field"], c["field"], _cap_code(c["cap"], "py"), c["field"], c["field"],
-                                  _cap_code(c["cap"], "py")))
+                                  _cap_code(c["cap"], "py"), _cap_code(c["cap"], "py"), c["field"], c["field"]))
                     out.append("                return %r %% (label, %d, enc[%d][0], %s)"
                                % (py(_MSG_EXACT), c["field"], c["field"], _cap_code(c["cap"], "py")))
                 else:

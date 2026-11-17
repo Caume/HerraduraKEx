@@ -3796,9 +3796,15 @@ func cmdDec(args []string) {
 		}
 		ctLen := bounded(wireInt(ctInts[2], "declared ciphertext length", "dec"),
 			0, derBudget, "declared ciphertext length", "dec")
-		if len(ctInts[3]) > ctLen {
+		// Compare SIGNIFICANT bytes: an empty payload is the INTEGER 0, one
+		// 00 byte in DER, which was refused here from TODO #239 until #370.
+		payload := ctInts[3]
+		for len(payload) > 0 && payload[0] == 0 {
+			payload = payload[1:]
+		}
+		if len(payload) > ctLen {
 			fmt.Fprintf(os.Stderr, "dec: V%d-Duplex ciphertext declares %d bytes "+
-				"but carries %d\n", wantFmt-1, ctLen, len(ctInts[3]))
+				"but carries %d\n", wantFmt-1, ctLen, len(payload))
 			os.Exit(1)
 		}
 		ct := make([]byte, ctLen)
@@ -5380,10 +5386,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -5399,7 +5405,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -5418,10 +5424,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -5437,7 +5443,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -5456,10 +5462,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -5475,7 +5481,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -5494,10 +5500,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -5513,7 +5519,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -5532,10 +5538,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -5551,7 +5557,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -5570,10 +5576,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -5589,7 +5595,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -5611,13 +5617,13 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
-			if c := int64(F(2) * 4); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2) * 4); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2) * 4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2) * 4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			if e := hkxRuleCoef(label, 0, v[0], 4, int64(F(2)), 65537, true); e != "" {
@@ -5645,13 +5651,13 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
-			if c := int64(F(2) * 2); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2) * 2); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2) * 4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2) * 4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			if e := hkxRuleCoef(label, 0, v[0], 2, int64(F(2)), 4096, false); e != "" {
@@ -5691,13 +5697,13 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 4 && lz[4] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
 			}
-			if c := int64(32); n > 5 && !(int64(ew[5]) == c || (lz[5] == 2 && int64(ew[5])+1 == c)) {
+			if c := int64(32); n > 5 && !(int64(ew[5]) == c || (lz[5] == 2 && int64(ew[5])+1 == c) || (c == 0 && ew[5] == 1 && L(5) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 5, ew[5], c)
 			}
-			if c := int64(F(3) * 2); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(3) * 2); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			if e := hkxRuleCoef(label, 1, v[1], 2, int64(F(3)), 4096, false); e != "" {
@@ -5743,19 +5749,19 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 4 && lz[4] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
 			}
-			if c := int64(32); n > 5 && !(int64(ew[5]) == c || (lz[5] == 2 && int64(ew[5])+1 == c)) {
+			if c := int64(32); n > 5 && !(int64(ew[5]) == c || (lz[5] == 2 && int64(ew[5])+1 == c) || (c == 0 && ew[5] == 1 && L(5) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 5, ew[5], c)
 			}
 			if n > 7 && lz[7] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 7)
 			}
-			if c := int64(F(3) * 2); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(3) * 2); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
-			if c := int64((F(7) + 7)/8); n > 6 && !(int64(ew[6]) == c || (lz[6] == 2 && int64(ew[6])+1 == c)) {
+			if c := int64((F(7) + 7)/8); n > 6 && !(int64(ew[6]) == c || (lz[6] == 2 && int64(ew[6])+1 == c) || (c == 0 && ew[6] == 1 && L(6) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 6, ew[6], c)
 			}
 			if e := hkxRuleCoef(label, 1, v[1], 2, int64(F(3)), 4096, false); e != "" {
@@ -5783,10 +5789,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -5805,10 +5811,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -5827,10 +5833,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -5849,10 +5855,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -5883,16 +5889,16 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 5 && lz[5] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5)
 			}
-			if c := int64((F(4) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64((F(4) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64((F(4) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64((F(4) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(5) * 2); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(F(5) * 2); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
-			if c := int64(F(5) * 2); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64(F(5) * 2); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			if e := hkxRuleSupport(label, 2, v[2], int64(F(5)), int64(F(4))); e != "" {
@@ -5920,7 +5926,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64((F(1) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64((F(1) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			if e := hkxRuleBits(label, 0, v[0], int64(F(1)), true); e != "" {
@@ -5936,7 +5942,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(4); n > 1 && L(1) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			if n > 1 && lz[1] == 1 {
@@ -5955,7 +5961,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1) * 32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1) * 32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -5971,7 +5977,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1) * 32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1) * 32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -5990,7 +5996,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(32 * (1 << hkxMin(F(1), 32))); n > 3 && L(3) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
-			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			if n > 1 && lz[1] == 1 {
@@ -5999,7 +6005,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(32 * (1 << hkxMin(F(1), 32))); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64(32 * (1 << hkxMin(F(1), 32))); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
@@ -6012,7 +6018,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(1); n > 1 && L(1) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			if n > 1 && lz[1] == 1 {
@@ -6046,10 +6052,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 4 && lz[4] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
 			}
-			if c := int64(67 * (F(4)/8)); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(67 * (F(4)/8)); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(3) * 32); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(F(3) * 32); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			return ""
@@ -6077,7 +6083,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
@@ -6093,7 +6099,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -6112,10 +6118,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -6131,7 +6137,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -6147,13 +6153,13 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(4); n > 2 && L(2) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(4); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(4); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			return ""
@@ -6172,10 +6178,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -6191,7 +6197,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -6213,13 +6219,13 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 3 && lz[3] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
 			}
-			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			return ""
@@ -6235,7 +6241,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -6257,13 +6263,13 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 3 && lz[3] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
 			}
-			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			return ""
@@ -6291,13 +6297,13 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
-			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
-			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c)) {
+			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c) || (c == 0 && ew[4] == 1 && L(4) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
 			}
 			return ""
@@ -6323,7 +6329,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(32); n > 0 && L(0) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			return ""
@@ -6336,7 +6342,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(8); n > 1 && L(1) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			if n > 1 && lz[1] == 1 {
@@ -6364,22 +6370,22 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(F(5)); n > 3 && L(3) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
-			if c := int64(16); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(16); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(32); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(32); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
-			if c := int64(32); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c)) {
+			if c := int64(32); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c) || (c == 0 && ew[4] == 1 && L(4) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
 			}
 			if n > 5 && lz[5] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5)
 			}
-			if c := int64(F(5)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64(F(5)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
@@ -6395,13 +6401,13 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64((F(2) + 7)/8); n > 0 && L(0) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
-			if c := int64(32); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(32); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64((F(2) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64((F(2) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
 			if e := hkxRuleBits(label, 0, v[0], int64(F(2)), true); e != "" {
@@ -6425,7 +6431,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64((F(2) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64((F(2) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -6443,10 +6449,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64((F(2) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64((F(2) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64((F(2) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64((F(2) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
 			return ""
@@ -6470,10 +6476,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 3 && lz[3] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
 			}
-			if c := int64((F(3) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64((F(3) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64((F(3) + 7)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64((F(3) + 7)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			return ""
@@ -6497,16 +6503,16 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 0 && lz[0] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
 			}
-			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			if n > 4 && lz[4] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
 			}
-			if c := int64((F(4) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64((F(4) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64((F(4) + 7)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64((F(4) + 7)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			return ""
@@ -6530,16 +6536,16 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 4 && lz[4] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
 			}
-			if c := int64(F(4)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(4)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(4)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(4)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(4)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(F(4)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
-			if c := int64(F(4)/8); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64(F(4)/8); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
@@ -6569,16 +6575,16 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(32); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c)) {
+			if c := int64(32); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c) || (c == 0 && ew[4] == 1 && L(4) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
 			}
 			if n > 5 && lz[5] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5)
 			}
-			if c := int64((F(5) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64((F(5) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(2)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64(F(2)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
@@ -6600,13 +6606,13 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 3 && lz[3] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
 			}
-			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c)) {
+			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
 			}
-			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c)) {
+			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			return ""
@@ -6633,13 +6639,13 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c)) {
+			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
-			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c)) {
+			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
-			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c)) {
+			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c) || (c == 0 && ew[4] == 1 && L(4) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
 			}
 			return ""

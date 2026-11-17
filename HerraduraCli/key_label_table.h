@@ -268,7 +268,8 @@ static int hkx_rule_equals(char *m, size_t ms, const char *label, int k, long lo
                  (long long)hkx_cap_len(vals[k], lens[k]), c_); return 1; } \
     } while (0)
 #define HKX_EXACT(k, e) do { long long c_ = (e); \
-    if (!((long long)ew[k] == c_ || (lz[k] == 2 && (long long)ew[k] + 1 == c_))) { \
+    if (!((long long)ew[k] == c_ || (lz[k] == 2 && (long long)ew[k] + 1 == c_) || \
+          (c_ == 0 && ew[k] == 1 && hkx_cap_len(vals[k], lens[k]) == 0))) { \
         snprintf(m, ms, "%s: field %d is encoded in %lld bytes (expected exactly %lld)", label, k, (long long)ew[k], c_); \
         return 1; } \
     } while (0)

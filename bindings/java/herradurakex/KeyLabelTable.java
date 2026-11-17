@@ -125,8 +125,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -135,7 +135,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -145,8 +145,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -155,7 +155,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -165,8 +165,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -175,7 +175,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -185,8 +185,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -195,7 +195,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -205,8 +205,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -215,7 +215,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -225,8 +225,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -235,7 +235,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -246,9 +246,9 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2) * 4L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2) * 4L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 3) { long c = 32L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
-                if (n > 0) { long c = F0.applyAsLong(2) * 4L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2) * 4L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 3) { long c = 32L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 0) { long c = F0.applyAsLong(2) * 4L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2) * 4L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 if ((e = ruleCoef(label, 0, v.get(0), 4, F0.applyAsLong(2), 65537L, true)) != null) return e;
                 if ((e = ruleCoef(label, 1, v.get(1), 4, F0.applyAsLong(2), 65537L, false)) != null) return e;
                 return null;
@@ -261,9 +261,9 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2) * 2L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2) * 4L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 3) { long c = 32L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
-                if (n > 0) { long c = F0.applyAsLong(2) * 2L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2) * 4L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 3) { long c = 32L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 0) { long c = F0.applyAsLong(2) * 2L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2) * 4L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 if ((e = ruleCoef(label, 0, v.get(0), 2, F0.applyAsLong(2), 4096L, false)) != null) return e;
                 if ((e = ruleCoef(label, 1, v.get(1), 4, F0.applyAsLong(2), 65537L, false)) != null) return e;
                 return null;
@@ -280,9 +280,9 @@ final class KeyLabelTable {
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
                 if (n > 3 && lz[3] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3);
                 if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
-                if (n > 5) { long c = 32L; if (!(ew[5] == c || (lz[5] == 2 && ew[5] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 5, (long) ew[5], c); }
-                if (n > 1) { long c = F0.applyAsLong(3) * 2L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 5) { long c = 32L; if (!(ew[5] == c || (lz[5] == 2 && ew[5] + 1 == c) || (c == 0 && ew[5] == 1 && L.applyAsInt(5) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 5, (long) ew[5], c); }
+                if (n > 1) { long c = F0.applyAsLong(3) * 2L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
                 if ((e = ruleCoef(label, 1, v.get(1), 2, F0.applyAsLong(3), 4096L, false)) != null) return e;
                 if ((e = ruleEquals(label, 4, F0.applyAsLong(4), F0.applyAsLong(3)/2L)) != null) return e;
                 return null;
@@ -301,11 +301,11 @@ final class KeyLabelTable {
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
                 if (n > 3 && lz[3] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3);
                 if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
-                if (n > 5) { long c = 32L; if (!(ew[5] == c || (lz[5] == 2 && ew[5] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 5, (long) ew[5], c); }
+                if (n > 5) { long c = 32L; if (!(ew[5] == c || (lz[5] == 2 && ew[5] + 1 == c) || (c == 0 && ew[5] == 1 && L.applyAsInt(5) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 5, (long) ew[5], c); }
                 if (n > 7 && lz[7] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 7);
-                if (n > 1) { long c = F0.applyAsLong(3) * 2L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
-                if (n > 6) { long c = (F0.applyAsLong(7) + 7L)/8L; if (!(ew[6] == c || (lz[6] == 2 && ew[6] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 6, (long) ew[6], c); }
+                if (n > 1) { long c = F0.applyAsLong(3) * 2L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 6) { long c = (F0.applyAsLong(7) + 7L)/8L; if (!(ew[6] == c || (lz[6] == 2 && ew[6] + 1 == c) || (c == 0 && ew[6] == 1 && L.applyAsInt(6) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 6, (long) ew[6], c); }
                 if ((e = ruleCoef(label, 1, v.get(1), 2, F0.applyAsLong(3), 4096L, false)) != null) return e;
                 if ((e = ruleEquals(label, 4, F0.applyAsLong(4), F0.applyAsLong(3)/2L)) != null) return e;
                 if ((e = ruleBits(label, 6, v.get(6), F0.applyAsLong(7), false)) != null) return e;
@@ -318,8 +318,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -329,8 +329,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -340,8 +340,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -351,8 +351,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -366,10 +366,10 @@ final class KeyLabelTable {
                 if (n > 3) { long c = F0.applyAsLong(5) * 2L; if (L.applyAsInt(3) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 3, (long) L.applyAsInt(3), c); }
                 if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
                 if (n > 5 && lz[5] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5);
-                if (n > 0) { long c = (F0.applyAsLong(4) + 7L)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = (F0.applyAsLong(4) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = F0.applyAsLong(5) * 2L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
-                if (n > 3) { long c = F0.applyAsLong(5) * 2L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 0) { long c = (F0.applyAsLong(4) + 7L)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = (F0.applyAsLong(4) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = F0.applyAsLong(5) * 2L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 3) { long c = F0.applyAsLong(5) * 2L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
                 if ((e = ruleSupport(label, 2, v.get(2), F0.applyAsLong(5), F0.applyAsLong(4))) != null) return e;
                 if ((e = ruleSupport(label, 3, v.get(3), F0.applyAsLong(5), F0.applyAsLong(4))) != null) return e;
                 if ((e = rulePolyOf(label, 0, v.get(0), 2, v.get(2), F0.applyAsLong(5), F0.applyAsLong(4))) != null) return e;
@@ -382,7 +382,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = (F0.applyAsLong(1) + 7L)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = (F0.applyAsLong(1) + 7L)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = (F0.applyAsLong(1) + 7L)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 if ((e = ruleBits(label, 0, v.get(0), F0.applyAsLong(1), true)) != null) return e;
                 return null;
             }
@@ -391,7 +391,7 @@ final class KeyLabelTable {
             if (n >= 2 && n <= 2) {
                 if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = 4L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
-                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
                 return null;
             }
@@ -401,7 +401,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1) * 32L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1) * 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1) * 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -410,7 +410,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1) * 32L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1) * 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1) * 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -420,10 +420,10 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 1L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2) { long c = 4L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
                 if (n > 3) { long c = 32L * (1L << Math.min(F0.applyAsLong(1), 32L)); if (L.applyAsInt(3) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 3, (long) L.applyAsInt(3), c); }
-                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 3) { long c = 32L * (1L << Math.min(F0.applyAsLong(1), 32L)); if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 3) { long c = 32L * (1L << Math.min(F0.applyAsLong(1), 32L)); if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
                 return null;
             }
             return null;
@@ -431,7 +431,7 @@ final class KeyLabelTable {
             if (n >= 2 && n <= 2) {
                 if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = 1L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
-                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
                 return null;
             }
@@ -446,8 +446,8 @@ final class KeyLabelTable {
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
                 if (n > 3 && lz[3] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3);
                 if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
-                if (n > 1) { long c = 67L * (F0.applyAsLong(4)/8L); if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = F0.applyAsLong(3) * 32L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 1) { long c = 67L * (F0.applyAsLong(4)/8L); if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = F0.applyAsLong(3) * 32L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
                 return null;
             }
             return null;
@@ -460,7 +460,7 @@ final class KeyLabelTable {
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 3) { long c = F0.applyAsLong(0) * F0.applyAsLong(1) * (5L * (F0.applyAsLong(2)/8L) + 1L); if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 3) { long c = F0.applyAsLong(0) * F0.applyAsLong(1) * (5L * (F0.applyAsLong(2)/8L) + 1L); if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
                 return null;
             }
             return null;
@@ -469,7 +469,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -479,8 +479,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -489,7 +489,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -498,9 +498,9 @@ final class KeyLabelTable {
                 if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = 4L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2) { long c = 4L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
-                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = 4L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = 4L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = 4L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = 4L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
                 return null;
             }
             return null;
@@ -510,8 +510,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = F0.applyAsLong(2)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = F0.applyAsLong(2)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(2)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             return null;
@@ -520,7 +520,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -531,9 +531,9 @@ final class KeyLabelTable {
                 if (n > 1) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
                 if (n > 3 && lz[3] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3);
-                if (n > 0) { long c = F0.applyAsLong(3)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(3)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 0) { long c = F0.applyAsLong(3)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(3)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
                 return null;
             }
             return null;
@@ -542,7 +542,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0) { long c = F0.applyAsLong(1)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = F0.applyAsLong(1)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -553,9 +553,9 @@ final class KeyLabelTable {
                 if (n > 1) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
                 if (n > 3 && lz[3] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3);
-                if (n > 0) { long c = F0.applyAsLong(3)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(3)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 0) { long c = F0.applyAsLong(3)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(3)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
                 return null;
             }
             return null;
@@ -568,9 +568,9 @@ final class KeyLabelTable {
                 if (n > 4) { long c = F0.applyAsLong(1) * 2L * (F0.applyAsLong(0)/8L); if (L.applyAsInt(4) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 4, (long) L.applyAsInt(4), c); }
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 2) { long c = F0.applyAsLong(1) * 3L * (F0.applyAsLong(0)/8L); if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
-                if (n > 3) { long c = (F0.applyAsLong(1) + 3L)/4L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
-                if (n > 4) { long c = F0.applyAsLong(1) * 2L * (F0.applyAsLong(0)/8L); if (!(ew[4] == c || (lz[4] == 2 && ew[4] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, (long) ew[4], c); }
+                if (n > 2) { long c = F0.applyAsLong(1) * 3L * (F0.applyAsLong(0)/8L); if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 3) { long c = (F0.applyAsLong(1) + 3L)/4L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 4) { long c = F0.applyAsLong(1) * 2L * (F0.applyAsLong(0)/8L); if (!(ew[4] == c || (lz[4] == 2 && ew[4] + 1 == c) || (c == 0 && ew[4] == 1 && L.applyAsInt(4) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, (long) ew[4], c); }
                 return null;
             }
             return null;
@@ -586,7 +586,7 @@ final class KeyLabelTable {
         case "HERRADURA DIGEST":
             if (n >= 1 && n <= 1) {
                 if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
-                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 return null;
             }
             return null;
@@ -594,7 +594,7 @@ final class KeyLabelTable {
             if (n >= 2 && n <= 2) {
                 if (n > 0) { long c = 32L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = 8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
-                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = 32L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
                 return null;
             }
@@ -607,12 +607,12 @@ final class KeyLabelTable {
                 if (n > 4) { long c = 32L; if (L.applyAsInt(4) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 4, (long) L.applyAsInt(4), c); }
                 if (n > 5) { long c = 4L; if (L.applyAsInt(5) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 5, (long) L.applyAsInt(5), c); }
                 if (n > 3) { long c = F0.applyAsLong(5); if (L.applyAsInt(3) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 3, (long) L.applyAsInt(3), c); }
-                if (n > 0) { long c = 16L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = 16L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 2) { long c = 32L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
-                if (n > 4) { long c = 32L; if (!(ew[4] == c || (lz[4] == 2 && ew[4] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, (long) ew[4], c); }
+                if (n > 2) { long c = 32L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 4) { long c = 32L; if (!(ew[4] == c || (lz[4] == 2 && ew[4] + 1 == c) || (c == 0 && ew[4] == 1 && L.applyAsInt(4) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, (long) ew[4], c); }
                 if (n > 5 && lz[5] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5);
-                if (n > 3) { long c = F0.applyAsLong(5); if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 3) { long c = F0.applyAsLong(5); if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
                 return null;
             }
             return null;
@@ -621,9 +621,9 @@ final class KeyLabelTable {
                 if (n > 1) { long c = 32L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
                 if (n > 0) { long c = (F0.applyAsLong(2) + 7L)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
-                if (n > 1) { long c = 32L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 1) { long c = 32L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = (F0.applyAsLong(2) + 7L)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 0) { long c = (F0.applyAsLong(2) + 7L)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
                 if ((e = ruleBits(label, 0, v.get(0), F0.applyAsLong(2), true)) != null) return e;
                 return null;
             }
@@ -633,7 +633,7 @@ final class KeyLabelTable {
                 if (n > 1) { long c = (F0.applyAsLong(2) + 7L)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 1) { long c = (F0.applyAsLong(2) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 1) { long c = (F0.applyAsLong(2) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             if (n >= 3 && n <= 3) {
@@ -641,8 +641,8 @@ final class KeyLabelTable {
                 if (n > 0) { long c = (F0.applyAsLong(2) + 7L)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = (F0.applyAsLong(2) + 7L)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 0) { long c = (F0.applyAsLong(2) + 7L)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = (F0.applyAsLong(2) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 0) { long c = (F0.applyAsLong(2) + 7L)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = (F0.applyAsLong(2) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 return null;
             }
             if (n >= 4 && n <= 4) {
@@ -652,8 +652,8 @@ final class KeyLabelTable {
                 if (n > 2) { long c = (F0.applyAsLong(3) + 7L)/8L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
                 if (n > 3 && lz[3] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3);
-                if (n > 1) { long c = (F0.applyAsLong(3) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = (F0.applyAsLong(3) + 7L)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 1) { long c = (F0.applyAsLong(3) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = (F0.applyAsLong(3) + 7L)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
                 return null;
             }
             if (n >= 5 && n <= 5 && (F0.applyAsLong(0) == 2L)) {
@@ -663,10 +663,10 @@ final class KeyLabelTable {
                 if (n > 1) { long c = (F0.applyAsLong(4) + 7L)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2) { long c = (F0.applyAsLong(4) + 7L)/8L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
-                if (n > 3) { long c = 32L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 3) { long c = 32L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
                 if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
-                if (n > 1) { long c = (F0.applyAsLong(4) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = (F0.applyAsLong(4) + 7L)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 1) { long c = (F0.applyAsLong(4) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = (F0.applyAsLong(4) + 7L)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
                 return null;
             }
             if (n >= 5 && n <= 5) {
@@ -676,10 +676,10 @@ final class KeyLabelTable {
                 if (n > 2) { long c = F0.applyAsLong(4)/8L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
                 if (n > 3) { long c = F0.applyAsLong(4)/8L; if (L.applyAsInt(3) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 3, (long) L.applyAsInt(3), c); }
                 if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
-                if (n > 0) { long c = F0.applyAsLong(4)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(4)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = F0.applyAsLong(4)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
-                if (n > 3) { long c = F0.applyAsLong(4)/8L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 0) { long c = F0.applyAsLong(4)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(4)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = F0.applyAsLong(4)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 3) { long c = F0.applyAsLong(4)/8L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
                 return null;
             }
             if (n >= 6 && n <= 6) {
@@ -691,10 +691,10 @@ final class KeyLabelTable {
                 if (n > 3) { long c = F0.applyAsLong(2); if (L.applyAsInt(3) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 3, (long) L.applyAsInt(3), c); }
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 4) { long c = 32L; if (!(ew[4] == c || (lz[4] == 2 && ew[4] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, (long) ew[4], c); }
+                if (n > 4) { long c = 32L; if (!(ew[4] == c || (lz[4] == 2 && ew[4] + 1 == c) || (c == 0 && ew[4] == 1 && L.applyAsInt(4) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, (long) ew[4], c); }
                 if (n > 5 && lz[5] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5);
-                if (n > 1) { long c = (F0.applyAsLong(5) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 3) { long c = F0.applyAsLong(2); if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 1) { long c = (F0.applyAsLong(5) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 3) { long c = F0.applyAsLong(2); if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
                 return null;
             }
             return null;
@@ -705,9 +705,9 @@ final class KeyLabelTable {
                 if (n > 1) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2) { long c = F0.applyAsLong(3)/8L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
                 if (n > 3 && lz[3] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3);
-                if (n > 0) { long c = F0.applyAsLong(3)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(3)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 0) { long c = F0.applyAsLong(3)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
+                if (n > 1) { long c = F0.applyAsLong(3)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
+                if (n > 2) { long c = F0.applyAsLong(3)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
                 return null;
             }
             if (n >= 5 && n <= 5) {
@@ -718,9 +718,9 @@ final class KeyLabelTable {
                 if (n > 4) { long c = F0.applyAsLong(1) * 2L * (F0.applyAsLong(0)/8L); if (L.applyAsInt(4) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 4, (long) L.applyAsInt(4), c); }
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
-                if (n > 2) { long c = F0.applyAsLong(1) * 3L * (F0.applyAsLong(0)/8L); if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
-                if (n > 3) { long c = (F0.applyAsLong(1) + 3L)/4L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
-                if (n > 4) { long c = F0.applyAsLong(1) * 2L * (F0.applyAsLong(0)/8L); if (!(ew[4] == c || (lz[4] == 2 && ew[4] + 1 == c))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, (long) ew[4], c); }
+                if (n > 2) { long c = F0.applyAsLong(1) * 3L * (F0.applyAsLong(0)/8L); if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                if (n > 3) { long c = (F0.applyAsLong(1) + 3L)/4L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 4) { long c = F0.applyAsLong(1) * 2L * (F0.applyAsLong(0)/8L); if (!(ew[4] == c || (lz[4] == 2 && ew[4] + 1 == c) || (c == 0 && ew[4] == 1 && L.applyAsInt(4) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, (long) ew[4], c); }
                 return null;
             }
             return null;

@@ -25390,3 +25390,46 @@ supports.  3421 checks, 0 failures; against the pre-#373 build it fails 1975, no
 control, 1650 of them accepted outright.  MAJOR inside v15.0.0, MIGRATING.md section 34.
 
 Status: **DONE v15.0.0** — one encoding per field (fixed width or minimal, shortest DER lengths) and HKEX-RNL / QC-MDPC values in range, in every CLI.
+
+---
+
+### #370: CliTest scripts that exit 0 without testing
+
+Found with #364.  PATCH.
+
+`CliTest/test_threshold_interop.sh` prints "SKIP: C CLI not found ... (run build_c.sh
+first)" and exits 0 when the C or Go CLI is not built -- the exact pattern
+`CliTest/lib_build.sh` (TODO #229) was written to remove.  The nine `test_java_*.sh`
+scripts (`bindings`, `codec`, `hcred_interop`, `interop`, `keygen`, `nl_interop`,
+`oprf_wots_interop`, `pake_interop`, `stern_interop`) exit 0 when `javac` is absent.  CI is
+not affected (every job builds first and has a JDK); a local run can be green with nothing
+tested.
+
+A second shape, found with #371: `CliTest/test_cross_lang_matrix.sh` runs under
+`set -e`, and in its HKEX-RNL section a refused `kex` aborts the whole script with no
+FAIL line -- CI showed the step red after "PASS hkex-rnl py-alice/c-bob agree" and
+nothing else, so the failing pair had to be inferred.  Each command whose failure is the
+thing being tested must be run with its status captured (`|| rc=$?`) and scored.
+
+**Work.**  Source `lib_build.sh` and use `hkx_require_built`, so an all-skipped run exits 2
+unless `HKX_ALLOW_SKIP=1`.  The Java scripts need a "javac absent" branch in the library
+if it has none.  Show the guard firing (negative control) for one script of each kind.
+
+**Resolution.**  All ten scripts source `lib_build.sh` and call `hkx_require_built`
+(`c go` for threshold, `java` for the nine Java scripts; `lib_build.sh` now treats Java
+as available when `javac` and `java` are both on PATH).  `test_cross_lang_matrix.sh`
+runs every producer step through a `prod` helper that captures its status: a refused
+step is one named FAIL with the command's own error text, and its dependent checks are
+skipped, not scored.  Controls: no JDK, the nine Java scripts exit 2;
+no built CLIs, threshold exits 2; `HKX_ALLOW_SKIP=1` gives 0.  With a C CLI rigged to
+refuse every HKEX-RNL `kex`, the matrix finishes at 511 PASS / 7 FAIL, each FAIL naming
+the step and quoting the refusal.  Unrigged: 518 / 0.
+
+Running the CI step the #373 commit failed in also found:
+- three #373 fallouts, all fixed under #373 in the CHANGELOG: a width-0 exact field (an
+  empty plaintext) refused, a padded zero-key fixture, and a pre-6.5.1 HPKS-T 4-byte n
+  that is now refused and asserted so;
+- a C and Go bug from TODO #239: an empty `hske-duplex` / `hske-duplex3` payload was
+  refused. `test_duplex.sh` now decrypts the empty case 4×4.
+
+Status: **DONE v15.0.0** — CliTest scripts exit 2 when nothing was asserted, and the cross-language matrix names a failed producer step instead of aborting.

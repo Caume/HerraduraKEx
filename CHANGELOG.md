@@ -6,7 +6,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 **MAJOR: security fixes in seven parts.** All seven change what an existing `--algo`
 produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections
-30, 31, 32, 33 and 34.
+30, 31, 32, 33 and 34. One test-tooling fix rides along (TODO #370, last section).
 
 ### TODO #364 — verifiers enforce a Fiat-Shamir round floor
 
@@ -386,8 +386,55 @@ produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md se
   `test_passphrase_envelope.sh` accepts the field-3 refusal for a declared plaintext
   length of 2^32−1: the ciphertext must now be exactly that long, which is refused
   before any allocation.
+- **Found after the #373 commit, by scripts not run before it** (CI failed on the first):
+  - **An empty plaintext's body.** A fixed-width field of width 0 is the INTEGER 0,
+    whose one DER form is the single byte 00 (an INTEGER cannot be empty). The exact
+    check expected 0 bytes, so every CLI refused an empty `hske-duplex` or
+    `hske-duplex3` ciphertext. It now accepts that one form; a padded `00 00` and any
+    nonzero byte are still refused. The 937-artifact measurement had no empty plaintext.
+  - **`test_v3_family.sh`'s zero-key fixture** was a padded session key, which is now
+    refused as non-minimal before the key check it exists to test. It is minimal now, as
+    every writer writes it.
+- **A pre-6.5.1 HPKS-T artifact is now refused.** Python and Java wrote its trailing n in
+  4 bytes until TODO #271. `test_threshold_interop.sh` asserted that such an aggregate
+  still read, and failed CI on the #373 commit. It now asserts the minimal-encoding
+  refusal in all four CLIs, after an accept-control on the minimal form (MIGRATING.md
+  section 12). Such a round had to be redone on 12.0.0+ anyway.
 - **Not changed.** A QC-MDPC public h is checked for range only. Whether it is a usable
   key is a peer-value question, like #371's screens.
+
+### TODO #370 — CliTest scripts no longer pass without testing
+
+- **The finding.** `test_threshold_interop.sh` printed SKIP and exited 0 when the C or Go
+  CLI was not built, and the nine `test_java_*.sh` scripts did the same without `javac`.
+  A local run could be green with nothing tested. This is the pattern
+  `CliTest/lib_build.sh` (TODO #229) was written to remove. CI was not affected, because
+  every job builds first and has a JDK.
+- **The guard.** All ten scripts now call `hkx_require_built` (`c go`, or `java`), so a
+  run that asserts nothing exits 2 and says what is missing and why. `HKX_ALLOW_SKIP=1`
+  still downgrades that to 0. `lib_build.sh` gains Java: it is available when `javac`
+  and `java` are both on PATH, since its CLI is built from source on every run.
+  Threshold's Java rows stay optional, as before (TODO #260).
+- **A second shape.** `test_cross_lang_matrix.sh` runs under `set -e` and ran its
+  producer steps (genpkey, pkey, kex, enc, sign, oprf, pake-register) bare. One refused
+  step aborted the whole script with no FAIL line, so the failing pair had to be inferred
+  from the last PASS. Each producer step now goes through `prod`, which captures its
+  status. A failure is one named FAIL carrying the command's own error text, and the
+  checks that depend on it are skipped, not scored. A failed Java build now says so too.
+- **A C and Go bug the wider test found.** Since TODO #239, C and Go compared the
+  payload's encoded length with the declared length. An empty `hske-duplex` /
+  `hske-duplex3` payload is one 00 byte against a declared 0, so neither could decrypt
+  an empty plaintext ("declares 0 bytes but carries 1"); Python and Java could. Both
+  now compare significant bytes. `test_duplex.sh` decrypted the empty case with Python
+  only, which is why this went unseen; it now runs it 4×4 (16 PASS), and
+  `hske-duplex3` was checked 4×4 by hand.
+- **Tests.** Each guard was shown to fire. Without a JDK, all nine Java scripts exit 2;
+  with no built CLIs, the threshold script exits 2; and both exit 0 under
+  `HKX_ALLOW_SKIP=1`. A matrix run whose C CLI was rigged to refuse every HKEX-RNL
+  `kex` finished with 511 PASS / 7 FAIL. Each FAIL names the refused step and quotes the
+  refusal, the 7 pairs are exactly those involving C, and 511 + 7 is the full 518.
+  Before this change, the first refusal ended the run. With nothing rigged, the matrix
+  gives 518 / 0, and the ten guarded scripts all pass.
 
 ## [14.0.4] - 2026-11-11
 

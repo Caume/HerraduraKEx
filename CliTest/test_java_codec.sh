@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CliTest/test_java_codec.sh — TODO #197: cross-check the Java PEM/DER codec
-# against Python-CLI-produced key files (both directions). SKIPs (exit 0)
-# if javac is not available, matching test_java_bindings.sh's pattern.
+# against Python-CLI-produced key files (both directions). Without a JDK it
+# exits 2 (lib_build.sh, TODO #370), like every other test_java_*.sh.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,10 +10,10 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
 
-if ! command -v javac >/dev/null 2>&1; then
-    echo "SKIP test_java_codec.sh: javac not found"
-    exit 0
-fi
+# TODO #370: no JDK is a run that did not happen, not a pass (exit 2;
+# HKX_ALLOW_SKIP=1 to override).
+. "$ROOT/CliTest/lib_build.sh"
+hkx_require_built java
 
 bash "$ROOT/bindings/java/build.sh" >/dev/null
 

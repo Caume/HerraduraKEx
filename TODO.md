@@ -711,29 +711,3 @@ Found with #364.  PATCH.
     219-round credential is unusable there.  Re-measure C once #364 moves it to 219.
 
 Status: **OPEN**
-
----
-
-### #370: CliTest scripts that exit 0 without testing
-
-Found with #364.  PATCH.
-
-`CliTest/test_threshold_interop.sh` prints "SKIP: C CLI not found ... (run build_c.sh
-first)" and exits 0 when the C or Go CLI is not built -- the exact pattern
-`CliTest/lib_build.sh` (TODO #229) was written to remove.  The nine `test_java_*.sh`
-scripts (`bindings`, `codec`, `hcred_interop`, `interop`, `keygen`, `nl_interop`,
-`oprf_wots_interop`, `pake_interop`, `stern_interop`) exit 0 when `javac` is absent.  CI is
-not affected (every job builds first and has a JDK); a local run can be green with nothing
-tested.
-
-A second shape, found with #371: `CliTest/test_cross_lang_matrix.sh` runs under
-`set -e`, and in its HKEX-RNL section a refused `kex` aborts the whole script with no
-FAIL line -- CI showed the step red after "PASS hkex-rnl py-alice/c-bob agree" and
-nothing else, so the failing pair had to be inferred.  Each command whose failure is the
-thing being tested must be run with its status captured (`|| rc=$?`) and scored.
-
-**Work.**  Source `lib_build.sh` and use `hkx_require_built`, so an all-skipped run exits 2
-unless `HKX_ALLOW_SKIP=1`.  The Java scripts need a "javac absent" branch in the library
-if it has none.  Show the guard firing (negative control) for one script of each kind.
-
-Status: **OPEN**
