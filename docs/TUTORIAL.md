@@ -79,7 +79,9 @@ $CLI kex --algo hkex-gf --our alice.pem --their bob_pub.pem --out alice_sk.pem
 $CLI kex --algo hkex-gf --our bob.pem   --their alice_pub.pem --out bob_sk.pem
 # alice_sk.pem and bob_sk.pem now hold the same 256-bit session key
 
-echo -n "hello herradura" > msg.bin
+# hske encrypts ONE 256-bit block, so the message is exactly 32 bytes (a shorter
+# one comes back zero-padded to 32; use hske-duplex for any length)
+echo -n "hello herradura, a 32-byte block" > msg.bin
 $CLI enc --algo hske --key alice_sk.pem --in msg.bin --out ct.pem
 $CLI dec --algo hske --key bob_sk.pem   --in ct.pem  --out recovered.bin
 cmp msg.bin recovered.bin && echo "round-trip OK"
@@ -88,7 +90,7 @@ cmp msg.bin recovered.bin && echo "round-trip OK"
 The sections below walk through this same flow (and its NL/PQC, code-based, and
 signature/encryption counterparts) in depth, in C, Go, and Python as well as the CLI.
 
-Every protocol section below shows the same operation four ways: the CLI (Python, C, and Go
+Every protocol section below shows the same operation four ways: the CLI (Python, C, Go and Java
 share identical subcommands and byte-for-byte compatible PEM files), and the C, Go, and Python
 library APIs. Set these up once, then jump to whichever protocol section you need.
 
@@ -455,7 +457,7 @@ $CLI verify --algo hpks-ring --ring "$RING" --in msg.bin --sig sig.pem
 The signer must be a member of `--ring` (its public key present), else signing is
 refused. Verification is anonymous: it succeeds for a signature from *any* ring
 member and fails for non-members, a tampered message, or a different ring.
-Signatures are byte-for-byte interoperable across the Python, C, and Go CLIs
+Signatures are byte-for-byte interoperable across all four CLIs
 (`CliTest/test_ring.sh`).
 
 > **Demo parameters.** Like `hpks-stern`, the ring signature uses N=256 / 32
@@ -477,7 +479,7 @@ message to someone she'll never talk to again.
 $CLI genpkey --algo hpke --out enc_key.pem
 $CLI pkey    --in enc_key.pem --pubout --out enc_pub.pem
 
-$CLI enc --algo hpke --key enc_pub.pem  --in msg.bin --out ct.pem
+$CLI enc --algo hpke --pubkey enc_pub.pem --in msg.bin --out ct.pem
 $CLI dec --algo hpke --key enc_key.pem  --in ct.pem  --out recovered.bin
 ```
 
@@ -835,35 +837,37 @@ have doubled that surface.
 |---|---|---|---|
 | `hske-nla2` | `hske-nla3` | `--algo` | C, Go, Python, Java |
 | `hpke-nl` | `hpke-nl3` | `--algo`, own PEM labels | C, Go, Python, Java |
-| `hske-duplex` | `hske-duplex3` | `--algo` | C, Go, Python |
-| `fpe` | `fpe --v3` | flag | C, Go, Python |
-| `twk` | `twk --v3` | flag | C, Go, Python |
+| `hske-duplex` | `hske-duplex3` | `--algo` | C, Go, Python, Java |
+| `fpe` | `fpe --v3` | flag | C, Go, Python, Java |
+| `twk` | `twk --v3` | flag | C, Go, Python, Java |
 
 ```bash
+# alice_sk.pem is the HKEX-GF session key from the quickstart; msg.bin is any file
+# (hske-nla3 encrypts one 32-byte block, as hske does).
 # Symmetric block encryption.  No key check: any 256-bit key is accepted,
 # including ones hske-nla2 refuses as weak (short-arc delta, TODO #354).
-herradura enc --algo hske-nla3 --key sk.pem --in msg.bin --out ct.pem
-herradura dec --algo hske-nla3 --key sk.pem --in ct.pem  --out out.bin
+$CLI enc --algo hske-nla3 --key alice_sk.pem --in msg.bin --out ct.pem
+$CLI dec --algo hske-nla3 --key alice_sk.pem --in ct.pem  --out out.bin
 
 # Public-key encryption.  Its own key type, so generate a fresh keypair —
-# an hpke-nl key is not an hpke-nl3 key.
-herradura genpkey --algo hpke-nl3 --out bob.pem
-herradura pkey --in bob.pem --pubout --out bob_pub.pem
-herradura enc --algo hpke-nl3 --pubkey bob_pub.pem --in msg.bin --out ct.pem
-herradura dec --algo hpke-nl3 --key bob.pem --in ct.pem --out out.bin
+# an hpke-nl key is not an hpke-nl3 key, and every CLI refuses one here (TODO #366).
+$CLI genpkey --algo hpke-nl3 --out bob_nl3.pem
+$CLI pkey --in bob_nl3.pem --pubout --out bob_nl3_pub.pem
+$CLI enc --algo hpke-nl3 --pubkey bob_nl3_pub.pem --in msg.bin --out ct.pem
+$CLI dec --algo hpke-nl3 --key bob_nl3.pem --in ct.pem --out out.bin
 
 # Single-pass AEAD, arbitrary length.  Its ciphertexts carry format tag 4, so
 # `dec --algo hske-duplex` refuses them outright rather than failing the tag.
-herradura enc --algo hske-duplex3 --key sk.pem --in msg.bin --ad hdr --out ct.pem
-herradura dec --algo hske-duplex3 --key sk.pem --in ct.pem  --ad hdr --out out.bin
+$CLI enc --algo hske-duplex3 --key alice_sk.pem --in msg.bin --ad hdr --out ct.pem
+$CLI dec --algo hske-duplex3 --key alice_sk.pem --in ct.pem  --ad hdr --out out.bin
 
 # The two flag-selected variants.  --v3 changes the subkey domain as well as the
 # round, so a v3 ciphertext will not decrypt without --v3 — and, being an
 # unauthenticated permutation, it fails by returning wrong bytes, not an error.
-herradura fpe --v3 --encrypt --key sk.pem --context ctx --in msg.bin --out ct.bin
-herradura fpe --v3 --decrypt --key sk.pem --context ctx --in ct.bin  --out out.bin
-herradura twk --v3 --encrypt --key sk.pem --sector 7 --bidx 3 --in msg.bin --out ct.bin
-herradura twk --v3 --decrypt --key sk.pem --sector 7 --bidx 3 --in ct.bin  --out out.bin
+$CLI fpe --v3 --encrypt --key alice_sk.pem --context ctx --in msg.bin --out ct.bin
+$CLI fpe --v3 --decrypt --key alice_sk.pem --context ctx --in ct.bin  --out out.bin
+$CLI twk --v3 --encrypt --key alice_sk.pem --sector 7 --bidx 3 --in msg.bin --out ct.bin
+$CLI twk --v3 --decrypt --key alice_sk.pem --sector 7 --bidx 3 --in ct.bin  --out out.bin
 ```
 
 **Cost.** In the shipped C implementation the v3 round is about 1.16× the v2
@@ -897,8 +901,8 @@ $CLI dec --algo hske-nla1 --ad "header-v1" \
 # cmp msg.bin recovered.bin  →  identical
 ```
 
-The C and Go CLIs accept the same `--aead` and `--ad` flags. AEAD PEMs are
-cross-language compatible — see `CliTest/test_aead.sh` for a 9-way interop test.
+All four CLIs accept the same `--aead` and `--ad` flags. AEAD PEMs are
+cross-language compatible — see `CliTest/test_aead.sh` for a 16-way interop test.
 
 `hske-nla1 --aead` operates on a single 32-byte block. For **arbitrary-length**
 single-pass authenticated encryption, use the `hske-duplex` algorithm (a
@@ -906,6 +910,7 @@ MonkeyDuplex sponge AEAD over `nl_fscx_revolve_v2`):
 
 ```bash
 # Encrypt arbitrary-length input; nonce, ciphertext, and 32-byte tag in ct.pem
+head -c 100000 /dev/urandom > large_msg.bin      # any length, including 0
 $CLI enc --algo hske-duplex --ad "header-v1" \
          --key alice_sk.pem --in large_msg.bin --out ct_duplex.pem
 
@@ -914,9 +919,9 @@ $CLI dec --algo hske-duplex --ad "header-v1" \
          --key alice_sk.pem --in ct_duplex.pem --out recovered.bin
 ```
 
-`hske-duplex` requires a 256-bit key and is supported identically by the
-Python, C, and Go CLIs — see `CliTest/test_duplex.sh` for the 9-way interop
-matrix (plus empty-plaintext and tamper-rejection cases).
+`hske-duplex` requires a 256-bit key and is supported identically by all four
+CLIs — see `CliTest/test_duplex.sh` for the 16-way interop matrix (plus a 16-way
+empty-plaintext matrix and tamper-rejection cases).
 
 #### C
 
@@ -1353,8 +1358,10 @@ the credential to a specific institution.
 
 ```bash
 # ── User key generation ──────────────────────────────────────────────────────
-$CLI genpkey --algo hcred --out user.pem          # default n=32 (Python demo)
-$CLI genpkey --algo hcred --bits 256 --out u256.pem  # n=256 for C interop
+# Default width: n=32 in the Python CLI (a demo width), n=256 in C, Go and Java.
+# Python, Go and Java take --bits to choose (e.g. --bits 256 to match the C CLI);
+# C is compiled for n=256 and has no --bits.
+$CLI genpkey --algo hcred --out user.pem
 
 # Extract public key (C and A receive this to verify/issue)
 $CLI pkey --in user.pem --pubout --out user_pub.pem
@@ -1370,31 +1377,47 @@ $CLI cred-issue --our issuer.pem --in user_pub.pem \
 # cred.pem = HERRADURA HCRED CREDENTIAL (Stern-F sig over the public statement)
 
 # ── Generate presentation proof ──────────────────────────────────────────────
-$CLI cred-prove --in user.pem --msg "session-nonce-42" \
+# The default is 219 rounds (128-bit Fiat-Shamir soundness), which takes minutes
+# (table below).  This walkthrough uses a 16-round DEMO count; a verifier refuses
+# fewer than 219 unless told otherwise, hence --min-rounds 16 below (TODO #364).
+$CLI cred-prove --in user.pem --msg "session-nonce-42" --rounds 16 \
                 --out proof.pem
-# proof.pem = HERRADURA HCRED PROOF (ZKBoo MPCitH, ~18 KB for n=32 / R=219)
+# proof.pem = HERRADURA HCRED PROOF (ZKBoo MPCitH); sizes in the table below
 
 # ── Verify proof (anyone with user public key) ───────────────────────────────
 $CLI cred-verify --proof proof.pem --pubkey user_pub.pem \
-                 --msg "session-nonce-42"
+                 --msg "session-nonce-42" --min-rounds 16
 # Prints: Proof OK
 
 # ── Verify proof + issuer binding ────────────────────────────────────────────
 $CLI cred-verify --proof proof.pem  --pubkey user_pub.pem \
                  --cred  cred.pem   --issuer issuer_pub.pem \
-                 --msg   "session-nonce-42"
+                 --msg   "session-nonce-42" --min-rounds 16
 # Prints: Credential OK / Proof OK
 ```
 
 The proof convinces a verifier that the prover knows `s` satisfying the public
 relations bound to `(C, m, seed_H, y)` *and* the presentation nonce `--msg` — but
 nothing else. A proof generated for one nonce cannot be replayed under a different
-nonce. PEM files are byte-for-byte interoperable between the Python and C CLIs at
-n=256 (`CliTest/test_cred_interop.sh`).
+nonce. PEM files are interoperable across all four CLIs at n=256
+(`CliTest/test_cross_lang_matrix.sh`; `CliTest/test_cred_interop.sh` covers C,
+Go and Python, `CliTest/test_java_hcred_interop.sh` Java and Python).
 
-> **Demo parameters.** Default n=32 in the Python CLI; n=256 in the C CLI. Both
-> use `SDF_ROUNDS = 32` Fiat-Shamir rounds for `cred-issue` — a sub-128-bit demo
-> configuration. Production soundness requires R ≥ 219 rounds.
+> **Rounds and cost.** `cred-issue` and `cred-prove` both default to 219 rounds in
+> every CLI (TODO #364), and `cred-verify` refuses fewer unless given
+> `--min-rounds N`.  `cred-issue` is cheap (0.3 s in C, 1.1 s in Java, 3.3 s in Go,
+> 5.6 s in Python).  The proof is not.  Measured on an aarch64 SBC:
+>
+> | CLI, n | rounds | prove | verify | proof (PEM) |
+> |---|---|---|---|---|
+> | Python, n=32 | 16 | 29 s | 24 s | 105 KB |
+> | Python, n=32 | 219 | 391 s | 275 s | 1.44 MB |
+> | C, n=256 | 16 | 8.8 s | 6.3 s | 926 KB |
+> | Java, n=256 | 16 | 37 s | 27 s | 915 KB |
+> | Go, n=256 | 16 | 193 s | 144 s | 948 KB |
+> | Java, n=256 | 219 | 494 s | — | 12.8 MB |
+>
+> Go's prover is far slower than the others' (TODO #369).
 
 ### C
 
@@ -1604,14 +1627,18 @@ mac = h.hfscx_256(data, iv=mac_iv)
 
 Fast-key-erasure DRBG built on NL-FSCX v1, exposed as the `rand` CLI command. It is
 a **deterministic** DRBG, *not* an OS entropy source: identical seed + personalization
-+ byte count produce byte-identical output across the Python, C, and Go
-implementations. Suitable for constrained targets where `/dev/urandom` is
++ byte count produce byte-identical output across all four CLIs. Suitable for constrained targets where `/dev/urandom` is
 unavailable, or for deterministic test vectors. Seed from a full-entropy source
 (≥ 32 bytes recommended); reseed after at most `DRBG_MAX_BLOCKS` (2^20) output blocks.
 
 #### CLI
 
 ```bash
+# A seed file: 32 bytes from a full-entropy source.  (rand is deterministic --
+# it does not read the OS RNG -- so the seed is where the entropy comes from.)
+head -c 32 /dev/urandom > seed.bin
+head -c 32 /dev/urandom > more_entropy.bin   # for --reseed, below
+
 # Generate 64 deterministic bytes from a seed (hex to stdout)
 $CLI rand --seed seed.bin --bytes 64 --hex
 
@@ -1723,11 +1750,12 @@ Combined with the Fiat-Shamir heuristic they yield non-interactive signatures.
 
 - Use **ZKP-RNL** when you need an anonymous credential: the verifier learns only
   that the signer holds *a* valid key, not which key relative to other keys.
-  Post-quantum hardness follows Ring-LWR. Proof size is 1,056 bytes at n=256 —
-  smaller than ML-DSA-44 (2,420 bytes).
+  Post-quantum hardness follows Ring-LWR. A CLI proof at n=256 is 12,292 bytes of
+  DER (16.7 KB as PEM) — the smallest post-quantum option here, though about five
+  times ML-DSA-44's 2,420 bytes.
 - Use **ZKP-NL** when the secret is an NL-FSCX preimage — e.g. to prove knowledge
-  of the input to the one-way function without revealing it. CLI defaults to n=8
-  (35.5 KB proof at R=219); production at n=256 yields 920 KB pending ZKB++
+  of the input to the one-way function without revealing it. The CLIs generate
+  n=8 keys only (40,085-byte proof at R=219); n=256, through the library, yields 920 KB pending ZKB++
   optimisation.
 - Use **HPKS-Stern-F** for conventional signatures where a formal reduction to
   syndrome decoding hardness is required (78 KB, production-ready).
@@ -1882,14 +1910,18 @@ for a 14-way cross-language interop test.
 
 | Construction | Proof / signature size | Hardness | Notes |
 |---|---|---|---|
-| HPKS | 64 B | DLP in GF(2^256) — quantum-broken | Fastest |
-| ZKP-RNL (n=256) | **1,056 B** | Ring-LWR (heuristic) | Best lattice compactness |
+| HPKS | 110 B | DLP in GF(2^256) — quantum-broken | Fastest |
 | ML-DSA-44 (reference) | 2,420 B | Module-LWE | NIST standard |
-| HPKS-Stern-F (rounds=219) | 78 KB | SD(N,t) + NL-FSCX v1 PRF | **Demo params** (N=256, ~30–40 bits); 128-bit needs N≥17000 |
-| ZKP-NL (n=8, R=219) | 35.5 KB | NL-FSCX OWF | CLI default; toy parameters |
-| ZKP-NL (n=256, R=219) | 920 KB | NL-FSCX OWF | Awaits ZKB++ (~180 KB est.) |
+| ZKP-RNL (n=256) | **12,292 B** | Ring-LWR (heuristic) | Smallest post-quantum option here |
+| HPKS-Stern-F (rounds=219) | 35,118 B | SD(N,t) + NL-FSCX v1 PRF | **Demo params** (N=256, ~30–40 bits); 128-bit needs N≥17000 |
+| ZKP-NL (n=8, R=219) | 40,085 B | NL-FSCX OWF | CLI default (the only CLI width); toy parameters |
+| ZKP-NL (n=256, R=219) | 920 KB | NL-FSCX OWF | Library only; awaits ZKB++ (~180 KB est.) |
 
-ZKP-RNL is the most compact lattice-based signing option in the suite.
+Sizes are the DER a CLI writes (the PEM file is about a third larger), measured on
+v15.0.0 with each CLI's defaults; the n=256 ZKP-NL row is the library's figure, not
+re-measured, since no CLI generates an n=256 `hpks-zkp-nl` key.
+
+ZKP-RNL is the most compact post-quantum signing option in the suite.
 For NL-FSCX witness statements, ZKP-NL is the only applicable construction.
 
 ---
@@ -1908,13 +1940,18 @@ Keys are standard `hpks` or `hpks-nl` private key PEMs. The workflow is a
 **Phase 1 — Each signer generates a nonce and commitment:**
 
 ```bash
+# Each signer holds an ordinary hpks (or hpks-nl) key, and all agree on the message
+python3 HerraduraCli/herradura.py genpkey --algo hpks --out alice_hpks.pem
+python3 HerraduraCli/herradura.py genpkey --algo hpks --out bob_hpks.pem
+echo "the message all signers agree on" > message.bin
+
 # signer Alice
-python3 herradura.py threshold-commit \
-  --key alice.pem --commit-out alice_commit.pem --nonce-out alice_nonce.pem
+python3 HerraduraCli/herradura.py threshold-commit \
+  --key alice_hpks.pem --commit-out alice_commit.pem --nonce-out alice_nonce.pem
 
 # signer Bob
-python3 herradura.py threshold-commit \
-  --key bob.pem --commit-out bob_commit.pem --nonce-out bob_nonce.pem
+python3 HerraduraCli/herradura.py threshold-commit \
+  --key bob_hpks.pem --commit-out bob_commit.pem --nonce-out bob_nonce.pem
 ```
 
 Alice shares `alice_commit.pem` with the coordinator. `alice_nonce.pem` is secret
@@ -1923,7 +1960,7 @@ and must be kept private until phase 3, then securely deleted.
 **Phase 2 — Coordinator aggregates commitments and broadcasts challenge:**
 
 ```bash
-python3 herradura.py threshold-aggregate \
+python3 HerraduraCli/herradura.py threshold-aggregate \
   --commits alice_commit.pem bob_commit.pem \
   --in message.bin \
   --out aggregate.pem
@@ -1935,16 +1972,16 @@ The coordinator broadcasts `aggregate.pem` to all signers.
 
 ```bash
 # Alice
-python3 herradura.py threshold-respond \
-  --key alice.pem \
+python3 HerraduraCli/herradura.py threshold-respond \
+  --key alice_hpks.pem \
   --commits alice_commit.pem bob_commit.pem \
   --aggregate aggregate.pem \
   --nonce alice_nonce.pem \
   --out alice_partial.pem
 
 # Bob
-python3 herradura.py threshold-respond \
-  --key bob.pem \
+python3 HerraduraCli/herradura.py threshold-respond \
+  --key bob_hpks.pem \
   --commits alice_commit.pem bob_commit.pem \
   --aggregate aggregate.pem \
   --nonce bob_nonce.pem \
@@ -1954,7 +1991,7 @@ python3 herradura.py threshold-respond \
 **Phase 4 — Coordinator combines partial sigs into the final signature:**
 
 ```bash
-python3 herradura.py threshold-combine \
+python3 HerraduraCli/herradura.py threshold-combine \
   --aggregate aggregate.pem \
   --partials alice_partial.pem bob_partial.pem \
   --out final_sig.pem
@@ -1963,7 +2000,7 @@ python3 herradura.py threshold-combine \
 **Verify:**
 
 ```bash
-python3 herradura.py verify --algo hpks-t --in message.bin --sig final_sig.pem
+python3 HerraduraCli/herradura.py verify --algo hpks-t --in message.bin --sig final_sig.pem
 ```
 
 No `--pubkey` flag is needed: the aggregate public key C_agg is embedded in
@@ -1971,30 +2008,38 @@ No `--pubkey` flag is needed: the aggregate public key C_agg is embedded in
 
 ### C CLI equivalent
 
-The C CLI uses repeated `--commit` / `--partial` flags instead of `nargs+`:
+The C CLI uses repeated `--commit` / `--partial` flags instead of `nargs+` (the
+Python CLI accepts that form too, TODO #270):
 
 ```bash
-herradura_cli threshold-commit --key alice.pem \
-  --commit-out alice_commit.pem --nonce-out alice_nonce.pem
+C=./HerraduraCli/herradura_cli      # or ./HerraduraCli/herradura_cli_go
 
-herradura_cli threshold-aggregate \
+$C threshold-commit --key alice_hpks.pem \
+  --commit-out alice_commit.pem --nonce-out alice_nonce.pem
+$C threshold-commit --key bob_hpks.pem \
+  --commit-out bob_commit.pem --nonce-out bob_nonce.pem
+
+$C threshold-aggregate \
   --commit alice_commit.pem --commit bob_commit.pem \
   --in message.bin --out aggregate.pem
 
-herradura_cli threshold-respond --key alice.pem \
+$C threshold-respond --key alice_hpks.pem \
   --commit alice_commit.pem --commit bob_commit.pem \
   --aggregate aggregate.pem --nonce alice_nonce.pem --out alice_partial.pem
+$C threshold-respond --key bob_hpks.pem \
+  --commit alice_commit.pem --commit bob_commit.pem \
+  --aggregate aggregate.pem --nonce bob_nonce.pem --out bob_partial.pem
 
-herradura_cli threshold-combine \
+$C threshold-combine \
   --aggregate aggregate.pem \
   --partial alice_partial.pem --partial bob_partial.pem \
   --out final_sig.pem
 
-herradura_cli verify --algo hpks-t --in message.bin --sig final_sig.pem
+$C verify --algo hpks-t --in message.bin --sig final_sig.pem
 ```
 
-The Go CLI (`herradura_cli_go`) uses the same `--commit` / `--partial` repeated-flag
-convention as the C CLI.
+The Go CLI (`herradura_cli_go`) and Java's `herradurakex.HerraduraCli` use the same
+`--commit` / `--partial` repeated-flag convention as the C CLI.
 
 ### Cross-language interoperability
 
@@ -2125,12 +2170,15 @@ implementations retry automatically (expected two attempts on average).
 All four CLIs share the same subcommands and PEM wire format:
 
 ```bash
+# The client's input is a file (every CLI reads it with --in)
+echo -n "my-password" > input.bin
+
 # --- Python CLI ---
 # 1. Generate OPRF server key
 python3 HerraduraCli/herradura.py genpkey --algo oprf --out server.pem
 
 # 2. Client blinds its input
-python3 HerraduraCli/herradura.py oprf-blind --input "my-password" --out state.pem
+python3 HerraduraCli/herradura.py oprf-blind --in input.bin --out state.pem
 
 # 3. Server evaluates (state.pem contains alpha; server.pem contains k)
 python3 HerraduraCli/herradura.py oprf-eval --key server.pem --in state.pem --out eval.pem
@@ -2140,15 +2188,22 @@ python3 HerraduraCli/herradura.py oprf-unblind --state state.pem --eval eval.pem
 
 # --- C CLI (identical subcommands) ---
 ./HerraduraCli/herradura_cli genpkey   --algo oprf --out server.pem
-./HerraduraCli/herradura_cli oprf-blind  --input "my-password" --out state.pem
+./HerraduraCli/herradura_cli oprf-blind  --in input.bin --out state.pem
 ./HerraduraCli/herradura_cli oprf-eval   --key server.pem --in state.pem --out eval.pem
 ./HerraduraCli/herradura_cli oprf-unblind --state state.pem --eval eval.pem
 
 # --- Go CLI (identical subcommands) ---
 ./HerraduraCli/herradura_cli_go genpkey    --algo oprf --out server.pem
-./HerraduraCli/herradura_cli_go oprf-blind  --input "my-password" --out state.pem
+./HerraduraCli/herradura_cli_go oprf-blind  --in input.bin --out state.pem
 ./HerraduraCli/herradura_cli_go oprf-eval   --key server.pem --in state.pem --out eval.pem
 ./HerraduraCli/herradura_cli_go oprf-unblind --state state.pem --eval eval.pem
+
+# --- Java CLI (identical subcommands; build with bash bindings/java/build.sh) ---
+J="java -cp bindings/java herradurakex.HerraduraCli"
+$J genpkey      --algo oprf --out server.pem
+$J oprf-blind   --in input.bin --out state.pem
+$J oprf-eval    --key server.pem --in state.pem --out eval.pem
+$J oprf-unblind --state state.pem --eval eval.pem
 ```
 
 PEM files produced by any implementation are byte-for-byte compatible with the
@@ -2307,11 +2362,12 @@ wrongKey, _ := h.HpakeLoginDemo(rec, []byte("wrong"), oprfKey)
 
 Demo parameters: `HpakeZkpN = 32`, `HpakeRounds = 16`.
 
-#### Python CLI usage
+#### CLI usage
 
-The aPAKE CLI flow requires the Python CLI. The C and Go CLIs support OPRF
-but not the `pake-register` / `pake-demo` subcommands; use the library APIs
-above for C and Go aPAKE integration.
+All four CLIs have `pake-register` and `pake-demo`, and a record written by any of
+them decodes in the others (`CliTest/test_cross_lang_matrix.sh`).  `--username`
+exists in the Python and Java CLIs only; the username is not stored in the record,
+so C and Go simply omit it (spec `cli_surface_gaps`).
 
 ```bash
 # 1. Generate OPRF server key (one time)
@@ -2326,9 +2382,11 @@ python3 HerraduraCli/herradura.py pake-demo \
     --key server.pem --username alice --password s3cr3t
 ```
 
-`pake-demo` reads the record generated by the most recent `pake-register` for
-the given username and prints the session key on success, or reports rejection
-for a wrong password. See `CliTest/test_pake.sh` for the full integration test.
+`pake-demo` does not read `record.pem`: it runs a fresh registration and a login
+in one process from the OPRF key, prints the session key, and then checks that a
+wrong password is rejected.  There is no two-party login subcommand; the library
+APIs above are the integration point.  See
+`CliTest/test_pake.sh` for the full integration test.
 
 #### Python library API
 
@@ -2426,8 +2484,8 @@ tool or script needs the exact wire-format string or algo tag, read the JSON, no
 
 | Construction | Key type | Sign / prove | Verify | Proof size |
 |---|---|---|---|---|
-| ZKP-RNL (Ring-LWR Σ-protocol) | `hkex-rnl` | `rnl_sigma_sign` | `rnl_sigma_verify` | 1,056 B (n=256) |
-| ZKP-NL (NL-FSCX ZKBoo) | `hpks-zkp-nl` | `zkp_nl_prove` | `zkp_nl_verify` | 35.5 KB (n=8, R=219) |
+| ZKP-RNL (Ring-LWR Σ-protocol) | `hkex-rnl` | `rnl_sigma_sign` | `rnl_sigma_verify` | 12,292 B (n=256) |
+| ZKP-NL (NL-FSCX ZKBoo) | `hpks-zkp-nl` | `zkp_nl_prove` | `zkp_nl_verify` | 40,085 B (n=8, R=219) |
 | HCRED (Ring-LWR + SDP hybrid) | `hcred` | `hcred_prove` / `cred-prove` | `hcred_verify` / `cred-verify` | ~18 KB (n=32, R=219); ~4 KB (R=4 demo) |
 
 ### OPRF and aPAKE
@@ -2435,7 +2493,7 @@ tool or script needs the exact wire-format string or algo tag, read the JSON, no
 | Protocol | Key type | Hard problem | Availability |
 |----------|----------|--------------|--------------|
 | OPRF (2HashDH) | `oprf` | DLP in GF(2^256) | C, Go, Python, all CLIs |
-| aPAKE | `oprf` | DLP + Ring-LWR + NL-FSCX OWF | C, Go, Python (library); Python CLI only |
+| aPAKE | `oprf` | DLP + Ring-LWR + NL-FSCX OWF | C, Go, Python (library); all four CLIs (`pake-register`, `pake-demo`) |
 
 The OPRF output is `F(k, x) = gf_pow(H(x), k)` where `H` is HFSCX-256 hash-to-field.
 The aPAKE protocol uses HKEX-RNL for the key exchange channel, ZKBoo for the
@@ -2622,7 +2680,7 @@ models that exclude quantum adversaries.
   the OPRF output, not the raw password hash, to prevent offline dictionary attacks
   on a stolen database *alone* — but the OPRF key must still be protected.
 
-### Passphrase-encrypted private-key export (Python CLI only, TODO #166)
+### Passphrase-encrypted private-key export (TODO #166)
 
 ```bash
 # Generate a passphrase-protected private key instead of the default cleartext PEM.
@@ -2649,8 +2707,8 @@ $CLI pkey --pubout --in alice.pem --out alice_pub.pem
   tradeoff, not a production security recommendation.
 - A wrong `--passphrase` is rejected cleanly by the AEAD authentication tag — never a
   crash or silently-wrong key.
-- Go and C CLIs do not yet support this — private keys exported from those CLIs remain
-  cleartext-only.
+- All four CLIs take `genpkey --passphrase` and `pkey --decrypt`, and decrypt each
+  other's files (`CliTest/test_passphrase_envelope.sh`).
 
 ### Constant-time status
 

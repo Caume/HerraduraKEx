@@ -25433,3 +25433,63 @@ Running the CI step the #373 commit failed in also found:
   refused. `test_duplex.sh` now decrypts the empty case 4×4.
 
 Status: **DONE v15.0.0** — CliTest scripts exit 2 when nothing was asserted, and the cross-language matrix names a failed producer step instead of aborting.
+
+---
+
+### #362: TUTORIAL examples that fail as written
+
+Found by running every shell block in `docs/TUTORIAL.md` against all four CLIs (C, Go,
+Python, Java) on v14.0.4.  CI checks the documents against the spec and sources, but never
+executes the documented command lines, so each of these has been failing silently.  All
+fail in all four CLIs unless noted.
+
+  * **The first quickstart (lines 82-85) cannot succeed.**  It encrypts the 15-byte
+    `"hello herradura"` with `--algo hske` and then runs `cmp msg.bin recovered.bin && echo
+    "round-trip OK"`.  `hske` is a single 256-bit block: `dec` returns the message
+    zero-padded to 32 bytes, so `cmp` reports EOF after byte 15 and "round-trip OK" never
+    prints.  This is the first command a new user runs.  Use a 32-byte message (as the
+    `hske` section further down does), or compare only the first 15 bytes and say why.
+  * **Line 480: `enc --algo hpke --key enc_pub.pem`** -- every CLI requires `--pubkey`
+    for `hpke` (`enc: --pubkey required for hpke`).
+  * **Lines 2131 / 2141 / 2147: `oprf-blind --input "my-password"`** -- no CLI has
+    `--input`; all four take `--in FILE` (llms.txt already says so).  The `oprf-eval` and
+    `oprf-unblind` lines after it then fail on the missing `state.pem`.
+  * **Line 1375: "~18 KB for n=32 / R=219".**  A Python `cred-prove` at n = 32 and its
+    default 219 rounds writes 1,449,028 bytes (about 1.4 MB).  Measure and restate it; the
+    n = 256 proof is about 12.8 MB at 219 rounds (Java).
+  * **Line 1866: "C CLI hardcodes 219 rounds; Go CLI hardcodes 4 rounds"** for `nl-zkboo`.
+    All four default to 219 (54,228-byte proof), and Go, Java and Python honour
+    `--rounds`.  C accepts the flag but ignores it (TODO #367 tracks
+    it); the sentence should say so rather than describe a Go default that no longer
+    exists.
+  * **Line 849: "an hpke-nl key is not an hpke-nl3 key".**  The two have separate PEM
+    labels, but no CLI checks the label: `enc --algo hpke-nl3 --pubkey hpke-nl.pub` and
+    the matching `dec` round-trip in all four.  Either restate it as advice ("generate a
+    fresh keypair; the CLIs do not yet enforce the label") or land the label check (#366) first
+    and keep the sentence.
+  * **Line 1357: `genpkey --algo hcred --bits 256  # n=256 for C interop`.**  The C CLI
+    has no `--bits` (spec `cli_surface_gaps`, acknowledged), so the line fails there; and
+    C, Go and Java already default to n = 256 while Python defaults to n = 32 (line 1356
+    says "Python demo", which is the only CLI the comment is true for).  Say which CLIs
+    take `--bits` and what each defaults to.
+  * **Lines 1910-1964: the HPKS-T walkthrough runs `python3 herradura.py ...`**, a path
+    that exists only from inside `HerraduraCli/`; every other section uses
+    `python3 HerraduraCli/herradura.py`.
+
+**Acceptance.**  Every changed block runs as written against all four CLIs (the
+blocks that are Python-only by design are labelled so).  A follow-up worth considering, not
+required here: a check that extracts the TUTORIAL's `$CLI` blocks and runs them, so the
+next drift fails CI instead of a reader.
+
+**Resolution.**  Every `bash` block (30) run in order, once per CLI, failures logged
+by line and each block's printed verdict checked.  All eight listed items fixed (the
+hpke-nl3 sentence stands, since #366 enforces it; the nl-zkboo one was fixed under #364),
+plus: the v3 block's nonexistent `herradura` command, input files the duplex and `rand`
+blocks never created, the threshold walkthrough's wrong keys and one-signer C block,
+HCRED's 219-round cost (now a 16-round demo with `--min-rounds` and a measured table),
+Python-only claims for aPAKE and passphrase export, C/Go/Python-only claims for v3,
+AEAD, ring and `rand`, and a measured proof-size table.  All 30 blocks run in all four
+CLIs; the remaining failures are the two marked `# error` and a placeholder `myapp.c`.
+Filed #374 (`hpks-zkp-nl --bits` ignored; stale SecurityProofs-7 figures).
+
+Status: **DONE v15.0.0** — every TUTORIAL shell block runs as written in all four CLIs.

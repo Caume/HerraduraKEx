@@ -6,7 +6,8 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 **MAJOR: security fixes in seven parts.** All seven change what an existing `--algo`
 produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections
-30, 31, 32, 33 and 34. One test-tooling fix rides along (TODO #370, last section).
+30, 31, 32, 33 and 34. A test-tooling fix and a tutorial fix ride along (TODO #370 and #362, the last two
+sections).
 
 ### TODO #364 — verifiers enforce a Fiat-Shamir round floor
 
@@ -435,6 +436,48 @@ produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md se
   refusal, the 7 pairs are exactly those involving C, and 511 + 7 is the full 518.
   Before this change, the first refusal ended the run. With nothing rigged, the matrix
   gives 518 / 0, and the ten guarded scripts all pass.
+
+### TODO #362 — every TUTORIAL command runs as written
+
+- **How.** Every `bash` block in `docs/TUTORIAL.md` (30 of them) was run in order, as a
+  reader would, once per CLI with `$CLI` set to each of the four. Every failing command
+  was logged with its line. Exit codes were not taken on trust: each block's printed
+  verdict was checked too (round-trip OK, Proof OK / Credential OK, Signature OK, the
+  aPAKE login, the OPRF output).
+- **What failed, and the fix:**
+  - the first quickstart encrypted a 15-byte message with `hske`, which is one 32-byte
+    block, so `cmp` never printed "round-trip OK" — it now uses a 32-byte message and
+    says why;
+  - `enc --algo hpke --key` — every CLI requires `--pubkey`;
+  - `oprf-blind --input "…"` — no CLI has `--input`; the block writes the input to a
+    file and passes `--in` (and gains the Java lines its heading promised);
+  - the HPKS-T walkthrough ran `python3 herradura.py`, a path that exists only inside
+    `HerraduraCli/`, used the quickstart's HKEX-GF keys and a `message.bin` it never
+    made; it now generates hpks keys and the message first. The C block called a bare
+    `herradura_cli`, and committed and responded for Alice only; it is now a complete
+    two-signer run that works for C, Go and Java;
+  - the v3 block called a `herradura` command that does not exist, on an `sk.pem`
+    nothing wrote; it now uses `$CLI` and the quickstart's key;
+  - the duplex and `rand` blocks read `large_msg.bin`, `seed.bin` and
+    `more_entropy.bin`, which nothing created; the blocks create them;
+  - HCRED: `genpkey --bits 256` fails in C, which has no `--bits`, and at the default
+    219 rounds `cred-prove` ran past 15 minutes in Python, Go and Java. The block now
+    uses a 16-round demo count with `--min-rounds 16` on the verifier, beside a measured
+    cost table. The "~18 KB" proof is 1.44 MB at n = 32 (391 s to prove in Python);
+    the "SDF_ROUNDS = 32" note predates #364.
+- **Claims that were wrong without failing.** aPAKE and passphrase export were
+  described as Python-only, and `hske-duplex3`, `fpe --v3`, `twk --v3`, AEAD, ring
+  signatures and `rand` as C/Go/Python; each was checked in all four CLIs and now says
+  so. `pake-demo` was said to read `record.pem`; it runs its own registration. The
+  proof-size table is now measured: ZKP-RNL is 12,292 B, not 1,056 B (still the
+  smallest post-quantum option here, but larger than ML-DSA-44); HPKS-Stern-F
+  35,118 B, not 78 KB; ZKP-NL 40,085 B, not 35.5 KB; HPKS 110 B, not 64 B.
+- **Already right.** The hpke-nl / hpke-nl3 sentence stands: #366 made every CLI refuse
+  the wrong key. The `nl-zkboo` rounds sentence was corrected under #364.
+- **Result.** All 30 blocks run in all four CLIs. What is left fails on purpose (the
+  second WOTS signature and the undecrypted passphrase key, both marked `# error` in
+  the text) or compiles a placeholder `myapp.c`.
+- **Found and filed, not fixed:** TODO #374.
 
 ## [14.0.4] - 2026-11-11
 

@@ -622,55 +622,6 @@ Status: **OPEN**
 
 ---
 
-### #362: TUTORIAL examples that fail as written
-
-Found by running every shell block in `docs/TUTORIAL.md` against all four CLIs (C, Go,
-Python, Java) on v14.0.4.  CI checks the documents against the spec and sources, but never
-executes the documented command lines, so each of these has been failing silently.  All
-fail in all four CLIs unless noted.
-
-  * **The first quickstart (lines 82-85) cannot succeed.**  It encrypts the 15-byte
-    `"hello herradura"` with `--algo hske` and then runs `cmp msg.bin recovered.bin && echo
-    "round-trip OK"`.  `hske` is a single 256-bit block: `dec` returns the message
-    zero-padded to 32 bytes, so `cmp` reports EOF after byte 15 and "round-trip OK" never
-    prints.  This is the first command a new user runs.  Use a 32-byte message (as the
-    `hske` section further down does), or compare only the first 15 bytes and say why.
-  * **Line 480: `enc --algo hpke --key enc_pub.pem`** -- every CLI requires `--pubkey`
-    for `hpke` (`enc: --pubkey required for hpke`).
-  * **Lines 2131 / 2141 / 2147: `oprf-blind --input "my-password"`** -- no CLI has
-    `--input`; all four take `--in FILE` (llms.txt already says so).  The `oprf-eval` and
-    `oprf-unblind` lines after it then fail on the missing `state.pem`.
-  * **Line 1375: "~18 KB for n=32 / R=219".**  A Python `cred-prove` at n = 32 and its
-    default 219 rounds writes 1,449,028 bytes (about 1.4 MB).  Measure and restate it; the
-    n = 256 proof is about 12.8 MB at 219 rounds (Java).
-  * **Line 1866: "C CLI hardcodes 219 rounds; Go CLI hardcodes 4 rounds"** for `nl-zkboo`.
-    All four default to 219 (54,228-byte proof), and Go, Java and Python honour
-    `--rounds`.  C accepts the flag but ignores it (TODO #367 tracks
-    it); the sentence should say so rather than describe a Go default that no longer
-    exists.
-  * **Line 849: "an hpke-nl key is not an hpke-nl3 key".**  The two have separate PEM
-    labels, but no CLI checks the label: `enc --algo hpke-nl3 --pubkey hpke-nl.pub` and
-    the matching `dec` round-trip in all four.  Either restate it as advice ("generate a
-    fresh keypair; the CLIs do not yet enforce the label") or land the label check (#366) first
-    and keep the sentence.
-  * **Line 1357: `genpkey --algo hcred --bits 256  # n=256 for C interop`.**  The C CLI
-    has no `--bits` (spec `cli_surface_gaps`, acknowledged), so the line fails there; and
-    C, Go and Java already default to n = 256 while Python defaults to n = 32 (line 1356
-    says "Python demo", which is the only CLI the comment is true for).  Say which CLIs
-    take `--bits` and what each defaults to.
-  * **Lines 1910-1964: the HPKS-T walkthrough runs `python3 herradura.py ...`**, a path
-    that exists only from inside `HerraduraCli/`; every other section uses
-    `python3 HerraduraCli/herradura.py`.
-
-**Acceptance.**  Every changed block runs as written against all four CLIs (the
-blocks that are Python-only by design are labelled so).  A follow-up worth considering, not
-required here: a check that extracts the TUTORIAL's `$CLI` blocks and runs them, so the
-next drift fails CI instead of a reader.
-
-Status: **OPEN**
-
----
-
 ### #363: CLI help text, llms.txt and version banners out of step with the code
 
 Found alongside #362 (v14.0.4).
@@ -709,5 +660,26 @@ Found with #364.  PATCH.
     Java 494 s for 219 rounds (12.8 MB proof), Go unfinished after 21 min.  Java's proof
     verifies in C (82 s) and C's in Java.  Profile Go's prover; at its current speed a
     219-round credential is unusable there.  Re-measure C once #364 moves it to 219.
+    (Measured with #362, n = 256, 16 rounds: prove / verify C 8.8 s / 6.3 s, Java
+    37 s / 27 s, Go 193 s / 144 s -- Go is 20x C, so 219 rounds is about 45 min.)
+
+Status: **OPEN**
+
+---
+
+### #374: `hpks-zkp-nl` ignores `--bits`, and two stale ZKP figures
+
+Found with #362.  PATCH.
+
+  * **`genpkey --algo hpks-zkp-nl --bits 256`** writes an n = 8 key in Python, Go and
+    Java, without a word; C refuses the flag.  A user asking for n = 256 gets the toy
+    width.  Either honour `--bits` (the library supports n = 256: the TUTORIAL's
+    920 KB row) or refuse it, as C does, and record which in spec `cli_surface_gaps`.
+  * **Python `pkey --text`** on an `hpks-zkp-nl` private key prints nothing and exits 0;
+    Go and Java print n, A and B.
+  * **`SecurityProofs-7.md` §11's ZKP table** gives ZKP-RNL at n = 256 as 1,056 B and
+    HPKS-Stern-F as 78 KB, and concludes ZKP-RNL beats ML-DSA-44.  A CLI proof
+    measures 12,292 B of DER and a Stern-F signature 35,118 B (#362 restated the
+    TUTORIAL's copies).  Restate it, and find where 1,056 B came from.
 
 Status: **OPEN**
