@@ -23,9 +23,9 @@
   mismatch is E_MIXED_WIDTH, never a coercion
 - docs/examples/{python,c,go}/hello_herradura.* — minimal integration samples
 
-## Protocol identifiers (used as --algo values across all 3 CLIs; also the naming
+## Protocol identifiers (used as --algo values across all four CLIs; also the naming
 ## convention for functions in every language binding)
-Key exchange:     hkex-gf, hkex-rnl
+Key exchange:     hkex-gf, hkex-rnl, hybrid-rnl-stern
 Symmetric enc:    hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3
 Asymmetric enc:   hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem
 Signatures:       hpks, hpks-nl, hpks-stern, hpks-ring, hpks-wots, hpks-xmss,
@@ -176,8 +176,12 @@ HKEX-RNL coefficients and QC-MDPC values in range ("field <i> coefficient <j> is
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,
              hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss, hpks-wots, hcred
   pkey --in FILE [--pubout] [--text] [--out FILE]
-  kex --algo {hkex-gf,hkex-rnl} --our FILE --their FILE --out FILE [--kdf {none,hfscx-256}]
+  kex --algo {hkex-gf,hkex-rnl,hybrid-rnl-stern} --our FILE --their FILE --out FILE
+      [--kdf {none,hfscx-256}] [--their-kem FILE] [--our-kem FILE]
     hkex-rnl is two-round: responder replies first, initiator completes with the response PEM.
+    hybrid-rnl-stern is hkex-rnl plus a QC-MDPC KEM: the responder passes --their-kem
+    (the initiator's hpke-stern-kem public key), the initiator --our-kem (its private key).
+    Python's --kdf also accepts sp800227 (hkex-rnl only; spec cli_flag_value_gaps).
   enc/dec --algo {hske,hske-nla1,hske-nla2,hske-nla3,hske-duplex,hske-duplex3,
                   hpke,hpke-nl,hpke-nl3,hpke-stern,hpke-stern-kem}
            --key|--pubkey FILE --in FILE --out FILE [--aead] [--ad STR]
@@ -246,8 +250,10 @@ HKEX-RNL coefficients and QC-MDPC values in range ("field <i> coefficient <j> is
   oprf-blind --in FILE --out FILE
   oprf-eval --key FILE --in FILE --out FILE
   oprf-unblind --state FILE --eval FILE --out FILE
-  pake-register --key FILE --username U [--password P] --out FILE
+  pake-register --key FILE [--username U] [--password P] --out FILE
   pake-demo --key FILE [--username U] [--password P]
+    --username exists in Python and Java only; it is a lookup label, not bound into the
+    record, so C and Go records are byte-comparable (spec cli_surface_gaps).
   cred-issue --our FILE --in FILE [--rounds N] --out FILE
   cred-prove --in FILE [--msg STR] [--rounds N] --out FILE
   cred-verify --proof FILE --pubkey FILE [--msg STR] [--cred FILE --issuer FILE]

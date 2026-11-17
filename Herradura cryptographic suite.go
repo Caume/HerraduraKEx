@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.9.77
+/*  Herradura Cryptographic Suite
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 

@@ -1,4 +1,4 @@
-/* HerraduraCli/herradura_codec.h — Base64, PEM, and minimal DER codec (v1.5.25)
+/* HerraduraCli/herradura_codec.h — Base64, PEM, and minimal DER codec
  *
  * Header-only (all functions static).  No external dependencies.
  * Include <assert.h> and define HERRADURA_CODEC_SELFTEST before including

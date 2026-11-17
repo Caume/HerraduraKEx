@@ -25520,3 +25520,35 @@ Both are restated. `CliTest/test_pkey_text_matrix.sh` holds all of it: 59 FAILs 
 260 PASS after.
 
 Status: **DONE v15.0.0** — `pkey --text` describes every private key in every CLI; `genpkey hpks-zkp-nl --bits 256` is refused, not silently n = 8; ZKP figures restated as measured.
+
+### #363: CLI help text, llms.txt and version banners out of step with the code
+
+Found alongside #362 (v14.0.4).
+
+  * **`HerraduraCli/herradura_cli.c:5232`, the C `--help` note:** "rnl-sigma: key =
+    hpks-zkp-nl private key (n=256)".  Wrong: `rnl-sigma` takes an `hkex-rnl` key in all
+    four CLIs, and the C CLI given an `hpks-zkp-nl` key fails with "cannot parse DER".
+  * **`llms.txt`, the `kex` synopsis** lists `--algo {hkex-gf,hkex-rnl}` and omits
+    `hybrid-rnl-stern` and its `--their-kem` / `--our-kem` flags, which all four CLIs ship
+    (the generated C/Go/Java flag tables list them).  Its `pake-register` line also shows
+    `--username U` as required; it is optional in Python and Java and absent from C and Go
+    (spec `cli_surface_gaps`).
+  * **Version banners.**  `python3 HerraduraCli/herradura.py --help` prints "Herradura
+    Cryptographic Suite CLI v1.9.79" (also in the file headers of `herradura.py` and
+    `codec.py`); the C CLI's `--help` prints "v1.9.44"; Go and Java print no version.  The
+    project is at 14.0.4.  No CLI has `--version`.  Either drop the stale numbers or emit
+    one version from a single source (pyproject.toml / the README title, which
+    `check_docs_consistency.py` already reads) -- and if a `--version` subcommand is added,
+    that is new CLI surface (MINOR, and a spec `cli_subcommands` row).
+
+**Acceptance.**  The help notes and llms.txt match what the CLIs accept; no CLI prints a
+version other than the current one.
+
+**Resolution.** All three fixed. The version numbers were dropped, not regenerated: 21
+in all, across the CLIs, the suite demos, the test harnesses and the source headers.
+Adding `--version` would be new CLI surface. Three checks in
+`spec/check_docs_consistency.py` keep them fixed: A5 (banners), F2 (llms.txt synopses
+against the flag matrix) and F3 (help-note key types). On the pre-fix tree they report
+23 failures.
+
+Status: **DONE v15.0.0** — help note, llms.txt synopses and version banners match the code; check_docs_consistency A5/F2/F3 hold them.

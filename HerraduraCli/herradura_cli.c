@@ -5531,7 +5531,9 @@ static void cmd_cred_verify(int argc, char **argv)
  * so the list cannot drift from dispatch again (TODO #339). */
 static void usage(void)
 {
-    fputs("Herradura Cryptographic Suite CLI v1.9.44\n"
+    /* No version here: a hand-kept number went stale (v1.9.44 at 14.0.4, TODO #363);
+     * the release is the README title, which check_docs_consistency.py holds. */
+    fputs("Herradura Cryptographic Suite CLI\n"
           "\n"
           "Usage: herradura_cli <command> [options]\n"
           "\n", stdout);
@@ -5573,7 +5575,7 @@ static void usage(void)
 "    decfile verifies before decrypting and exits non-zero on auth failure.\n"
 "\n"
 "  sign --algo ALGO --key PRIV --in FILE --out SIG\n"
-"    rnl-sigma: key = hpks-zkp-nl private key (n=256); produces ZKP-RNL PROOF PEM.\n"
+"    rnl-sigma: key = hkex-rnl private key;          produces ZKP-RNL PROOF PEM.\n"
 "    nl-zkboo:  key = hpks-zkp-nl private key;      produces ZKP-NL PROOF PEM.\n"
 "    nl-zkbpp:  key = hpks-zkp-nl private key;      produces ZKP-NL-PP SIGNATURE PEM (ZKB++).\n"
 "    hpks-wots: ONE-TIME signature — a WOTS key may sign exactly once (reuse refused).\n"

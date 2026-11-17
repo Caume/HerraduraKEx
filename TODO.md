@@ -622,31 +622,6 @@ Status: **OPEN**
 
 ---
 
-### #363: CLI help text, llms.txt and version banners out of step with the code
-
-Found alongside #362 (v14.0.4).
-
-  * **`HerraduraCli/herradura_cli.c:5232`, the C `--help` note:** "rnl-sigma: key =
-    hpks-zkp-nl private key (n=256)".  Wrong: `rnl-sigma` takes an `hkex-rnl` key in all
-    four CLIs, and the C CLI given an `hpks-zkp-nl` key fails with "cannot parse DER".
-  * **`llms.txt`, the `kex` synopsis** lists `--algo {hkex-gf,hkex-rnl}` and omits
-    `hybrid-rnl-stern` and its `--their-kem` / `--our-kem` flags, which all four CLIs ship
-    (the generated C/Go/Java flag tables list them).  Its `pake-register` line also shows
-    `--username U` as required; it is optional in Python and Java and absent from C and Go
-    (spec `cli_surface_gaps`).
-  * **Version banners.**  `python3 HerraduraCli/herradura.py --help` prints "Herradura
-    Cryptographic Suite CLI v1.9.79" (also in the file headers of `herradura.py` and
-    `codec.py`); the C CLI's `--help` prints "v1.9.44"; Go and Java print no version.  The
-    project is at 14.0.4.  No CLI has `--version`.  Either drop the stale numbers or emit
-    one version from a single source (pyproject.toml / the README title, which
-    `check_docs_consistency.py` already reads) -- and if a `--version` subcommand is added,
-    that is new CLI surface (MINOR, and a spec `cli_subcommands` row).
-
-**Acceptance.**  The help notes and llms.txt match what the CLIs accept; no CLI prints a
-version other than the current one.
-
-Status: **OPEN**
-
 ---
 
 ### #369: HCRED defaults and cost differ across the four CLIs

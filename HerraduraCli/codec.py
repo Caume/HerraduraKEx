@@ -1,4 +1,4 @@
-# HerraduraCli/codec.py — PEM and minimal DER codec (v1.9.79)
+# HerraduraCli/codec.py — PEM and minimal DER codec
 # No external dependencies; uses only base64 from stdlib.
 import base64
 

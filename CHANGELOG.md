@@ -6,8 +6,8 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 **MAJOR: security fixes in seven parts.** All seven change what an existing `--algo`
 produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections
-30, 31, 32, 33 and 34. A test-tooling fix and a tutorial fix ride along (TODO #370 and #362), and
-so does a CLI-surface fix with its own MIGRATING section 35 (TODO #374); they are the last three
+30, 31, 32, 33 and 34. A test-tooling fix and two documentation fixes ride along (TODO #370, #362 and #363),
+and so does a CLI-surface fix with its own MIGRATING section 35 (TODO #374); they are the last four
 sections.
 
 ### TODO #364 — verifiers enforce a Fiat-Shamir round floor
@@ -513,6 +513,29 @@ sections.
   Second, OPRF `--pubout` is refused, after an accept-control. Third, hpks-zkp-nl
   `--bits` with no flag, 64, 256 and 7. Against the pre-#374 CLIs it reports 59 FAILs,
   covering every defect above; on this tree, 260 PASS / 0 FAIL.
+
+### TODO #363 — help text, llms.txt and banners match the code
+
+- **The C `--help` note** said `sign --algo rnl-sigma` takes an hpks-zkp-nl key. Every
+  CLI takes an hkex-rnl key and refuses the other one; the note now says hkex-rnl.
+- **llms.txt.** The `kex` synopsis now lists `hybrid-rnl-stern` and its `--their-kem` /
+  `--our-kem` flags, which all four CLIs ship, and notes Python's extra `--kdf
+  sp800227`. `pake-register --username` is now shown as optional, Python and Java only.
+  The protocol-identifier heading said "all 3 CLIs".
+- **Version banners.** The CLIs' `--help` printed v1.9.44 (C) and v1.9.79 (Python) at
+  14.0.4. The suite demos and test harnesses printed v1.8.0 to v1.9.35, and the source
+  headers carried more. All 21 numbers are dropped rather than kept by hand. No
+  `--version` subcommand was added; that would be new CLI surface.
+- **Guards** in `spec/check_docs_consistency.py`, so none of this drifts silently again:
+  - A5: no shipped source names a version in banner form except the current release.
+  - F2: every llms.txt synopsis is held to spec/'s flag matrix. Each flag it shows must
+    exist. A flag shown as required must be in every CLI. A literal `--algo {...}` list
+    must equal the spec's set.
+  - F3: a `<algo>: key = <x> private key` help note must name a key type spec/'s
+    `key_label_acceptance` accepts.
+
+  Run against the pre-#363 tree, the three report 23 failures: the 21 banners and the
+  two llms.txt lines. F3 fires when the old note is put back.
 
 ## [14.0.4] - 2026-11-11
 

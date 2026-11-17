@@ -178,6 +178,31 @@ def header_constants():
 
 _VER = r"(\d+)\.(\d+)\.(\d+)"
 
+# A5's banner forms: "Herradura KEx vX.Y.Z", "Herradura Cryptographic Suite
+# vX.Y.Z", "... CLI vX.Y.Z", "... codec (vX.Y.Z)".  Prose citing a release
+# ("since v6.7.0", "TODO #281, v6.7.0") does not match.
+_BANNER_VER_RE = re.compile(
+    r"(?:Herradura KEx|Cryptographic Suite|Suite CLI|codec) \(?v" + _VER)
+
+
+def _VERSIONED_SOURCES():
+    import glob
+    pats = ["Herradura cryptographic suite.*", "CryptosuiteTests/Herradura_tests.*",
+            "HerraduraCli/*.py", "HerraduraCli/*.c", "HerraduraCli/*.h",
+            "HerraduraCli/*.go", "herradura.h", "herradura/*.go",
+            "bindings/java/herradurakex/*.java"]
+    out = []
+    for pat in pats:
+        for f in sorted(glob.glob(os.path.join(REPO, pat))):
+            if os.path.isfile(f) and not f.endswith((".o", ".elf", ".hex")) \
+                    and os.access(f, os.R_OK):
+                try:
+                    read(f)
+                except UnicodeDecodeError:
+                    continue          # a compiled binary beside its source
+                out.append(f)
+    return out
+
 
 def check_versions():
     changelog = read(CHANGELOG)
@@ -213,6 +238,20 @@ def check_versions():
         fail("A", "pyproject.toml declares %s; newest CHANGELOG.md entry is %s "
                   "(this is the version `pip install` reports)"
                   % (".".join(m.groups()), latest_s))
+
+    # A5: no shipped program prints a version but the current one (TODO #363).
+    # The CLI --help banners said v1.9.44 / v1.9.79 at 14.0.4, and the suite and
+    # harness banners v1.8.0 .. v1.9.35: hand-kept numbers nothing compared.
+    # They were dropped; this keeps a stale one from coming back, and lets a
+    # current one in.
+    for path in _VERSIONED_SOURCES():
+        for lineno, line in enumerate(read(path).splitlines(), 1):
+            for m in _BANNER_VER_RE.finditer(line):
+                v = ".".join(m.groups())
+                if v != latest_s:
+                    fail("A", "%s:%d names v%s; the release is %s (TODO #363: "
+                              "drop the number or keep it current)"
+                              % (os.path.relpath(path, REPO), lineno, v, latest_s))
 
     # A4: CLAUDE.md's policy -- every MAJOR bump gets a MIGRATING.md entry.
     migrating = read(MIGRATING)
@@ -1147,8 +1186,115 @@ def check_cli_surface_claims(spec):
     for name in names:
         if not re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", llms):
             fail("F", "llms.txt never mentions the %r subcommand" % name)
+    synopses = check_llms_synopses(spec, llms)
     print("  F: %d CLI-surface claim(s) in %d present-tense docs, %d "
-          "subcommands in llms.txt" % (claims, len(SURFACE_DOCS), len(names)))
+          "subcommands in llms.txt, %d synopsis line(s)"
+          % (claims, len(SURFACE_DOCS), len(names), synopses))
+
+
+def check_llms_synopses(spec, llms):
+    """F2 (TODO #363): llms.txt's CLI synopses against spec/.
+
+    Its `kex --algo {hkex-gf,hkex-rnl}` omitted hybrid-rnl-stern for releases
+    after all four CLIs shipped it, and `pake-register --username U` showed as
+    required a flag C and Go do not have.  For each synopsis (a line naming a
+    subcommand, or an `a/b` pair, plus its continuation lines):
+      * every flag shown exists in spec/'s cli_flag_matrix for it (for a pair,
+        in either one);
+      * a flag shown outside [ ] is in every CLI implementing it;
+      * a literal `--algo {x,y,...}` list equals the spec's algo set.
+    A synopsis may omit flags; it may not invent or mis-mark one.  Returns the
+    number of synopses read; zero fails, since the check would be vacuous."""
+    subs = spec.get("cli_subcommands", {})
+    fm = spec.get("cli_flag_matrix", {})
+    lines = llms.split("\n")
+    try:
+        start = next(i for i, l in enumerate(lines) if l.startswith("## HerraduraCli"))
+        end = next(i for i in range(start + 1, len(lines)) if lines[i].startswith("## "))
+    except StopIteration:
+        fail("F", "llms.txt: no '## HerraduraCli' section -- synopsis check is vacuous")
+        return 0
+    count = 0
+    for i in range(start, end):
+        m = re.match(r"^  ([a-z][\w-]*(?:/[a-z][\w-]*)*)(\s|$)", lines[i])
+        if not m or not all(n in subs for n in m.group(1).split("/")):
+            continue
+        names = m.group(1).split("/")
+        text, j = lines[i], i + 1
+        while text.count("{") > text.count("}") and j < end:
+            text += " " + lines[j].strip(); j += 1
+        while j < end and re.match(r"^\s{5,}\[?--", lines[j]):
+            text += " " + lines[j].strip(); j += 1
+        count += 1
+        body = text.strip()[len(m.group(1)):]
+        impl = set().union(*(subs[n].get("implementations", []) for n in names))
+        depth, toks = 0, []
+        for t in re.finditer(r"\[|\]|--[a-z][\w-]*", body):
+            g = t.group(0)
+            if g == "[":
+                depth += 1
+            elif g == "]":
+                depth -= 1
+            else:
+                toks.append((g, depth > 0, t.end()))
+        for flag, optional, pos in toks:
+            have = set()
+            known = False
+            for n in names:
+                if flag in fm.get(n, {}):
+                    known = True
+                    have |= {c for c, v in fm[n][flag].items() if v}
+            where = "llms.txt:%d (%s)" % (i + 1, m.group(1))
+            if not known:
+                fail("F", "%s shows %s, which spec/'s cli_flag_matrix does not "
+                          "list for it" % (where, flag))
+                continue
+            if not optional and have != impl:
+                fail("F", "%s shows %s as required, but only %s have it -- "
+                          "bracket it and say which" % (where, flag, ", ".join(sorted(have))))
+            lst = re.match(r"\s+\{([^}]*)\}", body[pos:])
+            if flag == "--algo" and lst and len(names) == 1 and subs[names[0]].get("algos"):
+                shown = {x.strip() for x in lst.group(1).split(",")}
+                if any(re.search(r"[\s+]", x) for x in shown):
+                    continue              # prose ("sign algos + hpks-t"), not a list
+                want = set(subs[names[0]]["algos"])
+                if shown != want:
+                    fail("F", "%s lists --algo %s; spec/ has %s (missing %s, extra %s)"
+                              % (where, sorted(shown), sorted(want),
+                                 sorted(want - shown) or "none", sorted(shown - want) or "none"))
+    if count == 0:
+        fail("F", "llms.txt: no CLI synopsis lines found -- check is vacuous")
+    check_help_key_notes(spec)
+    return count
+
+
+def check_help_key_notes(spec):
+    """F3 (TODO #363): a hand-written --help note "<algo>: key = <x> private key"
+    must name a key type spec/'s key_label_acceptance accepts for
+    `sign --algo <algo> --key`.  The C note said rnl-sigma took an hpks-zkp-nl
+    key; every CLI takes hkex-rnl and refuses the other."""
+    acc = {(r["subcommand"], r["algo"], r["flag"]): set(r["accepts"])
+           for r in spec.get("key_label_acceptance", [])}
+    if not acc:
+        fail("F", "spec/ has no key_label_acceptance -- help-note check is vacuous")
+        return
+    rx = re.compile(r"\b([a-z][\w-]*):\s+key = ([a-z][\w-]*) private key")
+    seen = 0
+    for rel in ("HerraduraCli/herradura_cli.c", "HerraduraCli/herradura_cli.go",
+                "HerraduraCli/herradura.py", "bindings/java/herradurakex/HerraduraCli.java"):
+        for lineno, line in enumerate(read(os.path.join(REPO, rel)).splitlines(), 1):
+            for m in rx.finditer(line):
+                algo, key = m.groups()
+                ok = acc.get(("sign", algo, "--key"))
+                if ok is None:
+                    continue
+                seen += 1
+                if key not in ok:
+                    fail("F", "%s:%d: help says %s signs with a %s key; spec/ accepts %s"
+                              % (rel, lineno, algo, key, ", ".join(sorted(ok))))
+    if seen == 0:
+        fail("F", "no '<algo>: key = <x> private key' help notes found -- "
+                  "the C --help format changed, so F3 is vacuous")
 
 
 # ══ main ═══════════════════════════════════════════════════════════════════
@@ -1174,13 +1320,14 @@ def main():
     check_cli_surface_claims(spec)
 
     labels = {
-        "A": "versions (README / CHANGELOG / pyproject / MIGRATING)",
+        "A": "versions (README / CHANGELOG / pyproject / MIGRATING / program banners)",
         "B": "parameters (herradura.h vs. spec/ vs. prose)",
         "B''": "currency claims in SecurityProofsCode/ vs. herradura.h",
         "C": "protocol coverage (spec/ vs. README / INTRODUCTION)",
         "D": "claims (corrected statements kept, superseded ones gone)",
         "E": "spec/COVERAGE_COUNTS.md vs. the tools that emit the counts",
-        "F": "CLI-surface claims in present-tense docs vs. spec/ cli_support",
+        "F": "CLI-surface claims in present-tense docs vs. spec/ cli_support; "
+             "llms.txt synopses vs. spec/ flag matrix",
     }
     for key in ("A", "B", "B''", "C", "D", "E", "F"):
         hits = [m for k, m in FAILURES if k == key]

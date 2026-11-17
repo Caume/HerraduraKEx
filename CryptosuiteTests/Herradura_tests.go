@@ -1792,7 +1792,7 @@ func main() {
 
 	restore := captureStdout()
 
-	fmt.Println("=== Herradura KEx v1.9.35 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

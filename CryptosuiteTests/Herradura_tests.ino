@@ -1263,7 +1263,7 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("=== Herradura KEx v1.8.0 - Security Tests (Arduino, 32-bit) ===");
+    Serial.println("=== Herradura KEx - Security Tests (Arduino, 32-bit) ===");
     Serial.println();
 
     test_hkex_gf();

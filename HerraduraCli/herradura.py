@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.9.79)
+# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite
 #
 # Usage examples:
 #   python3 herradura.py genpkey --algo hkex-gf  --bits 256 --out alice.pem
@@ -4305,7 +4305,7 @@ def cmd_cred_verify(args):
 def build_parser():
     p = argparse.ArgumentParser(
         prog='herradura',
-        description='Herradura Cryptographic Suite CLI v1.9.79',
+        description='Herradura Cryptographic Suite CLI',
     )
     sub = p.add_subparsers(dest='cmd', required=True)
 
