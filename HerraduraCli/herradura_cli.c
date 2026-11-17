@@ -1706,6 +1706,16 @@ static void cmd_pkey(int argc, char **argv)
 
     PemKey k; pem_key_load(&k, in_path);
 
+    /* TODO #374: an OPRF server key has --text but no public half; it fell
+     * through to "unrecognised PEM label" here. */
+    if (strcmp(k.label, PEM_OPRF_PRIV) == 0) {
+        if (!text) die("pkey --pubout: oprf has no public key");
+        printf("%-10s: %s\n", "algorithm", "oprf");
+        printf("%-10s: %d\n", "bits", KEYBITS);
+        pem_key_free(&k);
+        return;
+    }
+
     /* Detect algo from label */
     static const struct { const char *priv_label; const char *pub_label;
                           const char *algo; int is_classical; } algos[] = {
@@ -1770,7 +1780,7 @@ static void cmd_pkey(int argc, char **argv)
             uint8_t s_buf[RNL_N * 4];
             poly_pack(s_buf, s_poly, 4);
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: 256\n", "n");
+            printf("%-10s: %d\n", "n", RNL_N);   /* was a literal 256 (TODO #374) */
             printf("%-10s: ", "s_packed");
             for (size_t j = 0; j < sizeof s_buf; j++) printf("%02x", s_buf[j]);
             putchar('\n');

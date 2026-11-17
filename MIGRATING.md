@@ -117,6 +117,11 @@ not the recomputed one. It also refuses HKEX-RNL and QC-MDPC values out of range
 the CLIs write are unaffected, except an HKEX-RNL response from an older Go CLI. See
 [section 34](#34-one-encoding-per-artifact-v1500).
 
+The thirty-fifth ships in the same release. `genpkey --algo hpks-zkp-nl --bits 256` used
+to write an n = 8 key and exit 0 in Python, Go and Java; it is now refused, because
+n = 64 is the most the PEM can carry. See
+[section 35](#35-genpkey-hpks-zkp-nl---bits-means-what-it-says-v1500).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -160,6 +165,7 @@ trusting any signature made by an earlier build.
 | [Malformed artifacts are refused, not crashed on](#32-malformed-artifacts-are-refused-not-crashed-on-v1500) | v15.0.0 | Only hand-built or damaged PEM files: a DER SEQUENCE with missing or extra items, or an out-of-range width / ring / size field | **Nothing**, for files the CLIs wrote. A damaged file now fails with "malformed PEM '<label>': <k> DER items, expected <n>" or a one-line bound error |
 | [Degenerate peer values and unsupported widths are refused](#33-degenerate-peer-values-and-unsupported-widths-are-refused-v1500) | v15.0.0 | A GF public key or ciphertext R of 0 or 1; an HKEX-RNL peer C or C_B that is zero, sparse or clustered; in C and Java, any key or artifact whose declared width is not 256 (or the compiled RNL n / QC-MDPC r) | **Nothing**, for files a CLI generated at its default width. For a 32/64/128-bit GF key, use the Go or Python CLI, which run those widths |
 | [One encoding per artifact](#34-one-encoding-per-artifact-v1500) | v15.0.0 | Bytes after a DER SEQUENCE, a raw-body PEM's last field or an `.hkx` tag; a DER field wider than its writer's width or encoded another way; a non-shortest DER length; an HKEX-RNL or QC-MDPC value out of range; an HPKS signature whose stored e or n does not match | **Nothing**, for files a CLI wrote. Re-run an HKEX-RNL exchange whose response came from a pre-15.0.0 Go CLI; regenerate any artifact a tool edited by hand |
+| [`genpkey hpks-zkp-nl --bits` means what it says](#35-genpkey-hpks-zkp-nl---bits-means-what-it-says-v1500) | v15.0.0 | `genpkey --algo hpks-zkp-nl --bits 256` (Python, Go, Java), which wrote an n = 8 key | Drop `--bits 256`, or pass a width from 2 to 64; existing keys are unchanged |
 
 ---
 
@@ -1936,3 +1942,26 @@ to be redone on 12.0.0+ already.
 
 **Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface.
 It ships inside 15.0.0 so there is one migration.
+
+## 35. `genpkey hpks-zkp-nl --bits` means what it says (v15.0.0)
+
+**Who is affected:** a script that runs `genpkey --algo hpks-zkp-nl --bits 256` with the
+Python, Go or Java CLI. The C CLI has no `--bits` and is unaffected.
+
+**What changed (TODO #374).** Those three CLIs treated `--bits 256` as if the flag were
+absent, because 256 is its default, and wrote an n = 8 key with exit 0. A caller asking
+for a 256-bit statement got the toy width without a word. Now "absent" means absent, and
+256 meets the range check every other width already met:
+
+```
+genpkey hpks-zkp-nl: --bits must be a positive even integer <= 64, got 256
+```
+
+An n = 256 ZKP-NL statement exists only in the library (a 920 KB proof); the PEM wire
+format caps n at 64 (TODO #283).
+
+**What to do.** Drop `--bits 256` to keep getting the n = 8 key it always produced, or
+pass an even width up to 64. Keys already on disk are unchanged and still load.
+
+**Why this is MAJOR.** It refuses an input an existing `--algo` accepted, the 2.0.0
+surface. It ships inside 15.0.0 so there is one migration.

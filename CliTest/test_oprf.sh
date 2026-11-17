@@ -60,8 +60,10 @@ OUT4=$($CLI oprf-unblind --state "$T/state4.pem" --eval "$T/eval4.pem")
 check "Different server key → different PRF output" test "$OUT" != "$OUT4"
 
 # 8. pkey inspect works on OPRF key
+# TODO #374: this once passed on EMPTY output -- Python's --text had no oprf
+# branch and exited 0 having printed nothing -- so assert the content.
 check "pkey --text works on OPRF key" \
-    bash -c '$0 pkey --in "$1" --text > /dev/null' "$CLI" "$T/srv.pem"
+    bash -c '$0 pkey --in "$1" --text | head -1 | tr -s " " | grep -qx "algorithm : oprf"' "$CLI" "$T/srv.pem"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

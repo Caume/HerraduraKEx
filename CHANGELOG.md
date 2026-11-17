@@ -6,8 +6,9 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 **MAJOR: security fixes in seven parts.** All seven change what an existing `--algo`
 produces or accepts. Keys are unchanged; re-sign on 15.0.0+. See MIGRATING.md sections
-30, 31, 32, 33 and 34. A test-tooling fix and a tutorial fix ride along (TODO #370 and #362, the last two
-sections).
+30, 31, 32, 33 and 34. A test-tooling fix and a tutorial fix ride along (TODO #370 and #362), and
+so does a CLI-surface fix with its own MIGRATING section 35 (TODO #374); they are the last three
+sections.
 
 ### TODO #364 — verifiers enforce a Fiat-Shamir round floor
 
@@ -478,6 +479,40 @@ sections).
   second WOTS signature and the undecrypted passphrase key, both marked `# error` in
   the text) or compiles a placeholder `myapp.c`.
 - **Found and filed, not fixed:** TODO #374.
+
+### TODO #374 — `pkey --text` describes every key, and `--bits` means what it says
+
+- **`genpkey --algo hpks-zkp-nl --bits 256`** wrote an n = 8 key with exit 0 in Python,
+  Go and Java. Each read "the flag equals its default, 256" as "the flag was omitted".
+  Now only an omitted flag means n = 8, and 256 fails the range check that already
+  refused 0, odd widths and anything over 64, the PEM's cap (MIGRATING section 35).
+  C has no `--bits`. Its acknowledged `cli_surface_gaps` row now notes that
+  hpks-zkp-nl's n is a runtime parameter in C as well.
+- **`pkey --text` printed nothing and exited 0** on five private-key types in Python
+  (hpks-zkp-nl, hpke-stern-kem, hpks-wots, hpks-xmss, oprf) and three in Go
+  (hpke-stern-kem, hpks-wots, hpks-xmss). Neither chain had a branch for them, or a
+  default. Both now print `algorithm`, plus n, r/d, leaf_idx or h/root; an unhandled
+  type fails. C, Go and Java refused an OPRF key as an unrecognised label; all four now
+  describe it. `test_oprf.sh` asserted only the exit status, so it passed on Python's
+  empty output; it now checks the text. `pkey --pubout` on an OPRF key is refused by
+  name in all four ("oprf has no public key"). Go's `--pubout` chain had no default
+  either, so an unlisted type would have written an empty file and exited 0.
+- **C's `pkey --text` printed `n : 256` for an hkex-rnl key**; the ring is n = 1024.
+- **Stale ZKP figures** in SecurityProofs-7.md §11.10 are restated as measured. The
+  1,056 B ZKP-RNL proof was a bit-packed estimate at n = 256 (w 17, c 1 and z 15 bits a
+  coefficient). The CLIs run the deployed n = 1024 ring with 32-bit coefficients, so a
+  proof is 4 + 3 × 4,096 = 12,292 B. Even bit-packed, n = 1024 would be 4,224 B, so
+  ZKP-RNL does not undercut ML-DSA-44's 2,420 B; the "smaller than ML-DSA-44" claim
+  held only at n = 256, which no CLI generates. HPKS-Stern-F's 78 KB dates from v1.9.4,
+  before the TODO #184 encoding; a 219-round signature is 35,118 B of DER. The TUTORIAL's
+  last copy of 78 KB ("production-ready", which the demo parameters are not) is fixed,
+  and so is its "n = 8 keys only" sentence.
+- **Tests.** The new `CliTest/test_pkey_text_matrix.sh` (native-interop) has three
+  sections. First, every producer × consumer × the 15 key types: `--text` exits 0, its
+  first line is `algorithm : <algo>`, and n is right for hkex-rnl and hpks-zkp-nl.
+  Second, OPRF `--pubout` is refused, after an accept-control. Third, hpks-zkp-nl
+  `--bits` with no flag, 64, 256 and 7. Against the pre-#374 CLIs it reports 59 FAILs,
+  covering every defect above; on this tree, 260 PASS / 0 FAIL.
 
 ## [14.0.4] - 2026-11-11
 

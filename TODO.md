@@ -667,19 +667,3 @@ Status: **OPEN**
 
 ---
 
-### #374: `hpks-zkp-nl` ignores `--bits`, and two stale ZKP figures
-
-Found with #362.  PATCH.
-
-  * **`genpkey --algo hpks-zkp-nl --bits 256`** writes an n = 8 key in Python, Go and
-    Java, without a word; C refuses the flag.  A user asking for n = 256 gets the toy
-    width.  Either honour `--bits` (the library supports n = 256: the TUTORIAL's
-    920 KB row) or refuse it, as C does, and record which in spec `cli_surface_gaps`.
-  * **Python `pkey --text`** on an `hpks-zkp-nl` private key prints nothing and exits 0;
-    Go and Java print n, A and B.
-  * **`SecurityProofs-7.md` §11's ZKP table** gives ZKP-RNL at n = 256 as 1,056 B and
-    HPKS-Stern-F as 78 KB, and concludes ZKP-RNL beats ML-DSA-44.  A CLI proof
-    measures 12,292 B of DER and a Stern-F signature 35,118 B (#362 restated the
-    TUTORIAL's copies).  Restate it, and find where 1,056 B came from.
-
-Status: **OPEN**

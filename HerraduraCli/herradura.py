@@ -2647,7 +2647,9 @@ def cmd_genpkey(args):
         pem_out = _encode_stern_privkey(e_int, seed, bits, algo)
 
     elif algo in _ZKP_NL_ALGOS:
-        n = bits if bits != KEYBITS else _ZKP_NL_DEFAULT_N
+        # TODO #374: "unset" is args.bits is None, not bits == KEYBITS -- an
+        # explicit --bits 256 used to read as unset and wrote an n = 8 key.
+        n = args.bits if args.bits is not None else _ZKP_NL_DEFAULT_N
         # TODO #283: _ZKP_NL_MAX_N is a WIRE bound, and until v6.7.1 it was
         # enforced only on the way IN -- codec.decode_zkp_nl_privkey applies it,
         # genpkey did not -- so this was the one path in the Python CLI that
@@ -2786,6 +2788,8 @@ def cmd_pkey(args):
             h0_inv = _qcp_inv(h0, _QCMDPC_R)
             h_pub  = _qcp_mul(h1, h0_inv, _QCMDPC_R)
             pem_out = _encode_kem_pubkey(h_pub)
+        elif algo == 'oprf':
+            sys.exit("pkey --pubout: oprf has no public key")   # TODO #374
         else:
             sys.exit(f"Unknown algorithm: {algo!r}")
         _write_file(args.out or '-', pem_out)
@@ -2820,6 +2824,36 @@ def cmd_pkey(args):
             print(f"seed_H    : {seed_H_int:0{n//4}x}")
             print(f"syndr     : {syndr:0{n//8}x}")
             print(f"W (weight): {bin(hcred_phi(s)).count('1')}")
+        # TODO #374: the five branches below were missing, so --text printed
+        # nothing and exited 0 for these keys; an unhandled label now fails.
+        elif algo in _ZKP_NL_ALGOS:
+            A, B, y, n = ints
+            w = 2 * ((n + 7) // 8)
+            print(f"algorithm : {algo}")
+            print(f"n         : {n}")
+            print(f"A (priv)  : {A:0{w}x}")
+            print(f"B (pub)   : {B:0{w}x}")
+            print(f"y (pub)   : {y:0{w}x}")
+        elif algo == 'hpke-stern-kem':
+            _decode_kem_privkey(in_path)          # validates the key
+            print(f"algorithm : {algo}")
+            print(f"r         : {_QCMDPC_R}")
+            print(f"d         : {_QCMDPC_D}")
+        elif algo == 'hpks-wots':
+            _master_seed, leaf_idx = _decode_wots_privkey(in_path)
+            print(f"algorithm : {algo}")
+            print(f"leaf_idx  : {leaf_idx}")
+        elif algo == 'hpks-xmss':
+            _ms, h, _idx, _leaves, root = _decode_xmss_privkey(in_path)
+            print(f"algorithm : {algo}")
+            print(f"h         : {h} ({1 << h} leaves)")
+            print(f"root      : {root.hex() if isinstance(root, bytes) else format(root, '064x')}")
+        elif algo == 'oprf':
+            _k, nbits = _load_oprf_key(in_path)
+            print(f"algorithm : {algo}")
+            print(f"bits      : {nbits}")
+        else:
+            sys.exit(f"pkey --text: no text form for {algo!r}")
     else:
         sys.exit("Specify --pubout or --text")
 

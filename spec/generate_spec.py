@@ -1029,7 +1029,12 @@ CLI_FLAG_PARITY = {
         "and a single RNL_N -- the same reason KAT/'s n=64 PEM vectors skip the C "
         "CLI -- so there is no runtime width for the flag to set. Porting it would "
         "mean making the C suite width-parametric, which is a far larger change than "
-        "an argument parser."),
+        "an argument parser. hpks-zkp-nl is the exception: its n is a runtime "
+        "parameter in C too, and C reads any n <= 64 the other three write; C "
+        "generates only their default, n = 8. Where --bits exists, an explicit "
+        "value is honoured or refused by name, never read as the default -- Python, "
+        "Go and Java read `--bits 256` on hpks-zkp-nl as 'omitted' and wrote n = 8 "
+        "until TODO #374."),
     ("pake-register", "--username"): (
         ("java", "python"), "acknowledged",
         "aPAKE client identifier. It is stored in the record dict for lookup and is "

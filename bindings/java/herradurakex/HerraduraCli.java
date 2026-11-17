@@ -490,14 +490,12 @@ public final class HerraduraCli {
             // proof is already ~35 KB there, so a wider n is a deliberate choice
             // rather than a default.
             // n comes from --bits, exactly as in the Python CLI: an omitted
-            // --bits (or --bits 256, its KEYBITS default) means ZKP_NL_DEFAULT_N,
-            // because at R = 219 a ZKBoo proof is already ~35 KB at n = 8.
+            // --bits means ZKP_NL_DEFAULT_N, because at R = 219 a ZKBoo proof is
+            // already ~35 KB at n = 8.  TODO #374: an explicit --bits 256 used to
+            // read as omitted and wrote an n = 8 key; it now fails the range check.
             int n = ZKP_NL_DEFAULT_N;
             String nOpt = opt.get("bits");
-            if (nOpt != null) {
-                int req = Integer.parseInt(nOpt);
-                if (req != Herradura.N) n = req;
-            }
+            if (nOpt != null) n = Integer.parseInt(nOpt);
             if (n <= 0 || n % 2 != 0 || n > ZKP_NL_MAX_N) {
                 throw new CliError("genpkey hpks-zkp-nl: --bits must be a positive even "
                     + "integer <= " + ZKP_NL_MAX_N + ", got " + n);
@@ -566,6 +564,18 @@ public final class HerraduraCli {
         if (block.label.equals(Codec.PEM_ENC_PRIV)) {
             throw new CliError(in + " is a passphrase-encrypted private key; decrypt it "
                 + "first with `pkey --decrypt --passphrase ... --in " + in + " --out plain.pem`");
+        }
+
+        // TODO #374: an OPRF server key has --text but no public half; it fell
+        // through to "unrecognized private-key label".
+        if (block.label.equals(Codec.PEM_OPRF_PRIV)) {
+            if (opt.containsKey("pubout")) {
+                throw new CliError("pkey --pubout: oprf has no public key");
+            }
+            Codec.decodeOprfPrivKey(pemIn);   // validates the key
+            System.out.println("algorithm : oprf");
+            System.out.println("bits      : " + Herradura.N);
+            return;
         }
 
         if (block.label.equals(Codec.PEM_HPKS_STERN_PRIV) || block.label.equals(Codec.PEM_HPKE_STERN_PRIV)) {

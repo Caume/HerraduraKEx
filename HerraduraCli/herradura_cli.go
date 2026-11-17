@@ -256,6 +256,7 @@ var privToAlgo = map[string]string{
 	lblKemPriv:       "hpke-stern-kem",
 	lblHpksWotsPriv:  "hpks-wots",
 	lblHpksXmssPriv:  "hpks-xmss",
+	lblOprfPriv:      "oprf", // pkey --text only (TODO #374)
 }
 
 var algoToPrivLbl = map[string]string{
@@ -1292,9 +1293,9 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 
 // ── genpkey ──────────────────────────────────────────────────────────────────
 
-// genpkeyDefaultBits is genpkey's --bits default, and the value the algorithms
-// that carry their own natural width (hpks-zkp-nl, TODO #281) read as "unset" --
-// matching the Python CLI's KEYBITS comparison and Java's Herradura.N one.
+// genpkeyDefaultBits is genpkey's --bits default.  An algorithm with its own
+// natural width (hpks-zkp-nl, TODO #281) tests isSet(fs, "bits") instead of
+// comparing against this value, so an explicit --bits 256 is not "unset" (#374).
 const genpkeyDefaultBits = 256
 
 func cmdGenpkey(args []string) {
@@ -1362,14 +1363,16 @@ func cmdGenpkey(args []string) {
 
 	case *algo == "hpks-zkp-nl":
 		// n comes from --bits, exactly as in the Python and Java CLIs (TODO
-		// #281): an omitted --bits -- or --bits 256, the flag's own default --
-		// means ZkpNlDefaultN, because at R = 219 a ZKBoo proof is already
+		// #281): an omitted --bits means ZkpNlDefaultN, because at R = 219 a ZKBoo proof is already
 		// ~35 KB at n = 8, so a wider n is a deliberate choice.  An
 		// out-of-range value is rejected by name rather than clamped: this
 		// branch passed ZkpNlDefaultN as a literal and dropped the flag
 		// silently until v6.7.0, so a caller asking for 64 got 8 and no error.
+		// TODO #374: "unset" means the flag was not given, not that it equals
+		// its default -- an explicit --bits 256 used to read as unset and wrote
+		// an n = 8 key; it now fails the range check below.
 		zkpN := ZkpNlDefaultN
-		if n != genpkeyDefaultBits {
+		if isSet(fs, "bits") {
 			zkpN = n
 		}
 		if zkpN <= 0 || zkpN%2 != 0 || zkpN > ZkpNlMaxN {
@@ -1653,6 +1656,12 @@ func cmdPkey(args []string) {
 				os.Exit(1)
 			}
 			pem, err = encodeKemPub(QcMdpcMul(h1, inv))
+
+		default:
+			// TODO #374: an OPRF server key has no public half; any other
+			// label reaching here wrote an empty file and exited 0.
+			fmt.Fprintf(os.Stderr, "pkey --pubout: %s has no public key\n", algo)
+			os.Exit(1)
 		}
 
 		if err != nil {
@@ -1697,6 +1706,45 @@ func cmdPkey(args []string) {
 		fmt.Printf("n         : %d\n", n)
 		fmt.Printf("e_int     : %0*x\n", n/4, eBig)
 		fmt.Printf("seed      : %0*x\n", n/4, sBig)
+
+	// TODO #374: the four cases below were missing, so --text printed nothing
+	// and exited 0 for these keys; an unhandled label now fails.
+	case algo == "hpke-stern-kem":
+		decodeKemPriv(ints) // validates the key
+		fmt.Printf("algorithm : %s\n", algo)
+		fmt.Printf("r         : %d\n", QcMdpcR)
+		fmt.Printf("d         : %d\n", QcMdpcD)
+
+	case algo == "hpks-wots":
+		fitBytes(ints[0], 32, "WOTS seed", "pkey")
+		var leafIdx uint32
+		if len(ints) >= 2 {
+			leafIdx = uint32(wireInt(ints[1], "WOTS leaf index", "pkey"))
+		}
+		fmt.Printf("algorithm : %s\n", algo)
+		fmt.Printf("leaf_idx  : %d\n", leafIdx)
+
+	case algo == "hpks-xmss":
+		h := bounded(wireInt(ints[1], "XMSS height", "pkey"), 1, xmssMaxH,
+			"XMSS height", "pkey")
+		numLeaves := 1 << uint(h)
+		blob := alignBlob(ints[3], numLeaves*32)
+		leafHashes := make([][]byte, numLeaves)
+		for i := 0; i < numLeaves; i++ {
+			leafHashes[i] = blob[i*32 : (i+1)*32]
+		}
+		fmt.Printf("algorithm : %s\n", algo)
+		fmt.Printf("h         : %d (%d leaves)\n", h, numLeaves)
+		fmt.Printf("root      : %x\n", HaccumRoot(leafHashes))
+
+	case algo == "oprf":
+		fitBytes(ints[0], 32, "OPRF key", "pkey")
+		fmt.Printf("algorithm : %s\n", algo)
+		fmt.Printf("bits      : %d\n", genpkeyDefaultBits)
+
+	default:
+		fmt.Fprintf(os.Stderr, "pkey --text: no text form for %s\n", algo)
+		os.Exit(1)
 	}
 }
 

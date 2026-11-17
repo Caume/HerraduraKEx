@@ -1755,10 +1755,11 @@ Combined with the Fiat-Shamir heuristic they yield non-interactive signatures.
   times ML-DSA-44's 2,420 bytes.
 - Use **ZKP-NL** when the secret is an NL-FSCX preimage — e.g. to prove knowledge
   of the input to the one-way function without revealing it. The CLIs generate
-  n=8 keys only (40,085-byte proof at R=219); n=256, through the library, yields 920 KB pending ZKB++
+  n=8 keys by default (40,085-byte proof at R=219) and accept `--bits` up to 64; n=256, through the library, yields 920 KB pending ZKB++
   optimisation.
 - Use **HPKS-Stern-F** for conventional signatures where a formal reduction to
-  syndrome decoding hardness is required (78 KB, production-ready).
+  syndrome decoding hardness is required (35,118 B at 219 rounds; demo parameters, see
+  SecurityProofs-5.md §11.8.4).
 - Use **HCRED** (see above) when the credential must bind two hard problems
   (Ring-LWR + SDP) at once.
 

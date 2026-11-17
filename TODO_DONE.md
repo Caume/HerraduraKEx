@@ -25493,3 +25493,30 @@ CLIs; the remaining failures are the two marked `# error` and a placeholder `mya
 Filed #374 (`hpks-zkp-nl --bits` ignored; stale SecurityProofs-7 figures).
 
 Status: **DONE v15.0.0** — every TUTORIAL shell block runs as written in all four CLIs.
+
+### #374: `hpks-zkp-nl` ignores `--bits`, and two stale ZKP figures
+
+Found with #362.  PATCH.
+
+  * **`genpkey --algo hpks-zkp-nl --bits 256`** writes an n = 8 key in Python, Go and
+    Java, without a word; C refuses the flag.  A user asking for n = 256 gets the toy
+    width.  Either honour `--bits` (the library supports n = 256: the TUTORIAL's
+    920 KB row) or refuse it, as C does, and record which in spec `cli_surface_gaps`.
+  * **Python `pkey --text`** on an `hpks-zkp-nl` private key prints nothing and exits 0;
+    Go and Java print n, A and B.
+  * **`SecurityProofs-7.md` §11's ZKP table** gives ZKP-RNL at n = 256 as 1,056 B and
+    HPKS-Stern-F as 78 KB, and concludes ZKP-RNL beats ML-DSA-44.  A CLI proof
+    measures 12,292 B of DER and a Stern-F signature 35,118 B (#362 restated the
+    TUTORIAL's copies).  Restate it, and find where 1,056 B came from.
+
+**Resolution.** `--bits` on hpks-zkp-nl is honoured up to 64, the wire cap, and refused
+beyond it; an explicit 256 is refused rather than read as "omitted" (MIGRATING section
+35). Honouring n = 256 would need the PEM cap raised (TODO #283's bound), and the proof
+is 920 KB, so it stays library-only. The silent `pkey --text` was wider than filed: five
+key types in Python and three in Go. All are now described, an OPRF key in every CLI, and
+both chains fail on a type they do not handle; C's hkex-rnl n is fixed too. The 1,056 B
+figure is §11.10.2's bit-packed n = 256 estimate; 78 KB predates TODO #184's encoding.
+Both are restated. `CliTest/test_pkey_text_matrix.sh` holds all of it: 59 FAILs before,
+260 PASS after.
+
+Status: **DONE v15.0.0** — `pkey --text` describes every private key in every CLI; `genpkey hpks-zkp-nl --bits 256` is refused, not silently n = 8; ZKP figures restated as measured.
