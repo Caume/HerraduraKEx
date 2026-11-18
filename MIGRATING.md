@@ -2142,3 +2142,42 @@ that does. Ciphertexts written before this change decrypt as before.
 
 **Why this is MAJOR.** It refuses input existing `--algo` values accepted, the 2.0.0
 surface.
+
+## 41. One rule for the shape of a command line (v16.0.0)
+
+**Who is affected:** a script that leaves out `--in` or `--out` and relies on the Go CLI
+(or, for `enc`, `dec` and `sign --out`, the C CLI) to read stdin or write stdout; that
+passes a directory as `--in` to the C CLI; that leaves a stray word on the command line;
+or that writes `--flag=value` for a flag that takes no value.
+
+**What changed (TODO #381).** All four CLIs now follow one rule:
+
+- **A directory is not input.** The C CLI read `--in DIR` as an empty file: `sign --in .`
+  signed the empty message and `dgst --in .` printed the empty-input digest, exit 0.
+  It now refuses, as the other three did (`error: .: Is a directory`).
+- **A flag that takes a value needs one.** At the end of the command line, or followed by
+  another flag of the same subcommand, it is refused (`genpkey: --out needs a value`).
+  Java used to store a trailing `--out` as the string `true` and write the private key to
+  a file named `true`; C wrote it to stdout; `--out --algo hpks` gave Go and C an output
+  file named `--algo`. A value that merely looks like a flag but is not one of the
+  subcommand's (a file named `--weird.pem`) is still a value.
+- **No stray words.** A word that is neither a flag nor a flag's value is refused
+  (`genpkey: unexpected argument 'extra'`). C and Go ignored it; Go stopped reading at the
+  first one, so `genpkey extra --algo hpks` ran without its `--algo`. Java joined it to the
+  previous value. Only the threshold path lists (`--commits a b c`) take several words.
+- **`--flag=value` is `--flag value`** in all four; it used to work only in Python and Go.
+  A flag that takes no value refuses one (`pkey: --pubout takes no value`), where Go read
+  `--aead=false` as switching AEAD off.
+- **Required flags are the same everywhere.** Where Python requires `--in` or `--out`, so
+  do C, Go and Java. Go defaulted 19 of them to `-` (`kex`, `enc`, `dec`, `sign`,
+  `encfile`, `decfile` and the threshold commands' `--out`; `dgst`, `enc`, `dec`, `sign`,
+  `verify`, `encfile`, `decfile`, `fpe`, `twk` and `threshold-aggregate`'s `--in`), and C
+  wrote `enc`, `dec` and `sign` output to stdout without `--out`.
+
+**What to do.** To read stdin or write stdout, say so: `--in -`, `--out -` work in all
+four CLIs, as before. Name a file, not a directory, as `--in`. Remove stray words, and
+drop `=value` from boolean flags (`--pubout`, `--aead`, `--text`, `--hex`, `--encrypt`,
+`--decrypt`, `--v3`).
+
+**Why this is MAJOR.** It refuses command lines existing subcommands accepted, the 2.0.0
+surface.

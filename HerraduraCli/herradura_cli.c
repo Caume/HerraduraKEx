@@ -18,6 +18,7 @@
 #include "herradura_codec.h"
 #include "cli_flag_table.h"
 #include "key_label_table.h"   /* TODO #366 */
+#include <sys/stat.h>          /* TODO #381: read_binary_file refuses a directory */
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * I/O helpers
@@ -68,6 +69,16 @@ static uint8_t *read_binary_file(const char *path, size_t *len_out)
 {
     FILE *f = (strcmp(path, "-") == 0) ? stdin : fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open: %s\n", path); exit(1); }
+    /* TODO #381: fopen succeeds on a directory and fread then returns 0, so
+     * `sign --in .` signed the empty message and `dgst --in .` printed the
+     * empty-input digest, exit 0.  Python, Go and Java refuse; so does C now. */
+    {
+        struct stat st;
+        if (fstat(fileno(f), &st) == 0 && S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "error: %s: Is a directory\n", path);
+            exit(1);
+        }
+    }
     size_t cap = 4096, n = 0;
     uint8_t *buf = malloc(cap);
     if (!buf) die("out of memory");
@@ -188,6 +199,108 @@ static void check_unknown_flags(const char *cmd, int argc, char **argv)
             if (prev_takes_value) continue;
         }
         fprintf(stderr, "%s: unrecognised flag %s\n", cmd, a);
+        exit(2);
+    }
+}
+
+/* TODO #381: the shape of the argument list, in one rule shared by all four CLIs.
+ *
+ *   - `--flag=value` is `--flag value` (Python and Go always took it; C and Java
+ *     refused it as an unknown flag).  A boolean flag takes no value, so
+ *     `--aead=x` is refused rather than read as --aead.
+ *   - A value-taking flag needs a value: at the end of argv, or followed by
+ *     another flag this subcommand knows, it is refused.  C used to ignore a
+ *     trailing `--out` and write to stdout; Java stored it as the string "true"
+ *     and wrote a file of that name.
+ *   - A token that is neither a flag nor a flag's value is refused.  C ignored
+ *     `genpkey --algo hpks extra`.
+ *
+ * A flag-shaped VALUE that is not a flag of this subcommand (a file literally
+ * named "--weird.pem") is still a value, as check_unknown_flags has it.  The
+ * threshold path lists take every following token that does not start with
+ * "--" (TODO #270), and need at least one. */
+static int hkx_set_has(const char *const *v, int n, const char *a)
+{
+    for (int j = 0; j < n; j++) if (strcmp(a, v[j]) == 0) return 1;
+    return 0;
+}
+
+static int hkx_multi_flag(const char *a)
+{
+    return strcmp(a, "--commits") == 0 || strcmp(a, "--commit") == 0 ||
+           strcmp(a, "--partials") == 0 || strcmp(a, "--partial") == 0;
+}
+
+/* Split each `--name=value` whose --name is a flag of cmd into two tokens.
+ * Returns a new argv (argc updated); the strings are never freed -- they live
+ * for the whole run, as argv does. */
+static char **split_eq_args(const char *cmd, int *argc_io, char **argv)
+{
+    const HkxFlagSet *set = NULL;
+    for (int i = 0; i < HKX_FLAG_SETS_N; i++)
+        if (strcmp(HKX_FLAG_SETS[i].cmd, cmd) == 0) { set = &HKX_FLAG_SETS[i]; break; }
+    int argc = *argc_io;
+    if (!set) return argv;
+    char **out = malloc(sizeof(char *) * (size_t)(2 * argc + 1));
+    if (!out) die("out of memory");
+    int n = 0;
+    for (int i = 0; i < argc; i++) {
+        const char *a = argv[i];
+        const char *eq = (i >= 2 && a[0] == '-' && a[1] == '-') ? strchr(a, '=') : NULL;
+        if (eq) {
+            size_t k = (size_t)(eq - a);
+            char *name = malloc(k + 1);
+            if (!name) die("out of memory");
+            memcpy(name, a, k); name[k] = '\0';
+            if (hkx_set_has(set->flags, set->n, name)) {
+                if (!hkx_set_has(set->valued, set->nv, name)) {
+                    fprintf(stderr, "%s: %s takes no value\n", cmd, name);
+                    exit(2);
+                }
+                out[n++] = name;
+                out[n++] = (char *)(eq + 1);
+                continue;
+            }
+            free(name);
+        }
+        out[n++] = argv[i];
+    }
+    out[n] = NULL;
+    *argc_io = n;
+    return out;
+}
+
+static void check_arg_shape(const char *cmd, int argc, char **argv)
+{
+    const HkxFlagSet *set = NULL;
+    for (int i = 0; i < HKX_FLAG_SETS_N; i++)
+        if (strcmp(HKX_FLAG_SETS[i].cmd, cmd) == 0) { set = &HKX_FLAG_SETS[i]; break; }
+    if (!set) return;
+    for (int i = 2; i < argc; i++) {
+        const char *a = argv[i];
+        if (strcmp(a, "--help") == 0) continue;
+        if (hkx_set_has(set->valued, set->nv, a)) {
+            if (hkx_multi_flag(a)) {
+                int j = i + 1;
+                while (j < argc && strncmp(argv[j], "--", 2) != 0) j++;
+                if (j == i + 1) {
+                    fprintf(stderr, "%s: %s needs a value\n", cmd, a);
+                    exit(2);
+                }
+                i = j - 1;
+                continue;
+            }
+            if (i + 1 >= argc || hkx_set_has(set->flags, set->n, argv[i + 1])) {
+                fprintf(stderr, "%s: %s needs a value\n", cmd, a);
+                exit(2);
+            }
+            i++;                          /* its value */
+            continue;
+        }
+        if (hkx_set_has(set->flags, set->n, a)) continue;   /* boolean */
+        /* check_unknown_flags has already refused an unknown "--" token that
+         * is not a value, so what is left here is a stray positional. */
+        fprintf(stderr, "%s: unexpected argument '%s'\n", cmd, a);
         exit(2);
     }
 }
@@ -3198,6 +3311,7 @@ static void cmd_enc(int argc, char **argv)
     const char *out_path   = get_arg(argc, argv, "--out");
     if (!algo)    die("enc: --algo required");
     if (!in_path) die("enc: --in required");
+    if (!out_path) die("enc: --out required");   /* TODO #381: was stdout */
     aead_flags_ok("enc", algo, get_arg(argc, argv, "--ad"),
                   has_flag(argc, argv, "--aead"));
 
@@ -3514,6 +3628,7 @@ static void cmd_dec(int argc, char **argv)
     const char *out_path = get_arg(argc, argv, "--out");
     if (!algo)    die("dec: --algo required");
     if (!in_path) die("dec: --in required");
+    if (!out_path) die("dec: --out required");   /* TODO #381: was stdout */
     aead_flags_ok("dec", algo, get_arg(argc, argv, "--ad"), 0);
 
     /* Load ciphertext PEM. */
@@ -4168,6 +4283,7 @@ static void cmd_sign(int argc, char **argv)
     if (!algo)     die("sign: --algo required");
     if (!key_path) die("sign: --key required");
     if (!in_path)  die("sign: --in required");
+    if (!out_path) die("sign: --out required");   /* TODO #381: was stdout */
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
@@ -5722,7 +5838,7 @@ static void usage(void)
 "    with an OPRF PRIVATE KEY PEM (oprf-eval --key); the client unblinds with\n"
 "    --state and --eval and prints F(k,x) as 64-char hex.\n"
 "\n"
-"PEM output goes to stdout when --out is absent or '-'.\n"
+"PEM output goes to stdout when --out is '-', or is omitted where it is optional.\n"
 "All keys are 256-bit.\n"
     );
     exit(0);
@@ -5738,7 +5854,9 @@ int main(int argc, char **argv)
         usage();
 
     const char *cmd = argv[1];
+    argv = split_eq_args(cmd, &argc, argv);   /* TODO #381 */
     check_unknown_flags(cmd, argc, argv);
+    check_arg_shape(cmd, argc, argv);         /* TODO #381 */
     check_key_labels(cmd, argc, argv);   /* TODO #366 */
     if (strcmp(cmd, "genpkey") == 0) { cmd_genpkey(argc, argv); return 0; }
     if (strcmp(cmd, "pkey")    == 0) { cmd_pkey(argc, argv);    return 0; }

@@ -675,33 +675,5 @@ Status: **OPEN**
 
 ---
 
-### #381: CLI argument hygiene: C reads a directory as empty input; Java writes a file named `true`
-
-Found by the v15.0.0 CLI audit.  Lower severity, but two of these produce a wrong artifact
-with exit 0.
-
-**The finding.**
-- **C reads a directory as an empty file.**  `sign --in .` signs the empty message, and
-  `enc`, `encfile`, `dgst` and `oprf-blind` with `--in .` all exit 0 (`dgst --in .` prints
-  the empty-input digest).  Python, Go and Java refuse ("is a directory").
-- **A value-taking flag with no value.**  Java's parser stores a trailing `--out` as the
-  string `true`, so `genpkey --algo hpks --out` writes the private key to a file named
-  `true` and exits 0; C ignores the flag and writes to stdout; Python and Go refuse.
-- **Stray positional arguments** are ignored by C and Go (`genpkey --algo hpks extra`);
-  Python refuses; Java folds them into the previous value.
-- **`--flag=value`** works in Python and Go and is refused as an unknown flag by C and Java.
-- **`dgst` with no `--in`** reads stdin in Go and is refused by the other three; `encfile`
-  with no `--out` writes to stdout in Go and is refused by the others.
-
-**Work.**  Refuse non-regular `--in` files in C (fstat after open); refuse a value-taking
-flag with no value and stray positionals in all four; pick one rule for `=` syntax and
-the stdin/stdout defaults, or list the differences in `cli_surface_gaps`.  CliTest cases.
-
-Status: **OPEN**
-
----
-
----
-
 ---
 

@@ -25731,3 +25731,46 @@ the TODO #380 build (170 accepted).  MIGRATING.md §40.
 Status: **DONE v16.0.0** — single-block `enc` refuses input past its block; `--ad` / `--aead` are refused wherever they were dropped, in all four CLIs.
 
 ---
+
+### #381: CLI argument hygiene: C reads a directory as empty input; Java writes a file named `true`
+
+Found by the v15.0.0 CLI audit.  Lower severity, but two of these produce a wrong artifact
+with exit 0.
+
+**The finding.**
+- **C reads a directory as an empty file.**  `sign --in .` signs the empty message, and
+  `enc`, `encfile`, `dgst` and `oprf-blind` with `--in .` all exit 0 (`dgst --in .` prints
+  the empty-input digest).  Python, Go and Java refuse ("is a directory").
+- **A value-taking flag with no value.**  Java's parser stores a trailing `--out` as the
+  string `true`, so `genpkey --algo hpks --out` writes the private key to a file named
+  `true` and exits 0; C ignores the flag and writes to stdout; Python and Go refuse.
+- **Stray positional arguments** are ignored by C and Go (`genpkey --algo hpks extra`);
+  Python refuses; Java folds them into the previous value.
+- **`--flag=value`** works in Python and Go and is refused as an unknown flag by C and Java.
+- **`dgst` with no `--in`** reads stdin in Go and is refused by the other three; `encfile`
+  with no `--out` writes to stdout in Go and is refused by the others.
+
+**Work.**  Refuse non-regular `--in` files in C (fstat after open); refuse a value-taking
+flag with no value and stray positionals in all four; pick one rule for `=` syntax and
+the stdin/stdout defaults, or list the differences in `cli_surface_gaps`.  CliTest cases.
+
+**Resolution.**  One rule in all four CLIs, with Python's argparse as the reference:
+`--in DIR` is refused (C `read_binary_file`); a value-taking flag at the end of argv or
+followed by another of its subcommand's flags is refused ("needs a value"); a word that is
+neither a flag nor a flag's value is refused ("unexpected argument"); `--flag=value` is
+`--flag value` and a boolean refuses a value ("takes no value").  `=` syntax: accepted
+everywhere (C `split_eq_args`, Java `parseOpts`) rather than refused in Python and Go.
+stdin/stdout: a flag Python requires is required in every CLI, and `-` names stdin or
+stdout explicitly -- Go's 19 defaulted `--in` / `--out` flags (`requiredFlags`, enforced
+in its new `parseArgs`) and C's `enc` / `dec` / `sign --out` now require it, so nothing
+goes to `cli_surface_gaps`.  Java's arity comes from a generated `CliFlagTable.BOOLEAN`,
+cross-checked against C's by `spec/generate_spec.py`.  Also fixed on the way: Java's
+`threshold-commit` wrote the commitment before checking `--nonce-out`; Go reported an empty
+`--commit` as an absent list.  Left as is: Python's argparse accepts abbreviated flags.
+
+New `CliTest/test_arg_hygiene.sh` (native-interop): 380 PASS; 59 FAIL on the TODO #378
+build (35 accepted).  MIGRATING.md §41.
+
+Status: **DONE v16.0.0** — one rule for the shape of a command line in all four CLIs: no directory as input, no flag without its value, no stray words, `--flag=value` everywhere, the same required flags.
+
+---

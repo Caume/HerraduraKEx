@@ -126,11 +126,11 @@ public final class HerraduraCli {
         if (args[0].equals("--help") || args[0].equals("-h")) {
             System.out.print("Usage: herradurakex <command> [options]\n\n"
                 + CliFlagTable.HELP_SYNOPSIS
-                + "\nPEM output goes to stdout when --out is absent or '-'.\n");
+                + "\nPEM output goes to stdout when --out is '-', or is omitted where it is optional.\n");
             return;
         }
         String cmd = args[0];
-        Map<String, String> opt = parseOpts(args, 1);
+        Map<String, String> opt = parseOpts(cmd, args, 1);
         checkUnknownFlags(cmd, opt);
         checkKeyLabels(cmd, opt);   // TODO #366
         switch (cmd) {
@@ -246,26 +246,66 @@ public final class HerraduraCli {
         }
     }
 
-    private static Map<String, String> parseOpts(String[] args, int from) {
+    /** TODO #381: the shape of the argument list, in one rule shared by all four CLIs.
+     *
+     *  <ul>
+     *  <li>{@code --flag=value} is {@code --flag value}.  A boolean flag
+     *      ({@link CliFlagTable#BOOLEAN}) takes no value, so {@code --pubout=x} is
+     *      refused.</li>
+     *  <li>A value-taking flag needs a value: at the end of argv, or followed by
+     *      another flag of this subcommand, it is refused.  This parser used to
+     *      store a trailing {@code --out} as the string "true", and genpkey wrote
+     *      the private key to a file of that name.</li>
+     *  <li>A token that is neither a flag nor a flag's value is refused.  This
+     *      parser used to fold it into the previous flag's value, so
+     *      {@code genpkey --algo hpks extra} asked for algo "hpks extra".</li>
+     *  </ul>
+     *  Only the threshold path lists ({@link #REPEATABLE}) take every following
+     *  token that does not start with "--" (TODO #270).  A flag-shaped value that
+     *  is not a flag of this subcommand (a file named "--weird.pem") is still a
+     *  value, as in C. */
+    private static Map<String, String> parseOpts(String cmd, String[] args, int from) {
+        Set<String> known = CliFlagTable.FLAGS.getOrDefault(cmd, java.util.Collections.emptySet());
         Map<String, String> opt = new HashMap<>();
         int i = from;
         while (i < args.length) {
             String a = args[i];
-            if (!a.startsWith("--")) throw new CliError("unexpected argument: " + a);
+            if (!a.startsWith("--") || a.length() == 2) {
+                throw new CliError(cmd + ": unexpected argument '" + a + "'");
+            }
             String key = a.substring(2);
-            // Greedily consume every following non-"--" token as this
-            // flag's value(s), space-joined — matches argparse's nargs='+'
-            // for multi-value flags (e.g. --commits a.pem b.pem c.pem)
-            // while staying a no-op for the single-value case, since every
-            // other flag's value is always immediately followed by the
-            // next "--flag" or end of argv.
+            String inline = null;
+            int eq = key.indexOf('=');
+            if (eq >= 0 && known.contains(key.substring(0, eq))) {
+                inline = key.substring(eq + 1);
+                key = key.substring(0, eq);
+            }
             int j = i + 1;
-            java.util.List<String> vals = new java.util.ArrayList<>();
-            while (j < args.length && !args[j].startsWith("--")) {
-                vals.add(args[j]);
+            String val;
+            if (CliFlagTable.BOOLEAN.contains(key) || key.equals("help")) {
+                if (inline != null) throw new CliError(cmd + ": --" + key + " takes no value");
+                val = "true";
+            } else if (REPEATABLE.contains(key)) {
+                // Every following non-"--" token, space-joined -- argparse's
+                // nargs='+' (e.g. --commits a.pem b.pem c.pem).
+                java.util.List<String> vals = new java.util.ArrayList<>();
+                if (inline != null) vals.add(inline);
+                while (j < args.length && !args[j].startsWith("--")) {
+                    vals.add(args[j]);
+                    j++;
+                }
+                if (vals.isEmpty()) throw new CliError(cmd + ": --" + key + " needs a value");
+                val = String.join(" ", vals);
+            } else if (inline != null) {
+                val = inline;
+            } else {
+                if (j >= args.length || (args[j].startsWith("--")
+                        && known.contains(args[j].substring(2).split("=", 2)[0]))) {
+                    throw new CliError(cmd + ": --" + key + " needs a value");
+                }
+                val = args[j];
                 j++;
             }
-            String val = vals.isEmpty() ? "true" : String.join(" ", vals);
             // TODO #270: a REPEATED multi-value flag accumulates rather than
             // overwriting, so `--commit a --commit b` reaches the command as the
             // same space-joined list `--commits a b` does.  Scoped to the declared
@@ -1956,13 +1996,18 @@ public final class HerraduraCli {
 
     private static void cmdThresholdCommit(Map<String, String> opt) throws IOException {
         Codec.PrivKey pk = loadHpksPrivKeyForThreshold(req(opt, "key", "threshold-commit"));
+        // Both outputs are named before either is written (TODO #381): asking
+        // for --nonce-out only after writing the commitment left a commitment
+        // on disk whose nonce was never saved.
+        String commitOut = req(opt, "commit-out", "threshold-commit");
+        String nonceOut  = req(opt, "nonce-out", "threshold-commit");
         if (pk.nbits != Herradura.N) {
             throw new CliError("threshold-commit: HPKS-T requires a " + Herradura.N + "-bit key; got " + pk.nbits + "-bit");
         }
         BigInteger kJ = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
         BigInteger rJ = Herradura.gfPow(Herradura.GF_GEN, BitArray.fromBigInteger(kJ, Herradura.N)).toBigInteger();
-        writeString(req(opt, "commit-out", "threshold-commit"), Codec.encodeHpkstCommit(rJ, pk.pub, pk.nbits));
-        writeString(req(opt, "nonce-out", "threshold-commit"), Codec.encodeHpkstNonce(kJ, pk.nbits));
+        writeString(commitOut, Codec.encodeHpkstCommit(rJ, pk.pub, pk.nbits));
+        writeString(nonceOut, Codec.encodeHpkstNonce(kJ, pk.nbits));
     }
 
     private static void cmdThresholdAggregate(Map<String, String> opt) throws IOException {

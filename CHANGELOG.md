@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in four parts so
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in five parts so
 far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
@@ -15,6 +15,43 @@ longer signs at 219 and `rand --bytes abc` no longer writes 0 bytes (TODO #380, 
 A single-block `enc` now refuses input longer than its block instead of encrypting the
 first 32 bytes, and `--ad` / `--aead` are refused wherever they used to be dropped
 (TODO #378, section 40).
+All four CLIs now share one rule for the shape of a command line: no directory as input,
+no flag missing its value, no stray words, `--flag=value` everywhere, and the same
+required flags (TODO #381, section 41).
+
+### TODO #381 — one rule for the shape of a command line
+
+- **The defect.** C read `--in DIR` as an empty file, so `sign --in .` signed the empty
+  message, exit 0. Java stored a trailing `--out` as the string `true`, and
+  `genpkey --algo hpks --out` wrote the private key to a file named `true`; C wrote it to
+  stdout; `--out --algo hpks` gave Go and C an output file named `--algo`. C and Go
+  ignored stray words (Go stopped parsing at the first, so `genpkey extra --algo hpks`
+  ran without its `--algo`); Java joined them to the previous value. `--flag=value`
+  worked only in Python and Go, and Go read `--aead=false`. Go defaulted 19 `--in` /
+  `--out` flags to stdin / stdout where Python and Java required them, and C did so for
+  `enc`, `dec` and `sign --out`. Java's `threshold-commit` wrote the commitment before
+  asking for `--nonce-out`, and Go reported an empty `--commit` as the list being absent.
+- **The fix.** One rule, Python's argparse as the reference. C: `read_binary_file`
+  refuses a directory; `split_eq_args` and `check_arg_shape` run before dispatch. Go:
+  every `fs.Parse` goes through `parseArgs`, which checks the same shape, refuses what
+  the flag package leaves in `fs.Args()`, and enforces a `requiredFlags` table. Java:
+  `parseOpts` knows each flag's arity from a new generated `CliFlagTable.BOOLEAN`, which
+  `spec/generate_spec.py` derives from Java's source and refuses to emit if it disagrees
+  with C's. Messages: "`<cmd>: <flag> needs a value`", "`<cmd>: unexpected argument
+  '<w>'`", "`<cmd>: <flag> takes no value`", "`<cmd>: --in required`"; Python's stay
+  argparse's. `-` still means stdin / stdout. The C, Go and Java help note on stdout now
+  says it applies where `--out` is optional.
+- **Test.** New `CliTest/test_arg_hygiene.sh` (native-interop). Accept-controls: one
+  complete command for each of 24 subcommands runs in every CLI; `--flag=value` matches
+  `--flag value`; `-` reads stdin and writes stdout. Then 67 refusals per CLI: every
+  flag Python requires, omitted in turn (refused as missing, by name); `--in DIR` at five
+  readers; a flag missing its value, a stray word, a boolean given a value. 380 PASS on
+  this build; on the TODO #378 build, 59 FAIL (C 19, Go 28, Java 12, Python 0): 35
+  accepted, 19 refused under another message, one refusal that still wrote output, and
+  `--flag=value` refused by C and Java. All 82 CliTest scripts pass.
+- **Not changed.** Python's argparse still accepts abbreviated flags (`--alg` for
+  `--algo`); the other three refuse them.
+- **Docs.** llms.txt (a command-line paragraph); MIGRATING §41.
 
 ### TODO #378 — single-block `enc` refuses long input; `--ad` / `--aead` only where used
 

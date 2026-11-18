@@ -326,6 +326,37 @@ def extract_flags_java(java_src):
             for sub, fn in dispatch.items()}
 
 
+def extract_bool_flags_java(java_src, c_src):
+    """Java's BOOLEAN flags: names its handlers only ever test with
+    opt.containsKey, never read as a value (TODO #381).
+
+    parseOpts needs the arity: a boolean consumes no token, so `genpkey --algo
+    hpks extra` has a stray 'extra' and `--pubout=x` is refused, while a
+    value-taking flag at the end of argv is missing its value (Java stored it
+    as the string "true" and wrote a file of that name).  The set is checked
+    against C's (every flag C reads with has_flag rather than get_arg): the
+    arity of a flag is part of the shared CLI surface, so a flag boolean in one
+    CLI and valued in another is refused here rather than emitted."""
+    js = _strip_c_comments(java_src)
+    tested = set(re.findall(r'\bopt\.containsKey\(\s*"([a-z0-9\-]+)"', js))
+    valued = set()
+    for pat in (r'\bopt\.(?:get|getOrDefault)\(\s*"([a-z0-9\-]+)"',
+                r'\breq\(\s*opt\s*,\s*"([a-z0-9\-]+)"',
+                r'\bnumArg\(\s*opt\s*,\s*"([a-z0-9\-]+)"'):
+        valued |= set(re.findall(pat, js))
+    java_bool = tested - valued
+    flags_c, valued_c = extract_flags_c(c_src), extract_valued_flags_c(c_src)
+    c_bool = set()
+    for sub in flags_c:
+        c_bool |= {f.lstrip("-") for f in set(flags_c[sub]) - set(valued_c.get(sub, []))}
+    if java_bool != c_bool:
+        raise RuntimeError("boolean flags differ between the Java and C CLIs: "
+                           "Java-only %s, C-only %s (TODO #381: a flag's arity is "
+                           "shared surface)" % (sorted(java_bool - c_bool),
+                                                sorted(c_bool - java_bool)))
+    return java_bool
+
+
 def extract_const_int(src, name):
     """Grep a `#define NAME <expr>  /* comment */` (C) or `Name = <expr>  // comment`
     (Go) constant, stripping trailing line comments before capturing the expression.
@@ -1729,7 +1760,7 @@ def emit_c_flag_table(flags_c, valued_c, help_lines=()):
     return "\n".join(out)
 
 
-def emit_java_flag_table(flags_java, help_lines=()):
+def emit_java_flag_table(flags_java, help_lines=(), bool_flags=()):
     """Java's allow-list.  Keyed WITHOUT the leading dashes, because that is how
     parseOpts keys its option map."""
     out = ["package herradurakex;", "",
@@ -1750,6 +1781,9 @@ def emit_java_flag_table(flags_java, help_lines=()):
         out.append('        m.put("%s", new HashSet<>(Arrays.asList(%s)));' % (sub, names))
     out += ["        FLAGS = Collections.unmodifiableMap(m);",
             "    }", "",
+            "    /** Flags that take no value (TODO #381); every other flag takes one. */",
+            "    static final Set<String> BOOLEAN = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(%s)));"
+            % ", ".join('"%s"' % f for f in sorted(bool_flags)), "",
             "    /** --help's synopsis (TODO #339). */",
             "    static final String HELP_SYNOPSIS ="]
     body = ['        "%s\\n"' % l.replace("\\", "\\\\").replace('"', '\\"') for l in help_lines]
@@ -2986,7 +3020,9 @@ def main():
                                          extract_valued_flags_c(read(CLI_C)),
                                          build_help_synopsis(spec, "c"))),
         (JAVA_FLAG_TABLE, emit_java_flag_table(extract_flags_java(read(CLI_JAVA)),
-                                               build_help_synopsis(spec, "java"))),
+                                               build_help_synopsis(spec, "java"),
+                                               extract_bool_flags_java(read(CLI_JAVA),
+                                                                       read(CLI_C)))),
         # TODO #339: Go's synopsis lives in a marked region of the CLI itself.
         (CLI_GO, emit_go_key_region(
             emit_go_help_region(read(CLI_GO), build_help_synopsis(spec, "go")),

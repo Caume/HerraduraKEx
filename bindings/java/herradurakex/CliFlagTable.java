@@ -44,6 +44,9 @@ final class CliFlagTable {
         FLAGS = Collections.unmodifiableMap(m);
     }
 
+    /** Flags that take no value (TODO #381); every other flag takes one. */
+    static final Set<String> BOOLEAN = Collections.unmodifiableSet(new HashSet<>(Arrays.asList("aead", "decrypt", "encrypt", "hex", "pubout", "text", "v3")));
+
     /** --help's synopsis (TODO #339). */
     static final String HELP_SYNOPSIS =
         "Subcommands and the flags each one reads (generated from this CLI's\n" +

@@ -895,6 +895,88 @@ func padLeftN(src []byte, n int) []byte {
 // Pass make([]byte, 32) for zero nonces when interoperating with old peers.
 // isSet reports whether the named flag was explicitly given on the command line
 // (flag.FlagSet.Visit walks only the flags that were actually set).
+// TODO #381: the shape of the argument list, in one rule shared by all four CLIs.
+//
+//   - `--flag=value` is `--flag value`.  A boolean flag takes no value, so
+//     `--aead=false` is refused instead of quietly switching AEAD off.
+//   - A value-taking flag needs a value: at the end of the list, or followed by
+//     another flag of this subcommand, it is refused.  The flag package would
+//     take `--out --algo` as the file name "--algo".
+//   - A token that is neither a flag nor a flag's value is refused.  The flag
+//     package stops at the first one and the commands never looked at the
+//     rest, so `genpkey --algo hpks extra` ran and `genpkey extra --algo hpks`
+//     ran WITHOUT its --algo.
+//   - Where Python requires --in or --out, so does this CLI (requiredFlags).
+//     They used to default to "-", so an omitted --in read stdin and an omitted
+//     --out wrote stdout; "-" still means exactly that when given.
+//
+// The threshold path lists (--commits / --commit / --partials / --partial) are
+// removed by filterMultiFlags before this runs (TODO #270).
+var requiredFlags = map[string][]string{
+	"kex": {"out"}, "dgst": {"in"}, "enc": {"in", "out"}, "dec": {"in", "out"},
+	"sign": {"in", "out"}, "verify": {"in"}, "encfile": {"in", "out"},
+	"decfile": {"in", "out"}, "fpe": {"in"}, "twk": {"in"},
+	"threshold-aggregate": {"in", "out"}, "threshold-respond": {"out"},
+	"threshold-combine": {"out"},
+}
+
+func flagOf(fs *flag.FlagSet, tok string) (*flag.Flag, string, bool) {
+	if len(tok) < 2 || tok[0] != '-' || tok == "--" {
+		return nil, "", false
+	}
+	name := strings.TrimPrefix(strings.TrimPrefix(tok, "-"), "-")
+	hasEq := false
+	if k := strings.IndexByte(name, '='); k >= 0 {
+		name, hasEq = name[:k], true
+	}
+	return fs.Lookup(name), name, hasEq
+}
+
+func isBoolFlag(f *flag.Flag) bool {
+	b, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return ok && b.IsBoolFlag()
+}
+
+func parseArgs(fs *flag.FlagSet, args []string) {
+	cmd := fs.Name()
+	for i := 0; i < len(args); i++ {
+		f, name, hasEq := flagOf(fs, args[i])
+		if f == nil {
+			continue // a value, a stray token, or an unknown flag fs.Parse reports
+		}
+		if isBoolFlag(f) {
+			if hasEq {
+				fmt.Fprintf(os.Stderr, "%s: --%s takes no value\n", cmd, name)
+				os.Exit(2)
+			}
+			continue
+		}
+		if hasEq {
+			continue
+		}
+		if i+1 >= len(args) {
+			fmt.Fprintf(os.Stderr, "%s: --%s needs a value\n", cmd, name)
+			os.Exit(2)
+		}
+		if g, _, _ := flagOf(fs, args[i+1]); g != nil {
+			fmt.Fprintf(os.Stderr, "%s: --%s needs a value\n", cmd, name)
+			os.Exit(2)
+		}
+		i++ // its value
+	}
+	fs.Parse(args)
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "%s: unexpected argument '%s'\n", cmd, fs.Arg(0))
+		os.Exit(2)
+	}
+	for _, r := range requiredFlags[cmd] {
+		if !isSet(fs, r) {
+			fmt.Fprintf(os.Stderr, "%s: --%s required\n", cmd, r)
+			os.Exit(1)
+		}
+	}
+}
+
 func isSet(fs *flag.FlagSet, name string) bool {
 	found := false
 	fs.Visit(func(f *flag.Flag) {
@@ -1309,7 +1391,7 @@ func cmdGenpkey(args []string) {
 	xmssHeightS := fs.String("xmss-height", "10", "hpks-xmss: tree height (2^H leaves, 1 to 20)")
 	passphrase := fs.String("passphrase", "", "Encrypt the exported private key under this passphrase (TODO #268)")
 	kdfIterationsS := fs.String("kdf-iterations", strconv.Itoa(pbkdf2IterDemo), "PBKDF2-HFSCX256 iterations for --passphrase (1 to 100000000)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	// TODO #380: parsed strictly and range-checked before any key is generated.
 	xmssHeight := numFlag(fs, "xmss-height", xmssHeightS, 1, 20, 10)
 	kdfIterations := numFlag(fs, "kdf-iterations", kdfIterationsS, 1, pbkdf2IterMax, pbkdf2IterDemo)
@@ -1503,7 +1585,7 @@ func cmdPkey(args []string) {
 	out    := fs.String("out", "-", "Output path")
 	decrypt := fs.Bool("decrypt", false, "Decrypt a --passphrase-protected private key PEM (TODO #268)")
 	passphrase := fs.String("passphrase", "", "Passphrase for --decrypt")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "pkey: --in required")
@@ -1772,7 +1854,7 @@ func cmdKex(args []string) {
 	kdf  := fs.String("kdf", "", "KDF applied to raw shared secret (none|hfscx-256; both sides must match)")
 	theirKem := fs.String("their-kem", "", "hybrid-rnl-stern: Alice's HPKE-Stern-KEM public key (Bob step)")
 	ourKem   := fs.String("our-kem", "", "hybrid-rnl-stern: Alice's own HPKE-Stern-KEM private key (Alice step)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("kex", fs) // TODO #366
 
 	if *algo == "" || *our == "" || *their == "" {
@@ -2101,7 +2183,7 @@ func cmdDgst(args []string) {
 	algo := fs.String("algo", "hfscx-256", "Digest algorithm")
 	in   := fs.String("in", "-", "Input file (- = stdin)")
 	out  := fs.String("out", "-", "Output: - = hex to stdout; path = DIGEST PEM")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	data, err := readFile(*in)
 	if err != nil {
@@ -2179,7 +2261,7 @@ func cmdRand(args []string) {
 	nbytesS := fs.String("bytes", "", "Number of output bytes to generate (0 to 33554432)")
 	asHex  := fs.Bool("hex", false, "Hex-encode the output instead of raw bytes")
 	out    := fs.String("out", "-", "Output file (default: - = stdout)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	var d *HDrbg
 	switch {
@@ -3434,7 +3516,7 @@ func cmdCredIssue(args []string) {
 	our := fs.String("our", "", "Issuer hpks-stern/hpke-stern private key PEM")
 	out := fs.String("out", "-", "HCRED CREDENTIAL PEM output")
 	roundsS := fs.String("rounds", "", "Stern-F rounds (1 to 4096; default: 219 for 128-bit soundness)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("cred-issue", fs) // TODO #366
 	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, hcredSignRounds) // TODO #380
 
@@ -3483,7 +3565,7 @@ func cmdCredProve(args []string) {
 	out := fs.String("out", "-", "HCRED PROOF PEM output")
 	msg := fs.String("msg", "", "Message to bind into the proof")
 	roundsS := fs.String("rounds", "", "ZKBoo rounds (1 to 4096; default: 219 for 128-bit soundness)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("cred-prove", fs) // TODO #366
 	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, 0) // TODO #380; 0 = default
 
@@ -3527,7 +3609,7 @@ func cmdCredVerify(args []string) {
 	roundsS := fs.String("rounds", "", "Rounds to verify (1 to 4096; default: proof's own round count)")
 	minR := fs.String("min-rounds", strconv.Itoa(cliMinVerifyRounds),
 		"Refuse a proof or credential declaring fewer rounds (TODO #364)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("cred-verify", fs) // TODO #366
 	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, 0) // TODO #380; 0 = proof's own
 	minRounds := numFlag(fs, "min-rounds", minR, 1, SdfMaxRounds, cliMinVerifyRounds)
@@ -3617,7 +3699,7 @@ func cmdEnc(args []string) {
 	out    := fs.String("out", "-", "Ciphertext output PEM file")
 	aead   := fs.Bool("aead", false, "HSKE-NL-AEAD authenticated encryption (hske-nla1 only)")
 	ad     := fs.String("ad", "", "Associated data bound into the AEAD tag (hske-duplex, hske-duplex3, or hske-nla1 with --aead; refused elsewhere)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("enc", fs) // TODO #366
 
 	if *algo == "" {
@@ -3843,7 +3925,7 @@ func cmdDec(args []string) {
 	in   := fs.String("in", "-", "Ciphertext PEM input file")
 	out  := fs.String("out", "-", "Plaintext output file")
 	ad   := fs.String("ad", "", "Associated data for AEAD ciphertexts (must match enc --ad; refused on algos without AEAD)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("dec", fs) // TODO #366
 
 	if *algo == "" {
@@ -4136,7 +4218,7 @@ func cmdSign(args []string) {
 	roundsS := fs.String("rounds", "", "ZKP/Stern-F rounds, 1 to 4096 (nl-zkboo, nl-zkbpp, hpks-stern, hpks-ring; "+
 		"default: 219, the 128-bit count every verifier requires unless it passes "+
 		"--min-rounds; TODO #364)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("sign", fs) // TODO #366
 	// TODO #380: an explicit 0 used to read as omitted (219), and 5000 signed
 	// a signature every verifier refuses.  0 here means "not given".
@@ -4415,7 +4497,7 @@ func cmdVerify(args []string) {
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
 	minR   := fs.String("min-rounds", strconv.Itoa(cliMinVerifyRounds),
 		"Refuse hpks-stern/hpks-ring/nl-zkboo/nl-zkbpp artifacts declaring fewer rounds (TODO #364)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("verify", fs) // TODO #366
 	digestValue("verify", digest)
 	minRounds := numFlag(fs, "min-rounds", minR, 1, SdfMaxRounds, cliMinVerifyRounds) // TODO #380
@@ -4725,7 +4807,7 @@ func cmdEncfile(args []string) {
 	key  := fs.String("key", "", "Session key file")
 	in   := fs.String("in", "-", "Plaintext input file")
 	out  := fs.String("out", "-", "Output .hkx file")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	if *algo != "hske-nla1" {
 		fmt.Fprintf(os.Stderr, "encfile: unsupported algorithm %q\n", *algo)
@@ -4808,7 +4890,7 @@ func cmdDecfile(args []string) {
 	key  := fs.String("key", "", "Session key file")
 	in   := fs.String("in", "-", "Input .hkx file")
 	out  := fs.String("out", "-", "Plaintext output file")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	if *algo != "hske-nla1" {
 		fmt.Fprintf(os.Stderr, "decfile: unsupported algorithm %q\n", *algo)
@@ -4924,7 +5006,7 @@ func cmdFpe(args []string) {
 	doDec   := fs.Bool("decrypt",   false, "Decrypt")
 	v3      := fs.Bool("v3", false, "Use the NL-FSCX v3 round (TODO #255) "+
 		"instead of v2.  Separate subkey domain; decrypt with --v3 too.")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	if !*doEnc && !*doDec {
 		fmt.Fprintln(os.Stderr, "fpe: --encrypt or --decrypt required")
@@ -5004,7 +5086,7 @@ func cmdTwk(args []string) {
 	doDec   := fs.Bool("decrypt",   false, "Decrypt")
 	v3      := fs.Bool("v3", false, "Use the NL-FSCX v3 round (TODO #255) "+
 		"instead of v2.  Separate subkey domain; decrypt with --v3 too.")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	if !*doEnc && !*doDec {
 		fmt.Fprintln(os.Stderr, "twk: --encrypt or --decrypt required")
@@ -5054,7 +5136,7 @@ func cmdOprfBlind(args []string) {
 	fs    := flag.NewFlagSet("oprf-blind", flag.ExitOnError)
 	inF   := fs.String("in", "", "Input bytes file (- for stdin)")
 	outF  := fs.String("out", "-", "Output OPRF CLIENT STATE PEM")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	if *inF == "" {
 		fmt.Fprintln(os.Stderr, "oprf-blind: --in required")
 		os.Exit(1)
@@ -5088,7 +5170,7 @@ func cmdOprfEval(args []string) {
 	keyF  := fs.String("key", "", "OPRF PRIVATE KEY PEM (server key)")
 	inF   := fs.String("in", "", "OPRF CLIENT STATE PEM")
 	outF  := fs.String("out", "-", "Output OPRF EVALUATION PEM")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("oprf-eval", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "oprf-eval: --key required")
@@ -5149,7 +5231,7 @@ func cmdOprfUnblind(args []string) {
 	stateF := fs.String("state", "", "OPRF CLIENT STATE PEM")
 	evalF  := fs.String("eval",  "", "OPRF EVALUATION PEM")
 	outF   := fs.String("out", "-", "Output PRF hex")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	if *stateF == "" {
 		fmt.Fprintln(os.Stderr, "oprf-unblind: --state required")
 		os.Exit(1)
@@ -5200,7 +5282,7 @@ func cmdPakeRegister(args []string) {
 	keyF  := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
 	pwF   := fs.String("password", "", "Password to register (required, non-empty)")
 	outF  := fs.String("out",      "-", "Output PAKE RECORD PEM")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("pake-register", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-register: --key required")
@@ -5252,7 +5334,7 @@ func cmdPakeDemo(args []string) {
 	fs   := flag.NewFlagSet("pake-demo", flag.ExitOnError)
 	keyF := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
 	pwF  := fs.String("password", "demo-password", "Password")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("pake-demo", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-demo: --key required")
@@ -5378,7 +5460,7 @@ Notes:
   encfile/decfile: hske-nla1 only (stream CTR-AEAD); decfile exits non-zero on auth failure.
   fpe: NOT format-preserving in the FF1/FF3-1 sense: no radix, no domain --
        32 bytes in, 32 raw bytes out. See SECURITY.md.
-  PEM output goes to stdout when --out is absent or '-'.
+  PEM output goes to stdout when --out is '-', or is omitted where it is optional.
 `)
 }
 
@@ -7127,6 +7209,14 @@ func stringFlags(args []string, name string) []string {
 // so there is no defensible interleaving, and silently choosing one would produce a
 // wrong signature rather than an error.
 func multiValueFlags(args []string, cmd, plural, singular string) []string {
+	// TODO #381: a list flag given with no value is refused as such, not
+	// reported later as the list being absent.
+	for i, a := range args {
+		if (a == plural || a == singular) && (i+1 == len(args) || strings.HasPrefix(args[i+1], "--")) {
+			fmt.Fprintf(os.Stderr, "%s: %s needs a value\n", cmd, a)
+			os.Exit(2)
+		}
+	}
 	p := stringFlags(args, plural)
 	sg := stringFlags(args, singular)
 	if len(p) > 0 && len(sg) > 0 {
@@ -7145,7 +7235,7 @@ func cmdThresholdCommit(args []string) {
 	key     := fs.String("key", "", "hpks or hpks-nl private key PEM")
 	commitOut := fs.String("commit-out", "", "Output commitment PEM")
 	nonceOut  := fs.String("nonce-out",  "", "Output nonce PEM")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("threshold-commit", fs) // TODO #366
 	if *key == "" || *commitOut == "" || *nonceOut == "" {
 		fmt.Fprintln(os.Stderr, "threshold-commit: --key, --commit-out, --nonce-out required")
@@ -7171,7 +7261,7 @@ func cmdThresholdAggregate(args []string) {
 	in     := fs.String("in", "-", "Message input file")
 	out    := fs.String("out", "-", "Output aggregate PEM")
 	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
-	fs.Parse(filterMultiFlags(args, "--commits", "--commit"))
+	parseArgs(fs, filterMultiFlags(args, "--commits", "--commit"))
 	digestValue("threshold-aggregate", digest)
 	if len(commitPaths) == 0 {
 		fmt.Fprintln(os.Stderr, "threshold-aggregate: --commits (or --commit) is required")
@@ -7249,7 +7339,7 @@ func cmdThresholdRespond(args []string) {
 	aggregate := fs.String("aggregate", "", "Aggregate PEM from coordinator")
 	nonce     := fs.String("nonce", "", "Nonce PEM from threshold-commit")
 	out       := fs.String("out", "-", "Output partial signature PEM")
-	fs.Parse(rest)
+	parseArgs(fs, rest)
 	checkKeyLabels("threshold-respond", fs) // TODO #366
 	if *key == "" || *aggregate == "" || *nonce == "" {
 		fmt.Fprintln(os.Stderr, "threshold-respond: --key, --aggregate, --nonce required")
@@ -7328,7 +7418,7 @@ func cmdThresholdCombine(args []string) {
 	fs        := flag.NewFlagSet("threshold-combine", flag.ExitOnError)
 	aggregate := fs.String("aggregate", "", "Aggregate PEM")
 	out       := fs.String("out", "-", "Output HPKST SIGNATURE PEM")
-	fs.Parse(rest)
+	parseArgs(fs, rest)
 	if *aggregate == "" {
 		fmt.Fprintln(os.Stderr, "threshold-combine: --aggregate required")
 		os.Exit(1)
@@ -7372,7 +7462,7 @@ func cmdThresholdVerify(args []string) {
 	in     := fs.String("in", "-", "Message input file")
 	sig    := fs.String("sig", "", "HPKST SIGNATURE PEM file")
 	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	digestValue("threshold-verify", digest)
 	if *sig == "" {
 		fmt.Fprintln(os.Stderr, "threshold-verify: --sig required")

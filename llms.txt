@@ -180,6 +180,15 @@ output), every --rounds and --min-rounds 1..4096 (what every verifier accepts), 
 --sector 0..2^64-1 and --bidx 0..2^32-1.  An explicit value is never read as the
 default: sign --rounds 0 is refused, not signed at 219.  (genpkey --bits: TODO #379.)
 
+One rule for the shape of a command line, in all four CLIs (TODO #381): --flag=value
+is --flag value, and a boolean flag (--aead --decrypt --encrypt --hex --pubout --text
+--v3) refuses a value; a value-taking flag at the end of the line, or followed by another
+of its subcommand's flags, fails "<cmd>: <flag> needs a value"; a word that is neither a
+flag nor a flag's value fails "<cmd>: unexpected argument '<w>'"; --in naming a directory
+fails "Is a directory".  A flag Python's argparse requires is required in every CLI (Go
+used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spelled "-".
+(Python's own refusals keep argparse's wording.)
+
   genpkey --algo <ID> [--bits N] [--xmss-height N] [--passphrase P [--kdf-iterations N]] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,
              hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss, hpks-wots, hcred
