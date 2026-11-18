@@ -622,6 +622,196 @@ Status: **OPEN**
 
 ---
 
+### #375: `twk --bidx` / `--sector` alias tweaks: C and Go wrap the block index mod 2^32 (MAJOR)
+
+Found by the v15.0.0 CLI audit.  `twk`'s security rests on a unique tweak per
+(sector, block index), and the CLIs do not agree on which (sector, index) a command line
+names.
+
+**The finding.**  The block index is a 32-bit tweak field.  C reads it with
+`(uint32_t)strtoul(s, NULL, 10)` and Go with `fs.Uint` then `uint32(*bidx)`, so
+`--bidx 4294967296` encrypts with exactly the tweak of `--bidx 0` (same ciphertext for the
+same block, measured), and `--bidx 9223372036854775808` does too.  C also reads `abc`, `1e3`
+and `-1` without an end-pointer check (`abc` -> 0, another alias of block 0).  C's
+`--sector` uses `strtoull` the same way, so `-1` and `18446744073709551616` both
+silently become 2^64 - 1.  Java parses `--bidx` as a signed `int` and `--sector` as a
+signed `long`, so it REFUSES valid indices 2^31 .. 2^32 - 1 and sectors >= 2^63, and
+accepts `-1` (read as 2^32 - 1).  Python accepts any int and dies with an
+`OverflowError` traceback at >= 2^32 or below 0.
+
+**Work.**  In all four CLIs: decimal digits only, `--bidx` in [0, 2^32 - 1], `--sector`
+in [0, 2^64 - 1], anything else refused by name before any key is read.  A matrix test
+(`CliTest/`) over 0, 2^31, 2^32 - 1, 2^32, 2^64 - 1, 2^64, -1, `abc`, `+1`, `0x10`, with an
+accept-control, asserting byte-identical output where accepted.  MAJOR: it changes what an
+existing subcommand accepts; it needs a `MIGRATING.md` entry.  A caller who relied on the
+wrap has ciphertexts under an aliased tweak and should re-encrypt.
+
+Status: **OPEN**
+
+---
+
+### #376: empty or missing secrets: `--passphrase ''` writes a cleartext key; PAKE accepts no password (MAJOR)
+
+Found by the v15.0.0 CLI audit.
+
+**The finding.**
+- `genpkey --passphrase ''`: Python and Go test the passphrase for truthiness, so an empty
+  one writes an UNENCRYPTED `HERRADURA HPKS PRIVATE KEY` and exits 0 -- the caller asked
+  for encryption and got none.  C and Java encrypt under the empty passphrase, and
+  Python and Go then cannot decrypt those keys (`pkey --decrypt --passphrase ''`).
+- `genpkey --kdf-iterations N` without `--passphrase`: Python and Go accept and ignore
+  it; C and Java refuse.
+- `pake-register` with `--password` omitted: C and Go write a record (under an empty
+  password) and exit 0; Java refuses ("--password required"); Python prompts, and with
+  no TTY dies with an `EOFError` traceback.  With `--password ''`, C, Go and Java write a
+  record; Python reads `''` as omitted and prompts.  `pake-demo --password ''` is
+  accepted by all four.
+
+**Work.**  Refuse an empty `--passphrase` and an empty or missing `--password` by name in
+all four (Python may keep its prompt when stdin is a TTY, but must not crash, and must
+treat `''` as given).  `--kdf-iterations` without `--passphrase` refused in all four.
+A CliTest matrix with accept-controls.  MAJOR (what existing subcommands accept);
+`MIGRATING.md` entry.
+
+Status: **OPEN**
+
+---
+
+### #377: `fpe` / `twk` drop input past 32 bytes, and Go pads short input differently
+
+Found by the v15.0.0 CLI audit.  Both map one 32-byte block (SECURITY.md: "it maps 32
+bytes to 32 bytes, zero-pads shorter input").
+
+**The finding.**
+- Any input longer than 32 bytes is cut to its first 32, written as 32 bytes, exit 0, in
+  all four CLIs: a 64-byte `twk --encrypt` loses half the data and nothing round-trips.
+- Shorter input: Python, C and Java pad on the RIGHT (`ljust`); Go builds the block with
+  `big.Int.SetBytes`, which pads on the LEFT.  So `fpe` and `twk` on any input that is not
+  exactly 32 bytes give different ciphertext in Go than in the other three (measured at
+  1, 11, 31, 33, 47 and 64 bytes for both).  The 32-byte matrices never see it.
+- `--encrypt --decrypt` together: C and Go accept and encrypt; Python and Java refuse.
+
+**Work.**  Decide: refuse any input that is not exactly 32 bytes (simplest; makes the
+padding question moot), or keep zero-padding short input and refuse only > 32.  Either
+way bring Go to the others' byte order for whatever is kept, refuse both mode flags at
+once in C and Go, and add lengths 0, 1, 31, 33 and 64 to a cross-CLI test.  Refusing
+inputs that used to be accepted is MAJOR; a Go-only padding fix changes Go's ciphertexts
+for short inputs and needs a `MIGRATING.md` note either way.
+
+Status: **OPEN**
+
+---
+
+### #378: single-block `enc` truncates past 32 bytes; `--ad` / `--aead` ignored where unsupported (MAJOR)
+
+Found by the v15.0.0 CLI audit.  The truncation was first noted under #365's "Out of
+scope, related" and left to be filed.
+
+**The finding.**
+- `enc --algo hske | hske-nla1 | hske-nla2 | hpke` (and by the same code path `hske-nla3`,
+  `hpke-nl`, `hpke-nl3`) on a 64-byte input writes a ciphertext of the first 32 bytes and
+  exits 0, in all four CLIs; `dec` returns 32 bytes.  The TUTORIAL says the message "is
+  exactly 32 bytes", and points to `hske-duplex` for any length, but the CLIs never say so.
+- `enc --algo hske --ad X` produces byte-for-byte the ciphertext of no `--ad` in all four:
+  the associated data the caller asked to bind is dropped silently.  `dec --algo hske --ad X`
+  is accepted too.  The only `--ad` check is in the `hske-nla1` non-AEAD branch
+  ("--ad requires --aead").  `--aead` on `hske` / `hpke` is likewise accepted and ignored.
+
+**Work.**  Refuse input over 32 bytes on the single-block algorithms by name (pointing to
+`hske-duplex` / `encfile`); refuse `--ad` and `--aead` on every algorithm that does not
+use them, at `enc` and `dec`.  CliTest cases with accept-controls.  MAJOR (what existing
+`--algo` values accept); `MIGRATING.md` entry.
+
+Status: **OPEN**
+
+---
+
+### #379: `genpkey --bits` outside hpks-zkp-nl: Go panics, Python tracebacks, Java ignores it
+
+Found by the v15.0.0 CLI audit.  `cli_surface_gaps` says "Where --bits exists, an explicit
+value is honoured or refused by name"; outside `hpks-zkp-nl` that is not true.
+
+**The finding.**  Measured on hkex-rnl, hcred, hpks-stern, hpke-stern, oprf, hpks and
+hkex-gf at 0, 7, 64, 100 and 512:
+- **Go** honours `--bits` unchecked: index-out-of-range PANIC at 0, 7 and 100 (rnl, hcred,
+  stern) and 512 (hcred, stern); `oprf --bits 7` hangs (>120 s); `oprf --bits 64` writes a
+  key its own `pkey --text` reports as n = 256.  The classical algos silently normalise
+  an unlisted width to 256.
+- **Python** honours it unchecked: `IndexError`, `OverflowError` and `BaError: E_WIDTH`
+  tracebacks at 0, 7, 100 and 512 depending on the algo.
+- **Java** ignores it on every algo but hpks-zkp-nl and writes the default width, exit 0.
+- Keys Python and Go do write at 64 bits (hpks, hkex-gf, hpks-stern, hpke-stern, hcred)
+  and at 64 / 512 (hkex-rnl) are refused by C and, except hkex-rnl, by Java.
+- `genpkey --algo hcred --bits 0` in Python: `IndexError`.
+
+**Work.**  Decide per algo which widths are supported (KAT/ pins n = 64 HKEX-RNL vectors
+for Python/Go/Java), refuse every other value by name in all three CLIs that have the
+flag (and refuse the flag on algos with no runtime width), make Java honour or refuse
+rather than ignore, and correct the `cli_surface_gaps` reason.  A CliTest matrix over
+those values with accept-controls.  Refusing previously accepted values is MAJOR.
+
+Status: **OPEN**
+
+---
+
+### #380: numeric flags are not parsed strictly, and `sign --rounds` is unchecked outside C
+
+Found by the v15.0.0 CLI audit.  No CLI has one strict number parser: C mixes `atoi` and
+`strtol`/`strtoul` with no end-pointer check (only its `--min-rounds` helper checks), Go
+uses `flag.Int` (which accepts `0x10`, refuses ` 5`), Java signed `parseInt` /
+`parseLong`, Python argparse `int`.
+
+**The finding.**
+- `rand --bytes abc | '' | 1.5 | 5x | 0x10`: C writes 0 bytes and exits 0; Go reads
+  `0x10` as 16 (so C and Go print different output for one command line); Python and
+  Java refuse.
+- `sign --rounds` (measured on hpks-stern; the nl-zkboo, nl-zkbpp, hpks-ring and
+  `cred-*` sites parse `--rounds` the same way in each CLI and are unmeasured): C refuses outside 1..4096; Python and Go read an explicit `0` as "omitted" and sign
+  at 219 (the bug class #374 fixed for `--bits`); Java writes a zero-round signature every
+  verifier rejects as malformed, exit 0; Go and Java sign 5000 rounds, which every verifier
+  refuses (> 4096); Python crashes on `-1` (`IndexError`) and hangs on 100000.
+- `genpkey --kdf-iterations`: C, Go and Java refuse outside 1..10^8; Python accepts `0` --
+  it writes an encrypted key with PBKDF2 iteration count 0, which only Python will decrypt
+  -- and has no upper bound (99999999999 hangs).
+- `--xmss-height` in C is `atoi` (`abc` is refused only because 0 is out of range).
+
+The verifiers are sound: all four reject 0 rounds and > 4096 rounds.
+
+**Work.**  One strict decimal parser per CLI, range-checked by name, for every numeric
+flag; sign-side `--rounds` held to the verifier's 1..4096 in all four; an explicit value
+never read as the default; Python's `--kdf-iterations` held to 1..10^8.  A matrix test.
+Refusing previously accepted values is MAJOR.
+
+Status: **OPEN**
+
+---
+
+### #381: CLI argument hygiene: C reads a directory as empty input; Java writes a file named `true`
+
+Found by the v15.0.0 CLI audit.  Lower severity, but two of these produce a wrong artifact
+with exit 0.
+
+**The finding.**
+- **C reads a directory as an empty file.**  `sign --in .` signs the empty message, and
+  `enc`, `encfile`, `dgst` and `oprf-blind` with `--in .` all exit 0 (`dgst --in .` prints
+  the empty-input digest).  Python, Go and Java refuse ("is a directory").
+- **A value-taking flag with no value.**  Java's parser stores a trailing `--out` as the
+  string `true`, so `genpkey --algo hpks --out` writes the private key to a file named
+  `true` and exits 0; C ignores the flag and writes to stdout; Python and Go refuse.
+- **Stray positional arguments** are ignored by C and Go (`genpkey --algo hpks extra`);
+  Python refuses; Java folds them into the previous value.
+- **`--flag=value`** works in Python and Go and is refused as an unknown flag by C and Java.
+- **`dgst` with no `--in`** reads stdin in Go and is refused by the other three; `encfile`
+  with no `--out` writes to stdout in Go and is refused by the others.
+
+**Work.**  Refuse non-regular `--in` files in C (fstat after open); refuse a value-taking
+flag with no value and stray positionals in all four; pick one rule for `=` syntax and
+the stdin/stdout defaults, or list the differences in `cli_surface_gaps`.  CliTest cases.
+
+Status: **OPEN**
+
+---
+
 ---
 
 ---
