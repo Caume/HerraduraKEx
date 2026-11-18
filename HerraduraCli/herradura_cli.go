@@ -33,6 +33,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"os"
 	"strconv"
@@ -4907,11 +4908,28 @@ func cmdFpe(args []string) {
 
 // ── twk (78.B) ───────────────────────────────────────────────────────────────
 
+// decUintArg reads a flag value that must be a decimal integer in [0, max]:
+// digits only (no sign, space, 0x or exponent), refused by name otherwise
+// (TODO #375).
+func decUintArg(s string, max uint64, cmd, flagName string) uint64 {
+	ok := s != ""
+	for i := 0; ok && i < len(s); i++ {
+		ok = s[i] >= '0' && s[i] <= '9'
+	}
+	v, err := strconv.ParseUint(s, 10, 64)
+	if !ok || err != nil || v > max {
+		fmt.Fprintf(os.Stderr, "%s: %s must be a decimal integer from 0 to %d, got '%s'\n",
+			cmd, flagName, max, s)
+		os.Exit(1)
+	}
+	return v
+}
+
 func cmdTwk(args []string) {
 	fs      := flag.NewFlagSet("twk", flag.ExitOnError)
 	keyPath := fs.String("key",     "",  "Session key PEM")
-	sector  := fs.Uint64("sector",  0,   "Sector number")
-	bidx    := fs.Uint("bidx",      0,   "Block index within sector")
+	sector  := fs.String("sector",  "0", "Sector number (decimal, 0 to 2^64-1)")
+	bidx    := fs.String("bidx",    "0", "Block index within sector (decimal, 0 to 2^32-1)")
 	in      := fs.String("in",      "-", "Input file (32-byte block)")
 	out     := fs.String("out",     "-", "Output file")
 	doEnc   := fs.Bool("encrypt",   false, "Encrypt")
@@ -4928,6 +4946,11 @@ func cmdTwk(args []string) {
 		fmt.Fprintln(os.Stderr, "twk: --key required")
 		os.Exit(1)
 	}
+	// TODO #375: the tweak is sector_be64 || bidx_be32.  fs.Uint then
+	// uint32(*bidx) wrapped --bidx mod 2^32, so --bidx 4294967296 encrypted
+	// under block 0's tweak; flag.Uint also read 0x10 as 16.
+	sectorV := decUintArg(*sector, math.MaxUint64, "twk", "--sector")
+	bidxV := uint32(decUintArg(*bidx, math.MaxUint32, "twk", "--bidx"))
 	keyBig, keyBits, err := loadKey(*keyPath)
 	if err != nil {
 		die("twk", err)
@@ -4944,13 +4967,13 @@ func cmdTwk(args []string) {
 	var R *BitArray
 	switch {
 	case *doEnc && *v3:
-		R = TwkV3Encrypt(P, K.Bytes(), *sector, uint32(*bidx))
+		R = TwkV3Encrypt(P, K.Bytes(), sectorV, bidxV)
 	case *doEnc:
-		R = TwkEncrypt(P, K.Bytes(), *sector, uint32(*bidx))
+		R = TwkEncrypt(P, K.Bytes(), sectorV, bidxV)
 	case *v3:
-		R = TwkV3Decrypt(P, K.Bytes(), *sector, uint32(*bidx))
+		R = TwkV3Decrypt(P, K.Bytes(), sectorV, bidxV)
 	default:
-		R = TwkDecrypt(P, K.Bytes(), *sector, uint32(*bidx))
+		R = TwkDecrypt(P, K.Bytes(), sectorV, bidxV)
 	}
 	if err := writeBytes(*out, R.Bytes()); err != nil {
 		die("twk", err)

@@ -2052,15 +2052,36 @@ public final class HerraduraCli {
         writeBytes(opt.getOrDefault("out", "-"), r.toBytes());
     }
 
+    /** A flag value that must be a decimal integer from 0 to {@code max}, both
+     *  read as UNSIGNED 64-bit (so -1L is 2^64 - 1): digits only (no sign,
+     *  space, 0x or exponent), refused by name otherwise (TODO #375). */
+    static long decUintArg(String s, long max, String cmd, String flag) {
+        boolean ok = s != null && !s.isEmpty() && s.chars().allMatch(c -> c >= '0' && c <= '9');
+        long v = 0;
+        if (ok) {
+            try { v = Long.parseUnsignedLong(s); } catch (NumberFormatException e) { ok = false; }
+        }
+        if (!ok || Long.compareUnsigned(v, max) > 0)
+            throw new CliError(cmd + ": " + flag + " must be a decimal integer from 0 to "
+                               + Long.toUnsignedString(max) + ", got '" + s + "'");
+        return v;
+    }
+
     private static void cmdTwk(Map<String, String> opt) throws IOException {
         boolean doEnc = opt.containsKey("encrypt");
         boolean doDec = opt.containsKey("decrypt");
         if (doEnc == doDec) throw new CliError("twk: exactly one of --encrypt or --decrypt required");
+        // TODO #375: the tweak is sector_be64 || bidx_be32, both unsigned.  Signed
+        // parseLong / parseInt refused valid sectors >= 2^63 and indices >= 2^31
+        // and accepted -1; the other CLIs wrapped.  The bit patterns below are
+        // the unsigned values, which is what FpeTwk.twkTweak encodes.
+        long sector = opt.containsKey("sector")
+            ? decUintArg(opt.get("sector"), -1L, "twk", "--sector") : 0L;
+        int bidx = opt.containsKey("bidx")
+            ? (int) decUintArg(opt.get("bidx"), 0xFFFFFFFFL, "twk", "--bidx") : 0;
         BitArray key = loadKey(req(opt, "key", "twk"));
         sym256OK(key.size(), "twk", "key");
         byte[] keyBytes = key.toBytes();
-        long sector = opt.containsKey("sector") ? Long.parseLong(opt.get("sector")) : 0L;
-        int bidx = opt.containsKey("bidx") ? Integer.parseInt(opt.get("bidx")) : 0;
         byte[] inBytes = readBytes(req(opt, "in", "twk"));
         BigInteger p = new BigInteger(1, padBlock(inBytes));
         boolean v3 = opt.containsKey("v3");

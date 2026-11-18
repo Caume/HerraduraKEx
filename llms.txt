@@ -247,6 +247,9 @@ HKEX-RNL coefficients and QC-MDPC values in range ("field <i> coefficient <j> is
     rather than an error.  ALL FOUR CLIs, Java included: TODO #260 added Java's
     fpe and twk in v5.3.6, and this line went on saying it shipped neither until
     TODO #269 re-checked it (v6.3.0).
+    twk's --sector is decimal 0..2^64-1 and --bidx decimal 0..2^32-1; every CLI
+    refuses any other value by name rather than wrapping it onto another block's
+    tweak (TODO #375).
   oprf-blind --in FILE --out FILE
   oprf-eval --key FILE --in FILE --out FILE
   oprf-unblind --state FILE --eval FILE --out FILE

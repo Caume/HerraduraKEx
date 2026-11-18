@@ -622,34 +622,6 @@ Status: **OPEN**
 
 ---
 
-### #375: `twk --bidx` / `--sector` alias tweaks: C and Go wrap the block index mod 2^32 (MAJOR)
-
-Found by the v15.0.0 CLI audit.  `twk`'s security rests on a unique tweak per
-(sector, block index), and the CLIs do not agree on which (sector, index) a command line
-names.
-
-**The finding.**  The block index is a 32-bit tweak field.  C reads it with
-`(uint32_t)strtoul(s, NULL, 10)` and Go with `fs.Uint` then `uint32(*bidx)`, so
-`--bidx 4294967296` encrypts with exactly the tweak of `--bidx 0` (same ciphertext for the
-same block, measured), and `--bidx 9223372036854775808` does too.  C also reads `abc`, `1e3`
-and `-1` without an end-pointer check (`abc` -> 0, another alias of block 0).  C's
-`--sector` uses `strtoull` the same way, so `-1` and `18446744073709551616` both
-silently become 2^64 - 1.  Java parses `--bidx` as a signed `int` and `--sector` as a
-signed `long`, so it REFUSES valid indices 2^31 .. 2^32 - 1 and sectors >= 2^63, and
-accepts `-1` (read as 2^32 - 1).  Python accepts any int and dies with an
-`OverflowError` traceback at >= 2^32 or below 0.
-
-**Work.**  In all four CLIs: decimal digits only, `--bidx` in [0, 2^32 - 1], `--sector`
-in [0, 2^64 - 1], anything else refused by name before any key is read.  A matrix test
-(`CliTest/`) over 0, 2^31, 2^32 - 1, 2^32, 2^64 - 1, 2^64, -1, `abc`, `+1`, `0x10`, with an
-accept-control, asserting byte-identical output where accepted.  MAJOR: it changes what an
-existing subcommand accepts; it needs a `MIGRATING.md` entry.  A caller who relied on the
-wrap has ciphertexts under an aliased tweak and should re-encrypt.
-
-Status: **OPEN**
-
----
-
 ### #376: empty or missing secrets: `--passphrase ''` writes a cleartext key; PAKE accepts no password (MAJOR)
 
 Found by the v15.0.0 CLI audit.

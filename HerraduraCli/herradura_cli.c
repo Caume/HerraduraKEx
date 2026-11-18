@@ -301,6 +301,27 @@ static const char *digest_value(const char *cmd, const char *digest)
  * Every signing default meets the floor, so default flags interoperate. */
 #define CLI_MIN_VERIFY_ROUNDS 219   /* == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS */
 
+/* A flag value that must be a decimal integer in [0, max]: digits only (no
+ * sign, space, 0x or exponent), refused by name otherwise (TODO #375). */
+static uint64_t dec_uint_arg(const char *s, uint64_t max, const char *cmd,
+                             const char *flag)
+{
+    uint64_t v = 0;
+    const char *p = s;
+    int ok = *p != '\0';
+    for (; ok && *p; p++) {
+        unsigned d = (unsigned)(*p - '0');
+        if (*p < '0' || *p > '9' || v > (max - d) / 10) ok = 0;
+        else v = v * 10 + d;
+    }
+    if (!ok) {
+        fprintf(stderr, "%s: %s must be a decimal integer from 0 to %llu, got '%s'\n",
+                cmd, flag, (unsigned long long)max, s);
+        exit(1);
+    }
+    return v;
+}
+
 static int rounds_arg(int argc, char **argv, const char *flag, const char *cmd,
                       int deflt)
 {
@@ -4977,8 +4998,11 @@ static void cmd_twk(int argc, char **argv)
     if (!do_enc && !do_dec) die("twk: --encrypt or --decrypt required");
     if (!key_path)   die("twk: --key required");
     if (!in_path)    die("twk: --in required");
-    uint64_t sector = sector_str ? (uint64_t)strtoull(sector_str, NULL, 10) : 0;
-    uint32_t bidx   = bidx_str   ? (uint32_t)strtoul(bidx_str,   NULL, 10) : 0;
+    /* TODO #375: the tweak is sector_be64 || bidx_be32.  strtoull/strtoul with
+     * no end check read "abc" as 0 and a cast wrapped --bidx mod 2^32, so two
+     * command lines naming different blocks encrypted under one tweak. */
+    uint64_t sector = sector_str ? dec_uint_arg(sector_str, UINT64_MAX, "twk", "--sector") : 0;
+    uint32_t bidx   = bidx_str   ? (uint32_t)dec_uint_arg(bidx_str, UINT32_MAX, "twk", "--bidx") : 0;
 
     BitArray K = BA_INIT;
     load_sym_key(&K, key_path, "twk");
@@ -5616,8 +5640,10 @@ static void usage(void)
 "    --v3: use the NL-FSCX v3 round (TODO #255).  Separate subkey domain, so v3\n"
 "    output is not v2 output; decrypt with --v3 too.\n"
 "\n"
-"  twk (--encrypt|--decrypt) --key SK --in FILE\n"
+"  twk (--encrypt|--decrypt) --key SK [--sector N] [--bidx N] --in FILE\n"
 "    Tweakable wide-block cipher (78.B).  Unique tweak per (sector, block-index).\n"
+"    --sector: decimal 0..2^64-1, --bidx: decimal 0..2^32-1 (default 0 each);\n"
+"    any other value is refused, never wrapped.\n"
 "    Key: HERRADURA SESSION KEY PEM.\n"
 "    --v3: use the NL-FSCX v3 round (TODO #255), as for fpe.\n"
 "\n"

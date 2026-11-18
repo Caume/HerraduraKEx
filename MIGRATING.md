@@ -1988,3 +1988,32 @@ already on disk are unchanged and still load wherever they did.
 
 **Why this is MAJOR.** It changes what an existing `--algo` produces, the 2.0.0 surface.
 It ships inside 15.0.0 so there is one migration.
+
+## 37. `twk --bidx` and `--sector` refuse values outside their fields (v16.0.0)
+
+**Who is affected:** a script that passes `twk` a `--bidx` of 2^32 or more, a `--sector`
+of 2^64 or more, or a value that is not plain decimal digits (`-1`, `+1`, `0x10`, `1e3`,
+`abc`, a value with spaces). Also Java users with a block index from 2^31 to 2^32 - 1 or a
+sector of 2^63 or more, which Java used to refuse.
+
+**What changed (TODO #375).** The tweak is `sector_be64 || bidx_be32`. C and Go wrapped
+`--bidx` mod 2^32, so `--bidx 4294967296` encrypted under exactly the tweak of
+`--bidx 0`: two blocks the caller numbered differently shared a tweak, and equal
+plaintexts gave equal ciphertexts. C also read `abc` as 0 and `-1` as the largest
+value. Java parsed both flags as signed and refused valid indices. Python crashed with
+an `OverflowError` traceback. Now all four accept decimal digits only, `--bidx` from 0 to
+2^32 - 1 and `--sector` from 0 to 2^64 - 1, and refuse anything else before reading the key:
+
+```
+twk: --bidx must be a decimal integer from 0 to 4294967295, got '4294967296'
+```
+
+Every in-range value gives the same ciphertext as before, in every CLI that accepted it.
+
+**What to do.** Pass the block index your scheme means, in range. If a script relied on
+the wrap (for example a counter that ran past 2^32 - 1), the blocks it wrote past the
+wrap share tweaks with earlier blocks. Decrypt them with the old build and re-encrypt
+under distinct (sector, bidx) pairs, for instance by moving to the next sector.
+
+**Why this is MAJOR.** It refuses input an existing subcommand accepted, the 2.0.0
+surface.

@@ -2,6 +2,35 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [16.0.0] - 2026-11-17
+
+**MAJOR: `twk` stops aliasing tweaks (TODO #375).** The v15.0.0 CLI audit (TODO #375-#381)
+found that C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one
+tweak. All four CLIs now refuse a `--bidx` or `--sector` outside its field. See
+MIGRATING.md section 37.
+
+### TODO #375 — `twk --bidx` / `--sector` name exactly one tweak
+
+- **The defect.** The tweak is `sector_be64 || bidx_be32`. C read `--bidx` with
+  `(uint32_t)strtoul(s, NULL, 10)` and Go with `flag.Uint` then `uint32()`. So
+  `--bidx 4294967296` and `--bidx 9223372036854775808` encrypted under block 0's tweak,
+  measured as byte-identical ciphertext. C, with no end-pointer check, also read `abc`
+  as 0 and `-1` as the maximum, and its `--sector` did the same. Go read `0x10` as 16.
+  Java parsed both flags as signed (`parseInt`, `parseLong`), refusing valid indices from
+  2^31 and sectors from 2^63. Python took any int and crashed with an `OverflowError`
+  traceback outside the field.
+- **The fix.** One strict parser per CLI: C `dec_uint_arg`, Go `decUintArg`, Java
+  `decUintArg` (unsigned, with the same bit pattern `FpeTwk.twkTweak` encodes), Python
+  `_dec_uint_arg`. It takes decimal digits only (no sign, space, `0x`, `_` or exponent),
+  `--bidx` 0..2^32 - 1 and `--sector` 0..2^64 - 1. Anything else is refused by name
+  before the key is read. In-range values encrypt exactly as before.
+- **Test.** New `CliTest/test_twk_tweak_range.sh` (native-interop). It checks nine
+  (sector, bidx) pairs at the field edges in all four CLIs: byte-identical ciphertext,
+  a decrypt that round-trips, no two pairs sharing a ciphertext, and `007` read as 7.
+  Then 13 bad values per flag, each refused by name with no output written.
+  153 PASS on this build; 109 FAIL on the v15.0.0 build.
+- **Docs.** C's `twk` help note and llms.txt state the ranges; MIGRATING §37.
+
 ## [15.0.0] - 2026-11-12
 
 **MAJOR: security fixes in seven parts.** All seven change what an existing `--algo`

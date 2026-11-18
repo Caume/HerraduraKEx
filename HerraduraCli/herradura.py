@@ -4042,7 +4042,20 @@ def cmd_fpe(args):
 # Sub-command: twk (78.B)
 # ---------------------------------------------------------------------------
 
+def _dec_uint_arg(s, max_v, cmd, flag):
+    """A flag value that must be a decimal integer in [0, max_v]: digits only
+    (no sign, space, 0x, underscore or exponent), refused by name otherwise
+    (TODO #375).  int() alone would take ' 1', '+1' and '1_0'."""
+    if not s or not all('0' <= c <= '9' for c in s) or int(s) > max_v:
+        sys.exit(f"{cmd}: {flag} must be a decimal integer from 0 to {max_v}, got '{s}'")
+    return int(s)
+
+
 def cmd_twk(args):
+    # TODO #375: the tweak is sector_be64 || bidx_be32.  argparse int took
+    # -1 and 2^32 here and the suite then died with an OverflowError traceback.
+    sector = _dec_uint_arg(args.sector, 2**64 - 1, 'twk', '--sector')
+    bidx = _dec_uint_arg(args.bidx, 2**32 - 1, 'twk', '--bidx')
     key_int, nbits = _load_key(args.key)
     _sym256_ok(nbits, 'twk')
     key_bytes = _fit(key_int, nbits // 8, 'key', 'pem')
@@ -4052,11 +4065,11 @@ def cmd_twk(args):
     P = BitArray(KEYBITS, int.from_bytes(in_bytes[:32], 'big'))
     v3 = getattr(args, 'v3', False)
     if args.encrypt:
-        R = twk_v3_encrypt(P, key_bytes, args.sector, args.bidx) if v3 else \
-            twk_encrypt(P, key_bytes, args.sector, args.bidx)
+        R = twk_v3_encrypt(P, key_bytes, sector, bidx) if v3 else \
+            twk_encrypt(P, key_bytes, sector, bidx)
     else:
-        R = twk_v3_decrypt(P, key_bytes, args.sector, args.bidx) if v3 else \
-            twk_decrypt(P, key_bytes, args.sector, args.bidx)
+        R = twk_v3_decrypt(P, key_bytes, sector, bidx) if v3 else \
+            twk_decrypt(P, key_bytes, sector, bidx)
     out_bytes = R.uint.to_bytes(KEYBITS // 8, 'big')
     if args.out == '-':
         sys.stdout.buffer.write(out_bytes)
@@ -4548,10 +4561,10 @@ def build_parser():
                         help='Tweakable wide-block encrypt/decrypt a 256-bit block (78.B)')
     tw.add_argument('--key',    required=True,
                     help='256-bit session key: a SESSION KEY PEM or a 0x hex file')
-    tw.add_argument('--sector', type=int, default=0,
-                    help='Sector number (default 0)')
-    tw.add_argument('--bidx',   type=int, default=0,
-                    help='Block index within sector (default 0)')
+    tw.add_argument('--sector', default='0',
+                    help='Sector number, decimal 0 to 2^64-1 (default 0)')
+    tw.add_argument('--bidx',   default='0',
+                    help='Block index within sector, decimal 0 to 2^32-1 (default 0)')
     tw.add_argument('--in',    required=True, dest='in',
                     help='Input file (32 bytes)')
     tw.add_argument('--out',   default='-',
