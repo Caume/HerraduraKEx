@@ -234,6 +234,11 @@ static int hkx_multi_flag(const char *a)
 /* Split each `--name=value` whose --name is a flag of cmd into two tokens.
  * Returns a new argv (argc updated); the strings are never freed -- they live
  * for the whole run, as argv does. */
+/* The rewritten argv lives for the whole run.  Held in a file-scope static so it stays
+ * reachable after main returns: LeakSanitizer otherwise reports it (and the flag names
+ * it points to) as leaked, which fails the sanitizers CI job. */
+static char **hkx_split_argv;
+
 static char **split_eq_args(const char *cmd, int *argc_io, char **argv)
 {
     const HkxFlagSet *set = NULL;
@@ -243,6 +248,7 @@ static char **split_eq_args(const char *cmd, int *argc_io, char **argv)
     if (!set) return argv;
     char **out = malloc(sizeof(char *) * (size_t)(2 * argc + 1));
     if (!out) die("out of memory");
+    hkx_split_argv = out;
     int n = 0;
     for (int i = 0; i < argc; i++) {
         const char *a = argv[i];
