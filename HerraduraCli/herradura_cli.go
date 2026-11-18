@@ -2740,6 +2740,36 @@ func nla1SameWidth(keyN, ctN int, ctx string) {
 }
 
 // msgPad returns inBytes truncated/zero-padded to exactly nbytes.
+// aeadFlagsOK refuses --aead / --ad on an --algo that would ignore them
+// (TODO #378).  --aead means something only to hske-nla1, --ad only to
+// hske-duplex, hske-duplex3 and hske-nla1; anywhere else the flag was dropped
+// without a word.  Presence is what counts: `--ad ''` is a flag given.
+func aeadFlagsOK(cmd, algo string, adSet, aeadSet bool) {
+	if aeadSet && algo != "hske-nla1" {
+		fmt.Fprintf(os.Stderr, "%s: --aead is only for --algo hske-nla1, not '%s'\n", cmd, algo)
+		os.Exit(1)
+	}
+	if adSet && algo != "hske-duplex" && algo != "hske-duplex3" && algo != "hske-nla1" {
+		fmt.Fprintf(os.Stderr, "%s: --ad is only for --algo hske-duplex, hske-duplex3 "+
+			"or hske-nla1, not '%s'\n", cmd, algo)
+		os.Exit(1)
+	}
+}
+
+// oneBlockOK refuses input longer than the one block a single-block --algo
+// encrypts (TODO #378); it used to be cut to its first block with exit 0.
+func oneBlockOK(algo string, inLen, nbytes int) {
+	if inLen > nbytes {
+		hint := "for longer input, encrypt a key with it and the message with --algo hske-duplex"
+		if strings.HasPrefix(algo, "hske") {
+			hint = "use --algo hske-duplex or encfile for longer input"
+		}
+		fmt.Fprintf(os.Stderr, "enc: --algo %s encrypts one %d-byte block; --in is %d bytes (%s)\n",
+			algo, nbytes, inLen, hint)
+		os.Exit(1)
+	}
+}
+
 func msgPad(inBytes []byte, nbytes int) []byte {
 	out := make([]byte, nbytes)
 	copy(out, inBytes)
@@ -3586,7 +3616,7 @@ func cmdEnc(args []string) {
 	in     := fs.String("in", "-", "Plaintext input file")
 	out    := fs.String("out", "-", "Ciphertext output PEM file")
 	aead   := fs.Bool("aead", false, "HSKE-NL-AEAD authenticated encryption (hske-nla1 only)")
-	ad     := fs.String("ad", "", "Associated data bound into the AEAD tag (requires --aead)")
+	ad     := fs.String("ad", "", "Associated data bound into the AEAD tag (hske-duplex, hske-duplex3, or hske-nla1 with --aead; refused elsewhere)")
 	fs.Parse(args)
 	checkKeyLabels("enc", fs) // TODO #366
 
@@ -3594,6 +3624,7 @@ func cmdEnc(args []string) {
 		fmt.Fprintln(os.Stderr, "enc: --algo required")
 		os.Exit(1)
 	}
+	aeadFlagsOK("enc", *algo, isSet(fs, "ad"), isSet(fs, "aead"))
 
 	inBytes, err := readFile(*in)
 	if err != nil {
@@ -3646,6 +3677,7 @@ func cmdEnc(args []string) {
 			sym256OK(n, "enc "+*algo, "key")
 		}
 		nb := n / 8
+		oneBlockOK(*algo, len(inBytes), nb)
 		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
 		K := NewBitArray(n, keyInt)
 
@@ -3667,7 +3699,7 @@ func cmdEnc(args []string) {
 					nonce.BigInt(), new(big.Int).SetBytes(authTag))
 				break
 			}
-			if *ad != "" {
+			if isSet(fs, "ad") {
 				fmt.Fprintln(os.Stderr, "enc: --ad requires --aead")
 				os.Exit(1)
 			}
@@ -3707,6 +3739,7 @@ func cmdEnc(args []string) {
 			die("enc", errors.New("public key is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
 		}
 		nb := n / 8
+		oneBlockOK(*algo, len(inBytes), nb)
 		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
 		// r is ours to choose, so for hpke-nl resample past the ~2^-96 short-arc
 		// weak-key class (TODO #168, #354) rather than failing an honest encryption.
@@ -3760,6 +3793,7 @@ func cmdEnc(args []string) {
 		n    := sternWireN(theirInts[2], "enc")
 		seed := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
 		nb   := n / 8
+		oneBlockOK(*algo, len(inBytes), nb)
 		P    := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
 		K, ctSyn, ePrime := HpkeSternFEncap(seed, n)
 		E := FscxRevolve(P, K, n/4)
@@ -3781,6 +3815,7 @@ func cmdEnc(args []string) {
 			die("enc", err)
 		}
 		hPub := decodeKemPub(theirInts)
+		oneBlockOK(*algo, len(inBytes), 32)
 		P := NewBitArray(256, new(big.Int).SetBytes(msgPad(inBytes, 32)))
 		syn, K := QcMdpcEncap(hPub, nil)
 		Kba := NewBitArray(256, new(big.Int).SetBytes(K))
@@ -3807,7 +3842,7 @@ func cmdDec(args []string) {
 	key  := fs.String("key", "", "Key or private key file")
 	in   := fs.String("in", "-", "Ciphertext PEM input file")
 	out  := fs.String("out", "-", "Plaintext output file")
-	ad   := fs.String("ad", "", "Associated data for AEAD ciphertexts (must match enc --ad)")
+	ad   := fs.String("ad", "", "Associated data for AEAD ciphertexts (must match enc --ad; refused on algos without AEAD)")
 	fs.Parse(args)
 	checkKeyLabels("dec", fs) // TODO #366
 
@@ -3815,6 +3850,7 @@ func cmdDec(args []string) {
 		fmt.Fprintln(os.Stderr, "dec: --algo required")
 		os.Exit(1)
 	}
+	aeadFlagsOK("dec", *algo, isSet(fs, "ad"), false)
 
 	switch *algo {
 	case "hske-duplex", "hske-duplex3":
@@ -3961,6 +3997,12 @@ func cmdDec(args []string) {
 		case "hske":
 			D = FscxRevolve(E, K, 3*n/4)
 		case "hske-nla1":
+			// TODO #378: format tag 1 has no tag to bind associated data to.
+			if isSet(fs, "ad") {
+				fmt.Fprintln(os.Stderr, "dec: --ad given, but this hske-nla1 ciphertext "+
+					"is not an AEAD one (it has no tag to bind it to)")
+				os.Exit(1)
+			}
 			if nonceInt == nil {
 				fmt.Fprintln(os.Stderr, "dec: hske-nla1 ciphertext missing nonce")
 				os.Exit(1)

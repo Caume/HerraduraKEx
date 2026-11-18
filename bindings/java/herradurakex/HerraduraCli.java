@@ -1083,6 +1083,7 @@ public final class HerraduraCli {
         String algo = req(opt, "algo", "enc");
         byte[] inBytes = readBytes(req(opt, "in", "enc"));
         String out = req(opt, "out", "enc");
+        aeadFlagsOK("enc", algo, opt);
 
         if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
             boolean v3 = algo.equals("hske-duplex3");
@@ -1099,6 +1100,7 @@ public final class HerraduraCli {
             int nbits = key.size();
             sym256OK(nbits, "enc hske", "key");
             int nbytes = nbits / 8;
+            oneBlockOK(algo, inBytes.length, nbytes);
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), nbits);
             BitArray e = Herradura.hskeEncrypt(p, key);
             writeString(out, encodeSymCt(e.toBigInteger(), nbits));
@@ -1106,6 +1108,7 @@ public final class HerraduraCli {
             BitArray key = loadKey(req(opt, "key", "enc"));
             int nbits = key.size();
             int nbytes = nbits / 8;
+            oneBlockOK(algo, inBytes.length, nbytes);
             byte[] block = padTrunc(inBytes, nbytes);
             BitArray nonce = BitArray.random(nbits, RNG);
             if (opt.containsKey("aead")) {
@@ -1118,7 +1121,7 @@ public final class HerraduraCli {
                                                  new BigInteger(1, c.tag), nbits));
             } else {
                 if (opt.containsKey("ad")) {
-                    throw new CliError("enc hske-nla1: --ad requires --aead");
+                    throw new CliError("enc: --ad requires --aead");
                 }
                 nla1WidthOK(nbits, "enc", "key");
                 BitArray p = BitArray.fromBytes(block, nbits);
@@ -1133,6 +1136,7 @@ public final class HerraduraCli {
                 throw new CliError("enc hske-nla2: NL-FSCX v2 weak key (delta(K) has a cyclic arc of at most n/4 bits; TODO #354)");
             }
             int nbytes = nbits / 8;
+            oneBlockOK(algo, inBytes.length, nbytes);
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), nbits);
             BitArray e = HerraduraNl.hskeNlA2Encrypt(p, key);
             writeString(out, encodeSymCt(e.toBigInteger(), nbits));
@@ -1141,6 +1145,7 @@ public final class HerraduraCli {
             BitArray key = loadKey(req(opt, "key", "enc"));
             int nbits = key.size();
             sym256OK(nbits, "enc hske-nla3", "key");
+            oneBlockOK(algo, inBytes.length, nbits / 8);
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbits / 8), nbits);
             writeString(out, encodeSymCt(HerraduraNl.hskeNlA3Encrypt(p, key).toBigInteger(), nbits));
         } else if (algo.equals("hpke")) {
@@ -1149,6 +1154,7 @@ public final class HerraduraCli {
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             int nbytes = pub.nbits / 8;
+            oneBlockOK(algo, inBytes.length, nbytes);
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), pub.nbits);
             gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = Herradura.hpkeEncrypt(p, BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
@@ -1160,6 +1166,7 @@ public final class HerraduraCli {
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             int nbytes = pub.nbits / 8;
+            oneBlockOK(algo, inBytes.length, nbytes);
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), pub.nbits);
             gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = HerraduraNl.hpkeNlEncrypt(p, BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
@@ -1169,6 +1176,7 @@ public final class HerraduraCli {
             String pubPem = readString(req(opt, "pubkey", "enc"));
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
+            oneBlockOK(algo, inBytes.length, pub.nbits / 8);
             BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
             gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(BitArray.fromBytes(padTrunc(inBytes, pub.nbits / 8), pub.nbits), BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
@@ -1179,6 +1187,7 @@ public final class HerraduraCli {
             String pubPem = readString(req(opt, "pubkey", "enc"));
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.SternPubKey pub = Codec.decodeSternPubKey(pubPem, pubBlock.label);
+            oneBlockOK(algo, inBytes.length, pub.nbits / 8);
             BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
             Stern.SternEncapResult enc = Stern.hpkeSternFEncapWithE(pub.seed, RNG);
             BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, Herradura.N), BitArray.fromBigInteger(enc.k, Herradura.N), Herradura.I_STEPS);
@@ -1190,6 +1199,7 @@ public final class HerraduraCli {
                 throw new CliError("enc hpke-stern-kem: --pubkey must be an HPKE-STERN-KEM PUBLIC KEY, got " + pubBlock.label);
             }
             Codec.KemPubKey pub = Codec.decodeKemPubKey(pubPem);
+            oneBlockOK(algo, inBytes.length, Herradura.N / 8);
             BigInteger p = new BigInteger(1, padTrunc(inBytes, Herradura.N / 8));
             Stern.QcMdpcEncapResult enc = Stern.qcmdpcEncap(pub.hPub, RNG);
             BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, Herradura.N), BitArray.fromBigInteger(enc.k, Herradura.N), Herradura.I_STEPS);
@@ -1203,6 +1213,7 @@ public final class HerraduraCli {
     private static void cmdDec(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "dec");
         String out = req(opt, "out", "dec");
+        aeadFlagsOK("dec", algo, opt);
 
         if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
             boolean v3 = algo.equals("hske-duplex3");
@@ -1246,6 +1257,11 @@ public final class HerraduraCli {
                 }
                 writeBytes(out, pt);
             } else {
+                // TODO #378: format tag 1 has no tag to bind associated data to.
+                if (opt.containsKey("ad")) {
+                    throw new CliError("dec: --ad given, but this hske-nla1 ciphertext "
+                        + "is not an AEAD one (it has no tag to bind it to)");
+                }
                 // No --aead on dec, in any of the four CLIs: the format tag is
                 // what the artifact IS, so decryption never needs telling.
                 nla1WidthOK(nbits, "dec", "key");
@@ -2514,6 +2530,33 @@ public final class HerraduraCli {
             return Integer.parseInt(s);
         } catch (Exception e) {
             return 0;
+        }
+    }
+
+    /** Refuses --aead / --ad on an --algo that would ignore them (TODO #378).
+     * --aead means something only to hske-nla1, --ad only to hske-duplex,
+     * hske-duplex3 and hske-nla1; anywhere else the flag was dropped without a
+     * word.  Presence is what counts: {@code --ad ''} is a flag given. */
+    private static void aeadFlagsOK(String cmd, String algo, Map<String, String> opt) {
+        if (opt.containsKey("aead") && !algo.equals("hske-nla1")) {
+            throw new CliError(cmd + ": --aead is only for --algo hske-nla1, not '" + algo + "'");
+        }
+        if (opt.containsKey("ad") && !algo.equals("hske-duplex") && !algo.equals("hske-duplex3")
+                && !algo.equals("hske-nla1")) {
+            throw new CliError(cmd + ": --ad is only for --algo hske-duplex, hske-duplex3 "
+                + "or hske-nla1, not '" + algo + "'");
+        }
+    }
+
+    /** Refuses input longer than the one block a single-block --algo
+     * encrypts (TODO #378); it used to be cut to its first block, exit 0. */
+    private static void oneBlockOK(String algo, int inLen, int nbytes) {
+        if (inLen > nbytes) {
+            String hint = algo.startsWith("hske")
+                ? "use --algo hske-duplex or encfile for longer input"
+                : "for longer input, encrypt a key with it and the message with --algo hske-duplex";
+            throw new CliError("enc: --algo " + algo + " encrypts one " + nbytes
+                + "-byte block; --in is " + inLen + " bytes (" + hint + ")");
         }
     }
 

@@ -2689,6 +2689,50 @@ static int der_i_byte(uint8_t v, uint8_t *out, size_t *olen)
 { return der_int_enc(&v, 1, out, olen); }
 
 /* Build msg BitArray: first KEYBYTES of data, zero-padded on the right. */
+/* TODO #378.  --aead means something only to hske-nla1, --ad only to
+ * hske-duplex, hske-duplex3 and hske-nla1.  Every other algorithm has nowhere
+ * to put associated data and no tag, so a flag given there was dropped without
+ * a word: `enc --algo hske --ad X` wrote byte-for-byte the ciphertext of no
+ * --ad.  Presence is what counts -- `--ad ''` is a flag given. */
+static int ad_algo(const char *algo)
+{
+    return strcmp(algo, "hske-duplex") == 0 || strcmp(algo, "hske-duplex3") == 0 ||
+           strcmp(algo, "hske-nla1") == 0;
+}
+
+static void aead_flags_ok(const char *cmd, const char *algo, const char *ad, int aead)
+{
+    char msg[160];
+    if (aead && strcmp(algo, "hske-nla1") != 0) {
+        snprintf(msg, sizeof msg, "%s: --aead is only for --algo hske-nla1, not '%s'",
+                 cmd, algo);
+        die(msg);
+    }
+    if (ad && !ad_algo(algo)) {
+        snprintf(msg, sizeof msg, "%s: --ad is only for --algo hske-duplex, "
+                 "hske-duplex3 or hske-nla1, not '%s'", cmd, algo);
+        die(msg);
+    }
+}
+
+/* TODO #378.  A single-block --algo encrypts exactly one block.  Longer input
+ * used to be cut to its first block with exit 0, and `dec` handed back a prefix
+ * of the message; now it is refused before anything is drawn or written. */
+static void one_block_ok(const char *algo, size_t in_len, size_t nbytes)
+{
+    if (in_len > nbytes) {
+        char msg[256];
+        snprintf(msg, sizeof msg,
+                 "enc: --algo %s encrypts one %zu-byte block; --in is %zu bytes (%s)",
+                 algo, nbytes, in_len,
+                 strncmp(algo, "hske", 4) == 0
+                     ? "use --algo hske-duplex or encfile for longer input"
+                     : "for longer input, encrypt a key with it and the message "
+                       "with --algo hske-duplex");
+        die(msg);
+    }
+}
+
 static void make_msg_ba(BitArray *msg, const uint8_t *data, size_t len)
 {
     memset(msg->b, 0, KEYBYTES);
@@ -3154,6 +3198,8 @@ static void cmd_enc(int argc, char **argv)
     const char *out_path   = get_arg(argc, argv, "--out");
     if (!algo)    die("enc: --algo required");
     if (!in_path) die("enc: --in required");
+    aead_flags_ok("enc", algo, get_arg(argc, argv, "--ad"),
+                  has_flag(argc, argv, "--aead"));
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
@@ -3222,6 +3268,9 @@ static void cmd_enc(int argc, char **argv)
             snprintf(what, sizeof what, "enc %s", algo);
             sym256_ok(key_nbits, what, "key");
         }
+        one_block_ok(algo, in_len,
+                     strcmp(algo, "hske-nla1") == 0 && !has_flag(argc, argv, "--aead")
+                         ? (size_t)(key_nbits / 8) : (size_t)KEYBYTES);
 
         if (strcmp(algo, "hske") == 0) {
             BitArray E = BA_INIT;
@@ -3332,6 +3381,7 @@ static void cmd_enc(int argc, char **argv)
         strcmp(algo, "hpke-nl3") == 0) {
         /* vals[0]=pub (32 bytes), vals[1]=n */
         if (pub_k.n_items < 1) die("enc: malformed public key");
+        one_block_ok(algo, in_len, KEYBYTES);
         BitArray pub = BA_INIT, r = BA_INIT, R = BA_INIT, enc_key = BA_INIT, E = BA_INIT;
         ba_from_ra(&pub, pub_k.vals[0], pub_k.vlens[0]);
         pem_key_free(&pub_k);
@@ -3373,6 +3423,7 @@ static void cmd_enc(int argc, char **argv)
     } else if (strcmp(algo, "hpke-stern-kem") == 0) {
         /* QC-MDPC Niederreiter KEM + BGF (TODO #126). Public key: SEQUENCE(h_pub[66], r). */
         if (pub_k.n_items < 2) die("enc: malformed HPKE-Stern-KEM public key");
+        one_block_ok(algo, in_len, KEYBYTES);
         QcMdpcPub pub_kem;
         int i, k;
         {   uint8_t hpb[QCMDPC_RBYTES];
@@ -3419,6 +3470,7 @@ static void cmd_enc(int argc, char **argv)
                         "Do not use for production.\n");
         /* vals[0]=syn32 (32 bytes), vals[1]=seed (32 bytes), vals[2]=n */
         if (pub_k.n_items < 2) die("enc: malformed Stern public key");
+        one_block_ok(algo, in_len, KEYBYTES);
         BitArray seed_ba = BA_INIT, K_ba = BA_INIT, e_p = BA_INIT, E = BA_INIT;
         ba_from_ra(&seed_ba, pub_k.vals[1], pub_k.vlens[1]);
         pem_key_free(&pub_k);
@@ -3462,6 +3514,7 @@ static void cmd_dec(int argc, char **argv)
     const char *out_path = get_arg(argc, argv, "--out");
     if (!algo)    die("dec: --algo required");
     if (!in_path) die("dec: --in required");
+    aead_flags_ok("dec", algo, get_arg(argc, argv, "--ad"), 0);
 
     /* Load ciphertext PEM. */
     PemKey ct;
@@ -3565,6 +3618,10 @@ static void cmd_dec(int argc, char **argv)
                 return;
             }
             if (fmt != 1 || ct.n_items < 4) die("dec: bad hske-nla1 ciphertext");
+            /* TODO #378: format tag 1 has no tag to bind associated data to. */
+            if (get_arg(argc, argv, "--ad"))
+                die("dec: --ad given, but this hske-nla1 ciphertext is not an AEAD "
+                    "one (it has no tag to bind it to)");
             nla1_width_ok(key_nbits, "dec", "key");
             {   /* The ciphertext's own declared width, item[3] of format tag 1.
                    Checked against the KEY's rather than against 256 since TODO

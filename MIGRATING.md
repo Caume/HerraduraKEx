@@ -2106,3 +2106,39 @@ from one seed; split it across reseeds. A 0-iteration envelope that Python wrote
 decrypted only by Python 15.x or earlier; decrypt it there and re-encrypt.
 
 **Why this is MAJOR.** It refuses input existing subcommands accepted, the 2.0.0 surface.
+
+## 40. Single-block `enc` refuses long input; `--ad` / `--aead` only where they are used (v16.0.0)
+
+**Who is affected:** a script that passes `enc` a message longer than one block under a
+single-block `--algo`, or passes `--ad` or `--aead` to an `--algo` that does not use it.
+
+**What changed (TODO #378).** In all four CLIs:
+
+- `enc --algo hske | hske-nla1 | hske-nla2 | hske-nla3 | hpke | hpke-nl | hpke-nl3 |
+  hpke-stern | hpke-stern-kem` encrypts one block (32 bytes; for `hske-nla1` without
+  `--aead`, the key's width). Longer input was cut to its first block with exit 0, and
+  `dec` returned that prefix. It is now refused:
+
+  ```
+  enc: --algo hske encrypts one 32-byte block; --in is 64 bytes (use --algo hske-duplex or encfile for longer input)
+  ```
+
+  Shorter input is still accepted and comes back from `dec` zero-padded to the block, as
+  before.
+- `--ad` is used only by `hske-duplex`, `hske-duplex3` and `hske-nla1 --aead`. Anywhere
+  else it was dropped: `enc --algo hske --ad X` wrote the same ciphertext as no `--ad`.
+  `enc` and `dec` now refuse it (`enc: --ad is only for --algo hske-duplex, hske-duplex3
+  or hske-nla1, not 'hske'`). `dec --algo hske-nla1 --ad X` on a ciphertext written
+  without `--aead` is refused too, since that ciphertext has no tag to bind X to.
+- `--aead` is used only by `hske-nla1`; `enc` now refuses it elsewhere.
+- `--ad ''` counts as given. Python and Go used to treat it as absent, so `enc --algo
+  hske-nla1 --ad ''` without `--aead` was accepted by those two; all four now refuse it.
+
+**What to do.** Encrypt a message of any length with `--algo hske-duplex` (or
+`hske-duplex3`), or a file with `encfile`. With a public-key algorithm, encrypt a 32-byte
+key and the message under that key with `hske-duplex`. Drop `--ad` / `--aead` where the
+algorithm does not use them; if you meant to bind associated data, switch to an algorithm
+that does. Ciphertexts written before this change decrypt as before.
+
+**Why this is MAJOR.** It refuses input existing `--algo` values accepted, the 2.0.0
+surface.

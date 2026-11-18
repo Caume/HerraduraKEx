@@ -25689,3 +25689,45 @@ like the other three.  `genpkey --bits` stays with #379.  `CliTest/test_numeric_
 MIGRATING §39.
 
 Status: **DONE v16.0.0** — every numeric flag is decimal digits in a stated range, parsed by one routine per CLI; sign --rounds is held to 1..4096.
+
+---
+
+### #378: single-block `enc` truncates past 32 bytes; `--ad` / `--aead` ignored where unsupported (MAJOR)
+
+Found by the v15.0.0 CLI audit.  The truncation was first noted under #365's "Out of
+scope, related" and left to be filed.
+
+**The finding.**
+- `enc --algo hske | hske-nla1 | hske-nla2 | hpke` (and by the same code path `hske-nla3`,
+  `hpke-nl`, `hpke-nl3`) on a 64-byte input writes a ciphertext of the first 32 bytes and
+  exits 0, in all four CLIs; `dec` returns 32 bytes.  The TUTORIAL says the message "is
+  exactly 32 bytes", and points to `hske-duplex` for any length, but the CLIs never say so.
+- `enc --algo hske --ad X` produces byte-for-byte the ciphertext of no `--ad` in all four:
+  the associated data the caller asked to bind is dropped silently.  `dec --algo hske --ad X`
+  is accepted too.  The only `--ad` check is in the `hske-nla1` non-AEAD branch
+  ("--ad requires --aead").  `--aead` on `hske` / `hpke` is likewise accepted and ignored.
+
+**Work.**  Refuse input over 32 bytes on the single-block algorithms by name (pointing to
+`hske-duplex` / `encfile`); refuse `--ad` and `--aead` on every algorithm that does not
+use them, at `enc` and `dec`.  CliTest cases with accept-controls.  MAJOR (what existing
+`--algo` values accept); `MIGRATING.md` entry.
+
+**Resolution.**  Each CLI got two checks, named alike in all four (C `aead_flags_ok` /
+`one_block_ok`, Go and Java `aeadFlagsOK` / `oneBlockOK`, Python `_aead_flags_ok` /
+`_one_block_ok`):
+- A single-block `enc` refuses input longer than its block before drawing randomness or
+  writing output: "enc: --algo <a> encrypts one <k>-byte block; --in is <l> bytes (...)",
+  pointing to `hske-duplex` / `encfile`.  The block is 32 bytes, or the key's width for
+  `hske-nla1` without `--aead`.  Shorter input is still zero-padded.
+- `--aead` is refused on any algo but `hske-nla1`.  `--ad` is refused at `enc` and `dec`
+  on any algo but `hske-duplex`, `hske-duplex3` and `hske-nla1`, and at `dec hske-nla1`
+  on a format-1 (non-AEAD) ciphertext.  Presence counts, so `--ad ''` is a flag given:
+  Python and Go used to let `enc --algo hske-nla1 --ad ''` through without `--aead`.
+- Java's "--ad requires --aead" message lost its `hske-nla1` prefix to match the others.
+
+New `CliTest/test_single_block_enc.sh` (native-interop): 432 PASS on the fix, 172 FAIL on
+the TODO #380 build (170 accepted).  MIGRATING.md §40.
+
+Status: **DONE v16.0.0** — single-block `enc` refuses input past its block; `--ad` / `--aead` are refused wherever they were dropped, in all four CLIs.
+
+---

@@ -2631,6 +2631,36 @@ def _load_key(path):
 _SYM_256_ALGOS = ('hske', 'hske-nla2', 'hske-nla3')
 
 
+# TODO #378.  Which --algo values each AEAD flag means anything for.  Every
+# other algorithm has nowhere to put associated data and no tag, so a flag
+# given there would be dropped without a word -- the ciphertext of
+# `enc --algo hske --ad X` was byte-for-byte that of no --ad.
+_AD_ALGOS = ('hske-duplex', 'hske-duplex3', 'hske-nla1')
+
+
+def _aead_flags_ok(cmd, algo, ad, aead=False):
+    """Refuse --aead / --ad on an --algo that would ignore them (TODO #378).
+    Presence is what counts: `--ad ''` is a flag given, not one omitted."""
+    if aead and algo != 'hske-nla1':
+        sys.exit(f"{cmd}: --aead is only for --algo hske-nla1, not '{algo}'")
+    if ad is not None and algo not in _AD_ALGOS:
+        sys.exit(f"{cmd}: --ad is only for --algo hske-duplex, hske-duplex3 "
+                 f"or hske-nla1, not '{algo}'")
+
+
+def _one_block_ok(algo, in_len, nbytes):
+    """Refuse input longer than the one block a single-block --algo encrypts
+    (TODO #378).  The CLIs used to keep the first `nbytes` and drop the rest,
+    exit 0, and let `dec` hand back a prefix of the message."""
+    if in_len > nbytes:
+        hint = ("use --algo hske-duplex or encfile for longer input"
+                if algo.startswith('hske') else
+                "for longer input, encrypt a key with it and the message "
+                "with --algo hske-duplex")
+        sys.exit(f"enc: --algo {algo} encrypts one {nbytes}-byte block; "
+                 f"--in is {in_len} bytes ({hint})")
+
+
 def _sym256_ok(nbits, ctx, what='key'):
     """sys.exit unless *nbits* is 256 (TODO #356)."""
     if nbits != 256:
@@ -3059,6 +3089,7 @@ def cmd_enc(args):
     algo     = args.algo
     in_bytes = _read_file(getattr(args, 'in'))
     out_path = args.out
+    _aead_flags_ok('enc', algo, args.ad, args.aead)
 
     # ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) ──────────────
     if algo in ('hske-duplex', 'hske-duplex3'):
@@ -3088,6 +3119,7 @@ def cmd_enc(args):
         if algo in _SYM_256_ALGOS:
             _sym256_ok(nbits, f"enc {algo}")
         nbytes  = nbits // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         in_padded = in_bytes[:nbytes].ljust(nbytes, b'\x00')
         P = BitArray(nbits, int.from_bytes(in_padded, 'big'))
         K = BitArray(nbits, key_int)
@@ -3108,7 +3140,7 @@ def cmd_enc(args):
                     'hske-nla1', int.from_bytes(ct, 'big'), nbits,
                     nonce_int=N_nonce.uint, tag_int=int.from_bytes(tag, 'big')))
                 return
-            if args.ad:
+            if args.ad is not None:
                 sys.exit("enc: --ad requires --aead")
             _nla1_width_ok(nbits, 'enc')
             E = hske_nla1_encrypt(P, K, N_nonce)
@@ -3138,6 +3170,7 @@ def cmd_enc(args):
         pub_int, nbits = their_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         nbytes  = nbits // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         P       = BitArray(nbits, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
         r       = BitArray.random(nbits)
         R       = BitArray(nbits, gf_pow(GF_GEN, r.uint, poly, nbits))
@@ -3149,6 +3182,7 @@ def cmd_enc(args):
         pub_int, nbits = their_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         nbytes  = nbits // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         P       = BitArray(nbits, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
         # r is ours to choose, so resample past the ~2^-96 short-arc weak-key
         # class (TODO #168, #354) rather than failing an honest encryption.
@@ -3168,6 +3202,7 @@ def cmd_enc(args):
         _v3_width_ok(nbits, 'enc hpke-nl3')
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         nbytes  = nbits // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         P       = BitArray(nbits, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
         # No resampling loop, unlike hpke-nl: v3 has no affine-degenerate key
         # class to sample past (SecurityProofs-8.md §11.34.4).
@@ -3182,6 +3217,7 @@ def cmd_enc(args):
         syn_int, seed_int, n = their_ints
         seed    = BitArray(n, seed_int)
         nbytes  = n // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         P       = BitArray(n, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
         K, ct_syn, e_p = hpke_stern_f_encap_with_e(seed, n)
         E       = fscx_revolve(P, K, n // 4)
@@ -3190,6 +3226,7 @@ def cmd_enc(args):
     elif algo == 'hpke-stern-kem':
         h_pub, r = _decode_kem_pubkey(pubkey_path)
         nbytes = KEYBITS // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         P = BitArray(KEYBITS, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
         syn, K_int = qcmdpc_encap(h_pub)
         K = BitArray(KEYBITS, K_int)
@@ -3207,6 +3244,7 @@ def cmd_enc(args):
 def cmd_dec(args):
     algo     = args.algo
     out_path = args.out
+    _aead_flags_ok('dec', algo, args.ad)
 
     # ── HSKE-NL-V2/V3-Duplex AEAD (arbitrary-length, single-pass) ──────────
     if algo in ('hske-duplex', 'hske-duplex3'):
@@ -3257,6 +3295,10 @@ def cmd_dec(args):
             _write_file(out_path, pt)
             return
 
+        if algo == 'hske-nla1' and args.ad is not None:
+            # TODO #378: format tag 1 has no tag to bind associated data to.
+            sys.exit("dec: --ad given, but this hske-nla1 ciphertext is not "
+                     "an AEAD one (it has no tag to bind it to)")
         if algo == 'hske':
             D = fscx_revolve(E, K, 3 * nbits // 4)
         elif algo == 'hske-nla1':
@@ -4423,7 +4465,8 @@ def build_parser():
     en.add_argument('--aead', action='store_true',
                     help='HSKE-NL-AEAD authenticated encryption (hske-nla1 only)')
     en.add_argument('--ad', default=None,
-                    help='associated data bound into the AEAD tag (requires --aead)')
+                    help='associated data bound into the AEAD tag (hske-duplex, '
+                         'hske-duplex3, or hske-nla1 with --aead; refused elsewhere)')
 
     # dec
     de = sub.add_parser('dec', help='Decrypt')
@@ -4436,7 +4479,8 @@ def build_parser():
     de.add_argument('--in',  required=True, dest='in')
     de.add_argument('--out', required=True)
     de.add_argument('--ad', default=None,
-                    help='associated data for AEAD ciphertexts (must match enc --ad)')
+                    help='associated data for AEAD ciphertexts (must match enc --ad; '
+                         'refused on algos without AEAD)')
 
     # sign
     sg = sub.add_parser('sign', help='Sign a message or generate a ZKP')

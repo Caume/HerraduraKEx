@@ -200,6 +200,12 @@ default: sign --rounds 0 is refused, not signed at 219.  (genpkey --bits: TODO #
                   hpke,hpke-nl,hpke-nl3,hpke-stern,hpke-stern-kem}
            --key|--pubkey FILE --in FILE --out FILE [--aead] [--ad STR]
     --aead/--ad apply to hske-nla1 (and both duplex variants are inherently AEAD).
+    Every other algo encrypts ONE block (32 bytes; hske-nla1 without --aead, the
+    key's width) and refuses longer input with "enc: --algo <a> encrypts one
+    <k>-byte block; --in is <l> bytes (...)"; shorter input comes back zero-padded.
+    --ad is refused at enc and dec on any algo but hske-duplex, hske-duplex3 and
+    hske-nla1, --aead on any but hske-nla1, and dec hske-nla1 --ad on a non-AEAD
+    ciphertext; --ad '' counts as given (TODO #378; they used to be dropped).
     hske-nla1 was 256-BIT ONLY from v9.0.0 (TODO #313) to v9.4.0: below 256 the
     four ports produced four different keystreams and, A1 having no
     authentication tag, dec wrote garbage and exited 0.  Since v9.5.0 (TODO #314

@@ -248,11 +248,14 @@ for e in "${LANGS[@]}"; do
     done
 done
 # 8 digits = 32 bits, through hske-nla1, the one symmetric algo that runs there.
+# The block is the key's 4 bytes, so the message is 4 bytes: since TODO #378 a
+# longer one is refused rather than cut to its first block.
 want32="$(printf 'width matters' | head -c 4)"
+printf '%s' "$want32" > "$TMP/m4.bin"
 for e in "${LANGS[@]}"; do
     rm -f "$TMP/a1.pem"
     # shellcheck disable=SC2086
-    ${CLI[$e]} enc --algo hske-nla1 --key "$TMP/hex32.txt" --in "$MSG" --out "$TMP/a1_$e.pem" \
+    ${CLI[$e]} enc --algo hske-nla1 --key "$TMP/hex32.txt" --in "$TMP/m4.bin" --out "$TMP/a1_$e.pem" \
         >/dev/null 2>&1 || { fail "hex32: $e could not encrypt"; continue; }
     for d in "${LANGS[@]}"; do
         rm -f "$TMP/o.bin"

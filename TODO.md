@@ -647,30 +647,6 @@ Status: **OPEN**
 
 ---
 
-### #378: single-block `enc` truncates past 32 bytes; `--ad` / `--aead` ignored where unsupported (MAJOR)
-
-Found by the v15.0.0 CLI audit.  The truncation was first noted under #365's "Out of
-scope, related" and left to be filed.
-
-**The finding.**
-- `enc --algo hske | hske-nla1 | hske-nla2 | hpke` (and by the same code path `hske-nla3`,
-  `hpke-nl`, `hpke-nl3`) on a 64-byte input writes a ciphertext of the first 32 bytes and
-  exits 0, in all four CLIs; `dec` returns 32 bytes.  The TUTORIAL says the message "is
-  exactly 32 bytes", and points to `hske-duplex` for any length, but the CLIs never say so.
-- `enc --algo hske --ad X` produces byte-for-byte the ciphertext of no `--ad` in all four:
-  the associated data the caller asked to bind is dropped silently.  `dec --algo hske --ad X`
-  is accepted too.  The only `--ad` check is in the `hske-nla1` non-AEAD branch
-  ("--ad requires --aead").  `--aead` on `hske` / `hpke` is likewise accepted and ignored.
-
-**Work.**  Refuse input over 32 bytes on the single-block algorithms by name (pointing to
-`hske-duplex` / `encfile`); refuse `--ad` and `--aead` on every algorithm that does not
-use them, at `enc` and `dec`.  CliTest cases with accept-controls.  MAJOR (what existing
-`--algo` values accept); `MIGRATING.md` entry.
-
-Status: **OPEN**
-
----
-
 ### #379: `genpkey --bits` outside hpks-zkp-nl: Go panics, Python tracebacks, Java ignores it
 
 Found by the v15.0.0 CLI audit.  `cli_surface_gaps` says "Where --bits exists, an explicit

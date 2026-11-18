@@ -79,8 +79,9 @@ $CLI kex --algo hkex-gf --our alice.pem --their bob_pub.pem --out alice_sk.pem
 $CLI kex --algo hkex-gf --our bob.pem   --their alice_pub.pem --out bob_sk.pem
 # alice_sk.pem and bob_sk.pem now hold the same 256-bit session key
 
-# hske encrypts ONE 256-bit block, so the message is exactly 32 bytes (a shorter
-# one comes back zero-padded to 32; use hske-duplex for any length)
+# hske encrypts ONE 256-bit block, so the message is at most 32 bytes (a shorter
+# one comes back zero-padded to 32, a longer one is refused; use hske-duplex for
+# any length)
 echo -n "hello herradura, a 32-byte block" > msg.bin
 $CLI enc --algo hske --key alice_sk.pem --in msg.bin --out ct.pem
 $CLI dec --algo hske --key bob_sk.pem   --in ct.pem  --out recovered.bin

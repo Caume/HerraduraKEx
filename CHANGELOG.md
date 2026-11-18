@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in three parts so
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in four parts so
 far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
@@ -12,6 +12,41 @@ section 37). Python and Go wrote a private key in the clear when given
 is now refused by name in all four (TODO #376, section 38). Every numeric flag now takes
 decimal digits in a stated range, parsed by one routine per CLI; `sign --rounds 0` no
 longer signs at 219 and `rand --bytes abc` no longer writes 0 bytes (TODO #380, section 39).
+A single-block `enc` now refuses input longer than its block instead of encrypting the
+first 32 bytes, and `--ad` / `--aead` are refused wherever they used to be dropped
+(TODO #378, section 40).
+
+### TODO #378 — single-block `enc` refuses long input; `--ad` / `--aead` only where used
+
+- **The defect.** In all four CLIs, `enc --algo hske | hske-nla1 | hske-nla2 | hske-nla3 |
+  hpke | hpke-nl | hpke-nl3 | hpke-stern | hpke-stern-kem` kept the first block of a longer
+  input, dropped the rest and exited 0, and `dec` returned that prefix.
+  `enc --algo hske --ad X` wrote byte-for-byte the ciphertext of no `--ad`, `dec` took
+  `--ad` on any algo, and `--aead` on `hske` / `hpke` was ignored. `dec --algo hske-nla1
+  --ad X` on a non-AEAD ciphertext ignored X. Python and Go read `--ad ''` as no `--ad`,
+  so `enc --algo hske-nla1 --ad ''` passed their "--ad requires --aead" check.
+- **The fix.** Two checks per CLI, named alike (C `aead_flags_ok` / `one_block_ok`, Go
+  `aeadFlagsOK` / `oneBlockOK`, Java `aeadFlagsOK` / `oneBlockOK`, Python
+  `_aead_flags_ok` / `_one_block_ok`). `--aead` is refused on any algo but `hske-nla1`;
+  `--ad` at `enc` and `dec` on any algo but `hske-duplex`, `hske-duplex3` and `hske-nla1`;
+  `dec hske-nla1 --ad` on a format-1 ciphertext. Presence counts, so `--ad ''` is a flag
+  given. Input longer than the block is refused before any randomness is drawn or file
+  written ("`enc: --algo <a> encrypts one <k>-byte block; --in is <l> bytes (...)`"),
+  pointing to `hske-duplex` / `encfile`. The block is the width each port encrypts at: 32
+  bytes, or the key's width for `hske-nla1` without `--aead`. Shorter input is still
+  zero-padded. Java's "--ad requires --aead" message lost its `hske-nla1` prefix to match
+  the other three. Python and Go `--ad` help text names the algos.
+- **Test.** New `CliTest/test_single_block_enc.sh` (native-interop). Accept-controls:
+  exactly one block encrypts in every CLI and decrypts under all four (8 algos, 4×4); a
+  5-byte input comes back zero-padded; `hske-nla1` at a 64-bit key (a second width, an
+  8-byte block) round-trips 8 bytes; `--ad hdr` and `--ad ''` round-trip under
+  `hske-duplex`, `hske-duplex3` and `hske-nla1 --aead`, and a wrong `--ad` fails the tag.
+  Then 44 refusal cases per CLI, each refused by name with no output and no crash. 432 PASS
+  on this build; on the TODO #380 build, 172 FAIL: 170 accepted, and Java's 2 "--ad
+  requires --aead" cases refused under the old prefix.  `test_sym_width.sh`'s 32-bit hex
+  key case encrypted a 16-byte message and read back its first 4 bytes, relying on the
+  truncation; it now encrypts the 4-byte block itself.
+- **Docs.** TUTORIAL (the `hske` block note), llms.txt (enc/dec), MIGRATING §40.
 
 ### TODO #380 — numeric flags are parsed strictly, in stated ranges
 
