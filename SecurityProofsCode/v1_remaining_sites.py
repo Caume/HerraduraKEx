@@ -104,7 +104,14 @@ FILES = (["herradura.h", "herradura/herradura.go", "Herradura cryptographic suit
          sorted(os.path.relpath(p, ROOT) for p in
                 glob.glob(os.path.join(ROOT, "bindings/java/herradurakex/*.java"))))
 
-PY_NAMES = {"nl_fscx_revolve_v1"}
+# TODO #369: HFSCX-256's compression runs v1 inlined on 64-bit words.  The
+# Python helper takes the step count as an argument, so it is censused as a call;
+# the C, Go and Java helpers hold it in their loop bound, which INLINED_V1 reads.
+PY_NAMES = {"nl_fscx_revolve_v1", "_hfscx256_compress"}
+INLINED_V1 = {"herradura.h": "_hfscx256_compress",
+              "herradura/herradura.go": "hfscx256Compress",
+              "bindings/java/herradurakex/Hfscx256.java": "compress"}
+STEP_LOOP = re.compile(r"\bfor\s*\(?\s*(?:int\s+)?step\s*:?=\s*0;\s*step\s*<\s*([^;]+?);")
 CALL = re.compile(r"\b(nl_fscx_revolve_v1_ba|nl_fscx_revolve_v1|NlFscxRevolveV1|"
                   r"nlFscxRevolveV1)\(")
 DEFN = re.compile(r"(?:\bstatic\b[^;{]*|\bfunc |\bpublic static BitArray )$")
@@ -154,6 +161,10 @@ def census_c_family(rel, text):
             j += 1
         steps = " ".join(_top_args(text[i:j - 1])[-1].split())
         rows.append((rel, fnat[text.count("\n", 0, m.start())], steps))
+    for m in STEP_LOOP.finditer(text):
+        fn = fnat[text.count("\n", 0, m.start())]
+        if INLINED_V1.get(rel) == fn:
+            rows.append((rel, fn, " ".join(m.group(1).split())))
     return rows
 
 
@@ -185,7 +196,7 @@ def census(override=None):
 # (file, function, step expression) -> (count, site).  A site's verdict is in SITES.
 EXPECTED = {
     # ── herradura.h: the library every C caller uses ───────────────────────
-    ("herradura.h", "hfscx_256", "V1_MODE_STEPS"): (1, "hfscx"),
+    ("herradura.h", "_hfscx256_compress", "V1_MODE_STEPS"): (1, "hfscx"),
     ("herradura.h", "hske_nla1_ks_block", "V1_MODE_STEPS"): (1, "a1"),
     ("herradura.h", "hske_nla1_mac_key", "V1_MODE_STEPS"): (1, "a1"),
     ("herradura.h", "hske_nla1_encrypt", "3 * base.nbits / 4"): (1, "a1"),
@@ -196,7 +207,7 @@ EXPECTED = {
     ("herradura.h", "_hpake_rnl_kdf", "KEYBITS / 4"): (1, "rnl_kdf"),
     ("herradura.h", "qcprf_refill", "I_VALUE"): (1, "qcprf"),
     # ── herradura/herradura.go ─────────────────────────────────────────────
-    ("herradura/herradura.go", "Hfscx256", "V1ModeSteps"): (1, "hfscx"),
+    ("herradura/herradura.go", "hfscx256Compress", "V1ModeSteps"): (1, "hfscx"),
     ("herradura/herradura.go", "HskeNla1KsBlock", "V1ModeSteps"): (1, "a1"),
     ("herradura/herradura.go", "HskeNla1MacKey", "V1ModeSteps"): (1, "a1"),
     ("herradura/herradura.go", "HskeNlA1Encrypt", "v1ModeSteps(n)"): (1, "a1"),
@@ -242,7 +253,7 @@ def _fill_expected():
         (J + "HerraduraNl.java", "hskeNlAeadStreams", "Hfscx256.V1_MODE_STEPS"):
             (1, "a1"),
         (J + "HerraduraNl.java", "hskeNlAeadXorKs", "Hfscx256.V1_MODE_STEPS"): (1, "a1"),
-        (J + "Hfscx256.java", "hash", "steps"): (1, "hfscx"),
+        (J + "Hfscx256.java", "compress", "V1_MODE_STEPS"): (1, "hfscx"),
         (J + "Hfscx256.java", "encFile", "steps"): (2, "a1"),
         (J + "Hfscx256.java", "decFile", "steps"): (2, "a1"),
         (J + "Hpake.java", "rnlKdf", "Herradura.N / 4"): (1, "rnl_kdf"),

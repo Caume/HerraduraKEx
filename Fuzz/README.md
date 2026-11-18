@@ -34,7 +34,11 @@ Run everything with a short time budget per target:
 - **`fuzz_cli_args.py`** — randomizes subcommands, flags, and malformed input files
   across the C (ASan-instrumented), Go, and Python CLIs; a signal-terminated process
   (SIGSEGV/SIGABRT/SIGBUS) is a bug, since all three CLIs use a graceful
-  `die()`/`exit(1)` path on recognized errors.
+  `die()`/`exit(1)` path on recognized errors. Since TODO #367 an exit with a crash trace (a Go `panic:` and
+  goroutine dump, a Python traceback, an ASan report) is a bug too, since those exit with
+  a code rather than a signal. The file pool also holds valid PEM/DER with the wrong
+  number of items for every label in the spec's `pem_der_items`, and the key flags
+  include the peer slots (`--their`, `--their-kem`).
 
 ## Bugs found and fixed while building this harness
 

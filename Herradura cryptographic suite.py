@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.9.77
+    Herradura Cryptographic Suite
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -1428,12 +1428,35 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
 
     # Chain blocks: C(s, m) = F_s^{192}(m) ⊕ m (Matyas-Meyer-Oseas, TODO #351)
     steps = V1_MODE_STEPS  # 192 (TODO #347; n/4 = 64 until v10.0.0)
+    # TODO #369: the chaining runs on plain ints (_hfscx256_compress) rather
+    # than through BitArray, whose per-op construction and width checks made
+    # HFSCX-256 nearly all of an HCRED proof's time.  Bit-exact with
+    # nl_fscx_revolve_v1(block, state, steps) ^ block; the HFSCX-256 KAT
+    # vectors and CliTest/test_digest_matrix.sh hold it to the other ports.
+    st = state.uint
     for off in range(0, len(padded), blen):
-        block = BitArray(n, int.from_bytes(padded[off:off + blen], 'big'))
-        state = nl_fscx_revolve_v1(block, state, steps)
-        state = BitArray(n, state.uint ^ block.uint)
+        st = _hfscx256_compress(st, int.from_bytes(padded[off:off + blen], 'big'), steps)
 
-    return state.uint.to_bytes(blen, 'big')
+    return st.to_bytes(blen, 'big')
+
+
+_U256 = (1 << 256) - 1
+
+
+def _hfscx256_compress(s: int, m: int, steps: int) -> int:
+    """One MMO step on 256-bit ints: F_s^steps(m) xor m, v1's A = m, B = s.
+
+    nl_fscx_v1(a, b) = fscx(a, b) ^ ROL((a + b) mod 2^256, 64).  The B-side
+    terms of fscx (b ^ ROL(b,1) ^ ROR(b,1)) are constant across the revolve,
+    so they are computed once."""
+    M = _U256
+    sb = (s ^ ((s << 1) | (s >> 255)) ^ ((s >> 1) | (s << 255))) & M
+    a = m
+    for _ in range(steps):
+        t = (a + s) & M
+        a = (a ^ ((a << 1) | (a >> 255)) ^ ((a >> 1) | (a << 255)) ^ sb
+             ^ (t << 64) ^ (t >> 192)) & M
+    return a ^ m
 
 
 def hfscx_256_ds(ds: int, data: bytes, *, iv: 'BitArray | None' = None) -> bytes:
@@ -1632,6 +1655,16 @@ def rnl_validate_m_blind(poly, q=None):
     if sum(1 for c in poly if c != 0) < n // 4:
         return False
     return (max(poly) - min(poly)) >= q // 4
+
+
+def rnl_validate_pub(poly):
+    """The peer PUBLIC-VALUE guard (TODO #371): rnl_validate_m_blind's two tests
+    over Z_p, applied to a peer's C (Alice's public key, or C_B in Bob's
+    response).  An all-zero C makes s*C = 0 for every s, so K_raw is a constant
+    and the session key depends only on the two public nonces.  Honest values
+    clear both bounds by a wide margin (>= 1022 of 1024 non-zero, range >= 4056
+    over 300 genuine keys and responses)."""
+    return rnl_validate_m_blind(poly, RNLP)
 
 def rnl_contributory_kdf(k_raw_int, n_bits, n_a, n_b):
     """Derive the HKEX-RNL session key: HFSCX-256(K_raw || n_A || n_B).

@@ -62,6 +62,9 @@ OUT_PATH = os.path.join(REPO, "spec", "herradura-protocol-spec.json")
 C_FLAG_TABLE = os.path.join(REPO, "HerraduraCli", "cli_flag_table.h")
 JAVA_FLAG_TABLE = os.path.join(REPO, "bindings", "java", "herradurakex", "CliFlagTable.java")
 SCHEMA_PATH = os.path.join(REPO, "spec", "herradura-protocol-spec.schema.json")
+# TODO #366: the key-label acceptance table, emitted into each CLI.
+C_KEY_TABLE = os.path.join(REPO, "HerraduraCli", "key_label_table.h")
+JAVA_KEY_TABLE = os.path.join(REPO, "bindings", "java", "herradurakex", "KeyLabelTable.java")
 
 SPEC_VERSION = "1.0.0"
 
@@ -247,7 +250,7 @@ def extract_flags_c(c_src):
         raise RuntimeError("extract_flags_c mapped no subcommands in herradura_cli.c "
                            "-- the extractor is stale, not the CLI.")
     bodies = _decl_bodies(src, r'^static\s+[A-Za-z_][\w \t\*]*\b(\w+)\s*\(')
-    pat = [r'(?:get_arg|has_flag|get_arg_multi)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
+    pat = [r'(?:get_arg|has_flag|get_arg_multi|rounds_arg)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
            # get_arg_multi2(argc, argv, "<cmd>", "--plural", "--singular", ...) — TODO #270
            r'get_arg_multi2\s*\(\s*argc\s*,\s*argv\s*,\s*"[a-z0-9\-]+"\s*,'
            r'\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"']
@@ -271,7 +274,7 @@ def extract_valued_flags_c(c_src):
         raise RuntimeError("extract_valued_flags_c mapped no subcommands in "
                            "herradura_cli.c -- the extractor is stale, not the CLI.")
     bodies = _decl_bodies(src, r'^static\s+[A-Za-z_][\w \t\*]*\b(\w+)\s*\(')
-    pat = [r'(?:get_arg|get_arg_multi)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
+    pat = [r'(?:get_arg|get_arg_multi|rounds_arg)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
            r'get_arg_multi2\s*\(\s*argc\s*,\s*argv\s*,\s*"[a-z0-9\-]+"\s*,'
            r'\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"']
     return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\s*\(\s*argc\b')
@@ -1026,7 +1029,12 @@ CLI_FLAG_PARITY = {
         "and a single RNL_N -- the same reason KAT/'s n=64 PEM vectors skip the C "
         "CLI -- so there is no runtime width for the flag to set. Porting it would "
         "mean making the C suite width-parametric, which is a far larger change than "
-        "an argument parser."),
+        "an argument parser. hpks-zkp-nl is the exception: its n is a runtime "
+        "parameter in C too, and C reads any n <= 64 the other three write; C "
+        "generates only their default, n = 8. Where --bits exists, an explicit "
+        "value is honoured or refused by name, never read as the default -- Python, "
+        "Go and Java read `--bits 256` on hpks-zkp-nl as 'omitted' and wrote n = 8 "
+        "until TODO #374."),
     ("pake-register", "--username"): (
         ("java", "python"), "acknowledged",
         "aPAKE client identifier. It is stored in the record dict for lookup and is "
@@ -1624,6 +1632,11 @@ def generate():
             for sc in subcommands if sc in UNFILED_CLI_SURFACE
         ],
         "parameters": build_parameters(),
+        "key_label_acceptance": build_key_label_acceptance(priv_algos, pem_labels_all),
+        "pem_der_items": build_pem_der_items(
+            list(pem_labels_all.values())
+            + [l for t in key_tag_labels(priv_algos, pem_labels_all).values() for l in t]),
+        "pem_der_field_caps": build_pem_der_field_caps(),
     }
     return spec
 
@@ -1813,6 +1826,1145 @@ def emit_go_help_region(go_src, lines):
     return pat.sub(lambda _m: region, go_src, count=1)
 
 
+# ── Key-label acceptance (TODO #366) ──────────────────────────────────────
+#
+# Until v15.0.0 no CLI compared a key's PEM label with the operation using it:
+# each read whatever integers the file held, so `sign --algo hpks-stern` signed
+# with an HKEX-GF private exponent, and Go signed HPKS-WOTS with one.  This table
+# is the one statement of which key labels each (subcommand, --algo, key flag)
+# accepts.  It is CURATED, not extracted -- it is policy -- and emitted into all
+# four CLIs below, so they enforce one table rather than four.
+#
+# Two families are deliberately shared.  GF: hkex-gf, hpks, hpks-nl, hpke and
+# hpke-nl are the same GF(2^n)* key pair (SPEC.md §7: "HPKE reuses HKEX-GF key
+# pairs").  STERN: hpks-stern and hpke-stern hold the same error vector + seed.
+# hpke-nl3 is NOT in the GF family: it has its own labels (TUTORIAL: "an
+# hpke-nl key is not an hpke-nl3 key").  Public-key slots accept PUBLIC labels
+# only; a private key passed as --pubkey was mis-parsed by every CLI before.
+# The exception is role "either": HCRED's public-key loaders take the private
+# key too, deliberately and correctly (it carries the public fields), in all
+# four CLIs and under test (test_cred.sh "proof verify (privkey)").
+# `pkey` is absent on purpose: it reads any key.  The threshold rows keep the
+# hpks/hpks-nl restriction all four CLIs already applied.
+#
+# CliTest/test_key_label_matrix.sh runs every row against every key label in
+# every CLI, so a row a CLI forgets to enforce fails there.
+
+_KF_GF = ["hkex-gf", "hpks", "hpks-nl", "hpke", "hpke-nl"]
+_KF_STERN = ["hpks-stern", "hpke-stern"]
+_KF_RNL = ["hkex-rnl"]
+_KF_KEM = ["hpke-stern-kem"]
+
+# (subcommand, --algo or "", key flag, "priv" | "pub" | "either", accepted key tags)
+KEY_LABEL_SITES = (
+    [("kex", "hkex-gf", "--our", "priv", _KF_GF),
+     ("kex", "hkex-gf", "--their", "pub", _KF_GF),
+     ("kex", "hkex-rnl", "--our", "priv", _KF_RNL),
+     ("kex", "hkex-rnl", "--their", "pub", _KF_RNL),
+     ("kex", "hybrid-rnl-stern", "--our", "priv", _KF_RNL),
+     ("kex", "hybrid-rnl-stern", "--their", "pub", _KF_RNL),
+     ("kex", "hybrid-rnl-stern", "--our-kem", "priv", _KF_KEM),
+     ("kex", "hybrid-rnl-stern", "--their-kem", "pub", _KF_KEM)]
+    + [(sub, algo, flag, role, fam)
+       for algo, fam in (("hpke", _KF_GF), ("hpke-nl", _KF_GF), ("hpke-nl3", ["hpke-nl3"]),
+                         ("hpke-stern", _KF_STERN), ("hpke-stern-kem", _KF_KEM))
+       for sub, flag, role in (("enc", "--pubkey", "pub"), ("dec", "--key", "priv"))]
+    + [(sub, algo, flag, role, fam)
+       for algo, fam in (("hpks", _KF_GF), ("hpks-nl", _KF_GF), ("hpks-stern", _KF_STERN),
+                         ("hpks-ring", _KF_STERN), ("rnl-sigma", _KF_RNL),
+                         ("nl-zkboo", ["hpks-zkp-nl"]), ("nl-zkbpp", ["hpks-zkp-nl"]),
+                         ("hpks-xmss", ["hpks-xmss"]), ("hpks-wots", ["hpks-wots"]))
+       for sub, flag, role in (("sign", "--key", "priv"),
+                               ("verify", "--ring" if algo == "hpks-ring" else "--pubkey", "pub"))]
+    + [("threshold-commit", "", "--key", "priv", ["hpks", "hpks-nl"]),
+       ("threshold-respond", "", "--key", "priv", ["hpks", "hpks-nl"]),
+       ("oprf-eval", "", "--key", "priv", ["oprf"]),
+       ("pake-register", "", "--key", "priv", ["oprf"]),
+       ("pake-demo", "", "--key", "priv", ["oprf"]),
+       ("cred-issue", "", "--our", "priv", _KF_STERN),
+       ("cred-issue", "", "--in", "either", ["hcred"]),
+       ("cred-prove", "", "--in", "priv", ["hcred"]),
+       ("cred-verify", "", "--pubkey", "either", ["hcred"]),
+       ("cred-verify", "", "--issuer", "pub", _KF_STERN)])
+
+# TODO #367: how many DER INTEGER items each DER-SEQUENCE PEM label carries, as
+# (min, max).  Every CLI checks this in its one PEM-to-integers loader, before
+# any decoder indexes the list, so "valid DER, wrong arity" is a one-line
+# refusal everywhere instead of an index panic (Go) or a traceback (Python).
+# A label used by several algorithms (CIPHERTEXT, SIGNATURE) gets the union
+# here; the decoder for each algorithm then checks its exact count.  A range
+# wider than one marks a documented optional trailing field (the HKEX-RNL
+# contributory nonce, whose absence reads as a zero nonce).
+PEM_DER_ITEMS = {
+    "HERRADURA HKEX-GF PRIVATE KEY": (3, 3),
+    "HERRADURA HKEX-GF PUBLIC KEY": (2, 2),
+    "HERRADURA HPKS PRIVATE KEY": (3, 3),
+    "HERRADURA HPKS PUBLIC KEY": (2, 2),
+    "HERRADURA HPKS-NL PRIVATE KEY": (3, 3),
+    "HERRADURA HPKS-NL PUBLIC KEY": (2, 2),
+    "HERRADURA HPKE PRIVATE KEY": (3, 3),
+    "HERRADURA HPKE PUBLIC KEY": (2, 2),
+    "HERRADURA HPKE-NL PRIVATE KEY": (3, 3),
+    "HERRADURA HPKE-NL PUBLIC KEY": (2, 2),
+    "HERRADURA HPKE-NL3 PRIVATE KEY": (3, 3),
+    "HERRADURA HPKE-NL3 PUBLIC KEY": (2, 2),
+    "HERRADURA HKEX-RNL PRIVATE KEY": (3, 4),
+    "HERRADURA HKEX-RNL PUBLIC KEY": (3, 4),
+    "HERRADURA HKEX-RNL RESPONSE": (5, 6),
+    "HERRADURA HYBRID-RNL-STERN RESPONSE": (8, 8),
+    "HERRADURA HPKS-STERN PRIVATE KEY": (3, 3),
+    "HERRADURA HPKS-STERN PUBLIC KEY": (3, 3),
+    "HERRADURA HPKE-STERN PRIVATE KEY": (3, 3),
+    "HERRADURA HPKE-STERN PUBLIC KEY": (3, 3),
+    "HERRADURA HPKE-STERN-KEM PRIVATE KEY": (6, 6),
+    "HERRADURA HPKE-STERN-KEM PUBLIC KEY": (2, 2),
+    "HERRADURA HPKS-WOTS PRIVATE KEY": (2, 2),
+    "HERRADURA HPKS-WOTS PUBLIC KEY": (2, 2),
+    "HERRADURA HPKS-WOTS SIGNATURE": (2, 2),
+    "HERRADURA HPKS-XMSS PRIVATE KEY": (4, 4),
+    "HERRADURA HPKS-XMSS PUBLIC KEY": (2, 2),
+    "HERRADURA HPKS-XMSS SIGNATURE": (5, 5),
+    "HERRADURA HPKS-RING SIGNATURE": (4, 4),
+    "HERRADURA OPRF PRIVATE KEY": (2, 2),
+    "HERRADURA OPRF CLIENT STATE": (3, 3),
+    "HERRADURA OPRF EVALUATION": (2, 2),
+    "HERRADURA PAKE RECORD": (3, 3),
+    "HERRADURA HPKST COMMITMENT": (3, 3),
+    "HERRADURA HPKST NONCE": (2, 2),
+    "HERRADURA HPKST AGGREGATE": (4, 4),
+    "HERRADURA HPKST PARTIAL": (2, 2),
+    "HERRADURA HPKST SIGNATURE": (4, 4),
+    "HERRADURA HCRED CREDENTIAL": (5, 5),
+    "HERRADURA SESSION KEY": (2, 2),
+    "HERRADURA DIGEST": (1, 1),
+    "HERRADURA HDRBG STATE": (2, 2),
+    "HERRADURA ENCRYPTED PRIVATE KEY": (6, 6),
+    "HERRADURA CIPHERTEXT": (3, 6),
+    "HERRADURA SIGNATURE": (4, 5),
+}
+
+
+def build_pem_der_items(all_labels):
+    unknown = sorted(set(PEM_DER_ITEMS) - set(all_labels))
+    if unknown:
+        raise RuntimeError("PEM_DER_ITEMS names labels no CLI defines: %r" % unknown)
+    rows = []
+    for label, (lo, hi) in sorted(PEM_DER_ITEMS.items()):
+        if not 0 < lo <= hi <= 16:
+            raise RuntimeError("PEM_DER_ITEMS[%r] = %r is not 1 <= min <= max <= 16" % (label, (lo, hi)))
+        rows.append({"label": label, "min": lo, "max": hi})
+    return rows
+
+
+# TODO #372: how wide each field of each DER-SEQUENCE label may be, in
+# significant bytes.  The cap is what the writer pads that field to (Python's
+# der_int(v, nbytes) calls, which every CLI matches byte for byte): a value
+# wider than it cannot have come from a writer, and before this table some
+# CLIs truncated it, some ignored it and some refused it.  One row per (label,
+# item count), optionally narrowed by `when`, a test on fields that tells two
+# layouts with the same count apart (CIPHERTEXT format tags); the first row
+# that matches is the one checked.  A cap is an integer expression: decimal
+# constants, fK (the value of field K), + - * / (integer division),
+# parentheses and min(a, b).  Every field an expression names must itself have
+# a constant cap of at most 6 bytes, so the arithmetic fits a signed 64-bit
+# integer in every language; the generated checks test the constant caps first.
+#
+# TODO #373: how each field is ENCODED.  A cap written "=E" is a fixed-width
+# field: every writer emits exactly E bytes, leading zeros included, plus the
+# 0x00 a set top bit needs, so the encoded width (content length less that
+# sign byte) must be exactly E -- or E-1 when the content is E bytes whose
+# leading 0x00 reads as a sign byte, which is the same bytes.  An exact width
+# of 0 (an empty plaintext's body) is the INTEGER 0, whose one DER form is the
+# single byte 00 (an INTEGER cannot be empty).  Any other cap is a scalar or a minimal value
+# (the session key, a response's K): its encoding must be minimal, i.e. carry
+# no 0x00 the sign does not need.  Measured on every writer in all four CLIs
+# before the table was marked.  An optional fifth element lists VALUE rules,
+# run once the widths hold (see _VALUE_RULE_KINDS).  Each CLI runs all of this
+# in its PEM-to-integers loader, right after PEM_DER_ITEMS, and prints the
+# same text:
+#     <label>: field <i> is <k> bytes (expected at most <cap>)
+#     <label>: field <i> is encoded in <k> bytes (expected exactly <cap>)
+#     <label>: field <i> is encoded with a leading zero byte (expected minimal)
+#     ... and one line per value rule, below.
+_GF_N = {0: "=f2/8", 1: "=f2/8", 2: "2"}         # (priv, pub, n)
+_GF_PUB = {0: "=f1/8", 1: "2"}                    # (pub, n)
+_STERN_KEY = {0: "=f2/8", 1: "=f2/8", 2: "2"}     # (e or syndrome, seed, n)
+_STERN_SIG = {0: "2", 1: "2", 2: "=f1*3*(f0/8)", 3: "=(f1+3)/4", 4: "=f1*2*(f0/8)"}
+# (K_B, C_B, hint, n, hint length[, n_B]): K_B is minimal, like a session key.
+_RNL_RESP = {0: "32", 1: "=f3*2", 2: "=f3/8", 3: "2", 4: "2", 5: "=32"}
+_RNL_Q = 65537        # parameters.hkex_rnl q
+_RNL_P = 4096         # parameters.hkex_rnl p
+_QCMDPC_R = 12323     # "Herradura cryptographic suite.py" _QCMDPC_R
+_WOTS_L = 67          # parameters.wots.l_total
+# Value rules (TODO #373), each a tuple whose first element is its kind:
+#   ("coef_below", K, W, COUNT, B)  field K is COUNT big-endian W-byte
+#                                   coefficients, each below B
+#   ("coef_cbd", K, W, COUNT, Q)    ... each 0, 1 or Q-1 (CBD(1) mod Q)
+#   ("le_bits", K, R)               field K is a little-endian R-bit string
+#                                   ((R+7)/8 bytes, the QC-MDPC keys and KEM
+#                                   syndrome): no bit at or above R
+#   ("bits", K, R)                  field K's value is below 2^R (the hybrid
+#                                   response's syndrome, a plain integer)
+#   ("support", K, D, R)            field K is D big-endian 2-byte indices,
+#                                   each below R, no two equal (any order)
+#   ("le_poly_of", K, S, D, R)      field K is the R-bit string whose set bits
+#                                   are field S's D indices
+#   ("equals", K, E)                field K's value is E
+# COUNT, D, R and E are cap expressions.  Messages:
+#     <label>: field <i> coefficient <j> is <v> (expected below <B>)
+#     <label>: field <i> coefficient <j> is <v> (expected 0, 1 or <Q-1>)
+#     <label>: field <i> has bits at or above r = <R>
+#     <label>: field <i> index <j> is <v> (expected below r = <R>)
+#     <label>: field <i> repeats index <v>
+#     <label>: field <i> is not the polynomial of field <S>
+#     <label>: field <i> is <v> (expected <E>)
+_VALUE_RULE_KINDS = {"coef_below": 5, "coef_cbd": 5, "le_bits": 3, "bits": 3, "support": 4,
+                     "le_poly_of": 5, "equals": 3}
+_RNL_RESP_RULES = [("coef_below", 1, 2, "f3", _RNL_P), ("equals", 4, "f3/2")]
+PEM_DER_FIELD_CAPS = [
+    # label, (min items, max items), when, {field: cap}[, value rules]
+    ("HERRADURA HKEX-GF PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HKEX-GF PUBLIC KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKS PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HPKS PUBLIC KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKS-NL PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HPKS-NL PUBLIC KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKE PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HPKE PUBLIC KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKE-NL PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HPKE-NL PUBLIC KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKE-NL3 PRIVATE KEY", (3, 3), None, _GF_N),
+    ("HERRADURA HPKE-NL3 PUBLIC KEY", (2, 2), None, _GF_PUB),
+    # s and m_blind are 4 bytes a coefficient, C 2; the optional nonce is 32.
+    # s is CBD(1) mod q (TODO #373: Java read 2^32-1 as -1, the others as 0).
+    ("HERRADURA HKEX-RNL PRIVATE KEY", (3, 4), None,
+     {0: "=f2*4", 1: "=f2*4", 2: "2", 3: "=32"},
+     [("coef_cbd", 0, 4, "f2", _RNL_Q), ("coef_below", 1, 4, "f2", _RNL_Q)]),
+    ("HERRADURA HKEX-RNL PUBLIC KEY", (3, 4), None,
+     {0: "=f2*2", 1: "=f2*4", 2: "2", 3: "=32"},
+     [("coef_below", 0, 2, "f2", _RNL_P), ("coef_below", 1, 4, "f2", _RNL_Q)]),
+    # (K_B, C_B, hint, n, hint length[, n_B]): 2 hint bits for each of n/2
+    # coefficients, so n/8 bytes; the hint length is n/2 (Go wrote n, #373).
+    ("HERRADURA HKEX-RNL RESPONSE", (5, 6), None, _RNL_RESP, _RNL_RESP_RULES),
+    ("HERRADURA HYBRID-RNL-STERN RESPONSE", (8, 8), None,
+     {**_RNL_RESP, 6: "=(f7+7)/8", 7: "2"},
+     _RNL_RESP_RULES + [("bits", 6, "f7")]),
+    ("HERRADURA HPKS-STERN PRIVATE KEY", (3, 3), None, _STERN_KEY),
+    ("HERRADURA HPKS-STERN PUBLIC KEY", (3, 3), None, _STERN_KEY),
+    ("HERRADURA HPKE-STERN PRIVATE KEY", (3, 3), None, _STERN_KEY),
+    ("HERRADURA HPKE-STERN PUBLIC KEY", (3, 3), None, _STERN_KEY),
+    # (h0, h1, support0, support1, r, d): 2 bytes a support index.  Every
+    # writer sets h0 and h1 to the supports' polynomials and the decoder reads
+    # only the supports, so h0 and h1 must be those polynomials.  C writes
+    # the supports in draw order, the others sorted: any order is accepted.
+    ("HERRADURA HPKE-STERN-KEM PRIVATE KEY", (6, 6), None,
+     {0: "=(f4+7)/8", 1: "=(f4+7)/8", 2: "=f5*2", 3: "=f5*2", 4: "2", 5: "2"},
+     [("support", 2, "f5", "f4"), ("support", 3, "f5", "f4"),
+      ("le_poly_of", 0, 2, "f5", "f4"), ("le_poly_of", 1, 3, "f5", "f4")]),
+    ("HERRADURA HPKE-STERN-KEM PUBLIC KEY", (2, 2), None, {0: "=(f1+7)/8", 1: "2"},
+     [("le_bits", 0, "f1")]),
+    ("HERRADURA HPKS-WOTS PRIVATE KEY", (2, 2), None, {0: "=32", 1: "4"}),
+    ("HERRADURA HPKS-WOTS PUBLIC KEY", (2, 2), None, {0: "=f1*32", 1: "2"}),
+    ("HERRADURA HPKS-WOTS SIGNATURE", (2, 2), None, {0: "=f1*32", 1: "2"}),
+    # (seed, h, next leaf, 32 bytes a leaf); min() keeps the shift in range
+    # for an h the decoder will refuse anyway.
+    ("HERRADURA HPKS-XMSS PRIVATE KEY", (4, 4), None,
+     {0: "=32", 1: "1", 2: "4", 3: "=32*(1<<min(f1, 32))"}),
+    ("HERRADURA HPKS-XMSS PUBLIC KEY", (2, 2), None, {0: "=32", 1: "1"}),
+    # (leaf, %d WOTS values of n/8 bytes, h auth-path nodes of 32, h, n)
+    ("HERRADURA HPKS-XMSS SIGNATURE", (5, 5), None,
+     {0: "4", 1: "=%d*(f4/8)" % _WOTS_L, 2: "=f3*32", 3: "1", 4: "2"}),
+    # (k, rounds, n, k*rounds entries of c0 c1 c2 b ra rb)
+    ("HERRADURA HPKS-RING SIGNATURE", (4, 4), None,
+     {0: "1", 1: "2", 2: "2", 3: "=f0*f1*(5*(f2/8)+1)"}),
+    ("HERRADURA OPRF PRIVATE KEY", (2, 2), None, _GF_PUB),
+    ("HERRADURA OPRF CLIENT STATE", (3, 3), None, _GF_N),
+    ("HERRADURA OPRF EVALUATION", (2, 2), None, _GF_PUB),
+    ("HERRADURA PAKE RECORD", (3, 3), None, {0: "=32", 1: "=4", 2: "=4"}),
+    ("HERRADURA HPKST COMMITMENT", (3, 3), None, _GF_N),
+    ("HERRADURA HPKST NONCE", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKST AGGREGATE", (4, 4), None, {0: "=f3/8", 1: "=f3/8", 2: "=f3/8", 3: "2"}),
+    ("HERRADURA HPKST PARTIAL", (2, 2), None, _GF_PUB),
+    ("HERRADURA HPKST SIGNATURE", (4, 4), None, {0: "=f3/8", 1: "=f3/8", 2: "=f3/8", 3: "2"}),
+    ("HERRADURA HCRED CREDENTIAL", (5, 5), None, _STERN_SIG),
+    # The session key is minimal in every writer (max(1, bit_length) bytes).
+    ("HERRADURA SESSION KEY", (2, 2), None, {0: "f1/8", 1: "2"}),
+    ("HERRADURA DIGEST", (1, 1), None, {0: "=32"}),
+    ("HERRADURA HDRBG STATE", (2, 2), None, {0: "=32", 1: "8"}),
+    # (salt, iterations, nonce, ciphertext of plaintext-length bytes, tag, length)
+    ("HERRADURA ENCRYPTED PRIVATE KEY", (6, 6), None,
+     {0: "=16", 1: "4", 2: "=32", 3: "=f5", 4: "=32", 5: "4"}),
+    # Three items: the QC-MDPC KEM (syndrome, E, r), whose r makes (r+7)/8 the
+    # syndrome width and whose E is a 32-byte key hash; hske format 0
+    # (0, E, n); else HPKE (R, E, n).
+    ("HERRADURA CIPHERTEXT", (3, 3), "f2 == %d" % _QCMDPC_R,
+     {0: "=(f2+7)/8", 1: "=32", 2: "2"}, [("le_bits", 0, "f2")]),
+    ("HERRADURA CIPHERTEXT", (3, 3), "f0 == 0", {0: "1", 1: "=(f2+7)/8", 2: "2"}),
+    ("HERRADURA CIPHERTEXT", (3, 3), None, {0: "=(f2+7)/8", 1: "=(f2+7)/8", 2: "2"}),
+    ("HERRADURA CIPHERTEXT", (4, 4), None, {0: "1", 1: "=(f3+7)/8", 2: "=(f3+7)/8", 3: "2"}),
+    # Five: hske-nla1 format 2 (2, nonce, E, tag, n), else HPKE-Stern (5 x n/8).
+    ("HERRADURA CIPHERTEXT", (5, 5), "f0 == 2",
+     {0: "1", 1: "=(f4+7)/8", 2: "=(f4+7)/8", 3: "=32", 4: "2"}),
+    ("HERRADURA CIPHERTEXT", (5, 5), None,
+     {0: "=f4/8", 1: "=f4/8", 2: "=f4/8", 3: "=f4/8", 4: "2"}),
+    # Six: duplex (format 3 or 4, nonce, length, ciphertext, tag, n).
+    ("HERRADURA CIPHERTEXT", (6, 6), None,
+     {0: "1", 1: "=(f5+7)/8", 2: "6", 3: "=f2", 4: "=32", 5: "2"}),
+    ("HERRADURA SIGNATURE", (4, 4), None, {0: "=f3/8", 1: "=f3/8", 2: "=f3/8", 3: "2"}),
+    ("HERRADURA SIGNATURE", (5, 5), None, _STERN_SIG),
+]
+
+_CAP_TOKEN = re.compile(r"\s*(?:(\d+)|f(\d+)|(min)|(<<|[-+*/(),]|==))")
+
+
+def _cap_refs(expr):
+    """Field indices an expression reads; raises on anything outside the grammar."""
+    refs, pos = set(), 0
+    while pos < len(expr):
+        m = _CAP_TOKEN.match(expr, pos)
+        if not m or m.end() == pos:
+            raise RuntimeError("PEM_DER_FIELD_CAPS: bad token in %r at %d" % (expr, pos))
+        if m.group(2) is not None:
+            refs.add(int(m.group(2)))
+        pos = m.end()
+    return refs
+
+
+def _cap_parts(cap):
+    """(expression, exact) for a cap: "=E" is a fixed-width field (TODO #373)."""
+    cap = cap.strip()
+    return (cap[1:].strip(), True) if cap.startswith("=") else (cap, False)
+
+
+def build_pem_der_field_caps():
+    items = dict(PEM_DER_ITEMS)
+    rows, seen = [], set()
+    for row in PEM_DER_FIELD_CAPS:
+        label, (lo, hi), when, caps = row[:4]
+        rules = row[4] if len(row) > 4 else []
+        if len(row) > 5:
+            raise RuntimeError("PEM_DER_FIELD_CAPS row %r has too many elements" % (label,))
+        if label not in items:
+            raise RuntimeError("PEM_DER_FIELD_CAPS row %r is not in PEM_DER_ITEMS" % label)
+        ilo, ihi = items[label]
+        if not ilo <= lo <= hi <= ihi:
+            raise RuntimeError("PEM_DER_FIELD_CAPS %r: items %d..%d outside PEM_DER_ITEMS %d..%d"
+                               % (label, lo, hi, ilo, ihi))
+        key = (label, lo, hi, when)
+        if key in seen:
+            raise RuntimeError("duplicate PEM_DER_FIELD_CAPS row %r" % (key,))
+        seen.add(key)
+        if sorted(caps) != list(range(hi)):
+            raise RuntimeError("PEM_DER_FIELD_CAPS %r: caps must name fields 0..%d" % (label, hi - 1))
+        parts = {i: _cap_parts(e) for i, e in caps.items()}
+        const = {i: int(e) for i, (e, _x) in parts.items() if e.isdigit()}
+
+        def need_const(where, expr):
+            for r in _cap_refs(expr):
+                if r not in const or const[r] > 6:
+                    raise RuntimeError("PEM_DER_FIELD_CAPS %r %s: %r reads f%d, which needs a "
+                                       "constant cap of at most 6 bytes" % (label, where, expr, r))
+                if parts[r][1]:
+                    raise RuntimeError("PEM_DER_FIELD_CAPS %r %s: %r reads f%d, a fixed-width "
+                                       "field; expressions read scalars" % (label, where, expr, r))
+        for i, (e, _x) in parts.items():
+            need_const("field %d" % i, e)
+        if when:
+            need_const("when", when)
+        out_rules = []
+        for rule in rules:
+            kind = rule[0]
+            if kind not in _VALUE_RULE_KINDS or len(rule) != _VALUE_RULE_KINDS[kind]:
+                raise RuntimeError("PEM_DER_FIELD_CAPS %r: bad value rule %r" % (label, rule))
+            k = rule[1]
+            if not 0 <= k < lo:
+                raise RuntimeError("PEM_DER_FIELD_CAPS %r: rule %r names field %d, which a "
+                                   "%d-item artifact may not have" % (label, rule, k, lo))
+            # A rule reads field K at its exact width, so K must be fixed-width.
+            if kind != "equals" and not parts[k][1]:
+                raise RuntimeError("PEM_DER_FIELD_CAPS %r: rule %r reads field %d, which is "
+                                   "not fixed-width" % (label, rule, k))
+            if kind == "le_poly_of" and not parts[rule[2]][1]:
+                raise RuntimeError("PEM_DER_FIELD_CAPS %r: rule %r reads field %d, which is "
+                                   "not fixed-width" % (label, rule, rule[2]))
+            r = {"kind": kind, "field": k}
+            if kind in ("coef_below", "coef_cbd"):
+                r.update(width=rule[2], count=rule[3], bound=rule[4])
+                need_const("rule", rule[3])
+            elif kind in ("le_bits", "bits"):
+                r.update(r=rule[2]); need_const("rule", rule[2])
+            elif kind == "support":
+                r.update(d=rule[2], r=rule[3]); need_const("rule", rule[2]); need_const("rule", rule[3])
+            elif kind == "le_poly_of":
+                r.update(support=rule[2], d=rule[3], r=rule[4])
+                need_const("rule", rule[3]); need_const("rule", rule[4])
+            else:
+                r.update(value=rule[2]); need_const("rule", rule[2])
+            out_rules.append(r)
+        # Check order: constant caps first, so every value an expression reads
+        # has already been bounded.
+        order = sorted(caps, key=lambda i: (i not in const, i))
+        rows.append({"label": label, "min_items": lo, "max_items": hi,
+                     "when": when or "",
+                     "caps": [{"field": i, "cap": parts[i][0], "exact": parts[i][1]}
+                              for i in order],
+                     "rules": out_rules})
+    # Every label with items has rows covering each count it allows.
+    for label, (ilo, ihi) in items.items():
+        for k in range(ilo, ihi + 1):
+            if not any(r["label"] == label and r["min_items"] <= k <= r["max_items"]
+                       and not r["when"] for r in rows):
+                raise RuntimeError("PEM_DER_FIELD_CAPS has no unconditional row for %r with "
+                                   "%d items" % (label, k))
+    return rows
+
+
+def _cap_code(expr, lang):
+    """Translate a cap expression; F(K) is each language's 'value of field K'."""
+    out, pos = [], 0
+    while pos < len(expr):
+        m = _CAP_TOKEN.match(expr, pos)
+        num, ref, mn, op = m.groups()
+        if num is not None:
+            out.append(num + ("LL" if lang == "c" else "L" if lang == "java" else ""))
+        elif ref is not None:
+            out.append({"py": "F[%s]", "c": "F(%s)", "go": "F(%s)", "java": "F(%s)"}[lang] % ref)
+        elif mn:
+            out.append({"py": "min", "c": "HKX_MIN", "go": "hkxMin", "java": "Math.min"}[lang])
+        elif op == "/" and lang == "py":
+            out.append("//")
+        elif op == ",":
+            out.append(", ")
+        elif op in ("+", "-", "*", "==", "<<"):
+            out.append(" %s " % op)
+        else:
+            out.append(op)
+        pos = m.end()
+    return "".join(out)
+
+
+def _cap_rows_by_label(caps):
+    by = {}
+    for r in caps:
+        by.setdefault(r["label"], []).append(r)
+    return by
+
+
+_MSG_WIDE = "%s: field %d is %lld bytes (expected at most %lld)"
+_MSG_EXACT = "%s: field %d is encoded in %lld bytes (expected exactly %lld)"
+_MSG_MINIMAL = "%s: field %d is encoded with a leading zero byte (expected minimal)"
+_MSG_EQUALS = "%s: field %d is %lld (expected %lld)"
+
+
+def _rule_call(rule, lang):
+    """One value-rule check (TODO #373) as a call to that language's helper,
+    which writes the message and returns true on a violation."""
+    k, kind = rule["field"], rule["kind"]
+    ex = lambda e: _cap_code(e, lang)
+    if lang == "c":
+        V = lambda f: "vals[%d], lens[%d]" % (f, f)
+        if kind in ("coef_below", "coef_cbd"):
+            return "hkx_rule_coef(m, ms, label, %d, %s, %d, %s, %dLL, %d)" % (
+                k, V(k), rule["width"], ex(rule["count"]), rule["bound"], kind == "coef_cbd")
+        if kind in ("le_bits", "bits"):
+            return "hkx_rule_bits(m, ms, label, %d, %s, %s, %d)" % (k, V(k), ex(rule["r"]), kind == "le_bits")
+        if kind == "support":
+            return "hkx_rule_support(m, ms, label, %d, %s, %s, %s)" % (k, V(k), ex(rule["d"]), ex(rule["r"]))
+        if kind == "le_poly_of":
+            return "hkx_rule_le_poly_of(m, ms, label, %d, %s, %d, %s, %s, %s)" % (
+                k, V(k), rule["support"], V(rule["support"]), ex(rule["d"]), ex(rule["r"]))
+        return "hkx_rule_equals(m, ms, label, %d, F(%d), %s)" % (k, k, ex(rule["value"]))
+    if lang == "go":
+        if kind in ("coef_below", "coef_cbd"):
+            return "hkxRuleCoef(label, %d, v[%d], %d, int64(%s), %d, %s)" % (
+                k, k, rule["width"], ex(rule["count"]), rule["bound"],
+                "true" if kind == "coef_cbd" else "false")
+        if kind in ("le_bits", "bits"):
+            return "hkxRuleBits(label, %d, v[%d], int64(%s), %s)" % (
+                k, k, ex(rule["r"]), "true" if kind == "le_bits" else "false")
+        if kind == "support":
+            return "hkxRuleSupport(label, %d, v[%d], int64(%s), int64(%s))" % (k, k, ex(rule["d"]), ex(rule["r"]))
+        if kind == "le_poly_of":
+            return "hkxRuleLePolyOf(label, %d, v[%d], %d, v[%d], int64(%s), int64(%s))" % (
+                k, k, rule["support"], rule["support"], ex(rule["d"]), ex(rule["r"]))
+        return "hkxRuleEquals(label, %d, F(%d), int64(%s))" % (k, k, ex(rule["value"]))
+    if lang == "java":
+        ex = lambda e: _cap_code(e, "java").replace("F(", "F0.applyAsLong(")
+        if kind in ("coef_below", "coef_cbd"):
+            return "ruleCoef(label, %d, v.get(%d), %d, %s, %dL, %s)" % (
+                k, k, rule["width"], ex(rule["count"]), rule["bound"],
+                "true" if kind == "coef_cbd" else "false")
+        if kind in ("le_bits", "bits"):
+            return "ruleBits(label, %d, v.get(%d), %s, %s)" % (
+                k, k, ex(rule["r"]), "true" if kind == "le_bits" else "false")
+        if kind == "support":
+            return "ruleSupport(label, %d, v.get(%d), %s, %s)" % (k, k, ex(rule["d"]), ex(rule["r"]))
+        if kind == "le_poly_of":
+            return "rulePolyOf(label, %d, v.get(%d), %d, v.get(%d), %s, %s)" % (
+                k, k, rule["support"], rule["support"], ex(rule["d"]), ex(rule["r"]))
+        return "ruleEquals(label, %d, F0.applyAsLong(%d), %s)" % (k, k, ex(rule["value"]))
+    # py
+    if kind in ("coef_below", "coef_cbd"):
+        return "_rule_coef(label, %d, v[%d], %d, %s, %d, %s)" % (
+            k, k, rule["width"], ex(rule["count"]), rule["bound"], kind == "coef_cbd")
+    if kind in ("le_bits", "bits"):
+        return "_rule_bits(label, %d, v[%d], %s, %s)" % (k, k, ex(rule["r"]), kind == "le_bits")
+    if kind == "support":
+        return "_rule_support(label, %d, v[%d], %s, %s)" % (k, k, ex(rule["d"]), ex(rule["r"]))
+    if kind == "le_poly_of":
+        return "_rule_le_poly_of(label, %d, v[%d], %d, v[%d], %s, %s)" % (
+            k, k, rule["support"], rule["support"], ex(rule["d"]), ex(rule["r"]))
+    return "_rule_equals(label, %d, F[%d], %s)" % (k, k, ex(rule["value"]))
+
+
+def _cap_rows_by_label(caps):
+    by = {}
+    for r in caps:
+        by.setdefault(r["label"], []).append(r)
+    return by
+
+
+_C_RULE_HELPERS = r"""/* TODO #373: the value rules.  Each fills m and returns 1 on a violation.  A
+ * rule reads a fixed-width field, which the encoding check has already held to
+ * its exact width; hkx_pad_byte reads it at that width (the parser drops one
+ * leading 0x00, so a field may be one byte shorter than its width here). */
+static unsigned hkx_pad_byte(const uint8_t *v, size_t n, long long w, long long i)
+{
+    long long off = w - (long long)n;
+    return (i < off || i - off >= (long long)n) ? 0u : v[i - off];
+}
+static int hkx_rule_coef(char *m, size_t ms, const char *label, int k,
+                         const uint8_t *v, size_t n, int w, long long cnt,
+                         long long bound, int cbd)
+{
+    long long j, x, W = (long long)w * cnt; int b;
+    for (j = 0; j < cnt; j++) {
+        for (x = 0, b = 0; b < w; b++) x = (x << 8) | hkx_pad_byte(v, n, W, j * w + b);
+        if (cbd ? !(x == 0 || x == 1 || x == bound - 1) : x >= bound) {
+            if (cbd) snprintf(m, ms, "%s: field %d coefficient %lld is %lld (expected 0, 1 or %lld)",
+                              label, k, j, x, bound - 1);
+            else     snprintf(m, ms, "%s: field %d coefficient %lld is %lld (expected below %lld)",
+                              label, k, j, x, bound);
+            return 1;
+        }
+    }
+    return 0;
+}
+/* le: an R-bit little-endian byte string (the spare bits are in the LAST
+ * byte); otherwise a plain integer below 2^R (spare bits in the FIRST). */
+static int hkx_rule_bits(char *m, size_t ms, const char *label, int k,
+                         const uint8_t *v, size_t n, long long r, int le)
+{
+    long long W = (r + 7) / 8;
+    if (W > 0 && r % 8 && (hkx_pad_byte(v, n, W, le ? W - 1 : 0) >> (r % 8))) {
+        snprintf(m, ms, "%s: field %d has bits at or above r = %lld", label, k, r);
+        return 1;
+    }
+    return 0;
+}
+static int hkx_rule_support(char *m, size_t ms, const char *label, int k,
+                            const uint8_t *v, size_t n, long long d, long long r)
+{
+    static uint8_t seen[8192];
+    long long j, x;
+    memset(seen, 0, sizeof seen);
+    for (j = 0; j < d; j++) {
+        x = ((long long)hkx_pad_byte(v, n, 2 * d, 2 * j) << 8) | hkx_pad_byte(v, n, 2 * d, 2 * j + 1);
+        if (x >= r) {
+            snprintf(m, ms, "%s: field %d index %lld is %lld (expected below r = %lld)",
+                     label, k, j, x, r);
+            return 1;
+        }
+        if (seen[x >> 3] & (1u << (x & 7))) {
+            snprintf(m, ms, "%s: field %d repeats index %lld", label, k, x);
+            return 1;
+        }
+        seen[x >> 3] |= (uint8_t)(1u << (x & 7));
+    }
+    return 0;
+}
+static int hkx_rule_le_poly_of(char *m, size_t ms, const char *label, int k,
+                               const uint8_t *v, size_t n, int s,
+                               const uint8_t *sv, size_t sn, long long d, long long r)
+{
+    long long W = (r + 7) / 8, i, j, x;
+    uint8_t *e = (uint8_t *)calloc((size_t)(W > 0 ? W : 1), 1);
+    if (!e) { snprintf(m, ms, "out of memory"); return 1; }
+    for (j = 0; j < d; j++) {
+        x = ((long long)hkx_pad_byte(sv, sn, 2 * d, 2 * j) << 8) | hkx_pad_byte(sv, sn, 2 * d, 2 * j + 1);
+        if (x < r) e[x >> 3] |= (uint8_t)(1u << (x & 7));
+    }
+    for (i = 0; i < W; i++)
+        if (hkx_pad_byte(v, n, W, i) != e[i]) {
+            free(e);
+            snprintf(m, ms, "%s: field %d is not the polynomial of field %d", label, k, s);
+            return 1;
+        }
+    free(e);
+    return 0;
+}
+static int hkx_rule_equals(char *m, size_t ms, const char *label, int k, long long x, long long want)
+{
+    if (x == want) return 0;
+    snprintf(m, ms, "%s: field %d is %lld (expected %lld)", label, k, x, want);
+    return 1;
+}"""
+
+
+def emit_c_field_caps(caps):
+    out = ["/* TODO #372 / #373: per DER-SEQUENCE label, each field's width cap",
+           " * (significant bytes), its encoding (exactly its width, or minimal) and",
+           " * the value rules.  ew[k] is field k's encoded width (content length less",
+           " * a sign byte), lz[k] 1 when it starts with a 0x00 the sign does not need,",
+           " * 2 when with a sign byte.  Returns 1 and fills m with the refusal, else 0.  F(K) is field",
+           " * K's value, or -1 if it is wider than 6 bytes. */",
+           "#define HKX_MIN(a, b) ((a) < (b) ? (a) : (b))",
+           "static long long hkx_cap_val(const uint8_t *v, size_t n)",
+           "{",
+           "    long long x = 0; size_t i = 0;",
+           "    while (i < n && v[i] == 0) i++;",
+           "    if (n - i > 6) return -1;",
+           "    for (; i < n; i++) x = (x << 8) | v[i];",
+           "    return x;",
+           "}",
+           "static size_t hkx_cap_len(const uint8_t *v, size_t n)",
+           "{",
+           "    size_t i = 0;",
+           "    while (i < n && v[i] == 0) i++;",
+           "    return n - i;",
+           "}"]
+    out += _C_RULE_HELPERS.split("\n")
+    out += ["#define F(k) hkx_cap_val(vals[k], lens[k])",
+            "#define HKX_WIDE(k, e) do { long long c_ = (e); \\",
+            "    if ((long long)hkx_cap_len(vals[k], lens[k]) > c_) { \\",
+            '        snprintf(m, ms, "' + _MSG_WIDE + '", label, k, \\',
+            "                 (long long)hkx_cap_len(vals[k], lens[k]), c_); return 1; } \\",
+            "    } while (0)",
+            "#define HKX_EXACT(k, e) do { long long c_ = (e); \\",
+            "    if (!((long long)ew[k] == c_ || (lz[k] == 2 && (long long)ew[k] + 1 == c_) || \\",
+            "          (c_ == 0 && ew[k] == 1 && hkx_cap_len(vals[k], lens[k]) == 0))) { \\",
+            '        snprintf(m, ms, "' + _MSG_EXACT + '", label, k, (long long)ew[k], c_); \\',
+            "        return 1; } \\",
+            "    } while (0)",
+            "#define HKX_MINIMAL(k) do { if (lz[k] == 1) { \\",
+            '        snprintf(m, ms, "' + _MSG_MINIMAL + '", label, k); return 1; } \\',
+            "    } while (0)",
+            "static int hkx_der_field_check(const char *label, int n, const uint8_t *const *vals,",
+            "                               const size_t *lens, const size_t *ew,",
+            "                               const unsigned char *lz, char *m, size_t ms)",
+            "{"]
+    for label, rows in _cap_rows_by_label(caps).items():
+        out.append('    if (strcmp(label, "%s") == 0) {' % label)
+        for r in rows:
+            cond = "n >= %d && n <= %d" % (r["min_items"], r["max_items"])
+            if r["when"]:
+                cond += " && (%s)" % _cap_code(r["when"], "c")
+            out.append("        if (%s) {" % cond)
+            for c in r["caps"]:
+                out.append("            if (n > %d) HKX_WIDE(%d, %s);"
+                           % (c["field"], c["field"], _cap_code(c["cap"], "c")))
+            for c in r["caps"]:
+                if c["exact"]:
+                    out.append("            if (n > %d) HKX_EXACT(%d, %s);"
+                               % (c["field"], c["field"], _cap_code(c["cap"], "c")))
+                else:
+                    out.append("            if (n > %d) HKX_MINIMAL(%d);" % (c["field"], c["field"]))
+            for rule in r["rules"]:
+                out.append("            if (%s) return 1;" % _rule_call(rule, "c"))
+            out.append("            return 0;")
+            out.append("        }")
+        out.append("        return 0;")
+        out.append("    }")
+    out += ["    return 0;", "}", "#undef F", "#undef HKX_WIDE", "#undef HKX_EXACT",
+            "#undef HKX_MINIMAL", ""]
+    return out
+
+
+_JAVA_RULE_HELPERS = r"""    /** TODO #373: x as exactly w bytes, big-endian (the width check has held it). */
+    private static byte[] padTo(java.math.BigInteger x, long w) {
+        byte[] raw = x.toByteArray();
+        byte[] out = new byte[(int) w];
+        int src = Math.max(0, raw.length - (int) w), dst = Math.max(0, (int) w - raw.length);
+        System.arraycopy(raw, src, out, dst, raw.length - src);
+        return out;
+    }
+
+    private static String ruleCoef(String label, int k, java.math.BigInteger x, int w, long cnt,
+                                   long bound, boolean cbd) {
+        byte[] b = padTo(x, (long) w * cnt);
+        for (long j = 0; j < cnt; j++) {
+            long c = 0;
+            for (int i = 0; i < w; i++) c = (c << 8) | (b[(int) (j * w) + i] & 0xff);
+            if (cbd ? !(c == 0 || c == 1 || c == bound - 1) : c >= bound) {
+                return cbd ? String.format("%s: field %d coefficient %d is %d (expected 0, 1 or %d)",
+                                           label, k, j, c, bound - 1)
+                           : String.format("%s: field %d coefficient %d is %d (expected below %d)",
+                                           label, k, j, c, bound);
+            }
+        }
+        return null;
+    }
+
+    /** le: an R-bit little-endian byte string (spare bits in the LAST byte);
+     *  otherwise a plain integer below 2^R (spare bits in the FIRST). */
+    private static String ruleBits(String label, int k, java.math.BigInteger x, long r, boolean le) {
+        long w = (r + 7) / 8;
+        if (w > 0 && r % 8 != 0 && ((padTo(x, w)[le ? (int) w - 1 : 0] & 0xff) >> (r % 8)) != 0) {
+            return String.format("%s: field %d has bits at or above r = %d", label, k, r);
+        }
+        return null;
+    }
+
+    private static String ruleSupport(String label, int k, java.math.BigInteger x, long d, long r) {
+        byte[] b = padTo(x, 2 * d);
+        java.util.BitSet seen = new java.util.BitSet();
+        for (int j = 0; j < d; j++) {
+            int idx = ((b[2 * j] & 0xff) << 8) | (b[2 * j + 1] & 0xff);
+            if (idx >= r) {
+                return String.format("%s: field %d index %d is %d (expected below r = %d)", label, k, j, idx, r);
+            }
+            if (seen.get(idx)) return String.format("%s: field %d repeats index %d", label, k, idx);
+            seen.set(idx);
+        }
+        return null;
+    }
+
+    private static String rulePolyOf(String label, int k, java.math.BigInteger x, int s,
+                                     java.math.BigInteger sup, long d, long r) {
+        long w = (r + 7) / 8;
+        byte[] want = new byte[(int) w];
+        byte[] b = padTo(sup, 2 * d);
+        for (int j = 0; j < d; j++) {
+            int idx = ((b[2 * j] & 0xff) << 8) | (b[2 * j + 1] & 0xff);
+            if (idx < r) want[idx >> 3] |= (byte) (1 << (idx & 7));
+        }
+        if (!java.util.Arrays.equals(padTo(x, w), want)) {
+            return String.format("%s: field %d is not the polynomial of field %d", label, k, s);
+        }
+        return null;
+    }
+
+    private static String ruleEquals(String label, int k, long x, long want) {
+        return x == want ? null : String.format("%s: field %d is %d (expected %d)", label, k, x, want);
+    }"""
+
+
+def emit_java_field_caps(caps):
+    out = ["    /** TODO #372 / #373: per DER-SEQUENCE label, each field's width cap",
+           "     *  (significant bytes), its encoding (exactly its width, or minimal) and",
+           "     *  the value rules.  ew[k] is field k's encoded width, lz[k] 1 when it",
+           "     *  starts with a 0x00 the sign does not need, 2 with a sign byte.",
+           "     *  Returns the refusal, or null. */",
+           "    static String fieldCheck(String label, java.util.List<java.math.BigInteger> v,",
+           "                             int[] ew, int[] lz) {",
+           "        int n = v.size();",
+           "        java.util.function.IntToLongFunction F0 = k -> {",
+           "            java.math.BigInteger x = v.get(k);",
+           "            return x.bitLength() > 48 ? -1L : x.longValue();",
+           "        };",
+           "        java.util.function.IntUnaryOperator L = k -> (v.get(k).bitLength() + 7) / 8;",
+           "        String e;",
+           "        switch (label) {"]
+    for label, rows in _cap_rows_by_label(caps).items():
+        out.append('        case "%s":' % label)
+        for r in rows:
+            cond = "n >= %d && n <= %d" % (r["min_items"], r["max_items"])
+            if r["when"]:
+                cond += " && (%s)" % _cap_code(r["when"], "java").replace("F(", "F0.applyAsLong(")
+            out.append("            if (%s) {" % cond)
+            for c in r["caps"]:
+                e = _cap_code(c["cap"], "java").replace("F(", "F0.applyAsLong(")
+                out.append('                if (n > %d) { long c = %s; if (L.applyAsInt(%d) > c) '
+                           'return String.format("%s", label, %d, (long) L.applyAsInt(%d), c); }'
+                           % (c["field"], e, c["field"], _MSG_WIDE.replace("%lld", "%d"),
+                              c["field"], c["field"]))
+            for c in r["caps"]:
+                e = _cap_code(c["cap"], "java").replace("F(", "F0.applyAsLong(")
+                if c["exact"]:
+                    out.append('                if (n > %d) { long c = %s; if (!(ew[%d] == c || (lz[%d] == 2 && ew[%d] + 1 == c) || (c == 0 && ew[%d] == 1 && L.applyAsInt(%d) == 0))) '
+                               'return String.format("%s", label, %d, (long) ew[%d], c); }'
+                               % (c["field"], e, c["field"], c["field"], c["field"], c["field"], c["field"],
+                                  _MSG_EXACT.replace("%lld", "%d"), c["field"], c["field"]))
+                else:
+                    out.append('                if (n > %d && lz[%d] == 1) return String.format("%s", label, %d);'
+                               % (c["field"], c["field"], _MSG_MINIMAL, c["field"]))
+            for rule in r["rules"]:
+                out.append("                if ((e = %s) != null) return e;" % _rule_call(rule, "java"))
+            out.append("                return null;")
+            out.append("            }")
+        out.append("            return null;")
+    out += ["        default:", "            return null;", "        }", "    }", ""]
+    out += _JAVA_RULE_HELPERS.split("\n")
+    return out
+
+
+_GO_RULE_HELPERS = r"""// TODO #373: the value rules.  Each returns the refusal, or "".  A rule reads
+// a fixed-width field, which the encoding check has already held to its exact
+// width; hkxPad reads it at that width (DerParseSeq drops one leading 0x00).
+func hkxPad(b []byte, w int64) []byte {
+	out := make([]byte, w)
+	if int64(len(b)) > w {
+		b = b[int64(len(b))-w:]
+	}
+	copy(out[w-int64(len(b)):], b)
+	return out
+}
+
+func hkxRuleCoef(label string, k int, x []byte, w int, cnt, bound int64, cbd bool) string {
+	b := hkxPad(x, int64(w)*cnt)
+	for j := int64(0); j < cnt; j++ {
+		var c int64
+		for i := 0; i < w; i++ {
+			c = c<<8 | int64(b[j*int64(w)+int64(i)])
+		}
+		if cbd && !(c == 0 || c == 1 || c == bound-1) {
+			return fmt.Sprintf("%s: field %d coefficient %d is %d (expected 0, 1 or %d)", label, k, j, c, bound-1)
+		}
+		if !cbd && c >= bound {
+			return fmt.Sprintf("%s: field %d coefficient %d is %d (expected below %d)", label, k, j, c, bound)
+		}
+	}
+	return ""
+}
+
+// le: an R-bit little-endian byte string (spare bits in the LAST byte);
+// otherwise a plain integer below 2^R (spare bits in the FIRST).
+func hkxRuleBits(label string, k int, x []byte, r int64, le bool) string {
+	w := (r + 7) / 8
+	i := int64(0)
+	if le {
+		i = w - 1
+	}
+	if w > 0 && r%8 != 0 && hkxPad(x, w)[i]>>(r%8) != 0 {
+		return fmt.Sprintf("%s: field %d has bits at or above r = %d", label, k, r)
+	}
+	return ""
+}
+
+func hkxRuleSupport(label string, k int, x []byte, d, r int64) string {
+	b := hkxPad(x, 2*d)
+	seen := make(map[int64]bool, d)
+	for j := int64(0); j < d; j++ {
+		idx := int64(b[2*j])<<8 | int64(b[2*j+1])
+		if idx >= r {
+			return fmt.Sprintf("%s: field %d index %d is %d (expected below r = %d)", label, k, j, idx, r)
+		}
+		if seen[idx] {
+			return fmt.Sprintf("%s: field %d repeats index %d", label, k, idx)
+		}
+		seen[idx] = true
+	}
+	return ""
+}
+
+func hkxRuleLePolyOf(label string, k int, x []byte, s int, sup []byte, d, r int64) string {
+	w := (r + 7) / 8
+	want := make([]byte, w)
+	b := hkxPad(sup, 2*d)
+	for j := int64(0); j < d; j++ {
+		idx := int64(b[2*j])<<8 | int64(b[2*j+1])
+		if idx < r {
+			want[idx>>3] |= 1 << uint(idx&7)
+		}
+	}
+	got := hkxPad(x, w)
+	for i := range want {
+		if got[i] != want[i] {
+			return fmt.Sprintf("%s: field %d is not the polynomial of field %d", label, k, s)
+		}
+	}
+	return ""
+}
+
+func hkxRuleEquals(label string, k int, x, want int64) string {
+	if x == want {
+		return ""
+	}
+	return fmt.Sprintf("%s: field %d is %d (expected %d)", label, k, x, want)
+}"""
+
+
+def emit_go_field_caps(caps):
+    out = ["// TODO #372 / #373: per DER-SEQUENCE label, each field's width cap",
+           "// (significant bytes), its encoding (exactly its width, or minimal) and the",
+           "// value rules.  ew[k] is field k's encoded width, lz[k] 1 when it starts with",
+           "// a 0x00 the sign does not need, 2 with a sign byte.  Returns the refusal, or \"\".",
+           "func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {",
+           "\tn := len(v)",
+           "\tL := func(k int) int64 {",
+           "\t\tb := v[k]",
+           "\t\tfor len(b) > 0 && b[0] == 0 {",
+           "\t\t\tb = b[1:]",
+           "\t\t}",
+           "\t\treturn int64(len(b))",
+           "\t}",
+           "\tF := func(k int) int64 {",
+           "\t\tif L(k) > 6 {",
+           "\t\t\treturn -1",
+           "\t\t}",
+           "\t\tvar x int64",
+           "\t\tfor _, c := range v[k] {",
+           "\t\t\tx = x<<8 | int64(c)",
+           "\t\t}",
+           "\t\treturn x",
+           "\t}",
+           "\t_ = F",
+           "\tswitch label {"]
+    for label, rows in _cap_rows_by_label(caps).items():
+        out.append('\tcase "%s":' % label)
+        for r in rows:
+            cond = "n >= %d && n <= %d" % (r["min_items"], r["max_items"])
+            if r["when"]:
+                cond += " && (%s)" % _cap_code(r["when"], "go")
+            out.append("\t\tif %s {" % cond)
+            for c in r["caps"]:
+                out.append("\t\t\tif c := int64(%s); n > %d && L(%d) > c {"
+                           % (_cap_code(c["cap"], "go"), c["field"], c["field"]))
+                out.append('\t\t\t\treturn fmt.Sprintf("%s", label, %d, L(%d), c)'
+                           % (_MSG_WIDE.replace("%lld", "%d"), c["field"], c["field"]))
+                out.append("\t\t\t}")
+            for c in r["caps"]:
+                if c["exact"]:
+                    out.append("\t\t\tif c := int64(%s); n > %d && !(int64(ew[%d]) == c || (lz[%d] == 2 && int64(ew[%d])+1 == c) || (c == 0 && ew[%d] == 1 && L(%d) == 0)) {"
+                               % (_cap_code(c["cap"], "go"), c["field"], c["field"], c["field"], c["field"], c["field"], c["field"]))
+                    out.append('\t\t\t\treturn fmt.Sprintf("%s", label, %d, ew[%d], c)'
+                               % (_MSG_EXACT.replace("%lld", "%d"), c["field"], c["field"]))
+                else:
+                    out.append("\t\t\tif n > %d && lz[%d] == 1 {" % (c["field"], c["field"]))
+                    out.append('\t\t\t\treturn fmt.Sprintf("%s", label, %d)' % (_MSG_MINIMAL, c["field"]))
+                out.append("\t\t\t}")
+            for rule in r["rules"]:
+                out.append("\t\t\tif e := %s; e != \"\" {" % _rule_call(rule, "go"))
+                out.append("\t\t\t\treturn e")
+                out.append("\t\t\t}")
+            out.append('\t\t\treturn ""')
+            out.append("\t\t}")
+    out += ["\t}", '\treturn ""', "}", ""]
+    out += _GO_RULE_HELPERS.split("\n")
+    return out
+
+
+_PY_RULE_HELPERS = """# TODO #373: the value rules.  Each returns the refusal, or None.  A rule reads
+# a fixed-width field, which the encoding check has already held to its width.
+def _rule_coef(label, k, x, w, cnt, bound, cbd):
+    b = x.to_bytes(w * cnt, 'big')
+    for j in range(cnt):
+        c = int.from_bytes(b[j * w:(j + 1) * w], 'big')
+        if cbd and c not in (0, 1, bound - 1):
+            return f"{label}: field {k} coefficient {j} is {c} (expected 0, 1 or {bound - 1})"
+        if not cbd and c >= bound:
+            return f"{label}: field {k} coefficient {j} is {c} (expected below {bound})"
+    return None
+
+
+def _rule_bits(label, k, x, r, le):
+    # le: an r-bit little-endian byte string (spare bits in the LAST byte);
+    # otherwise a plain integer below 2^r.
+    if (r % 8 and (x & 0xff) >> (r % 8)) if le else x >> r:
+        return f"{label}: field {k} has bits at or above r = {r}"
+    return None
+
+
+def _rule_support(label, k, x, d, r):
+    b, seen = x.to_bytes(2 * d, 'big'), set()
+    for j in range(d):
+        idx = int.from_bytes(b[2 * j:2 * j + 2], 'big')
+        if idx >= r:
+            return f"{label}: field {k} index {j} is {idx} (expected below r = {r})"
+        if idx in seen:
+            return f"{label}: field {k} repeats index {idx}"
+        seen.add(idx)
+    return None
+
+
+def _rule_le_poly_of(label, k, x, s, sup, d, r):
+    b, want = sup.to_bytes(2 * d, 'big'), bytearray((r + 7) // 8)
+    for j in range(d):
+        idx = int.from_bytes(b[2 * j:2 * j + 2], 'big')
+        if idx < r:
+            want[idx >> 3] |= 1 << (idx & 7)
+    if x != int.from_bytes(want, 'big'):
+        return f"{label}: field {k} is not the polynomial of field {s}"
+    return None
+
+
+def _rule_equals(label, k, x, want):
+    return None if x == want else f"{label}: field {k} is {x} (expected {want})\""""
+
+
+def emit_py_field_caps(caps):
+    out = _PY_RULE_HELPERS.split("\n") + ["", "",
+           "# TODO #372 / #373: per DER-SEQUENCE label, each field's width cap",
+           "# (significant bytes), its encoding (exactly its width, or minimal) and the",
+           "# value rules.  enc[k] is (encoded width, lead): lead 1 when it starts with a",
+           "# 0x00 the sign does not need, 2 with a sign byte.",
+           "def _der_field_check(label, v, enc):",
+           "    \"\"\"The refusal for the first field of v that breaks its row, else None.\"\"\"",
+           "    n = len(v)",
+           "    F = [x if x.bit_length() <= 48 else -1 for x in v]",
+           "    L = [(x.bit_length() + 7) // 8 for x in v]",
+           "    e = None"]
+    first = True
+    py = lambda fmt: fmt.replace("%lld", "%d")
+    for label, rows in _cap_rows_by_label(caps).items():
+        out.append("    %s label == %r:" % ("if" if first else "elif", label))
+        first = False
+        for r in rows:
+            cond = "%d <= n <= %d" % (r["min_items"], r["max_items"])
+            if r["when"]:
+                cond += " and (%s)" % _cap_code(r["when"], "py")
+            out.append("        if %s:" % cond)
+            for c in r["caps"]:
+                out.append("            if n > %d and L[%d] > (%s):" % (c["field"], c["field"],
+                                                                     _cap_code(c["cap"], "py")))
+                out.append("                return %r %% (label, %d, L[%d], %s)"
+                           % (py(_MSG_WIDE), c["field"], c["field"], _cap_code(c["cap"], "py")))
+            for c in r["caps"]:
+                if c["exact"]:
+                    out.append("            if n > %d and enc[%d][0] != (%s) and not (enc[%d][1] == 2 and enc[%d][0] + 1 == (%s)) and not ((%s) == 0 and enc[%d][0] == 1 and L[%d] == 0):"
+                               % (c["field"], c["field"], _cap_code(c["cap"], "py"), c["field"], c["field"],
+                                  _cap_code(c["cap"], "py"), _cap_code(c["cap"], "py"), c["field"], c["field"]))
+                    out.append("                return %r %% (label, %d, enc[%d][0], %s)"
+                               % (py(_MSG_EXACT), c["field"], c["field"], _cap_code(c["cap"], "py")))
+                else:
+                    out.append("            if n > %d and enc[%d][1] == 1:" % (c["field"], c["field"]))
+                    out.append("                return %r %% (label, %d)" % (_MSG_MINIMAL, c["field"]))
+            for rule in r["rules"]:
+                out.append("            e = %s" % _rule_call(rule, "py"))
+                out.append("            if e:")
+                out.append("                return e")
+            out.append("            return None")
+    out.append("    return None")
+    return out
+
+
+def key_tag_labels(priv_algos, pem_labels):
+    """tag -> (PRIVATE label, PUBLIC label) for every key type a CLI can generate."""
+    out = {t: (l, l.replace("PRIVATE", "PUBLIC")) for t, l in priv_algos.items()}
+    out["hcred"] = (pem_labels["PEM_HCRED_PRIV"], pem_labels["PEM_HCRED_PUB"])
+    return out
+
+
+def build_key_label_acceptance(priv_algos, pem_labels):
+    labels = key_tag_labels(priv_algos, pem_labels)
+    rows, seen = [], set()
+    for sub, algo, flag, role, tags in KEY_LABEL_SITES:
+        key = (sub, algo, flag)
+        if key in seen:
+            raise RuntimeError("duplicate key-label site %r" % (key,))
+        seen.add(key)
+        unknown = [t for t in tags if t not in labels]
+        if unknown:
+            raise RuntimeError("key-label site %r names unknown key tags %r" % (key, unknown))
+        rows.append({"subcommand": sub, "algo": algo, "flag": flag, "role": role,
+                     "accepts": list(tags),
+                     "labels": [labels[t][i] for t in tags
+                                for i in ((0,) if role == "priv" else (1,) if role == "pub"
+                                          else (1, 0))]})
+    return rows
+
+
+def emit_c_key_table(rows, items, caps):
+    width = max(len(r["labels"]) for r in rows) + 1
+    out = ["/* " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n * ") + " */",
+           "#ifndef HKX_KEY_LABEL_TABLE_H",
+           "#define HKX_KEY_LABEL_TABLE_H", "",
+           "/* Which key PEM labels each (subcommand, --algo, key flag) accepts. */",
+           "typedef struct { const char *cmd, *algo, *flag, *tags;",
+           "                 const char *labels[%d]; } HkxKeySite;" % width, "",
+           "static const HkxKeySite HKX_KEY_SITES[] = {"]
+    for r in rows:
+        labs = ", ".join('"%s"' % l for l in r["labels"]) + ", 0"
+        out.append('    {"%s", "%s", "%s", "%s",\n     {%s}},'
+                   % (r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"]), labs))
+    out += ["};",
+            "static const int HKX_KEY_SITES_N ="
+            " (int)(sizeof(HKX_KEY_SITES) / sizeof(HKX_KEY_SITES[0]));", "",
+            "/* TODO #367: DER INTEGER items each DER-SEQUENCE label carries (min, max). */",
+            "typedef struct { const char *label; int min, max; } HkxDerItems;", "",
+            "static const HkxDerItems HKX_DER_ITEMS[] = {"]
+    for r in items:
+        out.append('    {"%s", %d, %d},' % (r["label"], r["min"], r["max"]))
+    out += ["};",
+            "static const int HKX_DER_ITEMS_N ="
+            " (int)(sizeof(HKX_DER_ITEMS) / sizeof(HKX_DER_ITEMS[0]));", ""]
+    out += emit_c_field_caps(caps)
+    out += ["#endif /* HKX_KEY_LABEL_TABLE_H */", ""]
+    return "\n".join(out)
+
+
+def emit_java_key_table(rows, items, caps):
+    out = ["package herradurakex;", "",
+           "/** " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n *  ") + " */",
+           "final class KeyLabelTable {",
+           "    private KeyLabelTable() { }", "",
+           "    /** {subcommand, algo, flag, accepted tags, label...} per key site. */",
+           "    static final String[][] SITES = {"]
+    for r in rows:
+        cells = [r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"])] + r["labels"]
+        out.append("        {" + ", ".join('"%s"' % c for c in cells) + "},")
+    out += ["    };", "",
+            "    /** TODO #367: {label, min, max} DER INTEGER items per DER-SEQUENCE label. */",
+            "    static final String[][] DER_ITEMS = {"]
+    for r in items:
+        out.append('        {"%s", "%d", "%d"},' % (r["label"], r["min"], r["max"]))
+    out += ["    };", ""]
+    out += emit_java_field_caps(caps)
+    out += ["}", ""]
+    return "\n".join(out)
+
+
+GO_KEY_BEGIN = "// BEGIN GENERATED key-label table (spec/generate_spec.py, TODO #366) -- DO NOT EDIT."
+GO_KEY_END = "// END GENERATED key-label table"
+PY_KEY_BEGIN = "# BEGIN GENERATED key-label table (spec/generate_spec.py, TODO #366) -- DO NOT EDIT."
+PY_KEY_END = "# END GENERATED key-label table"
+
+
+def _replace_region(src, begin, end, body, what):
+    pat = re.compile(re.escape(begin) + r".*?" + re.escape(end), re.DOTALL)
+    if not pat.search(src):
+        raise RuntimeError("%s has no generated key-label region; restore the "
+                           "BEGIN/END GENERATED key-label table markers" % what)
+    return pat.sub(lambda _m: "\n".join([begin] + body + [end]), src, count=1)
+
+
+def emit_go_key_region(go_src, rows, items, caps):
+    body = ["var keySites = []keySite{"]
+    for r in rows:
+        body.append('\t{"%s", "%s", "%s", "%s", []string{%s}},'
+                    % (r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"]),
+                       ", ".join('"%s"' % l for l in r["labels"])))
+    body.append("}")
+    body.append("")
+    body.append("// TODO #367: DER INTEGER items each DER-SEQUENCE label carries (min, max).")
+    body.append("var derItems = map[string][2]int{")
+    for r in items:
+        body.append('\t"%s": {%d, %d},' % (r["label"], r["min"], r["max"]))
+    body.append("}")
+    body.append("")
+    body += emit_go_field_caps(caps)
+    return _replace_region(go_src, GO_KEY_BEGIN, GO_KEY_END, body, "herradura_cli.go")
+
+
+def emit_py_key_region(py_src, rows, items, caps):
+    body = ["_KEY_SITES = {"]
+    for r in rows:
+        body.append("    (%r, %r, %r): (%r, (%s)),"
+                    % (r["subcommand"], r["algo"], r["flag"], ", ".join(r["accepts"]),
+                       " ".join("%r," % l for l in r["labels"])))
+    body.append("}")
+    body.append("")
+    body.append("# TODO #367: DER INTEGER items each DER-SEQUENCE label carries (min, max).")
+    body.append("_DER_ITEMS = {")
+    for r in items:
+        body.append("    %r: (%d, %d)," % (r["label"], r["min"], r["max"]))
+    body.append("}")
+    body.append("")
+    body.append("")
+    body += emit_py_field_caps(caps)
+    return _replace_region(py_src, PY_KEY_BEGIN, PY_KEY_END, body, "herradura.py")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
@@ -1834,7 +2986,18 @@ def main():
         (JAVA_FLAG_TABLE, emit_java_flag_table(extract_flags_java(read(CLI_JAVA)),
                                                build_help_synopsis(spec, "java"))),
         # TODO #339: Go's synopsis lives in a marked region of the CLI itself.
-        (CLI_GO, emit_go_help_region(read(CLI_GO), build_help_synopsis(spec, "go"))),
+        (CLI_GO, emit_go_key_region(
+            emit_go_help_region(read(CLI_GO), build_help_synopsis(spec, "go")),
+            spec["key_label_acceptance"], spec["pem_der_items"], spec["pem_der_field_caps"])),
+        # TODO #366: the key-label acceptance table, in all four CLIs (with
+        # #367's item counts and #372's field caps).
+        (C_KEY_TABLE, emit_c_key_table(spec["key_label_acceptance"], spec["pem_der_items"],
+                                       spec["pem_der_field_caps"])),
+        (JAVA_KEY_TABLE, emit_java_key_table(spec["key_label_acceptance"], spec["pem_der_items"],
+                                             spec["pem_der_field_caps"])),
+        (HERRADURA_PY, emit_py_key_region(read(HERRADURA_PY), spec["key_label_acceptance"],
+                                                     spec["pem_der_items"],
+                                                     spec["pem_der_field_caps"])),
     ]
 
     if args.check:

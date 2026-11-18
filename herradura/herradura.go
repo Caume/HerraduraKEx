@@ -1692,7 +1692,9 @@ func Hfscx256(data []byte, iv []byte) []byte {
 		init_ = iv
 	}
 
-	state := NewFromBytes(init_, 0, 256)
+	if len(init_) < 32 {
+		baFail(baErr(BaEMixedWidth, "hfscx256 iv")) // NewFromBytes panicked here too
+	}
 
 	// ISO 7816-4 padding: data || 0x80 || zeros to 32-byte boundary
 	padded := make([]byte, len(data)+1)
@@ -1716,12 +1718,61 @@ func Hfscx256(data []byte, iv []byte) []byte {
 
 	// Chain each 32-byte block: C(s,m) = F_s^{192}(m) ⊕ m (Matyas-Meyer-Oseas,
 	// TODO #351): the block is v1's A, the chaining value its B.
+	// TODO #369: the chaining runs on four uint64 words (hfscx256Compress)
+	// rather than through BitArray, which allocated on every Xor and rotate --
+	// HFSCX-256 was 90% of an HCRED proof's time.  Bit-exact with
+	// NlFscxRevolveV1(block, state, V1ModeSteps).Xor(block); the HFSCX-256
+	// KAT vectors and CliTest/test_digest_matrix.sh hold it to the other ports.
+	st := u256FromBytes(init_)
 	for off := 0; off < len(padded); off += 32 {
-		block := NewFromBytes(padded[off:off+32], 0, 256)
-		state = NlFscxRevolveV1(block, state, V1ModeSteps).Xor(block)
+		st = hfscx256Compress(st, u256FromBytes(padded[off:off+32]))
 	}
+	return st.bytes()
+}
 
-	return state.Bytes()
+// u256 is a 256-bit value as four big-endian words: w[0] holds the most
+// significant 64 bits, matching BitArray's big-endian byte order.
+type u256 [4]uint64
+
+func u256FromBytes(b []byte) u256 {
+	return u256{binary.BigEndian.Uint64(b[0:]), binary.BigEndian.Uint64(b[8:]),
+		binary.BigEndian.Uint64(b[16:]), binary.BigEndian.Uint64(b[24:])}
+}
+
+func (x u256) bytes() []byte {
+	out := make([]byte, 32)
+	for i := 0; i < 4; i++ {
+		binary.BigEndian.PutUint64(out[8*i:], x[i])
+	}
+	return out
+}
+
+// hfscx256Compress is one MMO step, F_s^{V1ModeSteps}(m) xor m, with v1's
+// A = m and B = s: NlFscxV1(a, b) = Fscx(a, b) xor ROL(a + b mod 2^256, 64).
+func hfscx256Compress(s, m u256) u256 {
+	a := m
+	for step := 0; step < V1ModeSteps; step++ {
+		var f, sum u256
+		var carry uint64
+		for i := 3; i >= 0; i-- {
+			sum[i], carry = bits.Add64(a[i], s[i], carry)
+		}
+		for i := 0; i < 4; i++ {
+			nx, pv := (i+1)&3, (i+3)&3
+			rolA := a[i]<<1 | a[nx]>>63
+			rolB := s[i]<<1 | s[nx]>>63
+			rorA := a[i]>>1 | a[pv]<<63
+			rorB := s[i]>>1 | s[pv]<<63
+			f[i] = a[i] ^ s[i] ^ rolA ^ rolB ^ rorA ^ rorB
+		}
+		for i := 0; i < 4; i++ {
+			a[i] = f[i] ^ sum[(i+1)&3] // ROL by 64 = one word
+		}
+	}
+	for i := 0; i < 4; i++ {
+		a[i] ^= m[i]
+	}
+	return a
 }
 
 // Hfscx256DS is the domain-separated variant of Hfscx256 (HFSCX-256-DS).
@@ -2382,6 +2433,15 @@ func RnlValidateMBlind(poly []int, q int) bool {
 		}
 	}
 	return nz >= n/4 && mx-mn >= q/4
+}
+
+// RnlValidatePub is the peer PUBLIC-VALUE guard (TODO #371): RnlValidateMBlind's
+// two tests over Z_p, applied to a peer's C (Alice's public key, or C_B in Bob's
+// response).  An all-zero C makes s*C = 0 for every s, so K_raw is a constant and
+// the session key depends only on the two public nonces.  Honest values clear
+// both bounds by a wide margin.
+func RnlValidatePub(poly []int) bool {
+	return RnlValidateMBlind(poly, RnlP)
 }
 
 // RnlContributoryKdf derives the HKEX-RNL session key: HFSCX-256(K_raw || nA ||

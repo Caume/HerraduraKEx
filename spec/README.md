@@ -156,6 +156,36 @@ Python CLI's subparser list, which made a subcommand only another CLI defines
 structurally invisible — Go's top-level `threshold-verify` was. Each entry now carries
 `implementations`, and the union appears in `cli_flag_matrix`.
 
+## Key-label acceptance (TODO #366)
+
+`key_label_acceptance` is the one curated table here that the CLIs ENFORCE rather than
+describe. Each row is a (subcommand, `--algo`, key flag) slot and the key types it
+accepts, with their PEM labels. It is policy, not extraction, so it lives as
+`KEY_LABEL_SITES` in `generate_spec.py`, with the reasoning beside it. Two families are
+shared on purpose: GF (`hkex-gf`, `hpks`, `hpks-nl`, `hpke`, `hpke-nl`) and Stern
+(`hpks-stern`, `hpke-stern`). Public-key slots list PUBLIC labels only, except role
+`either` (HCRED's two, whose loaders take the private key too). The generator
+emits the table into `HerraduraCli/key_label_table.h`, `KeyLabelTable.java` and marked
+regions of `herradura_cli.go` and `herradura.py`; `--check` fails if any of the four
+is stale. `CliTest/test_key_label_matrix.sh` runs every row in every CLI, and fails if
+its templates and these rows differ.
+
+## DER item counts (TODO #367)
+
+`pem_der_items` gives, for every DER-SEQUENCE PEM label, how many DER INTEGER items it
+carries, as `min..max`. It is curated as `PEM_DER_ITEMS` in `generate_spec.py` and
+emitted beside the key-label table into the same four files. Every CLI checks it in its
+one PEM-to-integers loader, before any decoder indexes the list, and refuses a mismatch
+with one message: "`malformed PEM '<label>': <k> DER items, expected <min>[..<max>]`".
+Before this, a valid SEQUENCE with too few items, a peer's public key among them, panicked
+the Go CLI and raised a traceback in Python. Two labels serve several algorithms
+(`CIPHERTEXT`, `SIGNATURE`), so their row is the union and each decoder checks its exact
+count. One label has a range: the HKEX-RNL keys and response may omit the contributory
+nonce, which then reads as zero (a documented backward-compatibility rule). The raw,
+non-DER labels (ZKP-NL, ZKP-RNL, HCRED keys and proofs) have their own length checks
+(TODO #275) and no row here. `CliTest/test_der_items_matrix.sh` covers every row in
+every CLI, and fails if its templates and these rows differ.
+
 ## Protocols without an `--algo` tag
 
 `protocols` is keyed on a stable protocol id, which for most entries is also the `--algo`

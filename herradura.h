@@ -1673,6 +1673,54 @@ static BaStatus ba_try_gf_pow(BitArray *dst, const BitArray *base, uint64_t e)
  * H(b || 0^32) = H(0^32 || b) (SecurityProofs-10.md §11.75).  Nobody chooses
  * the chaining value.
  * Bare hash: iv = NULL.  Keyed MAC: iv = key XOR _HFSCX256_IV (32 bytes). */
+/* TODO #369: HFSCX-256's compression on a 256-bit value held as four
+ * big-endian uint64 words (w[0] = most significant), matching BitArray's
+ * big-endian byte order.  NL-FSCX v1: v1(a, b) = fscx(a, b) ^ ROL(a + b, 64);
+ * a rotation by 64 is one word. */
+static void _u256_load(uint64_t w[4], const uint8_t b[32])
+{
+    int i, k;
+    for (i = 0; i < 4; i++) {
+        w[i] = 0;
+        for (k = 0; k < 8; k++) w[i] = (w[i] << 8) | b[8 * i + k];
+    }
+}
+
+static void _u256_store(uint8_t b[32], const uint64_t w[4])
+{
+    int i, k;
+    for (i = 0; i < 4; i++)
+        for (k = 0; k < 8; k++) b[8 * i + k] = (uint8_t)(w[i] >> (56 - 8 * k));
+}
+
+/* s <- F_s^{V1_MODE_STEPS}(m) ^ m, with v1's A = m and B = s. */
+static void _hfscx256_compress(uint64_t s[4], const uint8_t blk[32])
+{
+    uint64_t m[4], a[4], sb[4], t[4], f[4];
+    int i, step;
+    _u256_load(m, blk);
+    for (i = 0; i < 4; i++) {               /* B-side fscx terms are fixed */
+        int nx = (i + 1) & 3, pv = (i + 3) & 3;
+        sb[i] = s[i] ^ (s[i] << 1 | s[nx] >> 63) ^ (s[i] >> 1 | s[pv] << 63);
+        a[i] = m[i];
+    }
+    for (step = 0; step < V1_MODE_STEPS; step++) {
+        uint64_t carry = 0;
+        for (i = 3; i >= 0; i--) {
+            uint64_t x = a[i] + s[i];
+            uint64_t c1 = x < a[i];
+            t[i] = x + carry;
+            carry = c1 | (t[i] < x);
+        }
+        for (i = 0; i < 4; i++) {
+            int nx = (i + 1) & 3, pv = (i + 3) & 3;
+            f[i] = a[i] ^ (a[i] << 1 | a[nx] >> 63) ^ (a[i] >> 1 | a[pv] << 63) ^ sb[i];
+        }
+        for (i = 0; i < 4; i++) a[i] = f[i] ^ t[(i + 1) & 3];
+    }
+    for (i = 0; i < 4; i++) s[i] = a[i] ^ m[i];
+}
+
 static void hfscx_256(const uint8_t *data, size_t len,
                       const uint8_t *iv, uint8_t out[32])
 {
@@ -1707,14 +1755,19 @@ static void hfscx_256(const uint8_t *data, size_t len,
     }
 
     /* Chain each 32-byte block: C(s,m) = F_s^{192}(m) ⊕ m (Matyas-Meyer-Oseas,
-     * TODO #351): the block is v1's A, the chaining value its B. */
-    for (off = 0; off < padded_len; off += 32) {
-        memcpy(block.b, padded + off, 32);
-        nl_fscx_revolve_v1_ba(&state, &block, &state, V1_MODE_STEPS);
-        ba_xor(&state, &state, &block);
+     * TODO #351): the block is v1's A, the chaining value its B.
+     * TODO #369: on four uint64 words (_hfscx256_compress) rather than
+     * through BitArray -- bit-exact with nl_fscx_revolve_v1_ba(&state, &block,
+     * &state, V1_MODE_STEPS) then ba_xor(&state, &state, &block); the HFSCX-256
+     * KAT vectors and CliTest/test_digest_matrix.sh hold it to the other ports. */
+    (void)block;
+    {
+        uint64_t st[4];
+        _u256_load(st, state.b);
+        for (off = 0; off < padded_len; off += 32)
+            _hfscx256_compress(st, padded + off);
+        _u256_store(out, st);
     }
-
-    memcpy(out, state.b, 32);
     free(padded);
 }
 
@@ -2557,6 +2610,28 @@ static int rnl_validate_m_blind(const rnl_poly_t poly, int n)
     }
     if (nz < n / 4) return 0;
     if (mx - mn < (int32_t)(RNL_Q / 4)) return 0;
+    return 1;
+}
+
+/* TODO #371: the peer PUBLIC-VALUE guard -- the same two tests as
+ * rnl_validate_m_blind, over Z_p instead of Z_q, applied to a peer's C (Alice's
+ * public key, or C_B in Bob's response).  C = round_p(m_blind * s) is uniform
+ * over Z_p for an honest party; an all-zero C makes s * C = 0 for every s, so
+ * K_raw is a constant and the session key depends only on the two public
+ * nonces.  A sparse or clustered C is the same collapse by degrees.  Honest
+ * values clear both bounds by a wide margin (TODO #371 measured 300 genuine
+ * keys and responses: >= 1022 of 1024 coefficients non-zero, range >= 4056). */
+static int rnl_validate_pub(const rnl_poly_t poly, int n)
+{
+    int i, nz = 0;
+    int32_t mn = poly[0], mx = poly[0];
+    for (i = 0; i < n; i++) {
+        if (poly[i] != 0) nz++;
+        if (poly[i] < mn) mn = poly[i];
+        if (poly[i] > mx) mx = poly[i];
+    }
+    if (nz < n / 4) return 0;
+    if (mx - mn < (int32_t)(RNL_P / 4)) return 0;
     return 1;
 }
 
@@ -7611,7 +7686,11 @@ static uint8_t *hcred_proof_serialize(const HcredProof *proof, size_t *out_len)
 /* Deserialize an HcredProof from bytes.
  * Returns 0 on success; -1 on truncation or n mismatch.
  * On success, proof->rd is heap-allocated; free with hcred_proof_free(). */
-static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_t data_len)
+/* Nothing may follow the proof's last field (TODO #372).  With used == NULL a
+ * body longer than the proof is an error; otherwise *used receives the bytes
+ * the proof occupies, so the caller can name the excess. */
+static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data,
+                                   size_t data_len, size_t *used)
 {
     int ri, j, ii;
     if (data_len < 12) return -1;
@@ -7681,6 +7760,8 @@ static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_
 
 #undef _HPSER_NEED
 #undef _HPSER_D3
+    if (used) *used = off;
+    else if (off != data_len) { hcred_proof_free(proof); return -1; }
     return 0;
 }
 

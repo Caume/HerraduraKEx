@@ -59,7 +59,7 @@ check_reject "verify hpks wrong key" \
     "$CLI" verify --algo hpks --pubkey "$TMP/hpks_other_pub.pem" \
     --in "$TMP/msg32.bin" --sig "$TMP/hpks_sig.pem"
 
-# ── HPKS-Stern-F (N=256, rounds=32) ─────────────────────────────────────────
+# ── HPKS-Stern-F (N=256, default rounds=219 since TODO #364) ─────────────────────────────────────────
 "$CLI" genpkey --algo hpks-stern --out "$TMP/hpks_stern.pem"
 "$CLI" pkey    --in "$TMP/hpks_stern.pem" --pubout --out "$TMP/hpks_stern_pub.pem"
 "$CLI" sign    --algo hpks-stern --key "$TMP/hpks_stern.pem" \
@@ -85,12 +85,44 @@ for r in 64 219; do
 
     check_verify "hpks-stern round-trip at --rounds $r (SDF_ROUNDS is 32)" \
         "$CLI" verify --algo hpks-stern --pubkey "$TMP/hpks_stern_pub.pem" \
-        --in "$TMP/msg32.bin" --sig "$TMP/stern_r$r.pem"
+        --in "$TMP/msg32.bin" --sig "$TMP/stern_r$r.pem" --min-rounds "$r"
 
     check_reject "hpks-stern wrong msg at --rounds $r" \
         "$CLI" verify --algo hpks-stern --pubkey "$TMP/hpks_stern_pub.pem" \
-        --in "$TMP/msg32b.bin" --sig "$TMP/stern_r$r.pem"
+        --in "$TMP/msg32b.bin" --sig "$TMP/stern_r$r.pem" --min-rounds "$r"
 done
+
+# ── The verifier's round floor (TODO #364) ───────────────────────────────────
+# The round count is the SIGNER's choice, so without a floor a 1-round
+# signature -- forgeable by grinding the Fiat-Shamir commitment -- verified.
+# The accept-controls are the --min-rounds cases above; these are the refusals,
+# matched on the floor's own message so a refusal for another reason cannot pass.
+check_floor() {
+    local label="$1"; shift
+    local output rc
+    output=$("$@" 2>&1) && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ] && echo "$output" | grep -q "below the --min-rounds floor"; then
+        echo "PASS $label"
+        PASS=$((PASS+1))
+    else
+        echo "FAIL $label: expected the round-floor refusal (rc=$rc); got: $output"
+        FAIL=$((FAIL+1))
+    fi
+}
+check_floor "hpks-stern 64-round signature refused at the default floor (219)" \
+    "$CLI" verify --algo hpks-stern --pubkey "$TMP/hpks_stern_pub.pem" \
+    --in "$TMP/msg32.bin" --sig "$TMP/stern_r64.pem"
+check_floor "hpks-stern 64-round signature refused at --min-rounds 65" \
+    "$CLI" verify --algo hpks-stern --pubkey "$TMP/hpks_stern_pub.pem" \
+    --in "$TMP/msg32.bin" --sig "$TMP/stern_r64.pem" --min-rounds 65
+"$CLI" sign --algo hpks-stern --rounds 1 --key "$TMP/hpks_stern.pem" \
+            --in "$TMP/msg32.bin" --out "$TMP/stern_r1.pem" 2>/dev/null
+check_verify "hpks-stern 1-round signature accepted at --min-rounds 1 (control)" \
+    "$CLI" verify --algo hpks-stern --pubkey "$TMP/hpks_stern_pub.pem" \
+    --in "$TMP/msg32.bin" --sig "$TMP/stern_r1.pem" --min-rounds 1
+check_floor "hpks-stern 1-round signature refused by default" \
+    "$CLI" verify --algo hpks-stern --pubkey "$TMP/hpks_stern_pub.pem" \
+    --in "$TMP/msg32.bin" --sig "$TMP/stern_r1.pem"
 
 # A signature at one round count must not verify as another: re-signing the same
 # message at 64 and at 219 must give distinct, non-interchangeable artifacts.

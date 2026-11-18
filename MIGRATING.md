@@ -80,6 +80,52 @@ PEM or a `0x` hex key such as 1, 2^95 or 0xff…fe. **Decrypt anything under suc
 with a 13.x build before upgrading.** See
 [section 29](#29-nl-fscx-v2-keys-are-screened-by-the-arc-of-delta-v1400).
 
+The thirtieth is the reason the version is **15.0.0**, and it is a **security fix** in
+two parts. `sign` and `verify` now pre-hash with HFSCX-256 by default, where the old
+default signed only the first 32 bytes of the input. And `verify` / `cred-verify` refuse
+a Stern-F, ring, ZKBoo, ZKB++ or HCRED artifact that declares fewer than 219
+Fiat-Shamir rounds, which a forger could otherwise grind. **Keys do not change.
+Re-sign on 15.0.0+, or pass `--digest none` / `--min-rounds N` on the verify side to
+check an old artifact.** Nothing fails silently. See
+[section 30](#30-sign-pre-hashes-by-default-and-verifiers-enforce-a-round-floor-v1500).
+
+The thirty-first ships in the same release. Every CLI now refuses a key whose PEM label
+the operation does not accept, such as an HKEX-GF key passed to `sign --algo
+hpks-stern`. The GF keys (`hkex-gf`, `hpks`, `hpks-nl`, `hpke`, `hpke-nl`) stay
+interchangeable, as do the two Stern keys. Only mismatched keys stop working, and they
+fail with "wrong key type". See
+[section 31](#31-every-cli-checks-a-keys-label-against-the-operation-v1500).
+
+The thirty-second ships in the same release too. A PEM file with the wrong number of
+DER items, or a width or size field out of range, is now refused with one line by every
+CLI, where Go used to panic and Python to print a traceback. Files the CLIs write are
+unaffected. See
+[section 32](#32-malformed-artifacts-are-refused-not-crashed-on-v1500).
+
+The thirty-third ships in the same release as well. Every CLI now refuses a peer value
+that makes the secret a constant: a GF(2^n)\* public key or ciphertext R of 0 or 1, or an
+HKEX-RNL peer C that is zero, sparse or clustered. Go and Python accepted the GF ones,
+and verified a forgeable signature under a public key of 1. The C and Java CLIs now also
+refuse a key width they do not run, where C used to compute a wrong answer and exit 0.
+See [section 33](#33-degenerate-peer-values-and-unsupported-widths-are-refused-v1500).
+
+The thirty-fourth ships in the same release too. Every CLI now refuses a second encoding
+of a valid artifact: bytes after a PEM's DER SEQUENCE, after a raw-body PEM's last field
+or after an `.hkx` file's tag; a field wider than its writer pads it to, or encoded at any
+other width than the one its writer uses; and an HPKS signature whose stored challenge is
+not the recomputed one. It also refuses HKEX-RNL and QC-MDPC values out of range. Files
+the CLIs write are unaffected, except an HKEX-RNL response from an older Go CLI. See
+[section 34](#34-one-encoding-per-artifact-v1500).
+
+The thirty-fifth ships in the same release. `genpkey --algo hpks-zkp-nl --bits 256` used
+to write an n = 8 key and exit 0 in Python, Go and Java; it is now refused, because
+n = 64 is the most the PEM can carry. See
+[section 35](#35-genpkey-hpks-zkp-nl---bits-means-what-it-says-v1500).
+
+The thirty-sixth ships in the same release. The Python CLI's `genpkey --algo hcred`
+writes an n = 256 key, as C, Go and Java always have; it wrote n = 32, which C and Java
+refuse. See [section 36](#36-python-genpkey-hcred-defaults-to-n--256-v1500).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -118,6 +164,13 @@ trusting any signature made by an earlier build.
 | [HFSCX-256's compression is Matyas–Meyer–Oseas](#25-hfscx-256s-compression-is-matyasmeyeroseas-v1100) | v11.0.0 | Every HFSCX-256 digest and MAC, so every signature, password-protected private key, `.hkx` file, `--aead` tag and hash-derived session secret; every `hpks-wots` / `hpks-xmss` key | **Decrypt and re-export with a 10.x build before upgrading; regenerate WOTS/XMSS keys and re-sign.** Plain `hske-nla1` is unchanged |
 | [The Schnorr challenge and the Stern hash use HFSCX-256-DS](#26-the-schnorr-challenge-and-the-stern-hash-use-hfscx-256-ds-v1200) | v12.0.0 | Every `hpks-nl` signature and HPKS-T aggregate / signature; every `hpks-stern`, ring and HCRED credential signature; `hpke-stern` session keys | **Re-sign on 12.0.0+, and redo `hpke-stern` exchanges.** Keys, `hpke-stern-kem` and everything else are unchanged |
 | [NL-FSCX v2 keys are screened by the arc of delta](#29-nl-fscx-v2-keys-are-screened-by-the-arc-of-delta-v1400) | v14.0.0 | `hske-nla2` keys with arc(δ(K)) ≤ 64: hand-written keys only (a generated key is affected with probability about 2^−96) | **Decrypt with a 13.x build and re-encrypt under a generated key.** Nothing else changes |
+| [`sign` pre-hashes by default, and verifiers enforce a round floor](#30-sign-pre-hashes-by-default-and-verifiers-enforce-a-round-floor-v1500) | v15.0.0 | Every signature made with the default `--digest` (none) by an earlier build, and every `hpks-stern` / `hpks-ring` / `nl-zkboo` / `nl-zkbpp` / HCRED artifact below 219 rounds, which includes the old 32-round `hpks-stern` / `hpks-ring` default and C's 4-round `cred-prove` | **Re-sign on 15.0.0+.** To check an old signature, verify with `--digest none` and/or `--min-rounds N`. Keys are unchanged |
+| [Every CLI checks a key's label against the operation](#31-every-cli-checks-a-keys-label-against-the-operation-v1500) | v15.0.0 | Any command given a key of the wrong type, e.g. an `hpke-nl` key for `hpke-nl3`, a Stern key for `hpks`, or a private key as `--pubkey` | **Pass the key the operation names** (`genpkey --algo <that algo>`). The GF keys stay interchangeable with each other, as do the two Stern keys |
+| [Malformed artifacts are refused, not crashed on](#32-malformed-artifacts-are-refused-not-crashed-on-v1500) | v15.0.0 | Only hand-built or damaged PEM files: a DER SEQUENCE with missing or extra items, or an out-of-range width / ring / size field | **Nothing**, for files the CLIs wrote. A damaged file now fails with "malformed PEM '<label>': <k> DER items, expected <n>" or a one-line bound error |
+| [Degenerate peer values and unsupported widths are refused](#33-degenerate-peer-values-and-unsupported-widths-are-refused-v1500) | v15.0.0 | A GF public key or ciphertext R of 0 or 1; an HKEX-RNL peer C or C_B that is zero, sparse or clustered; in C and Java, any key or artifact whose declared width is not 256 (or the compiled RNL n / QC-MDPC r) | **Nothing**, for files a CLI generated at its default width. For a 32/64/128-bit GF key, use the Go or Python CLI, which run those widths |
+| [One encoding per artifact](#34-one-encoding-per-artifact-v1500) | v15.0.0 | Bytes after a DER SEQUENCE, a raw-body PEM's last field or an `.hkx` tag; a DER field wider than its writer's width or encoded another way; a non-shortest DER length; an HKEX-RNL or QC-MDPC value out of range; an HPKS signature whose stored e or n does not match | **Nothing**, for files a CLI wrote. Re-run an HKEX-RNL exchange whose response came from a pre-15.0.0 Go CLI; regenerate any artifact a tool edited by hand |
+| [`genpkey hpks-zkp-nl --bits` means what it says](#35-genpkey-hpks-zkp-nl---bits-means-what-it-says-v1500) | v15.0.0 | `genpkey --algo hpks-zkp-nl --bits 256` (Python, Go, Java), which wrote an n = 8 key | Drop `--bits 256`, or pass a width from 2 to 64; existing keys are unchanged |
+| [Python `genpkey hcred` defaults to n = 256](#36-python-genpkey-hcred-defaults-to-n--256-v1500) | v15.0.0 | `genpkey --algo hcred` with the Python CLI and no `--bits`, which wrote an n = 32 key | Nothing, unless you relied on n = 32: pass `--bits 32`. Existing keys still load |
 
 ---
 
@@ -703,8 +756,13 @@ encoders as well as with C and Go.
 repo — a fixture, a hash, a signed manifest. Those pins need regenerating; the artifacts
 they pin are two bytes shorter — each label carries exactly one `n`, and the DER
 SEQUENCE header absorbs the change without widening. Ceremonies that span
-the upgrade are fine: a pre-6.5.1 aggregate is still accepted by every 6.5.1 CLI, which
-is asserted directly in `CliTest/test_threshold_interop.sh`.
+the upgrade are fine: a pre-6.5.1 aggregate is still accepted by every 6.5.1 CLI.
+
+**Since 15.0.0 (TODO #373) the 4-byte form is refused**, in all four CLIs, with
+`HERRADURA HPKST AGGREGATE: field 3 is encoded with a leading zero byte (expected
+minimal)`; `CliTest/test_threshold_interop.sh` now asserts that refusal.  Nothing usable
+is lost: a threshold round from before 12.0.0 no longer verifies anyway (section 26's
+table), so such an aggregate has to be redone regardless.
 
 **Why this is not a MAJOR bump.** No PEM label, flag name or `--algo` behaviour changed,
 and — the test the 2.0.0 surface actually sets — no existing key, signature or ciphertext
@@ -1626,3 +1684,307 @@ unchanged: no wire format, PEM label or CLI flag moved.
 **Why this is a MAJOR bump.** It changes what an existing `--algo` accepts, which is the
 2.0.0 surface. That is the reading behind sections 5 and 19, however few keys it reaches.
 
+## 30. `sign` pre-hashes by default, and verifiers enforce a round floor (v15.0.0)
+
+**Who is affected:** anyone holding a signature made by an earlier build, if either:
+
+- it was made without `--digest` (the old default, `none`), with any `sign --algo`, or
+  with `threshold-aggregate`; or
+- it is an `hpks-stern`, `hpks-ring`, `nl-zkboo` or `nl-zkbpp` signature, or an HCRED
+  proof or credential, made at fewer than 219 rounds. That includes every `hpks-stern` and
+  `hpks-ring` signature made with default flags, which used 32 rounds, and every C
+  `cred-prove` proof made with default flags, which used 4.
+
+Keys, ciphertexts and every other artifact are unchanged.
+
+**What changed: the pre-hash (TODO #365).** An absent `--digest` now means `hfscx-256`
+in `sign`, `verify`, `threshold-aggregate` and `threshold-verify`, in all four CLIs: the
+whole input is hashed and the 32-byte digest signed. The old default padded or truncated
+the input to 32 bytes, so a signature on one file verified for every file that shared its
+first 32 bytes. `--digest none` keeps that behaviour as an explicit opt-in, for 32-byte
+inputs and for checking old signatures. It must be passed on both sides.
+
+**What changed: the round floor (TODO #364).** The round count of a Stern-F, ring,
+ZKBoo, ZKB++ or HCRED artifact is carried in the artifact (TODO #236), and until 14.x
+every verifier accepted any count from 1 to 4096. So the signer chose the verifier's
+soundness. A cheater answers two of each round's three challenges without the witness,
+and under Fiat-Shamir can grind until the challenge is one of those. A 1-round artifact
+was therefore forgeable for any public key with a few hash evaluations. `verify` and
+`cred-verify` now refuse an artifact declaring fewer than `--min-rounds N` rounds
+(default 219, since (2/3)^219 < 2^−128), with "… declares R rounds, below the
+--min-rounds floor of 219 …". Every signing default is now 219. `sign --algo hpks-stern`
+and `hpks-ring` move from 32 in all four CLIs; C `cred-issue` moves from 32 and C
+`cred-prove` from 4. The C CLI also stops ignoring `sign --rounds` for `nl-zkboo`,
+`nl-zkbpp` and `hpks-ring`. The MCP server's verify tool has no `--min-rounds`, so it
+always enforces 219.
+
+**What to do.** Re-sign with a 15.0.0 build. To check a signature made by an earlier
+build:
+
+```bash
+# made without --digest:
+herradura verify --algo hpks-nl --pubkey pub.pem --in msg --sig sig.pem --digest none
+# an hpks-stern signature at the old 32-round default (also made without --digest):
+herradura verify --algo hpks-stern --pubkey pub.pem --in msg --sig sig.pem \
+    --digest none --min-rounds 32
+```
+
+Lowering `--min-rounds` lowers the soundness of that check to (2/3)^N. Do it only for an
+artifact whose signer you already trust for other reasons.
+
+**Why this is a MAJOR bump.** It changes what an existing `--algo` produces (the
+pre-hash, the round counts) and accepts (the floor), which is the 2.0.0 surface. Nothing
+in this break fails silently: an old signature is refused, not misread.
+
+## 31. Every CLI checks a key's label against the operation (v15.0.0)
+
+**Who is affected:** anyone passing a key of one type to an operation of another. For
+example:
+
+- an `hpke-nl` key to `enc` / `dec --algo hpke-nl3`;
+- an HKEX-GF, HPKS or HPKE key to `sign --algo hpks-stern`, or a Stern key to `sign
+  --algo hpks`;
+- an HKEX-GF key to `sign --algo hpks-wots` (Go only);
+- a private key as `--pubkey`, `--their`, `--ring` or `--issuer` (HCRED's
+  `cred-verify --pubkey` still takes one).
+
+Keys, signatures and ciphertexts are unchanged. Every key keeps working with the
+operations its type names.
+
+**What changed (TODO #366).** Until 14.x no CLI compared a key's PEM label with the
+`--algo` using it: each read whatever integers the file held. Over 15 key types and 47
+key slots, C accepted 127 mismatched combinations, Go 100, Python 49 and Java 47. That
+is cross-protocol key reuse. In the sharpest case, an HKEX-GF private exponent was used
+as a Stern error vector of the wrong weight, which may leak the exponent. Now one table
+(spec `key_label_acceptance`, emitted into all four CLIs) says which key types each
+slot accepts:
+
+| operation | accepted key types |
+|---|---|
+| `kex hkex-gf`; `enc` / `dec` `hpke`, `hpke-nl`; `sign` / `verify` `hpks`, `hpks-nl` | `hkex-gf`, `hpks`, `hpks-nl`, `hpke`, `hpke-nl` (one GF key pair) |
+| `sign` / `verify` `hpks-stern`, `hpks-ring`; `enc` / `dec hpke-stern`; `cred-issue --our`; `cred-verify --issuer` | `hpks-stern`, `hpke-stern` (one Stern key) |
+| `enc` / `dec hpke-nl3` | `hpke-nl3` |
+| `kex hkex-rnl`, `kex hybrid-rnl-stern --our/--their`, `rnl-sigma` | `hkex-rnl` |
+| `hpke-stern-kem`, `kex --our-kem/--their-kem` | `hpke-stern-kem` |
+| `nl-zkboo`, `nl-zkbpp` | `hpks-zkp-nl` |
+| `hpks-xmss`, `hpks-wots`; `oprf-eval`, `pake-*`; `cred-*` (HCRED) | their own type |
+| `threshold-commit`, `threshold-respond` | `hpks`, `hpks-nl` (unchanged) |
+
+Public-key slots accept public keys only, except HCRED's (`cred-verify --pubkey`,
+`cred-issue --in`), which also take the HCRED private key, as they always have. A
+refused key fails with:
+
+```
+sign --algo hpks-stern: wrong key type: --key holds 'HERRADURA HKEX-GF PRIVATE KEY'; accepted: hpks-stern, hpke-stern
+```
+
+A passphrase-encrypted key, an HKEX-RNL response, a session key and a `0x` hex key are
+not judged by the table, and get the same errors as before.
+
+**What to do.** Generate a key of the type the operation names (`genpkey --algo
+hpks-stern`, `genpkey --algo hpke-nl3`, …) and pass that. Derive public keys with `pkey
+--pubout` rather than passing the private key. Nothing that used matching keys changes.
+
+**Why this is a MAJOR bump.** It changes what an existing `--algo` accepts, which is the
+2.0.0 surface. Only misuse stops working, and it fails loudly.
+
+## 32. Malformed artifacts are refused, not crashed on (v15.0.0)
+
+**Who is affected:** nobody using files the CLIs write. Only hand-built, damaged or
+hostile PEM files behave differently, and they now fail on purpose:
+
+- a DER SEQUENCE with fewer or more INTEGER items than its label carries;
+- an HKEX-RNL ring dimension that is not a power of two from 8 to 1024, or that differs
+  from the other party's (Go accepted a peer of any ring size);
+- a Stern, GF or session-key width out of range, a QC-MDPC `r` or `d` out of range, or
+  a value too large for the fixed-size field it fills.
+
+**What changed (TODO #367).** Every CLI checks each DER-SEQUENCE label's item count
+(spec `pem_der_items`) in its PEM loader, and bounds the width and size fields before
+using them. Before 15.0.0, over 1794 malformed variants of 90 artifact slots, Go
+panicked or ran out of memory in 365 and Python printed a traceback in 299. A peer's
+public key and an HKEX-RNL response were among them. C and Java failed cleanly, but C,
+Go and Java ignored extra trailing items, and C accepted some keys with fields missing.
+Now all four refuse with one line:
+
+```
+kex: malformed PEM 'HERRADURA HKEX-GF PUBLIC KEY': 1 DER items, expected 2
+```
+
+The HKEX-RNL keys and response still may omit their contributory nonce (3..4 and 5..6
+items), which reads as a zero nonce, as before.
+
+**What to do.** Nothing, for files any CLI wrote. If a file you built by hand is refused,
+regenerate it with the CLI. A wrapper that parsed a Go panic or a Python traceback now
+gets exit 1 and one line on stderr.
+
+**Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface:
+C, Go and Java took files with extra items, and C took some with missing ones. It ships
+inside 15.0.0 so there is one migration.
+
+## 33. Degenerate peer values and unsupported widths are refused (v15.0.0)
+
+**Who is affected:** nobody exchanging keys a CLI generated at the default width. What
+now fails:
+
+- a GF(2^n)\* value of 0 or 1 supplied by the other party: a peer public key for
+  `kex --algo hkex-gf`, a recipient key for `enc --algo hpke`/`hpke-nl`/`hpke-nl3`, the
+  R of a ciphertext for `dec` of those three, a public key for `verify --algo
+  hpks`/`hpks-nl`;
+- an HKEX-RNL peer value C (Alice's public key, or C_B in Bob's response, for
+  `hkex-rnl` and `hybrid-rnl-stern`) with fewer than n/4 non-zero coefficients or a
+  coefficient range under p/4;
+- in the C and Java CLIs, a key or artifact whose declared width is not the one the
+  CLI runs: GF, Stern, OPRF and HPKST n other than 256, a QC-MDPC `r` other than 12323,
+  a hybrid response's ring n other than 1024. In Go, a QC-MDPC `r` other than 12323,
+  and a threshold commitment whose n differs from the key's.
+
+**What changed (TODO #371).** Each of these produced an answer before:
+
+- **The GF values.** C and Java refused them, but Go and Python accepted them. A peer
+  value of 0 or 1 makes the shared secret or the HPKE key 0 or 1. Under a public key of
+  1, Go and Python printed "Signature OK" for a signature anyone can make: R = g^s for
+  any s verifies against any message.
+- **The RNL values.** All four CLIs accepted an all-zero C. It makes K_raw a constant,
+  so the session key depends only on the two nonces, which travel in the clear.
+- **The widths.** C read a valid 128-bit key from the Go or Python CLI at 256 bits and
+  exited 0 with a different shared key, a ciphertext the recipient could not decrypt,
+  or a valid signature refused. Java failed inside its arithmetic.
+
+Now all four refuse, with one line:
+
+```
+kex: their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)
+kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)
+PEM 'HERRADURA HKEX-GF PRIVATE KEY': n is 128 (this CLI runs n = 256)
+```
+
+Honest values clear the RNL bounds by a wide margin: over 300 genuine keys and
+responses, at least 1022 of 1024 coefficients were non-zero and the range was at least
+4056, against bounds of 256 and 1024. The suites gain the check as `rnl_validate_pub` /
+`RnlValidatePub` / `rnlValidatePub`.
+
+**What to do.** Nothing, for keys a CLI generated at its default width. A peer whose
+key is refused here has a broken key generator or is not an honest peer. For GF keys at
+32, 64 or 128 bits, use the Go or Python CLI; C and Java now say so instead of
+computing a wrong answer.
+
+**Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface.
+It ships inside 15.0.0 so there is one migration.
+
+## 34. One encoding per artifact (v15.0.0)
+
+**Who is affected:** nobody whose files came from a CLI unchanged. What now fails:
+
+- a PEM with bytes after its DER SEQUENCE (all 45 DER labels), or after the last field
+  of a raw-body PEM (ZKP-NL keys and proofs, ZKP-RNL proofs, HCRED keys and proofs);
+- an `.hkx` file with bytes after its auth tag, or a header length longer than the file;
+- a DER field wider than its writer pads it to: a nonce or seed over 32 bytes, a GF value
+  over n/8, a polynomial over its coefficient count, a width field over 2 bytes, and so
+  on, per `pem_der_field_caps` in `spec/herradura-protocol-spec.json`;
+- an HPKS or HPKS-NL signature whose stored challenge e is not the one the verifier
+  recomputes, or whose n differs from the public key's;
+- a DER field encoded at any width but its writer's (TODO #373). A fixed-width field
+  (a key, nonce, seed, polynomial, ciphertext or tag) must be exactly its width; one of
+  width 0, such as an empty plaintext's body, is the INTEGER 0 in its one-byte form. A scalar
+  (n, rounds, a length or index) or a minimal value (a session key, a response's K) must
+  carry no 0x00 its sign does not need. A DER length must be in its shortest form, and an
+  INTEGER may not be negative or empty;
+- a value out of range (TODO #373):
+  - an HKEX-RNL private coefficient outside {0, 1, q−1}, an m_blind coefficient of q or
+    more, a C or C_B coefficient of p or more, or a response hint length other than n/2;
+  - a QC-MDPC public key, KEM ciphertext or hybrid syndrome with a bit at or above r;
+  - a KEM private key whose support repeats an index or holds one of r or more, or whose
+    h0 or h1 is not the polynomial of its support;
+- an HKEX-RNL response written by a Go CLI before 15.0.0, which wrote the hint length as
+  n where every other writer writes n/2 (TODO #373).
+
+**What changed (TODO #372, #368).** All of these were accepted before, by some or all
+CLIs. A trailing byte or a rewritten e left the signature, key or ciphertext working, so
+one artifact had unboundedly many byte-different encodings. Anything that deduplicates,
+caches or identifies artifacts by hash could be confused. An over-wide field was
+truncated by one CLI, ignored by another and refused by a third. The `.hkx` length check
+could also be bypassed: a crafted length sent the C CLI past its buffer and panicked Go.
+Now each is one line:
+
+```
+malformed PEM 'HERRADURA HPKE PUBLIC KEY': 1 bytes after the DER SEQUENCE
+malformed PEM 'HERRADURA ZKP-NL PROOF': 1 bytes after its last field
+decfile: 1 bytes after the auth tag
+HERRADURA HKEX-RNL PRIVATE KEY: field 3 is 33 bytes (expected at most 32)
+verify: signature challenge e is not the recomputed one (rejected: non-canonical signature)
+```
+
+**What changed (TODO #373).** #372's caps counted significant bytes, so a field
+re-encoded with extra leading zeros, or shorter than its writer's width, still worked.
+Every writer in all four CLIs was measured and agrees on how each field is written;
+`pem_der_field_caps` now records it, and every loader holds each field to it. The same
+table carries value rules. Before them the CLIs disagreed on out-of-range values. Java
+read an HKEX-RNL coefficient of 2^32−1 as −1 and derived a different session key. Go
+decapsulated a different key from a syndrome with bits above r, and panicked on a KEM
+support index of 0xffff. A KEM private key's h0 and h1 were never read, so they could be
+rewritten freely. Now:
+
+```
+HERRADURA SIGNATURE: field 1 is encoded in 33 bytes (expected exactly 32)
+HERRADURA HKEX-GF PUBLIC KEY: field 1 is encoded with a leading zero byte (expected minimal)
+malformed PEM 'HERRADURA HPKE PUBLIC KEY': DER length not in its shortest form
+HERRADURA HKEX-RNL PRIVATE KEY: field 0 coefficient 0 is 2 (expected 0, 1 or 65536)
+HERRADURA HPKE-STERN-KEM PRIVATE KEY: field 2 repeats index 1503
+HERRADURA HKEX-RNL RESPONSE: field 4 is 1024 (expected 512)
+```
+
+The supports of a KEM private key may be in any order: the C CLI writes them in draw
+order, the others sorted, and both stay readable.
+
+**What to do.** Nothing, for files a CLI wrote: every writer already produces exactly
+these widths and encodings, and the pinned KAT PEM corpus reads back unchanged. A file
+that a tool appended to, re-encoded or edited is refused; regenerate it from its source.
+An HKEX-RNL response is single-use, so a refused one from an older Go CLI means re-running
+that exchange with a 15.0.0+ CLI on Bob's side. A pre-6.5.1 HPKS-T artifact, whose
+trailing `n` Python and Java wrote in 4 bytes (section 12), is refused too; its round had
+to be redone on 12.0.0+ already.
+
+**Why this is MAJOR.** It changes what an existing `--algo` accepts, the 2.0.0 surface.
+It ships inside 15.0.0 so there is one migration.
+
+## 35. `genpkey hpks-zkp-nl --bits` means what it says (v15.0.0)
+
+**Who is affected:** a script that runs `genpkey --algo hpks-zkp-nl --bits 256` with the
+Python, Go or Java CLI. The C CLI has no `--bits` and is unaffected.
+
+**What changed (TODO #374).** Those three CLIs treated `--bits 256` as if the flag were
+absent, because 256 is its default, and wrote an n = 8 key with exit 0. A caller asking
+for a 256-bit statement got the toy width without a word. Now "absent" means absent, and
+256 meets the range check every other width already met:
+
+```
+genpkey hpks-zkp-nl: --bits must be a positive even integer <= 64, got 256
+```
+
+An n = 256 ZKP-NL statement exists only in the library (a 920 KB proof); the PEM wire
+format caps n at 64 (TODO #283).
+
+**What to do.** Drop `--bits 256` to keep getting the n = 8 key it always produced, or
+pass an even width up to 64. Keys already on disk are unchanged and still load.
+
+**Why this is MAJOR.** It refuses an input an existing `--algo` accepted, the 2.0.0
+surface. It ships inside 15.0.0 so there is one migration.
+
+## 36. Python `genpkey hcred` defaults to n = 256 (v15.0.0)
+
+**Who is affected:** a script that runs `genpkey --algo hcred` with the Python CLI and no
+`--bits`. C, Go and Java are unchanged.
+
+**What changed (TODO #369).** The same command gave different keys: n = 32 in Python
+(the suite library's demo width) and n = 256 in C, Go and Java. C and Java support only
+n = 256 and refused Python's default key by name. Now all four write n = 256 by default.
+That is also the only width at which HCRED's other constants (row bits, ε bits, the
+weight bound) are tuned. HCRED remains a research protocol (SECURITY.md).
+
+**What to do.** Nothing, if you want keys every CLI reads. To keep the old, faster demo
+width, pass `--bits 32`; such a key still works with the Python and Go CLIs. Keys
+already on disk are unchanged and still load wherever they did.
+
+**Why this is MAJOR.** It changes what an existing `--algo` produces, the 2.0.0 surface.
+It ships inside 15.0.0 so there is one migration.

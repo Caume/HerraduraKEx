@@ -35,6 +35,11 @@
 #     . "$(dirname "$0")/lib_build.sh"
 #     hkx_require_built c go
 #
+# Usage — a Java script (needs a JDK; the CLI is built from source):
+#
+#     . "$(dirname "$0")/lib_build.sh"
+#     hkx_require_built java
+#
 # Usage — a script that compares whichever languages are present:
 #
 #     . "$(dirname "$0")/lib_build.sh"
@@ -74,7 +79,14 @@ hkx_builder() {
 }
 
 # hkx_available <lang> — true when the compiled CLI is present and executable.
+# Java has no committed binary to look for: its CLI is compiled from source by
+# bindings/java/build.sh on every run, so "available" means a JDK (javac and
+# java) is on PATH (TODO #370).
 hkx_available() {
+    if [ "$1" = java ]; then
+        command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1
+        return
+    fi
     local b; b="$(hkx_bin "$1")"
     [ -n "$b" ] && [ -x "$b" ]
 }
@@ -85,6 +97,10 @@ hkx_why() {
     local lang="$1" tool builder
     tool="$(hkx_toolchain "$lang")"
     builder="$(hkx_builder "$lang")"
+    if [ "$lang" = java ]; then
+        echo "no JDK — javac and java must both be on PATH (install a JDK)"
+        return
+    fi
     if command -v "$tool" >/dev/null 2>&1; then
         echo "not built — $tool is installed, run $builder"
     else

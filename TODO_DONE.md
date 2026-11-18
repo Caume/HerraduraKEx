@@ -24985,3 +24985,594 @@ The printed job total stays 5.4e-5.  Since the hidden 1.8e-5 is gone, it is now 
 true total.
 
 Status: **DONE v14.0.4** — rate table audited at CI's sample sizes; stern §2 flake (1.8e-5) fixed, a vacuous gate and an unrun-as-pass fixed, five rates restated.
+
+---
+
+### #364: verifiers accept any round count the artifact declares -- enforce a minimum (MAJOR)
+
+Found in the v14.0.4 exploratory pass (with #362).  **This is a MAJOR change:** it changes
+what an existing `verify --algo` / `cred-verify` accepts, so artifacts made at low round
+counts stop verifying.  It needs a `MIGRATING.md` entry.
+
+**The finding.**  Since TODO #236 the round count travels in the PEM and every reader
+accepts any count in `[1, max]`, so the SIGNER chooses the verifier's soundness.  Measured
+with honestly produced `--rounds 1` artifacts:
+
+| artifact | C | Go | Java | Python |
+|---|---|---|---|---|
+| `hpks-stern` signature | OK | OK | OK | OK |
+| `hpks-ring` signature | OK | OK | OK | OK |
+| `nl-zkboo` proof | OK | OK | OK | OK |
+| `cred-verify` proof (n = 32) | rejected on width | OK | rejected on width | OK |
+
+One Stern / ZKBoo-(2,3) round can be answered without the witness for two of its three
+challenges, and under Fiat-Shamir the forger grinds the commitment until the challenge is
+one it can answer.  So a 1-round artifact is forgeable for any public key in a few hash
+evaluations, far below the ~30-40-bit instance hardness SECURITY.md quotes for these rows.
+TODO #236 treated the round count as an interop question only.  `rnl-sigma` carries no
+round count and is not affected.
+
+**A related default.**  The C CLI's `cred-prove` uses `HCRED_DEMO_ROUNDS = 4`
+(`herradura_cli.c:5051`, `herradura.h:5711`); Python, Go and Java use 219.  Its proofs are
+accepted by all four (measured: a 4-round n = 256 C proof verifies in Java).  Move C to 219.
+
+**Impact.**  Rows affected: HPKS-Stern-F, HPKS-Ring, ZKBoo/ZKB++, HCRED -- all Demo-only
+or Research, so no production-track rating moves, but SECURITY.md's figures for them
+describe a check no verifier performs.
+
+**Work.**  A verifier-side floor in all four ports (219, the 128-bit Fiat-Shamir count, or
+a `--min-rounds N` flag defaulting to it); reject below it with an error naming the declared
+count.  Update the CI scripts that sign at reduced rounds (the assembly-width `rounds=4`
+harnesses are not CLI verifiers and are out of scope).  Rejection tests need an
+accept-control at the floor and a negative control below it, in every port.
+
+**Resolution (v15.0.0).**  All four CLIs' `verify` (hpks-stern, hpks-ring, nl-zkboo,
+nl-zkbpp) and `cred-verify` (proof and credential) refuse an artifact declaring fewer than
+`--min-rounds N` rounds, default 219, with "<what> declares R rounds, below the
+--min-rounds floor of F ...".  `--min-rounds` takes 1..4096.  Every signing default is
+now 219: `sign --algo hpks-stern` / `hpks-ring` (was the 32-round SDF_ROUNDS in all four),
+C `cred-issue` (was 32) and C `cred-prove` (was HCRED_DEMO_ROUNDS = 4).  The C CLI also
+stops ignoring `--rounds` for `nl-zkboo` / `nl-zkbpp` (the #367 sub-item) and for
+`hpks-ring`.  CliTest scripts that sign at reduced rounds pass `--min-rounds` on the verify
+side, and `test_c_sign.sh` / `test_cred.sh` / `test_c_cred.sh` / `test_round_floor.sh`
+carry floor refusals matched on the floor's message, each beside an accept-control at
+the same artifact.  MCP's verify tool exposes no `--min-rounds`, so it always enforces
+219.  MIGRATING.md section 30.
+
+Status: **DONE v15.0.0** — verifiers refuse fewer than --min-rounds (default 219) Fiat-Shamir rounds; every CLI signs at 219 by default.
+
+---
+
+### #365: sign pre-hashes by default -- make `--digest hfscx-256` the default (MAJOR)
+
+Found with #364.  **This is a MAJOR change** (decision: option (a), the user's call on
+v14.0.4): it changes what an existing `sign`/`verify --algo` produces and accepts, so every
+signature made in the default mode stops verifying.  It needs a `MIGRATING.md` entry.
+
+**The finding.**  With the default `--digest none`, the message is padded/truncated to 32
+bytes (TODO #261), so a signature on file A verifies for any file B sharing A's first 32
+bytes.  Measured for `hpks`, `hpks-nl`, `hpks-stern` and `rnl-sigma` in all four CLIs (two
+47-byte payment strings differing after byte 32: "Signature OK"); with
+`--digest hfscx-256` the same pair fails, as it should.  `rnl-sigma` is production-track
+(conjectured), so this reaches a production row through its CLI.  The default is
+deliberate (TODO_DONE: "Default `--digest none` preserves the existing truncating
+behavior") and `--help` says so, but the TUTORIAL's signing examples use it with no
+warning.
+
+**Work.**  Default `--digest` to `hfscx-256` in `sign`, `verify` and
+`threshold-aggregate` / `threshold-verify` in all four CLIs (and the MCP server's tools);
+keep `--digest none` as an explicit opt-in for 32-byte inputs and for verifying old
+signatures.  Regenerate any KAT/PEM vectors that pin a default-mode signature.  Check
+whether `rnl-sigma`, `nl-zkboo`, `nl-zkbpp`, `hpks-ring`, `hpks-wots` and `hpks-xmss`
+route through the same `--digest` path or truncate separately, and bring each to the same
+rule.  Update the TUTORIAL, SPEC.md and llms.txt.
+
+**Out of scope, related.**  The single-block `enc` algorithms (`hske`, `hske-nla1`,
+`hske-nla2`, `hske-nla3`, `hpke`, `hpke-nl`, `hpke-nl3`) also drop everything past byte 32
+and exit 0, and return 32 bytes for a shorter input.  Refusing over-32-byte input there
+is a separate decision; file it if wanted.
+
+**Resolution (v15.0.0).**  An absent `--digest` means `hfscx-256` in `sign`, `verify`,
+`threshold-aggregate` and `threshold-verify` in all four CLIs (C `digest_value`, Go
+`digestValue`, Java `readMessage`, Python argparse defaults); `--digest none` keeps the
+pad/truncate behaviour as an explicit opt-in.  Every `--algo` goes through that one
+pre-hash site in each CLI, including rnl-sigma, nl-zkboo, nl-zkbpp, hpks-ring, hpks-wots
+and hpks-xmss, so there was no separate truncation path to fix.  Go's `verify --algo
+hpks-t` forwarded `--digest` only when non-empty, which after the change would have
+silently turned `none` into the default; it now forwards it explicitly.  No KAT/ or
+KAT/pem vector pins a CLI signature, so none needed regenerating.  The MCP tools inherit
+the default.  `test_digest_matrix.sh` now pins "flag omitted == hfscx-256" and "a
+`none` signature does not verify by default".  MIGRATING.md section 30.
+
+Status: **DONE v15.0.0** — sign/verify/threshold default to --digest hfscx-256 in all four CLIs; none is opt-in.
+
+---
+
+### #366: check the PEM label against `--algo`
+
+Found with #364.  Probably **MAJOR** under the "what an existing `--algo` accepts" rule,
+though only misuse stops working.
+
+**The finding.**  No CLI checks a key's PEM label against `--algo`; each reads whatever
+integers the file holds.  Measured: `sign --algo hpks-stern --key <HKEX-GF private key>`
+succeeds in all four CLIs; `enc --algo hpke-nl3 --pubkey <HPKE-NL key>` and the matching
+`dec` round-trip in all four, though HPKE-NL3 has its own labels (SPEC.md) and the
+TUTORIAL says the keys differ.  The C confusion matrix (14 key types x 13 commands)
+accepted 88 of 221 combinations, many of them mismatched.
+
+**Impact.**  Cross-protocol key reuse.  The sharpest case: an HKEX-GF private exponent
+used as a Stern error vector of the wrong weight.  Stern's zero-knowledge argument assumes
+weight t, so such signatures may leak information about the DH exponent (not measured).
+HPKS/HPKE sharing the GF key type is documented and stays allowed, via an explicit
+allow-list rather than by not checking.
+
+**Work.**  A label-to-`--algo` acceptance table in `spec/` (generated, like the flag
+tables), enforced identically by all four CLIs; a parity row; cases in
+`test_malformed_pem_matrix.sh`.  Each rejection test with an accept-control.  Restate the
+TUTORIAL line #362 touches once this lands.
+
+**Resolution (v15.0.0).**  Shipped in the same MAJOR release as #364/#365 (MIGRATING.md
+section 31).  `spec/generate_spec.py`'s `KEY_LABEL_SITES` is the table: 47 (subcommand,
+`--algo`, key flag) slots, each with the key types it accepts.  GF (`hkex-gf`, `hpks`,
+`hpks-nl`, `hpke`, `hpke-nl`) and Stern (`hpks-stern`, `hpke-stern`) are shared families
+by the owner's decision; everything else, `hpke-nl3` included, accepts only its own type,
+and public-key slots take PUBLIC labels only -- except HCRED's two (role `either`), whose
+loaders take the private key on purpose and under test.  The table is emitted into
+`key_label_table.h`, `KeyLabelTable.java` and generated regions of `herradura_cli.go` and
+`herradura.py`, and into the spec as `key_label_acceptance`.  Each CLI checks it once
+before dispatch, with one message ("wrong key type: <flag> holds '<label>'; accepted:
+…"), judging only KEY labels so encrypted keys, RNL responses and hex keys reach their
+own loaders' errors.  Measured: mismatches accepted before -- C 127, Go 100, Python 49,
+Java 47 -- are all refused, nothing is newly accepted, and the four agree on all 47
+slots.  The parity row is `CliTest/test_key_label_matrix.sh` (accept-control, family,
+opposite-role and foreign-type refusal per row per CLI, templates held to the spec rows
+in both directions) rather than `test_malformed_pem_matrix.sh`, whose cases are
+malformed artifacts, not well-formed keys of the wrong type.  The TUTORIAL line is
+#362's.
+
+Status: **DONE v15.0.0** — every CLI refuses a key whose PEM label the operation does not accept, from one generated table.
+
+---
+
+### #367: wrong-type or malformed keys crash the Go and Python CLIs
+
+Found with #364.  PATCH.
+
+**The finding.**  Over 14 key types x 13 commands (221 cases per CLI): Go panics in 25,
+Python prints a traceback in 10; C and Java fail cleanly in all.  A malformed PEER public
+key -- the remotely supplied input -- does the same in `kex`: a well-formed DER SEQUENCE
+with too few INTEGERs (0 for `hkex-gf`, 1 for `hkex-rnl`) panics Go
+(`index out of range`) and raises in Python.  Sites: unchecked `ints[k]` indexing and an
+unbounded width feeding `make` in `HerraduraCli/herradura_cli.go` (around lines 509, 1617,
+2253, 2307, 3933); in Python, uncaught `IndexError`, `OverflowError`, `AttributeError` and
+`BaError`.  Every case exits non-zero, so nothing is accepted that should not be: this is
+robustness, not a security hole, but a service wrapping the Go CLI gets a crash and stack
+dump from an untrusted peer.
+
+**Also here (closed by #364, v15.0.0).**  The C CLI accepted `--rounds` for `sign --algo
+nl-zkboo` and ignored it; with #364's verifier floor it had to be honoured, and now is.
+
+**Work.**  An arity/bounds check in each decoder before indexing, with the same error
+text across ports; "valid DER, wrong arity" seeds for the Fuzz/ harnesses; matrix cases
+in `test_malformed_pem_matrix.sh` (with accept-controls).
+
+**Resolution (v15.0.0).**  The sweep was redone at the shipped state (after #366, which
+already turned every wrong-TYPE key into a clean refusal) over 90 (command, artifact)
+cells and 1794 malformed variants: Go crashed in 365 and Python in 299; C and Java in
+none.  Three changes:
+
+  * `PEM_DER_ITEMS` (spec `pem_der_items`) gives every DER-SEQUENCE label's item count;
+    each CLI checks it in its one PEM-to-integers loader with the same text, "malformed
+    PEM '<label>': <k> DER items, expected <n>".  `CIPHERTEXT` and `SIGNATURE` carry the
+    union and their decoders check the exact count.
+  * Every width and size field is bounded where it is read: Go's `rnlWireN`,
+    `sternWireN`, `fitBytes`, a non-panicking `derIntBig`, and the peer ring check it
+    never had; Python's `_WIRE_FIELDS` / `_fit` and `ValueError` from the codec; Java's
+    ring and hint bounds.
+  * Tests: `CliTest/test_der_items_matrix.sh` (every label in every CLI, both-way
+    coverage, 552 failures against the pre-fix build); `lib_malformed.sh` now scores a Go
+    panic as a crash; `Fuzz/fuzz_cli_args.py` flags crash traces on any exit code and
+    aims a third of its trials at wrong-arity files.
+
+After: 0 crashes and 0 timeouts in all four CLIs across the 1794 variants.  Fields some
+CLIs never read (C sizes most from compiled widths) still exit 0 there and are
+TODO #371.  MAJOR inside v15.0.0, MIGRATING.md section 32: C, Go and Java accepted
+extra items, C some missing ones.
+
+Status: **DONE v15.0.0** — every CLI checks each DER label's item count from one generated table and bounds its width and size fields; no malformed variant crashes any CLI.
+
+---
+
+### #371: the CLIs disagree about which malformed artifacts they accept
+
+Found with #367.  Not a crash (#367 made every case a clean exit); a parity and
+validation question, and some of it is security-relevant.
+
+**The finding.**  Over #367's 1794 malformed variants of 90 (command, artifact) cells,
+at v15.0.0 the four CLIs agree on 1349 and disagree on 445, i.e. some CLI exits 0 on an
+artifact another refuses.  By who accepts: C alone 146; C+Go 86; C+Java 83; C+Go+Java
+59; C+Go+Python 50; C+Java+Python 8; C+Python 7; Go+Python 3; Go+Java+Python 3.  The
+main causes:
+
+  * **Fields a CLI never reads.**  C sizes most fields from its compiled widths
+    (KEYBITS, RNL_N, QCMDPC_R), so it ignores a key's or ciphertext's declared Stern /
+    GF / QC-MDPC width; Go ignores the OPRF width and the QC-MDPC `r`; Java ignores the
+    Stern width and QC-MDPC `r`.  `CliTest/test_der_items_matrix.sh` prints these as 33
+    NOTEs (C 17, Java 10, Go 6).
+  * **Values wider than their field**, silently masked to the width (Go's NewBitArray,
+    C's fixed buffers) in some CLIs and refused in others.
+  * **Trailing data**: an HCRED key or proof with a byte appended is accepted by all four
+    (the #368 class); the cross-CLI cases are where only some do.
+  * **Degenerate peer values (security-relevant):** a peer HKEX-GF public key of 0, and
+    an HPKE public key of 0, are accepted by Go and Python (C and Java refuse).  With
+    C = 0 the shared secret is a constant, so this is a key-validation gap, not just
+    parity.
+
+**Work.**  Decide per class whether the field is checked (refuse) or explicitly
+ignored, write it into the spec so the four agree, and turn the matrix's NOTEs into
+strict cases.  The peer-value item first: refuse a GF public key outside
+[2, 2^n - 2] in every CLI, with an accept-control.  This changes what existing
+`--algo`s accept (MAJOR); prototype across the four ports and report before editing.
+
+**Resolution (v15.0.0).**  Done for the classes that give a wrong or forgeable answer;
+the rest is split out as #372.
+
+  * **Degenerate GF values.**  Go and Python bypassed the suites' `gf_pub_is_valid` at
+    every CLI site; C did at `dec`.  Measured before: Go and Python exited 0 on a peer
+    HKEX-GF / HPKE key of 0 or 1, and printed "Signature OK" under an HPKS / HPKS-NL key
+    of 1 for a signature anyone can make (R = g^s); C, Go and Python decrypted under a
+    ciphertext R of 0 or 1.  All four now refuse at `kex hkex-gf`, `enc`/`dec` (`hpke`,
+    `hpke-nl`, `hpke-nl3`) and `verify` (`hpks`, `hpks-nl`), with C's wording, which
+    Java now uses too.  The planned bound of [2, 2^n − 2] was not used: in GF(2^n) the
+    all-ones element is an ordinary non-zero element, and the test accepts it as a
+    control.
+  * **Degenerate RNL values.**  An all-zero peer C or C_B was accepted by all four
+    (K_raw constant; the key then rests on the public nonces).  New suite function
+    `rnl_validate_pub` / `RnlValidatePub` / `rnlValidatePub`: the m_blind guard's two
+    tests over Z_p.  It runs at the four agreement sites in every CLI.  Honest margin:
+    >= 1022 of 1024 non-zero and range >= 4056 over 300 genuine keys and responses,
+    against 256 and 1024.  Parity-manifest row `rnl-validate-pub`, tested by [49] (f) /
+    Java [27] (f).
+  * **Widths a CLI does not run.**  The "fields a CLI never reads" class was a wrong
+    answer, not only a parity gap: C read a valid 128-bit Go / Python key at 256 bits and
+    exited 0 with a different shared key, an undecryptable ciphertext and a valid
+    signature refused; Java failed in its arithmetic.  C (one table in its PEM loader,
+    plus the shared CIPHERTEXT / SIGNATURE sites) and Java (its decoders) refuse any
+    declared width they do not run; Go now checks the QC-MDPC `r` and a threshold
+    commitment's n.  `test_der_items_matrix.sh`'s eleven width cases became strict and
+    its NOTEs fell from 33 to 13.
+  * **Not changed.**  A zero QC-MDPC public key or Stern syndrome does not make the
+    secret a constant (the KEM key still depends on unrevealed error bits), so it is
+    left alone.  The over-wide-value class (the 13 NOTEs) and trailing data are #372;
+    `.hkx` trailing bytes stay #368.
+  * **Tests.**  `CliTest/test_peer_value_matrix.sh` (cross-lang-compat), 257 assertions
+    with accept-controls first, each refusal matched on the new check's own message, and
+    a control showing the forged signature really satisfies the Schnorr equation.
+    Against the pre-#371 build it fails 136 of 257 and no accept-control.
+    `test_weak_key_rejection.sh` stays as the C / sanitizer run; this is its four-CLI
+    counterpart.
+
+MAJOR inside v15.0.0, MIGRATING.md section 33.
+
+Status: **DONE v15.0.0** — every CLI refuses a degenerate GF or RNL peer value and a width it does not run; Go and Python no longer verify a forgeable signature under a public key of 1.
+
+---
+
+### #368: `.hkx` decfile ignores bytes after the tag
+
+Found with #364.  PATCH (no valid file changes).
+
+**The finding.**  All four CLIs check only that the file is at least
+`45 + 32*blocks + 32` bytes (`len(raw) < ct_end + 32` in Python), so anything appended after
+the tag is ignored: a 100-byte file with 1 or 503 trailing bytes decrypts to the original
+plaintext with exit 0 in C, Go, Java and Python.  Every single-byte flip and every
+truncation is rejected, and no plaintext is written on failure.
+
+**Impact.**  Each `.hkx` file has unboundedly many byte-different encodings of the same
+plaintext.  Confidentiality and integrity are unaffected; anything that deduplicates,
+caches or identifies ciphertexts by hash can be confused.
+
+**Work.**  Require `len(raw) == ct_end + 32` in all four `decfile` implementations; a
+trailing-byte rejection case (with an accept-control on the exact file) in the cross-CLI
+encfile tests.  This is a property all four get wrong, so a cross-port check cannot see
+it: assert it per implementation.
+
+**Resolution (v15.0.0).**  Done with #372.  All four `decfile`s require the file to
+end at the tag ("decfile: <k> bytes after the auth tag").  Fixing it showed the
+length check could be bypassed: C computed `45 + n_blocks*32` from a `plaintext_len`
+near 2^64, which wrapped, so the check passed and the block loop read past the buffer
+(an abort under FORTIFY).  Go panicked on a length past 2^63, and Java wrapped and
+reported a tag failure.  Each now bounds `plaintext_len` by the file size before any
+arithmetic on it.  `CliTest/test_canonical_encoding_matrix.sh` asserts the exact file
+round-trips, one trailing byte is refused, and three overflowing lengths are refused
+cleanly, per implementation.  MAJOR inside v15.0.0, MIGRATING.md section 34.
+
+Status: **DONE v15.0.0** — `.hkx` files must end at the tag; a header length past the file is refused before the arithmetic that crashed C and Go.
+
+---
+
+### #372: over-wide values and trailing data that some CLIs accept
+
+Split from #371.  Not a wrong answer and not forgeable; a parity and strictness
+question.
+
+**The finding.**  After #371, `CliTest/test_der_items_matrix.sh` still prints 13
+"unread-field" NOTEs: a value wider than the fixed-size field it fills, which some CLIs
+truncate or ignore and others refuse.  The RNL contributory nonce wider than 32 bytes
+(C, Go, Java accept); the HKEX-RNL response hint length 2^31 − 1 (C, Go); the QC-MDPC
+private support wider than its field (C, Java); the threshold key's public value wider
+than n (C); the WOTS seed wider than 32 bytes (C, Java); the XMSS leaf blob wider than
+its field (C, Go, Java).  Separately, an HCRED key or proof with a byte appended after
+the DER SEQUENCE is accepted by all four (#367's sweep) -- the same class #368 tracks for
+`.hkx` files.
+
+**Work.**  Decide per field whether an over-wide value is refused (the default, and what
+Python does) or documented as truncated; make the matrix's remaining NOTEs strict.
+Refuse data after the outer DER SEQUENCE in every CLI, with an accept-control, and fold
+the result into #368's decision.  Changes what an existing `--algo` accepts (MAJOR).
+
+**Resolution (v15.0.0).**  Broader than filed.  The probes found:
+
+  * **Trailing data:** every CLI accepted it on all 45 DER labels, and C, Go and Java on
+    the 8 raw-body labels (Python and Go refused it only for the HCRED keys).  Each
+    port's DER parser now refuses it, with the label named by the loader, and each
+    raw-body decoder ends at its last field.
+  * **Over-wide fields:** 143 fields, set to 2^4096+1, were accepted in 33 (Python), 71
+    (C), 67 (Go) and 56 (Java).  `spec/generate_spec.py`'s `PEM_DER_FIELD_CAPS` gives
+    every field's width (the width its writer pads it to) as an expression over the
+    other fields, keyed by label, item count and, for CIPHERTEXT, the format tag.  It is
+    generated into all four CLIs beside #367's item counts and checked in every loader.
+    The six cases this entry listed are among them; the DER matrix's NOTEs are now 0.
+  * **HPKS:** every verifier ignored the stored challenge e (and Python and Go the
+    stored n), so a signature could be rewritten and still verify.  All four now refuse
+    a mismatch.
+  * **CI:** the DFR guard had been red since #366 on the three malformed-artifact
+    matrices; they are exempted by name with the reason (a fixed ciphertext, bytes
+    never read).
+
+Left as #373: extra leading-zero padding in a field (the caps count significant bytes),
+and values inside a cap but outside their range.  Test:
+`CliTest/test_canonical_encoding_matrix.sh`, 1409 checks; against the pre-#372 build it
+fails 921 of 1409, none an accept-control.  MAJOR inside v15.0.0, MIGRATING.md section 34.
+
+Status: **DONE v15.0.0** — one encoding per artifact: trailing data, over-wide fields and a rewritten HPKS challenge are refused by every CLI.
+
+---
+
+### #373: DER INTEGER padding and in-cap values that some CLIs accept
+
+Split from #372.  A parity and strictness question; neither is a wrong answer.
+
+  * **Padding.**  #372's caps count SIGNIFICANT bytes, because every writer pads a
+    fixed-width field with leading zeros (`der_int(v, nbytes)`) and C's reader strips
+    only one sign byte.  So a field re-encoded shorter, or with extra leading zero bytes,
+    is still accepted: one more encoding of the same artifact.  Pinning each field's
+    content length to the writer's width would close it, but #280 found C reading one
+    envelope in 64 one byte short; measure every writer first.
+  * **Values inside the cap.**  A value within its field's width but outside its range
+    is accepted by all four: an HKEX-RNL private or public polynomial with a coefficient
+    of q or more, a QC-MDPC private support or public key holding 2^4096+1 (513 bytes,
+    under the 1541-byte cap), the hybrid response's syndrome.  These are the 8 fields
+    #372's probe still reports at 2^4096+1.
+
+**Work.**  Per field, decide refuse (with a coefficient-range or exact-length check) or
+document; an accept-control and a negative control for each, all four CLIs.  Changes
+what an existing `--algo` accepts (MAJOR).
+
+**Resolution (v15.0.0).**  Measured first, in the scratchpad: every DER artifact
+generated by each CLI (2-3 runs over every label, 937 artifacts), each field
+classified, and every write site read for the 1-in-256 leading zero sampling cannot
+see.  The writers agree: fixed-width fields padded to exactly their width, scalars
+minimal, and three minimal values with a maximum (the session key, the HKEX-RNL and
+hybrid responses' K).  One writer bug: Go's HKEX-RNL response wrote the hint length as
+n, every other writer n/2; Go now writes n/2.  All four readers also accepted
+long-form DER lengths.
+
+  * **Encoding:** a `PEM_DER_FIELD_CAPS` cap written `=E` is fixed-width (exactly E
+    bytes, or E+1 with a needed sign byte); every other field must be minimal.  Each
+    parser gains a scan for the encoded widths, which also refuses a non-shortest
+    length and a negative or empty INTEGER.
+  * **Values:** seven rule kinds in the same rows, one helper each, generated into all
+    four CLIs.  HKEX-RNL s is held to the CBD(1) support {0, 1, q-1} (the user's
+    choice over plain [0, q)), m_blind below q, C and C_B below p, the hint length to
+    n/2.  QC-MDPC values may have no bits at or above r.  KEM supports must be below r
+    and distinct, in ANY order (C writes them unsorted; the user's choice over
+    requiring sorted), and h0 / h1 must be the supports' polynomials, which `dec` never
+    read.
+  * **Found by the probe:** Java read an RNL coefficient of 2^32-1 as -1 (a different
+    session key); Go decapsulated a different key from an over-wide syndrome and
+    panicked on a support index of 0xffff; C disagreed with the other three on a
+    repeated index or one of r.
+
+Test: part E of `CliTest/test_canonical_encoding_matrix.sh`, generated from the spec,
+with exact texts, a control inside each bound and an accept-control for reordered
+supports.  3421 checks, 0 failures; against the pre-#373 build it fails 1975, none a
+control, 1650 of them accepted outright.  MAJOR inside v15.0.0, MIGRATING.md section 34.
+
+Status: **DONE v15.0.0** — one encoding per field (fixed width or minimal, shortest DER lengths) and HKEX-RNL / QC-MDPC values in range, in every CLI.
+
+---
+
+### #370: CliTest scripts that exit 0 without testing
+
+Found with #364.  PATCH.
+
+`CliTest/test_threshold_interop.sh` prints "SKIP: C CLI not found ... (run build_c.sh
+first)" and exits 0 when the C or Go CLI is not built -- the exact pattern
+`CliTest/lib_build.sh` (TODO #229) was written to remove.  The nine `test_java_*.sh`
+scripts (`bindings`, `codec`, `hcred_interop`, `interop`, `keygen`, `nl_interop`,
+`oprf_wots_interop`, `pake_interop`, `stern_interop`) exit 0 when `javac` is absent.  CI is
+not affected (every job builds first and has a JDK); a local run can be green with nothing
+tested.
+
+A second shape, found with #371: `CliTest/test_cross_lang_matrix.sh` runs under
+`set -e`, and in its HKEX-RNL section a refused `kex` aborts the whole script with no
+FAIL line -- CI showed the step red after "PASS hkex-rnl py-alice/c-bob agree" and
+nothing else, so the failing pair had to be inferred.  Each command whose failure is the
+thing being tested must be run with its status captured (`|| rc=$?`) and scored.
+
+**Work.**  Source `lib_build.sh` and use `hkx_require_built`, so an all-skipped run exits 2
+unless `HKX_ALLOW_SKIP=1`.  The Java scripts need a "javac absent" branch in the library
+if it has none.  Show the guard firing (negative control) for one script of each kind.
+
+**Resolution.**  All ten scripts source `lib_build.sh` and call `hkx_require_built`
+(`c go` for threshold, `java` for the nine Java scripts; `lib_build.sh` now treats Java
+as available when `javac` and `java` are both on PATH).  `test_cross_lang_matrix.sh`
+runs every producer step through a `prod` helper that captures its status: a refused
+step is one named FAIL with the command's own error text, and its dependent checks are
+skipped, not scored.  Controls: no JDK, the nine Java scripts exit 2;
+no built CLIs, threshold exits 2; `HKX_ALLOW_SKIP=1` gives 0.  With a C CLI rigged to
+refuse every HKEX-RNL `kex`, the matrix finishes at 511 PASS / 7 FAIL, each FAIL naming
+the step and quoting the refusal.  Unrigged: 518 / 0.
+
+Running the CI step the #373 commit failed in also found:
+- three #373 fallouts, all fixed under #373 in the CHANGELOG: a width-0 exact field (an
+  empty plaintext) refused, a padded zero-key fixture, and a pre-6.5.1 HPKS-T 4-byte n
+  that is now refused and asserted so;
+- a C and Go bug from TODO #239: an empty `hske-duplex` / `hske-duplex3` payload was
+  refused. `test_duplex.sh` now decrypts the empty case 4×4.
+
+Status: **DONE v15.0.0** — CliTest scripts exit 2 when nothing was asserted, and the cross-language matrix names a failed producer step instead of aborting.
+
+---
+
+### #362: TUTORIAL examples that fail as written
+
+Found by running every shell block in `docs/TUTORIAL.md` against all four CLIs (C, Go,
+Python, Java) on v14.0.4.  CI checks the documents against the spec and sources, but never
+executes the documented command lines, so each of these has been failing silently.  All
+fail in all four CLIs unless noted.
+
+  * **The first quickstart (lines 82-85) cannot succeed.**  It encrypts the 15-byte
+    `"hello herradura"` with `--algo hske` and then runs `cmp msg.bin recovered.bin && echo
+    "round-trip OK"`.  `hske` is a single 256-bit block: `dec` returns the message
+    zero-padded to 32 bytes, so `cmp` reports EOF after byte 15 and "round-trip OK" never
+    prints.  This is the first command a new user runs.  Use a 32-byte message (as the
+    `hske` section further down does), or compare only the first 15 bytes and say why.
+  * **Line 480: `enc --algo hpke --key enc_pub.pem`** -- every CLI requires `--pubkey`
+    for `hpke` (`enc: --pubkey required for hpke`).
+  * **Lines 2131 / 2141 / 2147: `oprf-blind --input "my-password"`** -- no CLI has
+    `--input`; all four take `--in FILE` (llms.txt already says so).  The `oprf-eval` and
+    `oprf-unblind` lines after it then fail on the missing `state.pem`.
+  * **Line 1375: "~18 KB for n=32 / R=219".**  A Python `cred-prove` at n = 32 and its
+    default 219 rounds writes 1,449,028 bytes (about 1.4 MB).  Measure and restate it; the
+    n = 256 proof is about 12.8 MB at 219 rounds (Java).
+  * **Line 1866: "C CLI hardcodes 219 rounds; Go CLI hardcodes 4 rounds"** for `nl-zkboo`.
+    All four default to 219 (54,228-byte proof), and Go, Java and Python honour
+    `--rounds`.  C accepts the flag but ignores it (TODO #367 tracks
+    it); the sentence should say so rather than describe a Go default that no longer
+    exists.
+  * **Line 849: "an hpke-nl key is not an hpke-nl3 key".**  The two have separate PEM
+    labels, but no CLI checks the label: `enc --algo hpke-nl3 --pubkey hpke-nl.pub` and
+    the matching `dec` round-trip in all four.  Either restate it as advice ("generate a
+    fresh keypair; the CLIs do not yet enforce the label") or land the label check (#366) first
+    and keep the sentence.
+  * **Line 1357: `genpkey --algo hcred --bits 256  # n=256 for C interop`.**  The C CLI
+    has no `--bits` (spec `cli_surface_gaps`, acknowledged), so the line fails there; and
+    C, Go and Java already default to n = 256 while Python defaults to n = 32 (line 1356
+    says "Python demo", which is the only CLI the comment is true for).  Say which CLIs
+    take `--bits` and what each defaults to.
+  * **Lines 1910-1964: the HPKS-T walkthrough runs `python3 herradura.py ...`**, a path
+    that exists only from inside `HerraduraCli/`; every other section uses
+    `python3 HerraduraCli/herradura.py`.
+
+**Acceptance.**  Every changed block runs as written against all four CLIs (the
+blocks that are Python-only by design are labelled so).  A follow-up worth considering, not
+required here: a check that extracts the TUTORIAL's `$CLI` blocks and runs them, so the
+next drift fails CI instead of a reader.
+
+**Resolution.**  Every `bash` block (30) run in order, once per CLI, failures logged
+by line and each block's printed verdict checked.  All eight listed items fixed (the
+hpke-nl3 sentence stands, since #366 enforces it; the nl-zkboo one was fixed under #364),
+plus: the v3 block's nonexistent `herradura` command, input files the duplex and `rand`
+blocks never created, the threshold walkthrough's wrong keys and one-signer C block,
+HCRED's 219-round cost (now a 16-round demo with `--min-rounds` and a measured table),
+Python-only claims for aPAKE and passphrase export, C/Go/Python-only claims for v3,
+AEAD, ring and `rand`, and a measured proof-size table.  All 30 blocks run in all four
+CLIs; the remaining failures are the two marked `# error` and a placeholder `myapp.c`.
+Filed #374 (`hpks-zkp-nl --bits` ignored; stale SecurityProofs-7 figures).
+
+Status: **DONE v15.0.0** — every TUTORIAL shell block runs as written in all four CLIs.
+
+### #374: `hpks-zkp-nl` ignores `--bits`, and two stale ZKP figures
+
+Found with #362.  PATCH.
+
+  * **`genpkey --algo hpks-zkp-nl --bits 256`** writes an n = 8 key in Python, Go and
+    Java, without a word; C refuses the flag.  A user asking for n = 256 gets the toy
+    width.  Either honour `--bits` (the library supports n = 256: the TUTORIAL's
+    920 KB row) or refuse it, as C does, and record which in spec `cli_surface_gaps`.
+  * **Python `pkey --text`** on an `hpks-zkp-nl` private key prints nothing and exits 0;
+    Go and Java print n, A and B.
+  * **`SecurityProofs-7.md` §11's ZKP table** gives ZKP-RNL at n = 256 as 1,056 B and
+    HPKS-Stern-F as 78 KB, and concludes ZKP-RNL beats ML-DSA-44.  A CLI proof
+    measures 12,292 B of DER and a Stern-F signature 35,118 B (#362 restated the
+    TUTORIAL's copies).  Restate it, and find where 1,056 B came from.
+
+**Resolution.** `--bits` on hpks-zkp-nl is honoured up to 64, the wire cap, and refused
+beyond it; an explicit 256 is refused rather than read as "omitted" (MIGRATING section
+35). Honouring n = 256 would need the PEM cap raised (TODO #283's bound), and the proof
+is 920 KB, so it stays library-only. The silent `pkey --text` was wider than filed: five
+key types in Python and three in Go. All are now described, an OPRF key in every CLI, and
+both chains fail on a type they do not handle; C's hkex-rnl n is fixed too. The 1,056 B
+figure is §11.10.2's bit-packed n = 256 estimate; 78 KB predates TODO #184's encoding.
+Both are restated. `CliTest/test_pkey_text_matrix.sh` holds all of it: 59 FAILs before,
+260 PASS after.
+
+Status: **DONE v15.0.0** — `pkey --text` describes every private key in every CLI; `genpkey hpks-zkp-nl --bits 256` is refused, not silently n = 8; ZKP figures restated as measured.
+
+### #363: CLI help text, llms.txt and version banners out of step with the code
+
+Found alongside #362 (v14.0.4).
+
+  * **`HerraduraCli/herradura_cli.c:5232`, the C `--help` note:** "rnl-sigma: key =
+    hpks-zkp-nl private key (n=256)".  Wrong: `rnl-sigma` takes an `hkex-rnl` key in all
+    four CLIs, and the C CLI given an `hpks-zkp-nl` key fails with "cannot parse DER".
+  * **`llms.txt`, the `kex` synopsis** lists `--algo {hkex-gf,hkex-rnl}` and omits
+    `hybrid-rnl-stern` and its `--their-kem` / `--our-kem` flags, which all four CLIs ship
+    (the generated C/Go/Java flag tables list them).  Its `pake-register` line also shows
+    `--username U` as required; it is optional in Python and Java and absent from C and Go
+    (spec `cli_surface_gaps`).
+  * **Version banners.**  `python3 HerraduraCli/herradura.py --help` prints "Herradura
+    Cryptographic Suite CLI v1.9.79" (also in the file headers of `herradura.py` and
+    `codec.py`); the C CLI's `--help` prints "v1.9.44"; Go and Java print no version.  The
+    project is at 14.0.4.  No CLI has `--version`.  Either drop the stale numbers or emit
+    one version from a single source (pyproject.toml / the README title, which
+    `check_docs_consistency.py` already reads) -- and if a `--version` subcommand is added,
+    that is new CLI surface (MINOR, and a spec `cli_subcommands` row).
+
+**Acceptance.**  The help notes and llms.txt match what the CLIs accept; no CLI prints a
+version other than the current one.
+
+**Resolution.** All three fixed. The version numbers were dropped, not regenerated: 21
+in all, across the CLIs, the suite demos, the test harnesses and the source headers.
+Adding `--version` would be new CLI surface. Three checks in
+`spec/check_docs_consistency.py` keep them fixed: A5 (banners), F2 (llms.txt synopses
+against the flag matrix) and F3 (help-note key types). On the pre-fix tree they report
+23 failures.
+
+Status: **DONE v15.0.0** — help note, llms.txt synopses and version banners match the code; check_docs_consistency A5/F2/F3 hold them.
+
+### #369: HCRED defaults and cost differ across the four CLIs
+
+Found with #364.  PATCH.
+
+  * **Default width.**  `genpkey --algo hcred` gives n = 32 in Python and n = 256 in C,
+    Go and Java.  Same command, different key: align them, or record the difference as a
+    spec `cli_flag_value_gaps` row so the parity checker holds it.
+  * **Prover cost at n = 256** on this aarch64 host: C 2 s (but at 4 rounds, #364),
+    Java 494 s for 219 rounds (12.8 MB proof), Go unfinished after 21 min.  Java's proof
+    verifies in C (82 s) and C's in Java.  Profile Go's prover; at its current speed a
+    219-round credential is unusable there.  Re-measure C once #364 moves it to 219.
+    (Measured with #362, n = 256, 16 rounds: prove / verify C 8.8 s / 6.3 s, Java
+    37 s / 27 s, Go 193 s / 144 s -- Go is 20x C, so 219 rounds is about 45 min.)
+
+**Resolution.** Aligned rather than recorded. Python's CLI default is n = 256
+(MIGRATING section 36), the only width at which HCRED's constants are tuned and the
+only one C and Java accept. Go's prover was 90% HFSCX-256 over BitArray, and all four
+ports had the same shape. Each now runs the compression on 64-bit words, bit-exact
+with the old path. At n = 256 and 219 rounds, prove / verify takes Java 6.8 / 5.0 s,
+C 12.7 / 8.9 s, Go 13.8 / 9.9 s and Python 465 / 300 s. Every CLI verifies every
+other's proof.
+
+Status: **DONE v15.0.0** — every CLI defaults to n = 256; HFSCX-256 on 64-bit words in all four ports makes a 219-round HCRED proof 7–14 s compiled (Go was ~45 min).

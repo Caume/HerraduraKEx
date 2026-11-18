@@ -1,4 +1,4 @@
-/* HerraduraCli/herradura_codec.h — Base64, PEM, and minimal DER codec (v1.5.25)
+/* HerraduraCli/herradura_codec.h — Base64, PEM, and minimal DER codec
  *
  * Header-only (all functions static).  No external dependencies.
  * Include <assert.h> and define HERRADURA_CODEC_SELFTEST before including
@@ -262,6 +262,64 @@ static int der_seq_enc(const uint8_t **items, const size_t *item_lens,
     return 0;
 }
 
+/* Bytes after the outer DER SEQUENCE in der[0..len-1]: >= 0, or -1 when der
+ * does not start with a well-formed SEQUENCE header whose body fits.  Every
+ * CLI refuses a non-zero count (TODO #372), so an artifact has one encoding. */
+static long der_seq_trailing(const uint8_t *der, size_t len)
+{
+    size_t consumed, body_len;
+    if (!len || der[0] != 0x30) return -1;
+    if (_der_dec_len(der + 1, len - 1, &body_len, &consumed) < 0) return -1;
+    if (body_len > len - 1 - consumed) return -1;
+    return (long)(len - 1 - consumed - body_len);
+}
+
+/* TODO #373: how each INTEGER of a DER SEQUENCE is ENCODED, which
+ * der_parse_seq's sign-byte strip forgets.  For item i: ew[i] is its encoded
+ * width (content length less a 0x00 the set top bit needs) and lz[i] is 1 when
+ * it starts with a 0x00 the sign does not need, 2 when with a sign byte.  Returns 0; 1 when a length
+ * (the SEQUENCE's or an item's) is not in its shortest form; 2 when item *bad
+ * is negative (top bit set, no sign byte); 3 when item *bad is empty; -1 on a
+ * structure der_parse_seq refuses anyway.  Every CLI refuses 1-3, so a
+ * SEQUENCE has one encoding of its lengths and signs. */
+static int _der_len_minimal(const uint8_t *buf, size_t buf_len)
+{
+    if (!buf_len || buf[0] < 0x80) return 1;
+    int nb = buf[0] & 0x7f;
+    if (nb == 0 || (size_t)nb + 1 > buf_len || buf[1] == 0) return 0;
+    return nb == 1 ? buf[1] >= 0x80 : 1;
+}
+static int der_seq_scan(const uint8_t *der, size_t len, size_t *ew,
+                        unsigned char *lz, int max_items, int *bad)
+{
+    size_t consumed, body_len, vlen, offset = 1, end;
+    int n = 0;
+    if (!len || der[0] != 0x30) return -1;
+    if (_der_dec_len(der + 1, len - 1, &body_len, &consumed) < 0) return -1;
+    if (!_der_len_minimal(der + 1, len - 1)) return 1;
+    offset += consumed;
+    if (body_len > len - offset) return -1;
+    end = offset + body_len;
+    while (offset < end && n < max_items) {
+        if (der[offset] != 0x02) return -1;
+        offset++;
+        if (offset >= end) return -1;
+        if (_der_dec_len(der + offset, end - offset, &vlen, &consumed) < 0) return -1;
+        if (!_der_len_minimal(der + offset, end - offset)) return 1;
+        offset += consumed;
+        if (vlen > end - offset) return -1;
+        if (bad) *bad = n;
+        if (vlen == 0) return 3;
+        if (der[offset] & 0x80) return 2;
+        int sign = vlen > 1 && der[offset] == 0 && (der[offset + 1] & 0x80);
+        ew[n] = vlen - (size_t)sign;
+        lz[n] = (unsigned char)(sign ? 2 : (vlen > 1 && der[offset] == 0) ? 1 : 0);
+        n++;
+        offset += vlen;
+    }
+    return 0;
+}
+
 /* Parse a DER SEQUENCE of INTEGERs into pointer+length pairs.
  * vals[i] points into der (no copy); leading 0x00 sign bytes are skipped so
  * each val_lens[i] gives the true unsigned byte width (matching Python).
@@ -280,6 +338,8 @@ static int der_parse_seq(const uint8_t *der, size_t len,
      * without this check `end` is attacker-controlled and every access below
      * (der[offset], vp[0], etc.) can read out of bounds. */
     if (body_len > len - offset) return -1;
+    /* Nothing may follow the SEQUENCE (TODO #372). */
+    if (body_len != len - offset) return -1;
     size_t end = offset + body_len;
     while (offset < end && n < max_items) {
         if (der[offset] != 0x02) return -1;

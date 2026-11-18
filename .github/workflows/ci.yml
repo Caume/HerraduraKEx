@@ -422,7 +422,8 @@ jobs:
                    CliTest/test_zkbpp.sh CliTest/test_zkp_default_rounds.sh \
                    CliTest/test_kat_pem.sh CliTest/test_fpe_twk.sh \
                    CliTest/test_v3_family.sh CliTest/test_zkp_hybrid_family.sh \
-                   CliTest/test_unknown_flags.sh CliTest/test_passphrase_envelope.sh; do
+                   CliTest/test_unknown_flags.sh CliTest/test_passphrase_envelope.sh \
+                   CliTest/test_pkey_text_matrix.sh; do
             echo "=== $f ==="
             bash "$f"
           done
@@ -440,7 +441,7 @@ jobs:
                     test_stern_kem.sh test_wots.sh test_zkbpp.sh test_zkp_default_rounds.sh \
                     test_kat_pem.sh test_fpe_twk.sh test_v3_family.sh \
                     test_zkp_hybrid_family.sh test_unknown_flags.sh \
-                    test_passphrase_envelope.sh"
+                    test_passphrase_envelope.sh test_pkey_text_matrix.sh"
           cd CliTest
           missing=0
           for f in *.sh; do
@@ -448,6 +449,11 @@ jobs:
             case "$f" in test_cross_lang_matrix.sh) continue ;; esac  # claimed by cross-lang-compat (TODO #207)
             case "$f" in test_malformed_pem_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #240)
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
+            case "$f" in test_round_floor.sh) continue ;; esac        # claimed by cross-lang-compat (TODO #364)
+            case "$f" in test_key_label_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #366)
+            case "$f" in test_der_items_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #367)
+            case "$f" in test_peer_value_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #371)
+            case "$f" in test_canonical_encoding_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #372)
             case "$f" in test_kdf_matrix.sh) continue ;; esac         # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_param_bounds.sh) continue ;; esac       # claimed by cross-lang-compat (TODO #278)
             case "$f" in test_narrow_width_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #313)
@@ -647,6 +653,15 @@ jobs:
             # vector exists to produce.  An exemption must name a script and say
             # why; do not add one to silence a genuine exposure.
             case "$f" in test_kat_pem.sh) continue ;; esac
+            # EXEMPT (TODO #372): the malformed-artifact matrices decapsulate a
+            # FIXED ciphertext only to show a genuine artifact is accepted and a
+            # malformed one refused.  Neither verdict reads the decapsulated
+            # bytes, and implicit rejection makes `dec` exit 0 on a DFR event,
+            # so a decoding failure cannot change their result: there is nothing
+            # for a retry to retry.  lib_der_fixtures.sh holds those matrices'
+            # shared templates.
+            case "$f" in test_key_label_matrix.sh|test_der_items_matrix.sh|test_peer_value_matrix.sh|\
+                         test_canonical_encoding_matrix.sh|lib_der_fixtures.sh) continue ;; esac
             # A script is exposed if it decapsulates: `dec --algo hpke-stern-kem`
             # or a hybrid-rnl-stern completion (the step that takes --our-kem).
             if grep -qE 'dec --algo hpke-stern-kem|--our-kem' "$f"; then
@@ -758,6 +773,45 @@ jobs:
       # the flag set on both sides can see it.
       - name: --digest pre-hash matrix
         run: bash CliTest/test_digest_matrix.sh
+
+      # TODO #364: the verifier's Fiat-Shamir round floor.  The round count is
+      # the signer's choice, so each verifier must refuse an artifact below
+      # --min-rounds (default 219) itself; refusals are matched on the floor's
+      # message beside an accept-control on the same artifact.
+      - name: Fiat-Shamir round-floor matrix
+        run: bash CliTest/test_round_floor.sh
+
+      # TODO #366: every CLI refuses a key whose PEM label the operation does not
+      # accept, per the spec's generated key_label_acceptance table.  Each row is
+      # run in every CLI with an accept-control and two refusals matched on the
+      # check's own message; the templates are held to the spec rows both ways.
+      - name: Key-label acceptance matrix
+        run: bash CliTest/test_key_label_matrix.sh
+
+      # TODO #367: every DER-SEQUENCE label's item count (spec pem_der_items)
+      # and the width / fixed-size fields that sized buffers.  Genuine artifact
+      # first, then 0 / min-1 / max+1 items matched on the loaders' shared
+      # message, and out-of-range fields refused without a panic, a traceback,
+      # an out-of-memory abort or a timeout.
+      - name: DER item-count and field-bound matrix
+        run: bash CliTest/test_der_items_matrix.sh
+
+      # TODO #371: a degenerate value from the OTHER party -- a GF(2^n)* public
+      # key or ciphertext R of 0 or 1, an HKEX-RNL C or C_B that is zero, sparse
+      # or clustered -- and a width the CLI does not run, refused by all four
+      # CLIs with the check's own message.  Go and Python printed "Signature OK"
+      # for a signature anyone can make under a public key of 1.
+      - name: Degenerate peer value and width matrix
+        run: bash CliTest/test_peer_value_matrix.sh
+
+      # TODO #372 / #368: a second encoding of a valid artifact, or a value no
+      # writer produces -- bytes after a DER SEQUENCE, a raw-body PEM's last
+      # field or an .hkx tag; any DER field one byte past its spec
+      # pem_der_field_caps width; an HPKS signature whose stored e is not the
+      # recomputed one -- refused by all four CLIs, each with an accept-control.
+      # Also the .hkx lengths that sent C past its buffer and panicked Go.
+      - name: Canonical encoding matrix
+        run: bash CliTest/test_canonical_encoding_matrix.sh
 
       # TODO #269: `kex --kdf`, for two reasons. Java had no --kdf until v6.5.0,
       # and -- the one that is easy to miss -- `--kdf hfscx-256` had never been

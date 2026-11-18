@@ -127,7 +127,9 @@ _hkx_mal_expect() {
     out=$(_hkx_mal_run "$@") && rc=0 || rc=$?
     if [ "$rc" -eq 0 ]; then
         fail "$desc: CLI exited 0"
-    elif echo "$out" | grep -qE 'Traceback \(most recent call last\)|fatal error: out of memory|MemoryError|Exception in thread|OutOfMemoryError|java.lang.[A-Za-z]*Error'; then
+    # TODO #367: a Go panic exits 2 with a goroutine dump, and that non-zero
+    # exit used to score as a clean rejection here; so did runtime OOM.
+    elif echo "$out" | grep -qE 'Traceback \(most recent call last\)|fatal error: out of memory|runtime: out of memory|^panic: |^goroutine [0-9]+ \[|MemoryError|Exception in thread|OutOfMemoryError|java.lang.[A-Za-z]*Error'; then
         fail "$desc: crashed instead of rejecting — $(echo "$out" | head -1)"
     elif [ "$(echo "$out" | tail -1)" = "Verification FAILED" ]; then
         fail "$desc: reached the verifier instead of being rejected"
@@ -458,7 +460,7 @@ hkx_mal_suite_packed() {
     # HCRED PROOF: n at 0, W at 4, rounds at 8.  rounds=0 is the same vacuous
     # acceptance as the ZKBoo case above, in a second protocol.
     if _hkx_mal_control "[$lang] hcred: genuine proof verifies" \
-        "${CLI[@]}" cred-verify --cred "$hcred" --issuer "$d/rm1_pub.pem" \
+        "${CLI[@]}" cred-verify --min-rounds 4 --cred "$hcred" --issuer "$d/rm1_pub.pem" \
         --pubkey "$hpub" --proof "$hprf" --msg nonce; then
         for case in "0 0 n=0" "0 33 n=33" "0 4294967295 n=2^32-1" \
                     "4 0 W=0" "4 4294967295 W=2^32-1" \
@@ -467,7 +469,7 @@ hkx_mal_suite_packed() {
             off="$1" val="$2"; shift 2
             hkx_mal_poke "$hprf" "$bad" "$off" 4 "$val"
             _hkx_mal_expect "[$lang] hcred proof rejects $*" \
-                "${CLI[@]}" cred-verify --cred "$hcred" \
+                "${CLI[@]}" cred-verify --min-rounds 4 --cred "$hcred" \
                 --issuer "$d/rm1_pub.pem" --pubkey "$hpub" \
                 --proof "$bad" --msg nonce
         done

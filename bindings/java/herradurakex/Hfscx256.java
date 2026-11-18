@@ -103,12 +103,51 @@ public final class Hfscx256 {
         // block is v1's A, the chaining value its B, which the message cannot
         // choose.  Davies-Meyer let a zero block set B = 0, where v1 is constant
         // past n/2 rounds (SecurityProofs-10.md §11.75).
-        int steps = V1_MODE_STEPS; // 192
+        // TODO #369: on four big-endian longs (compress) rather than through
+        // BitArray -- bit-exact with nlFscxRevolveV1(block, state, 192)
+        // .xor(block); the HFSCX-256 KAT vectors and
+        // CliTest/test_digest_matrix.sh hold it to the other ports.
+        long[] st = load(state.toBytes(), 0);
         for (int off = 0; off < padded.length; off += BLOCK) {
-            BitArray block = BitArray.fromBytes(Arrays.copyOfRange(padded, off, off + BLOCK), N);
-            state = nlFscxRevolveV1(block, state, steps).xor(block);
+            compress(st, padded, off);
         }
-        return state.toBytes();
+        byte[] out = new byte[BLOCK];
+        for (int i = 0; i < 4; i++)
+            for (int k = 0; k < 8; k++) out[8 * i + k] = (byte) (st[i] >>> (56 - 8 * k));
+        return out;
+    }
+
+    /** A 256-bit value as four big-endian longs: w[0] is the most significant. */
+    private static long[] load(byte[] b, int off) {
+        long[] w = new long[4];
+        for (int i = 0; i < 4; i++)
+            for (int k = 0; k < 8; k++) w[i] = (w[i] << 8) | (b[off + 8 * i + k] & 0xFFL);
+        return w;
+    }
+
+    /** s <- F_s^{192}(m) XOR m, v1's A = m and B = s:
+     *  v1(a, b) = fscx(a, b) XOR ROL(a + b mod 2^256, 64), a rotation by one long. */
+    private static void compress(long[] s, byte[] blk, int off) {
+        long[] m = load(blk, off), a = m.clone(), sb = new long[4], t = new long[4], f = new long[4];
+        for (int i = 0; i < 4; i++) {           // B-side fscx terms are fixed
+            int nx = (i + 1) & 3, pv = (i + 3) & 3;
+            sb[i] = s[i] ^ (s[i] << 1 | s[nx] >>> 63) ^ (s[i] >>> 1 | s[pv] << 63);
+        }
+        for (int step = 0; step < V1_MODE_STEPS; step++) {
+            long carry = 0;
+            for (int i = 3; i >= 0; i--) {
+                long x = a[i] + s[i];
+                long c1 = Long.compareUnsigned(x, a[i]) < 0 ? 1 : 0;
+                t[i] = x + carry;
+                carry = c1 | (Long.compareUnsigned(t[i], x) < 0 ? 1 : 0);
+            }
+            for (int i = 0; i < 4; i++) {
+                int nx = (i + 1) & 3, pv = (i + 3) & 3;
+                f[i] = a[i] ^ (a[i] << 1 | a[nx] >>> 63) ^ (a[i] >>> 1 | a[pv] << 63) ^ sb[i];
+            }
+            for (int i = 0; i < 4; i++) a[i] = f[i] ^ t[(i + 1) & 3];
+        }
+        for (int i = 0; i < 4; i++) s[i] = a[i] ^ m[i];
     }
 
     public static byte[] hash(byte[] data) {
@@ -257,11 +296,21 @@ public final class Hfscx256 {
                 String.format("decfile: unsupported algo byte 0x%02x", raw[4] & 0xff));
         }
         long plaintextLen = readBe64(raw, 5);
+        // Bound the wire length by the file before the int arithmetic: a value
+        // past 2^31 (or negative as a long) wrapped nBlocks and ctEnd, and the
+        // decoder then tried to allocate the whole claimed length (TODO #368).
+        if (plaintextLen < 0 || plaintextLen > raw.length) {
+            throw new IllegalArgumentException("decfile: file truncated (ciphertext blocks or auth tag missing)");
+        }
         byte[] nonceBytes = Arrays.copyOfRange(raw, 13, 13 + HKX_BLOCK);
         int nBlocks = (int) ((plaintextLen + HKX_BLOCK - 1) / HKX_BLOCK);
         int ctEnd = 45 + nBlocks * HKX_BLOCK;
         if (raw.length < ctEnd + 32) {
             throw new IllegalArgumentException("decfile: file truncated (ciphertext blocks or auth tag missing)");
+        }
+        // TODO #368: exactly one encoding per file -- nothing after the tag.
+        if (raw.length > ctEnd + 32) {
+            throw new IllegalArgumentException("decfile: " + (raw.length - ctEnd - 32) + " bytes after the auth tag");
         }
         byte[] ctBytes = Arrays.copyOfRange(raw, 45, ctEnd);
         byte[] tagStored = Arrays.copyOfRange(raw, ctEnd, ctEnd + 32);

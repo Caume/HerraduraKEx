@@ -65,18 +65,24 @@ for enc in $langs; do
     done
 done
 
-# Empty-plaintext round-trip (each producer -> Python consumer)
+# Empty-plaintext round-trip, every producer -> every consumer.  This decoded
+# with Python only until TODO #370, which is how C and Go refusing an empty
+# payload ("declares 0 bytes but carries 1", since TODO #239) went unseen: the
+# payload is the INTEGER 0, one 00 byte in DER.
 : > "$TMP/empty.bin"
 for enc in $langs; do
     ${CLI[$enc]} enc --algo hske-duplex --ad "$AD" \
         --key "$TMP/sk.pem" --in "$TMP/empty.bin" --out "$TMP/ect_$enc.pem"
-    if $PY dec --algo hske-duplex --ad "$AD" \
-          --key "$TMP/sk.pem" --in "$TMP/ect_$enc.pem" --out "$TMP/ept_$enc.bin" \
-       && cmp -s "$TMP/empty.bin" "$TMP/ept_$enc.bin"; then
-        echo "PASS duplex empty-pt $enc-enc -> py-dec"; PASS=$((PASS+1))
-    else
-        echo "FAIL duplex empty-pt $enc-enc -> py-dec"; FAIL=$((FAIL+1))
-    fi
+    for dec in $langs; do
+        rm -f "$TMP/ept_${enc}_$dec.bin"
+        if ${CLI[$dec]} dec --algo hske-duplex --ad "$AD" \
+              --key "$TMP/sk.pem" --in "$TMP/ect_$enc.pem" --out "$TMP/ept_${enc}_$dec.bin" \
+           && cmp -s "$TMP/empty.bin" "$TMP/ept_${enc}_$dec.bin"; then
+            echo "PASS duplex empty-pt $enc-enc -> $dec-dec"; PASS=$((PASS+1))
+        else
+            echo "FAIL duplex empty-pt $enc-enc -> $dec-dec"; FAIL=$((FAIL+1))
+        fi
+    done
 done
 
 # Mutated ciphertext must be rejected: flip a base64 char in the PEM body

@@ -87,6 +87,15 @@ public final class HerraduraCli {
 
     private static final SecureRandom RNG = new SecureRandom();
 
+    /** TODO #371: one refusal for a degenerate GF(2^n)* peer value, worded as in
+     * the C, Go and Python CLIs, checked before the suite call so the message
+     * names the value rather than a generic failure. */
+    private static void gfPeerOK(BigInteger v, int nbits, String what) {
+        if (!Herradura.gfPubIsValid(BitArray.fromBigInteger(v, nbits))) {
+            throw new CliError(what + " is the GF(2^n)* identity/zero element (rejected: degenerate key)");
+        }
+    }
+
     public static void main(String[] args) {
         try {
             run(args);
@@ -123,6 +132,7 @@ public final class HerraduraCli {
         String cmd = args[0];
         Map<String, String> opt = parseOpts(args, 1);
         checkUnknownFlags(cmd, opt);
+        checkKeyLabels(cmd, opt);   // TODO #366
         switch (cmd) {
             case "genpkey": cmdGenpkey(opt); break;
             case "pkey":    cmdPkey(opt);    break;
@@ -162,6 +172,54 @@ public final class HerraduraCli {
      *  list, since all four CLIs now accept both. */
     private static final java.util.Set<String> REPEATABLE = new java.util.HashSet<>(
         java.util.Arrays.asList("commits", "commit", "partials", "partial"));
+
+    /** TODO #366: refuse a key whose PEM label this operation does not accept.
+     *
+     *  KeyLabelTable is generated from spec/generate_spec.py's KEY_LABEL_SITES,
+     *  which holds the reasoning; C, Go and Python carry the same rows.  Only KEY
+     *  labels are judged (ending in PRIVATE KEY or PUBLIC KEY, other than the
+     *  passphrase envelope): a response, session key or hex key goes on to the
+     *  loader, whose own message is the more specific one.  The message is
+     *  printed bare, without the "error: " prefix, so it reads the same in all
+     *  four CLIs. */
+    private static void checkKeyLabels(String cmd, Map<String, String> opt) {
+        String algo = opt.getOrDefault("algo", "");
+        for (String[] r : KeyLabelTable.SITES) {
+            if (!r[0].equals(cmd) || !r[1].equals(algo)) continue;
+            String v = opt.get(r[2].substring(2));
+            if (v == null || v.isEmpty()) continue;
+            String[] paths = r[2].equals("--ring") ? v.split(",", -1) : new String[] { v };
+            for (String p : paths) {
+                String label = pemFileLabel(p.trim());
+                if (label == null || label.equals("HERRADURA ENCRYPTED PRIVATE KEY")
+                        || !(label.endsWith("PRIVATE KEY") || label.endsWith("PUBLIC KEY")))
+                    continue;
+                boolean ok = false;
+                for (int k = 4; k < r.length; k++) if (r[k].equals(label)) ok = true;
+                if (!ok) {
+                    String where = algo.isEmpty() ? cmd : cmd + " --algo " + algo;
+                    System.err.println(where + ": wrong key type: " + r[2] + " holds '"
+                        + label + "'; accepted: " + r[3]);
+                    System.exit(1);
+                }
+            }
+        }
+    }
+
+    /** The first PEM BEGIN label in path, or null (unreadable, or not PEM). */
+    private static String pemFileLabel(String path) {
+        String text;
+        try {
+            text = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)),
+                              java.nio.charset.StandardCharsets.ISO_8859_1);
+        } catch (Exception e) {
+            return null;
+        }
+        int i = text.indexOf("-----BEGIN ");
+        if (i < 0) return null;
+        int j = text.indexOf("-----", i + 11);
+        return j > i + 11 ? text.substring(i + 11, j) : null;
+    }
 
     /** TODO #274: refuse a flag this subcommand does not read.
      *
@@ -432,14 +490,12 @@ public final class HerraduraCli {
             // proof is already ~35 KB there, so a wider n is a deliberate choice
             // rather than a default.
             // n comes from --bits, exactly as in the Python CLI: an omitted
-            // --bits (or --bits 256, its KEYBITS default) means ZKP_NL_DEFAULT_N,
-            // because at R = 219 a ZKBoo proof is already ~35 KB at n = 8.
+            // --bits means ZKP_NL_DEFAULT_N, because at R = 219 a ZKBoo proof is
+            // already ~35 KB at n = 8.  TODO #374: an explicit --bits 256 used to
+            // read as omitted and wrote an n = 8 key; it now fails the range check.
             int n = ZKP_NL_DEFAULT_N;
             String nOpt = opt.get("bits");
-            if (nOpt != null) {
-                int req = Integer.parseInt(nOpt);
-                if (req != Herradura.N) n = req;
-            }
+            if (nOpt != null) n = Integer.parseInt(nOpt);
             if (n <= 0 || n % 2 != 0 || n > ZKP_NL_MAX_N) {
                 throw new CliError("genpkey hpks-zkp-nl: --bits must be a positive even "
                     + "integer <= " + ZKP_NL_MAX_N + ", got " + n);
@@ -508,6 +564,18 @@ public final class HerraduraCli {
         if (block.label.equals(Codec.PEM_ENC_PRIV)) {
             throw new CliError(in + " is a passphrase-encrypted private key; decrypt it "
                 + "first with `pkey --decrypt --passphrase ... --in " + in + " --out plain.pem`");
+        }
+
+        // TODO #374: an OPRF server key has --text but no public half; it fell
+        // through to "unrecognized private-key label".
+        if (block.label.equals(Codec.PEM_OPRF_PRIV)) {
+            if (opt.containsKey("pubout")) {
+                throw new CliError("pkey --pubout: oprf has no public key");
+            }
+            Codec.decodeOprfPrivKey(pemIn);   // validates the key
+            System.out.println("algorithm : oprf");
+            System.out.println("bits      : " + Herradura.N);
+            return;
         }
 
         if (block.label.equals(Codec.PEM_HPKS_STERN_PRIV) || block.label.equals(Codec.PEM_HPKE_STERN_PRIV)) {
@@ -671,7 +739,7 @@ public final class HerraduraCli {
         BitArray sk = Herradura.hkexGfAgree(BitArray.fromBigInteger(our.priv, our.nbits),
                                             BitArray.fromBigInteger(their.pub, their.nbits));
         if (sk == null) {
-            throw new CliError("kex: peer public key is degenerate (identity or zero)");
+            throw new CliError("kex: their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)");
         }
         BigInteger skInt = applyKdf(sk.toBigInteger(), our.nbits, kdfOn);
         String pem = Codec.encodeSessionKey(skInt, our.nbits);
@@ -707,6 +775,9 @@ public final class HerraduraCli {
                 throw new CliError("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack");
             }
             int[] cB = HerraduraNl.hkexRnlDeriveC(their.mBlind, our.s, our.n);
+            if (!HerraduraNl.rnlValidatePub(their.c)) {
+                throw new CliError("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
+            }
             HerraduraNl.RnlAgreeResult agree = HerraduraNl.rnlAgree(
                 our.s, their.c, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
                 our.n, rnlKeyBits(our.n));
@@ -720,6 +791,9 @@ public final class HerraduraCli {
             Codec.RnlResponse resp = Codec.decodeRnlResponse(theirPem);
             if (our.n != resp.n) {
                 throw new CliError("kex hkex-rnl: ring size mismatch (ours=" + our.n + ", response=" + resp.n + ")");
+            }
+            if (!HerraduraNl.rnlValidatePub(resp.cB)) {
+                throw new CliError("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
             }
             BigInteger kA = HerraduraNl.rnlAgree(
                 our.s, resp.cB, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
@@ -788,6 +862,9 @@ public final class HerraduraCli {
             Codec.KemPubKey kemPub = Codec.decodeKemPubKey(readString(theirKem));
 
             int[] cB = HerraduraNl.hkexRnlDeriveC(their.mBlind, our.s, our.n);
+            if (!HerraduraNl.rnlValidatePub(their.c)) {
+                throw new CliError("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
+            }
             HerraduraNl.RnlAgreeResult agree = HerraduraNl.rnlAgree(
                 our.s, their.c, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
                 our.n, rnlKeyBits(our.n));
@@ -822,6 +899,9 @@ public final class HerraduraCli {
             BigInteger hPub = Stern.qcmdpcPubFromPriv(kemPriv.h0, kemPriv.h1);
             int[] cA = HerraduraNl.hkexRnlDeriveC(our.mBlind, our.s, our.n);
 
+            if (!HerraduraNl.rnlValidatePub(resp.cB)) {
+                throw new CliError("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
+            }
             BigInteger k1raw = HerraduraNl.rnlAgree(
                 our.s, resp.cB, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
                 our.n, rnlKeyBits(our.n), resp.hint);
@@ -939,7 +1019,7 @@ public final class HerraduraCli {
         if (!b.label.equals(Codec.PEM_CIPHERTEXT)) {
             throw new CliError("expected " + Codec.PEM_CIPHERTEXT + ", got " + b.label);
         }
-        List<BigInteger> ints = Codec.derParseSeq(b.der);
+        List<BigInteger> ints = Codec.derParseSeq(b);
         int formatTag = ints.get(0).intValueExact();
         if (formatTag == 0) {
             return new BigInteger[] { ints.get(1), ints.get(2), null, null };
@@ -986,7 +1066,7 @@ public final class HerraduraCli {
         if (!b.label.equals(Codec.PEM_CIPHERTEXT)) {
             throw new CliError("expected " + Codec.PEM_CIPHERTEXT + ", got " + b.label);
         }
-        List<BigInteger> ints = Codec.derParseSeq(b.der);
+        List<BigInteger> ints = Codec.derParseSeq(b);
         int want = v3 ? 4 : 3;
         int got = ints.get(0).intValueExact();
         if (got != want) {
@@ -1072,8 +1152,9 @@ public final class HerraduraCli {
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             int nbytes = pub.nbits / 8;
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), pub.nbits);
+            gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = Herradura.hpkeEncrypt(p, BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
-            if (ct == null) throw new CliError("enc: recipient public key is degenerate");
+            if (ct == null) throw new CliError("enc: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
         } else if (algo.equals("hpke-nl")) {
             String pubPath = req(opt, "pubkey", "enc");
@@ -1082,6 +1163,7 @@ public final class HerraduraCli {
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             int nbytes = pub.nbits / 8;
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), pub.nbits);
+            gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = HerraduraNl.hpkeNlEncrypt(p, BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
             if (ct == null) throw new CliError("enc: could not sample a non-degenerate ephemeral key");
             writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
@@ -1090,8 +1172,9 @@ public final class HerraduraCli {
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
+            gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(BitArray.fromBytes(padTrunc(inBytes, pub.nbits / 8), pub.nbits), BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
-            if (ct == null) throw new CliError("enc: recipient public key is degenerate");
+            if (ct == null) throw new CliError("enc: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
         } else if (algo.equals("hpke-stern")) {
             sternDemoWarning();
@@ -1200,22 +1283,25 @@ public final class HerraduraCli {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            gfPeerOK(ct.r, nbits, "dec: ciphertext R");
             BitArray d = Herradura.hpkeDecrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
-            if (d == null) throw new CliError("dec: ephemeral public value is degenerate");
+            if (d == null) throw new CliError("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-nl")) {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            gfPeerOK(ct.r, nbits, "dec: ciphertext R");
             BitArray d = HerraduraNl.hpkeNlDecrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
-            if (d == null) throw new CliError("dec: ephemeral public value is degenerate or the derived key is NL-FSCX v2 weak (TODO #354)");
+            if (d == null) throw new CliError("dec: the derived key is NL-FSCX v2 weak (TODO #354)");
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-nl3")) {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            gfPeerOK(ct.r, nbits, "dec: ciphertext R");
             BitArray d = HerraduraNl.hpkeNl3Decrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
-            if (d == null) throw new CliError("dec: ephemeral public value is degenerate");
+            if (d == null) throw new CliError("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-stern")) {
             sternDemoWarning();
@@ -1427,7 +1513,7 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
+            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : STERN_CLI_ROUNDS;
 
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1455,7 +1541,7 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
+            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : STERN_CLI_ROUNDS;
 
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1550,8 +1636,9 @@ public final class HerraduraCli {
             boolean ok;
             if (algo.equals("nl-zkboo")) {
                 Codec.ZkpNlProof pr = Codec.decodeZkpNlProof(readString(sigPath));
+                requireRounds(pr.rounds.size(), minRounds(opt, "verify"), "nl-zkboo proof", "verify");
                 // The round count travels in the PEM, as it does for Stern-F
-                // (TODO #236): a verifier accepts whatever the signer used.
+                // (TODO #236); the verifier holds it to --min-rounds (TODO #364).
                 // The WIDTH is different -- a proof about another n is not a
                 // proof about this key, and nb aliasing hides it (TODO #275).
                 if (pr.n != pub.n)
@@ -1561,6 +1648,7 @@ public final class HerraduraCli {
                                   padTrunc(msg, 32), pr.rounds);
             } else {
                 Codec.ZkpNlPpProof pr = Codec.decodeZkpNlPpProof(readString(sigPath));
+                requireRounds(pr.rounds.size(), minRounds(opt, "verify"), "nl-zkbpp proof", "verify");
                 if (pr.n != pub.n)
                     throw new CliError("verify: proof n mismatch with pubkey n ("
                                        + pr.n + " vs " + pub.n + ")");
@@ -1601,6 +1689,8 @@ public final class HerraduraCli {
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.SternPubKey pub = Codec.decodeSternPubKey(pubPem, pubBlock.label);
             Codec.SternSigDecoded sig = Codec.decodeSternSig(readString(sigPath));
+            requireRounds(sig.sig.challenges.length, minRounds(opt, "verify"),
+                          "hpks-stern signature", "verify");
             BigInteger msgInt = new BigInteger(1, padTrunc(msg, pub.nbits / 8));
 
             boolean ok = Stern.hpksSternFVerify(msgInt, sig.sig, pub.seed, pub.syndrome);
@@ -1639,6 +1729,7 @@ public final class HerraduraCli {
         if (algo.equals("hpks-ring")) {
             List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "verify"));
             Codec.RingSigDecoded sig = Codec.decodeRingSig(readString(req(opt, "sig", "verify")));
+            requireRounds(sig.sig.rounds(), minRounds(opt, "verify"), "hpks-ring signature", "verify");
             if (sig.nbits != Herradura.N) {
                 throw new CliError("hpks-ring verify: signature n=" + sig.nbits + " != ring n=" + Herradura.N);
             }
@@ -1664,9 +1755,16 @@ public final class HerraduraCli {
         String pubPem = readString(pubPath);
         Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
         Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
+        gfPeerOK(pub.pub, pub.nbits, "verify: public key");
         Codec.SchnorrSig sig = Codec.decodeSchnorrSig(readString(sigPath));
         BigInteger msgInt = new BigInteger(1, padTrunc(msg, pub.nbits / 8));
-
+        if (sig.nbits != pub.nbits) {
+            throw new CliError("verify: signature n is " + sig.nbits + ", public key n is " + pub.nbits);
+        }
+        BitArray rBa = BitArray.fromBigInteger(sig.r, pub.nbits);
+        BitArray mBa = BitArray.fromBigInteger(msgInt, pub.nbits);
+        BitArray eV = algo.equals("hpks") ? Herradura.fscxRevolve(rBa, mBa, pub.nbits / 4)
+                                          : HerraduraNl.hpksNlChallenge(rBa, mBa);
         boolean ok = algo.equals("hpks")
             ? Herradura.hpksVerify(BitArray.fromBigInteger(msgInt, pub.nbits),
                                    BitArray.fromBigInteger(pub.pub, pub.nbits),
@@ -1674,12 +1772,20 @@ public final class HerraduraCli {
             : HerraduraNl.hpksNlVerify(BitArray.fromBigInteger(msgInt, pub.nbits),
                                    BitArray.fromBigInteger(pub.pub, pub.nbits),
                                    BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sig.s, pub.nbits));
-        if (ok) {
-            System.out.println("Signature OK");
-        } else {
+        if (!ok) {
             System.out.println("Verification FAILED");
             System.exit(1);
         }
+        // TODO #372: the stored challenge is part of the signature's bytes, so
+        // one that is not the recomputed e is a second encoding of the same
+        // signature -- refused, as every CLI does.  Checked only once the
+        // algebra holds: a wrong message or key changes e too, and stays an
+        // ordinary "Verification FAILED".
+        if (!eV.toBigInteger().equals(sig.e)) {
+            throw new CliError("verify: signature challenge e is not the recomputed one "
+                + "(rejected: non-canonical signature)");
+        }
+        System.out.println("Signature OK");
     }
 
     // -----------------------------------------------------------------
@@ -2063,6 +2169,8 @@ public final class HerraduraCli {
         Codec.HcredPubKey pub = loadHcredPubkey(req(opt, "pubkey", "cred-verify"));
         byte[] msg = opt.getOrDefault("msg", "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
         int rounds = proof.rounds.size();
+        int floor = minRounds(opt, "cred-verify");
+        requireRounds(rounds, floor, "HCRED proof", "cred-verify");
 
         boolean okProof = Hcred.verify(pub.m, pub.c, pub.seedH, pub.syndr, proof, rounds, msg);
         if (!okProof) {
@@ -2072,6 +2180,7 @@ public final class HerraduraCli {
 
         if (opt.containsKey("cred")) {
             Codec.SternSigDecoded credSig = Codec.decodeHcredCredential(readString(opt.get("cred")));
+            requireRounds(credSig.sig.challenges.length, floor, "HCRED credential", "cred-verify");
             String issuerPem = readString(req(opt, "issuer", "cred-verify"));
             Codec.PemBlock issuerBlock = Codec.pemUnwrap(issuerPem);
             if (!issuerBlock.label.equals(Codec.PEM_HPKS_STERN_PUB) && !issuerBlock.label.equals(Codec.PEM_HPKE_STERN_PUB)) {
@@ -2157,9 +2266,40 @@ public final class HerraduraCli {
      *  herradura_cli.go), so all four now reject the same value set; this
      *  paragraph is kept because the divergence is the reason the value-set axis
      *  in spec/generate_spec.py exists, not because it is still live. */
+    /** TODO #364: the verifier's round-count floor.  The round count travels in
+     *  the artifact (TODO #236), so a verifier taking it from there let the
+     *  SIGNER choose the verifier's soundness: one Stern-F or ZKBoo-(2,3) round
+     *  can be answered without the witness for two of its three challenges, and
+     *  under Fiat-Shamir a forger grinds the commitment until the challenge is
+     *  one of those.  219 is the 128-bit count ((2/3)^219 < 2^-128);
+     *  `verify` / `cred-verify --min-rounds N` lowers it. */
+    private static final int MIN_VERIFY_ROUNDS = 219; // == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS
+    /** sign --algo hpks-stern / hpks-ring default; was Stern.SDFR (32 demo). */
+    private static final int STERN_CLI_ROUNDS = 219;
+
+    private static int minRounds(Map<String, String> opt, String cmd) {
+        String v = opt.get("min-rounds");
+        if (v == null) return MIN_VERIFY_ROUNDS;
+        int r;
+        try { r = Integer.parseInt(v); } catch (NumberFormatException e) { r = -1; }
+        if (r < 1 || r > 4096)
+            throw new CliError(cmd + ": --min-rounds must be between 1 and 4096");
+        return r;
+    }
+
+    private static void requireRounds(int rounds, int floor, String what, String cmd) {
+        if (rounds >= floor) return;
+        throw new CliError(cmd + ": " + what + " declares " + rounds + " rounds, below the "
+            + "--min-rounds floor of " + floor + " (" + MIN_VERIFY_ROUNDS + " = 128-bit "
+            + "Fiat-Shamir soundness); pass --min-rounds " + rounds + " to accept it anyway");
+    }
+
     private static byte[] readMessage(Map<String, String> opt, String cmd) throws IOException {
         byte[] msg = readBytes(req(opt, "in", cmd));
-        String digest = opt.getOrDefault("digest", "none");
+        // TODO #365: an absent --digest means hfscx-256.  The old default, none,
+        // padded/truncated the message to the key width, so a signature on one
+        // file verified for every file sharing its first 32 bytes.
+        String digest = opt.getOrDefault("digest", "hfscx-256");
         if (digest.equals("hfscx-256")) return Hfscx256.hash(msg);
         if (!digest.equals("none")) {
             throw new CliError(cmd + ": unsupported --digest " + digest
@@ -2266,7 +2406,7 @@ public final class HerraduraCli {
             throw new CliError("pkey --decrypt: expected " + Codec.PEM_ENC_PRIV
                 + ", got " + b.label);
         }
-        List<BigInteger> it = Codec.derParseSeq(b.der);
+        List<BigInteger> it = Codec.derParseSeq(b);
         if (it.size() != 6) {
             throw new CliError("pkey --decrypt: malformed envelope ("
                 + it.size() + " fields, want 6)");

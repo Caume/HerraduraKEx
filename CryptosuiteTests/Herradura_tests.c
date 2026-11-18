@@ -5452,7 +5452,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.9.35 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);
@@ -6031,6 +6031,24 @@ int main(int argc, char *argv[])
             /* (a) accept-control */
             for (j = 0; j < RNL_N; j++) poly[j] = (int32_t)rnl_rand_coeff();
             if (!rnl_validate_m_blind(poly, RNL_N)) bad_reject++;
+
+            /* (f) TODO #371: rnl_validate_pub, the same two tests over Z_p for a
+             * peer's public value C.  Accept-control: (a)'s draw reduced mod p
+             * (no new draw); then all-zero, sparse at full range, clustered at
+             * full count, and both sides of the count boundary. */
+            for (j = 0; j < RNL_N; j++) poly[j] %= RNL_P;
+            if (!rnl_validate_pub(poly, RNL_N)) bad_reject++;
+            memset(poly, 0, sizeof poly);
+            if (rnl_validate_pub(poly, RNL_N)) bad_accept++;
+            for (j = 0; j < RNL_N / 8; j++) poly[j] = RNL_P - 1;
+            if (rnl_validate_pub(poly, RNL_N)) bad_accept++;
+            for (j = 0; j < RNL_N; j++) poly[j] = 1 + j % (RNL_P / 8 - 1);
+            if (rnl_validate_pub(poly, RNL_N)) bad_accept++;
+            memset(poly, 0, sizeof poly);
+            for (j = 0; j < RNL_N / 4; j++) poly[j] = RNL_P - 1;
+            if (!rnl_validate_pub(poly, RNL_N)) bad_reject++;
+            poly[RNL_N / 4 - 1] = 0;
+            if (rnl_validate_pub(poly, RNL_N)) bad_accept++;
 
             /* (b) all-zero */
             memset(poly, 0, sizeof poly);

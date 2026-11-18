@@ -1,4 +1,4 @@
-# HerraduraCli/codec.py — PEM and minimal DER codec (v1.9.79)
+# HerraduraCli/codec.py — PEM and minimal DER codec
 # No external dependencies; uses only base64 from stdlib.
 import base64
 
@@ -37,6 +37,13 @@ def _packed_take(body: bytes, off: int, size: int, what: str) -> tuple:
     if size < 0 or off + size > len(body):
         raise ValueError(f"{what} truncated")
     return body[off:off + size], off + size
+
+
+def _packed_end(body: bytes, off: int, label: str) -> None:
+    """A raw-body PEM must end at its last field (TODO #372): bytes after it
+    would give one artifact many encodings.  Same text in all four CLIs."""
+    if off < len(body):
+        raise ValueError(f"malformed PEM '{label}': {len(body) - off} bytes after its last field")
 
 
 # ---------------------------------------------------------------------------
@@ -90,11 +97,83 @@ def der_seq(*items: bytes) -> bytes:
     return b'\x30' + _encode_length(len(body)) + body
 
 
-def der_parse_seq(data: bytes) -> list:
+# Set by HerraduraCli/herradura.py to its generated field check (TODO #372
+# widths, #373 encodings and value rules), so the decoders here hold each
+# field to the same rules as the CLI's own loader.  Called as
+# FIELD_CAPS_CHECK(label, ints, enc), enc from der_scan.  None when codec is
+# used on its own.
+FIELD_CAPS_CHECK = None
+
+
+def _der_len_minimal(data: bytes, offset: int) -> bool:
+    b = data[offset]
+    if b < 0x80:
+        return True
+    nb = b & 0x7f
+    if nb == 0 or offset + nb >= len(data) or data[offset + 1] == 0:
+        return False
+    return nb > 1 or data[offset + 1] >= 0x80
+
+
+def der_scan(data: bytes, label: str) -> list:
+    """TODO #373: how each INTEGER of a DER SEQUENCE that der_parse_seq has
+    accepted is ENCODED, which its sign-byte strip forgets: one (encoded width,
+    lead) pair per item -- the content length less a 0x00 the set top bit
+    needs, and lead 1 when it starts with a 0x00 the sign does not need, 2
+    when with a sign byte.
+    Raises ValueError, in the text every CLI prints, on a length not in its
+    shortest form or a negative or empty INTEGER: a SEQUENCE has one encoding
+    of its lengths and signs."""
+    where = f"malformed PEM '{label}'"
+    if not _der_len_minimal(data, 1):
+        raise ValueError(f"{where}: DER length not in its shortest form")
+    length, offset = _read_length(data, 1)
+    end, enc = offset + length, []
+    while offset < end:
+        offset += 1
+        if not _der_len_minimal(data, offset):
+            raise ValueError(f"{where}: DER length not in its shortest form")
+        vlen, offset = _read_length(data, offset)
+        c = data[offset:offset + vlen]
+        if not c:
+            raise ValueError(f"{where}: field {len(enc)} is an empty INTEGER")
+        if c[0] & 0x80:
+            raise ValueError(f"{where}: field {len(enc)} is a negative INTEGER")
+        sign = len(c) > 1 and c[0] == 0 and c[1] & 0x80
+        enc.append((len(c) - (1 if sign else 0), 2 if sign else 1 if len(c) > 1 and c[0] == 0 else 0))
+        offset += vlen
+    return enc
+
+
+def _der_count(label: str, data: bytes, want: int, gf_idx: int = None) -> list:
+    """der_parse_seq plus the item count TODO #367 checks in every CLI loader;
+    the message is the one HerraduraCli's _DER_ITEMS check prints.  gf_idx
+    names a GF(2^n) width field, which must be one of the widths with a
+    primitive polynomial (BITARRAY.md 4.6), and every other field must then
+    fit n bits."""
+    ints = der_parse_seq(data, label)
+    enc = der_scan(data, label)            # TODO #373
+    if len(ints) != want:
+        raise ValueError(f"malformed PEM '{label}': {len(ints)} DER items, expected {want}")
+    if FIELD_CAPS_CHECK is not None:       # TODO #372, #373: the CLI's generated check
+        FIELD_CAPS_CHECK(label, ints, enc)
+    if gf_idx is not None:
+        n = ints[gf_idx]
+        if n not in (32, 64, 128, 256):
+            raise ValueError(f"{label}: n is {n} (expected 32, 64, 128 or 256)")
+        for i, v in enumerate(ints):
+            if i != gf_idx and v.bit_length() > n:
+                raise ValueError(f"{label}: field {i} is wider than n = {n} bits")
+    return ints
+
+
+def der_parse_seq(data: bytes, label: str = None) -> list:
     """Decode a DER SEQUENCE of INTEGERs; return list of Python ints.
 
     Raises ValueError on any malformed input (never lets an IndexError
-    escape from an attacker-controlled length field)."""
+    escape from an attacker-controlled length field), including bytes after
+    the SEQUENCE (TODO #372): every artifact has exactly one encoding.  label,
+    when given, names the PEM in that message, as every CLI's loader does."""
     if not data:
         raise ValueError("Empty DER input")
     if data[0] != 0x30:
@@ -107,6 +186,9 @@ def der_parse_seq(data: bytes) -> list:
     end = offset + length
     if end > len(data):
         raise ValueError("DER: SEQUENCE body truncated")
+    if end < len(data):
+        where = f"malformed PEM '{label}'" if label else "DER"
+        raise ValueError(f"{where}: {len(data) - end} bytes after the DER SEQUENCE")
     results = []
     while offset < end:
         if data[offset] != 0x02:
@@ -148,6 +230,11 @@ def pack_poly(coeffs: list, bytes_per_coeff: int) -> tuple:
 def unpack_poly(packed_int: int, n: int, bytes_per_coeff: int) -> list:
     """Unpack a big integer back to a coefficient list (inverse of pack_poly)."""
     total = n * bytes_per_coeff
+    # TODO #367: a polynomial longer than its declared n (a key whose n field
+    # was edited) raised OverflowError here, i.e. a traceback.
+    if packed_int.bit_length() > 8 * total:
+        raise ValueError(f"packed polynomial is wider than n = {n} coefficients "
+                         f"of {bytes_per_coeff} bytes")
     raw = packed_int.to_bytes(total, 'big')
     return [int.from_bytes(raw[i * bytes_per_coeff:(i + 1) * bytes_per_coeff], 'big')
             for i in range(n)]
@@ -244,6 +331,7 @@ def decode_zkp_rnl_proof(pem_text: str) -> tuple:
     w_poly, off = _s32be_unpack(body, n, off)
     c_poly, off = _u32be_unpack(body, n, off)
     z_poly, off = _s32be_unpack(body, n, off)
+    _packed_end(body, off, label)
     return w_poly, c_poly, z_poly, n
 
 
@@ -285,6 +373,7 @@ def decode_zkp_nl_privkey(pem_text: str) -> tuple:
     A  = int.from_bytes(body[4:4 + nb], 'big')
     B  = int.from_bytes(body[4 + nb:4 + 2 * nb], 'big')
     y  = int.from_bytes(body[4 + 2 * nb:4 + 3 * nb], 'big')
+    _packed_end(body, 4 + 3 * nb, label)
     return A, B, y, n
 
 
@@ -306,6 +395,7 @@ def decode_zkp_nl_pubkey(pem_text: str) -> tuple:
         raise ValueError("ZKP-NL public key: truncated")
     B  = int.from_bytes(body[4:4 + nb], 'big')
     y  = int.from_bytes(body[4 + nb:4 + 2 * nb], 'big')
+    _packed_end(body, 4 + 2 * nb, label)
     return B, y, n
 
 
@@ -349,6 +439,7 @@ def decode_zkp_nl_proof(pem_text: str) -> tuple:
         vp2, off = _packed_take(body, off, l2, w + " view2")
         rounds.append({'com_0': com_0, 'com_1': com_1, 'com_2': com_2,
                        'e': e, 'view_p1': vp1, 'view_p2': vp2})
+    _packed_end(body, off, label)
     return rounds, n
 
 
@@ -421,6 +512,7 @@ def decode_zkp_nl_pp_proof(pem_text: str) -> tuple:
         rounds.append({'com_e': com_e, 'e': e, 'out_e': out_e,
                        'seed_p1': seed_p1, 'seed_p2': seed_p2,
                        'gates_p2': gates_p2, 'share2': share2})
+    _packed_end(body, off, label)
     return rounds, n
 
 
@@ -555,6 +647,7 @@ def decode_hcred_privkey(pem_text):
     syndr_nb = (n // 2 + 7) // 8
     # Exact, not ">=": the layout is fixed, so an n SMALLER than the body holds
     # would otherwise parse a prefix and succeed (TODO #275).
+    _packed_end(body, 4 + 8 * n + seed_nb + syndr_nb, label)
     if len(body) != 4 + 8 * n + seed_nb + syndr_nb:
         raise ValueError(f"HCRED private key: body length does not match n={n}")
     s,   off = _hcred_deser3(body, off, n)
@@ -589,6 +682,7 @@ def decode_hcred_pubkey(pem_text):
     syndr_nb = (n // 2 + 7) // 8
     # Exact, not ">=": the layout is fixed, so an n SMALLER than the body holds
     # would otherwise parse a prefix and succeed (TODO #275).
+    _packed_end(body, 4 + 5 * n + seed_nb + syndr_nb, label)
     if len(body) != 4 + 5 * n + seed_nb + syndr_nb:
         raise ValueError(f"HCRED public key: body length does not match n={n}")
     C,   off = _hcred_deser2(body, off, n)
@@ -647,10 +741,22 @@ def decode_hcred_credential(pem_text):
     label, data = pem_unwrap(pem_text)
     if label != _HCRED_CRED_LBL:
         raise ValueError(f"Expected {_HCRED_CRED_LBL!r}, got {label!r}")
-    ints = der_parse_seq(data)
+    ints = _der_count(label, data, 5)
     issuer_n, rounds, c_int, ch_int, r_int = (int(ints[0]), int(ints[1]),
                                                ints[2], ints[3], ints[4])
+    # TODO #367: n and rounds size every to_bytes below; an out-of-range one
+    # (or a blob wider than they describe) was an OverflowError traceback.
+    if issuer_n % 8 or not 8 <= issuer_n <= 256:
+        raise ValueError(f"{label}: n is {issuer_n} (expected a multiple of 8, 8..256)")
+    if not 1 <= rounds <= 4096:
+        shown = rounds if rounds.bit_length() <= 64 else f"a {rounds.bit_length()}-bit value"
+        raise ValueError(f"{label}: round count is {shown} (expected 1..4096)")
     nbytes = issuer_n // 8
+    for what, v, nb in (("commitments", c_int, 3 * rounds * nbytes),
+                        ("challenges", ch_int, (rounds + 3) // 4),
+                        ("responses", r_int, 2 * rounds * nbytes)):
+        if v.bit_length() > 8 * nb:
+            raise ValueError(f"{label}: {what} field is wider than {nb} bytes")
 
     commits_ba = c_int.to_bytes(3 * rounds * nbytes, 'big')
     commits = []
@@ -745,6 +851,7 @@ def decode_hcred_proof(pem_text):
                        'seed_c': seed_c, 'seed_c1': seed_c1,
                        'a1': a1, 'b1': b1, 'g1': g1, 'h1': h1,
                        'aux_s': aux_s, 'aux_B': aux_B, 'aux_D': aux_D})
+    _packed_end(body, off, label)
     return {'W': W, 'rounds': rounds}, n
 
 
@@ -777,7 +884,7 @@ def decode_hpkst_commit(pem_text: str) -> tuple:
     label, data = pem_unwrap(pem_text)
     if label != _HPKST_COMMIT_LBL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    R_j, C_j, n = der_parse_seq(data)
+    R_j, C_j, n = _der_count(label, data, 3, 2)
     return R_j, C_j, n
 
 
@@ -792,7 +899,7 @@ def decode_hpkst_nonce(pem_text: str) -> tuple:
     label, data = pem_unwrap(pem_text)
     if label != _HPKST_NONCE_LBL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    k_j, n = der_parse_seq(data)
+    k_j, n = _der_count(label, data, 2, 1)
     return k_j, n
 
 
@@ -807,7 +914,7 @@ def decode_hpkst_aggregate(pem_text: str) -> tuple:
     label, data = pem_unwrap(pem_text)
     if label != _HPKST_AGGREGATE_LBL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    R, C_agg, e, n = der_parse_seq(data)
+    R, C_agg, e, n = _der_count(label, data, 4, 3)
     return R, C_agg, e, n
 
 
@@ -822,7 +929,7 @@ def decode_hpkst_partial(pem_text: str) -> tuple:
     label, data = pem_unwrap(pem_text)
     if label != _HPKST_PARTIAL_LBL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    s_j, n = der_parse_seq(data)
+    s_j, n = _der_count(label, data, 2, 1)
     return s_j, n
 
 
@@ -837,7 +944,7 @@ def decode_hpkst_sig(pem_text: str) -> tuple:
     label, data = pem_unwrap(pem_text)
     if label != _HPKST_SIG_LBL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    C_agg, R, s, n = der_parse_seq(data)
+    C_agg, R, s, n = _der_count(label, data, 4, 3)
     return C_agg, R, s, n
 
 

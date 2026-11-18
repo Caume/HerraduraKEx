@@ -562,6 +562,14 @@ public final class HerraduraNl {
         return (max - min) >= q / 4;
     }
 
+    /** The peer PUBLIC-VALUE guard (TODO #371): rnlValidateMBlind's two tests over
+     * Z_p, applied to a peer's C (Alice's public key, or C_B in Bob's response).
+     * An all-zero C makes s*C = 0 for every s, so K_raw is a constant and the
+     * session key depends only on the two public nonces. */
+    public static boolean rnlValidatePub(int[] poly) {
+        return rnlValidateMBlind(poly, RNLP);
+    }
+
     /** Derives Alice's/Bob's C from her m_blind and s: C = round_p(m_blind * s). */
     public static int[] hkexRnlDeriveC(int[] mBlind, int[] s, int n) {
         int[] ms = rnlPolyMul(mBlind, s, RNLQ, n);

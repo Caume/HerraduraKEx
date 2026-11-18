@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.9.79)
+# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite
 #
 # Usage examples:
 #   python3 herradura.py genpkey --algo hkex-gf  --bits 256 --out alice.pem
@@ -72,6 +72,7 @@ from primitives import (
     HDrbg, drbg_seed, drbg_generate, drbg_reseed,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul, rnl_validate_m_blind as _rnl_validate_m_blind,
+    rnl_validate_pub as _rnl_validate_pub, gf_pub_is_valid,
     rnl_contributory_kdf as _rnl_contributory_kdf,
     hpks_sign, hpks_nl_sign,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
@@ -128,6 +129,1086 @@ _PUB_ALGOS = {k: v.replace('PRIVATE', 'PUBLIC') for k, v in _PRIV_ALGOS.items()}
 _LABEL_TO_ALGO = {v: k for k, v in _PRIV_ALGOS.items()}
 _LABEL_TO_ALGO.update({v: k for k, v in _PUB_ALGOS.items()})
 
+# TODO #366: which key labels each (subcommand, --algo, key flag) accepts.  The
+# table is generated from spec/generate_spec.py's KEY_LABEL_SITES, which holds
+# the reasoning; C, Go and Java carry the same rows.
+# BEGIN GENERATED key-label table (spec/generate_spec.py, TODO #366) -- DO NOT EDIT.
+_KEY_SITES = {
+    ('kex', 'hkex-gf', '--our'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
+    ('kex', 'hkex-gf', '--their'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
+    ('kex', 'hkex-rnl', '--our'): ('hkex-rnl', ('HERRADURA HKEX-RNL PRIVATE KEY',)),
+    ('kex', 'hkex-rnl', '--their'): ('hkex-rnl', ('HERRADURA HKEX-RNL PUBLIC KEY',)),
+    ('kex', 'hybrid-rnl-stern', '--our'): ('hkex-rnl', ('HERRADURA HKEX-RNL PRIVATE KEY',)),
+    ('kex', 'hybrid-rnl-stern', '--their'): ('hkex-rnl', ('HERRADURA HKEX-RNL PUBLIC KEY',)),
+    ('kex', 'hybrid-rnl-stern', '--our-kem'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PRIVATE KEY',)),
+    ('kex', 'hybrid-rnl-stern', '--their-kem'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PUBLIC KEY',)),
+    ('enc', 'hpke', '--pubkey'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
+    ('dec', 'hpke', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
+    ('enc', 'hpke-nl', '--pubkey'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
+    ('dec', 'hpke-nl', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
+    ('enc', 'hpke-nl3', '--pubkey'): ('hpke-nl3', ('HERRADURA HPKE-NL3 PUBLIC KEY',)),
+    ('dec', 'hpke-nl3', '--key'): ('hpke-nl3', ('HERRADURA HPKE-NL3 PRIVATE KEY',)),
+    ('enc', 'hpke-stern', '--pubkey'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
+    ('dec', 'hpke-stern', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
+    ('enc', 'hpke-stern-kem', '--pubkey'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PUBLIC KEY',)),
+    ('dec', 'hpke-stern-kem', '--key'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PRIVATE KEY',)),
+    ('sign', 'hpks', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
+    ('verify', 'hpks', '--pubkey'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
+    ('sign', 'hpks-nl', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
+    ('verify', 'hpks-nl', '--pubkey'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
+    ('sign', 'hpks-stern', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
+    ('verify', 'hpks-stern', '--pubkey'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
+    ('sign', 'hpks-ring', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
+    ('verify', 'hpks-ring', '--ring'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
+    ('sign', 'rnl-sigma', '--key'): ('hkex-rnl', ('HERRADURA HKEX-RNL PRIVATE KEY',)),
+    ('verify', 'rnl-sigma', '--pubkey'): ('hkex-rnl', ('HERRADURA HKEX-RNL PUBLIC KEY',)),
+    ('sign', 'nl-zkboo', '--key'): ('hpks-zkp-nl', ('HERRADURA ZKP-NL PRIVATE KEY',)),
+    ('verify', 'nl-zkboo', '--pubkey'): ('hpks-zkp-nl', ('HERRADURA ZKP-NL PUBLIC KEY',)),
+    ('sign', 'nl-zkbpp', '--key'): ('hpks-zkp-nl', ('HERRADURA ZKP-NL PRIVATE KEY',)),
+    ('verify', 'nl-zkbpp', '--pubkey'): ('hpks-zkp-nl', ('HERRADURA ZKP-NL PUBLIC KEY',)),
+    ('sign', 'hpks-xmss', '--key'): ('hpks-xmss', ('HERRADURA HPKS-XMSS PRIVATE KEY',)),
+    ('verify', 'hpks-xmss', '--pubkey'): ('hpks-xmss', ('HERRADURA HPKS-XMSS PUBLIC KEY',)),
+    ('sign', 'hpks-wots', '--key'): ('hpks-wots', ('HERRADURA HPKS-WOTS PRIVATE KEY',)),
+    ('verify', 'hpks-wots', '--pubkey'): ('hpks-wots', ('HERRADURA HPKS-WOTS PUBLIC KEY',)),
+    ('threshold-commit', '', '--key'): ('hpks, hpks-nl', ('HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY',)),
+    ('threshold-respond', '', '--key'): ('hpks, hpks-nl', ('HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY',)),
+    ('oprf-eval', '', '--key'): ('oprf', ('HERRADURA OPRF PRIVATE KEY',)),
+    ('pake-register', '', '--key'): ('oprf', ('HERRADURA OPRF PRIVATE KEY',)),
+    ('pake-demo', '', '--key'): ('oprf', ('HERRADURA OPRF PRIVATE KEY',)),
+    ('cred-issue', '', '--our'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
+    ('cred-issue', '', '--in'): ('hcred', ('HERRADURA HCRED PUBLIC KEY', 'HERRADURA HCRED PRIVATE KEY',)),
+    ('cred-prove', '', '--in'): ('hcred', ('HERRADURA HCRED PRIVATE KEY',)),
+    ('cred-verify', '', '--pubkey'): ('hcred', ('HERRADURA HCRED PUBLIC KEY', 'HERRADURA HCRED PRIVATE KEY',)),
+    ('cred-verify', '', '--issuer'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
+}
+
+# TODO #367: DER INTEGER items each DER-SEQUENCE label carries (min, max).
+_DER_ITEMS = {
+    'HERRADURA CIPHERTEXT': (3, 6),
+    'HERRADURA DIGEST': (1, 1),
+    'HERRADURA ENCRYPTED PRIVATE KEY': (6, 6),
+    'HERRADURA HCRED CREDENTIAL': (5, 5),
+    'HERRADURA HDRBG STATE': (2, 2),
+    'HERRADURA HKEX-GF PRIVATE KEY': (3, 3),
+    'HERRADURA HKEX-GF PUBLIC KEY': (2, 2),
+    'HERRADURA HKEX-RNL PRIVATE KEY': (3, 4),
+    'HERRADURA HKEX-RNL PUBLIC KEY': (3, 4),
+    'HERRADURA HKEX-RNL RESPONSE': (5, 6),
+    'HERRADURA HPKE PRIVATE KEY': (3, 3),
+    'HERRADURA HPKE PUBLIC KEY': (2, 2),
+    'HERRADURA HPKE-NL PRIVATE KEY': (3, 3),
+    'HERRADURA HPKE-NL PUBLIC KEY': (2, 2),
+    'HERRADURA HPKE-NL3 PRIVATE KEY': (3, 3),
+    'HERRADURA HPKE-NL3 PUBLIC KEY': (2, 2),
+    'HERRADURA HPKE-STERN PRIVATE KEY': (3, 3),
+    'HERRADURA HPKE-STERN PUBLIC KEY': (3, 3),
+    'HERRADURA HPKE-STERN-KEM PRIVATE KEY': (6, 6),
+    'HERRADURA HPKE-STERN-KEM PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS PRIVATE KEY': (3, 3),
+    'HERRADURA HPKS PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS-NL PRIVATE KEY': (3, 3),
+    'HERRADURA HPKS-NL PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS-RING SIGNATURE': (4, 4),
+    'HERRADURA HPKS-STERN PRIVATE KEY': (3, 3),
+    'HERRADURA HPKS-STERN PUBLIC KEY': (3, 3),
+    'HERRADURA HPKS-WOTS PRIVATE KEY': (2, 2),
+    'HERRADURA HPKS-WOTS PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS-WOTS SIGNATURE': (2, 2),
+    'HERRADURA HPKS-XMSS PRIVATE KEY': (4, 4),
+    'HERRADURA HPKS-XMSS PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS-XMSS SIGNATURE': (5, 5),
+    'HERRADURA HPKST AGGREGATE': (4, 4),
+    'HERRADURA HPKST COMMITMENT': (3, 3),
+    'HERRADURA HPKST NONCE': (2, 2),
+    'HERRADURA HPKST PARTIAL': (2, 2),
+    'HERRADURA HPKST SIGNATURE': (4, 4),
+    'HERRADURA HYBRID-RNL-STERN RESPONSE': (8, 8),
+    'HERRADURA OPRF CLIENT STATE': (3, 3),
+    'HERRADURA OPRF EVALUATION': (2, 2),
+    'HERRADURA OPRF PRIVATE KEY': (2, 2),
+    'HERRADURA PAKE RECORD': (3, 3),
+    'HERRADURA SESSION KEY': (2, 2),
+    'HERRADURA SIGNATURE': (4, 5),
+}
+
+
+# TODO #373: the value rules.  Each returns the refusal, or None.  A rule reads
+# a fixed-width field, which the encoding check has already held to its width.
+def _rule_coef(label, k, x, w, cnt, bound, cbd):
+    b = x.to_bytes(w * cnt, 'big')
+    for j in range(cnt):
+        c = int.from_bytes(b[j * w:(j + 1) * w], 'big')
+        if cbd and c not in (0, 1, bound - 1):
+            return f"{label}: field {k} coefficient {j} is {c} (expected 0, 1 or {bound - 1})"
+        if not cbd and c >= bound:
+            return f"{label}: field {k} coefficient {j} is {c} (expected below {bound})"
+    return None
+
+
+def _rule_bits(label, k, x, r, le):
+    # le: an r-bit little-endian byte string (spare bits in the LAST byte);
+    # otherwise a plain integer below 2^r.
+    if (r % 8 and (x & 0xff) >> (r % 8)) if le else x >> r:
+        return f"{label}: field {k} has bits at or above r = {r}"
+    return None
+
+
+def _rule_support(label, k, x, d, r):
+    b, seen = x.to_bytes(2 * d, 'big'), set()
+    for j in range(d):
+        idx = int.from_bytes(b[2 * j:2 * j + 2], 'big')
+        if idx >= r:
+            return f"{label}: field {k} index {j} is {idx} (expected below r = {r})"
+        if idx in seen:
+            return f"{label}: field {k} repeats index {idx}"
+        seen.add(idx)
+    return None
+
+
+def _rule_le_poly_of(label, k, x, s, sup, d, r):
+    b, want = sup.to_bytes(2 * d, 'big'), bytearray((r + 7) // 8)
+    for j in range(d):
+        idx = int.from_bytes(b[2 * j:2 * j + 2], 'big')
+        if idx < r:
+            want[idx >> 3] |= 1 << (idx & 7)
+    if x != int.from_bytes(want, 'big'):
+        return f"{label}: field {k} is not the polynomial of field {s}"
+    return None
+
+
+def _rule_equals(label, k, x, want):
+    return None if x == want else f"{label}: field {k} is {x} (expected {want})"
+
+
+# TODO #372 / #373: per DER-SEQUENCE label, each field's width cap
+# (significant bytes), its encoding (exactly its width, or minimal) and the
+# value rules.  enc[k] is (encoded width, lead): lead 1 when it starts with a
+# 0x00 the sign does not need, 2 with a sign byte.
+def _der_field_check(label, v, enc):
+    """The refusal for the first field of v that breaks its row, else None."""
+    n = len(v)
+    F = [x if x.bit_length() <= 48 else -1 for x in v]
+    L = [(x.bit_length() + 7) // 8 for x in v]
+    e = None
+    if label == 'HERRADURA HKEX-GF PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HKEX-GF PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
+            return None
+    elif label == 'HERRADURA HPKS PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HPKS PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
+            return None
+    elif label == 'HERRADURA HPKS-NL PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HPKS-NL PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
+            return None
+    elif label == 'HERRADURA HPKE PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HPKE PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
+            return None
+    elif label == 'HERRADURA HPKE-NL PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HPKE-NL PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
+            return None
+    elif label == 'HERRADURA HPKE-NL3 PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HPKE-NL3 PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
+            return None
+    elif label == 'HERRADURA HKEX-RNL PRIVATE KEY':
+        if 3 <= n <= 4:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 3 and L[3] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 32)
+            if n > 0 and L[0] > (F[2] * 4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2] * 4)
+            if n > 1 and L[1] > (F[2] * 4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2] * 4)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)) and not ((32) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], 32)
+            if n > 0 and enc[0][0] != (F[2] * 4) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2] * 4)) and not ((F[2] * 4) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2] * 4)
+            if n > 1 and enc[1][0] != (F[2] * 4) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2] * 4)) and not ((F[2] * 4) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2] * 4)
+            e = _rule_coef(label, 0, v[0], 4, F[2], 65537, True)
+            if e:
+                return e
+            e = _rule_coef(label, 1, v[1], 4, F[2], 65537, False)
+            if e:
+                return e
+            return None
+    elif label == 'HERRADURA HKEX-RNL PUBLIC KEY':
+        if 3 <= n <= 4:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 3 and L[3] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 32)
+            if n > 0 and L[0] > (F[2] * 2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2] * 2)
+            if n > 1 and L[1] > (F[2] * 4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2] * 4)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)) and not ((32) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], 32)
+            if n > 0 and enc[0][0] != (F[2] * 2) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2] * 2)) and not ((F[2] * 2) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2] * 2)
+            if n > 1 and enc[1][0] != (F[2] * 4) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2] * 4)) and not ((F[2] * 4) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2] * 4)
+            e = _rule_coef(label, 0, v[0], 2, F[2], 4096, False)
+            if e:
+                return e
+            e = _rule_coef(label, 1, v[1], 4, F[2], 65537, False)
+            if e:
+                return e
+            return None
+    elif label == 'HERRADURA HKEX-RNL RESPONSE':
+        if 5 <= n <= 6:
+            if n > 0 and L[0] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
+            if n > 3 and L[3] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 2)
+            if n > 4 and L[4] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], 2)
+            if n > 5 and L[5] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 5, L[5], 32)
+            if n > 1 and L[1] > (F[3] * 2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[3] * 2)
+            if n > 2 and L[2] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[3]//8)
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 3 and enc[3][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
+            if n > 4 and enc[4][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
+            if n > 5 and enc[5][0] != (32) and not (enc[5][1] == 2 and enc[5][0] + 1 == (32)) and not ((32) == 0 and enc[5][0] == 1 and L[5] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 5, enc[5][0], 32)
+            if n > 1 and enc[1][0] != (F[3] * 2) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3] * 2)) and not ((F[3] * 2) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[3] * 2)
+            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3]//8)
+            e = _rule_coef(label, 1, v[1], 2, F[3], 4096, False)
+            if e:
+                return e
+            e = _rule_equals(label, 4, F[4], F[3]//2)
+            if e:
+                return e
+            return None
+    elif label == 'HERRADURA HYBRID-RNL-STERN RESPONSE':
+        if 8 <= n <= 8:
+            if n > 0 and L[0] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
+            if n > 3 and L[3] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 2)
+            if n > 4 and L[4] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], 2)
+            if n > 5 and L[5] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 5, L[5], 32)
+            if n > 7 and L[7] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 7, L[7], 2)
+            if n > 1 and L[1] > (F[3] * 2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[3] * 2)
+            if n > 2 and L[2] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[3]//8)
+            if n > 6 and L[6] > ((F[7] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 6, L[6], (F[7] + 7)//8)
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 3 and enc[3][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
+            if n > 4 and enc[4][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
+            if n > 5 and enc[5][0] != (32) and not (enc[5][1] == 2 and enc[5][0] + 1 == (32)) and not ((32) == 0 and enc[5][0] == 1 and L[5] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 5, enc[5][0], 32)
+            if n > 7 and enc[7][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 7)
+            if n > 1 and enc[1][0] != (F[3] * 2) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3] * 2)) and not ((F[3] * 2) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[3] * 2)
+            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3]//8)
+            if n > 6 and enc[6][0] != ((F[7] + 7)//8) and not (enc[6][1] == 2 and enc[6][0] + 1 == ((F[7] + 7)//8)) and not (((F[7] + 7)//8) == 0 and enc[6][0] == 1 and L[6] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 6, enc[6][0], (F[7] + 7)//8)
+            e = _rule_coef(label, 1, v[1], 2, F[3], 4096, False)
+            if e:
+                return e
+            e = _rule_equals(label, 4, F[4], F[3]//2)
+            if e:
+                return e
+            e = _rule_bits(label, 6, v[6], F[7], False)
+            if e:
+                return e
+            return None
+    elif label == 'HERRADURA HPKS-STERN PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HPKS-STERN PUBLIC KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HPKE-STERN PRIVATE KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HPKE-STERN PUBLIC KEY':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HPKE-STERN-KEM PRIVATE KEY':
+        if 6 <= n <= 6:
+            if n > 4 and L[4] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], 2)
+            if n > 5 and L[5] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 5, L[5], 2)
+            if n > 0 and L[0] > ((F[4] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], (F[4] + 7)//8)
+            if n > 1 and L[1] > ((F[4] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], (F[4] + 7)//8)
+            if n > 2 and L[2] > (F[5] * 2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[5] * 2)
+            if n > 3 and L[3] > (F[5] * 2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[5] * 2)
+            if n > 4 and enc[4][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
+            if n > 5 and enc[5][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 5)
+            if n > 0 and enc[0][0] != ((F[4] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[4] + 7)//8)) and not (((F[4] + 7)//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], (F[4] + 7)//8)
+            if n > 1 and enc[1][0] != ((F[4] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[4] + 7)//8)) and not (((F[4] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[4] + 7)//8)
+            if n > 2 and enc[2][0] != (F[5] * 2) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[5] * 2)) and not ((F[5] * 2) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[5] * 2)
+            if n > 3 and enc[3][0] != (F[5] * 2) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[5] * 2)) and not ((F[5] * 2) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[5] * 2)
+            e = _rule_support(label, 2, v[2], F[5], F[4])
+            if e:
+                return e
+            e = _rule_support(label, 3, v[3], F[5], F[4])
+            if e:
+                return e
+            e = _rule_le_poly_of(label, 0, v[0], 2, v[2], F[5], F[4])
+            if e:
+                return e
+            e = _rule_le_poly_of(label, 1, v[1], 3, v[3], F[5], F[4])
+            if e:
+                return e
+            return None
+    elif label == 'HERRADURA HPKE-STERN-KEM PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > ((F[1] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], (F[1] + 7)//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != ((F[1] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[1] + 7)//8)) and not (((F[1] + 7)//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], (F[1] + 7)//8)
+            e = _rule_bits(label, 0, v[0], F[1], True)
+            if e:
+                return e
+            return None
+    elif label == 'HERRADURA HPKS-WOTS PRIVATE KEY':
+        if 2 <= n <= 2:
+            if n > 0 and L[0] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
+            if n > 1 and L[1] > (4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 4)
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            return None
+    elif label == 'HERRADURA HPKS-WOTS PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1] * 32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1] * 32)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1] * 32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1] * 32)) and not ((F[1] * 32) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1] * 32)
+            return None
+    elif label == 'HERRADURA HPKS-WOTS SIGNATURE':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1] * 32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1] * 32)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1] * 32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1] * 32)) and not ((F[1] * 32) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1] * 32)
+            return None
+    elif label == 'HERRADURA HPKS-XMSS PRIVATE KEY':
+        if 4 <= n <= 4:
+            if n > 0 and L[0] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
+            if n > 1 and L[1] > (1):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 1)
+            if n > 2 and L[2] > (4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 4)
+            if n > 3 and L[3] > (32 * (1 << min(F[1], 32))):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 32 * (1 << min(F[1], 32)))
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 3 and enc[3][0] != (32 * (1 << min(F[1], 32))) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32 * (1 << min(F[1], 32)))) and not ((32 * (1 << min(F[1], 32))) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], 32 * (1 << min(F[1], 32)))
+            return None
+    elif label == 'HERRADURA HPKS-XMSS PUBLIC KEY':
+        if 2 <= n <= 2:
+            if n > 0 and L[0] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
+            if n > 1 and L[1] > (1):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 1)
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            return None
+    elif label == 'HERRADURA HPKS-XMSS SIGNATURE':
+        if 5 <= n <= 5:
+            if n > 0 and L[0] > (4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 4)
+            if n > 3 and L[3] > (1):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 1)
+            if n > 4 and L[4] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], 2)
+            if n > 1 and L[1] > (67 * (F[4]//8)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 67 * (F[4]//8))
+            if n > 2 and L[2] > (F[3] * 32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[3] * 32)
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 3 and enc[3][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
+            if n > 4 and enc[4][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
+            if n > 1 and enc[1][0] != (67 * (F[4]//8)) and not (enc[1][1] == 2 and enc[1][0] + 1 == (67 * (F[4]//8))) and not ((67 * (F[4]//8)) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], 67 * (F[4]//8))
+            if n > 2 and enc[2][0] != (F[3] * 32) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3] * 32)) and not ((F[3] * 32) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3] * 32)
+            return None
+    elif label == 'HERRADURA HPKS-RING SIGNATURE':
+        if 4 <= n <= 4:
+            if n > 0 and L[0] > (1):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 1)
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 3 and L[3] > (F[0] * F[1] * (5 * (F[2]//8) + 1)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[0] * F[1] * (5 * (F[2]//8) + 1))
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 3 and enc[3][0] != (F[0] * F[1] * (5 * (F[2]//8) + 1)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[0] * F[1] * (5 * (F[2]//8) + 1))) and not ((F[0] * F[1] * (5 * (F[2]//8) + 1)) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[0] * F[1] * (5 * (F[2]//8) + 1))
+            return None
+    elif label == 'HERRADURA OPRF PRIVATE KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
+            return None
+    elif label == 'HERRADURA OPRF CLIENT STATE':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA OPRF EVALUATION':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
+            return None
+    elif label == 'HERRADURA PAKE RECORD':
+        if 3 <= n <= 3:
+            if n > 0 and L[0] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
+            if n > 1 and L[1] > (4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 4)
+            if n > 2 and L[2] > (4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 4)
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
+            if n > 1 and enc[1][0] != (4) and not (enc[1][1] == 2 and enc[1][0] + 1 == (4)) and not ((4) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], 4)
+            if n > 2 and enc[2][0] != (4) and not (enc[2][1] == 2 and enc[2][0] + 1 == (4)) and not ((4) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], 4)
+            return None
+    elif label == 'HERRADURA HPKST COMMITMENT':
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[2]//8)
+            if n > 1 and L[1] > (F[2]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[2]//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != (F[2]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[2]//8)
+            if n > 1 and enc[1][0] != (F[2]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[2]//8)) and not ((F[2]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[2]//8)
+            return None
+    elif label == 'HERRADURA HPKST NONCE':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
+            return None
+    elif label == 'HERRADURA HPKST AGGREGATE':
+        if 4 <= n <= 4:
+            if n > 3 and L[3] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 2)
+            if n > 0 and L[0] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[3]//8)
+            if n > 1 and L[1] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[3]//8)
+            if n > 2 and L[2] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[3]//8)
+            if n > 3 and enc[3][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
+            if n > 0 and enc[0][0] != (F[3]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[3]//8)
+            if n > 1 and enc[1][0] != (F[3]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[3]//8)
+            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3]//8)
+            return None
+    elif label == 'HERRADURA HPKST PARTIAL':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][0] != (F[1]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[1]//8)) and not ((F[1]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[1]//8)
+            return None
+    elif label == 'HERRADURA HPKST SIGNATURE':
+        if 4 <= n <= 4:
+            if n > 3 and L[3] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 2)
+            if n > 0 and L[0] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[3]//8)
+            if n > 1 and L[1] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[3]//8)
+            if n > 2 and L[2] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[3]//8)
+            if n > 3 and enc[3][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
+            if n > 0 and enc[0][0] != (F[3]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[3]//8)
+            if n > 1 and enc[1][0] != (F[3]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[3]//8)
+            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3]//8)
+            return None
+    elif label == 'HERRADURA HCRED CREDENTIAL':
+        if 5 <= n <= 5:
+            if n > 0 and L[0] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 2)
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 2 and L[2] > (F[1] * 3 * (F[0]//8)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[1] * 3 * (F[0]//8))
+            if n > 3 and L[3] > ((F[1] + 3)//4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], (F[1] + 3)//4)
+            if n > 4 and L[4] > (F[1] * 2 * (F[0]//8)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], F[1] * 2 * (F[0]//8))
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 2 and enc[2][0] != (F[1] * 3 * (F[0]//8)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * (F[0]//8))) and not ((F[1] * 3 * (F[0]//8)) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * (F[0]//8))
+            if n > 3 and enc[3][0] != ((F[1] + 3)//4) and not (enc[3][1] == 2 and enc[3][0] + 1 == ((F[1] + 3)//4)) and not (((F[1] + 3)//4) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], (F[1] + 3)//4)
+            if n > 4 and enc[4][0] != (F[1] * 2 * (F[0]//8)) and not (enc[4][1] == 2 and enc[4][0] + 1 == (F[1] * 2 * (F[0]//8))) and not ((F[1] * 2 * (F[0]//8)) == 0 and enc[4][0] == 1 and L[4] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 4, enc[4][0], F[1] * 2 * (F[0]//8))
+            return None
+    elif label == 'HERRADURA SESSION KEY':
+        if 2 <= n <= 2:
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 0 and L[0] > (F[1]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[1]//8)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            return None
+    elif label == 'HERRADURA DIGEST':
+        if 1 <= n <= 1:
+            if n > 0 and L[0] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
+            return None
+    elif label == 'HERRADURA HDRBG STATE':
+        if 2 <= n <= 2:
+            if n > 0 and L[0] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 32)
+            if n > 1 and L[1] > (8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 8)
+            if n > 0 and enc[0][0] != (32) and not (enc[0][1] == 2 and enc[0][0] + 1 == (32)) and not ((32) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 32)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            return None
+    elif label == 'HERRADURA ENCRYPTED PRIVATE KEY':
+        if 6 <= n <= 6:
+            if n > 0 and L[0] > (16):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 16)
+            if n > 1 and L[1] > (4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 4)
+            if n > 2 and L[2] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 32)
+            if n > 4 and L[4] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], 32)
+            if n > 5 and L[5] > (4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 5, L[5], 4)
+            if n > 3 and L[3] > (F[5]):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[5])
+            if n > 0 and enc[0][0] != (16) and not (enc[0][1] == 2 and enc[0][0] + 1 == (16)) and not ((16) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], 16)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 2 and enc[2][0] != (32) and not (enc[2][1] == 2 and enc[2][0] + 1 == (32)) and not ((32) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], 32)
+            if n > 4 and enc[4][0] != (32) and not (enc[4][1] == 2 and enc[4][0] + 1 == (32)) and not ((32) == 0 and enc[4][0] == 1 and L[4] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 4, enc[4][0], 32)
+            if n > 5 and enc[5][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 5)
+            if n > 3 and enc[3][0] != (F[5]) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[5])) and not ((F[5]) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[5])
+            return None
+    elif label == 'HERRADURA CIPHERTEXT':
+        if 3 <= n <= 3 and (F[2] == 12323):
+            if n > 1 and L[1] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 32)
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > ((F[2] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], (F[2] + 7)//8)
+            if n > 1 and enc[1][0] != (32) and not (enc[1][1] == 2 and enc[1][0] + 1 == (32)) and not ((32) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], 32)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != ((F[2] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[2] + 7)//8)) and not (((F[2] + 7)//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], (F[2] + 7)//8)
+            e = _rule_bits(label, 0, v[0], F[2], True)
+            if e:
+                return e
+            return None
+        if 3 <= n <= 3 and (F[0] == 0):
+            if n > 0 and L[0] > (1):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 1)
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 1 and L[1] > ((F[2] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], (F[2] + 7)//8)
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 1 and enc[1][0] != ((F[2] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[2] + 7)//8)) and not (((F[2] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[2] + 7)//8)
+            return None
+        if 3 <= n <= 3:
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 0 and L[0] > ((F[2] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], (F[2] + 7)//8)
+            if n > 1 and L[1] > ((F[2] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], (F[2] + 7)//8)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 0 and enc[0][0] != ((F[2] + 7)//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == ((F[2] + 7)//8)) and not (((F[2] + 7)//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], (F[2] + 7)//8)
+            if n > 1 and enc[1][0] != ((F[2] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[2] + 7)//8)) and not (((F[2] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[2] + 7)//8)
+            return None
+        if 4 <= n <= 4:
+            if n > 0 and L[0] > (1):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 1)
+            if n > 3 and L[3] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 2)
+            if n > 1 and L[1] > ((F[3] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], (F[3] + 7)//8)
+            if n > 2 and L[2] > ((F[3] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], (F[3] + 7)//8)
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 3 and enc[3][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
+            if n > 1 and enc[1][0] != ((F[3] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[3] + 7)//8)) and not (((F[3] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[3] + 7)//8)
+            if n > 2 and enc[2][0] != ((F[3] + 7)//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == ((F[3] + 7)//8)) and not (((F[3] + 7)//8) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], (F[3] + 7)//8)
+            return None
+        if 5 <= n <= 5 and (F[0] == 2):
+            if n > 0 and L[0] > (1):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 1)
+            if n > 3 and L[3] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 32)
+            if n > 4 and L[4] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], 2)
+            if n > 1 and L[1] > ((F[4] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], (F[4] + 7)//8)
+            if n > 2 and L[2] > ((F[4] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], (F[4] + 7)//8)
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)) and not ((32) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], 32)
+            if n > 4 and enc[4][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
+            if n > 1 and enc[1][0] != ((F[4] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[4] + 7)//8)) and not (((F[4] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[4] + 7)//8)
+            if n > 2 and enc[2][0] != ((F[4] + 7)//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == ((F[4] + 7)//8)) and not (((F[4] + 7)//8) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], (F[4] + 7)//8)
+            return None
+        if 5 <= n <= 5:
+            if n > 4 and L[4] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], 2)
+            if n > 0 and L[0] > (F[4]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[4]//8)
+            if n > 1 and L[1] > (F[4]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[4]//8)
+            if n > 2 and L[2] > (F[4]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[4]//8)
+            if n > 3 and L[3] > (F[4]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[4]//8)
+            if n > 4 and enc[4][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
+            if n > 0 and enc[0][0] != (F[4]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[4]//8)
+            if n > 1 and enc[1][0] != (F[4]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[4]//8)
+            if n > 2 and enc[2][0] != (F[4]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[4]//8)
+            if n > 3 and enc[3][0] != (F[4]//8) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[4]//8)
+            return None
+        if 6 <= n <= 6:
+            if n > 0 and L[0] > (1):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 1)
+            if n > 2 and L[2] > (6):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 6)
+            if n > 4 and L[4] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], 32)
+            if n > 5 and L[5] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 5, L[5], 2)
+            if n > 1 and L[1] > ((F[5] + 7)//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], (F[5] + 7)//8)
+            if n > 3 and L[3] > (F[2]):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[2])
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 4 and enc[4][0] != (32) and not (enc[4][1] == 2 and enc[4][0] + 1 == (32)) and not ((32) == 0 and enc[4][0] == 1 and L[4] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 4, enc[4][0], 32)
+            if n > 5 and enc[5][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 5)
+            if n > 1 and enc[1][0] != ((F[5] + 7)//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == ((F[5] + 7)//8)) and not (((F[5] + 7)//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[5] + 7)//8)
+            if n > 3 and enc[3][0] != (F[2]) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[2])) and not ((F[2]) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[2])
+            return None
+    elif label == 'HERRADURA SIGNATURE':
+        if 4 <= n <= 4:
+            if n > 3 and L[3] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 2)
+            if n > 0 and L[0] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[3]//8)
+            if n > 1 and L[1] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[3]//8)
+            if n > 2 and L[2] > (F[3]//8):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[3]//8)
+            if n > 3 and enc[3][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 3)
+            if n > 0 and enc[0][0] != (F[3]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[3]//8)
+            if n > 1 and enc[1][0] != (F[3]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[3]//8)
+            if n > 2 and enc[2][0] != (F[3]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3]//8)) and not ((F[3]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3]//8)
+            return None
+        if 5 <= n <= 5:
+            if n > 0 and L[0] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 2)
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 2 and L[2] > (F[1] * 3 * (F[0]//8)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[1] * 3 * (F[0]//8))
+            if n > 3 and L[3] > ((F[1] + 3)//4):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], (F[1] + 3)//4)
+            if n > 4 and L[4] > (F[1] * 2 * (F[0]//8)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], F[1] * 2 * (F[0]//8))
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 2 and enc[2][0] != (F[1] * 3 * (F[0]//8)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * (F[0]//8))) and not ((F[1] * 3 * (F[0]//8)) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * (F[0]//8))
+            if n > 3 and enc[3][0] != ((F[1] + 3)//4) and not (enc[3][1] == 2 and enc[3][0] + 1 == ((F[1] + 3)//4)) and not (((F[1] + 3)//4) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], (F[1] + 3)//4)
+            if n > 4 and enc[4][0] != (F[1] * 2 * (F[0]//8)) and not (enc[4][1] == 2 and enc[4][0] + 1 == (F[1] * 2 * (F[0]//8))) and not ((F[1] * 2 * (F[0]//8)) == 0 and enc[4][0] == 1 and L[4] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 4, enc[4][0], F[1] * 2 * (F[0]//8))
+            return None
+    return None
+# END GENERATED key-label table
+
+
+def _pem_file_label(path):
+    """The first PEM BEGIN label in *path*, or None (unreadable, or not PEM)."""
+    try:
+        with open(path, 'rb') as f:
+            text = f.read().decode('ascii', errors='replace')
+    except OSError:
+        return None
+    i = text.find('-----BEGIN ')
+    j = text.find('-----', i + 11) if i >= 0 else -1
+    return text[i + 11:j] if j > 0 else None
+
+
+def _check_key_labels(cmd, algo, values):
+    """TODO #366: refuse a key whose PEM label this operation does not accept.
+
+    *values* maps each key flag to its argument.  Only KEY labels are judged
+    (ending in PRIVATE KEY or PUBLIC KEY, other than the passphrase envelope):
+    a response, session key or hex key goes on to the loader, whose own
+    message is the more specific one."""
+    for (c, a, flag), (tags, labels) in _KEY_SITES.items():
+        if c != cmd or a != (algo or '') or not values.get(flag):
+            continue
+        paths = values[flag].split(',') if flag == '--ring' else [values[flag]]
+        for path in paths:
+            label = _pem_file_label(path.strip())
+            if (label is None or label == _LABEL_ENC_PRIV or
+                    not label.endswith(('PRIVATE KEY', 'PUBLIC KEY'))):
+                continue
+            if label not in labels:
+                where = f"{cmd} --algo {algo}" if algo else cmd
+                sys.exit(f"{where}: wrong key type: {flag} holds '{label}'; "
+                         f"accepted: {tags}")
+
 _LABEL_SESSION     = 'HERRADURA SESSION KEY'
 _LABEL_RNL_RESP    = 'HERRADURA HKEX-RNL RESPONSE'
 _LABEL_SIG         = 'HERRADURA SIGNATURE'
@@ -168,6 +1249,7 @@ _PBKDF2_HFSCX256_ITER_PROD = 200_000
 
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
 _ZKP_CLI_ROUNDS    = _ZKP_NL_PROD_ROUNDS   # CLI default: full 128-bit soundness
+_HCRED_CLI_N       = 256  # genpkey --algo hcred default width; == C's HCRED_N (TODO #369)
 
 # Binary container format for encfile / decfile (.hkx files)
 _HKX_MAGIC     = b'HKX1'   # 4-byte magic
@@ -202,9 +1284,109 @@ def _read_pem(path):
     return pem_unwrap(raw.decode('ascii') if isinstance(raw, bytes) else raw)
 
 
+# TODO #367: the width and fixed-size fields of each DER-SEQUENCE label, checked
+# once in _der_items so no decoder sizes a buffer, a polynomial or a GF(2^n)
+# exponentiation from an unbounded wire value.  Go bounds the same fields at
+# its call sites (rnlWireN, sternWireN, gfWidth, fitBytes); C and Java already
+# did.  Kinds: 'gf' = 32/64/128/256; 'rnl' = a power of two 8..RNLN; 'stern' =
+# _bounded_n; 'kem_r' = _QCMDPC_R exactly; 'kem_d' = 1.._QCMDPC_D; an int = the
+# field's value must fit that many bytes.
+_GF_LABELS = [(_PRIV_ALGOS[a], _PUB_ALGOS[a]) for a in
+              ('hkex-gf', 'hpks', 'hpks-nl', 'hpke', 'hpke-nl', 'hpke-nl3')]
+_WIRE_FIELDS = {}
+for _pr, _pu in _GF_LABELS:
+    # The width first: ('fitn', i) then holds the other fields to n bits.
+    _WIRE_FIELDS[_pr] = [(2, 'gf'), (0, ('fitn', 2)), (1, ('fitn', 2))]
+    _WIRE_FIELDS[_pu] = [(1, 'gf'), (0, ('fitn', 1))]
+for _a in ('hpks-stern', 'hpke-stern'):
+    _WIRE_FIELDS[_PRIV_ALGOS[_a]] = [(2, 'stern')]
+    _WIRE_FIELDS[_PUB_ALGOS[_a]] = [(2, 'stern')]
+_WIRE_FIELDS[_PRIV_ALGOS['hkex-rnl']] = [(2, 'rnl'), (3, 32)]
+_WIRE_FIELDS[_PUB_ALGOS['hkex-rnl']] = [(2, 'rnl'), (3, 32)]
+_WIRE_FIELDS[_PRIV_ALGOS['hpke-stern-kem']] = [(4, 'kem_r'), (5, 'kem_d'),
+                                               (0, (_QCMDPC_R + 7) // 8),
+                                               (1, (_QCMDPC_R + 7) // 8),
+                                               (2, 2 * _QCMDPC_D), (3, 2 * _QCMDPC_D)]
+_WIRE_FIELDS[_PUB_ALGOS['hpke-stern-kem']] = [(1, 'kem_r'), (0, (_QCMDPC_R + 7) // 8)]
+_WIRE_FIELDS[_PRIV_ALGOS['hpks-wots']] = [(0, 32)]
+_WIRE_FIELDS[_PRIV_ALGOS['hpks-xmss']] = [(0, 32)]
+_WIRE_FIELDS[_LABEL_RNL_RESP] = [(3, 'rnl'), (5, 32)]
+_WIRE_FIELDS[_LABEL_HYBRID_RESP] = [(3, 'rnl'), (5, 32), (6, (_QCMDPC_R + 7) // 8), (7, 'kem_r')]
+_WIRE_FIELDS[_LABEL_SESSION] = [(1, 'sym')]
+del _pr, _pu, _a
+
+
+def _fit(v, nbytes, what, where):
+    """v.to_bytes(nbytes), or exit(1) when v does not fit (TODO #367): an
+    oversized wire field raised OverflowError, i.e. a traceback."""
+    if _int_nbytes(v) > nbytes:
+        sys.exit(f"{where}: {what} is {_int_nbytes(v)} bytes (expected at most {nbytes})")
+    return int(v).to_bytes(nbytes, 'big')
+
+
+def _check_wire_fields(label, ints, fields=None):
+    for idx, kind in (fields if fields is not None else _WIRE_FIELDS.get(label, ())):
+        if idx >= len(ints):
+            continue
+        v = ints[idx]
+        if isinstance(kind, tuple):          # ('fitn', width index)
+            nb = ints[kind[1]] // 8
+            if _int_nbytes(v) > nb:
+                sys.exit(f"{label}: field {idx} is {_int_nbytes(v)} bytes (expected at most {nb})")
+        elif isinstance(kind, int):
+            if _int_nbytes(v) > kind:
+                sys.exit(f"{label}: field {idx} is {_int_nbytes(v)} bytes (expected at most {kind})")
+        elif kind == 'gf':
+            if v not in (32, 64, 128, 256):
+                sys.exit(f"{label}: n is {v} (expected 32, 64, 128 or 256)")
+        elif kind == 'rnl':
+            _bounded(v, 8, RNLN, 'ring dimension n', label)
+            if v & (v - 1):
+                sys.exit(f"{label}: ring dimension n is {v} (expected a power of two)")
+        elif kind == 'sym':
+            if v % 8 or not 16 <= v <= _suite_mod.BA_MAX_BITS:
+                sys.exit(f"{label}: session key width is {v} (expected a multiple of 8, "
+                         f"16..{_suite_mod.BA_MAX_BITS})")
+        elif kind == 'stern':
+            _bounded_n(v, label)
+        elif kind == 'kem_r':
+            _bounded(v, _QCMDPC_R, _QCMDPC_R, 'QC-MDPC r', label)
+        elif kind == 'kem_d':
+            _bounded(v, 1, _QCMDPC_D, 'QC-MDPC row weight d', label)
+
+
+def _der_items(label, der):
+    """Parse a DER SEQUENCE of INTEGERs and check its item count against the
+    generated _DER_ITEMS table (TODO #367), so a decoder never indexes past the
+    end of a short list.  ValueError is the codec's "malformed artifact" signal,
+    which main() reports as one line."""
+    ints = der_parse_seq(der, label)
+    enc = _codec_mod.der_scan(der, label)         # TODO #373
+    lim = _DER_ITEMS.get(label)
+    if lim is not None and not lim[0] <= len(ints) <= lim[1]:
+        want = str(lim[0]) if lim[0] == lim[1] else f'{lim[0]}..{lim[1]}'
+        raise ValueError(f"malformed PEM '{label}': {len(ints)} DER items, expected {want}")
+    _check_field_caps(label, ints, enc)
+    _check_wire_fields(label, ints)
+    return ints
+
+
+def _check_field_caps(label, ints, enc):
+    """The generated PEM_DER_FIELD_CAPS check: no field wider than its writer
+    pads it to (TODO #372), each field encoded the one way its writer does and
+    holding a value in range (TODO #373); same text in all four CLIs."""
+    msg = _der_field_check(label, ints, enc)
+    if msg:
+        raise ValueError(msg)
+
+
+import codec as _codec_mod                   # noqa: E402  (the module the decoders live in)
+_codec_mod.FIELD_CAPS_CHECK = _check_field_caps
+
+
 def _read_pem_ints(path):
     label, der = _read_pem(path)
-    return label, der_parse_seq(der)
+    return label, _der_items(label, der)
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +1410,33 @@ _SDF_MAX_ROUNDS = 4096    # herradura.h SDF_MAX_ROUNDS (TODO #236)
 _XMSS_MAX_H     = 20      # herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
 _STERN_MAX_N    = KEYBITS # no implementation here emits a wider Stern instance
 
+# TODO #364: the verifier's round-count floor.  The round count travels in the
+# artifact (TODO #236), so without a floor the SIGNER chose the verifier's
+# soundness: a 1-round Stern-F / ZKBoo artifact is forgeable without the witness
+# by grinding the Fiat-Shamir commitment until the challenge is one of the two
+# (of three) a cheater can answer.  219 rounds is the 128-bit count
+# ((2/3)^219 < 2^-128); `verify` / `cred-verify --min-rounds N` lowers it, so a
+# weaker check is something the VERIFIER asks for.  The signing defaults below
+# meet it, so an artifact made with default flags verifies with default flags.
+_MIN_VERIFY_ROUNDS = 219  # == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS
+_STERN_CLI_ROUNDS  = 219  # sign --algo hpks-stern / hpks-ring default (was SDFR = 32)
+
+
+def _round_floor(args, where):
+    """The --min-rounds floor this run enforces, bounded like a wire round count."""
+    v = getattr(args, 'min_rounds', None)
+    if v is None:
+        return _MIN_VERIFY_ROUNDS
+    return _bounded(v, 1, _SDF_MAX_ROUNDS, '--min-rounds', where)
+
+
+def _require_rounds(rounds, floor, what, where):
+    """Refuse an artifact declaring fewer rounds than the floor (TODO #364)."""
+    if rounds < floor:
+        sys.exit(f"{where}: {what} declares {rounds} rounds, below the --min-rounds "
+                 f"floor of {floor} ({_MIN_VERIFY_ROUNDS} = 128-bit Fiat-Shamir "
+                 f"soundness); pass --min-rounds {rounds} to accept it anyway")
+
 
 def _bounded(value, lo, hi, what, where):
     """Return int(value), or exit(1) if it falls outside [lo, hi].
@@ -237,7 +1446,8 @@ def _bounded(value, lo, hi, what, where):
     """
     v = int(value)
     if v < lo or v > hi:
-        sys.exit(f"{where}: {what} is {v} (expected {lo}..{hi})")
+        shown = v if v.bit_length() <= 64 else f"a {v.bit_length()}-bit value"
+        sys.exit(f"{where}: {what} is {shown} (expected {lo}..{hi})")
     return v
 
 
@@ -315,7 +1525,7 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
     label, der = pem_unwrap(enc_pem_text)
     if label != _LABEL_ENC_PRIV:
         raise ValueError(f"Expected {_LABEL_ENC_PRIV!r} PEM, got {label!r}")
-    salt_int, iterations, nonce_int, ct_int, tag_int, pt_len = der_parse_seq(der)
+    salt_int, iterations, nonce_int, ct_int, tag_int, pt_len = _der_items(label, der)
     # pt_len comes off the wire and sizes the allocation below: `to_bytes` of a
     # declared 2^62 raised MemoryError before TODO #280, with no bound anywhere
     # on this path.  The ciphertext cannot be longer than the envelope carrying
@@ -325,9 +1535,9 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
         raise ValueError("declared plaintext length does not match ciphertext")
     if ct_int.bit_length() > 8 * pt_len:
         raise ValueError("declared plaintext length does not match ciphertext")
-    salt = salt_int.to_bytes(_PBKDF2_SALT_BYTES, 'big')
-    ct   = ct_int.to_bytes(pt_len, 'big')
-    tag  = tag_int.to_bytes(32, 'big')
+    salt = _fit(salt_int, _PBKDF2_SALT_BYTES, 'salt', 'pem')
+    ct   = _fit(ct_int, pt_len, 'ct', 'pem')
+    tag  = _fit(tag_int, 32, 'tag', 'pem')
     key_bytes = _pbkdf2_hfscx256(passphrase.encode('utf-8'), salt, iterations)
     key = BitArray(KEYBITS, int.from_bytes(key_bytes, 'big'))
     nonce = BitArray(KEYBITS, nonce_int)
@@ -450,7 +1660,7 @@ def _decode_rnl_privkey(ints):
     """Return (s_poly, m_poly, n, n_a_bytes) from parsed private key integers."""
     if len(ints) >= 4:
         s_packed, m_packed, n, na_int = ints[0], ints[1], ints[2], ints[3]
-        n_a = na_int.to_bytes(32, 'big')
+        n_a = _fit(na_int, 32, 'na', 'pem')
     else:
         s_packed, m_packed, n = ints[0], ints[1], ints[2]
         n_a = bytes(32)
@@ -463,7 +1673,7 @@ def _decode_rnl_pubkey(ints):
     """Return (C_poly, m_poly, n, n_a_bytes) from parsed public key integers."""
     if len(ints) >= 4:
         C_packed, m_packed, n, na_int = ints[0], ints[1], ints[2], ints[3]
-        n_a = na_int.to_bytes(32, 'big')
+        n_a = _fit(na_int, 32, 'na', 'pem')
     else:
         C_packed, m_packed, n = ints[0], ints[1], ints[2]
         n_a = bytes(32)
@@ -559,13 +1769,13 @@ def _encode_xmss_privkey(master_seed: bytes, h: int, next_idx: int,
 def _decode_xmss_privkey(path):
     """Returns (master_seed, h, next_idx, leaf_hashes, root)."""
     label, der = _read_pem(path)
-    ints = der_parse_seq(der)
+    ints = _der_items(label, der)
     seed_int, h_int, next_idx, blob_int = ints
-    master_seed = seed_int.to_bytes(32, 'big')
+    master_seed = _fit(seed_int, 32, 'seed', 'pem')
     # h sizes `1 << h` leaves and the 32-bytes-per-leaf blob behind them.
     h = _bounded(h_int, 1, _XMSS_MAX_H, 'XMSS height', 'pkey')
     num_leaves = 1 << h
-    blob = blob_int.to_bytes(32 * num_leaves, 'big')
+    blob = _fit(blob_int, 32 * num_leaves, 'XMSS leaf blob', 'pkey')
     leaf_hashes = [blob[i*32:(i+1)*32] for i in range(num_leaves)]
     from primitives import haccum_root as _haccum_root
     root = _haccum_root(leaf_hashes)
@@ -581,8 +1791,8 @@ def _encode_xmss_pubkey(root: bytes, h: int) -> str:
 def _decode_xmss_pubkey(path):
     """Returns (root, h)."""
     label, der = _read_pem(path)
-    root_int, h_int = der_parse_seq(der)
-    return root_int.to_bytes(32, 'big'), int(h_int)
+    root_int, h_int = _der_items(label, der)
+    return _fit(root_int, 32, 'root', 'pem'), int(h_int)
 
 
 def _pack_xmss_sig(sig: dict, n: int) -> str:
@@ -608,13 +1818,13 @@ def _pack_xmss_sig(sig: dict, n: int) -> str:
 def _unpack_xmss_sig(path: str):
     """Returns sig dict for hpks_xmss_verify (pk is recovered during verify)."""
     label, der = _read_pem(path)
-    leaf_idx, sig_int, path_int, h_int, n_int = der_parse_seq(der)
+    leaf_idx, sig_int, path_int, h_int, n_int = _der_items(label, der)
     leaf_idx  = int(leaf_idx)
     n         = _bounded_n(n_int, 'verify')
     h         = _bounded(h_int, 1, _XMSS_MAX_H, 'XMSS signature depth', 'verify')
     nbytes    = n // 8
-    sig_blob  = sig_int.to_bytes(_WOTS_L * nbytes, 'big')
-    path_blob = path_int.to_bytes(h * 32, 'big')
+    sig_blob  = _fit(sig_int, _WOTS_L * nbytes, 'sig', 'pem')
+    path_blob = _fit(path_int, h * 32, 'path', 'pem')
     wots_sig  = [BitArray(n, int.from_bytes(sig_blob[i*nbytes:(i+1)*nbytes], 'big'))
                  for i in range(_WOTS_L)]
     auth_path = [path_blob[i*32:(i+1)*32] for i in range(h)]
@@ -662,8 +1872,8 @@ def _decode_wots_privkey(path):
     label, der = _read_pem(path)
     if label != _PRIV_ALGOS['hpks-wots']:
         raise ValueError(f"Expected HPKS-WOTS private key, got {label!r}")
-    seed_int, leaf_idx = der_parse_seq(der)
-    return seed_int.to_bytes(32, 'big'), int(leaf_idx)
+    seed_int, leaf_idx = _der_items(label, der)
+    return seed_int.to_bytes(32, 'big'), _bounded(leaf_idx, 0, 0xFFFFFFFF, 'WOTS leaf index', 'sign')
 
 
 def _encode_wots_pubkey(pk: list) -> str:
@@ -680,12 +1890,12 @@ def _decode_wots_pubkey(path):
     label, der = _read_pem(path)
     if label != _PUB_ALGOS['hpks-wots']:
         raise ValueError(f"Expected HPKS-WOTS public key, got {label!r}")
-    blob_int, ell = der_parse_seq(der)
+    blob_int, ell = _der_items(label, der)
     # The shipped parameters fix the chain count, so anything else is malformed
     # rather than merely large.
     ell = _bounded(ell, _WOTS_L, _WOTS_L, 'WOTS chain count', 'verify')
     nbytes = KEYBITS // 8
-    blob = blob_int.to_bytes(ell * nbytes, 'big')
+    blob = _fit(blob_int, ell * nbytes, 'blob', 'pem')
     return [BitArray(KEYBITS, int.from_bytes(blob[i*nbytes:(i+1)*nbytes], 'big'))
             for i in range(ell)]
 
@@ -704,12 +1914,12 @@ def _unpack_wots_sig(path: str):
     label, der = _read_pem(path)
     if label != _LABEL_WOTS_SIG:
         raise ValueError(f"Expected HPKS-WOTS signature, got {label!r}")
-    blob_int, ell = der_parse_seq(der)
+    blob_int, ell = _der_items(label, der)
     # The shipped parameters fix the chain count, so anything else is malformed
     # rather than merely large.
     ell = _bounded(ell, _WOTS_L, _WOTS_L, 'WOTS chain count', 'verify')
     nbytes = KEYBITS // 8
-    blob = blob_int.to_bytes(ell * nbytes, 'big')
+    blob = _fit(blob_int, ell * nbytes, 'blob', 'pem')
     return [BitArray(KEYBITS, int.from_bytes(blob[i*nbytes:(i+1)*nbytes], 'big'))
             for i in range(ell)]
 
@@ -849,6 +2059,10 @@ def _decode_rnl_response(path):
     if label != _LABEL_RNL_RESP:
         raise ValueError(f"Expected HKEX-RNL RESPONSE PEM, got {label!r}")
     K_int, C_packed, hint_int, n, hint_len = ints[0], ints[1], ints[2], ints[3], ints[4]
+    # TODO #367: hint_len sized a list comprehension, so it is bounded.  Since
+    # TODO #373 the loader's generated check holds it to exactly n//2, which
+    # every writer now emits (Go wrote n until then).
+    hint_len = _bounded(hint_len, 0, n, 'hint length', 'kex')
     C_B_poly = unpack_poly(C_packed, n, 2)
     hint = [(hint_int >> (2 * i)) & 3 for i in range(hint_len)]
     n_b = ints[5].to_bytes(32, 'big') if len(ints) >= 6 else bytes(32)
@@ -880,8 +2094,8 @@ def _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B, hint_used, h_pub, s
     # same number until TODO #223 moved the ring to 1024 while the derived key
     # stayed 256 bits; using n here writes 128 zero-padded bytes where C's
     # combiner writes KEYBYTES (32), so the two sides derive different keys.
-    data = (K1_int.to_bytes(_rnl_session_bits(n) // 8, 'big')
-            + K2_int.to_bytes(KEYBITS // 8, 'big')
+    data = (_fit(K1_int, _rnl_session_bits(n) // 8, 'K1', 'pem')
+            + _fit(K2_int, KEYBITS // 8, 'K2', 'pem')
             + C_A_packed.to_bytes(C_A_nb, 'big')
             + m_A_packed.to_bytes(m_A_nb, 'big')
             + C_B_packed.to_bytes(C_B_nb, 'big')
@@ -909,7 +2123,7 @@ def _hkex_rnl_sp800227_kdf(K_int, n, C_A, m_A, C_B, hint_used):
     C_A_packed, C_A_nb = pack_poly(C_A, 2)
     m_A_packed, m_A_nb = pack_poly(m_A, 4)
     C_B_packed, C_B_nb = pack_poly(C_B, 2)
-    data = (K_int.to_bytes(n // 8, 'big')
+    data = (_fit(K_int, n // 8, 'K', 'pem')
             + C_A_packed.to_bytes(C_A_nb, 'big')
             + m_A_packed.to_bytes(m_A_nb, 'big')
             + C_B_packed.to_bytes(C_B_nb, 'big')
@@ -946,9 +2160,10 @@ def _decode_hybrid_response(path):
         raise ValueError(f"Expected HYBRID-RNL-STERN RESPONSE PEM, got {label!r}")
     (K_int, C_packed, hint_int, n, hint_len,
      nb_int, syn, r_qc) = ints
+    hint_len = _bounded(hint_len, 0, n, 'hint length', 'kex')   # TODO #367; n//2 since #373
     C_B_poly = unpack_poly(C_packed, n, 2)
     hint = [(hint_int >> (2 * i)) & 3 for i in range(hint_len)]
-    n_b = nb_int.to_bytes(32, 'big')
+    n_b = _fit(nb_int, 32, 'nb', 'pem')
     return K_int, C_B_poly, hint, n, n_b, syn, r_qc
 
 
@@ -1020,7 +2235,7 @@ def _encode_duplex_ct(nonce_int, ct_bytes, tag_int, nbits, v3=False):
 def _decode_duplex_ct(path, v3=False):
     """Return (nonce_int, ct_bytes, tag_int, nbits)."""
     label, der = _read_pem(path)
-    ints = der_parse_seq(der)
+    ints = _der_items(label, der)
     if label != _LABEL_CT:
         raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
     want = 4 if v3 else 3
@@ -1028,6 +2243,7 @@ def _decode_duplex_ct(path, v3=False):
         raise ValueError(f"Expected {'V3' if v3 else 'V2'}-Duplex ciphertext "
                          f"(format {want}), got {ints[0]}")
     _, nonce_int, ct_len, ct_int, tag_int, nbits = ints
+    _fit(tag_int, 32, 'authentication tag', 'dec')     # TODO #367
     # The declared length sizes the buffer.  It cannot exceed the DER actually
     # read, and the payload cannot be longer than the length claiming to
     # describe it; shorter is legal (DER strips leading zero bytes) and is
@@ -1036,7 +2252,7 @@ def _decode_duplex_ct(path, v3=False):
     if _int_nbytes(ct_int) > ct_len:
         sys.exit(f"dec: V2-Duplex ciphertext declares {ct_len} bytes but "
                  f"carries {_int_nbytes(ct_int)}")
-    ct_bytes = ct_int.to_bytes(ct_len, 'big') if ct_len else b''
+    ct_bytes = _fit(ct_int, ct_len, 'ct', 'pem') if ct_len else b''
     return nonce_int, ct_bytes, tag_int, nbits
 
 
@@ -1114,10 +2330,10 @@ def _decode_kem_privkey(path):
     r  = _bounded(r, 1, _QCMDPC_R, 'QC-MDPC block length r', 'pkey')
     d  = _bounded(d, 1, _QCMDPC_D, 'QC-MDPC row weight d',   'pkey')
     rb = (r + 7) // 8
-    h0 = int.from_bytes(h0_int.to_bytes(rb, 'big'), 'little')
-    h1 = int.from_bytes(h1_int.to_bytes(rb, 'big'), 'little')
-    s0b = s0_int.to_bytes(d * 2, 'big')
-    s1b = s1_int.to_bytes(d * 2, 'big')
+    h0 = int.from_bytes(_fit(h0_int, rb, 'h0', 'pem'), 'little')
+    h1 = int.from_bytes(_fit(h1_int, rb, 'h1', 'pem'), 'little')
+    s0b = _fit(s0_int, d * 2, 'QC-MDPC support', 'pkey')
+    s1b = _fit(s1_int, d * 2, 'QC-MDPC support', 'pkey')
     sup0 = {int.from_bytes(s0b[k*2:k*2+2], 'big') for k in range(d)}
     sup1 = {int.from_bytes(s1b[k*2:k*2+2], 'big') for k in range(d)}
     return sup0, sup1, h0, h1
@@ -1138,7 +2354,7 @@ def _decode_kem_pubkey(path):
         raise ValueError(f"Expected HPKE-Stern-KEM public key, got {label!r}")
     hpb_int, r = ints
     rb = (r + 7) // 8
-    h_pub = int.from_bytes(hpb_int.to_bytes(rb, 'big'), 'little')
+    h_pub = int.from_bytes(_fit(hpb_int, rb, 'hpb', 'pem'), 'little')
     return h_pub, r
 
 
@@ -1157,9 +2373,12 @@ def _decode_kem_ct(path):
     label, ints = _read_pem_ints(path)
     if label != _LABEL_CT:
         raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
+    if len(ints) != 3:
+        raise ValueError(f"malformed PEM '{label}': {len(ints)} DER items, expected 3")
     syn_int, E_int, r = ints
+    r  = _bounded(r, _QCMDPC_R, _QCMDPC_R, 'QC-MDPC r', 'dec')
     rb = (r + 7) // 8
-    syn = int.from_bytes(syn_int.to_bytes(rb, 'big'), 'little')
+    syn = int.from_bytes(_fit(syn_int, rb, 'QC-MDPC syndrome', 'dec'), 'little')
     return syn, E_int, r
 
 
@@ -1234,7 +2453,7 @@ def _unpack_stern_sig(path):
     rounds = _bounded(rounds, 1, _SDF_MAX_ROUNDS, 'round count', 'verify')
     nbytes = n // 8
 
-    commits_ba = c_int.to_bytes(3 * rounds * nbytes, 'big')
+    commits_ba = _fit(c_int, 3 * rounds * nbytes, 'c', 'pem')
     commits = []
     for i in range(rounds):
         off = i * 3 * nbytes
@@ -1244,10 +2463,10 @@ def _unpack_stern_sig(path):
         commits.append((c0, c1, c2))
 
     chal_nb    = (rounds + 3) // 4
-    chal_bytes = ch_int.to_bytes(chal_nb, 'big')
+    chal_bytes = _fit(ch_int, chal_nb, 'ch', 'pem')
     challenges = [(chal_bytes[i // 4] >> ((i % 4) * 2)) & 3 for i in range(rounds)]
 
-    resp_ba   = r_int.to_bytes(2 * rounds * nbytes, 'big')
+    resp_ba   = _fit(r_int, 2 * rounds * nbytes, 'r', 'pem')
     responses = []
     for i in range(rounds):
         off = i * 2 * nbytes
@@ -1313,7 +2532,7 @@ def _unpack_ring_sig(path):
         sys.exit(f"verify: HPKS-RING signature payload is "
                  f"{_int_nbytes(blob_int)} bytes, but k={k} rounds={rounds} "
                  f"n={n} describe {blen}")
-    blob   = blob_int.to_bytes(blen, 'big')
+    blob   = _fit(blob_int, blen, 'blob', 'pem')
 
     all_commits    = [[None] * rounds for _ in range(k)]
     all_challenges = [[0]    * rounds for _ in range(k)]
@@ -1429,7 +2648,9 @@ def cmd_genpkey(args):
         pem_out = _encode_stern_privkey(e_int, seed, bits, algo)
 
     elif algo in _ZKP_NL_ALGOS:
-        n = bits if bits != KEYBITS else _ZKP_NL_DEFAULT_N
+        # TODO #374: "unset" is args.bits is None, not bits == KEYBITS -- an
+        # explicit --bits 256 used to read as unset and wrote an n = 8 key.
+        n = args.bits if args.bits is not None else _ZKP_NL_DEFAULT_N
         # TODO #283: _ZKP_NL_MAX_N is a WIRE bound, and until v6.7.1 it was
         # enforced only on the way IN -- codec.decode_zkp_nl_privkey applies it,
         # genpkey did not -- so this was the one path in the Python CLI that
@@ -1487,9 +2708,10 @@ def cmd_genpkey(args):
               file=sys.stderr)
 
     elif algo == 'hcred':
-        # args.bits is None when --bits is omitted → use _HCRED_DEFAULT_N (32, demo speed).
-        # --bits N uses N directly, including --bits 256 for C interop.
-        n = args.bits if args.bits is not None else _HCRED_DEFAULT_N
+        # TODO #369: an omitted --bits means n = 256 (_HCRED_CLI_N), as in C, Go
+        # and Java -- it meant the suite's demo width, 32, which C and Java
+        # refuse.  --bits N still chooses N; --bits 32 is the fast demo width.
+        n = args.bits if args.bits is not None else _HCRED_CLI_N
         m_base  = _suite_mod._rnl_m_poly(n)
         a_rand  = _suite_mod._rnl_rand_poly(n, RNLQ)
         m_blind = [(m_base[i] + a_rand[i]) % RNLQ for i in range(n)]
@@ -1568,6 +2790,8 @@ def cmd_pkey(args):
             h0_inv = _qcp_inv(h0, _QCMDPC_R)
             h_pub  = _qcp_mul(h1, h0_inv, _QCMDPC_R)
             pem_out = _encode_kem_pubkey(h_pub)
+        elif algo == 'oprf':
+            sys.exit("pkey --pubout: oprf has no public key")   # TODO #374
         else:
             sys.exit(f"Unknown algorithm: {algo!r}")
         _write_file(args.out or '-', pem_out)
@@ -1602,6 +2826,36 @@ def cmd_pkey(args):
             print(f"seed_H    : {seed_H_int:0{n//4}x}")
             print(f"syndr     : {syndr:0{n//8}x}")
             print(f"W (weight): {bin(hcred_phi(s)).count('1')}")
+        # TODO #374: the five branches below were missing, so --text printed
+        # nothing and exited 0 for these keys; an unhandled label now fails.
+        elif algo in _ZKP_NL_ALGOS:
+            A, B, y, n = ints
+            w = 2 * ((n + 7) // 8)
+            print(f"algorithm : {algo}")
+            print(f"n         : {n}")
+            print(f"A (priv)  : {A:0{w}x}")
+            print(f"B (pub)   : {B:0{w}x}")
+            print(f"y (pub)   : {y:0{w}x}")
+        elif algo == 'hpke-stern-kem':
+            _decode_kem_privkey(in_path)          # validates the key
+            print(f"algorithm : {algo}")
+            print(f"r         : {_QCMDPC_R}")
+            print(f"d         : {_QCMDPC_D}")
+        elif algo == 'hpks-wots':
+            _master_seed, leaf_idx = _decode_wots_privkey(in_path)
+            print(f"algorithm : {algo}")
+            print(f"leaf_idx  : {leaf_idx}")
+        elif algo == 'hpks-xmss':
+            _ms, h, _idx, _leaves, root = _decode_xmss_privkey(in_path)
+            print(f"algorithm : {algo}")
+            print(f"h         : {h} ({1 << h} leaves)")
+            print(f"root      : {root.hex() if isinstance(root, bytes) else format(root, '064x')}")
+        elif algo == 'oprf':
+            _k, nbits = _load_oprf_key(in_path)
+            print(f"algorithm : {algo}")
+            print(f"bits      : {nbits}")
+        else:
+            sys.exit(f"pkey --text: no text form for {algo!r}")
     else:
         sys.exit("Specify --pubout or --text")
 
@@ -1621,7 +2875,7 @@ def cmd_kex(args):
     def _apply_kdf(k_int, nbits):
         if kdf_mode != 'hfscx-256':
             return k_int
-        raw = k_int.to_bytes(nbits // 8, 'big')
+        raw = _fit(k_int, nbits // 8, 'k', 'pem')
         return int.from_bytes(hfscx_256(raw), 'big')
 
     if algo == 'hkex-gf':
@@ -1629,6 +2883,8 @@ def cmd_kex(args):
         their_algo, their_ints = _decode_pubkey(their_path)
         priv_int, _, nbits = our_ints
         pub_int = their_ints[0]
+        if not gf_pub_is_valid(pub_int):
+            sys.exit("kex: their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         sk_int  = _apply_kdf(gf_pow(pub_int, priv_int, poly, nbits), nbits)
         _write_file(args.out, _encode_session_key(sk_int, nbits))
@@ -1650,6 +2906,8 @@ def cmd_kex(args):
             if not _rnl_validate_m_blind(m_A):
                 sys.exit("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack")
             C_B       = _rnl_derive_C(m_A, s_B, n)
+            if not _rnl_validate_pub(C_A):
+                sys.exit("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)")
             K_B, hint = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n))
             n_b       = os.urandom(32)
             K_B_int   = _rnl_contributory_kdf(K_B.uint, _rnl_key_bits(n), n_a, n_b)
@@ -1668,6 +2926,8 @@ def cmd_kex(args):
             _, C_B, hint, n_resp, n_b = _decode_rnl_response(their_path)
             if n != n_resp:
                 sys.exit(f"Ring size mismatch: ours n={n}, response n={n_resp}")
+            if not _rnl_validate_pub(C_B):
+                sys.exit("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)")
             K_A     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n), hint)
             K_A_int = _rnl_contributory_kdf(K_A.uint, _rnl_key_bits(n), n_a, n_b)
             if kdf_mode == 'sp800227':
@@ -1705,6 +2965,8 @@ def cmd_kex(args):
             h_pub, r_qc = _decode_kem_pubkey(args.their_kem)
 
             C_B         = _rnl_derive_C(m_A, s_B, n)
+            if not _rnl_validate_pub(C_A):
+                sys.exit("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)")
             K1, hint    = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n))
             n_b         = os.urandom(32)
             K1_int      = _rnl_contributory_kdf(K1.uint, _rnl_key_bits(n), n_a, n_b)
@@ -1734,6 +2996,8 @@ def cmd_kex(args):
             h_pub  = _qcp_mul(h1, h0_inv, r_qc)
             C_A    = _rnl_derive_C(m_A, s_A, n)
 
+            if not _rnl_validate_pub(C_B):
+                sys.exit("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)")
             K1     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n), hint_used)
             K1_int = _rnl_contributory_kdf(K1.uint, _rnl_key_bits(n), n_a, n_b)
             K1_int = _apply_kdf(K1_int, _rnl_session_bits(n))
@@ -1837,6 +3101,8 @@ def cmd_enc(args):
     if not pubkey_path:
         sys.exit(f"--pubkey required for {algo}")
     their_algo, their_ints = _decode_pubkey(pubkey_path)
+    if algo in ('hpke', 'hpke-nl', 'hpke-nl3') and not gf_pub_is_valid(their_ints[0]):
+        sys.exit("enc: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
 
     if algo == 'hpke':
         pub_int, nbits = their_ints
@@ -1927,7 +3193,7 @@ def cmd_dec(args):
         ad = (getattr(args, 'ad', None) or '').encode()
         dec_fn = hske_nl_v3_duplex_decrypt if v3 else hske_nl_v2_duplex_decrypt
         pt = dec_fn(K, BitArray(nbits, nonce_int), ct_bytes,
-                    tag_int.to_bytes(32, 'big'), ad)
+                    _fit(tag_int, 32, 'tag', 'pem'), ad)
         if pt is None:
             sys.exit("dec: authentication tag mismatch — "
                      "ciphertext corrupt, wrong key, or wrong --ad")
@@ -1953,8 +3219,8 @@ def cmd_dec(args):
             # HSKE-NL-AEAD (TODO #95): verify-then-decrypt
             ad = (getattr(args, 'ad', None) or '').encode()
             pt = hske_nl_aead_decrypt(K, BitArray(nbits, nonce_int),
-                                      E_int.to_bytes(nbits // 8, 'big'),
-                                      tag_int.to_bytes(32, 'big'), ad)
+                                      _fit(E_int, nbits // 8, 'E', 'pem'),
+                                      _fit(tag_int, 32, 'tag', 'pem'), ad)
             if pt is None:
                 sys.exit("dec: authentication tag mismatch — "
                          "ciphertext corrupt, wrong key, or wrong --ad")
@@ -1992,6 +3258,8 @@ def cmd_dec(args):
         priv_int, _, nbits = our_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if not gf_pub_is_valid(R_int):
+            sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
         dec_key = BitArray(nbits, gf_pow(R_int, priv_int, poly, nbits))
         D       = fscx_revolve(E, dec_key, 3 * nbits // 4)
@@ -2001,6 +3269,8 @@ def cmd_dec(args):
         priv_int, _, nbits = our_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if not gf_pub_is_valid(R_int):
+            sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
         dec_key = BitArray(nbits, gf_pow(R_int, priv_int, poly, nbits))
         if not nl_v2_key_is_valid(dec_key):
@@ -2013,6 +3283,8 @@ def cmd_dec(args):
         _v3_width_ok(nbits, 'dec hpke-nl3')
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if not gf_pub_is_valid(R_int):
+            sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
         dec_key = BitArray(nbits, gf_pow(R_int, priv_int, poly, nbits))
         D       = nl_fscx_revolve_v3_inv(E, dec_key, _r3(nbits))
@@ -2082,7 +3354,7 @@ def cmd_sign(args):
         seed   = BitArray(n, seed_int)
         syn    = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
         msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        rounds = getattr(args, 'rounds', None) or SDFR
+        rounds = getattr(args, 'rounds', None) or _STERN_CLI_ROUNDS
         sig    = hpks_stern_f_sign(msg, e_int, seed, syn, n, rounds)
         _write_file(args.out, _pack_stern_sig(sig, n))
 
@@ -2111,7 +3383,7 @@ def cmd_sign(args):
             sys.exit("hpks-ring sign: signer's public key is not in --ring "
                      "(run pkey --pubout on the signer key and include it)")
         msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        rounds = getattr(args, 'rounds', None) or SDFR
+        rounds = getattr(args, 'rounds', None) or _STERN_CLI_ROUNDS
         sig    = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
         _write_file(args.out, _pack_ring_sig(sig, n))
         print(f"Ring signature created (k={len(ring_keys)}); signer index is hidden.",
@@ -2200,6 +3472,9 @@ def _load_hpks_privkey_for_threshold(key_path):
     algo, ints = _decode_privkey(key_path)
     if algo not in ('hpks', 'hpks-nl'):
         sys.exit(f"threshold: expected hpks or hpks-nl key, got {algo!r}")
+    priv_int, pub_int, nbits = ints   # nbits already held to the GF widths (_WIRE_FIELDS)
+    _fit(priv_int, nbits // 8, 'private key', 'threshold')
+    _fit(pub_int, nbits // 8, 'public key', 'threshold')
     return ints  # (priv_int, pub_int, nbits)
 
 
@@ -2367,6 +3642,7 @@ def cmd_verify(args):
             sys.exit("hpks-ring verify: --ring (comma-separated member public keys) required")
         ring_keys, n = _load_ring_pubkeys(args.ring)
         sig, k, rounds, sig_n = _unpack_ring_sig(sig_path)
+        _require_rounds(rounds, _round_floor(args, 'verify'), 'hpks-ring signature', 'verify')
         if sig_n != n:
             sys.exit(f"hpks-ring verify: signature n={sig_n} != ring n={n}")
         if k != len(ring_keys):
@@ -2387,21 +3663,32 @@ def cmd_verify(args):
 
     if algo in ('hpks', 'hpks-nl'):
         pub_int, nbits = their_ints
+        if not gf_pub_is_valid(pub_int):
+            sys.exit("verify: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         poly = GF_POLY.get(nbits, GF_POLY[256])
         msg  = BitArray(nbits, int.from_bytes(in_bytes[:nbits // 8].ljust(nbits // 8, b'\x00'), 'big'))
-        s_int, R_int, e_int, _nb = _decode_schnorr_sig(sig_path)
+        s_int, R_int, e_int, sig_nb = _decode_schnorr_sig(sig_path)
+        if sig_nb != nbits:
+            sys.exit(f"verify: signature n is {sig_nb}, public key n is {nbits}")
         R    = BitArray(nbits, R_int)
         e_v  = (fscx_revolve(R, msg, nbits // 4)
                 if algo == 'hpks'
                 else hpks_nl_challenge(R, msg))
         lhs  = gf_mul(gf_pow(GF_GEN, s_int, poly, nbits),
                       gf_pow(pub_int, e_v.uint, poly, nbits), poly, nbits)
-        if lhs == R_int:
-            print("Signature OK")
-            sys.exit(0)
-        else:
+        if lhs != R_int:
             print("Verification FAILED")
             sys.exit(1)
+        # TODO #372: the stored challenge is part of the signature's bytes, so
+        # one that is not the recomputed e is a second encoding of the same
+        # signature -- refused, as every CLI does.  Checked only once the
+        # algebra holds: a wrong message or key changes e too, and stays an
+        # ordinary "Verification FAILED".
+        if e_int != e_v.uint:
+            sys.exit("verify: signature challenge e is not the recomputed one "
+                     "(rejected: non-canonical signature)")
+        print("Signature OK")
+        sys.exit(0)
 
     elif algo == 'hpks-stern':
         print(_STERN_DEMO_WARNING, file=sys.stderr)
@@ -2409,6 +3696,8 @@ def cmd_verify(args):
         seed = BitArray(n, seed_int)
         msg  = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
         commits, challenges, responses, _n = _unpack_stern_sig(sig_path)
+        _require_rounds(len(commits), _round_floor(args, 'verify'),
+                        'hpks-stern signature', 'verify')
         sig  = (commits, challenges, responses)
         ok   = hpks_stern_f_verify(msg, sig, seed, syn_int, n)
         if ok:
@@ -2449,6 +3738,7 @@ def cmd_verify(args):
         if proof_n != n:
             raise ValueError(f"proof n mismatch with pubkey n ({proof_n} vs {n})")
         rounds = len(proof_rounds)
+        _require_rounds(rounds, _round_floor(args, 'verify'), 'nl-zkboo proof', 'verify')
         # Pad/truncate to 32 bytes to match C/Go behavior (TODO #261; see the
         # sign branch above for why this was missing).
         msg = (in_bytes + b'\x00' * 32)[:32]
@@ -2468,6 +3758,7 @@ def cmd_verify(args):
         sig_pem = _read_file(sig_path).decode('ascii')
         proof_rounds, _n = decode_zkp_nl_pp_proof(sig_pem)
         rounds = len(proof_rounds)
+        _require_rounds(rounds, _round_floor(args, 'verify'), 'nl-zkbpp proof', 'verify')
         # Pad/truncate to 32 bytes to match C/Go behavior
         msg = (in_bytes + b'\x00' * 32)[:32]
         ok = zkp_nl_verify_pp(B, y, n, rounds, msg, proof_rounds)
@@ -2597,6 +3888,9 @@ def cmd_decfile(args):
 
     if len(raw) < ct_end + 32:
         sys.exit("decfile: file truncated (ciphertext blocks or auth tag missing)")
+    # TODO #368: exactly one encoding per file -- nothing after the tag.
+    if len(raw) > ct_end + 32:
+        sys.exit(f"decfile: {len(raw) - ct_end - 32} bytes after the auth tag")
 
     ct_bytes   = raw[45:ct_end]
     tag_stored = bytes(raw[ct_end:ct_end + 32])
@@ -2723,7 +4017,7 @@ def cmd_rand(args):
 def cmd_fpe(args):
     key_int, nbits = _load_key(args.key)
     _sym256_ok(nbits, 'fpe')
-    key_bytes = key_int.to_bytes(nbits // 8, 'big')
+    key_bytes = _fit(key_int, nbits // 8, 'key', 'pem')
     ctx_bytes = args.context.encode() if args.context else b''
     in_bytes  = _read_file(getattr(args, 'in'))
     if len(in_bytes) < 32:
@@ -2751,7 +4045,7 @@ def cmd_fpe(args):
 def cmd_twk(args):
     key_int, nbits = _load_key(args.key)
     _sym256_ok(nbits, 'twk')
-    key_bytes = key_int.to_bytes(nbits // 8, 'big')
+    key_bytes = _fit(key_int, nbits // 8, 'key', 'pem')
     in_bytes  = _read_file(getattr(args, 'in'))
     if len(in_bytes) < 32:
         in_bytes = in_bytes.ljust(32, b'\x00')
@@ -2781,6 +4075,10 @@ def _load_oprf_key(path):
     if label != _PRIV_ALGOS['oprf']:
         sys.exit(f"Expected OPRF PRIVATE KEY PEM, got {label!r}")
     k_int, nbits = ints
+    # TODO #367: the OPRF runs at KEYBITS only (Go and C ignore the field);
+    # an unbounded width reached der_int's to_bytes as an OverflowError.
+    nbits = _bounded(nbits, KEYBITS, KEYBITS, 'n', 'oprf')
+    _fit(k_int, nbits // 8, 'OPRF key', 'oprf')
     return k_int, nbits
 
 
@@ -2861,7 +4159,7 @@ def _load_pake_record(path):
     salt_int, B_int, y_int = ints
     return {
         'username': '',            # not stored in the PEM for simplicity
-        'salt':     salt_int.to_bytes(32, 'big'),
+        'salt':     _fit(salt_int, 32, 'salt', 'pem'),
         'B':        B_int,
         'y':        y_int,
     }
@@ -2961,6 +4259,8 @@ def cmd_cred_verify(args):
 
     msg    = (args.msg or '').encode()
     rounds = len(proof['rounds'])
+    floor  = _round_floor(args, 'cred-verify')
+    _require_rounds(rounds, floor, 'HCRED proof', 'cred-verify')
 
     ok_proof = hcred_verify(m, C, seed_H, syndr, proof, n=pub_n,
                             rounds=rounds, msg_bytes=msg)
@@ -2972,6 +4272,7 @@ def cmd_cred_verify(args):
     if args.cred:
         raw_cred = _read_file(args.cred).decode('ascii')
         commits_raw, challenges, responses, issuer_n = decode_hcred_credential(raw_cred)
+        _require_rounds(len(challenges), floor, 'HCRED credential', 'cred-verify')
         # Wrap commit integers as BitArrays for hpks_stern_f_verify
         commits = [(BitArray(issuer_n, c0), BitArray(issuer_n, c1), BitArray(issuer_n, c2))
                    for c0, c1, c2 in commits_raw]
@@ -3006,7 +4307,7 @@ def cmd_cred_verify(args):
 def build_parser():
     p = argparse.ArgumentParser(
         prog='herradura',
-        description='Herradura Cryptographic Suite CLI v1.9.79',
+        description='Herradura Cryptographic Suite CLI',
     )
     sub = p.add_subparsers(dest='cmd', required=True)
 
@@ -3101,13 +4402,14 @@ def build_parser():
                     help='hpks-ring: comma-separated member public-key PEM paths')
     sg.add_argument('--in',  required=True, dest='in')
     sg.add_argument('--out', required=True)
-    sg.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
-                    help='Pre-hash: none=truncate input to block size (default), '
-                         'hfscx-256=hash full input then sign the 32-byte digest')
+    sg.add_argument('--digest', default='hfscx-256', choices=['none', 'hfscx-256'],
+                    help='Pre-hash: hfscx-256=hash full input then sign the 32-byte '
+                         'digest (default; TODO #365), none=pad/truncate input to '
+                         'the block size, so only its first bytes are signed')
     sg.add_argument('--rounds', type=int, default=None,
                     help='ZKP/Stern-F rounds (nl-zkboo, hpks-stern, hpks-ring; '
-                         'default: 32 demo for hpks-stern/hpks-ring, 219 for nl-zkboo; '
-                         'production soundness needs >= 219 for all three)')
+                         'default: 219, the 128-bit count every verifier requires '
+                         'unless it passes --min-rounds; TODO #364)')
 
     # verify
     vf = sub.add_parser('verify', help='Verify a signature or ZKP proof')
@@ -3119,8 +4421,12 @@ def build_parser():
                     help='hpks-ring: comma-separated member public-key PEM paths')
     vf.add_argument('--in',  required=True, dest='in')
     vf.add_argument('--sig', required=True)
-    vf.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
-                    help='Pre-hash algorithm: must match the value used during signing')
+    vf.add_argument('--digest', default='hfscx-256', choices=['none', 'hfscx-256'],
+                    help='Pre-hash: must match the value used during signing '
+                         '(default: hfscx-256; none = pad/truncate to 32 bytes)')
+    vf.add_argument('--min-rounds', type=int, default=None, dest='min_rounds',
+                    help='Refuse hpks-stern/hpks-ring/nl-zkboo/nl-zkbpp artifacts declaring fewer Fiat-Shamir rounds '
+                         '(default: 219, 128-bit soundness; TODO #364)')
 
     # threshold-commit
     tc = sub.add_parser('threshold-commit',
@@ -3141,8 +4447,9 @@ def build_parser():
                          'and both syntaxes work in all four CLIs')
     ta.add_argument('--in',  required=True, dest='in', help='Message file to sign')
     ta.add_argument('--out', required=True, help='Output aggregate PEM (broadcast to all signers)')
-    ta.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
-                    help='Pre-hash: must match the value used during combine/verify')
+    ta.add_argument('--digest', default='hfscx-256', choices=['none', 'hfscx-256'],
+                    help='Pre-hash: must match the value used during combine/verify '
+                         '(default: hfscx-256)')
 
     # threshold-respond
     tr = sub.add_parser('threshold-respond',
@@ -3344,6 +4651,9 @@ def build_parser():
                     help='Issuer hpks-stern PUBLIC KEY PEM (required with --cred)')
     cv.add_argument('--msg',     default='',
                     help='Presentation nonce / message (must match cred-prove --msg)')
+    cv.add_argument('--min-rounds', type=int, default=None, dest='min_rounds',
+                    help='Refuse a proof or credential declaring fewer Fiat-Shamir rounds '
+                         '(default: 219, 128-bit soundness; TODO #364)')
 
     return p
 
@@ -3380,6 +4690,10 @@ _DISPATCH = {
 def main():
     parser = build_parser()
     args   = parser.parse_args()
+    # TODO #366: every key flag's label, against the generated table.
+    _check_key_labels(args.cmd, getattr(args, 'algo', '') or '',
+                      {'--' + k.replace('_', '-'): v for k, v in vars(args).items()
+                       if isinstance(v, str)})
     try:
         _DISPATCH[args.cmd](args)
     except ValueError as e:
@@ -3389,6 +4703,11 @@ def main():
         # narrow: every other exception still surfaces with its traceback, so
         # this cannot tidy away a genuine bug.
         print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except OSError as e:
+        # A missing or unreadable input file is the user's mistake, not a bug:
+        # one line, like the other three CLIs (TODO #367).
+        print(f"error: {e.filename or ''}: {e.strerror or e}", file=sys.stderr)
         sys.exit(1)
 
 

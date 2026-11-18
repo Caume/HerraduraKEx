@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.9.10 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
     HPKS-Stern-F, HPKE-Stern-F, ZKP-RNL, ZKP-NL
     KEYBITS = 32
@@ -1081,7 +1081,7 @@ void setup() {
 }
 
 void loop() {
-    Serial.println(F("=== Herradura Cryptographic Suite v1.9.16 (Arduino, 32-bit) ==="));
+    Serial.println(F("=== Herradura Cryptographic Suite (Arduino, 32-bit) ==="));
     Serial.println();
 
     printHexLine(F("a_priv : "), A_PRIV);

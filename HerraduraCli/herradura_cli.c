@@ -17,6 +17,7 @@
 #include "../herradura.h"
 #include "herradura_codec.h"
 #include "cli_flag_table.h"
+#include "key_label_table.h"   /* TODO #366 */
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * I/O helpers
@@ -32,6 +33,36 @@ static void die(const char *msg) { fputs(msg, stderr); fputc('\n', stderr); exit
     "(SecurityProofs-10.md 11.81, TODO #168, #354)"
 static void dief(const char *fmt, const char *s)
 { fprintf(stderr, fmt, s); fputc('\n', stderr); exit(1); }
+
+/* TODO #372: nothing may follow a PEM's DER SEQUENCE; same text in all four CLIs. */
+static void die_der_trailing(const char *label, long trail)
+{
+    fprintf(stderr, "malformed PEM '%s': %ld bytes after the DER SEQUENCE\n", label, trail);
+    exit(1);
+}
+/* TODO #373: a SEQUENCE's lengths and signs have one encoding each.  Fills
+ * ew / lz (see der_seq_scan) for the field checks. */
+static void der_scan_or_die(const char *label, const uint8_t *der, size_t len,
+                            size_t *ew, unsigned char *lz)
+{
+    int bad = 0, rc = der_seq_scan(der, len, ew, lz, 16, &bad);
+    if (rc == 1)
+        fprintf(stderr, "malformed PEM '%s': DER length not in its shortest form\n", label);
+    else if (rc == 2)
+        fprintf(stderr, "malformed PEM '%s': field %d is a negative INTEGER\n", label, bad);
+    else if (rc == 3)
+        fprintf(stderr, "malformed PEM '%s': field %d is an empty INTEGER\n", label, bad);
+    else
+        return;
+    exit(1);
+}
+/* The same rule for a raw-body PEM (ZKP-NL, ZKP-RNL, HCRED): its body ends at
+ * its last field. */
+static void die_raw_trailing(const char *label, size_t extra)
+{
+    fprintf(stderr, "malformed PEM '%s': %zu bytes after its last field\n", label, extra);
+    exit(1);
+}
 
 static uint8_t *read_binary_file(const char *path, size_t *len_out)
 {
@@ -161,6 +192,80 @@ static void check_unknown_flags(const char *cmd, int argc, char **argv)
     }
 }
 
+/* TODO #366: refuse a key whose PEM label this operation does not accept.
+ *
+ * HKX_KEY_SITES is generated from spec/generate_spec.py's KEY_LABEL_SITES, which
+ * holds the reasoning; Python, Go and Java carry the same rows.  Only KEY labels
+ * are judged (ending in PRIVATE KEY or PUBLIC KEY, other than the passphrase
+ * envelope): a response, session key or hex key goes on to the loader, whose
+ * own message is the more specific one.  pem_file_label writes "" when *path*
+ * is unreadable or not PEM. */
+static void pem_file_label(const char *path, char *out, size_t cap)
+{
+    char buf[512];
+    out[0] = '\0';
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    const char *b = strstr(buf, "-----BEGIN ");
+    if (!b) return;
+    b += 11;
+    const char *e = strstr(b, "-----");
+    if (!e || e == b || (size_t)(e - b) >= cap) return;
+    memcpy(out, b, (size_t)(e - b));
+    out[e - b] = '\0';
+}
+
+static int ends_with(const char *s, const char *suffix)
+{
+    size_t ls = strlen(s), lx = strlen(suffix);
+    return ls >= lx && strcmp(s + ls - lx, suffix) == 0;
+}
+
+static void check_key_label(const HkxKeySite *r, const char *cmd, const char *algo,
+                            const char *path)
+{
+    char label[128];
+    pem_file_label(path, label, sizeof(label));
+    if (!label[0] || strcmp(label, PEM_ENC_PRIV) == 0 ||
+        !(ends_with(label, "PRIVATE KEY") || ends_with(label, "PUBLIC KEY")))
+        return;
+    for (int k = 0; r->labels[k]; k++)
+        if (strcmp(r->labels[k], label) == 0) return;
+    if (algo[0])
+        fprintf(stderr, "%s --algo %s: wrong key type: %s holds '%s'; accepted: %s\n",
+                cmd, algo, r->flag, label, r->tags);
+    else
+        fprintf(stderr, "%s: wrong key type: %s holds '%s'; accepted: %s\n",
+                cmd, r->flag, label, r->tags);
+    exit(1);
+}
+
+static void check_key_labels(const char *cmd, int argc, char **argv)
+{
+    const char *algo = get_arg(argc, argv, "--algo");
+    if (!algo) algo = "";
+    for (int i = 0; i < HKX_KEY_SITES_N; i++) {
+        const HkxKeySite *r = &HKX_KEY_SITES[i];
+        if (strcmp(r->cmd, cmd) != 0 || strcmp(r->algo, algo) != 0) continue;
+        const char *v = get_arg(argc, argv, r->flag);
+        if (!v || !*v) continue;
+        if (strcmp(r->flag, "--ring") != 0) { check_key_label(r, cmd, algo, v); continue; }
+        char path[4096];
+        for (const char *p = v; *p; ) {
+            const char *c = strchr(p, ',');
+            size_t len = c ? (size_t)(c - p) : strlen(p);
+            if (len < sizeof(path)) {
+                memcpy(path, p, len); path[len] = '\0';
+                check_key_label(r, cmd, algo, path);
+            }
+            p += len + (c ? 1 : 0);
+        }
+    }
+}
+
 /* --digest's value set, validated in one place (TODO #269).
  *
  * Every call site below tests `strcmp(digest, "hfscx-256") == 0` and falls
@@ -173,10 +278,50 @@ static void check_unknown_flags(const char *cmd, int argc, char **argv)
  * "no pre-hash", so the `if (digest && ...)` sites are unchanged. */
 static const char *digest_value(const char *cmd, const char *digest)
 {
-    if (!digest || strcmp(digest, "none") == 0) return NULL;
+    /* TODO #365: an absent --digest means hfscx-256.  The old default, none,
+     * padded/truncated the message to KEYBYTES, so a signature on one file
+     * verified for every file sharing its first 32 bytes. */
+    if (!digest) return "hfscx-256";
+    if (strcmp(digest, "none") == 0) return NULL;
     if (strcmp(digest, "hfscx-256") == 0) return digest;
     fprintf(stderr, "%s: unsupported --digest %s (choices: none, hfscx-256)\n",
             cmd, digest);
+    exit(1);
+}
+
+/* Fiat-Shamir round counts on the command line (TODO #364).
+ *
+ * The round count travels in the artifact (TODO #236), so a verifier that takes
+ * it from there lets the SIGNER choose the verifier's soundness: one Stern-F or
+ * ZKBoo-(2,3) round can be answered without the witness for two of its three
+ * challenges, and under Fiat-Shamir a forger grinds the commitment until the
+ * challenge is one of those.  `verify` and `cred-verify` therefore refuse an
+ * artifact declaring fewer than CLI_MIN_VERIFY_ROUNDS rounds, the 128-bit count
+ * ((2/3)^219 < 2^-128), unless the verifier asks for less with --min-rounds.
+ * Every signing default meets the floor, so default flags interoperate. */
+#define CLI_MIN_VERIFY_ROUNDS 219   /* == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS */
+
+static int rounds_arg(int argc, char **argv, const char *flag, const char *cmd,
+                      int deflt)
+{
+    const char *a = get_arg(argc, argv, flag);
+    if (!a) return deflt;
+    char *end = NULL;
+    long v = strtol(a, &end, 10);
+    if (!*a || *end || v < 1 || v > SDF_MAX_ROUNDS) {
+        fprintf(stderr, "%s: %s must be between 1 and %d\n", cmd, flag, SDF_MAX_ROUNDS);
+        exit(1);
+    }
+    return (int)v;
+}
+
+static void require_rounds(int rounds, int floor, const char *what, const char *cmd)
+{
+    if (rounds >= floor) return;
+    fprintf(stderr, "%s: %s declares %d rounds, below the --min-rounds floor of %d "
+                    "(%d = 128-bit Fiat-Shamir soundness); pass --min-rounds %d to "
+                    "accept it anyway\n",
+            cmd, what, rounds, floor, CLI_MIN_VERIFY_ROUNDS, rounds);
     exit(1);
 }
 
@@ -457,15 +602,29 @@ static void encrypt_pem_text_to_file(const char *pem_text, const char *passphras
 /* Read an envelope and return the recovered cleartext PEM text (heap, NUL-
  * terminated).  Exits with a one-line diagnostic on a wrong passphrase or a
  * tampered envelope -- never returns unverified bytes. */
+static void check_der_items(const char *label, int n_items);   /* TODO #367 */
+static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
+                           const size_t *vlens, const size_t *ew,
+                           const unsigned char *lz);             /* TODO #372, #373 */
+
 static char *decrypt_pem_file(const char *in_path, const char *passphrase)
 {
     size_t blen;
     uint8_t *body = zkp_raw_pem_read(in_path, PEM_ENC_PRIV, &blen);
-    const uint8_t *vals[6];
-    size_t vlens[6];
+    /* Room for more than six, so a seventh item is SEEN and refused rather
+     * than silently dropped by der_parse_seq's max_items cap (TODO #367). */
+    const uint8_t *vals[16];
+    size_t vlens[16], ew[16];
+    unsigned char lz[16];
     int n_out = 0;
-    if (der_parse_seq(body, blen, vals, vlens, 6, &n_out) != 0 || n_out != 6)
+    long trail = der_seq_trailing(body, blen);
+    if (trail > 0)                                   /* TODO #372 */
+        die_der_trailing(PEM_ENC_PRIV, trail);
+    der_scan_or_die(PEM_ENC_PRIV, body, blen, ew, lz);   /* TODO #373 */
+    if (der_parse_seq(body, blen, vals, vlens, 16, &n_out) != 0)
         die("decrypt: malformed ENCRYPTED PRIVATE KEY envelope");
+    check_der_items(PEM_ENC_PRIV, n_out);
+    check_der_caps(PEM_ENC_PRIV, n_out, vals, vlens, ew, lz);
     /* The salt, nonce, ciphertext and tag are FIXED-WIDTH byte strings carried
      * as DER INTEGERs, and a DER INTEGER has no leading zero to carry: a field
      * whose first byte is 0x00 encodes one significant byte SHORT, and
@@ -553,6 +712,8 @@ typedef struct {
     size_t   der_len;
     const uint8_t *vals[16];
     size_t   vlens[16];
+    size_t   ew[16];      /* TODO #373: encoded width of each item */
+    unsigned char lz[16]; /* TODO #373: item carries an unneeded 0x00 */
     int      n_items;
 } PemKey;
 
@@ -598,6 +759,110 @@ static void stern_require_n(const void *pkv, int idx, const char *what)
     }
 }
 
+/* TODO #367: a DER SEQUENCE's item count, against the generated table, before
+ * any reader indexes it.  Same text in all four CLIs. */
+static void check_der_items(const char *label, int n_items)
+{
+    for (int i = 0; i < HKX_DER_ITEMS_N; i++) {
+        const HkxDerItems *r = &HKX_DER_ITEMS[i];
+        if (strcmp(r->label, label) != 0) continue;
+        if (n_items < r->min || n_items > r->max) {
+            if (r->min == r->max)
+                fprintf(stderr, "malformed PEM '%s': %d DER items, expected %d\n",
+                        label, n_items, r->min);
+            else
+                fprintf(stderr, "malformed PEM '%s': %d DER items, expected %d..%d\n",
+                        label, n_items, r->min, r->max);
+            exit(1);
+        }
+        return;
+    }
+}
+
+/* TODO #372: no field wider than its writer pads it to (the generated
+ * PEM_DER_FIELD_CAPS table, hkx_der_field_caps); same text in all four CLIs. */
+static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
+                           const size_t *vlens, const size_t *ew,
+                           const unsigned char *lz)
+{
+    /* TODO #372 widths, #373 encodings and value rules: one generated check. */
+    char msg[256];
+    if (!hkx_der_field_check(label, n, vals, vlens, ew, lz, msg, sizeof msg)) return;
+    fprintf(stderr, "%s\n", msg);
+    exit(1);
+}
+
+/* TODO #371: the width a key or exchange artifact DECLARES must be the width
+ * this build runs.  This CLI is compiled for one width per family (KEYBITS,
+ * RNL_N, QCMDPC_R) and sized every operation from it, so a 128-bit key from
+ * the Go or Python CLI -- which do run 32/64/128 -- used to be read as 256 bits
+ * and exit 0 with a wrong answer: a different shared key, a ciphertext nobody
+ * could decrypt, a valid signature refused.  item < 0 counts from the end.
+ * CIPHERTEXT and SIGNATURE are shared labels whose width sits in different
+ * places per algorithm; their sites check it themselves. */
+typedef struct { const char *label; int item; long want; const char *what; } HkxWidthRow;
+static const HkxWidthRow HKX_WIDTH[] = {
+    { PEM_HKEX_GF_PRIV, -1, KEYBITS, "n" },   { PEM_HKEX_GF_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKS_PRIV, -1, KEYBITS, "n" },      { PEM_HPKS_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKS_NL_PRIV, -1, KEYBITS, "n" },   { PEM_HPKS_NL_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKE_PRIV, -1, KEYBITS, "n" },      { PEM_HPKE_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKE_NL_PRIV, -1, KEYBITS, "n" },   { PEM_HPKE_NL_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKE_NL3_PRIV, -1, KEYBITS, "n" },  { PEM_HPKE_NL3_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKS_STERN_PRIV, -1, KEYBITS, "n" }, { PEM_HPKS_STERN_PUB, -1, KEYBITS, "n" },
+    { PEM_HPKE_STERN_PRIV, -1, KEYBITS, "n" }, { PEM_HPKE_STERN_PUB, -1, KEYBITS, "n" },
+    { PEM_OPRF_PRIV, -1, KEYBITS, "n" },      { PEM_OPRF_STATE, -1, KEYBITS, "n" },
+    { PEM_OPRF_EVAL, -1, KEYBITS, "n" },
+    { PEM_HPKST_COMMIT, -1, KEYBITS, "n" },   { PEM_HPKST_NONCE, -1, KEYBITS, "n" },
+    { PEM_HPKST_PARTIAL, -1, KEYBITS, "n" },  { PEM_HPKST_AGGREGATE, -1, KEYBITS, "n" },
+    { PEM_HPKST_SIG, -1, KEYBITS, "n" },
+    { PEM_HPKE_STERN_KEM_PUB, 1, QCMDPC_R, "r" },
+    { PEM_HPKE_STERN_KEM_PRIV, 4, QCMDPC_R, "r" },
+    { PEM_HPKE_STERN_KEM_CT, 2, QCMDPC_R, "r" },
+    { PEM_HYBRID_RESPONSE, 3, RNL_N, "n" },   { PEM_HYBRID_RESPONSE, 7, QCMDPC_R, "r" },
+};
+
+/* A DER INTEGER's value bytes as a width, or -1 if it is too wide to be one. */
+static long der_small(const uint8_t *v, size_t len)
+{
+    long x = 0;
+    while (len > 0 && *v == 0) { v++; len--; }
+    if (len > 4) return -1;
+    while (len--) x = (x << 8) | *v++;
+    return x;
+}
+
+static void width_refuse(const char *label, const char *what, long got, long want)
+{
+    if (got < 0)
+        fprintf(stderr, "PEM '%s': %s is wider than 32 bits (this CLI runs %s = %ld)\n",
+                label, what, what, want);
+    else
+        fprintf(stderr, "PEM '%s': %s is %ld (this CLI runs %s = %ld)\n",
+                label, what, got, what, want);
+    exit(1);
+}
+
+static void check_der_width(const PemKey *k)
+{
+    for (size_t i = 0; i < sizeof HKX_WIDTH / sizeof HKX_WIDTH[0]; i++) {
+        const HkxWidthRow *r = &HKX_WIDTH[i];
+        if (strcmp(r->label, k->label) != 0) continue;
+        int idx = r->item < 0 ? k->n_items + r->item : r->item;
+        if (idx < 0 || idx >= k->n_items) continue;   /* arity is check_der_items' job */
+        long got = der_small(k->vals[idx], k->vlens[idx]);
+        if (got != r->want) width_refuse(k->label, r->what, got, r->want);
+    }
+}
+
+/* The same check for a site that knows where its width sits (CIPHERTEXT,
+ * SIGNATURE, and the KEM ciphertext's r). */
+static void check_item_width(const PemKey *k, int idx, long want, const char *what)
+{
+    if (idx < 0 || idx >= k->n_items) return;
+    long got = der_small(k->vals[idx], k->vlens[idx]);
+    if (got != want) width_refuse(k->label, what, got, want);
+}
+
 static void pem_key_load(PemKey *k, const char *path)
 {
     size_t raw_len;
@@ -615,8 +880,15 @@ static void pem_key_load(PemKey *k, const char *path)
     if (strcmp(k->label, PEM_ENC_PRIV) == 0)
         dief("%s is a passphrase-encrypted private key; decrypt it first with "
              "`pkey --decrypt --passphrase ... --in <file> --out plain.pem`", path);
+    long trail = der_seq_trailing(k->der, k->der_len);
+    if (trail > 0)                                   /* TODO #372 */
+        die_der_trailing(k->label, trail);
+    der_scan_or_die(k->label, k->der, k->der_len, k->ew, k->lz);   /* TODO #373 */
     if (der_parse_seq(k->der, k->der_len, k->vals, k->vlens, 16, &k->n_items) != 0)
         dief("cannot parse DER from: %s", path);
+    check_der_items(k->label, k->n_items);
+    check_der_width(k);
+    check_der_caps(k->label, k->n_items, k->vals, k->vlens, k->ew, k->lz);
 }
 static void pem_key_free(PemKey *k) { free(k->der); k->der = NULL; }
 
@@ -649,6 +921,25 @@ static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, siz
         free(buf);
         fprintf(stderr, "expected PEM label '%s', got '%s'\n", expect_label, label);
         exit(1);
+    }
+    /* TODO #372: a fixed-layout body is exactly as long as its header says.
+     * A SHORT body is left to each reader's own truncation check; the
+     * variable-length proofs are checked where they are unpacked. */
+    if (cap >= 4) {
+        uint32_t hn = ((uint32_t)buf[0]<<24)|((uint32_t)buf[1]<<16)|
+                      ((uint32_t)buf[2]<<8)|buf[3];
+        size_t want = 0;
+        if (hn > 0 && hn <= ZKP_NL_MAX_N && strcmp(label, PEM_ZKP_NL_PRIV) == 0)
+            want = 4 + 3 * (size_t)((hn + 7) / 8);
+        else if (hn > 0 && hn <= ZKP_NL_MAX_N && strcmp(label, PEM_ZKP_NL_PUB) == 0)
+            want = 4 + 2 * (size_t)((hn + 7) / 8);
+        else if (hn == RNL_N && strcmp(label, PEM_ZKP_RNL_PROOF) == 0)
+            want = 4 + (size_t)hn * 12;
+        else if (hn == HCRED_N && strcmp(label, PEM_HCRED_PRIV) == 0)
+            want = 4 + (size_t)hn * 8 + hn / 8 + (hn / 2 + 7) / 8;
+        else if (hn == HCRED_N && strcmp(label, PEM_HCRED_PUB) == 0)
+            want = 4 + (size_t)hn * 5 + hn / 8 + (hn / 2 + 7) / 8;
+        if (want && cap > want) die_raw_trailing(label, cap - want);
     }
     *olen = cap;
     return buf;
@@ -735,6 +1026,7 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
         if (!proof[j].view_p2) die("out of memory");
         memcpy(proof[j].view_p2, p, l2); p += l2;
     }
+    if (p < buf + blen) die_raw_trailing(PEM_ZKP_NL_PROOF, (size_t)(buf + blen - p));
     return proof;
 }
 
@@ -825,6 +1117,7 @@ static ZkpNlPpRound *zkp_nl_pp_unpack_proof(const uint8_t *buf, size_t blen,
             memset(proof[j].share2, 0, sizeof(proof[j].share2));
         }
     }
+    if (p < buf + blen) die_raw_trailing(PEM_ZKP_NL_PP_SIG, (size_t)(buf + blen - p));
     return proof;
 }
 
@@ -1413,6 +1706,16 @@ static void cmd_pkey(int argc, char **argv)
 
     PemKey k; pem_key_load(&k, in_path);
 
+    /* TODO #374: an OPRF server key has --text but no public half; it fell
+     * through to "unrecognised PEM label" here. */
+    if (strcmp(k.label, PEM_OPRF_PRIV) == 0) {
+        if (!text) die("pkey --pubout: oprf has no public key");
+        printf("%-10s: %s\n", "algorithm", "oprf");
+        printf("%-10s: %d\n", "bits", KEYBITS);
+        pem_key_free(&k);
+        return;
+    }
+
     /* Detect algo from label */
     static const struct { const char *priv_label; const char *pub_label;
                           const char *algo; int is_classical; } algos[] = {
@@ -1477,7 +1780,7 @@ static void cmd_pkey(int argc, char **argv)
             uint8_t s_buf[RNL_N * 4];
             poly_pack(s_buf, s_poly, 4);
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: 256\n", "n");
+            printf("%-10s: %d\n", "n", RNL_N);   /* was a literal 256 (TODO #374) */
             printf("%-10s: ", "s_packed");
             for (size_t j = 0; j < sizeof s_buf; j++) printf("%02x", s_buf[j]);
             putchar('\n');
@@ -1845,6 +2148,8 @@ static void cmd_kex(int argc, char **argv)
             /* Compute K_B and hint via Peikert reconciliation */
             BitArray K_B = BA_INIT;
             uint8_t hint[RNL_N / 8];
+            if (!rnl_validate_pub(C_A, RNL_N))
+                die("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
             rnl_agree(&K_B, s_B, C_A, NULL, hint);
 
             /* Bob's contributory nonce n_B */
@@ -1941,6 +2246,8 @@ static void cmd_kex(int argc, char **argv)
             pem_key_free(&our); pem_key_free(&their);
 
             BitArray K_A = BA_INIT;
+            if (!rnl_validate_pub(C_B, RNL_N))
+                die("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
             rnl_agree(&K_A, s_A, C_B, hint, NULL);
 
             /* rnl_agree output is LSB-first; reverse to big-endian for Python compat */
@@ -2019,6 +2326,8 @@ static void cmd_kex(int argc, char **argv)
 
             BitArray K1 = BA_INIT;
             uint8_t hint[RNL_N / 8];
+            if (!rnl_validate_pub(C_A, RNL_N))
+                die("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
             rnl_agree(&K1, s_B, C_A, NULL, hint);
 
             uint8_t n_B[KEYBYTES];
@@ -2137,6 +2446,8 @@ static void cmd_kex(int argc, char **argv)
             rnl_round(C_A, ms, RNL_Q, RNL_P);
 
             BitArray K1 = BA_INIT;
+            if (!rnl_validate_pub(C_B, RNL_N))
+                die("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
             rnl_agree(&K1, s_A, C_B, hint, NULL);
             uint8_t K1_rev[KEYBYTES]; int ri2;
             for (ri2 = 0; ri2 < KEYBYTES; ri2++) K1_rev[ri2] = K1.b[KEYBYTES-1-ri2];
@@ -3151,18 +3462,23 @@ static void cmd_dec(int argc, char **argv)
          * used (TODO #239).  It cannot exceed the DER we actually read, and the
          * payload cannot be longer than the length claiming to describe it.
          * Shorter is legal — integer encoding may have dropped leading zero
-         * bytes — and is right-aligned into the zero-padded buffer below. */
-        if (ct.vlens[2] > 9 || ct_len > ct.der_len || ct.vlens[3] > ct_len) {
+         * bytes — and is right-aligned into the zero-padded buffer below.
+         * Compare SIGNIFICANT bytes: an empty payload is the INTEGER 0, whose
+         * one DER form is a single 00 byte, so its encoded length is 1 against
+         * a declared 0 (refused here from TODO #239 until #370). */
+        size_t vl = ct.vlens[3];
+        const uint8_t *vp = ct.vals[3];
+        while (vl > 0 && vp[0] == 0) { vp++; vl--; }
+        if (ct.vlens[2] > 9 || ct_len > ct.der_len || vl > ct_len) {
             fprintf(stderr, "dec: V%d-Duplex ciphertext declares %zu bytes but "
                             "carries %zu\n", dplex_v3 ? 3 : 2, ct_len,
-                    ct.vlens[3]);
+                    vl);
             exit(1);
         }
         uint8_t *ct_buf = calloc(ct_len ? ct_len : 1, 1);
         uint8_t *pt_buf = malloc(ct_len ? ct_len : 1);
         if (!ct_buf || !pt_buf) die("dec: out of memory");
-        size_t vl = ct.vlens[3];
-        memcpy(ct_buf + (ct_len - vl), ct.vals[3], vl);
+        if (vl) memcpy(ct_buf + (ct_len - vl), vp, vl);
         uint8_t tag_buf[32];
         BitArray tag_ba = BA_INIT;
         ba_from_ra(&tag_ba, ct.vals[4], ct.vlens[4]);
@@ -3282,12 +3598,15 @@ static void cmd_dec(int argc, char **argv)
         strcmp(algo, "hpke-nl3") == 0) {
         /* CT: vals[0]=R, vals[1]=E, vals[2]=nbits (no format tag) */
         if (ct.n_items < 2) die("dec: malformed HPKE ciphertext");
+        check_item_width(&ct, 2, KEYBITS, "n");   /* TODO #371 */
         if (priv_k.n_items < 1) die("dec: malformed private key");
         BitArray priv = BA_INIT, R = BA_INIT, E = BA_INIT, dec_key = BA_INIT, D = BA_INIT;
         ba_from_ra(&priv, priv_k.vals[0], priv_k.vlens[0]);
         ba_from_ra(&R,    ct.vals[0],     ct.vlens[0]);
         ba_from_ra(&E,    ct.vals[1],     ct.vlens[1]);
         pem_key_free(&ct); pem_key_free(&priv_k);
+        if (!gf_pub_is_valid(&R))
+            die("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
         gf_pow_ba(&dec_key, &R, &priv);
         if (strcmp(algo, "hpke") == 0)
             ba_fscx_revolve(&D, &E, &dec_key, R_VALUE);
@@ -3302,6 +3621,7 @@ static void cmd_dec(int argc, char **argv)
     } else if (strcmp(algo, "hpke-stern-kem") == 0) {
         /* CT: SEQUENCE(syn[66], E[32], r).  Priv: SEQUENCE(h0,h1,sup0,sup1,r,d). */
         if (ct.n_items < 3) die("dec: malformed HPKE-Stern-KEM ciphertext");
+        check_item_width(&ct, 2, QCMDPC_R, "r");   /* TODO #371 */
         if (priv_k.n_items < 6) die("dec: malformed HPKE-Stern-KEM private key");
         int i, k;
         QcMdpcPriv priv;
@@ -3908,12 +4228,15 @@ static void cmd_sign(int argc, char **argv)
         for (ki=0;ki<nb;ki++) zkB=(zkB<<8)|kbody[4+nb+ki];
         for (ki=0;ki<nb;ki++) zky=(zky<<8)|kbody[4+2*nb+ki];
         free(kbody);
-        ZkpNlRound *zk_proof = zkp_nl_prove(zkA, zkB, zky, nl_n, ZKP_NL_PROD_ROUNDS,
+        /* --rounds was parsed by the other CLIs and ignored here (TODO #367);
+         * with a verifier floor (TODO #364) the count has to be the one asked for. */
+        int zk_rounds = rounds_arg(argc, argv, "--rounds", "sign", ZKP_NL_PROD_ROUNDS);
+        ZkpNlRound *zk_proof = zkp_nl_prove(zkA, zkB, zky, nl_n, zk_rounds,
                                              msg_bytes, KEYBYTES, urnd2);
         fclose(urnd2);
         size_t pack_len;
-        uint8_t *pack = zkp_nl_pack_proof(zk_proof, ZKP_NL_PROD_ROUNDS, nl_n, &pack_len);
-        zkp_nl_proof_free(zk_proof, ZKP_NL_PROD_ROUNDS);
+        uint8_t *pack = zkp_nl_pack_proof(zk_proof, zk_rounds, nl_n, &pack_len);
+        zkp_nl_proof_free(zk_proof, zk_rounds);
         if (pem_write_file(out_path ? out_path : "-", PEM_ZKP_NL_PROOF, pack, pack_len) != 0)
             die("cannot write ZKP-NL proof");
         free(pack);
@@ -3938,12 +4261,13 @@ static void cmd_sign(int argc, char **argv)
         for (ki=0;ki<nb;ki++) zkB=(zkB<<8)|kbody[4+nb+ki];
         for (ki=0;ki<nb;ki++) zky=(zky<<8)|kbody[4+2*nb+ki];
         free(kbody);
-        ZkpNlPpRound *pp_proof = zkp_nl_pp_prove(zkA, zkB, zky, nl_n, ZKP_NL_PROD_ROUNDS,
+        int pp_rounds = rounds_arg(argc, argv, "--rounds", "sign", ZKP_NL_PROD_ROUNDS);
+        ZkpNlPpRound *pp_proof = zkp_nl_pp_prove(zkA, zkB, zky, nl_n, pp_rounds,
                                                   msg_bytes, KEYBYTES, urnd2);
         fclose(urnd2);
         size_t pack_len;
-        uint8_t *pack = zkp_nl_pp_pack_proof(pp_proof, ZKP_NL_PROD_ROUNDS, nl_n, &pack_len);
-        zkp_nl_pp_proof_free(pp_proof, ZKP_NL_PROD_ROUNDS);
+        uint8_t *pack = zkp_nl_pp_pack_proof(pp_proof, pp_rounds, nl_n, &pack_len);
+        zkp_nl_pp_proof_free(pp_proof, pp_rounds);
         if (pem_write_file(out_path ? out_path : "-", PEM_ZKP_NL_PP_SIG, pack, pack_len) != 0)
             die("cannot write ZKP-NL-PP signature");
         free(pack);
@@ -3994,21 +4318,14 @@ static void cmd_sign(int argc, char **argv)
         ba_from_ra(&seed_ba, priv_k.vals[1], priv_k.vlens[1]);
         pem_key_free(&priv_k);
 
-        /* --rounds selects the Fiat-Shamir round count; SDF_ROUNDS is the
-         * build default.  Matches the Go and Python CLIs (TODO #236). */
-        const char *sr_arg = get_arg(argc, argv, "--rounds");
-        int sr_rounds = SDF_ROUNDS;
-        if (sr_arg) {
-            sr_rounds = atoi(sr_arg);
-            if (sr_rounds < 1 || sr_rounds > SDF_MAX_ROUNDS) {
-                fprintf(stderr, "sign: --rounds must be between 1 and %d\n",
-                        SDF_MAX_ROUNDS);
-                exit(1);
-            }
-        }
+        /* --rounds selects the Fiat-Shamir round count (TODO #236).  The CLI
+         * default is the 128-bit count, not the suite's SDF_ROUNDS demo value,
+         * because verifiers refuse fewer unless asked (TODO #364). */
+        int sr_rounds = rounds_arg(argc, argv, "--rounds", "sign", SDF_PRODUCTION_ROUNDS);
         if (sr_rounds < SDF_PRODUCTION_ROUNDS)
             fprintf(stderr, "WARNING: signing at %d rounds; %d are needed for "
-                            "128-bit Fiat-Shamir soundness ((2/3)^r).\n",
+                            "128-bit Fiat-Shamir soundness ((2/3)^r), and a verifier "
+                            "refuses fewer unless given --min-rounds.\n",
                     sr_rounds, SDF_PRODUCTION_ROUNDS);
 
         SternSig sig;
@@ -4041,7 +4358,9 @@ static void cmd_sign(int argc, char **argv)
                 "(run pkey --pubout on the signer key and include it)");
 
         SternRingSig rsig;
-        stern_ring_alloc(&rsig, k, SDF_ROUNDS);
+        /* Honours --rounds like Python/Go/Java; it used SDF_ROUNDS (32) always. */
+        stern_ring_alloc(&rsig, k,
+                         rounds_arg(argc, argv, "--rounds", "sign", SDF_PRODUCTION_ROUNDS));
         stern_ring_sign(&rsig, &msg, &e_ba, j, seeds, syndrs, urnd);
         ring_sig_pack_and_write(&rsig, out_path);
         stern_ring_free(&rsig);
@@ -4107,6 +4426,8 @@ static void cmd_verify(int argc, char **argv)
     const char *sig_path    = get_arg(argc, argv, "--sig");
     const char *digest      = get_arg(argc, argv, "--digest");
     digest = digest_value("verify", digest);
+    const int   min_rounds  = rounds_arg(argc, argv, "--min-rounds", "verify",
+                                         CLI_MIN_VERIFY_ROUNDS);
     if (!algo)    die("verify: --algo required");
     if (!in_path) die("verify: --in required");
     if (!sig_path) die("verify: --sig required");
@@ -4215,6 +4536,9 @@ static void cmd_verify(int argc, char **argv)
         int k = ring_load_members(ring_arg, seeds, syndrs);
         SternRingSig rsig;
         int sig_k = ring_sig_load(sig_path, &rsig);
+        { int rr = rsig.rounds;
+          if (rr < min_rounds) stern_ring_free(&rsig);
+          require_rounds(rr, min_rounds, "hpks-ring signature", "verify"); }
         if (sig_k != k) {
             stern_ring_free(&rsig);
             fprintf(stderr, "hpks-ring verify: signature ring size %d != %d "
@@ -4247,6 +4571,7 @@ static void cmd_verify(int argc, char **argv)
         int prf_n, prf_rounds;
         ZkpNlRound *zk_proof = zkp_nl_unpack_proof(prfbuf, prflen, &prf_n, &prf_rounds);
         free(prfbuf);
+        require_rounds(prf_rounds, min_rounds, "nl-zkboo proof", "verify");
         if (prf_n != nl_n) die("verify: proof n mismatch with pubkey n");
         int ok = zkp_nl_verify(zkB, zky, nl_n, prf_rounds, msg.b, KEYBYTES, zk_proof);
         zkp_nl_proof_free(zk_proof, prf_rounds);
@@ -4274,6 +4599,7 @@ static void cmd_verify(int argc, char **argv)
         int prf_n, prf_rounds;
         ZkpNlPpRound *pp_proof = zkp_nl_pp_unpack_proof(prfbuf, prflen, &prf_n, &prf_rounds);
         free(prfbuf);
+        require_rounds(prf_rounds, min_rounds, "nl-zkbpp proof", "verify");
         if (prf_n != nl_n) die("verify: proof n mismatch with pubkey n");
         int ok = zkp_nl_pp_verify(zkB, zky, nl_n, prf_rounds, msg.b, KEYBYTES, pp_proof);
         zkp_nl_pp_proof_free(pp_proof, prf_rounds);
@@ -4298,6 +4624,7 @@ static void cmd_verify(int argc, char **argv)
         pem_key_load(&sig_k, sig_path);
         if (strcmp(sig_k.label, PEM_SIGNATURE) != 0 || sig_k.n_items < 3)
             die("verify: invalid signature PEM");
+        check_item_width(&sig_k, 3, KEYBITS, "n");   /* TODO #371 */
         BitArray s_ba = BA_INIT, R = BA_INIT, e_stored = BA_INIT;
         ba_from_ra(&s_ba,     sig_k.vals[0], sig_k.vlens[0]);
         ba_from_ra(&R,        sig_k.vals[1], sig_k.vlens[1]);
@@ -4310,15 +4637,23 @@ static void cmd_verify(int argc, char **argv)
             ba_fscx_revolve(&e_v, &R, &msg, I_VALUE);
         else
             hpks_nl_challenge(&e_v, &R, &msg);
-
         /* lhs = g^s * pub^e_v; OK if lhs == R */
         BitArray lhs1 = BA_INIT, lhs2 = BA_INIT, lhs = BA_INIT;
         gf_pow_ba(&lhs1, &GF_GEN, &s_ba);
         gf_pow_ba(&lhs2, &pub,    &e_v);
         gf_mul_ba(&lhs, &lhs1, &lhs2);
 
-        if (ba_equal(&lhs, &R)) { puts("Signature OK");          exit(0); }
-        else                    { puts("Verification FAILED");   exit(1); }
+        if (!ba_equal(&lhs, &R)) { puts("Verification FAILED");  exit(1); }
+        /* TODO #372: the stored challenge is part of the signature's bytes, so
+         * one that is not the recomputed e is a second encoding of the same
+         * signature -- refused, as every CLI does.  Checked only once the
+         * algebra holds: a wrong message or key changes e too, and stays an
+         * ordinary "Verification FAILED". */
+        if (!ba_equal(&e_v, &e_stored))
+            die("verify: signature challenge e is not the recomputed one "
+                "(rejected: non-canonical signature)");
+        puts("Signature OK");
+        exit(0);
 
     } else if (strcmp(algo, "hpks-stern") == 0) {
         fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
@@ -4343,6 +4678,7 @@ static void cmd_verify(int argc, char **argv)
         SternSig sig;
         if (stern_sig_load(sig_path, &sig) != 0)
             die("verify: cannot load Stern signature");
+        require_rounds(sig.rounds, min_rounds, "hpks-stern signature", "verify");
 
         int ok = hpks_stern_f_verify(&sig, &msg, &seed_ba, syndr);
         stern_sig_free(&sig);
@@ -4516,9 +4852,20 @@ static void cmd_decfile(int argc, char **argv)
     uint64_t plaintext_len = 0;
     { int j; for (j = 0; j < 8; j++) plaintext_len = (plaintext_len << 8) | raw[5+j]; }
     const uint8_t *nonce_bytes = raw + 13;
+    /* Bound the wire length by the file BEFORE any arithmetic on it: a
+     * plaintext_len near 2^64 wrapped n_blocks * KEYBYTES, so ct_end came out
+     * small, the check below passed, and the block loop read past the buffer
+     * (TODO #368). */
+    if (plaintext_len > raw_len - 77)
+        die("decfile: file truncated (ciphertext or auth tag missing)");
     size_t n_blocks = (size_t)((plaintext_len + KEYBYTES - 1) / KEYBYTES);
     size_t ct_end   = 45 + n_blocks * KEYBYTES;
     if (raw_len < ct_end + 32) die("decfile: file truncated (ciphertext or auth tag missing)");
+    /* TODO #368: exactly one encoding per file -- nothing after the tag. */
+    if (raw_len > ct_end + 32) {
+        fprintf(stderr, "decfile: %zu bytes after the auth tag\n", raw_len - ct_end - 32);
+        exit(1);
+    }
     const uint8_t *ct_bytes   = raw + 45;
     const uint8_t *tag_stored = raw + ct_end;
 
@@ -5019,16 +5366,8 @@ static void cmd_cred_issue(int argc, char **argv)
      * matching the Go and Python CLIs (TODO #236).  Before that item a C
      * issuer was locked to its build's SDF_ROUNDS, and CI compensated by
      * asking the Python and Go issuers for --rounds 32. */
-    const char *ci_rnd = get_arg(argc, argv, "--rounds");
-    int ci_rounds = SDF_ROUNDS;
-    if (ci_rnd) {
-        ci_rounds = atoi(ci_rnd);
-        if (ci_rounds < 1 || ci_rounds > SDF_MAX_ROUNDS) {
-            fprintf(stderr, "cred-issue: --rounds must be between 1 and %d\n",
-                    SDF_MAX_ROUNDS);
-            exit(1);
-        }
-    }
+    /* Default: the 128-bit count, as in the other three CLIs (TODO #364). */
+    int ci_rounds = rounds_arg(argc, argv, "--rounds", "cred-issue", SDF_PRODUCTION_ROUNDS);
 
     SternSig sig;
     stern_sig_alloc(&sig, ci_rounds);
@@ -5045,12 +5384,11 @@ static void cmd_cred_prove(int argc, char **argv)
     const char *in_path  = get_arg(argc, argv, "--in");
     const char *out_path = get_arg(argc, argv, "--out");
     const char *msg_arg  = get_arg(argc, argv, "--msg");
-    const char *rnd_arg  = get_arg(argc, argv, "--rounds");
     if (!in_path) die("cred-prove: --in (HCRED private key) required");
 
-    int rounds = HCRED_DEMO_ROUNDS;
-    if (rnd_arg) rounds = atoi(rnd_arg);
-    if (rounds < 1) die("cred-prove: --rounds must be >= 1");
+    /* Default: 219, as in the other three CLIs; it was HCRED_DEMO_ROUNDS (4),
+     * which the verifier floor now refuses (TODO #364). */
+    int rounds = rounds_arg(argc, argv, "--rounds", "cred-prove", ZKP_NL_PROD_ROUNDS);
 
     size_t blen;
     uint8_t *body = zkp_raw_pem_read(in_path, PEM_HCRED_PRIV, &blen);
@@ -5098,6 +5436,8 @@ static void cmd_cred_verify(int argc, char **argv)
     const char *issuer_path = get_arg(argc, argv, "--issuer");
     const char *msg_arg     = get_arg(argc, argv, "--msg");
     const char *rnd_arg     = get_arg(argc, argv, "--rounds");
+    const int   min_rounds  = rounds_arg(argc, argv, "--min-rounds", "cred-verify",
+                                         CLI_MIN_VERIFY_ROUNDS);
     if (!proof_path)  die("cred-verify: --proof required");
     if (!pubkey_path) die("cred-verify: --pubkey required");
 
@@ -5106,14 +5446,17 @@ static void cmd_cred_verify(int argc, char **argv)
     uint8_t *pbuf = zkp_raw_pem_read(proof_path, PEM_HCRED_PROOF, &plen);
     HcredProof proof;
     memset(&proof, 0, sizeof(proof));
-    if (hcred_proof_deserialize(&proof, pbuf, plen) != 0) {
+    size_t used = 0;
+    if (hcred_proof_deserialize(&proof, pbuf, plen, &used) != 0) {
         free(pbuf);
         die("cred-verify: cannot deserialize proof");
     }
     free(pbuf);
+    if (used != plen) die_raw_trailing(PEM_HCRED_PROOF, plen - used);   /* TODO #372 */
 
     int rounds = proof.rounds;
     if (rnd_arg) rounds = atoi(rnd_arg);
+    require_rounds(proof.rounds, min_rounds, "HCRED proof", "cred-verify");
 
     /* Load public key */
     int32_t C_poly[HCRED_N], m_poly[HCRED_N];
@@ -5143,6 +5486,7 @@ static void cmd_cred_verify(int argc, char **argv)
         SternSig cred_sig;
         if (stern_sig_load_label(cred_path, PEM_HCRED_CRED, &cred_sig) != 0)
             die("cred-verify: cannot load credential from --cred");
+        require_rounds(cred_sig.rounds, min_rounds, "HCRED credential", "cred-verify");
 
         /* Load issuer hpks-stern public key: DER SEQ(syndr_int, seed, n) */
         PemKey iss_k;
@@ -5187,7 +5531,9 @@ static void cmd_cred_verify(int argc, char **argv)
  * so the list cannot drift from dispatch again (TODO #339). */
 static void usage(void)
 {
-    fputs("Herradura Cryptographic Suite CLI v1.9.44\n"
+    /* No version here: a hand-kept number went stale (v1.9.44 at 14.0.4, TODO #363);
+     * the release is the README title, which check_docs_consistency.py holds. */
+    fputs("Herradura Cryptographic Suite CLI\n"
           "\n"
           "Usage: herradura_cli <command> [options]\n"
           "\n", stdout);
@@ -5229,7 +5575,7 @@ static void usage(void)
 "    decfile verifies before decrypting and exits non-zero on auth failure.\n"
 "\n"
 "  sign --algo ALGO --key PRIV --in FILE --out SIG\n"
-"    rnl-sigma: key = hpks-zkp-nl private key (n=256); produces ZKP-RNL PROOF PEM.\n"
+"    rnl-sigma: key = hkex-rnl private key;          produces ZKP-RNL PROOF PEM.\n"
 "    nl-zkboo:  key = hpks-zkp-nl private key;      produces ZKP-NL PROOF PEM.\n"
 "    nl-zkbpp:  key = hpks-zkp-nl private key;      produces ZKP-NL-PP SIGNATURE PEM (ZKB++).\n"
 "    hpks-wots: ONE-TIME signature — a WOTS key may sign exactly once (reuse refused).\n"
@@ -5297,6 +5643,7 @@ int main(int argc, char **argv)
 
     const char *cmd = argv[1];
     check_unknown_flags(cmd, argc, argv);
+    check_key_labels(cmd, argc, argv);   /* TODO #366 */
     if (strcmp(cmd, "genpkey") == 0) { cmd_genpkey(argc, argv); return 0; }
     if (strcmp(cmd, "pkey")    == 0) { cmd_pkey(argc, argv);    return 0; }
     if (strcmp(cmd, "kex")     == 0) { cmd_kex(argc, argv);     return 0; }

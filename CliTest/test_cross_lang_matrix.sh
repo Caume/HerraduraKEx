@@ -47,7 +47,13 @@ CLI[py]="python3 $ROOT/HerraduraCli/herradura.py"
 [ -x "$ROOT/HerraduraCli/herradura_cli" ]    && CLI[c]="$ROOT/HerraduraCli/herradura_cli"
 [ -x "$ROOT/HerraduraCli/herradura_cli_go" ] && CLI[go]="$ROOT/HerraduraCli/herradura_cli_go"
 if command -v javac >/dev/null 2>&1; then
-    bash bindings/java/build.sh >/dev/null 2>&1
+    # TODO #370: a failed build used to abort here under `set -e` with no line
+    # saying so; say what broke instead.
+    if ! bash bindings/java/build.sh >"$TMP/java_build.out" 2>&1; then
+        echo "FAIL test_cross_lang_matrix: bindings/java/build.sh failed:" >&2
+        sed 's/^/       | /' "$TMP/java_build.out" | tail -20 >&2
+        exit 1
+    fi
     CLI[java]="java -cp $ROOT/bindings/java herradurakex.HerraduraCli"
 fi
 
@@ -77,6 +83,23 @@ fi
 pass() { echo "PASS $1"; PASS=$((PASS+1)); }
 fail() { echo "FAIL $1"; FAIL=$((FAIL+1)); }
 
+# prod <label> <cmd...> -- run a PRODUCER step (genpkey, pkey, kex, enc, sign,
+# ...) with its status captured (TODO #370).  These used to run bare under
+# `set -e`, so one refused step aborted the whole script with no FAIL line:
+# CI showed "PASS hkex-rnl py-alice/c-bob agree" and then nothing, and the
+# failing pair had to be inferred.  Now a failed step is ONE named FAIL that
+# carries the command's own error text, and returns 1 so the caller skips
+# (does not score) the checks that depend on it -- `prod ... || continue`.
+prod() {
+    local label="$1"; shift
+    local rc=0
+    "$@" >"$TMP/prod.out" 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    fail "$label (rc=$rc) -- dependent checks skipped, not scored"
+    sed 's/^/       | /' "$TMP/prod.out" | head -12
+    return 1
+}
+
 check_roundtrip() {
     local label="$1" orig="$2" plain="$3"
     if [ -f "$plain" ] && cmp -s "$orig" "$plain"; then pass "$label"; else fail "$label"; fi
@@ -100,14 +123,15 @@ printf 'CROSS-LANG-MATRIX-TEST-32BYTES!!' > "$TMP/msg.bin"
 echo "=== HKEX-GF keygen/kex matrix ==="
 for genA in "${LANGS[@]}"; do
     for genB in "${LANGS[@]}"; do
-        ${CLI[$genA]} genpkey --algo hkex-gf --out "$TMP/a_${genA}_${genB}.pem" >/dev/null 2>&1
-        ${CLI[$genA]} pkey --in "$TMP/a_${genA}_${genB}.pem" --pubout --out "$TMP/a_${genA}_${genB}_pub.pem" >/dev/null 2>&1
-        ${CLI[$genB]} genpkey --algo hkex-gf --out "$TMP/b_${genA}_${genB}.pem" >/dev/null 2>&1
-        ${CLI[$genB]} pkey --in "$TMP/b_${genA}_${genB}.pem" --pubout --out "$TMP/b_${genA}_${genB}_pub.pem" >/dev/null 2>&1
-        ${CLI[$genA]} kex --algo hkex-gf --our "$TMP/a_${genA}_${genB}.pem" --their "$TMP/b_${genA}_${genB}_pub.pem" \
-            --out "$TMP/ask_${genA}_${genB}.pem" >/dev/null 2>&1
-        ${CLI[$genB]} kex --algo hkex-gf --our "$TMP/b_${genA}_${genB}.pem" --their "$TMP/a_${genA}_${genB}_pub.pem" \
-            --out "$TMP/bsk_${genA}_${genB}.pem" >/dev/null 2>&1
+        L="hkex-gf $genA-alice/$genB-bob"
+        prod "$L: $genA genpkey" ${CLI[$genA]} genpkey --algo hkex-gf --out "$TMP/a_${genA}_${genB}.pem" &&
+        prod "$L: $genA pkey --pubout" ${CLI[$genA]} pkey --in "$TMP/a_${genA}_${genB}.pem" --pubout --out "$TMP/a_${genA}_${genB}_pub.pem" &&
+        prod "$L: $genB genpkey" ${CLI[$genB]} genpkey --algo hkex-gf --out "$TMP/b_${genA}_${genB}.pem" &&
+        prod "$L: $genB pkey --pubout" ${CLI[$genB]} pkey --in "$TMP/b_${genA}_${genB}.pem" --pubout --out "$TMP/b_${genA}_${genB}_pub.pem" &&
+        prod "$L: $genA kex" ${CLI[$genA]} kex --algo hkex-gf --our "$TMP/a_${genA}_${genB}.pem" --their "$TMP/b_${genA}_${genB}_pub.pem" \
+            --out "$TMP/ask_${genA}_${genB}.pem" &&
+        prod "$L: $genB kex" ${CLI[$genB]} kex --algo hkex-gf --our "$TMP/b_${genA}_${genB}.pem" --their "$TMP/a_${genA}_${genB}_pub.pem" \
+            --out "$TMP/bsk_${genA}_${genB}.pem" || continue
         if cmp -s "$TMP/ask_${genA}_${genB}.pem" "$TMP/bsk_${genA}_${genB}.pem"; then
             pass "hkex-gf $genA-alice/$genB-bob agree"
         else
@@ -124,7 +148,7 @@ matrix_symmetric() {
     local algo="$1" key="$2"
     echo "=== $algo enc/dec matrix ==="
     for enc in "${LANGS[@]}"; do
-        ${CLI[$enc]} enc --algo "$algo" --key "$key" --in "$TMP/msg.bin" --out "$TMP/${algo}_ct_$enc.pem" >/dev/null 2>&1
+        prod "$algo $enc-enc" ${CLI[$enc]} enc --algo "$algo" --key "$key" --in "$TMP/msg.bin" --out "$TMP/${algo}_ct_$enc.pem" || continue
         for dec in "${LANGS[@]}"; do
             ${CLI[$dec]} dec --algo "$algo" --key "$key" --in "$TMP/${algo}_ct_$enc.pem" \
                 --out "$TMP/${algo}_pt_${enc}_${dec}.bin" >/dev/null 2>&1 || true
@@ -147,11 +171,11 @@ matrix_asym_enc() {
     local algo="$1"
     echo "=== $algo enc/dec matrix ==="
     for kg in "${LANGS[@]}"; do
-        ${CLI[$kg]} genpkey --algo "$algo" --out "$TMP/${algo}_${kg}.pem" >/dev/null 2>&1
-        ${CLI[$kg]} pkey --in "$TMP/${algo}_${kg}.pem" --pubout --out "$TMP/${algo}_${kg}_pub.pem" >/dev/null 2>&1
+        prod "$algo key=$kg genpkey" ${CLI[$kg]} genpkey --algo "$algo" --out "$TMP/${algo}_${kg}.pem" &&
+        prod "$algo key=$kg pkey --pubout" ${CLI[$kg]} pkey --in "$TMP/${algo}_${kg}.pem" --pubout --out "$TMP/${algo}_${kg}_pub.pem" || continue
         for enc in "${LANGS[@]}"; do
-            ${CLI[$enc]} enc --algo "$algo" --pubkey "$TMP/${algo}_${kg}_pub.pem" --in "$TMP/msg.bin" \
-                --out "$TMP/${algo}_ct_${kg}_${enc}.pem" >/dev/null 2>&1
+            prod "$algo key=$kg $enc-enc" ${CLI[$enc]} enc --algo "$algo" --pubkey "$TMP/${algo}_${kg}_pub.pem" --in "$TMP/msg.bin" \
+                --out "$TMP/${algo}_ct_${kg}_${enc}.pem" || continue
             for dec in "${LANGS[@]}"; do
                 ${CLI[$dec]} dec --algo "$algo" --key "$TMP/${algo}_${kg}.pem" --in "$TMP/${algo}_ct_${kg}_${enc}.pem" \
                     --out "$TMP/${algo}_pt_${kg}_${enc}_${dec}.bin" >/dev/null 2>&1 || true
@@ -178,10 +202,11 @@ matrix_kem() {
                 local attempt=0
                 while :; do
                     attempt=$((attempt+1))
-                    ${CLI[$kg]} genpkey --algo "$algo" --out "$TMP/kem_${kg}.pem" >/dev/null 2>&1
-                    ${CLI[$kg]} pkey --in "$TMP/kem_${kg}.pem" --pubout --out "$TMP/kem_${kg}_pub.pem" >/dev/null 2>&1
-                    ${CLI[$enc]} enc --algo "$algo" --pubkey "$TMP/kem_${kg}_pub.pem" --in "$TMP/msg.bin" \
-                        --out "$TMP/kem_ct.pem" >/dev/null 2>&1
+                    local L="$algo key=$kg $enc-enc -> $dec-dec"
+                    prod "$L: $kg genpkey" ${CLI[$kg]} genpkey --algo "$algo" --out "$TMP/kem_${kg}.pem" &&
+                    prod "$L: $kg pkey --pubout" ${CLI[$kg]} pkey --in "$TMP/kem_${kg}.pem" --pubout --out "$TMP/kem_${kg}_pub.pem" &&
+                    prod "$L: $enc enc" ${CLI[$enc]} enc --algo "$algo" --pubkey "$TMP/kem_${kg}_pub.pem" --in "$TMP/msg.bin" \
+                        --out "$TMP/kem_ct.pem" || break
                     local dec_output rc
                     dec_output=$(${CLI[$dec]} dec --algo "$algo" --key "$TMP/kem_${kg}.pem" --in "$TMP/kem_ct.pem" \
                         --out "$TMP/kem_pt.bin" 2>&1) && rc=0 || rc=$?
@@ -218,10 +243,10 @@ matrix_sign() {
     local extra=("$@")
     echo "=== $algo sign/verify matrix ==="
     for sg in "${LANGS[@]}"; do
-        ${CLI[$sg]} genpkey --algo "$algo" --out "$TMP/${algo}_${sg}.pem" >/dev/null 2>&1
-        ${CLI[$sg]} pkey --in "$TMP/${algo}_${sg}.pem" --pubout --out "$TMP/${algo}_${sg}_pub.pem" >/dev/null 2>&1
-        ${CLI[$sg]} sign --algo "$algo" --key "$TMP/${algo}_${sg}.pem" --in "$TMP/msg.bin" \
-            --out "$TMP/${algo}_sig_${sg}.pem" "${extra[@]}" >/dev/null 2>&1
+        prod "$algo $sg genpkey" ${CLI[$sg]} genpkey --algo "$algo" --out "$TMP/${algo}_${sg}.pem" &&
+        prod "$algo $sg pkey --pubout" ${CLI[$sg]} pkey --in "$TMP/${algo}_${sg}.pem" --pubout --out "$TMP/${algo}_${sg}_pub.pem" &&
+        prod "$algo $sg-sign" ${CLI[$sg]} sign --algo "$algo" --key "$TMP/${algo}_${sg}.pem" --in "$TMP/msg.bin" \
+            --out "$TMP/${algo}_sig_${sg}.pem" "${extra[@]}" || continue
         for vf in "${LANGS[@]}"; do
             check_verify_ok "$algo $sg-sign -> $vf-verify" \
                 ${CLI[$vf]} verify --algo "$algo" --pubkey "$TMP/${algo}_${sg}_pub.pem" \
@@ -231,10 +256,10 @@ matrix_sign() {
 }
 matrix_sign hpks
 matrix_sign hpks-nl
-# The C CLI hardcodes Stern-F signing/verification to its compile-time
-# SDF_ROUNDS (32) with no override (same constraint as hcred above), so all
-# signers must use 32 rounds for a C-verifiable (or C-produced) signature.
-matrix_sign hpks-stern --rounds 32
+# Default flags on both sides: since TODO #364 every CLI signs Stern-F at 219
+# rounds and every verifier refuses fewer, so this cell is the production-count
+# interop check (it ran at a 32-round demo count before).
+matrix_sign hpks-stern
 
 # ── HPKS-XMSS-F sign/verify matrix (TODO #208) — h=3 (8 leaves) keeps
 #    4-language keygen fast; each signer uses leaf 0 only, so the matrix
@@ -243,12 +268,12 @@ matrix_sign hpks-stern --rounds 32
 #    to sign). ─────────────────────────────────────────────────────────────
 echo "=== hpks-xmss sign/verify matrix ==="
 for sg in "${LANGS[@]}"; do
-    ${CLI[$sg]} genpkey --algo hpks-xmss --xmss-height 3 \
-        --out "$TMP/xmss_${sg}.pem" >/dev/null 2>&1
-    ${CLI[$sg]} pkey --in "$TMP/xmss_${sg}.pem" --pubout \
-        --out "$TMP/xmss_${sg}_pub.pem" >/dev/null 2>&1
-    ${CLI[$sg]} sign --algo hpks-xmss --key "$TMP/xmss_${sg}.pem" --in "$TMP/msg.bin" \
-        --out "$TMP/xmss_sig_${sg}.pem" >/dev/null 2>&1
+    prod "hpks-xmss $sg genpkey" ${CLI[$sg]} genpkey --algo hpks-xmss --xmss-height 3 \
+        --out "$TMP/xmss_${sg}.pem" &&
+    prod "hpks-xmss $sg pkey --pubout" ${CLI[$sg]} pkey --in "$TMP/xmss_${sg}.pem" --pubout \
+        --out "$TMP/xmss_${sg}_pub.pem" &&
+    prod "hpks-xmss $sg-sign" ${CLI[$sg]} sign --algo hpks-xmss --key "$TMP/xmss_${sg}.pem" --in "$TMP/msg.bin" \
+        --out "$TMP/xmss_sig_${sg}.pem" || continue
     for vf in "${LANGS[@]}"; do
         check_verify_ok "hpks-xmss $sg-sign -> $vf-verify" \
             ${CLI[$vf]} verify --algo hpks-xmss --pubkey "$TMP/xmss_${sg}_pub.pem" \
@@ -270,13 +295,14 @@ PYEOF
 }
 for genA in "${LANGS[@]}"; do
     for genB in "${LANGS[@]}"; do
-        ${CLI[$genA]} genpkey --algo hkex-rnl --out "$TMP/ra_${genA}_${genB}.pem" >/dev/null 2>&1
-        ${CLI[$genA]} pkey --in "$TMP/ra_${genA}_${genB}.pem" --pubout --out "$TMP/ra_${genA}_${genB}_pub.pem" >/dev/null 2>&1
-        ${CLI[$genB]} genpkey --algo hkex-rnl --out "$TMP/rb_${genA}_${genB}.pem" >/dev/null 2>&1
-        ${CLI[$genB]} kex --algo hkex-rnl --our "$TMP/rb_${genA}_${genB}.pem" --their "$TMP/ra_${genA}_${genB}_pub.pem" \
-            --out "$TMP/rb_resp_${genA}_${genB}.pem" >/dev/null 2>&1
-        ${CLI[$genA]} kex --algo hkex-rnl --our "$TMP/ra_${genA}_${genB}.pem" --their "$TMP/rb_resp_${genA}_${genB}.pem" \
-            --out "$TMP/ra_sk_${genA}_${genB}.pem" >/dev/null 2>&1
+        L="hkex-rnl $genA-alice/$genB-bob"
+        prod "$L: $genA genpkey" ${CLI[$genA]} genpkey --algo hkex-rnl --out "$TMP/ra_${genA}_${genB}.pem" &&
+        prod "$L: $genA pkey --pubout" ${CLI[$genA]} pkey --in "$TMP/ra_${genA}_${genB}.pem" --pubout --out "$TMP/ra_${genA}_${genB}_pub.pem" &&
+        prod "$L: $genB genpkey" ${CLI[$genB]} genpkey --algo hkex-rnl --out "$TMP/rb_${genA}_${genB}.pem" &&
+        prod "$L: $genB kex (Bob responds)" ${CLI[$genB]} kex --algo hkex-rnl --our "$TMP/rb_${genA}_${genB}.pem" --their "$TMP/ra_${genA}_${genB}_pub.pem" \
+            --out "$TMP/rb_resp_${genA}_${genB}.pem" &&
+        prod "$L: $genA kex (Alice completes)" ${CLI[$genA]} kex --algo hkex-rnl --our "$TMP/ra_${genA}_${genB}.pem" --their "$TMP/rb_resp_${genA}_${genB}.pem" \
+            --out "$TMP/ra_sk_${genA}_${genB}.pem" || continue
         k_bob=$(rnl_session_key "$TMP/rb_resp_${genA}_${genB}.pem" 2>/dev/null || echo BOB_ERR)
         k_alice=$(rnl_session_key "$TMP/ra_sk_${genA}_${genB}.pem" 2>/dev/null || echo ALICE_ERR)
         if [ "$k_bob" = "$k_alice" ] && [ "$k_bob" != "BOB_ERR" ]; then
@@ -289,12 +315,11 @@ done
 
 # ── HCRED: NxN issuer/user-CLI x verifier-CLI matrix (rounds=8 for speed) ──
 echo "=== hcred issue/prove/verify matrix ==="
-# cred-issue's --rounds controls the issuer's Stern-F signature; the C CLI
-# hardcodes this to its compile-time SDF_ROUNDS (32) with no override, so
-# all producers must use 32 here for a C-issued/verified credential to be
-# readable. cred-prove's --rounds controls the ZKBoo presentation-proof
-# repetition count instead and is independently configurable everywhere;
-# use a small demo value (matching C's HCRED_DEMO_ROUNDS default) for speed.
+# cred-issue's --rounds controls the issuer's Stern-F signature and
+# cred-prove's the ZKBoo presentation proof; both are configurable in all four
+# CLIs (TODO #236) and default to 219.  Small demo values keep the n = 256
+# matrix affordable, so the verifier passes --min-rounds to accept them
+# (TODO #364); test_round_floor.sh checks that it refuses them otherwise.
 HCRED_ISSUE_ROUNDS=32
 HCRED_PROVE_ROUNDS=4
 for who in "${LANGS[@]}"; do
@@ -349,7 +374,8 @@ for who in "${LANGS[@]}"; do
     fi
     for vf in "${LANGS[@]}"; do
         set +e
-        ${CLI[$vf]} cred-verify --proof "$TMP/hc_proof_$who.pem" --pubkey "$TMP/hc_u_${who}_pub.pem" \
+        ${CLI[$vf]} cred-verify --min-rounds $HCRED_PROVE_ROUNDS \
+            --proof "$TMP/hc_proof_$who.pem" --pubkey "$TMP/hc_u_${who}_pub.pem" \
             --cred "$TMP/hc_cred_$who.pem" --issuer "$TMP/hc_i_${who}_pub.pem" \
             --msg "matrix-presentation-$who" >/dev/null 2>&1
         rc=$?
@@ -377,12 +403,14 @@ with open(sys.argv[2], "rb") as f:
 print(suite.oprf_direct(x, k).to_bytes(nbits // 8, "big").hex())
 PYEOF
 }
-${CLI[py]} genpkey --algo oprf --out "$TMP/oprf_k.pem" >/dev/null 2>&1
+OPRF_KEY_OK=1
+prod "oprf py genpkey" ${CLI[py]} genpkey --algo oprf --out "$TMP/oprf_k.pem" || OPRF_KEY_OK=0
 for role in "${LANGS[@]}"; do
-    ${CLI[$role]} oprf-blind --in "$TMP/msg.bin" --out "$TMP/oprf_state_$role.pem" >/dev/null 2>&1
-    ${CLI[py]} oprf-eval --key "$TMP/oprf_k.pem" --in "$TMP/oprf_state_$role.pem" --out "$TMP/oprf_eval_$role.pem" >/dev/null 2>&1
-    ${CLI[$role]} oprf-unblind --state "$TMP/oprf_state_$role.pem" --eval "$TMP/oprf_eval_$role.pem" \
-        --out "$TMP/oprf_out_$role.hex" >/dev/null 2>&1
+    [ "$OPRF_KEY_OK" -eq 1 ] || break
+    prod "oprf $role oprf-blind" ${CLI[$role]} oprf-blind --in "$TMP/msg.bin" --out "$TMP/oprf_state_$role.pem" &&
+    prod "oprf $role: py oprf-eval" ${CLI[py]} oprf-eval --key "$TMP/oprf_k.pem" --in "$TMP/oprf_state_$role.pem" --out "$TMP/oprf_eval_$role.pem" &&
+    prod "oprf $role oprf-unblind" ${CLI[$role]} oprf-unblind --state "$TMP/oprf_state_$role.pem" --eval "$TMP/oprf_eval_$role.pem" \
+        --out "$TMP/oprf_out_$role.hex" || continue
     direct=$(oprf_direct_hex "$TMP/oprf_k.pem" "$TMP/msg.bin" 2>/dev/null || echo DIRECT_ERR)
     got=$(tr -d '\r\n' < "$TMP/oprf_out_$role.hex" 2>/dev/null || echo GOT_ERR)
     if [ "$got" = "$direct" ] && [ "$direct" != "DIRECT_ERR" ]; then
@@ -438,9 +466,9 @@ for who in "${LANGS[@]}"; do
     # what turned the stale half of this comment into a failing test.
     uarg=(--username "user_$who")
     case "$who" in c|go) uarg=() ;; esac
-    ${CLI[$who]} genpkey --algo oprf --out "$TMP/pake_k_$who.pem" >/dev/null 2>&1
-    ${CLI[$who]} pake-register --key "$TMP/pake_k_$who.pem" "${uarg[@]}" \
-        --password "correct horse battery staple $who" --out "$TMP/pake_rec_$who.pem" >/dev/null 2>&1
+    prod "aPAKE $who genpkey" ${CLI[$who]} genpkey --algo oprf --out "$TMP/pake_k_$who.pem" &&
+    prod "aPAKE $who pake-register" ${CLI[$who]} pake-register --key "$TMP/pake_k_$who.pem" "${uarg[@]}" \
+        --password "correct horse battery staple $who" --out "$TMP/pake_rec_$who.pem" || continue
     for other in "${LANGS[@]}"; do
         [ "$other" = "$who" ] && continue
         if pake_can_decode "$other" "$TMP/pake_rec_$who.pem"; then

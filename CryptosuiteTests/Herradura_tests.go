@@ -1792,7 +1792,7 @@ func main() {
 
 	restore := captureStdout()
 
-	fmt.Println("=== Herradura KEx v1.9.35 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
@@ -2180,8 +2180,48 @@ func testRnlMBlindGuard() {
 	for i := 0; i < N; i++ {
 		nRun++
 		// (a) accept-control: a genuine uniform draw must pass.
-		if !RnlValidateMBlind(RnlRandPoly(n, RnlQ), RnlQ) {
+		uniform := RnlRandPoly(n, RnlQ)
+		if !RnlValidateMBlind(uniform, RnlQ) {
 			badReject++
+		}
+		// (f) TODO #371: RnlValidatePub, the same two tests over Z_p for a
+		//     peer's public value C.  Accept-control: (a)'s draw reduced mod p
+		//     (no new draw); then all-zero, sparse at full range, clustered at
+		//     full count, and both sides of the count boundary.
+		pub := make([]int, n)
+		for j, c := range uniform {
+			pub[j] = c % RnlP
+		}
+		if !RnlValidatePub(pub) {
+			badReject++
+		}
+		if RnlValidatePub(make([]int, n)) {
+			badAccept++
+		}
+		pSparse := make([]int, n)
+		for j := 0; j < n/8; j++ {
+			pSparse[j] = RnlP - 1
+		}
+		if RnlValidatePub(pSparse) {
+			badAccept++
+		}
+		pClustered := make([]int, n)
+		for j := range pClustered {
+			pClustered[j] = 1 + j%(RnlP/8-1)
+		}
+		if RnlValidatePub(pClustered) {
+			badAccept++
+		}
+		pEdge := make([]int, n)
+		for j := 0; j < n/4; j++ {
+			pEdge[j] = RnlP - 1
+		}
+		if !RnlValidatePub(pEdge) {
+			badReject++
+		}
+		pEdge[n/4-1] = 0
+		if RnlValidatePub(pEdge) {
+			badAccept++
 		}
 		// (b) the all-zero polynomial.
 		if RnlValidateMBlind(make([]int, n), RnlQ) {

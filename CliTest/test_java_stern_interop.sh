@@ -9,10 +9,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-if ! command -v javac >/dev/null 2>&1; then
-    echo "SKIP test_java_stern_interop: javac not found (install a JDK to run this test)"
-    exit 0
-fi
+# TODO #370: no JDK is a run that did not happen, not a pass (exit 2;
+# HKX_ALLOW_SKIP=1 to override).
+. "$ROOT/CliTest/lib_build.sh"
+hkx_require_built java
 
 bash bindings/java/build.sh >/dev/null
 
@@ -91,13 +91,13 @@ $CLI_JAVA genpkey --algo hpks-stern --out "$TMP/hpks_j.pem" 2>/dev/null
 $CLI_JAVA pkey    --in "$TMP/hpks_j.pem" --pubout --out "$TMP/hpks_j_pub.pem" 2>/dev/null
 $CLI_JAVA sign    --algo hpks-stern --key "$TMP/hpks_j.pem" --in "$TMP/msg.bin" --out "$TMP/sig_j.pem" --rounds 16 2>/dev/null
 check_verify "hpks-stern: Java sign -> Python verify" \
-    $CLI_PY verify --algo hpks-stern --pubkey "$TMP/hpks_j_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/sig_j.pem"
+    $CLI_PY verify --algo hpks-stern --pubkey "$TMP/hpks_j_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/sig_j.pem" --min-rounds 16
 
 $CLI_PY  genpkey --algo hpks-stern --out "$TMP/hpks_p.pem" 2>/dev/null
 $CLI_PY  pkey    --in "$TMP/hpks_p.pem" --pubout --out "$TMP/hpks_p_pub.pem" 2>/dev/null
 $CLI_PY  sign    --algo hpks-stern --key "$TMP/hpks_p.pem" --in "$TMP/msg.bin" --out "$TMP/sig_p.pem" --rounds 16 2>/dev/null
 check_verify "hpks-stern: Python sign -> Java verify" \
-    $CLI_JAVA verify --algo hpks-stern --pubkey "$TMP/hpks_p_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/sig_p.pem"
+    $CLI_JAVA verify --algo hpks-stern --pubkey "$TMP/hpks_p_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/sig_p.pem" --min-rounds 16
 
 # ── HPKE-Stern-F (demo Niederreiter KEM) — both directions ─────────────────
 $CLI_JAVA genpkey --algo hpke-stern --out "$TMP/hpke_j.pem" 2>/dev/null

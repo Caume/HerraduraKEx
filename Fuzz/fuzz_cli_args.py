@@ -17,7 +17,9 @@ of silently corrupting memory and returning 0.
 Usage: python3 Fuzz/fuzz_cli_args.py [--trials N] [--seconds S]
 """
 import argparse
+import json
 import os
+import re
 import random
 import signal
 import subprocess
@@ -38,7 +40,18 @@ ALGOS = ["hkex-gf", "hkex-rnl", "hpks", "hpks-nl", "hpke", "hpke-nl",
           "hpks-stern", "hpke-stern", "hske", "hske-nla1", "hske-duplex",
           "hfscx-256", "", "not-an-algo", "hkex-gf\x00", "A" * 4096]
 FLAGS = ["--algo", "--in", "--out", "--key", "--pubkey", "--sig", "--ad",
-         "--kdf", "--digest", "--ring", "--bits", "--aead"]
+         "--kdf", "--digest", "--ring", "--bits", "--aead",
+         # TODO #367: the slots that take a PEER's artifact, which is where a
+         # "valid DER, wrong arity" file panicked the Go CLI.
+         "--our", "--their", "--our-kem", "--their-kem"]
+FILE_FLAGS = ("--in", "--key", "--pubkey", "--sig", "--our", "--their",
+              "--our-kem", "--their-kem")
+
+# A process that exits with a code but printed one of these crashed all the
+# same: a Go panic exits 2 with a goroutine dump, an uncaught Python exception
+# exits 1 with a traceback.  Matching only signals missed both (TODO #367).
+CRASH_RE = re.compile(rb"^panic: |^goroutine \d+ \[|Traceback \(most recent call last\)"
+                      rb"|fatal error: |runtime: out of memory|AddressSanitizer", re.M)
 
 
 def random_file_pool(tmpdir, count=12):
@@ -65,12 +78,57 @@ def random_file_pool(tmpdir, count=12):
     write("der_claims_huge_seq", bytes([0x30, 0x82, 0xff, 0xff]) + b"\x00" * 16)
     write("truncated_der_int", bytes([0x30, 0x10, 0x02, 0x82, 0xff, 0xff]))
     write("path_traversal_name", b"ignored")  # content unused; used as a path idea below
+    # TODO #367: structurally valid PEM/DER with the wrong number of items, for
+    # every DER-SEQUENCE label the spec lists -- the shape that reached unchecked
+    # indexing in the Go and Python decoders.  0, min-1 and max+1 small INTEGERs.
+    sys.path.insert(0, os.path.join(REPO, "HerraduraCli"))
+    from codec import der_int, der_seq, pem_wrap
+    spec = json.load(open(os.path.join(REPO, "spec", "herradura-protocol-spec.json")))
+    for row in spec["pem_der_items"]:
+        for k in sorted({0, row["min"] - 1, row["max"] + 1} - {-1}):
+            body = der_seq(*[der_int(v) for v in ([256, 7, 1 << 31, 0, 1] * 4)[:k]])
+            tag = row["label"].replace("HERRADURA ", "").replace(" ", "_").lower()
+            write(f"arity_{tag}_{k}", pem_wrap(row["label"], body).encode())
     for i in range(max(0, count - len(paths))):
         write(f"extra_{i}", bytes(rng.randrange(256) for _ in range(rng.randint(0, 512))))
     return paths
 
 
+# TODO #367: a well-formed invocation whose artifact slots all point at
+# wrong-arity files.  Purely random argv almost never names a subcommand, a
+# valid --algo and the flags that algo reads all at once, so it never reached
+# the decoders where the Go panics were (a 2-minute run against the pre-fix
+# build found none); this mode does, within seconds.
+STRUCTURED = [
+    ("kex", ["hkex-gf", "hkex-rnl", "hybrid-rnl-stern"], ["--our", "--their", "--our-kem", "--their-kem"]),
+    ("enc", ["hpke", "hpke-nl", "hpke-nl3", "hpke-stern", "hpke-stern-kem", "hske", "hske-nla1"], ["--pubkey", "--key"]),
+    ("dec", ["hpke", "hpke-nl", "hpke-nl3", "hpke-stern", "hpke-stern-kem", "hske", "hske-nla1", "hske-duplex"], ["--key", "--in"]),
+    ("sign", ["hpks", "hpks-nl", "hpks-stern", "rnl-sigma", "hpks-xmss", "hpks-wots"], ["--key"]),
+    ("verify", ["hpks", "hpks-nl", "hpks-stern", "rnl-sigma", "hpks-xmss", "hpks-wots"], ["--pubkey", "--sig"]),
+    ("pkey", [""], ["--in"]),
+]
+
+
+def build_structured_argv(cli_prefix, tmpdir, files, rng):
+    sub, algos, slots = rng.choice(STRUCTURED)
+    arity = [f for f in files if os.path.basename(f).startswith("arity_")]
+    argv = list(cli_prefix) + [sub]
+    algo = rng.choice(algos)
+    if algo:
+        argv += ["--algo", algo]
+    for flag in slots:
+        argv += [flag, rng.choice(arity)]
+    if sub in ("enc", "sign", "verify"):
+        argv += ["--in", files[0]]       # the empty file: a valid message
+    if sub == "verify":
+        argv += ["--min-rounds", "1"]
+    argv += ["--out", os.path.join(tmpdir, f"out_{rng.randrange(10000)}")]
+    return argv
+
+
 def build_argv(cli_prefix, tmpdir, files, rng):
+    if rng.random() < 1 / 3:
+        return build_structured_argv(cli_prefix, tmpdir, files, rng)
     sub = rng.choice(SUBCOMMANDS)
     argv = list(cli_prefix) + [sub]
     nflags = rng.randint(0, 5)
@@ -82,7 +140,7 @@ def build_argv(cli_prefix, tmpdir, files, rng):
             argv += [flag, rng.choice(["256", "0", "-1", "99999999999999999999", "abc"])]
         elif flag == "--aead":
             argv += [flag]
-        elif flag in ("--in", "--key", "--pubkey", "--sig"):
+        elif flag in FILE_FLAGS:
             choice = rng.choice(files + [os.path.join(tmpdir, "does_not_exist"),
                                           "/etc/passwd", ""])
             argv += [flag, choice]
@@ -105,6 +163,8 @@ def run_one(argv, timeout=5):
         return ("bad_argv", None, b"")  # e.g. embedded NUL -- not a CLI bug, just an invalid argv
     if proc.returncode < 0:
         return ("signal", -proc.returncode, proc.stderr[-2000:])
+    if CRASH_RE.search(proc.stderr):
+        return ("crash_output", proc.returncode, proc.stderr[-2000:])
     return ("exit", proc.returncode, proc.stderr[-2000:])
 
 
@@ -134,6 +194,10 @@ def main():
                     sig_name = signal.Signals(code).name if code else "?"
                     crashes.append((name, argv, sig_name, stderr))
                     print(f"CRASH [{name}] signal={sig_name}: {argv}")
+                    print(f"  stderr tail: {stderr[-400:]!r}")
+                elif kind == "crash_output":
+                    crashes.append((name, argv, f"exit {code}", stderr))
+                    print(f"CRASH [{name}] exit={code} with a crash trace: {argv}")
                     print(f"  stderr tail: {stderr[-400:]!r}")
                 elif kind == "timeout":
                     crashes.append((name, argv, "timeout", b""))

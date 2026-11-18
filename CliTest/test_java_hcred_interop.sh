@@ -9,10 +9,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-if ! command -v javac >/dev/null 2>&1; then
-    echo "SKIP test_java_hcred_interop: javac not found (install a JDK to run this test)"
-    exit 0
-fi
+# TODO #370: no JDK is a run that did not happen, not a pass (exit 2;
+# HKX_ALLOW_SKIP=1 to override).
+. "$ROOT/CliTest/lib_build.sh"
+hkx_require_built java
 
 bash bindings/java/build.sh >/dev/null
 
@@ -42,7 +42,7 @@ $CLI_JAVA pkey --in "$TMP/ji.pem" --pubout --out "$TMP/ji_pub.pem" 2>/dev/null
 $CLI_JAVA cred-issue --our "$TMP/ji.pem" --in "$TMP/ju_pub.pem" --rounds $ROUNDS --out "$TMP/jcred.pem" 2>/dev/null
 $CLI_JAVA cred-prove --in "$TMP/ju.pem" --msg "java-side presentation" --rounds $ROUNDS --out "$TMP/jproof.pem" 2>/dev/null
 set +e
-$CLI_PY cred-verify --proof "$TMP/jproof.pem" --pubkey "$TMP/ju_pub.pem" \
+$CLI_PY cred-verify --min-rounds $ROUNDS --proof "$TMP/jproof.pem" --pubkey "$TMP/ju_pub.pem" \
     --cred "$TMP/jcred.pem" --issuer "$TMP/ji_pub.pem" --msg "java-side presentation" >/dev/null 2>&1
 check "hcred: Java user/issuer/proof -> Python verify (proof + credential)" $?
 set -e
@@ -55,7 +55,7 @@ $CLI_PY pkey --in "$TMP/pi.pem" --pubout --out "$TMP/pi_pub.pem" >/dev/null 2>&1
 $CLI_PY cred-issue --our "$TMP/pi.pem" --in "$TMP/pu_pub.pem" --rounds $ROUNDS --out "$TMP/pcred.pem" >/dev/null 2>&1
 $CLI_PY cred-prove --in "$TMP/pu.pem" --msg "python-side presentation" --rounds $ROUNDS --out "$TMP/pproof.pem" >/dev/null 2>&1
 set +e
-$CLI_JAVA cred-verify --proof "$TMP/pproof.pem" --pubkey "$TMP/pu_pub.pem" \
+$CLI_JAVA cred-verify --min-rounds $ROUNDS --proof "$TMP/pproof.pem" --pubkey "$TMP/pu_pub.pem" \
     --cred "$TMP/pcred.pem" --issuer "$TMP/pi_pub.pem" --msg "python-side presentation" >/dev/null 2>&1
 check "hcred: Python user/issuer/proof -> Java verify (proof + credential)" $?
 set -e
@@ -63,7 +63,7 @@ set -e
 # ── Tamper rejection: a proof verified against a different presentation
 #    message must fail, in both languages ───────────────────────────────────
 set +e
-$CLI_PY cred-verify --proof "$TMP/jproof.pem" --pubkey "$TMP/ju_pub.pem" --msg "wrong message" >/dev/null 2>&1
+$CLI_PY cred-verify --min-rounds $ROUNDS --proof "$TMP/jproof.pem" --pubkey "$TMP/ju_pub.pem" --msg "wrong message" >/dev/null 2>&1
 tamper_py_rc=$?
 set -e
 if [ "$tamper_py_rc" -ne 0 ]; then
@@ -75,7 +75,7 @@ else
 fi
 
 set +e
-$CLI_JAVA cred-verify --proof "$TMP/pproof.pem" --pubkey "$TMP/pu_pub.pem" --msg "wrong message" >/dev/null 2>&1
+$CLI_JAVA cred-verify --min-rounds $ROUNDS --proof "$TMP/pproof.pem" --pubkey "$TMP/pu_pub.pem" --msg "wrong message" >/dev/null 2>&1
 tamper_j_rc=$?
 set -e
 if [ "$tamper_j_rc" -ne 0 ]; then

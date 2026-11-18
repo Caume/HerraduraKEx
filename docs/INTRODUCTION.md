@@ -481,7 +481,8 @@ Cryptographic hash functions are used for:
 - **Message authentication (MAC):** mixing a secret key into the digest to prove both
   integrity and knowledge of the key.
 - **Pre-hash signing:** reducing a large file to 32 bytes before signing with HPKS,
-  HPKS-NL, or HPKS-Stern-F (via `--digest hfscx-256` in the CLI).
+  HPKS-NL, or HPKS-Stern-F. The CLI does this by default (`--digest hfscx-256`, since
+  v15.0.0); `--digest none` signs only the first 32 bytes of the input.
 
 ### 4.5.2 Merkle-Damgård construction in plain English
 
@@ -1107,10 +1108,10 @@ accepted signatures made with a Gaussian-elimination vector and no secret key.  
 take one thing from this section, take that the weight check is the scheme.
 
 Each round, a cheating prover survives with probability 2/3 — it can anticipate two
-of the three challenges, never all three.  After 32 rounds (the suite's demo default)
+of the three challenges, never all three.  After 32 rounds (the suite library's demo default)
 the probability a cheater passes every check is (2/3)^32 ≈ 5.6 × 10^{-6}, which is far
-from negligible: reaching 128-bit soundness takes 219 rounds, which is what
-`sign --rounds 219` is for.  Note the surviving probability is 2/3 per round, not 1/3
+from negligible: reaching 128-bit soundness takes 219 rounds, which is the CLIs' default and the
+floor every CLI verifier enforces unless given `--min-rounds` (TODO #364).  Note the surviving probability is 2/3 per round, not 1/3
 — see the (2/3)^R bound in the ZKBoo section below.
 
 **Fiat-Shamir Stern (HPKS-Stern-F):** Replace the verifier's random challenge b with

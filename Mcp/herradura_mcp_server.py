@@ -299,7 +299,9 @@ TOOLS = {
             "properties": {
                 "algo": {"type": "string"}, "key": {"type": "string"}, "in": {"type": "string"},
                 "out": {"type": "string"},
-                "digest": {"type": "string", "enum": ["none", "hfscx-256"]},
+                "digest": {"type": "string", "enum": ["none", "hfscx-256"],
+                           "description": "Pre-hash. Default hfscx-256 (the whole file is "
+                           "signed); none signs only its first 32 bytes."},
                 "ring": {"type": "string", "description": "hpks-ring only: comma-separated member "
                           "public-key PEM paths."},
             },
@@ -314,7 +316,7 @@ TOOLS = {
                 "algo": {"type": "string"}, "pubkey": {"type": "string"}, "in": {"type": "string"},
                 "sig": {"type": "string"},
                 "digest": {"type": "string", "enum": ["none", "hfscx-256"], "description": "Must "
-                          "match the value used when signing."},
+                          "match the value used when signing. Default hfscx-256."},
                 "ring": {"type": "string", "description": "hpks-ring only: comma-separated member "
                           "public-key PEM paths."},
             },

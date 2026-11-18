@@ -105,15 +105,15 @@ $CLI_PY sign  --algo nl-zkboo --key "$TMP/py_zkpnl.pem" \
               --rounds 16 --in "$TMP/msg.bin" --out "$TMP/py_zkpnl_proof.pem"
 check_verify "Python nl-zkboo sign → C verify" \
     "$CLI_C" verify --algo nl-zkboo --pubkey "$TMP/py_zkpnl_pub.pem" \
-    --in "$TMP/msg.bin" --sig "$TMP/py_zkpnl_proof.pem"
+    --in "$TMP/msg.bin" --sig "$TMP/py_zkpnl_proof.pem" --min-rounds 16
 check_reject "Python nl-zkboo sign → C verify (wrong msg)" \
     "$CLI_C" verify --algo nl-zkboo --pubkey "$TMP/py_zkpnl_pub.pem" \
-    --in "$TMP/msg2.bin" --sig "$TMP/py_zkpnl_proof.pem"
+    --in "$TMP/msg2.bin" --sig "$TMP/py_zkpnl_proof.pem" --min-rounds 16
 
 # Python sign → Go verify
 check_verify "Python nl-zkboo sign → Go verify" \
     "$CLI_GO" verify --algo nl-zkboo --pubkey "$TMP/py_zkpnl_pub.pem" \
-    --in "$TMP/msg.bin" --sig "$TMP/py_zkpnl_proof.pem"
+    --in "$TMP/msg.bin" --sig "$TMP/py_zkpnl_proof.pem" --min-rounds 16
 
 # C ZKP-NL keygen + sign → Python verify
 "$CLI_C" genpkey --algo hpks-zkp-nl --out "$TMP/c_zkpnl.pem"

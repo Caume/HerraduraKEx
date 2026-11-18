@@ -12,14 +12,11 @@ PY="python3 $SCRIPT_DIR/../HerraduraCli/herradura.py"
 C="$SCRIPT_DIR/../HerraduraCli/herradura_cli"
 GO="$SCRIPT_DIR/../HerraduraCli/herradura_cli_go"
 
-if [ ! -x "$C" ]; then
-  echo "SKIP: C CLI not found at $C (run build_c.sh first)"
-  exit 0
-fi
-if [ ! -x "$GO" ]; then
-  echo "SKIP: Go CLI not found at $GO (run build_go.sh first)"
-  exit 0
-fi
+# TODO #370: a missing C or Go CLI used to print SKIP and exit 0 -- a green
+# run that asserted nothing.  lib_build.sh exits 2 instead (HKX_ALLOW_SKIP=1
+# to override), and says whether the build or the toolchain is missing.
+. "$SCRIPT_DIR/lib_build.sh"
+hkx_require_built c go
 
 HAVE_JAVA=1
 if command -v javac >/dev/null 2>&1; then
@@ -344,8 +341,13 @@ for kind in co no; do
   pass "n-width: $kind PEM encodes n minimally (2 bytes) in ${CLINAMES[*]}"
 done
 
-# A pre-fix artifact (4-byte n) must still READ everywhere: the convergence
-# changes what we WRITE and must not narrow what we ACCEPT.
+# A pre-fix artifact (4-byte n).  Until v15.0.0 this asserted that it still
+# READ everywhere.  TODO #373 made every non-fixed-width field minimal-only,
+# so the 4-byte n is now REFUSED, in all four CLIs, with the minimal-encoding
+# message (MIGRATING.md section 12).  Nothing usable is lost: a round from
+# before 12.0.0 does not verify anyway.  Accept-control first: the same
+# aggregate in its minimal form must be accepted, or a CLI refusing every
+# aggregate would pass the refusal check.
 python3 - "$TMPDIR/i271_agg_${CLINAMES[0]}.pem" "$TMPDIR/i271_agg_wide.pem" <<'PYEOF'
 import base64, sys
 src, dst = sys.argv[1], sys.argv[2]
@@ -359,14 +361,25 @@ body = base64.encodebytes(bytes(d)).decode().strip()
 open(dst, 'w').write('-----BEGIN HERRADURA HPKST AGGREGATE-----\n%s\n'
                      '-----END HERRADURA HPKST AGGREGATE-----\n' % body)
 PYEOF
+WIDE_MSG='HERRADURA HPKST AGGREGATE: field 3 is encoded with a leading zero byte (expected minimal)'
 for i in "${!CLIS[@]}"; do
   cli="${CLIS[$i]}"; name="${CLINAMES[$i]}"
   $cli threshold-respond --key "$TMPDIR/alice.pem" \
     --commit "$TMPDIR/i271_ca.pem" --commit "$TMPDIR/i271_cb.pem" \
+    --aggregate "$TMPDIR/i271_agg_${CLINAMES[0]}.pem" --nonce "$TMPDIR/i271_na.pem" \
+    --out "$TMPDIR/i271_min_$name.pem" >/dev/null 2>&1 \
+    || fail "pre-#271 control" "$name refused the minimal aggregate the 4-byte case is built from"
+  rc=0
+  out=$($cli threshold-respond --key "$TMPDIR/alice.pem" \
+    --commit "$TMPDIR/i271_ca.pem" --commit "$TMPDIR/i271_cb.pem" \
     --aggregate "$TMPDIR/i271_agg_wide.pem" --nonce "$TMPDIR/i271_na.pem" \
-    --out "$TMPDIR/i271_wide_$name.pem" >/dev/null 2>&1 \
-    || fail "back-compat" "$name refused a pre-#271 aggregate with a 4-byte n"
+    --out "$TMPDIR/i271_wide_$name.pem" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "pre-#271 refusal" "$name accepted a 4-byte-n aggregate (TODO #373 expects a refusal)"
+  printf '%s' "$out" | grep -qF "$WIDE_MSG" \
+    || fail "pre-#271 refusal" "$name refused with unexpected text: $out"
 done
-pass "back-compat: a pre-#271 4-byte-n aggregate still reads in ${CLINAMES[*]}"
+pass "pre-#271 control: the minimal aggregate is accepted in ${CLINAMES[*]}"
+pass "pre-#271 refusal: a 4-byte-n aggregate is refused as non-minimal in ${CLINAMES[*]}"
 
 echo "=== All HPKS-T interop tests PASSED ==="

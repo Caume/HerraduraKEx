@@ -1,5 +1,4 @@
 // HerraduraCli/herradura_cli.go — Go CLI for the Herradura Cryptographic Suite
-// v1.9.48
 //
 // Usage:
 //   herradura_cli_go genpkey  --algo hkex-gf  --bits 256 --out alice.pem
@@ -122,6 +121,62 @@ func wireInt(b []byte, what, where string) int {
 	return bytesToInt(b)
 }
 
+// rnlWireN bounds a wire-supplied HKEX-RNL ring dimension: a power of two from
+// 8 to the deployed RnlN (TODO #367).  It sizes every polynomial unpacked
+// after it, so an unbounded one panicked or ran the process out of memory.
+// C is compiled for RnlN alone and requires it exactly (rnl_require_n).
+func rnlWireN(b []byte, where string) int {
+	v := bounded(wireInt(b, "ring dimension n", where), 8, RnlN, "ring dimension n", where)
+	if v&(v-1) != 0 {
+		fmt.Fprintf(os.Stderr, "%s: ring dimension n is %d (expected a power of two)\n", where, v)
+		os.Exit(1)
+	}
+	return v
+}
+
+// sternWireN bounds a wire-supplied Stern / HPKE-Stern key width (TODO #367).
+// rnlSameRing refuses a peer artifact whose ring dimension is not ours.  Go
+// used to read only its own key's n and ignore the peer's (TODO #367); Python
+// and Java refused the mismatch, and C requires RnlN of both.
+func rnlSameRing(ours int, theirs []byte, where string) {
+	if t := rnlWireN(theirs, where); t != ours {
+		fmt.Fprintf(os.Stderr, "%s: ring size mismatch (ours=%d, theirs=%d)\n", where, ours, t)
+		os.Exit(1)
+	}
+}
+
+func sternWireN(b []byte, where string) int {
+	return boundedN(wireInt(b, "n", where), where)
+}
+
+// checkDerItemsExact reports a shared-label artifact (CIPHERTEXT, SIGNATURE)
+// whose item count is not the one this algorithm's decoder reads (TODO #367).
+func checkDerItemsExact(label string, ints [][]byte, want int) error {
+	return fmt.Errorf("malformed PEM '%s': %d DER items, expected %d", label, len(ints), want)
+}
+
+// wireIntZ is wireInt for a field whose legitimate value may be 0, which DER
+// carries as an empty INTEGER body here (leading zero bytes are stripped).
+func wireIntZ(b []byte, what, where string) int {
+	if len(b) == 0 {
+		return 0
+	}
+	return wireInt(b, what, where)
+}
+
+// fitBytes returns a wire integer's bytes right-aligned in a width-byte field,
+// or refuses it when it does not fit.  big.Int.FillBytes PANICS on an
+// oversized value, which is what a crafted field reached before TODO #367.
+func fitBytes(b []byte, width int, what, where string) []byte {
+	v := new(big.Int).SetBytes(b)
+	if (v.BitLen()+7)/8 > width {
+		fmt.Fprintf(os.Stderr, "%s: %s is %d bytes (expected at most %d)\n",
+			where, what, (v.BitLen()+7)/8, width)
+		os.Exit(1)
+	}
+	return v.FillBytes(make([]byte, width))
+}
+
 // ── PEM label constants (must match Python and C exactly) ───────────────────
 
 const (
@@ -200,6 +255,7 @@ var privToAlgo = map[string]string{
 	lblKemPriv:       "hpke-stern-kem",
 	lblHpksWotsPriv:  "hpks-wots",
 	lblHpksXmssPriv:  "hpks-xmss",
+	lblOprfPriv:      "oprf", // pkey --text only (TODO #374)
 }
 
 var algoToPrivLbl = map[string]string{
@@ -378,12 +434,15 @@ func decryptPEMFile(path, passphrase string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	items, err := DerParseSeq(body)
+	items, enc, err := derParseLabeled(lblEncPriv, body)
 	if err != nil {
 		return "", err
 	}
-	if len(items) != 6 {
-		return "", fmt.Errorf("malformed ENCRYPTED PRIVATE KEY envelope (%d fields, want 6)", len(items))
+	if err := checkDerItems(lblEncPriv, items); err != nil {   // TODO #367
+		return "", err
+	}
+	if err := checkDerCaps(lblEncPriv, items, enc); err != nil {   // TODO #372, #373
+		return "", err
 	}
 	salt, iterB, nonceB, ct, tag, ptLenB := items[0], items[1], items[2], items[3], items[4], items[5]
 	// The salt, nonce, ciphertext and tag are FIXED-WIDTH byte strings carried
@@ -457,13 +516,89 @@ func readPEMInts(path string) (string, [][]byte, error) {
 		return "", nil, fmt.Errorf("%s is a passphrase-encrypted private key; decrypt it "+
 			"first with `pkey --decrypt --passphrase ... --in %s --out plain.pem`", path, path)
 	}
-	ints, err := DerParseSeq(der)
+	ints, enc, err := derParseLabeled(label, der)
+	if err == nil {
+		err = checkDerItems(label, ints)
+	}
+	if err == nil {
+		err = checkDerCaps(label, ints, enc)
+	}
 	return label, ints, err
+}
+
+// rawEnd refuses bytes after a raw-body PEM's last field (TODO #372); the text
+// is the one every CLI prints.
+func rawEnd(label string, body []byte, off int) error {
+	if off < len(body) {
+		return fmt.Errorf("malformed PEM '%s': %d bytes after its last field", label, len(body)-off)
+	}
+	return nil
+}
+
+// checkDerCaps holds each field to the generated PEM_DER_FIELD_CAPS width
+// (TODO #372): no field wider than its writer pads it to.
+// checkDerCaps runs the generated field check: #372's widths, #373's
+// encodings and value rules.
+func checkDerCaps(label string, ints [][]byte, enc DerEnc) error {
+	if len(enc.Width) != len(ints) {
+		return fmt.Errorf("malformed PEM '%s': cannot parse DER", label)
+	}
+	if msg := derFieldCheck(label, ints, enc.Width, enc.Lead); msg != "" {
+		return errors.New(msg)
+	}
+	return nil
+}
+
+func hkxMin(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// derParseLabeled is DerParseSeq with the PEM label in the trailing-data
+// message every CLI prints (TODO #372).
+func derParseLabeled(label string, der []byte) ([][]byte, DerEnc, error) {
+	if t, err := DerSeqTrailing(der); err == nil && t > 0 {
+		return nil, DerEnc{}, fmt.Errorf("malformed PEM '%s': %d bytes after the DER SEQUENCE", label, t)
+	}
+	// TODO #373: one encoding of the lengths and signs.
+	enc, kind, bad := DerSeqScan(der)
+	switch kind {
+	case 1:
+		return nil, enc, fmt.Errorf("malformed PEM '%s': DER length not in its shortest form", label)
+	case 2:
+		return nil, enc, fmt.Errorf("malformed PEM '%s': field %d is a negative INTEGER", label, bad)
+	case 3:
+		return nil, enc, fmt.Errorf("malformed PEM '%s': field %d is an empty INTEGER", label, bad)
+	}
+	ints, err := DerParseSeq(der)
+	return ints, enc, err
+}
+
+// checkDerItems holds a parsed DER SEQUENCE to the generated derItems table
+// (TODO #367), so no decoder indexes past the end of a short list.
+func checkDerItems(label string, ints [][]byte) error {
+	lim, ok := derItems[label]
+	if !ok || (len(ints) >= lim[0] && len(ints) <= lim[1]) {
+		return nil
+	}
+	want := fmt.Sprint(lim[0])
+	if lim[0] != lim[1] {
+		want = fmt.Sprintf("%d..%d", lim[0], lim[1])
+	}
+	return fmt.Errorf("malformed PEM '%s': %d DER items, expected %s", label, len(ints), want)
 }
 
 // ── DER encoding helpers ─────────────────────────────────────────────────────
 
 func derIntBig(v *big.Int, width int) ([]byte, error) {
+	// FillBytes panics on a value wider than the field; a key read from a
+	// crafted PEM reaches here with one (TODO #367).
+	if (v.BitLen()+7)/8 > width {
+		return nil, fmt.Errorf("value is %d bytes, wider than its %d-byte field",
+			(v.BitLen()+7)/8, width)
+	}
 	return DerIntEnc(v.FillBytes(make([]byte, width)))
 }
 
@@ -712,12 +847,13 @@ func encodeRNLResponse(K_B *BitArray, C_B []int, hint []byte, n int, nB []byte) 
 		return "", err
 	}
 
-	// n and hint_len (= n, number of coefficients)
+	// n and hint_len: n/2, the coefficients the hint covers, as the other three
+	// CLIs and encodeHybridResponse write (this wrote n until TODO #373).
 	nDer, err := derIntSmall(n)
 	if err != nil {
 		return "", err
 	}
-	hlDer, err := derIntSmall(n)
+	hlDer, err := derIntSmall(n / 2)
 	if err != nil {
 		return "", err
 	}
@@ -926,7 +1062,7 @@ func encodeHybridResponse(K *big.Int, C_B []int, hintUsedLen int, hint []byte, n
 func decodeHybridResponse(ints [][]byte) (K *big.Int, C_B []int, hintPacked []byte,
 	n int, nB []byte, syn *big.Int, rQC int) {
 	K = new(big.Int).SetBytes(ints[0])
-	n = bytesToInt(ints[3])
+	n = rnlWireN(ints[3], "kex hybrid-rnl-stern")
 
 	C_B = unpackPolyRaw(ints[1], n, 2)
 
@@ -943,7 +1079,8 @@ func decodeHybridResponse(ints [][]byte) (K *big.Int, C_B []int, hintPacked []by
 	}
 
 	nB = padLeftN(ints[5], 32)
-	rQC = bytesToInt(ints[7])
+	rQC = bounded(wireInt(ints[7], "QC-MDPC r", "kex hybrid-rnl-stern"), QcMdpcR, QcMdpcR,
+		"QC-MDPC r", "kex hybrid-rnl-stern")
 	rb := (rQC + 7) / 8
 	syn = new(big.Int).SetBytes(padLeftN(ints[6], rb))
 	return K, C_B, hintBuf, n, nB, syn, rQC
@@ -1054,7 +1191,7 @@ func loadRingPubkeys(ringArg string) ([]RingKeypair, int) {
 			fmt.Fprintf(os.Stderr, "hpks-ring: ring member %q is %q, expected hpks-stern public key\n", p, label)
 			os.Exit(1)
 		}
-		n := bytesToInt(ints[2])
+		n := sternWireN(ints[2], "hpks-ring")
 		if ringN < 0 {
 			ringN = n
 		} else if n != ringN {
@@ -1155,9 +1292,9 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 
 // ── genpkey ──────────────────────────────────────────────────────────────────
 
-// genpkeyDefaultBits is genpkey's --bits default, and the value the algorithms
-// that carry their own natural width (hpks-zkp-nl, TODO #281) read as "unset" --
-// matching the Python CLI's KEYBITS comparison and Java's Herradura.N one.
+// genpkeyDefaultBits is genpkey's --bits default.  An algorithm with its own
+// natural width (hpks-zkp-nl, TODO #281) tests isSet(fs, "bits") instead of
+// comparing against this value, so an explicit --bits 256 is not "unset" (#374).
 const genpkeyDefaultBits = 256
 
 func cmdGenpkey(args []string) {
@@ -1225,14 +1362,16 @@ func cmdGenpkey(args []string) {
 
 	case *algo == "hpks-zkp-nl":
 		// n comes from --bits, exactly as in the Python and Java CLIs (TODO
-		// #281): an omitted --bits -- or --bits 256, the flag's own default --
-		// means ZkpNlDefaultN, because at R = 219 a ZKBoo proof is already
+		// #281): an omitted --bits means ZkpNlDefaultN, because at R = 219 a ZKBoo proof is already
 		// ~35 KB at n = 8, so a wider n is a deliberate choice.  An
 		// out-of-range value is rejected by name rather than clamped: this
 		// branch passed ZkpNlDefaultN as a literal and dropped the flag
 		// silently until v6.7.0, so a caller asking for 64 got 8 and no error.
+		// TODO #374: "unset" means the flag was not given, not that it equals
+		// its default -- an explicit --bits 256 used to read as unset and wrote
+		// an n = 8 key; it now fails the range check below.
 		zkpN := ZkpNlDefaultN
-		if n != genpkeyDefaultBits {
+		if isSet(fs, "bits") {
 			zkpN = n
 		}
 		if zkpN <= 0 || zkpN%2 != 0 || zkpN > ZkpNlMaxN {
@@ -1453,12 +1592,12 @@ func cmdPkey(args []string) {
 
 		switch {
 		case classicalAlgos[algo]:
-			n := bytesToInt(ints[2])
+			n := gfWidth(bytesToInt(ints[2]), "pkey")
 			pub := new(big.Int).SetBytes(ints[1])
 			pem, err = encodeClassicalPub(pub, n, algo)
 
 		case algo == "hkex-rnl":
-			n := bytesToInt(ints[2])
+			n := rnlWireN(ints[2], "pkey")
 			s      := unpackPolyRaw(ints[0], n, 4)
 			mBlind := unpackPolyRaw(ints[1], n, 4)
 			ms     := RnlPolyMul(mBlind, s, RnlQ, n)
@@ -1470,18 +1609,17 @@ func cmdPkey(args []string) {
 			pem, err = encodeRNLPub(C, mBlind, n, nA)
 
 		case sternAlgos[algo]:
-			n    := bytesToInt(ints[2])
+			n    := sternWireN(ints[2], "pkey")
 			e    := NewBitArray(n, new(big.Int).SetBytes(ints[0]))
 			seed := NewBitArray(n, new(big.Int).SetBytes(ints[1]))
 			syn  := SternSyndrome(seed, e)
 			pem, err = encodeSternPub(syn, seed, n, algo)
 
 		case algo == "hpks-wots":
-			seed := make([]byte, 32)
-			new(big.Int).SetBytes(ints[0]).FillBytes(seed)
+			seed := fitBytes(ints[0], 32, "WOTS seed", "pkey")
 			var leafIdx uint32
 			if len(ints) >= 2 {
-				leafIdx = uint32(bytesToInt(ints[1]))
+				leafIdx = uint32(wireInt(ints[1], "WOTS leaf index", "pkey"))
 			}
 			_, pk := HpksWotsKeygen(seed, leafIdx)
 			pem = encodeWotsBlobPEM(pk, lblHpksWotsPub)
@@ -1517,6 +1655,12 @@ func cmdPkey(args []string) {
 				os.Exit(1)
 			}
 			pem, err = encodeKemPub(QcMdpcMul(h1, inv))
+
+		default:
+			// TODO #374: an OPRF server key has no public half; any other
+			// label reaching here wrote an empty file and exited 0.
+			fmt.Fprintf(os.Stderr, "pkey --pubout: %s has no public key\n", algo)
+			os.Exit(1)
 		}
 
 		if err != nil {
@@ -1531,7 +1675,7 @@ func cmdPkey(args []string) {
 	// --text
 	switch {
 	case classicalAlgos[algo]:
-		n    := bytesToInt(ints[2])
+		n    := gfWidth(bytesToInt(ints[2]), "pkey")
 		priv := new(big.Int).SetBytes(ints[0])
 		pub  := new(big.Int).SetBytes(ints[1])
 		fmt.Printf("algorithm : %s\n", algo)
@@ -1540,7 +1684,7 @@ func cmdPkey(args []string) {
 		fmt.Printf("public    : %0*x\n", n/4, pub)
 
 	case algo == "hkex-rnl":
-		n      := bytesToInt(ints[2])
+		n      := rnlWireN(ints[2], "pkey")
 		s      := unpackPolyRaw(ints[0], n, 4)
 		mBlind := unpackPolyRaw(ints[1], n, 4)
 		ms     := RnlPolyMul(mBlind, s, RnlQ, n)
@@ -1554,13 +1698,52 @@ func cmdPkey(args []string) {
 		}
 
 	case sternAlgos[algo]:
-		n    := bytesToInt(ints[2])
+		n    := sternWireN(ints[2], "pkey")
 		eBig := new(big.Int).SetBytes(ints[0])
 		sBig := new(big.Int).SetBytes(ints[1])
 		fmt.Printf("algorithm : %s\n", algo)
 		fmt.Printf("n         : %d\n", n)
 		fmt.Printf("e_int     : %0*x\n", n/4, eBig)
 		fmt.Printf("seed      : %0*x\n", n/4, sBig)
+
+	// TODO #374: the four cases below were missing, so --text printed nothing
+	// and exited 0 for these keys; an unhandled label now fails.
+	case algo == "hpke-stern-kem":
+		decodeKemPriv(ints) // validates the key
+		fmt.Printf("algorithm : %s\n", algo)
+		fmt.Printf("r         : %d\n", QcMdpcR)
+		fmt.Printf("d         : %d\n", QcMdpcD)
+
+	case algo == "hpks-wots":
+		fitBytes(ints[0], 32, "WOTS seed", "pkey")
+		var leafIdx uint32
+		if len(ints) >= 2 {
+			leafIdx = uint32(wireInt(ints[1], "WOTS leaf index", "pkey"))
+		}
+		fmt.Printf("algorithm : %s\n", algo)
+		fmt.Printf("leaf_idx  : %d\n", leafIdx)
+
+	case algo == "hpks-xmss":
+		h := bounded(wireInt(ints[1], "XMSS height", "pkey"), 1, xmssMaxH,
+			"XMSS height", "pkey")
+		numLeaves := 1 << uint(h)
+		blob := alignBlob(ints[3], numLeaves*32)
+		leafHashes := make([][]byte, numLeaves)
+		for i := 0; i < numLeaves; i++ {
+			leafHashes[i] = blob[i*32 : (i+1)*32]
+		}
+		fmt.Printf("algorithm : %s\n", algo)
+		fmt.Printf("h         : %d (%d leaves)\n", h, numLeaves)
+		fmt.Printf("root      : %x\n", HaccumRoot(leafHashes))
+
+	case algo == "oprf":
+		fitBytes(ints[0], 32, "OPRF key", "pkey")
+		fmt.Printf("algorithm : %s\n", algo)
+		fmt.Printf("bits      : %d\n", genpkeyDefaultBits)
+
+	default:
+		fmt.Fprintf(os.Stderr, "pkey --text: no text form for %s\n", algo)
+		os.Exit(1)
 	}
 }
 
@@ -1576,6 +1759,7 @@ func cmdKex(args []string) {
 	theirKem := fs.String("their-kem", "", "hybrid-rnl-stern: Alice's HPKE-Stern-KEM public key (Bob step)")
 	ourKem   := fs.String("our-kem", "", "hybrid-rnl-stern: Alice's own HPKE-Stern-KEM private key (Alice step)")
 	fs.Parse(args)
+	checkKeyLabels("kex", fs) // TODO #366
 
 	if *algo == "" || *our == "" || *their == "" {
 		fmt.Fprintln(os.Stderr, "kex: --algo, --our, --their required")
@@ -1617,6 +1801,9 @@ func cmdKex(args []string) {
 		n    := gfWidth(bytesToInt(ourInts[2]), "kex")
 		priv := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		pub  := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
+		if !GfPubIsValid(pub) {
+			die("kex", errors.New("their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
+		}
 
 		skBA := applyKDF(GfPow(pub, priv), n)
 		pem, err := encodeSessionKey(skBA, n)
@@ -1640,7 +1827,8 @@ func cmdKex(args []string) {
 			if err != nil {
 				die("kex", err)
 			}
-			n   := bytesToInt(ourInts[2])
+			n   := rnlWireN(ourInts[2], "kex")
+			rnlSameRing(n, theirInts[2], "kex")
 			s_B := unpackPolyRaw(ourInts[0], n, 4)
 			C_A := unpackPolyRaw(theirInts[0], n, 2)
 			m_A := unpackPolyRaw(theirInts[1], n, 4)
@@ -1663,6 +1851,9 @@ func cmdKex(args []string) {
 			C_B := RnlRound(ms, RnlQ, RnlP)
 
 			// Compute K_B and reconciliation hint
+			if !RnlValidatePub(C_A) {
+				die("kex hkex-rnl", errors.New("peer C failed entropy check (rejected: degenerate key)"))
+			}
 			K_B_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), nil)
 
 			// Bob's contributory nonce n_B
@@ -1686,7 +1877,8 @@ func cmdKex(args []string) {
 			if err != nil {
 				die("kex", err)
 			}
-			n   := bytesToInt(ourInts[2])
+			n   := rnlWireN(ourInts[2], "kex")
+			rnlSameRing(n, theirInts[3], "kex")
 			s_A := unpackPolyRaw(ourInts[0], n, 4)
 			C_B := unpackPolyRaw(theirInts[1], n, 2)
 
@@ -1719,6 +1911,9 @@ func cmdKex(args []string) {
 				hintBuf[i], hintBuf[j] = hintBuf[j], hintBuf[i]
 			}
 
+			if !RnlValidatePub(C_B) {
+				die("kex hkex-rnl", errors.New("peer C failed entropy check (rejected: degenerate key)"))
+			}
 			K_A_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), hintBuf)
 
 			// Contributory KDF: final_key = HFSCX-256(K_A_raw || n_A || n_B)
@@ -1758,7 +1953,8 @@ func cmdKex(args []string) {
 			if err != nil {
 				die("kex", err)
 			}
-			n   := bytesToInt(ourInts[2])
+			n   := rnlWireN(ourInts[2], "kex")
+			rnlSameRing(n, theirInts[2], "kex")
 			s_B := unpackPolyRaw(ourInts[0], n, 4)
 			C_A := unpackPolyRaw(theirInts[0], n, 2)
 			m_A := unpackPolyRaw(theirInts[1], n, 4)
@@ -1785,6 +1981,9 @@ func cmdKex(args []string) {
 			ms  := RnlPolyMul(m_A, s_B, RnlQ, n)
 			C_B := RnlRound(ms, RnlQ, RnlP)
 
+			if !RnlValidatePub(C_A) {
+				die("kex hybrid-rnl-stern", errors.New("peer C failed entropy check (rejected: degenerate key)"))
+			}
 			K1_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), nil)
 			n_B := NewRandBitArray(256).Bytes()
 			K1_ba := rnlContributoryKDF(K1_raw, rnlKeyBits(n), n_A, n_B)
@@ -1813,7 +2012,7 @@ func cmdKex(args []string) {
 			if err != nil {
 				die("kex", err)
 			}
-			n   := bytesToInt(ourInts[2])
+			n   := rnlWireN(ourInts[2], "kex")
 			s_A := unpackPolyRaw(ourInts[0], n, 4)
 			m_A := unpackPolyRaw(ourInts[1], n, 4)
 
@@ -1845,6 +2044,9 @@ func cmdKex(args []string) {
 			ms  := RnlPolyMul(m_A, s_A, RnlQ, n)
 			C_A := RnlRound(ms, RnlQ, RnlP)
 
+			if !RnlValidatePub(C_B) {
+				die("kex hybrid-rnl-stern", errors.New("peer C failed entropy check (rejected: degenerate key)"))
+			}
 			K1_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), hintPacked)
 			K1_ba := rnlContributoryKDF(K1_raw, rnlKeyBits(n), n_A, n_B)
 			K1_ba = applyKDF(K1_ba, rnlSessionBits(n))
@@ -1950,8 +2152,7 @@ func loadHdrbgState(path string) *HDrbg {
 		fmt.Fprintln(os.Stderr, "rand: malformed HDRBG state")
 		os.Exit(1)
 	}
-	state := make([]byte, 32)
-	new(big.Int).SetBytes(ints[0]).FillBytes(state)
+	state := fitBytes(ints[0], 32, "HDRBG state", "rand")
 	return DrbgFromState(state, uint64(bytesToInt(ints[1])))
 }
 
@@ -2059,13 +2260,26 @@ func loadKey(path string) (*big.Int, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	ints, err := DerParseSeq(der)
+	ints, enc, err := derParseLabeled(label, der)
+	if err == nil {
+		err = checkDerItems(label, ints)
+	}
+	if err == nil {
+		err = checkDerCaps(label, ints, enc)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
 	switch label {
 	case lblSession:
-		return new(big.Int).SetBytes(ints[0]), bytesToInt(ints[1]), nil
+		// TODO #367: the width sizes every BitArray the key builds; 0 or 7
+		// panicked in NewZero (E_WIDTH).
+		bits := new(big.Int).SetBytes(ints[1])
+		if !bits.IsInt64() || bits.Int64() < 16 || bits.Int64() > BAMaxBits || bits.Int64()%8 != 0 {
+			return nil, 0, fmt.Errorf("%s: session key width is %s (expected a multiple of 8, 16..%d)",
+				path, bits, BAMaxBits)
+		}
+		return new(big.Int).SetBytes(ints[0]), int(bits.Int64()), nil
 	case lblRnlResp:
 		// ints[3] is the RING dimension, which since TODO #223 is no longer the
 		// key width — the ring is 1024 while the derived key stays 256 bits.
@@ -2249,8 +2463,7 @@ func polyToDerInt(poly *big.Int, width int) *big.Int {
 
 // polyFromDerInt inverts polyToDerInt.
 func polyFromDerInt(v *big.Int, width int) *big.Int {
-	le := make([]byte, width)
-	v.FillBytes(le) // this is the little-endian byte view of the poly
+	le := fitBytes(v.Bytes(), width, "QC-MDPC polynomial", "hpke-stern-kem") // little-endian view
 	return new(big.Int).SetBytes(reverseBytes(le))
 }
 
@@ -2271,8 +2484,7 @@ func supToDerInt(sup []int, d int) *big.Int {
 }
 
 func supFromDerInt(v *big.Int, d int) []int {
-	buf := make([]byte, d*2)
-	v.FillBytes(buf)
+	buf := fitBytes(v.Bytes(), d*2, "QC-MDPC support", "hpke-stern-kem")
 	sup := make([]int, d)
 	for i := 0; i < d; i++ {
 		sup[i] = int(buf[i*2])<<8 | int(buf[i*2+1])
@@ -2331,6 +2543,11 @@ func encodeKemPub(hPub *big.Int) (string, error) {
 }
 
 func decodeKemPub(ints [][]byte) *big.Int {
+	// TODO #371: the declared r must be the one this CLI runs (it was ignored).
+	if len(ints) > 1 {
+		bounded(wireInt(ints[1], "QC-MDPC r", "QC-MDPC public key"), QcMdpcR, QcMdpcR,
+			"QC-MDPC r", "QC-MDPC public key")
+	}
 	return polyFromDerInt(new(big.Int).SetBytes(ints[0]), QcMdpcRBytes)
 }
 
@@ -2352,6 +2569,10 @@ func encodeKemCT(syn *big.Int, E *big.Int) (string, error) {
 }
 
 func decodeKemCT(ints [][]byte) (syn, E *big.Int) {
+	if len(ints) > 2 {   // TODO #371, as decodeKemPub
+		bounded(wireInt(ints[2], "QC-MDPC r", "QC-MDPC ciphertext"), QcMdpcR, QcMdpcR,
+			"QC-MDPC r", "QC-MDPC ciphertext")
+	}
 	syn = polyFromDerInt(new(big.Int).SetBytes(ints[0]), QcMdpcRBytes)
 	E = new(big.Int).SetBytes(ints[1])
 	return syn, E
@@ -2423,6 +2644,9 @@ func packSternSigLabel(sig *SternSig, n int, label string) (string, error) {
 
 // unpackSternSig deserialises a *SternSig from DER-parsed integer fields.
 func unpackSternSig(ints [][]byte) (*SternSig, int, error) {
+	if len(ints) != 5 {
+		return nil, 0, checkDerItemsExact(lblSig, ints, 5)
+	}
 	n := boundedN(wireInt(ints[0], "n", "verify"), "verify")
 	rounds := bounded(wireInt(ints[1], "round count", "verify"), 1, SdfMaxRounds,
 		"round count", "verify")
@@ -2581,6 +2805,7 @@ func decodeZkpRnlProof(body []byte) (w, c, z []int, n int, err error) {
 	for i := 0; i < n; i++ {
 		z[i] = int(int32(binary.BigEndian.Uint32(body[4+n*8+i*4:])))
 	}
+	err = rawEnd(lblZkpRnlProof, body, 4+n*12)
 	return
 }
 
@@ -2622,6 +2847,7 @@ func decodeZkpNlPriv(body []byte) (A, B, y uint64, n int, err error) {
 	for i := 0; i < nb; i++ {
 		y = (y << 8) | uint64(body[4+2*nb+i])
 	}
+	err = rawEnd(lblZkpNlPriv, body, 4+3*nb)
 	return
 }
 
@@ -2657,6 +2883,7 @@ func decodeZkpNlPub(body []byte) (B, y uint64, n int, err error) {
 	for i := 0; i < nb; i++ {
 		y = (y << 8) | uint64(body[4+nb+i])
 	}
+	err = rawEnd(lblZkpNlPub, body, 4+2*nb)
 	return
 }
 
@@ -2722,6 +2949,7 @@ func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
 		}
 		proof[j].ViewP2 = body[off : off+l2]; off += l2
 	}
+	err = rawEnd(lblZkpNlProof, body, off)
 	return
 }
 
@@ -2799,6 +3027,7 @@ func decodeZkpNlPpProof(body []byte) (proof []ZkpNlPpRound, n int, err error) {
 			copy(proof[j].Share2, body[off:off+nb]); off += nb
 		}
 	}
+	err = rawEnd(lblZkpNlPpSig, body, off)
 	return
 }
 
@@ -2942,6 +3171,10 @@ func decodeHcredPriv(body []byte) (sPoly, cPoly, mPoly []int, seedH *BitArray, s
 	// The layout is fixed, so the body length is EXACTLY what n implies.  A
 	// ">=" test only catches an n too LARGE; an n too small parses a prefix
 	// and succeeds, which is how a poked n=33 passed at n=256 (TODO #275).
+	if e := rawEnd(lblHcredPriv, body, 4+8*n+n/8+(n/2+7)/8); e != nil { // TODO #372
+		err = e
+		return
+	}
 	if len(body) != 4+8*n+n/8+(n/2+7)/8 {
 		return nil, nil, nil, nil, nil, 0, fmt.Errorf("HCRED private key: body length does not match n=%d", n)
 	}
@@ -2985,6 +3218,10 @@ func decodeHcredPub(body []byte) (cPoly, mPoly []int, seedH *BitArray, syndr *bi
 	// The layout is fixed, so the body length is EXACTLY what n implies.  A
 	// ">=" test only catches an n too LARGE; an n too small parses a prefix
 	// and succeeds, which is how a poked n=33 passed at n=256 (TODO #275).
+	if e := rawEnd(lblHcredPub, body, 4+5*n+n/8+(n/2+7)/8); e != nil { // TODO #372
+		err = e
+		return
+	}
 	if len(body) != 4+5*n+n/8+(n/2+7)/8 {
 		return nil, nil, nil, nil, 0, fmt.Errorf("HCRED public key: body length does not match n=%d", n)
 	}
@@ -3140,6 +3377,9 @@ func decodeHcredProof(body []byte) (*HcredProof, int, error) {
 		}
 		proof.Rounds[j] = rd
 	}
+	if e := rawEnd(lblHcredProof, body, off); e != nil {
+		return nil, 0, e
+	}
 	return proof, n, nil
 }
 
@@ -3152,6 +3392,7 @@ func cmdCredIssue(args []string) {
 	out := fs.String("out", "-", "HCRED CREDENTIAL PEM output")
 	rounds := fs.Int("rounds", 0, "Stern-F rounds (default: 219 for 128-bit soundness)")
 	fs.Parse(args)
+	checkKeyLabels("cred-issue", fs) // TODO #366
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "cred-issue: --in (HCRED public/private key) required")
@@ -3176,7 +3417,7 @@ func cmdCredIssue(args []string) {
 		fmt.Fprintf(os.Stderr, "cred-issue: --our must be an hpks-stern or hpke-stern private key, got %q\n", label)
 		os.Exit(1)
 	}
-	issuerN := bytesToInt(ourInts[2])
+	issuerN := sternWireN(ourInts[2], "cred-issue")
 	issuerE := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[0]))
 	issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[1]))
 
@@ -3202,6 +3443,7 @@ func cmdCredProve(args []string) {
 	msg := fs.String("msg", "", "Message to bind into the proof")
 	rounds := fs.Int("rounds", 0, "ZKBoo rounds (default: 219 for 128-bit soundness)")
 	fs.Parse(args)
+	checkKeyLabels("cred-prove", fs) // TODO #366
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "cred-prove: --in (HCRED private key) required")
@@ -3241,7 +3483,11 @@ func cmdCredVerify(args []string) {
 	issuerPath := fs.String("issuer", "", "Issuer hpks-stern/hpke-stern public key PEM (required with --cred)")
 	msg := fs.String("msg", "", "Message bound into the proof")
 	rounds := fs.Int("rounds", 0, "Rounds to verify (default: proof's own round count)")
+	minR := fs.Int("min-rounds", cliMinVerifyRounds,
+		"Refuse a proof or credential declaring fewer rounds (TODO #364)")
 	fs.Parse(args)
+	checkKeyLabels("cred-verify", fs) // TODO #366
+	minRounds := minRoundsValue("cred-verify", *minR)
 
 	if *proofPath == "" {
 		fmt.Fprintln(os.Stderr, "cred-verify: --proof required")
@@ -3261,6 +3507,7 @@ func cmdCredVerify(args []string) {
 		die("cred-verify", derr)
 	}
 
+	requireRounds(len(proof.Rounds), minRounds, "HCRED proof", "cred-verify")
 	r := len(proof.Rounds)
 	if *rounds > 0 {
 		r = *rounds
@@ -3291,6 +3538,7 @@ func cmdCredVerify(args []string) {
 		if uerr != nil {
 			die("cred-verify", uerr)
 		}
+		requireRounds(len(credSig.Rounds), minRounds, "HCRED credential", "cred-verify")
 
 		issLabel, issInts, ierr := readPEMInts(*issuerPath)
 		if ierr != nil {
@@ -3300,7 +3548,7 @@ func cmdCredVerify(args []string) {
 			fmt.Fprintf(os.Stderr, "cred-verify: --issuer must be an hpks-stern or hpke-stern public key, got %q\n", issLabel)
 			os.Exit(1)
 		}
-		issuerN := bytesToInt(issInts[2])
+		issuerN := sternWireN(issInts[2], "cred-verify")
 		issuerSyn := new(big.Int).SetBytes(issInts[0])
 		issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(issInts[1]))
 
@@ -3327,6 +3575,7 @@ func cmdEnc(args []string) {
 	aead   := fs.Bool("aead", false, "HSKE-NL-AEAD authenticated encryption (hske-nla1 only)")
 	ad     := fs.String("ad", "", "Associated data bound into the AEAD tag (requires --aead)")
 	fs.Parse(args)
+	checkKeyLabels("enc", fs) // TODO #366
 
 	if *algo == "" {
 		fmt.Fprintln(os.Stderr, "enc: --algo required")
@@ -3441,6 +3690,9 @@ func cmdEnc(args []string) {
 		}
 		n := gfWidth(bytesToInt(theirInts[1]), "enc")
 		pubBA := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
+		if !GfPubIsValid(pubBA) {
+			die("enc", errors.New("public key is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
+		}
 		nb := n / 8
 		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
 		// r is ours to choose, so for hpke-nl resample past the ~2^-96 short-arc
@@ -3492,7 +3744,7 @@ func cmdEnc(args []string) {
 		if err != nil {
 			die("enc", err)
 		}
-		n    := bytesToInt(theirInts[2])
+		n    := sternWireN(theirInts[2], "enc")
 		seed := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
 		nb   := n / 8
 		P    := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
@@ -3544,6 +3796,7 @@ func cmdDec(args []string) {
 	out  := fs.String("out", "-", "Plaintext output file")
 	ad   := fs.String("ad", "", "Associated data for AEAD ciphertexts (must match enc --ad)")
 	fs.Parse(args)
+	checkKeyLabels("dec", fs) // TODO #366
 
 	if *algo == "" {
 		fmt.Fprintln(os.Stderr, "dec: --algo required")
@@ -3577,6 +3830,7 @@ func cmdDec(args []string) {
 			os.Exit(1)
 		}
 		n := bytesToInt(ctInts[5])
+		sym256OK(n, "dec "+*algo, "ciphertext")
 		K := NewBitArray(n, keyInt)
 		nonce := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
 		// The declared length sizes the buffer.  It cannot exceed the payload
@@ -3589,17 +3843,22 @@ func cmdDec(args []string) {
 		}
 		ctLen := bounded(wireInt(ctInts[2], "declared ciphertext length", "dec"),
 			0, derBudget, "declared ciphertext length", "dec")
-		if len(ctInts[3]) > ctLen {
+		// Compare SIGNIFICANT bytes: an empty payload is the INTEGER 0, one
+		// 00 byte in DER, which was refused here from TODO #239 until #370.
+		payload := ctInts[3]
+		for len(payload) > 0 && payload[0] == 0 {
+			payload = payload[1:]
+		}
+		if len(payload) > ctLen {
 			fmt.Fprintf(os.Stderr, "dec: V%d-Duplex ciphertext declares %d bytes "+
-				"but carries %d\n", wantFmt-1, ctLen, len(ctInts[3]))
+				"but carries %d\n", wantFmt-1, ctLen, len(payload))
 			os.Exit(1)
 		}
 		ct := make([]byte, ctLen)
 		if ctLen > 0 {
 			new(big.Int).SetBytes(ctInts[3]).FillBytes(ct)
 		}
-		authTag := make([]byte, 32)
-		new(big.Int).SetBytes(ctInts[4]).FillBytes(authTag)
+		authTag := fitBytes(ctInts[4], 32, "authentication tag", "dec")
 		var pt []byte
 		var ok bool
 		if dplexV3 {
@@ -3640,13 +3899,15 @@ func cmdDec(args []string) {
 				fmt.Fprintln(os.Stderr, "dec: AEAD ciphertext requires --algo hske-nla1")
 				os.Exit(1)
 			}
-			n := bytesToInt(ctInts[4])
+			if len(ctInts) != 5 {
+				die("dec", checkDerItemsExact(lblCT, ctInts, 5))
+			}
+			n := wireInt(ctInts[4], "n", "dec")
+			nla1WidthOK(n, "dec", "ciphertext")
 			K := NewBitArray(n, keyInt)
 			nonce := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
-			ct := make([]byte, n/8)
-			new(big.Int).SetBytes(ctInts[2]).FillBytes(ct)
-			authTag := make([]byte, 32)
-			new(big.Int).SetBytes(ctInts[3]).FillBytes(authTag)
+			ct := fitBytes(ctInts[2], n/8, "ciphertext", "dec")
+			authTag := fitBytes(ctInts[3], 32, "authentication tag", "dec")
 			pt, ok := HskeNlAeadDecrypt(K, nonce, []byte(*ad), ct, authTag)
 			if !ok {
 				fmt.Fprintln(os.Stderr, "dec: authentication tag mismatch — "+
@@ -3661,15 +3922,23 @@ func cmdDec(args []string) {
 		var EInt, nonceInt *big.Int
 		var n int
 		if fmtTag == 1 {
+			if len(ctInts) != 4 {
+				die("dec", checkDerItemsExact(lblCT, ctInts, 4))
+			}
 			EInt    = new(big.Int).SetBytes(ctInts[2])
-			n       = bytesToInt(ctInts[3])
+			n       = wireInt(ctInts[3], "n", "dec")
 			nonceInt = new(big.Int).SetBytes(ctInts[1])
 		} else {
+			if len(ctInts) != 3 {
+				die("dec", checkDerItemsExact(lblCT, ctInts, 3))
+			}
 			EInt = new(big.Int).SetBytes(ctInts[1])
-			n    = bytesToInt(ctInts[2])
+			n    = wireInt(ctInts[2], "n", "dec")
 		}
 		if *algo != "hske-nla1" {
 			sym256OK(n, "dec "+*algo, "ciphertext")
+		} else {
+			nla1WidthOK(n, "dec", "ciphertext")
 		}
 		K := NewBitArray(n, keyInt)
 		E := NewBitArray(n, EInt)
@@ -3717,6 +3986,9 @@ func cmdDec(args []string) {
 		n    := gfWidth(bytesToInt(ourInts[2]), "dec")
 		priv := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		R    := NewBitArray(n, new(big.Int).SetBytes(ctInts[0]))
+		if !GfPubIsValid(R) {
+			die("dec", errors.New("ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
+		}
 		EInt := new(big.Int).SetBytes(ctInts[1])
 		decKey := GfPow(R, priv)
 		E      := NewBitArray(n, EInt)
@@ -3751,7 +4023,10 @@ func cmdDec(args []string) {
 		if err != nil {
 			die("dec", err)
 		}
-		n       := bytesToInt(ourInts[2])
+		if len(ctInts) != 5 {
+			die("dec", checkDerItemsExact(lblCT, ctInts, 5))
+		}
+		n       := sternWireN(ourInts[2], "dec")
 		seed    := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
 		ePrime  := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
 		EInt    := new(big.Int).SetBytes(ctInts[3])
@@ -3800,13 +4075,14 @@ func cmdSign(args []string) {
 	algo   := fs.String("algo", "", "Signature algorithm (hpks|hpks-nl|hpks-stern)")
 	key    := fs.String("key", "", "Private key file")
 	in     := fs.String("in", "-", "Message input file")
-	digest := fs.String("digest", "", "Pre-hash algorithm (hfscx-256)")
+	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	out    := fs.String("out", "-", "Signature PEM output file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
 	rounds := fs.Int("rounds", 0, "ZKP/Stern-F rounds (nl-zkboo, nl-zkbpp, hpks-stern, hpks-ring; "+
-		"default: 219 for nl-zkboo/nl-zkbpp, 32 demo for hpks-stern/hpks-ring; "+
-		"production soundness needs >= 219 for all)")
+		"default: 219, the 128-bit count every verifier requires unless it passes "+
+		"--min-rounds; TODO #364)")
 	fs.Parse(args)
+	checkKeyLabels("sign", fs) // TODO #366
 	digestValue("sign", digest)
 
 	if *algo == "" || *key == "" {
@@ -3826,7 +4102,9 @@ func cmdSign(args []string) {
 	if *rounds > 0 {
 		zkpRounds = *rounds
 	}
-	sternRounds := SdfRounds
+	// The CLI default is the 128-bit count, not the suite's SdfRounds demo
+	// value: verifiers refuse fewer unless asked (TODO #364).
+	sternRounds := SdfProductionRounds
 	if *rounds > 0 {
 		sternRounds = *rounds
 	}
@@ -3883,7 +4161,7 @@ func cmdSign(args []string) {
 	switch *algo {
 	case "rnl-sigma":
 		// derive Cp from stored s and m_blind
-		zkpN := bytesToInt(ourInts[2])
+		zkpN := rnlWireN(ourInts[2], "sign")
 		zkpS := unpackPolyRaw(ourInts[0], zkpN, 4)
 		zkpM := unpackPolyRaw(ourInts[1], zkpN, 4)
 		ms   := RnlPolyMul(zkpM, zkpS, RnlQ, zkpN)
@@ -3929,7 +4207,7 @@ func cmdSign(args []string) {
 
 	case "hpks-stern":
 		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
-		n    := bytesToInt(ourInts[2])
+		n    := sternWireN(ourInts[2], "sign")
 		e    := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		seed := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
 		msg  := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
@@ -3948,7 +4226,7 @@ func cmdSign(args []string) {
 			fmt.Fprintln(os.Stderr, "hpks-ring sign: --ring (comma-separated member public keys) required")
 			os.Exit(1)
 		}
-		n := bytesToInt(ourInts[2])
+		n := sternWireN(ourInts[2], "sign")
 		e := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		signerSeed := new(big.Int).SetBytes(ourInts[1])
 		ringKeys, ringN := loadRingPubkeys(*ring)
@@ -3991,11 +4269,10 @@ func cmdSign(args []string) {
 				"are ONE-TIME. Generate a fresh key (genpkey --algo hpks-wots).")
 			os.Exit(1)
 		}
-		seed := make([]byte, 32)
-		new(big.Int).SetBytes(ourInts[0]).FillBytes(seed)
+		seed := fitBytes(ourInts[0], 32, "WOTS seed", "sign")
 		var leafIdx uint32
 		if len(ourInts) >= 2 {
-			leafIdx = uint32(bytesToInt(ourInts[1]))
+			leafIdx = uint32(wireInt(ourInts[1], "WOTS leaf index", "sign"))
 		}
 		sig := HpksWotsSign(inBytes, seed, leafIdx)
 		pem := encodeWotsBlobPEM(sig, lblHpksWotsSig)
@@ -4014,8 +4291,7 @@ func cmdSign(args []string) {
 			fmt.Fprintf(os.Stderr, "sign: expected HPKS-XMSS private key, got %q\n", label)
 			os.Exit(1)
 		}
-		seed := make([]byte, 32)
-		new(big.Int).SetBytes(xmssInts[0]).FillBytes(seed)
+		seed := fitBytes(xmssInts[0], 32, "XMSS seed", "sign")
 		h := bounded(wireInt(xmssInts[1], "XMSS height", "sign"), 1, xmssMaxH,
 			"XMSS height", "sign")
 		numLeaves := 1 << uint(h)
@@ -4076,11 +4352,15 @@ func cmdVerify(args []string) {
 	algo   := fs.String("algo", "", "Signature algorithm")
 	pubkey := fs.String("pubkey", "", "Public key file")
 	in     := fs.String("in", "-", "Message input file")
-	digest := fs.String("digest", "", "Pre-hash algorithm (hfscx-256)")
+	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	sig    := fs.String("sig", "", "Signature PEM file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
+	minR   := fs.Int("min-rounds", cliMinVerifyRounds,
+		"Refuse hpks-stern/hpks-ring/nl-zkboo/nl-zkbpp artifacts declaring fewer rounds (TODO #364)")
 	fs.Parse(args)
+	checkKeyLabels("verify", fs) // TODO #366
 	digestValue("verify", digest)
+	minRounds := minRoundsValue("verify", *minR)
 
 	if *algo == "" || *sig == "" {
 		fmt.Fprintln(os.Stderr, "verify: --algo and --sig required")
@@ -4107,6 +4387,7 @@ func cmdVerify(args []string) {
 		}
 		ringKeys, n := loadRingPubkeys(*ring)
 		rsig, sigN := decodeRingSig(*sig)
+		requireRounds(rsig.Rounds, minRounds, "hpks-ring signature", "verify")
 		if sigN != n {
 			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sigN, n)
 			os.Exit(1)
@@ -4129,7 +4410,13 @@ func cmdVerify(args []string) {
 	if *algo == "hpks-t" {
 		// Pass --in, --sig, --digest directly from parsed values.
 		tvArgs := []string{"--sig", *sig, "--in", *in}
-		if *digest != "" { tvArgs = append(tvArgs, "--digest", *digest) }
+		// digestValue normalised none to "", which threshold-verify would now
+		// read as the hfscx-256 default (TODO #365): forward it explicitly.
+		fwd := *digest
+		if fwd == "" {
+			fwd = "none"
+		}
+		tvArgs = append(tvArgs, "--digest", fwd)
 		cmdThresholdVerify(tvArgs)
 		return
 	}
@@ -4159,6 +4446,7 @@ func cmdVerify(args []string) {
 		if prfN != zkpN {
 			die("verify", fmt.Errorf("proof n mismatch with pubkey n (%d vs %d)", prfN, zkpN))
 		}
+		requireRounds(len(proof), minRounds, "nl-zkboo proof", "verify")
 		if ZkpNlVerify(B, y, zkpN, len(proof), msgPad(inBytes, 32), proof) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
@@ -4188,6 +4476,7 @@ func cmdVerify(args []string) {
 		if uerr != nil {
 			die("verify", uerr)
 		}
+		requireRounds(len(proof), minRounds, "nl-zkbpp proof", "verify")
 		if ZkpNlVerifypp(B, y, zkpN, len(proof), msgPad(inBytes, 32), proof) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
@@ -4205,7 +4494,7 @@ func cmdVerify(args []string) {
 	switch *algo {
 	case "rnl-sigma":
 		// HKEX-RNL public key: theirInts[0]=C (2B/coeff), theirInts[1]=mBlind (4B/coeff), theirInts[2]=n
-		zkpN  := bytesToInt(theirInts[2])
+		zkpN  := rnlWireN(theirInts[2], "verify")
 		zkpCp := unpackPolyRaw(theirInts[0], zkpN, 2)
 		zkpM  := unpackPolyRaw(theirInts[1], zkpN, 4)
 
@@ -4234,15 +4523,24 @@ func cmdVerify(args []string) {
 	case "hpks", "hpks-nl":
 		n   := gfWidth(bytesToInt(theirInts[1]), "verify")
 		pub := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
+		if !GfPubIsValid(pub) {
+			die("verify", errors.New("public key is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
+		}
 		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
 
 		_, sigInts, err := readPEMInts(*sig)
 		if err != nil {
 			die("verify", err)
 		}
+		if len(sigInts) != 4 {
+			die("verify", fmt.Errorf("malformed PEM '%s': %d DER items, expected 4", lblSig, len(sigInts)))
+		}
 		sInt := new(big.Int).SetBytes(sigInts[0])
 		R    := new(big.Int).SetBytes(sigInts[1])
-		_     = sigInts[2] // e stored in sig; recomputed below for verification
+		eStored := new(big.Int).SetBytes(sigInts[2])
+		if sn := new(big.Int).SetBytes(sigInts[3]); !sn.IsInt64() || sn.Int64() != int64(n) {
+			die("verify", fmt.Errorf("signature n is %s, public key n is %d", sn, n))
+		}
 
 		// e_v = challenge recomputed from R and msg
 		var eV *BitArray
@@ -4253,18 +4551,25 @@ func cmdVerify(args []string) {
 		}
 		// Verify: g^s * pub^(e_recomputed) == R  (matches Python verify)
 		lhs := GfMul(GfPow(GfGenBA(n), NewBitArray(n, sInt)), GfPow(pub, eV))
-		if lhs.BigInt().Cmp(R) == 0 {
-			fmt.Println("Signature OK")
-			os.Exit(0)
-		} else {
+		if lhs.BigInt().Cmp(R) != 0 {
 			fmt.Println("Verification FAILED")
 			os.Exit(1)
 		}
+		// TODO #372: the stored challenge is part of the signature's bytes, so
+		// one that is not the recomputed e is a second encoding of the same
+		// signature -- refused, as every CLI does.  Checked only once the
+		// algebra holds: a wrong message or key changes e too, and stays an
+		// ordinary "Verification FAILED".
+		if eV.BigInt().Cmp(eStored) != 0 {
+			die("verify", errors.New("signature challenge e is not the recomputed one (rejected: non-canonical signature)"))
+		}
+		fmt.Println("Signature OK")
+		os.Exit(0)
 
 	case "hpks-stern":
 		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
 		synInt  := new(big.Int).SetBytes(theirInts[0])
-		n       := bytesToInt(theirInts[2])
+		n       := sternWireN(theirInts[2], "verify")
 		seed    := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
 		msg     := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
 
@@ -4276,6 +4581,7 @@ func cmdVerify(args []string) {
 		if err != nil {
 			die("verify", err)
 		}
+		requireRounds(len(sternSig.Rounds), minRounds, "hpks-stern signature", "verify")
 		if HpksSternFVerify(msg, sternSig, seed, synInt) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
@@ -4290,7 +4596,7 @@ func cmdVerify(args []string) {
 		if serr != nil {
 			die("verify", serr)
 		}
-		leafIdx := int(bytesToInt(sigInts[0]))
+		leafIdx := wireIntZ(sigInts[0], "XMSS leaf index", "verify")
 		depth := bounded(wireInt(sigInts[3], "XMSS signature depth", "verify"),
 			1, xmssMaxH, "XMSS signature depth", "verify")
 		sig := &HpksXmssSig{
@@ -4483,13 +4789,25 @@ func cmdDecfile(args []string) {
 		os.Exit(1)
 	}
 
-	ptLen    := int(binary.BigEndian.Uint64(raw[5:13]))
+	// Bound the wire length by the file before converting it: a value past
+	// 2^63 became a negative int and panicked the slice below (TODO #368).
+	ptLen64  := binary.BigEndian.Uint64(raw[5:13])
+	if ptLen64 > uint64(len(raw)) {
+		fmt.Fprintln(os.Stderr, "decfile: file truncated (ciphertext blocks or auth tag missing)")
+		os.Exit(1)
+	}
+	ptLen    := int(ptLen64)
 	nonceBuf := raw[13:45]
 	nBlocks  := (ptLen + hkxBlock - 1) / hkxBlock
 	ctEnd    := hkxHdrSize + nBlocks*hkxBlock
 
 	if len(raw) < ctEnd+hkxBlock {
 		fmt.Fprintln(os.Stderr, "decfile: file truncated (ciphertext blocks or auth tag missing)")
+		os.Exit(1)
+	}
+	// TODO #368: exactly one encoding per file -- nothing after the tag.
+	if len(raw) > ctEnd+hkxBlock {
+		fmt.Fprintf(os.Stderr, "decfile: %d bytes after the auth tag\n", len(raw)-ctEnd-hkxBlock)
 		os.Exit(1)
 	}
 
@@ -4680,6 +4998,7 @@ func cmdOprfEval(args []string) {
 	inF   := fs.String("in", "", "OPRF CLIENT STATE PEM")
 	outF  := fs.String("out", "-", "Output OPRF EVALUATION PEM")
 	fs.Parse(args)
+	checkKeyLabels("oprf-eval", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "oprf-eval: --key required")
 		os.Exit(1)
@@ -4791,6 +5110,7 @@ func cmdPakeRegister(args []string) {
 	pwF   := fs.String("password", "", "Password (default: demo-password)")
 	outF  := fs.String("out",      "-", "Output PAKE RECORD PEM")
 	fs.Parse(args)
+	checkKeyLabels("pake-register", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-register: --key required")
 		os.Exit(1)
@@ -4835,6 +5155,7 @@ func cmdPakeDemo(args []string) {
 	keyF := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
 	pwF  := fs.String("password", "demo-password", "Password")
 	fs.Parse(args)
+	checkKeyLabels("pake-demo", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-demo: --key required")
 		os.Exit(1)
@@ -4887,6 +5208,33 @@ func die(prefix string, err error) {
 	os.Exit(1)
 }
 
+// cliMinVerifyRounds is the verifier's round-count floor (TODO #364).  The
+// round count travels in the artifact (TODO #236), so a verifier taking it from
+// there let the SIGNER choose the verifier's soundness: one Stern-F or
+// ZKBoo-(2,3) round can be answered without the witness for two of its three
+// challenges, and under Fiat-Shamir a forger grinds the commitment until the
+// challenge is one of those.  219 is the 128-bit count ((2/3)^219 < 2^-128);
+// `verify` / `cred-verify --min-rounds N` lowers it.
+const cliMinVerifyRounds = 219 // == SdfProductionRounds == ZkpNlProdRounds
+
+func minRoundsValue(cmd string, v int) int {
+	if v < 1 || v > SdfMaxRounds {
+		fmt.Fprintf(os.Stderr, "%s: --min-rounds must be between 1 and %d\n", cmd, SdfMaxRounds)
+		os.Exit(1)
+	}
+	return v
+}
+
+func requireRounds(rounds, floor int, what, cmd string) {
+	if rounds >= floor {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s: %s declares %d rounds, below the --min-rounds floor of %d "+
+		"(%d = 128-bit Fiat-Shamir soundness); pass --min-rounds %d to accept it anyway\n",
+		cmd, what, rounds, floor, cliMinVerifyRounds, rounds)
+	os.Exit(1)
+}
+
 // digestValue validates --digest's value set in one place (TODO #269).
 //
 // Every call site tests `*digest == "hfscx-256"` and falls through to the
@@ -4897,7 +5245,16 @@ func die(prefix string, err error) {
 // only that the flag exists. Python rejects via argparse choices= and Java by
 // name; this makes Go agree. `none` is normalised to "" so the call sites are
 // unchanged.
+//
+// TODO #365: an absent --digest means hfscx-256.  The old default, none,
+// padded/truncated the message to the key width, so a signature on one file
+// verified for every file sharing its first 32 bytes.  The flags are declared
+// with "" so that this function, not four declarations, owns the default.
 func digestValue(cmd string, digest *string) {
+	if *digest == "" {
+		*digest = "hfscx-256"
+		return
+	}
 	if *digest == "none" {
 		*digest = ""
 		return
@@ -4930,13 +5287,1579 @@ Notes:
 `)
 }
 
+// TODO #366: which key labels each (subcommand, --algo, key flag) accepts.  The
+// table is generated from spec/generate_spec.py's KEY_LABEL_SITES, which holds
+// the reasoning; C, Python and Java carry the same rows.
+type keySite struct {
+	cmd, algo, flag, tags string
+	labels                []string
+}
+
+// BEGIN GENERATED key-label table (spec/generate_spec.py, TODO #366) -- DO NOT EDIT.
+var keySites = []keySite{
+	{"kex", "hkex-gf", "--our", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
+	{"kex", "hkex-gf", "--their", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
+	{"kex", "hkex-rnl", "--our", "hkex-rnl", []string{"HERRADURA HKEX-RNL PRIVATE KEY"}},
+	{"kex", "hkex-rnl", "--their", "hkex-rnl", []string{"HERRADURA HKEX-RNL PUBLIC KEY"}},
+	{"kex", "hybrid-rnl-stern", "--our", "hkex-rnl", []string{"HERRADURA HKEX-RNL PRIVATE KEY"}},
+	{"kex", "hybrid-rnl-stern", "--their", "hkex-rnl", []string{"HERRADURA HKEX-RNL PUBLIC KEY"}},
+	{"kex", "hybrid-rnl-stern", "--our-kem", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PRIVATE KEY"}},
+	{"kex", "hybrid-rnl-stern", "--their-kem", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PUBLIC KEY"}},
+	{"enc", "hpke", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
+	{"dec", "hpke", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
+	{"enc", "hpke-nl", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
+	{"dec", "hpke-nl", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
+	{"enc", "hpke-nl3", "--pubkey", "hpke-nl3", []string{"HERRADURA HPKE-NL3 PUBLIC KEY"}},
+	{"dec", "hpke-nl3", "--key", "hpke-nl3", []string{"HERRADURA HPKE-NL3 PRIVATE KEY"}},
+	{"enc", "hpke-stern", "--pubkey", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
+	{"dec", "hpke-stern", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
+	{"enc", "hpke-stern-kem", "--pubkey", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PUBLIC KEY"}},
+	{"dec", "hpke-stern-kem", "--key", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PRIVATE KEY"}},
+	{"sign", "hpks", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
+	{"verify", "hpks", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
+	{"sign", "hpks-nl", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
+	{"verify", "hpks-nl", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
+	{"sign", "hpks-stern", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
+	{"verify", "hpks-stern", "--pubkey", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
+	{"sign", "hpks-ring", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
+	{"verify", "hpks-ring", "--ring", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
+	{"sign", "rnl-sigma", "--key", "hkex-rnl", []string{"HERRADURA HKEX-RNL PRIVATE KEY"}},
+	{"verify", "rnl-sigma", "--pubkey", "hkex-rnl", []string{"HERRADURA HKEX-RNL PUBLIC KEY"}},
+	{"sign", "nl-zkboo", "--key", "hpks-zkp-nl", []string{"HERRADURA ZKP-NL PRIVATE KEY"}},
+	{"verify", "nl-zkboo", "--pubkey", "hpks-zkp-nl", []string{"HERRADURA ZKP-NL PUBLIC KEY"}},
+	{"sign", "nl-zkbpp", "--key", "hpks-zkp-nl", []string{"HERRADURA ZKP-NL PRIVATE KEY"}},
+	{"verify", "nl-zkbpp", "--pubkey", "hpks-zkp-nl", []string{"HERRADURA ZKP-NL PUBLIC KEY"}},
+	{"sign", "hpks-xmss", "--key", "hpks-xmss", []string{"HERRADURA HPKS-XMSS PRIVATE KEY"}},
+	{"verify", "hpks-xmss", "--pubkey", "hpks-xmss", []string{"HERRADURA HPKS-XMSS PUBLIC KEY"}},
+	{"sign", "hpks-wots", "--key", "hpks-wots", []string{"HERRADURA HPKS-WOTS PRIVATE KEY"}},
+	{"verify", "hpks-wots", "--pubkey", "hpks-wots", []string{"HERRADURA HPKS-WOTS PUBLIC KEY"}},
+	{"threshold-commit", "", "--key", "hpks, hpks-nl", []string{"HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"}},
+	{"threshold-respond", "", "--key", "hpks, hpks-nl", []string{"HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"}},
+	{"oprf-eval", "", "--key", "oprf", []string{"HERRADURA OPRF PRIVATE KEY"}},
+	{"pake-register", "", "--key", "oprf", []string{"HERRADURA OPRF PRIVATE KEY"}},
+	{"pake-demo", "", "--key", "oprf", []string{"HERRADURA OPRF PRIVATE KEY"}},
+	{"cred-issue", "", "--our", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
+	{"cred-issue", "", "--in", "hcred", []string{"HERRADURA HCRED PUBLIC KEY", "HERRADURA HCRED PRIVATE KEY"}},
+	{"cred-prove", "", "--in", "hcred", []string{"HERRADURA HCRED PRIVATE KEY"}},
+	{"cred-verify", "", "--pubkey", "hcred", []string{"HERRADURA HCRED PUBLIC KEY", "HERRADURA HCRED PRIVATE KEY"}},
+	{"cred-verify", "", "--issuer", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
+}
+
+// TODO #367: DER INTEGER items each DER-SEQUENCE label carries (min, max).
+var derItems = map[string][2]int{
+	"HERRADURA CIPHERTEXT": {3, 6},
+	"HERRADURA DIGEST": {1, 1},
+	"HERRADURA ENCRYPTED PRIVATE KEY": {6, 6},
+	"HERRADURA HCRED CREDENTIAL": {5, 5},
+	"HERRADURA HDRBG STATE": {2, 2},
+	"HERRADURA HKEX-GF PRIVATE KEY": {3, 3},
+	"HERRADURA HKEX-GF PUBLIC KEY": {2, 2},
+	"HERRADURA HKEX-RNL PRIVATE KEY": {3, 4},
+	"HERRADURA HKEX-RNL PUBLIC KEY": {3, 4},
+	"HERRADURA HKEX-RNL RESPONSE": {5, 6},
+	"HERRADURA HPKE PRIVATE KEY": {3, 3},
+	"HERRADURA HPKE PUBLIC KEY": {2, 2},
+	"HERRADURA HPKE-NL PRIVATE KEY": {3, 3},
+	"HERRADURA HPKE-NL PUBLIC KEY": {2, 2},
+	"HERRADURA HPKE-NL3 PRIVATE KEY": {3, 3},
+	"HERRADURA HPKE-NL3 PUBLIC KEY": {2, 2},
+	"HERRADURA HPKE-STERN PRIVATE KEY": {3, 3},
+	"HERRADURA HPKE-STERN PUBLIC KEY": {3, 3},
+	"HERRADURA HPKE-STERN-KEM PRIVATE KEY": {6, 6},
+	"HERRADURA HPKE-STERN-KEM PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS PRIVATE KEY": {3, 3},
+	"HERRADURA HPKS PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS-NL PRIVATE KEY": {3, 3},
+	"HERRADURA HPKS-NL PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS-RING SIGNATURE": {4, 4},
+	"HERRADURA HPKS-STERN PRIVATE KEY": {3, 3},
+	"HERRADURA HPKS-STERN PUBLIC KEY": {3, 3},
+	"HERRADURA HPKS-WOTS PRIVATE KEY": {2, 2},
+	"HERRADURA HPKS-WOTS PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS-WOTS SIGNATURE": {2, 2},
+	"HERRADURA HPKS-XMSS PRIVATE KEY": {4, 4},
+	"HERRADURA HPKS-XMSS PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS-XMSS SIGNATURE": {5, 5},
+	"HERRADURA HPKST AGGREGATE": {4, 4},
+	"HERRADURA HPKST COMMITMENT": {3, 3},
+	"HERRADURA HPKST NONCE": {2, 2},
+	"HERRADURA HPKST PARTIAL": {2, 2},
+	"HERRADURA HPKST SIGNATURE": {4, 4},
+	"HERRADURA HYBRID-RNL-STERN RESPONSE": {8, 8},
+	"HERRADURA OPRF CLIENT STATE": {3, 3},
+	"HERRADURA OPRF EVALUATION": {2, 2},
+	"HERRADURA OPRF PRIVATE KEY": {2, 2},
+	"HERRADURA PAKE RECORD": {3, 3},
+	"HERRADURA SESSION KEY": {2, 2},
+	"HERRADURA SIGNATURE": {4, 5},
+}
+
+// TODO #372 / #373: per DER-SEQUENCE label, each field's width cap
+// (significant bytes), its encoding (exactly its width, or minimal) and the
+// value rules.  ew[k] is field k's encoded width, lz[k] 1 when it starts with
+// a 0x00 the sign does not need, 2 with a sign byte.  Returns the refusal, or "".
+func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
+	n := len(v)
+	L := func(k int) int64 {
+		b := v[k]
+		for len(b) > 0 && b[0] == 0 {
+			b = b[1:]
+		}
+		return int64(len(b))
+	}
+	F := func(k int) int64 {
+		if L(k) > 6 {
+			return -1
+		}
+		var x int64
+		for _, c := range v[k] {
+			x = x<<8 | int64(c)
+		}
+		return x
+	}
+	_ = F
+	switch label {
+	case "HERRADURA HKEX-GF PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HKEX-GF PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-NL PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-NL PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKE PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKE PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKE-NL PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKE-NL PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKE-NL3 PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKE-NL3 PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HKEX-RNL PRIVATE KEY":
+		if n >= 3 && n <= 4 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(32); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(F(2) * 4); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2) * 4); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if c := int64(F(2) * 4); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2) * 4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if e := hkxRuleCoef(label, 0, v[0], 4, int64(F(2)), 65537, true); e != "" {
+				return e
+			}
+			if e := hkxRuleCoef(label, 1, v[1], 4, int64(F(2)), 65537, false); e != "" {
+				return e
+			}
+			return ""
+		}
+	case "HERRADURA HKEX-RNL PUBLIC KEY":
+		if n >= 3 && n <= 4 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(32); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(F(2) * 2); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2) * 4); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if c := int64(F(2) * 2); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2) * 4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if e := hkxRuleCoef(label, 0, v[0], 2, int64(F(2)), 4096, false); e != "" {
+				return e
+			}
+			if e := hkxRuleCoef(label, 1, v[1], 4, int64(F(2)), 65537, false); e != "" {
+				return e
+			}
+			return ""
+		}
+	case "HERRADURA HKEX-RNL RESPONSE":
+		if n >= 5 && n <= 6 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(2); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(2); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if c := int64(32); n > 5 && L(5) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 5, L(5), c)
+			}
+			if c := int64(F(3) * 2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(3)/8); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if c := int64(32); n > 5 && !(int64(ew[5]) == c || (lz[5] == 2 && int64(ew[5])+1 == c) || (c == 0 && ew[5] == 1 && L(5) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 5, ew[5], c)
+			}
+			if c := int64(F(3) * 2); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if e := hkxRuleCoef(label, 1, v[1], 2, int64(F(3)), 4096, false); e != "" {
+				return e
+			}
+			if e := hkxRuleEquals(label, 4, F(4), int64(F(3)/2)); e != "" {
+				return e
+			}
+			return ""
+		}
+	case "HERRADURA HYBRID-RNL-STERN RESPONSE":
+		if n >= 8 && n <= 8 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(2); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(2); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if c := int64(32); n > 5 && L(5) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 5, L(5), c)
+			}
+			if c := int64(2); n > 7 && L(7) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 7, L(7), c)
+			}
+			if c := int64(F(3) * 2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(3)/8); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64((F(7) + 7)/8); n > 6 && L(6) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 6, L(6), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if c := int64(32); n > 5 && !(int64(ew[5]) == c || (lz[5] == 2 && int64(ew[5])+1 == c) || (c == 0 && ew[5] == 1 && L(5) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 5, ew[5], c)
+			}
+			if n > 7 && lz[7] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 7)
+			}
+			if c := int64(F(3) * 2); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64((F(7) + 7)/8); n > 6 && !(int64(ew[6]) == c || (lz[6] == 2 && int64(ew[6])+1 == c) || (c == 0 && ew[6] == 1 && L(6) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 6, ew[6], c)
+			}
+			if e := hkxRuleCoef(label, 1, v[1], 2, int64(F(3)), 4096, false); e != "" {
+				return e
+			}
+			if e := hkxRuleEquals(label, 4, F(4), int64(F(3)/2)); e != "" {
+				return e
+			}
+			if e := hkxRuleBits(label, 6, v[6], int64(F(7)), false); e != "" {
+				return e
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-STERN PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-STERN PUBLIC KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKE-STERN PRIVATE KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKE-STERN PUBLIC KEY":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKE-STERN-KEM PRIVATE KEY":
+		if n >= 6 && n <= 6 {
+			if c := int64(2); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if c := int64(2); n > 5 && L(5) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 5, L(5), c)
+			}
+			if c := int64((F(4) + 7)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64((F(4) + 7)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(5) * 2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(5) * 2); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if n > 5 && lz[5] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5)
+			}
+			if c := int64((F(4) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64((F(4) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(5) * 2); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64(F(5) * 2); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if e := hkxRuleSupport(label, 2, v[2], int64(F(5)), int64(F(4))); e != "" {
+				return e
+			}
+			if e := hkxRuleSupport(label, 3, v[3], int64(F(5)), int64(F(4))); e != "" {
+				return e
+			}
+			if e := hkxRuleLePolyOf(label, 0, v[0], 2, v[2], int64(F(5)), int64(F(4))); e != "" {
+				return e
+			}
+			if e := hkxRuleLePolyOf(label, 1, v[1], 3, v[3], int64(F(5)), int64(F(4))); e != "" {
+				return e
+			}
+			return ""
+		}
+	case "HERRADURA HPKE-STERN-KEM PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64((F(1) + 7)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64((F(1) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if e := hkxRuleBits(label, 0, v[0], int64(F(1)), true); e != "" {
+				return e
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-WOTS PRIVATE KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(4); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-WOTS PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1) * 32); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1) * 32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-WOTS SIGNATURE":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1) * 32); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1) * 32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-XMSS PRIVATE KEY":
+		if n >= 4 && n <= 4 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(1); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(4); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(32 * (1 << hkxMin(F(1), 32))); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(32 * (1 << hkxMin(F(1), 32))); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-XMSS PUBLIC KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(1); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-XMSS SIGNATURE":
+		if n >= 5 && n <= 5 {
+			if c := int64(4); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(1); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(2); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if c := int64(67 * (F(4)/8)); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(3) * 32); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if c := int64(67 * (F(4)/8)); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3) * 32); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-RING SIGNATURE":
+		if n >= 4 && n <= 4 {
+			if c := int64(1); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			return ""
+		}
+	case "HERRADURA OPRF PRIVATE KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA OPRF CLIENT STATE":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA OPRF EVALUATION":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA PAKE RECORD":
+		if n >= 3 && n <= 3 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(4); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(4); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(4); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(4); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKST COMMITMENT":
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(2)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(2)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(F(2)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(2)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKST NONCE":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKST AGGREGATE":
+		if n >= 4 && n <= 4 {
+			if c := int64(2); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(F(3)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(3)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(3)/8); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKST PARTIAL":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKST SIGNATURE":
+		if n >= 4 && n <= 4 {
+			if c := int64(2); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(F(3)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(3)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(3)/8); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
+		}
+	case "HERRADURA HCRED CREDENTIAL":
+		if n >= 5 && n <= 5 {
+			if c := int64(2); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64((F(1) + 3)/4); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c) || (c == 0 && ew[4] == 1 && L(4) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
+			}
+			return ""
+		}
+	case "HERRADURA SESSION KEY":
+		if n >= 2 && n <= 2 {
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			return ""
+		}
+	case "HERRADURA DIGEST":
+		if n >= 1 && n <= 1 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			return ""
+		}
+	case "HERRADURA HDRBG STATE":
+		if n >= 2 && n <= 2 {
+			if c := int64(32); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(32); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			return ""
+		}
+	case "HERRADURA ENCRYPTED PRIVATE KEY":
+		if n >= 6 && n <= 6 {
+			if c := int64(16); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(4); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(32); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(32); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if c := int64(4); n > 5 && L(5) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 5, L(5), c)
+			}
+			if c := int64(F(5)); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(16); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(32); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64(32); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c) || (c == 0 && ew[4] == 1 && L(4) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
+			}
+			if n > 5 && lz[5] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5)
+			}
+			if c := int64(F(5)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			return ""
+		}
+	case "HERRADURA CIPHERTEXT":
+		if n >= 3 && n <= 3 && (F(2) == 12323) {
+			if c := int64(32); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64((F(2) + 7)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(32); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64((F(2) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if e := hkxRuleBits(label, 0, v[0], int64(F(2)), true); e != "" {
+				return e
+			}
+			return ""
+		}
+		if n >= 3 && n <= 3 && (F(0) == 0) {
+			if c := int64(1); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64((F(2) + 7)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64((F(2) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+		if n >= 3 && n <= 3 {
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64((F(2) + 7)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64((F(2) + 7)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64((F(2) + 7)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64((F(2) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			return ""
+		}
+		if n >= 4 && n <= 4 {
+			if c := int64(1); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(2); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64((F(3) + 7)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64((F(3) + 7)/8); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if c := int64((F(3) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64((F(3) + 7)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
+		}
+		if n >= 5 && n <= 5 && (F(0) == 2) {
+			if c := int64(1); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(32); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(2); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if c := int64((F(4) + 7)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64((F(4) + 7)/8); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if c := int64((F(4) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64((F(4) + 7)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
+		}
+		if n >= 5 && n <= 5 {
+			if c := int64(2); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if c := int64(F(4)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(4)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(4)/8); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(F(4)/8); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
+			}
+			if c := int64(F(4)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(4)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(4)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64(F(4)/8); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			return ""
+		}
+		if n >= 6 && n <= 6 {
+			if c := int64(1); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(6); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(32); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if c := int64(2); n > 5 && L(5) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 5, L(5), c)
+			}
+			if c := int64((F(5) + 7)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(2)); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(32); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c) || (c == 0 && ew[4] == 1 && L(4) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
+			}
+			if n > 5 && lz[5] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 5)
+			}
+			if c := int64((F(5) + 7)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(2)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			return ""
+		}
+	case "HERRADURA SIGNATURE":
+		if n >= 4 && n <= 4 {
+			if c := int64(2); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(F(3)/8); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(F(3)/8); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(3)/8); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if n > 3 && lz[3] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 3)
+			}
+			if c := int64(F(3)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
+			}
+			if c := int64(F(3)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
+			}
+			if c := int64(F(3)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
+		}
+		if n >= 5 && n <= 5 {
+			if c := int64(2); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64((F(1) + 3)/4); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if c := int64(F(1) * 2 * (F(0)/8)); n > 4 && !(int64(ew[4]) == c || (lz[4] == 2 && int64(ew[4])+1 == c) || (c == 0 && ew[4] == 1 && L(4) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 4, ew[4], c)
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// TODO #373: the value rules.  Each returns the refusal, or "".  A rule reads
+// a fixed-width field, which the encoding check has already held to its exact
+// width; hkxPad reads it at that width (DerParseSeq drops one leading 0x00).
+func hkxPad(b []byte, w int64) []byte {
+	out := make([]byte, w)
+	if int64(len(b)) > w {
+		b = b[int64(len(b))-w:]
+	}
+	copy(out[w-int64(len(b)):], b)
+	return out
+}
+
+func hkxRuleCoef(label string, k int, x []byte, w int, cnt, bound int64, cbd bool) string {
+	b := hkxPad(x, int64(w)*cnt)
+	for j := int64(0); j < cnt; j++ {
+		var c int64
+		for i := 0; i < w; i++ {
+			c = c<<8 | int64(b[j*int64(w)+int64(i)])
+		}
+		if cbd && !(c == 0 || c == 1 || c == bound-1) {
+			return fmt.Sprintf("%s: field %d coefficient %d is %d (expected 0, 1 or %d)", label, k, j, c, bound-1)
+		}
+		if !cbd && c >= bound {
+			return fmt.Sprintf("%s: field %d coefficient %d is %d (expected below %d)", label, k, j, c, bound)
+		}
+	}
+	return ""
+}
+
+// le: an R-bit little-endian byte string (spare bits in the LAST byte);
+// otherwise a plain integer below 2^R (spare bits in the FIRST).
+func hkxRuleBits(label string, k int, x []byte, r int64, le bool) string {
+	w := (r + 7) / 8
+	i := int64(0)
+	if le {
+		i = w - 1
+	}
+	if w > 0 && r%8 != 0 && hkxPad(x, w)[i]>>(r%8) != 0 {
+		return fmt.Sprintf("%s: field %d has bits at or above r = %d", label, k, r)
+	}
+	return ""
+}
+
+func hkxRuleSupport(label string, k int, x []byte, d, r int64) string {
+	b := hkxPad(x, 2*d)
+	seen := make(map[int64]bool, d)
+	for j := int64(0); j < d; j++ {
+		idx := int64(b[2*j])<<8 | int64(b[2*j+1])
+		if idx >= r {
+			return fmt.Sprintf("%s: field %d index %d is %d (expected below r = %d)", label, k, j, idx, r)
+		}
+		if seen[idx] {
+			return fmt.Sprintf("%s: field %d repeats index %d", label, k, idx)
+		}
+		seen[idx] = true
+	}
+	return ""
+}
+
+func hkxRuleLePolyOf(label string, k int, x []byte, s int, sup []byte, d, r int64) string {
+	w := (r + 7) / 8
+	want := make([]byte, w)
+	b := hkxPad(sup, 2*d)
+	for j := int64(0); j < d; j++ {
+		idx := int64(b[2*j])<<8 | int64(b[2*j+1])
+		if idx < r {
+			want[idx>>3] |= 1 << uint(idx&7)
+		}
+	}
+	got := hkxPad(x, w)
+	for i := range want {
+		if got[i] != want[i] {
+			return fmt.Sprintf("%s: field %d is not the polynomial of field %d", label, k, s)
+		}
+	}
+	return ""
+}
+
+func hkxRuleEquals(label string, k int, x, want int64) string {
+	if x == want {
+		return ""
+	}
+	return fmt.Sprintf("%s: field %d is %d (expected %d)", label, k, x, want)
+}
+// END GENERATED key-label table
+
+// pemFileLabel returns the first PEM BEGIN label in path, or "" (unreadable or
+// not PEM).
+func pemFileLabel(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	text := string(raw)
+	i := strings.Index(text, "-----BEGIN ")
+	if i < 0 {
+		return ""
+	}
+	j := strings.Index(text[i+11:], "-----")
+	if j <= 0 {
+		return ""
+	}
+	return text[i+11 : i+11+j]
+}
+
+// checkKeyLabels refuses a key whose PEM label this operation does not accept
+// (TODO #366).  Only KEY labels are judged (ending in PRIVATE KEY or PUBLIC KEY,
+// other than the passphrase envelope): a response, session key or hex key goes
+// on to the loader, whose own message is the more specific one.
+func checkKeyLabels(cmd string, fs *flag.FlagSet) {
+	algo := ""
+	if f := fs.Lookup("algo"); f != nil {
+		algo = f.Value.String()
+	}
+	for _, r := range keySites {
+		if r.cmd != cmd || r.algo != algo {
+			continue
+		}
+		f := fs.Lookup(strings.TrimPrefix(r.flag, "--"))
+		if f == nil || f.Value.String() == "" {
+			continue
+		}
+		paths := []string{f.Value.String()}
+		if r.flag == "--ring" {
+			paths = strings.Split(paths[0], ",")
+		}
+		for _, p := range paths {
+			label := pemFileLabel(strings.TrimSpace(p))
+			if label == "" || label == "HERRADURA ENCRYPTED PRIVATE KEY" ||
+				!(strings.HasSuffix(label, "PRIVATE KEY") || strings.HasSuffix(label, "PUBLIC KEY")) {
+				continue
+			}
+			ok := false
+			for _, l := range r.labels {
+				if l == label {
+					ok = true
+				}
+			}
+			if !ok {
+				where := cmd
+				if algo != "" {
+					where = cmd + " --algo " + algo
+				}
+				fmt.Fprintf(os.Stderr, "%s: wrong key type: %s holds '%s'; accepted: %s\n",
+					where, r.flag, label, r.tags)
+				os.Exit(1)
+			}
+		}
+	}
+}
+
 // BEGIN GENERATED help synopsis (spec/generate_spec.py, TODO #339) -- DO NOT EDIT.
 const helpSynopsis = `Subcommands and the flags each one reads (generated from this CLI's
 own parser by spec/generate_spec.py; the notes below say which are
 required):
   cred-issue           --in --our --out --rounds
   cred-prove           --in --msg --out --rounds
-  cred-verify          --cred --issuer --msg --proof --pubkey --rounds
+  cred-verify          --cred --issuer --min-rounds --msg --proof --pubkey
+                       --rounds
   dec                  --ad --algo --in --key --out
                        --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex
                                hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern
@@ -4977,7 +6900,7 @@ required):
   threshold-verify     --digest --in --sig
   twk                  --bidx --decrypt --encrypt --in --key --out --sector
                        --v3
-  verify               --algo --digest --in --pubkey --ring --sig
+  verify               --algo --digest --in --min-rounds --pubkey --ring --sig
                        --algo: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo
                                nl-zkbpp hpks-xmss hpks-wots hpks-ring hpks-t
 `
@@ -4997,9 +6920,9 @@ func loadHpksPrivForThreshold(path string) (*big.Int, *big.Int, int) {
 		fmt.Fprintf(os.Stderr, "threshold: expected hpks or hpks-nl key, got %q\n", label)
 		os.Exit(1)
 	}
-	priv := new(big.Int).SetBytes(ints[0])
-	pub  := new(big.Int).SetBytes(ints[1])
-	n    := bytesToInt(ints[2])
+	n    := gfWidth(wireInt(ints[2], "n", "threshold"), "threshold")
+	priv := new(big.Int).SetBytes(fitBytes(ints[0], n/8, "private key", "threshold"))
+	pub  := new(big.Int).SetBytes(fitBytes(ints[1], n/8, "public key", "threshold"))
 	return priv, pub, n
 }
 
@@ -5128,6 +7051,7 @@ func cmdThresholdCommit(args []string) {
 	commitOut := fs.String("commit-out", "", "Output commitment PEM")
 	nonceOut  := fs.String("nonce-out",  "", "Output nonce PEM")
 	fs.Parse(args)
+	checkKeyLabels("threshold-commit", fs) // TODO #366
 	if *key == "" || *commitOut == "" || *nonceOut == "" {
 		fmt.Fprintln(os.Stderr, "threshold-commit: --key, --commit-out, --nonce-out required")
 		os.Exit(1)
@@ -5151,7 +7075,7 @@ func cmdThresholdAggregate(args []string) {
 	fs     := flag.NewFlagSet("threshold-aggregate", flag.ExitOnError)
 	in     := fs.String("in", "-", "Message input file")
 	out    := fs.String("out", "-", "Output aggregate PEM")
-	digest := fs.String("digest", "", "Pre-hash (hfscx-256)")
+	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	fs.Parse(filterMultiFlags(args, "--commits", "--commit"))
 	digestValue("threshold-aggregate", digest)
 	if len(commitPaths) == 0 {
@@ -5173,9 +7097,12 @@ func cmdThresholdAggregate(args []string) {
 			fmt.Fprintf(os.Stderr, "threshold-aggregate: invalid commitment PEM: %s\n", cp)
 			os.Exit(1)
 		}
-		Rj := new(big.Int).SetBytes(ints[0])
+		if len(ints) > 2 {   // TODO #371: a commitment at another width was read at ours
+			bounded(wireInt(ints[2], "commitment n", "threshold-aggregate"), n, n, "commitment n", "threshold-aggregate")
+		}
+		Rj := new(big.Int).SetBytes(fitBytes(ints[0], n/8, "commitment R", "threshold-aggregate"))
 		R   = GfMul(NewBitArray(n, R), NewBitArray(n, Rj)).BigInt()
-		pubs[i] = new(big.Int).SetBytes(ints[1])
+		pubs[i] = new(big.Int).SetBytes(fitBytes(ints[1], n/8, "public key", "threshold-aggregate"))
 	}
 
 	msg   := msgPad(inBytes, n/8)
@@ -5228,6 +7155,7 @@ func cmdThresholdRespond(args []string) {
 	nonce     := fs.String("nonce", "", "Nonce PEM from threshold-commit")
 	out       := fs.String("out", "-", "Output partial signature PEM")
 	fs.Parse(rest)
+	checkKeyLabels("threshold-respond", fs) // TODO #366
 	if *key == "" || *aggregate == "" || *nonce == "" {
 		fmt.Fprintln(os.Stderr, "threshold-respond: --key, --aggregate, --nonce required")
 		os.Exit(1)
@@ -5265,6 +7193,9 @@ func cmdThresholdRespond(args []string) {
 		if label != lblHpkstCommit || len(ints) < 2 {
 			fmt.Fprintf(os.Stderr, "threshold-respond: invalid commitment PEM: %s\n", cp)
 			os.Exit(1)
+		}
+		if len(ints) > 2 {   // TODO #371: a commitment at another width was read at ours
+			bounded(wireInt(ints[2], "commitment n", "threshold-respond"), n, n, "commitment n", "threshold-respond")
 		}
 		pubs[i] = new(big.Int).SetBytes(ints[1])
 	}
@@ -5345,7 +7276,7 @@ func cmdThresholdVerify(args []string) {
 	fs     := flag.NewFlagSet("threshold-verify", flag.ExitOnError)
 	in     := fs.String("in", "-", "Message input file")
 	sig    := fs.String("sig", "", "HPKST SIGNATURE PEM file")
-	digest := fs.String("digest", "", "Pre-hash (hfscx-256)")
+	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	fs.Parse(args)
 	digestValue("threshold-verify", digest)
 	if *sig == "" {

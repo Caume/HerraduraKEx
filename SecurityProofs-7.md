@@ -85,7 +85,7 @@ language test suites (`CryptosuiteTests/Herradura_tests.py` test [21]) against t
 | 32 | 68 | 8 | 56 | **132 B** |
 | 256 | 544 | 32 | 480 | **1 056 B** (1.03 KB) |
 
-At $n=256$, one proof is 1.03 KB — smaller than ML-DSA-44 (2 420 B).
+These rows are a bit-packed lower bound (17-bit w, 1-bit c and 15-bit z coefficients), not the wire format.  The CLIs run the deployed HKEX-RNL ring, n = 1024, and write each coefficient as a 32-bit integer, so a `HERRADURA ZKP-RNL PROOF` is 4 + 3 × 4,096 = **12,292 B** (TODO #374).  Bit-packed, n = 1024 would still be 4 × 1,056 = 4,224 B — larger than ML-DSA-44 (2,420 B).  The claim that ZKP-RNL undercuts ML-DSA-44 held only at $n=256$, which no CLI generates.
 
 **Honest limitation.** The security reduction is heuristic: it relies on the Ring-LWR hardness assumption for the suite's specific blinding polynomial $m$ (derived from the HKEX-RNL session) rather than a provably-secure reduction to a standard lattice problem.  See Lyubashevsky 2012 for the standard-model reduction template.
 
@@ -129,7 +129,7 @@ The Fiat-Shamir seed includes $y$; a cheating prover supplying wrong $A$ (so $F_
 |---|---|---|---|
 | 8 (toy) | 14 | 35.5 KB | — |
 | 32 | 248 | 49.2 KB | — |
-| 256, $r=64$ | 16 320 | **920 KB** | 78 KB (Stern-F) |
+| 256, $r=64$ | 16 320 | **920 KB** | 35 KB (Stern-F, measured; TODO #374) |
 
 At production parameters ($n=256$, $R=219$), basic ZKBoo yields approximately 920 KB.  ZKB++ (Chase et al. 2017) re-encodes each round — input shares from 16-byte seeds, a single online party's AND-gate broadcast (the dominant term drops from $2\times$ to $1\times$), and only the hidden party's commitment.  The often-quoted $5\times$ reduction assumes the per-round *overhead* (commitments, tapes) dominates; for the NL-FSCX circuit the AND-gate broadcast dominates instead (2 040 B/round vs ~224 B overhead/round at $n=256$), so the realistic reduction is governed by the $2\times{\to}1\times$ gate term.  A first-principles accounting (`zkp_pqc_exploration.py` §3.7) gives **≈457 KB at $n=256$, a $2.0\times$ reduction** — not 180 KB.  Reaching ~180 KB would require reducing the AND-gate count itself (e.g. a LowMC-like sparse circuit), a circuit redesign separate from the ZKB++ transcript encoding.
 
@@ -155,16 +155,16 @@ ARM Thumb-2 and NASM i386 targets implement ZKP-RNL only (`rnl_sigma_sign_32`, `
 | Construction | $n$ | $R$ | Proof size | Targets |
 |---|---|---|---|---|
 | ZKP-RNL | 32 | — | proportional to $n$ | all (ARM/NASM at n=32) |
-| ZKP-RNL | 256 | — | **1,056 B** | C, Go, Python |
+| ZKP-RNL | 1024 (deployed ring) | — | **12,292 B** as written by every CLI (4,224 B bit-packed) | C, Go, Python, Java |
 | ZKP-NL | 8 | 4 | demo (toy) | all |
-| ZKP-NL | 8 | 219 | 35.5 KB | C, Python |
-| ZKP-NL | 256 | 219 | 920 KB | C, Go, Python |
+| ZKP-NL | 8 | 219 | 40,085 B as written by every CLI (35.5 KB analytic) | C, Go, Python, Java |
+| ZKP-NL | 256 | 219 | 920 KB | library only — the PEM wire cap is n ≤ 64 |
 
 **Comparison with HPKS-Stern-F and ML-DSA-44 (from §4):**
 
-ZKP-RNL at n=256 produces a 1,056-byte proof — smaller than both HPKS-Stern-F (78 KB) and the NIST reference scheme ML-DSA-44 (2,420 bytes).  It is therefore the most compact PQC signing option in the suite for Ring-LWR keys, at the cost of heuristic rather than tight security.
+A ZKP-RNL proof as the CLIs write it (n = 1024, 32-bit coefficients) is 12,292 B — about a third of an HPKS-Stern-F signature at 219 rounds (35,118 B), and about five times ML-DSA-44 (2,420 bytes).  It is therefore the most compact PQC signing option in the suite for Ring-LWR keys, at the cost of heuristic rather than tight security, but it is not smaller than ML-DSA-44: the 1,056-byte figure this paragraph used to quote is the bit-packed n = 256 estimate of §11.10.2 (TODO #374).  The 78 KB Stern-F figure it quoted dated from v1.9.4, before the TODO #184 encoding.
 
-ZKP-NL at n=256 and R=219 yields 920 KB, which exceeds practical limits for most use cases.  The CLI defaults to n=8 (35.5 KB) for this reason.  The ZKB++ encoding (`zkp_nl_prove_pp`, implemented v1.9.81 — §11.10.6 direction 3) reduces the n=256 revolve proof to 464 KB ($1.98\times$, gate-broadcast-dominated — see §11.10.4 size breakdown), not the generic $5\times$/180 KB; the implemented single-step circuit drops to 31 KB ($5.5\times$, overhead-dominated).  The Ligero-lite IOP prototype (v1.9.87 — §11.10.6 direction 3) further reduces the revolve statement to 219 KB unpruned / 163 KB pruned at $\lambda = 128$ with no parallel repetition, reaching the Picnic-range target.
+ZKP-NL at n=256 and R=219 yields 920 KB, which exceeds practical limits for most use cases.  The CLI defaults to n=8 (40,085 B as written) for this reason, and accepts at most n = 64.  The ZKB++ encoding (`zkp_nl_prove_pp`, implemented v1.9.81 — §11.10.6 direction 3) reduces the n=256 revolve proof to 464 KB ($1.98\times$, gate-broadcast-dominated — see §11.10.4 size breakdown), not the generic $5\times$/180 KB; the implemented single-step circuit drops to 31 KB ($5.5\times$, overhead-dominated).  The Ligero-lite IOP prototype (v1.9.87 — §11.10.6 direction 3) further reduces the revolve statement to 219 KB unpruned / 163 KB pruned at $\lambda = 128$ with no parallel repetition, reaching the Picnic-range target.
 
 CLI integration is documented in `docs/TUTORIAL.md §ZKP Protocols`.  Cross-language interop is verified by `CliTest/test_zkp_interop.sh` (14-way test: 6 signing directions per protocol, plus 2 tamper-rejection checks).
 
@@ -172,14 +172,14 @@ CLI integration is documented in `docs/TUTORIAL.md §ZKP Protocols`.  Cross-lang
 
 | Use case | Recommended construction | Proof size | Notes |
 |---|---|---|---|
-| PQC signature | HPKS-Stern-F (§11.8.4) | 78 KB | **Demo parameters** ($N=256$, ~30–40 bits security); 128-bit requires $N \geq 17000$ |
-| Ring-LWR key proof / anonymous cred | Ring-LWR $\Sigma$-protocol (§11.10.2) | 1 KB | Implemented v1.9.x; heuristic security |
+| PQC signature | HPKS-Stern-F (§11.8.4) | 35 KB | **Demo parameters** ($N=256$, ~30–40 bits security); 128-bit requires $N \geq 17000$ |
+| Ring-LWR key proof / anonymous cred | Ring-LWR $\Sigma$-protocol (§11.10.2) | 12 KB | Implemented v1.9.x; heuristic security |
 | NL-FSCX witness proof | ZKBoo (§11.10.3) | 920 KB | Implemented v1.9.x; CLI defaults to n=8 |
 | NL-FSCX with ZKB++ encoding | ZKB++ (§11.10.3, `zkp_nl_prove_pp`) | 464 KB extrapolated ($1.98\times$); 34 KB for the implemented single-step circuit | Implemented v1.9.81 (Python) |
 | NL-FSCX with sparse circuit | ZKB++ + LowMC-like circuit | ruled out (~15% savings only) | Analysed v1.9.83 (`nl_fscx_sparse_circuit.py`): share size, not gate count, dominates |
 | NL-FSCX IOP argument | Ligero-lite over $\text{GF}(2^{16})$ (`nl_fscx_ligero.py`) | 219 KB (163 KB with path pruning) at $n=256$, $r=64$; 96 KB (39 KB pruned) single-step | Prototyped v1.9.87; argument of knowledge (ZK randomizer rows pending) |
 
-For anonymous credential applications on HKEX-RNL keys, the Ring-LWR $\Sigma$-protocol is the most practical option: its 1 KB proof size is competitive with ML-DSA-44 (2.4 KB).
+For anonymous credential applications on HKEX-RNL keys, the Ring-LWR $\Sigma$-protocol is the most practical option: its 12 KB proof is a third the size of a Stern-F signature, though about five times ML-DSA-44 (2.4 KB).
 
 ### 11.10.6 Open Research Directions
 
@@ -295,7 +295,7 @@ The Python suite implements the credential as `hcred_phi`, `hcred_user_keygen`, 
 - the revealed weight $W = \sum_i e_i$ (linear output, verifier checks $1 \leq W \leq w_{\max}$ with $w_{\max} = \lfloor n/4 + 4\sqrt{3n/16} \rfloor$, i.e. 91 at $n = 256$);
 - the syndrome rows as *integer* sums $S_r = \sum_i H_{ri} e_i \leq n < q$ (no wraparound), reduced mod 2 through auxiliary witness bits: $S_r = \sum_t 2^t \beta_{r,t}$ with $\beta_{r,t}^2 = \beta_{r,t}$ ($\lceil \log_2(n{+}1) \rceil$ bit-check gates per row — 1152 gates at $n = 256$) and the public output $\beta_{r,0} = y_r$.
 
-Total: $2n + (n/2)\lceil \log_2(n{+}1) \rceil$ multiplication gates (1664 at $n = 256$).  The mod-2 reduction via bit decomposition is the only structural cost the merge adds over the §11.10.9 gadget, and it eliminates both the standalone Stern branch (78 KB) and its linkage gadget.  The weight bound replaces Stern's exact-weight check; at the demo code $(N{=}256, k{=}128)$, forging a syndrome preimage of weight $\leq 91$ costs roughly $2^{24}$ by multiplicity-adjusted Prange — the same order as the deployed Stern-F demo parameters, and production still requires the longer codes of TODO #91/#126.
+Total: $2n + (n/2)\lceil \log_2(n{+}1) \rceil$ multiplication gates (1664 at $n = 256$).  The mod-2 reduction via bit decomposition is the only structural cost the merge adds over the §11.10.9 gadget, and it eliminates both the standalone Stern branch (35 KB) and its linkage gadget.  The weight bound replaces Stern's exact-weight check; at the demo code $(N{=}256, k{=}128)$, forging a syndrome preimage of weight $\leq 91$ costs roughly $2^{24}$ by multiplicity-adjusted Prange — the same order as the deployed Stern-F demo parameters, and production still requires the longer codes of TODO #91/#126.
 
 **Refinement 2 (Batch 1, superseded) — sequential Fiat-Shamir binding.**  Batch 1 ran the §11.10.2 Ring-LWR $\Sigma$-protocol as a separate branch, bound to the MPCitH branch only through the shared Fiat-Shamir transcript.  That left the collusion-splitting gap: a compound proof demonstrated knowledge of *some* $s'$ for $C$ and *some* $s''$ for $y$, not the same witness.  Batch 2 (v1.9.75) eliminates the gap — and the $\Sigma$-protocol branch itself — as follows.
 

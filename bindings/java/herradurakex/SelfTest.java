@@ -753,6 +753,29 @@ public final class SelfTest {
             for (int i = 0; i < n; i++) uniform[i] = rng.nextInt(q);
             if (!HerraduraNl.rnlValidateMBlind(uniform, q)) badReject++;
 
+            // (f) TODO #371: rnlValidatePub, the same two tests over Z_p for a
+            //     peer's public value C.  (a)'s draw reduced mod p is the
+            //     accept-control (no new draw); then all-zero, sparse at full
+            //     range, clustered at full count, both sides of the count boundary.
+            {
+                final int p = HerraduraNl.RNLP;
+                int[] pub = new int[n];
+                for (int i = 0; i < n; i++) pub[i] = uniform[i] % p;
+                if (!HerraduraNl.rnlValidatePub(pub)) badReject++;
+                if (HerraduraNl.rnlValidatePub(new int[n])) badAccept++;
+                int[] ps = new int[n];
+                for (int i = 0; i < n / 8; i++) ps[i] = p - 1;
+                if (HerraduraNl.rnlValidatePub(ps)) badAccept++;
+                int[] pc = new int[n];
+                for (int i = 0; i < n; i++) pc[i] = 1 + i % (p / 8 - 1);
+                if (HerraduraNl.rnlValidatePub(pc)) badAccept++;
+                int[] pe = new int[n];
+                for (int i = 0; i < n / 4; i++) pe[i] = p - 1;
+                if (!HerraduraNl.rnlValidatePub(pe)) badReject++;
+                pe[n / 4 - 1] = 0;
+                if (HerraduraNl.rnlValidatePub(pe)) badAccept++;
+            }
+
             // (b) the all-zero polynomial.
             if (HerraduraNl.rnlValidateMBlind(new int[n], q)) badAccept++;
 

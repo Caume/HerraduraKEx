@@ -99,29 +99,42 @@ for algo in hpks hpks-nl; do
     ${CLI[py]} pkey --in "$TMP/k.pem" --pubout --out "$TMP/p.pem" >/dev/null 2>&1
 
     for s in "${LANGS[@]}"; do
-        # Two signatures over the same message: one pre-hashed, one raw.
+        # Three signatures over the same message: pre-hashed, raw, and with the
+        # flag omitted, which since TODO #365 (v15.0.0) means pre-hashed.
         ${CLI[$s]} sign --algo "$algo" --key "$TMP/k.pem" --in "$TMP/msg.bin" \
                    --out "$TMP/dig_$s.pem" --digest hfscx-256 >/dev/null 2>&1
         ${CLI[$s]} sign --algo "$algo" --key "$TMP/k.pem" --in "$TMP/msg.bin" \
-                   --out "$TMP/raw_$s.pem" >/dev/null 2>&1
+                   --out "$TMP/raw_$s.pem" --digest none >/dev/null 2>&1
+        ${CLI[$s]} sign --algo "$algo" --key "$TMP/k.pem" --in "$TMP/msg.bin" \
+                   --out "$TMP/dflt_$s.pem" >/dev/null 2>&1
 
         for v in "${LANGS[@]}"; do
             verify_ok "$algo digest $s->$v" \
                 ${CLI[$v]} verify --algo "$algo" --pubkey "$TMP/p.pem" \
                 --in "$TMP/msg.bin" --sig "$TMP/dig_$s.pem" --digest hfscx-256
-            # The raw path must keep interoperating too: this fix must not have
-            # changed what a plain `sign` produces.
+            # The raw path must keep interoperating too, as an explicit opt-in.
             verify_ok "$algo raw    $s->$v" \
                 ${CLI[$v]} verify --algo "$algo" --pubkey "$TMP/p.pem" \
-                --in "$TMP/msg.bin" --sig "$TMP/raw_$s.pem"
-            # The controls: the two paths must be distinguishable in both
-            # directions, or the flag is decorative.
-            verify_rejects "$algo digest-sig verified WITHOUT --digest $s->$v" \
+                --in "$TMP/msg.bin" --sig "$TMP/raw_$s.pem" --digest none
+            # The default on both sides is the pre-hash (TODO #365) ...
+            verify_ok "$algo default $s->$v" \
+                ${CLI[$v]} verify --algo "$algo" --pubkey "$TMP/p.pem" \
+                --in "$TMP/msg.bin" --sig "$TMP/dflt_$s.pem" --digest hfscx-256
+            verify_ok "$algo dig-sig, verify flag omitted $s->$v" \
                 ${CLI[$v]} verify --algo "$algo" --pubkey "$TMP/p.pem" \
                 --in "$TMP/msg.bin" --sig "$TMP/dig_$s.pem"
+            # The controls: the two paths must be distinguishable in both
+            # directions, or the flag is decorative.
+            verify_rejects "$algo digest-sig verified WITH --digest none $s->$v" \
+                ${CLI[$v]} verify --algo "$algo" --pubkey "$TMP/p.pem" \
+                --in "$TMP/msg.bin" --sig "$TMP/dig_$s.pem" --digest none
             verify_rejects "$algo raw-sig verified WITH --digest $s->$v" \
                 ${CLI[$v]} verify --algo "$algo" --pubkey "$TMP/p.pem" \
                 --in "$TMP/msg.bin" --sig "$TMP/raw_$s.pem" --digest hfscx-256
+            # ... and the raw signature no longer verifies by default.
+            verify_rejects "$algo raw-sig verified with the flag omitted $s->$v" \
+                ${CLI[$v]} verify --algo "$algo" --pubkey "$TMP/p.pem" \
+                --in "$TMP/msg.bin" --sig "$TMP/raw_$s.pem"
         done
     done
 done
@@ -164,8 +177,11 @@ for agg in "${LANGS[@]}"; do
         verify_ok "hpks-t digest agg=$agg -> $v" \
             ${CLI[$v]} verify --algo hpks-t --in "$TMP/msg.bin" \
             --sig "$TMP/tsig.pem" --digest hfscx-256
-        verify_rejects "hpks-t digest-agg verified WITHOUT --digest agg=$agg -> $v" \
+        verify_ok "hpks-t digest agg=$agg -> $v, flag omitted" \
             ${CLI[$v]} verify --algo hpks-t --in "$TMP/msg.bin" --sig "$TMP/tsig.pem"
+        verify_rejects "hpks-t digest-agg verified WITH --digest none agg=$agg -> $v" \
+            ${CLI[$v]} verify --algo hpks-t --in "$TMP/msg.bin" \
+            --sig "$TMP/tsig.pem" --digest none
     done
 done
 
@@ -183,10 +199,10 @@ done
 # reason spec/generate_spec.py grew CLI_FLAG_VALUES, and this loop is the
 # executable half of that table.
 #
-# `none` is also checked, in both directions: it must be accepted (it is the
-# documented default in all four) and it must mean the same thing as omitting
-# the flag, or "reject everything unknown" would have been satisfied by a CLI
-# that rejected the legal value too.
+# `none` is also checked: it must be accepted, or "reject everything unknown"
+# would have been satisfied by a CLI that rejected the legal value too.  It was
+# the default until TODO #365 (v15.0.0); omitting the flag now means hfscx-256,
+# so the last check pins the omitted flag to that spelling.
 echo "=== --digest value set: unknown rejected, none accepted, all four ==="
 for l in "${LANGS[@]}"; do
     if ${CLI[$l]} sign --algo hpks --key "$TMP/k.pem" --in "$TMP/msg.bin" \
@@ -199,13 +215,16 @@ for l in "${LANGS[@]}"; do
        --out "$TMP/dnone_$l.pem" --digest none >/dev/null 2>&1; then
         pass "$l: sign --digest none accepted"
     else
-        fail "$l: sign --digest none rejected — it is the documented default value"
+        fail "$l: sign --digest none rejected — it is a documented value"
     fi
-    # `--digest none` must verify against a signature made with the flag
-    # omitted: the two spellings are one behaviour.
-    verify_ok "$l: --digest none == flag omitted" \
+    verify_ok "$l: --digest none round-trips" \
         ${CLI[$l]} verify --algo hpks --pubkey "$TMP/p.pem" \
-        --in "$TMP/msg.bin" --sig "$TMP/dnone_$l.pem"
+        --in "$TMP/msg.bin" --sig "$TMP/dnone_$l.pem" --digest none
+    ${CLI[$l]} sign --algo hpks --key "$TMP/k.pem" --in "$TMP/msg.bin" \
+        --out "$TMP/domit_$l.pem" >/dev/null 2>&1
+    verify_ok "$l: flag omitted == --digest hfscx-256" \
+        ${CLI[$l]} verify --algo hpks --pubkey "$TMP/p.pem" \
+        --in "$TMP/msg.bin" --sig "$TMP/domit_$l.pem" --digest hfscx-256
 done
 
 echo

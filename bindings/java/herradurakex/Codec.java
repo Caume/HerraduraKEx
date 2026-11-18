@@ -263,14 +263,123 @@ public final class Codec {
      * values (leading 0x00 sign bytes stripped, matching Python
      * der_parse_seq / C der_parse_seq / Go DerParseSeq).
      */
+    public static List<BigInteger> derParseSeq(PemBlock b) {
+        // TODO #367: the item count, against the generated table, before any
+        // decoder indexes the list.  Same text in all four CLIs.
+        int trail = derSeqTrailing(b.der);                    // TODO #372
+        if (trail > 0) {
+            throw new IllegalArgumentException("malformed PEM '" + b.label + "': "
+                + trail + " bytes after the DER SEQUENCE");
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        DerEnc enc = derSeqScan(b.der, b.label);              // TODO #373
+        for (String[] r : KeyLabelTable.DER_ITEMS) {
+            if (!r[0].equals(b.label)) continue;
+            int lo = Integer.parseInt(r[1]), hi = Integer.parseInt(r[2]);
+            if (ints.size() < lo || ints.size() > hi) {
+                throw new IllegalArgumentException("malformed PEM '" + b.label + "': "
+                    + ints.size() + " DER items, expected " + (lo == hi ? "" + lo : lo + ".." + hi));
+            }
+            break;
+        }
+        // TODO #372: no field wider than its writer pads it to; #373: each
+        // field encoded the one way its writer does, and its value in range.
+        String msg = KeyLabelTable.fieldCheck(b.label, ints, enc.width, enc.lead);
+        if (msg != null) throw new IllegalArgumentException(msg);
+        return ints;
+    }
+
+    /** TODO #373: how each INTEGER is ENCODED, which derParseSeq forgets:
+     *  width[i] is its encoded width (content length less a 0x00 the set top
+     *  bit needs), lead[i] 1 when it starts with a 0x00 the sign does not
+     *  need, 2 when with a sign byte. */
+    static final class DerEnc {
+        final int[] width;
+        final int[] lead;
+        DerEnc(int[] w, int[] z) { width = w; lead = z; }
+    }
+
+    private static boolean derLenMinimal(byte[] d, int off) {
+        int b = d[off] & 0xff;
+        if (b < 0x80) return true;
+        int nb = b & 0x7f;
+        if (nb == 0 || off + nb >= d.length || d[off + 1] == 0) return false;
+        return nb > 1 || (d[off + 1] & 0xff) >= 0x80;
+    }
+
+    /** The encodings of a SEQUENCE derParseSeq has accepted.  Throws, in the
+     *  text every CLI prints, on a length not in its shortest form or a
+     *  negative or empty INTEGER: a SEQUENCE has one encoding of its lengths
+     *  and signs (TODO #373). */
+    static DerEnc derSeqScan(byte[] der, String label) {
+        String where = "malformed PEM '" + label + "': ";
+        if (!derLenMinimal(der, 1)) throw new IllegalArgumentException(where + "DER length not in its shortest form");
+        Len l = derDecLen(der, 1);
+        int offset = 1 + l.consumed, end = offset + l.length;
+        List<int[]> items = new ArrayList<>();
+        while (offset < end) {
+            offset++;
+            if (!derLenMinimal(der, offset)) {
+                throw new IllegalArgumentException(where + "DER length not in its shortest form");
+            }
+            Len vl = derDecLen(der, offset);
+            offset += vl.consumed;
+            int n = items.size();
+            if (vl.length == 0) throw new IllegalArgumentException(where + "field " + n + " is an empty INTEGER");
+            int c0 = der[offset] & 0xff;
+            if ((c0 & 0x80) != 0) throw new IllegalArgumentException(where + "field " + n + " is a negative INTEGER");
+            int c1 = vl.length > 1 ? der[offset + 1] & 0xff : 0;
+            boolean sign = vl.length > 1 && c0 == 0 && (c1 & 0x80) != 0;
+            boolean lz = vl.length > 1 && c0 == 0 && (c1 & 0x80) == 0;
+            items.add(new int[]{vl.length - (sign ? 1 : 0), sign ? 2 : lz ? 1 : 0});
+            offset += vl.length;
+        }
+        int[] w = new int[items.size()];
+        int[] z = new int[items.size()];
+        for (int i = 0; i < w.length; i++) { w[i] = items.get(i)[0]; z[i] = items.get(i)[1]; }
+        return new DerEnc(w, z);
+    }
+
+    /** A raw-body PEM (ZKP-NL, ZKP-RNL, HCRED) ends at its last field
+     * (TODO #372); same text in all four CLIs. */
+    static void rawEnd(String label, byte[] body, int off) {
+        if (off < body.length) {
+            throw new IllegalArgumentException("malformed PEM '" + label + "': "
+                + (body.length - off) + " bytes after its last field");
+        }
+    }
+
+    /** Bytes after the outer DER SEQUENCE, or -1 when der does not start with a
+     * well-formed SEQUENCE header whose body fits.  Every CLI refuses a non-zero
+     * count (TODO #372), so an artifact has exactly one encoding. */
+    public static int derSeqTrailing(byte[] der) {
+        if (der.length == 0 || der[0] != 0x30) return -1;
+        try {
+            Len l = derDecLen(der, 1);
+            if (l.length < 0) return -1;          // a 4-byte length past 2^31
+            long end = 1L + l.consumed + l.length;
+            return end > der.length ? -1 : (int) (der.length - end);
+        } catch (IllegalArgumentException e) {
+            return -1;
+        }
+    }
+
+    /** Parses a DER SEQUENCE of INTEGERs; {@link #derParseSeq(PemBlock)} also
+     * checks the item count for the block's label. */
     public static List<BigInteger> derParseSeq(byte[] der) {
         if (der.length == 0 || der[0] != 0x30) {
             throw new IllegalArgumentException("DER: not a SEQUENCE");
         }
         Len l = derDecLen(der, 1);
         int offset = 1 + l.consumed;
+        if (l.length < 0 || l.length > der.length) {
+            throw new IllegalArgumentException("DER: SEQUENCE body truncated");
+        }
         int end = offset + l.length;
         if (end > der.length) throw new IllegalArgumentException("DER: SEQUENCE body truncated");
+        if (end < der.length) {   // TODO #372: nothing may follow the SEQUENCE
+            throw new IllegalArgumentException("DER: " + (der.length - end) + " bytes after the DER SEQUENCE");
+        }
 
         List<BigInteger> out = new ArrayList<>();
         while (offset < end) {
@@ -317,8 +426,8 @@ public final class Codec {
         if (!b.label.equals(expectedLabel)) {
             throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new PrivKey(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new PrivKey(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
     }
 
     /** Encodes an HDRBG checkpoint: SEQUENCE(state[32], blocks) (TODO #269).
@@ -346,7 +455,7 @@ public final class Codec {
         if (!b.label.equals(PEM_HDRBG_STATE)) {
             throw new IllegalArgumentException("Expected " + PEM_HDRBG_STATE + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         if (ints.size() < 2) {
             throw new IllegalArgumentException("HDRBG STATE: expected SEQUENCE(state, blocks)");
         }
@@ -370,8 +479,8 @@ public final class Codec {
         if (!b.label.equals(expectedLabel)) {
             throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new PubKey(ints.get(0), ints.get(1).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new PubKey(ints.get(0), runWidth(ints.get(1), Herradura.N, "n", b.label));
     }
 
     /** Encodes an HPKE ciphertext: SEQUENCE(R, E, nbits). */
@@ -392,8 +501,8 @@ public final class Codec {
         if (!b.label.equals(PEM_CIPHERTEXT)) {
             throw new IllegalArgumentException("Expected " + PEM_CIPHERTEXT + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new AsymCt(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new AsymCt(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
     }
 
     /** Encodes an HPKS (Schnorr) signature: SEQUENCE(s, R, e, nbits). */
@@ -419,8 +528,8 @@ public final class Codec {
         if (!b.label.equals(PEM_SIGNATURE)) {
             throw new IllegalArgumentException("Expected " + PEM_SIGNATURE + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new SchnorrSig(ints.get(0), ints.get(1), ints.get(2), ints.get(3).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new SchnorrSig(ints.get(0), ints.get(1), ints.get(2), runWidth(ints.get(3), Herradura.N, "n", b.label));
     }
 
     /** Encodes an HSKE session key: SEQUENCE(key, nbits).
@@ -443,7 +552,7 @@ public final class Codec {
         if (!b.label.equals(PEM_SESSION_KEY)) {
             throw new IllegalArgumentException("Expected " + PEM_SESSION_KEY + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         return new PubKey(ints.get(0), ints.get(1).intValueExact());
     }
 
@@ -518,8 +627,8 @@ public final class Codec {
         if (!b.label.equals(PEM_HKEX_RNL_PRIV)) {
             throw new IllegalArgumentException("Expected " + PEM_HKEX_RNL_PRIV + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        int n = ints.get(2).intValueExact();
+        List<BigInteger> ints = derParseSeq(b);
+        int n = rnlN(ints.get(2), "pkey");
         int[] s = unpackPoly(ints.get(0), n, 4);
         int[] mBlind = unpackPoly(ints.get(1), n, 4);
         byte[] nA = (ints.size() >= 4) ? toFixedBytes(ints.get(3), RNL_NA_BYTES) : new byte[RNL_NA_BYTES];
@@ -556,8 +665,8 @@ public final class Codec {
         if (!b.label.equals(PEM_HKEX_RNL_PUB)) {
             throw new IllegalArgumentException("Expected " + PEM_HKEX_RNL_PUB + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        int n = ints.get(2).intValueExact();
+        List<BigInteger> ints = derParseSeq(b);
+        int n = rnlN(ints.get(2), "kex");
         int[] c = unpackPoly(ints.get(0), n, 2);
         int[] mBlind = unpackPoly(ints.get(1), n, 4);
         byte[] nA = (ints.size() >= 4) ? toFixedBytes(ints.get(3), RNL_NA_BYTES) : new byte[RNL_NA_BYTES];
@@ -603,10 +712,10 @@ public final class Codec {
         if (!b.label.equals(PEM_RNL_RESPONSE)) {
             throw new IllegalArgumentException("Expected " + PEM_RNL_RESPONSE + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         BigInteger k = ints.get(0);
-        int n = ints.get(3).intValueExact();
-        int hintLen = ints.get(4).intValueExact();
+        int n = rnlN(ints.get(3), "kex");
+        int hintLen = bounded(ints.get(4), 0, n, "hint length", "kex");   // n, not n/2: Go writes n (TODO #367)
         int[] cB = unpackPoly(ints.get(1), n, 2);
         BigInteger hintInt = ints.get(2);
         int[] hint = new int[hintLen];
@@ -638,6 +747,23 @@ public final class Codec {
     /** Returns v, or throws if it falls outside [lo, hi].  {@code what} names
      * the field as the wire calls it; {@code where} is the subcommand, so the
      * message shape matches the C, Go and Python CLIs'. */
+    /** TODO #371: a width the artifact DECLARES must be the width this port runs.
+     * GF arithmetic here is fixed at Herradura.N and the QC-MDPC code at
+     * Stern.QCMDPC_R, so any other value used to reach the arithmetic and fail
+     * inside it (E_MIXED_WIDTH, E_RANGE).  Worded as in the C CLI. */
+    static int runWidth(BigInteger v, int want, String what, String label) {
+        if (v.signum() < 0 || v.bitLength() > 31) {
+            throw new IllegalArgumentException("PEM '" + label + "': " + what
+                + " is wider than 32 bits (this CLI runs " + what + " = " + want + ")");
+        }
+        int got = v.intValueExact();
+        if (got != want) {
+            throw new IllegalArgumentException("PEM '" + label + "': " + what + " is " + got
+                + " (this CLI runs " + what + " = " + want + ")");
+        }
+        return got;
+    }
+
     private static int bounded(BigInteger value, int lo, int hi, String what, String where) {
         // intValueExact() already refuses anything too wide for an int; the
         // range check below is what stops the in-range-but-absurd values.
@@ -651,6 +777,18 @@ public final class Codec {
         if (v < lo || v > hi) {
             throw new IllegalArgumentException(where + ": " + what + " is " + v
                 + " (expected " + lo + ".." + hi + ")");
+        }
+        return v;
+    }
+
+    /** Bounds a wire-supplied HKEX-RNL ring dimension: a power of two from 8 to
+     * the deployed RNLN (TODO #367).  It sizes every polynomial unpacked after
+     * it; Go and Python bound it the same way, C requires RNLN exactly. */
+    static int rnlN(BigInteger value, String where) {
+        int v = bounded(value, 8, HerraduraNl.RNLN, "ring dimension n", where);
+        if ((v & (v - 1)) != 0) {
+            throw new IllegalArgumentException(where + ": ring dimension n is " + v
+                + " (expected a power of two)");
         }
         return v;
     }
@@ -748,6 +886,7 @@ public final class Codec {
         int n = rd4(body, 0);
         if (n <= 0 || n > 1 << 20) throw new IllegalArgumentException("ZKP-NL: bad n " + n);
         int nb = (n + 7) / 8;
+        rawEnd(PEM_ZKP_NL_PRIV, body, 4 + 3 * nb);
         return new ZkpNlPrivKey(new BigInteger(1, sub(body, 4, nb)),
                                 new BigInteger(1, sub(body, 4 + nb, nb)),
                                 new BigInteger(1, sub(body, 4 + 2 * nb, nb)), n);
@@ -776,6 +915,7 @@ public final class Codec {
         int n = rd4(body, 0);
         if (n <= 0 || n > 1 << 20) throw new IllegalArgumentException("ZKP-NL: bad n " + n);
         int nb = (n + 7) / 8;
+        rawEnd(PEM_ZKP_NL_PUB, body, 4 + 2 * nb);
         return new ZkpNlPubKey(new BigInteger(1, sub(body, 4, nb)),
                                new BigInteger(1, sub(body, 4 + nb, nb)), n);
     }
@@ -830,6 +970,7 @@ public final class Codec {
             pr.viewP2 = sub(body, off, l2); off += l2;
             rounds.add(pr);
         }
+        rawEnd(PEM_ZKP_NL_PROOF, body, off);
         return new ZkpNlProof(rounds, n);
     }
 
@@ -890,6 +1031,7 @@ public final class Codec {
             else pr.share2 = new byte[0];
             rounds.add(pr);
         }
+        rawEnd(PEM_ZKP_NL_PP_SIG, body, off);
         return new ZkpNlPpProof(rounds, n);
     }
 
@@ -934,6 +1076,7 @@ public final class Codec {
         for (int i = 0; i < n; i++) { w[i] = rd4(body, off); off += 4; }   // signed
         for (int i = 0; i < n; i++) { c[i] = rd4(body, off); off += 4; }   // unsigned (< 2^31)
         for (int i = 0; i < n; i++) { z[i] = rd4(body, off); off += 4; }   // signed
+        rawEnd(PEM_ZKP_RNL_PROOF, body, off);
         return new ZkpRnlProof(w, c, z, n);
     }
 
@@ -981,13 +1124,13 @@ public final class Codec {
         if (!b.label.equals(PEM_HYBRID_RESPONSE)) {
             throw new IllegalArgumentException("Expected " + PEM_HYBRID_RESPONSE + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         if (ints.size() < 8) {
             throw new IllegalArgumentException("HYBRID-RNL-STERN RESPONSE: expected 8 fields, got " + ints.size());
         }
-        int n = ints.get(3).intValueExact();
-        int hintLen = ints.get(4).intValueExact();
-        int rQc = ints.get(7).intValueExact();
+        int n = rnlN(ints.get(3), "kex");
+        int hintLen = bounded(ints.get(4), 0, n, "hint length", "kex");   // n, not n/2: Go writes n (TODO #367)
+        int rQc = runWidth(ints.get(7), Stern.QCMDPC_R, "r", b.label);   // TODO #371
         // Bound every field that sizes an allocation before it is used (TODO #240).
         if (n <= 0 || n > 1 << 16) throw new IllegalArgumentException("HYBRID response: bad n " + n);
         if (hintLen < 0 || hintLen > n) {
@@ -1014,7 +1157,7 @@ public final class Codec {
         if (!b.label.equals(PEM_DIGEST)) {
             throw new IllegalArgumentException("Expected " + PEM_DIGEST + ", got " + b.label);
         }
-        return derParseSeq(b.der).get(0);
+        return derParseSeq(b).get(0);
     }
 
     // -----------------------------------------------------------------
@@ -1042,8 +1185,8 @@ public final class Codec {
         if (!b.label.equals(expectedLabel)) {
             throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new SternPrivKey(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new SternPrivKey(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
     }
 
     /** Encodes a Stern-F public key: SEQUENCE(syndrome, seed, n). */
@@ -1064,8 +1207,8 @@ public final class Codec {
         if (!b.label.equals(expectedLabel)) {
             throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new SternPubKey(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new SternPubKey(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
     }
 
     /** Encodes an HPKE-Stern-F (demo) ciphertext: SEQUENCE(ct_syn, e_p, K, E, n). */
@@ -1091,7 +1234,7 @@ public final class Codec {
         if (!b.label.equals(PEM_CIPHERTEXT)) {
             throw new IllegalArgumentException("Expected " + PEM_CIPHERTEXT + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         return new SternCt(ints.get(0), ints.get(1), ints.get(2), ints.get(3), ints.get(4).intValueExact());
     }
 
@@ -1122,13 +1265,13 @@ public final class Codec {
         if (!b.label.equals(PEM_SIGNATURE)) {
             throw new IllegalArgumentException("Expected " + PEM_SIGNATURE + ", got " + b.label);
         }
-        return decodeSternSigDer(b.der);
+        return decodeSternSigDer(b);
     }
 
     /** Shared DER body parser for {@link #decodeSternSig} and
      * {@link #decodeHcredCredential} (identical wire shape, different label). */
-    private static SternSigDecoded decodeSternSigDer(byte[] der) {
-        List<BigInteger> ints = derParseSeq(der);
+    private static SternSigDecoded decodeSternSigDer(PemBlock blk) {
+        List<BigInteger> ints = derParseSeq(blk);
         int nbits = boundedN(ints.get(0), "verify");
         int rounds = bounded(ints.get(1), 1, SDF_MAX_ROUNDS, "round count", "verify");
         int nbytes = nbits / 8;
@@ -1233,10 +1376,10 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKE_STERN_KEM_PRIV)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKE_STERN_KEM_PRIV + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         // r and d each size a toFixedBytes() below; d additionally indexes the
         // support arrays, and `d * 2` overflowed int before this bound existed.
-        int r = bounded(ints.get(4), 1, Stern.QCMDPC_R, "QC-MDPC block length r", "pkey");
+        int r = runWidth(ints.get(4), Stern.QCMDPC_R, "r", b.label);   // TODO #371: exact, not 1..R
         int d = bounded(ints.get(5), 1, Stern.QCMDPC_D, "QC-MDPC row weight d", "pkey");
         int rb = (r + 7) / 8;
         BigInteger h0 = leReverseToInt(toFixedBytes(ints.get(0), rb));
@@ -1262,8 +1405,8 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKE_STERN_KEM_PUB)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKE_STERN_KEM_PUB + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        int r = bounded(ints.get(1), 1, Stern.QCMDPC_R, "QC-MDPC block length r", "pkey");
+        List<BigInteger> ints = derParseSeq(b);
+        int r = runWidth(ints.get(1), Stern.QCMDPC_R, "r", b.label);   // TODO #371: exact, not 1..R
         int rb = (r + 7) / 8;
         BigInteger hPub = leReverseToInt(toFixedBytes(ints.get(0), rb));
         return new KemPubKey(hPub, r);
@@ -1288,8 +1431,8 @@ public final class Codec {
         if (!b.label.equals(PEM_CIPHERTEXT)) {
             throw new IllegalArgumentException("Expected " + PEM_CIPHERTEXT + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        int r = ints.get(2).intValueExact();
+        List<BigInteger> ints = derParseSeq(b);
+        int r = runWidth(ints.get(2), Stern.QCMDPC_R, "r", b.label);
         int rb = (r + 7) / 8;
         BigInteger syn = leReverseToInt(toFixedBytes(ints.get(0), rb));
         return new KemCt(syn, ints.get(1), r);
@@ -1356,8 +1499,8 @@ public final class Codec {
         if (!b.label.equals(PEM_OPRF_STATE)) {
             throw new IllegalArgumentException("Expected " + PEM_OPRF_STATE + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new OprfState(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new OprfState(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
     }
 
     /** Encodes an OPRF evaluation: SEQUENCE(beta, nbits) — same shape as a
@@ -1392,7 +1535,7 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKS_WOTS_PRIV)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_WOTS_PRIV + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         byte[] seed = toFixedBytes(ints.get(0), 32);
         return new WotsPrivKey(seed, ints.get(1).intValueExact());
     }
@@ -1409,7 +1552,7 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKS_WOTS_PUB)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_WOTS_PUB + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         // The shipped parameters fix the chain count, so anything else is
         // malformed rather than merely large.
         int ell = bounded(ints.get(1), Wots.L, Wots.L, "WOTS chain count", "verify");
@@ -1430,7 +1573,7 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKS_WOTS_SIG)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_WOTS_SIG + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         // The shipped parameters fix the chain count, so anything else is
         // malformed rather than merely large.
         int ell = bounded(ints.get(1), Wots.L, Wots.L, "WOTS chain count", "verify");
@@ -1472,7 +1615,7 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKS_XMSS_PRIV)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_XMSS_PRIV + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         byte[] seed = toFixedBytes(ints.get(0), 32);
         // h sizes `1 << h` leaves and the 32-bytes-per-leaf blob behind them.
         int h = bounded(ints.get(1), 1, XMSS_MAX_H, "XMSS height", "pkey");
@@ -1502,7 +1645,7 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKS_XMSS_PUB)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_XMSS_PUB + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         return new XmssPubKey(toFixedBytes(ints.get(0), 32),
                               bounded(ints.get(1), 1, XMSS_MAX_H, "XMSS height", "pkey"));
     }
@@ -1521,7 +1664,7 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKS_XMSS_SIG)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_XMSS_SIG + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         int leafIdx = ints.get(0).intValueExact();
         int h = bounded(ints.get(3), 1, XMSS_MAX_H, "XMSS signature depth", "verify");
         int n = boundedN(ints.get(4), "verify");
@@ -1684,6 +1827,7 @@ public final class Codec {
         int[] m = deser3(body, off, n); off += n * 3;
         BigInteger seedH = new BigInteger(1, slice(body, off, HCRED_SEED_NB)); off += HCRED_SEED_NB;
         BigInteger syndr = fromLE(body, off, HCRED_SYNDR_NB);
+        rawEnd(PEM_HCRED_PRIV, body, off + HCRED_SYNDR_NB);
         return new HcredPrivKey(s, c, m, seedH, syndr, n);
     }
 
@@ -1719,6 +1863,7 @@ public final class Codec {
         int[] m = deser3(body, off, n); off += n * 3;
         BigInteger seedH = new BigInteger(1, slice(body, off, HCRED_SEED_NB)); off += HCRED_SEED_NB;
         BigInteger syndr = fromLE(body, off, HCRED_SYNDR_NB);
+        rawEnd(PEM_HCRED_PUB, body, off + HCRED_SYNDR_NB);
         return new HcredPubKey(c, m, seedH, syndr, n);
     }
 
@@ -1741,7 +1886,7 @@ public final class Codec {
         if (!b.label.equals(PEM_HCRED_CRED)) {
             throw new IllegalArgumentException("Expected " + PEM_HCRED_CRED + ", got " + b.label);
         }
-        return decodeSternSigDer(b.der);
+        return decodeSternSigDer(b);
     }
 
     private static byte[] outsToBytes(Hcred.Outputs outs) {
@@ -1852,6 +1997,7 @@ public final class Codec {
         }
         Hcred.Proof proof = new Hcred.Proof();
         proof.W = w; proof.rounds = rds;
+        rawEnd(PEM_HCRED_PROOF, body, off);
         return proof;
     }
 
@@ -1873,7 +2019,7 @@ public final class Codec {
         if (!block.label.equals(PEM_PAKE_RECORD)) {
             throw new IllegalArgumentException("Expected " + PEM_PAKE_RECORD + ", got " + block.label);
         }
-        List<BigInteger> ints = derParseSeq(block.der);
+        List<BigInteger> ints = derParseSeq(block);
         byte[] salt = toFixedBytes(ints.get(0), 32);
         return new Hpake.Record("", salt, ints.get(1), ints.get(2));
     }
@@ -1910,8 +2056,8 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKST_COMMIT)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKST_COMMIT + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new HpkstCommit(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new HpkstCommit(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
     }
 
     public static String encodeHpkstNonce(BigInteger kJ, int n) {
@@ -1931,8 +2077,8 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKST_NONCE)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKST_NONCE + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new HpkstNonce(ints.get(0), ints.get(1).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new HpkstNonce(ints.get(0), runWidth(ints.get(1), Herradura.N, "n", b.label));
     }
 
     public static String encodeHpkstAggregate(BigInteger r, BigInteger cAgg, BigInteger e, int n) {
@@ -1956,8 +2102,8 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKST_AGGREGATE)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKST_AGGREGATE + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new HpkstAggregate(ints.get(0), ints.get(1), ints.get(2), ints.get(3).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new HpkstAggregate(ints.get(0), ints.get(1), ints.get(2), runWidth(ints.get(3), Herradura.N, "n", b.label));
     }
 
     public static String encodeHpkstPartial(BigInteger sJ, int n) {
@@ -1977,8 +2123,8 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKST_PARTIAL)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKST_PARTIAL + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new HpkstPartial(ints.get(0), ints.get(1).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new HpkstPartial(ints.get(0), runWidth(ints.get(1), Herradura.N, "n", b.label));
     }
 
     public static String encodeHpkstSig(BigInteger cAgg, BigInteger r, BigInteger s, int n) {
@@ -2002,8 +2148,8 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKST_SIG)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKST_SIG + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
-        return new HpkstSig(ints.get(0), ints.get(1), ints.get(2), ints.get(3).intValueExact());
+        List<BigInteger> ints = derParseSeq(b);
+        return new HpkstSig(ints.get(0), ints.get(1), ints.get(2), runWidth(ints.get(3), Herradura.N, "n", b.label));
     }
 
     // -----------------------------------------------------------------
@@ -2046,7 +2192,7 @@ public final class Codec {
         if (!b.label.equals(PEM_HPKS_RING_SIG)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_RING_SIG + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        List<BigInteger> ints = derParseSeq(b);
         int k = bounded(ints.get(0), 2, RING_MAX_K, "ring member count", "verify");
         int rounds = bounded(ints.get(1), 1, SDF_MAX_ROUNDS, "round count", "verify");
         int n = boundedN(ints.get(2), "verify");

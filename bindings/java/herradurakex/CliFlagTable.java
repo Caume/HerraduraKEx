@@ -18,7 +18,7 @@ final class CliFlagTable {
         Map<String, Set<String>> m = new HashMap<>();
         m.put("cred-issue", new HashSet<>(Arrays.asList("in", "our", "out", "rounds")));
         m.put("cred-prove", new HashSet<>(Arrays.asList("in", "msg", "out", "rounds")));
-        m.put("cred-verify", new HashSet<>(Arrays.asList("cred", "issuer", "msg", "proof", "pubkey")));
+        m.put("cred-verify", new HashSet<>(Arrays.asList("cred", "issuer", "min-rounds", "msg", "proof", "pubkey")));
         m.put("dec", new HashSet<>(Arrays.asList("ad", "algo", "in", "key", "out")));
         m.put("decfile", new HashSet<>(Arrays.asList("algo", "in", "key", "out")));
         m.put("dgst", new HashSet<>(Arrays.asList("algo", "in", "out")));
@@ -40,7 +40,7 @@ final class CliFlagTable {
         m.put("threshold-commit", new HashSet<>(Arrays.asList("commit-out", "key", "nonce-out")));
         m.put("threshold-respond", new HashSet<>(Arrays.asList("aggregate", "commit", "commits", "key", "nonce", "out")));
         m.put("twk", new HashSet<>(Arrays.asList("bidx", "decrypt", "encrypt", "in", "key", "out", "sector", "v3")));
-        m.put("verify", new HashSet<>(Arrays.asList("algo", "digest", "in", "pubkey", "ring", "sig")));
+        m.put("verify", new HashSet<>(Arrays.asList("algo", "digest", "in", "min-rounds", "pubkey", "ring", "sig")));
         FLAGS = Collections.unmodifiableMap(m);
     }
 
@@ -51,7 +51,7 @@ final class CliFlagTable {
         "required):\n" +
         "  cred-issue           --in --our --out --rounds\n" +
         "  cred-prove           --in --msg --out --rounds\n" +
-        "  cred-verify          --cred --issuer --msg --proof --pubkey\n" +
+        "  cred-verify          --cred --issuer --min-rounds --msg --proof --pubkey\n" +
         "  dec                  --ad --algo --in --key --out\n" +
         "                       --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex\n" +
         "                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern\n" +
@@ -91,7 +91,7 @@ final class CliFlagTable {
         "  threshold-respond    --aggregate --commit --commits --key --nonce --out\n" +
         "  twk                  --bidx --decrypt --encrypt --in --key --out --sector\n" +
         "                       --v3\n" +
-        "  verify               --algo --digest --in --pubkey --ring --sig\n" +
+        "  verify               --algo --digest --in --min-rounds --pubkey --ring --sig\n" +
         "                       --algo: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo\n" +
         "                               nl-zkbpp hpks-xmss hpks-wots hpks-ring hpks-t\n";
 }

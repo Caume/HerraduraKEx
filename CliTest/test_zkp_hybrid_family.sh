@@ -135,6 +135,10 @@ sig_matrix() {   # sig_matrix <algo> <keyfile> <pubfile> [extra sign args...]
     local algo="$1" key="$2" pub="$3"; shift 3
     local tag="${MATRIX_TAG:+ $MATRIX_TAG}" sfx="${MATRIX_TAG:+_$MATRIX_TAG}"
     echo "── $algo$tag: $(echo $LANGS | wc -w)x$(echo $LANGS | wc -w) sign/verify matrix ──"
+    # A reduced --rounds on the sign side needs the same --min-rounds on the
+    # verify side, or every verifier refuses it at the 219 floor (TODO #364).
+    local vx=() prev=""
+    for a in "$@"; do [ "$prev" = "--rounds" ] && vx=(--min-rounds "$a"); prev="$a"; done
     for s in $LANGS; do
         local SCLI; SCLI=$(cli_for "$s")
         if ! $SCLI sign --algo "$algo" --key "$key" --in "$TMP/msg.bin" \
@@ -144,7 +148,7 @@ sig_matrix() {   # sig_matrix <algo> <keyfile> <pubfile> [extra sign args...]
         for v in $LANGS; do
             local VCLI; VCLI=$(cli_for "$v")
             if $VCLI verify --algo "$algo" --pubkey "$pub" --in "$TMP/msg.bin" \
-                            --sig "$TMP/${algo}${sfx}_$s.sig" >/dev/null 2>&1; then
+                            --sig "$TMP/${algo}${sfx}_$s.sig" "${vx[@]}" >/dev/null 2>&1; then
                 ok "[$s->$v] $algo$tag verifies"
             else
                 bad "[$s->$v] $algo$tag verifies"
@@ -157,7 +161,7 @@ sig_matrix() {   # sig_matrix <algo> <keyfile> <pubfile> [extra sign args...]
     for v in $LANGS; do
         local VCLI; VCLI=$(cli_for "$v")
         if $VCLI verify --algo "$algo" --pubkey "$pub" --in "$TMP/bad.bin" \
-                        --sig "$TMP/${algo}${sfx}_$first.sig" >/dev/null 2>&1; then
+                        --sig "$TMP/${algo}${sfx}_$first.sig" "${vx[@]}" >/dev/null 2>&1; then
             bad "[$v] $algo$tag REJECTS a tampered message (it accepted one)"
         else
             ok "[$v] $algo$tag rejects a tampered message"

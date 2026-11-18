@@ -63,7 +63,7 @@ section .data
         db 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
         db 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
 
-    hdr         db "=== Herradura KEx v1.8.0 -- Correctness Tests (NASM i386, KEYBITS=32) ===", 10, 10
+    hdr         db "=== Herradura KEx -- Correctness Tests (NASM i386, KEYBITS=32) ===", 10, 10
     hdr_l       equ $-hdr
 
     t1_hdr      db "[1] HKEX-GF key exchange correctness: sk_alice == sk_bob (20 iterations)", 10

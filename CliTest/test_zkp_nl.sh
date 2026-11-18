@@ -44,18 +44,18 @@ $CLI sign    --algo nl-zkboo --key "$TMP/zkpnl.pem" \
 
 check_verify "nl-zkboo verify correct msg" \
     $CLI verify --algo nl-zkboo --pubkey "$TMP/zkpnl_pub.pem" \
-    --in "$TMP/msg.bin" --sig "$TMP/zkpnl_proof.pem"
+    --in "$TMP/msg.bin" --sig "$TMP/zkpnl_proof.pem" --min-rounds 16
 
 check_reject "nl-zkboo verify wrong msg" \
     $CLI verify --algo nl-zkboo --pubkey "$TMP/zkpnl_pub.pem" \
-    --in "$TMP/msg2.bin" --sig "$TMP/zkpnl_proof.pem"
+    --in "$TMP/msg2.bin" --sig "$TMP/zkpnl_proof.pem" --min-rounds 16
 
 # Wrong pubkey rejection
 $CLI genpkey --algo hpks-zkp-nl --out "$TMP/zkpnl_other.pem"
 $CLI pkey    --in "$TMP/zkpnl_other.pem" --pubout --out "$TMP/zkpnl_other_pub.pem"
 check_reject "nl-zkboo verify wrong pubkey" \
     $CLI verify --algo nl-zkboo --pubkey "$TMP/zkpnl_other_pub.pem" \
-    --in "$TMP/msg.bin" --sig "$TMP/zkpnl_proof.pem"
+    --in "$TMP/msg.bin" --sig "$TMP/zkpnl_proof.pem" --min-rounds 16
 
 echo ""
 echo "Results: $PASS PASS / $FAIL FAIL"

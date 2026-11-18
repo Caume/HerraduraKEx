@@ -12,10 +12,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-if ! command -v javac >/dev/null 2>&1; then
-    echo "SKIP test_java_pake_interop: javac not found (install a JDK to run this test)"
-    exit 0
-fi
+# TODO #370: no JDK is a run that did not happen, not a pass (exit 2;
+# HKX_ALLOW_SKIP=1 to override).
+. "$ROOT/CliTest/lib_build.sh"
+hkx_require_built java
 
 bash bindings/java/build.sh >/dev/null
 
