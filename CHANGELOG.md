@@ -567,6 +567,13 @@ they are the last five sections.
 - **Docs.** The TUTORIAL's HCRED cost table is remeasured. Two stale claims went with
   it: that the Go CLI lacks `cred-*` subcommands, and an "~18 KB (n=32, R=219)" proof
   size. The ZKP-RNL row there now says n = 1024.
+- **Findings gates.** Three gates read HFSCX-256's v1 call out of the source and stopped
+  reproducing when that call became the word-wise helper. `hfscx_mmo_compression.py`
+  now checks the helper's A, B, round count and feed-forward, and its §6 site count
+  skips comments. `v1_mode_rounds.py` §1 matches each port's helper call and loop.
+  `v1_remaining_sites.py` censuses the C, Go and Java helpers' loop bounds and Python's
+  `_hfscx256_compress` calls, so the table still pins all four ports at 3n/4. A loop
+  bound changed to 64 shows up as an untabled row. No finding changed.
 
 ## [14.0.4] - 2026-11-11
 

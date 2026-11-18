@@ -100,6 +100,17 @@ def _load(name, rel):
     return m
 
 
+def _blank_comments(text):
+    """C comments replaced by spaces, newlines kept."""
+    return re.sub(r"/\*.*?\*/|//[^\n]*",
+                  lambda m: re.sub(r"[^\n]", " ", m.group(0)), text, flags=re.S)
+
+
+def _fn_body(text, head):
+    body = text[text.index(head):]
+    return body[:body.index("\n}\n")]
+
+
 def _src(rel):
     with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
         return f.read()
@@ -236,10 +247,16 @@ def section_3():
            or H.hfscx_256(b + w.to_bytes(32, "big")) == H.hfscx_256(b)]
     check(not bad, "no W block commutes with a random block or erases itself (%s)" % bad)
     hdr = _src("herradura.h")
-    body = hdr[hdr.index("static void hfscx_256("):]
-    body = body[:body.index("\n}\n")]
-    check("nl_fscx_revolve_v1_ba(&state, &block, &state, V1_MODE_STEPS);" in body
-          and "ba_xor(&state, &state, &block);" in body and "BitArray prev" not in body,
+    # TODO #369: the compression runs on four uint64 words in _hfscx256_compress
+    # (a = m is v1's A, sb / s its B, s = a ^ m the feed-forward), not through
+    # nl_fscx_revolve_v1_ba; the KATs hold it bit-exact to the BitArray form.
+    body = _fn_body(hdr, "static void hfscx_256(")
+    comp = _fn_body(hdr, "static void _hfscx256_compress(")
+    check("_hfscx256_compress(st, padded + off);" in body and "BitArray prev" not in body
+          and "a[i] = m[i];" in comp
+          and "sb[i] = s[i] ^ (s[i] << 1 | s[nx] >> 63) ^ (s[i] >> 1 | s[pv] << 63);" in comp
+          and "for (step = 0; step < V1_MODE_STEPS; step++)" in comp
+          and "s[i] = a[i] ^ m[i];" in comp,
           "herradura.h's hfscx_256 passes the block as A and the state as B, and feeds "
           "the block forward")
     ok32 = []
@@ -327,11 +344,15 @@ def section_5():
 def section_6():
     rule("§6  The other v1 sites at >= n/2 rounds")
     hdr = _src("herradura.h")
-    calls = re.findall(r"nl_fscx_revolve_v1_ba\(([^;]*?),\s*V1_MODE_STEPS\)", hdr)
+    code = _blank_comments(hdr)
+    calls = re.findall(r"nl_fscx_revolve_v1_ba\(([^;]*?),\s*V1_MODE_STEPS\)", code)
     sites = sorted(c.split(",")[-1].strip() for c in calls)
-    want = sorted(["&state", "&base_i", "base", "x"])
+    # HFSCX-256's v1 is inlined in _hfscx256_compress since TODO #369, B = s.
+    sites = sorted(sites + ["s (_hfscx256_compress)"] * code.count(
+        "for (step = 0; step < V1_MODE_STEPS; step++)"))
+    want = sorted(["s (_hfscx256_compress)", "&base_i", "base", "x"])
     check(sites == want,
-          "herradura.h has exactly four V1_MODE_STEPS calls, with B = %s" % sites)
+          "herradura.h has exactly four V1_MODE_STEPS sites, with B = %s" % sites)
     print("""
     site                 B                     who can set B to a W value
     HFSCX-256            the chaining value    nobody (§4)
