@@ -1312,6 +1312,18 @@ func cmdGenpkey(args []string) {
 		fmt.Fprintln(os.Stderr, "genpkey: --algo required")
 		os.Exit(1)
 	}
+	// TODO #376: a GIVEN passphrase must be non-empty.  Before #376 this read
+	// --passphrase '' as no passphrase and wrote the key in the clear, and
+	// accepted --kdf-iterations alone and ignored it.  Both are refused
+	// before any key is generated.
+	if isSet(fs, "passphrase") && *passphrase == "" {
+		fmt.Fprintln(os.Stderr, "genpkey: --passphrase must not be empty")
+		os.Exit(1)
+	}
+	if isSet(fs, "kdf-iterations") && !isSet(fs, "passphrase") {
+		fmt.Fprintln(os.Stderr, "genpkey: --kdf-iterations requires --passphrase")
+		os.Exit(1)
+	}
 
 	n := *bits
 
@@ -1503,7 +1515,9 @@ func cmdPkey(args []string) {
 	// its own mode, not a modifier of --pubout/--text, so it is handled before
 	// the "specify --pubout or --text" check.
 	if *decrypt {
-		if *passphrase == "" {
+		// TODO #376: '' is a passphrase here, so a key C or Java encrypted
+		// under '' before #376 stays readable.
+		if !isSet(fs, "passphrase") {
 			fmt.Fprintln(os.Stderr, "pkey --decrypt: --passphrase required")
 			os.Exit(1)
 		}
@@ -1516,7 +1530,7 @@ func cmdPkey(args []string) {
 		}
 		return
 	}
-	if *passphrase != "" {
+	if isSet(fs, "passphrase") {
 		fmt.Fprintln(os.Stderr, "pkey: --passphrase is only meaningful with --decrypt")
 		os.Exit(1)
 	}
@@ -5130,12 +5144,22 @@ func cmdOprfUnblind(args []string) {
 func cmdPakeRegister(args []string) {
 	fs    := flag.NewFlagSet("pake-register", flag.ExitOnError)
 	keyF  := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
-	pwF   := fs.String("password", "", "Password (default: demo-password)")
+	pwF   := fs.String("password", "", "Password to register (required, non-empty)")
 	outF  := fs.String("out",      "-", "Output PAKE RECORD PEM")
 	fs.Parse(args)
 	checkKeyLabels("pake-register", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-register: --key required")
+		os.Exit(1)
+	}
+	// TODO #376: a record is never written under a password nobody chose.
+	// Before #376 an omitted or empty --password registered "demo-password".
+	if !isSet(fs, "password") {
+		fmt.Fprintln(os.Stderr, "pake-register: --password required")
+		os.Exit(1)
+	}
+	if *pwF == "" {
+		fmt.Fprintln(os.Stderr, "pake-register: --password must not be empty")
 		os.Exit(1)
 	}
 	kLabel, kInts, err := readPEMInts(*keyF)
@@ -5150,9 +5174,6 @@ func cmdPakeRegister(args []string) {
 	}
 	oprfKey := new(big.Int).SetBytes(kInts[0])
 	pw := []byte(*pwF)
-	if len(pw) == 0 {
-		pw = []byte("demo-password")
-	}
 	rec, err := HpakeRegister(pw, oprfKey)
 	if err != nil { die("pake-register", err) }
 
@@ -5181,6 +5202,11 @@ func cmdPakeDemo(args []string) {
 	checkKeyLabels("pake-demo", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-demo: --key required")
+		os.Exit(1)
+	}
+	// TODO #376: omitted, the demo uses "demo-password"; given, it must be one.
+	if *pwF == "" {
+		fmt.Fprintln(os.Stderr, "pake-demo: --password must not be empty")
 		os.Exit(1)
 	}
 	kLabel, kInts, err := readPEMInts(*keyF)

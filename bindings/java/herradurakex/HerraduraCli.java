@@ -419,6 +419,10 @@ public final class HerraduraCli {
         // TODO #268.  The count travels in the PEM, so this default only
         // affects what THIS build writes.
         if (opt.containsKey("passphrase")) {
+            // TODO #376: an empty passphrase protects nothing; refused.
+            if (opt.get("passphrase").isEmpty()) {
+                throw new CliError("genpkey: --passphrase must not be empty");
+            }
             encPassphrase = opt.get("passphrase");
             encIterations = Integer.parseInt(opt.getOrDefault("kdf-iterations",
                                                               String.valueOf(PBKDF2_ITER_DEMO)));
@@ -2230,6 +2234,10 @@ public final class HerraduraCli {
         if (passwordOpt == null) {
             throw new CliError("pake-register: --password required (interactive prompting is not supported by this Java CLI)");
         }
+        // TODO #376: never register the empty password.
+        if (passwordOpt.isEmpty()) {
+            throw new CliError("pake-register: --password must not be empty");
+        }
         byte[] password = passwordOpt.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Hpake.Record record = Hpake.register(username, password, key.pub, RNG);
         writeString(opt.getOrDefault("out", "-"), Codec.encodePakeRecord(record.salt, record.b, record.y));
@@ -2238,6 +2246,10 @@ public final class HerraduraCli {
     private static void cmdPakeDemo(Map<String, String> opt) throws IOException {
         Codec.PubKey key = Codec.decodeOprfPrivKey(readString(req(opt, "key", "pake-demo")));
         String username = opt.getOrDefault("username", "demo-user");
+        // TODO #376: omitted, the demo uses "demo-password"; given, it must be one.
+        if (opt.containsKey("password") && opt.get("password").isEmpty()) {
+            throw new CliError("pake-demo: --password must not be empty");
+        }
         byte[] password = opt.getOrDefault("password", "demo-password").getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
         Hpake.Record record = Hpake.register(username, password, key.pub, RNG);

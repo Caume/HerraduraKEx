@@ -2,12 +2,39 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
-## [16.0.0] - 2026-11-17
+## [16.0.0] - 2026-11-18
 
-**MAJOR: `twk` stops aliasing tweaks (TODO #375).** The v15.0.0 CLI audit (TODO #375-#381)
-found that C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one
-tweak. All four CLIs now refuse a `--bidx` or `--sector` outside its field. See
-MIGRATING.md section 37.
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in two parts so
+far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
+all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
+section 37). Python and Go wrote a private key in the clear when given
+`--passphrase ''`, and PAKE registered a password nobody chose; an empty or missing secret
+is now refused by name in all four (TODO #376, section 38).
+
+### TODO #376 — an empty or missing passphrase or password is refused
+
+- **The defect.** Python and Go tested `--passphrase` for truthiness, so
+  `genpkey --passphrase ''` wrote an unencrypted private key and exited 0. C and Java
+  encrypted under `''`, and Python and Go could not then decrypt those keys
+  (`pkey --decrypt` read `''` as missing). Python and Go accepted and ignored
+  `--kdf-iterations` without `--passphrase`. `pake-register` with no `--password`
+  registered `demo-password` in C and Go; Python prompted and, with no terminal, died
+  with an `EOFError` traceback. `--password ''` registered the empty password in C, Go
+  and Java. `pake-demo --password ''` ran in all four.
+- **The fix.** All four refuse, by name and before writing anything: an empty
+  `genpkey --passphrase`, `--kdf-iterations` without `--passphrase`, a missing or empty
+  `pake-register --password`, and an empty `pake-demo --password`. Go tells a given
+  flag from an omitted one with `isSet`; Python's `--kdf-iterations` default is now
+  `None`. Python prompts for an omitted `pake-register` password only when stdin is a
+  terminal, and refuses an empty answer. `pkey --decrypt --passphrase ''` is accepted
+  in all four, so envelopes written under `''` stay readable.
+- **Test.** New `CliTest/test_empty_secrets.sh` (native-interop). Accept-controls: every
+  CLI's envelope decrypts under every CLI, a legacy `''` envelope decrypts in all four,
+  and PAKE register/demo succeed with a password. Then six refusals per CLI, each by
+  name, with no output and no traceback. 60 PASS on this build; 23 FAIL on the
+  TODO #375 build, one per case the audit found.
+- **Docs.** llms.txt (genpkey `--passphrase`, `pkey --decrypt`, PAKE passwords);
+  MIGRATING §38.
 
 ### TODO #375 — `twk --bidx` / `--sector` name exactly one tweak
 

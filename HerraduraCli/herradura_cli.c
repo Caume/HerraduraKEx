@@ -1273,6 +1273,10 @@ static void cmd_genpkey(int argc, char **argv)
      * the writer chose -- this default only affects what THIS build writes. */
     const char *pass_arg = get_arg(argc, argv, "--passphrase");
     if (pass_arg) {
+        /* TODO #376: an empty passphrase is refused, not "encrypted" under ''
+         * -- it protects nothing, and before #376 Python and Go read it as
+         * no passphrase at all and wrote the key in the clear. */
+        if (!*pass_arg) die("genpkey: --passphrase must not be empty");
         const char *iter_arg = get_arg(argc, argv, "--kdf-iterations");
         long iters = iter_arg ? strtol(iter_arg, NULL, 10) : PBKDF2_ITER_DEMO;
         if (iters < 1 || iters > 100000000L)
@@ -5164,6 +5168,12 @@ static void cmd_pake_register(int argc, char **argv)
     const char *pw_arg   = get_arg(argc, argv, "--password");
     const char *out_path = get_arg(argc, argv, "--out");
     if (!key_path) die("pake-register: --key required");
+    /* TODO #376: a record is never written under a password nobody chose.
+     * Before #376 an omitted --password registered "demo-password", and ''
+     * registered the empty password. */
+    if (!pw_arg) die("pake-register: --password required");
+    if (!*pw_arg) die("pake-register: --password must not be empty");
+    const char *pw = pw_arg;
 
     PemKey kpem; pem_key_load(&kpem, key_path);
     if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)
@@ -5173,7 +5183,6 @@ static void cmd_pake_register(int argc, char **argv)
     ba_from_der_item(&oprf_k, kpem.vals[0], kpem.vlens[0]);
     pem_key_free(&kpem);
 
-    const char *pw = pw_arg ? pw_arg : "demo-password";
     FILE *urnd = fopen("/dev/urandom", "rb");
     if (!urnd) die("cannot open /dev/urandom");
 
@@ -5200,6 +5209,8 @@ static void cmd_pake_demo(int argc, char **argv)
     const char *key_path = get_arg(argc, argv, "--key");
     const char *pw_arg   = get_arg(argc, argv, "--password");
     if (!key_path) die("pake-demo: --key required");
+    /* TODO #376: omitted, the demo uses "demo-password"; given, it must be one. */
+    if (pw_arg && !*pw_arg) die("pake-demo: --password must not be empty");
 
     PemKey kpem; pem_key_load(&kpem, key_path);
     if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)

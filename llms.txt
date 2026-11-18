@@ -172,10 +172,16 @@ its width ("is encoded in <k> bytes (expected exactly <w>)"), any other field mi
 HKEX-RNL coefficients and QC-MDPC values in range ("field <i> coefficient <j> is <v>
 (expected below <b>)", "has bits at or above r = <r>").
 
-  genpkey --algo <ID> [--bits N] [--xmss-height N] --out FILE
+  genpkey --algo <ID> [--bits N] [--xmss-height N] [--passphrase P [--kdf-iterations N]] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,
              hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss, hpks-wots, hcred
+    --passphrase writes a HERRADURA ENCRYPTED PRIVATE KEY envelope.  An empty
+    passphrase, and --kdf-iterations without --passphrase, are refused by name in
+    every CLI (TODO #376; Python and Go used to write the key in the clear).
   pkey --in FILE [--pubout] [--text] [--out FILE]
+  pkey --decrypt --passphrase P --in FILE [--out FILE]
+    --decrypt accepts --passphrase '' so envelopes written under '' before TODO #376
+    stay readable.
   kex --algo {hkex-gf,hkex-rnl,hybrid-rnl-stern} --our FILE --their FILE --out FILE
       [--kdf {none,hfscx-256}] [--their-kem FILE] [--our-kem FILE]
     hkex-rnl is two-round: responder replies first, initiator completes with the response PEM.
@@ -257,6 +263,9 @@ HKEX-RNL coefficients and QC-MDPC values in range ("field <i> coefficient <j> is
   pake-demo --key FILE [--username U] [--password P]
     --username exists in Python and Java only; it is a lookup label, not bound into the
     record, so C and Go records are byte-comparable (spec cli_surface_gaps).
+    pake-register needs a non-empty --password in every CLI (Python alone may prompt
+    for it, on a terminal); pake-demo defaults to "demo-password" but refuses ''
+    (TODO #376).
   cred-issue --our FILE --in FILE [--rounds N] --out FILE
   cred-prove --in FILE [--msg STR] [--rounds N] --out FILE
   cred-verify --proof FILE --pubkey FILE [--msg STR] [--cred FILE --issuer FILE]

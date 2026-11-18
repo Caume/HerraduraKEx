@@ -622,33 +622,6 @@ Status: **OPEN**
 
 ---
 
-### #376: empty or missing secrets: `--passphrase ''` writes a cleartext key; PAKE accepts no password (MAJOR)
-
-Found by the v15.0.0 CLI audit.
-
-**The finding.**
-- `genpkey --passphrase ''`: Python and Go test the passphrase for truthiness, so an empty
-  one writes an UNENCRYPTED `HERRADURA HPKS PRIVATE KEY` and exits 0 -- the caller asked
-  for encryption and got none.  C and Java encrypt under the empty passphrase, and
-  Python and Go then cannot decrypt those keys (`pkey --decrypt --passphrase ''`).
-- `genpkey --kdf-iterations N` without `--passphrase`: Python and Go accept and ignore
-  it; C and Java refuse.
-- `pake-register` with `--password` omitted: C and Go write a record (under an empty
-  password) and exit 0; Java refuses ("--password required"); Python prompts, and with
-  no TTY dies with an `EOFError` traceback.  With `--password ''`, C, Go and Java write a
-  record; Python reads `''` as omitted and prompts.  `pake-demo --password ''` is
-  accepted by all four.
-
-**Work.**  Refuse an empty `--passphrase` and an empty or missing `--password` by name in
-all four (Python may keep its prompt when stdin is a TTY, but must not crash, and must
-treat `''` as given).  `--kdf-iterations` without `--passphrase` refused in all four.
-A CliTest matrix with accept-controls.  MAJOR (what existing subcommands accept);
-`MIGRATING.md` entry.
-
-Status: **OPEN**
-
----
-
 ### #377: `fpe` / `twk` drop input past 32 bytes, and Go pads short input differently
 
 Found by the v15.0.0 CLI audit.  Both map one 32-byte block (SECURITY.md: "it maps 32

@@ -2623,6 +2623,14 @@ def _sym256_ok(nbits, ctx, what='key'):
 def cmd_genpkey(args):
     algo = args.algo
     bits = args.bits or KEYBITS
+    # TODO #376: a GIVEN passphrase must be non-empty.  Before #376 this read
+    # --passphrase '' as no passphrase and wrote the key in the clear, and
+    # accepted --kdf-iterations alone and ignored it.  Both are refused before
+    # any key is generated.
+    if args.passphrase == '':
+        sys.exit("genpkey: --passphrase must not be empty")
+    if args.kdf_iterations is not None and args.passphrase is None:
+        sys.exit("genpkey: --kdf-iterations requires --passphrase")
 
     if algo in _CLASSICAL_GF_ALGOS:
         poly    = GF_POLY.get(bits, GF_POLY[256])
@@ -2727,9 +2735,10 @@ def cmd_genpkey(args):
     else:
         sys.exit(f"Unknown algorithm: {algo!r}")
 
-    passphrase = getattr(args, 'passphrase', None)
-    if passphrase:
-        iterations = getattr(args, 'kdf_iterations', _PBKDF2_HFSCX256_ITER_DEMO)
+    passphrase = args.passphrase
+    if passphrase is not None:
+        iterations = (args.kdf_iterations if args.kdf_iterations is not None
+                      else _PBKDF2_HFSCX256_ITER_DEMO)
         pem_out = _encrypt_pem(pem_out, passphrase, iterations)
 
     _write_file(args.out or '-', pem_out)
@@ -2746,8 +2755,10 @@ def cmd_pkey(args):
         # TODO #166: recover the original cleartext PEM (any algorithm) from a
         # passphrase-encrypted envelope. The result is byte-for-byte the original
         # PEM, so it can be fed to any other subcommand unmodified.
+        # TODO #376: '' is a passphrase here, so a key C or Java encrypted
+        # under '' before #376 stays readable.
         passphrase = args.passphrase
-        if not passphrase:
+        if passphrase is None:
             sys.exit("pkey --decrypt: --passphrase required")
         enc_text = _read_file(in_path).decode('ascii')
         try:
@@ -4145,11 +4156,22 @@ def cmd_pake_register(args):
     """Register a new user for aPAKE.  Outputs HERRADURA PAKE RECORD PEM."""
     oprf_key, _nbits = _load_oprf_key(args.key)
     username = args.username or "user"
-    if args.password:
-        password = args.password.encode()
-    else:
+    # TODO #376: a record is never written under a password nobody chose.  An
+    # omitted --password prompts only when there is a terminal to prompt on;
+    # '' (given or typed) is refused, as in the other three CLIs.
+    if args.password is not None:
+        password = args.password
+    elif sys.stdin.isatty():
         import getpass
-        password = getpass.getpass(f"Password for {username!r}: ").encode()
+        try:
+            password = getpass.getpass(f"Password for {username!r}: ")
+        except (EOFError, KeyboardInterrupt):
+            sys.exit("\npake-register: no password entered")
+    else:
+        sys.exit("pake-register: --password required (stdin is not a terminal to prompt on)")
+    if password == '':
+        sys.exit("pake-register: --password must not be empty")
+    password = password.encode()
     record  = hpake_register(username, password, oprf_key)
     salt_b  = record['salt']
     B_int   = record['B']
@@ -4182,7 +4204,10 @@ def cmd_pake_demo(args):
     """aPAKE demo: run full registration + login on both sides and show session key."""
     oprf_key, _nbits = _load_oprf_key(args.key)
     username  = args.username or "demo-user"
-    password  = (args.password or "demo-password").encode()
+    # TODO #376: omitted, the demo uses "demo-password"; given, it must be one.
+    if args.password == '':
+        sys.exit("pake-demo: --password must not be empty")
+    password  = args.password.encode()
     record    = hpake_register(username, password, oprf_key)
     sk        = hpake_login_demo(record, password, oprf_key)
     if sk is not None:
@@ -4336,7 +4361,7 @@ def build_parser():
                     help='Encrypt the exported private key PEM under this passphrase '
                          '(TODO #166; PBKDF2-HFSCX256 + HSKE-NL-AEAD). Omit for the '
                          'existing cleartext behavior.')
-    gp.add_argument('--kdf-iterations', type=int, default=_PBKDF2_HFSCX256_ITER_DEMO,
+    gp.add_argument('--kdf-iterations', type=int, default=None,
                     help=f'PBKDF2-HFSCX256 iteration count for --passphrase (default '
                          f'{_PBKDF2_HFSCX256_ITER_DEMO}, demo-speed; NIST SP 800-132 '
                          f'recommends >={_PBKDF2_HFSCX256_ITER_PROD}, which takes '

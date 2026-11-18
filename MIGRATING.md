@@ -2017,3 +2017,48 @@ under distinct (sector, bidx) pairs, for instance by moving to the next sector.
 
 **Why this is MAJOR.** It refuses input an existing subcommand accepted, the 2.0.0
 surface.
+
+## 38. An empty or missing passphrase or password is refused (v16.0.0)
+
+**Who is affected:** a script that passes `genpkey --passphrase ''`, passes
+`--kdf-iterations` without `--passphrase`, runs `pake-register` without `--password`, or
+passes `pake-register --password ''` or `pake-demo --password ''`.
+
+**What changed (TODO #376).** Before 16.0.0 the four CLIs disagreed, and in two cases
+gave the caller less protection than asked for:
+
+- `genpkey --passphrase ''`: Python and Go read `''` as no passphrase and wrote the
+  private key **in the clear**, exiting 0. C and Java wrote an envelope under `''`, which
+  Python and Go then could not decrypt.
+- `genpkey --kdf-iterations N` alone: Python and Go ignored it; C and Java refused.
+- `pake-register` with no `--password`: C and Go registered the password
+  `demo-password`; Java refused; Python prompted and, with no terminal, crashed with an
+  `EOFError` traceback. With `--password ''`, C, Go and Java registered the empty
+  password.
+
+All four now refuse each case by name, before any key or record is written:
+
+```
+genpkey: --passphrase must not be empty
+genpkey: --kdf-iterations requires --passphrase
+pake-register: --password required
+pake-register: --password must not be empty
+pake-demo: --password must not be empty
+```
+
+Python's `pake-register` still prompts for an omitted password when stdin is a
+terminal; an empty answer is refused, and with no terminal it refuses instead of
+prompting. `pake-demo` with no `--password` still runs under `demo-password`.
+
+**What stays readable.** `pkey --decrypt --passphrase ''` is accepted by all four, so an
+envelope C or Java wrote under `''` before 16.0.0 can still be decrypted, now by Python
+and Go as well. Decrypt it and re-encrypt under a real passphrase:
+
+```
+herradura_cli pkey --decrypt --passphrase '' --in old.pem --out plain.pem
+```
+
+A PAKE record registered under `demo-password` or `''` by an omitted or empty
+`--password` protects nothing; re-register the user with a chosen password.
+
+**Why this is MAJOR.** It refuses input existing subcommands accepted, the 2.0.0 surface.
