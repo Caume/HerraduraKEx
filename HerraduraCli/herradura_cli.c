@@ -5127,6 +5127,19 @@ static void cmd_decfile(int argc, char **argv)
  *   Input/output: raw 32-byte block.  Key: HERRADURA SESSION KEY PEM or 0x hex, 256-bit.
  * ───────────────────────────────────────────────────────────────────────────── */
 
+/* TODO #377: fpe / twk map exactly one 32-byte block.  Longer input used to be
+ * cut to its first 32 bytes (exit 0, nothing round-tripped) and shorter input
+ * zero-padded -- on the right here, in Python and Java, on the LEFT in Go -- so
+ * any other length is refused rather than reshaped. */
+static void block32_ok(const char *cmd, size_t in_len)
+{
+    if (in_len == KEYBYTES) return;
+    char msg[160];
+    snprintf(msg, sizeof msg, "%s: --in must be exactly %d bytes (one block), got %zu",
+             cmd, KEYBYTES, in_len);
+    die(msg);
+}
+
 static void cmd_fpe(int argc, char **argv)
 {
     const char *key_path = get_arg(argc, argv, "--key");
@@ -5135,7 +5148,8 @@ static void cmd_fpe(int argc, char **argv)
     const char *out_path = get_arg(argc, argv, "--out");
     int do_enc = has_flag(argc, argv, "--encrypt");
     int do_dec = has_flag(argc, argv, "--decrypt");
-    if (!do_enc && !do_dec) die("fpe: --encrypt or --decrypt required");
+    /* TODO #377: both mode flags used to encrypt; Python and Java refused. */
+    if (do_enc == do_dec) die("fpe: exactly one of --encrypt or --decrypt required");
     if (!key_path) die("fpe: --key required");
     if (!in_path)  die("fpe: --in required");
     if (!ctx_str)  ctx_str = "";
@@ -5145,6 +5159,7 @@ static void cmd_fpe(int argc, char **argv)
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    block32_ok("fpe", in_len);
     BitArray P = BA_INIT;
     make_msg_ba(&P, in_buf, in_len);
     free(in_buf);
@@ -5178,7 +5193,8 @@ static void cmd_twk(int argc, char **argv)
     const char *out_path    = get_arg(argc, argv, "--out");
     int do_enc = has_flag(argc, argv, "--encrypt");
     int do_dec = has_flag(argc, argv, "--decrypt");
-    if (!do_enc && !do_dec) die("twk: --encrypt or --decrypt required");
+    /* TODO #377: both mode flags used to encrypt; Python and Java refused. */
+    if (do_enc == do_dec) die("twk: exactly one of --encrypt or --decrypt required");
     if (!key_path)   die("twk: --key required");
     if (!in_path)    die("twk: --in required");
     /* TODO #375: the tweak is sector_be64 || bidx_be32.  strtoull/strtoul with
@@ -5192,6 +5208,7 @@ static void cmd_twk(int argc, char **argv)
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    block32_ok("twk", in_len);
     BitArray P = BA_INIT;
     make_msg_ba(&P, in_buf, in_len);
     free(in_buf);

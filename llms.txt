@@ -279,6 +279,9 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     twk's --sector is decimal 0..2^64-1 and --bidx decimal 0..2^32-1; every CLI
     refuses any other value by name rather than wrapping it onto another block's
     tweak (TODO #375).
+    --in must be exactly 32 bytes in every CLI, both modes, with or without --v3;
+    longer input used to be cut to 32 and shorter zero-padded (on the left in Go
+    only).  Exactly one of --encrypt / --decrypt (TODO #377).
   oprf-blind --in FILE --out FILE
   oprf-eval --key FILE --in FILE --out FILE
   oprf-unblind --state FILE --eval FILE --out FILE

@@ -4084,15 +4084,24 @@ def cmd_rand(args):
 # Sub-command: fpe (78.A)
 # ---------------------------------------------------------------------------
 
+def _block32_in(path, cmd):
+    """TODO #377: fpe / twk map exactly one 32-byte block.  Longer input used to
+    be cut to its first 32 bytes (exit 0, nothing round-tripped) and shorter
+    input zero-padded -- on the right here, C and Java, on the LEFT in Go -- so
+    any other length is refused rather than reshaped."""
+    data = _read_file(path)
+    if len(data) != 32:
+        sys.exit(f'{cmd}: --in must be exactly 32 bytes (one block), got {len(data)}')
+    return data
+
+
 def cmd_fpe(args):
     key_int, nbits = _load_key(args.key)
     _sym256_ok(nbits, 'fpe')
     key_bytes = _fit(key_int, nbits // 8, 'key', 'pem')
     ctx_bytes = args.context.encode() if args.context else b''
-    in_bytes  = _read_file(getattr(args, 'in'))
-    if len(in_bytes) < 32:
-        in_bytes = in_bytes.ljust(32, b'\x00')
-    P = BitArray(KEYBITS, int.from_bytes(in_bytes[:32], 'big'))
+    in_bytes  = _block32_in(getattr(args, 'in'), 'fpe')
+    P = BitArray(KEYBITS, int.from_bytes(in_bytes, 'big'))
     v3 = getattr(args, 'v3', False)
     if args.encrypt:
         R = fpe_v3_encrypt(P, key_bytes, ctx_bytes) if v3 else \
@@ -4120,10 +4129,8 @@ def cmd_twk(args):
     key_int, nbits = _load_key(args.key)
     _sym256_ok(nbits, 'twk')
     key_bytes = _fit(key_int, nbits // 8, 'key', 'pem')
-    in_bytes  = _read_file(getattr(args, 'in'))
-    if len(in_bytes) < 32:
-        in_bytes = in_bytes.ljust(32, b'\x00')
-    P = BitArray(KEYBITS, int.from_bytes(in_bytes[:32], 'big'))
+    in_bytes  = _block32_in(getattr(args, 'in'), 'twk')
+    P = BitArray(KEYBITS, int.from_bytes(in_bytes, 'big'))
     v3 = getattr(args, 'v3', False)
     if args.encrypt:
         R = twk_v3_encrypt(P, key_bytes, sector, bidx) if v3 else \
@@ -4622,7 +4629,7 @@ def build_parser():
     fp.add_argument('--context', default='',
                     help='Context/tweak string (optional)')
     fp.add_argument('--in',     required=True, dest='in',
-                    help='Input file (32 bytes)')
+                    help='Input file (exactly 32 bytes)')
     fp.add_argument('--out',    default='-',
                     help='Output file (raw 32 bytes); - for stdout')
     fp.add_argument('--v3', action='store_true',
@@ -4643,7 +4650,7 @@ def build_parser():
     tw.add_argument('--bidx',   default='0',
                     help='Block index within sector, decimal 0 to 2^32-1 (default 0)')
     tw.add_argument('--in',    required=True, dest='in',
-                    help='Input file (32 bytes)')
+                    help='Input file (exactly 32 bytes)')
     tw.add_argument('--out',   default='-',
                     help='Output file (raw 32 bytes); - for stdout')
     tw.add_argument('--v3', action='store_true',

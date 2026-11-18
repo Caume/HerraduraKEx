@@ -4996,11 +4996,23 @@ func cmdDecfile(args []string) {
 
 // ── fpe (78.A) ───────────────────────────────────────────────────────────────
 
+// block32OK — TODO #377: fpe / twk map exactly one 32-byte block.  Longer input
+// used to be cut to its first 32 bytes (exit 0, nothing round-tripped), and
+// shorter input went through big.Int.SetBytes, which pads on the LEFT where
+// Python, C and Java pad on the right, so Go's ciphertext differed from theirs.
+// Any other length is now refused rather than reshaped.
+func block32OK(cmd string, data []byte) {
+	if len(data) != 32 {
+		fmt.Fprintf(os.Stderr, "%s: --in must be exactly 32 bytes (one block), got %d\n", cmd, len(data))
+		os.Exit(1)
+	}
+}
+
 func cmdFpe(args []string) {
 	fs      := flag.NewFlagSet("fpe", flag.ExitOnError)
 	keyPath := fs.String("key",     "",  "Session key PEM")
 	ctx     := fs.String("context", "",  "Context string (tweak)")
-	in      := fs.String("in",      "-", "Input file (32-byte block)")
+	in      := fs.String("in",      "-", "Input file (exactly 32 bytes)")
 	out     := fs.String("out",     "-", "Output file")
 	doEnc   := fs.Bool("encrypt",   false, "Encrypt")
 	doDec   := fs.Bool("decrypt",   false, "Decrypt")
@@ -5008,8 +5020,9 @@ func cmdFpe(args []string) {
 		"instead of v2.  Separate subkey domain; decrypt with --v3 too.")
 	parseArgs(fs, args)
 
-	if !*doEnc && !*doDec {
-		fmt.Fprintln(os.Stderr, "fpe: --encrypt or --decrypt required")
+	// TODO #377: both mode flags used to encrypt; Python and Java refused.
+	if *doEnc == *doDec {
+		fmt.Fprintln(os.Stderr, "fpe: exactly one of --encrypt or --decrypt required")
 		os.Exit(1)
 	}
 	if *keyPath == "" {
@@ -5027,6 +5040,7 @@ func cmdFpe(args []string) {
 	if err != nil {
 		die("fpe", err)
 	}
+	block32OK("fpe", data)
 	P := NewBitArray(256, new(big.Int).SetBytes(data))
 
 	var R *BitArray
@@ -5080,7 +5094,7 @@ func cmdTwk(args []string) {
 	keyPath := fs.String("key",     "",  "Session key PEM")
 	sector  := fs.String("sector",  "0", "Sector number (decimal, 0 to 2^64-1)")
 	bidx    := fs.String("bidx",    "0", "Block index within sector (decimal, 0 to 2^32-1)")
-	in      := fs.String("in",      "-", "Input file (32-byte block)")
+	in      := fs.String("in",      "-", "Input file (exactly 32 bytes)")
 	out     := fs.String("out",     "-", "Output file")
 	doEnc   := fs.Bool("encrypt",   false, "Encrypt")
 	doDec   := fs.Bool("decrypt",   false, "Decrypt")
@@ -5088,8 +5102,9 @@ func cmdTwk(args []string) {
 		"instead of v2.  Separate subkey domain; decrypt with --v3 too.")
 	parseArgs(fs, args)
 
-	if !*doEnc && !*doDec {
-		fmt.Fprintln(os.Stderr, "twk: --encrypt or --decrypt required")
+	// TODO #377: both mode flags used to encrypt; Python and Java refused.
+	if *doEnc == *doDec {
+		fmt.Fprintln(os.Stderr, "twk: exactly one of --encrypt or --decrypt required")
 		os.Exit(1)
 	}
 	if *keyPath == "" {
@@ -5112,6 +5127,7 @@ func cmdTwk(args []string) {
 	if err != nil {
 		die("twk", err)
 	}
+	block32OK("twk", data)
 	P := NewBitArray(256, new(big.Int).SetBytes(data))
 
 	var R *BitArray

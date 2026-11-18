@@ -2095,10 +2095,9 @@ public final class HerraduraCli {
         sym256OK(key.size(), "fpe", "key");
         byte[] keyBytes = key.toBytes();
         byte[] ctx = opt.getOrDefault("context", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-        byte[] inBytes = readBytes(req(opt, "in", "fpe"));
-        BigInteger p = new BigInteger(1, padBlock(inBytes));
+        byte[] inBytes = block32(readBytes(req(opt, "in", "fpe")), "fpe");
         boolean v3 = opt.containsKey("v3");
-        BitArray pBa = BitArray.fromBytes(padBlock(inBytes), Herradura.N);
+        BitArray pBa = BitArray.fromBytes(inBytes, Herradura.N);
           BitArray r = doEnc
             ? (v3 ? FpeTwk.fpeV3Encrypt(pBa, keyBytes, ctx) : FpeTwk.fpeEncrypt(pBa, keyBytes, ctx))
             : (v3 ? FpeTwk.fpeV3Decrypt(pBa, keyBytes, ctx) : FpeTwk.fpeDecrypt(pBa, keyBytes, ctx));
@@ -2148,24 +2147,25 @@ public final class HerraduraCli {
         BitArray key = loadKey(req(opt, "key", "twk"));
         sym256OK(key.size(), "twk", "key");
         byte[] keyBytes = key.toBytes();
-        byte[] inBytes = readBytes(req(opt, "in", "twk"));
-        BigInteger p = new BigInteger(1, padBlock(inBytes));
+        byte[] inBytes = block32(readBytes(req(opt, "in", "twk")), "twk");
         boolean v3 = opt.containsKey("v3");
-        BitArray pBa = BitArray.fromBytes(padBlock(inBytes), Herradura.N);
+        BitArray pBa = BitArray.fromBytes(inBytes, Herradura.N);
           BitArray r = doEnc
             ? (v3 ? FpeTwk.twkV3Encrypt(pBa, keyBytes, sector, bidx) : FpeTwk.twkEncrypt(pBa, keyBytes, sector, bidx))
             : (v3 ? FpeTwk.twkV3Decrypt(pBa, keyBytes, sector, bidx) : FpeTwk.twkDecrypt(pBa, keyBytes, sector, bidx));
         writeBytes(opt.getOrDefault("out", "-"), r.toBytes());
     }
 
-    /** Right-pads (zero-fills) to a 32-byte block and truncates to it,
-     * matching herradura.py's {@code in_bytes.ljust(32, b'\x00')[:32]}. */
-    private static byte[] padBlock(byte[] in) {
+    /** TODO #377: fpe / twk map exactly one 32-byte block.  Longer input used to
+     *  be cut to its first 32 bytes (exit 0, nothing round-tripped) and shorter
+     *  input zero-padded, on the right here but on the LEFT in Go, so any other
+     *  length is refused rather than reshaped. */
+    private static byte[] block32(byte[] in, String cmd) {
         int blockLen = Herradura.N / 8;
-        if (in.length == blockLen) return in;
-        byte[] out = new byte[blockLen];
-        System.arraycopy(in, 0, out, 0, Math.min(in.length, blockLen));
-        return out;
+        if (in.length != blockLen)
+            throw new CliError(cmd + ": --in must be exactly " + blockLen
+                               + " bytes (one block), got " + in.length);
+        return in;
     }
 
     // -----------------------------------------------------------------

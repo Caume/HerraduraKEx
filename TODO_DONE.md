@@ -25774,3 +25774,39 @@ build (35 accepted).  MIGRATING.md §41.
 Status: **DONE v16.0.0** — one rule for the shape of a command line in all four CLIs: no directory as input, no flag without its value, no stray words, `--flag=value` everywhere, the same required flags.
 
 ---
+
+### #377: `fpe` / `twk` drop input past 32 bytes, and Go pads short input differently
+
+Found by the v15.0.0 CLI audit.  Both map one 32-byte block (SECURITY.md: "it maps 32
+bytes to 32 bytes, zero-pads shorter input").
+
+**The finding.**
+- Any input longer than 32 bytes is cut to its first 32, written as 32 bytes, exit 0, in
+  all four CLIs: a 64-byte `twk --encrypt` loses half the data and nothing round-trips.
+- Shorter input: Python, C and Java pad on the RIGHT (`ljust`); Go builds the block with
+  `big.Int.SetBytes`, which pads on the LEFT.  So `fpe` and `twk` on any input that is not
+  exactly 32 bytes give different ciphertext in Go than in the other three (measured at
+  1, 11, 31, 33, 47 and 64 bytes for both).  The 32-byte matrices never see it.
+- `--encrypt --decrypt` together: C and Go accept and encrypt; Python and Java refuse.
+
+**Work.**  Decide: refuse any input that is not exactly 32 bytes (simplest; makes the
+padding question moot), or keep zero-padding short input and refuse only > 32.  Either
+way bring Go to the others' byte order for whatever is kept, refuse both mode flags at
+once in C and Go, and add lengths 0, 1, 31, 33 and 64 to a cross-CLI test.  Refusing
+inputs that used to be accepted is MAJOR; a Go-only padding fix changes Go's ciphertexts
+for short inputs and needs a `MIGRATING.md` note either way.
+
+**Resolution.**  Decided: refuse any input that is not exactly 32 bytes, which makes the
+padding question moot.  One check per CLI (C `block32_ok`, Go `block32OK`, Java `block32`
+in place of `padBlock`, Python `_block32_in`), after the key loads and before anything is
+written: "`<cmd>: --in must be exactly 32 bytes (one block), got <n>`", in both modes and
+with or without `--v3`.  C and Go now refuse `--encrypt --decrypt` with Java's message.
+32-byte inputs give the same output as before.
+
+`CliTest/test_fpe_twk.sh` section 6: lengths 0, 1, 31, 33 and 64 per CLI, subcommand, mode
+and round, plus both mode flags, after a 32-byte `--v3` round-trip accept-control.  235 PASS;
+164 FAIL on the TODO #381 build (all accepted).  MIGRATING.md §42.
+
+Status: **DONE v16.0.0** — `fpe` / `twk` take exactly one 32-byte block in all four CLIs (any other length refused by name, no more truncation or Go left-padding), and C / Go refuse `--encrypt --decrypt`.
+
+---

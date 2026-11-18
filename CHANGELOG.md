@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in five parts so
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in six parts so
 far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
@@ -18,6 +18,32 @@ first 32 bytes, and `--ad` / `--aead` are refused wherever they used to be dropp
 All four CLIs now share one rule for the shape of a command line: no directory as input,
 no flag missing its value, no stray words, `--flag=value` everywhere, and the same
 required flags (TODO #381, section 41).
+`fpe` and `twk` now take exactly one 32-byte block: longer input was cut to 32 bytes with
+exit 0, and Go padded shorter input on the other side from the other three CLIs (TODO #377,
+section 42).
+
+### TODO #377 — `fpe` / `twk` take exactly one 32-byte block
+
+- **The defect.** In all four CLIs, `fpe` and `twk` cut input longer than 32 bytes to its
+  first 32, wrote 32 bytes and exited 0, so nothing past the block round-tripped. Shorter
+  input was zero-padded on the right by Python, C and Java, but Go built the block with
+  `big.Int.SetBytes`, which pads on the left, so Go's ciphertext differed from the other
+  three at every length but 32. C and Go encrypted when given both `--encrypt` and
+  `--decrypt`; Python and Java refused.
+- **The fix.** One check per CLI (C `block32_ok`, Go `block32OK`, Java `block32`, Python
+  `_block32_in`), run after the key loads and before anything is written: any length but 32
+  is refused ("`<cmd>: --in must be exactly 32 bytes (one block), got <n>`"). C and Go now
+  refuse both mode flags with Java's message, "`<cmd>: exactly one of --encrypt or
+  --decrypt required`". Java's `padBlock` is gone. Help text says "exactly 32 bytes".
+- **Test.** `CliTest/test_fpe_twk.sh` gains section 6: per CLI and per subcommand, a 32-byte
+  `--v3` round-trip (the accept-control at v3; sections 1-3 are the one at v2), then
+  lengths 0, 1, 31, 33 and 64 in both modes, with and without `--v3`, and both mode flags
+  together, each refused by name with no output and no crash. 235 PASS on this build; on
+  the v16.0.0 TODO #381 build, 164 FAIL: all 160 wrong-length cases and C's and Go's 4
+  two-mode cases accepted.
+- **Docs.** SECURITY.md's FPE row and the spec's `fpe` note no longer say short input is
+  zero-padded; `SecurityProofsCode/rand_fpe_twk_analysis.py`'s §3 text says the caller pads
+  now. llms.txt (fpe/twk), MIGRATING §42.
 
 ### TODO #381 — one rule for the shape of a command line
 

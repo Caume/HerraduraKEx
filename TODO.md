@@ -622,31 +622,6 @@ Status: **OPEN**
 
 ---
 
-### #377: `fpe` / `twk` drop input past 32 bytes, and Go pads short input differently
-
-Found by the v15.0.0 CLI audit.  Both map one 32-byte block (SECURITY.md: "it maps 32
-bytes to 32 bytes, zero-pads shorter input").
-
-**The finding.**
-- Any input longer than 32 bytes is cut to its first 32, written as 32 bytes, exit 0, in
-  all four CLIs: a 64-byte `twk --encrypt` loses half the data and nothing round-trips.
-- Shorter input: Python, C and Java pad on the RIGHT (`ljust`); Go builds the block with
-  `big.Int.SetBytes`, which pads on the LEFT.  So `fpe` and `twk` on any input that is not
-  exactly 32 bytes give different ciphertext in Go than in the other three (measured at
-  1, 11, 31, 33, 47 and 64 bytes for both).  The 32-byte matrices never see it.
-- `--encrypt --decrypt` together: C and Go accept and encrypt; Python and Java refuse.
-
-**Work.**  Decide: refuse any input that is not exactly 32 bytes (simplest; makes the
-padding question moot), or keep zero-padding short input and refuse only > 32.  Either
-way bring Go to the others' byte order for whatever is kept, refuse both mode flags at
-once in C and Go, and add lengths 0, 1, 31, 33 and 64 to a cross-CLI test.  Refusing
-inputs that used to be accepted is MAJOR; a Go-only padding fix changes Go's ciphertexts
-for short inputs and needs a `MIGRATING.md` note either way.
-
-Status: **OPEN**
-
----
-
 ### #379: `genpkey --bits` outside hpks-zkp-nl: Go panics, Python tracebacks, Java ignores it
 
 Found by the v15.0.0 CLI audit.  `cli_surface_gaps` says "Where --bits exists, an explicit
@@ -670,6 +645,32 @@ for Python/Go/Java), refuse every other value by name in all three CLIs that hav
 flag (and refuse the flag on algos with no runtime width), make Java honour or refuse
 rather than ignore, and correct the `cli_surface_gaps` reason.  A CliTest matrix over
 those values with accept-controls.  Refusing previously accepted values is MAJOR.
+
+**Decision (2026-11-18).**  One width set for every algorithm that has a width, in all
+four CLIs, C included:
+
+| algorithms | `--bits` |
+|---|---|
+| hkex-gf, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, oprf, hpks-stern, hpke-stern, hcred | 32, 64, 128, 256; default 256.  Below 256, a stderr warning that it is a demo width |
+| hkex-rnl (`--bits` is the ring dimension, not a key width) | 32, 64, 128, 256 (demo) and 1024 (default).  512 refused by name: SECURITY.md withdraws it |
+| hpke-stern-kem, hpks-wots, hpks-xmss | fixed parameters: `--bits` refused |
+| hpks-zkp-nl | unchanged (even, <= 64: a wire bound, TODO #283) |
+
+C gains `--bits` and reads and writes every listed width; Python's tracebacks, Go's panics
+and silent normalisation to 256, and Java's ignoring the flag all become refusals naming
+the allowed values.
+
+**Why not 512 / 1024** (measured in the decision pass): every BitArray port caps at
+`BA_MAX_BITS` = 256 and BITARRAY.md defines GF polynomials only up to 256, so it needs a
+normative spec change, four ports' capacity raised (4x every C BitArray, stack included),
+new polynomials and KATs.  It buys no security: GF(2^n)\* falls to index calculus in
+binary fields far past 1024 bits (Pohlig–Hellman alone: 2^36 at 256, 2^103 at 512, 2^164
+at 1024), and Stern-F at N = 1024 is ~2^67 Prange iterations, still short of the N >= 17000
+128-bit bar.  Cost: Python `gf_pow` grows ~4.5x per doubling (39 ms at 256, 800 ms at
+1024); Stern signatures double per step (47 KB at 256, ~190 KB at 1024).  At 32–256 every
+operation is dominated by process start (Python 0.2–0.35 s, Go 0.02–0.28 s).  A separate
+TODO if it is wanted.  Side finding: `hpks-xmss` keygen at the default height 10 takes
+over 120 s in Python and Go.
 
 Status: **OPEN**
 

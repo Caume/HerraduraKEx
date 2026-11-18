@@ -760,7 +760,7 @@ SECURITY = {
                        notes="Reached through the `fpe` subcommand rather than an --algo tag. "
                              "BROKEN AS NAMED: this is not format-preserving encryption in the "
                              "SP 800-38G (FF1/FF3-1) sense. It has no radix, no length and no "
-                             "domain -- it maps 32 bytes to 32 bytes, zero-pads shorter input and "
+                             "domain -- it maps exactly 32 bytes to 32 bytes (any other length is refused since v16.0.0, TODO #377) and "
                              "returns raw binary, so a 16-digit card number comes back as 32 bytes "
                              "of binary. It is additionally the SAME FUNCTION as twk whenever the "
                              "context is 12 bytes: both derive their subkey as the unseparated "

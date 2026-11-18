@@ -2181,3 +2181,33 @@ drop `=value` from boolean flags (`--pubout`, `--aead`, `--text`, `--hex`, `--en
 
 **Why this is MAJOR.** It refuses command lines existing subcommands accepted, the 2.0.0
 surface.
+
+## 42. `fpe` and `twk` take exactly one 32-byte block (v16.0.0)
+
+**Who is affected:** a script that passes `fpe` or `twk` an `--in` that is not exactly 32
+bytes, or passes both `--encrypt` and `--decrypt` to the C or Go CLI.
+
+**What changed (TODO #377).** Both subcommands map one 32-byte block to one 32-byte block.
+In all four CLIs:
+
+- Longer input was cut to its first 32 bytes with exit 0, so a 64-byte `twk --encrypt`
+  lost half the data and nothing round-tripped. Shorter input was zero-padded, on the
+  right in Python, C and Java but on the LEFT in Go, so Go's ciphertext for any length but
+  32 differed from the other three. Any length but 32 is now refused, in both modes and
+  with or without `--v3`:
+
+  ```
+  twk: --in must be exactly 32 bytes (one block), got 33
+  ```
+- C and Go encrypted when given both `--encrypt` and `--decrypt`; they now refuse it
+  (`fpe: exactly one of --encrypt or --decrypt required`), as Java did. Python still
+  refuses it through argparse.
+
+**What to do.** Pad or split the data to 32-byte blocks yourself before calling `fpe` or
+`twk`, and decide how the padding is removed after decryption. For a message of any length,
+use `enc --algo hske-duplex` or `encfile` instead. 32-byte inputs give the same output as
+before in all four CLIs. Ciphertext is always 32 bytes, so existing ciphertext decrypts in
+every CLI as before. One that Go wrote from a short input decrypts to the zero padding
+first and the data last, where the other three CLIs put the padding last.
+
+**Why this is MAJOR.** It refuses input existing subcommands accepted, the 2.0.0 surface.
