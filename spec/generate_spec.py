@@ -250,7 +250,7 @@ def extract_flags_c(c_src):
         raise RuntimeError("extract_flags_c mapped no subcommands in herradura_cli.c "
                            "-- the extractor is stale, not the CLI.")
     bodies = _decl_bodies(src, r'^static\s+[A-Za-z_][\w \t\*]*\b(\w+)\s*\(')
-    pat = [r'(?:get_arg|has_flag|get_arg_multi|rounds_arg)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
+    pat = [r'(?:get_arg|has_flag|get_arg_multi|rounds_arg|num_arg)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
            # get_arg_multi2(argc, argv, "<cmd>", "--plural", "--singular", ...) — TODO #270
            r'get_arg_multi2\s*\(\s*argc\s*,\s*argv\s*,\s*"[a-z0-9\-]+"\s*,'
            r'\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"']
@@ -274,7 +274,7 @@ def extract_valued_flags_c(c_src):
         raise RuntimeError("extract_valued_flags_c mapped no subcommands in "
                            "herradura_cli.c -- the extractor is stale, not the CLI.")
     bodies = _decl_bodies(src, r'^static\s+[A-Za-z_][\w \t\*]*\b(\w+)\s*\(')
-    pat = [r'(?:get_arg|get_arg_multi|rounds_arg)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
+    pat = [r'(?:get_arg|get_arg_multi|rounds_arg|num_arg)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
            r'get_arg_multi2\s*\(\s*argc\s*,\s*argv\s*,\s*"[a-z0-9\-]+"\s*,'
            r'\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"']
     return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\s*\(\s*argc\b')
@@ -316,6 +316,8 @@ def extract_flags_java(java_src):
         src, r'^    (?:private|public|protected)\s+static\s+[\w<>,\[\] ]+?\s(\w+)\s*\(')
     pat = [r'\bopt\.(?:get|getOrDefault|containsKey)\(\s*"([a-z0-9\-]+)"',
            r'\breq\(\s*opt\s*,\s*"([a-z0-9\-]+)"',
+           # numArg(opt, "name", ...) -- TODO #380's numeric parser (bare name, as above)
+           r'\bnumArg\(\s*opt\s*,\s*"([a-z0-9\-]+)"',
            # multiPaths(opt, "<cmd>", "plural", "singular") — TODO #270.  No "--"
            # here: Java's option map is keyed without the dashes.
            r'multiPaths\(\s*opt\s*,\s*"[a-z0-9\-]+"\s*,'

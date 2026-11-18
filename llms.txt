@@ -172,6 +172,14 @@ its width ("is encoded in <k> bytes (expected exactly <w>)"), any other field mi
 HKEX-RNL coefficients and QC-MDPC values in range ("field <i> coefficient <j> is <v>
 (expected below <b>)", "has bits at or above r = <r>").
 
+Every numeric flag takes decimal digits only (no sign, space, 0x, _ or exponent) in a
+stated range, and anything else fails in all four CLIs with "<cmd>: <flag> must be a
+decimal integer from <lo> to <hi>, got '<v>'" (TODO #375, #380): --kdf-iterations
+1..100000000, --xmss-height 1..20, rand --bytes 0..33554432 (one seed's worth of DRBG
+output), every --rounds and --min-rounds 1..4096 (what every verifier accepts), twk
+--sector 0..2^64-1 and --bidx 0..2^32-1.  An explicit value is never read as the
+default: sign --rounds 0 is refused, not signed at 219.  (genpkey --bits: TODO #379.)
+
   genpkey --algo <ID> [--bits N] [--xmss-height N] [--passphrase P [--kdf-iterations N]] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,
              hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss, hpks-wots, hcred

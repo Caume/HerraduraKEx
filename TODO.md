@@ -699,38 +699,6 @@ Status: **OPEN**
 
 ---
 
-### #380: numeric flags are not parsed strictly, and `sign --rounds` is unchecked outside C
-
-Found by the v15.0.0 CLI audit.  No CLI has one strict number parser: C mixes `atoi` and
-`strtol`/`strtoul` with no end-pointer check (only its `--min-rounds` helper checks), Go
-uses `flag.Int` (which accepts `0x10`, refuses ` 5`), Java signed `parseInt` /
-`parseLong`, Python argparse `int`.
-
-**The finding.**
-- `rand --bytes abc | '' | 1.5 | 5x | 0x10`: C writes 0 bytes and exits 0; Go reads
-  `0x10` as 16 (so C and Go print different output for one command line); Python and
-  Java refuse.
-- `sign --rounds` (measured on hpks-stern; the nl-zkboo, nl-zkbpp, hpks-ring and
-  `cred-*` sites parse `--rounds` the same way in each CLI and are unmeasured): C refuses outside 1..4096; Python and Go read an explicit `0` as "omitted" and sign
-  at 219 (the bug class #374 fixed for `--bits`); Java writes a zero-round signature every
-  verifier rejects as malformed, exit 0; Go and Java sign 5000 rounds, which every verifier
-  refuses (> 4096); Python crashes on `-1` (`IndexError`) and hangs on 100000.
-- `genpkey --kdf-iterations`: C, Go and Java refuse outside 1..10^8; Python accepts `0` --
-  it writes an encrypted key with PBKDF2 iteration count 0, which only Python will decrypt
-  -- and has no upper bound (99999999999 hangs).
-- `--xmss-height` in C is `atoi` (`abc` is refused only because 0 is out of range).
-
-The verifiers are sound: all four reject 0 rounds and > 4096 rounds.
-
-**Work.**  One strict decimal parser per CLI, range-checked by name, for every numeric
-flag; sign-side `--rounds` held to the verifier's 1..4096 in all four; an explicit value
-never read as the default; Python's `--kdf-iterations` held to 1..10^8.  A matrix test.
-Refusing previously accepted values is MAJOR.
-
-Status: **OPEN**
-
----
-
 ### #381: CLI argument hygiene: C reads a directory as empty input; Java writes a file named `true`
 
 Found by the v15.0.0 CLI audit.  Lower severity, but two of these produce a wrong artifact

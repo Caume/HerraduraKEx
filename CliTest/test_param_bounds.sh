@@ -60,7 +60,7 @@ for h in 0 -1 21 32 64; do
         elif [ "$rc" -eq 0 ]; then
             echo "FAIL [$name] --xmss-height $h accepted (exit 0): $(echo "$out" | tail -1)"
             FAIL=$((FAIL+1))
-        elif ! printf '%s' "$out" | grep -q 'xmss-height must be in \[1,20\]'; then
+        elif ! printf '%s' "$out" | grep -qF -- "genpkey: --xmss-height must be a decimal integer from 1 to 20, got '$h'"; then
             echo "FAIL [$name] --xmss-height $h refused, but not with the shared"
             echo "     message: $(echo "$out" | tail -1)"
             FAIL=$((FAIL+1))

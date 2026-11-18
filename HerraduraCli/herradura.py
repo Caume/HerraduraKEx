@@ -69,7 +69,7 @@ from primitives import (
     hske_nl_aead_encrypt, hske_nl_aead_decrypt,
     hske_nl_v2_duplex_encrypt, hske_nl_v2_duplex_decrypt,
     hske_nl_v3_duplex_encrypt, hske_nl_v3_duplex_decrypt,
-    HDrbg, drbg_seed, drbg_generate, drbg_reseed,
+    HDrbg, drbg_seed, drbg_generate, drbg_reseed, DRBG_MAX_BLOCKS,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul, rnl_validate_m_blind as _rnl_validate_m_blind,
     rnl_validate_pub as _rnl_validate_pub, gf_pub_is_valid,
@@ -1245,6 +1245,7 @@ _PBKDF2_SALT_BYTES    = 16
 # floor (or higher) at the cost of a multi-minute wait, matching this repo's existing
 # demo-vs-production-parameter pattern (e.g. Stern-F rounds=32 demo / 219 production).
 _PBKDF2_HFSCX256_ITER_DEMO = 1_000
+_PBKDF2_HFSCX256_ITER_MAX  = 100_000_000  # the most any writer may choose, or reader honour
 _PBKDF2_HFSCX256_ITER_PROD = 200_000
 
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
@@ -1427,7 +1428,7 @@ def _round_floor(args, where):
     v = getattr(args, 'min_rounds', None)
     if v is None:
         return _MIN_VERIFY_ROUNDS
-    return _bounded(v, 1, _SDF_MAX_ROUNDS, '--min-rounds', where)
+    return v   # already held to 1.._SDF_MAX_ROUNDS by its argparse type (TODO #380)
 
 
 def _require_rounds(rounds, floor, what, where):
@@ -1436,6 +1437,22 @@ def _require_rounds(rounds, floor, what, where):
         sys.exit(f"{where}: {what} declares {rounds} rounds, below the --min-rounds "
                  f"floor of {floor} ({_MIN_VERIFY_ROUNDS} = 128-bit Fiat-Shamir "
                  f"soundness); pass --min-rounds {rounds} to accept it anyway")
+
+
+def _dec_range_arg(s, lo, hi, cmd, flag):
+    """THE numeric-flag parser (TODO #375, #380): a decimal integer in [lo, hi],
+    digits only (no sign, space, 0x, underscore or exponent), refused by name
+    otherwise, with the message the other three CLIs print.  argparse's int()
+    alone takes ' 1', '+1', '-1' and '1_0', and has no range."""
+    if not s or not all('0' <= c <= '9' for c in s) or not lo <= int(s) <= hi:
+        sys.exit(f"{cmd}: {flag} must be a decimal integer from {lo} to {hi}, got '{s}'")
+    return int(s)
+
+
+def _dec_type(cmd, flag, lo, hi):
+    """An argparse `type` running _dec_range_arg: it is applied only to a value
+    actually given, so an explicit 0 is refused rather than read as omitted."""
+    return lambda s: _dec_range_arg(s, lo, hi, cmd, flag)
 
 
 def _bounded(value, lo, hi, what, where):
@@ -1535,6 +1552,10 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
         raise ValueError("declared plaintext length does not match ciphertext")
     if ct_int.bit_length() > 8 * pt_len:
         raise ValueError("declared plaintext length does not match ciphertext")
+    # TODO #380: the bound C, Go and Java apply.  Without it Python alone read
+    # (and, before #380, wrote) a 0-iteration envelope.
+    if not 1 <= iterations <= _PBKDF2_HFSCX256_ITER_MAX:
+        raise ValueError(f"iteration count out of range ({iterations})")
     salt = _fit(salt_int, _PBKDF2_SALT_BYTES, 'salt', 'pem')
     ct   = _fit(ct_int, pt_len, 'ct', 'pem')
     tag  = _fit(tag_int, 32, 'tag', 'pem')
@@ -2693,8 +2714,6 @@ def cmd_genpkey(args):
         # for 2^32 leaves and the process simply never returns; C and Go refuse
         # the same input up front, and Java did not either (it wrapped `1 << h`
         # on an int and wrote a ONE-leaf tree labelled h = 32, exit 0).
-        if not 1 <= h_val <= _XMSS_MAX_H:
-            sys.exit(f'genpkey: --xmss-height must be in [1,{_XMSS_MAX_H}]')
         master_seed = _sec.token_bytes(32)
         print(f"Generating XMSS tree (h={h_val}, {1<<h_val} leaves) — may take a moment…",
               file=sys.stderr)
@@ -3365,7 +3384,7 @@ def cmd_sign(args):
         seed   = BitArray(n, seed_int)
         syn    = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
         msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        rounds = getattr(args, 'rounds', None) or _STERN_CLI_ROUNDS
+        rounds = args.rounds if args.rounds is not None else _STERN_CLI_ROUNDS
         sig    = hpks_stern_f_sign(msg, e_int, seed, syn, n, rounds)
         _write_file(args.out, _pack_stern_sig(sig, n))
 
@@ -3394,7 +3413,7 @@ def cmd_sign(args):
             sys.exit("hpks-ring sign: signer's public key is not in --ring "
                      "(run pkey --pubout on the signer key and include it)")
         msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        rounds = getattr(args, 'rounds', None) or _STERN_CLI_ROUNDS
+        rounds = args.rounds if args.rounds is not None else _STERN_CLI_ROUNDS
         sig    = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
         _write_file(args.out, _pack_ring_sig(sig, n))
         print(f"Ring signature created (k={len(ring_keys)}); signer index is hidden.",
@@ -3420,7 +3439,7 @@ def cmd_sign(args):
         if our_algo != 'hpks-zkp-nl':
             sys.exit(f"nl-zkboo sign: expected hpks-zkp-nl key, got {our_algo!r}")
         A, B, y, n = our_ints
-        rounds = getattr(args, 'rounds', None) or _ZKP_CLI_ROUNDS
+        rounds = args.rounds if args.rounds is not None else _ZKP_CLI_ROUNDS
         # Pad/truncate to 32 bytes to match C/Go behavior.  TODO #261 found this
         # line missing here while it was present in the nl-zkbpp branch below:
         # C passes `msg_bytes, KEYBYTES` and Go `msgPad(inBytes, 32)`, so an
@@ -3437,7 +3456,7 @@ def cmd_sign(args):
         if our_algo != 'hpks-zkp-nl':
             sys.exit(f"nl-zkbpp sign: expected hpks-zkp-nl key, got {our_algo!r}")
         A, B, y, n = our_ints
-        rounds = getattr(args, 'rounds', None) or _ZKP_CLI_ROUNDS
+        rounds = args.rounds if args.rounds is not None else _ZKP_CLI_ROUNDS
         # Pad/truncate to 32 bytes to match C/Go behavior
         msg = (in_bytes + b'\x00' * 32)[:32]
         proof_rounds = zkp_nl_prove_pp(A, B, y, n, rounds, msg)
@@ -3999,8 +4018,6 @@ def cmd_rand(args):
         drbg_reseed(drbg, _read_file(args.reseed))
 
     if args.bytes is not None:
-        if args.bytes < 0:
-            sys.exit("rand: --bytes must be non-negative")
         try:
             out = drbg_generate(drbg, args.bytes)
         except RuntimeError as e:
@@ -4053,20 +4070,11 @@ def cmd_fpe(args):
 # Sub-command: twk (78.B)
 # ---------------------------------------------------------------------------
 
-def _dec_uint_arg(s, max_v, cmd, flag):
-    """A flag value that must be a decimal integer in [0, max_v]: digits only
-    (no sign, space, 0x, underscore or exponent), refused by name otherwise
-    (TODO #375).  int() alone would take ' 1', '+1' and '1_0'."""
-    if not s or not all('0' <= c <= '9' for c in s) or int(s) > max_v:
-        sys.exit(f"{cmd}: {flag} must be a decimal integer from 0 to {max_v}, got '{s}'")
-    return int(s)
-
-
 def cmd_twk(args):
     # TODO #375: the tweak is sector_be64 || bidx_be32.  argparse int took
     # -1 and 2^32 here and the suite then died with an OverflowError traceback.
-    sector = _dec_uint_arg(args.sector, 2**64 - 1, 'twk', '--sector')
-    bidx = _dec_uint_arg(args.bidx, 2**32 - 1, 'twk', '--bidx')
+    sector = _dec_range_arg(args.sector, 0, 2**64 - 1, 'twk', '--sector')
+    bidx = _dec_range_arg(args.bidx, 0, 2**32 - 1, 'twk', '--bidx')
     key_int, nbits = _load_key(args.key)
     _sym256_ok(nbits, 'twk')
     key_bytes = _fit(key_int, nbits // 8, 'key', 'pem')
@@ -4256,7 +4264,7 @@ def cmd_cred_issue(args):
     issuer_seed = BitArray(issuer_n, seed_int)
     issuer_syn  = _suite_mod._stern_syndrome(seed_int, e_int, issuer_n, issuer_n // 2)
 
-    rounds = getattr(args, 'rounds', None) or _HCRED_SIGN_ROUNDS
+    rounds = args.rounds if args.rounds is not None else _HCRED_SIGN_ROUNDS
     print(_STERN_DEMO_WARNING, file=sys.stderr)
     cred_sig = hcred_issue(m, C, seed_H, syndr, n,
                            e_int, issuer_seed, issuer_syn,
@@ -4274,7 +4282,7 @@ def cmd_cred_prove(args):
     s, C, m, seed_H_int, syndr, n = decode_hcred_privkey(raw)
     seed_H  = BitArray(n, seed_H_int)
     msg     = (args.msg or '').encode()
-    rounds  = getattr(args, 'rounds', None) or _HCRED_CLI_ROUNDS
+    rounds  = args.rounds if args.rounds is not None else _HCRED_CLI_ROUNDS
     try:
         proof = hcred_prove(s, m, C, seed_H, syndr, n=n, rounds=rounds,
                             msg_bytes=msg)
@@ -4354,14 +4362,14 @@ def build_parser():
     gp.add_argument('--algo', required=True, choices=list(_PRIV_ALGOS) + ['hcred'])
     gp.add_argument('--bits', type=int, default=None,
                     help='Key size in bits (default 256; Stern: matrix dimension N)')
-    gp.add_argument('--xmss-height', type=int, default=10, dest='xmss_height',
+    gp.add_argument('--xmss-height', type=_dec_type('genpkey', '--xmss-height', 1, _XMSS_MAX_H), default=10, dest='xmss_height',
                     help='XMSS tree height (default 10 → 1024 leaves)')
     gp.add_argument('--out', default='-')
     gp.add_argument('--passphrase', default=None,
                     help='Encrypt the exported private key PEM under this passphrase '
                          '(TODO #166; PBKDF2-HFSCX256 + HSKE-NL-AEAD). Omit for the '
                          'existing cleartext behavior.')
-    gp.add_argument('--kdf-iterations', type=int, default=None,
+    gp.add_argument('--kdf-iterations', type=_dec_type('genpkey', '--kdf-iterations', 1, _PBKDF2_HFSCX256_ITER_MAX), default=None,
                     help=f'PBKDF2-HFSCX256 iteration count for --passphrase (default '
                          f'{_PBKDF2_HFSCX256_ITER_DEMO}, demo-speed; NIST SP 800-132 '
                          f'recommends >={_PBKDF2_HFSCX256_ITER_PROD}, which takes '
@@ -4444,7 +4452,7 @@ def build_parser():
                     help='Pre-hash: hfscx-256=hash full input then sign the 32-byte '
                          'digest (default; TODO #365), none=pad/truncate input to '
                          'the block size, so only its first bytes are signed')
-    sg.add_argument('--rounds', type=int, default=None,
+    sg.add_argument('--rounds', type=_dec_type('sign', '--rounds', 1, _SDF_MAX_ROUNDS), default=None,
                     help='ZKP/Stern-F rounds (nl-zkboo, hpks-stern, hpks-ring; '
                          'default: 219, the 128-bit count every verifier requires '
                          'unless it passes --min-rounds; TODO #364)')
@@ -4462,7 +4470,7 @@ def build_parser():
     vf.add_argument('--digest', default='hfscx-256', choices=['none', 'hfscx-256'],
                     help='Pre-hash: must match the value used during signing '
                          '(default: hfscx-256; none = pad/truncate to 32 bytes)')
-    vf.add_argument('--min-rounds', type=int, default=None, dest='min_rounds',
+    vf.add_argument('--min-rounds', type=_dec_type('verify', '--min-rounds', 1, _SDF_MAX_ROUNDS), default=None, dest='min_rounds',
                     help='Refuse hpks-stern/hpks-ring/nl-zkboo/nl-zkbpp artifacts declaring fewer Fiat-Shamir rounds '
                          '(default: 219, 128-bit soundness; TODO #364)')
 
@@ -4555,7 +4563,7 @@ def build_parser():
                     help='Personalization string (with --seed only)')
     rd.add_argument('--reseed', default=None,
                     help='Entropy file to fold into the state before generating')
-    rd.add_argument('--bytes', type=int, default=None,
+    rd.add_argument('--bytes', type=_dec_type('rand', '--bytes', 0, DRBG_MAX_BLOCKS * 32), default=None,
                     help='Number of output bytes to generate')
     rd.add_argument('--hex', action='store_true',
                     help='Hex-encode the output instead of raw bytes')
@@ -4659,7 +4667,7 @@ def build_parser():
                     help='Issuer hpks-stern PRIVATE KEY PEM')
     ci.add_argument('--in',     required=True, dest='in',
                     help='User HCRED PUBLIC KEY (or PRIVATE KEY) PEM')
-    ci.add_argument('--rounds', type=int, default=None,
+    ci.add_argument('--rounds', type=_dec_type('cred-issue', '--rounds', 1, _SDF_MAX_ROUNDS), default=None,
                     help=f'Stern-F rounds (default: {_HCRED_SIGN_ROUNDS} for 128-bit soundness)')
     ci.add_argument('--out',    default='-',
                     help='HCRED CREDENTIAL PEM output')
@@ -4671,7 +4679,7 @@ def build_parser():
                     help='User HCRED PRIVATE KEY PEM')
     cp.add_argument('--msg',    default='',
                     help='Presentation nonce / message (default: empty)')
-    cp.add_argument('--rounds', type=int, default=None,
+    cp.add_argument('--rounds', type=_dec_type('cred-prove', '--rounds', 1, _SDF_MAX_ROUNDS), default=None,
                     help=f'ZKBoo rounds (default: {_HCRED_CLI_ROUNDS} for 128-bit soundness)')
     cp.add_argument('--out',    default='-',
                     help='HCRED PROOF PEM output')
@@ -4689,7 +4697,7 @@ def build_parser():
                     help='Issuer hpks-stern PUBLIC KEY PEM (required with --cred)')
     cv.add_argument('--msg',     default='',
                     help='Presentation nonce / message (must match cred-prove --msg)')
-    cv.add_argument('--min-rounds', type=int, default=None, dest='min_rounds',
+    cv.add_argument('--min-rounds', type=_dec_type('cred-verify', '--min-rounds', 1, _SDF_MAX_ROUNDS), default=None, dest='min_rounds',
                     help='Refuse a proof or credential declaring fewer Fiat-Shamir rounds '
                          '(default: 219, 128-bit soundness; TODO #364)')
 

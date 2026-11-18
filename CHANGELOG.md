@@ -4,12 +4,46 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in two parts so
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in three parts so
 far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
 `--passphrase ''`, and PAKE registered a password nobody chose; an empty or missing secret
-is now refused by name in all four (TODO #376, section 38).
+is now refused by name in all four (TODO #376, section 38). Every numeric flag now takes
+decimal digits in a stated range, parsed by one routine per CLI; `sign --rounds 0` no
+longer signs at 219 and `rand --bytes abc` no longer writes 0 bytes (TODO #380, section 39).
+
+### TODO #380 — numeric flags are parsed strictly, in stated ranges
+
+- **The defect.** No CLI had one strict number parser. C mixed `atoi` and `strtol` with
+  no end-pointer check, so `rand --bytes abc` wrote 0 bytes and exited 0, and
+  `--xmss-height` was `atoi`. Go's `flag.Int` read `0x10` as 16 and could not tell an
+  explicit 0 from an omitted flag. `sign --rounds 0` signed at 219 in Python and Go, and
+  Java wrote a 0-round signature; Go and Java signed 5000 rounds, which every verifier
+  refuses; Python crashed on `-1` (`IndexError`) and ran without end on 100000.
+  Python's `genpkey --kdf-iterations 0` wrote an envelope only Python would read, with
+  no upper bound, and its `pkey --decrypt` honoured any declared count.
+- **The fix.** One parser per CLI, generalised from TODO #375's: C `dec_range_arg` (with
+  `num_arg` for a flag that may be omitted), Go `decRangeArg` / `numFlag` (every numeric
+  flag is now an `fs.String`), Java `decRangeArg` / `numArg` / `roundsArg`, Python
+  `_dec_range_arg` as an argparse `type`, so it sees only a value actually given. Decimal
+  digits only, refused with "`<cmd>: <flag> must be a decimal integer from <lo> to <hi>,
+  got '<v>'`". Ranges: `--kdf-iterations` 1..10^8, `--xmss-height` 1..20, `rand --bytes`
+  0..33554432 (`DRBG_MAX_BLOCKS` 32-byte blocks), every `--rounds` / `--min-rounds`
+  1..4096, the verifiers' own bound. Python's envelope reader now bounds the iteration
+  count as the other three do. `spec/generate_spec.py`'s C flag scrapers learned
+  `num_arg`. `genpkey --bits` is left to TODO #379.
+- **Test.** New `CliTest/test_numeric_flags.sh` (native-interop): accept-controls at each
+  range's low edge in all four CLIs (byte-identical `rand` output, `007` read as 7,
+  1-round artifacts that verify at `--min-rounds 1`), then 12 bad values at each of 12
+  flag sites, each refused by the shared message with no output, no crash and no hang.
+  622 PASS on this build. On the TODO #376 build, 548 FAIL: 162 bad values accepted,
+  crashing or hanging (among them some the audit had not measured: `+1` accepted
+  everywhere, C's `--kdf-iterations 1e3` read as 1, Go's `--xmss-height 0x10` building a
+  2^16-leaf tree, Go's `cred-verify --rounds -1` read as omitted), and 386 refused under
+  another message. `test_param_bounds.sh` and `test_rand.sh` now expect the shared
+  message.
+- **Docs.** llms.txt (a numeric-flag paragraph); MIGRATING §39.
 
 ### TODO #376 — an empty or missing passphrase or password is refused
 

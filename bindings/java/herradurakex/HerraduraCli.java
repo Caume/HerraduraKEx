@@ -424,11 +424,8 @@ public final class HerraduraCli {
                 throw new CliError("genpkey: --passphrase must not be empty");
             }
             encPassphrase = opt.get("passphrase");
-            encIterations = Integer.parseInt(opt.getOrDefault("kdf-iterations",
-                                                              String.valueOf(PBKDF2_ITER_DEMO)));
-            if (encIterations < 1 || encIterations > 100000000) {
-                throw new CliError("genpkey: --kdf-iterations out of range (1..100000000)");
-            }
+            encIterations = numArg(opt, "kdf-iterations", 1, PBKDF2_ITER_MAX,
+                                   PBKDF2_ITER_DEMO, "genpkey");
         } else if (opt.containsKey("kdf-iterations")) {
             throw new CliError("genpkey: --kdf-iterations requires --passphrase");
         }
@@ -468,7 +465,7 @@ public final class HerraduraCli {
             return;
         }
         if (algo.equals("hpks-xmss")) {
-            int h = opt.containsKey("xmss-height") ? Integer.parseInt(opt.get("xmss-height")) : Xmss.DEFAULT_H;
+            int h = numArg(opt, "xmss-height", 1, Codec.XMSS_MAX_H, Xmss.DEFAULT_H, "genpkey");
             // Codec.XMSS_MAX_H's own comment calls itself "genpkey's
             // --xmss-height cap", and until TODO #278 genpkey was the one path
             // that did not apply it — the decode side did.  Unbounded, `1 << h`
@@ -476,9 +473,6 @@ public final class HerraduraCli {
             // reported "h=32, 1 leaves", wrote a ONE-leaf tree labelled h = 32,
             // and exited 0.  Nothing could read it back, Java included.  C, Go
             // and Python all refuse the same input up front.
-            if (h < 1 || h > Codec.XMSS_MAX_H)
-                throw new CliError("genpkey: --xmss-height must be in [1,"
-                        + Codec.XMSS_MAX_H + "]");
             System.err.println("Generating XMSS tree (h=" + h + ", " + (1 << h) + " leaves) — may take a moment...");
             byte[] masterSeed = new byte[32];
             RNG.nextBytes(masterSeed);
@@ -1462,9 +1456,7 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            int rounds = opt.containsKey("rounds")
-                ? Integer.parseInt(opt.get("rounds")) : ZKP_CLI_ROUNDS;
-            if (rounds <= 0) throw new CliError(algo + " sign: --rounds must be positive");
+            int rounds = roundsArg(opt, ZKP_CLI_ROUNDS, "sign");
 
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1517,7 +1509,7 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : STERN_CLI_ROUNDS;
+            int rounds = roundsArg(opt, STERN_CLI_ROUNDS, "sign");
 
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1545,7 +1537,7 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : STERN_CLI_ROUNDS;
+            int rounds = roundsArg(opt, STERN_CLI_ROUNDS, "sign");
 
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1866,13 +1858,9 @@ public final class HerraduraCli {
         }
 
         if (opt.containsKey("bytes")) {
-            int n;
-            try {
-                n = Integer.parseInt(opt.get("bytes"));
-            } catch (NumberFormatException e) {
-                throw new CliError("rand: --bytes must be an integer");
-            }
-            if (n < 0) throw new CliError("rand: --bytes must be non-negative");
+            // TODO #380: at most one seed's worth of output, the most a single
+            // request can ever return.
+            int n = numArg(opt, "bytes", 0, (int) (Hdrbg.DRBG_MAX_BLOCKS * 32), 0, "rand");
             byte[] data;
             try {
                 data = drbg.generate(n);
@@ -2056,19 +2044,32 @@ public final class HerraduraCli {
         writeBytes(opt.getOrDefault("out", "-"), r.toBytes());
     }
 
-    /** A flag value that must be a decimal integer from 0 to {@code max}, both
-     *  read as UNSIGNED 64-bit (so -1L is 2^64 - 1): digits only (no sign,
-     *  space, 0x or exponent), refused by name otherwise (TODO #375). */
-    static long decUintArg(String s, long max, String cmd, String flag) {
+    /** THE numeric-flag parser (TODO #375, #380): a decimal integer from
+     *  {@code lo} to {@code hi}, both read as UNSIGNED 64-bit (so -1L is
+     *  2^64 - 1): digits only (no sign, space, 0x, _ or exponent), refused by
+     *  name otherwise, with the message the other three CLIs print. */
+    static long decRangeArg(String s, long lo, long hi, String cmd, String flag) {
         boolean ok = s != null && !s.isEmpty() && s.chars().allMatch(c -> c >= '0' && c <= '9');
         long v = 0;
         if (ok) {
             try { v = Long.parseUnsignedLong(s); } catch (NumberFormatException e) { ok = false; }
         }
-        if (!ok || Long.compareUnsigned(v, max) > 0)
-            throw new CliError(cmd + ": " + flag + " must be a decimal integer from 0 to "
-                               + Long.toUnsignedString(max) + ", got '" + s + "'");
+        if (!ok || Long.compareUnsigned(v, lo) < 0 || Long.compareUnsigned(v, hi) > 0)
+            throw new CliError(cmd + ": " + flag + " must be a decimal integer from "
+                               + Long.toUnsignedString(lo) + " to "
+                               + Long.toUnsignedString(hi) + ", got '" + s + "'");
         return v;
+    }
+
+    /** {@code --name}'s value through decRangeArg, or {@code deflt} when omitted. */
+    static int numArg(Map<String, String> opt, String name, int lo, int hi, int deflt, String cmd) {
+        String v = opt.get(name);
+        return v == null ? deflt : (int) decRangeArg(v, lo, hi, cmd, "--" + name);
+    }
+
+    /** Signing-side --rounds: held to the verifiers' 1..4096 (TODO #380). */
+    private static int roundsArg(Map<String, String> opt, int deflt, String cmd) {
+        return numArg(opt, "rounds", 1, SDF_MAX_ROUNDS, deflt, cmd);
     }
 
     private static void cmdTwk(Map<String, String> opt) throws IOException {
@@ -2080,9 +2081,9 @@ public final class HerraduraCli {
         // and accepted -1; the other CLIs wrapped.  The bit patterns below are
         // the unsigned values, which is what FpeTwk.twkTweak encodes.
         long sector = opt.containsKey("sector")
-            ? decUintArg(opt.get("sector"), -1L, "twk", "--sector") : 0L;
+            ? decRangeArg(opt.get("sector"), 0L, -1L, "twk", "--sector") : 0L;
         int bidx = opt.containsKey("bidx")
-            ? (int) decUintArg(opt.get("bidx"), 0xFFFFFFFFL, "twk", "--bidx") : 0;
+            ? (int) decRangeArg(opt.get("bidx"), 0L, 0xFFFFFFFFL, "twk", "--bidx") : 0;
         BitArray key = loadKey(req(opt, "key", "twk"));
         sym256OK(key.size(), "twk", "key");
         byte[] keyBytes = key.toBytes();
@@ -2163,7 +2164,7 @@ public final class HerraduraCli {
         Codec.SternPrivKey issuer = Codec.decodeSternPrivKey(ourPem, ourBlock.label);
         BigInteger issuerSyn = Stern.sternSyndrome(issuer.seed, issuer.e);
 
-        int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : HCRED_SIGN_ROUNDS;
+        int rounds = roundsArg(opt, HCRED_SIGN_ROUNDS, "cred-issue");
         System.err.println("warning: HPKS-Stern-F/HPKE-Stern-F are demo-strength illustrations of a "
             + "code-based construction, not a production-hardened scheme at these parameters.");
         Stern.SternSignature credSig = Hcred.issue(pub.m, pub.c, pub.seedH, pub.syndr, pub.n,
@@ -2179,7 +2180,7 @@ public final class HerraduraCli {
         }
         Codec.HcredPrivKey pk = Codec.decodeHcredPrivKey(pem);
         byte[] msg = opt.getOrDefault("msg", "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : HCRED_CLI_ROUNDS;
+        int rounds = roundsArg(opt, HCRED_CLI_ROUNDS, "cred-prove");
         Hcred.Proof proof;
         try {
             proof = Hcred.prove(pk.s, pk.m, pk.c, pk.seedH, pk.syndr, rounds, msg, RNG);
@@ -2309,15 +2310,11 @@ public final class HerraduraCli {
     private static final int MIN_VERIFY_ROUNDS = 219; // == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS
     /** sign --algo hpks-stern / hpks-ring default; was Stern.SDFR (32 demo). */
     private static final int STERN_CLI_ROUNDS = 219;
+    /** herradura.h SDF_MAX_ROUNDS: the most rounds any verifier accepts (TODO #236). */
+    private static final int SDF_MAX_ROUNDS = 4096;
 
     private static int minRounds(Map<String, String> opt, String cmd) {
-        String v = opt.get("min-rounds");
-        if (v == null) return MIN_VERIFY_ROUNDS;
-        int r;
-        try { r = Integer.parseInt(v); } catch (NumberFormatException e) { r = -1; }
-        if (r < 1 || r > 4096)
-            throw new CliError(cmd + ": --min-rounds must be between 1 and 4096");
-        return r;
+        return numArg(opt, "min-rounds", 1, SDF_MAX_ROUNDS, MIN_VERIFY_ROUNDS, cmd);
     }
 
     private static void requireRounds(int rounds, int floor, String what, String cmd) {
@@ -2391,6 +2388,8 @@ public final class HerraduraCli {
      *  travels in the PEM, so a reader honours whatever the writer chose --
      *  the contract Stern-F's round count has had since TODO #236. */
     private static final int PBKDF2_ITER_DEMO = 1000;
+    /** The most any writer may choose, and the most any reader honours. */
+    private static final int PBKDF2_ITER_MAX = 100000000;
 
     /** RFC 8018 PBKDF2 with the suite's own HMAC-HFSCX-256 as the PRF: a
      *  standard, analysed shape rather than a bespoke construction, and
@@ -2452,7 +2451,7 @@ public final class HerraduraCli {
         // field.  The plaintext bound is the envelope's own length -- a
         // ciphertext cannot be longer than the file carrying it -- which is
         // what C, Go and Python check too; the old 1 << 24 was merely safe.
-        if (it.get(1).signum() < 1 || it.get(1).compareTo(BigInteger.valueOf(100000000)) > 0) {
+        if (it.get(1).signum() < 1 || it.get(1).compareTo(BigInteger.valueOf(PBKDF2_ITER_MAX)) > 0) {
             throw new CliError("pkey --decrypt: iteration count out of range ("
                 + it.get(1) + ")");
         }

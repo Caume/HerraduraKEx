@@ -301,39 +301,41 @@ static const char *digest_value(const char *cmd, const char *digest)
  * Every signing default meets the floor, so default flags interoperate. */
 #define CLI_MIN_VERIFY_ROUNDS 219   /* == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS */
 
-/* A flag value that must be a decimal integer in [0, max]: digits only (no
- * sign, space, 0x or exponent), refused by name otherwise (TODO #375). */
-static uint64_t dec_uint_arg(const char *s, uint64_t max, const char *cmd,
-                             const char *flag)
+/* THE numeric-flag parser (TODO #375, #380): a decimal integer in [lo, hi],
+ * digits only (no sign, space, 0x, _ or exponent), refused by name otherwise.
+ * Every numeric flag goes through it, so an explicit value is never read as
+ * "omitted" and never wraps.  The message is shared with the other three CLIs. */
+static uint64_t dec_range_arg(const char *s, uint64_t lo, uint64_t hi,
+                              const char *cmd, const char *flag)
 {
     uint64_t v = 0;
     const char *p = s;
     int ok = *p != '\0';
     for (; ok && *p; p++) {
         unsigned d = (unsigned)(*p - '0');
-        if (*p < '0' || *p > '9' || v > (max - d) / 10) ok = 0;
+        if (*p < '0' || *p > '9' || v > (hi - d) / 10) ok = 0;
         else v = v * 10 + d;
     }
-    if (!ok) {
-        fprintf(stderr, "%s: %s must be a decimal integer from 0 to %llu, got '%s'\n",
-                cmd, flag, (unsigned long long)max, s);
+    if (!ok || v < lo) {
+        fprintf(stderr, "%s: %s must be a decimal integer from %llu to %llu, got '%s'\n",
+                cmd, flag, (unsigned long long)lo, (unsigned long long)hi, s);
         exit(1);
     }
     return v;
 }
 
+/* The flag's value through dec_range_arg, or deflt when it is omitted. */
+static uint64_t num_arg(int argc, char **argv, const char *flag, const char *cmd,
+                        uint64_t lo, uint64_t hi, uint64_t deflt)
+{
+    const char *a = get_arg(argc, argv, flag);
+    return a ? dec_range_arg(a, lo, hi, cmd, flag) : deflt;
+}
+
 static int rounds_arg(int argc, char **argv, const char *flag, const char *cmd,
                       int deflt)
 {
-    const char *a = get_arg(argc, argv, flag);
-    if (!a) return deflt;
-    char *end = NULL;
-    long v = strtol(a, &end, 10);
-    if (!*a || *end || v < 1 || v > SDF_MAX_ROUNDS) {
-        fprintf(stderr, "%s: %s must be between 1 and %d\n", cmd, flag, SDF_MAX_ROUNDS);
-        exit(1);
-    }
-    return (int)v;
+    return (int)num_arg(argc, argv, flag, cmd, 1, SDF_MAX_ROUNDS, (uint64_t)deflt);
 }
 
 static void require_rounds(int rounds, int floor, const char *what, const char *cmd)
@@ -535,6 +537,8 @@ static void zkp_pem_peek_label(const char *path, char *label_out);
  * reader honours whatever the writer chose regardless of its own default --
  * the same contract Stern-F's round count has had since TODO #236. */
 #define PBKDF2_ITER_DEMO  1000
+/* The most any writer may choose, and the most any reader honours. */
+#define PBKDF2_ITER_MAX   100000000ULL
 
 static void pbkdf2_hfscx256(const uint8_t *password, size_t pw_len,
                             const uint8_t salt[PBKDF2_SALT_BYTES],
@@ -671,7 +675,7 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     for (i = 0; i < vlens[1]; i++) iterations = (iterations << 8) | vals[1][i];
     if (vlens[5] > 8) die("decrypt: bad plaintext length");
     for (i = 0; i < vlens[5]; i++) pt_len = (pt_len << 8) | vals[5][i];
-    if (iterations < 1 || iterations > 100000000ULL)
+    if (iterations < 1 || iterations > PBKDF2_ITER_MAX)
         die("decrypt: iteration count out of range");
     /* pt_len sizes the allocation below and must agree with the ciphertext
      * actually present -- the field class TODO #239/#240/#275 exist over.
@@ -1277,12 +1281,9 @@ static void cmd_genpkey(int argc, char **argv)
          * -- it protects nothing, and before #376 Python and Go read it as
          * no passphrase at all and wrote the key in the clear. */
         if (!*pass_arg) die("genpkey: --passphrase must not be empty");
-        const char *iter_arg = get_arg(argc, argv, "--kdf-iterations");
-        long iters = iter_arg ? strtol(iter_arg, NULL, 10) : PBKDF2_ITER_DEMO;
-        if (iters < 1 || iters > 100000000L)
-            die("genpkey: --kdf-iterations out of range (1..100000000)");
+        g_enc_iterations = (uint32_t)num_arg(argc, argv, "--kdf-iterations", "genpkey",
+                                             1, PBKDF2_ITER_MAX, PBKDF2_ITER_DEMO);
         g_enc_passphrase = pass_arg;
-        g_enc_iterations = (uint32_t)iters;
     } else if (get_arg(argc, argv, "--kdf-iterations")) {
         die("genpkey: --kdf-iterations requires --passphrase");
     }
@@ -1413,10 +1414,7 @@ static void cmd_genpkey(int argc, char **argv)
     /* HPKS-XMSS-F key: SEQUENCE(INTEGER(seed,32), INTEGER(h), INTEGER(next_idx=0),
      * INTEGER(leaf_hashes_blob, 32*2^h)) — mirrors the Python CLI exactly. */
     if (strcmp(algo, "hpks-xmss") == 0) {
-        const char *h_arg = get_arg(argc, argv, "--xmss-height");
-        int h_val = h_arg ? atoi(h_arg) : 10;
-        if (h_val < 1 || h_val > XMSS_MAX_H)
-            die("genpkey: --xmss-height must be in [1,20]");
+        int h_val = (int)num_arg(argc, argv, "--xmss-height", "genpkey", 1, XMSS_MAX_H, 10);
         uint8_t seed[KEYBYTES];
         if (fread(seed, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
         fprintf(stderr, "Generating XMSS tree (h=%d, %d leaves) — may take a moment...\n",
@@ -3115,8 +3113,10 @@ static void cmd_rand(int argc, char **argv)
     }
 
     if (bytes_arg) {
-        long n = strtol(bytes_arg, NULL, 10);
-        if (n < 0) die("rand: --bytes must be non-negative");
+        /* At most one seed's worth of output (DRBG_MAX_BLOCKS blocks), the
+         * most a single request can ever return (TODO #380). */
+        long n = (long)dec_range_arg(bytes_arg, 0, DRBG_MAX_BLOCKS * KEYBYTES,
+                                     "rand", "--bytes");
         uint8_t *out = (uint8_t *)malloc((size_t)n ? (size_t)n : 1);
         if (!out) die("rand: out of memory");
         if (!drbg_generate(&d, out, (size_t)n))
@@ -5005,8 +5005,8 @@ static void cmd_twk(int argc, char **argv)
     /* TODO #375: the tweak is sector_be64 || bidx_be32.  strtoull/strtoul with
      * no end check read "abc" as 0 and a cast wrapped --bidx mod 2^32, so two
      * command lines naming different blocks encrypted under one tweak. */
-    uint64_t sector = sector_str ? dec_uint_arg(sector_str, UINT64_MAX, "twk", "--sector") : 0;
-    uint32_t bidx   = bidx_str   ? (uint32_t)dec_uint_arg(bidx_str, UINT32_MAX, "twk", "--bidx") : 0;
+    uint64_t sector = sector_str ? dec_range_arg(sector_str, 0, UINT64_MAX, "twk", "--sector") : 0;
+    uint32_t bidx   = bidx_str   ? (uint32_t)dec_range_arg(bidx_str, 0, UINT32_MAX, "twk", "--bidx") : 0;
 
     BitArray K = BA_INIT;
     load_sym_key(&K, key_path, "twk");
@@ -5489,8 +5489,10 @@ static void cmd_cred_verify(int argc, char **argv)
     free(pbuf);
     if (used != plen) die_raw_trailing(PEM_HCRED_PROOF, plen - used);   /* TODO #372 */
 
-    int rounds = proof.rounds;
-    if (rnd_arg) rounds = atoi(rnd_arg);
+    /* hcred_verify refuses a count other than the proof's own; --rounds only
+     * asserts it (parsed strictly, TODO #380). */
+    int rounds = rnd_arg ? (int)dec_range_arg(rnd_arg, 1, SDF_MAX_ROUNDS, "cred-verify", "--rounds")
+                         : proof.rounds;
     require_rounds(proof.rounds, min_rounds, "HCRED proof", "cred-verify");
 
     /* Load public key */

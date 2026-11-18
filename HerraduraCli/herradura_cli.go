@@ -351,6 +351,9 @@ const envKeyBits = 256
 // own default -- the contract Stern-F's round count has had since TODO #236.
 const pbkdf2IterDemo = 1000
 
+// pbkdf2IterMax is the most any writer may choose, and the most any reader honours.
+const pbkdf2IterMax = 100000000
+
 // pbkdf2Hfscx256 is RFC 8018 PBKDF2 with the suite's own HMAC-HFSCX-256 as the
 // PRF: a standard, analysed shape rather than a bespoke construction, and
 // dependency-free.  Only dklen == 32 (the PRF's native width, hence a single
@@ -473,7 +476,7 @@ func decryptPEMFile(path, passphrase string) (string, error) {
 	}
 	// Both size work below, so both are bounded before use -- the field class
 	// TODO #239/#240/#275 exist over.
-	if iterations < 1 || iterations > 100000000 {
+	if iterations < 1 || iterations > pbkdf2IterMax {
 		return "", fmt.Errorf("iteration count out of range (%d)", iterations)
 	}
 	// The comparison runs the other way from the pre-TODO-#280 form: the
@@ -1303,10 +1306,13 @@ func cmdGenpkey(args []string) {
 	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hpks|hpks-nl|hpke|hpke-nl|hpke-nl3|hpks-stern|hpke-stern|hcred|hpks-wots|hpks-xmss)")
 	bits := fs.Int("bits", genpkeyDefaultBits, "Key size in bits")
 	out  := fs.String("out", "-", "Output path (- = stdout)")
-	xmssHeight := fs.Int("xmss-height", 10, "hpks-xmss: tree height (2^H leaves)")
+	xmssHeightS := fs.String("xmss-height", "10", "hpks-xmss: tree height (2^H leaves, 1 to 20)")
 	passphrase := fs.String("passphrase", "", "Encrypt the exported private key under this passphrase (TODO #268)")
-	kdfIterations := fs.Int("kdf-iterations", pbkdf2IterDemo, "PBKDF2-HFSCX256 iterations for --passphrase")
+	kdfIterationsS := fs.String("kdf-iterations", strconv.Itoa(pbkdf2IterDemo), "PBKDF2-HFSCX256 iterations for --passphrase (1 to 100000000)")
 	fs.Parse(args)
+	// TODO #380: parsed strictly and range-checked before any key is generated.
+	xmssHeight := numFlag(fs, "xmss-height", xmssHeightS, 1, 20, 10)
+	kdfIterations := numFlag(fs, "kdf-iterations", kdfIterationsS, 1, pbkdf2IterMax, pbkdf2IterDemo)
 
 	if *algo == "" {
 		fmt.Fprintln(os.Stderr, "genpkey: --algo required")
@@ -1439,11 +1445,7 @@ func cmdGenpkey(args []string) {
 		fmt.Fprintln(os.Stderr, "HPKS-WOTS: ONE-TIME key — it may sign exactly one message.")
 
 	case *algo == "hpks-xmss":
-		h := *xmssHeight
-		if h < 1 || h > 20 {
-			fmt.Fprintln(os.Stderr, "genpkey: --xmss-height must be in [1,20]")
-			os.Exit(1)
-		}
+		h := xmssHeight
 		fmt.Fprintf(os.Stderr, "Generating XMSS tree (h=%d, %d leaves) — may take a moment...\n",
 			h, 1<<uint(h))
 		seed := NewRandBitArray(256).Bytes()
@@ -1481,10 +1483,7 @@ func cmdGenpkey(args []string) {
 	// TODO #268.  Wrapping the finished PEM string keeps CLEARTEXT OFF DISK:
 	// the plaintext only ever exists in memory.
 	if *passphrase != "" {
-		if *kdfIterations < 1 || *kdfIterations > 100000000 {
-			die("genpkey", fmt.Errorf("--kdf-iterations out of range (1..100000000)"))
-		}
-		pem, err = encryptPEMText(pem, *passphrase, *kdfIterations)
+		pem, err = encryptPEMText(pem, *passphrase, kdfIterations)
 		if err != nil {
 			die("genpkey", err)
 		}
@@ -2177,7 +2176,7 @@ func cmdRand(args []string) {
 	state  := fs.String("state", "", "HDRBG STATE PEM to resume from and/or update")
 	pers   := fs.String("personalization", "", "Personalization string (with --seed only)")
 	reseed := fs.String("reseed", "", "Entropy file to fold into the state before generating")
-	nbytes := fs.Int("bytes", -1, "Number of output bytes to generate")
+	nbytesS := fs.String("bytes", "", "Number of output bytes to generate (0 to 33554432)")
 	asHex  := fs.Bool("hex", false, "Hex-encode the output instead of raw bytes")
 	out    := fs.String("out", "-", "Output file (default: - = stdout)")
 	fs.Parse(args)
@@ -2209,12 +2208,11 @@ func cmdRand(args []string) {
 	// `--bytes -1` fell through to "nothing to do" while Python, C and Java all
 	// report "--bytes must be non-negative".  isSet distinguishes the two, which
 	// is what the other three get for free from argparse / an explicit NULL check.
-	if isSet(fs, "bytes") && *nbytes < 0 {
-		fmt.Fprintln(os.Stderr, "rand: --bytes must be non-negative")
-		os.Exit(1)
-	}
-	if *nbytes >= 0 {
-		outBytes, ok := d.DrbgGenerate(*nbytes)
+	// TODO #380: at most one seed's worth of output (DrbgMaxBlocks blocks),
+	// the most a single request can ever return; -1 means "not given".
+	nbytes := numFlag(fs, "bytes", nbytesS, 0, DrbgMaxBlocks*32, -1)
+	if nbytes >= 0 {
+		outBytes, ok := d.DrbgGenerate(nbytes)
 		if !ok {
 			fmt.Fprintln(os.Stderr, "rand: output limit reached — reseed required")
 			os.Exit(1)
@@ -3405,9 +3403,10 @@ func cmdCredIssue(args []string) {
 	in := fs.String("in", "", "User HCRED public (or private) key PEM")
 	our := fs.String("our", "", "Issuer hpks-stern/hpke-stern private key PEM")
 	out := fs.String("out", "-", "HCRED CREDENTIAL PEM output")
-	rounds := fs.Int("rounds", 0, "Stern-F rounds (default: 219 for 128-bit soundness)")
+	roundsS := fs.String("rounds", "", "Stern-F rounds (1 to 4096; default: 219 for 128-bit soundness)")
 	fs.Parse(args)
 	checkKeyLabels("cred-issue", fs) // TODO #366
+	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, hcredSignRounds) // TODO #380
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "cred-issue: --in (HCRED public/private key) required")
@@ -3436,10 +3435,7 @@ func cmdCredIssue(args []string) {
 	issuerE := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[0]))
 	issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[1]))
 
-	r := hcredSignRounds
-	if *rounds > 0 {
-		r = *rounds
-	}
+	r := rounds
 
 	sig := HcredIssue(mPoly, cPoly, seedH, syndr, n, issuerE, issuerSeed, r)
 	pem, perr := packSternSigLabel(sig, issuerN, lblHcredCred)
@@ -3456,9 +3452,10 @@ func cmdCredProve(args []string) {
 	in := fs.String("in", "", "User HCRED PRIVATE KEY PEM")
 	out := fs.String("out", "-", "HCRED PROOF PEM output")
 	msg := fs.String("msg", "", "Message to bind into the proof")
-	rounds := fs.Int("rounds", 0, "ZKBoo rounds (default: 219 for 128-bit soundness)")
+	roundsS := fs.String("rounds", "", "ZKBoo rounds (1 to 4096; default: 219 for 128-bit soundness)")
 	fs.Parse(args)
 	checkKeyLabels("cred-prove", fs) // TODO #366
+	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, 0) // TODO #380; 0 = default
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "cred-prove: --in (HCRED private key) required")
@@ -3475,8 +3472,8 @@ func cmdCredProve(args []string) {
 	}
 
 	r := hcredCliRounds
-	if *rounds > 0 {
-		r = *rounds
+	if rounds > 0 {
+		r = rounds
 	}
 
 	proof, perr := HcredProve(sPoly, mPoly, cPoly, seedH, syndr, n, r, []byte(*msg))
@@ -3497,12 +3494,13 @@ func cmdCredVerify(args []string) {
 	credPath := fs.String("cred", "", "HCRED CREDENTIAL PEM (optional; verify issuer binding)")
 	issuerPath := fs.String("issuer", "", "Issuer hpks-stern/hpke-stern public key PEM (required with --cred)")
 	msg := fs.String("msg", "", "Message bound into the proof")
-	rounds := fs.Int("rounds", 0, "Rounds to verify (default: proof's own round count)")
-	minR := fs.Int("min-rounds", cliMinVerifyRounds,
+	roundsS := fs.String("rounds", "", "Rounds to verify (1 to 4096; default: proof's own round count)")
+	minR := fs.String("min-rounds", strconv.Itoa(cliMinVerifyRounds),
 		"Refuse a proof or credential declaring fewer rounds (TODO #364)")
 	fs.Parse(args)
 	checkKeyLabels("cred-verify", fs) // TODO #366
-	minRounds := minRoundsValue("cred-verify", *minR)
+	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, 0) // TODO #380; 0 = proof's own
+	minRounds := numFlag(fs, "min-rounds", minR, 1, SdfMaxRounds, cliMinVerifyRounds)
 
 	if *proofPath == "" {
 		fmt.Fprintln(os.Stderr, "cred-verify: --proof required")
@@ -3524,8 +3522,8 @@ func cmdCredVerify(args []string) {
 
 	requireRounds(len(proof.Rounds), minRounds, "HCRED proof", "cred-verify")
 	r := len(proof.Rounds)
-	if *rounds > 0 {
-		r = *rounds
+	if rounds > 0 {
+		r = rounds
 	}
 
 	cPoly, mPoly, seedH, syndr, pubN, lerr := loadHcredPubinfo(*pubkeyPath)
@@ -4093,11 +4091,14 @@ func cmdSign(args []string) {
 	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	out    := fs.String("out", "-", "Signature PEM output file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
-	rounds := fs.Int("rounds", 0, "ZKP/Stern-F rounds (nl-zkboo, nl-zkbpp, hpks-stern, hpks-ring; "+
+	roundsS := fs.String("rounds", "", "ZKP/Stern-F rounds, 1 to 4096 (nl-zkboo, nl-zkbpp, hpks-stern, hpks-ring; "+
 		"default: 219, the 128-bit count every verifier requires unless it passes "+
 		"--min-rounds; TODO #364)")
 	fs.Parse(args)
 	checkKeyLabels("sign", fs) // TODO #366
+	// TODO #380: an explicit 0 used to read as omitted (219), and 5000 signed
+	// a signature every verifier refuses.  0 here means "not given".
+	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, 0)
 	digestValue("sign", digest)
 
 	if *algo == "" || *key == "" {
@@ -4114,14 +4115,14 @@ func cmdSign(args []string) {
 	}
 
 	zkpRounds := ZkpNlProdRounds
-	if *rounds > 0 {
-		zkpRounds = *rounds
+	if rounds > 0 {
+		zkpRounds = rounds
 	}
 	// The CLI default is the 128-bit count, not the suite's SdfRounds demo
 	// value: verifiers refuse fewer unless asked (TODO #364).
 	sternRounds := SdfProductionRounds
-	if *rounds > 0 {
-		sternRounds = *rounds
+	if rounds > 0 {
+		sternRounds = rounds
 	}
 
 	// ZKP-NL: raw binary PEM — must not call readPEMInts
@@ -4370,12 +4371,12 @@ func cmdVerify(args []string) {
 	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	sig    := fs.String("sig", "", "Signature PEM file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
-	minR   := fs.Int("min-rounds", cliMinVerifyRounds,
+	minR   := fs.String("min-rounds", strconv.Itoa(cliMinVerifyRounds),
 		"Refuse hpks-stern/hpks-ring/nl-zkboo/nl-zkbpp artifacts declaring fewer rounds (TODO #364)")
 	fs.Parse(args)
 	checkKeyLabels("verify", fs) // TODO #366
 	digestValue("verify", digest)
-	minRounds := minRoundsValue("verify", *minR)
+	minRounds := numFlag(fs, "min-rounds", minR, 1, SdfMaxRounds, cliMinVerifyRounds) // TODO #380
 
 	if *algo == "" || *sig == "" {
 		fmt.Fprintln(os.Stderr, "verify: --algo and --sig required")
@@ -4922,21 +4923,32 @@ func cmdFpe(args []string) {
 
 // ── twk (78.B) ───────────────────────────────────────────────────────────────
 
-// decUintArg reads a flag value that must be a decimal integer in [0, max]:
-// digits only (no sign, space, 0x or exponent), refused by name otherwise
-// (TODO #375).
-func decUintArg(s string, max uint64, cmd, flagName string) uint64 {
+// decRangeArg is THE numeric-flag parser (TODO #375, #380): a decimal integer
+// in [lo, hi], digits only (no sign, space, 0x, _ or exponent), refused by name
+// otherwise.  flag.Int took 0x10 as 16 and could not tell an explicit 0 from an
+// omitted flag; every numeric flag is now an fs.String read through this, with
+// the message the other three CLIs print.
+func decRangeArg(s string, lo, hi uint64, cmd, flagName string) uint64 {
 	ok := s != ""
 	for i := 0; ok && i < len(s); i++ {
 		ok = s[i] >= '0' && s[i] <= '9'
 	}
 	v, err := strconv.ParseUint(s, 10, 64)
-	if !ok || err != nil || v > max {
-		fmt.Fprintf(os.Stderr, "%s: %s must be a decimal integer from 0 to %d, got '%s'\n",
-			cmd, flagName, max, s)
+	if !ok || err != nil || v < lo || v > hi {
+		fmt.Fprintf(os.Stderr, "%s: %s must be a decimal integer from %d to %d, got '%s'\n",
+			cmd, flagName, lo, hi, s)
 		os.Exit(1)
 	}
 	return v
+}
+
+// numFlag returns the named string flag through decRangeArg, or deflt when the
+// flag was not given.
+func numFlag(fs *flag.FlagSet, name string, val *string, lo, hi uint64, deflt int) int {
+	if !isSet(fs, name) {
+		return deflt
+	}
+	return int(decRangeArg(*val, lo, hi, fs.Name(), "--"+name))
 }
 
 func cmdTwk(args []string) {
@@ -4963,8 +4975,8 @@ func cmdTwk(args []string) {
 	// TODO #375: the tweak is sector_be64 || bidx_be32.  fs.Uint then
 	// uint32(*bidx) wrapped --bidx mod 2^32, so --bidx 4294967296 encrypted
 	// under block 0's tweak; flag.Uint also read 0x10 as 16.
-	sectorV := decUintArg(*sector, math.MaxUint64, "twk", "--sector")
-	bidxV := uint32(decUintArg(*bidx, math.MaxUint32, "twk", "--bidx"))
+	sectorV := decRangeArg(*sector, 0, math.MaxUint64, "twk", "--sector")
+	bidxV := uint32(decRangeArg(*bidx, 0, math.MaxUint32, "twk", "--bidx"))
 	keyBig, keyBits, err := loadKey(*keyPath)
 	if err != nil {
 		die("twk", err)
@@ -5265,14 +5277,6 @@ func die(prefix string, err error) {
 // challenge is one of those.  219 is the 128-bit count ((2/3)^219 < 2^-128);
 // `verify` / `cred-verify --min-rounds N` lowers it.
 const cliMinVerifyRounds = 219 // == SdfProductionRounds == ZkpNlProdRounds
-
-func minRoundsValue(cmd string, v int) int {
-	if v < 1 || v > SdfMaxRounds {
-		fmt.Fprintf(os.Stderr, "%s: --min-rounds must be between 1 and %d\n", cmd, SdfMaxRounds)
-		os.Exit(1)
-	}
-	return v
-}
 
 func requireRounds(rounds, floor int, what, cmd string) {
 	if rounds >= floor {

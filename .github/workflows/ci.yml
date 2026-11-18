@@ -424,7 +424,7 @@ jobs:
                    CliTest/test_v3_family.sh CliTest/test_zkp_hybrid_family.sh \
                    CliTest/test_unknown_flags.sh CliTest/test_passphrase_envelope.sh \
                    CliTest/test_pkey_text_matrix.sh CliTest/test_twk_tweak_range.sh \
-                   CliTest/test_empty_secrets.sh; do
+                   CliTest/test_empty_secrets.sh CliTest/test_numeric_flags.sh; do
             echo "=== $f ==="
             bash "$f"
           done
@@ -443,7 +443,7 @@ jobs:
                     test_kat_pem.sh test_fpe_twk.sh test_v3_family.sh \
                     test_zkp_hybrid_family.sh test_unknown_flags.sh \
                     test_passphrase_envelope.sh test_pkey_text_matrix.sh test_twk_tweak_range.sh \
-                    test_empty_secrets.sh"
+                    test_empty_secrets.sh test_numeric_flags.sh"
           cd CliTest
           missing=0
           for f in *.sh; do

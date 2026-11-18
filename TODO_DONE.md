@@ -25646,3 +25646,46 @@ before).  `CliTest/test_empty_secrets.sh` (native-interop): 60 PASS; 23 FAIL on 
 #375 build.  MIGRATING §38.
 
 Status: **DONE v16.0.0** — an empty or missing passphrase or password is refused by name in all four CLIs; `pkey --decrypt` still reads `''` envelopes.
+
+---
+
+### #380: numeric flags are not parsed strictly, and `sign --rounds` is unchecked outside C
+
+Found by the v15.0.0 CLI audit.  No CLI has one strict number parser: C mixes `atoi` and
+`strtol`/`strtoul` with no end-pointer check (only its `--min-rounds` helper checks), Go
+uses `flag.Int` (which accepts `0x10`, refuses ` 5`), Java signed `parseInt` /
+`parseLong`, Python argparse `int`.
+
+**The finding.**
+- `rand --bytes abc | '' | 1.5 | 5x | 0x10`: C writes 0 bytes and exits 0; Go reads
+  `0x10` as 16 (so C and Go print different output for one command line); Python and
+  Java refuse.
+- `sign --rounds` (measured on hpks-stern; the nl-zkboo, nl-zkbpp, hpks-ring and
+  `cred-*` sites parse `--rounds` the same way in each CLI and are unmeasured): C refuses outside 1..4096; Python and Go read an explicit `0` as "omitted" and sign
+  at 219 (the bug class #374 fixed for `--bits`); Java writes a zero-round signature every
+  verifier rejects as malformed, exit 0; Go and Java sign 5000 rounds, which every verifier
+  refuses (> 4096); Python crashes on `-1` (`IndexError`) and hangs on 100000.
+- `genpkey --kdf-iterations`: C, Go and Java refuse outside 1..10^8; Python accepts `0` --
+  it writes an encrypted key with PBKDF2 iteration count 0, which only Python will decrypt
+  -- and has no upper bound (99999999999 hangs).
+- `--xmss-height` in C is `atoi` (`abc` is refused only because 0 is out of range).
+
+The verifiers are sound: all four reject 0 rounds and > 4096 rounds.
+
+**Work.**  One strict decimal parser per CLI, range-checked by name, for every numeric
+flag; sign-side `--rounds` held to the verifier's 1..4096 in all four; an explicit value
+never read as the default; Python's `--kdf-iterations` held to 1..10^8.  A matrix test.
+Refusing previously accepted values is MAJOR.
+
+**Resolution (v16.0.0).**  One parser per CLI, generalised from #375's: C
+`dec_range_arg` / `num_arg`, Go `decRangeArg` / `numFlag` (numeric flags are now
+`fs.String`), Java `decRangeArg` / `numArg` / `roundsArg`, Python `_dec_range_arg` as an
+argparse `type`.  Decimal digits only, one message ("<cmd>: <flag> must be a decimal integer
+from <lo> to <hi>, got '<v>'").  `--kdf-iterations` 1..10^8, `--xmss-height` 1..20,
+`rand --bytes` 0..33554432, every `--rounds` / `--min-rounds` 1..4096; an explicit 0 is
+refused, never read as the default.  Python's envelope reader bounds the iteration count
+like the other three.  `genpkey --bits` stays with #379.  `CliTest/test_numeric_flags.sh`
+(native-interop): 622 PASS; 548 FAIL on the #376 build (162 accepted, crashed or hung).
+MIGRATING §39.
+
+Status: **DONE v16.0.0** — every numeric flag is decimal digits in a stated range, parsed by one routine per CLI; sign --rounds is held to 1..4096.

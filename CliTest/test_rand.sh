@@ -129,7 +129,8 @@ for impl in "${IMPLS[@]}"; do
         ${CLI[$impl]} rand --bytes 8
     check_msg "rand err nothing-to-do ($impl)" "nothing to do" -- \
         ${CLI[$impl]} rand --seed "$TMP/seed.bin"
-    check_msg "rand err negative-bytes ($impl)" "--bytes must be non-negative" -- \
+    # TODO #380: the shared numeric-flag message, from one parser per CLI.
+    check_msg "rand err negative-bytes ($impl)" "rand: --bytes must be a decimal integer from 0 to 33554432, got '-1'" -- \
         ${CLI[$impl]} rand --seed "$TMP/seed.bin" --bytes -1
 done
 

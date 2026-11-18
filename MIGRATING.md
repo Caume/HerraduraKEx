@@ -2062,3 +2062,47 @@ A PAKE record registered under `demo-password` or `''` by an omitted or empty
 `--password` protects nothing; re-register the user with a chosen password.
 
 **Why this is MAJOR.** It refuses input existing subcommands accepted, the 2.0.0 surface.
+
+## 39. Numeric flags take decimal digits in a stated range (v16.0.0)
+
+**Who is affected:** a script that passes a numeric flag a value that is not plain
+decimal digits (`0x10`, `+5`, ` 5`, `1e3`, `abc`, `''`), or a value outside the flag's
+range, or `0` meaning "the default".
+
+**What changed (TODO #380).** No CLI had one strict number parser, and they disagreed:
+
+- `rand --bytes abc` (or `''`, `1.5`, `5x`): C wrote 0 bytes and exited 0. Go read
+  `--bytes 0x10` as 16 bytes. Python and Java refused.
+- `sign --rounds 0`: Python and Go signed at the default 219, Java wrote a 0-round
+  signature every verifier refuses, and C refused. `--rounds 5000`: Go and Java wrote a
+  signature every verifier refuses (they accept at most 4096). Python crashed on
+  `--rounds -1` and ran without end on `--rounds 100000`. The same parsing sat behind
+  `cred-issue` and `cred-prove --rounds`.
+- `genpkey --kdf-iterations 0`: Python wrote an envelope with 0 PBKDF2-HFSCX-256
+  iterations, which only Python would decrypt, and took any count, however large.
+- `genpkey --xmss-height abc`: C read it with `atoi`.
+
+All four now share one rule. Each flag takes decimal digits only, in this range, and
+anything else is refused before work starts:
+
+| flag | range |
+|---|---|
+| `genpkey --kdf-iterations` | 1 to 100000000 |
+| `genpkey --xmss-height` | 1 to 20 |
+| `rand --bytes` | 0 to 33554432 (one seed's worth of DRBG output) |
+| `sign`, `cred-issue`, `cred-prove --rounds`; `verify`, `cred-verify --min-rounds`; `cred-verify --rounds` (C, Go) | 1 to 4096 |
+
+```
+sign: --rounds must be a decimal integer from 1 to 4096, got '0'
+```
+
+The messages for `--xmss-height`, `rand --bytes` and `--min-rounds` changed to this
+form. Python's `pkey --decrypt` now also refuses an envelope declaring an iteration
+count outside 1 to 100000000, as C, Go and Java already did.
+
+**What to do.** Write the number in decimal. Omit `--rounds` for the default rather than
+passing 0. A request for more than 33554432 bytes of `rand` output was never satisfiable
+from one seed; split it across reseeds. A 0-iteration envelope that Python wrote can be
+decrypted only by Python 15.x or earlier; decrypt it there and re-encrypt.
+
+**Why this is MAJOR.** It refuses input existing subcommands accepted, the 2.0.0 surface.
