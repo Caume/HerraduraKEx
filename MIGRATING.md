@@ -2249,3 +2249,71 @@ unchanged, and existing keys read as before.
 
 **Why this is MAJOR.** It refuses `--bits` values existing `--algo` values accepted, the
 2.0.0 surface.
+
+## 44. C runs the GF(2^n) family at 32-128 bits; mixed widths are refused (v16.0.0)
+
+**Who is affected:** a script that uses a GF-family key (hkex-gf, hpks, hpks-nl, hpke,
+hpke-nl, hpke-nl3) narrower than 256 bits, or that passes a key of one width with a peer
+key or ciphertext of another.
+
+**What changed (TODO #383, stage 1).**
+
+- The C CLI now runs the GF(2^n) family at 32, 64, 128 and 256 bits: `genpkey --bits`,
+  `pkey`, `kex`, `enc` / `dec` and `sign` / `verify`, byte-identical with Python and Go in
+  both directions. It used to refuse a narrower key with `this CLI runs n = 256`, and
+  `genpkey` with `not yet supported by this CLI`. Java still runs 256 only (TODO #384).
+- A key used with a peer key, ciphertext or signature of another width is refused in
+  Python, Go and C, with the same text:
+  `kex: their public key n is 128, our private key n is 64`,
+  `dec: ciphertext n is 128, private key n is 64`,
+  `verify: signature n is 128, public key n is 64` (`verify` already refused). Python and
+  Go used to reduce the peer's value into the key's width and exit 0 with a key or
+  plaintext nobody else derived.
+- C's threshold commands refuse an hpks key narrower than 256 bits by name; HPKS-T is
+  defined at 256 only (Python and Go since TODO #388, section 45).
+
+**What to do.** Use keys of one width on both sides. Existing 256-bit keys, ciphertexts and
+signatures read exactly as before.
+
+**Why this is MAJOR.** `kex` and `dec` now refuse inputs Python and Go accepted, the 2.0.0
+surface.
+
+## 45. `kex --kdf hfscx-256` below 256 bits; narrow keys at `threshold-commit` (v16.0.0)
+
+**Who is affected:** a script that runs `kex --algo hkex-gf --kdf hfscx-256` with keys
+narrower than 256 bits, or that passes a narrower hpks / hpks-nl key to
+`threshold-commit`. Nothing changes at 256 bits.
+
+**What changed (TODO #389).** With `--kdf hfscx-256`, the session key is now the same in
+every CLI at every width n:
+
+1. the raw shared secret g^ab is serialised as exactly n/8 big-endian bytes (leading
+   zero bytes kept), e.g. 8 bytes at n = 64;
+2. those bytes are hashed with HFSCX-256, giving 32 bytes;
+3. the SESSION KEY PEM holds that whole digest and declares `n = 256`, its own width,
+   not the n of the exchange: `SEQUENCE { INTEGER digest, INTEGER 256 }`.
+
+The key therefore keys HSKE (`enc --algo hske --key sk.pem`) like any 256-bit session key,
+the same way HKEX-RNL's session key (a digest, labelled 256) always has. Before:
+
+- Python, and C since section 44, wrote the 256-bit digest under `n = 64`, a key no CLI
+  could read back (`field 0 is 32 bytes (expected at most 8)`);
+- Go kept the digest's low 64 bits and declared `n = 64`, so it disagreed with the others.
+
+Without `--kdf`, the session key is still the raw n-bit g^ab declaring `n`. The digest does
+not add entropy: a 64-bit exchange still yields at most 64 bits (and the demonstration
+widths far less security; see `genpkey`'s warnings).
+
+**What changed (TODO #388).** Python and Go now refuse an hpks or hpks-nl key narrower
+than 256 bits at `threshold-commit` with
+`threshold: the key is 64-bit; threshold signing runs at 256 bits only`, as C does. They
+used to write a commitment that their own `threshold-aggregate` then refused (Python with
+a traceback). Java refuses such a key at load.
+
+**What to do.** Re-run a narrow-width `kex --kdf hfscx-256` that wrote a Go session key;
+the old Go value (the digest's low bits) is not what any CLI derives now. Use 256-bit keys
+for threshold signing.
+
+**Why this is MAJOR.** It changes what an existing `--algo` / `--kdf` combination produces
+(Go's narrow session keys) and refuses input Python and Go accepted.
+

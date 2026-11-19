@@ -316,6 +316,9 @@ non-uniform bit distribution — not all 256-bit values appear with equal probab
 Before using it as a symmetric key, post-hash it through HFSCX-256 to produce a
 uniformly random 256-bit output: `final_key = HFSCX-256(sk_bytes)`.  In the CLI,
 `--kdf hfscx-256` on the `kex` subcommand applies this step automatically.
+At every key width n it hashes `sk` as exactly n/8 bytes and writes the whole 32-byte
+digest as a session key declaring n = 256, so a narrow-width exchange still yields a
+256-bit HSKE key (with no more entropy than its n-bit secret; SPEC.md §4.2, TODO #389).
 See Part 4.5 for the construction.
 
 ### 3.4 Forward secrecy

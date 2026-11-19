@@ -64,9 +64,11 @@
 #if KEYBYTES < 2
 #  error "KEYBITS must be >= 16"
 #endif
-#if KEYBITS != 256
-#  error "GF polynomial constants are only defined for KEYBITS=256 in this build"
-#endif
+/* KEYBITS is the DEFAULT width -- what BA_INIT and the fixed-width protocols
+ * (HSKE, OPRF, the hash-based signatures) run at.  The GF(2^n) family takes its
+ * width from its operands since TODO #383: ba_gf_poly() looks the polynomial
+ * up by width and refuses an unlisted one (BA_E_NO_POLY, BITARRAY.md 4.6), which
+ * replaced this build's `#if KEYBITS != 256 #error`. */
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * BitArray — variable width, big-endian octets (TODO #314 pass 2)
@@ -651,15 +653,21 @@ static void ba_fscx_revolve(BitArray *result, const BitArray *a,
         return;
     }
 
-    /* M^steps * A, building the stride table 2^u mod KEYBITS by doubling as we
-       go so nothing overflows for a large step count. */
+    /* M^steps * A, building the stride table 2^u mod n by doubling as we
+       go so nothing overflows for a large step count.  n is the operands'
+       width (TODO #383: it was KEYBITS, and the accumulator below was born at
+       256 bits, so a narrower closed-form call failed E_MIXED_WIDTH). */
+    {
+        BaStatus st = ba_same_width(a, b);
+        if (st != BA_OK) BA_FAIL(st, "ba_fscx_revolve");
+    }
     acc = *a;
-    s = 1 % KEYBITS;
+    s = 1 % a->nbits;
     for (rem = steps; rem; rem >>= 1) {
         strides[nstr++] = s;
         if (rem & 1)
             ba_m_pow2_mul(&acc, s);
-        s = (s * 2) % KEYBITS;
+        s = (s * 2) % a->nbits;
     }
 
     /* S_steps * B, from the recurrence
@@ -667,12 +675,12 @@ static void ba_fscx_revolve(BitArray *result, const BitArray *a,
        walked from the deepest level up.  With Y = M^(2^u) at level u both
        multipliers are sparse, and k at level u is just steps >> u.  s_acc
        carries S_k(Y) * B; q carries the correction (Y^2)^(k/2) * B. */
-    memset(s_acc.b, 0, KEYBYTES);        /* S_0 = 0 */
+    ba_zero_w(&s_acc, a->nbits);         /* S_0 = 0 */
     q = *b;                              /* M^0 * B = B */
     for (u = nstr - 1; u >= 0; u--) {
         ba_one_plus_m_pow2_mul(&s_acc, strides[u]);
         if ((steps >> u) & 1) {
-            for (i = 0; i < KEYBYTES; i++)
+            for (i = 0; i < a->nbits / 8; i++)
                 s_acc.b[i] ^= q.b[i];
             ba_m_pow2_mul(&q, strides[u]);
         }
@@ -728,57 +736,88 @@ static int ba_shr1(BitArray *a)
     return carry;
 }
 
-/* GF(2^KEYBITS) multiplication: dst = a * b mod GF_POLY.
-   Shift-and-XOR: O(KEYBITS) iterations. */
-/* SA-02/03: constant-time GF(2^KEYBITS) multiply.
-   All branches replaced with bitmask selects so execution time is
-   independent of the value of either operand (private key). */
-static void gf_mul_ba(BitArray *dst, const BitArray *a, const BitArray *b)
+static BaStatus ba_gf_poly(BitArray *dst, int n);   /* defined with the BITARRAY.md ops */
+
+/* dst = a * b mod poly at the operands' width (poly already looked up).
+   SA-02/03: constant-time -- all branches are bitmask selects, so execution
+   time is independent of either operand (the private key). */
+static void gf_mul_poly_ba(BitArray *dst, const BitArray *a, const BitArray *b,
+                           const BitArray *poly)
 {
     BitArray r = BA_INIT, aa = BA_INIT, bb = BA_INIT;
     uint8_t bit_mask, carry_mask;
-    int i, k;
-    memset(r.b, 0, KEYBYTES);
+    int i, k, n = a->nbits, nb = ba_nbytes(a);
+    ba_zero_w(&r, n);
     aa = *a;
     bb = *b;
-    for (i = 0; i < KEYBITS; i++) {
+    for (i = 0; i < n; i++) {
         /* CT: XOR aa into r iff LSB of bb is set */
-        bit_mask = (uint8_t)(0u - (bb.b[KEYBYTES - 1] & 1u));
-        for (k = 0; k < KEYBYTES; k++)
+        bit_mask = (uint8_t)(0u - (bb.b[nb - 1] & 1u));
+        for (k = 0; k < nb; k++)
             r.b[k] ^= aa.b[k] & bit_mask;
-        /* CT: reduce aa by GF_POLY iff its MSB is set */
+        /* CT: reduce aa by poly iff its MSB is set */
         carry_mask = (uint8_t)(0u - (aa.b[0] >> 7));
         ba_shl1(&aa);
-        for (k = 0; k < KEYBYTES; k++)
-            aa.b[k] ^= GF_POLY.b[k] & carry_mask;
+        for (k = 0; k < nb; k++)
+            aa.b[k] ^= poly->b[k] & carry_mask;
         ba_shr1(&bb);
     }
     *dst = r;
 }
 
-/* SA-02: constant-time GF(2^KEYBITS) exponentiation.
-   Iterates exactly KEYBITS times (no early exit on leading zeros) and
-   uses CT select instead of a conditional call, so loop count and
-   branch pattern are independent of the exponent (private key). */
+/* The polynomial for a's width, or a hard failure: a GF(2^n) operation at a
+   width with no listed polynomial is a caller bug (the CLIs screen widths at
+   the PEM boundary), never a silent default (TODO #383). */
+static void gf_poly_for(BitArray *poly, const BitArray *a, const char *what)
+{
+    BaStatus st = ba_gf_poly(poly, a->nbits);
+    if (st != BA_OK) BA_FAIL(st, what);
+}
+
+/* GF(2^n) multiplication at the operands' common width: dst = a * b mod p(x). */
+static void gf_mul_ba(BitArray *dst, const BitArray *a, const BitArray *b)
+{
+    BitArray poly = BA_INIT;
+    BaStatus st = ba_same_width(a, b);
+    if (st != BA_OK) BA_FAIL(st, "gf_mul_ba");
+    gf_poly_for(&poly, a, "gf_mul_ba");
+    gf_mul_poly_ba(dst, a, b, &poly);
+}
+
+/* SA-02: constant-time GF(2^n) exponentiation, n = base's width.
+   Iterates exactly n times (no early exit on leading zeros) and uses CT
+   select instead of a conditional call, so loop count and branch pattern are
+   independent of the exponent (private key).  exp has base's width. */
 static void gf_pow_ba(BitArray *dst, const BitArray *base, const BitArray *exp)
 {
-    BitArray r = BA_INIT, b = BA_INIT, e = BA_INIT, tmp = BA_INIT;
+    BitArray r = BA_INIT, b = BA_INIT, e = BA_INIT, tmp = BA_INIT, poly = BA_INIT;
     uint8_t bit, sel;
-    int i, k;
-    memset(r.b, 0, KEYBYTES);
-    r.b[KEYBYTES - 1] = 1;   /* multiplicative identity */
+    int i, k, n = base->nbits, nb;
+    BaStatus st = ba_same_width(base, exp);
+    if (st != BA_OK) BA_FAIL(st, "gf_pow_ba");
+    gf_poly_for(&poly, base, "gf_pow_ba");
+    nb = ba_nbytes(base);
+    ba_zero_w(&r, n);
+    r.b[nb - 1] = 1;   /* multiplicative identity */
     b = *base;
     e = *exp;
-    for (i = 0; i < KEYBITS; i++) {
-        bit = e.b[KEYBYTES - 1] & 1u;
-        gf_mul_ba(&tmp, &r, &b);        /* always compute r*b */
-        sel = (uint8_t)(0u - bit);      /* 0xFF if bit set, 0x00 if not */
-        for (k = 0; k < KEYBYTES; k++) /* CT select: r = bit ? tmp : r */
+    for (i = 0; i < n; i++) {
+        bit = e.b[nb - 1] & 1u;
+        gf_mul_poly_ba(&tmp, &r, &b, &poly);   /* always compute r*b */
+        sel = (uint8_t)(0u - bit);             /* 0xFF if bit set, 0x00 if not */
+        for (k = 0; k < nb; k++)               /* CT select: r = bit ? tmp : r */
             r.b[k] = (r.b[k] & ~sel) | (tmp.b[k] & sel);
-        gf_mul_ba(&b, &b, &b);
+        gf_mul_poly_ba(&b, &b, &b, &poly);
         ba_shr1(&e);
     }
     *dst = r;
+}
+
+/* The generator g = x + 1 = 3 at width n. */
+static void gf_gen_w(BitArray *g, int n)
+{
+    ba_zero_w(g, n);
+    g->b[n / 8 - 1] = 0x03;
 }
 
 /* Returns 1 if pub is a valid, non-degenerate GF(2^KEYBITS)* public element:
@@ -790,8 +829,9 @@ static void gf_pow_ba(BitArray *dst, const BitArray *base, const BitArray *exp)
 static int gf_pub_is_valid(const BitArray *pub)
 {
     BitArray one = BA_INIT;
-    memset(one.b, 0, KEYBYTES);
-    one.b[KEYBYTES - 1] = 1;
+    if (ba_check_width(pub->nbits) != BA_OK) return 0;
+    ba_zero_w(&one, pub->nbits);
+    one.b[ba_nbytes(pub) - 1] = 1;
     if (ba_is_zero(pub)) return 0;
     if (ba_equal(pub, &one)) return 0;
     return 1;
@@ -901,23 +941,27 @@ static void ba_mul_mod2n(BitArray *dst, const BitArray *a, const BitArray *b)
     }
 }
 
-/* Full 512-bit schoolbook multiply, then reduce mod (2^256-1).
-   Reduction: (lo + hi) mod (2^256-1), where hi*2^256 + lo = a*b. */
+/* dst = a*b mod (2^n - 1) at the operands' common width n (the order of
+   GF(2^n)*).  Full 2n-bit schoolbook product, then (lo + hi) mod (2^n - 1),
+   where hi*2^n + lo = a*b.  Width-generic since TODO #383 (was 256 only). */
 static void ba_mul_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
 {
-    uint8_t full[2 * KEYBYTES];   /* little-endian 512-bit product */
-    uint8_t lo[KEYBYTES];
+    uint8_t full[2 * BA_MAX_BYTES];   /* little-endian 2n-bit product */
+    uint8_t lo[BA_MAX_BYTES];
     uint16_t carry;
-    int i, j, all_ff;
+    int i, j, all_ff, nb;
+    BaStatus st = ba_same_width(a, b);
+    if (st != BA_OK) BA_FAIL(st, "ba_mul_mod_ord");
+    nb = ba_nbytes(a);
 
     /* SA-04: removed `if (!ai) continue` — unconditional outer loop so
        execution time does not leak zero bytes in the private key scalar. */
     memset(full, 0, sizeof(full));
-    for (i = 0; i < KEYBYTES; i++) {
-        uint8_t ai = a->b[KEYBYTES - 1 - i];
+    for (i = 0; i < nb; i++) {
+        uint8_t ai = a->b[nb - 1 - i];
         carry = 0;
-        for (j = 0; j < KEYBYTES; j++) {
-            uint16_t prod = (uint16_t)ai * b->b[KEYBYTES - 1 - j]
+        for (j = 0; j < nb; j++) {
+            uint16_t prod = (uint16_t)ai * b->b[nb - 1 - j]
                             + full[i + j] + carry;
             full[i + j] = (uint8_t)prod;
             carry = prod >> 8;
@@ -925,7 +969,7 @@ static void ba_mul_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
         {
             int k;
             /* SA-04: unconditional carry propagation — no early exit on carry==0 */
-            for (k = i + KEYBYTES; k < 2 * KEYBYTES; k++) {
+            for (k = i + nb; k < 2 * nb; k++) {
                 uint16_t s = (uint16_t)full[k] + carry;
                 full[k] = (uint8_t)s;
                 carry = s >> 8;
@@ -933,36 +977,41 @@ static void ba_mul_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
         }
     }
     carry = 0;
-    for (i = 0; i < KEYBYTES; i++) {
-        uint16_t s = (uint16_t)full[i] + full[KEYBYTES + i] + carry;
+    for (i = 0; i < nb; i++) {
+        uint16_t s = (uint16_t)full[i] + full[nb + i] + carry;
         lo[i] = (uint8_t)s;
         carry = s >> 8;
     }
     if (carry) {
         carry = 1;
         /* SA-04: unconditional carry propagation */
-        for (i = 0; i < KEYBYTES; i++) {
+        for (i = 0; i < nb; i++) {
             uint16_t s = (uint16_t)lo[i] + carry;
             lo[i] = (uint8_t)s;
             carry = s >> 8;
         }
-        if (carry) { memset(lo, 0, KEYBYTES); lo[0] = 1; }
+        if (carry) { memset(lo, 0, (size_t)nb); lo[0] = 1; }
     } else {
         /* SA-04: no early-exit break in all_ff scan */
         all_ff = 1;
-        for (i = 0; i < KEYBYTES; i++) all_ff &= (lo[i] == 0xFF);
-        if (all_ff) memset(lo, 0, KEYBYTES);
+        for (i = 0; i < nb; i++) all_ff &= (lo[i] == 0xFF);
+        if (all_ff) memset(lo, 0, (size_t)nb);
     }
-    for (i = 0; i < KEYBYTES; i++)
-        dst->b[KEYBYTES - 1 - i] = lo[i];
+    dst->nbits = a->nbits;
+    for (i = 0; i < nb; i++)
+        dst->b[nb - 1 - i] = lo[i];
 }
 
-/* dst = (a - b) mod (2^256-1) */
+/* dst = (a - b) mod (2^n - 1) at the common width (was 256 only). */
 static void ba_sub_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
 {
     int16_t borrow = 0;
-    int i, all_ff;
-    for (i = KEYBYTES - 1; i >= 0; i--) {
+    int i, all_ff, nb;
+    BaStatus st = ba_same_width(a, b);
+    if (st != BA_OK) BA_FAIL(st, "ba_sub_mod_ord");
+    nb = ba_nbytes(a);
+    dst->nbits = a->nbits;
+    for (i = nb - 1; i >= 0; i--) {
         int16_t d = (int16_t)(uint16_t)a->b[i] - (uint16_t)b->b[i] + borrow;
         dst->b[i] = (uint8_t)d;
         borrow = d >> 8;
@@ -970,7 +1019,7 @@ static void ba_sub_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
     if (borrow) {
         /* SA-04: CT subtract-1 — propagate borrow unconditionally */
         uint16_t sub1 = 1;
-        for (i = KEYBYTES - 1; i >= 0; i--) {
+        for (i = nb - 1; i >= 0; i--) {
             uint16_t d = (uint16_t)dst->b[i] - sub1;
             dst->b[i] = (uint8_t)d;
             sub1 = (d >> 8) & 1u;
@@ -978,8 +1027,8 @@ static void ba_sub_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
     }
     /* SA-04: no early-exit break in all_ff scan */
     all_ff = 1;
-    for (i = 0; i < KEYBYTES; i++) all_ff &= (dst->b[i] == 0xFF);
-    if (all_ff) memset(dst->b, 0, KEYBYTES);
+    for (i = 0; i < nb; i++) all_ff &= (dst->b[i] == 0xFF);
+    if (all_ff) memset(dst->b, 0, (size_t)nb);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1001,13 +1050,26 @@ static const uint64_t MINV256_TBL[4] = {
     UINT64_C(0xb6db6db6db6db6db)   /* k=192..255 */
 };
 
-/* M^{-1}(x): apply precomputed rotation table (MINV256_TBL). */
+/* M^{-1}(x).  At n = 256 the precomputed rotation table (MINV256_TBL).  At
+   any other width M^(n/2-1) in closed form, fscx_revolve(x, 0, n/2-1) -- with
+   B = 0 each FSCX step is just M -- which is M^-1 exactly when ord(M) divides
+   n/2, i.e. at the powers of two; the M(v) = x check below refuses the rest,
+   as Python's _m_inv does (TODO #356, #383). */
 static void m_inv_ba(BitArray *result, const BitArray *x)
 {
     BitArray r = BA_INIT, rot = BA_INIT;
     int k;
+    if (x->nbits != 256) {
+        BitArray z = BA_INIT, chk = BA_INIT;
+        ba_zero_w(&z, x->nbits);
+        ba_fscx_revolve(&r, x, &z, x->nbits / 2 - 1);
+        ba_fscx(&chk, &r, &z);
+        if (!ba_equal(&chk, x)) BA_FAIL(BA_E_WIDTH, "m_inv_ba (no M^-1 at this width)");
+        *result = r;
+        return;
+    }
     r = *x;   /* k=0 term */
-    for (k = 1; k < KEYBITS; k++) {
+    for (k = 1; k < 256; k++) {
         if ((MINV256_TBL[k >> 6] >> (k & 63)) & 1) {
             ba_rol_k(&rot, x, k);
             ba_xor(&r, &r, &rot);
@@ -1042,8 +1104,10 @@ static void nl_fscx_revolve_v1_ba(BitArray *result, const BitArray *a,
 /* delta(B) = ROL(B * floor((B+1)/2) mod 2^n, n/4) */
 static void nl_fscx_delta_v2_ba(BitArray *delta, const BitArray *b)
 {
-    BitArray b1 = BA_INIT, half = BA_INIT, prod = BA_INIT;
-    ba_add_mod2n(&b1, b, &ONE_BA);
+    BitArray b1 = BA_INIT, half = BA_INIT, prod = BA_INIT, one = BA_INIT;
+    ba_zero_w(&one, b->nbits);
+    one.b[b->nbits / 8 - 1] = 1;   /* 1 at b's width (TODO #383) */
+    ba_add_mod2n(&b1, b, &one);
     half = b1; ba_shr1(&half);
     ba_mul_mod2n(&prod, b, &half);
     ba_rol_quarter(delta, &prod);
@@ -1126,10 +1190,11 @@ static void nl_fscx_v2_inv_ba(BitArray *result, const BitArray *y, const BitArra
  * bounds carry over verbatim.  Wire-format breaking; see MIGRATING.md §9. */
 static inline void nl_fscx_v2_rc_ba(BitArray *st, int i)
 {
-    st->b[KEYBYTES - 1] ^= (uint8_t)( (unsigned)i        & 0xff);
-    st->b[KEYBYTES - 2] ^= (uint8_t)(((unsigned)i >> 8)  & 0xff);
-    st->b[KEYBYTES - 3] ^= (uint8_t)(((unsigned)i >> 16) & 0xff);
-    st->b[KEYBYTES - 4] ^= (uint8_t)(((unsigned)i >> 24) & 0xff);
+    int nb = st->nbits / 8;   /* the state's width (TODO #383); every width is >= 32 bits here */
+    st->b[nb - 1] ^= (uint8_t)( (unsigned)i        & 0xff);
+    st->b[nb - 2] ^= (uint8_t)(((unsigned)i >> 8)  & 0xff);
+    st->b[nb - 3] ^= (uint8_t)(((unsigned)i >> 16) & 0xff);
+    st->b[nb - 4] ^= (uint8_t)(((unsigned)i >> 24) & 0xff);
 }
 
 static void nl_fscx_revolve_v2_ba(BitArray *result, const BitArray *a,
@@ -1299,10 +1364,49 @@ static void ba_shr_k(BitArray *dst, const BitArray *a, int k)
  * 7-row; b_{i+2} is (x >> 2) except at a row's top TWO bits, supplied by
  * (x << 3) / (x << 5).  Validated bit-exactly against a per-row reference in
  * test [47] and in benchmarks/v3_round_cost.c. */
+/* The chi row partition at width n: n5 5-bit rows (from bit 0 up), then n7
+ * 7-bit rows -- the partition with the fewest 7-rows, as Python's v3_rows.
+ * Returns 0 if n admits none (n < 5, or n in {6, 8, 9, 11, 13}). */
+static int nl_v3_rows(int n, int *n5, int *n7)
+{
+    int k;
+    for (k = 0; 7 * k <= n; k++)
+        if ((n - 7 * k) % 5 == 0) { *n5 = (n - 7 * k) / 5; *n7 = k; return 1; }
+    return 0;
+}
+
+/* Bit i (LSB = 0) of a big-endian BitArray. */
+#define NL_V3_BIT(a, i) (((a)->b[(a)->nbits / 8 - 1 - ((i) >> 3)] >> ((i) & 7)) & 1u)
+
+/* chi at a width other than 256, one row at a time (TODO #383): the masks
+ * below are 256-bit literals, and the narrower widths are demo widths where a
+ * per-bit loop costs nothing that matters. */
+static void nl_chi_v3_rows_ba(BitArray *out, const BitArray *x)
+{
+    int n5, n7, g, off = 0, j, nb = x->nbits / 8;
+    BitArray r = BA_INIT;
+    if (!nl_v3_rows(x->nbits, &n5, &n7)) BA_FAIL(BA_E_WIDTH, "nl_chi_v3 (no row partition)");
+    ba_zero_w(&r, x->nbits);
+    for (g = 0; g < n5 + n7; g++) {
+        int L = (g < n5) ? 5 : 7;
+        for (j = 0; j < L; j++) {
+            unsigned b0 = NL_V3_BIT(x, off + j);
+            unsigned b1 = NL_V3_BIT(x, off + (j + 1) % L);
+            unsigned b2 = NL_V3_BIT(x, off + (j + 2) % L);
+            unsigned o  = b0 ^ ((b1 ^ 1u) & b2);
+            int i = off + j;
+            r.b[nb - 1 - (i >> 3)] |= (uint8_t)(o << (i & 7));
+        }
+        off += L;
+    }
+    *out = r;
+}
+
 static void nl_chi_v3_ba(BitArray *out, const BitArray *x)
 {
     BitArray s1 = BA_INIT, s2 = BA_INIT, s3 = BA_INIT, s4 = BA_INIT, s5 = BA_INIT, s6 = BA_INIT, r1 = BA_INIT, r2 = BA_INIT, t = BA_INIT;
     int i;
+    if (x->nbits != 256) { nl_chi_v3_rows_ba(out, x); return; }
     ba_shr_k(&s1, x, 1);
     ba_shl_k(&s2, x, 4);
     ba_shl_k(&s3, x, 6);
@@ -1355,20 +1459,21 @@ static const uint8_t _V3_CHI7_INV[128] = {
  * big-endian BitArray lives in byte KEYBYTES-1-(i/8) at bit position i%8. */
 static void nl_chi_v3_inv_ba(BitArray *out, const BitArray *y)
 {
-    int g, off = 0, j;
-    memset(out->b, 0, KEYBYTES);
-    for (g = 0; g < 50; g++) {
-        int L = (g < 47) ? 5 : 7;
+    int g, off = 0, j, n5, n7, nb = y->nbits / 8;
+    if (!nl_v3_rows(y->nbits, &n5, &n7)) BA_FAIL(BA_E_WIDTH, "nl_chi_v3_inv (no row partition)");
+    ba_zero_w(out, y->nbits);
+    for (g = 0; g < n5 + n7; g++) {
+        int L = (g < n5) ? 5 : 7;
         unsigned v = 0, u;
         for (j = 0; j < L; j++) {
             int i = off + j;
-            v |= (unsigned)((y->b[KEYBYTES - 1 - (i >> 3)] >> (i & 7)) & 1) << j;
+            v |= (unsigned)((y->b[nb - 1 - (i >> 3)] >> (i & 7)) & 1) << j;
         }
         u = (L == 5) ? _V3_CHI5_INV[v] : _V3_CHI7_INV[v];
         for (j = 0; j < L; j++) {
             int i = off + j;
             if ((u >> j) & 1u)
-                out->b[KEYBYTES - 1 - (i >> 3)] |= (uint8_t)(1u << (i & 7));
+                out->b[nb - 1 - (i >> 3)] |= (uint8_t)(1u << (i & 7));
         }
         off += L;
     }
@@ -3595,10 +3700,12 @@ static void hpke_stern_f_decap_known(BitArray *K_out,
  * See docs/TUTORIAL.md for complete usage examples.
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* HKEX-GF: derive public key pub = g^priv in GF(2^KEYBITS)*. */
+/* HKEX-GF: derive public key pub = g^priv in GF(2^n)*, n = priv's width. */
 static inline void hkex_gf_pubkey(const BitArray *priv, BitArray *pub)
 {
-    gf_pow_ba(pub, &GF_GEN, priv);
+    BitArray g = BA_INIT;
+    gf_gen_w(&g, priv->nbits);
+    gf_pow_ba(pub, &g, priv);
 }
 
 /* HKEX-GF: derive shared secret shared = their_pub^my_priv in GF(2^KEYBITS)*.
@@ -3634,10 +3741,13 @@ static inline void hske_decrypt(const BitArray *ct, const BitArray *key,
 static inline void hpks_sign(const BitArray *msg, const BitArray *priv,
                                BitArray *R_out, BitArray *s_out, FILE *urnd)
 {
-    BitArray k = BA_INIT, e = BA_INIT, ae = BA_INIT;
+    BitArray k = BA_INIT, e = BA_INIT, ae = BA_INIT, g = BA_INIT;
+    int n = priv->nbits;   /* every value below is at the key's width (TODO #383) */
+    ba_zero_w(&k, n);
+    gf_gen_w(&g, n);
     ba_rand(&k, urnd);
-    gf_pow_ba(R_out, &GF_GEN, &k);
-    ba_fscx_revolve(&e, R_out, msg, I_VALUE);
+    gf_pow_ba(R_out, &g, &k);
+    ba_fscx_revolve(&e, R_out, msg, n / 4);
     ba_mul_mod_ord(&ae, priv, &e);
     ba_sub_mod_ord(s_out, &k, &ae);
 }
@@ -3651,9 +3761,11 @@ static inline void hpks_sign(const BitArray *msg, const BitArray *priv,
 static inline void hpks_nl_sign(const BitArray *msg, const BitArray *priv,
                                   BitArray *R_out, BitArray *s_out, FILE *urnd)
 {
-    BitArray k = BA_INIT, e = BA_INIT, ae = BA_INIT;
+    BitArray k = BA_INIT, e = BA_INIT, ae = BA_INIT, g = BA_INIT;
+    ba_zero_w(&k, priv->nbits);
+    gf_gen_w(&g, priv->nbits);
     ba_rand(&k, urnd);
-    gf_pow_ba(R_out, &GF_GEN, &k);
+    gf_pow_ba(R_out, &g, &k);
     hpks_nl_challenge(&e, R_out, msg);
     ba_mul_mod_ord(&ae, priv, &e);
     ba_sub_mod_ord(s_out, &k, &ae);
@@ -3666,10 +3778,12 @@ static inline void hpks_nl_sign(const BitArray *msg, const BitArray *priv,
 static inline int hpks_verify(const BitArray *msg, const BitArray *pub,
                                 const BitArray *R, const BitArray *s)
 {
-    BitArray e = BA_INIT, gs = BA_INIT, Ce = BA_INIT, lhs = BA_INIT;
+    BitArray e = BA_INIT, gs = BA_INIT, Ce = BA_INIT, lhs = BA_INIT, g = BA_INIT;
     if (!gf_pub_is_valid(pub)) return 0;
-    ba_fscx_revolve(&e, R, msg, I_VALUE);
-    gf_pow_ba(&gs, &GF_GEN, s);
+    if (pub->nbits != R->nbits || pub->nbits != s->nbits || pub->nbits != msg->nbits) return 0;
+    gf_gen_w(&g, pub->nbits);
+    ba_fscx_revolve(&e, R, msg, pub->nbits / 4);
+    gf_pow_ba(&gs, &g, s);
     gf_pow_ba(&Ce, pub, &e);
     gf_mul_ba(&lhs, &gs, &Ce);
     return ba_equal(&lhs, R);
@@ -3683,12 +3797,14 @@ static inline int hpks_verify(const BitArray *msg, const BitArray *pub,
 static inline int hpke_encrypt(const BitArray *pt, const BitArray *pub,
                                  BitArray *R_out, BitArray *ct_out, FILE *urnd)
 {
-    BitArray r = BA_INIT, enc_key = BA_INIT;
+    BitArray r = BA_INIT, enc_key = BA_INIT, g = BA_INIT;
     if (!gf_pub_is_valid(pub)) return 0;
+    ba_zero_w(&r, pub->nbits);
+    gf_gen_w(&g, pub->nbits);
     ba_rand(&r, urnd);
-    gf_pow_ba(R_out, &GF_GEN, &r);
+    gf_pow_ba(R_out, &g, &r);
     gf_pow_ba(&enc_key, pub, &r);
-    ba_fscx_revolve(ct_out, pt, &enc_key, I_VALUE);
+    ba_fscx_revolve(ct_out, pt, &enc_key, pub->nbits / 4);
     return 1;
 }
 
@@ -3701,7 +3817,7 @@ static inline int hpke_decrypt(const BitArray *ct, const BitArray *R,
     BitArray dec_key = BA_INIT;
     if (!gf_pub_is_valid(R)) return 0;
     gf_pow_ba(&dec_key, R, priv);
-    ba_fscx_revolve(pt_out, ct, &dec_key, R_VALUE);
+    ba_fscx_revolve(pt_out, ct, &dec_key, 3 * R->nbits / 4);
     return 1;
 }
 

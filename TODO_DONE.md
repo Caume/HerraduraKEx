@@ -25917,3 +25917,52 @@ section now runs on C too.  MIGRATING.md section 43.
 Status: **DONE v16.0.0** — genpkey key sizes come from one generated parameter-set table in all four CLIs, chosen by --bits or the new --level, every other value refused by name; C / Java narrow widths, OPRF below 256 and the pkey --text security line split into #383–#386.
 
 ---
+
+### #388: threshold signing with a key narrower than 256 bits
+
+Found in TODO #383's pass.  HPKS-T (MuSig2 coefficients, key aggregation and verify) is
+defined at 256 bits in every suite, but Python's and Go's `threshold-commit` accept a 64-bit
+hpks key and write a 64-bit commitment that their own `threshold-aggregate` then refuses:
+Go with "commitment n is 64 (expected 256..256)", Python with an `OverflowError`
+traceback.  C refuses the key at `threshold-commit` by name since #383 ("threshold: the key
+is 64-bit; threshold signing runs at 256 bits only"); Java reads only 256-bit keys.  Make
+Python and Go refuse it at commit with the same message, and add the case to
+`test_threshold_interop.sh` (or define HPKS-T at every GF width, if that is wanted).
+
+Resolution: Python and Go refuse a key narrower than 256 bits in
+`_load_hpks_privkey_for_threshold` / `loadHpksPrivForThreshold`, i.e. at every threshold
+command that reads a key and before `threshold-commit` writes anything, with C's text
+(`threshold: the key is 64-bit; threshold signing runs at 256 bits only`); Java refuses at
+load. HPKS-T stays defined at 256 bits only. `test_threshold_interop.sh` checks 64- and
+128-bit hpks / hpks-nl keys in all four CLIs after a 256-bit accept-control; with the fix
+reverted it fails at the first narrow key. MIGRATING.md section 45.
+
+Status: **DONE v16.0.0** — Python and Go refuse a narrow key at threshold-commit, as C does.
+
+---
+
+### #389: `kex --algo hkex-gf --kdf hfscx-256` below 256 bits
+
+Found in TODO #383's pass.  The HFSCX-256 digest is 256 bits whatever n is.  Below 256
+bits, Python writes all 256 digest bits into a SESSION KEY that declares n = 64 (say), and
+every CLI's reader then refuses that key ("field 0 is 32 bytes (expected at most 8)"): a
+writer whose output nobody reads.  Go instead keeps the digest's LOW n bits, a readable
+n-bit key, but BITARRAY.md section 4.4 truncates by keeping the HIGH bits.  C follows Python
+since #383 (it had no narrow widths before).  Needs a decision: declare n = 256 (the
+digest's own width, usable with HSKE), truncate to the high n bits, or refuse --kdf below
+256; then all four agree and `test_width_matrix.sh` checks --kdf at every width (today
+only at the default).
+
+Resolution (decided: declare n = 256): `sk = HFSCX-256(g^ab as exactly n/8 big-endian
+bytes)`, written whole as `SESSION KEY { sk, 256 }` at every width, as HKEX-RNL's session key
+already is (TODO #228); it keys HSKE in all four CLIs and is never truncated. Without
+`--kdf` the key is the raw n-bit g^ab labelled n. Python and C now label the digest 256
+(`sk_bits` / `sk.nbits`); Go keeps the whole digest instead of the low n bits. SPEC.md
+section 4.2, INTRODUCTION.md, TUTORIAL.md and llms.txt describe the rule.
+`test_width_matrix.sh` runs `--kdf` at every width: both directions agree, the key equals
+HFSCX-256 of the raw secret labelled 256 (checked against Python's suite), and it works as
+an HSKE key; with the fix reverted, 66 checks fail. MIGRATING.md section 45.
+
+Status: **DONE v16.0.0** — `kex --kdf hfscx-256` writes the whole digest labelled n = 256 at every width.
+
+---

@@ -681,6 +681,26 @@ runtime n <= `RNL_N`.  The CLI's PEM readers and writers at every listed width. 
 those rows' ports; `test_key_params.sh` then expects acceptance, and a four-way operation
 matrix at every width joins it.
 
+**Stages** (each adds "c" to its rows' ports once C agrees with Python and Go on every
+operation at every width, and extends `CliTest/test_width_matrix.sh` to the family):
+
+1. **The GF(2^n) family — done (v16.0.0).**  hkex-gf, hpks, hpks-nl, hpke, hpke-nl and
+   hpke-nl3 at 32, 64, 128 and 256 in `herradura.h` and the C CLI: `gf_mul_ba` /
+   `gf_pow_ba` look the polynomial up by width (`ba_gf_poly`, `BA_E_NO_POLY`), the
+   generator, `gf_pub_is_valid`, the Schnorr arithmetic mod 2^n - 1, M^-1 (closed form
+   M^(n/2-1) off 256), NL-FSCX v2's delta and round constant, and v3's chi rows all take
+   the operand's width; the `#if KEYBITS != 256 #error` is gone.  `ba_fscx_revolve`'s
+   closed form was born at 256 bits and failed `E_MIXED_WIDTH` at any narrower width with
+   n/4 >= 8 steps.  Threshold signing (HPKS-T) stays 256-only and C refuses a narrower
+   hpks key there by name (TODO #388).  New `CliTest/test_width_matrix.sh` (1102 checks;
+   28 fail on the pre-#383 build).  A 64-bit key used with a 128-bit peer key or
+   ciphertext is now refused in Python, Go and C (`kex` and `dec` accepted it with exit 0
+   in Python and Go; `verify` already refused) -- MIGRATING.md section 44.
+2. **Stern-F and hpke-stern** at runtime N (`SDF_SYNBYTES`, the signature blobs sized
+   from the signature's own n), including `hpks-ring`.
+3. **hcred** at runtime `HCRED_N`.
+4. **hkex-rnl** at runtime n <= `RNL_N` (32-256), including rnl-sigma and the hybrid.
+
 Status: **OPEN**
 
 ---
@@ -713,6 +733,8 @@ Status: **OPEN**
 Split from TODO #379, whose decision asked for it.  Every CLI's `pkey --text` prints a
 `security :` line from the key's `key_parameter_sets` row (by algo and width), and its
 level where it has one, identically in all four; `test_pkey_text_matrix.sh` checks the line.
+While there: Python's `pkey --text` on a PUBLIC key dies with "not enough values to
+unpack (expected 3, got 2)"; C, Go and Java refuse it by label (found in #383's pass).
 
 Status: **OPEN**
 

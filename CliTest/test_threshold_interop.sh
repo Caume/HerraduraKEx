@@ -382,4 +382,36 @@ done
 pass "pre-#271 control: the minimal aggregate is accepted in ${CLINAMES[*]}"
 pass "pre-#271 refusal: a 4-byte-n aggregate is refused as non-minimal in ${CLINAMES[*]}"
 
+echo "--- TODO #388: a key narrower than 256 bits is refused at threshold-commit ---"
+# HPKS-T is defined at 256 bits only.  Python and Go used to accept a 64-bit
+# key here and write a commitment their own threshold-aggregate then refused
+# (Python with a traceback).  Accept-control first: the 256-bit key commits in
+# every CLI, so a CLI refusing everything cannot pass the refusal check.
+for i in "${!CLIS[@]}"; do
+  ${CLIS[$i]} threshold-commit --key "$TMPDIR/alice.pem" --commit-out "$TMPDIR/i388_c.pem" \
+    --nonce-out "$TMPDIR/i388_n.pem" >/dev/null 2>&1 \
+    || fail "#388 accept-control" "${CLINAMES[$i]} refused a 256-bit key at threshold-commit"
+done
+pass "#388 accept-control: a 256-bit key commits in ${CLINAMES[*]}"
+for a in hpks hpks-nl; do
+  for nb in 64 128; do
+    $PY genpkey --algo "$a" --bits "$nb" --out "$TMPDIR/i388_$a$nb.pem" 2>/dev/null
+    for i in "${!CLIS[@]}"; do
+      rm -f "$TMPDIR/i388_c.pem"
+      rc=0
+      out=$(${CLIS[$i]} threshold-commit --key "$TMPDIR/i388_$a$nb.pem" \
+        --commit-out "$TMPDIR/i388_c.pem" --nonce-out "$TMPDIR/i388_n.pem" 2>&1) || rc=$?
+      [ "$rc" -eq 1 ] || fail "#388 refusal" "${CLINAMES[$i]} $a/$nb: threshold-commit rc=$rc (expected 1): $out"
+      [ ! -e "$TMPDIR/i388_c.pem" ] || fail "#388 refusal" "${CLINAMES[$i]} $a/$nb wrote a commitment"
+      # Java runs n = 256 only and refuses at load (its PEM width message);
+      # the others load the key and refuse it by name.
+      if [ "${CLINAMES[$i]}" = java ]; then want="n is $nb (this CLI runs n = 256)"
+      else want="threshold: the key is $nb-bit; threshold signing runs at 256 bits only"; fi
+      printf '%s' "$out" | grep -qF "$want" \
+        || fail "#388 refusal" "${CLINAMES[$i]} $a/$nb refused with unexpected text: $out"
+    done
+  done
+done
+pass "#388 refusal: 64- and 128-bit hpks / hpks-nl keys are refused at threshold-commit in ${CLINAMES[*]}"
+
 echo "=== All HPKS-T interop tests PASSED ==="

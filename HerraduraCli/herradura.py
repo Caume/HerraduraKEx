@@ -1178,51 +1178,51 @@ def _der_field_check(label, v, enc):
 # --bits value names the row.  ports: the CLIs that run the row today.
 _PARAM_SETS = (
     ('hkex-gf', 32, None, False, 'demo',
-     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hkex-gf', 64, None, False, 'demo',
-     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hkex-gf', 128, None, False, 'demo',
-     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hkex-gf', 256, 'demo', True, 'demo',
      'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
     ('hpks', 32, None, False, 'demo',
-     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpks', 64, None, False, 'demo',
-     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpks', 128, None, False, 'demo',
-     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpks', 256, 'demo', True, 'demo',
      'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
     ('hpks-nl', 32, None, False, 'demo',
-     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpks-nl', 64, None, False, 'demo',
-     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpks-nl', 128, None, False, 'demo',
-     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpks-nl', 256, 'demo', True, 'demo',
      'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
     ('hpke', 32, None, False, 'demo',
-     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpke', 64, None, False, 'demo',
-     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpke', 128, None, False, 'demo',
-     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpke', 256, 'demo', True, 'demo',
      'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
     ('hpke-nl', 32, None, False, 'demo',
-     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpke-nl', 64, None, False, 'demo',
-     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpke-nl', 128, None, False, 'demo',
-     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpke-nl', 256, 'demo', True, 'demo',
      'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
     ('hpke-nl3', 32, None, False, 'demo',
-     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpke-nl3', 64, None, False, 'demo',
-     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpke-nl3', 128, None, False, 'demo',
-     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py c go', None),
     ('hpke-nl3', 256, 'demo', True, 'demo',
      'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
     ('oprf', 256, 'demo', True, 'demo',
@@ -3115,11 +3115,19 @@ def cmd_kex(args):
         their_algo, their_ints = _decode_pubkey(their_path)
         priv_int, _, nbits = our_ints
         pub_int = their_ints[0]
+        # TODO #383: a peer key at another width is refused, not reduced into ours
+        if their_ints[-1] != nbits:
+            sys.exit(f"kex: their public key n is {their_ints[-1]}, our private key n is {nbits}")
         if not gf_pub_is_valid(pub_int):
             sys.exit("kex: their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         sk_int  = _apply_kdf(gf_pow(pub_int, priv_int, poly, nbits), nbits)
-        _write_file(args.out, _encode_session_key(sk_int, nbits))
+        # TODO #389: with --kdf hfscx-256 the session key IS the whole 256-bit
+        # digest of the n-bit shared value, at every n, and is labelled n = 256
+        # (as HKEX-RNL's session key already is, TODO #228); without --kdf it is
+        # the raw n-bit g^ab, labelled n.
+        sk_bits = 256 if kdf_mode == 'hfscx-256' else nbits
+        _write_file(args.out, _encode_session_key(sk_int, sk_bits))
 
     elif algo == 'hkex-rnl':
         # Detect protocol step from the type of --their file
@@ -3502,6 +3510,8 @@ def cmd_dec(args):
         priv_int, _, nbits = our_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if _nb != nbits:   # TODO #383: a ciphertext at another width is refused
+            sys.exit(f"dec: ciphertext n is {_nb}, private key n is {nbits}")
         if not gf_pub_is_valid(R_int):
             sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
@@ -3513,6 +3523,8 @@ def cmd_dec(args):
         priv_int, _, nbits = our_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if _nb != nbits:   # TODO #383: a ciphertext at another width is refused
+            sys.exit(f"dec: ciphertext n is {_nb}, private key n is {nbits}")
         if not gf_pub_is_valid(R_int):
             sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
@@ -3527,6 +3539,8 @@ def cmd_dec(args):
         _v3_width_ok(nbits, 'dec hpke-nl3')
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if _nb != nbits:   # TODO #383: a ciphertext at another width is refused
+            sys.exit(f"dec: ciphertext n is {_nb}, private key n is {nbits}")
         if not gf_pub_is_valid(R_int):
             sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
@@ -3717,6 +3731,11 @@ def _load_hpks_privkey_for_threshold(key_path):
     if algo not in ('hpks', 'hpks-nl'):
         sys.exit(f"threshold: expected hpks or hpks-nl key, got {algo!r}")
     priv_int, pub_int, nbits = ints   # nbits already held to the GF widths (_WIRE_FIELDS)
+    # TODO #388: HPKS-T (MuSig2 coefficients, aggregation, verify) is defined at
+    # 256 bits only; refuse a narrower key here, before it writes a commitment
+    # that threshold-aggregate cannot read (same message as C and Go).
+    if nbits != 256:
+        sys.exit(f"threshold: the key is {nbits}-bit; threshold signing runs at 256 bits only")
     _fit(priv_int, nbits // 8, 'private key', 'threshold')
     _fit(pub_int, nbits // 8, 'public key', 'threshold')
     return ints  # (priv_int, pub_int, nbits)

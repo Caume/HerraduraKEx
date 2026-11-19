@@ -161,8 +161,10 @@ A DER-SEQUENCE PEM with the wrong number of items fails with "malformed PEM
 out-of-range width, ring dimension or field size fails with a one-line bound error.
 A peer GF value (public key, ciphertext R) of 0 or 1, or an HKEX-RNL peer C that is
 zero, sparse or clustered, is refused as a degenerate key.  GF keys run at 32/64/128/256
-bits in the Go and Python CLIs and at 256 only in C and Java, which refuse any other
-declared width ("n is 128 (this CLI runs n = 256)").  Each artifact has one encoding:
+bits in the Python, C and Go CLIs (C since TODO #383) and at 256 only in Java, which
+refuses any other declared width ("n is 128 (this CLI runs n = 256)").  A key used with a
+peer key, ciphertext or signature of another width fails ("kex: their public key n is
+128, our private key n is 64").  Each artifact has one encoding:
 bytes after a DER SEQUENCE, a raw-body PEM's last field or an .hkx tag are refused, a
 field wider than its writer pads it to fails with "<label>: field <i> is <k> bytes
 (expected at most <cap>)" (pem_der_field_caps), and an HPKS signature whose stored
@@ -201,9 +203,9 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     (default); 512 refused as withdrawn.  hpks-stern, hpke-stern, hcred: 32|64|128|256,
     --level demo = 256.  hpke-stern-kem: --level 128 only.  hpks-zkp-nl: --bits any even
     n <= 64, --level demo = 8.  hpks-wots, hpks-xmss: neither flag.  Below the default a
-    stderr warning gives the estimated security.  Widths below 256 run in Python and Go
-    (hkex-rnl also in Java); C and Java refuse them "not yet supported by this CLI"
-    (TODO #383 / #384).  Anything else fails by name; --bits with --level fails.
+    stderr warning gives the estimated security.  Widths below 256 run in Python and Go,
+    the GF family's also in C, hkex-rnl's also in Java; elsewhere C and Java refuse them
+    "not yet supported by this CLI" (TODO #383 / #384).  Anything else fails by name; --bits with --level fails.
     --passphrase writes a HERRADURA ENCRYPTED PRIVATE KEY envelope.  An empty
     passphrase, and --kdf-iterations without --passphrase, are refused by name in
     every CLI (TODO #376; Python and Go used to write the key in the clear).
@@ -217,6 +219,8 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     hybrid-rnl-stern is hkex-rnl plus a QC-MDPC KEM: the responder passes --their-kem
     (the initiator's hpke-stern-kem public key), the initiator --our-kem (its private key).
     Python's --kdf also accepts sp800227 (hkex-rnl only; spec cli_flag_value_gaps).
+    hkex-gf --kdf hfscx-256 at any width n: sk = HFSCX-256(g^ab as n/8 bytes), written
+    whole as a SESSION KEY declaring n = 256 (an HSKE key); without --kdf, raw g^ab at n.
   enc/dec --algo {hske,hske-nla1,hske-nla2,hske-nla3,hske-duplex,hske-duplex3,
                   hpke,hpke-nl,hpke-nl3,hpke-stern,hpke-stern-kem}
            --key|--pubkey FILE --in FILE --out FILE [--aead] [--ad STR]
@@ -258,6 +262,8 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
   threshold-aggregate --commits FILE... --in FILE --out FILE [--digest {hfscx-256,none}]
   threshold-respond --key FILE --commits FILE... --aggregate FILE --nonce FILE --out FILE
   threshold-combine --aggregate FILE --partials FILE... --out FILE
+    threshold-* take 256-bit hpks/hpks-nl keys only; a narrower one is refused at commit
+    (TODO #388).
     Since TODO #270 (v6.4.0) all four CLIs accept BOTH spellings of these list
     flags with BOTH syntaxes: --commits a b, --commit a --commit b, --commits a
     --commits b and --commit a b are equivalent (likewise --partials/--partial).

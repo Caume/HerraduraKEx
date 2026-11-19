@@ -471,15 +471,6 @@ static void require_rounds(int rounds, int floor, const char *what, const char *
  * BitArray / polynomial packing helpers
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* Minimal-byte pointer for a BitArray (skips leading zero bytes). */
-static void ba_min_bytes(const BitArray *ba, const uint8_t **start, size_t *len)
-{
-    size_t i;
-    for (i = 0; i < KEYBYTES && ba->b[i] == 0; i++);
-    if (i == KEYBYTES) { *start = ba->b + KEYBYTES - 1; *len = 1; }
-    else               { *start = ba->b + i; *len = KEYBYTES - i; }
-}
-
 /* Right-align src_len bytes into a KEYBYTES-wide BitArray (big-endian). */
 static void ba_from_ra(BitArray *ba, const uint8_t *src, size_t src_len)
 {
@@ -945,13 +936,16 @@ static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
  * CIPHERTEXT and SIGNATURE are shared labels whose width sits in different
  * places per algorithm; their sites check it themselves. */
 typedef struct { const char *label; int item; long want; const char *what; } HkxWidthRow;
+/* TODO #383: want = HKX_W_GF is "any width with a GF(2^n) polynomial" (32, 64,
+ * 128, 256 -- BITARRAY.md 4.6), the widths the GF(2^n) family runs at. */
+#define HKX_W_GF (-1L)
 static const HkxWidthRow HKX_WIDTH[] = {
-    { PEM_HKEX_GF_PRIV, -1, KEYBITS, "n" },   { PEM_HKEX_GF_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKS_PRIV, -1, KEYBITS, "n" },      { PEM_HPKS_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKS_NL_PRIV, -1, KEYBITS, "n" },   { PEM_HPKS_NL_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKE_PRIV, -1, KEYBITS, "n" },      { PEM_HPKE_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKE_NL_PRIV, -1, KEYBITS, "n" },   { PEM_HPKE_NL_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKE_NL3_PRIV, -1, KEYBITS, "n" },  { PEM_HPKE_NL3_PUB, -1, KEYBITS, "n" },
+    { PEM_HKEX_GF_PRIV, -1, HKX_W_GF, "n" },   { PEM_HKEX_GF_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKS_PRIV, -1, HKX_W_GF, "n" },      { PEM_HPKS_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKS_NL_PRIV, -1, HKX_W_GF, "n" },   { PEM_HPKS_NL_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKE_PRIV, -1, HKX_W_GF, "n" },      { PEM_HPKE_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKE_NL_PRIV, -1, HKX_W_GF, "n" },   { PEM_HPKE_NL_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKE_NL3_PRIV, -1, HKX_W_GF, "n" },  { PEM_HPKE_NL3_PUB, -1, HKX_W_GF, "n" },
     { PEM_HPKS_STERN_PRIV, -1, KEYBITS, "n" }, { PEM_HPKS_STERN_PUB, -1, KEYBITS, "n" },
     { PEM_HPKE_STERN_PRIV, -1, KEYBITS, "n" }, { PEM_HPKE_STERN_PUB, -1, KEYBITS, "n" },
     { PEM_OPRF_PRIV, -1, KEYBITS, "n" },      { PEM_OPRF_STATE, -1, KEYBITS, "n" },
@@ -986,6 +980,24 @@ static void width_refuse(const char *label, const char *what, long got, long wan
     exit(1);
 }
 
+/* A GF(2^n) width this build runs: one with a listed polynomial (TODO #383). */
+static int gf_width_ok(long n)
+{
+    BitArray p = BA_INIT;
+    return n >= 16 && n <= BA_MAX_BITS && ba_gf_poly(&p, (int)n) == BA_OK;
+}
+
+static void gf_width_refuse(const char *label, long got)
+{
+    if (got < 0)
+        fprintf(stderr, "PEM '%s': n is wider than 32 bits (this CLI runs n = 32, 64, "
+                        "128 or 256)\n", label);
+    else
+        fprintf(stderr, "PEM '%s': n is %ld (this CLI runs n = 32, 64, 128 or 256)\n",
+                label, got);
+    exit(1);
+}
+
 static void check_der_width(const PemKey *k)
 {
     for (size_t i = 0; i < sizeof HKX_WIDTH / sizeof HKX_WIDTH[0]; i++) {
@@ -994,7 +1006,9 @@ static void check_der_width(const PemKey *k)
         int idx = r->item < 0 ? k->n_items + r->item : r->item;
         if (idx < 0 || idx >= k->n_items) continue;   /* arity is check_der_items' job */
         long got = der_small(k->vals[idx], k->vlens[idx]);
-        if (got != r->want) width_refuse(k->label, r->what, got, r->want);
+        if (r->want == HKX_W_GF) {
+            if (!gf_width_ok(got)) gf_width_refuse(k->label, got);
+        } else if (got != r->want) width_refuse(k->label, r->what, got, r->want);
     }
 }
 
@@ -1005,6 +1019,44 @@ static void check_item_width(const PemKey *k, int idx, long want, const char *wh
     if (idx < 0 || idx >= k->n_items) return;
     long got = der_small(k->vals[idx], k->vlens[idx]);
     if (got != want) width_refuse(k->label, what, got, want);
+}
+
+/* A GF(2^n)-family key's width n: its last DER item, already screened by
+ * check_der_width at load (TODO #383). */
+static int gf_key_width(const PemKey *k)
+{
+    long n = k->n_items > 0 ? der_small(k->vals[k->n_items - 1], k->vlens[k->n_items - 1]) : -1;
+    if (!gf_width_ok(n)) gf_width_refuse(k->label, n);
+    return (int)n;
+}
+
+/* A GF(2^n) artifact's width field at a known index must be a GF width, and
+ * the width of the key it is used with (TODO #383).  The refusal reads as
+ * Python's, Go's and Java's: "<cmd>: <what> n is X, <key> n is Y". */
+static void check_item_gf_width(const PemKey *k, int idx, int want,
+                                const char *what, const char *key)
+{
+    if (idx < 0 || idx >= k->n_items) return;
+    long got = der_small(k->vals[idx], k->vlens[idx]);
+    if (!gf_width_ok(got)) gf_width_refuse(k->label, got);
+    if (got != want) {
+        fprintf(stderr, "%s n is %ld, %s n is %d\n", what, got, key, want);
+        exit(1);
+    }
+}
+
+/* DER INTEGER of a BitArray at its own width (nbits/8 octets, plus a sign
+ * octet when the top bit is set) -- Python's der_int(v, nbits // 8). */
+static int der_ba(const BitArray *ba, uint8_t *out, size_t *olen)
+{ return der_int_enc(ba->b, (size_t)(ba->nbits / 8), out, olen); }
+
+/* The message block at width n: the first n/8 octets, zero-padded on the
+ * right -- Python's in_bytes[:n // 8].ljust(n // 8, b'\x00'). */
+static void make_msg_ba_n(BitArray *msg, const uint8_t *data, size_t len, int nbits)
+{
+    size_t nb = (size_t)nbits / 8, cp = len < nb ? len : nb;
+    ba_zero_w(msg, nbits);
+    memcpy(msg->b, data, cp);
 }
 
 static void pem_key_load(PemKey *k, const char *path)
@@ -1555,11 +1607,12 @@ static void cmd_genpkey(int argc, char **argv)
     for (int ci = 0; classical[ci]; ci++) {
         if (strcmp(algo, classical[ci]) != 0) continue;
         BitArray a = BA_INIT, C = BA_INIT;
+        ba_zero_w(&a, pbits);   /* TODO #383: the row's width */
         ba_rand(&a, urnd);
-        gf_pow_ba(&C, &GF_GEN, &a);
+        hkex_gf_pubkey(&a, &C);
         uint8_t ia[DER_INT_LEN(KEYBYTES)], iC[DER_INT_LEN(KEYBYTES)], in[8];
         size_t la, lC, ln;
-        der_i32(a.b, ia, &la); der_i32(C.b, iC, &lC); der_i_n256(in, &ln);
+        der_ba(&a, ia, &la); der_ba(&C, iC, &lC); der_i_uint((uint64_t)pbits, in, &ln);
         const uint8_t *it[3] = {ia, iC, in};
         size_t il[3] = {la, lC, ln};
         seq_and_write(it, il, 3, classical_labels[ci], out);
@@ -2038,18 +2091,19 @@ static void cmd_pkey(int argc, char **argv)
     /* ── Classical GF algorithms ─── */
     if (kind == 1) {
         if (k.n_items != 3) die("pkey: malformed classical private key");
+        int gn = gf_key_width(&k);   /* TODO #383 */
         BitArray priv = BA_INIT, pub = BA_INIT;
-        ba_from_ra(&priv, k.vals[0], k.vlens[0]);
-        ba_from_ra(&pub,  k.vals[1], k.vlens[1]);
+        ba_from_ra_n(&priv, k.vals[0], k.vlens[0], gn);
+        ba_from_ra_n(&pub,  k.vals[1], k.vlens[1], gn);
 
         if (text) {
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: 256\n", "bits");
-            print_hex_field("private", priv.b, KEYBYTES);
-            print_hex_field("public",  pub.b,  KEYBYTES);
+            printf("%-10s: %d\n", "bits", gn);
+            print_hex_field("private", priv.b, (size_t)gn / 8);
+            print_hex_field("public",  pub.b,  (size_t)gn / 8);
         } else {
             uint8_t ip[DER_INT_LEN(KEYBYTES)], in[8]; size_t lp, ln;
-            der_i32(pub.b, ip, &lp); der_i_n256(in, &ln);
+            der_ba(&pub, ip, &lp); der_i_uint((uint64_t)gn, in, &ln);
             const uint8_t *it[2] = {ip, in}; size_t il[2] = {lp, ln};
             seq_and_write(it, il, 2, algos[ai].pub_label, out_path);
         }
@@ -2377,28 +2431,39 @@ static void cmd_kex(int argc, char **argv)
         pem_key_load(&their, their_path);
         if (our.n_items < 1)   die("kex: malformed our private key");
         if (their.n_items < 1) die("kex: malformed their public key");
+        /* TODO #383: at our key's width; their key must be that width too. */
+        int gn = gf_key_width(&our);
+        check_item_gf_width(&their, their.n_items - 1, gn, "kex: their public key", "our private key");
         BitArray priv = BA_INIT, pub_theirs = BA_INIT, sk = BA_INIT;
-        ba_from_ra(&priv,       our.vals[0],   our.vlens[0]);
-        ba_from_ra(&pub_theirs, their.vals[0], their.vlens[0]);
+        ba_from_ra_n(&priv,       our.vals[0],   our.vlens[0],   gn);
+        ba_from_ra_n(&pub_theirs, their.vals[0], their.vlens[0], gn);
         if (!gf_pub_is_valid(&pub_theirs))
             die("kex: their public key is the GF(2^n)* identity/zero element "
                 "(rejected: degenerate key)");
         gf_pow_ba(&sk, &pub_theirs, &priv);
         pem_key_free(&our); pem_key_free(&their);
 
-        /* Apply KDF if requested: sk = HFSCX-256(sk) */
+        /* Apply KDF if requested: sk = HFSCX-256(sk at n/8 bytes).  TODO #389:
+         * the session key is the WHOLE 256-bit digest at every n and the PEM
+         * declares n = 256 (sk.nbits), as HKEX-RNL's session key already does;
+         * without --kdf it is the raw n-bit g^ab, declared n. */
         if (kdf) {
             uint8_t kdf_out[32];
-            hfscx_256(sk.b, KEYBYTES, NULL, kdf_out);
+            hfscx_256(sk.b, (size_t)gn / 8, NULL, kdf_out);
+            ba_zero_w(&sk, 256);
             memcpy(sk.b, kdf_out, 32);
             explicit_bzero(kdf_out, sizeof(kdf_out));
         }
 
         const uint8_t *sk_start; size_t sk_len;
-        ba_min_bytes(&sk, &sk_start, &sk_len);
+        {   /* minimal octets of sk at its own width */
+            size_t nb = (size_t)sk.nbits / 8, i0 = 0;
+            while (i0 + 1 < nb && sk.b[i0] == 0) i0++;
+            sk_start = sk.b + i0; sk_len = nb - i0;
+        }
         uint8_t isk[DER_INT_LEN(KEYBYTES)], in[8]; size_t lsk, ln;
         der_int_enc(sk_start, sk_len, isk, &lsk);
-        der_i_n256(in, &ln);
+        der_i_uint((uint64_t)sk.nbits, in, &ln);
         const uint8_t *it[2] = {isk, in}; size_t il[2] = {lsk, ln};
         seq_and_write(it, il, 2, PEM_SESSION_KEY, out_path);
         explicit_bzero(&sk, sizeof(sk));
@@ -3652,9 +3717,14 @@ static void cmd_enc(int argc, char **argv)
         strcmp(algo, "hpke-nl3") == 0) {
         /* vals[0]=pub (32 bytes), vals[1]=n */
         if (pub_k.n_items < 1) die("enc: malformed public key");
-        one_block_ok(algo, in_len, KEYBYTES);
-        BitArray pub = BA_INIT, r = BA_INIT, R = BA_INIT, enc_key = BA_INIT, E = BA_INIT;
-        ba_from_ra(&pub, pub_k.vals[0], pub_k.vlens[0]);
+        int gn = gf_key_width(&pub_k);   /* TODO #383: the key's width */
+        one_block_ok(algo, in_len, (size_t)gn / 8);
+        BitArray pub = BA_INIT, r = BA_INIT, R = BA_INIT, enc_key = BA_INIT, E = BA_INIT, g = BA_INIT;
+        BitArray Pn = BA_INIT;
+        ba_from_ra_n(&pub, pub_k.vals[0], pub_k.vlens[0], gn);
+        make_msg_ba_n(&Pn, P.b, KEYBYTES, gn);
+        ba_zero_w(&r, gn);
+        gf_gen_w(&g, gn);
         pem_key_free(&pub_k);
         if (!gf_pub_is_valid(&pub))
             die("enc: public key is the GF(2^n)* identity/zero element "
@@ -3668,7 +3738,7 @@ static void cmd_enc(int argc, char **argv)
             int attempt;
             for (attempt = 0; attempt < 64; attempt++) {
                 ba_rand(&r, urnd);
-                gf_pow_ba(&R, &GF_GEN, &r);
+                gf_pow_ba(&R, &g, &r);
                 gf_pow_ba(&enc_key, &pub, &r);
                 /* hpke-nl3 has no affine-degenerate key class to sample past
                  * (SecurityProofs-8.md 11.34.4), so it takes the first draw. */
@@ -3680,14 +3750,14 @@ static void cmd_enc(int argc, char **argv)
         }
         fclose(urnd);
         if (strcmp(algo, "hpke") == 0)
-            ba_fscx_revolve(&E, &P, &enc_key, I_VALUE);
+            ba_fscx_revolve(&E, &Pn, &enc_key, gn / 4);
         else if (strcmp(algo, "hpke-nl3") == 0)
-            nl_fscx_revolve_v3_ba(&E, &P, &enc_key, R3_VALUE);
+            nl_fscx_revolve_v3_ba(&E, &Pn, &enc_key, 5 * gn / 8);
         else
-            nl_fscx_revolve_v2_ba(&E, &P, &enc_key, I_VALUE);
+            nl_fscx_revolve_v2_ba(&E, &Pn, &enc_key, gn / 4);
         uint8_t iR[DER_INT_LEN(KEYBYTES)], iE[DER_INT_LEN(KEYBYTES)], in[8];
         size_t lR, lE, ln;
-        der_i32(R.b, iR, &lR); der_i32(E.b, iE, &lE); der_i_n256(in, &ln);
+        der_ba(&R, iR, &lR); der_ba(&E, iE, &lE); der_i_uint((uint64_t)gn, in, &ln);
         const uint8_t *it[3] = {iR, iE, in}; size_t il[3] = {lR, lE, ln};
         seq_and_write(it, il, 3, PEM_CIPHERTEXT, out_path);
 
@@ -3952,25 +4022,27 @@ static void cmd_dec(int argc, char **argv)
         strcmp(algo, "hpke-nl3") == 0) {
         /* CT: vals[0]=R, vals[1]=E, vals[2]=nbits (no format tag) */
         if (ct.n_items < 2) die("dec: malformed HPKE ciphertext");
-        check_item_width(&ct, 2, KEYBITS, "n");   /* TODO #371 */
         if (priv_k.n_items < 1) die("dec: malformed private key");
+        /* TODO #371, #383: the key's width, and the ciphertext's must match it */
+        int gn = gf_key_width(&priv_k);
+        check_item_gf_width(&ct, 2, gn, "dec: ciphertext", "private key");
         BitArray priv = BA_INIT, R = BA_INIT, E = BA_INIT, dec_key = BA_INIT, D = BA_INIT;
-        ba_from_ra(&priv, priv_k.vals[0], priv_k.vlens[0]);
-        ba_from_ra(&R,    ct.vals[0],     ct.vlens[0]);
-        ba_from_ra(&E,    ct.vals[1],     ct.vlens[1]);
+        ba_from_ra_n(&priv, priv_k.vals[0], priv_k.vlens[0], gn);
+        ba_from_ra_n(&R,    ct.vals[0],     ct.vlens[0],     gn);
+        ba_from_ra_n(&E,    ct.vals[1],     ct.vlens[1],     gn);
         pem_key_free(&ct); pem_key_free(&priv_k);
         if (!gf_pub_is_valid(&R))
             die("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
         gf_pow_ba(&dec_key, &R, &priv);
         if (strcmp(algo, "hpke") == 0)
-            ba_fscx_revolve(&D, &E, &dec_key, R_VALUE);
+            ba_fscx_revolve(&D, &E, &dec_key, 3 * gn / 4);
         else if (strcmp(algo, "hpke-nl3") == 0)
-            nl_fscx_revolve_v3_inv_ba(&D, &E, &dec_key, R3_VALUE);
+            nl_fscx_revolve_v3_inv_ba(&D, &E, &dec_key, 5 * gn / 8);
         else {
             if (!nl_v2_key_is_valid(&dec_key)) die("dec hpke-nl: " WEAK_V2_KEY_MSG);
-            nl_fscx_revolve_v2_inv_ba(&D, &E, &dec_key, I_VALUE);
+            nl_fscx_revolve_v2_inv_ba(&D, &E, &dec_key, gn / 4);
         }
-        write_binary_file(out_path, D.b, KEYBYTES);
+        write_binary_file(out_path, D.b, (size_t)gn / 8);
 
     } else if (strcmp(algo, "hpke-stern-kem") == 0) {
         /* CT: SEQUENCE(syn[66], E[32], r).  Priv: SEQUENCE(h0,h1,sup0,sup1,r,d). */
@@ -4141,6 +4213,15 @@ static int load_hpks_priv_for_threshold(const char *key_path,
     if (!is_hpks && !is_hpks_nl)
         dief("threshold: expected hpks or hpks-nl key; got label '%s'", k.label);
     if (k.n_items < 3) die("threshold: malformed private key (< 3 integers)");
+    /* TODO #383: hpks keys now load at 32-256 bits, but HPKS-T (its MuSig2
+     * coefficients and aggregation) is defined at 256 only; widening a
+     * narrower key would sign under a different key and exit 0. */
+    if (gf_key_width(&k) != KEYBITS) {
+        char msg[128];
+        snprintf(msg, sizeof msg, "threshold: the key is %d-bit; threshold signing "
+                 "runs at %d bits only", gf_key_width(&k), KEYBITS);
+        die(msg);
+    }
     ba_from_ra(priv_out, k.vals[0], k.vlens[0]);
     ba_from_ra(pub_out,  k.vals[1], k.vlens[1]);
     int nbits = pem_key_get_n(&k, 2);
@@ -4637,8 +4718,10 @@ static void cmd_sign(int argc, char **argv)
 
     if (strcmp(algo, "hpks") == 0 || strcmp(algo, "hpks-nl") == 0) {
         if (priv_k.n_items < 1) die("sign: malformed private key");
+        int gn = gf_key_width(&priv_k);   /* TODO #383: the key's width */
         BitArray priv = BA_INIT, R = BA_INIT, e = BA_INIT, s_ba = BA_INIT;
-        ba_from_ra(&priv, priv_k.vals[0], priv_k.vlens[0]);
+        ba_from_ra_n(&priv, priv_k.vals[0], priv_k.vlens[0], gn);
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, gn);
         pem_key_free(&priv_k);
 
         /* TODO #308: call the suite operation rather than transcribing it.
@@ -4649,7 +4732,7 @@ static void cmd_sign(int argc, char **argv)
          * returns only (R, s) -- the shape the Java CLI has always used. */
         if (strcmp(algo, "hpks") == 0) {
             hpks_sign(&msg, &priv, &R, &s_ba, urnd);
-            ba_fscx_revolve(&e, &R, &msg, I_VALUE);
+            ba_fscx_revolve(&e, &R, &msg, gn / 4);
         } else {
             hpks_nl_sign(&msg, &priv, &R, &s_ba, urnd);
             hpks_nl_challenge(&e, &R, &msg);
@@ -4658,8 +4741,8 @@ static void cmd_sign(int argc, char **argv)
         uint8_t is[DER_INT_LEN(KEYBYTES)], iR[DER_INT_LEN(KEYBYTES)];
         uint8_t ie[DER_INT_LEN(KEYBYTES)], in[8];
         size_t ls, lR, le, ln;
-        der_i32(s_ba.b, is, &ls); der_i32(R.b, iR, &lR);
-        der_i32(e.b,    ie, &le); der_i_n256(in, &ln);
+        der_ba(&s_ba, is, &ls); der_ba(&R, iR, &lR);
+        der_ba(&e,    ie, &le); der_i_uint((uint64_t)gn, in, &ln);
         const uint8_t *it[4] = {is, iR, ie, in}; size_t il[4] = {ls, lR, le, ln};
         seq_and_write(it, il, 4, PEM_SIGNATURE, out_path);
 
@@ -4967,8 +5050,10 @@ static void cmd_verify(int argc, char **argv)
 
     if (strcmp(algo, "hpks") == 0 || strcmp(algo, "hpks-nl") == 0) {
         if (pub_k.n_items < 1) die("verify: malformed public key");
+        int gn = gf_key_width(&pub_k);   /* TODO #383: the key's width */
         BitArray pub = BA_INIT;
-        ba_from_ra(&pub, pub_k.vals[0], pub_k.vlens[0]);
+        ba_from_ra_n(&pub, pub_k.vals[0], pub_k.vlens[0], gn);
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, gn);
         pem_key_free(&pub_k);
         if (!gf_pub_is_valid(&pub))
             die("verify: public key is the GF(2^n)* identity/zero element "
@@ -4979,22 +5064,23 @@ static void cmd_verify(int argc, char **argv)
         pem_key_load(&sig_k, sig_path);
         if (strcmp(sig_k.label, PEM_SIGNATURE) != 0 || sig_k.n_items < 3)
             die("verify: invalid signature PEM");
-        check_item_width(&sig_k, 3, KEYBITS, "n");   /* TODO #371 */
+        check_item_gf_width(&sig_k, 3, gn, "verify: signature", "public key");   /* TODO #371, #383 */
         BitArray s_ba = BA_INIT, R = BA_INIT, e_stored = BA_INIT;
-        ba_from_ra(&s_ba,     sig_k.vals[0], sig_k.vlens[0]);
-        ba_from_ra(&R,        sig_k.vals[1], sig_k.vlens[1]);
-        ba_from_ra(&e_stored, sig_k.vals[2], sig_k.vlens[2]);
+        ba_from_ra_n(&s_ba,     sig_k.vals[0], sig_k.vlens[0], gn);
+        ba_from_ra_n(&R,        sig_k.vals[1], sig_k.vlens[1], gn);
+        ba_from_ra_n(&e_stored, sig_k.vals[2], sig_k.vlens[2], gn);
         pem_key_free(&sig_k);
 
         /* Recompute e_v: fscx_revolve for hpks, hpks_nl_challenge for hpks-nl */
         BitArray e_v = BA_INIT;
         if (strcmp(algo, "hpks") == 0)
-            ba_fscx_revolve(&e_v, &R, &msg, I_VALUE);
+            ba_fscx_revolve(&e_v, &R, &msg, gn / 4);
         else
             hpks_nl_challenge(&e_v, &R, &msg);
         /* lhs = g^s * pub^e_v; OK if lhs == R */
-        BitArray lhs1 = BA_INIT, lhs2 = BA_INIT, lhs = BA_INIT;
-        gf_pow_ba(&lhs1, &GF_GEN, &s_ba);
+        BitArray lhs1 = BA_INIT, lhs2 = BA_INIT, lhs = BA_INIT, g = BA_INIT;
+        gf_gen_w(&g, gn);
+        gf_pow_ba(&lhs1, &g, &s_ba);
         gf_pow_ba(&lhs2, &pub,    &e_v);
         gf_mul_ba(&lhs, &lhs1, &lhs2);
 

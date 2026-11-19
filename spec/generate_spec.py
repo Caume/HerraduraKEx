@@ -2005,11 +2005,12 @@ PARAM_LEVEL_NOTES.update({a: "128-bit Stern-F parameters are TODO #382"
 def _param_rows():
     rows = []   # (algo, bits, level, default, security, ports, withdrawn)
     all4, narrow = PARAM_PORTS, ("py", "go")
+    gf_narrow = ("py", "c", "go")   # TODO #383 stage 1: C runs the GF family at every width
     for a in _GF_ALGOS:
         for w in (32, 64, 128, 256):
             rows.append((a, w, "demo" if w == 256 else None, w == 256,
                          "at most %s (Pohlig-Hellman; index calculus is cheaper)" % _GF_PH[w],
-                         all4 if w == 256 else narrow, None))
+                         all4 if w == 256 else gf_narrow, None))
     # OPRF runs at 256 only in every CLI today; narrower rows are TODO #385.
     rows.append(("oprf", 256, "demo", True,
                  "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", all4, None))

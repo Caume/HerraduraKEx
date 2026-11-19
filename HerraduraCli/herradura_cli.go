@@ -2014,12 +2014,16 @@ func cmdKex(args []string) {
 	}
 
 	// applyKDF returns a new BitArray with HFSCX-256 applied when --kdf is set.
+	// TODO #389: the result is the WHOLE 256-bit digest at every input width
+	// (it used to be reduced to the low n bits below 256); kex hkex-gf labels it
+	// n = 256, as HKEX-RNL's session key already is (rnlSessionBits).
 	applyKDF := func(ba *BitArray, n int) *BitArray {
 		if *kdf != "hfscx-256" {
 			return ba
 		}
+		_ = n
 		digest := Hfscx256(ba.Bytes(), nil)
-		return NewBitArray(n, new(big.Int).SetBytes(digest))
+		return NewBitArray(256, new(big.Int).SetBytes(digest))
 	}
 
 	switch *algo {
@@ -2034,6 +2038,10 @@ func cmdKex(args []string) {
 		}
 
 		n    := gfWidth(bytesToInt(ourInts[2]), "kex")
+		// TODO #383: a peer key at another width is refused, not reduced into ours
+		if tn := new(big.Int).SetBytes(theirInts[len(theirInts)-1]); !tn.IsInt64() || tn.Int64() != int64(n) {
+			die("kex", fmt.Errorf("their public key n is %s, our private key n is %d", tn, n))
+		}
 		priv := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		pub  := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
 		if !GfPubIsValid(pub) {
@@ -2041,7 +2049,11 @@ func cmdKex(args []string) {
 		}
 
 		skBA := applyKDF(GfPow(pub, priv), n)
-		pem, err := encodeSessionKey(skBA, n)
+		skBits := n
+		if *kdf == "hfscx-256" {
+			skBits = 256 // TODO #389: the whole digest, labelled at its own width
+		}
+		pem, err := encodeSessionKey(skBA, skBits)
 		if err != nil {
 			die("kex", err)
 		}
@@ -4260,6 +4272,10 @@ func cmdDec(args []string) {
 			die("dec", err)
 		}
 		n    := gfWidth(bytesToInt(ourInts[2]), "dec")
+		// TODO #383: a ciphertext at another width is refused
+		if cn := new(big.Int).SetBytes(ctInts[len(ctInts)-1]); !cn.IsInt64() || cn.Int64() != int64(n) {
+			die("dec", fmt.Errorf("ciphertext n is %s, private key n is %d", cn, n))
+		}
 		priv := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		R    := NewBitArray(n, new(big.Int).SetBytes(ctInts[0]))
 		if !GfPubIsValid(R) {
@@ -7120,29 +7136,29 @@ func hkxRuleEquals(label string, k int, x, want int64) string {
 // TODO #379: genpkey's key parameter sets (--bits / --level); bits -1: no
 // --bits value names the row.  ports: the CLIs that run the row today.
 var paramSets = []paramSet{
-	{"hkex-gf", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hkex-gf", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hkex-gf", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hkex-gf", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hkex-gf", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hkex-gf", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
 	{"hkex-gf", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
-	{"hpks", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hpks", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hpks", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpks", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hpks", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hpks", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
 	{"hpks", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
-	{"hpks-nl", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hpks-nl", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hpks-nl", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpks-nl", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hpks-nl", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hpks-nl", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
 	{"hpks-nl", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
-	{"hpke", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hpke", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hpke", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hpke", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hpke", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
 	{"hpke", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
-	{"hpke-nl", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hpke-nl", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hpke-nl", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke-nl", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hpke-nl", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hpke-nl", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
 	{"hpke-nl", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
-	{"hpke-nl3", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hpke-nl3", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
-	{"hpke-nl3", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke-nl3", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hpke-nl3", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
+	{"hpke-nl3", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
 	{"hpke-nl3", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
 	{"oprf", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
 	{"hkex-rnl", 32, "", false, "demo", "far below 2^87 (not estimated)", "py go java", ""},
@@ -7319,6 +7335,13 @@ func loadHpksPrivForThreshold(path string) (*big.Int, *big.Int, int) {
 		os.Exit(1)
 	}
 	n    := gfWidth(wireInt(ints[2], "n", "threshold"), "threshold")
+	// TODO #388: HPKS-T (MuSig2 coefficients, aggregation, verify) is defined at
+	// 256 bits only; refuse a narrower key here, before it writes a commitment
+	// that threshold-aggregate cannot read (same message as C and Python).
+	if n != 256 {
+		fmt.Fprintf(os.Stderr, "threshold: the key is %d-bit; threshold signing runs at 256 bits only\n", n)
+		os.Exit(1)
+	}
 	priv := new(big.Int).SetBytes(fitBytes(ints[0], n/8, "private key", "threshold"))
 	pub  := new(big.Int).SetBytes(fitBytes(ints[1], n/8, "public key", "threshold"))
 	return priv, pub, n

@@ -2603,7 +2603,10 @@ models that exclude quantum adversaries.
   retain algebraic structure and non-uniform bit distribution. Post-hash through
   HFSCX-256 before using the value as a symmetric key. In the CLI, pass
   `--kdf hfscx-256` to `kex`; in library code call `hfscx_256` / `Hfscx256` /
-  `hfscx_256` directly. Both parties must apply the same step.
+  `hfscx_256` directly. Both parties must apply the same step.  For hkex-gf the CLI
+  hashes the secret as exactly n/8 big-endian bytes and writes the whole digest as a
+  SESSION KEY declaring n = 256, at every width n (TODO #389), so the key works with
+  `enc --algo hske`; it is never truncated back to n bits.
 - **HKEX-RNL** rests on Ring-LWR hardness, which is conjectured quantum-hard, at
   ring dimension n=1024 since v2.7.19: ~206 classical / ~187 quantum Core-SVP bits.
   Keys generated before v2.7.19 used n=256 and are worth only ~32/~29 — regenerate

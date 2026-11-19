@@ -141,6 +141,24 @@ raw `shared_secret` MAY be passed through a KDF before use (the CLI's
 `kex --kdf hfscx-256` and `--kdf sp800227` options; `--kdf none` uses the
 raw field element, NOT RECOMMENDED for anything but interop testing).
 
+`kex --algo hkex-gf --kdf hfscx-256` works the same way at every width n
+(32, 64, 128 or 256; TODO #389):
+
+```
+raw  = shared_secret as exactly n/8 big-endian bytes (leading zeros kept)
+sk   = HFSCX-256(raw)                       -- always 256 bits
+SESSION KEY = SEQUENCE { INTEGER sk, INTEGER 256 }
+```
+
+The session key is the whole digest and declares `n_bits = 256`, its own
+width, whatever n the key exchange ran at, so it can key HSKE (`enc --algo
+hske --key`) like any 256-bit session key; HKEX-RNL's session key is
+labelled the same way (TODO #228).  Without `--kdf` the SESSION KEY holds
+the raw n-bit `shared_secret` and declares `n_bits = n`.  No CLI truncates
+the digest.  A 256-bit digest of a 64-bit secret still carries at most 64
+bits of entropy (and the demonstration widths far less security, see the
+`genpkey` warnings); the KDF fixes the key's FORMAT, not its strength.
+
 ### 4.3. Wire Format
 
 Private key: DER `SEQUENCE { INTEGER a, INTEGER n_bits }`, PEM-wrapped

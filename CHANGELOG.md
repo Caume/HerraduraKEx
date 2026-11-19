@@ -4,8 +4,8 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in seven parts so
-far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#383, #388, #389), in nine
+parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
 `--passphrase ''`, and PAKE registered a password nobody chose; an empty or missing secret
@@ -24,6 +24,79 @@ section 42).
 `genpkey` key sizes now come from one parameter-set table generated into all four CLIs,
 chosen by `--bits` or the new `--level`; Go no longer panics or silently writes 256 bits,
 Python no longer tracebacks and Java no longer ignores `--bits` (TODO #379, section 43).
+The C CLI now runs the GF(2^n) family at 32, 64, 128 and 256 bits, byte-identical with
+Python and Go, and a key used with a peer key or ciphertext of another width is refused
+instead of answered (TODO #383 stage 1, section 44).
+Below 256 bits, `kex --kdf hfscx-256` now writes the whole 256-bit digest labelled n = 256
+in all CLIs (Python and C wrote an unreadable key, Go kept the low bits), and Python and
+Go refuse a narrower key at `threshold-commit` as C does (TODO #389, #388, section 45).
+
+### TODO #388 and #389 — threshold and `kex --kdf` at narrow widths
+
+- **#389, the defect.** The HFSCX-256 digest is 256 bits whatever n the key exchange ran
+  at. Below 256 bits, Python (and C since #383 stage 1) wrote all 256 digest bits into a
+  SESSION KEY declaring n = 64 (say), which every CLI's reader refused ("field 0 is 32
+  bytes (expected at most 8)"); Go kept the digest's LOW n bits, against BITARRAY.md 4.4's
+  high-bit truncation, so the two wrote different keys from one exchange.
+- **#389, the rule (decided).** `sk = HFSCX-256(g^ab as exactly n/8 big-endian bytes)`,
+  the whole digest, written as `SESSION KEY { sk, 256 }`: the key declares its own width,
+  as HKEX-RNL's session key already does (TODO #228), and keys HSKE in every CLI. Nothing
+  truncates it. Without `--kdf` the key is the raw n-bit g^ab, labelled n, as before. At
+  256 bits nothing changes. SPEC.md section 4.2 states the rule; a 256-bit digest of a
+  64-bit secret still holds at most 64 bits of entropy.
+- **#388, the defect.** HPKS-T is defined at 256 bits only. Python's and Go's
+  `threshold-commit` accepted a 64-bit hpks key and wrote a 64-bit commitment their own
+  `threshold-aggregate` then refused (Go by width, Python with an `OverflowError`
+  traceback). They now refuse at commit with C's text, `threshold: the key is 64-bit;
+  threshold signing runs at 256 bits only`; Java refuses at load (it runs 256 only).
+- **Tests.** `test_width_matrix.sh` checks `--kdf` at every width, not only 256: both
+  directions agree, the key equals HFSCX-256 of the raw n/8-byte secret with n = 256
+  (checked against Python's suite, since all CLIs agreeing on a wrong rule would pass
+  the comparison), and the reader uses it as an HSKE key; 1215 PASS. `test_threshold_interop.sh`
+  refuses 64- and 128-bit hpks / hpks-nl keys at `threshold-commit` in all four CLIs, after
+  a 256-bit accept-control. Against this tree with the two fixes reverted, the width
+  matrix fails 66 checks (every narrow `--kdf` cell) and the threshold test fails at its
+  first narrow key.
+
+### TODO #383 (stage 1) — C runs the GF(2^n) family at every width
+
+- **The gap.** `key_parameter_sets` lists hkex-gf, hpks, hpks-nl, hpke, hpke-nl and
+  hpke-nl3 at 32, 64, 128 and 256 bits; Python and Go ran them all, C only 256
+  (`#if KEYBITS != 256 #error` in `herradura.h`, and every CLI path sized from `KEYBYTES`).
+- **`herradura.h`.** The GF(2^n) operations take their width from the operand:
+  `gf_mul_ba` / `gf_pow_ba` look the polynomial up with `ba_gf_poly` (BITARRAY.md 4.6;
+  `BA_E_NO_POLY` for an unlisted width) and stay constant-time; `gf_gen_w`,
+  `gf_pub_is_valid`, `ba_mul_mod_ord` / `ba_sub_mod_ord` (mod 2^n - 1), `hkex_gf_pubkey`,
+  `hpks_sign` / `hpks_nl_sign` / `hpks_verify` and `hpke_encrypt` / `hpke_decrypt` follow.
+  NL-FSCX v2's delta built its 1 at 256 bits and its round constant indexed `KEYBYTES`;
+  M^-1 is the 256-bit table at 256 and the closed form M^(n/2-1) elsewhere (checked
+  M(v) = x, as Python's `_m_inv`); v3's chi layer runs any 5/7 row partition (Python's
+  `v3_rows`) and keeps the bit-parallel masks at 256. `ba_fscx_revolve`'s closed form
+  zeroed its accumulator at 256 bits, so any narrower call with at least 8 steps failed
+  `E_MIXED_WIDTH`; it is born at the operands' width now. 256-bit output is unchanged:
+  the KATs, the C suite and every CliTest script pass as before.
+- **The C CLI.** The width table accepts any GF width for the family's labels; `genpkey`,
+  `pkey`, `kex`, `enc` / `dec` and `sign` / `verify` read and write every value at the
+  key's width (`der_ba`, `make_msg_ba_n`). "c" joins those rows' ports, so
+  `test_key_params.sh` now expects C to accept them.
+- **Mixed widths.** Python and Go reduced a 128-bit peer key or ciphertext into a 64-bit
+  key's width in `kex` and `dec` and exited 0; all three now refuse with
+  `kex: their public key n is 128, our private key n is 64` /
+  `dec: ciphertext n is 128, private key n is 64`, the shape `verify` already used.
+- **Threshold.** HPKS-T is defined at 256 bits only; C refuses a narrower hpks key at
+  `threshold-commit` by name rather than widening it. Python and Go accepted it and failed
+  at `threshold-aggregate` (TODO #388, resolved above).
+- **Tests.** New `CliTest/test_width_matrix.sh`: for every GF-family row and every pair of
+  CLIs the row lists, `pkey --pubout` / `--text` identical, `kex` both ways, signatures
+  verified both ways with and without `--digest` (and a changed message refused),
+  encryption both ways; a CLI the row does not list (Java) refuses by width; and the
+  mixed-width refusals with same-width accept-controls. 1102 PASS; against the pre-#383
+  build (with this spec) it fails 28 checks: C at every narrow row, and the mixed-width
+  cases. `test_peer_value_matrix.sh` reads which CLIs run 128 bits from the spec.
+- **Found, filed.** `kex --kdf hfscx-256` below 256 bits: Python (and now C) write a
+  256-bit digest under an n-bit SESSION KEY that no reader accepts, while Go keeps the
+  digest's low bits (TODO #389, resolved above). Python's `pkey --text` on a public key
+  dies on a tuple unpack (noted under TODO #386).
 
 ### TODO #379 — `genpkey` key sizes come from one table; new `--level`
 

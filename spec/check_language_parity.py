@@ -4941,11 +4941,9 @@ PRIMITIVES = {
     # bookkeeping -- test [47] checks the contents in all four languages and this
     # entry checks the function that produces them still exists to be checked.
     "v3-rows": {
-        "acknowledged":
-            "C stores the 47x5 + 3x7 row partition as a static table (_V3_ROWS) "
-            "rather than computing it, so there is no function to name. The "
-            "table's contents are asserted directly by test [47] in all four "
-            "languages",
+        # TODO #383: C computes the partition at any width since its chi layer
+        # left 256 bits (it returns the 5-row and 7-row counts rather than a list).
+        "c": r"static int nl_v3_rows\(",
         "go": r"^func V3Rows\(",
         "python": r"^def v3_rows\(",
         "java": r"HerraduraNl.java::public static int\[\] v3Rows\(",
@@ -5801,6 +5799,17 @@ DECL_PATTERNS = {
 # it instead of quietly covering the next thing that matches.
 CENSUS_EXEMPT = {
     "c": [
+        (r"^(gf_mul_poly_ba|gf_poly_for)$",
+         "the GF(2^n) multiply with its polynomial already looked up, and the "
+         "lookup-or-fail wrapper around ba_gf_poly (TODO #383).  gf_pow_ba "
+         "looks the polynomial up once instead of once per multiply; gf-mul and "
+         "gf-pow remain the manifest's steps, and the lookup is BITARRAY.md 4.6's "
+         "table, which ba_gf_poly already carries under the ba_ rule"),
+        (r"^nl_chi_v3_rows_ba$",
+         "nl-chi-v3 evaluated one row at a time, the branch nl_chi_v3_ba takes "
+         "off 256 bits, where its bit-parallel masks do not apply (TODO #383).  "
+         "Not a second primitive: nl_chi_v3_ba is the manifest's entry and "
+         "dispatches here"),
         (r"^_?ba(33)?_", "BitArray octet plumbing (shift/compare/popcount/print/rand, "
                          "the width check, and the fallible ba_try_* surface). NOT a "
                          "protocol step in any language. Until TODO #314 pass 3 the "

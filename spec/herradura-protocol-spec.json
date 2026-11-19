@@ -5087,6 +5087,7 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5100,6 +5101,7 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5113,6 +5115,7 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5141,6 +5144,7 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5154,6 +5158,7 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5167,6 +5172,7 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5195,6 +5201,7 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5208,6 +5215,7 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5221,6 +5229,7 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5249,6 +5258,7 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5262,6 +5272,7 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5275,6 +5286,7 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5303,6 +5315,7 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5316,6 +5329,7 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5329,6 +5343,7 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5357,6 +5372,7 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5370,6 +5386,7 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5383,6 +5400,7 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
