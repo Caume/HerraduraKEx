@@ -25,7 +25,7 @@ final class CliFlagTable {
         m.put("enc", new HashSet<>(Arrays.asList("ad", "aead", "algo", "in", "key", "out", "pubkey")));
         m.put("encfile", new HashSet<>(Arrays.asList("algo", "in", "key", "out")));
         m.put("fpe", new HashSet<>(Arrays.asList("context", "decrypt", "encrypt", "in", "key", "out", "v3")));
-        m.put("genpkey", new HashSet<>(Arrays.asList("algo", "bits", "kdf-iterations", "out", "passphrase", "xmss-height")));
+        m.put("genpkey", new HashSet<>(Arrays.asList("algo", "bits", "kdf-iterations", "level", "out", "passphrase", "xmss-height")));
         m.put("kex", new HashSet<>(Arrays.asList("algo", "kdf", "our", "our-kem", "out", "their", "their-kem")));
         m.put("oprf-blind", new HashSet<>(Arrays.asList("in", "out")));
         m.put("oprf-eval", new HashSet<>(Arrays.asList("in", "key", "out")));
@@ -70,8 +70,8 @@ final class CliFlagTable {
         "  encfile              --algo --in --key --out\n" +
         "                       --algo: hske-nla1\n" +
         "  fpe                  --context --decrypt --encrypt --in --key --out --v3\n" +
-        "  genpkey              --algo --bits --kdf-iterations --out --passphrase\n" +
-        "                       --xmss-height\n" +
+        "  genpkey              --algo --bits --kdf-iterations --level --out\n" +
+        "                       --passphrase --xmss-height\n" +
         "                       --algo: hcred hkex-gf hkex-rnl hpke hpke-nl hpke-nl3\n" +
         "                               hpke-stern hpke-stern-kem hpks hpks-nl\n" +
         "                               hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf\n" +
