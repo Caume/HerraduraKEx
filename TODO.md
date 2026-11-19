@@ -665,12 +665,77 @@ the allowed values.
 normative spec change, four ports' capacity raised (4x every C BitArray, stack included),
 new polynomials and KATs.  It buys no security: GF(2^n)\* falls to index calculus in
 binary fields far past 1024 bits (Pohlig–Hellman alone: 2^36 at 256, 2^103 at 512, 2^164
-at 1024), and Stern-F at N = 1024 is ~2^67 Prange iterations, still short of the N >= 17000
-128-bit bar.  Cost: Python `gf_pow` grows ~4.5x per doubling (39 ms at 256, 800 ms at
+at 1024).  Stern-F reaches 128 bits by a longer code, not a wider BitArray: TODO #382.  Cost: Python `gf_pow` grows ~4.5x per doubling (39 ms at 256, 800 ms at
 1024); Stern signatures double per step (47 KB at 256, ~190 KB at 1024).  At 32–256 every
 operation is dominated by process start (Python 0.2–0.35 s, Go 0.02–0.28 s).  A separate
 TODO if it is wanted.  Side finding: `hpks-xmss` keygen at the default height 10 takes
 over 120 s in Python and Go.
+
+**Revised decision (2026-11-18): a parameter table, chosen by `--level`, with `--bits` kept.**
+The goal is one model for every algorithm, from small demo sizes to sizes meant to give
+128-bit security (the classical strength of a 128-bit symmetric key).
+
+- **One curated table** in `spec/generate_spec.py`, generated into all four CLIs as
+  `KEY_LABEL_SITES` is (TODO #366).  Each row: algorithm, `--bits` value, `--level` name,
+  the parameters behind it (GF polynomial; ring n/q/p; Stern N/k/t), estimated classical
+  and quantum security with its source, and a status (demo / production-track).  The
+  CLIs accept only listed rows; a demo row prints a stderr warning; `pkey --text` prints
+  the row's estimated security.  A checker holds the table to SECURITY.md.
+- **`--level`** (new genpkey flag, so MINOR on its own): `demo` and `128` now; `192` and
+  `256` are reserved names, refused until a row exists.  `--level 128` maps to hkex-rnl
+  n = 1024 and hpke-stern-kem's BIKE-128 set today, and to Stern-F once TODO #382 adds its
+  row.  On the GF(2^n)\* family it is refused by name: **that family is demo-only at every
+  width** (binary-field DLP falls to index calculus far past any width here); reaching 128
+  would take a different group, a new `--algo`, not a width.  `--level demo` maps to each
+  algorithm's current default demo set.  With neither flag, the current defaults stand.
+- **`--bits`** stays, with the per-algorithm values in the table above, for compatibility.
+  Its meaning differs per algorithm (key width, ring dimension, code length), which is why
+  `--level` is the primary interface; `--bits` may later print a deprecation warning, not
+  in this TODO.  `--bits` and `--level` together are refused.
+- Algorithms with fixed parameters (hpks-wots, hpks-xmss) refuse both flags;
+  hpke-stern-kem accepts only `--level 128` (its only set; BIKE's Level 3 / 5 sets would be
+  further rows).
+
+Status: **OPEN**
+
+---
+
+### #382: a 128-bit Stern-F parameter set (N ≈ 2048), and the documented N ≥ 17000
+
+Found in TODO #379's width pass.  SECURITY.md and SecurityProofs-4/5 say Stern-F needs
+N >= 17000 for 128-bit classical security, by comparison with BIKE-128 (N ~ 24646).  BIKE's
+error weight grows like sqrt(N); Stern-F's is fixed at t = N/16, the linear-weight regime,
+where each bit of N buys far more.  A rough estimate at Stern-F's shape (k = N/2, t = N/16,
+log2 bit operations including Gaussian elimination):
+
+| N | Prange | Stern ISD (1989) |
+|---|---|---|
+| 256 | 38.7 | 30.8 |
+| 1024 | 95.0 | 78.3 |
+| 2048 | 165.1 | 143.8 |
+| 3072 | 233.9 | 209.3 |
+
+BJMM-class ISD is cheaper than Stern's, so 128 bits classical sits somewhere around
+N ~ 2048–3072, an order of magnitude below 17000.  The same documents put N = 256 at
+2^56–2^60 by BJMM/SDE; the Stern ISD figure above is ~2^31, which matches SECURITY.md's
+own "~30–40 bits".  Both documented figures need re-deriving.
+
+**Work.**
+1. Run a standard syndrome-decoding estimator (e.g. the CryptographicEstimators SD module:
+   Prange, Stern, Dumer, MMT, BJMM, May–Ozerov; classical and quantum) over N at
+   t = N/16, k = N/2, and choose the smallest N meeting 128 bits classical, recording
+   the quantum figure.  Expected near 2048.  Correct SecurityProofs-4 §11.8.x, -5 and
+   SECURITY.md's Stern rows (both the N = 256 figure and the N >= 17000 bar).
+2. Stern-F at that N in all four ports: its vectors exceed `BA_MAX_BITS` = 256, so move
+   them to the long-vector representation the QC-MDPC KEM already uses (r = 12323) rather
+   than raising the BitArray cap.  KATs, PEM layout rows (`PEM_DER_ITEMS`,
+   `PEM_DER_FIELD_CAPS`), and a row in TODO #379's parameter table as `--level 128`.
+3. Costs to state: signatures grow linearly in N (47 KB at 256, so ~380 KB at 2048 at
+   219 rounds); H is N/2 x N bits from the seed per sign/verify.  hcred and hpks-ring are
+   Stern-based too: decide whether they get the row or stay demo.
+
+New parameter set: MINOR.  Changing what an existing `--algo` defaults to would be MAJOR;
+the default stays at N = 256 unless decided otherwise.
 
 Status: **OPEN**
 
