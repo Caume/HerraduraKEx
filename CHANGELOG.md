@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in six parts so
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#381), in seven parts so
 far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
@@ -21,6 +21,47 @@ required flags (TODO #381, section 41).
 `fpe` and `twk` now take exactly one 32-byte block: longer input was cut to 32 bytes with
 exit 0, and Go padded shorter input on the other side from the other three CLIs (TODO #377,
 section 42).
+`genpkey` key sizes now come from one parameter-set table generated into all four CLIs,
+chosen by `--bits` or the new `--level`; Go no longer panics or silently writes 256 bits,
+Python no longer tracebacks and Java no longer ignores `--bits` (TODO #379, section 43).
+
+### TODO #379 — `genpkey` key sizes come from one table; new `--level`
+
+- **The defect.** `genpkey --bits` outside hpks-zkp-nl: Go honoured it unchecked and
+  panicked (index out of range) at 0, 7, 100 and 512 on hkex-rnl, hcred and Stern, hung on
+  `oprf --bits 7`, wrote an n = 256 OPRF key for `--bits 64`, and silently wrote 256-bit
+  classical keys for any unlisted width. Python raised `IndexError`, `OverflowError` and
+  `BaError: E_WIDTH` tracebacks. Java ignored the flag on every algorithm but hpks-zkp-nl.
+  C had no `--bits`.
+- **Measured first.** Python and Go already run 32, 64, 128 and 256 on every GF-family,
+  Stern and hcred algorithm and every hkex-rnl ring from 32, and agree on every operation
+  in both directions; C and Java ran only the defaults (Java also every hkex-rnl ring).
+  512 and 1024 were left out: every port caps BitArray at 256 and the GF family is
+  demo-only at any width (binary-field index calculus; Pohlig–Hellman alone is 2^36 at 256,
+  2^103 at 512, 2^164 at 1024), while 128-bit Stern-F needs a longer code (TODO #382).
+- **The fix.** One curated table, `key_parameter_sets` in `spec/generate_spec.py`,
+  generated beside the key-label table into all four CLIs: per (algo, `--bits`) row, its
+  `--level`, default, status, estimated security with source, the CLIs that run it, and a
+  withdrawal reason. The generator refuses inconsistent tables. One resolver per CLI runs
+  before any key is generated, with shared messages. New `--level` (`demo`, `128`; `192`
+  and `256` reserved); `--bits` kept; both together refused; fixed-parameter algorithms
+  refuse either; hkex-rnl 512 refused as withdrawn; the GF family refuses `--level 128`
+  naming why. C gains `--bits` (hpks-zkp-nl honours it, as in the others) and Java honours
+  it on hkex-rnl. Rows a CLI cannot run yet are refused "not yet supported by this CLI"
+  naming TODO #383 (C) or #384 (Java). The `cli_surface_gaps` row for `genpkey --bits` is
+  gone.
+- **Test.** New `CliTest/test_key_params.sh` (native-interop), driven by the generated
+  spec: every algorithm's default in every CLI (read back at its width by every CLI), every
+  row by `--bits` and every `--level` in every CLI (accepted and read back by every CLI
+  the row lists, or refused by name), 13 unlisted `--bits` values and 5 malformed `--level`
+  names per algorithm, both flags, the fixed-parameter algorithms, and invariants written
+  out by hand. 1588 PASS. On the TODO #377 build it had failed 869 checks (about 290 bad
+  values accepted, 87 crashes -- Python tracebacks and Go panics -- and the rest refused
+  under another message, C having no `--bits`) when the old Go's hang on `oprf --bits`
+  stopped it at a 50-minute cap. `test_pkey_text_matrix.sh`'s hpks-zkp-nl `--bits`
+  section now includes C.
+- **Docs.** llms.txt (genpkey), TUTORIAL (hcred widths), spec/README.md, MIGRATING §43.
+  Follow-ups filed: #383–#387.
 
 ### TODO #377 — `fpe` / `twk` take exactly one 32-byte block
 

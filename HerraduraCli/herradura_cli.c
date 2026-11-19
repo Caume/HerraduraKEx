@@ -1386,6 +1386,139 @@ static void xmss_blob_align(uint8_t *dst, size_t dst_len,
  * genpkey
  * ───────────────────────────────────────────────────────────────────────────── */
 
+/* TODO #379: resolve genpkey's --bits / --level against HKX_PARAM_SETS (the
+ * generated table in key_label_table.h).  Returns the row's bits (-1 for a row
+ * with no width), 0 when the algorithm has fixed parameters and neither flag was
+ * given, or -2 when --bits goes to the algorithm's own rule (hpks-zkp-nl).
+ * Every refusal happens here, before any key is generated, with the message the
+ * other three CLIs print.  This CLI runs only each algorithm's default row so
+ * far; the others are refused naming TODO #383. */
+static int psl_has(const char *const *list, const char *s)
+{
+    for (; *list; list++) if (strcmp(*list, s) == 0) return 1;
+    return 0;
+}
+
+static int ports_has(const char *ports, const char *port)
+{
+    size_t n = strlen(port);
+    for (const char *p = ports; *p; ) {
+        while (*p == ' ') p++;
+        const char *e = p;
+        while (*e && *e != ' ') e++;
+        if ((size_t)(e - p) == n && strncmp(p, port, n) == 0) return 1;
+        p = e;
+    }
+    return 0;
+}
+
+static int resolve_key_params(const char *algo, const char *bits_s, const char *level_s)
+{
+    char msg[1024];
+    if (psl_has(HKX_PARAM_FIXED, algo)) {
+        if (bits_s || level_s) {
+            snprintf(msg, sizeof msg, "genpkey: --algo %s has fixed parameters; "
+                     "--bits and --level do not apply", algo);
+            die(msg);
+        }
+        return 0;
+    }
+    if (bits_s && level_s) die("genpkey: give --bits or --level, not both");
+    const HkxParamSet *row = NULL, *dflt = NULL;
+    int nrows = 0;
+    for (int i = 0; i < HKX_PARAM_SETS_N; i++) {
+        if (strcmp(HKX_PARAM_SETS[i].algo, algo) != 0) continue;
+        nrows++;
+        if (HKX_PARAM_SETS[i].is_default) dflt = &HKX_PARAM_SETS[i];
+    }
+    if (!nrows) return 0;
+    if (level_s) {
+        if (!psl_has(HKX_PARAM_LEVELS, level_s)) {
+            snprintf(msg, sizeof msg, "genpkey: --level must be one of ");
+            for (int l = 0; HKX_PARAM_LEVELS[l]; l++)
+                snprintf(msg + strlen(msg), sizeof msg - strlen(msg), "%s%s",
+                         l ? ", " : "", HKX_PARAM_LEVELS[l]);
+            snprintf(msg + strlen(msg), sizeof msg - strlen(msg), ", got '%s'", level_s);
+            die(msg);
+        }
+        for (int i = 0; i < HKX_PARAM_SETS_N; i++)
+            if (strcmp(HKX_PARAM_SETS[i].algo, algo) == 0 && HKX_PARAM_SETS[i].level
+                && strcmp(HKX_PARAM_SETS[i].level, level_s) == 0)
+                row = &HKX_PARAM_SETS[i];
+        if (!row) {
+            snprintf(msg, sizeof msg, "genpkey: --level %s is not available for --algo %s "
+                     "(available: ", level_s, algo);
+            int first = 1;
+            for (int l = 0; HKX_PARAM_LEVELS[l]; l++)
+                for (int i = 0; i < HKX_PARAM_SETS_N; i++)
+                    if (strcmp(HKX_PARAM_SETS[i].algo, algo) == 0 && HKX_PARAM_SETS[i].level
+                        && strcmp(HKX_PARAM_SETS[i].level, HKX_PARAM_LEVELS[l]) == 0) {
+                        snprintf(msg + strlen(msg), sizeof msg - strlen(msg), "%s%s",
+                                 first ? "" : ", ", HKX_PARAM_LEVELS[l]);
+                        first = 0;
+                        break;
+                    }
+            snprintf(msg + strlen(msg), sizeof msg - strlen(msg), ")");
+            for (int k = 0; HKX_PARAM_LEVEL_NOTES[k]; k += 2)
+                if (strcmp(HKX_PARAM_LEVEL_NOTES[k], algo) == 0)
+                    snprintf(msg + strlen(msg), sizeof msg - strlen(msg), "; %s",
+                             HKX_PARAM_LEVEL_NOTES[k + 1]);
+            die(msg);
+        }
+    } else if (bits_s) {
+        if (psl_has(HKX_PARAM_OWN_BITS, algo)) return -2;
+        char listed[256] = "";
+        const char *first_level = NULL;
+        for (int i = 0; i < HKX_PARAM_SETS_N; i++) {
+            const HkxParamSet *r = &HKX_PARAM_SETS[i];
+            if (strcmp(r->algo, algo) != 0) continue;
+            if (!first_level && r->level) first_level = r->level;
+            if (r->bits > 0 && !r->withdrawn)
+                snprintf(listed + strlen(listed), sizeof listed - strlen(listed), "%s%d",
+                         listed[0] ? ", " : "", r->bits);
+            if (r->bits > 0) {
+                char b[16];
+                snprintf(b, sizeof b, "%d", r->bits);
+                if (strcmp(b, bits_s) == 0) row = r;
+            }
+        }
+        if (!listed[0]) {
+            snprintf(msg, sizeof msg, "genpkey: --bits does not apply to --algo %s "
+                     "(use --level %s)", algo, first_level ? first_level : "");
+            die(msg);
+        }
+        if (!row) {
+            snprintf(msg, sizeof msg, "genpkey: --bits must be one of %s for --algo %s, "
+                     "got '%s'", listed, algo, bits_s);
+            die(msg);
+        }
+        if (row->withdrawn) {
+            snprintf(msg, sizeof msg, "genpkey: --bits %d for --algo %s is withdrawn: %s",
+                     row->bits, algo, row->withdrawn);
+            die(msg);
+        }
+    } else {
+        row = dflt;
+    }
+    if (!ports_has(row->ports, "c")) {
+        char here[256] = "";
+        for (int i = 0; i < HKX_PARAM_SETS_N; i++) {
+            const HkxParamSet *r = &HKX_PARAM_SETS[i];
+            if (strcmp(r->algo, algo) == 0 && r->bits > 0 && ports_has(r->ports, "c"))
+                snprintf(here + strlen(here), sizeof here - strlen(here), "%s%d",
+                         here[0] ? ", " : "", r->bits);
+        }
+        snprintf(msg, sizeof msg, "genpkey: --algo %s at %d bits is not yet supported by "
+                 "this CLI (supported here: %s; TODO #%d)", algo, row->bits, here,
+                 HKX_PARAM_GAP_TODO);
+        die(msg);
+    }
+    if (row->bits > 0 && dflt && row->bits < dflt->bits)
+        fprintf(stderr, "WARNING: --algo %s at %d bits is a demonstration width "
+                "(estimated security: %s)\n", algo, row->bits, row->security);
+    return row->bits;
+}
+
 static void cmd_genpkey(int argc, char **argv)
 {
     const char *algo = get_arg(argc, argv, "--algo");
@@ -1406,6 +1539,9 @@ static void cmd_genpkey(int argc, char **argv)
     } else if (get_arg(argc, argv, "--kdf-iterations")) {
         die("genpkey: --kdf-iterations requires --passphrase");
     }
+    /* TODO #379: every width comes from the parameter-set table. */
+    const char *bits_arg = get_arg(argc, argv, "--bits");
+    const int pbits = resolve_key_params(algo, bits_arg, get_arg(argc, argv, "--level"));
 
     FILE *urnd = fopen("/dev/urandom", "rb");
     if (!urnd) die("cannot open /dev/urandom");
@@ -1483,7 +1619,22 @@ static void cmd_genpkey(int argc, char **argv)
 
     /* ZKP-NL keypair: raw binary PEM (A, B, y, n) */
     if (strcmp(algo, "hpks-zkp-nl") == 0) {
-        int nl_n = ZKP_NL_DEFAULT_N, nb = (nl_n+7)/8, k;
+        /* TODO #379: C now honours --bits here too (even, <= ZKP_NL_MAX_N, the
+         * same rule and message as the other three); zkp_nl_keygen's n is a
+         * runtime parameter, and C always read every n the others write. */
+        int nl_n = ZKP_NL_DEFAULT_N;
+        if (pbits == -2) {
+            int ok = bits_arg[0] != '\0' && strlen(bits_arg) <= 6;
+            for (const char *c = bits_arg; ok && *c; c++) ok = *c >= '0' && *c <= '9';
+            nl_n = ok ? atoi(bits_arg) : -1;
+            if (nl_n <= 0 || nl_n % 2 != 0 || nl_n > ZKP_NL_MAX_N) {
+                char zmsg[160];
+                snprintf(zmsg, sizeof zmsg, "genpkey hpks-zkp-nl: --bits must be a positive "
+                         "even integer <= %d, got %s", ZKP_NL_MAX_N, bits_arg);
+                die(zmsg);
+            }
+        }
+        int nb = (nl_n+7)/8, k;
         uint64_t A, B, y;
         zkp_nl_keygen(nl_n, urnd, &A, &B, &y);
         size_t blen = 4 + (size_t)3*nb;

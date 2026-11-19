@@ -25810,3 +25810,110 @@ and round, plus both mode flags, after a 32-byte `--v3` round-trip accept-contro
 Status: **DONE v16.0.0** — `fpe` / `twk` take exactly one 32-byte block in all four CLIs (any other length refused by name, no more truncation or Go left-padding), and C / Go refuse `--encrypt --decrypt`.
 
 ---
+
+### #379: `genpkey --bits` outside hpks-zkp-nl: Go panics, Python tracebacks, Java ignores it
+
+Found by the v15.0.0 CLI audit.  `cli_surface_gaps` says "Where --bits exists, an explicit
+value is honoured or refused by name"; outside `hpks-zkp-nl` that is not true.
+
+**The finding.**  Measured on hkex-rnl, hcred, hpks-stern, hpke-stern, oprf, hpks and
+hkex-gf at 0, 7, 64, 100 and 512:
+- **Go** honours `--bits` unchecked: index-out-of-range PANIC at 0, 7 and 100 (rnl, hcred,
+  stern) and 512 (hcred, stern); `oprf --bits 7` hangs (>120 s); `oprf --bits 64` writes a
+  key its own `pkey --text` reports as n = 256.  The classical algos silently normalise
+  an unlisted width to 256.
+- **Python** honours it unchecked: `IndexError`, `OverflowError` and `BaError: E_WIDTH`
+  tracebacks at 0, 7, 100 and 512 depending on the algo.
+- **Java** ignores it on every algo but hpks-zkp-nl and writes the default width, exit 0.
+- Keys Python and Go do write at 64 bits (hpks, hkex-gf, hpks-stern, hpke-stern, hcred)
+  and at 64 / 512 (hkex-rnl) are refused by C and, except hkex-rnl, by Java.
+- `genpkey --algo hcred --bits 0` in Python: `IndexError`.
+
+**Work.**  Decide per algo which widths are supported (KAT/ pins n = 64 HKEX-RNL vectors
+for Python/Go/Java), refuse every other value by name in all three CLIs that have the
+flag (and refuse the flag on algos with no runtime width), make Java honour or refuse
+rather than ignore, and correct the `cli_surface_gaps` reason.  A CliTest matrix over
+those values with accept-controls.  Refusing previously accepted values is MAJOR.
+
+**Decision (2026-11-18).**  One width set for every algorithm that has a width, in all
+four CLIs, C included:
+
+| algorithms | `--bits` |
+|---|---|
+| hkex-gf, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, oprf, hpks-stern, hpke-stern, hcred | 32, 64, 128, 256; default 256.  Below 256, a stderr warning that it is a demo width |
+| hkex-rnl (`--bits` is the ring dimension, not a key width) | 32, 64, 128, 256 (demo) and 1024 (default).  512 refused by name: SECURITY.md withdraws it |
+| hpke-stern-kem, hpks-wots, hpks-xmss | fixed parameters: `--bits` refused |
+| hpks-zkp-nl | unchanged (even, <= 64: a wire bound, TODO #283) |
+
+C gains `--bits` and reads and writes every listed width; Python's tracebacks, Go's panics
+and silent normalisation to 256, and Java's ignoring the flag all become refusals naming
+the allowed values.
+
+**Why not 512 / 1024** (measured in the decision pass): every BitArray port caps at
+`BA_MAX_BITS` = 256 and BITARRAY.md defines GF polynomials only up to 256, so it needs a
+normative spec change, four ports' capacity raised (4x every C BitArray, stack included),
+new polynomials and KATs.  It buys no security: GF(2^n)\* falls to index calculus in
+binary fields far past 1024 bits (Pohlig–Hellman alone: 2^36 at 256, 2^103 at 512, 2^164
+at 1024).  Stern-F reaches 128 bits by a longer code, not a wider BitArray: TODO #382.  Cost: Python `gf_pow` grows ~4.5x per doubling (39 ms at 256, 800 ms at
+1024); Stern signatures double per step (47 KB at 256, ~190 KB at 1024).  At 32–256 every
+operation is dominated by process start (Python 0.2–0.35 s, Go 0.02–0.28 s).  A separate
+TODO if it is wanted.  Side finding: `hpks-xmss` keygen at the default height 10 takes
+over 120 s in Python and Go.
+
+**Revised decision (2026-11-18): a parameter table, chosen by `--level`, with `--bits` kept.**
+The goal is one model for every algorithm, from small demo sizes to sizes meant to give
+128-bit security (the classical strength of a 128-bit symmetric key).
+
+- **One curated table** in `spec/generate_spec.py`, generated into all four CLIs as
+  `KEY_LABEL_SITES` is (TODO #366).  Each row: algorithm, `--bits` value, `--level` name,
+  the parameters behind it (GF polynomial; ring n/q/p; Stern N/k/t), estimated classical
+  and quantum security with its source, and a status (demo / production-track).  The
+  CLIs accept only listed rows; a demo row prints a stderr warning; `pkey --text` prints
+  the row's estimated security.  A checker holds the table to SECURITY.md.
+- **`--level`** (new genpkey flag, so MINOR on its own): `demo` and `128` now; `192` and
+  `256` are reserved names, refused until a row exists.  `--level 128` maps to hkex-rnl
+  n = 1024 and hpke-stern-kem's BIKE-128 set today, and to Stern-F once TODO #382 adds its
+  row.  On the GF(2^n)\* family it is refused by name: **that family is demo-only at every
+  width** (binary-field DLP falls to index calculus far past any width here); reaching 128
+  would take a different group, a new `--algo`, not a width.  `--level demo` maps to each
+  algorithm's current default demo set.  With neither flag, the current defaults stand.
+- **`--bits`** stays, with the per-algorithm values in the table above, for compatibility.
+  Its meaning differs per algorithm (key width, ring dimension, code length), which is why
+  `--level` is the primary interface; `--bits` may later print a deprecation warning, not
+  in this TODO.  `--bits` and `--level` together are refused.
+- Algorithms with fixed parameters (hpks-wots, hpks-xmss) refuse both flags;
+  hpke-stern-kem accepts only `--level 128` (its only set; BIKE's Level 3 / 5 sets would be
+  further rows).
+
+**Resolution (stage 1 of the staged plan agreed on 2026-11-19).**  One table,
+`key_parameter_sets` in `spec/generate_spec.py`, generated beside the key-label table into
+all four CLIs (C `key_label_table.h`, Java `KeyLabelTable.java`, the Go and Python generated
+regions).  Each row: algo, `--bits`, `--level`, default, status (the protocol's for a
+strength-level row, else `demo`), estimated security with its source, the ports that run
+it, and a withdrawal reason.  The generator refuses a duplicate row, a second default or
+level, an unknown algo, port or level, and a default some CLI cannot run.  One resolver per
+CLI (C `resolve_key_params`, Go `resolveKeyParams`, Java `resolveKeyParams`, Python
+`_resolve_key_params`) runs before any key is generated; every refusal is by name and
+shared across the four.  New `genpkey --level` (demo, 128; 192 and 256 reserved, refused);
+`--bits` kept; both together refused; hpks-wots / hpks-xmss refuse either; hpke-stern-kem
+takes only `--level 128`; the GF family refuses `--level 128` naming why; hkex-rnl 512 is
+refused as withdrawn; hpks-zkp-nl keeps its own even-and-<=-64 rule, which C now honours
+too.  Go no longer normalises an unlisted width to 256, panics or hangs; Python no longer
+tracebacks; Java no longer ignores the flag, and runs every hkex-rnl ring (its RNL already
+did).  Below the default a stderr warning gives the estimated security.  The
+`cli_surface_gaps` row for `genpkey --bits` is gone: every CLI has the flag, and the
+per-CLI width gaps live in the rows' `ports`, refused with "not yet supported by this CLI
+(supported here: ...; TODO #383 / #384)".
+
+Split out, per the staged plan: C narrow widths (#383), Java narrow widths (#384), OPRF
+below 256 (#385), `pkey --text` printing a row's estimated security (#386).  Found on the
+way: Python's `pkey --text` drops leading zeros from hkex-rnl's packed dumps (#387).
+
+New `CliTest/test_key_params.sh` (native-interop), driven by the generated spec plus
+invariants written out by hand: 1588 PASS; on the TODO #377 build, 869 FAIL (about 290
+accepted, 87 crashes) before the old Go's `oprf --bits` hang stopped it at a 50-minute cap.  `test_pkey_text_matrix.sh`'s zkp-nl `--bits`
+section now runs on C too.  MIGRATING.md section 43.
+
+Status: **DONE v16.0.0** — genpkey key sizes come from one generated parameter-set table in all four CLIs, chosen by --bits or the new --level, every other value refused by name; C / Java narrow widths, OPRF below 256 and the pkey --text security line split into #383–#386.
+
+---

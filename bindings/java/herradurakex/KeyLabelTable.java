@@ -796,4 +796,70 @@ final class KeyLabelTable {
     private static String ruleEquals(String label, int k, long x, long want) {
         return x == want ? null : String.format("%s: field %d is %d (expected %d)", label, k, x, want);
     }
+    /** TODO #379: genpkey's key parameter sets: {algo, bits, level|"", default,
+     *  status, security, ports, withdrawn|""}.  bits -1: no --bits value. */
+    static final String[][] PARAM_SETS = {
+        {"hkex-gf", "32", "", "0", "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hkex-gf", "64", "", "0", "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hkex-gf", "128", "", "0", "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hkex-gf", "256", "demo", "1", "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+        {"hpks", "32", "", "0", "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpks", "64", "", "0", "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpks", "128", "", "0", "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpks", "256", "demo", "1", "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+        {"hpks-nl", "32", "", "0", "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpks-nl", "64", "", "0", "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpks-nl", "128", "", "0", "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpks-nl", "256", "demo", "1", "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+        {"hpke", "32", "", "0", "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpke", "64", "", "0", "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpke", "128", "", "0", "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpke", "256", "demo", "1", "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+        {"hpke-nl", "32", "", "0", "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpke-nl", "64", "", "0", "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpke-nl", "128", "", "0", "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpke-nl", "256", "demo", "1", "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+        {"hpke-nl3", "32", "", "0", "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpke-nl3", "64", "", "0", "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpke-nl3", "128", "", "0", "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+        {"hpke-nl3", "256", "demo", "1", "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+        {"oprf", "256", "demo", "1", "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+        {"hkex-rnl", "32", "", "0", "demo", "far below 2^87 (not estimated)", "py go java", ""},
+        {"hkex-rnl", "64", "", "0", "demo", "far below 2^87 (not estimated)", "py go java", ""},
+        {"hkex-rnl", "128", "", "0", "demo", "far below 2^87 (not estimated)", "py go java", ""},
+        {"hkex-rnl", "256", "demo", "0", "demo", "far below 2^87 (not estimated)", "py go java", ""},
+        {"hkex-rnl", "512", "", "0", "withdrawn", "~2^87 classical, ~2^79 quantum", "", "SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical bits, short of the 128 it was claimed to give"},
+        {"hkex-rnl", "1024", "128", "1", "production", ">= 2^128 classical (conjectured; SECURITY.md)", "py go c java", ""},
+        {"hpks-stern", "32", "", "0", "demo", "below 2^30", "py go", ""},
+        {"hpks-stern", "64", "", "0", "demo", "below 2^30", "py go", ""},
+        {"hpks-stern", "128", "", "0", "demo", "below 2^30", "py go", ""},
+        {"hpks-stern", "256", "demo", "1", "demo", "~2^30-2^40 (SECURITY.md)", "py go c java", ""},
+        {"hpke-stern", "32", "", "0", "demo", "below 2^30", "py go", ""},
+        {"hpke-stern", "64", "", "0", "demo", "below 2^30", "py go", ""},
+        {"hpke-stern", "128", "", "0", "demo", "below 2^30", "py go", ""},
+        {"hpke-stern", "256", "demo", "1", "demo", "~2^30-2^40 (SECURITY.md)", "py go c java", ""},
+        {"hcred", "32", "", "0", "demo", "research construction; its Stern-F half below 2^30", "py go", ""},
+        {"hcred", "64", "", "0", "demo", "research construction; its Stern-F half below 2^30", "py go", ""},
+        {"hcred", "128", "", "0", "demo", "research construction; its Stern-F half below 2^30", "py go", ""},
+        {"hcred", "256", "demo", "1", "demo", "research construction; its Stern-F half ~2^30-2^40 (SECURITY.md)", "py go c java", ""},
+        {"hpke-stern-kem", "-1", "128", "1", "demo-only", "2^128 classical by its parameters (BIKE-128)", "py go c java", ""},
+        {"hpks-zkp-nl", "8", "demo", "1", "demo", "demonstration keypair; no security claim", "py go c java", ""},
+    };
+    static final String[] PARAM_LEVELS = {"demo", "128", "192", "256"};
+    static final String[] PARAM_FIXED = {"hpks-wots", "hpks-xmss"};
+    static final String[] PARAM_OWN_BITS = {"hpks-zkp-nl"};
+    static final String[][] PARAM_LEVEL_NOTES = {
+        {"hcred", "128-bit Stern-F parameters are TODO #382"},
+        {"hkex-gf", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)"},
+        {"hpke", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)"},
+        {"hpke-nl", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)"},
+        {"hpke-nl3", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)"},
+        {"hpke-stern", "128-bit Stern-F parameters are TODO #382"},
+        {"hpks", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)"},
+        {"hpks-nl", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)"},
+        {"hpks-stern", "128-bit Stern-F parameters are TODO #382"},
+        {"oprf", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)"},
+    };
+    static final int PARAM_GAP_TODO = 384;
+
 }

@@ -178,7 +178,7 @@ decimal integer from <lo> to <hi>, got '<v>'" (TODO #375, #380): --kdf-iteration
 1..100000000, --xmss-height 1..20, rand --bytes 0..33554432 (one seed's worth of DRBG
 output), every --rounds and --min-rounds 1..4096 (what every verifier accepts), twk
 --sector 0..2^64-1 and --bidx 0..2^32-1.  An explicit value is never read as the
-default: sign --rounds 0 is refused, not signed at 219.  (genpkey --bits: TODO #379.)
+default: sign --rounds 0 is refused, not signed at 219.  (genpkey --bits / --level: below.)
 
 One rule for the shape of a command line, in all four CLIs (TODO #381): --flag=value
 is --flag value, and a boolean flag (--aead --decrypt --encrypt --hex --pubout --text
@@ -189,9 +189,21 @@ fails "Is a directory".  A flag Python's argparse requires is required in every 
 used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spelled "-".
 (Python's own refusals keep argparse's wording.)
 
-  genpkey --algo <ID> [--bits N] [--xmss-height N] [--passphrase P [--kdf-iterations N]] --out FILE
+  genpkey --algo <ID> [--bits N | --level L] [--xmss-height N] [--passphrase P [--kdf-iterations N]] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,
              hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss, hpks-wots, hcred
+    Key sizes come from one table, spec's key_parameter_sets, generated into all four
+    CLIs (TODO #379).  --level names the strength a set is sized for: demo, 128 (192 and
+    256 reserved); --bits names a row by width (key width, HKEX-RNL ring dimension or
+    Stern-F N) and is kept for compatibility.  GF family (hkex-gf hpks hpks-nl hpke
+    hpke-nl hpke-nl3): --bits 32|64|128|256, --level demo = 256, no --level 128 (demo-only
+    at every width).  oprf: 256.  hkex-rnl: 32|64|128|256 (demo), 1024 = --level 128
+    (default); 512 refused as withdrawn.  hpks-stern, hpke-stern, hcred: 32|64|128|256,
+    --level demo = 256.  hpke-stern-kem: --level 128 only.  hpks-zkp-nl: --bits any even
+    n <= 64, --level demo = 8.  hpks-wots, hpks-xmss: neither flag.  Below the default a
+    stderr warning gives the estimated security.  Widths below 256 run in Python and Go
+    (hkex-rnl also in Java); C and Java refuse them "not yet supported by this CLI"
+    (TODO #383 / #384).  Anything else fails by name; --bits with --level fails.
     --passphrase writes a HERRADURA ENCRYPTED PRIVATE KEY envelope.  An empty
     passphrase, and --kdf-iterations without --passphrase, are refused by name in
     every CLI (TODO #376; Python and Go used to write the key in the clear).

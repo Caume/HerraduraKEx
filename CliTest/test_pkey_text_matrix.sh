@@ -20,8 +20,8 @@
 #   2. oprf has no public half: every CLI refuses `pkey --pubout` on it, after
 #      an accept-control (--pubout on an hpks key succeeds).
 #   3. genpkey hpks-zkp-nl --bits: omitted -> n = 8, 64 -> n = 64 (accept-
-#      controls), 256 and 7 -> refused.  C has no --bits (an acknowledged
-#      cli_surface_gaps row), so this section runs on py, go and java only.
+#      controls), 256 and 7 -> refused, in all four CLIs (C gained --bits in
+#      TODO #379; until then this section ran on py, go and java only).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -97,7 +97,7 @@ for c in "${LANGS[@]}"; do
 done
 
 # ── 3. genpkey hpks-zkp-nl --bits ───────────────────────────────────────────
-for c in py go java; do
+for c in py go java c; do
     for case_ in "none 8" "64 64" "256 refuse" "7 refuse"; do
         set -- $case_; b=$1; want=$2; k="$TMP/zb_${c}_$b.pem"; rm -f "$k"
         bits=(); [ "$b" != none ] && bits=(--bits "$b")

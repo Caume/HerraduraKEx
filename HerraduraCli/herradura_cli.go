@@ -1383,10 +1383,149 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 // comparing against this value, so an explicit --bits 256 is not "unset" (#374).
 const genpkeyDefaultBits = 256
 
+// paramSet is one row of genpkey's key parameter-set table (TODO #379); the
+// rows are generated into paramSets by spec/generate_spec.py.
+type paramSet struct {
+	algo      string
+	bits      int // -1: no --bits value names this row
+	level     string
+	isDefault bool
+	status    string
+	security  string
+	ports     string // the CLIs that run this row today
+	withdrawn string
+}
+
+func strIn(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveKeyParams resolves genpkey's --bits / --level against paramSets.  It
+// returns the row's bits (-1 for a row with no width), 0 when the algorithm has
+// fixed parameters and neither flag was given, or -2 when --bits goes to the
+// algorithm's own rule (hpks-zkp-nl).  Every refusal happens here, before any
+// key is generated, with the message the other three CLIs print.
+func resolveKeyParams(algo string, bitsSet bool, bitsS string, levelSet bool, levelS string) int {
+	fail := func(f string, a ...interface{}) {
+		fmt.Fprintf(os.Stderr, f+"\n", a...)
+		os.Exit(1)
+	}
+	if strIn(paramFixed, algo) {
+		if bitsSet || levelSet {
+			fail("genpkey: --algo %s has fixed parameters; --bits and --level do not apply", algo)
+		}
+		return 0
+	}
+	if bitsSet && levelSet {
+		fail("genpkey: give --bits or --level, not both")
+	}
+	var rows []paramSet
+	for _, r := range paramSets {
+		if r.algo == algo {
+			rows = append(rows, r)
+		}
+	}
+	if len(rows) == 0 {
+		return 0
+	}
+	var row paramSet
+	found := false
+	switch {
+	case levelSet:
+		if !strIn(paramLevels, levelS) {
+			fail("genpkey: --level must be one of %s, got '%s'", strings.Join(paramLevels, ", "), levelS)
+		}
+		for _, r := range rows {
+			if r.level == levelS {
+				row, found = r, true
+			}
+		}
+		if !found {
+			var avail []string
+			for _, l := range paramLevels {
+				for _, r := range rows {
+					if r.level == l {
+						avail = append(avail, l)
+						break
+					}
+				}
+			}
+			msg := fmt.Sprintf("genpkey: --level %s is not available for --algo %s (available: %s)",
+				levelS, algo, strings.Join(avail, ", "))
+			if note, ok := paramLevelNotes[algo]; ok {
+				msg += "; " + note
+			}
+			fail("%s", msg)
+		}
+	case bitsSet:
+		if strIn(paramOwnBits, algo) {
+			return -2
+		}
+		var listed []string
+		firstLevel := ""
+		for _, r := range rows {
+			if r.bits > 0 && r.withdrawn == "" {
+				listed = append(listed, strconv.Itoa(r.bits))
+			}
+			if firstLevel == "" && r.level != "" {
+				firstLevel = r.level
+			}
+		}
+		if len(listed) == 0 {
+			fail("genpkey: --bits does not apply to --algo %s (use --level %s)", algo, firstLevel)
+		}
+		for _, r := range rows {
+			if r.bits > 0 && strconv.Itoa(r.bits) == bitsS {
+				row, found = r, true
+			}
+		}
+		if !found {
+			fail("genpkey: --bits must be one of %s for --algo %s, got '%s'",
+				strings.Join(listed, ", "), algo, bitsS)
+		}
+		if row.withdrawn != "" {
+			fail("genpkey: --bits %d for --algo %s is withdrawn: %s", row.bits, algo, row.withdrawn)
+		}
+	default:
+		for _, r := range rows {
+			if r.isDefault {
+				row = r
+			}
+		}
+	}
+	if !strIn(strings.Fields(row.ports), "go") {
+		var here []string
+		for _, r := range rows {
+			if r.bits > 0 && strIn(strings.Fields(r.ports), "go") {
+				here = append(here, strconv.Itoa(r.bits))
+			}
+		}
+		fail("genpkey: --algo %s at %d bits is not yet supported by this CLI (supported here: %s)",
+			algo, row.bits, strings.Join(here, ", "))
+	}
+	dflt := 0
+	for _, r := range rows {
+		if r.isDefault {
+			dflt = r.bits
+		}
+	}
+	if row.bits > 0 && row.bits < dflt {
+		fmt.Fprintf(os.Stderr, "WARNING: --algo %s at %d bits is a demonstration width (estimated security: %s)\n",
+			algo, row.bits, row.security)
+	}
+	return row.bits
+}
+
 func cmdGenpkey(args []string) {
 	fs := flag.NewFlagSet("genpkey", flag.ExitOnError)
 	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hpks|hpks-nl|hpke|hpke-nl|hpke-nl3|hpks-stern|hpke-stern|hcred|hpks-wots|hpks-xmss)")
-	bits := fs.Int("bits", genpkeyDefaultBits, "Key size in bits")
+	bitsS := fs.String("bits", "", "Key size in bits: key width, HKEX-RNL ring dimension or Stern-F N, from the algorithm's listed values (TODO #379); prefer --level")
+	levelS := fs.String("level", "", "Parameter set by the strength it is sized for: demo, 128 (192, 256 reserved)")
 	out  := fs.String("out", "-", "Output path (- = stdout)")
 	xmssHeightS := fs.String("xmss-height", "10", "hpks-xmss: tree height (2^H leaves, 1 to 20)")
 	passphrase := fs.String("passphrase", "", "Encrypt the exported private key under this passphrase (TODO #268)")
@@ -1413,28 +1552,23 @@ func cmdGenpkey(args []string) {
 		os.Exit(1)
 	}
 
-	n := *bits
+	// TODO #379: every width comes from the parameter-set table.
+	n := resolveKeyParams(*algo, isSet(fs, "bits"), *bitsS, isSet(fs, "level"), *levelS)
 
 	var pem string
 	var err error
 
 	switch {
 	case classicalAlgos[*algo]:
-		// An unlisted --bits normalises to 256, as it always has: the width
-		// selects the GF polynomial and there is one only for 32/64/128/256.
-		if _, perr := BaGfPoly(n); perr != nil {
-			n = 256
-		}
+		// TODO #379: an unlisted --bits used to normalise silently to 256;
+		// resolveKeyParams now refuses it by name.
 		a := NewRandBitArray(n)
 		C := GfPow(GfGenBA(n), a)
 		pem, err = encodeClassicalPriv(a.BigInt(), C.BigInt(), n, *algo)
 
 	case *algo == "hkex-rnl":
-		// Ring dimension is independent of the key width (TODO #223); --bits
-		// still overrides, for interop with older/other sizes.
-		if !isSet(fs, "bits") {
-			n = RnlN
-		}
+		// Ring dimension is independent of the key width (TODO #223); the
+		// table's rows choose it (TODO #379).
 		mBase  := RnlMPoly(n)
 		aRand  := RnlRandPoly(n, RnlQ)
 		mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
@@ -1472,14 +1606,19 @@ func cmdGenpkey(args []string) {
 		// its default -- an explicit --bits 256 used to read as unset and wrote
 		// an n = 8 key; it now fails the range check below.
 		zkpN := ZkpNlDefaultN
-		if isSet(fs, "bits") {
-			zkpN = n
-		}
-		if zkpN <= 0 || zkpN%2 != 0 || zkpN > ZkpNlMaxN {
-			fmt.Fprintf(os.Stderr,
-				"genpkey hpks-zkp-nl: --bits must be a positive even integer <= %d, got %d\n",
-				ZkpNlMaxN, zkpN)
-			os.Exit(1)
+		if n == -2 { // TODO #379: --bits is a string now, read as decimal digits
+			v, perr := strconv.Atoi(*bitsS)
+			ok := perr == nil && *bitsS != ""
+			for _, ch := range *bitsS {
+				ok = ok && ch >= '0' && ch <= '9'
+			}
+			if !ok || v <= 0 || v%2 != 0 || v > ZkpNlMaxN {
+				fmt.Fprintf(os.Stderr,
+					"genpkey hpks-zkp-nl: --bits must be a positive even integer <= %d, got %s\n",
+					ZkpNlMaxN, *bitsS)
+				os.Exit(1)
+			}
+			zkpN = v
 		}
 		A, B, y, kerr := ZkpNlKeygen(zkpN)
 		if kerr != nil {
@@ -6978,6 +7117,72 @@ func hkxRuleEquals(label string, k int, x, want int64) string {
 	}
 	return fmt.Sprintf("%s: field %d is %d (expected %d)", label, k, x, want)
 }
+// TODO #379: genpkey's key parameter sets (--bits / --level); bits -1: no
+// --bits value names the row.  ports: the CLIs that run the row today.
+var paramSets = []paramSet{
+	{"hkex-gf", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hkex-gf", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hkex-gf", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hkex-gf", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpks", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpks", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpks", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpks", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpks-nl", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpks-nl", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpks-nl", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpks-nl", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke-nl", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke-nl", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke-nl", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke-nl", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke-nl3", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke-nl3", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke-nl3", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go", ""},
+	{"hpke-nl3", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"oprf", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hkex-rnl", 32, "", false, "demo", "far below 2^87 (not estimated)", "py go java", ""},
+	{"hkex-rnl", 64, "", false, "demo", "far below 2^87 (not estimated)", "py go java", ""},
+	{"hkex-rnl", 128, "", false, "demo", "far below 2^87 (not estimated)", "py go java", ""},
+	{"hkex-rnl", 256, "demo", false, "demo", "far below 2^87 (not estimated)", "py go java", ""},
+	{"hkex-rnl", 512, "", false, "withdrawn", "~2^87 classical, ~2^79 quantum", "", "SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical bits, short of the 128 it was claimed to give"},
+	{"hkex-rnl", 1024, "128", true, "production", ">= 2^128 classical (conjectured; SECURITY.md)", "py go c java", ""},
+	{"hpks-stern", 32, "", false, "demo", "below 2^30", "py go", ""},
+	{"hpks-stern", 64, "", false, "demo", "below 2^30", "py go", ""},
+	{"hpks-stern", 128, "", false, "demo", "below 2^30", "py go", ""},
+	{"hpks-stern", 256, "demo", true, "demo", "~2^30-2^40 (SECURITY.md)", "py go c java", ""},
+	{"hpke-stern", 32, "", false, "demo", "below 2^30", "py go", ""},
+	{"hpke-stern", 64, "", false, "demo", "below 2^30", "py go", ""},
+	{"hpke-stern", 128, "", false, "demo", "below 2^30", "py go", ""},
+	{"hpke-stern", 256, "demo", true, "demo", "~2^30-2^40 (SECURITY.md)", "py go c java", ""},
+	{"hcred", 32, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go", ""},
+	{"hcred", 64, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go", ""},
+	{"hcred", 128, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go", ""},
+	{"hcred", 256, "demo", true, "demo", "research construction; its Stern-F half ~2^30-2^40 (SECURITY.md)", "py go c java", ""},
+	{"hpke-stern-kem", -1, "128", true, "demo-only", "2^128 classical by its parameters (BIKE-128)", "py go c java", ""},
+	{"hpks-zkp-nl", 8, "demo", true, "demo", "demonstration keypair; no security claim", "py go c java", ""},
+}
+
+var paramLevels = []string{"demo", "128", "192", "256"}
+var paramFixed = []string{"hpks-wots", "hpks-xmss"}
+var paramOwnBits = []string{"hpks-zkp-nl"}
+var paramLevelNotes = map[string]string{
+	"hcred": "128-bit Stern-F parameters are TODO #382",
+	"hkex-gf": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpke": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpke-nl": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpke-nl3": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpke-stern": "128-bit Stern-F parameters are TODO #382",
+	"hpks": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpks-nl": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpks-stern": "128-bit Stern-F parameters are TODO #382",
+	"oprf": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+}
+
 // END GENERATED key-label table
 
 // pemFileLabel returns the first PEM BEGIN label in path, or "" (unreadable or
@@ -7068,8 +7273,8 @@ required):
   encfile              --algo --in --key --out
                        --algo: hske-nla1
   fpe                  --context --decrypt --encrypt --in --key --out --v3
-  genpkey              --algo --bits --kdf-iterations --out --passphrase
-                       --xmss-height
+  genpkey              --algo --bits --kdf-iterations --level --out
+                       --passphrase --xmss-height
                        --algo: hcred hkex-gf hkex-rnl hpke hpke-nl hpke-nl3
                                hpke-stern hpke-stern-kem hpks hpks-nl
                                hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf

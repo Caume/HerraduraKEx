@@ -343,6 +343,37 @@
         }
       }
     },
+    "key_parameter_sets": {
+      "type": "object",
+      "description": "genpkey's key parameter sets (TODO #379): one row per (--algo, --bits value), chosen by --bits or by --level (the strength a row's parameters are sized for: demo, or a classical strength in bits). Curated in spec/generate_spec.py and emitted beside the key-label table into all four CLIs, each of which resolves --bits / --level against it before generating a key. `ports` lists the CLIs that run a row today; the others refuse it by name, pointing at `port_gap_todo`. A row's `security` is an estimate with its source, and its `status` is the protocol's for a strength-level row and \"demo\" otherwise. bits -1 marks a row no --bits value names.",
+      "required": ["levels", "fixed_algos", "own_bits_rule", "port_gap_todo", "level_notes", "rows"],
+      "additionalProperties": false,
+      "properties": {
+        "levels": {"type": "array", "items": {"type": "string"}},
+        "fixed_algos": {"type": "array", "items": {"type": "string"}},
+        "own_bits_rule": {"type": "array", "items": {"type": "string"}},
+        "port_gap_todo": {"type": "object", "additionalProperties": {"type": "integer"}},
+        "level_notes": {"type": "object", "additionalProperties": {"type": "string"}},
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["algo", "bits", "level", "default", "status", "security", "ports", "withdrawn"],
+            "additionalProperties": false,
+            "properties": {
+              "algo": {"type": "string"},
+              "bits": {"type": "integer", "minimum": -1},
+              "level": {"type": ["string", "null"]},
+              "default": {"type": "boolean"},
+              "status": {"type": "string"},
+              "security": {"type": "string"},
+              "ports": {"type": "array", "items": {"enum": ["py", "go", "c", "java"]}},
+              "withdrawn": {"type": ["string", "null"]}
+            }
+          }
+        }
+      }
+    },
     "key_label_acceptance": {
       "type": "array",
       "description": "Which key PEM labels each (subcommand, --algo, key flag) accepts (TODO #366). Curated policy in spec/generate_spec.py, emitted into all four CLIs (HerraduraCli/key_label_table.h, bindings/java/herradurakex/KeyLabelTable.java, and generated regions of herradura_cli.go and herradura.py). A key whose label is not listed is refused with 'wrong key type'. Public-key slots accept PUBLIC labels only. `algo` is empty for subcommands without --algo; `pkey` reads any key and has no row.",

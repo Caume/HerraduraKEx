@@ -1173,6 +1173,117 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 4, enc[4][0], F[1] * 2 * (F[0]//8))
             return None
     return None
+
+# TODO #379: genpkey's key parameter sets (--bits / --level); bits -1: no
+# --bits value names the row.  ports: the CLIs that run the row today.
+_PARAM_SETS = (
+    ('hkex-gf', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hkex-gf', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hkex-gf', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hkex-gf', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpks', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpks', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpks', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpks', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpks-nl', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpks-nl', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpks-nl', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpks-nl', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpke', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpke', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpke', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke-nl', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpke-nl', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpke-nl', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpke-nl', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke-nl3', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpke-nl3', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpke-nl3', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go', None),
+    ('hpke-nl3', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('oprf', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hkex-rnl', 32, None, False, 'demo',
+     'far below 2^87 (not estimated)', 'py go java', None),
+    ('hkex-rnl', 64, None, False, 'demo',
+     'far below 2^87 (not estimated)', 'py go java', None),
+    ('hkex-rnl', 128, None, False, 'demo',
+     'far below 2^87 (not estimated)', 'py go java', None),
+    ('hkex-rnl', 256, 'demo', False, 'demo',
+     'far below 2^87 (not estimated)', 'py go java', None),
+    ('hkex-rnl', 512, None, False, 'withdrawn',
+     '~2^87 classical, ~2^79 quantum', '', 'SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical bits, short of the 128 it was claimed to give'),
+    ('hkex-rnl', 1024, '128', True, 'production',
+     '>= 2^128 classical (conjectured; SECURITY.md)', 'py go c java', None),
+    ('hpks-stern', 32, None, False, 'demo',
+     'below 2^30', 'py go', None),
+    ('hpks-stern', 64, None, False, 'demo',
+     'below 2^30', 'py go', None),
+    ('hpks-stern', 128, None, False, 'demo',
+     'below 2^30', 'py go', None),
+    ('hpks-stern', 256, 'demo', True, 'demo',
+     '~2^30-2^40 (SECURITY.md)', 'py go c java', None),
+    ('hpke-stern', 32, None, False, 'demo',
+     'below 2^30', 'py go', None),
+    ('hpke-stern', 64, None, False, 'demo',
+     'below 2^30', 'py go', None),
+    ('hpke-stern', 128, None, False, 'demo',
+     'below 2^30', 'py go', None),
+    ('hpke-stern', 256, 'demo', True, 'demo',
+     '~2^30-2^40 (SECURITY.md)', 'py go c java', None),
+    ('hcred', 32, None, False, 'demo',
+     'research construction; its Stern-F half below 2^30', 'py go', None),
+    ('hcred', 64, None, False, 'demo',
+     'research construction; its Stern-F half below 2^30', 'py go', None),
+    ('hcred', 128, None, False, 'demo',
+     'research construction; its Stern-F half below 2^30', 'py go', None),
+    ('hcred', 256, 'demo', True, 'demo',
+     'research construction; its Stern-F half ~2^30-2^40 (SECURITY.md)', 'py go c java', None),
+    ('hpke-stern-kem', -1, '128', True, 'demo-only',
+     '2^128 classical by its parameters (BIKE-128)', 'py go c java', None),
+    ('hpks-zkp-nl', 8, 'demo', True, 'demo',
+     'demonstration keypair; no security claim', 'py go c java', None),
+)
+_PARAM_LEVELS = ('demo', '128', '192', '256')
+_PARAM_FIXED = ('hpks-wots', 'hpks-xmss')
+_PARAM_OWN_BITS = ('hpks-zkp-nl',)
+_PARAM_LEVEL_NOTES = {
+    'hcred': '128-bit Stern-F parameters are TODO #382',
+    'hkex-gf': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpke': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpke-nl': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpke-nl3': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpke-stern': '128-bit Stern-F parameters are TODO #382',
+    'hpks': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpks-nl': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpks-stern': '128-bit Stern-F parameters are TODO #382',
+    'oprf': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+}
+
 # END GENERATED key-label table
 
 
@@ -2671,9 +2782,62 @@ def _sym256_ok(nbits, ctx, what='key'):
 # Sub-command: genpkey
 # ---------------------------------------------------------------------------
 
+def _resolve_key_params(algo, bits_s, level_s, port='py'):
+    """TODO #379: resolve genpkey's --bits / --level against _PARAM_SETS (the
+    generated table).  Returns the row's bits (-1 for a row with no width), or
+    None when the algorithm has fixed parameters and neither flag was given, or
+    the string 'own' when --bits goes to the algorithm's own rule (hpks-zkp-nl).
+    Every refusal happens here, before any key is generated."""
+    if algo in _PARAM_FIXED:
+        if bits_s is not None or level_s is not None:
+            sys.exit(f"genpkey: --algo {algo} has fixed parameters; "
+                     f"--bits and --level do not apply")
+        return None
+    if bits_s is not None and level_s is not None:
+        sys.exit("genpkey: give --bits or --level, not both")
+    rows = [r for r in _PARAM_SETS if r[0] == algo]
+    if not rows:
+        return None
+    if level_s is not None:
+        if level_s not in _PARAM_LEVELS:
+            sys.exit(f"genpkey: --level must be one of {', '.join(_PARAM_LEVELS)}, "
+                     f"got '{level_s}'")
+        match = [r for r in rows if r[2] == level_s]
+        if not match:
+            avail = ', '.join(l for l in _PARAM_LEVELS if any(r[2] == l for r in rows))
+            note = _PARAM_LEVEL_NOTES.get(algo)
+            sys.exit(f"genpkey: --level {level_s} is not available for --algo {algo} "
+                     f"(available: {avail})" + (f"; {note}" if note else ""))
+        row = match[0]
+    elif bits_s is not None:
+        if algo in _PARAM_OWN_BITS:
+            return 'own'
+        listed = [r for r in rows if r[1] > 0 and not r[7]]
+        if not listed:
+            sys.exit(f"genpkey: --bits does not apply to --algo {algo} "
+                     f"(use --level {next(r[2] for r in rows if r[2])})")
+        match = [r for r in rows if r[1] > 0 and str(r[1]) == bits_s]
+        if not match:
+            sys.exit(f"genpkey: --bits must be one of "
+                     f"{', '.join(str(r[1]) for r in listed)} for --algo {algo}, got '{bits_s}'")
+        row = match[0]
+        if row[7]:
+            sys.exit(f"genpkey: --bits {row[1]} for --algo {algo} is withdrawn: {row[7]}")
+    else:
+        row = next(r for r in rows if r[3])
+    if port not in row[6].split():
+        here = ', '.join(str(r[1]) for r in rows if port in r[6].split() and r[1] > 0)
+        sys.exit(f"genpkey: --algo {algo} at {row[1]} bits is not yet supported by "
+                 f"this CLI (supported here: {here})")
+    dflt = next(r for r in rows if r[3])[1]
+    if 0 < row[1] < dflt:
+        print(f"WARNING: --algo {algo} at {row[1]} bits is a demonstration width "
+              f"(estimated security: {row[5]})", file=sys.stderr)
+    return row[1]
+
+
 def cmd_genpkey(args):
     algo = args.algo
-    bits = args.bits or KEYBITS
     # TODO #376: a GIVEN passphrase must be non-empty.  Before #376 this read
     # --passphrase '' as no passphrase and wrote the key in the clear, and
     # accepted --kdf-iterations alone and ignored it.  Both are refused before
@@ -2682,9 +2846,11 @@ def cmd_genpkey(args):
         sys.exit("genpkey: --passphrase must not be empty")
     if args.kdf_iterations is not None and args.passphrase is None:
         sys.exit("genpkey: --kdf-iterations requires --passphrase")
+    # TODO #379: every width comes from the parameter-set table.
+    bits = _resolve_key_params(algo, args.bits, args.level)
 
     if algo in _CLASSICAL_GF_ALGOS:
-        poly    = GF_POLY.get(bits, GF_POLY[256])
+        poly    = GF_POLY[bits]
         a       = BitArray.random(bits)
         C       = BitArray(bits, gf_pow(GF_GEN, a.uint, poly, bits))
         pem_out = _encode_classical_privkey(a.uint, C.uint, bits, algo)
@@ -2693,7 +2859,7 @@ def cmd_genpkey(args):
         # Ring dimension is independent of the derived key width (TODO #223):
         # the ring must be 1024 for 128-bit security, the session key stays
         # KEYBITS.  --bits still overrides, for interop with older/other sizes.
-        n       = args.bits or RNLN
+        n       = bits
         m_base  = _rnl_m_poly(n)
         a_rand  = _rnl_rand_poly(n, RNLQ)
         m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)   # randomised m_blind
@@ -2709,7 +2875,13 @@ def cmd_genpkey(args):
     elif algo in _ZKP_NL_ALGOS:
         # TODO #374: "unset" is args.bits is None, not bits == KEYBITS -- an
         # explicit --bits 256 used to read as unset and wrote an n = 8 key.
-        n = args.bits if args.bits is not None else _ZKP_NL_DEFAULT_N
+        n = _ZKP_NL_DEFAULT_N
+        if bits == 'own':
+            # TODO #379: the flag is now a string, read as decimal digits here.
+            if not (args.bits.isascii() and args.bits.isdigit()):
+                sys.exit(f'genpkey hpks-zkp-nl: --bits must be a positive even '
+                         f'integer <= {_ZKP_NL_MAX_N}, got {args.bits}')
+            n = int(args.bits)
         # TODO #283: _ZKP_NL_MAX_N is a WIRE bound, and until v6.7.1 it was
         # enforced only on the way IN -- codec.decode_zkp_nl_privkey applies it,
         # genpkey did not -- so this was the one path in the Python CLI that
@@ -2768,7 +2940,7 @@ def cmd_genpkey(args):
         # TODO #369: an omitted --bits means n = 256 (_HCRED_CLI_N), as in C, Go
         # and Java -- it meant the suite's demo width, 32, which C and Java
         # refuse.  --bits N still chooses N; --bits 32 is the fast demo width.
-        n = args.bits if args.bits is not None else _HCRED_CLI_N
+        n = bits
         m_base  = _suite_mod._rnl_m_poly(n)
         a_rand  = _suite_mod._rnl_rand_poly(n, RNLQ)
         m_blind = [(m_base[i] + a_rand[i]) % RNLQ for i in range(n)]
@@ -4409,8 +4581,13 @@ def build_parser():
     # genpkey
     gp = sub.add_parser('genpkey', help='Generate a private key')
     gp.add_argument('--algo', required=True, choices=list(_PRIV_ALGOS) + ['hcred'])
-    gp.add_argument('--bits', type=int, default=None,
-                    help='Key size in bits (default 256; Stern: matrix dimension N)')
+    gp.add_argument('--bits', default=None,
+                    help='Key size in bits: the key width, the HKEX-RNL ring dimension or '
+                         'the Stern-F code length N, from the algorithm\'s listed values '
+                         '(TODO #379); kept for compatibility -- prefer --level')
+    gp.add_argument('--level', default=None,
+                    help='Parameter set by the strength it is sized for: demo, 128 '
+                         '(192 and 256 reserved).  Not every algorithm has every level')
     gp.add_argument('--xmss-height', type=_dec_type('genpkey', '--xmss-height', 1, _XMSS_MAX_H), default=10, dest='xmss_height',
                     help='XMSS tree height (default 10 → 1024 leaves)')
     gp.add_argument('--out', default='-')

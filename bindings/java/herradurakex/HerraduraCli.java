@@ -452,6 +452,82 @@ public final class HerraduraCli {
     // genpkey
     // -----------------------------------------------------------------
 
+    /** TODO #379: resolve genpkey's --bits / --level against
+     *  KeyLabelTable.PARAM_SETS (generated).  Returns the row's bits (-1 for a
+     *  row with no width), 0 when the algorithm has fixed parameters and neither
+     *  flag was given, or -2 when --bits goes to the algorithm's own rule
+     *  (hpks-zkp-nl).  Every refusal happens here, before any key is generated,
+     *  with the message the other three CLIs print.  This CLI runs only each
+     *  algorithm's default row so far, and every hkex-rnl ring; other rows are
+     *  refused naming TODO #384. */
+    static int resolveKeyParams(String algo, String bitsS, String levelS) {
+        java.util.List<String> fixed = Arrays.asList(KeyLabelTable.PARAM_FIXED);
+        java.util.List<String> levels = Arrays.asList(KeyLabelTable.PARAM_LEVELS);
+        if (fixed.contains(algo)) {
+            if (bitsS != null || levelS != null)
+                throw new CliError("genpkey: --algo " + algo + " has fixed parameters; "
+                                   + "--bits and --level do not apply");
+            return 0;
+        }
+        if (bitsS != null && levelS != null) throw new CliError("genpkey: give --bits or --level, not both");
+        java.util.List<String[]> rows = new java.util.ArrayList<>();
+        for (String[] r : KeyLabelTable.PARAM_SETS) if (r[0].equals(algo)) rows.add(r);
+        if (rows.isEmpty()) return 0;
+        String[] row = null, dflt = null;
+        for (String[] r : rows) if (r[3].equals("1")) dflt = r;
+        if (levelS != null) {
+            if (!levels.contains(levelS))
+                throw new CliError("genpkey: --level must be one of " + String.join(", ", levels)
+                                   + ", got '" + levelS + "'");
+            for (String[] r : rows) if (r[2].equals(levelS)) row = r;
+            if (row == null) {
+                java.util.List<String> avail = new java.util.ArrayList<>();
+                for (String l : levels)
+                    for (String[] r : rows) if (r[2].equals(l)) { avail.add(l); break; }
+                String m = "genpkey: --level " + levelS + " is not available for --algo " + algo
+                         + " (available: " + String.join(", ", avail) + ")";
+                for (String[] nt : KeyLabelTable.PARAM_LEVEL_NOTES)
+                    if (nt[0].equals(algo)) m += "; " + nt[1];
+                throw new CliError(m);
+            }
+        } else if (bitsS != null) {
+            if (Arrays.asList(KeyLabelTable.PARAM_OWN_BITS).contains(algo)) return -2;
+            java.util.List<String> listed = new java.util.ArrayList<>();
+            String firstLevel = null;
+            for (String[] r : rows) {
+                int b = Integer.parseInt(r[1]);
+                if (firstLevel == null && !r[2].isEmpty()) firstLevel = r[2];
+                if (b > 0 && r[7].isEmpty()) listed.add(r[1]);
+                if (b > 0 && r[1].equals(bitsS)) row = r;
+            }
+            if (listed.isEmpty())
+                throw new CliError("genpkey: --bits does not apply to --algo " + algo
+                                   + " (use --level " + firstLevel + ")");
+            if (row == null)
+                throw new CliError("genpkey: --bits must be one of " + String.join(", ", listed)
+                                   + " for --algo " + algo + ", got '" + bitsS + "'");
+            if (!row[7].isEmpty())
+                throw new CliError("genpkey: --bits " + row[1] + " for --algo " + algo
+                                   + " is withdrawn: " + row[7]);
+        } else {
+            row = dflt;
+        }
+        if (!Arrays.asList(row[6].split(" ")).contains("java")) {
+            java.util.List<String> here = new java.util.ArrayList<>();
+            for (String[] r : rows)
+                if (Integer.parseInt(r[1]) > 0 && Arrays.asList(r[6].split(" ")).contains("java"))
+                    here.add(r[1]);
+            throw new CliError("genpkey: --algo " + algo + " at " + row[1] + " bits is not yet "
+                               + "supported by this CLI (supported here: " + String.join(", ", here)
+                               + "; TODO #" + KeyLabelTable.PARAM_GAP_TODO + ")");
+        }
+        int bits = Integer.parseInt(row[1]);
+        if (bits > 0 && bits < Integer.parseInt(dflt[1]))
+            System.err.println("WARNING: --algo " + algo + " at " + bits + " bits is a demonstration "
+                               + "width (estimated security: " + row[5] + ")");
+        return bits;
+    }
+
     private static void cmdGenpkey(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "genpkey");
         String out = opt.getOrDefault("out", "-");
@@ -469,6 +545,8 @@ public final class HerraduraCli {
         } else if (opt.containsKey("kdf-iterations")) {
             throw new CliError("genpkey: --kdf-iterations requires --passphrase");
         }
+        // TODO #379: every width comes from the parameter-set table.
+        final int pbits = resolveKeyParams(algo, opt.get("bits"), opt.get("level"));
 
         if (algo.equals("hpks-stern") || algo.equals("hpke-stern")) {
             sternDemoWarning();
@@ -533,10 +611,15 @@ public final class HerraduraCli {
             // read as omitted and wrote an n = 8 key; it now fails the range check.
             int n = ZKP_NL_DEFAULT_N;
             String nOpt = opt.get("bits");
-            if (nOpt != null) n = Integer.parseInt(nOpt);
-            if (n <= 0 || n % 2 != 0 || n > ZKP_NL_MAX_N) {
-                throw new CliError("genpkey hpks-zkp-nl: --bits must be a positive even "
-                    + "integer <= " + ZKP_NL_MAX_N + ", got " + n);
+            if (pbits == -2) {
+                // TODO #379: decimal digits only; parseInt used to throw on "abc".
+                boolean ok = !nOpt.isEmpty() && nOpt.length() <= 6
+                             && nOpt.chars().allMatch(c -> c >= '0' && c <= '9');
+                n = ok ? Integer.parseInt(nOpt) : -1;
+                if (n <= 0 || n % 2 != 0 || n > ZKP_NL_MAX_N) {
+                    throw new CliError("genpkey hpks-zkp-nl: --bits must be a positive even "
+                        + "integer <= " + ZKP_NL_MAX_N + ", got " + nOpt);
+                }
             }
             BigInteger[] kp = ZkpNl.keygen(n, RNG);
             writeString(out, Codec.encodeZkpNlPrivKey(kp[0], kp[1], kp[2], n));
@@ -544,8 +627,9 @@ public final class HerraduraCli {
         }
 
         if (algo.equals("hkex-rnl")) {
-            // Ring dimension is independent of the derived key width (TODO #223).
-            int n = HerraduraNl.RNLN;
+            // Ring dimension is independent of the derived key width (TODO #223);
+            // the parameter-set table chooses it (TODO #379).
+            int n = pbits;
             int[] mBase = HerraduraNl.rnlMPoly(n);
             int[] aRand = HerraduraNl.rnlRandPoly(n, HerraduraNl.RNLQ, RNG);
             int[] mBlind = HerraduraNl.rnlPolyAdd(mBase, aRand, HerraduraNl.RNLQ);

@@ -2211,3 +2211,41 @@ every CLI as before. One that Go wrote from a short input decrypts to the zero p
 first and the data last, where the other three CLIs put the padding last.
 
 **Why this is MAJOR.** It refuses input existing subcommands accepted, the 2.0.0 surface.
+
+## 43. `genpkey` key sizes come from one table; new `--level` (v16.0.0)
+
+**Who is affected:** a script that passes `genpkey --bits` a value outside the algorithm's
+listed widths, passes `--bits` to `hpks-wots`, `hpks-xmss` or `hpke-stern-kem`, or relies
+on Java ignoring `--bits`.
+
+**What changed (TODO #379).** Every key size `genpkey` makes now comes from one table,
+`key_parameter_sets` in the spec, generated into all four CLIs:
+
+| `--algo` | `--bits` | `--level` |
+|---|---|---|
+| hkex-gf, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3 | 32, 64, 128, 256 (default) | `demo` = 256; no `128`: this family is demo-only at every width |
+| oprf | 256 | `demo` |
+| hkex-rnl (the ring dimension) | 32, 64, 128, 256, 1024 (default) | `demo` = 256, `128` = 1024 |
+| hpks-stern, hpke-stern, hcred | 32, 64, 128, 256 (default) | `demo` = 256 |
+| hpke-stern-kem | none | `128` (its only set) |
+| hpks-zkp-nl | any even n up to 64, as before | `demo` = 8 |
+| hpks-wots, hpks-xmss | none | none |
+
+- Anything else is refused by name before a key is generated
+  (`genpkey: --bits must be one of 32, 64, 128, 256 for --algo hpks, got '100'`). Go
+  used to write a 256-bit key for an unlisted classical width and panic on hkex-rnl,
+  hcred and Stern; Python raised tracebacks; Java ignored the flag and wrote the default.
+- `hkex-rnl --bits 512` is refused as withdrawn (SECURITY.md: about 87 classical bits).
+- `--level` is new; `--bits` stays for compatibility. Giving both is refused.
+- Widths below the default print a stderr warning with the estimated security.
+- Widths below 256 run in Python and Go (and hkex-rnl's in Java). C and Java refuse them
+  with `not yet supported by this CLI (supported here: ...; TODO #383)` (`#384` for Java)
+  instead of failing later or writing the default. C now has `--bits` (for hpks-zkp-nl,
+  every even n up to 64, and each default).
+
+**What to do.** Use `--level demo` or `--level 128`, or a listed `--bits` value. Drop
+`--bits` from `hpks-wots`, `hpks-xmss` and `hpke-stern-kem`. With no flag the defaults are
+unchanged, and existing keys read as before.
+
+**Why this is MAJOR.** It refuses `--bits` values existing `--algo` values accepted, the
+2.0.0 surface.
