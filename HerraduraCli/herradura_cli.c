@@ -19,6 +19,7 @@
 #include "cli_flag_table.h"
 #include "key_label_table.h"   /* TODO #366 */
 #include <sys/stat.h>          /* TODO #381: read_binary_file refuses a directory */
+#include <stdarg.h>            /* dievf */
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * I/O helpers
@@ -34,6 +35,11 @@ static void die(const char *msg) { fputs(msg, stderr); fputc('\n', stderr); exit
     "(SecurityProofs-10.md 11.81, TODO #168, #354)"
 static void dief(const char *fmt, const char *s)
 { fprintf(stderr, fmt, s); fputc('\n', stderr); exit(1); }
+/* printf-style die for a message with numeric fields (TODO #383 stage 4). */
+__attribute__((format(printf, 1, 2), noreturn))
+static void dievf(const char *fmt, ...)
+{ va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
+  fputc('\n', stderr); exit(1); }
 
 /* TODO #372: nothing may follow a PEM's DER SEQUENCE; same text in all four CLIs. */
 static void die_der_trailing(const char *label, long trail)
@@ -503,28 +509,31 @@ static void ba_from_ra_n(BitArray *ba, const uint8_t *src, size_t src_len, int n
     }
 }
 
-/* Pack n Z_q polynomial coefficients into bpc-bytes-per-coeff big-endian blob.
+/* Pack n Z_q polynomial coefficients into bpc-bytes-per-coeff big-endian blob
+ * of n * bpc bytes (n is the ring dimension, TODO #383 stage 4).
  * bpc=4 for s and m (Z_q, q=65537 ≤ 17 bits); bpc=2 for C (Z_p, p=4096 ≤ 12 bits). */
-static void poly_pack(uint8_t *out, const rnl_poly_t p, int bpc)
+static void poly_pack(uint8_t *out, const int32_t *p, int n, int bpc)
 {
     int i, k;
-    for (i = 0; i < RNL_N; i++) {
+    for (i = 0; i < n; i++) {
         uint32_t v = (uint32_t)p[i];
         for (k = bpc - 1; k >= 0; k--) { out[i * bpc + k] = (uint8_t)(v & 0xFF); v >>= 8; }
     }
 }
 
-/* Unpack a bpc-bytes-per-coeff big-endian blob into a Z_q polynomial. */
-static void poly_unpack(rnl_poly_t p, const uint8_t *src, size_t src_len, int bpc)
+/* Unpack a bpc-bytes-per-coeff big-endian blob into n coefficients.  The
+ * loader's field caps (TODO #372) already hold the blob to n * bpc bytes. */
+static void poly_unpack(rnl_poly_t p, const uint8_t *src, size_t src_len, int n, int bpc)
 {
     uint8_t aligned[RNL_N * 4];
-    int total = RNL_N * bpc;
+    int total = n * bpc;
     /* Right-align in case sign byte was stripped (src_len may be total-1). */
     memset(aligned, 0, (size_t)total);
     if ((int)src_len > total) src_len = (size_t)total;
     memcpy(aligned + total - (int)src_len, src, src_len);
     int i, k;
-    for (i = 0; i < RNL_N; i++) {
+    memset(p, 0, sizeof(rnl_poly_t));
+    for (i = 0; i < n; i++) {
         uint32_t v = 0;
         for (k = 0; k < bpc; k++) v = (v << 8) | aligned[i * bpc + k];
         p[i] = (int32_t)v;
@@ -540,14 +549,14 @@ static int der_i32(const uint8_t bytes[KEYBYTES], uint8_t *out, size_t *olen)
 static int der_i_n256(uint8_t *out, size_t *olen)
 { static const uint8_t n[2] = {0x01, 0x00}; return der_int_enc(n, 2, out, olen); }
 
-/* DER INTEGER for the HKEX-RNL ring dimension and for the transmitted hint
- * length (RNL_N/2 coefficients, matching Python's hint[:n//2]).  Since TODO #223
- * RNL_N is 1024 rather than 256, so neither is der_i_n256 any more. */
+/* DER INTEGER for the HKEX-RNL ring dimension n and for the transmitted hint
+ * length (n/2 coefficients, matching Python's hint[:n//2]).  Since TODO #383
+ * stage 4 n is the key's own, not RNL_N. */
 static int der_i_uint(uint64_t v, uint8_t *out, size_t *olen);
-static int der_i_rnl_n(uint8_t *out, size_t *olen)
-{ return der_i_uint((uint64_t)RNL_N, out, olen); }
-static int der_i_rnl_hintlen(uint8_t *out, size_t *olen)
-{ return der_i_uint((uint64_t)(RNL_N / 2), out, olen); }
+static int der_i_rnl_n(int n, uint8_t *out, size_t *olen)
+{ return der_i_uint((uint64_t)n, out, olen); }
+static int der_i_rnl_hintlen(int n, uint8_t *out, size_t *olen)
+{ return der_i_uint((uint64_t)(n / 2), out, olen); }
 
 /* DER INTEGER for an unsigned value, minimal big-endian width (matches Python der_int).
  * Used for the variable ciphertext length in the HSKE-NL-V2-Duplex format. */
@@ -833,12 +842,13 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
  * PEM read helpers
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* HKEX-RNL PEMs carry their ring dimension explicitly, and this build is compiled
- * for one value of RNL_N.  poly_unpack right-aligns whatever it is given into an
- * RNL_N-sized buffer, so a PEM from a different ring would be silently misread as
- * garbage rather than rejected — it produced a wrong public key with exit status 0
- * before TODO #227 added this check.  Fail loudly instead. */
-static void rnl_require_n(const void *pk, int idx, const char *what);
+/* HKEX-RNL PEMs carry their ring dimension explicitly.  Until TODO #383 stage 4
+ * this build ran RNL_N alone and refused every other n (TODO #227: before that a
+ * PEM from another ring was misread with exit 0).  It now runs every power of
+ * two from 8 to RNL_N, as Python, Go and Java do: check_der_width screens the
+ * field at load, rnl_key_n reads it, rnl_same_ring holds a peer artifact to
+ * our key's n. */
+static int rnl_key_n(const void *pk, int idx, const char *what);
 
 /* Read PEM from path or stdin; allocate DER buffer; parse DER SEQUENCE. */
 typedef struct {
@@ -852,22 +862,33 @@ typedef struct {
     int      n_items;
 } PemKey;
 
-static void rnl_require_n(const void *pkv, int idx, const char *what)
+static int rnl_n_ok(long n) { return n >= 8 && n <= RNL_N && (n & (n - 1)) == 0; }
+
+static int rnl_key_n(const void *pkv, int idx, const char *what)
 {
     const PemKey *k = (const PemKey *)pkv;
     uint64_t got = 0;
     size_t i;
     if (k->n_items <= idx)
         dief("%s: malformed HKEX-RNL PEM (no ring-dimension field)", what);
-    for (i = 0; i < k->vlens[idx] && i < 8; i++)
+    if (k->vlens[idx] > 4)
+        dievf("%s: ring dimension n is wider than 32 bits (this CLI runs n = 8..%d, "
+             "a power of two)", what, RNL_N);
+    for (i = 0; i < k->vlens[idx]; i++)
         got = (got << 8) | k->vals[idx][i];
-    if (got != (uint64_t)RNL_N) {
-        fprintf(stderr, "%s: ring dimension mismatch — PEM declares n=%llu but this "
-                        "build is compiled for RNL_N=%d.  Regenerate the key at the "
-                        "deployed ring size (TODO #223 moved it to 1024).\n",
-                what, (unsigned long long)got, RNL_N);
-        exit(1);
-    }
+    if (!rnl_n_ok((long)got))
+        dievf("%s: ring dimension n is %llu (this CLI runs n = 8..%d, a power of two)",
+             what, (unsigned long long)got, RNL_N);
+    return (int)got;
+}
+
+/* A peer artifact over another ring is not one this key can complete with:
+ * refused with Python's text (TODO #383 stage 4).  `kind` is "theirs" for a
+ * public key and "response" for a response. */
+static void rnl_same_ring(int ours, int theirs, const char *kind)
+{
+    if (ours != theirs)
+        dievf("Ring size mismatch: ours n=%d, %s n=%d", ours, kind, theirs);
 }
 
 /* A Stern/ring signature carries its own key width in item[idx].  This build
@@ -876,7 +897,7 @@ static void rnl_require_n(const void *pkv, int idx, const char *what)
  * Java readers now bound and this one does not (TODO #240).  A signature
  * declaring a different width is not one this build can check: fail loudly
  * instead of verifying it against the wrong geometry.  Same reasoning as
- * rnl_require_n above. */
+ * TODO #227's ring-dimension check above. */
 static void stern_require_n(const void *pkv, int idx, const char *what)
 {
     const PemKey *k = (const PemKey *)pkv;
@@ -939,6 +960,8 @@ typedef struct { const char *label; int item; long want; const char *what; } Hkx
 /* TODO #383: want = HKX_W_GF is "any width with a GF(2^n) polynomial" (32, 64,
  * 128, 256 -- BITARRAY.md 4.6), the widths the GF(2^n) family runs at. */
 #define HKX_W_GF (-1L)
+/* want = HKX_W_RNL: an HKEX-RNL ring dimension, a power of two 8..RNL_N. */
+#define HKX_W_RNL (-2L)
 static const HkxWidthRow HKX_WIDTH[] = {
     { PEM_HKEX_GF_PRIV, -1, HKX_W_GF, "n" },   { PEM_HKEX_GF_PUB, -1, HKX_W_GF, "n" },
     { PEM_HPKS_PRIV, -1, HKX_W_GF, "n" },      { PEM_HPKS_PUB, -1, HKX_W_GF, "n" },
@@ -957,7 +980,10 @@ static const HkxWidthRow HKX_WIDTH[] = {
     { PEM_HPKE_STERN_KEM_PUB, 1, QCMDPC_R, "r" },
     { PEM_HPKE_STERN_KEM_PRIV, 4, QCMDPC_R, "r" },
     { PEM_HPKE_STERN_KEM_CT, 2, QCMDPC_R, "r" },
-    { PEM_HYBRID_RESPONSE, 3, RNL_N, "n" },   { PEM_HYBRID_RESPONSE, 7, QCMDPC_R, "r" },
+    /* TODO #383 stage 4: HKEX-RNL runs every power-of-two ring up to RNL_N */
+    { PEM_HKEX_RNL_PRIV, 2, HKX_W_RNL, "n" },  { PEM_HKEX_RNL_PUB, 2, HKX_W_RNL, "n" },
+    { PEM_RNL_RESPONSE, 3, HKX_W_RNL, "n" },
+    { PEM_HYBRID_RESPONSE, 3, HKX_W_RNL, "n" }, { PEM_HYBRID_RESPONSE, 7, QCMDPC_R, "r" },
 };
 
 /* A DER INTEGER's value bytes as a width, or -1 if it is too wide to be one. */
@@ -1009,6 +1035,13 @@ static void check_der_width(const PemKey *k)
         long got = der_small(k->vals[idx], k->vlens[idx]);
         if (r->want == HKX_W_GF) {
             if (!gf_width_ok(got)) gf_width_refuse(k->label, got);
+        } else if (r->want == HKX_W_RNL) {
+            if (got < 0)
+                dievf("PEM '%s': ring dimension n is wider than 32 bits (this CLI runs "
+                     "n = 8..%d, a power of two)", k->label, RNL_N);
+            if (!rnl_n_ok(got))
+                dievf("PEM '%s': ring dimension n is %ld (this CLI runs n = 8..%d, "
+                     "a power of two)", k->label, got, RNL_N);
         } else if (got != r->want) width_refuse(k->label, r->what, got, r->want);
     }
 }
@@ -1130,7 +1163,7 @@ static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, siz
             want = 4 + 3 * (size_t)((hn + 7) / 8);
         else if (hn > 0 && hn <= ZKP_NL_MAX_N && strcmp(label, PEM_ZKP_NL_PUB) == 0)
             want = 4 + 2 * (size_t)((hn + 7) / 8);
-        else if (hn == RNL_N && strcmp(label, PEM_ZKP_RNL_PROOF) == 0)
+        else if (hn <= RNL_N && strcmp(label, PEM_ZKP_RNL_PROOF) == 0)
             want = 4 + (size_t)hn * 12;
         else if (hcred_n_ok((int)hn) && strcmp(label, PEM_HCRED_PRIV) == 0)
             want = 4 + (size_t)hn * 8 + hn / 8 + (hn / 2 + 7) / 8;
@@ -1621,29 +1654,32 @@ static void cmd_genpkey(int argc, char **argv)
     }
 
     if (strcmp(algo, "hkex-rnl") == 0) {
+        /* TODO #383 stage 4: the row's ring dimension (1024 by default) */
+        const int n = pbits;
         rnl_poly_t m_base, a_rand, m_blind, s_poly, C_poly;
-        rnl_m_poly(m_base);
-        rnl_rand_poly(a_rand, urnd);
-        rnl_poly_add(m_blind, m_base, a_rand);
-        rnl_keygen(s_poly, C_poly, m_blind, urnd);
+        rnl_m_poly_dim(m_base, n);
+        rnl_rand_poly_dim(a_rand, urnd, n);
+        rnl_poly_add_dim(m_blind, m_base, a_rand, n);
+        rnl_keygen_dim(s_poly, C_poly, m_blind, urnd, n);
 
         /* Alice's contributory nonce n_A */
         uint8_t n_A[KEYBYTES];
         if (fread(n_A, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
 
         uint8_t s_buf[RNL_N * 4], m_buf[RNL_N * 4];
-        poly_pack(s_buf, s_poly, 4);
-        poly_pack(m_buf, m_blind, 4);
+        const size_t pb = (size_t)n * 4;
+        poly_pack(s_buf, s_poly, n, 4);
+        poly_pack(m_buf, m_blind, n, 4);
 
-        size_t is_sz = DER_INT_LEN(sizeof s_buf);
-        size_t im_sz = DER_INT_LEN(sizeof m_buf);
+        size_t is_sz = DER_INT_LEN(pb);
+        size_t im_sz = DER_INT_LEN(pb);
         size_t ina_sz = DER_INT_LEN(KEYBYTES);
         uint8_t *is_der = malloc(is_sz), *im_der = malloc(im_sz), *ina_der = malloc(ina_sz);
         uint8_t in_der[8]; size_t ls, lm, ln, lna;
         if (!is_der || !im_der || !ina_der) die("out of memory");
-        der_int_enc(s_buf, sizeof s_buf, is_der, &ls);
-        der_int_enc(m_buf, sizeof m_buf, im_der, &lm);
-        der_i_rnl_n(in_der, &ln);
+        der_int_enc(s_buf, pb, is_der, &ls);
+        der_int_enc(m_buf, pb, im_der, &lm);
+        der_i_rnl_n(n, in_der, &ln);
         der_int_enc(n_A, KEYBYTES, ina_der, &lna);
         const uint8_t *it[4] = {is_der, im_der, in_der, ina_der};
         size_t il[4] = {ls, lm, ln, lna};
@@ -2117,10 +2153,10 @@ static void cmd_pkey(int argc, char **argv)
     /* ── HKEX-RNL ─── */
     else if (kind == 0) {
         if (k.n_items < 3) die("pkey: malformed RNL private key");
-        rnl_require_n(&k, 2, "pkey: HKEX-RNL private key");
+        const int n = rnl_key_n(&k, 2, "pkey: HKEX-RNL private key");
         rnl_poly_t s_poly, m_poly, C_poly;
-        poly_unpack(s_poly, k.vals[0], k.vlens[0], 4);
-        poly_unpack(m_poly, k.vals[1], k.vlens[1], 4);
+        poly_unpack(s_poly, k.vals[0], k.vlens[0], n, 4);
+        poly_unpack(m_poly, k.vals[1], k.vlens[1], n, 4);
 
         /* Extract Alice's nonce n_A (index 3); zero if absent (old key format) */
         uint8_t n_A[KEYBYTES];
@@ -2130,31 +2166,31 @@ static void cmd_pkey(int argc, char **argv)
 
         if (text) {
             uint8_t s_buf[RNL_N * 4];
-            poly_pack(s_buf, s_poly, 4);
+            poly_pack(s_buf, s_poly, n, 4);
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: %d\n", "n", RNL_N);   /* was a literal 256 (TODO #374) */
+            printf("%-10s: %d\n", "n", n);   /* was a literal 256 (TODO #374) */
             printf("%-10s: ", "s_packed");
-            for (size_t j = 0; j < sizeof s_buf; j++) printf("%02x", s_buf[j]);
+            for (size_t j = 0; j < (size_t)n * 4; j++) printf("%02x", s_buf[j]);
             putchar('\n');
         } else {
             /* Derive C = round_p(m * s) */
             rnl_poly_t ms;
-            rnl_poly_mul(ms, m_poly, s_poly);
-            rnl_round(C_poly, ms, RNL_Q, RNL_P);
+            rnl_poly_mul_dim(ms, m_poly, s_poly, n);
+            rnl_round_dim(C_poly, ms, RNL_Q, RNL_P, n);
 
             uint8_t C_buf[RNL_N * 2], m_buf[RNL_N * 4];
-            poly_pack(C_buf, C_poly, 2);
-            poly_pack(m_buf, m_poly, 4);
+            poly_pack(C_buf, C_poly, n, 2);
+            poly_pack(m_buf, m_poly, n, 4);
 
-            size_t ic_sz = DER_INT_LEN(sizeof C_buf);
-            size_t im_sz = DER_INT_LEN(sizeof m_buf);
+            size_t ic_sz = DER_INT_LEN((size_t)n * 2);
+            size_t im_sz = DER_INT_LEN((size_t)n * 4);
             size_t ina_sz = DER_INT_LEN(KEYBYTES);
             uint8_t *ic_der = malloc(ic_sz), *im_der = malloc(im_sz), *ina_der = malloc(ina_sz);
             uint8_t in_der[8]; size_t lc, lm, ln, lna;
             if (!ic_der || !im_der || !ina_der) die("out of memory");
-            der_int_enc(C_buf, sizeof C_buf, ic_der, &lc);
-            der_int_enc(m_buf, sizeof m_buf, im_der, &lm);
-            der_i_rnl_n(in_der, &ln);
+            der_int_enc(C_buf, (size_t)n * 2, ic_der, &lc);
+            der_int_enc(m_buf, (size_t)n * 4, im_der, &lm);
+            der_i_rnl_n(n, in_der, &ln);
             der_int_enc(n_A, KEYBYTES, ina_der, &lna);
             const uint8_t *it[4] = {ic_der, im_der, in_der, ina_der};
             size_t il[4] = {lc, lm, ln, lna};
@@ -2345,14 +2381,44 @@ static void kem_priv_load(QcMdpcPriv *priv, QcMdpcPub *pub, const char *path)
     }
 }
 
-/* Unpack a packed 2-bit-per-coefficient hint (RNL_N/8 bytes) into RNL_N/2 raw
+/* Unpack a packed 2-bit-per-coefficient hint (n/8 bytes) into n/2 raw
  * per-coefficient bytes (values 0..3), matching Python's `hint_used` transcript
  * representation used by the combiner (bytes(hint_used) in _hybrid_rnl_stern_combine). */
-static void rnl_hint_to_raw(uint8_t raw[RNL_N / 2], const uint8_t hint[RNL_N / 8])
+static void rnl_hint_to_raw(uint8_t raw[RNL_N / 2], const uint8_t hint[RNL_N / 8], int n)
 {
     int i;
-    for (i = 0; i < RNL_N / 2; i++)
+    for (i = 0; i < n / 2; i++)
         raw[i] = (hint[i / 4] >> ((i % 4) * 2)) & 3;
+}
+
+/* The contributory KDF over a reconciled K_raw (LSB-first, rnl_agree_dim's
+ * layout) at ring dimension n: K_raw is serialised big-endian at
+ * rnl_key_bits(n) / 8 bytes, as Python's rnl_contributory_kdf(K.uint,
+ * _rnl_key_bits(n), n_a, n_b) does -- 32 bytes on every ring of at least 256,
+ * n / 8 below (TODO #383 stage 4). */
+static void rnl_kraw_kdf(uint8_t out[KEYBYTES], BitArray *K, int n,
+                         const uint8_t n_A[KEYBYTES], const uint8_t n_B[KEYBYTES])
+{
+    const int kb = rnl_key_bits(n) / 8;
+    uint8_t rev[KEYBYTES];
+    int i;
+    for (i = 0; i < kb; i++) rev[i] = K->b[kb - 1 - i];
+    rnl_contributory_kdf_len(out, rev, (size_t)kb, n_A, n_B);
+    explicit_bzero(rev, sizeof rev);
+    explicit_bzero(K, sizeof *K);
+}
+
+/* A response's hint field (big-endian, Python's packing) into rnl_agree_dim's
+ * LSB-first n/8 bytes. */
+static void rnl_hint_from_der(uint8_t hint[RNL_N / 8], const uint8_t *v, size_t vl, int n)
+{
+    uint8_t hint_rev[RNL_N / 8];
+    const size_t hb = (size_t)n / 8;
+    size_t i;
+    memset(hint_rev, 0, sizeof hint_rev);
+    if (vl > hb) { v += vl - hb; vl = hb; }
+    memcpy(hint_rev + hb - vl, v, vl);
+    for (i = 0; i < hb; i++) hint[i] = hint_rev[hb - 1 - i];
 }
 
 /* hybrid_rnl_stern_combine implements the SP 800-227 §4.6-style IND-CCA-preserving
@@ -2365,29 +2431,29 @@ static void hybrid_rnl_stern_combine(uint8_t out[KEYBYTES],
                                       const uint8_t K1[KEYBYTES], const uint8_t K2[KEYBYTES],
                                       const rnl_poly_t C_A, const rnl_poly_t m_A,
                                       const rnl_poly_t C_B, const uint8_t hint_used[RNL_N / 2],
-                                      const QcPoly *h_pub, const QcPoly *syn)
+                                      const QcPoly *h_pub, const QcPoly *syn, int n)
 {
     static const char TAG[] = "HERRADURA-HYBRID-RNL-STERN-v1";
     uint8_t C_A_buf[RNL_N * 2], m_A_buf[RNL_N * 4], C_B_buf[RNL_N * 2];
     uint8_t h_pub_buf[QCMDPC_RBYTES], syn_buf[QCMDPC_RBYTES];
-    poly_pack(C_A_buf, C_A, 2);
-    poly_pack(m_A_buf, m_A, 4);
-    poly_pack(C_B_buf, C_B, 2);
+    const size_t cb = (size_t)n * 2, mb = (size_t)n * 4, hb = (size_t)n / 2;
+    poly_pack(C_A_buf, C_A, n, 2);
+    poly_pack(m_A_buf, m_A, n, 4);
+    poly_pack(C_B_buf, C_B, n, 2);
     qcpoly_to_natural_be(h_pub_buf, h_pub);
     qcpoly_to_natural_be(syn_buf, syn);
 
-    size_t total = KEYBYTES + KEYBYTES + sizeof(C_A_buf) + sizeof(m_A_buf) +
-                   sizeof(C_B_buf) + (RNL_N / 2) + QCMDPC_RBYTES + QCMDPC_RBYTES +
-                   (sizeof(TAG) - 1);
+    size_t total = KEYBYTES + KEYBYTES + cb + mb + cb + hb +
+                   QCMDPC_RBYTES + QCMDPC_RBYTES + (sizeof(TAG) - 1);
     uint8_t *data = malloc(total);
     if (!data) die("out of memory");
     size_t off = 0;
     memcpy(data + off, K1, KEYBYTES);              off += KEYBYTES;
     memcpy(data + off, K2, KEYBYTES);               off += KEYBYTES;
-    memcpy(data + off, C_A_buf, sizeof(C_A_buf));    off += sizeof(C_A_buf);
-    memcpy(data + off, m_A_buf, sizeof(m_A_buf));    off += sizeof(m_A_buf);
-    memcpy(data + off, C_B_buf, sizeof(C_B_buf));    off += sizeof(C_B_buf);
-    memcpy(data + off, hint_used, RNL_N / 2);        off += RNL_N / 2;
+    memcpy(data + off, C_A_buf, cb);                 off += cb;
+    memcpy(data + off, m_A_buf, mb);                 off += mb;
+    memcpy(data + off, C_B_buf, cb);                 off += cb;
+    memcpy(data + off, hint_used, hb);               off += hb;
     memcpy(data + off, h_pub_buf, QCMDPC_RBYTES);    off += QCMDPC_RBYTES;
     memcpy(data + off, syn_buf, QCMDPC_RBYTES);      off += QCMDPC_RBYTES;
     memcpy(data + off, TAG, sizeof(TAG) - 1);        off += sizeof(TAG) - 1;
@@ -2482,13 +2548,13 @@ static void cmd_kex(int argc, char **argv)
             PemKey our; pem_key_load(&our, our_path);
             if (our.n_items < 2)   die("kex rnl: malformed our private key");
             if (their.n_items < 2) die("kex rnl: malformed their public key");
-            rnl_require_n(&our,   2, "kex rnl: our private key");
-            rnl_require_n(&their, 2, "kex rnl: their public key");
+            const int n = rnl_key_n(&our, 2, "kex rnl: our private key");
+            rnl_same_ring(n, rnl_key_n(&their, 2, "kex rnl: their public key"), "theirs");
 
             rnl_poly_t s_B, m_A, C_A, C_B, ms;
-            poly_unpack(s_B, our.vals[0],   our.vlens[0],   4);
-            poly_unpack(C_A, their.vals[0], their.vlens[0], 2);
-            poly_unpack(m_A, their.vals[1], their.vlens[1], 4);
+            poly_unpack(s_B, our.vals[0],   our.vlens[0],   n, 4);
+            poly_unpack(C_A, their.vals[0], their.vlens[0], n, 2);
+            poly_unpack(m_A, their.vals[1], their.vlens[1], n, 4);
 
             /* Extract Alice's contributory nonce n_A (field 3 of pub key) */
             uint8_t n_A[KEYBYTES];
@@ -2498,39 +2564,33 @@ static void cmd_kex(int argc, char **argv)
 
             pem_key_free(&our); pem_key_free(&their);
 
-            if (!rnl_validate_m_blind(m_A, RNL_N))
+            if (!rnl_validate_m_blind(m_A, n))
                 die("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack");
 
             /* Derive C_B = round_p(m_A * s_B) */
-            rnl_poly_mul(ms, m_A, s_B);
-            rnl_round(C_B, ms, RNL_Q, RNL_P);
+            rnl_poly_mul_dim(ms, m_A, s_B, n);
+            rnl_round_dim(C_B, ms, RNL_Q, RNL_P, n);
 
             /* Compute K_B and hint via Peikert reconciliation */
             BitArray K_B = BA_INIT;
             uint8_t hint[RNL_N / 8];
-            if (!rnl_validate_pub(C_A, RNL_N))
+            if (!rnl_validate_pub(C_A, n))
                 die("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
-            rnl_agree(&K_B, s_B, C_A, NULL, hint);
+            rnl_agree_dim(&K_B, s_B, C_A, NULL, hint, n);
 
             /* Bob's contributory nonce n_B */
             uint8_t n_B[KEYBYTES];
             if (fread(n_B, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
 
-            /* rnl_agree output is LSB-first; reverse to big-endian before KDF */
-            uint8_t K_B_rev_raw[KEYBYTES]; int ri_kb;
-            for (ri_kb = 0; ri_kb < KEYBYTES; ri_kb++)
-                K_B_rev_raw[ri_kb] = K_B.b[KEYBYTES-1-ri_kb];
-
             /* Contributory KDF: final_key = HFSCX-256(K_B_big_endian || n_A || n_B) */
             uint8_t K_B_kdf[KEYBYTES];
-            rnl_contributory_kdf(K_B_kdf, K_B_rev_raw, n_A, n_B);
-            explicit_bzero(K_B_rev_raw, KEYBYTES);
+            rnl_kraw_kdf(K_B_kdf, &K_B, n, n_A, n_B);
             explicit_bzero(n_A, KEYBYTES);
-            explicit_bzero(&K_B, sizeof(K_B));
 
             /* Encode RESPONSE: K_B, C_B_packed, hint, n, hint_len, n_B */
             uint8_t C_B_buf[RNL_N * 2];
-            poly_pack(C_B_buf, C_B, 2);
+            const size_t cbl = (size_t)n * 2, hbl = (size_t)n / 8;
+            poly_pack(C_B_buf, C_B, n, 2);
 
             /* K_B_kdf is already big-endian (HFSCX-256 output); encode directly.
              * hint is LSB-first (rnl_reconcile_bits) — reverse for Python compat. */
@@ -2544,7 +2604,7 @@ static void cmd_kex(int argc, char **argv)
             }
 
             uint8_t hint_rev[RNL_N / 8];
-            { int ri; for (ri = 0; ri < RNL_N/8; ri++) hint_rev[ri] = hint[RNL_N/8-1-ri]; }
+            { size_t ri; for (ri = 0; ri < hbl; ri++) hint_rev[ri] = hint[hbl-1-ri]; }
 
             /* Minimum-width encoding for the session key */
             size_t kb_len = KEYBYTES;
@@ -2552,17 +2612,17 @@ static void cmd_kex(int argc, char **argv)
             while (kb_len > 1 && *kb_start == 0) { kb_start++; kb_len--; }
 
             uint8_t ik[DER_INT_LEN(KEYBYTES)];
-            size_t ic_sz = DER_INT_LEN(sizeof C_B_buf);
+            size_t ic_sz = DER_INT_LEN(cbl);
             size_t inb_sz = DER_INT_LEN(KEYBYTES);
             uint8_t *ic_der = malloc(ic_sz), *inb_der = malloc(inb_sz);
             uint8_t ih[DER_INT_LEN(RNL_N / 8)], in1[8], in2[8];
             size_t lk, lc, lh, ln1, ln2, lnb;
             if (!ic_der || !inb_der) die("out of memory");
             der_int_enc(kb_start,          kb_len,          ik,      &lk);
-            der_int_enc(C_B_buf,    sizeof C_B_buf,  ic_der,  &lc);
-            der_int_enc(hint_rev,   sizeof hint_rev,  ih,      &lh);
-            der_i_rnl_n(in1, &ln1);
-            der_i_rnl_hintlen(in2, &ln2);  /* len(hint_used) == RNL_N/2 */
+            der_int_enc(C_B_buf,    cbl,             ic_der,  &lc);
+            der_int_enc(hint_rev,   hbl,             ih,      &lh);
+            der_i_rnl_n(n, in1, &ln1);
+            der_i_rnl_hintlen(n, in2, &ln2);  /* len(hint_used) == n/2 */
             der_int_enc(n_B, KEYBYTES, inb_der, &lnb);
             const uint8_t *it[6] = {ik, ic_der, ih, in1, in2, inb_der};
             size_t il[6] = {lk, lc, lh, ln1, ln2, lnb};
@@ -2575,12 +2635,13 @@ static void cmd_kex(int argc, char **argv)
             PemKey our; pem_key_load(&our, our_path);
             if (our.n_items < 2)   die("kex rnl: malformed our private key");
             if (their.n_items < 5) die("kex rnl: malformed RNL response");
-            rnl_require_n(&our,   2, "kex rnl: our private key");
-            rnl_require_n(&their, 3, "kex rnl: RNL response");  /* n is field 3 here */
+            const int n = rnl_key_n(&our, 2, "kex rnl: our private key");
+            /* n is field 3 of a response */
+            rnl_same_ring(n, rnl_key_n(&their, 3, "kex rnl: RNL response"), "response");
 
             rnl_poly_t s_A, C_B;
-            poly_unpack(s_A, our.vals[0],   our.vlens[0],   4);
-            poly_unpack(C_B, their.vals[1], their.vlens[1], 2);
+            poly_unpack(s_A, our.vals[0],   our.vlens[0],   n, 4);
+            poly_unpack(C_B, their.vals[1], their.vlens[1], n, 2);
 
             /* Extract Alice's n_A from her private key (field 3) */
             uint8_t n_A[KEYBYTES];
@@ -2594,32 +2655,19 @@ static void cmd_kex(int argc, char **argv)
             if (their.n_items >= 6 && their.vlens[5] <= KEYBYTES)
                 memcpy(n_B + KEYBYTES - their.vlens[5], their.vals[5], their.vlens[5]);
 
-            /* Unpack hint: DER is big-endian (Python: hint[31]=bits0-7 at LSB).
-             * Right-align into hint_rev, then reverse to C byte order. */
+            /* Unpack hint: DER is big-endian (Python: hint[n/8-1]=bits0-7 at LSB). */
             uint8_t hint[RNL_N / 8];
-            { uint8_t hint_rev[RNL_N / 8]; int ri;
-              memset(hint_rev, 0, sizeof hint_rev);
-              size_t hl = their.vlens[2];
-              if (hl > sizeof hint_rev) hl = sizeof hint_rev;
-              memcpy(hint_rev + sizeof hint_rev - hl, their.vals[2], hl);
-              for (ri = 0; ri < RNL_N/8; ri++) hint[ri] = hint_rev[RNL_N/8-1-ri]; }
+            rnl_hint_from_der(hint, their.vals[2], their.vlens[2], n);
             pem_key_free(&our); pem_key_free(&their);
 
             BitArray K_A = BA_INIT;
-            if (!rnl_validate_pub(C_B, RNL_N))
+            if (!rnl_validate_pub(C_B, n))
                 die("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
-            rnl_agree(&K_A, s_A, C_B, hint, NULL);
-
-            /* rnl_agree output is LSB-first; reverse to big-endian for Python compat */
-            uint8_t K_A_raw_rev[KEYBYTES]; int ri_ka;
-            for (ri_ka = 0; ri_ka < KEYBYTES; ri_ka++)
-                K_A_raw_rev[ri_ka] = K_A.b[KEYBYTES-1-ri_ka];
-            explicit_bzero(&K_A, sizeof(K_A));
+            rnl_agree_dim(&K_A, s_A, C_B, hint, NULL, n);
 
             /* Contributory KDF: final_key = HFSCX-256(K_A_raw || n_A || n_B) */
             uint8_t K_A_kdf[KEYBYTES];
-            rnl_contributory_kdf(K_A_kdf, K_A_raw_rev, n_A, n_B);
-            explicit_bzero(K_A_raw_rev, KEYBYTES);
+            rnl_kraw_kdf(K_A_kdf, &K_A, n, n_A, n_B);
             explicit_bzero(n_A, KEYBYTES);
             explicit_bzero(n_B, KEYBYTES);
 
@@ -2662,11 +2710,16 @@ static void cmd_kex(int argc, char **argv)
             PemKey our; pem_key_load(&our, our_path);
             if (our.n_items < 2)   die("kex hybrid-rnl-stern: malformed our private key");
             if (their.n_items < 2) die("kex hybrid-rnl-stern: malformed their public key");
+            /* TODO #383 stage 4: the ring is our key's; the peer's must match
+             * (this branch read neither n until now) */
+            const int n = rnl_key_n(&our, 2, "kex hybrid-rnl-stern: our private key");
+            rnl_same_ring(n, rnl_key_n(&their, 2, "kex hybrid-rnl-stern: their public key"),
+                          "theirs");
 
             rnl_poly_t s_B, m_A, C_A, C_B, ms;
-            poly_unpack(s_B, our.vals[0],   our.vlens[0],   4);
-            poly_unpack(C_A, their.vals[0], their.vlens[0], 2);
-            poly_unpack(m_A, their.vals[1], their.vlens[1], 4);
+            poly_unpack(s_B, our.vals[0],   our.vlens[0],   n, 4);
+            poly_unpack(C_A, their.vals[0], their.vlens[0], n, 2);
+            poly_unpack(m_A, their.vals[1], their.vlens[1], n, 4);
 
             uint8_t n_A[KEYBYTES];
             memset(n_A, 0, KEYBYTES);
@@ -2675,31 +2728,26 @@ static void cmd_kex(int argc, char **argv)
 
             pem_key_free(&our); pem_key_free(&their);
 
-            if (!rnl_validate_m_blind(m_A, RNL_N))
+            if (!rnl_validate_m_blind(m_A, n))
                 die("kex hybrid-rnl-stern: peer m_blind failed entropy check — possible substitution attack");
 
             QcMdpcPub pub_kem;
             kem_pub_load(&pub_kem, their_kem);
 
-            rnl_poly_mul(ms, m_A, s_B);
-            rnl_round(C_B, ms, RNL_Q, RNL_P);
+            rnl_poly_mul_dim(ms, m_A, s_B, n);
+            rnl_round_dim(C_B, ms, RNL_Q, RNL_P, n);
 
             BitArray K1 = BA_INIT;
             uint8_t hint[RNL_N / 8];
-            if (!rnl_validate_pub(C_A, RNL_N))
+            if (!rnl_validate_pub(C_A, n))
                 die("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
-            rnl_agree(&K1, s_B, C_A, NULL, hint);
+            rnl_agree_dim(&K1, s_B, C_A, NULL, hint, n);
 
             uint8_t n_B[KEYBYTES];
             if (fread(n_B, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
 
-            uint8_t K1_rev[KEYBYTES]; int ri;
-            for (ri = 0; ri < KEYBYTES; ri++) K1_rev[ri] = K1.b[KEYBYTES-1-ri];
-            explicit_bzero(&K1, sizeof(K1));
-
             uint8_t K1_kdf[KEYBYTES];
-            rnl_contributory_kdf(K1_kdf, K1_rev, n_A, n_B);
-            explicit_bzero(K1_rev, KEYBYTES);
+            rnl_kraw_kdf(K1_kdf, &K1, n, n_A, n_B);
             explicit_bzero(n_A, KEYBYTES);
             if (kdf) {
                 uint8_t kdf_out[KEYBYTES];
@@ -2717,19 +2765,20 @@ static void cmd_kex(int argc, char **argv)
             qcmdpc_encap(&syn, &K2, &pub_kem, &prf);
 
             uint8_t hint_used[RNL_N / 2];
-            rnl_hint_to_raw(hint_used, hint);
+            rnl_hint_to_raw(hint_used, hint, n);
 
             uint8_t K[KEYBYTES];
             hybrid_rnl_stern_combine(K, K1_kdf, K2.b, C_A, m_A, C_B, hint_used,
-                                      &pub_kem.h_pub, &syn);
+                                      &pub_kem.h_pub, &syn, n);
             explicit_bzero(K1_kdf, KEYBYTES);
             explicit_bzero(&K2, sizeof(K2));
 
             /* Encode RESPONSE: K, C_B, hint, n, hint_len, n_B, syn, r */
             uint8_t C_B_buf[RNL_N * 2];
-            poly_pack(C_B_buf, C_B, 2);
+            const size_t cbl = (size_t)n * 2, hbl = (size_t)n / 8;
+            poly_pack(C_B_buf, C_B, n, 2);
             uint8_t hint_rev[RNL_N / 8];
-            { int rj; for (rj = 0; rj < RNL_N/8; rj++) hint_rev[rj] = hint[RNL_N/8-1-rj]; }
+            { size_t rj; for (rj = 0; rj < hbl; rj++) hint_rev[rj] = hint[hbl-1-rj]; }
             uint8_t syn_buf[QCMDPC_RBYTES];
             qcpoly_to_natural_be(syn_buf, &syn);
 
@@ -2738,7 +2787,7 @@ static void cmd_kex(int argc, char **argv)
             while (k_len > 1 && *k_start == 0) { k_start++; k_len--; }
 
             uint8_t ik[DER_INT_LEN(KEYBYTES)];
-            size_t ic_sz = DER_INT_LEN(sizeof C_B_buf);
+            size_t ic_sz = DER_INT_LEN(cbl);
             size_t inb_sz = DER_INT_LEN(KEYBYTES);
             uint8_t *ic_der = malloc(ic_sz), *inb_der = malloc(inb_sz);
             if (!ic_der || !inb_der) die("out of memory");
@@ -2746,10 +2795,10 @@ static void cmd_kex(int argc, char **argv)
             uint8_t isyn[DER_INT_LEN(QCMDPC_RBYTES)], ir[8];
             size_t lk, lc, lh, ln1, ln2, lnb, lsyn, lr;
             der_int_enc(k_start,   k_len,          ik,      &lk);
-            der_int_enc(C_B_buf,   sizeof C_B_buf,  ic_der,  &lc);
-            der_int_enc(hint_rev,  sizeof hint_rev, ih,      &lh);
-            der_i_rnl_n(in1, &ln1);   /* ring dimension, not the 256-bit key width */
-            der_i_uint(RNL_N / 2, in2, &ln2);
+            der_int_enc(C_B_buf,   cbl,            ic_der,  &lc);
+            der_int_enc(hint_rev,  hbl,            ih,      &lh);
+            der_i_rnl_n(n, in1, &ln1);   /* ring dimension, not the 256-bit key width */
+            der_i_rnl_hintlen(n, in2, &ln2);
             der_int_enc(n_B, KEYBYTES, inb_der, &lnb);
             der_int_enc(syn_buf, QCMDPC_RBYTES, isyn, &lsyn);
             der_i_uint(QCMDPC_R, ir, &lr);
@@ -2767,11 +2816,14 @@ static void cmd_kex(int argc, char **argv)
             PemKey our; pem_key_load(&our, our_path);
             if (our.n_items < 2)   die("kex hybrid-rnl-stern: malformed our private key");
             if (their.n_items < 8) die("kex hybrid-rnl-stern: malformed hybrid response");
+            const int n = rnl_key_n(&our, 2, "kex hybrid-rnl-stern: our private key");
+            rnl_same_ring(n, rnl_key_n(&their, 3, "kex hybrid-rnl-stern: hybrid response"),
+                          "response");
 
             rnl_poly_t s_A, m_A, C_A, C_B, ms;
-            poly_unpack(s_A, our.vals[0], our.vlens[0], 4);
-            poly_unpack(m_A, our.vals[1], our.vlens[1], 4);
-            poly_unpack(C_B, their.vals[1], their.vlens[1], 2);
+            poly_unpack(s_A, our.vals[0], our.vlens[0], n, 4);
+            poly_unpack(m_A, our.vals[1], our.vlens[1], n, 4);
+            poly_unpack(C_B, their.vals[1], their.vlens[1], n, 2);
 
             uint8_t n_A[KEYBYTES];
             memset(n_A, 0, KEYBYTES);
@@ -2784,12 +2836,7 @@ static void cmd_kex(int argc, char **argv)
                 memcpy(n_B + KEYBYTES - their.vlens[5], their.vals[5], their.vlens[5]);
 
             uint8_t hint[RNL_N / 8];
-            { uint8_t hint_rev[RNL_N / 8]; int ri;
-              memset(hint_rev, 0, sizeof hint_rev);
-              size_t hl = their.vlens[2];
-              if (hl > sizeof hint_rev) hl = sizeof hint_rev;
-              memcpy(hint_rev + sizeof hint_rev - hl, their.vals[2], hl);
-              for (ri = 0; ri < RNL_N/8; ri++) hint[ri] = hint_rev[RNL_N/8-1-ri]; }
+            rnl_hint_from_der(hint, their.vals[2], their.vlens[2], n);
 
             QcPoly syn;
             { uint8_t synb[QCMDPC_RBYTES];
@@ -2802,20 +2849,16 @@ static void cmd_kex(int argc, char **argv)
             QcMdpcPub  pub_kem;
             kem_priv_load(&priv_kem, &pub_kem, our_kem);
 
-            rnl_poly_mul(ms, m_A, s_A);
-            rnl_round(C_A, ms, RNL_Q, RNL_P);
+            rnl_poly_mul_dim(ms, m_A, s_A, n);
+            rnl_round_dim(C_A, ms, RNL_Q, RNL_P, n);
 
             BitArray K1 = BA_INIT;
-            if (!rnl_validate_pub(C_B, RNL_N))
+            if (!rnl_validate_pub(C_B, n))
                 die("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
-            rnl_agree(&K1, s_A, C_B, hint, NULL);
-            uint8_t K1_rev[KEYBYTES]; int ri2;
-            for (ri2 = 0; ri2 < KEYBYTES; ri2++) K1_rev[ri2] = K1.b[KEYBYTES-1-ri2];
-            explicit_bzero(&K1, sizeof(K1));
+            rnl_agree_dim(&K1, s_A, C_B, hint, NULL, n);
 
             uint8_t K1_kdf[KEYBYTES];
-            rnl_contributory_kdf(K1_kdf, K1_rev, n_A, n_B);
-            explicit_bzero(K1_rev, KEYBYTES);
+            rnl_kraw_kdf(K1_kdf, &K1, n, n_A, n_B);
             explicit_bzero(n_A, KEYBYTES);
             if (kdf) {
                 uint8_t kdf_out[KEYBYTES];
@@ -2832,11 +2875,11 @@ static void cmd_kex(int argc, char **argv)
             explicit_bzero(&priv_kem, sizeof(priv_kem));
 
             uint8_t hint_used[RNL_N / 2];
-            rnl_hint_to_raw(hint_used, hint);
+            rnl_hint_to_raw(hint_used, hint, n);
 
             uint8_t K[KEYBYTES];
             hybrid_rnl_stern_combine(K, K1_kdf, K2.b, C_A, m_A, C_B, hint_used,
-                                      &pub_kem.h_pub, &syn);
+                                      &pub_kem.h_pub, &syn, n);
             explicit_bzero(K1_kdf, KEYBYTES);
             explicit_bzero(&K2, sizeof(K2));
             pem_key_free(&their);
@@ -4852,39 +4895,40 @@ static void cmd_sign(int argc, char **argv)
         fprintf(stderr, "Ring signature created (k=%d); signer index is hidden.\n", k);
 
     } else if (strcmp(algo, "rnl-sigma") == 0) {
-        /* ZKP-RNL: uses hkex-rnl private key, n must equal RNL_N */
+        /* ZKP-RNL: uses an hkex-rnl private key, at its own ring dimension
+         * (TODO #383 stage 4; this was RNL_N only, refused as "n=256") */
         if (priv_k.n_items < 3) die("sign: malformed hkex-rnl private key");
-        int sig_n = pem_key_get_n(&priv_k, 2);
-        if (sig_n != RNL_N) die("sign: rnl-sigma requires n=256 key");
+        const int sig_n = rnl_key_n(&priv_k, 2, "sign: hkex-rnl private key");
         rnl_poly_t sig_s, sig_m, sig_ms, sig_Cp;
-        poly_unpack(sig_s, priv_k.vals[0], priv_k.vlens[0], 4);
-        poly_unpack(sig_m, priv_k.vals[1], priv_k.vlens[1], 4);
+        poly_unpack(sig_s, priv_k.vals[0], priv_k.vlens[0], sig_n, 4);
+        poly_unpack(sig_m, priv_k.vals[1], priv_k.vlens[1], sig_n, 4);
         pem_key_free(&priv_k);
-        rnl_poly_mul(sig_ms, sig_m, sig_s);
-        rnl_round(sig_Cp, sig_ms, RNL_Q, RNL_P);
+        rnl_poly_mul_dim(sig_ms, sig_m, sig_s, sig_n);
+        rnl_round_dim(sig_Cp, sig_ms, RNL_Q, RNL_P, sig_n);
 
         rnl_poly_t sig_w, sig_c, sig_z;
-        int r = rnl_sigma_sign(sig_s, sig_m, sig_Cp, RNL_N,
+        int r = rnl_sigma_sign(sig_s, sig_m, sig_Cp, sig_n,
                                msg.b, KEYBYTES, urnd, sig_w, sig_c, sig_z);
         if (r != 0) die("sign: rnl-sigma rejection limit reached");
 
         /* Write raw binary proof: 4B n | n×4B w | n×4B c | n×4B z */
-        size_t proof_len = 4 + (size_t)RNL_N * 12;
+        const int N = sig_n;
+        size_t proof_len = 4 + (size_t)N * 12;
         uint8_t *pbuf = (uint8_t *)malloc(proof_len);
         if (!pbuf) die("out of memory");
-        pbuf[0]=(uint8_t)(RNL_N>>24); pbuf[1]=(uint8_t)(RNL_N>>16);
-        pbuf[2]=(uint8_t)(RNL_N>>8);  pbuf[3]=(uint8_t)RNL_N;
+        pbuf[0]=(uint8_t)(N>>24); pbuf[1]=(uint8_t)(N>>16);
+        pbuf[2]=(uint8_t)(N>>8);  pbuf[3]=(uint8_t)N;
         int pi;
-        for (pi=0;pi<RNL_N;pi++) {
+        for (pi=0;pi<N;pi++) {
             uint32_t v;
             v=(uint32_t)sig_w[pi];
             pbuf[4+pi*4+0]=v>>24; pbuf[4+pi*4+1]=v>>16; pbuf[4+pi*4+2]=v>>8; pbuf[4+pi*4+3]=v;
             v=(uint32_t)sig_c[pi];
-            pbuf[4+RNL_N*4+pi*4+0]=v>>24; pbuf[4+RNL_N*4+pi*4+1]=v>>16;
-            pbuf[4+RNL_N*4+pi*4+2]=v>>8;  pbuf[4+RNL_N*4+pi*4+3]=v;
+            pbuf[4+N*4+pi*4+0]=v>>24; pbuf[4+N*4+pi*4+1]=v>>16;
+            pbuf[4+N*4+pi*4+2]=v>>8;  pbuf[4+N*4+pi*4+3]=v;
             v=(uint32_t)sig_z[pi];
-            pbuf[4+RNL_N*8+pi*4+0]=v>>24; pbuf[4+RNL_N*8+pi*4+1]=v>>16;
-            pbuf[4+RNL_N*8+pi*4+2]=v>>8;  pbuf[4+RNL_N*8+pi*4+3]=v;
+            pbuf[4+N*8+pi*4+0]=v>>24; pbuf[4+N*8+pi*4+1]=v>>16;
+            pbuf[4+N*8+pi*4+2]=v>>8;  pbuf[4+N*8+pi*4+3]=v;
         }
         if (pem_write_file(out_path ? out_path : "-", PEM_ZKP_RNL_PROOF, pbuf, proof_len) != 0)
             die("cannot write ZKP-RNL proof");
@@ -5190,37 +5234,40 @@ static void cmd_verify(int argc, char **argv)
     } else if (strcmp(algo, "rnl-sigma") == 0) {
         /* ZKP-RNL verify: pubkey = hkex-rnl public key (C_p, m, n) */
         if (pub_k.n_items < 3) die("verify: malformed hkex-rnl public key");
-        int vfy_n = pem_key_get_n(&pub_k, 2);
-        if (vfy_n != RNL_N) die("verify: rnl-sigma requires n=256 key");
+        const int vfy_n = rnl_key_n(&pub_k, 2, "verify: hkex-rnl public key");
         rnl_poly_t vfy_Cp, vfy_m;
-        poly_unpack(vfy_Cp, pub_k.vals[0], pub_k.vlens[0], 2);
-        poly_unpack(vfy_m,  pub_k.vals[1], pub_k.vlens[1], 4);
+        poly_unpack(vfy_Cp, pub_k.vals[0], pub_k.vlens[0], vfy_n, 2);
+        poly_unpack(vfy_m,  pub_k.vals[1], pub_k.vlens[1], vfy_n, 4);
         pem_key_free(&pub_k);
 
-        /* Read proof */
+        /* Read proof.  Its n must be the key's: a proof over another ring is
+         * not a proof about this key (Python's and Go's text, TODO #383). */
         size_t plen;
         uint8_t *pbuf = zkp_raw_pem_read(sig_path, PEM_ZKP_RNL_PROOF, &plen);
-        if (plen < 4 + (size_t)RNL_N*12) die("verify: truncated ZKP-RNL proof");
-        int pn = (int)(((uint32_t)pbuf[0]<<24)|((uint32_t)pbuf[1]<<16)|
-                       ((uint32_t)pbuf[2]<<8)|pbuf[3]);
-        if (pn != RNL_N) die("verify: proof n mismatch");
+        if (plen < 4) die("verify: truncated ZKP-RNL proof");
+        long pn = (long)(((uint32_t)pbuf[0]<<24)|((uint32_t)pbuf[1]<<16)|
+                         ((uint32_t)pbuf[2]<<8)|pbuf[3]);
+        if (pn != vfy_n)
+            dievf("verify: ring size mismatch (pubkey n=%d, proof n=%ld)", vfy_n, pn);
+        const int N = vfy_n;
+        if (plen < 4 + (size_t)N*12) die("verify: truncated ZKP-RNL proof");
         rnl_poly_t vfy_w, vfy_c, vfy_z;
         int pi;
-        for (pi=0;pi<RNL_N;pi++) {
+        for (pi=0;pi<N;pi++) {
             vfy_w[pi]=(int32_t)(((uint32_t)pbuf[4+pi*4]<<24)|((uint32_t)pbuf[4+pi*4+1]<<16)|
                                 ((uint32_t)pbuf[4+pi*4+2]<<8)|pbuf[4+pi*4+3]);
-            vfy_c[pi]=(int32_t)(((uint32_t)pbuf[4+RNL_N*4+pi*4]<<24)|
-                                ((uint32_t)pbuf[4+RNL_N*4+pi*4+1]<<16)|
-                                ((uint32_t)pbuf[4+RNL_N*4+pi*4+2]<<8)|
-                                pbuf[4+RNL_N*4+pi*4+3]);
-            vfy_z[pi]=(int32_t)(((uint32_t)pbuf[4+RNL_N*8+pi*4]<<24)|
-                                ((uint32_t)pbuf[4+RNL_N*8+pi*4+1]<<16)|
-                                ((uint32_t)pbuf[4+RNL_N*8+pi*4+2]<<8)|
-                                pbuf[4+RNL_N*8+pi*4+3]);
+            vfy_c[pi]=(int32_t)(((uint32_t)pbuf[4+N*4+pi*4]<<24)|
+                                ((uint32_t)pbuf[4+N*4+pi*4+1]<<16)|
+                                ((uint32_t)pbuf[4+N*4+pi*4+2]<<8)|
+                                pbuf[4+N*4+pi*4+3]);
+            vfy_z[pi]=(int32_t)(((uint32_t)pbuf[4+N*8+pi*4]<<24)|
+                                ((uint32_t)pbuf[4+N*8+pi*4+1]<<16)|
+                                ((uint32_t)pbuf[4+N*8+pi*4+2]<<8)|
+                                pbuf[4+N*8+pi*4+3]);
         }
         free(pbuf);
 
-        int ok = rnl_sigma_verify(vfy_m, vfy_Cp, RNL_N, msg.b, KEYBYTES,
+        int ok = rnl_sigma_verify(vfy_m, vfy_Cp, N, msg.b, KEYBYTES,
                                    vfy_w, vfy_c, vfy_z);
         if (ok) { puts("Signature OK");         exit(0); }
         else    { puts("Verification FAILED");  exit(1); }

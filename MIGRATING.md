@@ -2339,3 +2339,31 @@ width with a key of another.
 256-bit keys, signatures and ciphertexts read exactly as before.
 
 **Why this is MAJOR.** `dec` now refuses input Python and Go accepted, the 2.0.0 surface.
+
+## 47. C runs hkex-rnl at every ring; Go's rnl-sigma at n = 64 and 128 (v16.0.0)
+
+**Who is affected:** a script that uses an hkex-rnl key on a ring narrower than 1024
+(`genpkey --algo hkex-rnl --bits 32|64|128|256`) with the C CLI, or with rnl-sigma; or
+that keeps an rnl-sigma proof the Go CLI wrote with a 64- or 128-bit key.
+
+**What changed (TODO #383, stage 4).**
+
+- The C CLI now runs hkex-rnl, rnl-sigma and hybrid-rnl-stern at 32, 64, 128 and 256 as
+  well as the deployed 1024, byte-identical with Python, Go and Java in both roles. It
+  used to refuse a narrower key with `ring dimension mismatch — PEM declares n=64 but
+  this build is compiled for RNL_N=1024`. A key used with a peer key or response over
+  another ring is refused with `Ring size mismatch: ours n=64, theirs n=128` (`response
+  n=128` at the completing step); C's hybrid-rnl-stern read neither ring before and
+  failed further in.
+- Go's rnl-sigma used a challenge weight of t = 16 at every ring above 32. C, Python and
+  Java use t = 8 at n = 64 and t = 12 at n = 128, so at those two rings a Go proof did
+  not verify in the other three CLIs, nor theirs in Go. Go now uses the same weights.
+  A proof Go wrote at n = 64 or 128 before this release no longer verifies in Go either.
+  At 32, 256 and 1024 nothing changes.
+
+**What to do.** Re-sign any rnl-sigma proof the Go CLI made with a 64- or 128-bit
+hkex-rnl key. Keys, responses and session keys at every ring, and every proof at 32,
+256 and 1024, read exactly as before.
+
+**Why this is MAJOR.** Go's `verify --algo rnl-sigma` now refuses a stored proof it
+accepted before, which makes an existing artifact unreadable by a newer build.

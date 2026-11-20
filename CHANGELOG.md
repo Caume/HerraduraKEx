@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#383, #388, #389), in eleven
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#383, #388, #389), in twelve
 parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
@@ -36,6 +36,52 @@ C (Go panicked; Python and Go decrypted with exit 0) (TODO #383 stage 2, section
 C now also runs hcred at 32, 64, 128 and 256 bits and issues credentials under an
 hpks-stern key of any width, and a proof or credential of another width than its key is
 refused by name in Python, Go and C (Go panicked) (TODO #383 stage 3).
+C now also runs hkex-rnl, rnl-sigma and hybrid-rnl-stern on every ring the spec lists, which
+completes TODO #383: C runs every listed width. Go's rnl-sigma used a different challenge
+weight at n = 64 and 128, so its proofs there did not verify in the other CLIs (TODO #383
+stage 4, section 47).
+
+### TODO #383 (stage 4) — C runs hkex-rnl at every ring; #383 is done
+
+- **`herradura.h`.** New dimension-taking RNL helpers: `rnl_m_poly_dim`,
+  `rnl_rand_poly_dim`, `rnl_poly_add_dim`, `rnl_hint_dim` (n/2 coefficients into n/8
+  bytes), `rnl_reconcile_bits_dim`, `rnl_agree_dim`, `rnl_key_bits` (KEYBITS on a ring of
+  at least 256, n below it, Python's `_rnl_key_bits`) and `rnl_contributory_kdf_len`
+  (K_raw at `rnl_key_bits(n)` / 8 bytes). The fixed-width functions are now wrappers at
+  `RNL_N`, so the deployed ring computes exactly what it did: KAT/hkex_rnl.json, the
+  sampler and operation replays and the suite tests pass unchanged. The schoolbook branch
+  of `rnl_poly_mul_dim` now covers every power of two below `RNL_N` (it stopped at 256).
+- **The C CLI.** `genpkey --algo hkex-rnl --bits 32|64|128|256`, `pkey`, both `kex` roles,
+  `--kdf hfscx-256`, hybrid-rnl-stern and rnl-sigma `sign` / `verify` run on the key's
+  own ring. The reader takes any power of two from 8 to 1024, as Python, Go and Java do,
+  and refuses a peer key or response over another ring with Python's text: `Ring size
+  mismatch: ours n=64, theirs n=128` (`response n=128` at the completing step). C's
+  hybrid read neither ring before: a mismatched peer key failed further in, on the
+  m_blind entropy check. `verify --algo rnl-sigma` refuses a proof over another ring with
+  `ring size mismatch (pubkey n=64, proof n=128)`, as Python and Go word it; it used to
+  say `rnl-sigma requires n=256 key` at every ring but 1024. "c" joins hkex-rnl's narrow
+  rows' ports.
+- **Go's rnl-sigma.** `ZkpRnlParams` returned a challenge weight t = 16 at every n > 32.
+  C's `sigma_params`, Python's `_SIGMA_T` and Java use 8 at n = 64 and 12 at n = 128, so
+  at those two rings Go's proofs failed in the other three CLIs and theirs failed in Go.
+  No test ran rnl-sigma below the default ring before; Go now uses the same ladder.
+  MIGRATING.md section 47: a proof Go wrote at 64 or 128 before this release must be
+  re-signed.
+- **Tests.** `test_width_matrix.sh` covers hkex-rnl on every listed ring and CLI pair,
+  1024 included. The reader responds to the writer's key and the writer completes, with
+  and without `--kdf hfscx-256` and over hybrid-rnl-stern (under lib_dfr.sh's retry
+  policy), and both sides hold one session key, declared n = 256. The writer's rnl-sigma
+  proof verifies under the reader, and not on a changed message. Each of the five
+  mixed-ring refusals (kex and hybrid in both roles, rnl-sigma verify) runs after a
+  same-ring accept-control in every CLI. The hkex-rnl section is 780 PASS, 0 FAIL; on
+  the stage-3 build it fails 22 checks (C refuses every narrow ring, Go's rnl-sigma
+  fails at 64 and 128). The whole matrix is 2735 PASS, 0 FAIL, 102 n/a. hkex-rnl's `pkey --text` has four
+  layouts at every ring, 1024 included, so its 60 cross-CLI cells print as n/a; that
+  joins TODO #387.
+- **Census.** `spec/check_language_parity.py` gains `rnl-keygen` and `rnl-agree`
+  manifest rows (207 entries, spec/COVERAGE_COUNTS.md): the C CLI now calls their `_dim`
+  twins, so the stems are no longer CLI-reachable. The raw-entropy census and the `rnl_rand_poly` sampler pin name C's
+  `rnl_rand_poly_dim`, the function that now reads the stream.
 
 ### TODO #383 (stage 3) — C runs hcred at every width
 

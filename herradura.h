@@ -2550,9 +2550,10 @@ static void rnl_ntt(int32_t *a, int n, int q, int invert)
 
 /* Negacyclic multiply: h = f*g in Z_q[x]/(x^n+1) via NTT. O(n log n).
    ψ = 3^((q-1)/(2n)) is a primitive 2n-th root; ψ^n ≡ -1 encodes the wrap. */
-/* h = f*g in Z_q[x]/(x^n+1) at an explicit dimension.  n must be RNL_N or
-   RNL_ALT_N — the only two the twiddle tables cover.  Python's _rnl_poly_mul and
-   Go's RnlPolyMul have always taken n; this brings C into line (TODO #223). */
+/* h = f*g in Z_q[x]/(x^n+1) at an explicit dimension: n = RNL_N or RNL_ALT_N
+   by NTT (the two the twiddle tables cover), any other power of two below
+   RNL_N by schoolbook.  Python's _rnl_poly_mul and Go's RnlPolyMul have always
+   taken n; this brings C into line (TODO #223, #383). */
 static void rnl_poly_mul_dim(int32_t *h, const int32_t *f, const int32_t *g, int n)
 {
     int32_t fa[RNL_N], ga[RNL_N], ha[RNL_N];   /* RNL_N is the larger of the two */
@@ -2566,12 +2567,12 @@ static void rnl_poly_mul_dim(int32_t *h, const int32_t *f, const int32_t *g, int
     } else if (n == RNL_N) {
         psi_pow = rnl_tw.psi_pow;     psi_inv_pow = rnl_tw.psi_inv_pow;
         inv_n   = rnl_tw.inv_n;
-    } else if (n >= 2 && n < RNL_ALT_N && (n & (n - 1)) == 0) {
-        /* The narrower power-of-two rings (HCRED at 32-128, TODO #383 stage 3)
-           have no twiddle table; the negacyclic product mod x^n + 1 is
-           schoolbook here.  Every loop bound is public (n), so the operation
-           count does not depend on f or g. */
-        int64_t acc[RNL_ALT_N];
+    } else if (n >= 2 && n < RNL_N && (n & (n - 1)) == 0) {
+        /* The other power-of-two rings (HCRED at 32-128, TODO #383 stage 3;
+           HKEX-RNL at 8-512, stage 4) have no twiddle table; the negacyclic
+           product mod x^n + 1 is schoolbook here.  Every loop bound is public
+           (n), so the operation count does not depend on f or g. */
+        int64_t acc[RNL_N];
         int j;
         for (i = 0; i < n; i++) acc[i] = 0;
         for (i = 0; i < n; i++)
@@ -2607,10 +2608,15 @@ static void rnl_poly_mul(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
     rnl_poly_mul_dim(h, f, g, RNL_N);
 }
 
-static void rnl_poly_add(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
+static void rnl_poly_add_dim(int32_t *h, const int32_t *f, const int32_t *g, int n)
 {
     int i;
-    for (i = 0; i < RNL_N; i++) h[i] = (f[i] + g[i]) % RNL_Q;
+    for (i = 0; i < n; i++) h[i] = (f[i] + g[i]) % RNL_Q;
+}
+
+static void rnl_poly_add(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
+{
+    rnl_poly_add_dim(h, f, g, RNL_N);
 }
 
 static void rnl_round_dim(int32_t *out, const int32_t *in, int from_q, int to_p, int n)
@@ -2637,24 +2643,36 @@ static void rnl_lift(rnl_poly_t out, const int32_t *in, int from_p, int to_q)
     rnl_lift_dim(out, in, from_p, to_q, RNL_N);
 }
 
-/* m(x) = 1 + x + x^{n-1} */
-static void rnl_m_poly(rnl_poly_t p)
+/* m(x) = 1 + x + x^{n-1}, at ring dimension n (TODO #383 stage 4) */
+static void rnl_m_poly_dim(int32_t *p, int n)
 {
-    memset(p, 0, sizeof(rnl_poly_t));
-    p[0] = p[1] = p[RNL_N - 1] = 1;
+    memset(p, 0, (size_t)n * sizeof(int32_t));
+    p[0] = p[1] = p[n - 1] = 1;
 }
 
-static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
+static void rnl_m_poly(rnl_poly_t p)
+{
+    rnl_m_poly_dim(p, RNL_N);
+}
+
+/* n uniform coefficients in Z_q (3-byte rejection sampling), as Python's
+ * _rnl_rand_poly(n, q): same reads in the same order at every n. */
+static void rnl_rand_poly_dim(int32_t *p, FILE *urnd, int n)
 {
     static const uint32_t threshold = (1u << 24) - ((1u << 24) % RNL_Q);
     int i = 0;
-    while (i < RNL_N) {
+    while (i < n) {
         uint8_t buf[3];
         if (fread(buf, 3, 1, urnd) != 1) { fputs("urandom error\n", stderr); exit(1); }
         uint32_t v = ((uint32_t)buf[0] << 16) | ((uint32_t)buf[1] << 8) | buf[2];
         if (v < threshold)
             p[i++] = (int32_t)(v % RNL_Q);
     }
+}
+
+static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
+{
+    rnl_rand_poly_dim(p, urnd, RNL_N);
 }
 
 /* CBD(eta=1): 4 coefficients per byte — bit-pairs (0-1),(2-3),(4-5),(6-7).
@@ -2761,22 +2779,35 @@ static int rnl_validate_pub(const rnl_poly_t poly, int n)
  * the per-session nonces contributed by Alice and Bob respectively.
  * Both nonces must be KEYBYTES (32) bytes. Zero-valued nonces are
  * accepted (they arise when talking to older implementations). */
+/* K_raw is k_len bytes: rnl_key_bits(n) / 8, which is KEYBYTES at every
+ * deployed ring and n / 8 below n = KEYBITS (Python's
+ * rnl_contributory_kdf(k, n_bits, ...) serialises K_raw at n_bits // 8). */
+static void rnl_contributory_kdf_len(uint8_t out[KEYBYTES],
+                                     const uint8_t *k_raw, size_t k_len,
+                                     const uint8_t n_a[KEYBYTES],
+                                     const uint8_t n_b[KEYBYTES])
+{
+    uint8_t buf[3 * KEYBYTES];
+    if (k_len > KEYBYTES) { fputs("rnl_contributory_kdf: K_raw too wide\n", stderr); exit(1); }
+    memcpy(buf,                 k_raw, k_len);
+    memcpy(buf + k_len,         n_a,   KEYBYTES);
+    memcpy(buf + k_len + KEYBYTES, n_b, KEYBYTES);
+    hfscx_256(buf, k_len + 2 * KEYBYTES, NULL, out);
+    explicit_bzero(buf, sizeof buf);
+}
+
 static void rnl_contributory_kdf(uint8_t out[KEYBYTES],
                                   const uint8_t k_raw[KEYBYTES],
                                   const uint8_t n_a[KEYBYTES],
                                   const uint8_t n_b[KEYBYTES])
 {
-    uint8_t buf[3 * KEYBYTES];
-    memcpy(buf,                k_raw, KEYBYTES);
-    memcpy(buf +     KEYBYTES, n_a,   KEYBYTES);
-    memcpy(buf + 2 * KEYBYTES, n_b,   KEYBYTES);
-    hfscx_256(buf, sizeof buf, NULL, out);
-    explicit_bzero(buf, sizeof buf);
+    rnl_contributory_kdf_len(out, k_raw, KEYBYTES, n_a, n_b);
 }
 
 /* keygen: s=CBD(eta=1) private, C=round_p(m_blind * s) */
-/* Keygen at an explicit ring dimension; n must be RNL_N or RNL_ALT_N.  HCRED
-   uses RNL_ALT_N (256) while HKEX-RNL uses RNL_N (1024) — TODO #223. */
+/* Keygen at an explicit ring dimension: any power of two up to RNL_N (the
+   product's rule).  HCRED runs at 32-256, HKEX-RNL at RNL_N (1024) by default
+   and 8-512 when a key says so -- TODO #223, #383. */
 static void rnl_keygen_dim(int32_t *s_out, int32_t *c_out,
                            const int32_t *m_blind, FILE *urnd, int n)
 {
@@ -2792,33 +2823,53 @@ static void rnl_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
     rnl_keygen_dim(s_out, c_out, m_blind, urnd, RNL_N);
 }
 
-/* 2-bit Peikert cross-rounding hint for first RNL_N/2 coefficients, packed 2 bits/coeff.
-   h[i] = floor((8*c + q/4) / q) % 4 */
-static void rnl_hint(uint8_t hint[RNL_N / 8], const rnl_poly_t K_poly)
+/* The raw reconciliation width at ring dimension n (Python's _rnl_key_bits):
+ * KEYBITS on a ring at least that wide, n on a narrower one, which can supply
+ * only n bits (2 from each of n/2 coefficients). */
+static int rnl_key_bits(int n)
+{
+    return n >= KEYBITS ? KEYBITS : n;
+}
+
+/* 2-bit Peikert cross-rounding hint for the first n/2 coefficients, packed 2
+   bits/coeff into n/8 bytes.  h[i] = floor((8*c + q/4) / q) % 4 */
+static void rnl_hint_dim(uint8_t *hint, const int32_t *K_poly, int n)
 {
     int i;
-    memset(hint, 0, RNL_N / 8);
-    for (i = 0; i < RNL_N / 2; i++) {
+    memset(hint, 0, (size_t)n / 8);
+    for (i = 0; i < n / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
         uint32_t r = (uint32_t)(((uint64_t)8 * c + RNL_Q / 4) / RNL_Q) % 4;
         hint[i / 4] |= (uint8_t)(r << ((i % 4) * 2));
     }
 }
 
-/* Extract KEYBITS key bits: 2 bits per coefficient from KEYBITS/2 coefficients.
+static void rnl_hint(uint8_t hint[RNL_N / 8], const rnl_poly_t K_poly)
+{
+    rnl_hint_dim(hint, K_poly, RNL_N);
+}
+
+/* Extract key_bits key bits: 2 bits per coefficient from key_bits/2
+   coefficients, LSB-first into out->b[0 .. key_bits/8 - 1].
    b[i] = floor((4*c + (2*h+1)*(q/4)) / q) % 4 */
-static void rnl_reconcile_bits(BitArray *out, const rnl_poly_t K_poly,
-                                const uint8_t hint[RNL_N / 8])
+static void rnl_reconcile_bits_dim(BitArray *out, const int32_t *K_poly,
+                                   const uint8_t *hint, int key_bits)
 {
     int i;
     const uint32_t qq = RNL_Q / 4;
     memset(out->b, 0, sizeof(out->b));
-    for (i = 0; i < KEYBITS / 2; i++) {
+    for (i = 0; i < key_bits / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
         uint32_t h = (hint[i / 4] >> ((i % 4) * 2)) & 3u;
         uint32_t b = (uint32_t)(((uint64_t)4 * c + (uint64_t)(2*h+1) * qq) / RNL_Q) % RNL_PP;
         out->b[i / 4] |= (uint8_t)(b << ((i % 4) * 2));
     }
+}
+
+static void rnl_reconcile_bits(BitArray *out, const rnl_poly_t K_poly,
+                                const uint8_t hint[RNL_N / 8])
+{
+    rnl_reconcile_bits_dim(out, K_poly, hint, KEYBITS);
 }
 
 /* agree: compute raw key with Peikert reconciliation.
@@ -2829,19 +2880,28 @@ static void rnl_reconcile_bits(BitArray *out, const rnl_poly_t K_poly,
    provides key agreement only; the caller is responsible for authenticating the
    transcript (e.g. via HPKS-NL or a MAC over b_pub||m_blind) before using the
    derived key.                                                                 */
+/* At ring dimension n (TODO #383 stage 4): s, c_other n coefficients; the
+   hint is n/8 bytes; out receives rnl_key_bits(n) bits, LSB-first. */
+static void rnl_agree_dim(BitArray *out, const int32_t *s, const int32_t *c_other,
+                          const uint8_t *hint_in, uint8_t *hint_out, int n)
+{
+    rnl_poly_t c_lifted, k_poly;
+    rnl_lift_dim(c_lifted, c_other, RNL_P, RNL_Q, n);
+    rnl_poly_mul_dim(k_poly, s, c_lifted, n);
+    if (!hint_in) {
+        rnl_hint_dim(hint_out, k_poly, n);
+        rnl_reconcile_bits_dim(out, k_poly, hint_out, rnl_key_bits(n));
+    } else {
+        rnl_reconcile_bits_dim(out, k_poly, hint_in, rnl_key_bits(n));
+    }
+    explicit_bzero(k_poly, sizeof k_poly);
+}
+
 static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
                       const int32_t c_other[RNL_N],
                       const uint8_t *hint_in, uint8_t *hint_out)
 {
-    rnl_poly_t c_lifted, k_poly;
-    rnl_lift(c_lifted, c_other, RNL_P, RNL_Q);
-    rnl_poly_mul(k_poly, s, c_lifted);
-    if (!hint_in) {
-        rnl_hint(hint_out, k_poly);
-        rnl_reconcile_bits(out, k_poly, hint_out);
-    } else {
-        rnl_reconcile_bits(out, k_poly, hint_in);
-    }
+    rnl_agree_dim(out, s, c_other, hint_in, hint_out, RNL_N);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

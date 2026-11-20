@@ -125,7 +125,7 @@ func wireInt(b []byte, what, where string) int {
 // rnlWireN bounds a wire-supplied HKEX-RNL ring dimension: a power of two from
 // 8 to the deployed RnlN (TODO #367).  It sizes every polynomial unpacked
 // after it, so an unbounded one panicked or ran the process out of memory.
-// C is compiled for RnlN alone and requires it exactly (rnl_require_n).
+// C reads the same range (rnl_key_n, TODO #383 stage 4).
 func rnlWireN(b []byte, where string) int {
 	v := bounded(wireInt(b, "ring dimension n", where), 8, RnlN, "ring dimension n", where)
 	if v&(v-1) != 0 {
@@ -138,7 +138,7 @@ func rnlWireN(b []byte, where string) int {
 // sternWireN bounds a wire-supplied Stern / HPKE-Stern key width (TODO #367).
 // rnlSameRing refuses a peer artifact whose ring dimension is not ours.  Go
 // used to read only its own key's n and ignore the peer's (TODO #367); Python
-// and Java refused the mismatch, and C requires RnlN of both.
+// and Java refused the mismatch, and C does (rnl_same_ring).
 func rnlSameRing(ours int, theirs []byte, where string) {
 	if t := rnlWireN(theirs, where); t != ours {
 		fmt.Fprintf(os.Stderr, "%s: ring size mismatch (ours=%d, theirs=%d)\n", where, ours, t)
@@ -7180,10 +7180,10 @@ var paramSets = []paramSet{
 	{"hpke-nl3", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py c go", ""},
 	{"hpke-nl3", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
 	{"oprf", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
-	{"hkex-rnl", 32, "", false, "demo", "far below 2^87 (not estimated)", "py go java", ""},
-	{"hkex-rnl", 64, "", false, "demo", "far below 2^87 (not estimated)", "py go java", ""},
-	{"hkex-rnl", 128, "", false, "demo", "far below 2^87 (not estimated)", "py go java", ""},
-	{"hkex-rnl", 256, "demo", false, "demo", "far below 2^87 (not estimated)", "py go java", ""},
+	{"hkex-rnl", 32, "", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
+	{"hkex-rnl", 64, "", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
+	{"hkex-rnl", 128, "", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
+	{"hkex-rnl", 256, "demo", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
 	{"hkex-rnl", 512, "", false, "withdrawn", "~2^87 classical, ~2^79 quantum", "", "SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical bits, short of the 128 it was claimed to give"},
 	{"hkex-rnl", 1024, "128", true, "production", ">= 2^128 classical (conjectured; SECURITY.md)", "py go c java", ""},
 	{"hpks-stern", 32, "", false, "demo", "below 2^30", "py c go", ""},

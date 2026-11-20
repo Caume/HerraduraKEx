@@ -25966,3 +25966,82 @@ an HSKE key; with the fix reverted, 66 checks fail. MIGRATING.md section 45.
 Status: **DONE v16.0.0** — `kex --kdf hfscx-256` writes the whole digest labelled n = 256 at every width.
 
 ---
+
+### #383: C runs every listed width (GF family, Stern, hcred, hkex-rnl below 1024)
+
+Split from TODO #379 (stage 2 of its staged plan).  `key_parameter_sets` lists 32, 64,
+128 and 256 for the GF family (hkex-gf, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3), hpks-stern,
+hpke-stern and hcred, and 32-256 for hkex-rnl; Python and Go run every row and agree on
+every operation in both directions (measured in #379's pass).  C runs only each
+algorithm's default and refuses the rest "not yet supported by this CLI (...; TODO #383)".
+
+**Work.**  `herradura.h`'s GF arithmetic takes its width from the operand and its
+polynomial from BITARRAY.md's table (`E_NO_POLY` for an unlisted width, replacing the
+`#if KEYBITS != 256 #error`), constant-time as now; `gf_pub_is_valid` and the generator by
+width.  HPKS / HPKE / HPKS-NL / HPKE-NL / HPKE-NL3 at width n exactly as Python
+(`fscx_revolve` at n/4, Schnorr mod 2^n - 1, the HFSCX-256-DS challenge truncated to its
+high n bits).  Stern-F and hcred at runtime N (`SDF_SYNBYTES`, `HCRED_N`); hkex-rnl at
+runtime n <= `RNL_N`.  The CLI's PEM readers and writers at every listed width.  Add "c" to
+those rows' ports; `test_key_params.sh` then expects acceptance, and a four-way operation
+matrix at every width joins it.
+
+**Stages** (each adds "c" to its rows' ports once C agrees with Python and Go on every
+operation at every width, and extends `CliTest/test_width_matrix.sh` to the family):
+
+1. **The GF(2^n) family — done (v16.0.0).**  hkex-gf, hpks, hpks-nl, hpke, hpke-nl and
+   hpke-nl3 at 32, 64, 128 and 256 in `herradura.h` and the C CLI: `gf_mul_ba` /
+   `gf_pow_ba` look the polynomial up by width (`ba_gf_poly`, `BA_E_NO_POLY`), the
+   generator, `gf_pub_is_valid`, the Schnorr arithmetic mod 2^n - 1, M^-1 (closed form
+   M^(n/2-1) off 256), NL-FSCX v2's delta and round constant, and v3's chi rows all take
+   the operand's width; the `#if KEYBITS != 256 #error` is gone.  `ba_fscx_revolve`'s
+   closed form was born at 256 bits and failed `E_MIXED_WIDTH` at any narrower width with
+   n/4 >= 8 steps.  Threshold signing (HPKS-T) stays 256-only and C refuses a narrower
+   hpks key there by name (TODO #388).  New `CliTest/test_width_matrix.sh` (1102 checks;
+   28 fail on the pre-#383 build).  A 64-bit key used with a 128-bit peer key or
+   ciphertext is now refused in Python, Go and C (`kex` and `dec` accepted it with exit 0
+   in Python and Go; `verify` already refused) -- MIGRATING.md section 44.
+2. **Stern-F and hpke-stern — done (v16.0.0).**  hpks-stern, hpke-stern and hpks-ring
+   at 32, 64, 128 and 256: every Stern function in `herradura.h` takes N from its operand
+   (N/2 rows, t = max(2, N/16), the chain hash's high N bits, the PRNG and permutation at
+   N), and the C CLI's keys, signatures, ring signatures and ciphertexts are sized from
+   their own n.  A 64-bit key used with a 128-bit signature or ciphertext is now refused
+   in all three (Go panicked in `verify`; Python and Go decrypted with exit 0) --
+   MIGRATING.md section 46.  `test_width_matrix.sh` covers the family (1709 checks; 99
+   fail on the stage-1 build).
+3. **hcred — done (v16.0.0).**  hcred at 32, 64, 128 and 256 in `herradura.h` and the
+   C CLI: the ZKBoo prover and verifier, the statement hash, phi, keygen's weight screen
+   (w_max = n/4 + floor(sqrt(3n)), Python's rule) and the proof codec read n from their
+   operands (`seed_H`'s width, the proof's new `n` field); `HCRED_N` = 256 stays the
+   default and the array bound.  The ring product gained a schoolbook branch for the
+   power-of-two dimensions below 256, which have no NTT table.  The issuer key may be an
+   hpks-stern key of any width, the issuance message being the statement digest's high
+   issuer-n bits, as in Python and Go.  A proof of another width than its key, or a
+   credential of another width than its issuer key, is now refused by name in all three
+   (Go panicked on both; Python failed the credential as a forgery).  HCRED-KKW stays at
+   256 in C (no CLI uses it).  `test_width_matrix.sh` covers the family.
+4. **hkex-rnl — done (v16.0.0).**  hkex-rnl, rnl-sigma and hybrid-rnl-stern at every
+   ring the spec lists (32, 64, 128, 256 and the deployed 1024) in the C CLI, which reads
+   any power of two from 8 to `RNL_N` as Python, Go and Java do: `herradura.h` gains the
+   dimension-taking `rnl_m_poly_dim`, `rnl_rand_poly_dim`, `rnl_poly_add_dim`,
+   `rnl_hint_dim`, `rnl_reconcile_bits_dim`, `rnl_agree_dim`, `rnl_key_bits` and
+   `rnl_contributory_kdf_len` (K_raw at `rnl_key_bits(n)` / 8 bytes, Python's rule), and
+   the ring product's schoolbook branch now covers every power of two below `RNL_N`.  A
+   key used with a peer key or response over another ring is refused in C with Python's
+   text ("Ring size mismatch: ours n=64, theirs n=128"); C's hybrid read neither ring
+   before.  Go's `ZkpRnlParams` gave t = 16 at every n > 32, where C, Python and Java use
+   8 at 64 and 12 at 128, so rnl-sigma proofs did not verify across Go and the others at
+   those two rings; it now follows the shared ladder -- MIGRATING.md section 47.
+
+Resolution: C runs every listed width of every family the spec lists: the GF(2^n) family,
+hpks-stern, hpke-stern and hpks-ring, hcred, and hkex-rnl with rnl-sigma and the hybrid,
+each byte-identical with Python and Go (and with Java where Java runs the row), and "c"
+is in every narrow row's ports except OPRF's (TODO #385).  A key used with an artifact
+of another width is refused by name in every family.  `CliTest/test_width_matrix.sh`
+holds every operation to the spec's rows across all CLI pairs, and every stage's run on
+the previous stage's build fails.  MIGRATING.md sections 44, 46 and 47.  Java's narrow
+widths are TODO #384; the `pkey --text` layouts the matrix reports as n/a are TODO #386
+and #387.
+
+Status: **DONE v16.0.0** — C runs every listed width: the GF family, Stern-F, hcred and hkex-rnl.
+
+---

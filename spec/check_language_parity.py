@@ -4846,6 +4846,20 @@ PRIMITIVES = {
         "python": r"^def _rnl_reconcile_bits\(",
         "java": r"HerraduraNl.java::public static BigInteger rnlReconcileBits\(",
     },
+    # TODO #383 stage 4: the C CLI calls rnl_keygen_dim / rnl_agree_dim at the
+    # key's ring, so these two stems stopped being CLI-reachable and need rows.
+    "rnl-keygen": {
+        "c": r"static void rnl_keygen\(",
+        "go": r"^func RnlKeygen\(",
+        "python": r"^def _rnl_keygen\(",
+        "java": r"HerraduraNl.java::public static RnlKeypair rnlKeygen\(",
+    },
+    "rnl-agree": {
+        "c": r"static void rnl_agree\(",
+        "go": r"^func RnlAgree\(",
+        "python": r"^def _rnl_agree\(",
+        "java": r"HerraduraNl.java::public static RnlAgreeResult rnlAgree\(",
+    },
     "rnl-m-poly": {
         "c": r"static void rnl_m_poly\(",
         "go": r"^func RnlMPoly\(",
@@ -6945,7 +6959,7 @@ SAMPLER_REPLAY_PINNED = {
         "python": "_rnl_cbd_poly", "java": "HerraduraNl.java::rnlCbdPoly",
     },
     "rnl_rand_poly": {
-        "c": "rnl_rand_poly", "go": "RnlRandPoly",
+        "c": "rnl_rand_poly_dim", "go": "RnlRandPoly",
         "python": "_rnl_rand_poly", "java": "HerraduraNl.java::rnlRandPoly",
     },
     "stern_weight_t": {
@@ -7335,7 +7349,7 @@ RANDOMNESS_CENSUS = {
         "hpake_register", "hpke_encrypt", "hpks_nl_sign", "hpks_sign",
         "hpks_stern_f_sign",
         "hpkst_sign", "hske_decrypt_masked", "hske_encrypt_masked", "oprf_blind",
-        "oprf_keygen", "rnl_cbd_poly_dim", "rnl_rand_poly",
+        "oprf_keygen", "rnl_cbd_poly_dim", "rnl_rand_poly_dim",
         "rnl_sigma_sign", "stern_f_keygen", "stern_rand_error", "stern_ring_sign",
         "stern_ring_simulate", "stern_ring_trit", "zkp_nl_keygen",
         "zkp_nl_pp_prove", "zkp_nl_prove",

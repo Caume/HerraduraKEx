@@ -663,63 +663,6 @@ Status: **OPEN**
 
 ---
 
-### #383: C runs every listed width (GF family, Stern, hcred, hkex-rnl below 1024)
-
-Split from TODO #379 (stage 2 of its staged plan).  `key_parameter_sets` lists 32, 64,
-128 and 256 for the GF family (hkex-gf, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3), hpks-stern,
-hpke-stern and hcred, and 32-256 for hkex-rnl; Python and Go run every row and agree on
-every operation in both directions (measured in #379's pass).  C runs only each
-algorithm's default and refuses the rest "not yet supported by this CLI (...; TODO #383)".
-
-**Work.**  `herradura.h`'s GF arithmetic takes its width from the operand and its
-polynomial from BITARRAY.md's table (`E_NO_POLY` for an unlisted width, replacing the
-`#if KEYBITS != 256 #error`), constant-time as now; `gf_pub_is_valid` and the generator by
-width.  HPKS / HPKE / HPKS-NL / HPKE-NL / HPKE-NL3 at width n exactly as Python
-(`fscx_revolve` at n/4, Schnorr mod 2^n - 1, the HFSCX-256-DS challenge truncated to its
-high n bits).  Stern-F and hcred at runtime N (`SDF_SYNBYTES`, `HCRED_N`); hkex-rnl at
-runtime n <= `RNL_N`.  The CLI's PEM readers and writers at every listed width.  Add "c" to
-those rows' ports; `test_key_params.sh` then expects acceptance, and a four-way operation
-matrix at every width joins it.
-
-**Stages** (each adds "c" to its rows' ports once C agrees with Python and Go on every
-operation at every width, and extends `CliTest/test_width_matrix.sh` to the family):
-
-1. **The GF(2^n) family — done (v16.0.0).**  hkex-gf, hpks, hpks-nl, hpke, hpke-nl and
-   hpke-nl3 at 32, 64, 128 and 256 in `herradura.h` and the C CLI: `gf_mul_ba` /
-   `gf_pow_ba` look the polynomial up by width (`ba_gf_poly`, `BA_E_NO_POLY`), the
-   generator, `gf_pub_is_valid`, the Schnorr arithmetic mod 2^n - 1, M^-1 (closed form
-   M^(n/2-1) off 256), NL-FSCX v2's delta and round constant, and v3's chi rows all take
-   the operand's width; the `#if KEYBITS != 256 #error` is gone.  `ba_fscx_revolve`'s
-   closed form was born at 256 bits and failed `E_MIXED_WIDTH` at any narrower width with
-   n/4 >= 8 steps.  Threshold signing (HPKS-T) stays 256-only and C refuses a narrower
-   hpks key there by name (TODO #388).  New `CliTest/test_width_matrix.sh` (1102 checks;
-   28 fail on the pre-#383 build).  A 64-bit key used with a 128-bit peer key or
-   ciphertext is now refused in Python, Go and C (`kex` and `dec` accepted it with exit 0
-   in Python and Go; `verify` already refused) -- MIGRATING.md section 44.
-2. **Stern-F and hpke-stern — done (v16.0.0).**  hpks-stern, hpke-stern and hpks-ring
-   at 32, 64, 128 and 256: every Stern function in `herradura.h` takes N from its operand
-   (N/2 rows, t = max(2, N/16), the chain hash's high N bits, the PRNG and permutation at
-   N), and the C CLI's keys, signatures, ring signatures and ciphertexts are sized from
-   their own n.  A 64-bit key used with a 128-bit signature or ciphertext is now refused
-   in all three (Go panicked in `verify`; Python and Go decrypted with exit 0) --
-   MIGRATING.md section 46.  `test_width_matrix.sh` covers the family (1709 checks; 99
-   fail on the stage-1 build).
-3. **hcred — done (v16.0.0).**  hcred at 32, 64, 128 and 256 in `herradura.h` and the
-   C CLI: the ZKBoo prover and verifier, the statement hash, phi, keygen's weight screen
-   (w_max = n/4 + floor(sqrt(3n)), Python's rule) and the proof codec read n from their
-   operands (`seed_H`'s width, the proof's new `n` field); `HCRED_N` = 256 stays the
-   default and the array bound.  The ring product gained a schoolbook branch for the
-   power-of-two dimensions below 256, which have no NTT table.  The issuer key may be an
-   hpks-stern key of any width, the issuance message being the statement digest's high
-   issuer-n bits, as in Python and Go.  A proof of another width than its key, or a
-   credential of another width than its issuer key, is now refused by name in all three
-   (Go panicked on both; Python failed the credential as a forgery).  HCRED-KKW stays at
-   256 in C (no CLI uses it).  `test_width_matrix.sh` covers the family.
-4. **hkex-rnl** at runtime n <= `RNL_N` (32-256), including rnl-sigma and the hybrid.
-
-Status: **OPEN**
-
----
 
 ### #384: Java runs every listed width
 
@@ -772,6 +715,10 @@ digits, so its dump is shorter and shifted.  Display only (no artifact changes),
 four CLIs should print the same text; `test_pkey_text_matrix.sh` compares only the first
 lines, which is why it never failed.  Make Python print the full fixed-width dump and
 extend the matrix to compare whole `--text` outputs across CLIs.
+Also (#383 stage 4): the other three do not agree either.  Go prints `s_packed`,
+`C_packed` and `n_A`; C prints `s_packed` alone; Java prints the first five coefficients
+of `s` and `C` (`s[0..4]`, `C[0..4]`).  `test_width_matrix.sh` reports hkex-rnl's 60
+cross-CLI `--text` cells as n/a until this lands.
 
 Status: **OPEN**
 

@@ -2014,9 +2014,11 @@ def _param_rows():
     # OPRF runs at 256 only in every CLI today; narrower rows are TODO #385.
     rows.append(("oprf", 256, "demo", True,
                  "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", all4, None))
+    # TODO #383 stage 4: C runs hkex-rnl (and rnl-sigma, the hybrid) at every
+    # ring; Java already did.
     for w in (32, 64, 128, 256):
         rows.append(("hkex-rnl", w, "demo" if w == 256 else None, False,
-                     "far below 2^87 (not estimated)", ("py", "go", "java"), None))
+                     "far below 2^87 (not estimated)", all4, None))
     rows.append(("hkex-rnl", 512, None, False, "~2^87 classical, ~2^79 quantum", (),
                  "SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical "
                  "bits, short of the 128 it was claimed to give"))

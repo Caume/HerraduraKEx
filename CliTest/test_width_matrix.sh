@@ -24,16 +24,26 @@
 #     the reader, and not under another message; a credential the writer issues
 #     over the reader's key, under an n-bit hpks-stern issuer key, verifies under
 #     the reader, and not under another issuer's key.
+#   - hkex-rnl (TODO #383 stage 4), at every ring the spec lists (32-256 and the
+#     deployed 1024): the reader responds to the writer's public key and the
+#     writer completes, with and without --kdf hfscx-256, and both hold one
+#     session key, declared n = 256 at every ring (TODO #228); the same over
+#     hybrid-rnl-stern, with the writer's HPKE-Stern-KEM key; and the writer's
+#     rnl-sigma proof verifies under the reader, and not on a changed message.
 # A CLI the row does not list must refuse the key (pkey --text, enc, verify),
 # naming the width, without crashing -- never exit 0 with a wrong answer.
 #
 # Widths come from the spec, so a CLI added to a row (TODO #384: Java) is
 # tested the moment the row says it runs.
+#
+# hybrid-rnl-stern decapsulates the QC-MDPC KEM, so a session-key mismatch
+# there retries under lib_dfr.sh's policy (TODO #221, #276).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/CliTest/lib_build.sh"
+. "$ROOT/CliTest/lib_dfr.sh"
 hkx_require_built c go java
 
 declare -A CLI=(
@@ -47,11 +57,11 @@ bash "$ROOT/bindings/java/build.sh" >/dev/null 2>&1
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-PASS=0; FAIL=0; NA=0; NA_STERN=0; NA_HCRED=0
+PASS=0; FAIL=0; NA=0; NA_STERN=0; NA_HCRED=0; NA_RNL=0
 pass() { PASS=$((PASS+1)); }
 fail() { echo "FAIL $1"; FAIL=$((FAIL+1)); }
 
-GF_ALGOS="hkex-gf hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern hcred"
+GF_ALGOS="hkex-gf hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern hcred hkex-rnl"
 SR=16   # Stern-F rounds: soundness is not under test, interop is
 python3 - "$ROOT/spec/herradura-protocol-spec.json" "$GF_ALGOS" > "$TMP/rows" <<'EOF'
 import json, sys
@@ -65,6 +75,49 @@ has_port() { case ",$1," in *",$2,"*) return 0 ;; *) return 1 ;; esac; }
 
 # q: run quietly; RC holds the exit status, ERR the stderr
 q() { local c=$1; shift; ${CLI[$c]} "$@" >"$TMP/out" 2>"$TMP/err"; RC=$?; }
+
+# der_ints: a DER SEQUENCE PEM's INTEGERs, one per line, in hex (a 1024-ring
+# polynomial is past Python's decimal-conversion limit)
+der_ints() { python3 - "$1" <<'PYEOF'
+import base64, sys
+der = base64.b64decode("".join(l for l in open(sys.argv[1]).read().split("\n")
+                               if l and not l.startswith("-----")))
+i = 2 if der[1] < 0x80 else 2 + (der[1] & 0x7f)
+while i < len(der):
+    L, j = der[i + 1], i + 2
+    if L & 0x80:
+        nb = L & 0x7f; L = int.from_bytes(der[j:j + nb], "big"); j += nb
+    print(format(int.from_bytes(der[j:j + L], "big"), "x")); i = j + L
+PYEOF
+}
+first_int() { [ -s "$1" ] && der_ints "$1" | head -1; }
+last_int()  { [ -s "$1" ] && der_ints "$1" | tail -1; }
+
+# rnl_pair: the reader $2 responds to the writer $1's key, the writer completes
+# with the reader's response; both must hold one key, and the completion
+# declares n = 256.  $3 = algo, rest = extra kex flags.  hybrid-rnl-stern
+# decapsulates the writer's KEM key, so a mismatch there retries (lib_dfr.sh).
+rnl_pair() { local g=$1 r=$2 a=$3; shift 3; local attempt=0 kem1=() kem2=() k1 k2
+    if [ "$a" = hybrid-rnl-stern ]; then
+        kem1=(--their-kem "$D/kem_${g}_pub.pem"); kem2=(--our-kem "$D/kem_$g.pem")
+    fi
+    while :; do
+        rm -f "$D/resp.pem" "$D/sk.pem"
+        q "$r" kex --algo "$a" "$@" --our "$D/$r.pem" --their "$D/${g}_pub.pem" "${kem1[@]}" --out "$D/resp.pem"
+        [ "$RC" -eq 0 ] || { fail "$L: $a $* respond (rc=$RC) $(head -c 160 "$TMP/err")"; return; }
+        q "$g" kex --algo "$a" "$@" --our "$D/$g.pem" "${kem2[@]}" --their "$D/resp.pem" --out "$D/sk.pem"
+        [ "$RC" -eq 0 ] || { fail "$L: $a $* complete (rc=$RC) $(head -c 160 "$TMP/err")"; return; }
+        k1=$(first_int "$D/resp.pem"); k2=$(first_int "$D/sk.pem")
+        if [ -n "$k1" ] && [ "$k1" = "$k2" ]; then break; fi
+        if [ "$a" = hybrid-rnl-stern ] && dfr_retryable "$attempt"; then
+            attempt=$((attempt+1)); dfr_report_retry "$L $a" "$attempt"; continue
+        fi
+        fail "$L: $a $* -- the two sides hold different session keys"; return
+    done
+    pass
+    if [ "$(last_int "$D/sk.pem")" = 100 ]; then pass   # 0x100 = 256
+    else fail "$L: $a $* session key declares n = 0x$(last_int "$D/sk.pem"), not 256"; fi
+}
 
 # refused: the last q exited 1 or 2 naming the width, without a crash
 refused() {  # label
@@ -88,6 +141,10 @@ while read -r a n dflt ports; do
         q "$g" pkey --in "$D/$g.pem" --pubout --out "$D/${g}_pub.pem"
         if [ "$RC" -ne 0 ]; then fail "$a/$n pubout ($g): rc=$RC"; continue; fi
         ${CLI[$g]} pkey --in "$D/$g.pem" --text > "$D/${g}_text" 2>/dev/null
+        if [ "$a" = hkex-rnl ]; then   # the hybrid's KEM half, one key per CLI
+            q "$g" genpkey --algo hpke-stern-kem --out "$D/kem_$g.pem"
+            q "$g" pkey --in "$D/kem_$g.pem" --pubout --out "$D/kem_${g}_pub.pem"
+        fi
         gens+=("$g")
     done
     [ "${#gens[@]}" -gt 0 ] || { fail "$a/$n: no CLI wrote a key"; continue; }
@@ -100,14 +157,19 @@ while read -r a n dflt ports; do
             if [ "$RC" -eq 0 ] && cmp -s "$D/x.pem" "$D/${g}_pub.pem"; then pass
             else fail "$L: pkey --pubout differs (rc=$RC)"; fi
             # Java's Stern --text dump has other fields (bits, syndrome, no e_int),
-            # and hcred's has three layouts at every width, 256 included (Python:
+            # hcred's has three layouts at every width, 256 included (Python:
             # seed_H, y big-endian, W; C: seed_H, y low byte first; Go and Java: W):
-            # the whole-dump divergence TODO #386 covers, not a width defect --
-            # reported as n/a, never scored as a pass.
+            # the whole-dump divergence TODO #386 covers.  hkex-rnl's has four at
+            # every ring, 1024 included (Go: s_packed, C_packed, n_A; Python: the
+            # same without the packed values' leading zeros; C: s_packed alone;
+            # Java: five coefficients of s and C), TODO #387.  Neither is a width
+            # defect -- reported as n/a, never scored as a pass.
             if [[ $a == *-stern && ( $g == java || $r == java ) && $g != "$r" ]]; then
                 NA=$((NA+1)); NA_STERN=$((NA_STERN+1))
             elif [[ $a == hcred && $g != "$r" ]]; then
                 NA=$((NA+1)); NA_HCRED=$((NA_HCRED+1))
+            elif [[ $a == hkex-rnl && $g != "$r" ]]; then
+                NA=$((NA+1)); NA_RNL=$((NA_RNL+1))
             elif ${CLI[$r]} pkey --in "$D/$g.pem" --text 2>/dev/null | cmp -s - "$D/${g}_text"; then pass
             else fail "$L: pkey --text differs"; fi
             case $a in
@@ -209,6 +271,20 @@ EOF
                     if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED (credential)' "$TMP/out"; then pass
                     else fail "$L: credential under another issuer: rc=$RC, not 'Verification FAILED (credential)'"; fi
                 fi ;;
+            hkex-rnl)
+                rnl_pair "$g" "$r" hkex-rnl
+                rnl_pair "$g" "$r" hkex-rnl --kdf hfscx-256
+                rnl_pair "$g" "$r" hybrid-rnl-stern
+                { cat "$D/m.bin"; printf x; } > "$D/m2.bin"
+                q "$g" sign --algo rnl-sigma --key "$D/$g.pem" --in "$D/m.bin" --out "$D/s.pem"
+                if [ "$RC" -ne 0 ]; then fail "$L: rnl-sigma sign (rc=$RC) $(head -c 160 "$TMP/err")"
+                else
+                    q "$r" verify --algo rnl-sigma --pubkey "$D/${g}_pub.pem" --in "$D/m.bin" --sig "$D/s.pem"
+                    if [ "$RC" -eq 0 ]; then pass; else fail "$L: rnl-sigma verify refused a valid proof (rc=$RC) $(head -c 160 "$TMP/err")"; fi
+                    q "$r" verify --algo rnl-sigma --pubkey "$D/${g}_pub.pem" --in "$D/m2.bin" --sig "$D/s.pem"
+                    if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED' "$TMP/out"; then pass
+                    else fail "$L: rnl-sigma verify on a changed message: rc=$RC, not 'Verification FAILED'"; fi
+                fi ;;
             hpke*)
                 rm -f "$D/ct.pem" "$D/d.bin"
                 q "$g" enc --algo "$a" --pubkey "$D/${r}_pub.pem" --in "$D/m.bin" --out "$D/ct.pem"
@@ -237,6 +313,8 @@ EOF
         hcred)  q "$ref" cred-prove --rounds $SR --in "$D/$ref.pem" --out "$D/pf_x.pem"
                 q "$c" cred-verify --min-rounds $SR --proof "$D/pf_x.pem" --pubkey "$D/${ref}_pub.pem"
                 refused "$a/$n cred-verify ($c)" ;;
+        hkex-rnl) q "$c" kex --algo hkex-rnl --our "$D/$ref.pem" --their "$D/${ref}_pub.pem" --out "$D/k_$c.pem"
+                refused "$a/$n kex ($c)" ;;
         esac
     done
 done < "$TMP/rows"
@@ -252,9 +330,12 @@ runs_both() { local a=$1 c=$2 p64 p128
 mixed() {  # label want-message
     if [ "$RC" -ne 0 ] && [ "$RC" -le 2 ] && grep -qF "$2" "$TMP/err"; then pass
     else fail "$1: rc=$RC, not refused with '$2': $(head -c 160 "$TMP/err")"; fi; }
+rnl_mixed() {  # label: refused as a ring size mismatch naming our 64, then 128
+    if [ "$RC" -ne 0 ] && [ "$RC" -le 2 ] && grep -qiE 'ring size mismatch.*\b64\b.*\b128\b' "$TMP/err"; then pass
+    else fail "$1: rc=$RC, not refused as a ring size mismatch (64, then 128): $(head -c 160 "$TMP/err")"; fi; }
 M="$TMP/mix"; mkdir -p "$M"; head -c 8 /dev/urandom > "$M/m.bin"
 for c in "${LANGS[@]}"; do
-    for a in hkex-gf hpke hpks hpke-stern hpks-stern hcred; do
+    for a in hkex-gf hpke hpks hpke-stern hpks-stern hcred hkex-rnl; do
         runs_both "$a" "$c" || continue
         q "$c" genpkey --algo "$a" --bits 64  --out "$M/k64.pem"
         q "$c" genpkey --algo "$a" --bits 128 --out "$M/k128.pem"
@@ -321,12 +402,36 @@ for c in "${LANGS[@]}"; do
             q "$c" cred-issue --rounds $SR --in "$M/k64_pub.pem" --our "$M/i128.pem" --out "$M/c128.pem"
             q "$c" cred-verify --min-rounds $SR --proof "$M/p64.pem" --pubkey "$M/k64_pub.pem" --cred "$M/c128.pem" --issuer "$M/i64_pub.pem"
             mixed "mixed-width hcred credential ($c)" "credential n is 128, issuer key n is 64" ;;
+        hkex-rnl)   # TODO #383 stage 4.  The four CLIs word it four ways, each
+                    # naming our ring and then the other's; C's hybrid read
+                    # neither ring until now.
+            q "$c" genpkey --algo hpke-stern-kem --out "$M/kem.pem"
+            q "$c" pkey --in "$M/kem.pem" --pubout --out "$M/kem_pub.pem"
+            for ka in hkex-rnl hybrid-rnl-stern; do
+                kem1=(); kem2=()
+                [ "$ka" = hybrid-rnl-stern ] && { kem1=(--their-kem "$M/kem_pub.pem"); kem2=(--our-kem "$M/kem.pem"); }
+                q "$c" kex --algo "$ka" --our "$M/k64.pem" --their "$M/k64_pub.pem" "${kem1[@]}" --out "$M/r64.pem"
+                [ "$RC" -eq 0 ] && pass || fail "mixed control: same-ring $ka respond ($c) rc=$RC"
+                q "$c" kex --algo "$ka" --our "$M/k64.pem" --their "$M/r64.pem" "${kem2[@]}" --out "$M/ok.pem"
+                [ "$RC" -eq 0 ] && pass || fail "mixed control: same-ring $ka complete ($c) rc=$RC"
+                q "$c" kex --algo "$ka" --our "$M/k64.pem" --their "$M/k128_pub.pem" "${kem1[@]}" --out "$M/x.pem"
+                rnl_mixed "mixed-ring $ka respond ($c)"
+                q "$c" kex --algo "$ka" --our "$M/k128.pem" --their "$M/k128_pub.pem" "${kem1[@]}" --out "$M/r128.pem"
+                q "$c" kex --algo "$ka" --our "$M/k64.pem" --their "$M/r128.pem" "${kem2[@]}" --out "$M/x.pem"
+                rnl_mixed "mixed-ring $ka complete ($c)"
+            done
+            q "$c" sign --algo rnl-sigma --key "$M/k64.pem" --in "$M/m.bin" --out "$M/s64.pem"
+            q "$c" verify --algo rnl-sigma --pubkey "$M/k64_pub.pem" --in "$M/m.bin" --sig "$M/s64.pem"
+            [ "$RC" -eq 0 ] && pass || fail "mixed control: same-ring rnl-sigma verify ($c) rc=$RC"
+            q "$c" sign --algo rnl-sigma --key "$M/k128.pem" --in "$M/m.bin" --out "$M/s128.pem"
+            q "$c" verify --algo rnl-sigma --pubkey "$M/k64_pub.pem" --in "$M/m.bin" --sig "$M/s128.pem"
+            rnl_mixed "mixed-ring rnl-sigma verify ($c)" ;;
         esac
     done
 done
 
 echo
 echo "Results: $PASS PASS / $FAIL FAIL / $NA n/a (languages: ${LANGS[*]})"
-[ "$NA" -eq 0 ] || echo "n/a: $NA_STERN Stern pkey --text cells with Java on one side, $NA_HCRED hcred pkey --text cells across CLIs (TODO #386)"
+[ "$NA" -eq 0 ] || echo "n/a: $NA_STERN Stern pkey --text cells with Java on one side, $NA_HCRED hcred pkey --text cells across CLIs (TODO #386), $NA_RNL hkex-rnl ones (TODO #387)"
 [ "$PASS" -gt 0 ] || exit 2
 [ "$FAIL" -eq 0 ] || exit 1

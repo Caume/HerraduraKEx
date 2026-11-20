@@ -204,10 +204,9 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     (default); 512 refused as withdrawn.  hpks-stern, hpke-stern, hcred: 32|64|128|256,
     --level demo = 256.  hpke-stern-kem: --level 128 only.  hpks-zkp-nl: --bits any even
     n <= 64, --level demo = 8.  hpks-wots, hpks-xmss: neither flag.  Below the default a
-    stderr warning gives the estimated security.  Widths below 256 run in Python and Go,
-    the GF family's, hpks-stern's, hpke-stern's and hcred's also in C, hkex-rnl's also
-    in Java; elsewhere C and Java refuse them
-    "not yet supported by this CLI" (TODO #383 / #384).  Anything else fails by name; --bits with --level fails.
+    stderr warning gives the estimated security.  Every listed width runs in Python, Go
+    and C; Java runs hkex-rnl's narrow rings too, and refuses the GF family's, Stern-F's
+    and hcred's below 256 "not yet supported by this CLI" (TODO #384).  Anything else fails by name; --bits with --level fails.
     --passphrase writes a HERRADURA ENCRYPTED PRIVATE KEY envelope.  An empty
     passphrase, and --kdf-iterations without --passphrase, are refused by name in
     every CLI (TODO #376; Python and Go used to write the key in the clear).

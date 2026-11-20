@@ -3261,9 +3261,18 @@ func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) b
 const sigmaMaxAttempts = 1000
 
 // ZkpRnlParams returns (gamma, t) for the Ring-LWR Σ-protocol at bit-width n.
+// The ladder is C's sigma_params, Python's _SIGMA_T and Java's: t = 4, 8, 12, 16
+// at n <= 32, 64, 128 and above.  Go returned 16 for every n > 32, so at n = 64
+// and 128 its proofs and the other three's did not verify against each other
+// (TODO #383 stage 4; no test ran rnl-sigma below the default ring before).
 func ZkpRnlParams(n int) (gamma, t int) {
-	if n <= 32 {
+	switch {
+	case n <= 32:
 		return 4096, 4
+	case n <= 64:
+		return 8192, 8
+	case n <= 128:
+		return 8192, 12
 	}
 	return 8192, 16
 }
