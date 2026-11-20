@@ -2317,3 +2317,25 @@ for threshold signing.
 **Why this is MAJOR.** It changes what an existing `--algo` / `--kdf` combination produces
 (Go's narrow session keys) and refuses input Python and Go accepted.
 
+## 46. C runs Stern-F at 32-128 bits; mixed Stern widths are refused (v16.0.0)
+
+**Who is affected:** a script that uses an hpks-stern or hpke-stern key narrower than 256
+bits (including in an hpks-ring), or that passes a Stern signature or ciphertext of one
+width with a key of another.
+
+**What changed (TODO #383, stage 2).**
+
+- The C CLI now runs hpks-stern, hpke-stern and hpks-ring at 32, 64, 128 and 256 bits,
+  byte-identical with Python and Go in both directions. It used to refuse a narrower key
+  with `this CLI runs n = 256`. Java still runs 256 only (TODO #384), and C's hcred
+  issuer stays 256-bit (stage 3).
+- A Stern signature or hpke-stern ciphertext whose width is not its key's is refused in
+  Python, Go and C with `verify: signature n is 128, public key n is 64` /
+  `dec: ciphertext n is 128, private key n is 64`. Go used to panic in `verify`, Python
+  failed inside its hash, and both decrypted a mismatched ciphertext to garbage with
+  exit 0.
+
+**What to do.** Use one width for a key and its signatures and ciphertexts. Existing
+256-bit keys, signatures and ciphertexts read exactly as before.
+
+**Why this is MAJOR.** `dec` now refuses input Python and Go accepted, the 2.0.0 surface.

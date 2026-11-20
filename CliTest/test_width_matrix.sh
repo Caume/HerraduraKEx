@@ -16,6 +16,10 @@
 #     and without --digest hfscx-256, and a one-byte-longer message does NOT
 #     (the negative control, so a verifier that accepts everything fails);
 #   - hpke*: the writer encrypts to the reader's key and the reader decrypts.
+#   - hpks-stern (TODO #383 stage 2): as hpks, at SR reduced rounds (the
+#     verifier is given --min-rounds SR); and an hpks-ring signature by the
+#     writer over a ring of every listed CLI's key verifies under the reader,
+#     and not on a changed message.  hpke-stern runs the hpke* checks.
 # A CLI the row does not list must refuse the key (pkey --text, enc, verify),
 # naming the width, without crashing -- never exit 0 with a wrong answer.
 #
@@ -39,11 +43,12 @@ bash "$ROOT/bindings/java/build.sh" >/dev/null 2>&1
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-PASS=0; FAIL=0
+PASS=0; FAIL=0; NA=0
 pass() { PASS=$((PASS+1)); }
 fail() { echo "FAIL $1"; FAIL=$((FAIL+1)); }
 
-GF_ALGOS="hkex-gf hpks hpks-nl hpke hpke-nl hpke-nl3"
+GF_ALGOS="hkex-gf hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern"
+SR=16   # Stern-F rounds: soundness is not under test, interop is
 python3 - "$ROOT/spec/herradura-protocol-spec.json" "$GF_ALGOS" > "$TMP/rows" <<'EOF'
 import json, sys
 algos = sys.argv[2].split()
@@ -90,7 +95,12 @@ while read -r a n dflt ports; do
             q "$r" pkey --in "$D/$g.pem" --pubout --out "$D/x.pem"
             if [ "$RC" -eq 0 ] && cmp -s "$D/x.pem" "$D/${g}_pub.pem"; then pass
             else fail "$L: pkey --pubout differs (rc=$RC)"; fi
-            if ${CLI[$r]} pkey --in "$D/$g.pem" --text 2>/dev/null | cmp -s - "$D/${g}_text"; then pass
+            # Java's Stern --text dump has other fields (bits, syndrome, no e_int):
+            # the whole-dump divergence TODO #386 covers, not a width defect --
+            # reported as n/a, never scored as a pass.
+            if [[ $a == *-stern && ( $g == java || $r == java ) && $g != "$r" ]]; then
+                NA=$((NA+1))
+            elif ${CLI[$r]} pkey --in "$D/$g.pem" --text 2>/dev/null | cmp -s - "$D/${g}_text"; then pass
             else fail "$L: pkey --text differs"; fi
             case $a in
             hkex-gf)
@@ -138,6 +148,28 @@ EOF
                     if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED' "$TMP/out"; then pass
                     else fail "$L: verify $dg on a changed message: rc=$RC, not 'Verification FAILED'"; fi
                 done ;;
+            hpks-stern)
+                { cat "$D/m.bin"; printf x; } > "$D/m2.bin"
+                for dg in "" "--digest hfscx-256"; do
+                    q "$g" sign --algo hpks-stern $dg --rounds $SR --key "$D/$g.pem" --in "$D/m.bin" --out "$D/s.pem"
+                    [ "$RC" -eq 0 ] || { fail "$L: sign $dg (rc=$RC) $(head -c 160 "$TMP/err")"; continue; }
+                    q "$r" verify --algo hpks-stern $dg --min-rounds $SR --pubkey "$D/${g}_pub.pem" --in "$D/m.bin" --sig "$D/s.pem"
+                    if [ "$RC" -eq 0 ]; then pass; else fail "$L: verify $dg refused a valid signature (rc=$RC) $(head -c 160 "$TMP/err")"; fi
+                    q "$r" verify --algo hpks-stern $dg --min-rounds $SR --pubkey "$D/${g}_pub.pem" --in "$D/m2.bin" --sig "$D/s.pem"
+                    if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED' "$TMP/out"; then pass
+                    else fail "$L: verify $dg on a changed message: rc=$RC, not 'Verification FAILED'"; fi
+                done
+                ring=$(printf "$D/%s_pub.pem," "${gens[@]}"); ring=${ring%,}
+                if [ "${#gens[@]}" -lt 2 ]; then ring="$ring,$ring"; fi
+                q "$g" sign --algo hpks-ring --rounds $SR --key "$D/$g.pem" --ring "$ring" --in "$D/m.bin" --out "$D/rs.pem"
+                if [ "$RC" -ne 0 ]; then fail "$L: ring sign (rc=$RC) $(head -c 160 "$TMP/err")"
+                else
+                    q "$r" verify --algo hpks-ring --min-rounds $SR --ring "$ring" --in "$D/m.bin" --sig "$D/rs.pem"
+                    if [ "$RC" -eq 0 ]; then pass; else fail "$L: ring verify refused a valid signature (rc=$RC) $(head -c 160 "$TMP/err")"; fi
+                    q "$r" verify --algo hpks-ring --min-rounds $SR --ring "$ring" --in "$D/m2.bin" --sig "$D/rs.pem"
+                    if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED' "$TMP/out"; then pass
+                    else fail "$L: ring verify on a changed message: rc=$RC, not 'Verification FAILED'"; fi
+                fi ;;
             hpke*)
                 rm -f "$D/ct.pem" "$D/d.bin"
                 q "$g" enc --algo "$a" --pubkey "$D/${r}_pub.pem" --in "$D/m.bin" --out "$D/ct.pem"
@@ -156,8 +188,10 @@ EOF
         case $a in
         hpke*)  q "$c" enc --algo "$a" --pubkey "$D/${ref}_pub.pem" --in "$D/m.bin" --out "$D/ct_$c.pem"
                 refused "$a/$n enc ($c)" ;;
-        hpks*)  q "$ref" sign --algo "$a" --key "$D/$ref.pem" --in "$D/m.bin" --out "$D/s.pem"
-                q "$c" verify --algo "$a" --pubkey "$D/${ref}_pub.pem" --in "$D/m.bin" --sig "$D/s.pem"
+        hpks*)  sr=(); vr=()
+                [ "$a" = hpks-stern ] && { sr=(--rounds $SR); vr=(--min-rounds $SR); }
+                q "$ref" sign --algo "$a" "${sr[@]}" --key "$D/$ref.pem" --in "$D/m.bin" --out "$D/s.pem"
+                q "$c" verify --algo "$a" "${vr[@]}" --pubkey "$D/${ref}_pub.pem" --in "$D/m.bin" --sig "$D/s.pem"
                 refused "$a/$n verify ($c)" ;;
         hkex-gf) q "$c" kex --algo hkex-gf --our "$D/$ref.pem" --their "$D/${ref}_pub.pem" --out "$D/k_$c.pem"
                 refused "$a/$n kex ($c)" ;;
@@ -178,7 +212,7 @@ mixed() {  # label want-message
     else fail "$1: rc=$RC, not refused with '$2': $(head -c 160 "$TMP/err")"; fi; }
 M="$TMP/mix"; mkdir -p "$M"; head -c 8 /dev/urandom > "$M/m.bin"
 for c in "${LANGS[@]}"; do
-    for a in hkex-gf hpke hpks; do
+    for a in hkex-gf hpke hpks hpke-stern hpks-stern; do
         runs_both "$a" "$c" || continue
         q "$c" genpkey --algo "$a" --bits 64  --out "$M/k64.pem"
         q "$c" genpkey --algo "$a" --bits 128 --out "$M/k128.pem"
@@ -204,11 +238,36 @@ for c in "${LANGS[@]}"; do
             q "$c" sign --algo hpks --key "$M/k128.pem" --in "$M/m.bin" --out "$M/s128.pem"
             q "$c" verify --algo hpks --pubkey "$M/k64_pub.pem" --in "$M/m.bin" --sig "$M/s128.pem"
             mixed "mixed-width verify ($c)" "signature n is 128, public key n is 64" ;;
+        hpke-stern)   # TODO #383 stage 2: Python and Go decrypted this with exit 0
+            q "$c" enc --algo hpke-stern --pubkey "$M/k64_pub.pem" --in "$M/m.bin" --out "$M/ct64.pem"
+            q "$c" dec --algo hpke-stern --key "$M/k64.pem" --in "$M/ct64.pem" --out "$M/d.bin"
+            [ "$RC" -eq 0 ] && cmp -s "$M/d.bin" "$M/m.bin" && pass || fail "mixed control: same-width hpke-stern dec ($c) rc=$RC"
+            q "$c" enc --algo hpke-stern --pubkey "$M/k128_pub.pem" --in "$M/m.bin" --out "$M/ct128.pem"
+            q "$c" dec --algo hpke-stern --key "$M/k64.pem" --in "$M/ct128.pem" --out "$M/d.bin"
+            mixed "mixed-width hpke-stern dec ($c)" "ciphertext n is 128, private key n is 64" ;;
+        hpks-stern)   # Go panicked, Python failed inside its hash
+            q "$c" sign --algo hpks-stern --rounds $SR --key "$M/k64.pem" --in "$M/m.bin" --out "$M/s64.pem"
+            q "$c" verify --algo hpks-stern --min-rounds $SR --pubkey "$M/k64_pub.pem" --in "$M/m.bin" --sig "$M/s64.pem"
+            [ "$RC" -eq 0 ] && pass || fail "mixed control: same-width hpks-stern verify ($c) rc=$RC"
+            q "$c" sign --algo hpks-stern --rounds $SR --key "$M/k128.pem" --in "$M/m.bin" --out "$M/s128.pem"
+            q "$c" verify --algo hpks-stern --min-rounds $SR --pubkey "$M/k64_pub.pem" --in "$M/m.bin" --sig "$M/s128.pem"
+            mixed "mixed-width hpks-stern verify ($c)" "signature n is 128, public key n is 64"
+            # a ring: members of two widths, and a signature of another width
+            q "$c" genpkey --algo hpks-stern --bits 64 --out "$M/j64.pem"
+            q "$c" pkey --in "$M/j64.pem" --pubout --out "$M/j64_pub.pem"
+            q "$c" sign --algo hpks-ring --rounds $SR --key "$M/k64.pem" --ring "$M/k64_pub.pem,$M/j64_pub.pem" --in "$M/m.bin" --out "$M/rs64.pem"
+            q "$c" verify --algo hpks-ring --min-rounds $SR --ring "$M/k64_pub.pem,$M/j64_pub.pem" --in "$M/m.bin" --sig "$M/rs64.pem"
+            [ "$RC" -eq 0 ] && pass || fail "mixed control: same-width ring verify ($c) rc=$RC"
+            q "$c" sign --algo hpks-ring --rounds $SR --key "$M/k64.pem" --ring "$M/k64_pub.pem,$M/k128_pub.pem" --in "$M/m.bin" --out "$M/x.pem"
+            mixed "mixed-width ring members ($c)" "all ring members must share the same n"
+            q "$c" verify --algo hpks-ring --min-rounds $SR --ring "$M/k128_pub.pem,$M/k128_pub.pem" --in "$M/m.bin" --sig "$M/rs64.pem"
+            mixed "mixed-width ring signature ($c)" "signature n=64 != ring n=128" ;;
         esac
     done
 done
 
 echo
-echo "Results: $PASS PASS / $FAIL FAIL (languages: ${LANGS[*]})"
+echo "Results: $PASS PASS / $FAIL FAIL / $NA n/a (languages: ${LANGS[*]})"
+[ "$NA" -eq 0 ] || echo "n/a: $NA Stern pkey --text cells with Java on one side (TODO #386)"
 [ "$PASS" -gt 0 ] || exit 2
 [ "$FAIL" -eq 0 ] || exit 1

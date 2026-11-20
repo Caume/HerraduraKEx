@@ -4319,6 +4319,11 @@ func cmdDec(args []string) {
 			die("dec", checkDerItemsExact(lblCT, ctInts, 5))
 		}
 		n       := sternWireN(ourInts[2], "dec")
+		// TODO #383 stage 2: a ciphertext of another width was reduced into
+		// the key's and decrypted to garbage with exit 0
+		if cn := new(big.Int).SetBytes(ctInts[4]); !cn.IsInt64() || cn.Int64() != int64(n) {
+			die("dec", fmt.Errorf("ciphertext n is %s, private key n is %d", cn, n))
+		}
 		seed    := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
 		ePrime  := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
 		EInt    := new(big.Int).SetBytes(ctInts[3])
@@ -4872,11 +4877,15 @@ func cmdVerify(args []string) {
 		if err != nil {
 			die("verify", err)
 		}
-		sternSig, _, err := unpackSternSig(sigInts)
+		sternSig, sigN, err := unpackSternSig(sigInts)
 		if err != nil {
 			die("verify", err)
 		}
 		requireRounds(len(sternSig.Rounds), minRounds, "hpks-stern signature", "verify")
+		// TODO #383 stage 2: a signature of another width panicked in SternHash
+		if sigN != n {
+			die("verify", fmt.Errorf("signature n is %d, public key n is %d", sigN, n))
+		}
 		if HpksSternFVerify(msg, sternSig, seed, synInt) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
@@ -7167,13 +7176,13 @@ var paramSets = []paramSet{
 	{"hkex-rnl", 256, "demo", false, "demo", "far below 2^87 (not estimated)", "py go java", ""},
 	{"hkex-rnl", 512, "", false, "withdrawn", "~2^87 classical, ~2^79 quantum", "", "SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical bits, short of the 128 it was claimed to give"},
 	{"hkex-rnl", 1024, "128", true, "production", ">= 2^128 classical (conjectured; SECURITY.md)", "py go c java", ""},
-	{"hpks-stern", 32, "", false, "demo", "below 2^30", "py go", ""},
-	{"hpks-stern", 64, "", false, "demo", "below 2^30", "py go", ""},
-	{"hpks-stern", 128, "", false, "demo", "below 2^30", "py go", ""},
+	{"hpks-stern", 32, "", false, "demo", "below 2^30", "py c go", ""},
+	{"hpks-stern", 64, "", false, "demo", "below 2^30", "py c go", ""},
+	{"hpks-stern", 128, "", false, "demo", "below 2^30", "py c go", ""},
 	{"hpks-stern", 256, "demo", true, "demo", "~2^30-2^40 (SECURITY.md)", "py go c java", ""},
-	{"hpke-stern", 32, "", false, "demo", "below 2^30", "py go", ""},
-	{"hpke-stern", 64, "", false, "demo", "below 2^30", "py go", ""},
-	{"hpke-stern", 128, "", false, "demo", "below 2^30", "py go", ""},
+	{"hpke-stern", 32, "", false, "demo", "below 2^30", "py c go", ""},
+	{"hpke-stern", 64, "", false, "demo", "below 2^30", "py c go", ""},
+	{"hpke-stern", 128, "", false, "demo", "below 2^30", "py c go", ""},
 	{"hpke-stern", 256, "demo", true, "demo", "~2^30-2^40 (SECURITY.md)", "py go c java", ""},
 	{"hcred", 32, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go", ""},
 	{"hcred", 64, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go", ""},

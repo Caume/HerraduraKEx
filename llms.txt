@@ -160,8 +160,9 @@ A DER-SEQUENCE PEM with the wrong number of items fails with "malformed PEM
 '<label>': <k> DER items, expected <n>" (pem_der_items in the same file), and an
 out-of-range width, ring dimension or field size fails with a one-line bound error.
 A peer GF value (public key, ciphertext R) of 0 or 1, or an HKEX-RNL peer C that is
-zero, sparse or clustered, is refused as a degenerate key.  GF keys run at 32/64/128/256
-bits in the Python, C and Go CLIs (C since TODO #383) and at 256 only in Java, which
+zero, sparse or clustered, is refused as a degenerate key.  GF keys, and hpks-stern /
+hpke-stern keys (hpks-ring too), run at 32/64/128/256 bits in the Python, C and Go CLIs
+(C since TODO #383 stages 1 and 2) and at 256 only in Java, which
 refuses any other declared width ("n is 128 (this CLI runs n = 256)").  A key used with a
 peer key, ciphertext or signature of another width fails ("kex: their public key n is
 128, our private key n is 64").  Each artifact has one encoding:

@@ -5810,6 +5810,11 @@ CENSUS_EXEMPT = {
          "off 256 bits, where its bit-parallel masks do not apply (TODO #383).  "
          "Not a second primitive: nl_chi_v3_ba is the manifest's entry and "
          "dispatches here"),
+        (r"^stern_t$",
+         "Stern-F's error weight t = max(2, N/16) at width N, which Python, Go "
+         "and Java write inline where they use it (Python's `t = max(2, n // 16)`; "
+         "TODO #383 stage 2).  A parameter rule, not a protocol step: the "
+         "sdf-t PARAMETERS row is what checks it, and it reads SDF_T"),
         (r"^_?ba(33)?_", "BitArray octet plumbing (shift/compare/popcount/print/rand, "
                          "the width check, and the fallible ba_try_* surface). NOT a "
                          "protocol step in any language. Until TODO #314 pass 3 the "

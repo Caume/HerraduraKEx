@@ -696,9 +696,18 @@ operation at every width, and extends `CliTest/test_width_matrix.sh` to the fami
    28 fail on the pre-#383 build).  A 64-bit key used with a 128-bit peer key or
    ciphertext is now refused in Python, Go and C (`kex` and `dec` accepted it with exit 0
    in Python and Go; `verify` already refused) -- MIGRATING.md section 44.
-2. **Stern-F and hpke-stern** at runtime N (`SDF_SYNBYTES`, the signature blobs sized
-   from the signature's own n), including `hpks-ring`.
-3. **hcred** at runtime `HCRED_N`.
+2. **Stern-F and hpke-stern — done (v16.0.0).**  hpks-stern, hpke-stern and hpks-ring
+   at 32, 64, 128 and 256: every Stern function in `herradura.h` takes N from its operand
+   (N/2 rows, t = max(2, N/16), the chain hash's high N bits, the PRNG and permutation at
+   N), and the C CLI's keys, signatures, ring signatures and ciphertexts are sized from
+   their own n.  A 64-bit key used with a 128-bit signature or ciphertext is now refused
+   in all three (Go panicked in `verify`; Python and Go decrypted with exit 0) --
+   MIGRATING.md section 46.  `test_width_matrix.sh` covers the family (1709 checks; 99
+   fail on the stage-1 build).
+3. **hcred** at runtime `HCRED_N`.  Also the Stern issuer: Python and Go issue and
+   verify credentials under a 32-128-bit hpks-stern issuer key; C refuses one by name
+   ("the issuer key is 64-bit; this CLI issues credentials under a 256-bit issuer only")
+   since stage 2 made those keys loadable.
 4. **hkex-rnl** at runtime n <= `RNL_N` (32-256), including rnl-sigma and the hybrid.
 
 Status: **OPEN**
@@ -735,6 +744,9 @@ Split from TODO #379, whose decision asked for it.  Every CLI's `pkey --text` pr
 level where it has one, identically in all four; `test_pkey_text_matrix.sh` checks the line.
 While there: Python's `pkey --text` on a PUBLIC key dies with "not enough values to
 unpack (expected 3, got 2)"; C, Go and Java refuse it by label (found in #383's pass).
+Also (#383 stage 2): Java's `pkey --text` on an hpks-stern / hpke-stern private key prints
+`bits` for `n`, omits `e_int` and adds `syndrome`; Python, C and Go print `n`, `e_int`,
+`seed`.  `test_width_matrix.sh` reports those 12 cells as n/a until this lands.
 
 Status: **OPEN**
 
@@ -749,6 +761,22 @@ digits, so its dump is shorter and shifted.  Display only (no artifact changes),
 four CLIs should print the same text; `test_pkey_text_matrix.sh` compares only the first
 lines, which is why it never failed.  Make Python print the full fixed-width dump and
 extend the matrix to compare whole `--text` outputs across CLIs.
+
+Status: **OPEN**
+
+---
+
+### #390: Stern-F's Fiat-Shamir round index above 255 rounds
+
+Found in TODO #383 stage 2.  Each round's challenge advances the state with
+`nl_fscx_v1(ch_st, idx)`.  Python and Java use the whole round number as `idx`
+(`BitArray(n, i)`); C and Go use `i & 0xFF` (herradura.h `stern_fs_challenges` /
+`stern_ring_challenges`, Go `sternFsChallenges`).  The two agree below 256 rounds, so the
+default 219 interoperates, but `sign --algo hpks-stern --rounds 300` from Python verifies
+in Python and Java and fails in C and Go (measured at 256 bits).  hpks-ring and HCRED's
+credential signature share the derivation.  Needs a decision: the whole index (Python's
+and Java's; C's and Go's signatures above 255 rounds change) or its low byte; then SPEC
+states it and a cross-CLI test signs at more than 255 rounds.
 
 Status: **OPEN**
 

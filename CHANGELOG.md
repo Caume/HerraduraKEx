@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#383, #388, #389), in nine
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#383, #388, #389), in ten
 parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
@@ -30,6 +30,41 @@ instead of answered (TODO #383 stage 1, section 44).
 Below 256 bits, `kex --kdf hfscx-256` now writes the whole 256-bit digest labelled n = 256
 in all CLIs (Python and C wrote an unreadable key, Go kept the low bits), and Python and
 Go refuse a narrower key at `threshold-commit` as C does (TODO #389, #388, section 45).
+C now also runs hpks-stern, hpke-stern and hpks-ring at 32, 64, 128 and 256 bits, and a
+Stern signature or ciphertext of another width than its key is refused in Python, Go and
+C (Go panicked; Python and Go decrypted with exit 0) (TODO #383 stage 2, section 46).
+
+### TODO #383 (stage 2) — C runs Stern-F at every width
+
+- **`herradura.h`.** Every Stern-F function takes N from its operand, as Python's take
+  `n`: `stern_hash` hashes N-bit items and keeps the digest's high N bits; the matrix row
+  revolves NL-FSCX v1 for N/4 steps and keeps N bits; H has N/2 rows; the permutation
+  PRNG, `stern_apply_perm`, the challenge chain and the error sampler (weight
+  `stern_t(N)` = max(2, N/16)) all run at N; sign, verify, the ring and the KEM follow,
+  and verify refuses a value of another width rather than aborting. `stern_rand_error`
+  and `stern_f_keygen` draw at the width their operand already has, so every 256-bit
+  caller (the suite tests, KAT verifiers, dudect) is unchanged; the KATs and the
+  fixed-stream replays pass as before.
+- **The C CLI.** Stern keys load at any of the four widths; `genpkey`, `pkey`, `sign` /
+  `verify` (hpks-stern, hpks-ring), `enc` / `dec` (hpke-stern) and the signature, ring and
+  ciphertext codecs size every field from the artifact's own n. "c" joins those rows'
+  ports. The hcred issuer stays 256-bit in C until stage 3, refused by name.
+- **Mixed widths.** A 64-bit Stern key with a 128-bit signature: Go panicked in
+  `SternHash`, Python failed inside `_stern_hash`; with a 128-bit hpke-stern ciphertext,
+  Python and Go reduced it into the key's width and wrote garbage with exit 0. All three
+  now refuse with `verify: signature n is 128, public key n is 64` /
+  `dec: ciphertext n is 128, private key n is 64`. Ring members of two widths, and a ring
+  signature of another width, were already refused; C now uses Python's text for both.
+- **Tests.** `test_width_matrix.sh` covers hpks-stern (sign/verify with and without
+  `--digest`, at 16 rounds, with a changed-message control), hpks-ring (a ring of every
+  listed CLI's key) and hpke-stern at every width and CLI pair, and the mixed-width
+  cases with same-width accept-controls: 1709 PASS, also through the ASan+UBSan C build.
+  On the stage-1 build (this test and spec) it fails 99 checks. Java's Stern `pkey
+  --text` dump differs in its fields at 256 bits (TODO #386); those 12 cells print as
+  n/a.
+- **Found, filed.** Stern-F's challenge chain feeds the round number whole in Python and
+  Java and as its low byte in C and Go, so a signature of more than 255 rounds verifies
+  in only two CLIs (TODO #390, needs a decision).
 
 ### TODO #388 and #389 — threshold and `kex --kdf` at narrow widths
 

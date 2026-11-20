@@ -946,8 +946,9 @@ static const HkxWidthRow HKX_WIDTH[] = {
     { PEM_HPKE_PRIV, -1, HKX_W_GF, "n" },      { PEM_HPKE_PUB, -1, HKX_W_GF, "n" },
     { PEM_HPKE_NL_PRIV, -1, HKX_W_GF, "n" },   { PEM_HPKE_NL_PUB, -1, HKX_W_GF, "n" },
     { PEM_HPKE_NL3_PRIV, -1, HKX_W_GF, "n" },  { PEM_HPKE_NL3_PUB, -1, HKX_W_GF, "n" },
-    { PEM_HPKS_STERN_PRIV, -1, KEYBITS, "n" }, { PEM_HPKS_STERN_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKE_STERN_PRIV, -1, KEYBITS, "n" }, { PEM_HPKE_STERN_PUB, -1, KEYBITS, "n" },
+    /* TODO #383 stage 2: Stern-F runs at the same four widths */
+    { PEM_HPKS_STERN_PRIV, -1, HKX_W_GF, "n" }, { PEM_HPKS_STERN_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKE_STERN_PRIV, -1, HKX_W_GF, "n" }, { PEM_HPKE_STERN_PUB, -1, HKX_W_GF, "n" },
     { PEM_OPRF_PRIV, -1, KEYBITS, "n" },      { PEM_OPRF_STATE, -1, KEYBITS, "n" },
     { PEM_OPRF_EVAL, -1, KEYBITS, "n" },
     { PEM_HPKST_COMMIT, -1, KEYBITS, "n" },   { PEM_HPKST_NONCE, -1, KEYBITS, "n" },
@@ -1660,10 +1661,11 @@ static void cmd_genpkey(int argc, char **argv)
                              ? PEM_HPKS_STERN_PRIV : PEM_HPKE_STERN_PRIV;
         BitArray seed = BA_INIT, e = BA_INIT;
         uint8_t syndr[SDF_SYNBYTES];
+        ba_zero_w(&seed, pbits);                 /* TODO #383: the row's N */
         stern_f_keygen(&seed, &e, syndr, urnd);
         uint8_t ie[DER_INT_LEN(KEYBYTES)], is[DER_INT_LEN(KEYBYTES)], in[8];
         size_t le, ls, ln;
-        der_i32(e.b, ie, &le); der_i32(seed.b, is, &ls); der_i_n256(in, &ln);
+        der_ba(&e, ie, &le); der_ba(&seed, is, &ls); der_i_uint((uint64_t)pbits, in, &ln);
         const uint8_t *it[3] = {ie, is, in};
         size_t il[3] = {le, ls, ln};
         seq_and_write(it, il, 3, label, out);
@@ -2215,33 +2217,30 @@ static void cmd_pkey(int argc, char **argv)
     /* ── Stern-F algorithms ─── */
     else {
         if (k.n_items != 3) die("pkey: malformed Stern private key");
+        int sn = gf_key_width(&k);   /* TODO #383 stage 2: the key's N */
         BitArray e = BA_INIT, seed = BA_INIT;
-        ba_from_ra(&e,    k.vals[0], k.vlens[0]);
-        ba_from_ra(&seed, k.vals[1], k.vlens[1]);
+        ba_from_ra_n(&e,    k.vals[0], k.vlens[0], sn);
+        ba_from_ra_n(&seed, k.vals[1], k.vlens[1], sn);
 
         if (text) {
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: 256\n", "n");
-            print_hex_field("e_int", e.b,    KEYBYTES);
-            print_hex_field("seed",  seed.b, KEYBYTES);
+            printf("%-10s: %d\n", "n", sn);
+            print_hex_field("e_int", e.b,    (size_t)sn / 8);
+            print_hex_field("seed",  seed.b, (size_t)sn / 8);
         } else {
             uint8_t syndr[SDF_SYNBYTES];
             stern_syndrome(syndr, &seed, &e);
 
-            /* Syndrome is SDF_SYNBYTES (16) bytes; encode as 32-byte DER INTEGER
-             * where syndrome bit i (= row i parity) occupies integer bit i.
-             * syndr[k] holds rows k*8..k*8+7 as bits 0-7, so syndr[k] goes to
-             * byte KEYBYTES-1-k (integer bits k*8..k*8+7) — matching Python/Go. */
-            uint8_t syn32[KEYBYTES]; int _sk;
-            memset(syn32, 0, KEYBYTES);
-            for (_sk = 0; _sk < SDF_SYNBYTES; _sk++)
-                syn32[KEYBYTES - 1 - _sk] = syndr[_sk];
+            /* The N/2-bit syndrome as an N-bit DER INTEGER where syndrome bit
+             * i (= row i parity) occupies integer bit i -- matching Python/Go. */
+            BitArray syn_ba = BA_INIT;
+            syndr_to_ba_w(&syn_ba, syndr, sn);
 
             uint8_t isyn[DER_INT_LEN(KEYBYTES)], is[DER_INT_LEN(KEYBYTES)], in[8];
             size_t lsyn, ls, ln;
-            der_i32(syn32, isyn, &lsyn);
-            der_i32(seed.b, is, &ls);
-            der_i_n256(in, &ln);
+            der_ba(&syn_ba, isyn, &lsyn);
+            der_ba(&seed, is, &ls);
+            der_i_uint((uint64_t)sn, in, &ln);
             const uint8_t *it[3] = {isyn, is, in};
             size_t il[3] = {lsyn, ls, ln};
             seq_and_write(it, il, 3, algos[ai].pub_label, out_path);
@@ -3081,9 +3080,11 @@ static void make_msg_ba(BitArray *msg, const uint8_t *data, size_t len)
  * build's SDF_ROUNDS (TODO #236).  The round count is item[1] of the DER
  * SEQUENCE and has always been on the wire; deriving the sizes from the macro
  * instead made two builds with different SDF_ROUNDS unable to read each other. */
-#define STERN_COMMITS_BYTES_R(r) ((size_t)3 * (size_t)(r) * KEYBYTES)
-#define STERN_CHAL_BYTES_R(r)    (((size_t)(r) + 3) / 4)
-#define STERN_RESP_BYTES_R(r)    ((size_t)2 * (size_t)(r) * KEYBYTES)
+/* TODO #383 stage 2: and of the signature's own width N (nb = N/8 octets per
+ * value), item[0]. */
+#define STERN_COMMITS_BYTES_R(r, nb) ((size_t)3 * (size_t)(r) * (size_t)(nb))
+#define STERN_CHAL_BYTES_R(r)        (((size_t)(r) + 3) / 4)
+#define STERN_RESP_BYTES_R(r, nb)    ((size_t)2 * (size_t)(r) * (size_t)(nb))
 
 /* Decode item[1] of a Stern PEM as a round count, rejecting anything outside
  * [1, SDF_MAX_ROUNDS].  Returns 0 on success.  A hostile PEM must not be able
@@ -3104,21 +3105,23 @@ static void stern_sig_pack_write_lbl(const SternSig *sig, const char *label,
                                      const char *out_path)
 {
     int    rounds  = sig->rounds;
-    size_t cm_len  = STERN_COMMITS_BYTES_R(rounds);
+    int    sn      = sig->c0[0].nbits;          /* the signature's N */
+    size_t nb      = (size_t)sn / 8;
+    size_t cm_len  = STERN_COMMITS_BYTES_R(rounds, nb);
     size_t ch_len  = STERN_CHAL_BYTES_R(rounds);
-    size_t rs_len  = STERN_RESP_BYTES_R(rounds);
+    size_t rs_len  = STERN_RESP_BYTES_R(rounds, nb);
     uint8_t *commits = malloc(cm_len);
     uint8_t *chal    = malloc(ch_len);
     uint8_t *resp    = malloc(rs_len);
     if (!commits || !chal || !resp) die("out of memory");
 
-    /* Commits: c0, c1, c2 per round (each KEYBYTES bytes, big-endian). */
+    /* Commits: c0, c1, c2 per round (each nb bytes, big-endian). */
     { int i;
       for (i = 0; i < rounds; i++) {
-          size_t off = (size_t)i * 3 * KEYBYTES;
-          memcpy(commits + off,              sig->c0[i].b, KEYBYTES);
-          memcpy(commits + off + KEYBYTES,   sig->c1[i].b, KEYBYTES);
-          memcpy(commits + off + 2*KEYBYTES, sig->c2[i].b, KEYBYTES);
+          size_t off = (size_t)i * 3 * nb;
+          memcpy(commits + off,          sig->c0[i].b, nb);
+          memcpy(commits + off + nb,     sig->c1[i].b, nb);
+          memcpy(commits + off + 2 * nb, sig->c2[i].b, nb);
       }
     }
     /* Challenges: 2 bits per round, packed LSB-first within each byte. */
@@ -3127,12 +3130,12 @@ static void stern_sig_pack_write_lbl(const SternSig *sig, const char *label,
       for (i = 0; i < rounds; i++)
           chal[i / 4] |= (uint8_t)((sig->b[i] & 3) << ((i % 4) * 2));
     }
-    /* Responses: resp_a then resp_b per round (each KEYBYTES). */
+    /* Responses: resp_a then resp_b per round (each nb). */
     { int i;
       for (i = 0; i < rounds; i++) {
-          size_t off = (size_t)i * 2 * KEYBYTES;
-          memcpy(resp + off,            sig->resp_a[i].b, KEYBYTES);
-          memcpy(resp + off + KEYBYTES, sig->resp_b[i].b, KEYBYTES);
+          size_t off = (size_t)i * 2 * nb;
+          memcpy(resp + off,      sig->resp_a[i].b, nb);
+          memcpy(resp + off + nb, sig->resp_b[i].b, nb);
       }
     }
 
@@ -3149,7 +3152,7 @@ static void stern_sig_pack_write_lbl(const SternSig *sig, const char *label,
     uint8_t *irs_der = malloc(irs_sz);
     if (!ic_der || !ich_der || !irs_der) die("out of memory");
     size_t lc, lch, lrs;
-    der_i_n256(in_der, &ln);
+    der_i_uint((uint64_t)sn, in_der, &ln);
     der_i_uint((uint64_t)rounds, ir_der, &lr);
     der_int_enc(commits, cm_len, ic_der,  &lc);
     der_int_enc(chal,    ch_len, ich_der, &lch);
@@ -3169,8 +3172,12 @@ static void stern_sig_pack_and_write(const SternSig *sig, const char *out_path)
 }
 
 /* Load a SternSig written under `label`.  On success *sig is allocated with
- * the round count read from the PEM and the caller must stern_sig_free() it. */
-static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig)
+ * the round count read from the PEM and the caller must stern_sig_free() it.
+ * want_n = 0 takes any Stern-F width (32/64/128/256, TODO #383 stage 2) and
+ * the caller compares it with its key's (sig->c0[0].nbits); otherwise the
+ * signature must declare exactly want_n (hcred stays 256 until stage 3). */
+static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig,
+                              int want_n)
 {
     PemKey pk;
     int rounds;
@@ -3178,12 +3185,19 @@ static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig
     if (strcmp(pk.label, label) != 0 || pk.n_items != 5)
         { pem_key_free(&pk); return -1; }
 
-    stern_require_n(&pk, 0, "verify");
+    int sn;
+    if (want_n) { stern_require_n(&pk, 0, "verify"); sn = want_n; }
+    else {
+        long got = der_small(pk.vals[0], pk.vlens[0]);
+        if (!gf_width_ok(got)) gf_width_refuse(pk.label, got);
+        sn = (int)got;
+    }
+    size_t nb = (size_t)sn / 8;
     if (stern_decode_rounds(&pk, &rounds) != 0) { pem_key_free(&pk); return -1; }
 
-    size_t cm_len = STERN_COMMITS_BYTES_R(rounds);
+    size_t cm_len = STERN_COMMITS_BYTES_R(rounds, nb);
     size_t ch_len = STERN_CHAL_BYTES_R(rounds);
-    size_t rs_len = STERN_RESP_BYTES_R(rounds);
+    size_t rs_len = STERN_RESP_BYTES_R(rounds, nb);
 
     /* Each blob must fit the round count the same PEM declares; a longer one
      * means the two disagree, which is a malformed signature rather than a
@@ -3213,10 +3227,11 @@ static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig
     /* Unpack commits. */
     { int i;
       for (i = 0; i < rounds; i++) {
-          size_t off = (size_t)i * 3 * KEYBYTES;
-          memcpy(sig->c0[i].b, commits + off,              KEYBYTES);
-          memcpy(sig->c1[i].b, commits + off + KEYBYTES,   KEYBYTES);
-          memcpy(sig->c2[i].b, commits + off + 2*KEYBYTES, KEYBYTES);
+          size_t off = (size_t)i * 3 * nb;
+          ba_zero_w(&sig->c0[i], sn); ba_zero_w(&sig->c1[i], sn); ba_zero_w(&sig->c2[i], sn);
+          memcpy(sig->c0[i].b, commits + off,          nb);
+          memcpy(sig->c1[i].b, commits + off + nb,     nb);
+          memcpy(sig->c2[i].b, commits + off + 2 * nb, nb);
       }
     }
     /* Unpack challenges. */
@@ -3227,9 +3242,10 @@ static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig
     /* Unpack responses. */
     { int i;
       for (i = 0; i < rounds; i++) {
-          size_t off = (size_t)i * 2 * KEYBYTES;
-          memcpy(sig->resp_a[i].b, resp + off,            KEYBYTES);
-          memcpy(sig->resp_b[i].b, resp + off + KEYBYTES, KEYBYTES);
+          size_t off = (size_t)i * 2 * nb;
+          ba_zero_w(&sig->resp_a[i], sn); ba_zero_w(&sig->resp_b[i], sn);
+          memcpy(sig->resp_a[i].b, resp + off,      nb);
+          memcpy(sig->resp_b[i].b, resp + off + nb, nb);
       }
     }
 
@@ -3240,7 +3256,7 @@ static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig
 
 static int stern_sig_load(const char *path, SternSig *sig)
 {
-    return stern_sig_load_lbl(path, PEM_SIGNATURE, sig);
+    return stern_sig_load_lbl(path, PEM_SIGNATURE, sig, 0);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -3253,10 +3269,12 @@ static int stern_sig_load(const char *path, SternSig *sig)
 #define RING_MAX_K 64
 
 /* Parse comma-separated hpks-stern public-key PEM paths.  Fills seeds[k] and
- * syndrs_flat[k*SDF_SYNBYTES].  Returns k (>=2). */
+ * syndrs_flat[k*SDF_SYNBYTES] (the first N/16 octets of each slot) and *n_out
+ * with the members' one width N (TODO #383 stage 2).  Returns k (>=2). */
 static int ring_load_members(const char *ring_arg, BitArray *seeds,
-                             uint8_t *syndrs_flat)
+                             uint8_t *syndrs_flat, int *n_out)
 {
+    int ring_n = 0;
     char buf[8192];
     size_t al = strlen(ring_arg);
     if (al >= sizeof buf) die("hpks-ring: --ring too long");
@@ -3274,26 +3292,32 @@ static int ring_load_members(const char *ring_arg, BitArray *seeds,
                                 "hpks-stern public key\n", tok, pub.label);
                 exit(1);
             }
-            /* pubkey: vals[0]=syndrome(32B int), vals[1]=seed, vals[2]=n */
+            /* pubkey: vals[0]=syndrome(N-bit int), vals[1]=seed, vals[2]=n */
+            int mn = gf_key_width(&pub);
+            if (ring_n == 0) ring_n = mn;
+            else if (mn != ring_n) die("hpks-ring: all ring members must share the same n");
             BitArray syn_ba = BA_INIT;
-            ba_from_ra(&seeds[k], pub.vals[1], pub.vlens[1]);
-            ba_from_ra(&syn_ba,   pub.vals[0], pub.vlens[0]);
-            /* syndrome integer stores syndr[j] at byte KEYBYTES-1-j (see pkey). */
-            { int j; for (j = 0; j < SDF_SYNBYTES; j++)
-                syndrs_flat[k * SDF_SYNBYTES + j] = syn_ba.b[KEYBYTES - 1 - j]; }
+            ba_from_ra_n(&seeds[k], pub.vals[1], pub.vlens[1], mn);
+            ba_from_ra_n(&syn_ba,   pub.vals[0], pub.vlens[0], mn);
+            /* syndrome integer stores syndr[j] at byte N/8-1-j (see pkey). */
+            { int j, nb = mn / 8; for (j = 0; j < nb / 2; j++)
+                syndrs_flat[k * SDF_SYNBYTES + j] = syn_ba.b[nb - 1 - j]; }
             pem_key_free(&pub);
             k++;
         }
         tok = strtok_r(NULL, ",", &save);
     }
     if (k < 2) die("hpks-ring: --ring needs at least 2 member public keys");
+    *n_out = ring_n;
     return k;
 }
 
 static void ring_sig_pack_and_write(const SternRingSig *sig, const char *out_path)
 {
     int k = sig->k, rounds = sig->rounds;
-    size_t entry = 5 * (size_t)KEYBYTES + 1;
+    int sn = sig->c0[0].nbits;                  /* the ring's N (TODO #383) */
+    size_t nb = (size_t)sn / 8;
+    size_t entry = 5 * nb + 1;
     size_t blen  = (size_t)k * rounds * entry;
     uint8_t *blob = (uint8_t *)malloc(blen);
     if (!blob) die("out of memory");
@@ -3302,12 +3326,12 @@ static void ring_sig_pack_and_write(const SternRingSig *sig, const char *out_pat
     for (i = 0; i < k; i++) {
         for (r = 0; r < rounds; r++) {
             int idx = i * rounds + r;
-            memcpy(blob + off, sig->c0[idx].b, KEYBYTES); off += KEYBYTES;
-            memcpy(blob + off, sig->c1[idx].b, KEYBYTES); off += KEYBYTES;
-            memcpy(blob + off, sig->c2[idx].b, KEYBYTES); off += KEYBYTES;
+            memcpy(blob + off, sig->c0[idx].b, nb); off += nb;
+            memcpy(blob + off, sig->c1[idx].b, nb); off += nb;
+            memcpy(blob + off, sig->c2[idx].b, nb); off += nb;
             blob[off++] = (uint8_t)(sig->b[idx] & 0xFF);
-            memcpy(blob + off, sig->resp_a[idx].b, KEYBYTES); off += KEYBYTES;
-            memcpy(blob + off, sig->resp_b[idx].b, KEYBYTES); off += KEYBYTES;
+            memcpy(blob + off, sig->resp_a[idx].b, nb); off += nb;
+            memcpy(blob + off, sig->resp_b[idx].b, nb); off += nb;
         }
     }
     uint8_t ik[DER_INT_LEN(8)], ir[DER_INT_LEN(8)], in[8];
@@ -3316,7 +3340,7 @@ static void ring_sig_pack_and_write(const SternRingSig *sig, const char *out_pat
     if (!ib) die("out of memory");
     der_i_uint((uint64_t)k, ik, &lk);
     der_i_uint((uint64_t)rounds, ir, &lr);
-    der_i_n256(in, &ln);
+    der_i_uint((uint64_t)sn, in, &ln);
     der_int_enc(blob, blen, ib, &lb);
     const uint8_t *it[4] = {ik, ir, in, ib};
     size_t il[4] = {lk, lr, ln, lb};
@@ -3325,8 +3349,8 @@ static void ring_sig_pack_and_write(const SternRingSig *sig, const char *out_pat
 }
 
 /* Load a ring signature into an allocated SternRingSig.  Caller frees via
- * stern_ring_free.  Returns k. */
-static int ring_sig_load(const char *path, SternRingSig *sig)
+ * stern_ring_free.  Returns k; *n_out is the signature's N (TODO #383). */
+static int ring_sig_load(const char *path, SternRingSig *sig, int *n_out)
 {
     PemKey pk;
     pem_key_load(&pk, path);
@@ -3352,10 +3376,13 @@ static int ring_sig_load(const char *path, SternRingSig *sig)
                         "(expected 1..%d)\n", (unsigned long long)r_raw, SDF_MAX_ROUNDS);
         exit(1);
     }
-    stern_require_n(&pk, 2, "verify");
+    long sn_l = der_small(pk.vals[2], pk.vlens[2]);
+    if (!gf_width_ok(sn_l)) gf_width_refuse(pk.label, sn_l);
+    int sn = (int)sn_l;
+    size_t nb = (size_t)sn / 8;
     int k      = (int)k_raw;
     int rounds = (int)r_raw;
-    size_t entry = 5 * (size_t)KEYBYTES + 1;
+    size_t entry = 5 * nb + 1;
     size_t blen  = (size_t)k * (size_t)rounds * entry;
     /* Declared-vs-actual agreement, the counterpart of the check TODO #236 gave
      * the Stern-F reader: a payload longer than (k, rounds) describe is a
@@ -3379,15 +3406,19 @@ static int ring_sig_load(const char *path, SternRingSig *sig)
     for (i = 0; i < k; i++) {
         for (r = 0; r < rounds; r++) {
             int idx = i * rounds + r;
-            memcpy(sig->c0[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
-            memcpy(sig->c1[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
-            memcpy(sig->c2[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
+            ba_zero_w(&sig->c0[idx], sn); ba_zero_w(&sig->c1[idx], sn);
+            ba_zero_w(&sig->c2[idx], sn);
+            ba_zero_w(&sig->resp_a[idx], sn); ba_zero_w(&sig->resp_b[idx], sn);
+            memcpy(sig->c0[idx].b, blob + off, nb); off += nb;
+            memcpy(sig->c1[idx].b, blob + off, nb); off += nb;
+            memcpy(sig->c2[idx].b, blob + off, nb); off += nb;
             sig->b[idx] = blob[off++];
-            memcpy(sig->resp_a[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
-            memcpy(sig->resp_b[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
+            memcpy(sig->resp_a[idx].b, blob + off, nb); off += nb;
+            memcpy(sig->resp_b[idx].b, blob + off, nb); off += nb;
         }
     }
     free(blob);
+    *n_out = sn;
     return k;
 }
 
@@ -3809,11 +3840,13 @@ static void cmd_enc(int argc, char **argv)
         fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
                         "(demo parameters). 128-bit security requires N>=17000. "
                         "Do not use for production.\n");
-        /* vals[0]=syn32 (32 bytes), vals[1]=seed (32 bytes), vals[2]=n */
+        /* vals[0]=syndrome (N bits), vals[1]=seed (N bits), vals[2]=n */
         if (pub_k.n_items < 2) die("enc: malformed Stern public key");
-        one_block_ok(algo, in_len, KEYBYTES);
-        BitArray seed_ba = BA_INIT, K_ba = BA_INIT, e_p = BA_INIT, E = BA_INIT;
-        ba_from_ra(&seed_ba, pub_k.vals[1], pub_k.vlens[1]);
+        int sn = gf_key_width(&pub_k);   /* TODO #383 stage 2: the key's N */
+        one_block_ok(algo, in_len, (size_t)sn / 8);
+        BitArray seed_ba = BA_INIT, K_ba = BA_INIT, e_p = BA_INIT, E = BA_INIT, Pn = BA_INIT;
+        ba_from_ra_n(&seed_ba, pub_k.vals[1], pub_k.vlens[1], sn);
+        make_msg_ba_n(&Pn, P.b, KEYBYTES, sn);
         pem_key_free(&pub_k);
 
         FILE *urnd = fopen("/dev/urandom", "rb");
@@ -3821,18 +3854,18 @@ static void cmd_enc(int argc, char **argv)
         uint8_t ct_syndr[SDF_SYNBYTES];
         hpke_stern_f_encap(&K_ba, ct_syndr, &e_p, &seed_ba, urnd);
         fclose(urnd);
-        ba_fscx_revolve(&E, &P, &K_ba, I_VALUE);
+        ba_fscx_revolve(&E, &Pn, &K_ba, sn / 4);
 
-        /* Syndrome: zero-pad SDF_SYNBYTES → KEYBYTES. */
-        uint8_t ct32[KEYBYTES];
-        memset(ct32, 0, KEYBYTES);
-        memcpy(ct32 + KEYBYTES - SDF_SYNBYTES, ct_syndr, SDF_SYNBYTES);
+        /* The N/2-bit syndrome as an N-bit integer (bit i = row i). */
+        BitArray ct_ba = BA_INIT;
+        syndr_to_ba_w(&ct_ba, ct_syndr, sn);
 
         uint8_t ict[DER_INT_LEN(KEYBYTES)], iep[DER_INT_LEN(KEYBYTES)];
         uint8_t ik[DER_INT_LEN(KEYBYTES)],  iE[DER_INT_LEN(KEYBYTES)], in[8];
         size_t lct, lep, lk, lE, ln;
-        der_i32(ct32,   ict, &lct); der_i32(e_p.b, iep, &lep);
-        der_i32(K_ba.b, ik,  &lk);  der_i32(E.b,   iE,  &lE); der_i_n256(in, &ln);
+        der_ba(&ct_ba, ict, &lct); der_ba(&e_p, iep, &lep);
+        der_ba(&K_ba,  ik,  &lk);  der_ba(&E,   iE,  &lE);
+        der_i_uint((uint64_t)sn, in, &ln);
         const uint8_t *it[5] = {ict, iep, ik, iE, in};
         size_t         il[5] = {lct, lep, lk, lE, ln};
         seq_and_write(it, il, 5, PEM_CIPHERTEXT, out_path);
@@ -4091,17 +4124,19 @@ static void cmd_dec(int argc, char **argv)
         fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
                         "(demo parameters). 128-bit security requires N>=17000. "
                         "Do not use for production.\n");
-        /* CT: vals[0]=ct_syn, vals[1]=e_p, vals[2]=K_int, vals[3]=E_int */
-        if (ct.n_items < 4) die("dec: malformed HPKE-Stern ciphertext");
+        /* CT: vals[0]=ct_syn, vals[1]=e_p, vals[2]=K_int, vals[3]=E_int, vals[4]=n */
+        if (ct.n_items < 5) die("dec: malformed HPKE-Stern ciphertext");
         if (priv_k.n_items < 2) die("dec: malformed Stern private key");
+        int sn = gf_key_width(&priv_k);   /* TODO #383 stage 2: the key's N */
+        check_item_gf_width(&ct, 4, sn, "dec: ciphertext", "private key");
         BitArray e_p_ba = BA_INIT, E_ba = BA_INIT, seed_ba = BA_INIT, K_dec = BA_INIT, D = BA_INIT;
-        ba_from_ra(&e_p_ba,  ct.vals[1],       ct.vlens[1]);
-        ba_from_ra(&E_ba,    ct.vals[3],       ct.vlens[3]);
-        ba_from_ra(&seed_ba, priv_k.vals[1],   priv_k.vlens[1]);
+        ba_from_ra_n(&e_p_ba,  ct.vals[1],       ct.vlens[1], sn);
+        ba_from_ra_n(&E_ba,    ct.vals[3],       ct.vlens[3], sn);
+        ba_from_ra_n(&seed_ba, priv_k.vals[1],   priv_k.vlens[1], sn);
         pem_key_free(&ct); pem_key_free(&priv_k);
         hpke_stern_f_decap_known(&K_dec, &e_p_ba, &seed_ba);
-        ba_fscx_revolve(&D, &E_ba, &K_dec, R_VALUE);
-        write_binary_file(out_path, D.b, KEYBYTES);
+        ba_fscx_revolve(&D, &E_ba, &K_dec, 3 * sn / 4);
+        write_binary_file(out_path, D.b, (size_t)sn / 8);
 
     } else {
         pem_key_free(&ct); pem_key_free(&priv_k);
@@ -4751,10 +4786,12 @@ static void cmd_sign(int argc, char **argv)
                         "(demo parameters). 128-bit security requires N>=17000. "
                         "Do not use for production.\n");
         if (priv_k.n_items < 2) die("sign: malformed Stern private key");
+        int sn = gf_key_width(&priv_k);   /* TODO #383 stage 2: the key's N */
         BitArray e_ba = BA_INIT, seed_ba = BA_INIT;
-        ba_from_ra(&e_ba,    priv_k.vals[0], priv_k.vlens[0]);
-        ba_from_ra(&seed_ba, priv_k.vals[1], priv_k.vlens[1]);
+        ba_from_ra_n(&e_ba,    priv_k.vals[0], priv_k.vlens[0], sn);
+        ba_from_ra_n(&seed_ba, priv_k.vals[1], priv_k.vlens[1], sn);
         pem_key_free(&priv_k);
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, sn);
 
         /* --rounds selects the Fiat-Shamir round count (TODO #236).  The CLI
          * default is the 128-bit count, not the suite's SDF_ROUNDS demo value,
@@ -4779,14 +4816,21 @@ static void cmd_sign(int argc, char **argv)
         const char *ring_arg = get_arg(argc, argv, "--ring");
         if (!ring_arg) die("hpks-ring sign: --ring (comma-separated member public keys) required");
         if (priv_k.n_items < 2) die("sign: malformed Stern private key");
+        int sn = gf_key_width(&priv_k);   /* TODO #383 stage 2: the key's N */
         BitArray e_ba = BA_INIT, signer_seed = BA_INIT;
-        ba_from_ra(&e_ba,        priv_k.vals[0], priv_k.vlens[0]);
-        ba_from_ra(&signer_seed, priv_k.vals[1], priv_k.vlens[1]);
+        ba_from_ra_n(&e_ba,        priv_k.vals[0], priv_k.vlens[0], sn);
+        ba_from_ra_n(&signer_seed, priv_k.vals[1], priv_k.vlens[1], sn);
         pem_key_free(&priv_k);
 
         BitArray seeds[RING_MAX_K]; ba_init_array(seeds, RING_MAX_K);
         uint8_t  syndrs[RING_MAX_K * SDF_SYNBYTES];
-        int k = ring_load_members(ring_arg, seeds, syndrs);
+        int ring_n = 0;
+        int k = ring_load_members(ring_arg, seeds, syndrs, &ring_n);
+        if (ring_n != sn) {
+            fprintf(stderr, "hpks-ring sign: signer n=%d != ring n=%d\n", sn, ring_n);
+            exit(1);
+        }
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, sn);
 
         int j = -1, i;
         for (i = 0; i < k; i++)
@@ -4971,12 +5015,19 @@ static void cmd_verify(int argc, char **argv)
         if (!ring_arg) die("hpks-ring verify: --ring (comma-separated member public keys) required");
         BitArray seeds[RING_MAX_K]; ba_init_array(seeds, RING_MAX_K);
         uint8_t  syndrs[RING_MAX_K * SDF_SYNBYTES];
-        int k = ring_load_members(ring_arg, seeds, syndrs);
+        int ring_n = 0, sig_n = 0;
+        int k = ring_load_members(ring_arg, seeds, syndrs, &ring_n);
         SternRingSig rsig;
-        int sig_k = ring_sig_load(sig_path, &rsig);
+        int sig_k = ring_sig_load(sig_path, &rsig, &sig_n);
         { int rr = rsig.rounds;
           if (rr < min_rounds) stern_ring_free(&rsig);
           require_rounds(rr, min_rounds, "hpks-ring signature", "verify"); }
+        if (sig_n != ring_n) {   /* TODO #383 stage 2: Python's text */
+            stern_ring_free(&rsig);
+            fprintf(stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sig_n, ring_n);
+            exit(1);
+        }
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, ring_n);
         if (sig_k != k) {
             stern_ring_free(&rsig);
             fprintf(stderr, "hpks-ring verify: signature ring size %d != %d "
@@ -5102,24 +5153,31 @@ static void cmd_verify(int argc, char **argv)
                         "Do not use for production.\n");
         if (pub_k.n_items < 2) die("verify: malformed Stern public key");
 
-        /* Extract syndr (16 bytes) from syn32 (32 bytes, right-aligned).
-         * The public key stores syndr[k] at byte KEYBYTES-1-k so that syndrome
-         * bit i occupies integer bit i (matching Python/Go convention). */
-        uint8_t syn32[KEYBYTES], syndr[SDF_SYNBYTES]; int _sk;
-        memset(syn32, 0, KEYBYTES);
-        { size_t cl = pub_k.vlens[0] < KEYBYTES ? pub_k.vlens[0] : KEYBYTES;
-          memcpy(syn32 + KEYBYTES - cl, pub_k.vals[0], cl); }
-        for (_sk = 0; _sk < SDF_SYNBYTES; _sk++)
-            syndr[_sk] = syn32[KEYBYTES - 1 - _sk];
+        /* Extract the N/16-byte syndr from the N-bit syndrome integer.  The
+         * public key stores syndr[k] at byte N/8-1-k so that syndrome bit i
+         * occupies integer bit i (matching Python/Go convention). */
+        int sn = gf_key_width(&pub_k);   /* TODO #383 stage 2: the key's N */
+        BitArray syn_ba = BA_INIT;
+        uint8_t syndr[SDF_SYNBYTES]; int _sk;
+        ba_from_ra_n(&syn_ba, pub_k.vals[0], pub_k.vlens[0], sn);
+        for (_sk = 0; _sk < sn / 16; _sk++)
+            syndr[_sk] = syn_ba.b[sn / 8 - 1 - _sk];
 
         BitArray seed_ba = BA_INIT;
-        ba_from_ra(&seed_ba, pub_k.vals[1], pub_k.vlens[1]);
+        ba_from_ra_n(&seed_ba, pub_k.vals[1], pub_k.vlens[1], sn);
         pem_key_free(&pub_k);
 
         SternSig sig;
         if (stern_sig_load(sig_path, &sig) != 0)
             die("verify: cannot load Stern signature");
         require_rounds(sig.rounds, min_rounds, "hpks-stern signature", "verify");
+        if (sig.c0[0].nbits != sn) {   /* stage 1's text for hpks */
+            fprintf(stderr, "verify: signature n is %d, public key n is %d\n",
+                    sig.c0[0].nbits, sn);
+            stern_sig_free(&sig);
+            exit(1);
+        }
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, sn);
 
         int ok = hpks_stern_f_verify(&sig, &msg, &seed_ba, syndr);
         stern_sig_free(&sig);
@@ -5790,7 +5848,7 @@ static void stern_sig_write_label(const SternSig *sig, const char *label,
  * On success *sig is allocated; the caller must stern_sig_free() it. */
 static int stern_sig_load_label(const char *path, const char *label, SternSig *sig)
 {
-    return stern_sig_load_lbl(path, label, sig);
+    return stern_sig_load_lbl(path, label, sig, KEYBITS);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -5822,6 +5880,14 @@ static void cmd_cred_issue(int argc, char **argv)
         strcmp(issuer_k.label, PEM_HPKE_STERN_PRIV) != 0)
         die("cred-issue: --our must be an hpks-stern or hpke-stern private key");
     if (issuer_k.n_items < 2) die("cred-issue: malformed Stern private key");
+    /* Stern keys load at 32-256 since TODO #383 stage 2; hcred's issuer stays
+     * 256-bit in C until stage 3 (Python and Go already issue under any). */
+    if (gf_key_width(&issuer_k) != KEYBITS) {
+        fprintf(stderr, "cred-issue: the issuer key is %d-bit; this CLI issues "
+                        "credentials under a %d-bit issuer only (TODO #383)\n",
+                gf_key_width(&issuer_k), KEYBITS);
+        exit(1);
+    }
     BitArray issuer_e_ba = BA_INIT, issuer_seed_ba = BA_INIT;
     ba_from_ra(&issuer_e_ba,   issuer_k.vals[0], issuer_k.vlens[0]);
     ba_from_ra(&issuer_seed_ba, issuer_k.vals[1], issuer_k.vlens[1]);
@@ -5965,6 +6031,12 @@ static void cmd_cred_verify(int argc, char **argv)
             strcmp(iss_k.label, PEM_HPKE_STERN_PUB) != 0)
             die("cred-verify: --issuer must be an hpks-stern or hpke-stern public key");
         if (iss_k.n_items < 2) die("cred-verify: malformed issuer public key");
+        if (gf_key_width(&iss_k) != KEYBITS) {   /* as cred-issue (TODO #383) */
+            fprintf(stderr, "cred-verify: the issuer key is %d-bit; this CLI verifies "
+                            "credentials under a %d-bit issuer only (TODO #383)\n",
+                    gf_key_width(&iss_k), KEYBITS);
+            exit(1);
+        }
 
         /* Unpack syndrome (32-byte DER int, reversed) */
         uint8_t iss_syn32[KEYBYTES], issuer_syndr[SDF_SYNBYTES]; int _sk;

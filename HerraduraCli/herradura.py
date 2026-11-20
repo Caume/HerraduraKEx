@@ -1240,19 +1240,19 @@ _PARAM_SETS = (
     ('hkex-rnl', 1024, '128', True, 'production',
      '>= 2^128 classical (conjectured; SECURITY.md)', 'py go c java', None),
     ('hpks-stern', 32, None, False, 'demo',
-     'below 2^30', 'py go', None),
+     'below 2^30', 'py c go', None),
     ('hpks-stern', 64, None, False, 'demo',
-     'below 2^30', 'py go', None),
+     'below 2^30', 'py c go', None),
     ('hpks-stern', 128, None, False, 'demo',
-     'below 2^30', 'py go', None),
+     'below 2^30', 'py c go', None),
     ('hpks-stern', 256, 'demo', True, 'demo',
      '~2^30-2^40 (SECURITY.md)', 'py go c java', None),
     ('hpke-stern', 32, None, False, 'demo',
-     'below 2^30', 'py go', None),
+     'below 2^30', 'py c go', None),
     ('hpke-stern', 64, None, False, 'demo',
-     'below 2^30', 'py go', None),
+     'below 2^30', 'py c go', None),
     ('hpke-stern', 128, None, False, 'demo',
-     'below 2^30', 'py go', None),
+     'below 2^30', 'py c go', None),
     ('hpke-stern', 256, 'demo', True, 'demo',
      '~2^30-2^40 (SECURITY.md)', 'py go c java', None),
     ('hcred', 32, None, False, 'demo',
@@ -3552,6 +3552,9 @@ def cmd_dec(args):
         print(_STERN_DEMO_WARNING, file=sys.stderr)
         e_int, seed_int, n = our_ints
         ct_syn, e_p, K_int, E_int, _n = _decode_stern_ct(getattr(args, 'in'))
+        # TODO #383 stage 2: another width decrypted to garbage with exit 0
+        if _n != n:
+            sys.exit(f"dec: ciphertext n is {_n}, private key n is {n}")
         seed    = BitArray(n, seed_int)
         K_dec   = hpke_stern_f_decap(ct_syn, e_p, seed, n)
         if K_dec is None:
@@ -3961,6 +3964,9 @@ def cmd_verify(args):
         commits, challenges, responses, _n = _unpack_stern_sig(sig_path)
         _require_rounds(len(commits), _round_floor(args, 'verify'),
                         'hpks-stern signature', 'verify')
+        # TODO #383 stage 2: another width failed inside _stern_hash
+        if _n != n:
+            sys.exit(f"verify: signature n is {_n}, public key n is {n}")
         sig  = (commits, challenges, responses)
         ok   = hpks_stern_f_verify(msg, sig, seed, syn_int, n)
         if ok:

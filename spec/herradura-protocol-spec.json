@@ -5525,6 +5525,7 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5538,6 +5539,7 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5551,6 +5553,7 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5579,6 +5582,7 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5592,6 +5596,7 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5605,6 +5610,7 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null

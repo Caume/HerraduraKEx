@@ -2846,6 +2846,13 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
 #define SDF_PRODUCTION_ROUNDS 219          /* rounds for 128-bit soundness       */
 #define SDF_SYNBYTES        (SDF_N_ROWS / 8) /* syndrome bytes: 16               */
 
+/* TODO #383 stage 2: Stern-F runs at any listed width N in {32, 64, 128, 256}
+ * (Python's stern_f_keygen(n)): N/2 parity-check rows, weight t = max(2, N/16),
+ * every value N bits, the chain hash truncated to its HIGH N bits.  The
+ * macros above are the 256-bit values and the array bounds (N <= KEYBITS);
+ * the functions below take N from their operands (seed, e, msg). */
+static int stern_t(int n) { int t = n * SDF_T / KEYBITS; return t > 2 ? t : 2; }
+
 #if SDF_ROUNDS < SDF_PRODUCTION_ROUNDS
 #pragma message("WARNING: SDF_ROUNDS < SDF_PRODUCTION_ROUNDS (219). " \
     "Stern signatures have sub-128-bit soundness. For production use, " \
@@ -2860,22 +2867,26 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
  * B, and a zero item (B = 0) made the round affine-nilpotent: it shrank the
  * chain state's image to 2^(n/2) points and left a commitment to a zero item
  * about n/4 bits of binding (§11.75).  The items now reach only HFSCX-256's
- * message input.  Every item is KEYBITS wide. */
+ * message input.  Every item is N bits wide (N = items[0]'s width). */
 static void stern_hash(BitArray *out, const BitArray *items, int n_items, unsigned ds)
 {
-    size_t len = 1 + (size_t)n_items * KEYBYTES;
+    /* Every item is N bits, N = items[0]'s width; the digest's HIGH N bits are
+     * the result (Python's _stern_hash, TODO #383). */
+    int nb = n_items > 0 ? ba_nbytes(&items[0]) : KEYBYTES;
+    size_t len = 1 + (size_t)n_items * (size_t)nb;
     uint8_t *buf = (uint8_t *)malloc(len), digest[32];
     BitArray h = BA_INIT;
     int i;
     if (!buf) { fprintf(stderr, "stern_hash: out of memory\n"); exit(1); }
     buf[0] = (uint8_t)(ds & 0xFF);
     for (i = 0; i < n_items; i++) {
-        if (ba_nbytes(&items[i]) != KEYBYTES) BA_FAIL(BA_E_MIXED_WIDTH, "stern_hash");
-        memcpy(buf + 1 + (size_t)i * KEYBYTES, items[i].b, KEYBYTES);
+        if (ba_nbytes(&items[i]) != nb) BA_FAIL(BA_E_MIXED_WIDTH, "stern_hash");
+        memcpy(buf + 1 + (size_t)i * (size_t)nb, items[i].b, (size_t)nb);
     }
     hfscx_256_ds(STERN_DS_HASH, buf, len, NULL, digest);
     free(buf);
-    memcpy(h.b, digest, KEYBYTES);
+    ba_zero_w(&h, nb * 8);
+    memcpy(h.b, digest, (size_t)nb);
     *out = h;
 }
 
@@ -2884,33 +2895,39 @@ static void stern_hash(BitArray *out, const BitArray *items, int n_items, unsign
  * is indistinguishable from a uniform binary matrix (TODO #88, v1.9.35). */
 static void stern_matrix_row(BitArray *out, const BitArray *seed, int row)
 {
+    /* At the seed's width N: v1 revolve at N/4 steps (I_VALUE at 256), the
+     * HFSCX-256 digest of its N/8 bytes, high N bits kept (TODO #383). */
     BitArray sxr = *seed, a0;
     uint8_t digest[32];
-    sxr.b[KEYBYTES - 1] ^= (uint8_t)(row & 0xFF);
-    ba_rol_k(&a0, &sxr, KEYBITS / 8);
-    nl_fscx_revolve_v1_ba(out, &a0, seed, I_VALUE);
-    hfscx_256(out->b, KEYBYTES, NULL, digest);
-    memcpy(out->b, digest, KEYBYTES);
+    int n = seed->nbits, nb = ba_nbytes(seed);
+    sxr.b[nb - 1] ^= (uint8_t)(row & 0xFF);
+    ba_rol_k(&a0, &sxr, n / 8);
+    nl_fscx_revolve_v1_ba(out, &a0, seed, n / 4);
+    hfscx_256(out->b, (size_t)nb, NULL, digest);
+    memcpy(out->b, digest, (size_t)nb);
 }
 
-/* Build all SDF_N_ROWS rows of parity-check matrix H from seed.
+/* Build all N/2 rows of parity-check matrix H from seed (N = seed's width;
+   H has room for SDF_N_ROWS).
    Hot paths (sign/verify) call this once and reuse H via stern_syndrome_H. */
 static void stern_build_H(BitArray *H, const BitArray *seed)
 {
     int i;
-    for (i = 0; i < SDF_N_ROWS; i++)
+    for (i = 0; i < seed->nbits / 2; i++)
         stern_matrix_row(&H[i], seed, i);
 }
 
-/* Syndrome from prebuilt H: s = H*e^T mod 2, packed into syndr[SDF_SYNBYTES]. */
+/* Syndrome from prebuilt H: s = H*e^T mod 2, packed into syndr[N/16 bytes]
+   (N = e's width; at most SDF_SYNBYTES).  H must be built at that width. */
 static void stern_syndrome_H(uint8_t *syndr, const BitArray *H,
                               const BitArray *e)
 {
-    int i;
-    memset(syndr, 0, SDF_SYNBYTES);
-    for (i = 0; i < SDF_N_ROWS; i++) {
+    int i, nb = ba_nbytes(e), rows = e->nbits / 2;
+    if (H[0].nbits != e->nbits) BA_FAIL(BA_E_MIXED_WIDTH, "stern_syndrome_H");
+    memset(syndr, 0, (size_t)rows / 8);
+    for (i = 0; i < rows; i++) {
         int pc = 0, k;
-        for (k = 0; k < KEYBYTES; k++)
+        for (k = 0; k < nb; k++)
             pc ^= __builtin_popcount(H[i].b[k] & e->b[k]);
         if (pc & 1)
             syndr[i / 8] |= (uint8_t)(1u << (i % 8));
@@ -2927,15 +2944,22 @@ static void stern_syndrome(uint8_t *syndr, const BitArray *seed,
     stern_syndrome_H(syndr, H, e);
 }
 
-/* Pack syndrome into lower half of a BitArray (upper bytes = 0). */
+/* Pack an n/2-bit syndrome into the lower half of an n-bit BitArray (upper
+ * bytes = 0). */
+static void syndr_to_ba_w(BitArray *out, const uint8_t *syndr, int n)
+{
+    int k, nb = n / 8;
+    ba_zero_w(out, n);
+    /* Store syndr[k] (rows k*8..k*8+7) at byte nb-1-k so that syndrome
+     * bit i lands at integer bit i, matching Python/Go's big.Int convention. */
+    for (k = 0; k < nb / 2; k++)
+        out->b[nb - 1 - k] = syndr[k];
+}
+
+/* The 256-bit form, kept for its callers (tests, KAT verifier, dudect). */
 static void syndr_to_ba(BitArray *out, const uint8_t *syndr)
 {
-    int k;
-    memset(out->b, 0, KEYBYTES);
-    /* Store syndr[k] (rows k*8..k*8+7) at byte KEYBYTES-1-k so that syndrome
-     * bit i lands at integer bit i, matching Python/Go's big.Int convention. */
-    for (k = 0; k < SDF_SYNBYTES; k++)
-        out->b[KEYBYTES - 1 - k] = syndr[k];
+    syndr_to_ba_w(out, syndr, KEYBITS);
 }
 
 /* Fisher-Yates shuffle [0..N-1] driven by NL-FSCX v1 PRNG.
@@ -2952,17 +2976,18 @@ static void syndr_to_ba(BitArray *out, const uint8_t *syndr)
    language) must derive the same permutation from the same pi_seed. */
 static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
 {
+    /* The PRNG runs at pi_seed's width (Python: n = pi_seed.size, TODO #383). */
     BitArray key = BA_INIT, st = BA_INIT;
-    int i, cursor;
+    int i, cursor, nb = ba_nbytes(pi_seed);
     for (i = 0; i < N; i++) perm[i] = (uint8_t)i;
-    ba_rol_k(&key, pi_seed, KEYBITS / 8);
+    ba_rol_k(&key, pi_seed, pi_seed->nbits / 8);
     st = *pi_seed;
-    cursor = KEYBYTES;                          /* force state advance on first draw */
+    cursor = nb;                                /* force state advance on first draw */
     for (i = N - 1; i > 0; i--) {
         uint64_t range = (uint64_t)(i + 1);
         uint32_t v;
         int j;
-        if (cursor + 4 > KEYBYTES) {
+        if (cursor + 4 > nb) {
             nl_fscx_v1_ba(&st, &st, &key);
             cursor = 0;
         }
@@ -2991,10 +3016,10 @@ static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
 static void stern_apply_perm(BitArray *out, const uint8_t *perm,
                               const BitArray *v, int N)
 {
-    int i, j;
-    memset(out->b, 0, KEYBYTES);
+    int i, j, nb = ba_nbytes(v);
+    ba_zero_w(out, v->nbits);                  /* at v's width (TODO #383) */
     for (i = 0; i < N; i++) {
-        int byt      = KEYBYTES - 1 - i / 8;
+        int byt      = nb - 1 - i / 8;
         int bit      = i % 8;
         uint8_t vb   = (v->b[byt] >> bit) & 1u;
         uint8_t vmask = (uint8_t)(-(int8_t)vb);   /* 0x00 or 0xFF */
@@ -3003,7 +3028,7 @@ static void stern_apply_perm(BitArray *out, const uint8_t *perm,
             uint32_t d       = (uint32_t)(pi ^ (uint8_t)j);
             uint32_t iszero  = ((d | (0u - d)) >> 31) ^ 1u;   /* 1 if d==0 */
             uint8_t eq       = (uint8_t)(0u - iszero);        /* 0xFF or 0x00 */
-            int ob  = KEYBYTES - 1 - j / 8;
+            int ob  = nb - 1 - j / 8;
             int obb = j % 8;
             out->b[ob] |= eq & vmask & (uint8_t)(1u << obb);
         }
@@ -3028,11 +3053,14 @@ static void stern_apply_perm(BitArray *out, const uint8_t *perm,
  * SecurityProofsCode/stern_ct_demo.py exists to say the leak is still there. */
 static void stern_rand_error(BitArray *e, FILE *urnd)
 {
+    /* weight t = max(2, n/16) on n positions, n = e's width as the caller set
+     * it (Python's _csprng_weight_t(n, t); TODO #383 stage 2) */
     static const uint64_t span = (uint64_t)1 << 32;
-    const uint64_t threshold = span - (span % (uint64_t)KEYBITS);
-    int count = 0;
-    memset(e->b, 0, KEYBYTES);
-    while (count < SDF_T) {
+    const int n = e->nbits;
+    const uint64_t threshold = span - (span % (uint64_t)n);
+    int count = 0, t = stern_t(n), nb = n / 8;
+    ba_zero_w(e, n);
+    while (count < t) {
         uint8_t buf[4];
         uint64_t v;
         unsigned int pos;
@@ -3043,19 +3071,22 @@ static void stern_rand_error(BitArray *e, FILE *urnd)
         v = ((uint64_t)buf[0] << 24) | ((uint64_t)buf[1] << 16)
           | ((uint64_t)buf[2] << 8)  | (uint64_t)buf[3];
         if (v >= threshold) continue;
-        pos = (unsigned int)(v % (uint64_t)KEYBITS);
+        pos = (unsigned int)(v % (uint64_t)n);
         mask = (uint8_t)(1u << (pos % 8));
-        if (e->b[KEYBYTES - 1 - pos / 8] & mask) continue;   /* already chosen */
-        e->b[KEYBYTES - 1 - pos / 8] |= mask;
+        if (e->b[nb - 1 - pos / 8] & mask) continue;   /* already chosen */
+        e->b[nb - 1 - pos / 8] |= mask;
         count++;
     }
 }
 
+
 /* Key generation: random seed, weight-t error e, syndrome = H*e^T. */
+/* At the width N the caller gave *seed (ba_zero_w(seed, N); 256 for BA_INIT). */
 static void stern_f_keygen(BitArray *seed, BitArray *e, uint8_t *syndr,
                             FILE *urnd)
 {
     ba_rand(seed, urnd);
+    ba_zero_w(e, seed->nbits);
     stern_rand_error(e, urnd);
     stern_syndrome(syndr, seed, e);
 }
@@ -3081,14 +3112,16 @@ static void stern_fs_challenges(int *chals, int rounds,
     free(flat);
 
     for (i = 0; i < rounds; i++) {
-        BitArray idx_ba = { KEYBITS, {0} };
+        BitArray idx_ba = BA_INIT;
         uint32_t v;
-        idx_ba.b[KEYBYTES - 1] = (uint8_t)(i & 0xFF);
+        int nb = ba_nbytes(msg);               /* at msg's width (TODO #383) */
+        ba_zero_w(&idx_ba, msg->nbits);
+        idx_ba.b[nb - 1] = (uint8_t)(i & 0xFF);
         nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
-        v = ((uint32_t)ch_st.b[KEYBYTES - 4] << 24)
-          | ((uint32_t)ch_st.b[KEYBYTES - 3] << 16)
-          | ((uint32_t)ch_st.b[KEYBYTES - 2] << 8)
-          |  ch_st.b[KEYBYTES - 1];
+        v = ((uint32_t)ch_st.b[nb - 4] << 24)
+          | ((uint32_t)ch_st.b[nb - 3] << 16)
+          | ((uint32_t)ch_st.b[nb - 2] << 8)
+          |  ch_st.b[nb - 1];
         chals[i] = (int)(v % 3u);
     }
 }
@@ -3161,11 +3194,12 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
     uint8_t  *Hr = (uint8_t  *)malloc((size_t)rounds * SDF_SYNBYTES);
     BitArray H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
     uint8_t perm[KEYBITS];
-    int i;
+    int i, n = seed->nbits;                    /* N from the key (TODO #383) */
 
     if (!r || !y || !pi || !sr || !sy || !Hr) {
         fprintf(stderr, "hpks_stern_f_sign: out of memory\n"); exit(1);
     }
+    if (e->nbits != n || msg->nbits != n) BA_FAIL(BA_E_MIXED_WIDTH, "hpks_stern_f_sign");
     ba_init_array(r, rounds);  ba_init_array(y, rounds);  ba_init_array(pi, rounds);
     ba_init_array(sr, rounds); ba_init_array(sy, rounds);
 
@@ -3177,14 +3211,14 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
          * weight-t, which put both of the verifier's weight checks on the
          * prover's own blinding value and left wt(e) unbound entirely -- see
          * hpks_stern_f_verify's b = 0 case. */
-        ba_rand(&r[i], urnd);
+        ba_zero_w(&r[i], n);  ba_rand(&r[i], urnd);
         ba_xor(&y[i], e, &r[i]);
-        ba_rand(&pi[i], urnd);
+        ba_zero_w(&pi[i], n); ba_rand(&pi[i], urnd);
         stern_syndrome_H(Hr + i * SDF_SYNBYTES, H_mat, &r[i]);
-        stern_gen_perm(perm, &pi[i], KEYBITS);
-        stern_apply_perm(&sr[i], perm, &r[i], KEYBITS);
-        stern_apply_perm(&sy[i], perm, &y[i], KEYBITS);
-        items[0] = pi[i]; syndr_to_ba(&items[1], Hr + i * SDF_SYNBYTES);
+        stern_gen_perm(perm, &pi[i], n);
+        stern_apply_perm(&sr[i], perm, &r[i], n);
+        stern_apply_perm(&sy[i], perm, &y[i], n);
+        items[0] = pi[i]; syndr_to_ba_w(&items[1], Hr + i * SDF_SYNBYTES, n);
         stern_hash(&sig->c0[i], items, 2, 1);
         stern_hash(&sig->c1[i], &sr[i], 1, 2);
         stern_hash(&sig->c2[i], &sy[i], 1, 3);
@@ -3211,9 +3245,15 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
     int *chals;
     BitArray H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
     uint8_t perm[KEYBITS];
-    int i;
+    int i, n = seed->nbits, t = stern_t(n);    /* N from the key (TODO #383) */
 
     if (rounds < 1) return 0;
+    /* every value must be at the key's width: a caller that let a signature of
+     * another width through would otherwise abort in stern_hash */
+    if (msg->nbits != n) return 0;
+    for (i = 0; i < rounds; i++)
+        if (sig->c0[i].nbits != n || sig->c1[i].nbits != n || sig->c2[i].nbits != n ||
+            sig->resp_a[i].nbits != n || sig->resp_b[i].nbits != n) return 0;
     chals = (int *)malloc((size_t)rounds * sizeof(int));
     if (!chals) { fprintf(stderr, "hpks_stern_f_verify: out of memory\n"); exit(1); }
 
@@ -3243,16 +3283,16 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
              * Gaussian elimination away from the PUBLIC key: universal forgery
              * (TODO #298). */
             ba_xor(&xr, &sig->resp_a[i], &sig->resp_b[i]);
-            if (ba_popcount(&xr) != SDF_T) return 0;
+            if (ba_popcount(&xr) != t) return 0;
         } else if (bv == 1) {
             uint8_t Hr[SDF_SYNBYTES];
             BitArray items[2], sr2 = BA_INIT; ba_init_array(items, 2);
             stern_syndrome_H(Hr, H_mat, &sig->resp_b[i]);
-            items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hr);
+            items[0] = sig->resp_a[i]; syndr_to_ba_w(&items[1], Hr, n);
             stern_hash(&tmp, items, 2, 1);
             if (!ba_equal(&tmp, &sig->c0[i])) return 0;
-            stern_gen_perm(perm, &sig->resp_a[i], KEYBITS);
-            stern_apply_perm(&sr2, perm, &sig->resp_b[i], KEYBITS);
+            stern_gen_perm(perm, &sig->resp_a[i], n);
+            stern_apply_perm(&sr2, perm, &sig->resp_b[i], n);
             stern_hash(&tmp, &sr2, 1, 2);
             if (!ba_equal(&tmp, &sig->c1[i])) return 0;
         } else {
@@ -3260,12 +3300,12 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
             BitArray items[2], sy2 = BA_INIT; ba_init_array(items, 2);
             int k;
             stern_syndrome_H(Hy, H_mat, &sig->resp_b[i]);
-            for (k = 0; k < SDF_SYNBYTES; k++) Hys[k] = Hy[k] ^ syndr[k];
-            items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hys);
+            for (k = 0; k < n / 16; k++) Hys[k] = Hy[k] ^ syndr[k];
+            items[0] = sig->resp_a[i]; syndr_to_ba_w(&items[1], Hys, n);
             stern_hash(&tmp, items, 2, 1);
             if (!ba_equal(&tmp, &sig->c0[i])) return 0;
-            stern_gen_perm(perm, &sig->resp_a[i], KEYBITS);
-            stern_apply_perm(&sy2, perm, &sig->resp_b[i], KEYBITS);
+            stern_gen_perm(perm, &sig->resp_a[i], n);
+            stern_apply_perm(&sy2, perm, &sig->resp_b[i], n);
             stern_hash(&tmp, &sy2, 1, 3);
             if (!ba_equal(&tmp, &sig->c2[i])) return 0;
         }
@@ -3360,13 +3400,14 @@ static void stern_ring_challenges(int *joint_out, int rounds, int k,
     }
     /* derive one joint challenge per round */
     for (r = 0; r < rounds; r++) {
-        memset(idx_ba.b, 0, KEYBYTES);
-        idx_ba.b[KEYBYTES - 1] = (uint8_t)(r & 0xFF);
+        int nb = ba_nbytes(msg);               /* at msg's width (TODO #383) */
+        ba_zero_w(&idx_ba, msg->nbits);
+        idx_ba.b[nb - 1] = (uint8_t)(r & 0xFF);
         nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
-        v = ((uint32_t)ch_st.b[KEYBYTES - 4] << 24)
-          | ((uint32_t)ch_st.b[KEYBYTES - 3] << 16)
-          | ((uint32_t)ch_st.b[KEYBYTES - 2] << 8)
-          |  ch_st.b[KEYBYTES - 1];
+        v = ((uint32_t)ch_st.b[nb - 4] << 24)
+          | ((uint32_t)ch_st.b[nb - 3] << 16)
+          | ((uint32_t)ch_st.b[nb - 2] << 8)
+          |  ch_st.b[nb - 1];
         joint_out[r] = (int)(v % 3u);
     }
 }
@@ -3412,6 +3453,9 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
 {
     uint8_t  perm[KEYBITS], Hr_sim[SDF_SYNBYTES];
     BitArray items[2], pi_sim = BA_INIT, r_sim = BA_INIT, y_sim = BA_INIT, sr_sim = BA_INIT, sy_sim = BA_INIT; ba_init_array(items, 2);
+    int n = H_mat[0].nbits;                    /* the member's N (TODO #383) */
+    ba_zero_w(&pi_sim, n); ba_zero_w(&r_sim, n); ba_zero_w(&y_sim, n);
+    ba_zero_w(&sr_sim, n); ba_zero_w(&sy_sim, n);
 
     if (b == 0) {
         /* c1 = hash(sr_sim wt-t), c2 = hash(sy_sim random), c0 dummy.
@@ -3445,7 +3489,8 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
          * wt(sr ^ sy) was ~n/2 on every simulated round and exactly t on the
          * signer's: ONE b = 0 round named the signer, off the public
          * signature, with no statistics at all (TODO #298). */
-        BitArray zero = BA_INIT, pi_dum = BA_INIT, se_sim = BA_INIT; memset(zero.b, 0, KEYBYTES);
+        BitArray zero = BA_INIT, pi_dum = BA_INIT, se_sim = BA_INIT;
+        ba_zero_w(&zero, n); ba_zero_w(&pi_dum, n); ba_zero_w(&se_sim, n);
         ba_rand(&sr_sim, urnd);
         stern_rand_error(&se_sim, urnd);
         ba_xor(&sy_sim, &sr_sim, &se_sim);
@@ -3463,11 +3508,11 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
         /* UNIFORM: the b = 1 response reveals r, and the real r is now
          * uniform (TODO #298). */
         ba_rand(&r_sim, urnd);
-        stern_gen_perm(perm, &pi_sim, KEYBITS);
+        stern_gen_perm(perm, &pi_sim, n);
         stern_syndrome_H(Hr_sim, H_mat, &r_sim);
-        stern_apply_perm(&sr_sim, perm, &r_sim, KEYBITS);
+        stern_apply_perm(&sr_sim, perm, &r_sim, n);
         ba_rand(&sy_sim, urnd);
-        items[0] = pi_sim; syndr_to_ba(&items[1], Hr_sim);
+        items[0] = pi_sim; syndr_to_ba_w(&items[1], Hr_sim, n);
         stern_hash(&sig->c0[idx], items, 2, 1);
         stern_hash(&sig->c1[idx], &sr_sim, 1, 2);
         stern_hash(&sig->c2[idx], &sy_sim, 1, 3);  /* unchecked */
@@ -3480,12 +3525,12 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
         int k2;
         ba_rand(&pi_sim, urnd);
         ba_rand(&y_sim,  urnd);
-        stern_gen_perm(perm, &pi_sim, KEYBITS);
+        stern_gen_perm(perm, &pi_sim, n);
         stern_syndrome_H(Hr_sim, H_mat, &y_sim);
-        for (k2 = 0; k2 < SDF_SYNBYTES; k2++) Hys[k2] = Hr_sim[k2] ^ syndr[k2];
-        stern_apply_perm(&sy_sim, perm, &y_sim, KEYBITS);
+        for (k2 = 0; k2 < n / 16; k2++) Hys[k2] = Hr_sim[k2] ^ syndr[k2];
+        stern_apply_perm(&sy_sim, perm, &y_sim, n);
         ba_rand(&sr_sim, urnd);
-        items[0] = pi_sim; syndr_to_ba(&items[1], Hys);
+        items[0] = pi_sim; syndr_to_ba_w(&items[1], Hys, n);
         stern_hash(&sig->c0[idx], items, 2, 1);
         stern_hash(&sig->c1[idx], &sr_sim, 1, 2);  /* unchecked */
         stern_hash(&sig->c2[idx], &sy_sim, 1, 3);
@@ -3540,18 +3585,19 @@ static void stern_ring_sign(SternRingSig *sig,
     {
         BitArray H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
         uint8_t perm[KEYBITS];
+        int n = seeds[j].nbits;                /* the ring's N (TODO #383) */
         stern_build_H(H_mat, &seeds[j]);
         for (r = 0; r < rounds; r++) {
             int idx = j * rounds + r;
             BitArray items[2]; ba_init_array(items, 2);
-            ba_rand(&r_tmp[r], urnd);
+            ba_zero_w(&r_tmp[r], n);  ba_rand(&r_tmp[r], urnd);
             ba_xor(&y_tmp[r], e, &r_tmp[r]);
-            ba_rand(&pi_tmp[r], urnd);
+            ba_zero_w(&pi_tmp[r], n); ba_rand(&pi_tmp[r], urnd);
             stern_syndrome_H(Hr_tmp + r * SDF_SYNBYTES, H_mat, &r_tmp[r]);
-            stern_gen_perm(perm, &pi_tmp[r], KEYBITS);
-            stern_apply_perm(&sr_tmp[r], perm, &r_tmp[r], KEYBITS);
-            stern_apply_perm(&sy_tmp[r], perm, &y_tmp[r], KEYBITS);
-            items[0] = pi_tmp[r]; syndr_to_ba(&items[1], Hr_tmp + r * SDF_SYNBYTES);
+            stern_gen_perm(perm, &pi_tmp[r], n);
+            stern_apply_perm(&sr_tmp[r], perm, &r_tmp[r], n);
+            stern_apply_perm(&sy_tmp[r], perm, &y_tmp[r], n);
+            items[0] = pi_tmp[r]; syndr_to_ba_w(&items[1], Hr_tmp + r * SDF_SYNBYTES, n);
             stern_hash(&sig->c0[idx], items, 2, 1);
             stern_hash(&sig->c1[idx], &sr_tmp[r], 1, 2);
             stern_hash(&sig->c2[idx], &sy_tmp[r], 1, 3);
@@ -3613,11 +3659,16 @@ static int stern_ring_verify(const SternRingSig *sig,
         BitArray H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
         uint8_t perm[KEYBITS];
         const uint8_t *syn_i = syndrs_flat + i * SDF_SYNBYTES;
+        int n = seeds[i].nbits, t = stern_t(n);
+        if (n != msg->nbits) return 0;         /* one N for the ring (TODO #383) */
         stern_build_H(H_mat, &seeds[i]);
         for (r = 0; r < rounds; r++) {
             int idx = i * rounds + r;
             int bv  = sig->b[idx];
             BitArray tmp = BA_INIT;
+            if (sig->c0[idx].nbits != n || sig->c1[idx].nbits != n ||
+                sig->c2[idx].nbits != n || sig->resp_a[idx].nbits != n ||
+                sig->resp_b[idx].nbits != n) return 0;
             if (bv == 0) {
                 BitArray xr = BA_INIT;
                 stern_hash(&tmp, &sig->resp_a[idx], 1, 2);
@@ -3626,16 +3677,16 @@ static int stern_ring_verify(const SternRingSig *sig,
                 if (!ba_equal(&tmp, &sig->c2[idx])) return 0;
                 /* binds wt(e) -- see hpks_stern_f_verify (TODO #298) */
                 ba_xor(&xr, &sig->resp_a[idx], &sig->resp_b[idx]);
-                if (ba_popcount(&xr) != SDF_T) return 0;
+                if (ba_popcount(&xr) != t) return 0;
             } else if (bv == 1) {
                 uint8_t Hr[SDF_SYNBYTES];
                 BitArray items[2], sr2 = BA_INIT; ba_init_array(items, 2);
                 stern_syndrome_H(Hr, H_mat, &sig->resp_b[idx]);
-                items[0] = sig->resp_a[idx]; syndr_to_ba(&items[1], Hr);
+                items[0] = sig->resp_a[idx]; syndr_to_ba_w(&items[1], Hr, n);
                 stern_hash(&tmp, items, 2, 1);
                 if (!ba_equal(&tmp, &sig->c0[idx])) return 0;
-                stern_gen_perm(perm, &sig->resp_a[idx], KEYBITS);
-                stern_apply_perm(&sr2, perm, &sig->resp_b[idx], KEYBITS);
+                stern_gen_perm(perm, &sig->resp_a[idx], n);
+                stern_apply_perm(&sr2, perm, &sig->resp_b[idx], n);
                 stern_hash(&tmp, &sr2, 1, 2);
                 if (!ba_equal(&tmp, &sig->c1[idx])) return 0;
             } else {
@@ -3643,12 +3694,12 @@ static int stern_ring_verify(const SternRingSig *sig,
                 BitArray items[2], sy2 = BA_INIT; ba_init_array(items, 2);
                 int k2;
                 stern_syndrome_H(Hy, H_mat, &sig->resp_b[idx]);
-                for (k2 = 0; k2 < SDF_SYNBYTES; k2++) Hys[k2] = Hy[k2] ^ syn_i[k2];
-                items[0] = sig->resp_a[idx]; syndr_to_ba(&items[1], Hys);
+                for (k2 = 0; k2 < n / 16; k2++) Hys[k2] = Hy[k2] ^ syn_i[k2];
+                items[0] = sig->resp_a[idx]; syndr_to_ba_w(&items[1], Hys, n);
                 stern_hash(&tmp, items, 2, 1);
                 if (!ba_equal(&tmp, &sig->c0[idx])) return 0;
-                stern_gen_perm(perm, &sig->resp_a[idx], KEYBITS);
-                stern_apply_perm(&sy2, perm, &sig->resp_b[idx], KEYBITS);
+                stern_gen_perm(perm, &sig->resp_a[idx], n);
+                stern_apply_perm(&sy2, perm, &sig->resp_b[idx], n);
                 stern_hash(&tmp, &sy2, 1, 3);
                 if (!ba_equal(&tmp, &sig->c2[idx])) return 0;
             }
@@ -3662,6 +3713,7 @@ static void hpke_stern_f_encap(BitArray *K_out, uint8_t *ct, BitArray *e_out,
                                 const BitArray *seed, FILE *urnd)
 {
     BitArray items[2]; ba_init_array(items, 2);
+    ba_zero_w(e_out, seed->nbits);             /* at the key's N (TODO #383) */
     stern_rand_error(e_out, urnd);
     stern_syndrome(ct, seed, e_out);
     items[0] = *seed;

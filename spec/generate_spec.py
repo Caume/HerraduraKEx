@@ -2027,8 +2027,11 @@ def _param_rows():
             sec = _STERN_SEC.get(w, "below 2^30")
             if a == "hcred":
                 sec = "research construction; its Stern-F half " + sec
+            # TODO #383 stage 2: C runs Stern-F (hpks-stern, hpke-stern) at every
+            # width; hcred is stage 3.
             rows.append((a, w, "demo" if w == 256 else None, w == 256, sec,
-                         all4 if w == 256 else narrow, None))
+                         all4 if w == 256 else (narrow if a == "hcred" else gf_narrow),
+                         None))
     rows.append(("hpke-stern-kem", -1, "128", True,
                  "2^128 classical by its parameters (BIKE-128)", all4, None))
     rows.append(("hpks-zkp-nl", 8, "demo", True,
