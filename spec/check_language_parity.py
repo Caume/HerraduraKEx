@@ -5476,11 +5476,13 @@ PRIMITIVES = {
     },
     "hcred-params": {
         "acknowledged":
-            "HCRED's width is a RUNTIME argument in Python and Go and a "
-            "COMPILE-TIME constant in C (HCRED_N) and Java (Hcred.N) -- TODO "
-            "#266's finding, and the reason KAT/hcred_kkw.json ships two vector "
-            "sets. Only Python needs a parameter-derivation function; there is "
-            "nothing to port unless that split is closed first",
+            "HCRED's width is a RUNTIME argument in Python, Go and (since TODO "
+            "#383 stage 3) C, and a COMPILE-TIME constant in Java (Hcred.N, TODO "
+            "#384) -- TODO #266's finding, and the reason KAT/hcred_kkw.json "
+            "ships two vector sets. Python derives (rows, row_bits, w_max) in one "
+            "function; C writes one per value (exempt under the census's C rules: "
+            "hcred_row_bits / hcred_w_max ...), so there is no single C function "
+            "to name here",
         "python": r"^def _hcred_params\(",
     },
     "hcred-issuer-msg": {
@@ -5810,6 +5812,12 @@ CENSUS_EXEMPT = {
          "off 256 bits, where its bit-parallel masks do not apply (TODO #383).  "
          "Not a second primitive: nl_chi_v3_ba is the manifest's entry and "
          "dispatches here"),
+        (r"^hcred_(n_ok|row_bits|w_max|nb|nd|round_outs_ser)$",
+         "HCRED's parameter rules at runtime width n (TODO #383 stage 3): the "
+         "row-sum bit length, the weight bound n/4 + floor(sqrt(3n)), the share "
+         "counts and a round's serialised size, which Python computes in "
+         "_hcred_params (the hcred-params manifest row) and inline.  Parameter "
+         "rules, not protocol steps; the width matrix checks them by interop"),
         (r"^stern_t$",
          "Stern-F's error weight t = max(2, N/16) at width N, which Python, Go "
          "and Java write inline where they use it (Python's `t = max(2, n // 16)`; "

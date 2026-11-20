@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#383, #388, #389), in ten
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#383, #388, #389), in eleven
 parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
@@ -33,6 +33,47 @@ Go refuse a narrower key at `threshold-commit` as C does (TODO #389, #388, secti
 C now also runs hpks-stern, hpke-stern and hpks-ring at 32, 64, 128 and 256 bits, and a
 Stern signature or ciphertext of another width than its key is refused in Python, Go and
 C (Go panicked; Python and Go decrypted with exit 0) (TODO #383 stage 2, section 46).
+C now also runs hcred at 32, 64, 128 and 256 bits and issues credentials under an
+hpks-stern key of any width, and a proof or credential of another width than its key is
+refused by name in Python, Go and C (Go panicked) (TODO #383 stage 3).
+
+### TODO #383 (stage 3) — C runs hcred at every width
+
+- **`herradura.h`.** HCRED's ZKBoo prover and verifier, the statement hash, phi, the
+  witness, the per-party outputs, the commitments and the proof codec take n from their
+  operands -- `seed_H`'s width, and a new `n` field in `HcredProof` -- with Python's
+  `_hcred_params` rules: n/2 rows, a row sum of bit-length(n) bits, and the weight bound
+  w_max = n/4 + floor(sqrt(3n)) (91 at 256, 17 at 32), computed in integers.
+  `hcred_user_keygen` takes n. `HCRED_N` = 256 stays the default and the bound every
+  array is sized for; a static assert holds the 256-bit constants to the new functions.
+  `rnl_poly_mul_dim` gains a schoolbook branch for the power-of-two rings below 256, which
+  have no NTT table (the negacyclic product, loop bounds public). The issuance message is
+  the statement digest's high issuer-n bits (BITARRAY.md §4.4), so the issuer key may be
+  hpks-stern at any width, as in Python and Go. HCRED-KKW stays at 256 in C; no CLI uses
+  it. At 256 bits nothing changes: KAT/hcred_kkw.json, the operation replays and the suite
+  tests pass as before.
+- **The C CLI.** `genpkey --algo hcred --bits 32|64|128` (m = 1 + x + x^(n-1) plus a
+  uniform polynomial, Python's construction), `pkey`, `cred-prove`, `cred-verify` and the
+  key and proof readers run at the key's own n; `cred-issue` and `cred-verify` take an
+  issuer key of any Stern width, and the stage-2 refusal of a narrower issuer is gone.
+  "c" joins hcred's narrow rows' ports.
+- **Mixed widths.** A 128-bit proof against a 64-bit key, or a 128-bit credential under
+  a 64-bit issuer key: Go indexed past the narrower value and panicked on both; Python
+  refused the first and failed the second as a forgery. All three now refuse with
+  `cred-verify: proof n is 128, public key n is 64` / `cred-verify: credential n is 128,
+  issuer key n is 64`. Every input refused here was refused before, by a panic or a
+  failed verification, so there is no MIGRATING.md section.
+- **Tests.** `test_width_matrix.sh` covers hcred at every width and CLI pair: the
+  writer's proof verifies under the reader and not under another message; a credential
+  the writer issues over the reader's key verifies under the reader and not under another
+  issuer; and the two mixed-width refusals, each after a same-width accept-control.
+  1955 PASS, 0 FAIL; on the stage-2 build (this test and spec) it fails 11 checks.
+  hcred's `pkey --text` has three layouts at every width, 256 included (Python, C, and
+  Go with Java); its 30 cross-CLI cells print as n/a and the dump joins TODO #386.
+- **Docs.** TUTORIAL.md's C example used an `hcred_user_keygen` without its `e`
+  argument, a `rnl_sample_m` that does not exist, and called 1 success; it now compiles
+  and runs, at n = 64. A stale `v1_remaining_sites.py` table row (stage 2 changed
+  `stern_matrix_row`'s step count to `n / 4`) is updated.
 
 ### TODO #383 (stage 2) — C runs Stern-F at every width
 

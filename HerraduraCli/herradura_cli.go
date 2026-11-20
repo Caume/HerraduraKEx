@@ -3778,7 +3778,7 @@ func cmdCredVerify(args []string) {
 	if rerr != nil {
 		die("cred-verify", rerr)
 	}
-	proof, _, derr := decodeHcredProof(body)
+	proof, proofN, derr := decodeHcredProof(body)
 	if derr != nil {
 		die("cred-verify", derr)
 	}
@@ -3792,6 +3792,12 @@ func cmdCredVerify(args []string) {
 	cPoly, mPoly, seedH, syndr, pubN, lerr := loadHcredPubinfo(*pubkeyPath)
 	if lerr != nil {
 		die("cred-verify", lerr)
+	}
+	// HcredVerify indexed a narrower proof at the key's n and panicked
+	// (TODO #383 stage 3); same text in all CLIs.
+	if proofN != pubN {
+		fmt.Fprintf(os.Stderr, "cred-verify: proof n is %d, public key n is %d\n", proofN, pubN)
+		os.Exit(1)
 	}
 
 	msgBytes := []byte(*msg)
@@ -3810,7 +3816,7 @@ func cmdCredVerify(args []string) {
 		if cerr != nil {
 			die("cred-verify", cerr)
 		}
-		credSig, _, uerr := unpackSternSig(credInts)
+		credSig, credN, uerr := unpackSternSig(credInts)
 		if uerr != nil {
 			die("cred-verify", uerr)
 		}
@@ -3825,6 +3831,10 @@ func cmdCredVerify(args []string) {
 			os.Exit(1)
 		}
 		issuerN := sternWireN(issInts[2], "cred-verify")
+		if credN != issuerN { // panicked in the Stern verifier (TODO #383 stage 3)
+			fmt.Fprintf(os.Stderr, "cred-verify: credential n is %d, issuer key n is %d\n", credN, issuerN)
+			os.Exit(1)
+		}
 		issuerSyn := new(big.Int).SetBytes(issInts[0])
 		issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(issInts[1]))
 
@@ -7184,9 +7194,9 @@ var paramSets = []paramSet{
 	{"hpke-stern", 64, "", false, "demo", "below 2^30", "py c go", ""},
 	{"hpke-stern", 128, "", false, "demo", "below 2^30", "py c go", ""},
 	{"hpke-stern", 256, "demo", true, "demo", "~2^30-2^40 (SECURITY.md)", "py go c java", ""},
-	{"hcred", 32, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go", ""},
-	{"hcred", 64, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go", ""},
-	{"hcred", 128, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go", ""},
+	{"hcred", 32, "", false, "demo", "research construction; its Stern-F half below 2^30", "py c go", ""},
+	{"hcred", 64, "", false, "demo", "research construction; its Stern-F half below 2^30", "py c go", ""},
+	{"hcred", 128, "", false, "demo", "research construction; its Stern-F half below 2^30", "py c go", ""},
 	{"hcred", 256, "demo", true, "demo", "research construction; its Stern-F half ~2^30-2^40 (SECURITY.md)", "py go c java", ""},
 	{"hpke-stern-kem", -1, "128", true, "demo-only", "2^128 classical by its parameters (BIKE-128)", "py go c java", ""},
 	{"hpks-zkp-nl", 8, "demo", true, "demo", "demonstration keypair; no security claim", "py go c java", ""},

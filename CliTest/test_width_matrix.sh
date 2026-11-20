@@ -20,6 +20,10 @@
 #     verifier is given --min-rounds SR); and an hpks-ring signature by the
 #     writer over a ring of every listed CLI's key verifies under the reader,
 #     and not on a changed message.  hpke-stern runs the hpke* checks.
+#   - hcred (TODO #383 stage 3): the writer's presentation proof verifies under
+#     the reader, and not under another message; a credential the writer issues
+#     over the reader's key, under an n-bit hpks-stern issuer key, verifies under
+#     the reader, and not under another issuer's key.
 # A CLI the row does not list must refuse the key (pkey --text, enc, verify),
 # naming the width, without crashing -- never exit 0 with a wrong answer.
 #
@@ -43,11 +47,11 @@ bash "$ROOT/bindings/java/build.sh" >/dev/null 2>&1
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-PASS=0; FAIL=0; NA=0
+PASS=0; FAIL=0; NA=0; NA_STERN=0; NA_HCRED=0
 pass() { PASS=$((PASS+1)); }
 fail() { echo "FAIL $1"; FAIL=$((FAIL+1)); }
 
-GF_ALGOS="hkex-gf hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern"
+GF_ALGOS="hkex-gf hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern hcred"
 SR=16   # Stern-F rounds: soundness is not under test, interop is
 python3 - "$ROOT/spec/herradura-protocol-spec.json" "$GF_ALGOS" > "$TMP/rows" <<'EOF'
 import json, sys
@@ -67,7 +71,7 @@ refused() {  # label
     if [ "$RC" -eq 0 ]; then fail "$1: accepted (exit 0)"
     elif [ "$RC" -gt 2 ] || grep -qE 'Traceback|panic:|Exception in thread|Aborted' "$TMP/err"; then
         fail "$1: crashed (rc=$RC): $(head -c 160 "$TMP/err")"
-    elif ! grep -qE 'n is [0-9]+|this CLI runs n' "$TMP/err" "$TMP/out"; then
+    elif ! grep -qE 'n is [0-9]+|this CLI runs n|n must be [0-9]+, got [0-9]+' "$TMP/err" "$TMP/out"; then
         fail "$1: refused, but without naming the width: $(head -c 160 "$TMP/err")"
     else pass; fi
 }
@@ -95,11 +99,15 @@ while read -r a n dflt ports; do
             q "$r" pkey --in "$D/$g.pem" --pubout --out "$D/x.pem"
             if [ "$RC" -eq 0 ] && cmp -s "$D/x.pem" "$D/${g}_pub.pem"; then pass
             else fail "$L: pkey --pubout differs (rc=$RC)"; fi
-            # Java's Stern --text dump has other fields (bits, syndrome, no e_int):
+            # Java's Stern --text dump has other fields (bits, syndrome, no e_int),
+            # and hcred's has three layouts at every width, 256 included (Python:
+            # seed_H, y big-endian, W; C: seed_H, y low byte first; Go and Java: W):
             # the whole-dump divergence TODO #386 covers, not a width defect --
             # reported as n/a, never scored as a pass.
             if [[ $a == *-stern && ( $g == java || $r == java ) && $g != "$r" ]]; then
-                NA=$((NA+1))
+                NA=$((NA+1)); NA_STERN=$((NA_STERN+1))
+            elif [[ $a == hcred && $g != "$r" ]]; then
+                NA=$((NA+1)); NA_HCRED=$((NA_HCRED+1))
             elif ${CLI[$r]} pkey --in "$D/$g.pem" --text 2>/dev/null | cmp -s - "$D/${g}_text"; then pass
             else fail "$L: pkey --text differs"; fi
             case $a in
@@ -170,6 +178,37 @@ EOF
                     if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED' "$TMP/out"; then pass
                     else fail "$L: ring verify on a changed message: rc=$RC, not 'Verification FAILED'"; fi
                 fi ;;
+            hcred)
+                # one proof and one issuer key per CLI, made the first time it is needed
+                for c in "$g" "$r"; do
+                    [ -s "$D/pf_$c.pem" ] || q "$c" cred-prove --rounds $SR --in "$D/$c.pem" --msg hello --out "$D/pf_$c.pem"
+                    if [ ! -s "$D/iss_$c.pem" ]; then
+                        q "$c" genpkey --algo hpks-stern --bits "$n" --out "$D/iss_$c.pem"
+                        q "$c" pkey --in "$D/iss_$c.pem" --pubout --out "$D/iss_${c}_pub.pem"
+                    fi
+                done
+                if [ ! -s "$D/iss_x_pub.pem" ]; then   # the wrong issuer, for the control
+                    q "$ref" genpkey --algo hpks-stern --bits "$n" --out "$D/iss_x.pem"
+                    q "$ref" pkey --in "$D/iss_x.pem" --pubout --out "$D/iss_x_pub.pem"
+                fi
+                q "$r" cred-verify --min-rounds $SR --proof "$D/pf_$g.pem" --pubkey "$D/${g}_pub.pem" --msg hello
+                if [ "$RC" -eq 0 ]; then pass; else fail "$L: cred-verify refused a valid proof (rc=$RC) $(head -c 160 "$TMP/err")"; fi
+                q "$r" cred-verify --min-rounds $SR --proof "$D/pf_$g.pem" --pubkey "$D/${g}_pub.pem" --msg hellp
+                if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED (proof)' "$TMP/out"; then pass
+                else fail "$L: cred-verify under another message: rc=$RC, not 'Verification FAILED (proof)'"; fi
+                rm -f "$D/cr.pem"
+                q "$g" cred-issue --rounds $SR --in "$D/${r}_pub.pem" --our "$D/iss_$g.pem" --out "$D/cr.pem"
+                if [ "$RC" -ne 0 ]; then fail "$L: cred-issue (rc=$RC) $(head -c 160 "$TMP/err")"
+                else
+                    q "$r" cred-verify --min-rounds $SR --proof "$D/pf_$r.pem" --pubkey "$D/${r}_pub.pem" --msg hello \
+                        --cred "$D/cr.pem" --issuer "$D/iss_${g}_pub.pem"
+                    if [ "$RC" -eq 0 ] && grep -q 'Credential OK' "$TMP/out"; then pass
+                    else fail "$L: cred-verify refused $g's credential (rc=$RC) $(head -c 160 "$TMP/err")"; fi
+                    q "$r" cred-verify --min-rounds $SR --proof "$D/pf_$r.pem" --pubkey "$D/${r}_pub.pem" --msg hello \
+                        --cred "$D/cr.pem" --issuer "$D/iss_x_pub.pem"
+                    if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED (credential)' "$TMP/out"; then pass
+                    else fail "$L: credential under another issuer: rc=$RC, not 'Verification FAILED (credential)'"; fi
+                fi ;;
             hpke*)
                 rm -f "$D/ct.pem" "$D/d.bin"
                 q "$g" enc --algo "$a" --pubkey "$D/${r}_pub.pem" --in "$D/m.bin" --out "$D/ct.pem"
@@ -195,6 +234,9 @@ EOF
                 refused "$a/$n verify ($c)" ;;
         hkex-gf) q "$c" kex --algo hkex-gf --our "$D/$ref.pem" --their "$D/${ref}_pub.pem" --out "$D/k_$c.pem"
                 refused "$a/$n kex ($c)" ;;
+        hcred)  q "$ref" cred-prove --rounds $SR --in "$D/$ref.pem" --out "$D/pf_x.pem"
+                q "$c" cred-verify --min-rounds $SR --proof "$D/pf_x.pem" --pubkey "$D/${ref}_pub.pem"
+                refused "$a/$n cred-verify ($c)" ;;
         esac
     done
 done < "$TMP/rows"
@@ -212,7 +254,7 @@ mixed() {  # label want-message
     else fail "$1: rc=$RC, not refused with '$2': $(head -c 160 "$TMP/err")"; fi; }
 M="$TMP/mix"; mkdir -p "$M"; head -c 8 /dev/urandom > "$M/m.bin"
 for c in "${LANGS[@]}"; do
-    for a in hkex-gf hpke hpks hpke-stern hpks-stern; do
+    for a in hkex-gf hpke hpks hpke-stern hpks-stern hcred; do
         runs_both "$a" "$c" || continue
         q "$c" genpkey --algo "$a" --bits 64  --out "$M/k64.pem"
         q "$c" genpkey --algo "$a" --bits 128 --out "$M/k128.pem"
@@ -262,12 +304,29 @@ for c in "${LANGS[@]}"; do
             mixed "mixed-width ring members ($c)" "all ring members must share the same n"
             q "$c" verify --algo hpks-ring --min-rounds $SR --ring "$M/k128_pub.pem,$M/k128_pub.pem" --in "$M/m.bin" --sig "$M/rs64.pem"
             mixed "mixed-width ring signature ($c)" "signature n=64 != ring n=128" ;;
+        hcred)   # TODO #383 stage 3: Go panicked on both; Python failed the credential unnamed
+            q "$c" cred-prove --rounds $SR --in "$M/k64.pem" --out "$M/p64.pem"
+            q "$c" cred-verify --min-rounds $SR --proof "$M/p64.pem" --pubkey "$M/k64_pub.pem"
+            [ "$RC" -eq 0 ] && pass || fail "mixed control: same-width cred-verify ($c) rc=$RC"
+            q "$c" cred-prove --rounds $SR --in "$M/k128.pem" --out "$M/p128.pem"
+            q "$c" cred-verify --min-rounds $SR --proof "$M/p128.pem" --pubkey "$M/k64_pub.pem"
+            mixed "mixed-width hcred proof ($c)" "proof n is 128, public key n is 64"
+            q "$c" genpkey --algo hpks-stern --bits 64  --out "$M/i64.pem"
+            q "$c" genpkey --algo hpks-stern --bits 128 --out "$M/i128.pem"
+            q "$c" pkey --in "$M/i64.pem"  --pubout --out "$M/i64_pub.pem"
+            q "$c" pkey --in "$M/i128.pem" --pubout --out "$M/i128_pub.pem"
+            q "$c" cred-issue --rounds $SR --in "$M/k64_pub.pem" --our "$M/i64.pem" --out "$M/c64.pem"
+            q "$c" cred-verify --min-rounds $SR --proof "$M/p64.pem" --pubkey "$M/k64_pub.pem" --cred "$M/c64.pem" --issuer "$M/i64_pub.pem"
+            [ "$RC" -eq 0 ] && pass || fail "mixed control: same-width credential ($c) rc=$RC"
+            q "$c" cred-issue --rounds $SR --in "$M/k64_pub.pem" --our "$M/i128.pem" --out "$M/c128.pem"
+            q "$c" cred-verify --min-rounds $SR --proof "$M/p64.pem" --pubkey "$M/k64_pub.pem" --cred "$M/c128.pem" --issuer "$M/i64_pub.pem"
+            mixed "mixed-width hcred credential ($c)" "credential n is 128, issuer key n is 64" ;;
         esac
     done
 done
 
 echo
 echo "Results: $PASS PASS / $FAIL FAIL / $NA n/a (languages: ${LANGS[*]})"
-[ "$NA" -eq 0 ] || echo "n/a: $NA Stern pkey --text cells with Java on one side (TODO #386)"
+[ "$NA" -eq 0 ] || echo "n/a: $NA_STERN Stern pkey --text cells with Java on one side, $NA_HCRED hcred pkey --text cells across CLIs (TODO #386)"
 [ "$PASS" -gt 0 ] || exit 2
 [ "$FAIL" -eq 0 ] || exit 1

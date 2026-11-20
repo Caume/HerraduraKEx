@@ -1423,7 +1423,10 @@ Go and Python, `CliTest/test_java_hcred_interop.sh` Java and Python).
 ### C
 
 `hcred` proves knowledge of a Ring-LWR secret `s` satisfying both the LWR relation
-and a code syndrome, via ZKBoo-(2,3) MPCitH. Fixed at `n = HCRED_N = 256` in C.
+and a code syndrome, via ZKBoo-(2,3) MPCitH. C runs it at n = 32, 64, 128 or 256
+(TODO #383 stage 3); `HCRED_N = 256` is the default and the largest, every array is
+sized for it, and each function reads n from its operands (`seed_H`'s width, the
+proof's `n`). The issuer key may be an hpks-stern key of any of those widths.
 
 ```c
 #include "herradura.h"
@@ -1431,20 +1434,26 @@ and a code syndrome, via ZKBoo-(2,3) MPCitH. Fixed at `n = HCRED_N = 256` in C.
 FILE *urnd = fopen("/dev/urandom", "rb");
 
 /* ── User key generation ─────────────────────────────────────────────────── */
+const int n = 64;                              /* 32, 64, 128 or 256 */
 int32_t m_poly[HCRED_N], s_poly[HCRED_N], c_poly[HCRED_N];
-rnl_sample_m(m_poly, urnd);                    /* public module polynomial */
-hcred_user_keygen(s_poly, c_poly, m_poly, urnd);
+rnl_poly_t a_rand;
+rnl_rand_poly(a_rand, urnd);                   /* public module polynomial: */
+for (int k = 0; k < n; k++)                    /*   m = 1 + x + x^(n-1) + a */
+    m_poly[k] = (a_rand[k] + (k == 0 || k == 1 || k == n - 1)) % RNL_Q;
+BitArray e = BA_INIT;                          /* e = phi(s), kept secret */
+hcred_user_keygen(s_poly, c_poly, &e, m_poly, urnd, n);
 
-BitArray seed_H;
-ba_rand(&seed_H, urnd);                        /* public matrix seed */
+BitArray seed_H = BA_INIT;
+ba_zero_w(&seed_H, n);                         /* n-bit public matrix seed */
+ba_rand(&seed_H, urnd);
 
 uint8_t syndr[SDF_SYNBYTES];
-hcred_syndrome(syndr, &seed_H, s_poly);        /* public syndrome */
+hcred_syndrome(syndr, &seed_H, &e);            /* public syndrome */
 
-/* ── Issue credential (issuer = any hpks-stern key) ─────────────────────── */
-BitArray issuer_seed, issuer_e;
+/* ── Issue credential (issuer = an hpks-stern key of any width) ─────────── */
+BitArray issuer_seed = BA_INIT, issuer_e = BA_INIT;
 uint8_t  issuer_syndr[SDF_SYNBYTES];
-stern_f_keygen(&issuer_seed, &issuer_e, issuer_syndr, urnd);
+stern_f_keygen(&issuer_seed, &issuer_e, issuer_syndr, urnd);   /* 256-bit here */
 
 SternSig cred;
 stern_sig_alloc(&cred, SDF_ROUNDS);   /* or SDF_PRODUCTION_ROUNDS; TODO #236 */
@@ -1458,7 +1467,7 @@ HcredProof proof;
 memset(&proof, 0, sizeof proof);
 int proved = hcred_prove(&proof, s_poly, m_poly, c_poly, &seed_H, syndr,
                           HCRED_DEMO_ROUNDS, nonce, sizeof nonce - 1, urnd);
-/* proved == 1 on success */
+/* proved == 0 on success (-1 out of memory, -2 the key fails its own statement) */
 
 /* ── Verify proof ───────────────────────────────────────────────────────── */
 int ok = hcred_verify(m_poly, c_poly, &seed_H, syndr,
@@ -1531,7 +1540,7 @@ from primitives import (hcred_phi, hcred_user_keygen, hcred_syndrome,
                          hcred_cred_verify, _HCRED_DEFAULT_N)
 import os
 
-n = _HCRED_DEFAULT_N    # 32 (demo); use 256 for C interop
+n = _HCRED_DEFAULT_N    # 32 (demo); C, Go and Python interoperate at 32-256
 
 # ── User key generation ───────────────────────────────────────────────────
 m_poly, s_poly, c_poly, seed_H, syndr = hcred_user_keygen(n)
@@ -2578,7 +2587,7 @@ void oprf_direct (BitArray *F, const uint8_t *x, size_t xlen, const BitArray *k)
 | HCRED default n (Python) | — | — | `_HCRED_DEFAULT_N` | 32 (demo) |
 | HCRED CLI rounds | — | — | `_HCRED_CLI_ROUNDS` | 219 |
 | HCRED demo rounds | `HCRED_DEMO_ROUNDS` | — | `_HCRED_DEMO_ROUNDS` | 4 |
-| HCRED n (C, fixed) | `HCRED_N` | — | — | 256 |
+| HCRED n (C, default and largest; 32-256 at runtime) | `HCRED_N` | — | — | 256 |
 
 Stern-F parameters scale with N: T = N/16, rows = N/4. C/Go/Python support
 N ∈ {32, 64, 128, 256}; assembly and Arduino targets are fixed at N=32 (T=2, rounds=4).

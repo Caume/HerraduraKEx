@@ -1132,9 +1132,9 @@ static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, siz
             want = 4 + 2 * (size_t)((hn + 7) / 8);
         else if (hn == RNL_N && strcmp(label, PEM_ZKP_RNL_PROOF) == 0)
             want = 4 + (size_t)hn * 12;
-        else if (hn == HCRED_N && strcmp(label, PEM_HCRED_PRIV) == 0)
+        else if (hcred_n_ok((int)hn) && strcmp(label, PEM_HCRED_PRIV) == 0)
             want = 4 + (size_t)hn * 8 + hn / 8 + (hn / 2 + 7) / 8;
-        else if (hn == HCRED_N && strcmp(label, PEM_HCRED_PUB) == 0)
+        else if (hcred_n_ok((int)hn) && strcmp(label, PEM_HCRED_PUB) == 0)
             want = 4 + (size_t)hn * 5 + hn / 8 + (hn / 2 + 7) / 8;
         if (want && cap > want) die_raw_trailing(label, cap - want);
     }
@@ -1766,45 +1766,48 @@ static void cmd_genpkey(int argc, char **argv)
         fclose(urnd); return;
     }
 
-    /* HCRED user keypair (demo parameters, N=256) */
+    /* HCRED user keypair (demo parameters) at n = 32, 64, 128 or 256 (TODO #383
+     * stage 3; the width comes from the parameter-set table, 256 by default). */
     if (strcmp(algo, "hcred") == 0) {
-        fprintf(stderr, "WARNING: HCRED at N=256 is a demonstration parameter set.\n");
-        rnl_poly_t m_base, a_rand, m_blind;
-        rnl_m_poly(m_base);
+        const int n = pbits > 0 ? pbits : HCRED_N;
+        if (!hcred_n_ok(n)) die("genpkey: hcred supports n = 32, 64, 128 or 256");
+        fprintf(stderr, "WARNING: HCRED at N=%d is a demonstration parameter set.\n", n);
+        /* m = (1 + x + x^(n-1)) + a, a uniform in Z_q^n -- Python's construction */
+        rnl_poly_t a_rand;
         rnl_rand_poly(a_rand, urnd);
-        rnl_poly_add(m_blind, m_base, a_rand);
 
         int32_t s_poly[HCRED_N], C_poly[HCRED_N], m_poly[HCRED_N];
         int k;
-        for (k = 0; k < HCRED_N; k++) m_poly[k] = m_blind[k];
+        for (k = 0; k < n; k++)
+            m_poly[k] = (int32_t)(((int64_t)a_rand[k]
+                                   + ((k == 0 || k == 1 || k == n - 1) ? 1 : 0)) % RNL_Q);
         BitArray e_ba = BA_INIT;
-        hcred_user_keygen(s_poly, C_poly, &e_ba, m_poly, urnd);
+        hcred_user_keygen(s_poly, C_poly, &e_ba, m_poly, urnd, n);
 
-        uint8_t seed_H_raw[KEYBYTES];
-        if (fread(seed_H_raw, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
         BitArray seed_H_ba = BA_INIT;
-        memcpy(seed_H_ba.b, seed_H_raw, KEYBYTES);
+        ba_zero_w(&seed_H_ba, n);
+        ba_rand(&seed_H_ba, urnd);
         uint8_t syndr[SDF_SYNBYTES];
         hcred_syndrome(syndr, &seed_H_ba, &e_ba);
 
-        /* privkey: 4B n | n×3B s | n×2B C | n×3B m | KEYBYTES seed_H | SDF_SYNBYTES syndr */
-        size_t blen = 4 + (size_t)3*HCRED_N + (size_t)2*HCRED_N
-                        + (size_t)3*HCRED_N + KEYBYTES + SDF_SYNBYTES;
+        /* privkey: 4B n | n×3B s | n×2B C | n×3B m | n/8 seed_H | n/16 syndr */
+        size_t blen = 4 + (size_t)3*n + (size_t)2*n + (size_t)3*n
+                        + (size_t)n/8 + (size_t)n/16;
         uint8_t *body = (uint8_t *)malloc(blen);
         if (!body) die("out of memory");
-        body[0]=(uint8_t)(HCRED_N>>24); body[1]=(uint8_t)(HCRED_N>>16);
-        body[2]=(uint8_t)(HCRED_N>>8);  body[3]=(uint8_t)HCRED_N;
+        body[0]=(uint8_t)(n>>24); body[1]=(uint8_t)(n>>16);
+        body[2]=(uint8_t)(n>>8);  body[3]=(uint8_t)n;
         size_t off = 4;
-        hcred_ser(body + off, s_poly, HCRED_N); off += (size_t)3*HCRED_N;
-        for (k = 0; k < HCRED_N; k++) {
+        hcred_ser(body + off, s_poly, n); off += (size_t)3*n;
+        for (k = 0; k < n; k++) {
             uint16_t v = (uint16_t)((uint32_t)C_poly[k] & 0xFFFFu);
             body[off + 2*k]   = (uint8_t)(v >> 8);
             body[off + 2*k+1] = (uint8_t)(v);
         }
-        off += (size_t)2*HCRED_N;
-        hcred_ser(body + off, m_poly, HCRED_N); off += (size_t)3*HCRED_N;
-        memcpy(body + off, seed_H_raw, KEYBYTES); off += KEYBYTES;
-        memcpy(body + off, syndr, SDF_SYNBYTES);
+        off += (size_t)2*n;
+        hcred_ser(body + off, m_poly, n); off += (size_t)3*n;
+        memcpy(body + off, seed_H_ba.b, (size_t)n/8); off += (size_t)n/8;
+        memcpy(body + off, syndr, (size_t)n/16);
         if (pem_write_file(out ? out : "-", PEM_HCRED_PRIV, body, blen) != 0)
             die("cannot write HCRED private key");
         free(body);
@@ -1945,7 +1948,7 @@ static void cmd_pkey(int argc, char **argv)
             if (!body || blen < 4) die("pkey: malformed HCRED private key");
             int n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
                           ((uint32_t)body[2]<<8)|body[3]);
-            if (n != HCRED_N) die("pkey: unsupported HCRED n (expected 256)");
+            if (!hcred_n_ok(n)) die("pkey: unsupported HCRED n (expected 32, 64, 128 or 256)");
             /* layout: 4 | n×3 s | n×2 C | n×3 m | (n/8) seed_H | (n/16) syndr */
             size_t expected = 4 + (size_t)n*3 + (size_t)n*2 + (size_t)n*3
                               + (size_t)n/8 + (size_t)n/16;
@@ -5747,35 +5750,52 @@ static void cmd_pake_demo(int argc, char **argv)
  * HCRED helpers: raw-PEM key parsing
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* Parse HCRED private-key raw bytes into polys and key material.
+/* Parse HCRED private-key raw bytes into polys and key material, at the width
+ * its header declares (32, 64, 128 or 256 since TODO #383 stage 3): seed_H_ba
+ * comes back at that width, so every hcred function reads n from it.
  * Returns 0 on success, -1 on bad size/n. */
+static int hcred_body_n(const uint8_t *body, size_t blen)
+{
+    int n;
+    if (!body || blen < 4) return -1;
+    n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
+              ((uint32_t)body[2]<<8)|body[3]);
+    return hcred_n_ok(n) ? n : -1;
+}
+
+static void hcred_read_tail(const uint8_t *body, size_t off, int n,
+                            BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
+{
+    ba_zero_w(seed_H_ba, n);
+    memcpy(seed_H_ba->b, body + off, (size_t)n / 8); off += (size_t)n / 8;
+    memset(syndr, 0, SDF_SYNBYTES);
+    memcpy(syndr, body + off, (size_t)n / 16);
+}
+
 static int hcred_parse_privkey(const uint8_t *body, size_t blen,
                                 int32_t s_poly[HCRED_N], int32_t C_poly[HCRED_N],
                                 int32_t m_poly[HCRED_N],
                                 BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
 {
-    int k;
-    size_t expected = 4 + (size_t)3*HCRED_N + (size_t)2*HCRED_N
-                        + (size_t)3*HCRED_N + KEYBYTES + SDF_SYNBYTES;
+    int k, n = hcred_body_n(body, blen);
+    if (n < 0) return -1;
+    size_t expected = 4 + (size_t)3*n + (size_t)2*n + (size_t)3*n
+                        + (size_t)n/8 + (size_t)n/16;
     if (blen < expected) return -1;
-    int n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
-                  ((uint32_t)body[2]<<8)|body[3]);
-    if (n != HCRED_N) return -1;
     size_t off = 4;
-    for (k = 0; k < HCRED_N; k++) {
+    for (k = 0; k < n; k++) {
         s_poly[k] = (int32_t)(((uint32_t)body[off]<<16)|((uint32_t)body[off+1]<<8)|body[off+2]);
         off += 3;
     }
-    for (k = 0; k < HCRED_N; k++) {
+    for (k = 0; k < n; k++) {
         C_poly[k] = (int32_t)(((uint32_t)body[off]<<8)|body[off+1]);
         off += 2;
     }
-    for (k = 0; k < HCRED_N; k++) {
+    for (k = 0; k < n; k++) {
         m_poly[k] = (int32_t)(((uint32_t)body[off]<<16)|((uint32_t)body[off+1]<<8)|body[off+2]);
         off += 3;
     }
-    memcpy(seed_H_ba->b, body + off, KEYBYTES); off += KEYBYTES;
-    memcpy(syndr, body + off, SDF_SYNBYTES);
+    hcred_read_tail(body, off, n, seed_H_ba, syndr);
     return 0;
 }
 
@@ -5784,28 +5804,25 @@ static int hcred_parse_pubkey(const uint8_t *body, size_t blen,
                                int32_t C_poly[HCRED_N], int32_t m_poly[HCRED_N],
                                BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
 {
-    int k;
-    size_t expected = 4 + (size_t)2*HCRED_N + (size_t)3*HCRED_N + KEYBYTES + SDF_SYNBYTES;
+    int k, n = hcred_body_n(body, blen);
+    if (n < 0) return -1;
+    size_t expected = 4 + (size_t)2*n + (size_t)3*n + (size_t)n/8 + (size_t)n/16;
     if (blen < expected) return -1;
-    int n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
-                  ((uint32_t)body[2]<<8)|body[3]);
-    if (n != HCRED_N) return -1;
     size_t off = 4;
-    for (k = 0; k < HCRED_N; k++) {
+    for (k = 0; k < n; k++) {
         C_poly[k] = (int32_t)(((uint32_t)body[off]<<8)|body[off+1]);
         off += 2;
     }
-    for (k = 0; k < HCRED_N; k++) {
+    for (k = 0; k < n; k++) {
         m_poly[k] = (int32_t)(((uint32_t)body[off]<<16)|((uint32_t)body[off+1]<<8)|body[off+2]);
         off += 3;
     }
-    memcpy(seed_H_ba->b, body + off, KEYBYTES); off += KEYBYTES;
-    memcpy(syndr, body + off, SDF_SYNBYTES);
+    hcred_read_tail(body, off, n, seed_H_ba, syndr);
     return 0;
 }
 
 /* Load HCRED public info from either a PRIV or PUB PEM file.
- * Fills C_poly, m_poly, seed_H_ba, syndr.  Returns 0 on success. */
+ * Fills C_poly, m_poly, seed_H_ba (at the key's width), syndr.  Returns 0 on success. */
 static int hcred_load_pubinfo(const char *path,
                                int32_t C_poly[HCRED_N], int32_t m_poly[HCRED_N],
                                BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
@@ -5844,11 +5861,13 @@ static void stern_sig_write_label(const SternSig *sig, const char *label,
     stern_sig_pack_write_lbl(sig, label, out_path);
 }
 
-/* Load a SternSig from a PEM file with an expected label. Returns 0 on success.
+/* Load a SternSig from a PEM file with an expected label, at the width it
+ * declares (any Stern width since TODO #383 stage 3; the caller compares it with
+ * the issuer key's).  Returns 0 on success.
  * On success *sig is allocated; the caller must stern_sig_free() it. */
 static int stern_sig_load_label(const char *path, const char *label, SternSig *sig)
 {
-    return stern_sig_load_lbl(path, label, sig, KEYBITS);
+    return stern_sig_load_lbl(path, label, sig, 0);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -5880,17 +5899,13 @@ static void cmd_cred_issue(int argc, char **argv)
         strcmp(issuer_k.label, PEM_HPKE_STERN_PRIV) != 0)
         die("cred-issue: --our must be an hpks-stern or hpke-stern private key");
     if (issuer_k.n_items < 2) die("cred-issue: malformed Stern private key");
-    /* Stern keys load at 32-256 since TODO #383 stage 2; hcred's issuer stays
-     * 256-bit in C until stage 3 (Python and Go already issue under any). */
-    if (gf_key_width(&issuer_k) != KEYBITS) {
-        fprintf(stderr, "cred-issue: the issuer key is %d-bit; this CLI issues "
-                        "credentials under a %d-bit issuer only (TODO #383)\n",
-                gf_key_width(&issuer_k), KEYBITS);
-        exit(1);
-    }
+    /* Any Stern width since TODO #383 stage 3, as in Python and Go: the
+     * credential is signed at the issuer key's own n, independent of the
+     * HCRED key's. */
+    const int issuer_n = gf_key_width(&issuer_k);
     BitArray issuer_e_ba = BA_INIT, issuer_seed_ba = BA_INIT;
-    ba_from_ra(&issuer_e_ba,   issuer_k.vals[0], issuer_k.vlens[0]);
-    ba_from_ra(&issuer_seed_ba, issuer_k.vals[1], issuer_k.vlens[1]);
+    ba_from_ra_n(&issuer_e_ba,   issuer_k.vals[0], issuer_k.vlens[0], issuer_n);
+    ba_from_ra_n(&issuer_seed_ba, issuer_k.vals[1], issuer_k.vlens[1], issuer_n);
     pem_key_free(&issuer_k);
 
     FILE *urnd = fopen("/dev/urandom", "rb");
@@ -6002,6 +6017,12 @@ static void cmd_cred_verify(int argc, char **argv)
         hcred_proof_free(&proof);
         die("cred-verify: cannot parse public key from --pubkey");
     }
+    if (proof.n != seed_H_ba.nbits) {   /* TODO #383 stage 3; same text in all CLIs */
+        fprintf(stderr, "cred-verify: proof n is %d, public key n is %d\n",
+                proof.n, seed_H_ba.nbits);
+        hcred_proof_free(&proof);
+        exit(1);
+    }
 
     const uint8_t *msg     = msg_arg ? (const uint8_t *)msg_arg : (const uint8_t *)"";
     size_t          msg_len = msg_arg ? strlen(msg_arg) : 0;
@@ -6031,23 +6052,26 @@ static void cmd_cred_verify(int argc, char **argv)
             strcmp(iss_k.label, PEM_HPKE_STERN_PUB) != 0)
             die("cred-verify: --issuer must be an hpks-stern or hpke-stern public key");
         if (iss_k.n_items < 2) die("cred-verify: malformed issuer public key");
-        if (gf_key_width(&iss_k) != KEYBITS) {   /* as cred-issue (TODO #383) */
-            fprintf(stderr, "cred-verify: the issuer key is %d-bit; this CLI verifies "
-                            "credentials under a %d-bit issuer only (TODO #383)\n",
-                    gf_key_width(&iss_k), KEYBITS);
+        /* Any Stern width since TODO #383 stage 3; the credential must be at
+         * the issuer key's (as verify, stage 2). */
+        const int sn = gf_key_width(&iss_k);
+        if (cred_sig.c0[0].nbits != sn) {
+            fprintf(stderr, "cred-verify: credential n is %d, issuer key n is %d\n",
+                    cred_sig.c0[0].nbits, sn);
+            stern_sig_free(&cred_sig);
             exit(1);
         }
 
-        /* Unpack syndrome (32-byte DER int, reversed) */
-        uint8_t iss_syn32[KEYBYTES], issuer_syndr[SDF_SYNBYTES]; int _sk;
-        memset(iss_syn32, 0, KEYBYTES);
-        { size_t cl = iss_k.vlens[0] < KEYBYTES ? iss_k.vlens[0] : KEYBYTES;
-          memcpy(iss_syn32 + KEYBYTES - cl, iss_k.vals[0], cl); }
-        for (_sk = 0; _sk < SDF_SYNBYTES; _sk++)
-            issuer_syndr[_sk] = iss_syn32[KEYBYTES - 1 - _sk];
+        /* Unpack syndrome (an n-bit DER int, low byte first in syndr) */
+        BitArray iss_syn_ba = BA_INIT;
+        uint8_t issuer_syndr[SDF_SYNBYTES]; int _sk;
+        ba_from_ra_n(&iss_syn_ba, iss_k.vals[0], iss_k.vlens[0], sn);
+        memset(issuer_syndr, 0, SDF_SYNBYTES);
+        for (_sk = 0; _sk < sn / 16; _sk++)
+            issuer_syndr[_sk] = iss_syn_ba.b[sn / 8 - 1 - _sk];
 
         BitArray issuer_seed_ba = BA_INIT;
-        ba_from_ra(&issuer_seed_ba, iss_k.vals[1], iss_k.vlens[1]);
+        ba_from_ra_n(&issuer_seed_ba, iss_k.vals[1], iss_k.vlens[1], sn);
         pem_key_free(&iss_k);
 
         int ok_cred = hcred_cred_verify(m_poly, C_poly, &seed_H_ba, syndr,

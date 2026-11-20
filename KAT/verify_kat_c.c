@@ -740,7 +740,7 @@ static void op_hcred_prove(void)
         /* `outs` travels as the suite's OWN serialisation, the one that feeds
          * the FS hash, so this compares one buffer rather than four opinions
          * of a nested layout. */
-        _hcred_outs_ser(outs_buf, &rd->outs);
+        _hcred_outs_ser(outs_buf, &rd->outs, HCRED_N);
         if (memcmp(outs_buf, opr_hcp_outs[j], OPR_HCP_OUTS_LEN))      bad_field = "outs";
         else if (memcmp(rd->seed_c,  opr_hcp_seed_c[j],  KEYBYTES))   bad_field = "seed_c";
         else if (memcmp(rd->seed_c1, opr_hcp_seed_c1[j], KEYBYTES))   bad_field = "seed_c1";

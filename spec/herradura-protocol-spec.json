@@ -5639,6 +5639,7 @@
         "security": "research construction; its Stern-F half below 2^30",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5652,6 +5653,7 @@
         "security": "research construction; its Stern-F half below 2^30",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null
@@ -5665,6 +5667,7 @@
         "security": "research construction; its Stern-F half below 2^30",
         "ports": [
           "py",
+          "c",
           "go"
         ],
         "withdrawn": null

@@ -1256,11 +1256,11 @@ _PARAM_SETS = (
     ('hpke-stern', 256, 'demo', True, 'demo',
      '~2^30-2^40 (SECURITY.md)', 'py go c java', None),
     ('hcred', 32, None, False, 'demo',
-     'research construction; its Stern-F half below 2^30', 'py go', None),
+     'research construction; its Stern-F half below 2^30', 'py c go', None),
     ('hcred', 64, None, False, 'demo',
-     'research construction; its Stern-F half below 2^30', 'py go', None),
+     'research construction; its Stern-F half below 2^30', 'py c go', None),
     ('hcred', 128, None, False, 'demo',
-     'research construction; its Stern-F half below 2^30', 'py go', None),
+     'research construction; its Stern-F half below 2^30', 'py c go', None),
     ('hcred', 256, 'demo', True, 'demo',
      'research construction; its Stern-F half ~2^30-2^40 (SECURITY.md)', 'py go c java', None),
     ('hpke-stern-kem', -1, '128', True, 'demo-only',
@@ -4546,8 +4546,8 @@ def cmd_cred_verify(args):
 
     # Load user's public key
     C, m, seed_H, syndr, pub_n = _load_hcred_pubkey(args.pubkey)
-    if proof_n != pub_n:
-        sys.exit(f"cred-verify: proof n={proof_n} does not match public key n={pub_n}")
+    if proof_n != pub_n:   # same text in all CLIs (TODO #383 stage 3)
+        sys.exit(f"cred-verify: proof n is {proof_n}, public key n is {pub_n}")
 
     msg    = (args.msg or '').encode()
     rounds = len(proof['rounds'])
@@ -4578,7 +4578,11 @@ def cmd_cred_verify(args):
         issuer_algo, issuer_ints = _decode_pubkey(args.issuer)
         if issuer_algo not in ('hpks-stern', 'hpke-stern'):
             sys.exit(f"cred-verify: --issuer must be an hpks-stern public key, got {issuer_algo!r}")
-        issuer_syn_int, issuer_seed_int, _ = issuer_ints
+        issuer_syn_int, issuer_seed_int, issuer_key_n = issuer_ints
+        # A credential at another width than its issuer key's failed as a forgery;
+        # it is refused by name, as verify does (TODO #383 stages 2 and 3).
+        if issuer_n != issuer_key_n:
+            sys.exit(f"cred-verify: credential n is {issuer_n}, issuer key n is {issuer_key_n}")
         issuer_seed = BitArray(issuer_n, issuer_seed_int)
 
         ok_cred = hcred_cred_verify(m, C, seed_H, syndr, pub_n,

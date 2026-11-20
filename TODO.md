@@ -704,10 +704,17 @@ operation at every width, and extends `CliTest/test_width_matrix.sh` to the fami
    in all three (Go panicked in `verify`; Python and Go decrypted with exit 0) --
    MIGRATING.md section 46.  `test_width_matrix.sh` covers the family (1709 checks; 99
    fail on the stage-1 build).
-3. **hcred** at runtime `HCRED_N`.  Also the Stern issuer: Python and Go issue and
-   verify credentials under a 32-128-bit hpks-stern issuer key; C refuses one by name
-   ("the issuer key is 64-bit; this CLI issues credentials under a 256-bit issuer only")
-   since stage 2 made those keys loadable.
+3. **hcred — done (v16.0.0).**  hcred at 32, 64, 128 and 256 in `herradura.h` and the
+   C CLI: the ZKBoo prover and verifier, the statement hash, phi, keygen's weight screen
+   (w_max = n/4 + floor(sqrt(3n)), Python's rule) and the proof codec read n from their
+   operands (`seed_H`'s width, the proof's new `n` field); `HCRED_N` = 256 stays the
+   default and the array bound.  The ring product gained a schoolbook branch for the
+   power-of-two dimensions below 256, which have no NTT table.  The issuer key may be an
+   hpks-stern key of any width, the issuance message being the statement digest's high
+   issuer-n bits, as in Python and Go.  A proof of another width than its key, or a
+   credential of another width than its issuer key, is now refused by name in all three
+   (Go panicked on both; Python failed the credential as a forgery).  HCRED-KKW stays at
+   256 in C (no CLI uses it).  `test_width_matrix.sh` covers the family.
 4. **hkex-rnl** at runtime n <= `RNL_N` (32-256), including rnl-sigma and the hybrid.
 
 Status: **OPEN**
@@ -747,6 +754,10 @@ unpack (expected 3, got 2)"; C, Go and Java refuse it by label (found in #383's 
 Also (#383 stage 2): Java's `pkey --text` on an hpks-stern / hpke-stern private key prints
 `bits` for `n`, omits `e_int` and adds `syndrome`; Python, C and Go print `n`, `e_int`,
 `seed`.  `test_width_matrix.sh` reports those 12 cells as n/a until this lands.
+And (#383 stage 3): hcred's `pkey --text` has three layouts at every width, 256
+included -- Python prints `seed_H`, `syndr` as a big-endian integer and `W (weight)`;
+C prints `seed_H` and `syndr` low byte first, without W; Go and Java print only `W`.
+`test_width_matrix.sh` reports its 30 cross-CLI cells as n/a until this lands.
 
 Status: **OPEN**
 
