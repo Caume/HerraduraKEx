@@ -202,7 +202,7 @@ EXPECTED = {
     ("herradura.h", "hske_nla1_encrypt", "3 * base.nbits / 4"): (1, "a1"),
     ("herradura.h", "_wots_h_ba", "V1_MODE_STEPS"): (1, "wots"),
     ("herradura.h", "drbg_generate", "I_VALUE"): (1, "drbg"),
-    ("herradura.h", "stern_matrix_row", "I_VALUE"): (1, "stern_matrix"),
+    ("herradura.h", "stern_matrix_row", "n / 4"): (1, "stern_matrix"),
     ("herradura.h", "ratchet_advance", "1"): (1, "ratchet"),
     ("herradura.h", "_hpake_rnl_kdf", "KEYBITS / 4"): (1, "rnl_kdf"),
     ("herradura.h", "qcprf_refill", "I_VALUE"): (1, "qcprf"),
@@ -298,7 +298,7 @@ B_SETTER = {
     "ratchet": "a fixed domain constant",
 }
 
-N4 = {"I_VALUE", "64", "n/4", "n // 4", "nbits // 4", "N / 4", "KEYBITS / 4",
+N4 = {"I_VALUE", "64", "n/4", "n / 4", "n // 4", "nbits // 4", "N / 4", "KEYBITS / 4",
       "KEYBITS // 4", "kRaw.Size()/4", "256/4", "iValue", "Herradura.I_STEPS",
       "I_STEPS", "Herradura.N / 4", "keyBits / 4", "keyBits/4", "key_n // 4", "keyN/4"}
 
