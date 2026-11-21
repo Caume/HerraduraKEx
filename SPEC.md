@@ -499,6 +499,12 @@ signing, Niederreiter framing for the KEM) is intricate enough to warrant
 its own document rather than a condensed section here; see
 `SecurityProofs-5.md` §11.8.3–11.9 for the full construction and
 `SecurityProofs-7.md` for the accompanying Σ-protocol/ZKBoo analysis.
+One step is stated here because the four CLIs once disagreed on it
+(TODO #390): the Fiat-Shamir challenges of hpks-stern, hpks-ring and the
+HCRED credential signature are derived from `ch_st = stern_hash(msg ‖
+commitments)` by `ch_st = nl_fscx_v1(ch_st, i)` for round `i = 0, 1, …`,
+where `i` is the WHOLE round index as an n-bit integer (not its low byte),
+and round `i`'s challenge is `(ch_st mod 2^32) mod 3`.
 This SPEC.md's §9 NL/PQC coverage and this pointer satisfy TODO #193's
 scope (HKEX-GF, HSKE, HPKS, HPKE, and the NL/PQC/Stern variants); a
 follow-up TODO MAY expand §11 into full Stern-F/Niederreiter algorithm

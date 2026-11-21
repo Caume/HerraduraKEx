@@ -3192,7 +3192,11 @@ static void stern_fs_challenges(int *chals, int rounds,
         uint32_t v;
         int nb = ba_nbytes(msg);               /* at msg's width (TODO #383) */
         ba_zero_w(&idx_ba, msg->nbits);
-        idx_ba.b[nb - 1] = (uint8_t)(i & 0xFF);
+        /* the whole round index, big-endian (TODO #390; was i & 0xFF) */
+        idx_ba.b[nb - 1] = (uint8_t)i;
+        idx_ba.b[nb - 2] = (uint8_t)(i >> 8);
+        idx_ba.b[nb - 3] = (uint8_t)(i >> 16);
+        idx_ba.b[nb - 4] = (uint8_t)(i >> 24);
         nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
         v = ((uint32_t)ch_st.b[nb - 4] << 24)
           | ((uint32_t)ch_st.b[nb - 3] << 16)
@@ -3478,7 +3482,11 @@ static void stern_ring_challenges(int *joint_out, int rounds, int k,
     for (r = 0; r < rounds; r++) {
         int nb = ba_nbytes(msg);               /* at msg's width (TODO #383) */
         ba_zero_w(&idx_ba, msg->nbits);
-        idx_ba.b[nb - 1] = (uint8_t)(r & 0xFF);
+        /* the whole round index, big-endian (TODO #390; was r & 0xFF) */
+        idx_ba.b[nb - 1] = (uint8_t)r;
+        idx_ba.b[nb - 2] = (uint8_t)(r >> 8);
+        idx_ba.b[nb - 3] = (uint8_t)(r >> 16);
+        idx_ba.b[nb - 4] = (uint8_t)(r >> 24);
         nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
         v = ((uint32_t)ch_st.b[nb - 4] << 24)
           | ((uint32_t)ch_st.b[nb - 3] << 16)

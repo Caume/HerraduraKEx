@@ -2629,7 +2629,8 @@ static void stern_fs_challenges_t(int *chals, int rounds,
     for (i = 0; i < rounds; i++) {
         BitArray idx_ba = { KEYBITS, {0} };
         uint32_t v;
-        idx_ba.b[KEYBYTES - 1] = (uint8_t)(i & 0xFF);
+        idx_ba.b[KEYBYTES - 1] = (uint8_t)i;  /* whole index (TODO #390) */
+        idx_ba.b[KEYBYTES - 2] = (uint8_t)(i >> 8);
         nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
         v = ((uint32_t)ch_st.b[KEYBYTES-4]<<24)|((uint32_t)ch_st.b[KEYBYTES-3]<<16)
           | ((uint32_t)ch_st.b[KEYBYTES-2]<<8)|ch_st.b[KEYBYTES-1];

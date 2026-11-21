@@ -2816,7 +2816,7 @@ func sternFsChallenges(rounds int, msg *BitArray, c0, c1, c2 []*BitArray) []int 
 	chSt := SternHash(0, flat...)
 	chals := make([]int, rounds)
 	for i := 0; i < rounds; i++ {
-		idxBA := NewBitArray(n, big.NewInt(int64(i&0xFF)))
+		idxBA := NewBitArray(n, big.NewInt(int64(i))) // whole round index (TODO #390)
 		chSt = NlFscxV1(chSt, idxBA)
 		chals[i] = int(uint32(chSt.LowUint64()) % 3)
 	}
@@ -3006,7 +3006,7 @@ func sternRingChallenges(rounds, k int, msg *BitArray,
 	chSt := SternHash(0, flat...)
 	joint := make([]int, rounds)
 	for r := 0; r < rounds; r++ {
-		idxBA := NewBitArray(n, big.NewInt(int64(r&0xFF)))
+		idxBA := NewBitArray(n, big.NewInt(int64(r))) // whole round index (TODO #390)
 		chSt = NlFscxV1(chSt, idxBA)
 		joint[r] = int(uint32(chSt.LowUint64()) % 3)
 	}

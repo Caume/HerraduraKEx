@@ -2367,3 +2367,23 @@ hkex-rnl key. Keys, responses and session keys at every ring, and every proof at
 
 **Why this is MAJOR.** Go's `verify --algo rnl-sigma` now refuses a stored proof it
 accepted before, which makes an existing artifact unreadable by a newer build.
+
+## 48. Stern-F signatures above 255 rounds from the C and Go CLIs (v16.0.0)
+
+**Who is affected:** anyone who keeps an hpks-stern or hpks-ring signature, or an HCRED
+credential, that the C or Go CLI wrote with `--rounds` above 255.  The default (219
+rounds) and every count up to 255 are not affected.
+
+**What changed (TODO #390).** Each Fiat-Shamir round advances the challenge state with
+`nl_fscx_v1(ch_st, i)`.  Python and Java used the whole round number `i`; C and Go used
+`i & 0xFF`.  The two agree below 256 rounds, so above that a C or Go signature did not
+verify in Python or Java, nor theirs in C or Go.  C and Go now use the whole round
+number, as SPEC.md §11 states.  A signature or credential C or Go wrote above 255 rounds
+before this release no longer verifies in C or Go either.
+
+**What to do.** Re-sign, or re-issue, any such artifact.  Keys, and every signature and
+credential at 255 rounds or fewer, read exactly as before.
+
+**Why this is MAJOR.** C's and Go's `verify` and `cred-verify` now refuse a stored
+artifact they accepted before, which makes an existing artifact unreadable by a newer
+build.

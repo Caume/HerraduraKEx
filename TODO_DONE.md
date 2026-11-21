@@ -26105,3 +26105,28 @@ CLIs).  No artifact a 256-bit build wrote changes, so no MIGRATING.md section.
 Status: **DONE v16.0.0** — OPRF runs at 32, 64, 128 and 256 bits in all four CLIs, with `oprf-blind --bits`.
 
 ---
+
+### #390: Stern-F's Fiat-Shamir round index above 255 rounds
+
+Found in TODO #383 stage 2.  Each round's challenge advances the state with
+`nl_fscx_v1(ch_st, idx)`.  Python and Java use the whole round number as `idx`
+(`BitArray(n, i)`); C and Go use `i & 0xFF` (herradura.h `stern_fs_challenges` /
+`stern_ring_challenges`, Go `sternFsChallenges`).  The two agree below 256 rounds, so the
+default 219 interoperates, but `sign --algo hpks-stern --rounds 300` from Python verifies
+in Python and Java and fails in C and Go (measured at 256 bits).  hpks-ring and HCRED's
+credential signature share the derivation.  Needs a decision: the whole index (Python's
+and Java's; C's and Go's signatures above 255 rounds change) or its low byte; then SPEC
+states it and a cross-CLI test signs at more than 255 rounds.
+
+**Done (v16.0.0).** C and Go now use the whole round index, the rule Python and Java
+used; SPEC.md §11 states it, and `test_round_floor.sh` signs all three families at 300
+rounds in a 4x4 matrix with an independent recomputation of the challenges.
+
+**Resolution.** The whole index, not its low byte: it was already the rule of two ports
+and of the narrow-width harness copies, and the low byte repeats the step's input every
+256 rounds.  Signatures C and Go wrote above 255 rounds before this release no longer
+verify in C or Go (MIGRATING.md section 48); at 255 rounds or fewer nothing changes.
+
+Status: **DONE v16.0.0** — Stern-F's Fiat-Shamir step uses the whole round index in all four ports.
+
+---

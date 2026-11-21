@@ -17,6 +17,9 @@
 # at low round counts, so the matrix is cheap; the default-flags interop cell
 # (219 rounds both sides) is run once per verifier on the C signer's output.
 #
+# Also (TODO #390): signatures above 255 rounds, where C and Go used the round
+# index's low byte; see that section below.
+#
 # Claimed by ci.yml's cross-lang-compat job (all four CLIs built).
 set -euo pipefail
 
@@ -143,6 +146,61 @@ for v in "${LANGS[@]}"; do
         refused "$v verify refuses --min-rounds $bad" \
             $V verify --algo hpks-stern --pubkey "$TMP/st_pub.pem" --in "$TMP/msg.bin" \
             --sig "$TMP/st_dflt.pem" --min-rounds $bad
+    done
+done
+
+# ── Round index above 255 (TODO #390) ─────────────────────────────────────────
+# Each round's challenge advances the Fiat-Shamir state by nl_fscx_v1(ch_st, i)
+# with i the WHOLE round index.  C and Go used i & 0xFF, so above 255 rounds their
+# signatures and Python's / Java's did not verify in each other.  hpks-stern,
+# hpks-ring and the HCRED credential (cred-issue) share the derivation; each is
+# signed at RR rounds by every CLI and verified by every CLI at the default floor.
+# A rule all four got wrong would pass that matrix, so stern_ref restates the rule
+# and checks each signer's hpks-stern challenges against it; its low-byte variant
+# must disagree, which shows the check can fire.
+RR=300
+stern_ref() { python3 - "$ROOT" "$1" "$TMP/msg.bin" <<'PYEOF'
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "HerraduraCli"))
+import herradura as H
+S = H._suite_mod
+commits, chals, _resp, n = H._unpack_stern_sig(sys.argv[2])
+data = S.hfscx_256(open(sys.argv[3], "rb").read())   # sign's default --digest hfscx-256
+msg = S.BitArray(n, int.from_bytes(data[:n // 8].ljust(n // 8, b"\0"), "big"))
+def derive(idx):
+    st = S._stern_hash(n, msg, *[c for t in commits for c in t])
+    out = []
+    for i in range(len(commits)):
+        st = S.nl_fscx_v1(st, S.BitArray(n, idx(i)))
+        out.append((st.uint & 0xFFFFFFFF) % 3)
+    return out
+whole = derive(lambda i: i) == list(chals)
+low = derive(lambda i: i & 0xFF) == list(chals)
+print("whole" if whole and not low else "low" if low else "neither")
+PYEOF
+}
+for s in "${LANGS[@]}"; do
+    S=${CLI[$s]}
+    $S sign --algo hpks-stern --key "$TMP/st.pem" --in "$TMP/msg.bin" \
+            --rounds $RR --out "$TMP/st${RR}_$s.pem" 2>/dev/null || fail "hpks-stern $RR-round sign ($s)"
+    $S sign --algo hpks-ring --key "$TMP/m1.pem" --ring "$RING" --in "$TMP/msg.bin" \
+            --rounds $RR --out "$TMP/ring${RR}_$s.pem" 2>/dev/null || fail "hpks-ring $RR-round sign ($s)"
+    $S cred-issue --our "$TMP/st.pem" --in "$TMP/hc_pub.pem" --rounds $RR \
+            --out "$TMP/cred${RR}_$s.pem" 2>/dev/null || fail "cred-issue $RR rounds ($s)"
+    got=$(stern_ref "$TMP/st${RR}_$s.pem" 2>&1 | tail -1)
+    if [ "$got" = whole ]; then pass "hpks-stern $RR rounds ($s): challenges use the whole round index"
+    else fail "hpks-stern $RR rounds ($s): challenges follow the '$got' rule, not the whole index"; fi
+done
+for v in "${LANGS[@]}"; do
+    V=${CLI[$v]}
+    for s in "${LANGS[@]}"; do
+        accepts "hpks-stern $RR rounds $s->$v" $V verify --algo hpks-stern \
+            --pubkey "$TMP/st_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/st${RR}_$s.pem"
+        accepts "hpks-ring $RR rounds $s->$v" $V verify --algo hpks-ring \
+            --ring "$RING" --in "$TMP/msg.bin" --sig "$TMP/ring${RR}_$s.pem"
+        accepts "hcred credential $RR rounds $s->$v" $V cred-verify --proof "$TMP/proof.pem" \
+            --pubkey "$TMP/hc_pub.pem" --msg nonce --min-rounds $R \
+            --cred "$TMP/cred${RR}_$s.pem" --issuer "$TMP/st_pub.pem"
     done
 done
 
