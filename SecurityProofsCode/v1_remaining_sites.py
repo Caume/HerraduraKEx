@@ -259,7 +259,8 @@ def _fill_expected():
         (J + "Hpake.java", "rnlKdf", "Herradura.N / 4"): (1, "rnl_kdf"),
         (J + "KatVerify.java", "verifyRnl", "keyBits / 4"): (1, "rnl_kdf"),
         (J + "Ratchet.java", "advance", "1"): (1, "ratchet"),
-        (J + "Stern.java", "sternMatrixRow", "N / 4"): (1, "stern_matrix"),
+        # n / 4 at the key's width since TODO #384 (it was N / 4, fixed at 256)
+        (J + "Stern.java", "sternMatrixRow", "n / 4"): (1, "stern_matrix"),
         (J + "Stern.java", "refill", "N / 4"): (1, "qcprf"),
         (J + "Wots.java", "h", "Hfscx256.V1_MODE_STEPS"): (1, "wots"),
     })

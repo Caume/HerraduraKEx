@@ -88,6 +88,8 @@ flag changes, so no MIGRATING.md section).
 - **Census.** The Java manifest markers for the overloaded Stern-F and HCRED functions
   name the n-taking overload; the width rules (`rowsFor`, `tFor`, `gen`, `order`, `r3`,
   ...) and the `sternHash` wrapper get CENSUS_EXEMPT reasons, as C's do.
+  `SecurityProofsCode/v1_remaining_sites.py` tables Java's `sternMatrixRow` step as
+  `n / 4` (it was `N / 4`), as stage 2 of #383 did for C's.
 
 ### TODO #383 (stage 4) — C runs hkex-rnl at every ring; #383 is done
 
