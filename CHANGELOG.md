@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#383, #388, #389), in twelve
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#384, #388, #389), in thirteen
 parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
@@ -40,6 +40,54 @@ C now also runs hkex-rnl, rnl-sigma and hybrid-rnl-stern on every ring the spec 
 completes TODO #383: C runs every listed width. Go's rnl-sigma used a different challenge
 weight at n = 64 and 128, so its proofs there did not verify in the other CLIs (TODO #383
 stage 4, section 47).
+Java now also runs the GF(2^n) family, hpks-stern, hpke-stern, hpks-ring and hcred at 32,
+64, 128 and 256 bits, byte-identical with the other three, which completes the
+narrow-width work: every CLI runs every width the spec lists (TODO #384; no artifact or
+flag changes, so no MIGRATING.md section).
+
+### TODO #384 — Java runs every listed width
+
+- **The Java protocol layer.** Every function whose result depends on n now takes it,
+  from its operands or an `n` argument, as Python's does. `Herradura`: `gfPow` iterates
+  the operand's width, and HPKS/HPKE use g = 3, i = n/4, r = 3n/4 and the order 2^n - 1
+  at the key's width. `HerraduraNl`: NL-FSCX v2's delta rotates by n/4 of B's own width
+  (it rotated by 64 at every width), v3's chi rows and its 5n/8 round count follow the
+  width, and M^-1's rotation table is built per width; HPKS-NL and HPKE-NL / -NL3 follow.
+  `Stern` and `SternRing`: rows n/2, weight t = max(2, n/16), n-bit permutations, and
+  every chain hash and parity-matrix row is the digest's high n bits (Python's
+  `_stern_hash(n, ...)` and `_stern_matrix_row`). `Hcred`: the prover, verifier, keygen
+  and syndrome take n, with rows, row bits and the weight bound from Python's
+  `_hcred_params(n)`; the issuer message is the statement digest's high issuer-n bits.
+  The n-less signatures remain as the n = 256 wrappers, so SelfTest, KatVerify, Demo,
+  `KAT/` and the sampler and operation replays pass unchanged. HCRED-KKW stays at 256
+  (it has no CLI surface), as in C.
+- **The Java codec.** GF-family keys, ciphertexts and signatures, Stern-F keys,
+  ciphertexts and signatures, and HCRED keys, proofs and credentials are written at the
+  key's width and read at any GF width (32, 64, 128, 256), refusing any other as C does:
+  `PEM '...': n is 48 (this CLI runs n = 32, 64, 128 or 256)`. They were written at 32
+  bytes and refused anything but 256.
+- **The Java CLI.** `genpkey --bits 32|64|128` for the eleven rows, and `pkey`, `kex`,
+  `enc` / `dec`, `sign` / `verify` (hpks, hpks-nl, hpks-stern, hpks-ring) and
+  `cred-issue` / `cred-prove` / `cred-verify` run at the key's width; `kex --kdf
+  hfscx-256` writes the whole digest labelled n = 256, as TODO #389 made the others do.
+  A credential is issued at the issuer key's width, as in Python. A key used with an
+  artifact of another width is refused with the other CLIs' text (`their public key n is
+  128, our private key n is 64`, `ciphertext n is ...`, `signature n is ...`, `all ring
+  members must share the same n`, `proof n is ...`, `credential n is ...`); Java's kex
+  said `bit-size mismatch` and its ring reader `must share n=256`. `threshold-commit` and
+  `threshold-respond` now read a narrower hpks key and refuse it with the other CLIs' text
+  (`threshold: the key is 64-bit; threshold signing runs at 256 bits only`, TODO #388)
+  instead of the PEM width message, and `test_threshold_interop.sh` drops its Java case. "java" joins every
+  narrow row's ports (OPRF stays at 256 in every CLI, TODO #385).
+- **Tests.** `test_width_matrix.sh` reads the ports from the spec, so the Java cells run
+  as soon as the rows list Java: every pair with Java on one side, the Java mixed-width
+  refusals and their accept-controls. Restricted to Python and Java, the GF family,
+  Stern-F and hcred pass 714 checks with 0 FAIL; on the pre-#384 Java (with the new rows),
+  hkex-gf, hpks, hpke-nl3, Stern-F and hcred fail 135 of 503. The whole matrix is 3568 PASS, 0 FAIL, 156 n/a (it was 2735 / 0 / 102). Java's Stern and hcred
+  `pkey --text` cells stay n/a (TODO #386).
+- **Census.** The Java manifest markers for the overloaded Stern-F and HCRED functions
+  name the n-taking overload; the width rules (`rowsFor`, `tFor`, `gen`, `order`, `r3`,
+  ...) and the `sternHash` wrapper get CENSUS_EXEMPT reasons, as C's do.
 
 ### TODO #383 (stage 4) — C runs hkex-rnl at every ring; #383 is done
 

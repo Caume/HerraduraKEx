@@ -5087,8 +5087,9 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5101,8 +5102,9 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5115,8 +5117,9 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5144,8 +5147,9 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5158,8 +5162,9 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5172,8 +5177,9 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5201,8 +5207,9 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5215,8 +5222,9 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5229,8 +5237,9 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5258,8 +5267,9 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5272,8 +5282,9 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5286,8 +5297,9 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5315,8 +5327,9 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5329,8 +5342,9 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5343,8 +5357,9 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5372,8 +5387,9 @@
         "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5386,8 +5402,9 @@
         "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5400,8 +5417,9 @@
         "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5529,8 +5547,9 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5543,8 +5562,9 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5557,8 +5577,9 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5586,8 +5607,9 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5600,8 +5622,9 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5614,8 +5637,9 @@
         "security": "below 2^30",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5643,8 +5667,9 @@
         "security": "research construction; its Stern-F half below 2^30",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5657,8 +5682,9 @@
         "security": "research construction; its Stern-F half below 2^30",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },
@@ -5671,8 +5697,9 @@
         "security": "research construction; its Stern-F half below 2^30",
         "ports": [
           "py",
+          "go",
           "c",
-          "go"
+          "java"
         ],
         "withdrawn": null
       },

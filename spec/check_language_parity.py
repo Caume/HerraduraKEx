@@ -3932,7 +3932,9 @@ PRIMITIVES = {
         "c": r"static int hcred_prove\(",
         "go": r"func HcredProve\(",
         "python": r"^def hcred_prove\(",
-        "java": r"public static Proof prove\(",
+        # TODO #384: the n-taking overload; the 256-bit one delegates to it.
+        "java": r"public static Proof prove\(int\[\] sPoly, int\[\] mPoly, int\[\] cPoly, "
+                r"BigInteger seedH, BigInteger ySynd,\s+int rounds, byte\[\] msgBytes, int n,",
     },
     "hcred-kkw": {
         # TODO #261's seed case: Python-only until v5.5.0-v5.7.0 ported it
@@ -3990,7 +3992,7 @@ PRIMITIVES = {
         # passing with Hcred.verify deleted outright. See the uniqueness
         # check in check_primitives() below, which now fails on this class.
         "java": r"public static boolean verify\(int\[\] mPoly, int\[\] cPoly, "
-                r"BigInteger seedH, BigInteger ySynd, Proof proof",
+                r"BigInteger seedH, BigInteger ySynd, Proof proof,\s+int rounds, byte\[\] msgBytes, int n\)",
     },
     "hcred-kkw-verify": {
         "c": r"static int hcred_verify_kkw\(",
@@ -4327,7 +4329,7 @@ PRIMITIVES = {
         "c": r"static void hcred_syndrome\(",
         "go": r"^func HcredSyndrome\(",
         "python": r"^def hcred_syndrome\(",
-        "java": r"Hcred.java::public static BigInteger syndrome\(",
+        "java": r"Hcred.java::public static BigInteger syndrome\(BigInteger seedH, BigInteger eInt, int n\)",
     },
     "hcred-witness": {
         "c": r"static int _hcred_witness\(",
@@ -4390,19 +4392,19 @@ PRIMITIVES = {
         "c": r"static void hcred_user_keygen\(",
         "go": r"^func HcredUserKeygen\(",
         "python": r"^def hcred_user_keygen\(",
-        "java": r"Hcred.java::public static UserKeypair userKeygen\(",
+        "java": r"Hcred.java::public static UserKeypair userKeygen\(int\[\] mPoly, int n,",
     },
     "hcred-issue": {
         "c": r"static void hcred_issue\(",
         "go": r"^func HcredIssue\(",
         "python": r"^def hcred_issue\(",
-        "java": r"Hcred.java::public static Stern\.SternSignature issue\(",
+        "java": r"Hcred.java::public static Stern\.SternSignature issue\([^)]*int issuerN,",
     },
     "hcred-cred-verify": {
         "c": r"static int hcred_cred_verify\(",
         "go": r"^func HcredCredVerify\(",
         "python": r"^def hcred_cred_verify\(",
-        "java": r"Hcred.java::public static boolean credVerify\(",
+        "java": r"Hcred.java::public static boolean credVerify\([^)]*int issuerN\)",
     },
     # ── HCRED-KKW preprocessing internals (TODO #261, v6.1.0) ─────────────
     # The cut-and-choose machinery under hcred-kkw/hcred-kkw-verify. Three of the
@@ -4578,19 +4580,19 @@ PRIMITIVES = {
         "c": r"static void stern_hash\(",
         "go": r"^func SternHash\(",
         "python": r"^def _stern_hash\(",
-        "java": r"Stern.java::static BigInteger sternHash\(",
+        "java": r"Stern.java::static BigInteger sternHashN\(",   # at width n (TODO #384)
     },
     "stern-matrix-row": {
         "c": r"static void stern_matrix_row\(",
         "go": r"^func SternMatrixRow\(",
         "python": r"^def _stern_matrix_row\(",
-        "java": r"Stern.java::static BigInteger sternMatrixRow\(",
+        "java": r"Stern.java::static BigInteger sternMatrixRow\(BigInteger seedInt, int row, int n\)",
     },
     "stern-build-h": {
         "c": r"static void stern_build_H\(",
         "go": r"^func SternBuildH\(",
         "python": r"^def _stern_build_H\(",
-        "java": r"Stern.java::static BigInteger\[\] sternBuildH\(",
+        "java": r"Stern.java::static BigInteger\[\] sternBuildH\(BigInteger seedInt, int nRows, int n\)",
     },
     "stern-syndrome-h": {
         "c": r"static void stern_syndrome_H\(",
@@ -4602,13 +4604,13 @@ PRIMITIVES = {
         "c": r"static void stern_syndrome\(",
         "go": r"^func SternSyndrome\(",
         "python": r"^def _stern_syndrome\(",
-        "java": r"Stern.java::public static BigInteger sternSyndrome\(",
+        "java": r"Stern.java::public static BigInteger sternSyndrome\(BigInteger seedInt, BigInteger eInt, int n\)",
     },
     "stern-gen-perm": {
         "c": r"static void stern_gen_perm\(",
         "go": r"^func SternGenPerm\(",
         "python": r"^def _stern_gen_perm\(",
-        "java": r"Stern.java::static int\[\] sternGenPerm\(",
+        "java": r"Stern.java::static int\[\] sternGenPerm\(BigInteger piSeed, int n\)",
     },
     "stern-apply-perm": {
         "c": r"static void stern_apply_perm\(",
@@ -4620,7 +4622,7 @@ PRIMITIVES = {
         "c": r"static void stern_f_keygen\(",
         "go": r"^func SternFKeygen\(",
         "python": r"^def stern_f_keygen\(",
-        "java": r"Stern.java::public static SternKeypair sternFKeygen\(",
+        "java": r"Stern.java::public static SternKeypair sternFKeygen\(int n,",
     },
     "stern-fs-challenges": {
         "acknowledged":
@@ -4665,7 +4667,7 @@ PRIMITIVES = {
         "c": r"static void stern_rand_error\(",
         "go": r"^func SternRandError\(",
         "python": r"^def _csprng_weight_t\(",
-        "java": r"Stern.java::static BigInteger csprngWeightT\(",
+        "java": r"Stern.java::static BigInteger csprngWeightT\(int n, int t,",
     },
     # ── QC-MDPC KEM internals (TODO #261, v6.1.0) ─────────────────────────
     # The bit-polynomial arithmetic and BGF decoder under hpke-stern-kem. Note the
@@ -5490,13 +5492,14 @@ PRIMITIVES = {
     },
     "hcred-params": {
         "acknowledged":
-            "HCRED's width is a RUNTIME argument in Python, Go and (since TODO "
-            "#383 stage 3) C, and a COMPILE-TIME constant in Java (Hcred.N, TODO "
-            "#384) -- TODO #266's finding, and the reason KAT/hcred_kkw.json "
-            "ships two vector sets. Python derives (rows, row_bits, w_max) in one "
-            "function; C writes one per value (exempt under the census's C rules: "
-            "hcred_row_bits / hcred_w_max ...), so there is no single C function "
-            "to name here",
+            "HCRED's width is a RUNTIME argument in all four ports (C since "
+            "TODO #383 stage 3, Java since TODO #384; TODO #266 found it a "
+            "compile-time constant in both, and KAT/hcred_kkw.json still ships "
+            "two vector sets). Python derives (rows, row_bits, w_max) in one "
+            "function; C and Java write one per value (exempt under the census's "
+            "C and Java rules: hcred_row_bits / hcred_w_max ..., rowsFor / "
+            "rowBitsFor / wMaxFor), so there is no single C or Java function to "
+            "name here",
         "python": r"^def _hcred_params\(",
     },
     "hcred-issuer-msg": {
@@ -5563,7 +5566,7 @@ PRIMITIVES = {
         "go": r"^func HpkeSternFEncap\(",
         "python": r"^def hpke_stern_f_encap\(",
         "java": r"Stern.java::public static SternEncapResult "
-                r"hpkeSternFEncapWithE\(",
+                r"hpkeSternFEncapWithE\(BigInteger seed, int n,",
     },
     "hske-nl-v2-duplex-decrypt": {
         "c": r"static int hske_nl_v2_duplex_decrypt\(",
@@ -5958,6 +5961,18 @@ CENSUS_EXEMPT = {
                          "Python; Java factors it out because BigInteger has no "
                          "rotate. ZkpNl's own rol is a DIFFERENT function at n=32 and "
                          "is manifest-named as zkp-nl-rol"),
+        (r"^(rowsFor|rowBitsFor|wMaxFor|tFor|gen|order|r3)$",
+         "parameter rules at runtime width n (TODO #384): HCRED's rows, row-sum "
+         "bit length and weight bound (Python's _hcred_params, the hcred-params "
+         "row), Stern-F's rows n/2 and weight t = max(2, n/16), the generator g = "
+         "3 and Schnorr order 2^n - 1 at width n, and NL-FSCX v3's round count "
+         "5n/8.  Python writes each inline or in _hcred_params; C's are exempted "
+         "under its hcred_ and stern_t rules.  Parameter rules, not protocol "
+         "steps; the width matrix checks them by interop"),
+        (r"^sternHash$",
+         "the n = 256 wrapper over sternHashN, which the stern-hash manifest row "
+         "names (TODO #384).  Kept for the fixed-width callers (SelfTest, "
+         "KatVerify, Demo); the same split as C's _dim rule"),
         (r"^gateC$", "Java-only inner helper of hcred-gate-round (itself acknowledged), "
                      "one decomposition level further down"),
         (r"^(addmod|submod|mulmod|addmod3|floorMod3|maskOf|randomBig|"

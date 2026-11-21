@@ -5,7 +5,9 @@ import java.security.SecureRandom;
 
 /**
  * TODO #192: pure-Java port of the classical (v1.4.0) HerraduraKEx
- * quartet — HKEX-GF, HSKE, HPKS, HPKE — at n=256 bits.
+ * quartet — HKEX-GF, HSKE, HPKS, HPKE.  Each function runs at its operands'
+ * width (32, 64, 128 or 256 since TODO #384); N, I_STEPS, R_STEPS, GF_GEN and
+ * MASK are the n = 256 defaults the fixed-width callers use.
  *
  * Mirrors "Herradura cryptographic suite.py"'s BitArray/fscx/gf_* functions
  * and the guarded protocol API (hkex_gf_agree/hpks_verify/hpke_encrypt/
@@ -75,9 +77,12 @@ public final class Herradura {
      * and Go record.
      */
     public static BitArray gfPow(BitArray base, BitArray exp) {
-        BitArray result = BitArray.fromUint(1, N);
+        // TODO #384: the width is the operands' own (BITARRAY.md 3: they must
+        // agree, and gfMul refuses a mixed pair).
+        int n = base.size();
+        BitArray result = BitArray.fromUint(1, n);
         BitArray bb = base;
-        for (int i = 0; i < N; i++) {          // fixed N iterations
+        for (int i = 0; i < n; i++) {          // fixed n iterations
             if (exp.bit(i) == 1) result = BitArray.gfMul(result, bb);
             bb = BitArray.gfMul(bb, bb);
         }
@@ -96,8 +101,18 @@ public final class Herradura {
     // -----------------------------------------------------------------
 
     public static BitArray hkexGfPubkey(BitArray priv) {
-        return gfPow(GF_GEN, priv);
+        return gfPow(gen(priv.size()), priv);
     }
+
+    /** The generator g = 3 at width n (TODO #384). */
+    public static BitArray gen(int n) { return BitArray.fromUint(3, n); }
+
+    /** HSKE/HPKS/HPKE's i = n/4 and r = 3n/4 at width n (TODO #384). */
+    public static int iSteps(int n) { return n / 4; }
+    public static int rSteps(int n) { return 3 * n / 4; }
+
+    /** 2^n - 1, the HPKS group order at width n (TODO #384). */
+    public static BigInteger order(int n) { return BigInteger.ONE.shiftLeft(n).subtract(BigInteger.ONE); }
 
     /** Returns the shared secret, or null if theirPub is degenerate. */
     public static BitArray hkexGfAgree(BitArray myPriv, BitArray theirPub) {
@@ -110,11 +125,11 @@ public final class Herradura {
     // -----------------------------------------------------------------
 
     public static BitArray hskeEncrypt(BitArray pt, BitArray key) {
-        return fscxRevolve(pt, key, I_STEPS);
+        return fscxRevolve(pt, key, iSteps(pt.size()));
     }
 
     public static BitArray hskeDecrypt(BitArray ct, BitArray key) {
-        return fscxRevolve(ct, key, R_STEPS);
+        return fscxRevolve(ct, key, rSteps(ct.size()));
     }
 
     // -----------------------------------------------------------------
@@ -131,24 +146,25 @@ public final class Herradura {
     /** Signs with an explicit ephemeral scalar k — for deterministic/KAT use.
      * Real callers should use {@link #hpksSign(BigInteger, BigInteger, SecureRandom)}. */
     public static Signature hpksSign(BitArray msg, BitArray priv, BitArray k) {
-        BitArray r = gfPow(GF_GEN, k);
-        BitArray e = fscxRevolve(r, msg, I_STEPS);
-        // s = (k - priv*e) mod (2^N - 1).  The Schnorr scalar is an integer by
+        int n = priv.size();
+        BitArray r = gfPow(gen(n), k);
+        BitArray e = fscxRevolve(r, msg, iSteps(n));
+        // s = (k - priv*e) mod (2^n - 1).  The Schnorr scalar is an integer by
         // the protocol's own definition, so it crosses at the named boundary.
         BigInteger s = k.toBigInteger()
                         .subtract(priv.toBigInteger().multiply(e.toBigInteger()))
-                        .mod(GROUP_ORDER);
-        return new Signature(r, BitArray.fromBigInteger(s, N));
+                        .mod(order(n));
+        return new Signature(r, BitArray.fromBigInteger(s, n));
     }
 
     public static Signature hpksSign(BitArray msg, BitArray priv, SecureRandom rng) {
-        return hpksSign(msg, priv, BitArray.random(N, rng));
+        return hpksSign(msg, priv, BitArray.random(priv.size(), rng));
     }
 
     public static boolean hpksVerify(BitArray msg, BitArray pub, BitArray r, BitArray s) {
         if (!gfPubIsValid(pub)) return false;
-        BitArray e = fscxRevolve(r, msg, I_STEPS);
-        BitArray lhs = gfMul(gfPow(GF_GEN, s), gfPow(pub, e));
+        BitArray e = fscxRevolve(r, msg, iSteps(pub.size()));
+        BitArray lhs = gfMul(gfPow(gen(pub.size()), s), gfPow(pub, e));
         return lhs.equals(r);
     }
 
@@ -167,20 +183,20 @@ public final class Herradura {
      * Real callers should use {@link #hpkeEncrypt(BigInteger, BigInteger, SecureRandom)}. */
     public static Ciphertext hpkeEncrypt(BitArray pt, BitArray pub, BitArray r) {
         if (!gfPubIsValid(pub)) return null;
-        BitArray R = gfPow(GF_GEN, r);
+        BitArray R = gfPow(gen(pub.size()), r);
         BitArray encKey = gfPow(pub, r);
-        BitArray ct = fscxRevolve(pt, encKey, I_STEPS);
+        BitArray ct = fscxRevolve(pt, encKey, iSteps(pub.size()));
         return new Ciphertext(R, ct);
     }
 
     public static Ciphertext hpkeEncrypt(BitArray pt, BitArray pub, SecureRandom rng) {
-        return hpkeEncrypt(pt, pub, BitArray.random(N, rng));
+        return hpkeEncrypt(pt, pub, BitArray.random(pub.size(), rng));
     }
 
     public static BitArray hpkeDecrypt(BitArray ct, BitArray r, BitArray priv) {
         if (!gfPubIsValid(r)) return null;
         BitArray decKey = gfPow(r, priv);
-        return fscxRevolve(ct, decKey, R_STEPS);
+        return fscxRevolve(ct, decKey, rSteps(r.size()));
     }
 
     // -----------------------------------------------------------------

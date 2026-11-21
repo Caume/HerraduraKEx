@@ -26045,3 +26045,35 @@ and #387.
 Status: **DONE v16.0.0** — C runs every listed width: the GF family, Stern-F, hcred and hkex-rnl.
 
 ---
+
+### #384: Java runs every listed width
+
+Split from TODO #379 (stage 3).  As #383 for the Java port: `Herradura.N = 256` and one
+`GF_POLY` fix the GF family, Stern-F and hcred at 256.  hkex-rnl already runs every ring.
+Add "java" to the rows' ports once every operation agrees with Python and Go at every width.
+
+**Done (v16.0.0).**  The protocol layer takes n from its operands or from an n argument,
+as Python's does: `Herradura` (gfPow, the Schnorr order 2^n - 1, i = n/4 and r = 3n/4),
+`HerraduraNl` (NL-FSCX v2's delta rotates by n/4 of B's width, v3's chi rows and round
+count 5n/8 follow the width, M^-1's rotation table is built per width), `Stern` and
+`SternRing` (rows n/2, weight t = max(2, n/16), every chain hash and matrix row the
+digest's high n bits) and `Hcred` (rows, row bits and weight bound from n, and the
+issuer message the statement digest's high issuer-n bits).  The n-less forms are the
+n = 256 wrappers the fixed-width callers use, so SelfTest, KatVerify, the KAT and replay
+files and Demo pass unchanged.  `Codec` writes and reads every GF width (32, 64, 128,
+256) for the GF family, Stern-F and HCRED, refusing any other with C's text ("this CLI
+runs n = 32, 64, 128 or 256").  The CLI's genpkey, pkey, kex, enc / dec, sign / verify
+(hpks, hpks-nl, hpks-stern, hpks-ring) and cred-issue / -prove / -verify run at the
+key's width, and a key used with an artifact of another width is refused with the other
+CLIs' wording.  HCRED-KKW stays at 256 (no CLI uses it), as in C.
+
+Resolution: Java runs every listed width, byte-identical with Python, C and Go, and
+"java" is in every narrow row's ports except OPRF's (TODO #385): every CLI now runs every
+row the spec lists.  `CliTest/test_width_matrix.sh` holds it to that across all CLI
+pairs; restricted to Python and Java, the GF family, Stern-F and hcred pass 714 checks,
+and on the pre-#384 Java hkex-gf, hpks, hpke-nl3, Stern-F and hcred fail 135 of 503.  Java's Stern and hcred `pkey --text`
+layouts stay n/a there (TODO #386).
+
+Status: **DONE v16.0.0** — Java runs every listed width: the GF family, Stern-F and hcred.
+
+---

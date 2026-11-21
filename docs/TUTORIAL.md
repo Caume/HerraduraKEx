@@ -1360,8 +1360,8 @@ the credential to a specific institution.
 ```bash
 # ── User key generation ──────────────────────────────────────────────────────
 # Default width: n=256 in every CLI (TODO #369; Python's default was 32).
-# --bits 32, 64 or 128 chooses a faster demo width in Python and Go; C and Java
-# refuse it by name until TODO #383 / #384 (TODO #379's parameter-set table).
+# --bits 32, 64 or 128 chooses a faster demo width, in every CLI (TODO #383 / #384;
+# TODO #379's parameter-set table).
 $CLI genpkey --algo hcred --out user.pem
 
 # Extract public key (C and A receive this to verify/issue)
@@ -2670,8 +2670,8 @@ models that exclude quantum adversaries.
   public key — if the same proof is accepted by multiple verifiers, unlinkability
   holds only if different nonces are used.
 - **Demo parameter interop:** every CLI defaults to `n = 256` (TODO #369). The
-  narrower demo widths (`--bits 32 | 64 | 128`) run in Python and Go only, until
-  TODO #383 / #384 bring them to C and Java.
+  narrower demo widths (`--bits 32 | 64 | 128`) run in all four CLIs (TODO #383 /
+  #384).
   All four CLIs default `cred-issue` and `cred-prove` to 219 rounds, and
   `cred-verify` refuses fewer unless given `--min-rounds N` (TODO #364).
 

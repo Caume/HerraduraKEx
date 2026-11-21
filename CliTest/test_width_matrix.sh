@@ -33,8 +33,8 @@
 # A CLI the row does not list must refuse the key (pkey --text, enc, verify),
 # naming the width, without crashing -- never exit 0 with a wrong answer.
 #
-# Widths come from the spec, so a CLI added to a row (TODO #384: Java) is
-# tested the moment the row says it runs.
+# Widths come from the spec, so a CLI added to a row is tested the moment the
+# row says it runs (Java joined every row in TODO #384).
 #
 # hybrid-rnl-stern decapsulates the QC-MDPC KEM, so a session-key mismatch
 # there retries under lib_dfr.sh's policy (TODO #221, #276).

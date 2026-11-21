@@ -2005,12 +2005,13 @@ PARAM_LEVEL_NOTES.update({a: "128-bit Stern-F parameters are TODO #382"
 def _param_rows():
     rows = []   # (algo, bits, level, default, security, ports, withdrawn)
     all4 = PARAM_PORTS
-    gf_narrow = ("py", "c", "go")   # TODO #383 stage 1: C runs the GF family at every width
+    # TODO #383 stage 1 (C) and TODO #384 (Java): every CLI runs the GF family
+    # at every width.
     for a in _GF_ALGOS:
         for w in (32, 64, 128, 256):
             rows.append((a, w, "demo" if w == 256 else None, w == 256,
                          "at most %s (Pohlig-Hellman; index calculus is cheaper)" % _GF_PH[w],
-                         all4 if w == 256 else gf_narrow, None))
+                         all4, None))
     # OPRF runs at 256 only in every CLI today; narrower rows are TODO #385.
     rows.append(("oprf", 256, "demo", True,
                  "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", all4, None))
@@ -2029,10 +2030,9 @@ def _param_rows():
             sec = _STERN_SEC.get(w, "below 2^30")
             if a == "hcred":
                 sec = "research construction; its Stern-F half " + sec
-            # TODO #383 stages 2 and 3: C runs Stern-F (hpks-stern, hpke-stern)
-            # and hcred at every width.
-            rows.append((a, w, "demo" if w == 256 else None, w == 256, sec,
-                         all4 if w == 256 else gf_narrow, None))
+            # TODO #383 stages 2 and 3 (C) and TODO #384 (Java): every CLI runs
+            # Stern-F (hpks-stern, hpke-stern) and hcred at every width.
+            rows.append((a, w, "demo" if w == 256 else None, w == 256, sec, all4, None))
     rows.append(("hpke-stern-kem", -1, "128", True,
                  "2^128 classical by its parameters (BIKE-128)", all4, None))
     rows.append(("hpks-zkp-nl", 8, "demo", True,

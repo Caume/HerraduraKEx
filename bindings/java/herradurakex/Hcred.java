@@ -27,14 +27,10 @@ import java.util.Map;
  * _hcred_challenges / _hcred_witness / hcred_prove / hcred_verify /
  * hcred_issue / hcred_cred_verify.
  *
- * Fixed at n=256 (KEYBITS), matching this binding's existing scope
- * ({@link Herradura}, {@link HerraduraNl}, {@link Stern} are likewise
- * fixed at 256 bits) rather than the Python demo's n=32 default; n=256 is
- * explicitly supported upstream ("n=256 supported; slow in Python" —
- * {@code --bits 256} on the Python/C/Go CLIs) and lets this port reuse
- * {@link Stern}'s existing (256-bit-only) parity-check-matrix PRF
- * directly instead of introducing a second, arbitrary-width NL-FSCX v1
- * implementation just for HCRED.
+ * The ZKBoo prover and verifier, the keygen, the syndrome and the issuer
+ * credential run at any GF width n (32, 64, 128, 256) since TODO #384, as
+ * Python's take n; the n-less forms are the n = 256 wrappers.  The KKW
+ * variant below is still fixed at n = 256 (it has no CLI surface).
  *
  * TODO #261: the KKW preprocessing-model transcript variant
  * ({@code hcred_prove_kkw}/{@code hcred_verify_kkw} in Python,
@@ -52,6 +48,12 @@ public final class Hcred {
     public static final int ROWS = N / 2;                // 128 syndrome rows
     public static final int ROW_BITS = 9;                 // ceil(log2(N+1))
     public static final int W_MAX = (int) (N / 4.0 + 4 * Math.sqrt(N * 3.0 / 16));
+
+    /** Python's _hcred_params(n) (TODO #384): rows = n/2, row_bits =
+     * n.bit_length() (6 at n = 32, 9 at 256), w_max = int(n/4 + 4 sigma). */
+    public static int rowsFor(int n) { return n / 2; }
+    public static int rowBitsFor(int n) { return 32 - Integer.numberOfLeadingZeros(n); }
+    public static int wMaxFor(int n) { return (int) (n / 4.0 + 4 * Math.sqrt(n * 3.0 / 16)); }
     public static final int EPS_BITS = 5;
     public static final int EPS_OFF = 16;
     public static final int DEMO_ROUNDS = 4;
@@ -104,18 +106,24 @@ public final class Hcred {
      * Stern.qcmdpcKeygen's weak-key screen: a credential key that cannot
      * present is useless, so it is refused where it is made and the rate
      * becomes ZERO rather than smaller. */
-    public static UserKeypair userKeygen(int[] mPoly, SecureRandom rng) {
+    public static UserKeypair userKeygen(int[] mPoly, SecureRandom rng) { return userKeygen(mPoly, N, rng); }
+
+    /** The same at width n (TODO #384). */
+    public static UserKeypair userKeygen(int[] mPoly, int n, SecureRandom rng) {
+        int wMax = wMaxFor(n);
         while (true) {
-            HerraduraNl.RnlKeypair kp = HerraduraNl.rnlKeygen(mPoly, N, RNLQ, RNLP, rng);
+            HerraduraNl.RnlKeypair kp = HerraduraNl.rnlKeygen(mPoly, n, RNLQ, RNLP, rng);
             BigInteger e = phi(kp.s);
             int w = e.bitCount();
-            if (w >= 1 && w <= W_MAX) return new UserKeypair(kp.s, kp.c, e);
+            if (w >= 1 && w <= wMax) return new UserKeypair(kp.s, kp.c, e);
         }
     }
 
     /** Code syndrome y = H . e^T mod 2 for the credential. */
-    public static BigInteger syndrome(BigInteger seedH, BigInteger eInt) {
-        return Stern.sternSyndromeH(Stern.sternBuildH(seedH, ROWS), eInt);
+    public static BigInteger syndrome(BigInteger seedH, BigInteger eInt) { return syndrome(seedH, eInt, N); }
+
+    public static BigInteger syndrome(BigInteger seedH, BigInteger eInt, int n) {
+        return Stern.sternSyndromeH(Stern.sternBuildH(seedH, rowsFor(n), n), eInt);
     }
 
     // -----------------------------------------------------------------
@@ -418,6 +426,7 @@ public final class Hcred {
     }
 
     public static final class Proof {
+        public int n = N;   // the width the proof is about (TODO #384)
         public int W;
         public List<ProofRound> rounds;
     }
@@ -426,7 +435,14 @@ public final class Hcred {
      * if the witness s doesn't match the syndrome y or the public key C. */
     public static Proof prove(int[] sPoly, int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd,
                                int rounds, byte[] msgBytes, SecureRandom rng) {
-        BigInteger[] hRows = Stern.sternBuildH(seedH, ROWS);
+        return prove(sPoly, mPoly, cPoly, seedH, ySynd, rounds, msgBytes, N, rng);
+    }
+
+    /** Proves at width n (TODO #384). */
+    public static Proof prove(int[] sPoly, int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd,
+                               int rounds, byte[] msgBytes, int n, SecureRandom rng) {
+        final int N = n, ROWS = rowsFor(n), ROW_BITS = rowBitsFor(n);
+        BigInteger[] hRows = Stern.sternBuildH(seedH, ROWS, N);
         Witness wit = prepareWitness(sPoly, mPoly, cPoly, hRows, ySynd, N, ROWS, ROW_BITS);
         byte[] stmt = stmtHash(mPoly, cPoly, seedH, ySynd, N, msgBytes);
 
@@ -466,6 +482,7 @@ public final class Hcred {
             proofRounds.add(rd);
         }
         Proof p = new Proof();
+        p.n = n;
         p.W = wit.W;
         p.rounds = proofRounds;
         return p;
@@ -474,6 +491,13 @@ public final class Hcred {
     /** Verifies a credential-presentation proof (single unified MPCitH). */
     public static boolean verify(int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd, Proof proof,
                                   int rounds, byte[] msgBytes) {
+        return verify(mPoly, cPoly, seedH, ySynd, proof, rounds, msgBytes, N);
+    }
+
+    /** Verifies at width n (TODO #384). */
+    public static boolean verify(int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd, Proof proof,
+                                  int rounds, byte[] msgBytes, int n) {
+        final int N = n, ROWS = rowsFor(n), ROW_BITS = rowBitsFor(n), W_MAX = wMaxFor(n);
         if (proof.W < 1 || proof.W > W_MAX) return false;
         if (proof.rounds.size() != rounds) return false;
 
@@ -485,7 +509,7 @@ public final class Hcred {
         for (int ri = 0; ri < rounds; ri++) outsFlat[ri] = outputsSer(proof.rounds.get(ri).outs);
         byte[] outsSer = concat(outsFlat);
 
-        BigInteger[] hRows = Stern.sternBuildH(seedH, ROWS);
+        BigInteger[] hRows = Stern.sternBuildH(seedH, ROWS, N);
         int[] lift = HerraduraNl.rnlLift(cPoly, RNLP, RNLQ);
         int[] chals = deriveChallenges(stmt, comsSer, outsSer, rounds);
 
@@ -1198,20 +1222,34 @@ public final class Hcred {
     // Issuer credential: an HPKS-Stern-F signature over the statement
     // -----------------------------------------------------------------
 
-    private static BigInteger issuerMsg(int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd, int n) {
+    /** The statement digest's high issuer_n bits, as Python's hcred_issue
+     * takes them (TODO #384: the issuer key may be narrower than 256). */
+    private static BigInteger issuerMsg(int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd, int n, int issuerN) {
         byte[] digest = stmtHash(mPoly, cPoly, seedH, ySynd, n, "HCRED-issue".getBytes(StandardCharsets.US_ASCII));
-        return new BigInteger(1, digest); // issuer_n == 256 fixed, no truncating shift needed
+        return new BigInteger(1, digest).shiftRight(256 - issuerN);
     }
 
     public static Stern.SternSignature issue(int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd, int n,
                                               BigInteger issuerE, BigInteger issuerSeed, int rounds, SecureRandom rng) {
-        BigInteger msg = issuerMsg(mPoly, cPoly, seedH, ySynd, n);
-        return Stern.hpksSternFSign(msg, issuerE, issuerSeed, rounds, rng);
+        return issue(mPoly, cPoly, seedH, ySynd, n, issuerE, issuerSeed, rounds, N, rng);
+    }
+
+    public static Stern.SternSignature issue(int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd, int n,
+                                              BigInteger issuerE, BigInteger issuerSeed, int rounds, int issuerN,
+                                              SecureRandom rng) {
+        BigInteger msg = issuerMsg(mPoly, cPoly, seedH, ySynd, n, issuerN);
+        return Stern.hpksSternFSign(msg, issuerE, issuerSeed, rounds, issuerN, rng);
     }
 
     public static boolean credVerify(int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd, int n,
                                       Stern.SternSignature credSig, BigInteger issuerSeed, BigInteger issuerSyn) {
-        BigInteger msg = issuerMsg(mPoly, cPoly, seedH, ySynd, n);
-        return Stern.hpksSternFVerify(msg, credSig, issuerSeed, issuerSyn);
+        return credVerify(mPoly, cPoly, seedH, ySynd, n, credSig, issuerSeed, issuerSyn, N);
+    }
+
+    public static boolean credVerify(int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd, int n,
+                                      Stern.SternSignature credSig, BigInteger issuerSeed, BigInteger issuerSyn,
+                                      int issuerN) {
+        BigInteger msg = issuerMsg(mPoly, cPoly, seedH, ySynd, n, issuerN);
+        return Stern.hpksSternFVerify(msg, credSig, issuerSeed, issuerSyn, issuerN);
     }
 }

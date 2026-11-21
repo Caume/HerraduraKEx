@@ -49,7 +49,7 @@ public final class HerraduraNl {
         // B * ((B+1) >> 1) mod 2^n — NOT (B*(B+1))>>1 (they differ when B is even).
         // (B+1) >> 1 is a NUMERIC shift, so the bit the add vacates is zero and
         // the whole expression stays inside the width.
-        return b.mulMod2n(b.addUint(1).shr(1)).rotLeft(N / 4);
+        return b.mulMod2n(b.addUint(1).shr(1)).rotLeft(b.size() / 4);   // n/4 of B's width (TODO #384)
     }
 
     public static BitArray nlFscxV2(BitArray a, BitArray b) {
@@ -156,6 +156,9 @@ public final class HerraduraNl {
     /** NL-FSCX v3's round count at the suite's 256-bit width: 5n/8 = 160. */
     public static final int R3_VALUE = 5 * N / 8;
 
+    /** NL-FSCX v3's round count at width n: 5n/8 (TODO #384). */
+    public static int r3(int n) { return 5 * n / 8; }
+
     /**
      * chi row partition for width {@code n}: 5-bit rows then 7-bit rows, the
      * unique such partition with the fewest 7-rows.  Both lengths are odd and
@@ -225,7 +228,7 @@ public final class HerraduraNl {
         BigInteger v = x.toBigInteger();
         BigInteger out = BigInteger.ZERO;
         int off = 0;
-        for (int L : v3Rows(N)) {
+        for (int L : v3Rows(x.size())) {
             int row = v.shiftRight(off).and(BigInteger.valueOf((1L << L) - 1)).intValue();
             out = out.or(BigInteger.valueOf(chiRow(row, L)).shiftLeft(off));
             off += L;
@@ -238,7 +241,7 @@ public final class HerraduraNl {
         BigInteger v = y.toBigInteger();
         BigInteger out = BigInteger.ZERO;
         int off = 0;
-        for (int L : v3Rows(N)) {
+        for (int L : v3Rows(y.size())) {
             int row = v.shiftRight(off).and(BigInteger.valueOf((1L << L) - 1)).intValue();
             out = out.or(BigInteger.valueOf(chiInvFor(L)[row]).shiftLeft(off));
             off += L;
@@ -280,25 +283,27 @@ public final class HerraduraNl {
 
     // M^{-1} = M^{n/2-1}, bootstrapped once from fscx_revolve(1, 0, n/2-1) and
     // applied as an XOR of ROL(X, k) for each set bit k of that bootstrap value.
-    private static int[] mInvRotations;
+    // TODO #384: one table per width, built on first use.
+    private static final java.util.Map<Integer, int[]> mInvRotations = new java.util.HashMap<>();
 
-    private static synchronized int[] mInvRotationsTable() {
-        if (mInvRotations == null) {
+    private static synchronized int[] mInvRotationsTable(int n) {
+        int[] t = mInvRotations.get(n);
+        if (t == null) {
             BitArray v = Herradura.fscxRevolve(
-                BitArray.fromUint(1, N), BitArray.zero(N), N / 2 - 1);
-            int[] table = new int[v.popcount()];
+                BitArray.fromUint(1, n), BitArray.zero(n), n / 2 - 1);
+            t = new int[v.popcount()];
             int idx = 0;
-            for (int k = 0; k < N; k++) {
-                if (v.bit(k) == 1) table[idx++] = k;
+            for (int k = 0; k < n; k++) {
+                if (v.bit(k) == 1) t[idx++] = k;
             }
-            mInvRotations = table;
+            mInvRotations.put(n, t);
         }
-        return mInvRotations;
+        return t;
     }
 
     private static BitArray mInv(BitArray x) {
         BitArray result = BitArray.zero(x.size());
-        for (int k : mInvRotationsTable()) {
+        for (int k : mInvRotationsTable(x.size())) {
             result = result.xor(x.rotLeft(k));
         }
         return result;
@@ -758,24 +763,25 @@ public final class HerraduraNl {
     }
 
     public static Herradura.Signature hpksNlSign(BitArray msg, BitArray priv, BitArray k) {
-        BitArray r = Herradura.gfPow(Herradura.GF_GEN, k);
+        int n = priv.size();
+        BitArray r = Herradura.gfPow(Herradura.gen(n), k);
         BitArray e = hpksNlChallenge(r, msg);
         // The Schnorr scalar is an integer by the protocol's own definition and
         // crosses at the named boundary (BitArray.toBigInteger/fromBigInteger).
         BigInteger s = k.toBigInteger()
                         .subtract(priv.toBigInteger().multiply(e.toBigInteger()))
-                        .mod(Herradura.GROUP_ORDER);
-        return new Herradura.Signature(r, BitArray.fromBigInteger(s, N));
+                        .mod(Herradura.order(n));
+        return new Herradura.Signature(r, BitArray.fromBigInteger(s, n));
     }
 
     public static Herradura.Signature hpksNlSign(BitArray msg, BitArray priv, SecureRandom rng) {
-        return hpksNlSign(msg, priv, BitArray.random(N, rng));
+        return hpksNlSign(msg, priv, BitArray.random(priv.size(), rng));
     }
 
     public static boolean hpksNlVerify(BitArray msg, BitArray pub, BitArray r, BitArray s) {
         if (!Herradura.gfPubIsValid(pub)) return false;
         BitArray e = hpksNlChallenge(r, msg);
-        BitArray lhs = Herradura.gfMul(Herradura.gfPow(Herradura.GF_GEN, s), Herradura.gfPow(pub, e));
+        BitArray lhs = Herradura.gfMul(Herradura.gfPow(Herradura.gen(pub.size()), s), Herradura.gfPow(pub, e));
         return lhs.equals(r);
     }
 
@@ -786,9 +792,10 @@ public final class HerraduraNl {
 
     public static Herradura.Ciphertext hpkeNlEncrypt(BitArray pt, BitArray pub, BitArray r) {
         if (!Herradura.gfPubIsValid(pub)) return null;
-        BitArray bigR = Herradura.gfPow(Herradura.GF_GEN, r);
+        int n = pub.size();
+        BitArray bigR = Herradura.gfPow(Herradura.gen(n), r);
         BitArray encKey = Herradura.gfPow(pub, r);
-        BitArray ct = nlFscxRevolveV2(pt, encKey, N / 4);
+        BitArray ct = nlFscxRevolveV2(pt, encKey, n / 4);
         return new Herradura.Ciphertext(bigR, ct);
     }
 
@@ -797,12 +804,13 @@ public final class HerraduraNl {
      * loop (TODO #168) — returns null after 64 failed attempts. */
     public static Herradura.Ciphertext hpkeNlEncrypt(BitArray pt, BitArray pub, SecureRandom rng) {
         if (!Herradura.gfPubIsValid(pub)) return null;
+        int n = pub.size();
         for (int i = 0; i < 64; i++) {
-            BitArray r = BitArray.random(N, rng);
-            BitArray bigR = Herradura.gfPow(Herradura.GF_GEN, r);
+            BitArray r = BitArray.random(n, rng);
+            BitArray bigR = Herradura.gfPow(Herradura.gen(n), r);
             BitArray encKey = Herradura.gfPow(pub, r);
             if (nlV2KeyIsValid(encKey)) {
-                BitArray ct = nlFscxRevolveV2(pt, encKey, N / 4);
+                BitArray ct = nlFscxRevolveV2(pt, encKey, n / 4);
                 return new Herradura.Ciphertext(bigR, ct);
             }
         }
@@ -813,7 +821,7 @@ public final class HerraduraNl {
         if (!Herradura.gfPubIsValid(r)) return null;
         BitArray decKey = Herradura.gfPow(r, priv);
         if (!nlV2KeyIsValid(decKey)) return null;
-        return nlFscxRevolveV2Inv(ct, decKey, N / 4);
+        return nlFscxRevolveV2Inv(ct, decKey, r.size() / 4);
     }
 
     // -----------------------------------------------------------------
@@ -838,20 +846,20 @@ public final class HerraduraNl {
     public static Herradura.Ciphertext hpkeNl3Encrypt(BitArray pt, BitArray pub,
                                                       SecureRandom rng) {
         if (!Herradura.gfPubIsValid(pub)) return null;
-        return hpkeNl3Encrypt(pt, pub, BitArray.random(N, rng));
+        return hpkeNl3Encrypt(pt, pub, BitArray.random(pub.size(), rng));
     }
 
     public static Herradura.Ciphertext hpkeNl3Encrypt(BitArray pt, BitArray pub,
                                                       BitArray r) {
         if (!Herradura.gfPubIsValid(pub)) return null;
-        BitArray bigR = Herradura.gfPow(Herradura.GF_GEN, r);
+        BitArray bigR = Herradura.gfPow(Herradura.gen(pub.size()), r);
         BitArray encKey = Herradura.gfPow(pub, r);
-        return new Herradura.Ciphertext(bigR, nlFscxRevolveV3(pt, encKey, R3_VALUE));
+        return new Herradura.Ciphertext(bigR, nlFscxRevolveV3(pt, encKey, r3(pub.size())));
     }
 
     public static BitArray hpkeNl3Decrypt(BitArray ct, BitArray r, BitArray priv) {
         if (!Herradura.gfPubIsValid(r)) return null;
-        return nlFscxRevolveV3Inv(ct, Herradura.gfPow(r, priv), R3_VALUE);
+        return nlFscxRevolveV3Inv(ct, Herradura.gfPow(r, priv), r3(r.size()));
     }
 
     // -----------------------------------------------------------------

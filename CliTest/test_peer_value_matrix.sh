@@ -275,7 +275,7 @@ done
 
 # ── Widths: a 128-bit key from a CLI that runs 128 ───────────────────────────
 # Which CLIs run the GF family at 128 bits is the spec's key_parameter_sets row
-# (TODO #379; C joined in #383, Java is #384).  A CLI that runs the width must
+# (TODO #379; C joined in #383, Java in #384).  A CLI that runs the width must
 # agree with the others that do; one that does not must refuse, naming the
 # width -- never exit 0 with a wrong answer.
 GF128_PORTS=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1]))

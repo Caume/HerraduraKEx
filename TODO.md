@@ -663,17 +663,6 @@ Status: **OPEN**
 
 ---
 
-
-### #384: Java runs every listed width
-
-Split from TODO #379 (stage 3).  As #383 for the Java port: `Herradura.N = 256` and one
-`GF_POLY` fix the GF family, Stern-F and hcred at 256.  hkex-rnl already runs every ring.
-Add "java" to the rows' ports once every operation agrees with Python and Go at every width.
-
-Status: **OPEN**
-
----
-
 ### #385: OPRF below 256 bits
 
 Split from TODO #379.  `oprf` runs at 256 only in all four CLIs: Python's `oprf_keygen`

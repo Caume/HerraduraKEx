@@ -410,7 +410,12 @@ public final class Codec {
 
     /** Encodes a classical private key: SEQUENCE(priv, pub, nbits). */
     public static String encodePrivKey(String label, BigInteger priv, BigInteger pub) {
-        byte[] der = derSeq(derInt(priv, NBYTES), derInt(pub, NBYTES), derInt(BigInteger.valueOf(Herradura.N), -1));
+        return encodePrivKey(label, priv, pub, Herradura.N);
+    }
+
+    /** The same at width nbits (TODO #384). */
+    public static String encodePrivKey(String label, BigInteger priv, BigInteger pub, int nbits) {
+        byte[] der = derSeq(derInt(priv, nbits / 8), derInt(pub, nbits / 8), derInt(BigInteger.valueOf(nbits), -1));
         return pemWrap(label, der);
     }
 
@@ -427,7 +432,7 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b);
-        return new PrivKey(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
+        return new PrivKey(ints.get(0), ints.get(1), gfWidth(ints.get(2), b.label));
     }
 
     /** Encodes an HDRBG checkpoint: SEQUENCE(state[32], blocks) (TODO #269).
@@ -464,7 +469,11 @@ public final class Codec {
 
     /** Encodes a classical public key: SEQUENCE(pub, nbits). */
     public static String encodePubKey(String label, BigInteger pub) {
-        byte[] der = derSeq(derInt(pub, NBYTES), derInt(BigInteger.valueOf(Herradura.N), -1));
+        return encodePubKey(label, pub, Herradura.N);
+    }
+
+    public static String encodePubKey(String label, BigInteger pub, int nbits) {
+        byte[] der = derSeq(derInt(pub, nbits / 8), derInt(BigInteger.valueOf(nbits), -1));
         return pemWrap(label, der);
     }
 
@@ -480,7 +489,7 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b);
-        return new PubKey(ints.get(0), runWidth(ints.get(1), Herradura.N, "n", b.label));
+        return new PubKey(ints.get(0), gfWidth(ints.get(1), b.label));
     }
 
     /** Encodes an HPKE ciphertext: SEQUENCE(R, E, nbits). */
@@ -502,7 +511,7 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + PEM_CIPHERTEXT + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b);
-        return new AsymCt(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
+        return new AsymCt(ints.get(0), ints.get(1), gfWidth(ints.get(2), b.label));
     }
 
     /** Encodes an HPKS (Schnorr) signature: SEQUENCE(s, R, e, nbits). */
@@ -529,7 +538,7 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + PEM_SIGNATURE + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b);
-        return new SchnorrSig(ints.get(0), ints.get(1), ints.get(2), runWidth(ints.get(3), Herradura.N, "n", b.label));
+        return new SchnorrSig(ints.get(0), ints.get(1), ints.get(2), gfWidth(ints.get(3), b.label));
     }
 
     /** Encodes an HSKE session key: SEQUENCE(key, nbits).
@@ -761,6 +770,24 @@ public final class Codec {
             throw new IllegalArgumentException("PEM '" + label + "': " + what + " is " + got
                 + " (this CLI runs " + what + " = " + want + ")");
         }
+        return got;
+    }
+
+    /** TODO #384: a GF(2^n)-family or Stern-F width is any width with a GF(2^n)
+     * polynomial (BITARRAY.md 4.6: 32, 64, 128, 256), as in the C CLI
+     * (gf_width_ok) and worded as its refusal is. */
+    static boolean gfWidthOk(int n) {
+        try { BitArray.gfPoly(n); return true; } catch (BaException e) { return false; }
+    }
+
+    static int gfWidth(BigInteger v, String label) {
+        if (v.signum() < 0 || v.bitLength() > 31)
+            throw new IllegalArgumentException("PEM '" + label + "': n is wider than 32 bits "
+                + "(this CLI runs n = 32, 64, 128 or 256)");
+        int got = v.intValueExact();
+        if (!gfWidthOk(got))
+            throw new IllegalArgumentException("PEM '" + label + "': n is " + got
+                + " (this CLI runs n = 32, 64, 128 or 256)");
         return got;
     }
 
@@ -1169,7 +1196,11 @@ public final class Codec {
 
     /** Encodes a Stern-F private key: SEQUENCE(e, seed, n). */
     public static String encodeSternPrivKey(String label, BigInteger e, BigInteger seed) {
-        byte[] der = derSeq(derInt(e, NBYTES), derInt(seed, NBYTES), derInt(BigInteger.valueOf(Herradura.N), -1));
+        return encodeSternPrivKey(label, e, seed, Herradura.N);
+    }
+
+    public static String encodeSternPrivKey(String label, BigInteger e, BigInteger seed, int n) {
+        byte[] der = derSeq(derInt(e, n / 8), derInt(seed, n / 8), derInt(BigInteger.valueOf(n), -1));
         return pemWrap(label, der);
     }
 
@@ -1186,12 +1217,16 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b);
-        return new SternPrivKey(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
+        return new SternPrivKey(ints.get(0), ints.get(1), gfWidth(ints.get(2), b.label));
     }
 
     /** Encodes a Stern-F public key: SEQUENCE(syndrome, seed, n). */
     public static String encodeSternPubKey(String label, BigInteger syndrome, BigInteger seed) {
-        byte[] der = derSeq(derInt(syndrome, NBYTES), derInt(seed, NBYTES), derInt(BigInteger.valueOf(Herradura.N), -1));
+        return encodeSternPubKey(label, syndrome, seed, Herradura.N);
+    }
+
+    public static String encodeSternPubKey(String label, BigInteger syndrome, BigInteger seed, int n) {
+        byte[] der = derSeq(derInt(syndrome, n / 8), derInt(seed, n / 8), derInt(BigInteger.valueOf(n), -1));
         return pemWrap(label, der);
     }
 
@@ -1208,13 +1243,18 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b);
-        return new SternPubKey(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
+        return new SternPubKey(ints.get(0), ints.get(1), gfWidth(ints.get(2), b.label));
     }
 
     /** Encodes an HPKE-Stern-F (demo) ciphertext: SEQUENCE(ct_syn, e_p, K, E, n). */
     public static String encodeSternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e) {
-        byte[] der = derSeq(derInt(ctSyn, NBYTES), derInt(eP, NBYTES), derInt(k, NBYTES), derInt(e, NBYTES),
-                             derInt(BigInteger.valueOf(Herradura.N), -1));
+        return encodeSternCt(ctSyn, eP, k, e, Herradura.N);
+    }
+
+    public static String encodeSternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e, int n) {
+        int nb = n / 8;
+        byte[] der = derSeq(derInt(ctSyn, nb), derInt(eP, nb), derInt(k, nb), derInt(e, nb),
+                             derInt(BigInteger.valueOf(n), -1));
         return pemWrap(PEM_CIPHERTEXT, der);
     }
 
@@ -1244,12 +1284,14 @@ public final class Codec {
      * (c0||c1||c2) per round; challenges_packed is 2 bits/round packed
      * 4-per-byte LSB-first; responses_packed is (resp0||resp1) per round.
      */
-    public static String encodeSternSig(Stern.SternSignature sig) {
+    public static String encodeSternSig(Stern.SternSignature sig) { return encodeSternSig(sig, Herradura.N); }
+
+    public static String encodeSternSig(Stern.SternSignature sig, int n) {
         int rounds = sig.rounds();
-        byte[] commits = packSternTriples(sig.c0, sig.c1, sig.c2, rounds);
+        byte[] commits = packSternTriples(sig.c0, sig.c1, sig.c2, rounds, n / 8);
         byte[] challenges = packChallenges(sig.challenges);
-        byte[] responses = packSternPairs(sig.resp0, sig.resp1, rounds);
-        byte[] der = derSeq(derInt(BigInteger.valueOf(Herradura.N), -1), derInt(BigInteger.valueOf(rounds), -1),
+        byte[] responses = packSternPairs(sig.resp0, sig.resp1, rounds, n / 8);
+        byte[] der = derSeq(derInt(BigInteger.valueOf(n), -1), derInt(BigInteger.valueOf(rounds), -1),
                              derInt(commits), derInt(challenges), derInt(responses));
         return pemWrap(PEM_SIGNATURE, der);
     }
@@ -1294,8 +1336,7 @@ public final class Codec {
         return new SternSigDecoded(nbits, new Stern.SternSignature(c0, c1, c2, ch, resp0, resp1));
     }
 
-    private static byte[] packSternTriples(BigInteger[] a, BigInteger[] b, BigInteger[] c, int rounds) {
-        int nbytes = NBYTES;
+    private static byte[] packSternTriples(BigInteger[] a, BigInteger[] b, BigInteger[] c, int rounds, int nbytes) {
         byte[] out = new byte[3 * rounds * nbytes];
         for (int i = 0; i < rounds; i++) {
             System.arraycopy(toFixedBytes(a[i], nbytes), 0, out, (3 * i) * nbytes, nbytes);
@@ -1305,8 +1346,7 @@ public final class Codec {
         return out;
     }
 
-    private static byte[] packSternPairs(BigInteger[] a, BigInteger[] b, int rounds) {
-        int nbytes = NBYTES;
+    private static byte[] packSternPairs(BigInteger[] a, BigInteger[] b, int rounds, int nbytes) {
         byte[] out = new byte[2 * rounds * nbytes];
         for (int i = 0; i < rounds; i++) {
             System.arraycopy(toFixedBytes(a[i], nbytes), 0, out, (2 * i) * nbytes, nbytes);
@@ -1708,19 +1748,21 @@ public final class Codec {
     // public-key, and proof PEM bodies are NOT DER (no SEQUENCE/INTEGER
     // tags) — they are a flat, offset-parsed byte layout, matching the
     // Python reference exactly (only the credential uses real DER, via
-    // the same layout as {@link #encodeSternSig}). Fixed at n=256
-    // (Herradura.N) per this binding's scope — the wire format's `n`
-    // field is written as 256 for parity, not made variable.
+    // the same layout as {@link #encodeSternSig}).  Since TODO #384 the
+    // width is the header's n, any of 32, 64, 128 and 256, and every field
+    // is sized from it; the body length must then match exactly (rawEnd), so a
+    // SMALLER n than the body holds is still refused (TODO #275).
     // -----------------------------------------------------------------
 
-    private static final int HCRED_SEED_NB = Herradura.N / 8;                  // 32
-    /** HCRED width is a runtime argument in Python and Go but a compile-time
-     *  constant here and in C.  This build reads exactly this width and no
-     *  other, so the check is equality, as C's hcred_parse_pubkey does it: a
-     *  SMALLER n than the body holds is not a truncation and a length check
-     *  alone lets it through (TODO #275). */
-    static final int HCRED_MAX_N = Herradura.N;
-    private static final int HCRED_SYNDR_NB = (Herradura.N / 2 + 7) / 8;       // 16
+    /** TODO #384: HCRED runs at every GF width (32, 64, 128, 256), as C's
+     * hcred_n_ok does since #383 stage 3; the seed and syndrome sizes follow n. */
+    private static int hcredN(int n, String what) {
+        if (!gfWidthOk(n))
+            throw new IllegalArgumentException(what + ": n must be 32, 64, 128 or 256, got " + n);
+        return n;
+    }
+    private static int hcredSeedNb(int n) { return n / 8; }
+    private static int hcredSyndrNb(int n) { return (n / 2 + 7) / 8; }
 
     private static byte[] ser3(int[] vec) {
         byte[] out = new byte[vec.length * 3];
@@ -1795,8 +1837,9 @@ public final class Codec {
     }
 
     public static String encodeHcredPrivKey(int[] s, int[] c, int[] m, BigInteger seedH, BigInteger syndr) {
-        byte[] body = concat(be32(Herradura.N), ser3(s), ser2(c), ser3(m),
-                              toFixedBytes(seedH, HCRED_SEED_NB), toFixedBytesLE(syndr, HCRED_SYNDR_NB));
+        int n = s.length;   // the polynomial's own length is the width (TODO #384)
+        byte[] body = concat(be32(n), ser3(s), ser2(c), ser3(m),
+                              toFixedBytes(seedH, hcredSeedNb(n)), toFixedBytesLE(syndr, hcredSyndrNb(n)));
         return pemWrap(PEM_HCRED_PRIV, body);
     }
 
@@ -1819,21 +1862,21 @@ public final class Codec {
         // The packed HCRED framings size every field from this one
         // header, so it is bounded before anything is allocated;
         // rounds == 0 additionally makes verification vacuous (TODO #275).
-        if (n != HCRED_MAX_N)
-            throw new IllegalArgumentException("HCRED private key: n must be " + HCRED_MAX_N + ", got " + n);
+        hcredN(n, "HCRED private key");
         int off = 4;
         int[] s = deser3(body, off, n); off += n * 3;
         int[] c = deser2(body, off, n); off += n * 2;
         int[] m = deser3(body, off, n); off += n * 3;
-        BigInteger seedH = new BigInteger(1, slice(body, off, HCRED_SEED_NB)); off += HCRED_SEED_NB;
-        BigInteger syndr = fromLE(body, off, HCRED_SYNDR_NB);
-        rawEnd(PEM_HCRED_PRIV, body, off + HCRED_SYNDR_NB);
+        BigInteger seedH = new BigInteger(1, slice(body, off, hcredSeedNb(n))); off += hcredSeedNb(n);
+        BigInteger syndr = fromLE(body, off, hcredSyndrNb(n));
+        rawEnd(PEM_HCRED_PRIV, body, off + hcredSyndrNb(n));
         return new HcredPrivKey(s, c, m, seedH, syndr, n);
     }
 
     public static String encodeHcredPubKey(int[] c, int[] m, BigInteger seedH, BigInteger syndr) {
-        byte[] body = concat(be32(Herradura.N), ser2(c), ser3(m),
-                              toFixedBytes(seedH, HCRED_SEED_NB), toFixedBytesLE(syndr, HCRED_SYNDR_NB));
+        int n = c.length;
+        byte[] body = concat(be32(n), ser2(c), ser3(m),
+                              toFixedBytes(seedH, hcredSeedNb(n)), toFixedBytesLE(syndr, hcredSyndrNb(n)));
         return pemWrap(PEM_HCRED_PUB, body);
     }
 
@@ -1856,14 +1899,13 @@ public final class Codec {
         // The packed HCRED framings size every field from this one
         // header, so it is bounded before anything is allocated;
         // rounds == 0 additionally makes verification vacuous (TODO #275).
-        if (n != HCRED_MAX_N)
-            throw new IllegalArgumentException("HCRED public key: n must be " + HCRED_MAX_N + ", got " + n);
+        hcredN(n, "HCRED public key");
         int off = 4;
         int[] c = deser2(body, off, n); off += n * 2;
         int[] m = deser3(body, off, n); off += n * 3;
-        BigInteger seedH = new BigInteger(1, slice(body, off, HCRED_SEED_NB)); off += HCRED_SEED_NB;
-        BigInteger syndr = fromLE(body, off, HCRED_SYNDR_NB);
-        rawEnd(PEM_HCRED_PUB, body, off + HCRED_SYNDR_NB);
+        BigInteger seedH = new BigInteger(1, slice(body, off, hcredSeedNb(n))); off += hcredSeedNb(n);
+        BigInteger syndr = fromLE(body, off, hcredSyndrNb(n));
+        rawEnd(PEM_HCRED_PUB, body, off + hcredSyndrNb(n));
         return new HcredPubKey(c, m, seedH, syndr, n);
     }
 
@@ -1871,12 +1913,15 @@ public final class Codec {
      * (SEQUENCE(n, rounds, commits, challenges, responses)), just under
      * the HCRED CREDENTIAL label — the issuer credential is literally an
      * HPKS-Stern-F signature over the credential statement. */
-    public static String encodeHcredCredential(Stern.SternSignature sig) {
+    public static String encodeHcredCredential(Stern.SternSignature sig) { return encodeHcredCredential(sig, Herradura.N); }
+
+    /** At the issuer key's width n (TODO #384). */
+    public static String encodeHcredCredential(Stern.SternSignature sig, int n) {
         int rounds = sig.rounds();
-        byte[] commits = packSternTriples(sig.c0, sig.c1, sig.c2, rounds);
+        byte[] commits = packSternTriples(sig.c0, sig.c1, sig.c2, rounds, n / 8);
         byte[] challenges = packChallenges(sig.challenges);
-        byte[] responses = packSternPairs(sig.resp0, sig.resp1, rounds);
-        byte[] der = derSeq(derInt(BigInteger.valueOf(Herradura.N), -1), derInt(BigInteger.valueOf(rounds), -1),
+        byte[] responses = packSternPairs(sig.resp0, sig.resp1, rounds, n / 8);
+        byte[] der = derSeq(derInt(BigInteger.valueOf(n), -1), derInt(BigInteger.valueOf(rounds), -1),
                              derInt(commits), derInt(challenges), derInt(responses));
         return pemWrap(PEM_HCRED_CRED, der);
     }
@@ -1926,7 +1971,7 @@ public final class Codec {
     }
 
     public static String encodeHcredProof(Hcred.Proof proof) {
-        int n = Herradura.N, rows = Hcred.ROWS, rowBits = Hcred.ROW_BITS;
+        int n = proof.n, rows = Hcred.rowsFor(n), rowBits = Hcred.rowBitsFor(n);
         int nb = rows * rowBits, nd = n * Hcred.EPS_BITS;
         List<byte[]> parts = new ArrayList<>();
         parts.add(be32(n));
@@ -1961,13 +2006,12 @@ public final class Codec {
         // The packed HCRED framings size every field from this one
         // header, so it is bounded before anything is allocated;
         // rounds == 0 additionally makes verification vacuous (TODO #275).
-        if (n != HCRED_MAX_N)
-            throw new IllegalArgumentException("HCRED proof: n must be " + HCRED_MAX_N + ", got " + n);
-        if (w <= 0 || w > HCRED_MAX_N)
+        hcredN(n, "HCRED proof");
+        if (w <= 0 || w > Herradura.N)   // Python's bound: the widest n (codec.py _HCRED_MAX_N)
             throw new IllegalArgumentException("HCRED proof: W out of range (" + w + ")");
         if (rounds <= 0 || rounds > ZkpNl.MAX_ROUNDS)
             throw new IllegalArgumentException("HCRED proof: rounds out of range (" + rounds + ")");
-        int rows = n / 2, rowBits = 9; // matches Hcred.ROW_BITS at n=256
+        int rows = Hcred.rowsFor(n), rowBits = Hcred.rowBitsFor(n);
         int off = 12;
         List<Hcred.ProofRound> rds = new ArrayList<>(rounds);
         for (int i = 0; i < rounds; i++) {
@@ -1996,7 +2040,7 @@ public final class Codec {
             rds.add(rd);
         }
         Hcred.Proof proof = new Hcred.Proof();
-        proof.W = w; proof.rounds = rds;
+        proof.W = w; proof.rounds = rds; proof.n = n;
         rawEnd(PEM_HCRED_PROOF, body, off);
         return proof;
     }

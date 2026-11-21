@@ -403,10 +403,9 @@ for a in hpks hpks-nl; do
         --commit-out "$TMPDIR/i388_c.pem" --nonce-out "$TMPDIR/i388_n.pem" 2>&1) || rc=$?
       [ "$rc" -eq 1 ] || fail "#388 refusal" "${CLINAMES[$i]} $a/$nb: threshold-commit rc=$rc (expected 1): $out"
       [ ! -e "$TMPDIR/i388_c.pem" ] || fail "#388 refusal" "${CLINAMES[$i]} $a/$nb wrote a commitment"
-      # Java runs n = 256 only and refuses at load (its PEM width message);
-      # the others load the key and refuse it by name.
-      if [ "${CLINAMES[$i]}" = java ]; then want="n is $nb (this CLI runs n = 256)"
-      else want="threshold: the key is $nb-bit; threshold signing runs at 256 bits only"; fi
+      # Every CLI loads the key and refuses it by name (Java refused at load,
+      # with its PEM width message, until TODO #384).
+      want="threshold: the key is $nb-bit; threshold signing runs at 256 bits only"
       printf '%s' "$out" | grep -qF "$want" \
         || fail "#388 refusal" "${CLINAMES[$i]} $a/$nb refused with unexpected text: $out"
     done
