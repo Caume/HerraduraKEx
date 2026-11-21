@@ -659,6 +659,22 @@ own "~30–40 bits".  Both documented figures need re-deriving.
 New parameter set: MINOR.  Changing what an existing `--algo` defaults to would be MAJOR;
 the default stays at N = 256 unless decided otherwise.
 
+**Stage 1 done (v16.0.0): work item 1.**  `SecurityProofsCode/stern_f_parameter_selection.py`
+(a findings gate) costs (N, N/2, N/16) with Prange, Dumer, depth-2 BJMM and Grover-over-Prange,
+BJMM checked against BIKE's three published levels (within 2 bits; Dumer is 8 high).  N = 256
+is worth 2^24 by BJMM (2^38 even by Prange), so the documented 2^56-2^60 was wrong; BJMM first
+reaches 2^128 at N = 2144, so the N >= 17000 bar was ~8x too long.  Recommended 128-bit set:
+**N = 2304** (9 x 256, k = 1152, t = 144): 2^137.4 BJMM, 2^106.5 quantum.  SecurityProofs-4 §11.7,
+-5 §11.8.4, SECURITY.md, the C/Go/Python CLIs' Stern-F warning and the other copies now carry
+these figures.  The CryptographicEstimators package was not available, so it is not cross-checked.
+
+**Remaining (stage 2): work items 2 and 3** at N = 2304 -- the long-vector representation in
+all four ports, KATs, PEM rows, the `--level 128` row, and the hcred / hpks-ring decision.
+Open design questions to settle first: commitment width above 256 bits (the Stern hash yields
+256 bits, so c0/c1/c2 cannot stay N bits wide; at 256-bit commitments a 219-round signature is
+~145 KB rather than the ~380 KB estimated above), the permutation representation (C's `uint8_t`
+perm tables cap N at 256), and whether hpke-stern's demo KEM gets the row too.
+
 Status: **OPEN**
 
 ---
@@ -695,22 +711,6 @@ Also (#383 stage 4): the other three do not agree either.  Go prints `s_packed`,
 `C_packed` and `n_A`; C prints `s_packed` alone; Java prints the first five coefficients
 of `s` and `C` (`s[0..4]`, `C[0..4]`).  `test_width_matrix.sh` reports hkex-rnl's 60
 cross-CLI `--text` cells as n/a until this lands.
-
-Status: **OPEN**
-
----
-
-### #390: Stern-F's Fiat-Shamir round index above 255 rounds
-
-Found in TODO #383 stage 2.  Each round's challenge advances the state with
-`nl_fscx_v1(ch_st, idx)`.  Python and Java use the whole round number as `idx`
-(`BitArray(n, i)`); C and Go use `i & 0xFF` (herradura.h `stern_fs_challenges` /
-`stern_ring_challenges`, Go `sternFsChallenges`).  The two agree below 256 rounds, so the
-default 219 interoperates, but `sign --algo hpks-stern --rounds 300` from Python verifies
-in Python and Java and fails in C and Go (measured at 256 bits).  hpks-ring and HCRED's
-credential signature share the derivation.  Needs a decision: the whole index (Python's
-and Java's; C's and Go's signatures above 255 rounds change) or its low byte; then SPEC
-states it and a cross-CLI test signs at more than 255 rounds.
 
 Status: **OPEN**
 

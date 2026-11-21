@@ -1577,7 +1577,7 @@ func cmdGenpkey(args []string) {
 		pem, err = encodeRNLPriv(s, mBlind, n, nA)
 
 	case sternAlgos[*algo]:
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
 		seed, e, _ := SternFKeygen(n)
 		pem, err = encodeSternPriv(e, seed, n, *algo)
 
@@ -3681,7 +3681,7 @@ func cmdCredIssue(args []string) {
 		fmt.Fprintln(os.Stderr, "cred-issue: --our (hpks-stern private key) required")
 		os.Exit(1)
 	}
-	fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). Do not use for production.")
+	fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). Do not use for production.")
 
 	cPoly, mPoly, seedH, syndr, n, lerr := loadHcredPubinfo(*in)
 	if lerr != nil {
@@ -4026,7 +4026,7 @@ func cmdEnc(args []string) {
 		}
 
 	case "hpke-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
 		if *pubkey == "" {
 			fmt.Fprintln(os.Stderr, "enc: --pubkey required for hpke-stern")
 			os.Exit(1)
@@ -4314,7 +4314,7 @@ func cmdDec(args []string) {
 		}
 
 	case "hpke-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
 		if *key == "" {
 			fmt.Fprintln(os.Stderr, "dec: --key required for hpke-stern")
 			os.Exit(1)
@@ -4518,7 +4518,7 @@ func cmdSign(args []string) {
 		}
 
 	case "hpks-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
 		n    := sternWireN(ourInts[2], "sign")
 		e    := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		seed := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
@@ -4533,7 +4533,7 @@ func cmdSign(args []string) {
 		}
 
 	case "hpks-ring":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
 		if *ring == "" {
 			fmt.Fprintln(os.Stderr, "hpks-ring sign: --ring (comma-separated member public keys) required")
 			os.Exit(1)
@@ -4879,7 +4879,7 @@ func cmdVerify(args []string) {
 		os.Exit(0)
 
 	case "hpks-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
 		synInt  := new(big.Int).SetBytes(theirInts[0])
 		n       := sternWireN(theirInts[2], "verify")
 		seed    := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))

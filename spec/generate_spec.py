@@ -461,7 +461,7 @@ SECURITY = {
                               "reader rejected any count != SDF_ROUNDS, so two C builds were mutually "
                               "unreadable and cross-language HCRED interop ran only at 32 rounds. Round "
                               "count and instance hardness are independent axes -- 219 rounds over the "
-                              "deployed N=256 is still ~30-40 bits and still demo-only.",
+                              "deployed N=256 is still ~24-38 bits and still demo-only.",
                         source=["herradura.h:1383-1392", "herradura/herradura.go:1108-1110",
                                 "TODO.md #236"]),
     "hybrid-rnl-stern": dict(status="demo-only", quantum_resistant="conjectured",

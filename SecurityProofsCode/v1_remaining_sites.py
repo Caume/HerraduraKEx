@@ -494,7 +494,7 @@ def section_4():
   2^254-work preimage (§11.75).  No rating moves: every protocol they serve is
   Demo-only or Research for an independent reason -- HPKS-NL and HPKS-T fall to
   Pohlig-Hellman over GF(2^256)* (~2^36.5), Stern-F and its ring / KEM / credential
-  uses sit at N = 256 (~30-40 bits).  The change is MAJOR: every HPKS-NL / HPKS-T /
+  uses sit at N = 256 (~24-38 bits).  The change is MAJOR: every HPKS-NL / HPKS-T /
   Stern-F signature, ring signature, credential and HPKE-Stern-F key changes.""")
 
 

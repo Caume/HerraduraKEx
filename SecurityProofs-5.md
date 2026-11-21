@@ -419,6 +419,32 @@ quantum security.  The 128-bit classical floor requires approximately $N \geq 17
 0.0625$.  Until higher-$N$ parameters are adopted, HPKS-Stern-F and HPKE-Stern-F should be treated
 as proof-of-concept implementations.
 
+**Correction (TODO #382, v16.0.0): both figures in the paragraph above are wrong.**
+`SecurityProofsCode/stern_f_parameter_selection.py` costs the instance $(N, N/2, N/16)$ with
+Prange, Dumer and depth-2 BJMM (memory unconstrained), after checking BJMM against BIKE's three
+published levels, which it meets to within 2 bits; Dumer lands 8 bits high.  There is no
+quasi-cyclic structure to exploit, since the rows of $H$ are expanded from the seed
+independently, and the planted error is the instance's only solution.  Costs in log2 bit
+operations:
+
+| N | t | Prange | Dumer | BJMM | Grover over Prange |
+|---|---|---|---|---|---|
+| 256 | 16 | 38.3 | 27.4 | 24.3 | 29.9 |
+| 1024 | 64 | 94.6 | 70.8 | 63.8 | 61.1 |
+| 2048 | 128 | 164.7 | 134.7 | 122.3 | 97.6 |
+| 2144 | 134 | 171.2 | 140.7 | 128.0 | 101.0 |
+| 2304 | 144 | 182.0 | 150.8 | 137.4 | 106.5 |
+
+So $N = 256$ is worth about $2^{24}$, under even the low end of SECURITY.md's former ~30–40
+bits and far under $2^{56}$–$2^{60}$, which no estimator here approaches (even Prange is at
+$2^{38}$).  BJMM first reaches $2^{128}$ at $N = 2144$, and the recommended 128-bit set is
+$N = 2304$ ($9 \times 256$, $k = 1152$, $t = 144$), about 9 bits above that crossing.  The
+$N \geq 17000$ bar carried BIKE's length over to a different regime: BIKE's error weight grows
+like $\sqrt{N}$ ($t/N \approx 0.0054$), Stern-F's is linear ($t/N = 0.0625$), and ISD cost tracks
+the relative distance, so each bit of $N$ is worth far more here.  $N = 17000$ is worth over
+$2^{1000}$.  Depth-3 BJMM and the May-Ozerov line are not modelled; the second is galactic
+at these lengths (item 1 below).
+
 **2025–2026 ISD literature re-check (TODO #156).**  Three post-2024 ISD/syndrome-decoding
 papers were reviewed against the $N \geq 17000$ production target above, plus a
 cross-check against TODO #126's QC-MDPC parameters:
@@ -486,7 +512,8 @@ cross-check against TODO #126's QC-MDPC parameters:
    that is genuinely practical (unlike the May-Ozerov/Both-May line in item 1).
 
 **Net conclusion:** no revision to the $N \geq 17000$ / BIKE-128 parameter figures is
-made. All four work items of TODO #156 are now resolved: the two ISD advances that
+made.  (The $N \geq 17000$ figure was later found wrong on other grounds, by TODO #382; see
+the correction above.  The literature conclusion here is unaffected.) All four work items of TODO #156 are now resolved: the two ISD advances that
 prompted the review are a negative result (item 2) and a non-binding, galactic-family
 trade-off improvement in the wrong decoding regime (item 1), while the best available
 concrete QC-SD re-analysis (item 4) independently corroborates the parameters in use.

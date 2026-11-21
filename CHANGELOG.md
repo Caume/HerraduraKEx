@@ -4,8 +4,8 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#385, #388, #389), in fourteen
-parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#385, #388-#390, and #382 stage 1), in
+sixteen parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
 `--passphrase ''`, and PAKE registered a password nobody chose; an empty or missing secret
@@ -48,6 +48,55 @@ The OPRF now runs at 32, 64, 128 and 256 bits in all four CLIs: `genpkey --algo 
 --bits N`, and a new `oprf-blind --bits N` (default 256); a client state or evaluation of
 another width than its key is refused by name (TODO #385; 256-bit artifacts are
 unchanged, so no MIGRATING.md section).
+Above 255 rounds, C's and Go's Stern-F signatures (hpks-stern, hpks-ring, HCRED
+credentials) now verify in Python and Java and theirs in C and Go: C and Go fed each
+round's challenge step the round index's low byte instead of the whole index
+(TODO #390, section 48).
+Stern-F's documented security figures are re-derived: N = 256 is worth about 2^24 by BJMM, not
+2^56-2^60, and 128 bits needs N >= 2144, not N >= 17000; N = 2304 is the recommended 128-bit set
+(TODO #382 stage 1; documentation and warning text only).
+
+### TODO #382 stage 1 — Stern-F's instance, costed
+
+- **The estimate.** New findings gate `SecurityProofsCode/stern_f_parameter_selection.py`:
+  Prange, Dumer (the model `qcmdpc_parameter_selection.py` uses), depth-2 BJMM (MMT at
+  e1 = 0) and Grover-over-Prange over Stern-F's shape (N, N/2, N/16), memory unconstrained.
+  It first runs the message attack at BIKE's three published levels: BJMM lands within 2 bits
+  of each (+1.1, -0.1, -0.3) and Dumer 8 bits high, so BJMM is used uncorrected. Stern-F's
+  rows are seed-expanded independently, so no quasi-cyclic speedup applies, and the planted
+  error is the only solution (2^-45 spurious at N = 256, 2^-380 at 2304).
+- **Findings.** N = 256 costs 2^24.3 by BJMM, 2^27.4 by Dumer and 2^38.3 by Prange; the
+  documented "BJMM/SDE ~2^56-2^60" is not approached by any estimator. BJMM first reaches
+  2^128 at N = 2144; N = 2048 is short at 2^122.3. The documented N >= 17000 (BIKE-128's
+  length, whose error weight grows like sqrt(N) where Stern-F's is N/16) is worth 2^1035.
+  Recommended 128-bit set: N = 2304 (9 x 256, k = 1152, t = 144), 2^137.4 by BJMM and 2^106.5
+  quantum, about 9 bits over the crossing. The CryptographicEstimators package was not
+  available here, so the BIKE calibration is the cross-check.
+- **Documents.** SecurityProofs-4 §11.7's Stern-F rows and note, a correction in
+  SecurityProofs-5 §11.8.4 (with the table), SECURITY.md's Stern-F and HPKS-Ring rows,
+  SecurityProofs-7 and -10, TUTORIAL, BENCHMARKS, the spec notes, and the C / Go / Python
+  CLIs' Stern-F stderr warning (now "~24-38 bits ... requires N>=2144"). SecurityProofs-4
+  falls to 683 math expressions and SecurityProofs-5 rises to 693.
+- **Not yet.** Stern-F at N = 2304 in the four ports (TODO #382 work items 2 and 3) is the
+  next stage; #382 stays open.
+
+### TODO #390 — Stern-F's Fiat-Shamir round index above 255 rounds
+
+- **Decision.** The whole round index, as Python and Java (and the C test harness's
+  32- / 64- / 128-bit Stern copies) already used: `nl_fscx_v1(ch_st, BitArray(n, i))`.
+  The low byte would have repeated the step's input every 256 rounds, and it would have
+  changed Python's and Java's signatures instead. SPEC.md §11 now states the rule.
+- **C and Go.** `stern_fs_challenges` / `stern_ring_challenges` (herradura.h) write the
+  index's low four bytes big-endian (rounds are capped at 4096); Go's
+  `sternFsChallenges` / `sternRingChallenges` pass `i` whole. The C test harness's
+  256-bit copy writes two bytes. At 255 rounds or fewer every signature is unchanged,
+  so the default 219 and every KAT are as before.
+- **Tests.** `test_round_floor.sh` signs hpks-stern, hpks-ring and an HCRED credential
+  at 300 rounds with each CLI and verifies each in all four (48 cells), and recomputes
+  each signer's hpks-stern challenges from the signature by the stated rule, which must
+  match and whose low-byte variant must not: 276 PASS, 0 FAIL (was 224). Against the
+  pre-#390 C and Go CLIs it fails 26: the 24 cross cells between {Python, Java} and
+  {C, Go}, and the rule check for C and Go, which reports the low-byte rule.
 
 ### TODO #385 — OPRF below 256 bits
 

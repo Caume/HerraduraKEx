@@ -172,7 +172,7 @@ CLI integration is documented in `docs/TUTORIAL.md §ZKP Protocols`.  Cross-lang
 
 | Use case | Recommended construction | Proof size | Notes |
 |---|---|---|---|
-| PQC signature | HPKS-Stern-F (§11.8.4) | 35 KB | **Demo parameters** ($N=256$, ~30–40 bits security); 128-bit requires $N \geq 17000$ |
+| PQC signature | HPKS-Stern-F (§11.8.4) | 35 KB | **Demo parameters** ($N=256$, ~24–38 bits security); 128-bit requires $N \geq 2144$ (TODO #382) |
 | Ring-LWR key proof / anonymous cred | Ring-LWR $\Sigma$-protocol (§11.10.2) | 12 KB | Implemented v1.9.x; heuristic security |
 | NL-FSCX witness proof | ZKBoo (§11.10.3) | 920 KB | Implemented v1.9.x; CLI defaults to n=8 |
 | NL-FSCX with ZKB++ encoding | ZKB++ (§11.10.3, `zkp_nl_prove_pp`) | 464 KB extrapolated ($1.98\times$); 34 KB for the implemented single-step circuit | Implemented v1.9.81 (Python) |

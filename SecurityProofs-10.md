@@ -1547,7 +1547,7 @@ A trail bound is a bar only where someone can choose the pair of inputs. The fou
 
 ### 11.73.4 What it means
 
-Both owed sites are in the condition §11.69 called inadequate for HFSCX-256: a floor at the bar. **Neither moves a rating.** Every protocol they serve is already Demo-only or Research for an independent reason. HPKS-NL and HPKS-T fall to Pohlig–Hellman over GF(2^256)\*, at about 2^36.5. Stern-F and its ring, KEM and credential uses sit at N = 256, about 30–40 bits. The raise is owed so that no v1 hash in the suite sits at its own bar. It would be MAJOR, because every HPKS-NL, HPKS-T and Stern-F signature, ring signature and credential changes, and it is TODO #348's second pass.
+Both owed sites are in the condition §11.69 called inadequate for HFSCX-256: a floor at the bar. **Neither moves a rating.** Every protocol they serve is already Demo-only or Research for an independent reason. HPKS-NL and HPKS-T fall to Pohlig–Hellman over GF(2^256)\*, at about 2^36.5. Stern-F and its ring, KEM and credential uses sit at N = 256, about 24–38 bits (TODO #382). The raise is owed so that no v1 hash in the suite sits at its own bar. It would be MAJOR, because every HPKS-NL, HPKS-T and Stern-F signature, ring signature and credential changes, and it is TODO #348's second pass.
 
 **Not done:** the raise; the exact probability (§11.69.2); and the linear hull.
 
@@ -1678,7 +1678,7 @@ hfscx_32(x) is the one-word case.
 
 The attacker's input reaches v1 only as A, and reaching an affine B from a chaining value is a 2^254-work preimage (§11.75.3). Both sites inherit HFSCX-256's analysis: the one-block shape is β = 0 at ≥ 336 and differing chaining values are at ≥ 384, both in the trail model (§11.75.4).
 
-**No rating moves.** HPKS-NL and HPKS-T fall to Pohlig–Hellman over GF(2^256)* at about 2^36.5. Stern-F and its ring, KEM and credential uses sit at N = 256, about 30–40 bits. The change makes no hash in the suite rest on an input the attacker controls.
+**No rating moves.** HPKS-NL and HPKS-T fall to Pohlig–Hellman over GF(2^256)* at about 2^36.5. Stern-F and its ring, KEM and credential uses sit at N = 256, about 24–38 bits (TODO #382). The change makes no hash in the suite rest on an input the attacker controls.
 
 **Cost:** one HFSCX-256 call per challenge or Stern hash, at 192 rounds per 32-byte block. A Stern signature's Fiat–Shamir hash costs about three times what it did. **Wire format:** MAJOR, MIGRATING.md section 26. Keys do not change.
 

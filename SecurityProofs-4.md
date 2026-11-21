@@ -643,8 +643,8 @@ sparse-secret concern (in favor of CBD) stands **unaffected**.
 | **HKEX-RNL** $n=256$ (§11.4) | Ring-LWR with blinded $m$ | BKZ primal uSVP: **32** classical Core-SVP bits at $\beta=110$ (§11.4.3, TODO #216) | **29** quantum Core-SVP bits; hybrid gains nothing (§11.7) | **32 classical / 29 quantum** — far below the 128-bit target and below the 100-bit floor; not production-track at any size (§11.4.3) |
 | **HKEX-RNL-128** $n=512$ (§11.4.3) | Ring-LWR with blinded $m$ | BKZ primal uSVP: **87** classical Core-SVP bits at $\beta=297$ (§11.4.3, TODO #216) | **79** quantum Core-SVP bits | **87 classical / 79 quantum** — does not reach 128 either, and no $(p,\eta)$ retune brings $n=512$ there; needs a larger ring (TODO #223) |
 | **HPKS-WOTS-F** (§11.8.3, proposed) | NL-FSCX v1 OWF (new assumption) | Degree-$n$ Boolean system — $O(2^n)$, Corollary 2 | Grover $O(2^{n/2})$ | $n/2$ bits (under NL-FSCX v1 OWF) |
-| **HPKS-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM/SDE: ~$2^{56}$–$2^{60}$ classical at $N=256$, $t=16$; 128-bit needs $N \geq 17000$ | Quantum ISD: ~$2^{30}$–$2^{40}$ at $N=256$ | ~30–40 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 17000$ |
-| **HPKE-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM/SDE: ~$2^{56}$–$2^{60}$ classical at $N=256$, $t=16$; 128-bit needs $N \geq 17000$ | Quantum ISD: ~$2^{30}$–$2^{40}$ at $N=256$ | ~30–40 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 17000$ |
+| **HPKS-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM: ~2^24 classical at $N=256$, $t=16$ (Prange 2^38); 128 bits at N ≈ 2144, 2^137 at N = 2304 (TODO #382) | Grover over Prange: ~2^30 at $N=256$, 2^106 at N = 2304 | ~24–38 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 2144$ |
+| **HPKE-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM: ~2^24 classical at $N=256$, $t=16$ (Prange 2^38); 128 bits at N ≈ 2144, 2^137 at N = 2304 (TODO #382) | Grover over Prange: ~2^30 at $N=256$, 2^106 at N = 2304 | ~24–38 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 2144$ |
 
 **HSKE key-only** provides $n/2$ bits of post-quantum security *for the key*, and only
 when no plaintext is ever observed.  In any realistic deployment, plaintexts are available
@@ -706,9 +706,13 @@ The classical attack column for HKEX-GF previously reflected the FFS $L[1/3]$ re
 Pohlig–Hellman at ~$2^{36.5}$, because the group order $2^{256}-1$ has a largest prime factor of
 only 73 bits.  Binary-field DLP is deprecated by NIST SP 800-57
 Rev. 5 (2020) and ENISA (2022).  HKEX-RNL estimates come from BKZ/MATZOV 2022 (§11.4.3).
-HPKS-Stern-F / HPKE-Stern-F concrete estimates use the SDE estimator (Becker-Joux-May-Meurer)
-for $(N=256, k=128, t=16)$; see §11.8.4.  All Stern-F rows are marked **demo only** at $N=256$;
-production use requires $N \geq 17000$ for 128-bit classical security (BIKE-128 uses $N \approx 24646$).
+HPKS-Stern-F / HPKE-Stern-F concrete estimates come from
+`SecurityProofsCode/stern_f_parameter_selection.py` (TODO #382): Prange, Dumer and depth-2
+BJMM over (N, N/2, N/16), with BJMM calibrated to within 2 bits of BIKE's three published
+levels; see §11.8.4.  All Stern-F rows are marked **demo only** at $N=256$, worth about 2^24
+by BJMM.  128-bit classical security needs $N \geq 2144$, not the $N \geq 17000$ these rows
+carried until v16.0.0, which was BIKE-128's length ($N \approx 24646$) carried over to an error
+weight linear in N rather than BIKE's √N.
 
 ---
 

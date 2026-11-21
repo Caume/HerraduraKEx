@@ -483,8 +483,8 @@ def section8_verdict(needed, bias_bits, unif_bits):
       soundness claim; it is assumed here, not re-proved.  This item audits
       the *repetition and challenge-expansion* layer on top of it.
 
-    * The round count is independent of the N >= 17000 parameter problem
-      tracked separately.  219 rounds on a 30-40-bit syndrome-decoding
+    * The round count is independent of the N parameter problem (128 bits at N >= 2144, TODO #382)
+      tracked separately.  219 rounds on a 24-38-bit syndrome-decoding
       instance is still a demo-only signature: raising rounds does not
       raise the hardness of the underlying instance, and HPKS-Stern-F's
       SECURITY.md classification is unaffected by this result.

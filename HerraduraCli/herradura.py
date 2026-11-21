@@ -1749,8 +1749,8 @@ def _r3(nbits):
 _STERN_ALGOS        = {'hpks-stern', 'hpke-stern'}
 
 _STERN_DEMO_WARNING = (
-    "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-    "(demo parameters). 128-bit security requires N>=17000. "
+    "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+    "(demo parameters). 128-bit security requires N>=2144. "
     "Do not use for production."
 )
 

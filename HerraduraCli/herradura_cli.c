@@ -1691,8 +1691,8 @@ static void cmd_genpkey(int argc, char **argv)
     }
 
     if (strcmp(algo, "hpks-stern") == 0 || strcmp(algo, "hpke-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters). 128-bit security requires N>=2144. "
                         "Do not use for production.\n");
         const char *label = (strcmp(algo,"hpks-stern")==0)
                              ? PEM_HPKS_STERN_PRIV : PEM_HPKE_STERN_PRIV;
@@ -3885,8 +3885,8 @@ static void cmd_enc(int argc, char **argv)
         seq_and_write(it2, il2, 3, PEM_CIPHERTEXT, out_path);
 
     } else if (strcmp(algo, "hpke-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters). 128-bit security requires N>=2144. "
                         "Do not use for production.\n");
         /* vals[0]=syndrome (N bits), vals[1]=seed (N bits), vals[2]=n */
         if (pub_k.n_items < 2) die("enc: malformed Stern public key");
@@ -4169,8 +4169,8 @@ static void cmd_dec(int argc, char **argv)
         write_binary_file(out_path, D.b, KEYBYTES);
 
     } else if (strcmp(algo, "hpke-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters). 128-bit security requires N>=2144. "
                         "Do not use for production.\n");
         /* CT: vals[0]=ct_syn, vals[1]=e_p, vals[2]=K_int, vals[3]=E_int, vals[4]=n */
         if (ct.n_items < 5) die("dec: malformed HPKE-Stern ciphertext");
@@ -4830,8 +4830,8 @@ static void cmd_sign(int argc, char **argv)
         seq_and_write(it, il, 4, PEM_SIGNATURE, out_path);
 
     } else if (strcmp(algo, "hpks-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters). 128-bit security requires N>=2144. "
                         "Do not use for production.\n");
         if (priv_k.n_items < 2) die("sign: malformed Stern private key");
         int sn = gf_key_width(&priv_k);   /* TODO #383 stage 2: the key's N */
@@ -4858,8 +4858,8 @@ static void cmd_sign(int argc, char **argv)
         stern_sig_free(&sig);
 
     } else if (strcmp(algo, "hpks-ring") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters). 128-bit security requires N>=2144. "
                         "Do not use for production.\n");
         const char *ring_arg = get_arg(argc, argv, "--ring");
         if (!ring_arg) die("hpks-ring sign: --ring (comma-separated member public keys) required");
@@ -5197,8 +5197,8 @@ static void cmd_verify(int argc, char **argv)
         exit(0);
 
     } else if (strcmp(algo, "hpks-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters). 128-bit security requires N>=2144. "
                         "Do not use for production.\n");
         if (pub_k.n_items < 2) die("verify: malformed Stern public key");
 
@@ -5938,7 +5938,7 @@ static void cmd_cred_issue(int argc, char **argv)
     if (!in_path)  die("cred-issue: --in (HCRED public/private key) required");
     if (!our_path) die("cred-issue: --our (hpks-stern private key) required");
 
-    fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
+    fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
                     "(demo parameters). Do not use for production.\n");
 
     /* Load HCRED public info from --in */
