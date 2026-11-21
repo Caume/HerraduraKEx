@@ -5824,6 +5824,10 @@ CENSUS_EXEMPT = {
          "looks the polynomial up once instead of once per multiply; gf-mul and "
          "gf-pow remain the manifest's steps, and the lookup is BITARRAY.md 4.6's "
          "table, which ba_gf_poly already carries under the ba_ rule"),
+        (r"^_oprf_is_(one|ord)$",
+         "x == 1 and x == 2^n - 1 at x's width, the OPRF's rejection tests (TODO "
+         "#385); Python, Go and Java write them inline as integer comparisons "
+         "(1 < k < ord).  Comparisons, not protocol steps"),
         (r"^nl_chi_v3_rows_ba$",
          "nl-chi-v3 evaluated one row at a time, the branch nl_chi_v3_ba takes "
          "off 256 bits, where its bit-parallel masks do not apply (TODO #383).  "

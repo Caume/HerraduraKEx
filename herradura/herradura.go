@@ -4705,10 +4705,14 @@ func oprfOrd(n int) *big.Int {
 	return new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
 }
 
+// oprfHashToField: HFSCX-256(data) as a non-zero element of GF(2^n).  Below
+// 256 bits it is the digest's HIGH n bits (BITARRAY.md 4.4's truncation, the
+// rule the Stern-F hash and HCRED's issuer message follow; TODO #385 -- it was
+// the low n bits, which no CLI reached: every one ran the OPRF at 256 only).
 func oprfHashToField(data []byte, n int) *big.Int {
 	h := Hfscx256(data, nil)
 	v := new(big.Int).SetBytes(h)
-	v.And(v, oprfOrd(n))
+	v.Rsh(v, uint(256-n))
 	if v.Sign() == 0 {
 		v.SetInt64(1)
 	}
@@ -4837,14 +4841,16 @@ func hpakeContributoryKdf(kRaw *BitArray, nA, nB []byte) []byte {
 	return Hfscx256(payload, nil)
 }
 
-// HpakeRegister creates a server-side aPAKE record for the given password and OPRF key.
-func HpakeRegister(password []byte, oprfKey *big.Int) (*HpakeRecord, error) {
+// HpakeRegister creates a server-side aPAKE record for the given password and
+// n-bit OPRF key (TODO #385: n is the key's width; the OPRF output enters the
+// witness derivation as n/8 bytes).
+func HpakeRegister(password []byte, oprfKey *big.Int, n int) (*HpakeRecord, error) {
 	rec := &HpakeRecord{}
 	if _, err := rand.Read(rec.Salt[:]); err != nil {
 		return nil, err
 	}
-	F := OprfDirect(password, oprfKey, 256)
-	fb := F.FillBytes(make([]byte, 32))
+	F := OprfDirect(password, oprfKey, n)
+	fb := F.FillBytes(make([]byte, n/8))
 	zkpA := hpakeDeriveZkpWitness(fb)
 
 	bBuf := make([]byte, 4)
@@ -4863,9 +4869,9 @@ func HpakeRegister(password []byte, oprfKey *big.Int) (*HpakeRecord, error) {
 
 // HpakeLoginDemo runs the full aPAKE login on both sides (demonstration).
 // Returns the 32-byte session key on success, or nil if the password does not match.
-func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int) ([]byte, error) {
-	F := OprfDirect(password, oprfKey, 256)
-	fb := F.FillBytes(make([]byte, 32))
+func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int, oprfN int) ([]byte, error) {
+	F := OprfDirect(password, oprfKey, oprfN)
+	fb := F.FillBytes(make([]byte, oprfN/8))
 	zkpA := hpakeDeriveZkpWitness(fb)
 
 	mask := zkpNlMask(HpakeZkpN)

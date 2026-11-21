@@ -1225,6 +1225,12 @@ _PARAM_SETS = (
      'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
     ('hpke-nl3', 256, 'demo', True, 'demo',
      'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('oprf', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('oprf', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('oprf', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
     ('oprf', 256, 'demo', True, 'demo',
      'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
     ('hkex-rnl', 32, None, False, 'demo',
@@ -1413,6 +1419,10 @@ for _pr, _pu in _GF_LABELS:
 for _a in ('hpks-stern', 'hpke-stern'):
     _WIRE_FIELDS[_PRIV_ALGOS[_a]] = [(2, 'stern')]
     _WIRE_FIELDS[_PUB_ALGOS[_a]] = [(2, 'stern')]
+# TODO #385: the OPRF runs at the GF family's four widths.
+_WIRE_FIELDS[_PRIV_ALGOS['oprf']] = [(1, 'gf'), (0, ('fitn', 1))]
+_WIRE_FIELDS['HERRADURA OPRF CLIENT STATE'] = [(2, 'gf'), (0, ('fitn', 2)), (1, ('fitn', 2))]
+_WIRE_FIELDS['HERRADURA OPRF EVALUATION'] = [(1, 'gf'), (0, ('fitn', 1))]
 _WIRE_FIELDS[_PRIV_ALGOS['hkex-rnl']] = [(2, 'rnl'), (3, 32)]
 _WIRE_FIELDS[_PUB_ALGOS['hkex-rnl']] = [(2, 'rnl'), (3, 32)]
 _WIRE_FIELDS[_PRIV_ALGOS['hpke-stern-kem']] = [(4, 'kem_r'), (5, 'kem_d'),
@@ -2899,7 +2909,7 @@ def cmd_genpkey(args):
         pem_out = encode_zkp_nl_privkey(A, B, y, n)
 
     elif algo == 'oprf':
-        k   = oprf_keygen()
+        k   = oprf_keygen(bits)            # TODO #385: at the --bits width
         der = der_seq(der_int(k, bits // 8), der_int(bits))
         pem_out = pem_wrap(_PRIV_ALGOS['oprf'], der)
 
@@ -4353,19 +4363,24 @@ def _load_oprf_key(path):
     if label != _PRIV_ALGOS['oprf']:
         sys.exit(f"Expected OPRF PRIVATE KEY PEM, got {label!r}")
     k_int, nbits = ints
-    # TODO #367: the OPRF runs at KEYBITS only (Go and C ignore the field);
-    # an unbounded width reached der_int's to_bytes as an OverflowError.
-    nbits = _bounded(nbits, KEYBITS, KEYBITS, 'n', 'oprf')
-    _fit(k_int, nbits // 8, 'OPRF key', 'oprf')
+    # TODO #385: n is 32, 64, 128 or 256, checked with the key's other fields
+    # by _der_items (_WIRE_FIELDS); it was KEYBITS only (TODO #367).
     return k_int, nbits
+
+
+# TODO #385: the OPRF's three artifacts carry n, and a pair from different
+# widths is refused by name, as the other GF-family operations refuse one.
+_OPRF_WIDTHS = (32, 64, 128, 256)
 
 
 def cmd_oprf_blind(args):
     """Client step 1: hash input and blind with random scalar r.
     Writes OPRF CLIENT STATE PEM (r + alpha) to --out; alpha is sent to server."""
     in_bytes = _read_file(getattr(args, 'in'))
-    r, alpha = oprf_blind(in_bytes)
-    nbits    = KEYBITS
+    nbits    = args.bits
+    if nbits not in _OPRF_WIDTHS:
+        sys.exit(f"oprf-blind: --bits must be 32, 64, 128 or 256, got {nbits}")
+    r, alpha = oprf_blind(in_bytes, nbits)
     der      = der_seq(der_int(r,     nbits // 8),
                        der_int(alpha, nbits // 8),
                        der_int(nbits))
@@ -4379,8 +4394,10 @@ def cmd_oprf_eval(args):
     label, ints  = _read_pem_ints(getattr(args, 'in'))
     if label != _LABEL_OPRF_STATE:
         sys.exit(f"Expected OPRF CLIENT STATE PEM, got {label!r}")
-    _r, alpha, _nb = ints
-    beta  = oprf_eval(alpha, k_int)
+    _r, alpha, state_n = ints
+    if state_n != nbits:
+        sys.exit(f"oprf-eval: client state n is {state_n}, key n is {nbits}")
+    beta  = oprf_eval(alpha, k_int, nbits)
     der   = der_seq(der_int(beta, nbits // 8), der_int(nbits))
     _write_file(args.out, pem_wrap(_LABEL_OPRF_EVAL, der))
 
@@ -4395,9 +4412,11 @@ def cmd_oprf_unblind(args):
     label_e, ints_e = _read_pem_ints(getattr(args, 'eval'))
     if label_e != _LABEL_OPRF_EVAL:
         sys.exit(f"Expected OPRF EVALUATION PEM, got {label_e!r}")
-    beta, _nb = ints_e
+    beta, eval_n = ints_e
+    if eval_n != nbits:
+        sys.exit(f"oprf-unblind: evaluation n is {eval_n}, client state n is {nbits}")
 
-    F      = oprf_unblind(beta, r)
+    F      = oprf_unblind(beta, r, nbits)
     F_hex  = F.to_bytes(nbits // 8, 'big').hex()
     _write_file(args.out, F_hex + '\n')
 
@@ -4408,7 +4427,7 @@ def cmd_oprf_unblind(args):
 
 def cmd_pake_register(args):
     """Register a new user for aPAKE.  Outputs HERRADURA PAKE RECORD PEM."""
-    oprf_key, _nbits = _load_oprf_key(args.key)
+    oprf_key, nbits = _load_oprf_key(args.key)
     username = args.username or "user"
     # TODO #376: a record is never written under a password nobody chose.  An
     # omitted --password prompts only when there is a terminal to prompt on;
@@ -4426,7 +4445,7 @@ def cmd_pake_register(args):
     if password == '':
         sys.exit("pake-register: --password must not be empty")
     password = password.encode()
-    record  = hpake_register(username, password, oprf_key)
+    record  = hpake_register(username, password, oprf_key, nbits)
     salt_b  = record['salt']
     B_int   = record['B']
     y_int   = record['y']
@@ -4456,21 +4475,21 @@ def _load_pake_record(path):
 
 def cmd_pake_demo(args):
     """aPAKE demo: run full registration + login on both sides and show session key."""
-    oprf_key, _nbits = _load_oprf_key(args.key)
+    oprf_key, nbits = _load_oprf_key(args.key)
     username  = args.username or "demo-user"
     # TODO #376: omitted, the demo uses "demo-password"; given, it must be one.
     if args.password == '':
         sys.exit("pake-demo: --password must not be empty")
     password  = args.password.encode()
-    record    = hpake_register(username, password, oprf_key)
-    sk        = hpake_login_demo(record, password, oprf_key)
+    record    = hpake_register(username, password, oprf_key, nbits)
+    sk        = hpake_login_demo(record, password, oprf_key, nbits)
     if sk is not None:
         print(f"- aPAKE login succeeded; session key: {sk.hex()}")
     else:
         print("+ aPAKE login failed!")
         sys.exit(1)
     # Also test wrong password
-    wrong_sk  = hpake_login_demo(record, b"wrong-password", oprf_key)
+    wrong_sk  = hpake_login_demo(record, b"wrong-password", oprf_key, nbits)
     if wrong_sk is None:
         print("- aPAKE correctly rejects wrong password")
     else:
@@ -4872,6 +4891,10 @@ def build_parser():
                         help='OPRF client step 1: hash input and blind (TODO #80)')
     ob.add_argument('--in',  required=True, dest='in',
                     help='Input bytes to blind (file or - for stdin)')
+    ob.add_argument('--bits', type=_dec_type('oprf-blind', '--bits', 1, 1 << 16),
+                    default=KEYBITS,
+                    help='GF(2^n) width: 32, 64, 128 or 256 (default 256); must be '
+                         'the server key\'s n (TODO #385)')
     ob.add_argument('--out', default='-',
                     help='OPRF CLIENT STATE PEM output (keep secret; contains r + alpha)')
 

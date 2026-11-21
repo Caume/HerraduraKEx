@@ -5266,7 +5266,8 @@ static inline void ratchet_erase(BitArray *state)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * 80 — Oblivious PRF (OPRF) over GF(2^KEYBITS)*  (TODO #80)
+ * 80 — Oblivious PRF (OPRF) over GF(2^n)*  (TODO #80; n = 32, 64, 128 or 256
+ * since TODO #385 -- every function runs at its operands' width)
  * Protocol: 2HashDH — F(k, x) = gf_pow(H(x), k)
  *   Client blinds: alpha = H(x)^r   (r random, gcd(r, ORD) == 1)
  *   Server evals:  beta  = alpha^k
@@ -5301,20 +5302,19 @@ static int _ba33_iszero(const uint8_t *a)
     return 1;
 }
 
-/* ba_modinv_ord: compute dst = a^{-1} mod (2^KEYBITS-1) via binary extended GCD.
+/* ba_modinv_ord: compute dst = a^{-1} mod (2^n-1) via binary extended GCD,
+   at a's width n (TODO #385; it was 2^KEYBITS-1 only).
    Requires gcd(a, ORD) == 1; result is undefined if gcd != 1.
-   ORD = 2^256-1 is all-0xFF bytes.
+   ORD = 2^n-1 is n/8 all-0xFF bytes.
    Uses 33-byte (257-bit) big-endian arrays for the Bezout coefficients to
-   avoid overflow when adding ORD to make them positive. */
+   avoid overflow when adding ORD to make them positive; an n-bit value sits
+   in the low n/8 bytes, so the same arithmetic serves every width. */
 static void ba_modinv_ord(BitArray *dst, const BitArray *a)
 {
-    static const uint8_t ORD33[33] = {
-        0x00,
-        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
-        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
-        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
-        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF
-    };
+    uint8_t ORD33[33];
+    const int nb = ba_nbytes(a), off = 33 - nb;
+    memset(ORD33, 0, sizeof ORD33);
+    memset(ORD33 + off, 0xFF, (size_t)nb);
     /* 257-bit big-endian unsigned arithmetic helpers (inline, avoiding recursion) */
 #define ADD33(dst33, a33, b33) do { \
         uint16_t _c = 0; int _i; \
@@ -5348,8 +5348,8 @@ static void ba_modinv_ord(BitArray *dst, const BitArray *a)
     int i;
 
     /* u = a (zero-extend to 33 bytes) */
-    u[0] = 0;
-    memcpy(u + 1, a->b, KEYBYTES);
+    memset(u, 0, 33);
+    memcpy(u + off, a->b, (size_t)nb);
     /* v = ORD */
     memcpy(v, ORD33, 33);
     /* x1 = 1, x2 = 0 */
@@ -5357,7 +5357,7 @@ static void ba_modinv_ord(BitArray *dst, const BitArray *a)
     memset(x2, 0, 33);
 
     /* Binary extended GCD: invariant a*x1 ≡ u (mod ORD), a*x2 ≡ v (mod ORD) */
-    for (i = 0; i < 2 * KEYBITS + 64; i++) {
+    for (i = 0; i < 2 * a->nbits + 64; i++) {
         if (IS_ZERO33(u)) break;
 
         if (!IS_ODD33(u)) {
@@ -5385,16 +5385,17 @@ static void ba_modinv_ord(BitArray *dst, const BitArray *a)
     }
     /* At exit: if u != 0, gcd was found via u; coefficient is x1.
        Otherwise v == gcd (should be 1) and x2 is the inverse. */
+    dst->nbits = a->nbits;
     if (!IS_ZERO33(u))
-        memcpy(dst->b, u + 1, KEYBYTES);  /* fallback: shouldn't happen if gcd==1 */
+        memcpy(dst->b, u + off, (size_t)nb);  /* fallback: shouldn't happen if gcd==1 */
     else
-        memcpy(dst->b, x2 + 1, KEYBYTES);
+        memcpy(dst->b, x2 + off, (size_t)nb);
 
     /* Reduce mod ORD: if result is all-0xFF (== ORD), set to 0
        (ORD ≡ 0 mod ORD; this can't be a valid inverse of any element != 0) */
     { int all_ff = 1;
-      for (i = 0; i < KEYBYTES; i++) all_ff &= (dst->b[i] == 0xFF);
-      if (all_ff) memset(dst->b, 0, KEYBYTES);
+      for (i = 0; i < nb; i++) all_ff &= (dst->b[i] == 0xFF);
+      if (all_ff) memset(dst->b, 0, (size_t)nb);
     }
 
 #undef ADD33
@@ -5405,19 +5406,41 @@ static void ba_modinv_ord(BitArray *dst, const BitArray *a)
 #undef IS_ODD33
 }
 
-/* oprf_hash_to_field: HFSCX-256(data) → non-zero element of GF(2^KEYBITS)*. */
-static void oprf_hash_to_field(BitArray *dst, const uint8_t *data, size_t dlen)
+/* _oprf_is_one / _oprf_is_ord: x == 1 / x == 2^n - 1 at x's width n. */
+static int _oprf_is_one(const BitArray *x)
 {
-    hfscx_256(data, dlen, NULL, dst->b);
-    if (ba_is_zero(dst))
-        dst->b[KEYBYTES - 1] = 1;   /* map 0 → 1 (negligible probability) */
+    int i, nb = ba_nbytes(x), acc = 0;
+    for (i = 0; i < nb - 1; i++) acc |= x->b[i];
+    return acc == 0 && x->b[nb - 1] == 1;
+}
+static int _oprf_is_ord(const BitArray *x)
+{
+    int i, nb = ba_nbytes(x), all_ff = 1;
+    for (i = 0; i < nb; i++) all_ff &= (x->b[i] == 0xFF);
+    return all_ff;
 }
 
-/* oprf_keygen: fill key with a random element of [2, 2^KEYBITS-2].
-   urnd must be an open handle to /dev/urandom (or equivalent). */
+/* oprf_hash_to_field: HFSCX-256(data) → non-zero element of GF(2^n)*, n =
+   dst->nbits.  Below 256 bits it is the digest's HIGH n bits (BITARRAY.md
+   4.4's truncation, as the Stern-F hash and HCRED's issuer message; TODO #385). */
+static void oprf_hash_to_field(BitArray *dst, const uint8_t *data, size_t dlen)
+{
+    uint8_t h[KEYBYTES];
+    int nb = ba_nbytes(dst);
+    hfscx_256(data, dlen, NULL, h);
+    memcpy(dst->b, h, (size_t)nb);
+    if (ba_is_zero(dst))
+        dst->b[nb - 1] = 1;   /* map 0 → 1 (negligible probability) */
+}
+
+/* oprf_keygen: fill key with a random element of [2, 2^n-2], n = key->nbits.
+   urnd must be an open handle to /dev/urandom (or equivalent).  TODO #385:
+   2^n-1 is refused too, as Python, Go and Java refuse it (k = ORD is k = 0
+   in the exponent: F would be 1 for every input).  Unreachable at 256 bits by
+   chance (p = 2^-256), reachable at 32 (2^-32). */
 static void oprf_keygen(BitArray *key, FILE *urnd)
 {
-    do { ba_rand(key, urnd); } while (ba_is_zero(key) || ba_cmp256(key, &ONE_BA) == 0);
+    do { ba_rand(key, urnd); } while (ba_is_zero(key) || _oprf_is_one(key) || _oprf_is_ord(key));
 }
 
 /* oprf_blind: client step — hash x and blind with random scalar r.
@@ -5429,6 +5452,7 @@ static void oprf_blind(const uint8_t *x, size_t xlen,
                        BitArray *r_out, BitArray *alpha_out, FILE *urnd)
 {
     BitArray hx = BA_INIT, r_inv = BA_INIT, check = BA_INIT;
+    hx.nbits = r_out->nbits;   /* TODO #385: the caller sets the width */
     oprf_hash_to_field(&hx, x, xlen);
     /* TODO #296: this was a do/while whose zero-or-one rejection used `continue`
      * -- which in a do/while jumps to the CONDITION, not to the top of the body.
@@ -5443,11 +5467,11 @@ static void oprf_blind(const uint8_t *x, size_t xlen,
      * and is the shape Go, Python and Java already had. */
     for (;;) {
         ba_rand(r_out, urnd);
-        if (ba_is_zero(r_out) || ba_cmp256(r_out, &ONE_BA) == 0) continue;
+        if (ba_is_zero(r_out) || _oprf_is_one(r_out)) continue;
         /* verify gcd(r, ORD) == 1 by checking r * r^{-1} == 1 mod ORD */
         ba_modinv_ord(&r_inv, r_out);
         ba_mul_mod_ord(&check, r_out, &r_inv);
-        if (ba_cmp256(&check, &ONE_BA) == 0) break;
+        if (_oprf_is_one(&check)) break;
     }
     gf_pow_ba(alpha_out, &hx, r_out);
 }
@@ -5470,6 +5494,7 @@ static void oprf_unblind(BitArray *F, const BitArray *beta, const BitArray *r)
 static void oprf_direct(BitArray *F, const uint8_t *x, size_t xlen, const BitArray *k)
 {
     BitArray hx = BA_INIT;
+    hx.nbits = k->nbits;       /* TODO #385: at the key's width */
     oprf_hash_to_field(&hx, x, xlen);
     gf_pow_ba(F, &hx, k);
 }
@@ -5504,13 +5529,14 @@ typedef struct {
     uint32_t y;
 } HpakeRecord;
 
-/* Derive 32-bit ZKBoo witness: lower 4 bytes of hfscx_256(oprf_out || "ZKP-A"). */
-static uint32_t _hpake_zkp_witness(const uint8_t oprf_out[KEYBYTES])
+/* Derive 32-bit ZKBoo witness: lower 4 bytes of hfscx_256(oprf_out || "ZKP-A").
+   oprf_out is the OPRF output at the key's width, len = n/8 bytes (TODO #385). */
+static uint32_t _hpake_zkp_witness(const uint8_t *oprf_out, size_t len)
 {
     uint8_t buf[KEYBYTES + 5], h[KEYBYTES];
-    memcpy(buf, oprf_out, KEYBYTES);
-    memcpy(buf + KEYBYTES, "ZKP-A", 5);
-    hfscx_256(buf, sizeof buf, NULL, h);
+    memcpy(buf, oprf_out, len);
+    memcpy(buf + len, "ZKP-A", 5);
+    hfscx_256(buf, len + 5, NULL, h);
     return ((uint32_t)h[28] << 24) | ((uint32_t)h[29] << 16)
          | ((uint32_t)h[30] <<  8) |  (uint32_t)h[31];
 }
@@ -5533,7 +5559,7 @@ static void hpake_register(HpakeRecord *rec,
     BitArray F = BA_INIT;
     if (fread(rec->salt, 1, 32, urnd) != 32) { fputs("urnd fail\n", stderr); exit(1); }
     oprf_direct(&F, password, pwlen, oprf_key);
-    uint32_t zkp_A = _hpake_zkp_witness(F.b);
+    uint32_t zkp_A = _hpake_zkp_witness(F.b, (size_t)ba_nbytes(&F));
     if (fread(b_bytes, 1, 4, urnd) != 4)     { fputs("urnd fail\n", stderr); exit(1); }
     rec->B = ((uint32_t)b_bytes[0] << 24) | ((uint32_t)b_bytes[1] << 16)
            | ((uint32_t)b_bytes[2] <<  8) |  (uint32_t)b_bytes[3];
@@ -5549,7 +5575,7 @@ static int hpake_login_demo(uint8_t session_key[KEYBYTES],
 {
     BitArray F = BA_INIT;
     oprf_direct(&F, password, pwlen, oprf_key);
-    uint32_t zkp_A = _hpake_zkp_witness(F.b);
+    uint32_t zkp_A = _hpake_zkp_witness(F.b, (size_t)ba_nbytes(&F));
 
     /* Fast reject: wrong password won't satisfy the ZKBoo statement */
     if ((uint32_t)zkp_nl_f1((uint64_t)zkp_A, (uint64_t)rec->B, HPAKE_ZKP_N) != rec->y)

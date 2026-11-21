@@ -5244,48 +5244,53 @@ def hske_nl_v3_duplex_decrypt(key: 'BitArray', nonce: 'BitArray', ct: bytes,
 #           client calls oprf_unblind(beta, r) → F = H(x)^k = oprf_direct(x, k).
 # ---------------------------------------------------------------------------
 
-def oprf_keygen() -> int:
-    """Random OPRF server key k in [2, 2^KEYBITS − 2]."""
+def oprf_keygen(n: int = KEYBITS) -> int:
+    """Random OPRF server key k in [2, 2^n − 2]."""
+    ordn = ((1 << n) - 1)
     while True:
-        k = int.from_bytes(os.urandom(KEYBITS // 8), 'big') & ORD
-        if 1 < k < ORD:
+        k = int.from_bytes(os.urandom(n // 8), 'big') & ordn
+        if 1 < k < ordn:
             return k
 
 
-def _oprf_hash_to_field(data: bytes) -> int:
-    """HFSCX-256(data) → non-zero element of GF(2^KEYBITS)."""
-    val = int.from_bytes(hfscx_256(data), 'big') & ORD
+def _oprf_hash_to_field(data: bytes, n: int = KEYBITS) -> int:
+    """HFSCX-256(data) → non-zero element of GF(2^n).  Below 256 bits the
+    element is the digest's HIGH n bits (BITARRAY.md 4.4's truncation, the
+    rule the Stern-F hash and HCRED's issuer message follow; TODO #385)."""
+    val = int.from_bytes(hfscx_256(data), 'big') >> (256 - n)
     return val if val != 0 else 1
 
 
-def oprf_blind(x: bytes) -> tuple:
+def oprf_blind(x: bytes, n: int = KEYBITS) -> tuple:
     """Client: hash x and blind with random scalar r.
-    Returns (r, alpha) where alpha = H(x)^r in GF(2^KEYBITS)*.
+    Returns (r, alpha) where alpha = H(x)^r in GF(2^n)*.
     r is secret (kept by client); alpha is sent to the server."""
-    poly = GF_POLY[KEYBITS]
+    ordn = ((1 << n) - 1)
     while True:
-        r = int.from_bytes(os.urandom(KEYBITS // 8), 'big') & ORD
-        if r > 1 and math.gcd(r, ORD) == 1:
+        r = int.from_bytes(os.urandom(n // 8), 'big') & ordn
+        if r > 1 and math.gcd(r, ordn) == 1:
             break
-    alpha = gf_pow(_oprf_hash_to_field(x), r, poly, KEYBITS)
+    alpha = gf_pow(_oprf_hash_to_field(x, n), r, GF_POLY[n], n)
     return r, alpha
 
 
-def oprf_eval(alpha: int, k: int) -> int:
-    """Server: evaluate alpha^k in GF(2^KEYBITS)*."""
-    return gf_pow(alpha & ORD, k & ORD, GF_POLY[KEYBITS], KEYBITS)
+def oprf_eval(alpha: int, k: int, n: int = KEYBITS) -> int:
+    """Server: evaluate alpha^k in GF(2^n)*."""
+    ordn = ((1 << n) - 1)
+    return gf_pow(alpha & ordn, k & ordn, GF_POLY[n], n)
 
 
-def oprf_unblind(beta: int, r: int) -> int:
+def oprf_unblind(beta: int, r: int, n: int = KEYBITS) -> int:
     """Client: recover F(k, x) = H(x)^k from beta = H(x)^{kr}.
-    Computes beta^{r^{-1} mod ORD}."""
-    r_inv = pow(r, -1, ORD)
-    return gf_pow(beta & ORD, r_inv, GF_POLY[KEYBITS], KEYBITS)
+    Computes beta^{r^{-1} mod (2^n - 1)}."""
+    ordn = ((1 << n) - 1)
+    r_inv = pow(r, -1, ordn)
+    return gf_pow(beta & ordn, r_inv, GF_POLY[n], n)
 
 
-def oprf_direct(x: bytes, k: int) -> int:
+def oprf_direct(x: bytes, k: int, n: int = KEYBITS) -> int:
     """Direct PRF evaluation F(k, x) = H(x)^k (server-side; not oblivious)."""
-    return gf_pow(_oprf_hash_to_field(x), k & ORD, GF_POLY[KEYBITS], KEYBITS)
+    return gf_pow(_oprf_hash_to_field(x, n), k & ((1 << n) - 1), GF_POLY[n], n)
 
 
 # ---------------------------------------------------------------------------
@@ -5327,7 +5332,8 @@ def _hpake_contributory_kdf(k_raw_bytes: bytes, n_a: bytes, n_b: bytes) -> bytes
     return hfscx_256(k_raw_bytes + n_a + n_b)
 
 
-def hpake_register(username: str, password: bytes, oprf_key: int) -> dict:
+def hpake_register(username: str, password: bytes, oprf_key: int,
+                   n: int = KEYBITS) -> dict:
     """
     aPAKE registration.  Returns a server record containing (username, salt, B, y).
     The OPRF output is used as the password hash — server cannot offline-attack
@@ -5335,10 +5341,12 @@ def hpake_register(username: str, password: bytes, oprf_key: int) -> dict:
     username: client identifier (stored in record for lookup).
     password: raw password bytes.
     oprf_key: server OPRF private key (integer from oprf_keygen()).
+    n:        the OPRF key's width (TODO #385); the OPRF output enters the
+              witness derivation as n/8 bytes.
     """
     salt           = os.urandom(32)
-    pw_oprf_out    = oprf_direct(password, oprf_key)
-    pw_oprf_bytes  = pw_oprf_out.to_bytes(KEYBITS // 8, 'big')
+    pw_oprf_out    = oprf_direct(password, oprf_key, n)
+    pw_oprf_bytes  = pw_oprf_out.to_bytes(n // 8, 'big')
     zkp_A          = _hpake_derive_zkp_witness(pw_oprf_bytes)
     mask           = (1 << _HPAKE_ZKP_N) - 1
     B              = int.from_bytes(os.urandom(_HPAKE_ZKP_N // 8), 'big') & mask
@@ -5347,7 +5355,8 @@ def hpake_register(username: str, password: bytes, oprf_key: int) -> dict:
     return {'username': username, 'salt': salt, 'B': B, 'y': y}
 
 
-def hpake_login_demo(record: dict, password: bytes, oprf_key: int) -> 'bytes | None':
+def hpake_login_demo(record: dict, password: bytes, oprf_key: int,
+                     n: int = KEYBITS) -> 'bytes | None':
     """
     aPAKE login (both-sides demo — client and server in one call).
     Performs the full 3-message HKEX-RNL + ZKBoo exchange and returns the
@@ -5359,8 +5368,8 @@ def hpake_login_demo(record: dict, password: bytes, oprf_key: int) -> 'bytes | N
     salt, B, y = record['salt'], record['B'], record['y']
 
     # Client: OPRF evaluation to derive pw_oprf_out
-    pw_oprf_out   = oprf_direct(password, oprf_key)
-    pw_oprf_bytes = pw_oprf_out.to_bytes(KEYBITS // 8, 'big')
+    pw_oprf_out   = oprf_direct(password, oprf_key, n)
+    pw_oprf_bytes = pw_oprf_out.to_bytes(n // 8, 'big')
     zkp_A         = _hpake_derive_zkp_witness(pw_oprf_bytes)
 
     # Fast local verifier check (aborts before ZKBoo if wrong password)

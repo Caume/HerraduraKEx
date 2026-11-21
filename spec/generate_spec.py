@@ -2007,14 +2007,12 @@ def _param_rows():
     all4 = PARAM_PORTS
     # TODO #383 stage 1 (C) and TODO #384 (Java): every CLI runs the GF family
     # at every width.
-    for a in _GF_ALGOS:
+    # TODO #385: the OPRF (2HashDH over GF(2^n)*) runs at the same four widths.
+    for a in _GF_ALGOS + ("oprf",):
         for w in (32, 64, 128, 256):
             rows.append((a, w, "demo" if w == 256 else None, w == 256,
                          "at most %s (Pohlig-Hellman; index calculus is cheaper)" % _GF_PH[w],
                          all4, None))
-    # OPRF runs at 256 only in every CLI today; narrower rows are TODO #385.
-    rows.append(("oprf", 256, "demo", True,
-                 "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", all4, None))
     # TODO #383 stage 4: C runs hkex-rnl (and rnl-sigma, the hybrid) at every
     # ring; Java already did.
     for w in (32, 64, 128, 256):

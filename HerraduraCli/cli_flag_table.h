@@ -25,8 +25,8 @@ static const char *const hkx_flags_genpkey[] = {"--algo", "--bits", "--kdf-itera
 static const char *const hkx_valued_genpkey[] = {"--algo", "--bits", "--kdf-iterations", "--level", "--out", "--passphrase", "--xmss-height"};
 static const char *const hkx_flags_kex[] = {"--algo", "--kdf", "--our", "--our-kem", "--out", "--their", "--their-kem"};
 static const char *const hkx_valued_kex[] = {"--algo", "--kdf", "--our", "--our-kem", "--out", "--their", "--their-kem"};
-static const char *const hkx_flags_oprf_blind[] = {"--in", "--out"};
-static const char *const hkx_valued_oprf_blind[] = {"--in", "--out"};
+static const char *const hkx_flags_oprf_blind[] = {"--bits", "--in", "--out"};
+static const char *const hkx_valued_oprf_blind[] = {"--bits", "--in", "--out"};
 static const char *const hkx_flags_oprf_eval[] = {"--in", "--key", "--out"};
 static const char *const hkx_valued_oprf_eval[] = {"--in", "--key", "--out"};
 static const char *const hkx_flags_oprf_unblind[] = {"--eval", "--out", "--state"};
@@ -69,7 +69,7 @@ static const HkxFlagSet HKX_FLAG_SETS[] = {
     {"fpe", hkx_flags_fpe, 7, hkx_valued_fpe, 4},
     {"genpkey", hkx_flags_genpkey, 7, hkx_valued_genpkey, 7},
     {"kex", hkx_flags_kex, 7, hkx_valued_kex, 7},
-    {"oprf-blind", hkx_flags_oprf_blind, 2, hkx_valued_oprf_blind, 2},
+    {"oprf-blind", hkx_flags_oprf_blind, 3, hkx_valued_oprf_blind, 3},
     {"oprf-eval", hkx_flags_oprf_eval, 3, hkx_valued_oprf_eval, 3},
     {"oprf-unblind", hkx_flags_oprf_unblind, 3, hkx_valued_oprf_unblind, 3},
     {"pake-demo", hkx_flags_pake_demo, 2, hkx_valued_pake_demo, 2},
@@ -117,7 +117,7 @@ static const char HKX_HELP_SYNOPSIS[] =
     "                               hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf\n"
     "  kex                  --algo --kdf --our --our-kem --out --their --their-kem\n"
     "                       --algo: hkex-gf hkex-rnl hybrid-rnl-stern\n"
-    "  oprf-blind           --in --out\n"
+    "  oprf-blind           --bits --in --out\n"
     "  oprf-eval            --in --key --out\n"
     "  oprf-unblind         --eval --out --state\n"
     "  pake-demo            --key --password\n"

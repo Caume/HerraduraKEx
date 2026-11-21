@@ -89,11 +89,11 @@ public final class Hpake {
      * where y = nl_fscx_v1(zkp_A, B) and zkp_A is derived from the OPRF
      * output of the password — the server cannot offline-attack passwords
      * without oprfKey. */
-    public static Record register(String username, byte[] password, BigInteger oprfKey, SecureRandom rng) {
+    public static Record register(String username, byte[] password, BigInteger oprfKey, int oprfN, SecureRandom rng) {
         byte[] salt = new byte[32];
         rng.nextBytes(salt);
-        BigInteger pwOprfOut = Oprf.direct(password, oprfKey);
-        byte[] pwOprfBytes = toFixedBytes(pwOprfOut, Herradura.N / 8);
+        BigInteger pwOprfOut = Oprf.direct(password, oprfKey, oprfN);   // TODO #385: the key's n
+        byte[] pwOprfBytes = toFixedBytes(pwOprfOut, oprfN / 8);
         BigInteger zkpA = deriveZkpWitness(pwOprfBytes);
         BigInteger mask = BigInteger.ONE.shiftLeft(ZKP_N).subtract(BigInteger.ONE);
         BigInteger b = new BigInteger(ZKP_N, rng).and(mask);
@@ -104,9 +104,9 @@ public final class Hpake {
     /** Both-sides demo login: performs the full 3-message HKEX-RNL + ZKBoo
      * exchange and returns the shared session key on success, or null if
      * the password is wrong. */
-    public static byte[] loginDemo(Record record, byte[] password, BigInteger oprfKey, SecureRandom rng) {
-        BigInteger pwOprfOut = Oprf.direct(password, oprfKey);
-        byte[] pwOprfBytes = toFixedBytes(pwOprfOut, Herradura.N / 8);
+    public static byte[] loginDemo(Record record, byte[] password, BigInteger oprfKey, int oprfN, SecureRandom rng) {
+        BigInteger pwOprfOut = Oprf.direct(password, oprfKey, oprfN);   // TODO #385: the key's n
+        byte[] pwOprfBytes = toFixedBytes(pwOprfOut, oprfN / 8);
         BigInteger zkpA = deriveZkpWitness(pwOprfBytes);
 
         BigInteger yCheck = ZkpNl.nlFscxV1General(zkpA, record.b, ZKP_N);

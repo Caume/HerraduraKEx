@@ -199,13 +199,13 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     CLIs (TODO #379).  --level names the strength a set is sized for: demo, 128 (192 and
     256 reserved); --bits names a row by width (key width, HKEX-RNL ring dimension or
     Stern-F N) and is kept for compatibility.  GF family (hkex-gf hpks hpks-nl hpke
-    hpke-nl hpke-nl3): --bits 32|64|128|256, --level demo = 256, no --level 128 (demo-only
-    at every width).  oprf: 256.  hkex-rnl: 32|64|128|256 (demo), 1024 = --level 128
+    hpke-nl hpke-nl3) and oprf: --bits 32|64|128|256, --level demo = 256, no --level 128
+    (demo-only at every width).  hkex-rnl: 32|64|128|256 (demo), 1024 = --level 128
     (default); 512 refused as withdrawn.  hpks-stern, hpke-stern, hcred: 32|64|128|256,
     --level demo = 256.  hpke-stern-kem: --level 128 only.  hpks-zkp-nl: --bits any even
     n <= 64, --level demo = 8.  hpks-wots, hpks-xmss: neither flag.  Below the default a
     stderr warning gives the estimated security.  Every listed width runs in all four
-    CLIs (TODO #383, #384).  Anything else fails by name; --bits with --level fails.
+    CLIs (TODO #383, #384, #385).  Anything else fails by name; --bits with --level fails.
     --passphrase writes a HERRADURA ENCRYPTED PRIVATE KEY envelope.  An empty
     passphrase, and --kdf-iterations without --passphrase, are refused by name in
     every CLI (TODO #376; Python and Go used to write the key in the clear).
@@ -300,9 +300,13 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     --in must be exactly 32 bytes in every CLI, both modes, with or without --v3;
     longer input used to be cut to 32 and shorter zero-padded (on the left in Go
     only).  Exactly one of --encrypt / --decrypt (TODO #377).
-  oprf-blind --in FILE --out FILE
+  oprf-blind --in FILE [--bits 32|64|128|256] --out FILE
   oprf-eval --key FILE --in FILE --out FILE
   oprf-unblind --state FILE --eval FILE --out FILE
+    --bits (default 256) is the GF(2^n) width and must be the server key's n: the
+    CLIENT STATE and EVALUATION PEMs carry n, and oprf-eval / oprf-unblind refuse a
+    pair from two widths by name.  Below 256 bits H(x) is the high n bits of
+    HFSCX-256(x).  pake-register / pake-demo run at the key's n (TODO #385).
   pake-register --key FILE [--username U] [--password P] --out FILE
   pake-demo --key FILE [--username U] [--password P]
     --username exists in Python and Java only; it is a lookup label, not bound into the

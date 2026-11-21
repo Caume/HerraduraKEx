@@ -26077,3 +26077,31 @@ layouts stay n/a there (TODO #386).
 Status: **DONE v16.0.0** — Java runs every listed width: the GF family, Stern-F and hcred.
 
 ---
+
+### #385: OPRF below 256 bits
+
+Split from TODO #379.  `oprf` runs at 256 only in all four CLIs: Python's `oprf_keygen`
+and Go's `OprfBlind(data, 256)` are fixed there, and before #379 Python raised
+`OverflowError` on `genpkey --algo oprf --bits 32|64|128` while Go wrote a 256-bit key.
+The table lists 256 only.  Decide whether OPRF gets 32/64/128 demo rows (all four CLIs,
+blind / eval / unblind at width n, the OPRF CLIENT STATE and EVAL PEMs carrying n) and
+add them, or record that it stays at 256.
+
+**Done (v16.0.0).**  Decided for the demo rows, as #379's decision table listed them.
+The suites run the OPRF at width n in all four ports (Python, C and Java gain the width;
+Go's had it), with H(x) the high n bits of HFSCX-256(x) below 256 bits (Go's took the
+low bits, which no CLI reached; at 256 the two agree, so no vector changes).  C's
+`ba_modinv_ord` inverts modulo 2^n - 1 at its operand's width, and C's keygen now refuses
+k = 2^n - 1 as the others do.  `genpkey --algo oprf --bits 32|64|128`, a new
+`oprf-blind --bits N` (default 256), `oprf-eval` and `oprf-unblind` at the artifacts' n
+with mixed widths refused by name, `pkey --text` printing the key's n, and pake-register
+/ pake-demo at the key's n, in all four CLIs.
+
+Resolution: every CLI runs the OPRF at every GF width.  `CliTest/test_width_matrix.sh`'s
+new OPRF section checks every (blinder, evaluator) pair against H(x)^k, recomputed from
+the rule (388 PASS; 204 FAIL with the low-bits rule; 100 of 124 FAIL on the pre-#385
+CLIs).  No artifact a 256-bit build wrote changes, so no MIGRATING.md section.
+
+Status: **DONE v16.0.0** — OPRF runs at 32, 64, 128 and 256 bits in all four CLIs, with `oprf-blind --bits`.
+
+---

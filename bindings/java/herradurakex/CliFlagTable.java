@@ -27,7 +27,7 @@ final class CliFlagTable {
         m.put("fpe", new HashSet<>(Arrays.asList("context", "decrypt", "encrypt", "in", "key", "out", "v3")));
         m.put("genpkey", new HashSet<>(Arrays.asList("algo", "bits", "kdf-iterations", "level", "out", "passphrase", "xmss-height")));
         m.put("kex", new HashSet<>(Arrays.asList("algo", "kdf", "our", "our-kem", "out", "their", "their-kem")));
-        m.put("oprf-blind", new HashSet<>(Arrays.asList("in", "out")));
+        m.put("oprf-blind", new HashSet<>(Arrays.asList("bits", "in", "out")));
         m.put("oprf-eval", new HashSet<>(Arrays.asList("in", "key", "out")));
         m.put("oprf-unblind", new HashSet<>(Arrays.asList("eval", "out", "state")));
         m.put("pake-demo", new HashSet<>(Arrays.asList("key", "password", "username")));
@@ -77,7 +77,7 @@ final class CliFlagTable {
         "                               hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf\n" +
         "  kex                  --algo --kdf --our --our-kem --out --their --their-kem\n" +
         "                       --algo: hkex-gf hkex-rnl hybrid-rnl-stern\n" +
-        "  oprf-blind           --in --out\n" +
+        "  oprf-blind           --bits --in --out\n" +
         "  oprf-eval            --in --key --out\n" +
         "  oprf-unblind         --eval --out --state\n" +
         "  pake-demo            --key --password --username\n" +

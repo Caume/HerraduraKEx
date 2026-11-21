@@ -1972,9 +1972,11 @@ func cmdPkey(args []string) {
 		fmt.Printf("root      : %x\n", HaccumRoot(leafHashes))
 
 	case algo == "oprf":
-		fitBytes(ints[0], 32, "OPRF key", "pkey")
+		// TODO #385: the key's own width (it printed genpkeyDefaultBits).
+		on := gfWidth(wireInt(ints[1], "n", lblOprfPriv), lblOprfPriv)
+		fitBytes(ints[0], on/8, "OPRF key", "pkey")
 		fmt.Printf("algorithm : %s\n", algo)
-		fmt.Printf("bits      : %d\n", genpkeyDefaultBits)
+		fmt.Printf("bits      : %d\n", on)
 
 	default:
 		fmt.Fprintf(os.Stderr, "pkey --text: no text form for %s\n", algo)
@@ -5322,35 +5324,79 @@ func cmdTwk(args []string) {
 
 // ── oprf-blind / oprf-eval / oprf-unblind  (TODO #80) ────────────────────────
 
+// oprfWire loads one of the OPRF's three artifacts (TODO #385): it checks the
+// label, reads the width from item nIdx (32, 64, 128 or 256) and holds every
+// other item to n bits.  The item count is already checked by readPEMInts.
+func oprfWire(where, path, label, what string, nIdx int) ([]*big.Int, int) {
+	got, ints, err := readPEMInts(path)
+	if err != nil {
+		die(where, err)
+	}
+	if got != label {
+		fmt.Fprintf(os.Stderr, "%s: expected %s PEM, got %q\n", where, what, got)
+		os.Exit(1)
+	}
+	if len(ints) <= nIdx {
+		fmt.Fprintf(os.Stderr, "%s: malformed %s PEM\n", where, what)
+		os.Exit(1)
+	}
+	n := gfWidth(wireInt(ints[nIdx], "n", label), label)
+	vals := make([]*big.Int, nIdx)
+	for i := 0; i < nIdx; i++ {
+		vals[i] = new(big.Int).SetBytes(fitBytes(ints[i], n/8, "field", label))
+	}
+	return vals, n
+}
+
+// oprfDer writes the values at n/8 bytes each, then n, as one DER SEQUENCE.
+func oprfDer(where string, n int, vals ...*big.Int) []byte {
+	items := make([][]byte, 0, len(vals)+1)
+	for _, v := range vals {
+		d, e := derIntBig(v, n/8)
+		if e != nil {
+			fmt.Fprintf(os.Stderr, "%s: DER encode error\n", where)
+			os.Exit(1)
+		}
+		items = append(items, d)
+	}
+	nDer, e := derIntSmall(n)
+	if e != nil {
+		fmt.Fprintf(os.Stderr, "%s: DER encode error\n", where)
+		os.Exit(1)
+	}
+	seq, e := DerSeqEnc(append(items, nDer)...)
+	if e != nil {
+		die(where, e)
+	}
+	return seq
+}
+
 func cmdOprfBlind(args []string) {
 	fs    := flag.NewFlagSet("oprf-blind", flag.ExitOnError)
 	inF   := fs.String("in", "", "Input bytes file (- for stdin)")
+	bitsF := fs.Int("bits", 256, "GF(2^n) width: 32, 64, 128 or 256; the server key's n (TODO #385)")
 	outF  := fs.String("out", "-", "Output OPRF CLIENT STATE PEM")
 	parseArgs(fs, args)
 	if *inF == "" {
 		fmt.Fprintln(os.Stderr, "oprf-blind: --in required")
 		os.Exit(1)
 	}
+	n := *bitsF
+	switch n {
+	case 32, 64, 128, 256:
+	default:
+		fmt.Fprintf(os.Stderr, "oprf-blind: --bits must be 32, 64, 128 or 256, got %d\n", n)
+		os.Exit(1)
+	}
 	data, err := readFile(*inF)
 	if err != nil {
 		die("oprf-blind", err)
 	}
-	r, alpha, err := OprfBlind(data, 256)
+	r, alpha, err := OprfBlind(data, n)
 	if err != nil {
 		die("oprf-blind", err)
 	}
-	rDer, e1    := derIntBig(r, 32)
-	aDer, e2    := derIntBig(alpha, 32)
-	nDer, e3    := derIntSmall(256)
-	if e1 != nil || e2 != nil || e3 != nil {
-		fmt.Fprintln(os.Stderr, "oprf-blind: DER encode error")
-		os.Exit(1)
-	}
-	seq, e4 := DerSeqEnc(rDer, aDer, nDer)
-	if e4 != nil {
-		die("oprf-blind", e4)
-	}
-	if err := writeString(*outF, PemWrap(lblOprfState, seq)); err != nil {
+	if err := writeString(*outF, PemWrap(lblOprfState, oprfDer("oprf-blind", n, r, alpha))); err != nil {
 		die("oprf-blind", err)
 	}
 }
@@ -5370,48 +5416,16 @@ func cmdOprfEval(args []string) {
 		fmt.Fprintln(os.Stderr, "oprf-eval: --in required")
 		os.Exit(1)
 	}
-	/* Load server key: SEQUENCE(INTEGER(k), INTEGER(256)) */
-	kLabel, kInts, err := readPEMInts(*keyF)
-	if err != nil {
-		die("oprf-eval", err)
-	}
-	if kLabel != lblOprfPriv {
-		fmt.Fprintf(os.Stderr, "oprf-eval: expected OPRF PRIVATE KEY PEM, got %q\n", kLabel)
+	/* Server key: SEQUENCE(INTEGER(k), INTEGER(n)) */
+	kv, kn := oprfWire("oprf-eval", *keyF, lblOprfPriv, "OPRF PRIVATE KEY", 1)
+	/* CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(n)) */
+	sv, sn := oprfWire("oprf-eval", *inF, lblOprfState, "OPRF CLIENT STATE", 2)
+	if sn != kn {
+		fmt.Fprintf(os.Stderr, "oprf-eval: client state n is %d, key n is %d\n", sn, kn)
 		os.Exit(1)
 	}
-	if len(kInts) < 1 {
-		fmt.Fprintln(os.Stderr, "oprf-eval: malformed OPRF private key")
-		os.Exit(1)
-	}
-	k := new(big.Int).SetBytes(kInts[0])
-
-	/* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
-	sLabel, sInts, err := readPEMInts(*inF)
-	if err != nil {
-		die("oprf-eval", err)
-	}
-	if sLabel != lblOprfState {
-		fmt.Fprintf(os.Stderr, "oprf-eval: expected OPRF CLIENT STATE PEM, got %q\n", sLabel)
-		os.Exit(1)
-	}
-	if len(sInts) < 2 {
-		fmt.Fprintln(os.Stderr, "oprf-eval: malformed CLIENT STATE PEM")
-		os.Exit(1)
-	}
-	alpha := new(big.Int).SetBytes(sInts[1])
-
-	beta := OprfEval(alpha, k, 256)
-	bDer, e1 := derIntBig(beta, 32)
-	nDer, e2 := derIntSmall(256)
-	if e1 != nil || e2 != nil {
-		fmt.Fprintln(os.Stderr, "oprf-eval: DER encode error")
-		os.Exit(1)
-	}
-	seq, e3 := DerSeqEnc(bDer, nDer)
-	if e3 != nil {
-		die("oprf-eval", e3)
-	}
-	if err := writeString(*outF, PemWrap(lblOprfEval, seq)); err != nil {
+	beta := OprfEval(sv[1], kv[0], kn)
+	if err := writeString(*outF, PemWrap(lblOprfEval, oprfDer("oprf-eval", kn, beta))); err != nil {
 		die("oprf-eval", err)
 	}
 }
@@ -5430,38 +5444,14 @@ func cmdOprfUnblind(args []string) {
 		fmt.Fprintln(os.Stderr, "oprf-unblind: --eval required")
 		os.Exit(1)
 	}
-	/* CLIENT STATE: (r, alpha, nbits) */
-	sLabel, sInts, err := readPEMInts(*stateF)
-	if err != nil {
-		die("oprf-unblind", err)
-	}
-	if sLabel != lblOprfState {
-		fmt.Fprintf(os.Stderr, "oprf-unblind: expected OPRF CLIENT STATE PEM, got %q\n", sLabel)
+	sv, sn := oprfWire("oprf-unblind", *stateF, lblOprfState, "OPRF CLIENT STATE", 2)
+	ev, en := oprfWire("oprf-unblind", *evalF, lblOprfEval, "OPRF EVALUATION", 1)
+	if en != sn {
+		fmt.Fprintf(os.Stderr, "oprf-unblind: evaluation n is %d, client state n is %d\n", en, sn)
 		os.Exit(1)
 	}
-	if len(sInts) < 1 {
-		fmt.Fprintln(os.Stderr, "oprf-unblind: malformed CLIENT STATE PEM")
-		os.Exit(1)
-	}
-	r := new(big.Int).SetBytes(sInts[0])
-
-	/* EVALUATION: (beta, nbits) */
-	eLabel, eInts, err := readPEMInts(*evalF)
-	if err != nil {
-		die("oprf-unblind", err)
-	}
-	if eLabel != lblOprfEval {
-		fmt.Fprintf(os.Stderr, "oprf-unblind: expected OPRF EVALUATION PEM, got %q\n", eLabel)
-		os.Exit(1)
-	}
-	if len(eInts) < 1 {
-		fmt.Fprintln(os.Stderr, "oprf-unblind: malformed EVALUATION PEM")
-		os.Exit(1)
-	}
-	beta := new(big.Int).SetBytes(eInts[0])
-
-	F := OprfUnblind(beta, r, 256)
-	hex := fmt.Sprintf("%064x\n", F)
+	F := OprfUnblind(ev[0], sv[0], sn)
+	hex := fmt.Sprintf("%0*x\n", sn/4, F)
 	if err := writeString(*outF, hex); err != nil {
 		die("oprf-unblind", err)
 	}
@@ -5488,19 +5478,10 @@ func cmdPakeRegister(args []string) {
 		fmt.Fprintln(os.Stderr, "pake-register: --password must not be empty")
 		os.Exit(1)
 	}
-	kLabel, kInts, err := readPEMInts(*keyF)
-	if err != nil { die("pake-register", err) }
-	if kLabel != lblOprfPriv {
-		fmt.Fprintf(os.Stderr, "pake-register: expected OPRF PRIVATE KEY PEM, got %q\n", kLabel)
-		os.Exit(1)
-	}
-	if len(kInts) < 1 {
-		fmt.Fprintln(os.Stderr, "pake-register: malformed OPRF private key")
-		os.Exit(1)
-	}
-	oprfKey := new(big.Int).SetBytes(kInts[0])
+	kv, kn := oprfWire("pake-register", *keyF, lblOprfPriv, "OPRF PRIVATE KEY", 1)
+	oprfKey := kv[0]
 	pw := []byte(*pwF)
-	rec, err := HpakeRegister(pw, oprfKey)
+	rec, err := HpakeRegister(pw, oprfKey, kn)
 	if err != nil { die("pake-register", err) }
 
 	/* Encode: SEQUENCE(INTEGER(salt,32), INTEGER(B,4), INTEGER(y,4)) */
@@ -5535,23 +5516,14 @@ func cmdPakeDemo(args []string) {
 		fmt.Fprintln(os.Stderr, "pake-demo: --password must not be empty")
 		os.Exit(1)
 	}
-	kLabel, kInts, err := readPEMInts(*keyF)
-	if err != nil { die("pake-demo", err) }
-	if kLabel != lblOprfPriv {
-		fmt.Fprintf(os.Stderr, "pake-demo: expected OPRF PRIVATE KEY PEM, got %q\n", kLabel)
-		os.Exit(1)
-	}
-	if len(kInts) < 1 {
-		fmt.Fprintln(os.Stderr, "pake-demo: malformed OPRF private key")
-		os.Exit(1)
-	}
-	oprfKey := new(big.Int).SetBytes(kInts[0])
+	kv, kn := oprfWire("pake-demo", *keyF, lblOprfPriv, "OPRF PRIVATE KEY", 1)
+	oprfKey := kv[0]
 	pw := []byte(*pwF)
 
-	rec, err := HpakeRegister(pw, oprfKey)
+	rec, err := HpakeRegister(pw, oprfKey, kn)
 	if err != nil { die("pake-demo", err) }
 
-	sk, err := HpakeLoginDemo(rec, pw, oprfKey)
+	sk, err := HpakeLoginDemo(rec, pw, oprfKey, kn)
 	if err != nil { die("pake-demo", err) }
 	if sk != nil {
 		fmt.Printf("- aPAKE login succeeded; session key: %x\n", sk)
@@ -5559,7 +5531,7 @@ func cmdPakeDemo(args []string) {
 		fmt.Fprintln(os.Stderr, "+ aPAKE login failed!")
 		os.Exit(1)
 	}
-	skBad, _ := HpakeLoginDemo(rec, []byte("wrong-password"), oprfKey)
+	skBad, _ := HpakeLoginDemo(rec, []byte("wrong-password"), oprfKey, kn)
 	if skBad == nil {
 		fmt.Println("- aPAKE correctly rejects wrong password")
 	} else {
@@ -7179,6 +7151,9 @@ var paramSets = []paramSet{
 	{"hpke-nl3", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
 	{"hpke-nl3", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
 	{"hpke-nl3", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"oprf", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"oprf", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"oprf", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
 	{"oprf", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
 	{"hkex-rnl", 32, "", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
 	{"hkex-rnl", 64, "", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
@@ -7315,7 +7290,7 @@ required):
                                hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf
   kex                  --algo --kdf --our --our-kem --out --their --their-kem
                        --algo: hkex-gf hkex-rnl hybrid-rnl-stern
-  oprf-blind           --in --out
+  oprf-blind           --bits --in --out
   oprf-eval            --in --key --out
   oprf-unblind         --eval --out --state
   pake-demo            --key --password

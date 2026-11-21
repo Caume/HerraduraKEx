@@ -2221,6 +2221,13 @@ PEM files produced by any implementation are byte-for-byte compatible with the
 others. See `CliTest/test_oprf_interop.sh` for a 6-way cross-language
 interop test (Python/C/Go key × blind × eval × unblind).
 
+The OPRF also runs at the GF family's demo widths, 32, 64 and 128 (TODO #385):
+`genpkey --algo oprf --bits N`, then `oprf-blind --bits N` with the same N.  The
+CLIENT STATE and EVALUATION PEMs carry n, and `oprf-eval` / `oprf-unblind` refuse
+a pair from two widths by name.  Below 256 bits `H(x)` is the high n bits of
+HFSCX-256(x); `F` prints as n/4 hex digits.  `CliTest/test_width_matrix.sh`
+runs every (blinder, evaluator) pair of the four CLIs at every width.
+
 ### OPRF library API (C)
 
 ```c

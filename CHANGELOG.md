@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#384, #388, #389), in thirteen
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#385, #388, #389), in fourteen
 parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
@@ -44,6 +44,50 @@ Java now also runs the GF(2^n) family, hpks-stern, hpke-stern, hpks-ring and hcr
 64, 128 and 256 bits, byte-identical with the other three, which completes the
 narrow-width work: every CLI runs every width the spec lists (TODO #384; no artifact or
 flag changes, so no MIGRATING.md section).
+The OPRF now runs at 32, 64, 128 and 256 bits in all four CLIs: `genpkey --algo oprf
+--bits N`, and a new `oprf-blind --bits N` (default 256); a client state or evaluation of
+another width than its key is refused by name (TODO #385; 256-bit artifacts are
+unchanged, so no MIGRATING.md section).
+
+### TODO #385 — OPRF below 256 bits
+
+- **Decision.** OPRF gets the GF family's 32 / 64 / 128 demo rows, as TODO #379's decision
+  table already listed it, rather than staying at 256. It is the same GF(2^n)*
+  exponentiation as HKEX-GF, so the rows carry the same Pohlig-Hellman estimates.
+- **The four suites.** `oprf_keygen` / `blind` / `eval` / `unblind` / `direct` run at width
+  n in Python (`n` argument, default `KEYBITS`), C (the operands' width) and Java (an `n`
+  argument); Go's already took n. Below 256 bits the hash-to-field `H(x)` is the HIGH n
+  bits of HFSCX-256(x), BITARRAY.md 4.4's truncation and the rule the Stern-F hash and
+  HCRED's issuer message follow. Go's took the low bits, which no CLI reached. At 256 bits
+  both rules give the same value, so the KAT and sampler-replay vectors are unchanged.
+  C's `ba_modinv_ord` was hard-wired to 2^256 - 1 and now inverts modulo 2^n - 1 at its
+  operand's width. C's `oprf_keygen` now also refuses k = 2^n - 1, as the other three do:
+  that k is 0 in the exponent, so F = 1 for every input. A random draw hits it with
+  probability 2^-256 at 256 bits but 2^-32 at 32. The aPAKE (`hpake_register` /
+  `login_demo`) runs the OPRF at the key's width, with the output entering the witness
+  derivation as n/8 bytes.
+- **The four CLIs.** `genpkey --algo oprf --bits 32|64|128|256`. `oprf-blind --bits N`
+  (default 256, refusing any other value with `--bits must be 32, 64, 128 or 256, got
+  X`) writes a CLIENT STATE of n/8-byte fields carrying n. `oprf-eval` runs at the key's
+  n and refuses a state of another width (`client state n is 128, key n is 64`).
+  `oprf-unblind` refuses an evaluation of another width (`evaluation n is 128, client
+  state n is 64`) and prints F as n/4 hex digits (Go printed 64 at every width).
+  `pkey --text` prints the key's own n (Go, C and Java printed 256 whatever the key
+  said). `pake-register` and `pake-demo` run at the key's n. The three OPRF labels'
+  width field is a GF width in every reader (it was 256 only).
+- **Tests.** `test_width_matrix.sh` gains an OPRF section, its rows read from the spec.
+  For a key from each CLI, `pkey --text` reads the same in every CLI, and every
+  (blinder, evaluator) pair unblinds to H(x)^k. That value is recomputed in the script
+  from HFSCX-256's high n bits and the suite's `gf_pow`, a check on the rule itself
+  that the four CLIs agreeing with each other cannot satisfy. Another input gives
+  another F, `pake-demo` runs at the width, and the mixed-width refusals follow
+  same-width accept-controls. The section has 388 checks, all passing. With the
+  reference switched to the LOW n bits it fails 204 (every 32 / 64 / 128 check, none at
+  256); on the pre-#385 CLIs with the new rows it fails 100 of 124. The whole matrix is
+  3956 PASS, 0 FAIL, 156 n/a (it was 3568 / 0 / 156). `mixed()` now passes its expected text to grep after `--`, so a message
+  starting with `--bits` is matched rather than read as an option.
+- **Census.** C's `_oprf_is_one` / `_oprf_is_ord` get a CENSUS_EXEMPT reason: they are
+  comparisons the other ports write inline.
 
 ### TODO #384 — Java runs every listed width
 

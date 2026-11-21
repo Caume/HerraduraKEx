@@ -561,7 +561,9 @@ public final class HerraduraCli {
             return;
         }
         if (algo.equals("oprf")) {
-            writeString(out, Codec.encodeOprfPrivKey(Oprf.keygen(RNG)));
+            // TODO #385: at the row's width
+            int on = pbits > 0 ? pbits : Herradura.N;
+            writeString(out, Codec.encodeOprfPrivKey(Oprf.keygen(on, RNG), on));
             return;
         }
         if (algo.equals("hpks-wots")) {
@@ -697,9 +699,9 @@ public final class HerraduraCli {
             if (opt.containsKey("pubout")) {
                 throw new CliError("pkey --pubout: oprf has no public key");
             }
-            Codec.decodeOprfPrivKey(pemIn);   // validates the key
+            Codec.PubKey ok = Codec.decodeOprfPrivKey(pemIn);   // validates the key
             System.out.println("algorithm : oprf");
-            System.out.println("bits      : " + Herradura.N);
+            System.out.println("bits      : " + ok.nbits);   // TODO #385: the key's own
             return;
         }
 
@@ -2290,21 +2292,32 @@ public final class HerraduraCli {
     private static void cmdOprfBlind(Map<String, String> opt) throws IOException {
         byte[] inBytes = readBytes(req(opt, "in", "oprf-blind"));
         String out = req(opt, "out", "oprf-blind");
-        Oprf.Blinded b = Oprf.blind(inBytes, RNG);
-        writeString(out, Codec.encodeOprfState(b.r, b.alpha));
+        // TODO #385: --bits is the GF(2^n) width, and must be the server key's n
+        int n = (int) numArg(opt, "bits", 1, 1 << 16, Herradura.N, "oprf-blind");
+        if (!Codec.gfWidthOk(n)) {
+            throw new CliError("oprf-blind: --bits must be 32, 64, 128 or 256, got " + n);
+        }
+        Oprf.Blinded b = Oprf.blind(inBytes, n, RNG);
+        writeString(out, Codec.encodeOprfState(b.r, b.alpha, n));
     }
 
     private static void cmdOprfEval(Map<String, String> opt) throws IOException {
         Codec.PubKey key = Codec.decodeOprfPrivKey(readString(req(opt, "key", "oprf-eval")));
         Codec.OprfState state = Codec.decodeOprfState(readString(req(opt, "in", "oprf-eval")));
-        BigInteger beta = Oprf.eval(state.alpha, key.pub);
-        writeString(req(opt, "out", "oprf-eval"), Codec.encodeOprfEval(beta));
+        if (state.nbits != key.nbits) {
+            throw new CliError("oprf-eval: client state n is " + state.nbits + ", key n is " + key.nbits);
+        }
+        BigInteger beta = Oprf.eval(state.alpha, key.pub, key.nbits);
+        writeString(req(opt, "out", "oprf-eval"), Codec.encodeOprfEval(beta, key.nbits));
     }
 
     private static void cmdOprfUnblind(Map<String, String> opt) throws IOException {
         Codec.OprfState state = Codec.decodeOprfState(readString(req(opt, "state", "oprf-unblind")));
         Codec.PubKey eval = Codec.decodeOprfEval(readString(req(opt, "eval", "oprf-unblind")));
-        BigInteger f = Oprf.unblind(eval.pub, state.r);
+        if (eval.nbits != state.nbits) {
+            throw new CliError("oprf-unblind: evaluation n is " + eval.nbits + ", client state n is " + state.nbits);
+        }
+        BigInteger f = Oprf.unblind(eval.pub, state.r, state.nbits);
         String out = opt.getOrDefault("out", "-");
         writeString(out, hexBytes(toFixedBytes(f, state.nbits / 8)) + "\n");
     }
@@ -2425,7 +2438,7 @@ public final class HerraduraCli {
             throw new CliError("pake-register: --password must not be empty");
         }
         byte[] password = passwordOpt.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        Hpake.Record record = Hpake.register(username, password, key.pub, RNG);
+        Hpake.Record record = Hpake.register(username, password, key.pub, key.nbits, RNG);
         writeString(opt.getOrDefault("out", "-"), Codec.encodePakeRecord(record.salt, record.b, record.y));
     }
 
@@ -2438,15 +2451,15 @@ public final class HerraduraCli {
         }
         byte[] password = opt.getOrDefault("password", "demo-password").getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
-        Hpake.Record record = Hpake.register(username, password, key.pub, RNG);
-        byte[] sk = Hpake.loginDemo(record, password, key.pub, RNG);
+        Hpake.Record record = Hpake.register(username, password, key.pub, key.nbits, RNG);
+        byte[] sk = Hpake.loginDemo(record, password, key.pub, key.nbits, RNG);
         if (sk != null) {
             System.out.println("- aPAKE login succeeded; session key: " + hexBytes(sk));
         } else {
             System.out.println("+ aPAKE login failed!");
             System.exit(1);
         }
-        byte[] wrongSk = Hpake.loginDemo(record, "wrong-password".getBytes(java.nio.charset.StandardCharsets.UTF_8), key.pub, RNG);
+        byte[] wrongSk = Hpake.loginDemo(record, "wrong-password".getBytes(java.nio.charset.StandardCharsets.UTF_8), key.pub, key.nbits, RNG);
         if (wrongSk == null) {
             System.out.println("- aPAKE correctly rejects wrong password");
         } else {

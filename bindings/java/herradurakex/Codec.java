@@ -1513,8 +1513,8 @@ public final class Codec {
 
     /** Encodes an OPRF private key: SEQUENCE(k, nbits) — same shape as a
      * classical public key, so {@link #decodePubKey} reads it back too. */
-    public static String encodeOprfPrivKey(BigInteger k) {
-        return encodePubKey(PEM_OPRF_PRIV, k);
+    public static String encodeOprfPrivKey(BigInteger k, int nbits) {
+        return encodePubKey(PEM_OPRF_PRIV, k, nbits);
     }
 
     public static PubKey decodeOprfPrivKey(String pem) {
@@ -1522,8 +1522,8 @@ public final class Codec {
     }
 
     /** Encodes an OPRF client state: SEQUENCE(r, alpha, nbits). */
-    public static String encodeOprfState(BigInteger r, BigInteger alpha) {
-        byte[] der = derSeq(derInt(r, NBYTES), derInt(alpha, NBYTES), derInt(BigInteger.valueOf(Herradura.N), -1));
+    public static String encodeOprfState(BigInteger r, BigInteger alpha, int nbits) {
+        byte[] der = derSeq(derInt(r, nbits / 8), derInt(alpha, nbits / 8), derInt(BigInteger.valueOf(nbits), -1));
         return pemWrap(PEM_OPRF_STATE, der);
     }
 
@@ -1540,13 +1540,13 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + PEM_OPRF_STATE + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b);
-        return new OprfState(ints.get(0), ints.get(1), runWidth(ints.get(2), Herradura.N, "n", b.label));
+        return new OprfState(ints.get(0), ints.get(1), gfWidth(ints.get(2), b.label));   // TODO #385
     }
 
     /** Encodes an OPRF evaluation: SEQUENCE(beta, nbits) — same shape as a
      * classical public key. */
-    public static String encodeOprfEval(BigInteger beta) {
-        return encodePubKey(PEM_OPRF_EVAL, beta);
+    public static String encodeOprfEval(BigInteger beta, int nbits) {
+        return encodePubKey(PEM_OPRF_EVAL, beta, nbits);
     }
 
     public static PubKey decodeOprfEval(String pem) {

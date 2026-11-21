@@ -972,8 +972,9 @@ static const HkxWidthRow HKX_WIDTH[] = {
     /* TODO #383 stage 2: Stern-F runs at the same four widths */
     { PEM_HPKS_STERN_PRIV, -1, HKX_W_GF, "n" }, { PEM_HPKS_STERN_PUB, -1, HKX_W_GF, "n" },
     { PEM_HPKE_STERN_PRIV, -1, HKX_W_GF, "n" }, { PEM_HPKE_STERN_PUB, -1, HKX_W_GF, "n" },
-    { PEM_OPRF_PRIV, -1, KEYBITS, "n" },      { PEM_OPRF_STATE, -1, KEYBITS, "n" },
-    { PEM_OPRF_EVAL, -1, KEYBITS, "n" },
+    /* TODO #385: the OPRF runs at the same four widths */
+    { PEM_OPRF_PRIV, -1, HKX_W_GF, "n" },     { PEM_OPRF_STATE, -1, HKX_W_GF, "n" },
+    { PEM_OPRF_EVAL, -1, HKX_W_GF, "n" },
     { PEM_HPKST_COMMIT, -1, KEYBITS, "n" },   { PEM_HPKST_NONCE, -1, KEYBITS, "n" },
     { PEM_HPKST_PARTIAL, -1, KEYBITS, "n" },  { PEM_HPKST_AGGREGATE, -1, KEYBITS, "n" },
     { PEM_HPKST_SIG, -1, KEYBITS, "n" },
@@ -1741,14 +1742,15 @@ static void cmd_genpkey(int argc, char **argv)
         free(body); fclose(urnd); return;
     }
 
-    /* OPRF server key: SEQUENCE(INTEGER(k), INTEGER(256)) */
+    /* OPRF server key: SEQUENCE(INTEGER(k), INTEGER(n)), n the row's width (TODO #385) */
     if (strcmp(algo, "oprf") == 0) {
         BitArray k = BA_INIT;
+        ba_zero_w(&k, pbits);
         oprf_keygen(&k, urnd);
         uint8_t ik[DER_INT_LEN(KEYBYTES)], in[8];
         size_t lk, ln;
-        der_i32(k.b, ik, &lk);
-        der_i_n256(in, &ln);
+        der_ba(&k, ik, &lk);
+        der_i_uint((uint64_t)pbits, in, &ln);
         const uint8_t *it[2] = {ik, in};
         size_t il[2] = {lk, ln};
         seq_and_write(it, il, 2, PEM_OPRF_PRIV, out);
@@ -2098,7 +2100,7 @@ static void cmd_pkey(int argc, char **argv)
     if (strcmp(k.label, PEM_OPRF_PRIV) == 0) {
         if (!text) die("pkey --pubout: oprf has no public key");
         printf("%-10s: %s\n", "algorithm", "oprf");
-        printf("%-10s: %d\n", "bits", KEYBITS);
+        printf("%-10s: %d\n", "bits", gf_key_width(&k));   /* TODO #385: the key's own */
         pem_key_free(&k);
         return;
     }
@@ -5576,7 +5578,11 @@ static void cmd_oprf_blind(int argc, char **argv)
 {
     const char *in_path  = get_arg(argc, argv, "--in");
     const char *out_path = get_arg(argc, argv, "--out");
+    /* TODO #385: --bits is the GF(2^n) width, and must be the server key's n */
+    const int n = (int)num_arg(argc, argv, "--bits", "oprf-blind", 1, 1 << 16, KEYBITS);
     if (!in_path) die("oprf-blind: --in required");
+    if (!gf_width_ok(n))
+        dievf("oprf-blind: --bits must be 32, 64, 128 or 256, got %d", n);
 
     FILE *urnd = fopen("/dev/urandom", "rb");
     if (!urnd) die("cannot open /dev/urandom");
@@ -5585,16 +5591,17 @@ static void cmd_oprf_blind(int argc, char **argv)
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
 
     BitArray r = BA_INIT, alpha = BA_INIT;
+    ba_zero_w(&r, n);
     oprf_blind(in_buf, in_len, &r, &alpha, urnd);
     free(in_buf);
     fclose(urnd);
 
-    /* CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
+    /* CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(n)) */
     uint8_t ir[DER_INT_LEN(KEYBYTES)], ialpha[DER_INT_LEN(KEYBYTES)], in[8];
     size_t lr, lalpha, ln;
-    der_i32(r.b, ir, &lr);
-    der_i32(alpha.b, ialpha, &lalpha);
-    der_i_n256(in, &ln);
+    der_ba(&r, ir, &lr);
+    der_ba(&alpha, ialpha, &lalpha);
+    der_i_uint((uint64_t)n, in, &ln);
     const uint8_t *it[3] = {ir, ialpha, in};
     size_t il[3] = {lr, lalpha, ln};
     seq_and_write(it, il, 3, PEM_OPRF_STATE, out_path);
@@ -5602,13 +5609,13 @@ static void cmd_oprf_blind(int argc, char **argv)
     explicit_bzero(&r, sizeof(r));
 }
 
-static void ba_from_der_item(BitArray *dst, const uint8_t *val, size_t vlen)
+/* An OPRF artifact's value item at its width n (the last item), which
+ * pem_key_load has already checked is 32, 64, 128 or 256 (TODO #385). */
+static int oprf_item(BitArray *dst, const PemKey *k, int idx)
 {
-    /* DER INTEGER may have a leading 0x00 pad byte (sign bit); skip it. */
-    if (vlen > 0 && val[0] == 0x00) { val++; vlen--; }
-    size_t copy = vlen < KEYBYTES ? vlen : KEYBYTES;
-    memset(dst->b, 0, KEYBYTES);
-    memcpy(dst->b + KEYBYTES - copy, val, copy);
+    int n = gf_key_width(k);
+    ba_from_ra_n(dst, k->vals[idx], k->vlens[idx], n);
+    return n;
 }
 
 static void cmd_oprf_eval(int argc, char **argv)
@@ -5619,33 +5626,34 @@ static void cmd_oprf_eval(int argc, char **argv)
     if (!key_path) die("oprf-eval: --key required");
     if (!in_path)  die("oprf-eval: --in required");
 
-    /* Load server key: SEQUENCE(INTEGER(k), INTEGER(256)) */
+    /* Load server key: SEQUENCE(INTEGER(k), INTEGER(n)) */
     PemKey kpem; pem_key_load(&kpem, key_path);
     if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)
         dief("oprf-eval: expected OPRF PRIVATE KEY PEM, got '%s'", kpem.label);
-    if (kpem.n_items < 1) die("oprf-eval: malformed OPRF private key");
+    if (kpem.n_items < 2) die("oprf-eval: malformed OPRF private key");
     BitArray k = BA_INIT;
-    ba_from_der_item(&k, kpem.vals[0], kpem.vlens[0]);
+    int n = oprf_item(&k, &kpem, 0);
     pem_key_free(&kpem);
 
-    /* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
+    /* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(n)) */
     PemKey spem; pem_key_load(&spem, in_path);
     if (strcmp(spem.label, PEM_OPRF_STATE) != 0)
         dief("oprf-eval: expected OPRF CLIENT STATE PEM, got '%s'", spem.label);
-    if (spem.n_items < 2) die("oprf-eval: malformed CLIENT STATE PEM");
+    if (spem.n_items < 3) die("oprf-eval: malformed CLIENT STATE PEM");
+    check_item_gf_width(&spem, 2, n, "oprf-eval: client state", "key");
     BitArray alpha = BA_INIT;
-    ba_from_der_item(&alpha, spem.vals[1], spem.vlens[1]);
+    oprf_item(&alpha, &spem, 1);
     pem_key_free(&spem);
 
     BitArray beta = BA_INIT;
     oprf_eval(&beta, &alpha, &k);
     explicit_bzero(&k, sizeof(k));
 
-    /* EVALUATION: SEQUENCE(INTEGER(beta), INTEGER(256)) */
+    /* EVALUATION: SEQUENCE(INTEGER(beta), INTEGER(n)) */
     uint8_t ibeta[DER_INT_LEN(KEYBYTES)], in[8];
     size_t lbeta, ln;
-    der_i32(beta.b, ibeta, &lbeta);
-    der_i_n256(in, &ln);
+    der_ba(&beta, ibeta, &lbeta);
+    der_i_uint((uint64_t)n, in, &ln);
     const uint8_t *it[2] = {ibeta, in};
     size_t il[2] = {lbeta, ln};
     seq_and_write(it, il, 2, PEM_OPRF_EVAL, out_path);
@@ -5659,34 +5667,35 @@ static void cmd_oprf_unblind(int argc, char **argv)
     if (!state_path) die("oprf-unblind: --state required");
     if (!eval_path)  die("oprf-unblind: --eval required");
 
-    /* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
+    /* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(n)) */
     PemKey spem; pem_key_load(&spem, state_path);
     if (strcmp(spem.label, PEM_OPRF_STATE) != 0)
         dief("oprf-unblind: expected OPRF CLIENT STATE PEM, got '%s'", spem.label);
-    if (spem.n_items < 1) die("oprf-unblind: malformed CLIENT STATE PEM");
+    if (spem.n_items < 3) die("oprf-unblind: malformed CLIENT STATE PEM");
     BitArray r = BA_INIT;
-    ba_from_der_item(&r, spem.vals[0], spem.vlens[0]);
+    int n = oprf_item(&r, &spem, 0);
     pem_key_free(&spem);
 
-    /* Load EVALUATION: SEQUENCE(INTEGER(beta), INTEGER(256)) */
+    /* Load EVALUATION: SEQUENCE(INTEGER(beta), INTEGER(n)) */
     PemKey epem; pem_key_load(&epem, eval_path);
     if (strcmp(epem.label, PEM_OPRF_EVAL) != 0)
         dief("oprf-unblind: expected OPRF EVALUATION PEM, got '%s'", epem.label);
-    if (epem.n_items < 1) die("oprf-unblind: malformed EVALUATION PEM");
+    if (epem.n_items < 2) die("oprf-unblind: malformed EVALUATION PEM");
+    check_item_gf_width(&epem, 1, n, "oprf-unblind: evaluation", "client state");
     BitArray beta = BA_INIT;
-    ba_from_der_item(&beta, epem.vals[0], epem.vlens[0]);
+    oprf_item(&beta, &epem, 0);
     pem_key_free(&epem);
 
     BitArray F = BA_INIT;
     oprf_unblind(&F, &beta, &r);
     explicit_bzero(&r, sizeof(r));
 
-    /* Output: hex string (+ newline) */
-    int i;
+    /* Output: hex string of the n/8 bytes (+ newline) */
+    int i, nb = n / 8;
     char hex[KEYBYTES * 2 + 2];
-    for (i = 0; i < KEYBYTES; i++) sprintf(hex + 2*i, "%02x", F.b[i]);
-    hex[KEYBYTES * 2] = '\n';
-    hex[KEYBYTES * 2 + 1] = '\0';
+    for (i = 0; i < nb; i++) sprintf(hex + 2*i, "%02x", F.b[i]);
+    hex[nb * 2] = '\n';
+    hex[nb * 2 + 1] = '\0';
     write_binary_file(out_path, (const uint8_t*)hex, strlen(hex));
 }
 
@@ -5719,9 +5728,9 @@ static void cmd_pake_register(int argc, char **argv)
     PemKey kpem; pem_key_load(&kpem, key_path);
     if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)
         dief("pake-register: expected OPRF PRIVATE KEY PEM, got '%s'", kpem.label);
-    if (kpem.n_items < 1) die("pake-register: malformed OPRF private key");
+    if (kpem.n_items < 2) die("pake-register: malformed OPRF private key");
     BitArray oprf_k = BA_INIT;
-    ba_from_der_item(&oprf_k, kpem.vals[0], kpem.vlens[0]);
+    oprf_item(&oprf_k, &kpem, 0);   /* TODO #385: at the key's width */
     pem_key_free(&kpem);
 
     FILE *urnd = fopen("/dev/urandom", "rb");
@@ -5756,9 +5765,9 @@ static void cmd_pake_demo(int argc, char **argv)
     PemKey kpem; pem_key_load(&kpem, key_path);
     if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)
         dief("pake-demo: expected OPRF PRIVATE KEY PEM, got '%s'", kpem.label);
-    if (kpem.n_items < 1) die("pake-demo: malformed OPRF private key");
+    if (kpem.n_items < 2) die("pake-demo: malformed OPRF private key");
     BitArray oprf_k = BA_INIT;
-    ba_from_der_item(&oprf_k, kpem.vals[0], kpem.vlens[0]);
+    oprf_item(&oprf_k, &kpem, 0);   /* TODO #385: at the key's width */
     pem_key_free(&kpem);
 
     const char *pw = pw_arg ? pw_arg : "demo-password";

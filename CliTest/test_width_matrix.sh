@@ -30,6 +30,13 @@
 #     session key, declared n = 256 at every ring (TODO #228); the same over
 #     hybrid-rnl-stern, with the writer's HPKE-Stern-KEM key; and the writer's
 #     rnl-sigma proof verifies under the reader, and not on a changed message.
+#   - oprf (TODO #385), in its own section (an OPRF key has no public half):
+#     pkey --text reads alike in every CLI; for a key each CLI writes, every
+#     (blinder, evaluator) pair unblinds to H(x)^k, with H the high n bits of
+#     HFSCX-256(x), recomputed here from the suite's gf_pow (an assertion about
+#     one rule, which the four agreeing with each other cannot satisfy), and
+#     another input gives another F; oprf-eval / oprf-unblind across two widths
+#     are refused naming both; and pake-demo runs at the width.
 # A CLI the row does not list must refuse the key (pkey --text, enc, verify),
 # naming the width, without crashing -- never exit 0 with a wrong answer.
 #
@@ -61,7 +68,7 @@ PASS=0; FAIL=0; NA=0; NA_STERN=0; NA_HCRED=0; NA_RNL=0
 pass() { PASS=$((PASS+1)); }
 fail() { echo "FAIL $1"; FAIL=$((FAIL+1)); }
 
-GF_ALGOS="hkex-gf hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern hcred hkex-rnl"
+GF_ALGOS="hkex-gf hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern hcred hkex-rnl oprf"
 SR=16   # Stern-F rounds: soundness is not under test, interop is
 python3 - "$ROOT/spec/herradura-protocol-spec.json" "$GF_ALGOS" > "$TMP/rows" <<'EOF'
 import json, sys
@@ -130,6 +137,7 @@ refused() {  # label
 }
 
 while read -r a n dflt ports; do
+    [ "$a" = oprf ] && continue   # its own section, below
     D="$TMP/$a-$n"; mkdir -p "$D"
     nb=$((n / 8)); head -c "$nb" /dev/urandom > "$D/m.bin"
     # one keypair per listed CLI
@@ -328,7 +336,7 @@ runs_both() { local a=$1 c=$2 p64 p128
     p128=$(awk -v a="$a" '$1==a && $2==128 {print $4}' "$TMP/rows")
     has_port "$p64" "$c" && has_port "$p128" "$c"; }
 mixed() {  # label want-message
-    if [ "$RC" -ne 0 ] && [ "$RC" -le 2 ] && grep -qF "$2" "$TMP/err"; then pass
+    if [ "$RC" -ne 0 ] && [ "$RC" -le 2 ] && grep -qF -- "$2" "$TMP/err"; then pass
     else fail "$1: rc=$RC, not refused with '$2': $(head -c 160 "$TMP/err")"; fi; }
 rnl_mixed() {  # label: refused as a ring size mismatch naming our 64, then 128
     if [ "$RC" -ne 0 ] && [ "$RC" -le 2 ] && grep -qiE 'ring size mismatch.*\b64\b.*\b128\b' "$TMP/err"; then pass
@@ -428,6 +436,86 @@ for c in "${LANGS[@]}"; do
             rnl_mixed "mixed-ring rnl-sigma verify ($c)" ;;
         esac
     done
+done
+
+# ── OPRF (TODO #385) ─────────────────────────────────────────────────────────
+# oprf_ref: F = H(x)^k from the key PEM's (k, n) and the input, with H the HIGH
+# n bits of HFSCX-256(x) (0 maps to 1) -- the rule restated here, not the
+# suite's _oprf_hash_to_field called.
+oprf_ref() { python3 - "$ROOT" "$1" "$2" <<'EOF'
+import base64, os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "HerraduraCli"))
+import primitives as P
+der = base64.b64decode("".join(l for l in open(sys.argv[2]).read().split("\n") if l and not l.startswith("-----")))
+out, i = [], 2
+while i < len(der):
+    L = der[i + 1]; out.append(int.from_bytes(der[i + 2:i + 2 + L], "big")); i += 2 + L
+k, n = out
+h = int.from_bytes(P.hfscx_256(open(sys.argv[3], "rb").read()), "big") >> (256 - n)
+print(format(P._s.gf_pow(h or 1, k, P._s.GF_POLY[n], n), "0%dx" % (n // 4)))
+EOF
+}
+O="$TMP/oprf"; mkdir -p "$O"
+printf 'oprf width matrix input' > "$O/x.bin"; printf 'another input' > "$O/y.bin"
+while read -r a n dflt ports; do
+    [ "$a" = oprf ] || continue
+    oc=(); for c in "${LANGS[@]}"; do has_port "$ports" "$c" && oc+=("$c"); done
+    for g in "${oc[@]}"; do
+        L="oprf/$n key:$g"
+        q "$g" genpkey --algo oprf --bits "$n" --out "$O/k.pem"
+        [ "$RC" -eq 0 ] || { fail "$L genpkey: rc=$RC $(head -c 160 "$TMP/err")"; continue; }
+        ${CLI[$g]} pkey --in "$O/k.pem" --text > "$O/text" 2>/dev/null
+        for r in "${oc[@]}"; do
+            if ${CLI[$r]} pkey --in "$O/k.pem" --text 2>/dev/null | cmp -s - "$O/text"; then pass
+            else fail "$L: pkey --text differs under $r"; fi
+        done
+        grep -qx "bits      : $n" "$O/text" && pass || fail "$L: pkey --text does not say bits $n"
+        want=$(oprf_ref "$O/k.pem" "$O/x.bin")
+        for b in "${oc[@]}"; do for e in "${oc[@]}"; do
+            q "$b" oprf-blind --in "$O/x.bin" --bits "$n" --out "$O/s.pem"
+            [ "$RC" -eq 0 ] || { fail "$L $b blind: rc=$RC $(head -c 160 "$TMP/err")"; continue; }
+            q "$e" oprf-eval --key "$O/k.pem" --in "$O/s.pem" --out "$O/e.pem"
+            [ "$RC" -eq 0 ] || { fail "$L $e eval: rc=$RC $(head -c 160 "$TMP/err")"; continue; }
+            q "$b" oprf-unblind --state "$O/s.pem" --eval "$O/e.pem"
+            [ "$RC" -eq 0 ] || { fail "$L $b unblind: rc=$RC $(head -c 160 "$TMP/err")"; continue; }
+            if [ -n "$want" ] && [ "$(cat "$TMP/out")" = "$want" ]; then pass
+            else fail "$L blind:$b eval:$e: F $(head -c 80 "$TMP/out") != H(x)^k $want"; fi
+        done; done
+        # negative control: another input gives its own F (a constant F fails here)
+        q "$g" oprf-blind --in "$O/y.bin" --bits "$n" --out "$O/s.pem"
+        q "$g" oprf-eval --key "$O/k.pem" --in "$O/s.pem" --out "$O/e.pem"
+        q "$g" oprf-unblind --state "$O/s.pem" --eval "$O/e.pem"
+        if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "$(oprf_ref "$O/k.pem" "$O/y.bin")" ] \
+           && [ "$(cat "$TMP/out")" != "$want" ]; then pass
+        else fail "$L: another input did not give its own F"; fi
+        q "$g" pake-demo --key "$O/k.pem"
+        if [ "$RC" -eq 0 ] && grep -q "correctly rejects wrong password" "$TMP/out"; then pass
+        else fail "$L: pake-demo rc=$RC $(head -c 160 "$TMP/err")"; fi
+    done
+    for c in "${LANGS[@]}"; do
+        has_port "$ports" "$c" && continue
+        q "${oc[0]}" genpkey --algo oprf --bits "$n" --out "$O/k.pem"
+        q "$c" pkey --in "$O/k.pem" --text; refused "oprf/$n pkey --text ($c)"
+    done
+done < "$TMP/rows"
+# Mixed widths, after a same-width accept-control.
+for c in "${LANGS[@]}"; do
+    runs_both oprf "$c" || continue
+    q "$c" genpkey --algo oprf --bits 64 --out "$O/k64.pem"
+    q "$c" genpkey --algo oprf --bits 128 --out "$O/k128.pem"
+    q "$c" oprf-blind --in "$O/x.bin" --bits 64 --out "$O/s64.pem"
+    q "$c" oprf-blind --in "$O/x.bin" --bits 128 --out "$O/s128.pem"
+    q "$c" oprf-eval --key "$O/k64.pem" --in "$O/s64.pem" --out "$O/e64.pem"
+    [ "$RC" -eq 0 ] && pass || fail "mixed control: same-width oprf-eval ($c) rc=$RC"
+    q "$c" oprf-unblind --state "$O/s64.pem" --eval "$O/e64.pem"
+    [ "$RC" -eq 0 ] && pass || fail "mixed control: same-width oprf-unblind ($c) rc=$RC"
+    q "$c" oprf-eval --key "$O/k64.pem" --in "$O/s128.pem" --out "$O/x.pem"
+    mixed "mixed-width oprf-eval ($c)" "client state n is 128, key n is 64"
+    q "$c" oprf-eval --key "$O/k128.pem" --in "$O/s128.pem" --out "$O/e128.pem"
+    q "$c" oprf-unblind --state "$O/s64.pem" --eval "$O/e128.pem"
+    mixed "mixed-width oprf-unblind ($c)" "evaluation n is 128, client state n is 64"
+    q "$c" oprf-blind --in "$O/x.bin" --bits 48 --out "$O/x.pem"
+    mixed "oprf-blind --bits 48 ($c)" "--bits must be 32, 64, 128 or 256, got 48"
 done
 
 echo

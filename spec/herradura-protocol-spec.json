@@ -2144,6 +2144,12 @@
       }
     },
     "oprf-blind": {
+      "--bits": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
       "--in": {
         "c": true,
         "go": true,
@@ -5430,6 +5436,51 @@
         "default": true,
         "status": "demo",
         "security": "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "oprf",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "oprf",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "oprf",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
         "ports": [
           "py",
           "go",

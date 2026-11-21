@@ -4,7 +4,8 @@ import java.math.BigInteger;
 import java.security.SecureRandom;
 
 /**
- * TODO #201: pure-Java port of the 2HashDH Oblivious PRF over GF(2^256)*.
+ * TODO #201: pure-Java port of the 2HashDH Oblivious PRF over GF(2^n)*, at
+ * n = 32, 64, 128 or 256 since TODO #385 (every method takes n).
  *
  * Byte-for-byte port of "Herradura cryptographic suite.py"'s oprf_keygen /
  * oprf_blind / oprf_eval / oprf_unblind / oprf_direct (TODO #80).
@@ -26,21 +27,22 @@ import java.security.SecureRandom;
 public final class Oprf {
     private Oprf() { }
 
-    private static final BigInteger ORD = Herradura.MASK; // 2^256 - 1
-
-    /** Random OPRF server key k in (1, ORD). */
-    public static BigInteger keygen(SecureRandom rng) {
+    /** Random n-bit OPRF server key k in (1, 2^n - 1). */
+    public static BigInteger keygen(int n, SecureRandom rng) {
+        BigInteger ordN = Herradura.order(n);
         while (true) {
-            BigInteger k = new BigInteger(Herradura.N, rng).and(ORD);
-            if (k.compareTo(BigInteger.ONE) > 0 && k.compareTo(ORD) < 0) {
+            BigInteger k = new BigInteger(n, rng).and(ordN);
+            if (k.compareTo(BigInteger.ONE) > 0 && k.compareTo(ordN) < 0) {
                 return k;
             }
         }
     }
 
-    /** HFSCX-256(data) as a non-zero element of GF(2^256). */
-    static BigInteger hashToField(byte[] data) {
-        BigInteger v = new BigInteger(1, Hfscx256.hash(data)).and(ORD);
+    /** HFSCX-256(data) as a non-zero element of GF(2^n): below 256 bits, the
+     * digest's HIGH n bits (BITARRAY.md 4.4's truncation, as the Stern-F hash
+     * and HCRED's issuer message; TODO #385). */
+    static BigInteger hashToField(byte[] data, int n) {
+        BigInteger v = new BigInteger(1, Hfscx256.hash(data)).shiftRight(256 - n);
         return (v.signum() == 0) ? BigInteger.ONE : v;
     }
 
@@ -50,30 +52,31 @@ public final class Oprf {
         Blinded(BigInteger r, BigInteger alpha) { this.r = r; this.alpha = alpha; }
     }
 
-    /** Client: hash x and blind with a random invertible scalar r. */
-    public static Blinded blind(byte[] x, SecureRandom rng) {
+    /** Client: hash x to GF(2^n) and blind with a random invertible scalar r. */
+    public static Blinded blind(byte[] x, int n, SecureRandom rng) {
+        BigInteger ordN = Herradura.order(n);
         BigInteger r;
         while (true) {
-            r = new BigInteger(Herradura.N, rng).and(ORD);
-            if (r.compareTo(BigInteger.ONE) > 0 && r.gcd(ORD).equals(BigInteger.ONE)) break;
+            r = new BigInteger(n, rng).and(ordN);
+            if (r.compareTo(BigInteger.ONE) > 0 && r.gcd(ordN).equals(BigInteger.ONE)) break;
         }
-        BigInteger alpha = Herradura.gfPow(BitArray.fromBigInteger(hashToField(x), Herradura.N), BitArray.fromBigInteger(r, Herradura.N)).toBigInteger();
-        return new Blinded(r, alpha);
+        return new Blinded(r, Herradura.gfPow(BitArray.fromBigInteger(hashToField(x, n), n), BitArray.fromBigInteger(r, n)).toBigInteger());
     }
 
-    /** Server: evaluate alpha^k in GF(2^256)*. */
-    public static BigInteger eval(BigInteger alpha, BigInteger k) {
-        return Herradura.gfPow(BitArray.fromBigInteger(alpha.and(ORD), Herradura.N), BitArray.fromBigInteger(k.and(ORD), Herradura.N)).toBigInteger();
+    /** Server: evaluate alpha^k in GF(2^n)*. */
+    public static BigInteger eval(BigInteger alpha, BigInteger k, int n) {
+        BigInteger ordN = Herradura.order(n);
+        return Herradura.gfPow(BitArray.fromBigInteger(alpha.and(ordN), n), BitArray.fromBigInteger(k.and(ordN), n)).toBigInteger();
     }
 
     /** Client: recover F(k, x) = H(x)^k from beta = H(x)^(kr). */
-    public static BigInteger unblind(BigInteger beta, BigInteger r) {
-        BigInteger rInv = r.modInverse(ORD);
-        return Herradura.gfPow(BitArray.fromBigInteger(beta.and(ORD), Herradura.N), BitArray.fromBigInteger(rInv, Herradura.N)).toBigInteger();
+    public static BigInteger unblind(BigInteger beta, BigInteger r, int n) {
+        BigInteger ordN = Herradura.order(n);
+        return Herradura.gfPow(BitArray.fromBigInteger(beta.and(ordN), n), BitArray.fromBigInteger(r.modInverse(ordN), n)).toBigInteger();
     }
 
     /** Direct (non-oblivious) evaluation F(k, x) = H(x)^k — server-side use only. */
-    public static BigInteger direct(byte[] x, BigInteger k) {
-        return Herradura.gfPow(BitArray.fromBigInteger(hashToField(x), Herradura.N), BitArray.fromBigInteger(k.and(ORD), Herradura.N)).toBigInteger();
+    public static BigInteger direct(byte[] x, BigInteger k, int n) {
+        return Herradura.gfPow(BitArray.fromBigInteger(hashToField(x, n), n), BitArray.fromBigInteger(k.and(Herradura.order(n)), n)).toBigInteger();
     }
 }

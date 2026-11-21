@@ -663,19 +663,6 @@ Status: **OPEN**
 
 ---
 
-### #385: OPRF below 256 bits
-
-Split from TODO #379.  `oprf` runs at 256 only in all four CLIs: Python's `oprf_keygen`
-and Go's `OprfBlind(data, 256)` are fixed there, and before #379 Python raised
-`OverflowError` on `genpkey --algo oprf --bits 32|64|128` while Go wrote a 256-bit key.
-The table lists 256 only.  Decide whether OPRF gets 32/64/128 demo rows (all four CLIs,
-blind / eval / unblind at width n, the OPRF CLIENT STATE and EVAL PEMs carrying n) and
-add them, or record that it stays at 256.
-
-Status: **OPEN**
-
----
-
 ### #386: `pkey --text` prints a key's parameter set and estimated security
 
 Split from TODO #379, whose decision asked for it.  Every CLI's `pkey --text` prints a

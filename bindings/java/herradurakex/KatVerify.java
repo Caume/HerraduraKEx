@@ -469,7 +469,7 @@ public final class KatVerify {
                 }
             } else if ("oprf_blind_scalar".equals(name)) {
                 int bits = ((Number) params.get("bits")).intValue();
-                Oprf.Blinded bl = Oprf.blind(unhexBytes((String) params.get("input_hex")), rng);
+                Oprf.Blinded bl = Oprf.blind(unhexBytes((String) params.get("input_hex")), bits, rng);
                 fails += replayCheck("replay " + name + " r",
                         String.format("%0" + (bits / 4) + "x", bl.r),
                         (String) r.get("expect_r"));
