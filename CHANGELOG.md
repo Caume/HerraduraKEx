@@ -4,8 +4,8 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#385, #388-#390), in
-seventeen parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#390), in
+eighteen parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
 `--passphrase ''`, and PAKE registered a password nobody chose; an empty or missing secret
@@ -59,6 +59,36 @@ Stern-F's 128-bit set ships: `genpkey --algo hpks-stern --level 128` (or `hpke-s
 an N = 2304 key in all four CLIs, and the same keys sign hpks-ring rings and HCRED
 credentials. Keys, signatures and ciphertexts at N <= 256 are unchanged (TODO #382 stage 2;
 a new parameter set, so no MIGRATING.md section).
+`pkey --text` now prints the same text in all four CLIs for every key type, ending in the
+key's parameter set (`level`, `security`), and a public key is refused by label instead of
+crashing Python (TODO #386, #387, section 49).
+
+### TODO #386 / #387 — `pkey --text`: one layout, and the key's parameter set
+
+- **One layout per algorithm.** The fields most CLIs already printed: hkex-rnl `n`,
+  `s_packed` (4 bytes a coefficient), `C_packed` (2), `n_A` where the key carries it;
+  Stern-F `n`, `e_int`, `seed`; hcred `n`, `seed_H`, `syndr` (big-endian), `W (weight)`;
+  ZKP-NL `n`, `A (priv)`, `B (pub)`, `y (pub)` in hex; KEM `r`, `d`; WOTS `leaf_idx`;
+  XMSS `h`, `root`; the GF family and OPRF unchanged.  Fixed on the way: Python's hkex-rnl
+  dump formatted the packed values at n and n/2 hex digits instead of 8n and 4n, so it
+  lost their leading zeros (TODO #387); C printed hcred's syndrome low byte first and no W,
+  hkex-rnl's s alone, no WOTS leaf index; Go and Java printed no hcred seed or syndrome;
+  Java printed Stern-F's `syndrome` for `e_int` and five hkex-rnl coefficients.
+- **The parameter set (TODO #386).** Every dump ends in the key's key_parameter_sets row,
+  looked up by (algo, width) in the table already generated into each CLI: `level : <level>`
+  where the row has one, then `security : <estimate>`.  WOTS and XMSS, which have no row,
+  print neither.
+- **Public keys.** `pkey --text` and `--pubout` on a public key are refused in every CLI with
+  `pkey: '<label>' is a public key (pkey reads a private key)`; Python unpacked it as a
+  private key and died in a traceback.
+- **Tests.** `test_pkey_text_matrix.sh` gains three sections: the whole dump compared
+  across the four CLIs for every producer and key type (section 1 compared the first line
+  only, which is how every divergence above passed); the closing lines against
+  spec/herradura-protocol-spec.json's rows, read independently of the CLIs; and the
+  public-key refusal after an accept-control.  516 assertions; against the previous build
+  116 of them fail.  `test_width_matrix.sh` now scores the Stern, hcred and hkex-rnl
+  `--text` cells it reported as n/a, and `test_stern_128.sh` compares the whole N = 2304
+  dump in all four CLIs.  MIGRATING.md section 49 lists the renamed fields.
 
 ### TODO #382 stage 2 — Stern-F at N = 2304, the 128-bit set
 

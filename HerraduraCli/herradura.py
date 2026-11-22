@@ -3025,6 +3025,16 @@ def cmd_genpkey(args):
 # Sub-command: pkey
 # ---------------------------------------------------------------------------
 
+def _param_text_lines(algo, width):
+    """TODO #386: `pkey --text`'s closing lines, from the key's
+    key_parameter_sets row: `level` where the row has one, then `security`.
+    Nothing for a key no row describes (WOTS, XMSS, an unlisted width)."""
+    for a, b, level, _dflt, _status, sec, _ports, _wd in _PARAM_SETS:
+        if a == algo and b == width:
+            return ([f"level     : {level}"] if level else []) + [f"security  : {sec}"]
+    return []
+
+
 def cmd_pkey(args):
     in_path = getattr(args, 'in')
 
@@ -3044,6 +3054,12 @@ def cmd_pkey(args):
             sys.exit(f"pkey --decrypt: {e}")
         _write_file(args.out or '-', plain_pem)
         return
+
+    # TODO #386: a public key is refused by label, in the same words in all
+    # four CLIs (Python unpacked it as a private key and died in a traceback).
+    _lbl, _ = _read_pem(in_path)
+    if _lbl.endswith(' PUBLIC KEY'):
+        sys.exit(f"pkey: '{_lbl}' is a public key (pkey reads a private key)")
 
     algo, ints = _decode_privkey(in_path)
 
@@ -3084,8 +3100,13 @@ def cmd_pkey(args):
         _write_file(args.out or '-', pem_out)
 
     elif args.text:
+        # TODO #386 / #387: one layout per algorithm, identical in all four
+        # CLIs, ending in the key's parameter-set row (level, security) where
+        # key_parameter_sets has one for its (algo, width).
+        tw = None                        # the width the row is looked up by
         if algo in _CLASSICAL_GF_ALGOS:
             priv_int, pub_int, nbits = ints
+            tw = nbits
             print(f"algorithm : {algo}")
             print(f"bits      : {nbits}")
             print(f"private   : {priv_int:0{nbits//4}x}")
@@ -3095,19 +3116,25 @@ def cmd_pkey(args):
             C_poly = _rnl_derive_C(m_poly, s_poly, n)
             C_packed, _ = pack_poly(C_poly, 2)
             s_packed, _ = pack_poly(s_poly, 4)
+            tw = n
             print(f"algorithm : {algo}")
             print(f"n         : {n}")
-            print(f"s_packed  : {s_packed:0{n}x}")
-            print(f"C_packed  : {C_packed:0{n//2}x}")
-            print(f"n_A       : {n_a.hex()}")
+            # 4 and 2 bytes a coefficient, every leading zero kept (TODO #387:
+            # the widths were n and n/2 digits, so the dump lost its zeros)
+            print(f"s_packed  : {s_packed:0{8 * n}x}")
+            print(f"C_packed  : {C_packed:0{4 * n}x}")
+            if len(ints) >= 4:           # a key that carries Alice's nonce
+                print(f"n_A       : {n_a.hex()}")
         elif algo in _STERN_ALGOS:
             e_int, seed_int, n = ints
+            tw = n
             print(f"algorithm : {algo}")
             print(f"n         : {n}")
             print(f"e_int     : {e_int:0{n//4}x}")
             print(f"seed      : {seed_int:0{n//4}x}")
         elif algo == 'hcred':
             s, C, m, seed_H_int, syndr, n = ints
+            tw = n
             print(f"algorithm : hcred")
             print(f"n         : {n}")
             print(f"seed_H    : {seed_H_int:0{n//4}x}")
@@ -3117,6 +3144,7 @@ def cmd_pkey(args):
         # nothing and exited 0 for these keys; an unhandled label now fails.
         elif algo in _ZKP_NL_ALGOS:
             A, B, y, n = ints
+            tw = n
             w = 2 * ((n + 7) // 8)
             print(f"algorithm : {algo}")
             print(f"n         : {n}")
@@ -3125,6 +3153,7 @@ def cmd_pkey(args):
             print(f"y (pub)   : {y:0{w}x}")
         elif algo == 'hpke-stern-kem':
             _decode_kem_privkey(in_path)          # validates the key
+            tw = -1                               # the row --bits cannot name
             print(f"algorithm : {algo}")
             print(f"r         : {_QCMDPC_R}")
             print(f"d         : {_QCMDPC_D}")
@@ -3139,10 +3168,13 @@ def cmd_pkey(args):
             print(f"root      : {root.hex() if isinstance(root, bytes) else format(root, '064x')}")
         elif algo == 'oprf':
             _k, nbits = _load_oprf_key(in_path)
+            tw = nbits
             print(f"algorithm : {algo}")
             print(f"bits      : {nbits}")
         else:
             sys.exit(f"pkey --text: no text form for {algo!r}")
+        for line in _param_text_lines(algo, tw):
+            print(line)
     else:
         sys.exit("Specify --pubout or --text")
 

@@ -228,7 +228,8 @@ $CLI genpkey --algo hkex-gf --out bob.pem
 # Extract the public key
 $CLI pkey --in alice.pem --pubout --out alice_pub.pem
 
-# Print key parameters in human-readable form
+# Print key parameters in human-readable form: the same text in every CLI,
+# ending in the key's parameter set (`level : demo`, `security : at most 2^36 ...`)
 $CLI pkey --in alice.pem --text
 
 $CLI kex --algo hkex-gf --our alice.pem --their bob_pub.pem   --out alice_sk.pem
@@ -1368,7 +1369,7 @@ $CLI genpkey --algo hcred --out user.pem
 
 # Extract public key (C and A receive this to verify/issue)
 $CLI pkey --in user.pem --pubout --out user_pub.pem
-$CLI pkey --in user.pem --text    # prints n, seed_H, syndr, φ(s) weight
+$CLI pkey --in user.pem --text    # prints n, seed_H, syndr, φ(s) weight, level, security
 
 # ── Issuer key (any hpks-stern keypair) ──────────────────────────────────────
 $CLI genpkey --algo hpks-stern --out issuer.pem

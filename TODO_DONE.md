@@ -26205,3 +26205,63 @@ section.
 Status: **DONE v16.0.0** — Stern-F's 128-bit set, N = 2304, in all four ports (`--level 128`).
 
 ---
+
+### #386: `pkey --text` prints a key's parameter set and estimated security
+
+Split from TODO #379, whose decision asked for it.  Every CLI's `pkey --text` prints a
+`security :` line from the key's `key_parameter_sets` row (by algo and width), and its
+level where it has one, identically in all four; `test_pkey_text_matrix.sh` checks the line.
+While there: Python's `pkey --text` on a PUBLIC key dies with "not enough values to
+unpack (expected 3, got 2)"; C, Go and Java refuse it by label (found in #383's pass).
+Also (#383 stage 2): Java's `pkey --text` on an hpks-stern / hpke-stern private key prints
+`bits` for `n`, omits `e_int` and adds `syndrome`; Python, C and Go print `n`, `e_int`,
+`seed`.  `test_width_matrix.sh` reports those 12 cells as n/a until this lands.
+And (#383 stage 3): hcred's `pkey --text` has three layouts at every width, 256
+included -- Python prints `seed_H`, `syndr` as a big-endian integer and `W (weight)`;
+C prints `seed_H` and `syndr` low byte first, without W; Go and Java print only `W`.
+`test_width_matrix.sh` reports its 30 cross-CLI cells as n/a until this lands.
+
+**Done (v16.0.0).**  Every CLI's `pkey --text` ends in the key's key_parameter_sets
+row, looked up by (algo, width) in the generated table: `level` where the row has one,
+then `security`; WOTS and XMSS, with no row, print neither.  Python refuses a public key
+by label, with one message in all four CLIs.  Java's Stern-F dump and hcred's three
+layouts now match the other CLIs, and so does every other algorithm's (#387 completed the
+hkex-rnl one); `test_pkey_text_matrix.sh` compares the whole dump across the four and the
+closing lines against the spec.
+
+**Resolution.**  One layout per algorithm, the fields most CLIs already printed, since the
+matrix had to compare whole outputs for #387 anyway.  The two lines close the dump rather
+than following the width line, so every layout keeps its existing order.  A public key is
+refused rather than described: no CLI printed one before, and `--text` on a private key
+already shows the public half.  Display only, so no artifact changes; MIGRATING.md section
+49 lists the renamed fields for scripts that parse them.
+
+Status: **DONE v16.0.0** — `pkey --text` prints the key's parameter set and one layout in all four CLIs.
+
+---
+
+### #387: Python's `pkey --text` drops leading zeros from hkex-rnl's packed dumps
+
+Found in TODO #379's pass.  For the same hkex-rnl private key, `pkey --text` prints
+different `s_packed` and `C_packed` values in Python than in C, Go and Java, at every ring
+dimension including 1024: Python formats the packed integers without their leading zero
+digits, so its dump is shorter and shifted.  Display only (no artifact changes), but the
+four CLIs should print the same text; `test_pkey_text_matrix.sh` compares only the first
+lines, which is why it never failed.  Make Python print the full fixed-width dump and
+extend the matrix to compare whole `--text` outputs across CLIs.
+Also (#383 stage 4): the other three do not agree either.  Go prints `s_packed`,
+`C_packed` and `n_A`; C prints `s_packed` alone; Java prints the first five coefficients
+of `s` and `C` (`s[0..4]`, `C[0..4]`).  `test_width_matrix.sh` reports hkex-rnl's 60
+cross-CLI `--text` cells as n/a until this lands.
+
+**Done (v16.0.0).**  Python prints s_packed and C_packed at 8n and 4n hex digits, every
+leading zero kept; C adds C_packed and n_A; Java prints the packed values instead of five
+coefficients.  All four print `n_A` only for a key that carries it.  The matrix compares
+whole `--text` outputs (`test_pkey_text_matrix.sh` section 4), and `test_width_matrix.sh`
+scores the 60 hkex-rnl cells it reported as n/a.
+
+**Resolution.**  Go's layout (s_packed, C_packed, n_A), the one complete form of the four.
+
+Status: **DONE v16.0.0** — hkex-rnl's `pkey --text` dump is the same, in full, in all four CLIs.
+
+---

@@ -64,7 +64,7 @@ bash "$ROOT/bindings/java/build.sh" >/dev/null 2>&1
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-PASS=0; FAIL=0; NA=0; NA_STERN=0; NA_HCRED=0; NA_RNL=0
+PASS=0; FAIL=0; NA=0
 pass() { PASS=$((PASS+1)); }
 fail() { echo "FAIL $1"; FAIL=$((FAIL+1)); }
 
@@ -166,21 +166,9 @@ while read -r a n dflt ports; do
             q "$r" pkey --in "$D/$g.pem" --pubout --out "$D/x.pem"
             if [ "$RC" -eq 0 ] && cmp -s "$D/x.pem" "$D/${g}_pub.pem"; then pass
             else fail "$L: pkey --pubout differs (rc=$RC)"; fi
-            # Java's Stern --text dump has other fields (bits, syndrome, no e_int),
-            # hcred's has three layouts at every width, 256 included (Python:
-            # seed_H, y big-endian, W; C: seed_H, y low byte first; Go and Java: W):
-            # the whole-dump divergence TODO #386 covers.  hkex-rnl's has four at
-            # every ring, 1024 included (Go: s_packed, C_packed, n_A; Python: the
-            # same without the packed values' leading zeros; C: s_packed alone;
-            # Java: five coefficients of s and C), TODO #387.  Neither is a width
-            # defect -- reported as n/a, never scored as a pass.
-            if [[ $a == *-stern && ( $g == java || $r == java ) && $g != "$r" ]]; then
-                NA=$((NA+1)); NA_STERN=$((NA_STERN+1))
-            elif [[ $a == hcred && $g != "$r" ]]; then
-                NA=$((NA+1)); NA_HCRED=$((NA_HCRED+1))
-            elif [[ $a == hkex-rnl && $g != "$r" ]]; then
-                NA=$((NA+1)); NA_RNL=$((NA_RNL+1))
-            elif ${CLI[$r]} pkey --in "$D/$g.pem" --text 2>/dev/null | cmp -s - "$D/${g}_text"; then pass
+            # Every cell is scored since TODO #386 / #387 gave every algorithm
+            # one --text layout (Stern, hcred and hkex-rnl were n/a until then).
+            if ${CLI[$r]} pkey --in "$D/$g.pem" --text 2>/dev/null | cmp -s - "$D/${g}_text"; then pass
             else fail "$L: pkey --text differs"; fi
             case $a in
             hkex-gf)
@@ -522,6 +510,6 @@ done
 
 echo
 echo "Results: $PASS PASS / $FAIL FAIL / $NA n/a (languages: ${LANGS[*]})"
-[ "$NA" -eq 0 ] || echo "n/a: $NA_STERN Stern pkey --text cells with Java on one side, $NA_HCRED hcred pkey --text cells across CLIs (TODO #386), $NA_RNL hkex-rnl ones (TODO #387)"
+[ "$NA" -eq 0 ] || echo "n/a: $NA cells"
 [ "$PASS" -gt 0 ] || exit 2
 [ "$FAIL" -eq 0 ] || exit 1

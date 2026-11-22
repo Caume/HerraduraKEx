@@ -7,7 +7,7 @@
 # the short form's PEM layout with n = 2304.  This file checks, at that N:
 #
 #   keys        genpkey --level 128 in every CLI; every CLI's pkey --pubout of
-#               every key is byte-identical, and --text agrees
+#               every key is byte-identical, and --text agrees (level 128)
 #   hpks-stern  every CLI signs, every CLI verifies (4x4), at a reduced round
 #               count; one 219-round C signature verified at the default floor
 #   hpks-ring   a two-member ring, 4x4
@@ -106,13 +106,13 @@ for s in "${LANGS[@]}"; do
     done
     cp "$ref" "$TMP/k_${s}_pub.pem"
 done
-# --text: n and the private values, in the three CLIs that print them alike
-# (Java's layout is TODO #386's).
+# --text: the whole dump, alike in every CLI (one layout since TODO #386),
+# ending in the 128-bit row's level and estimate.
 for s in "${LANGS[@]}"; do
     t_ref=""
-    for v in py c go; do
-        [ -n "${CLI[$v]:-}" ] || continue
-        out=$(${CLI[$v]} pkey --in "$TMP/k_$s.pem" --text 2>/dev/null | head -4)
+    for v in "${LANGS[@]}"; do
+        out=$(${CLI[$v]} pkey --in "$TMP/k_$s.pem" --text 2>/dev/null)
+        if ! echo "$out" | grep -q "^level *: 128\$"; then fail "$s's key: $v's --text has no 'level : 128'"; continue; fi
         if ! echo "$out" | grep -q "^n *: $N\$"; then fail "$s's key: $v's --text does not say n = $N"; continue; fi
         if [ -z "$t_ref" ]; then t_ref="$out"
         elif [ "$out" = "$t_ref" ]; then pass "$s's key: $v's --text matches"

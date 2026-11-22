@@ -1950,6 +1950,20 @@ static void print_hex_field(const char *name, const uint8_t *bytes, size_t len)
     putchar('\n');
 }
 
+/* TODO #386: `pkey --text`'s closing lines, from the key's generated
+ * key_parameter_sets row (HKX_PARAM_SETS): `level` where the row has one,
+ * then `security`.  Nothing for a key no row describes (WOTS, XMSS). */
+static void print_param_lines(const char *algo, int width)
+{
+    for (int i = 0; i < HKX_PARAM_SETS_N; i++) {
+        const HkxParamSet *r = &HKX_PARAM_SETS[i];
+        if (strcmp(r->algo, algo) != 0 || r->bits != width) continue;
+        if (r->level) printf("%-10s: %s\n", "level", r->level);
+        printf("%-10s: %s\n", "security", r->security);
+        return;
+    }
+}
+
 static void cmd_pkey(int argc, char **argv)
 {
     const char *in_path  = get_arg(argc, argv, "--in");
@@ -1982,6 +1996,17 @@ static void cmd_pkey(int argc, char **argv)
     if (passphrase) die("pkey: --passphrase is only meaningful with --decrypt");
     if (!pubout && !text) die("pkey: specify --pubout or --text");
 
+    /* TODO #386: a public key is refused by label, in the same words in all
+     * four CLIs. */
+    {
+        char peek[80];
+        size_t pl;
+        zkp_pem_peek_label(in_path, peek);
+        pl = strlen(peek);
+        if (pl >= 11 && strcmp(peek + pl - 11, " PUBLIC KEY") == 0)
+            dief("pkey: '%s' is a public key (pkey reads a private key)", peek);
+    }
+
     /* ZKP-NL keys use raw binary PEM — handle before DER-based path. */
     {
         char peek[80];
@@ -2004,9 +2029,10 @@ static void cmd_pkey(int argc, char **argv)
             if (text) {
                 printf("%-10s: %s\n", "algorithm", "hpks-zkp-nl");
                 printf("%-10s: %d\n", "n", nl_n);
-                printf("%-10s: %0*lx\n", "A_private", 2*nb, (unsigned long)A);
-                printf("%-10s: %0*lx\n", "B_public",  2*nb, (unsigned long)B);
-                printf("%-10s: %0*lx\n", "y_public",  2*nb, (unsigned long)y);
+                printf("%-10s: %0*lx\n", "A (priv)", 2*nb, (unsigned long)A);
+                printf("%-10s: %0*lx\n", "B (pub)",  2*nb, (unsigned long)B);
+                printf("%-10s: %0*lx\n", "y (pub)",  2*nb, (unsigned long)y);
+                print_param_lines("hpks-zkp-nl", nl_n);
             } else {
                 size_t pub_len = 4 + (size_t)2*nb;
                 uint8_t *pub = (uint8_t *)malloc(pub_len);
@@ -2050,9 +2076,21 @@ static void cmd_pkey(int argc, char **argv)
                 printf("%-10s: ", "seed_H");
                 for (int j = 0; j < n/8; j++) printf("%02x", body[sh_off+j]);
                 printf("\n");
+                /* the syndrome as a big-endian integer, as Python, Go and Java
+                 * print it; the key stores it low byte first (TODO #386) */
                 printf("%-10s: ", "syndr");
-                for (int j = 0; j < n/16; j++) printf("%02x", body[sy_off+j]);
+                for (int j = n/16 - 1; j >= 0; j--) printf("%02x", body[sy_off+j]);
                 printf("\n");
+                /* W = wt(phi(s)): the coefficients of s equal to 1 */
+                {
+                    int w = 0;
+                    for (int j = 0; j < n; j++) {
+                        const uint8_t *c3 = body + 4 + (size_t)j * 3;
+                        w += (c3[0] == 0 && c3[1] == 0 && c3[2] == 1);
+                    }
+                    printf("%-10s: %d\n", "W (weight)", w);
+                }
+                print_param_lines("hcred", n);
             } else {
                 /* pubkey: 4B n | n×2B C | n×3B m | n/8 seed_H | n/16 syndr */
                 size_t pub_len = 4 + (size_t)n*2 + (size_t)n*3 + (size_t)n/8 + (size_t)n/16;
@@ -2086,8 +2124,7 @@ static void cmd_pkey(int argc, char **argv)
                 printf("%-10s: %s\n", "algorithm", "hpke-stern-kem");
                 printf("%-10s: %llu\n", "r", (unsigned long long)parse_be_uint(pk.vals[4], pk.vlens[4]));
                 printf("%-10s: %llu\n", "d", (unsigned long long)parse_be_uint(pk.vals[5], pk.vlens[5]));
-                printf("%-10s: ", "h0"); for (i=0;i<(int)pk.vlens[0];i++) printf("%02x",pk.vals[0][i]); printf("\n");
-                printf("%-10s: ", "h1"); for (i=0;i<(int)pk.vlens[1];i++) printf("%02x",pk.vals[1][i]); printf("\n");
+                print_param_lines("hpke-stern-kem", -1);
             } else {
                 /* Public key: SEQUENCE(h_pub[66], r) */
                 /* Reconstruct QcMdpcPriv, derive pub from priv */
@@ -2143,6 +2180,7 @@ static void cmd_pkey(int argc, char **argv)
         if (!text) die("pkey --pubout: oprf has no public key");
         printf("%-10s: %s\n", "algorithm", "oprf");
         printf("%-10s: %d\n", "bits", gf_key_width(&k));   /* TODO #385: the key's own */
+        print_param_lines("oprf", gf_key_width(&k));
         pem_key_free(&k);
         return;
     }
@@ -2186,6 +2224,7 @@ static void cmd_pkey(int argc, char **argv)
             printf("%-10s: %d\n", "bits", gn);
             print_hex_field("private", priv.b, (size_t)gn / 8);
             print_hex_field("public",  pub.b,  (size_t)gn / 8);
+            print_param_lines(algo, gn);
         } else {
             uint8_t ip[DER_INT_LEN(KEYBYTES)], in[8]; size_t lp, ln;
             der_ba(&pub, ip, &lp); der_i_uint((uint64_t)gn, in, &ln);
@@ -2216,6 +2255,19 @@ static void cmd_pkey(int argc, char **argv)
             printf("%-10s: ", "s_packed");
             for (size_t j = 0; j < (size_t)n * 4; j++) printf("%02x", s_buf[j]);
             putchar('\n');
+            /* TODO #387: C and n_A as well, as Go and Python print them */
+            {
+                rnl_poly_t ms;
+                uint8_t C_buf[RNL_N * 2];
+                rnl_poly_mul_dim(ms, m_poly, s_poly, n);
+                rnl_round_dim(C_poly, ms, RNL_Q, RNL_P, n);
+                poly_pack(C_buf, C_poly, n, 2);
+                printf("%-10s: ", "C_packed");
+                for (size_t j = 0; j < (size_t)n * 2; j++) printf("%02x", C_buf[j]);
+                putchar('\n');
+            }
+            if (k.n_items >= 4) print_hex_field("n_A", n_A, KEYBYTES);
+            print_param_lines(algo, n);
         } else {
             /* Derive C = round_p(m * s) */
             rnl_poly_t ms;
@@ -2255,7 +2307,7 @@ static void cmd_pkey(int argc, char **argv)
         hpks_wots_keygen(sk, pk, seed_ba.b, leaf_idx);
         if (text) {
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: one-time\n", "type");
+            printf("%-10s: %u\n", "leaf_idx", (unsigned)leaf_idx);   /* TODO #386 */
         } else {
             uint8_t blob[WOTS_L * KEYBYTES];
             wots_blob_pack(blob, pk);
@@ -2285,7 +2337,7 @@ static void cmd_pkey(int argc, char **argv)
         free(flat);
         if (text) {
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: %d (%zu leaves)\n", "height", h_val, num_leaves);
+            printf("%-10s: %d (%zu leaves)\n", "h", h_val, num_leaves);   /* TODO #386 */
             print_hex_field("root", root, KEYBYTES);
         } else {
             uint8_t ir[DER_INT_LEN(KEYBYTES)], ih[DER_INT_LEN(8)];
@@ -2310,6 +2362,7 @@ static void cmd_pkey(int argc, char **argv)
                 printf("%-10s: %d\n", "n", sn);
                 print_hex_field("e_int", le,    (size_t)sn / 8);
                 print_hex_field("seed",  lseed, (size_t)sn / 8);
+                print_param_lines(algo, sn);
             } else {
                 stern_l_syndrome(lsyn, lseed, le, sn);
                 stern_l_write_key(lsyn, lseed, sn, algos[ai].pub_label, out_path);
@@ -2326,6 +2379,7 @@ static void cmd_pkey(int argc, char **argv)
             printf("%-10s: %d\n", "n", sn);
             print_hex_field("e_int", e.b,    (size_t)sn / 8);
             print_hex_field("seed",  seed.b, (size_t)sn / 8);
+            print_param_lines(algo, sn);
         } else {
             uint8_t syndr[SDF_SYNBYTES];
             stern_syndrome(syndr, &seed, &e);

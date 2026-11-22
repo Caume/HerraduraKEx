@@ -2387,3 +2387,30 @@ credential at 255 rounds or fewer, read exactly as before.
 **Why this is MAJOR.** C's and Go's `verify` and `cred-verify` now refuse a stored
 artifact they accepted before, which makes an existing artifact unreadable by a newer
 build.
+
+## 49. `pkey --text` prints one layout in all four CLIs (v16.0.0)
+
+**Who is affected:** anyone who parses `pkey --text` output.  No key, signature or
+ciphertext changes; `--pubout` writes the same bytes as before.
+
+**What changed (TODO #386, #387).** The four CLIs printed different text for the same
+key: hkex-rnl had four layouts (Python dropped the packed values' leading zeros, C printed
+`s_packed` alone, Java five coefficients); hcred three (C printed the syndrome low byte
+first, Go and Java only `W`); Java's Stern-F dump printed `bits` and `syndrome` for `n` and
+`e_int`; C labelled XMSS's height `height` and printed no WOTS leaf index; the ZKP-NL and
+KEM dumps differed in labels and fields.  Every CLI now prints one layout per algorithm
+(the fields most of them already printed), and every dump the parameter table describes
+ends in two new lines, `level` (where the row has one) and `security`.  `pkey` on a PUBLIC
+key is refused in every CLI with `pkey: '<label>' is a public key (pkey reads a private
+key)` (Python died in a traceback; the other three said "unrecognised label").
+
+**What to do.** Read fields by their `name :` prefix, and expect the two closing lines.
+Specifically: C's XMSS `height` is now `h`, its WOTS `type : one-time` is now
+`leaf_idx : <n>`, and its ZKP-NL `A_private` / `B_public` / `y_public` are now
+`A (priv)` / `B (pub)` / `y (pub)`; C's hcred `syndr` is now big-endian; C's KEM `h0` /
+`h1` and Java's `h_pub` lines are gone; Java's Stern-F `bits` / `syndrome` are now `n` /
+`e_int`, its hkex-rnl `s[0..4]` / `C[0..4]` are now `s_packed` / `C_packed` / `n_A`, and its
+ZKP-NL `B` / `y` are hex under the labels above.
+
+**Why it is listed.** `--text` is display output, not a stored artifact, so this is not a
+wire break; it is here because a script reading those fields would break.

@@ -686,6 +686,11 @@ public final class HerraduraCli {
 
         String pemIn = readString(in);
         Codec.PemBlock block = Codec.pemUnwrap(pemIn);
+        // TODO #386: a public key is refused by label, in the same words in
+        // all four CLIs.
+        if (block.label.endsWith(" PUBLIC KEY")) {
+            throw new CliError("pkey: '" + block.label + "' is a public key (pkey reads a private key)");
+        }
         // FAIL CLOSED (TODO #268).  An envelope IS a DER SEQUENCE, so without
         // this it parses cleanly and its salt/iterations/nonce are read as
         // though they were key material -- a wrong answer with exit 0.
@@ -703,6 +708,7 @@ public final class HerraduraCli {
             Codec.PubKey ok = Codec.decodeOprfPrivKey(pemIn);   // validates the key
             System.out.println("algorithm : oprf");
             System.out.println("bits      : " + ok.nbits);   // TODO #385: the key's own
+            printParamLines("oprf", ok.nbits);
             return;
         }
 
@@ -715,10 +721,13 @@ public final class HerraduraCli {
             if (opt.containsKey("pubout")) {
                 writeString(out, Codec.encodeSternPubKey(pubLabel, syndrome, pk.seed, pk.nbits));
             } else if (opt.containsKey("text")) {
-                System.out.println("algorithm : " + (block.label.equals(Codec.PEM_HPKS_STERN_PRIV) ? "hpks-stern" : "hpke-stern"));
-                System.out.println("bits      : " + pk.nbits);
+                // TODO #386: the other three's fields (n, e_int, seed)
+                String sa = block.label.equals(Codec.PEM_HPKS_STERN_PRIV) ? "hpks-stern" : "hpke-stern";
+                System.out.println("algorithm : " + sa);
+                System.out.println("n         : " + pk.nbits);
+                System.out.println("e_int     : " + hex(pk.e, pk.nbits / 4));
                 System.out.println("seed      : " + hex(pk.seed, pk.nbits / 4));
-                System.out.println("syndrome  : " + hex(syndrome, pk.nbits / 8));
+                printParamLines(sa, pk.nbits);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -734,7 +743,7 @@ public final class HerraduraCli {
                 System.out.println("algorithm : hpke-stern-kem");
                 System.out.println("r         : " + pk.r);
                 System.out.println("d         : " + pk.d);
-                System.out.println("h_pub     : " + hPub.toString(16));
+                printParamLines("hpke-stern-kem", -1);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -776,7 +785,10 @@ public final class HerraduraCli {
             } else if (opt.containsKey("text")) {
                 System.out.println("algorithm : hcred");
                 System.out.println("n         : " + pk.n);
+                System.out.println("seed_H    : " + hex(pk.seedH, pk.n / 4));   // TODO #386
+                System.out.println("syndr     : " + hex(pk.syndr, pk.n / 8));
                 System.out.println("W (weight): " + Hcred.phi(pk.s).bitCount());
+                printParamLines("hcred", pk.n);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -789,9 +801,12 @@ public final class HerraduraCli {
                 writeString(out, Codec.encodeZkpNlPubKey(pk.b, pk.y, pk.n));
             } else if (opt.containsKey("text")) {
                 System.out.println("algorithm : hpks-zkp-nl");
+                int w = 2 * ((pk.n + 7) / 8);                        // TODO #386
                 System.out.println("n         : " + pk.n);
-                System.out.println("B         : " + pk.b);
-                System.out.println("y         : " + pk.y);
+                System.out.println("A (priv)  : " + hex(pk.a, w));
+                System.out.println("B (pub)   : " + hex(pk.b, w));
+                System.out.println("y (pub)   : " + hex(pk.y, w));
+                printParamLines("hpks-zkp-nl", pk.n);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -805,9 +820,13 @@ public final class HerraduraCli {
                 writeString(out, Codec.encodeRnlPubKey(c, pk.mBlind, pk.n, pk.nA));
             } else if (opt.containsKey("text")) {
                 System.out.println("algorithm : hkex-rnl");
+                // TODO #387: the whole packed s and C, as the other three
                 System.out.println("n         : " + pk.n);
-                System.out.println("s[0..4]   : " + java.util.Arrays.toString(java.util.Arrays.copyOf(pk.s, 5)));
-                System.out.println("C[0..4]   : " + java.util.Arrays.toString(java.util.Arrays.copyOf(c, 5)));
+                System.out.println("s_packed  : " + packedHex(pk.s, 4));
+                System.out.println("C_packed  : " + packedHex(c, 2));
+                if (Codec.derParseSeq(block).size() >= 4)          // a key that carries n_A
+                    System.out.println("n_A       : " + hexBytes(pk.nA));
+                printParamLines("hkex-rnl", pk.n);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -826,6 +845,7 @@ public final class HerraduraCli {
             System.out.println("bits      : " + pk.nbits);
             System.out.println("private   : " + hex(pk.priv, hexWidth));
             System.out.println("public    : " + hex(pk.pub, hexWidth));
+            printParamLines(algo, pk.nbits);
         } else {
             throw new CliError("pkey: specify --pubout or --text");
         }
@@ -2803,6 +2823,26 @@ public final class HerraduraCli {
         int copyLen = raw.length - rawStart;
         System.arraycopy(raw, rawStart, out, nbytes - copyLen, copyLen);
         return out;
+    }
+
+    /** TODO #386: `pkey --text`'s closing lines, from the key's generated
+     * key_parameter_sets row: `level` where the row has one, then `security`.
+     * Nothing for a key no row describes (WOTS, XMSS). */
+    private static void printParamLines(String algo, int width) {
+        for (String[] r : KeyLabelTable.PARAM_SETS) {
+            if (!r[0].equals(algo) || Integer.parseInt(r[1]) != width) continue;
+            if (!r[2].isEmpty()) System.out.println("level     : " + r[2]);
+            System.out.println("security  : " + r[5]);
+            return;
+        }
+    }
+
+    /** Coefficients as bpc big-endian bytes each, in hex (TODO #387). */
+    private static String packedHex(int[] v, int bpc) {
+        StringBuilder sb = new StringBuilder(v.length * bpc * 2);
+        for (int x : v)
+            for (int k = bpc - 1; k >= 0; k--) sb.append(String.format("%02x", (x >>> (8 * k)) & 0xFF));
+        return sb.toString();
     }
 
     private static String hex(BigInteger v, int width) {

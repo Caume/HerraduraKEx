@@ -216,6 +216,9 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     passphrase, and --kdf-iterations without --passphrase, are refused by name in
     every CLI (TODO #376; Python and Go used to write the key in the clear).
   pkey --in FILE [--pubout] [--text] [--out FILE]
+    --text prints one layout per algorithm, byte-identical in all four CLIs, ending in
+    the key's parameter-set row (`level : ...` where it has one, `security : ...`;
+    none for WOTS / XMSS).  A PUBLIC key is refused by label (TODO #386, #387).
   pkey --decrypt --passphrase P --in FILE [--out FILE]
     --decrypt accepts --passphrase '' so envelopes written under '' before TODO #376
     stay readable.

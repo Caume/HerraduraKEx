@@ -1831,6 +1831,22 @@ func cmdGenpkey(args []string) {
 
 // ── pkey ─────────────────────────────────────────────────────────────────────
 
+// printParamLines is `pkey --text`'s closing lines, from the key's generated
+// key_parameter_sets row (paramSets): `level` where the row has one, then
+// `security` (TODO #386).  Nothing for a key no row describes (WOTS, XMSS).
+func printParamLines(algo string, width int) {
+	for _, r := range paramSets {
+		if r.algo != algo || r.bits != width {
+			continue
+		}
+		if r.level != "" {
+			fmt.Printf("level     : %s\n", r.level)
+		}
+		fmt.Printf("security  : %s\n", r.security)
+		return
+	}
+}
+
 func cmdPkey(args []string) {
 	fs := flag.NewFlagSet("pkey", flag.ExitOnError)
 	in     := fs.String("in", "", "Input private key file")
@@ -1880,6 +1896,12 @@ func cmdPkey(args []string) {
 		if lerr != nil {
 			die("pkey", lerr)
 		}
+		// TODO #386: a public key is refused by label, in the same words in
+		// all four CLIs.
+		if strings.HasSuffix(lbl, " PUBLIC KEY") {
+			fmt.Fprintf(os.Stderr, "pkey: '%s' is a public key (pkey reads a private key)\n", lbl)
+			os.Exit(1)
+		}
 		if lbl == lblZkpNlPriv {
 			body, rerr := readRawPEM(*in, lblZkpNlPriv)
 			if rerr != nil {
@@ -1901,6 +1923,7 @@ func cmdPkey(args []string) {
 				fmt.Printf("A (priv)  : %0*x\n", nb*2, A)
 				fmt.Printf("B (pub)   : %0*x\n", nb*2, B)
 				fmt.Printf("y (pub)   : %0*x\n", nb*2, y)
+				printParamLines("hpks-zkp-nl", zkpN)
 			}
 			return
 		}
@@ -1921,7 +1944,12 @@ func cmdPkey(args []string) {
 			} else {
 				fmt.Printf("algorithm : hcred\n")
 				fmt.Printf("n         : %d\n", hn)
+				// seed_H and the syndrome as big-endian integers, as the
+				// other three print them (TODO #386)
+				fmt.Printf("seed_H    : %0*x\n", hn/4, seedH.BigInt())
+				fmt.Printf("syndr     : %0*x\n", hn/8, syndr)
 				fmt.Printf("W (weight): %d\n", CountBits(HcredPhi(sPoly)))
+				printParamLines("hcred", hn)
 			}
 			return
 		}
@@ -2038,6 +2066,7 @@ func cmdPkey(args []string) {
 		fmt.Printf("bits      : %d\n", n)
 		fmt.Printf("private   : %0*x\n", n/4, priv)
 		fmt.Printf("public    : %0*x\n", n/4, pub)
+		printParamLines(algo, n)
 
 	case algo == "hkex-rnl":
 		n      := rnlWireN(ints[2], "pkey")
@@ -2052,6 +2081,7 @@ func cmdPkey(args []string) {
 		if len(ints) >= 4 {
 			fmt.Printf("n_A       : %x\n", padLeftN(ints[3], 32))
 		}
+		printParamLines(algo, n)
 
 	case sternAlgos[algo]:
 		n    := sternWireN(ints[2], "pkey")
@@ -2061,6 +2091,7 @@ func cmdPkey(args []string) {
 		fmt.Printf("n         : %d\n", n)
 		fmt.Printf("e_int     : %0*x\n", n/4, eBig)
 		fmt.Printf("seed      : %0*x\n", n/4, sBig)
+		printParamLines(algo, n)
 
 	// TODO #374: the four cases below were missing, so --text printed nothing
 	// and exited 0 for these keys; an unhandled label now fails.
@@ -2069,6 +2100,7 @@ func cmdPkey(args []string) {
 		fmt.Printf("algorithm : %s\n", algo)
 		fmt.Printf("r         : %d\n", QcMdpcR)
 		fmt.Printf("d         : %d\n", QcMdpcD)
+		printParamLines(algo, -1)
 
 	case algo == "hpks-wots":
 		fitBytes(ints[0], 32, "WOTS seed", "pkey")
@@ -2098,6 +2130,7 @@ func cmdPkey(args []string) {
 		fitBytes(ints[0], on/8, "OPRF key", "pkey")
 		fmt.Printf("algorithm : %s\n", algo)
 		fmt.Printf("bits      : %d\n", on)
+		printParamLines(algo, on)
 
 	default:
 		fmt.Fprintf(os.Stderr, "pkey --text: no text form for %s\n", algo)
