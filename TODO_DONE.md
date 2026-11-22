@@ -26368,3 +26368,43 @@ doubling a push's runner minutes.
 Status: **DONE v16.0.1** — CI's findings gates and width matrix run as parallel shards, and `cross-lang-compat` no longer waits for Python.
 
 ---
+
+### #392: shard the Python test suite in CI
+
+Found after TODO #391.  With the findings gates and the width matrix sharded, the
+`native-python` job (16.3 min on run 45038543745) set CI's wall clock with the slowest
+findings shards.  8.8 min of it was one step, `Herradura_tests.py -t 2.0`, running 54 test
+and benchmark functions in series; the rest of the job (demo, examples, `spec/` checkers,
+the two QC-MDPC gates, Mcp, the Python CliTest scripts) took about 7.5 min after it.  Run
+the suite as parallel shards, and the job's other steps beside them.
+
+**Done (v16.0.2).**
+- `Herradura_tests.py --shard K/N` runs a partition of the suite's functions.  The entry
+  point's call sequence is now one run list, `_RUN`, with section headers as strings; a
+  header prints only when its section has a function in the shard.
+- The partition is a longest-first greedy over `_SHARD_COST` (seconds per function,
+  measured locally at `-t 2.0`), ties broken by name.  A function missing from the table
+  costs 10 s and still runs.  An entry naming no function exits 2; that control was shown
+  to fire.
+- At two shards the estimates are 417 / 416 s.  Locally the shards took 343 s and 409 s
+  against 832 s unsharded, and between them printed the same 54 test numbers, each once,
+  and the same 106 `[PASS]` lines as the unsharded run.
+- `native-python` is now a two-shard matrix running only the suite.  The new
+  `native-python-cli` job runs every other step the old job ran, unchanged.
+  `check_docker_mirror.py` reasons about the new job id.
+- Python `[43]`'s verdict pin moved, because the last marker's span runs to the end of the
+  file and so takes in the entry point's new `*** FAILED` line.  No test decides
+  differently; re-pinned.
+
+**Resolution.**
+- Two shards, not three.  The suite at about 4.5 min a shard is already under the
+  `native-python-cli` half (7.5 min), and both are under the slowest findings shard
+  (16 min), which still sets the wall clock.
+- The cost table lives in the harness rather than beside it, because the harness is the
+  only consumer and needs no file I/O to run.
+- C and Go take no `--shard`: their suites run in 4 min, so a shard flag there would only
+  be a parity cost.
+
+Status: **DONE v16.0.2** — the Python test suite runs as two CI shards, beside a separate job for the rest of the Python checks.
+
+---

@@ -2389,7 +2389,7 @@ _VERDICT_FINGERPRINTS = {
     ("python", 37): "none", ("python", 38): "none",
     ("python", 39): "none", ("python", 40): "none",
     ("python", 41): "none", ("python", 42): "none",
-    ("python", 43): "e241c66aee", ("python", 44): "8d82a4b834",
+    ("python", 43): "efdf7d2d53", ("python", 44): "8d82a4b834",
     ("python", 45): "661a73d2f2", ("python", 46): "a945af0b0a",
     ("python", 47): "a9d13b319a", ("python", 48): "9ee4fb2c2e",
     ("python", 49): "a9d13b319a", ("python", 50): "4f6ccba4ce",

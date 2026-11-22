@@ -95,6 +95,12 @@ EXEMPT = {
         "Needs arduino-cli plus a board target, i.e. not a host-portable build.  "
         "Excluded since TODO #139 and documented in the Dockerfile header."
     ),
+    "native-python-cli": (
+        "The Python job's non-suite half (TODO #392): the suite demo, examples, "
+        "spec/ checkers and the Python CliTest scripts.  The entrypoint's "
+        "Python target is the test suite, which native-python owns; the rest "
+        "re-checks sources the image does not change."
+    ),
     "native-interop": (
         "Its scripts drive two or more CLIs at once; the entrypoint runs "
         "CliTest/test_c_interop.sh, which is one of them, as its CLI smoke test.  "

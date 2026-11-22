@@ -200,8 +200,31 @@ jobs:
             bash "$f"
           done
 
+  # TODO #392.  The Python test suite was 8.8 of this job's 16.3 min, so it runs
+  # as two shards (Herradura_tests.py --shard K/2, a partition computed from
+  # its _SHARD_COST table) and native-python-cli below runs the job's other
+  # steps beside them.  Both shards together run each numbered test once.
   native-python:
-    name: Python (tests + CliTest)
+    name: Python test suite (shard ${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3
+
+      - name: Python test suite
+        run: python3 CryptosuiteTests/Herradura_tests.py -t 2.0 --shard ${{ matrix.shard }}/2
+
+  native-python-cli:
+    name: Python (CliTest + checks)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -223,9 +246,6 @@ jobs:
       # verdict, via the demo's own "[FAIL]"-marker exit code.
       - name: Python suite demo runs to completion
         run: python3 "Herradura cryptographic suite.py"
-
-      - name: Python test suite
-        run: python3 CryptosuiteTests/Herradura_tests.py -t 2.0
 
       # TODO #329. The Python integration example and four benchmarks, none of
       # which any job ran. docs/examples/python/hello_herradura.py is what

@@ -2,6 +2,24 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [16.0.2] - 2026-11-22
+
+**The Python test suite runs as two CI shards (TODO #392).** No test changes what it asserts.
+
+### TODO #392 — the Python test suite, sharded
+
+- **`Herradura_tests.py --shard K/N`.** The entry point's call sequence is one run list,
+  `_RUN`. A shard runs a partition of its 54 functions, computed by a longest-first greedy
+  over the measured `_SHARD_COST` seconds; a function missing from the table still runs,
+  and an entry naming no function exits 2. Locally the two shards print the same 54 test
+  numbers, each once, and the same 106 `[PASS]` lines as an unsharded run, in 343 s and
+  409 s against 832 s.
+- **`native-python` is a two-shard matrix of the suite; `native-python-cli` runs the rest**
+  of what the job ran (demo, examples, `spec/` checkers, QC-MDPC gates, Mcp, Python
+  CliTest), unchanged. The 16.3 min job becomes about 4.5 min shards beside a 7.5 min job.
+- Python `[43]`'s verdict fingerprint was re-pinned: the last marker's span reaches the
+  entry point, whose new `*** FAILED` line moved the hash. No test's decision changed.
+
 ## [16.0.1] - 2026-11-22
 
 **CI finishes in about 20 minutes instead of about 95 (TODO #391).** No test asserts

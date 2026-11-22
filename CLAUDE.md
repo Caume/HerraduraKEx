@@ -270,9 +270,11 @@ themselves, and **any `[FAIL]` fails the build**.
 
 ### CI
 
-`.github/workflows/ci.yml` runs fifteen jobs on every push/PR, **all required**:
-`native-c`, `native-go`, `native-python` (build + suite tests + that language's own
-`CliTest/` scripts), `native-interop` (multi-CLI scripts, plus the CliTest coverage guard
+`.github/workflows/ci.yml` runs sixteen jobs on every push/PR, **all required**:
+`native-c`, `native-go` (build + suite tests + that language's own `CliTest/` scripts),
+`native-python` (the Python test suite in two shards, `--shard K/2`), `native-python-cli`
+(the Python demo, examples, `spec/` checkers and Python `CliTest/` scripts),
+`native-interop` (multi-CLI scripts, plus the CliTest coverage guard
 and the DFR guard), `native-interop-width` (`test_width_matrix.sh` in three shards,
 `HKX_SHARD=K/3`), `native-java`, `cross-lang-compat` (4×4 matrices:
 `test_cross_lang_matrix.sh`, `test_malformed_pem_matrix.sh`, and others; it waits for
@@ -280,9 +282,10 @@ the C, Go and Java jobs, not Python's), `arm-i386` (qemu), `katex` (+ part-index
 `arduino` (simavr), `fuzz-smoke`, `sanitizers` (ASan+UBSan + valgrind),
 `analysis-findings-shard` (`run_findings_gates.py --shard K/6`), `analysis-findings`
 (collects the six shards and checks the partition) and `docker` (image build +
-reduced-cap entrypoint).  The two matrix jobs (TODO #391) keep a push near 20 min of
-wall clock; a shard is balanced from `SecurityProofsCode/gate_durations.json`, which
-`--record-durations <log>` refreshes and which may go stale without dropping a gate.  The two QC-MDPC gates also run in `native-python`
+reduced-cap entrypoint).  The matrix jobs (TODO #391, #392) keep a push near 20 min of
+wall clock; the Python suite's shards come from its own `_SHARD_COST` table, and a
+findings shard is balanced from `SecurityProofsCode/gate_durations.json`, which
+`--record-durations <log>` refreshes and which may go stale without dropping a gate.  The two QC-MDPC gates also run in `native-python-cli`
 on purpose (defense in depth, TODO #336).  `.github/workflows/codeql.yml` is a separate,
 non-blocking CodeQL matrix (TODO #189).  Every step that installs packages (apt-get, npm,
 pip) carries `timeout-minutes: 20`, so a stalled mirror fails in minutes instead of the
@@ -309,6 +312,7 @@ HTEST_ROUNDS=200 HTEST_TIME=1.5 ./CryptosuiteTests/Herradura_tests_c  # env-var 
 
 cd CryptosuiteTests && go run Herradura_tests.go -r 500 -t 2.0
 python3 CryptosuiteTests/Herradura_tests.py -r 500 -t 2.0
+python3 CryptosuiteTests/Herradura_tests.py -t 2.0 --shard 1/2   # one CI shard (TODO #392)
 
 java -cp bindings/java herradurakex.SelfTest
 java -cp bindings/java herradurakex.Bench [-r N] [-t S]
