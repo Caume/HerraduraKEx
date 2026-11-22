@@ -270,14 +270,19 @@ themselves, and **any `[FAIL]` fails the build**.
 
 ### CI
 
-`.github/workflows/ci.yml` runs thirteen jobs on every push/PR, **all required**:
+`.github/workflows/ci.yml` runs fifteen jobs on every push/PR, **all required**:
 `native-c`, `native-go`, `native-python` (build + suite tests + that language's own
 `CliTest/` scripts), `native-interop` (multi-CLI scripts, plus the CliTest coverage guard
-and the DFR guard), `native-java`, `cross-lang-compat` (4×4 matrices:
-`test_cross_lang_matrix.sh`, `test_malformed_pem_matrix.sh`, and others), `arm-i386`
-(qemu), `katex` (+ part-index check), `arduino` (simavr), `fuzz-smoke`, `sanitizers`
-(ASan+UBSan + valgrind), `analysis-findings` (`run_findings_gates.py`) and `docker`
-(image build + reduced-cap entrypoint).  The two QC-MDPC gates also run in `native-python`
+and the DFR guard), `native-interop-width` (`test_width_matrix.sh` in three shards,
+`HKX_SHARD=K/3`), `native-java`, `cross-lang-compat` (4×4 matrices:
+`test_cross_lang_matrix.sh`, `test_malformed_pem_matrix.sh`, and others; it waits for
+the C, Go and Java jobs, not Python's), `arm-i386` (qemu), `katex` (+ part-index check),
+`arduino` (simavr), `fuzz-smoke`, `sanitizers` (ASan+UBSan + valgrind),
+`analysis-findings-shard` (`run_findings_gates.py --shard K/6`), `analysis-findings`
+(collects the six shards and checks the partition) and `docker` (image build +
+reduced-cap entrypoint).  The two matrix jobs (TODO #391) keep a push near 20 min of
+wall clock; a shard is balanced from `SecurityProofsCode/gate_durations.json`, which
+`--record-durations <log>` refreshes and which may go stale without dropping a gate.  The two QC-MDPC gates also run in `native-python`
 on purpose (defense in depth, TODO #336).  `.github/workflows/codeql.yml` is a separate,
 non-blocking CodeQL matrix (TODO #189).  Every step that installs packages (apt-get, npm,
 pip) carries `timeout-minutes: 20`, so a stalled mirror fails in minutes instead of the
@@ -361,6 +366,8 @@ python3 SecurityProofsCode/hkex_gf_test.py
 python3 SecurityProofsCode/qcmdpc_bgf_variants.py --quick   # ~11 min; --full ~72 min
 python3 SecurityProofsCode/run_findings_gates.py --list     # the set, incl. NON_GATING
 python3 SecurityProofsCode/run_findings_gates.py            # all gates, --quick; ~120 min on an aarch64 SBC
+python3 SecurityProofsCode/run_findings_gates.py --shard 2/6  # one CI shard (TODO #391)
+python3 SecurityProofsCode/run_findings_gates.py --verify-shards 6  # the partition CI uses
 ```
 
 ## Core Cryptographic Architecture

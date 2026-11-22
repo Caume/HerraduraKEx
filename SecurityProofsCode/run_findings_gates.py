@@ -53,12 +53,29 @@ three failures in one script and #288 six, so partial reporting is not a
 hypothetical.  Every script runs, the failures are re-listed at the end, and
 the exit status is non-zero if any failed.
 
+SHARDS (TODO #391).  The whole set is about 95 min on a CI runner, so CI runs
+it as N parallel jobs: `--shard K/N` runs only shard K's gates.  DISCOVERY DOES
+NOT CHANGE -- every shard discovers the whole set and runs every coverage check
+above, and the shards are a PARTITION of it, computed rather than listed: a
+longest-first greedy over gate_durations.json's measured seconds, ties broken
+by name, so every runner computes the same shards.  A gate the table does not
+know yet costs _DEFAULT_COST and lands on the lightest shard, so it runs; a
+stale figure only unbalances the shards.  A table entry naming no gate is an
+error, like every curated table here.  `--verify-shards N` prints the
+partition, checks it covers every gate exactly once, and fails if the busiest
+shard's estimate is over SHARD_BUDGET; `--record-durations LOG...` refreshes
+the table from runner output (a CI log, or several shards' logs).
+
 Run:  python3 SecurityProofsCode/run_findings_gates.py [--quick|--full] [--list]
                                                        [--timeout SECONDS]
+                                                       [--shard K/N]
+                                                       [--verify-shards N]
+                                                       [--record-durations LOG...]
 """
 
 import argparse
 import ast
+import json
 import os
 import re
 import subprocess
@@ -687,6 +704,88 @@ def check_declarations(found, undeclared):
     return bad
 
 
+# ── TODO #391: shards ──────────────────────────────────────────────────────
+DURATIONS = os.path.join(HERE, "gate_durations.json")
+_DEFAULT_COST = 120      # seconds, for a gate the table does not know yet
+SHARD_BUDGET = 1200      # seconds: the busiest shard's estimate must fit this
+_DURATION_LINE_RE = re.compile(r"\[(?:ok  |FAIL)\]\s+(\d+) s  (\S+\.py)")
+
+
+def load_durations():
+    try:
+        with open(DURATIONS, encoding="utf-8") as fh:
+            return json.load(fh)["seconds"]
+    except FileNotFoundError:
+        return {}
+
+
+def check_durations(found, durations):
+    """A duration entry naming no gate is an error; a missing one is not."""
+    names = {n for n, _ in found}
+    return ["%s: in gate_durations.json, but it is not a gating script -- "
+            "delete the entry (or run --record-durations)" % n
+            for n in sorted(durations) if n not in names]
+
+
+def assign_shards(names, durations, n):
+    """Longest-first greedy into n shards; deterministic for a given input."""
+    cost = lambda x: durations.get(x, _DEFAULT_COST)
+    shards, loads = [[] for _ in range(n)], [0] * n
+    for name in sorted(names, key=lambda x: (-cost(x), x)):
+        k = min(range(n), key=lambda i: (loads[i], i))
+        shards[k].append(name)
+        loads[k] += cost(name)
+    return [sorted(s) for s in shards], loads
+
+
+def parse_shard(text):
+    m = re.fullmatch(r"(\d+)/(\d+)", text)
+    if not m or not 1 <= int(m.group(1)) <= int(m.group(2)):
+        raise argparse.ArgumentTypeError("expected K/N with 1 <= K <= N, got %r"
+                                         % text)
+    return int(m.group(1)), int(m.group(2))
+
+
+def verify_shards(names, durations, n):
+    shards, loads = assign_shards(names, durations, n)
+    bad = []
+    seen = [x for s in shards for x in s]
+    if sorted(seen) != sorted(names) or len(seen) != len(set(seen)):
+        bad.append("the shards are not a partition of the %d gates" % len(names))
+    for k, (members, load) in enumerate(zip(shards, loads), 1):
+        print("  shard %d/%d: %3d gates, %5d s estimated  (%s)"
+              % (k, n, len(members), load, ", ".join(members)))
+    unknown = sorted(x for x in names if x not in durations)
+    if unknown:
+        print("  NOTE: %d gate(s) not in gate_durations.json, costed at %d s: %s"
+              % (len(unknown), _DEFAULT_COST, ", ".join(unknown)))
+    if max(loads) > SHARD_BUDGET:
+        bad.append("the busiest of %d shards is estimated at %d s, over the "
+                   "%d s budget -- add a shard" % (n, max(loads), SHARD_BUDGET))
+    return bad
+
+
+def record_durations(found, logs):
+    names = {n for n, _ in found}
+    table = {k: v for k, v in load_durations().items() if k in names}
+    got = 0
+    for path in logs:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for m in _DURATION_LINE_RE.finditer(fh.read()):
+                if m.group(2) in names:
+                    table[m.group(2)] = int(m.group(1))
+                    got += 1
+    with open(DURATIONS, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    doc["seconds"] = dict(sorted(table.items()))
+    with open(DURATIONS, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=1)
+        fh.write("\n")
+    print("  recorded %d timing line(s); table holds %d of %d gates"
+          % (got, len(table), len(names)))
+    return 0 if got else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", default=True,
@@ -699,6 +798,12 @@ def main():
     ap.add_argument("--timeout", type=int, default=3600,
                     help="per-script wall-clock limit in seconds (default 3600); "
                          "a hang must fail rather than consume the job")
+    ap.add_argument("--shard", type=parse_shard, metavar="K/N",
+                    help="run only shard K of N (TODO #391)")
+    ap.add_argument("--verify-shards", type=int, metavar="N",
+                    help="print the N-shard partition, check it, and exit")
+    ap.add_argument("--record-durations", nargs="+", metavar="LOG",
+                    help="refresh gate_durations.json from runner output")
     a = ap.parse_args()
 
     found, unclaimed, undeclared = discover()
@@ -708,6 +813,8 @@ def main():
     orphans += ["%s: its header advertises a findings gate, but its exit shape "
                 "is not one this runner discovers -- teach _GATING_RE the shape "
                 "or the script will never run in CI" % n for n in unclaimed]
+    durations = load_durations()
+    orphans += check_durations(found, durations)
     runnable = [(n, q) for n, q in found if n not in EXCLUDED]
 
     print("=" * 78)
@@ -734,6 +841,26 @@ def main():
     if orphans:
         for line in orphans:
             print("  EXCLUSION ERROR: " + line)
+
+    if a.record_durations:
+        return record_durations(found, a.record_durations)
+
+    if a.verify_shards:
+        bad = verify_shards([n for n, _ in runnable], durations, a.verify_shards)
+        for line in bad:
+            print("  SHARD ERROR: " + line)
+        ok = not (bad or orphans)
+        print("*** %s: %d gates in %d shards ***"
+              % ("OK" if ok else "FAILED", len(runnable), a.verify_shards))
+        return 0 if ok else 1
+
+    shard_tag = ""
+    if a.shard:
+        k, n = a.shard
+        mine = set(assign_shards([x for x, _ in runnable], durations, n)[0][k - 1])
+        runnable = [(x, q) for x, q in runnable if x in mine]
+        shard_tag = " in shard %d/%d" % (k, n)
+        print("  shard %d/%d: %d gates" % (k, n, len(runnable)))
 
     if a.list:
         for name, quick_flag in runnable:
@@ -790,7 +917,8 @@ def main():
         print("*** FAILED: %d finding gate(s) stopped reproducing: %s ***"
               % (len(failures), ", ".join(n for n, _, _ in failures)))
     if not orphans and not failures:
-        print("*** OK: all %d findings gates reproduce ***" % len(runnable))
+        print("*** OK: all %d findings gates%s reproduce ***"
+              % (len(runnable), shard_tag))
     return 1 if (orphans or failures) else 0
 
 

@@ -45,6 +45,12 @@
 #
 # hybrid-rnl-stern decapsulates the QC-MDPC KEM, so a session-key mismatch
 # there retries under lib_dfr.sh's policy (TODO #221, #276).
+#
+# HKX_SHARD=K/N (TODO #391) runs only the rows whose index in the spec's list
+# is K-1 mod N, and the two mixed-width sections only in shard 1, so N runs
+# with K = 1..N together cover the whole script once; CI runs it as three
+# parallel jobs.  Unset, it runs everything.  A shard asserting nothing exits
+# 2, like an unbuilt run.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -78,6 +84,18 @@ for r in json.load(open(sys.argv[1]))["key_parameter_sets"]["rows"]:
         print(r["algo"], r["bits"], int(r["default"]), ",".join(r["ports"]))
 EOF
 [ -s "$TMP/rows" ] || { echo "FAIL no GF parameter-set rows in the spec"; exit 1; }
+SHARD_K=1; SHARD_N=1
+if [ -n "${HKX_SHARD:-}" ]; then
+    if [[ "$HKX_SHARD" =~ ^([0-9]+)/([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" -ge 1 ] \
+            && [ "${BASH_REMATCH[1]}" -le "${BASH_REMATCH[2]}" ]; then
+        SHARD_K=${BASH_REMATCH[1]}; SHARD_N=${BASH_REMATCH[2]}
+    else
+        echo "FAIL HKX_SHARD must be K/N with 1 <= K <= N, got '$HKX_SHARD'"; exit 2
+    fi
+fi
+# The rows this run takes; $TMP/rows stays whole for runs_both's lookups.
+awk -v k="$SHARD_K" -v n="$SHARD_N" '(NR - 1) % n == k - 1' "$TMP/rows" > "$TMP/rows_mine"
+echo "shard $SHARD_K/$SHARD_N: $(wc -l < "$TMP/rows_mine") of $(wc -l < "$TMP/rows") parameter-set rows"
 has_port() { case ",$1," in *",$2,"*) return 0 ;; *) return 1 ;; esac; }
 
 # q: run quietly; RC holds the exit status, ERR the stderr
@@ -315,7 +333,7 @@ EOF
                 refused "$a/$n kex ($c)" ;;
         esac
     done
-done < "$TMP/rows"
+done < "$TMP/rows_mine"
 
 # Mixed widths: a 64-bit key used with a 128-bit peer key, ciphertext or
 # signature is refused with "<what> n is 128, <key> n is 64" -- never reduced
@@ -332,7 +350,7 @@ rnl_mixed() {  # label: refused as a ring size mismatch naming our 64, then 128
     if [ "$RC" -ne 0 ] && [ "$RC" -le 2 ] && grep -qiE 'ring size mismatch.*\b64\b.*\b128\b' "$TMP/err"; then pass
     else fail "$1: rc=$RC, not refused as a ring size mismatch (64, then 128): $(head -c 160 "$TMP/err")"; fi; }
 M="$TMP/mix"; mkdir -p "$M"; head -c 8 /dev/urandom > "$M/m.bin"
-for c in "${LANGS[@]}"; do
+[ "$SHARD_K" -eq 1 ] && for c in "${LANGS[@]}"; do
     for a in hkex-gf hpke hpks hpke-stern hpks-stern hcred hkex-rnl; do
         runs_both "$a" "$c" || continue
         q "$c" genpkey --algo "$a" --bits 64  --out "$M/k64.pem"
@@ -487,9 +505,9 @@ while read -r a n dflt ports; do
         q "${oc[0]}" genpkey --algo oprf --bits "$n" --out "$O/k.pem"
         q "$c" pkey --in "$O/k.pem" --text; refused "oprf/$n pkey --text ($c)"
     done
-done < "$TMP/rows"
+done < "$TMP/rows_mine"
 # Mixed widths, after a same-width accept-control.
-for c in "${LANGS[@]}"; do
+[ "$SHARD_K" -eq 1 ] && for c in "${LANGS[@]}"; do
     runs_both oprf "$c" || continue
     q "$c" genpkey --algo oprf --bits 64 --out "$O/k64.pem"
     q "$c" genpkey --algo oprf --bits 128 --out "$O/k128.pem"
@@ -509,7 +527,7 @@ for c in "${LANGS[@]}"; do
 done
 
 echo
-echo "Results: $PASS PASS / $FAIL FAIL / $NA n/a (languages: ${LANGS[*]})"
+echo "Results: $PASS PASS / $FAIL FAIL / $NA n/a (languages: ${LANGS[*]}; shard $SHARD_K/$SHARD_N)"
 [ "$NA" -eq 0 ] || echo "n/a: $NA cells"
 [ "$PASS" -gt 0 ] || exit 2
 [ "$FAIL" -eq 0 ] || exit 1

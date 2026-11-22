@@ -26265,3 +26265,106 @@ scores the 60 hkex-rnl cells it reported as n/a.
 Status: **DONE v16.0.0** — hkex-rnl's `pkey --text` dump is the same, in full, in all four CLIs.
 
 ---
+
+### #391: split CI's slow jobs into shards so a push is green in about 20 minutes
+
+A push now takes about 95 minutes to finish CI, and nearly all of that is one job.
+Measured on runs 44996900078 (67692f9) and 45006696446 (cc14e5e), wall-clock per job:
+
+| job | time | what dominates it |
+|---|---|---|
+| `analysis-findings` | 90–94 min | one step running 117 gates in series (94.1 min summed); the slowest are `qcmdpc_bgf_variants.py` 426 s, `annealed_moment_ladder.py` 317 s, `nl_fscx_v2_csp_analysis.py` 271 s, `nl_fscx_v2_round_constants.py` 265 s, `key_series.py` 244 s |
+| `native-interop` | 22–28 min | one step running 32 scripts in series: `test_width_matrix.sh` about 15 min, then `test_key_params.sh` 2.3 min and `test_cred_interop.sh` 1.6 min; the other 29 add about 8 min |
+| `native-python` → `cross-lang-compat` | 11–16 min, then 11–13 min | `cross-lang-compat` `needs:` all four native jobs, so it waits for `native-python`'s 8.5 min suite run before starting; it is the third-longest path at about 29 min |
+
+Every other job finishes in under 6 minutes.  The plan has three parts, in order of payoff.
+None of them changes what any test asserts; each one only changes where a test runs.
+
+**1. Shard `analysis-findings` (94 min → about 18 min).**
+- Add `--shard K/N` to `SecurityProofsCode/run_findings_gates.py`.  The runner keeps
+  discovering every gate as it does now and runs only the gates assigned to shard K.
+- Assign gates with a longest-processing-time-first greedy over a committed duration table
+  (`SecurityProofsCode/gate_durations.json`, refreshed with a `--record-durations` flag from
+  a CI log or a local run).  The assignment must be deterministic: same table and same
+  discovered set give the same shards on every runner.  A gate missing from the table goes
+  to the lightest shard at a default cost, so a new gate is never dropped.  A stale table
+  only unbalances the shards; it never skips a gate.
+- `--verify-shards N`: every discovered gate lands in exactly one shard, and the busiest
+  shard's estimate fits a stated budget.  Run it in CI, following the native-interop
+  coverage guard's precedent (TODO #205).
+- In `ci.yml`, make the job a `strategy.matrix` over `shard: [1..6]` with
+  `fail-fast: false`, because the runner's point is to report *which* gates failed (see
+  its header).
+  - 94 min / 6 is about 16 min per shard plus about 2 min of apt/pip setup.
+  - The longest single gate (7 min) puts the floor near 9 min, so 8 shards would buy
+    little.
+- Add a small `analysis-findings` job that `needs:` the matrix and:
+  - keeps the check name stable for anything that keys on it;
+  - prints the WHOLE-job nominal false-failure rate (TODO #300's banner is a sum over
+    every gate and must stay one figure, not six);
+  - runs the `NON_GATING` / `EXCLUDED` stale-entry checks once.
+  It fails if any shard failed.
+
+**2. Split `native-interop` (28 min → about 13 min).**
+- `test_width_matrix.sh` iterates over the spec's `key_parameter_sets` rows.  Give it a
+  `HKX_SHARD=K/N` environment variable that keeps rows whose index ≡ K mod N, with the
+  mixed-width sections running in shard 1 only.  Unset, it runs everything, so local use
+  is unchanged.
+- Run it as a new `native-interop-width` job, a matrix of 3 shards at about 5 min each.
+- Every shard must still assert something.  An empty shard exits 2 under
+  `hkx_require_built`'s rule (TODO #370), never 0.
+- The other 31 scripts stay in `native-interop` (about 12 min).  The coverage guard's
+  `declared` list stays as it is, because it lists scripts, not jobs; add
+  `test_width_matrix.sh` to the new job's claim comment.
+
+**3. Start `cross-lang-compat` without waiting (29 min → about 17 min on that path).**
+- Drop `native-python` from its `needs:`.  The job builds every CLI it uses itself, so
+  the dependency only orders the jobs; it does not gate them (TODO #207 calls the job
+  independent of the native-* jobs).
+- Keep `native-c`, `native-go` and `native-java`: they finish in 2–4 min and catch a
+  broken build before the 4×4 matrices spend runner minutes on it.
+
+**Expected result:**
+- Wall clock goes from about 95 min to about 18–20 min, set by the slowest findings shard.
+- Runner minutes go up by about 10, because each new job repeats its setup.
+
+**Checks that must follow the change:**
+- CLAUDE.md's CI section ("thirteen jobs"), `tools/check_fast.sh --verify-ci`, and
+  `tools/check_ci_install_bounds.py`.  Every new job's install step carries
+  `timeout-minutes: 20`.
+- Lower `analysis-findings`' `timeout-minutes: 240` per shard, keeping headroom for the
+  heavy tail.
+- Pin no shard-specific counts in `spec/COVERAGE_COUNTS.md`.
+
+**Validation:**
+- Run one CI push with both layouts, the old jobs and the sharded ones, and compare their
+  gate and script lists.  Each list must match exactly, with the same verdicts.
+- Then remove the old jobs.
+
+**Done (v16.0.1).**  All three parts, as planned.
+- `run_findings_gates.py --shard K/N` over a longest-first partition of
+  `SecurityProofsCode/gate_durations.json`.  The six shards are estimated at 941 s each
+  against a 1200 s budget.
+- `analysis-findings-shard` is a six-way matrix; `analysis-findings` collects it and runs
+  `--verify-shards 6`.  Both refusals were shown to fire: a duration entry naming no gate,
+  and a 3-shard split estimated at 1882 s.
+- `test_width_matrix.sh` takes `HKX_SHARD=K/N` and runs in `native-interop-width`, three
+  shards.  Locally the shards scored 1576 + 1356 + 1356 PASS against an unsharded control's
+  4288 PASS, 0 FAIL everywhere, so the three runs cover the script exactly once.
+- `cross-lang-compat` needs only `native-c`, `native-go` and `native-java`.
+- Shard 1/6 ran locally, 25 gates, all reproducing.  `live_region_certificate.py` needed
+  the MILP venv's HiGHS, which this host's python3 lacks and CI installs.
+- `check_docker_mirror.py` reasons about the two new job ids, and CLAUDE.md's CI section
+  names fifteen jobs.
+
+**Resolution.**  The partition is computed rather than listed, so the gate set stays
+discovered (TODO #289's rule): a table can unbalance the shards but cannot decide whether
+a gate runs.  The width matrix shards by row index rather than by cost; that is simpler,
+and measured it is close enough (the three local shards took 19-28 min under contention,
+against 46 min unsharded).  The side-by-side validation run the plan proposed was replaced
+by the two local equivalence checks above, which compare the same lists without
+doubling a push's runner minutes.
+
+Status: **DONE v16.0.1** — CI's findings gates and width matrix run as parallel shards, and `cross-lang-compat` no longer waits for Python.
+
+---

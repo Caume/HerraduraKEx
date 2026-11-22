@@ -2,6 +2,35 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [16.0.1] - 2026-11-22
+
+**CI finishes in about 20 minutes instead of about 95 (TODO #391).** No test asserts
+anything new or anything less; three jobs run their work in parallel instead of in series.
+
+### TODO #391 — CI's slow jobs, split into shards
+
+- **The findings gates run as six shards.** `analysis-findings` ran its 117 gates one after
+  another for 90-94 min, nearly all of CI's wall clock. `run_findings_gates.py --shard K/N`
+  now runs one shard, and the job is a six-way matrix, `analysis-findings-shard`, at about
+  16 min each. The shards are COMPUTED, not listed: a longest-first greedy over
+  `SecurityProofsCode/gate_durations.json` (seconds per gate, measured on a runner), ties
+  broken by name. Every shard still discovers the whole set and runs every coverage check,
+  so a gate cannot fall between shards; one the table does not know yet costs 120 s and
+  lands on the lightest shard, and a stale figure only unbalances them. A table entry that
+  names no gate fails, like every curated table here.
+- **`analysis-findings` collects the six.** It keeps the check name, runs
+  `--verify-shards 6` (each gate in exactly one shard, the busiest under a 1200 s budget,
+  both shown to fire: a stale entry and a 3-shard split at 1882 s fail), prints the whole-job
+  false-failure rate once, and fails if any shard failed. `--record-durations <log>...`
+  refreshes the table from runner output.
+- **`test_width_matrix.sh` runs as three shards.** It was about 15 of `native-interop`'s
+  28 min. `HKX_SHARD=K/N` keeps the spec rows K-1 mod N and runs the mixed-width sections
+  in shard 1 only; unset, the script runs whole. It runs in the new `native-interop-width`
+  job, a three-way matrix; `native-interop` keeps the other 31 scripts.
+- **`cross-lang-compat` no longer waits for `native-python`.** Its matrices build the CLIs
+  they use; it waited 8.5 min for a suite run it does not depend on. It still waits for the
+  C, Go and Java jobs, which take 2-4 min.
+
 ## [16.0.0] - 2026-11-18
 
 **MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#390), in
