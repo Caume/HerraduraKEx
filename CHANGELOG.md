@@ -4,8 +4,8 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [16.0.0] - 2026-11-18
 
-**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#385, #388-#390, and #382 stage 1), in
-sixteen parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#385, #388-#390), in
+seventeen parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
 all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
 section 37). Python and Go wrote a private key in the clear when given
 `--passphrase ''`, and PAKE registered a password nobody chose; an empty or missing secret
@@ -55,6 +55,54 @@ round's challenge step the round index's low byte instead of the whole index
 Stern-F's documented security figures are re-derived: N = 256 is worth about 2^24 by BJMM, not
 2^56-2^60, and 128 bits needs N >= 2144, not N >= 17000; N = 2304 is the recommended 128-bit set
 (TODO #382 stage 1; documentation and warning text only).
+Stern-F's 128-bit set ships: `genpkey --algo hpks-stern --level 128` (or `hpke-stern`) makes
+an N = 2304 key in all four CLIs, and the same keys sign hpks-ring rings and HCRED
+credentials. Keys, signatures and ciphertexts at N <= 256 are unchanged (TODO #382 stage 2;
+a new parameter set, so no MIGRATING.md section).
+
+### TODO #382 stage 2 — Stern-F at N = 2304, the 128-bit set
+
+- **What ships.** A key parameter row `hpks-stern` / `hpke-stern` at 2304, level 128, in all
+  four CLIs (`--level 128` or `--bits 2304`). The default stays N = 256. `hpks-ring` takes a
+  ring of 2304 keys; `cred-issue` / `cred-verify` take a 2304 issuer key. HCRED's own key has
+  no 128-bit set: it is a Ring-LWR and syndrome-decoding pair proved in ZKBoo, and
+  `genpkey --algo hcred --level 128` is refused with a note pointing at the issuer's key.
+- **The long form (SPEC.md §11.1).** A separate code path in each port (`stern_l_*` in
+  herradura.h, `SternL*` in Go, `stern_l_*` / `_sternl_*` in Python, `SternL.java`), since
+  N-bit vectors do not fit the 256-bit BitArray: C and Go carry them as N/8-byte strings,
+  Python and Java as integers. Above N = 256 every hash keeps all 256 bits, so commitments
+  are 32 bytes (the decision taken for stage 2); H's rows come from HFSCX-256 in counter
+  mode under sk = H_6(seed); the permutation generator is keyed by the 256-bit
+  k = H_5(pi_seed); the message and Fiat-Shamir state are 256 bits. The protocol,
+  challenge rule, weight check and draw order are the short form's. C's permutation is
+  applied obliviously at word granularity, as stern_apply_perm is at bit granularity.
+- **Sizes and cost.** Keys are two 288-byte fields. A 219-round signature is 147,249 bytes in
+  DER (about 199 KB of PEM), against about 35 KB at N = 256. On the aarch64 board this was
+  built on, a 219-round sign / verify takes 0.38 / 0.26 s in C, 0.60 / 0.42 s in Go,
+  0.90 / 0.66 s in Java and 8.2 / 6.5 s in Python, which expands H (10,368 HFSCX-256 calls)
+  in pure Python.
+- **Pins.** `KAT/operation_replay.json` gains `stern_l_keygen`, `hpks_stern_l_sign` and
+  `hpks_stern_l_ring_sign` at N = 2304, reproduced byte for byte, with bytes consumed, by
+  the C, Go and Java consumers. The language-parity manifest, parameter, raw-entropy and
+  replay censuses carry the new primitives. No existing vector moved.
+- **Tests.** New `CliTest/test_stern_128.sh` (cross-lang-compat): keys, hpks-stern (4x4 at 8
+  rounds, and a 219-round signature at the default floor), hpks-ring, hpke-stern and a
+  long-form HCRED issuer as 4x4 matrices, 128 assertions. Rejection controls run in every
+  verifier: changed message, corrupted response, wrong key, an N = 256 signature against an
+  N = 2304 key, and the default round floor. Two checks are about one implementation each:
+  the matrix rule restated from SPEC.md must reproduce C's and Go's public syndromes (its
+  low-byte variant must not), and a signature's DER fields must have the long form's sizes.
+  `test_key_params.sh` gains the invariants `--level 128` = 2304 for hpks-stern and
+  hpke-stern, and a refusal for hcred.
+- **Wire rules.** The 'stern' width check in all four CLIs accepts 2304 besides the short
+  widths. `PEM_DER_FIELD_CAPS` sizes commitments as `min(n/8, 32)` bytes (signature, HCRED
+  credential, ring signature) and the HPKE-Stern ciphertext's K and E the same way. Every
+  cap is unchanged at N <= 256.
+- **Documents.** SPEC.md §11.1 (new), an implementation note in SecurityProofs-5 §11.8.4
+  costing the four changed places (256-bit commitments bind at about 2^128, under the
+  instance's 2^137 but at the target), SECURITY.md's Stern-F, HPKS-Ring and HCRED rows,
+  TUTORIAL, llms.txt and CLAUDE.md. The CLIs' Stern-F warning now names N = 2304
+  (`--level 128`) as the 128-bit set.
 
 ### TODO #382 stage 1 — Stern-F's instance, costed
 

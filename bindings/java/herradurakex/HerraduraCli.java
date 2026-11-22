@@ -550,7 +550,8 @@ public final class HerraduraCli {
 
         if (algo.equals("hpks-stern") || algo.equals("hpke-stern")) {
             sternDemoWarning();
-            Stern.SternKeypair kp = Stern.sternFKeygen(pbits, RNG);   // TODO #384: n = the row's width
+            Stern.SternKeypair kp = SternL.isLong(pbits)            // TODO #382: the long form
+                ? SternL.keygen(pbits, RNG) : Stern.sternFKeygen(pbits, RNG);   // TODO #384: n = the row's width
             String label = algo.equals("hpks-stern") ? Codec.PEM_HPKS_STERN_PRIV : Codec.PEM_HPKE_STERN_PRIV;
             writeString(out, Codec.encodeSternPrivKey(label, kp.e, kp.seed, pbits));
             return;
@@ -708,7 +709,8 @@ public final class HerraduraCli {
         if (block.label.equals(Codec.PEM_HPKS_STERN_PRIV) || block.label.equals(Codec.PEM_HPKE_STERN_PRIV)) {
             sternDemoWarning();
             Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pemIn, block.label);
-            BigInteger syndrome = Stern.sternSyndrome(pk.seed, pk.e, pk.nbits);
+            BigInteger syndrome = SternL.isLong(pk.nbits) ? SternL.syndrome(pk.seed, pk.e, pk.nbits)
+                                                          : Stern.sternSyndrome(pk.seed, pk.e, pk.nbits);
             String pubLabel = block.label.equals(Codec.PEM_HPKS_STERN_PRIV) ? Codec.PEM_HPKS_STERN_PUB : Codec.PEM_HPKE_STERN_PUB;
             if (opt.containsKey("pubout")) {
                 writeString(out, Codec.encodeSternPubKey(pubLabel, syndrome, pk.seed, pk.nbits));
@@ -1318,11 +1320,13 @@ public final class HerraduraCli {
             String pubPem = readString(req(opt, "pubkey", "enc"));
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.SternPubKey pub = Codec.decodeSternPubKey(pubPem, pubBlock.label);
-            oneBlockOK(algo, inBytes.length, pub.nbits / 8);
-            BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
             int n = pub.nbits;   // TODO #384: the key's width
-            Stern.SternEncapResult enc = Stern.hpkeSternFEncapWithE(pub.seed, n, RNG);
-            BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, n), BitArray.fromBigInteger(enc.k, n), Herradura.iSteps(n));
+            int w = Math.min(n, 256);   // the payload block: 256 bits above 256 (TODO #382)
+            oneBlockOK(algo, inBytes.length, w / 8);
+            BigInteger p = new BigInteger(1, padTrunc(inBytes, w / 8));
+            Stern.SternEncapResult enc = SternL.isLong(n) ? SternL.encapWithE(pub.seed, n, RNG)
+                                                          : Stern.hpkeSternFEncapWithE(pub.seed, n, RNG);
+            BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, w), BitArray.fromBigInteger(enc.k, w), Herradura.iSteps(w));
             writeString(out, Codec.encodeSternCt(enc.ct, enc.eP, enc.k, e.toBigInteger(), n));
         } else if (algo.equals("hpke-stern-kem")) {
             String pubPem = readString(req(opt, "pubkey", "enc"));
@@ -1460,8 +1464,10 @@ public final class HerraduraCli {
             Codec.SternCt ct = Codec.decodeSternCt(readString(req(opt, "in", "dec")));
             int n = pk.nbits;   // TODO #384: the key's width
             asymSameWidth(ct.nbits, n);
-            BigInteger k = Stern.hpkeSternFDecap(ct.eP, pk.seed, n);
-            BitArray d = Herradura.fscxRevolve(BitArray.fromBigInteger(ct.e, n), BitArray.fromBigInteger(k, n), Herradura.rSteps(n));
+            int w = Math.min(n, 256);   // TODO #382
+            BigInteger k = SternL.isLong(n) ? SternL.decapKnown(ct.eP, pk.seed, n)
+                                            : Stern.hpkeSternFDecap(ct.eP, pk.seed, n);
+            BitArray d = Herradura.fscxRevolve(BitArray.fromBigInteger(ct.e, w), BitArray.fromBigInteger(k, w), Herradura.rSteps(w));
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-stern-kem")) {
             String pem = readString(req(opt, "key", "dec"));
@@ -1692,8 +1698,10 @@ public final class HerraduraCli {
             if (ringN != pk.nbits) {   // worded as Python's (TODO #384)
                 throw new CliError("hpks-ring sign: signer n=" + pk.nbits + " != ring n=" + ringN);
             }
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, pk.nbits / 8));
-            SternRing.RingSignature sig = SternRing.sign(msgInt, pk.e, j, ring, rounds, pk.nbits, RNG);
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(pk.nbits, 256) / 8));
+            SternRing.RingSignature sig = SternL.isLong(pk.nbits)    // TODO #382
+                ? SternL.ringSign(msgInt, pk.e, j, ring, rounds, pk.nbits, RNG)
+                : SternRing.sign(msgInt, pk.e, j, ring, rounds, pk.nbits, RNG);
             writeString(out, Codec.encodeRingSig(sig, pk.nbits));
             System.err.println("Ring signature created (k=" + ring.size() + "); signer index is hidden.");
             return;
@@ -1708,8 +1716,10 @@ public final class HerraduraCli {
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
             Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, pk.nbits / 8));
-            Stern.SternSignature sig = Stern.hpksSternFSign(msgInt, pk.e, pk.seed, rounds, pk.nbits, RNG);
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(pk.nbits, 256) / 8));
+            Stern.SternSignature sig = SternL.isLong(pk.nbits)       // TODO #382
+                ? SternL.sign(msgInt, pk.e, pk.seed, rounds, pk.nbits, RNG)
+                : Stern.hpksSternFSign(msgInt, pk.e, pk.seed, rounds, pk.nbits, RNG);
             writeString(out, Codec.encodeSternSig(sig, pk.nbits));
             return;
         }
@@ -1856,9 +1866,11 @@ public final class HerraduraCli {
             if (sig.nbits != pub.nbits) {   // TODO #384, worded as the other CLIs
                 throw new CliError("verify: signature n is " + sig.nbits + ", public key n is " + pub.nbits);
             }
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, pub.nbits / 8));
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(pub.nbits, 256) / 8));
 
-            boolean ok = Stern.hpksSternFVerify(msgInt, sig.sig, pub.seed, pub.syndrome, pub.nbits);
+            boolean ok = SternL.isLong(pub.nbits)                    // TODO #382
+                ? SternL.verify(msgInt, sig.sig, pub.seed, pub.syndrome, pub.nbits)
+                : Stern.hpksSternFVerify(msgInt, sig.sig, pub.seed, pub.syndrome, pub.nbits);
             if (ok) {
                 System.out.println("Signature OK");
             } else {
@@ -1905,8 +1917,9 @@ public final class HerraduraCli {
                     + " != " + ring.size() + " provided members");
             }
             byte[] msg = readMessage(opt, "verify");
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, ringN / 8));
-            boolean ok = SternRing.verify(msgInt, sig.sig, ring, ringN);
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(ringN, 256) / 8));
+            boolean ok = SternL.isLong(ringN) ? SternL.ringVerify(msgInt, sig.sig, ring, ringN)   // TODO #382
+                                              : SternRing.verify(msgInt, sig.sig, ring, ringN);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
             return;
         }

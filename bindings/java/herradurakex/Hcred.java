@@ -1226,7 +1226,8 @@ public final class Hcred {
      * takes them (TODO #384: the issuer key may be narrower than 256). */
     private static BigInteger issuerMsg(int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd, int n, int issuerN) {
         byte[] digest = stmtHash(mPoly, cPoly, seedH, ySynd, n, "HCRED-issue".getBytes(StandardCharsets.US_ASCII));
-        return new BigInteger(1, digest).shiftRight(256 - issuerN);
+        // the digest's high min(issuerN, 256) bits (TODO #382: all of it above 256)
+        return new BigInteger(1, digest).shiftRight(256 - Math.min(issuerN, 256));
     }
 
     public static Stern.SternSignature issue(int[] mPoly, int[] cPoly, BigInteger seedH, BigInteger ySynd, int n,
@@ -1238,6 +1239,8 @@ public final class Hcred {
                                               BigInteger issuerE, BigInteger issuerSeed, int rounds, int issuerN,
                                               SecureRandom rng) {
         BigInteger msg = issuerMsg(mPoly, cPoly, seedH, ySynd, n, issuerN);
+        if (SternL.isLong(issuerN))      // a long-form issuer key (TODO #382)
+            return SternL.sign(msg, issuerE, issuerSeed, rounds, issuerN, rng);
         return Stern.hpksSternFSign(msg, issuerE, issuerSeed, rounds, issuerN, rng);
     }
 
@@ -1250,6 +1253,8 @@ public final class Hcred {
                                       Stern.SternSignature credSig, BigInteger issuerSeed, BigInteger issuerSyn,
                                       int issuerN) {
         BigInteger msg = issuerMsg(mPoly, cPoly, seedH, ySynd, n, issuerN);
+        if (SternL.isLong(issuerN))
+            return SternL.verify(msg, credSig, issuerSeed, issuerSyn, issuerN);
         return Stern.hpksSternFVerify(msg, credSig, issuerSeed, issuerSyn, issuerN);
     }
 }

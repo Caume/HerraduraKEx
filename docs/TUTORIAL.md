@@ -1106,7 +1106,9 @@ skA = h.nl_fscx_revolve_v1(kA.rotated(n // 8), kA, n // 4)
 Stern identification protocol (a zero-knowledge proof for syndrome decoding), used
 both as a Fiat-Shamir signature (HPKS-Stern-F) and as a Niederreiter-style KEM
 (HPKE-Stern-F). Parameters: C/Go/Python use N=n=256, t=16, rounds=32; assembly/Arduino
-use N=32, t=2, rounds=4.
+use N=32, t=2, rounds=4.  The 128-bit set is N=2304, t=144 (`genpkey --algo hpks-stern
+--level 128`, all four CLIs; SPEC.md §11.1): the same commands, a ~580-byte public key and a
+147 KB signature at the CLI's 219 rounds.
 
 ### HPKS-Stern-F signature (code-based PQC)
 
@@ -1924,7 +1926,7 @@ for a 14-way cross-language interop test.
 | HPKS | 110 B | DLP in GF(2^256) — quantum-broken | Fastest |
 | ML-DSA-44 (reference) | 2,420 B | Module-LWE | NIST standard |
 | ZKP-RNL (n=256) | **12,292 B** | Ring-LWR (heuristic) | Smallest post-quantum option here |
-| HPKS-Stern-F (rounds=219) | 35,118 B | SD(N,t) + NL-FSCX v1 PRF | **Demo params** (N=256, ~24–38 bits); 128-bit needs N≥2144 |
+| HPKS-Stern-F (rounds=219) | 35,118 B | SD(N,t) + NL-FSCX v1 PRF | **Demo params** (N=256, ~24–38 bits); `--level 128` is N=2304 (~2^137, 147,249 B at 219 rounds) |
 | ZKP-NL (n=8, R=219) | 40,085 B | NL-FSCX OWF | CLI default (the only CLI width); toy parameters |
 | ZKP-NL (n=256, R=219) | 920 KB | NL-FSCX OWF | Library only; awaits ZKB++ (~180 KB est.) |
 

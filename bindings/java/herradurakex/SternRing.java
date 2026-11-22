@@ -87,7 +87,7 @@ public final class SternRing {
      * consumption-order one, which is the whole point of
      * KAT/operation_replay.json: four ports that agree on a distribution and
      * not on how they spend the stream cannot be pinned against each other. */
-    private static int ringTrit(SecureRandom rng) {
+    static int ringTrit(SecureRandom rng) {   // SternL's too (TODO #382)
         byte[] one = new byte[1];
         for (;;) {
             rng.nextBytes(one);

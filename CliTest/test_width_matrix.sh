@@ -139,7 +139,9 @@ refused() {  # label
 while read -r a n dflt ports; do
     [ "$a" = oprf ] && continue   # its own section, below
     D="$TMP/$a-$n"; mkdir -p "$D"
-    nb=$((n / 8)); head -c "$nb" /dev/urandom > "$D/m.bin"
+    # One block: n/8 bytes, but 32 above n = 256 -- the Stern-F long form's
+    # payload block and signed message are 256 bits (TODO #382, SPEC.md §11.1).
+    nb=$((n / 8)); [ "$nb" -gt 32 ] && nb=32; head -c "$nb" /dev/urandom > "$D/m.bin"
     # one keypair per listed CLI
     gens=()
     for g in "${LANGS[@]}"; do

@@ -67,6 +67,8 @@ exact choices list per subcommand.
   encrypted with (NL-)FSCX_REVOLVE.
 - HPKS-Stern-F / HPKE-Stern(-KEM): Stern zero-knowledge identification protocol
   (code-based, syndrome decoding) turned into a Fiat-Shamir signature / Niederreiter KEM.
+  N = 256 by default (~2^24, demo); N = 2304 is the 128-bit set (--level 128), the "long
+  form": N-bit values as byte strings, 256-bit commitments and message (SPEC.md §11.1).
 - HPKS-ring: ring signature built on HPKS-Stern-F.
 - rnl-sigma / nl-zkboo / nl-zkbpp: Sigma-protocol and ZKBoo/ZKB++ MPC-in-the-head proofs
   over Ring-LWR / NL-FSCX statements.
@@ -106,6 +108,8 @@ drbg_, haccum_, ratchet_, fpe_, twk_, qcmdpc_. Key public entry points:
   void fpe_v3_encrypt/decrypt(...);    void twk_v3_encrypt/decrypt(...);
   void hpks_stern_f_sign(SternSig *sig, ...); int hpks_stern_f_verify(const SternSig *sig, ...);
   void hpke_stern_f_encap(...); void hpke_stern_f_decap_known(...);
+  void stern_l_keygen(...); void hpks_stern_l_sign(SternLSig *sig, ...);   /* N = 2304, #382 */
+  int hpks_stern_l_verify(...); void stern_l_ring_sign/verify(...); void hpke_stern_l_encap(...);
   void hpks_wots_keygen/sign/verify(...); void hpks_xmss_keygen/sign/verify(...);
 
 Read herradura.h directly for full signatures of NL-FSCX, Ring-LWR (rnl_*), Stern-ring,
@@ -124,6 +128,7 @@ e.g. hkex_gf_agree -> corresponding Go call in the kex flow):
   Hfscx256, Hfscx256DS, HmacHfscx256
   RnlKeygen, RnlAgree, RnlHint, RnlReconcileBits
   SternFKeygen, HpksSternFSign/Verify, HpkeSternFEncap/DecapKnown, HpksSternRingSign/Verify
+  SternLKeygen, HpksSternLSign/Verify, HpksSternLRingSign/Verify, HpkeSternLEncap  (N = 2304)
   RnlSigmaSign/Verify, ZkpNlKeygen/Prove/Verify
   HpksWotsKeygen/Sign/Verify, HpksXmssKeygen/Sign/Verify
   HcredUserKeygen/Prove/Verify, HcredIssue/CredVerify
@@ -202,7 +207,8 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     hpke-nl hpke-nl3) and oprf: --bits 32|64|128|256, --level demo = 256, no --level 128
     (demo-only at every width).  hkex-rnl: 32|64|128|256 (demo), 1024 = --level 128
     (default); 512 refused as withdrawn.  hpks-stern, hpke-stern, hcred: 32|64|128|256,
-    --level demo = 256.  hpke-stern-kem: --level 128 only.  hpks-zkp-nl: --bits any even
+    --level demo = 256; hpks-stern and hpke-stern also 2304 = --level 128 (TODO #382; hcred
+    refuses --level 128, its issuer's hpks-stern key is what takes it).  hpke-stern-kem: --level 128 only.  hpks-zkp-nl: --bits any even
     n <= 64, --level demo = 8.  hpks-wots, hpks-xmss: neither flag.  Below the default a
     stderr warning gives the estimated security.  Every listed width runs in all four
     CLIs (TODO #383, #384, #385).  Anything else fails by name; --bits with --level fails.

@@ -822,6 +822,21 @@ public final class Codec {
 
     /** Bounds a wire-supplied bit width: a multiple of 8, no wider than the
      * suite's own key width. */
+    /** A Stern-F key's n: gfWidth's widths, or the long form's 2304 (TODO #382). */
+    static int sternWidth(BigInteger v, String label) {
+        if (v.equals(BigInteger.valueOf(SternL.STERN_LONG_N))) return SternL.STERN_LONG_N;
+        return gfWidth(v, label);
+    }
+
+    /** boundedN for a Stern-F code length, which may be the long form's 2304. */
+    private static int boundedSternN(BigInteger value, String where) {
+        if (value.equals(BigInteger.valueOf(SternL.STERN_LONG_N))) return SternL.STERN_LONG_N;
+        return boundedN(value, where);
+    }
+
+    /** Commitment bytes: min(n, 256) / 8 (TODO #382). */
+    static int commitBytes(int n) { return Math.min(n, 256) / 8; }
+
     private static int boundedN(BigInteger value, String where) {
         int v = bounded(value, 8, Herradura.N, "n", where);
         if (v % 8 != 0) {
@@ -1217,7 +1232,7 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b);
-        return new SternPrivKey(ints.get(0), ints.get(1), gfWidth(ints.get(2), b.label));
+        return new SternPrivKey(ints.get(0), ints.get(1), sternWidth(ints.get(2), b.label));
     }
 
     /** Encodes a Stern-F public key: SEQUENCE(syndrome, seed, n). */
@@ -1243,7 +1258,7 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b);
-        return new SternPubKey(ints.get(0), ints.get(1), gfWidth(ints.get(2), b.label));
+        return new SternPubKey(ints.get(0), ints.get(1), sternWidth(ints.get(2), b.label));
     }
 
     /** Encodes an HPKE-Stern-F (demo) ciphertext: SEQUENCE(ct_syn, e_p, K, E, n). */
@@ -1253,7 +1268,8 @@ public final class Codec {
 
     public static String encodeSternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e, int n) {
         int nb = n / 8;
-        byte[] der = derSeq(derInt(ctSyn, nb), derInt(eP, nb), derInt(k, nb), derInt(e, nb),
+        int kb = commitBytes(n);   // K and the payload block: 256 bits above 256 (TODO #382)
+        byte[] der = derSeq(derInt(ctSyn, nb), derInt(eP, nb), derInt(k, kb), derInt(e, kb),
                              derInt(BigInteger.valueOf(n), -1));
         return pemWrap(PEM_CIPHERTEXT, der);
     }
@@ -1288,7 +1304,7 @@ public final class Codec {
 
     public static String encodeSternSig(Stern.SternSignature sig, int n) {
         int rounds = sig.rounds();
-        byte[] commits = packSternTriples(sig.c0, sig.c1, sig.c2, rounds, n / 8);
+        byte[] commits = packSternTriples(sig.c0, sig.c1, sig.c2, rounds, commitBytes(n));
         byte[] challenges = packChallenges(sig.challenges);
         byte[] responses = packSternPairs(sig.resp0, sig.resp1, rounds, n / 8);
         byte[] der = derSeq(derInt(BigInteger.valueOf(n), -1), derInt(BigInteger.valueOf(rounds), -1),
@@ -1314,18 +1330,19 @@ public final class Codec {
      * {@link #decodeHcredCredential} (identical wire shape, different label). */
     private static SternSigDecoded decodeSternSigDer(PemBlock blk) {
         List<BigInteger> ints = derParseSeq(blk);
-        int nbits = boundedN(ints.get(0), "verify");
+        int nbits = boundedSternN(ints.get(0), "verify");
         int rounds = bounded(ints.get(1), 1, SDF_MAX_ROUNDS, "round count", "verify");
         int nbytes = nbits / 8;
-        byte[] commits = toFixedBytes(ints.get(2), 3 * rounds * nbytes);
+        int cb = commitBytes(nbits);
+        byte[] commits = toFixedBytes(ints.get(2), 3 * rounds * cb);
         byte[] challenges = toFixedBytes(ints.get(3), (rounds + 3) / 4);
         byte[] responses = toFixedBytes(ints.get(4), 2 * rounds * nbytes);
 
         BigInteger[] c0 = new BigInteger[rounds], c1 = new BigInteger[rounds], c2 = new BigInteger[rounds];
         for (int i = 0; i < rounds; i++) {
-            c0[i] = new BigInteger(1, slice(commits, (3 * i) * nbytes, nbytes));
-            c1[i] = new BigInteger(1, slice(commits, (3 * i + 1) * nbytes, nbytes));
-            c2[i] = new BigInteger(1, slice(commits, (3 * i + 2) * nbytes, nbytes));
+            c0[i] = new BigInteger(1, slice(commits, (3 * i) * cb, cb));
+            c1[i] = new BigInteger(1, slice(commits, (3 * i + 1) * cb, cb));
+            c2[i] = new BigInteger(1, slice(commits, (3 * i + 2) * cb, cb));
         }
         int[] ch = unpackChallenges(challenges, rounds);
         BigInteger[] resp0 = new BigInteger[rounds], resp1 = new BigInteger[rounds];
@@ -1918,7 +1935,7 @@ public final class Codec {
     /** At the issuer key's width n (TODO #384). */
     public static String encodeHcredCredential(Stern.SternSignature sig, int n) {
         int rounds = sig.rounds();
-        byte[] commits = packSternTriples(sig.c0, sig.c1, sig.c2, rounds, n / 8);
+        byte[] commits = packSternTriples(sig.c0, sig.c1, sig.c2, rounds, commitBytes(n));
         byte[] challenges = packChallenges(sig.challenges);
         byte[] responses = packSternPairs(sig.resp0, sig.resp1, rounds, n / 8);
         byte[] der = derSeq(derInt(BigInteger.valueOf(n), -1), derInt(BigInteger.valueOf(rounds), -1),
@@ -2208,13 +2225,14 @@ public final class Codec {
         int k = sig.ringSize();
         int rounds = sig.rounds();
         int nb = n / 8;
-        byte[] blob = new byte[k * rounds * (5 * nb + 1)];
+        int cb = commitBytes(n);
+        byte[] blob = new byte[k * rounds * (3 * cb + 2 * nb + 1)];
         int off = 0;
         for (int i = 0; i < k; i++) {
             for (int r = 0; r < rounds; r++) {
-                System.arraycopy(toFixedBytes(sig.c0[i][r], nb), 0, blob, off, nb); off += nb;
-                System.arraycopy(toFixedBytes(sig.c1[i][r], nb), 0, blob, off, nb); off += nb;
-                System.arraycopy(toFixedBytes(sig.c2[i][r], nb), 0, blob, off, nb); off += nb;
+                System.arraycopy(toFixedBytes(sig.c0[i][r], cb), 0, blob, off, cb); off += cb;
+                System.arraycopy(toFixedBytes(sig.c1[i][r], cb), 0, blob, off, cb); off += cb;
+                System.arraycopy(toFixedBytes(sig.c2[i][r], cb), 0, blob, off, cb); off += cb;
                 blob[off] = (byte) sig.challenges[i][r]; off += 1;
                 System.arraycopy(toFixedBytes(sig.resp0[i][r], nb), 0, blob, off, nb); off += nb;
                 System.arraycopy(toFixedBytes(sig.resp1[i][r], nb), 0, blob, off, nb); off += nb;
@@ -2239,9 +2257,10 @@ public final class Codec {
         List<BigInteger> ints = derParseSeq(b);
         int k = bounded(ints.get(0), 2, RING_MAX_K, "ring member count", "verify");
         int rounds = bounded(ints.get(1), 1, SDF_MAX_ROUNDS, "round count", "verify");
-        int n = boundedN(ints.get(2), "verify");
+        int n = boundedSternN(ints.get(2), "verify");
         int nb = n / 8;
-        int entry = 5 * nb + 1;
+        int cb = commitBytes(n);
+        int entry = 3 * cb + 2 * nb + 1;
         int blen = k * rounds * entry;
         BigInteger blobInt = ints.get(3);
         if (blobInt.bitLength() > blen * 8) {
@@ -2259,9 +2278,9 @@ public final class Codec {
         int off = 0;
         for (int i = 0; i < k; i++) {
             for (int r = 0; r < rounds; r++) {
-                c0[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + nb)); off += nb;
-                c1[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + nb)); off += nb;
-                c2[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + nb)); off += nb;
+                c0[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + cb)); off += cb;
+                c1[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + cb)); off += cb;
+                c2[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + cb)); off += cb;
                 challenges[i][r] = blob[off] & 0xFF; off += 1;
                 resp0[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + nb)); off += nb;
                 resp1[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + nb)); off += nb;

@@ -2771,6 +2771,281 @@ def hpks_stern_ring_verify(msg: 'BitArray', sig, ring_keys: list,
 
 
 # ---------------------------------------------------------------------------
+# Stern-F long form: N > 256 (TODO #382 stage 2, v16.0.0)
+#
+# The 128-bit parameter set is N = 2304, k = N/2 = 1152, t = N/16 = 144
+# (SecurityProofsCode/stern_f_parameter_selection.py: 2^137 by BJMM, 2^106 by
+# Grover-over-Prange).  Its vectors are wider than BitArray's 256-bit capacity,
+# so this path carries them as integers (N/8 big-endian bytes on the wire) and
+# keeps BitArray for the 256-bit values only.  The protocol is the short form's
+# (commit, Fiat-Shamir challenge, respond; same ds tags, same weight check);
+# what changes is every place the short form leans on "N <= 256":
+#
+#   hash     H_ds(x...) = HFSCX-256-DS(0x31, ds || x...), all 256 bits (the
+#            short form keeps the HIGH N bits).  Commitments are 256 bits.
+#   matrix   sk = H_6(seed); row i = chunk(i, 0) || ... || chunk(i, N/256 - 1),
+#            chunk(i, c) = HFSCX-256(i_hi || i_lo || c) with sk as the initial
+#            chaining value.  (The short form's row is one digest truncated.)
+#   perm     the short form's Fisher-Yates generator run over N positions on
+#            the 256-bit k = H_5(pi_seed), not on pi_seed itself.
+#   message  256 bits (the whole HFSCX-256 pre-hash); the Fiat-Shamir state is
+#            256 bits and advances by nl_fscx_v1(st, i) at 256 bits.
+#
+# seed, e, r, y, pi_seed, sigma(r) and sigma(y) are N bits; the syndrome is an
+# N/2-bit integer hashed as an N-bit item, as in the short form.  SPEC.md §11
+# states the same rules; KAT/operation_replay.json pins keygen, sign and ring
+# sign at N = 2304 in all four ports.
+# ---------------------------------------------------------------------------
+
+STERN_LONG_N = 2304            # the 128-bit Stern-F code length (TODO #382)
+_STERN_W     = 256             # hash, commitment and message width above 256
+_STERN_DS_PERM   = 5           # H_5(pi_seed): the permutation generator's key
+_STERN_DS_MATRIX = 6           # H_6(seed): the matrix expander's chaining value
+
+
+def stern_is_long(n: int) -> bool:
+    """True for a Stern-F code length on the long path (N > 256)."""
+    return n > KEYBITS
+
+
+def _sternl_check(n: int) -> None:
+    if n % 256 or n <= KEYBITS:
+        raise ValueError(f"Stern-F long form: N = {n} (expected a multiple of 256 above 256)")
+
+
+def _sternl_b(v: int, n: int) -> bytes:
+    return int(v).to_bytes(n // 8, 'big')
+
+
+def _sternl_hash(ds: int, *items: bytes) -> 'BitArray':
+    """H_ds = HFSCX-256-DS(0x31, ds || items), all 256 bits."""
+    return BitArray(_STERN_W, int.from_bytes(
+        hfscx_256_ds(_STERN_DS_HASH, bytes([ds & 0xFF]) + b''.join(items)), 'big'))
+
+
+def _sternl_build_H(seed_int: int, n: int) -> list:
+    """The N/2 rows of H as N-bit ints (row i, bit j = H[i][j])."""
+    _sternl_check(n)
+    sk = _sternl_hash(_STERN_DS_MATRIX, _sternl_b(seed_int, n))
+    chunks = n // 256
+    rows = []
+    for i in range(n // 2):
+        row = b''.join(hfscx_256(bytes([(i >> 8) & 0xFF, i & 0xFF, c]), iv=sk)
+                       for c in range(chunks))
+        rows.append(int.from_bytes(row, 'big'))
+    return rows
+
+
+def _sternl_gen_perm(pi_seed: int, n: int) -> list:
+    """sigma from pi_seed: the short form's generator on k = H_5(pi_seed)."""
+    return _stern_gen_perm(_sternl_hash(_STERN_DS_PERM, _sternl_b(pi_seed, n)), n)
+
+
+def _sternl_rand(n: int) -> int:
+    raw = os.urandom(n // 8)
+    if len(raw) != n // 8:
+        raise BaError(BA_E_ENTROPY, 'stern long form')
+    return int.from_bytes(raw, 'big')
+
+
+def _sternl_msg(msg) -> bytes:
+    if not isinstance(msg, BitArray) or msg.size != _STERN_W:
+        raise ValueError("Stern-F long form: the message is 256 bits")
+    return msg.bytes
+
+
+def _sternl_round_commit(H_rows, e_int, r_int, pi_seed, n):
+    """One prover round on the caller's uniform r and pi_seed (drawn in that
+    order): (c0, c1, c2) and the round's secrets."""
+    y_int   = e_int ^ r_int
+    perm    = _sternl_gen_perm(pi_seed, n)
+    Hr      = _stern_syndrome_H(H_rows, r_int)
+    sr      = _stern_apply_perm(perm, r_int, n)
+    sy      = _stern_apply_perm(perm, y_int, n)
+    commit  = (_sternl_hash(1, _sternl_b(pi_seed, n), _sternl_b(Hr, n)),
+               _sternl_hash(2, _sternl_b(sr, n)),
+               _sternl_hash(3, _sternl_b(sy, n)))
+    return commit, (r_int, y_int, pi_seed, sr, sy)
+
+
+def _sternl_respond(b, data):
+    r_int, y_int, pi_seed, sr, sy = data
+    if b == 0: return (sr, sy)
+    if b == 1: return (pi_seed, r_int)
+    return (pi_seed, y_int)
+
+
+def _sternl_fs_state(msg, flat_commits) -> 'BitArray':
+    return _sternl_hash(0, _sternl_msg(msg), *[c.bytes for c in flat_commits])
+
+
+def _sternl_check_round(b, commit, resp, H_rows, syndrome, n, t) -> bool:
+    c0, c1, c2 = commit
+    a, v = resp
+    if not (0 <= a < (1 << n) and 0 <= v < (1 << n)):
+        return False
+    if b == 0:                                   # (sigma(r), sigma(y))
+        return (_sternl_hash(2, _sternl_b(a, n)) == c1
+                and _sternl_hash(3, _sternl_b(v, n)) == c2
+                and bin(a ^ v).count('1') == t)
+    perm = _sternl_gen_perm(a, n)
+    Hv   = _stern_syndrome_H(H_rows, v)
+    if b == 1:                                   # (pi_seed, r)
+        return (_sternl_hash(1, _sternl_b(a, n), _sternl_b(Hv, n)) == c0
+                and _sternl_hash(2, _sternl_b(_stern_apply_perm(perm, v, n), n)) == c1)
+    return (_sternl_hash(1, _sternl_b(a, n), _sternl_b(Hv ^ syndrome, n)) == c0
+            and _sternl_hash(3, _sternl_b(_stern_apply_perm(perm, v, n), n)) == c2)
+
+
+def stern_l_keygen(n: int = STERN_LONG_N):
+    """(seed_int, e_int, syndrome): an N-bit seed, then the weight-N/16 error."""
+    _sternl_check(n)
+    seed  = int.from_bytes(os.urandom(n // 8), 'big')
+    e_int = _csprng_weight_t(n, n // 16)
+    return seed, e_int, _stern_syndrome_H(_sternl_build_H(seed, n), e_int)
+
+
+def stern_l_syndrome(seed_int: int, e_int: int, n: int = STERN_LONG_N) -> int:
+    return _stern_syndrome_H(_sternl_build_H(seed_int, n), e_int)
+
+
+def hpks_stern_l_sign(msg: 'BitArray', e_int: int, seed_int: int,
+                      n: int = STERN_LONG_N, rounds: int = None):
+    """Long-form HPKS-Stern-F signature on a 256-bit msg.  Returns the short
+    form's shape: (commits [(c0, c1, c2) as 256-bit BitArrays], challenges,
+    responses [(a, v) as N-bit ints])."""
+    if rounds is None: rounds = _STERN_F_PRODUCTION_ROUNDS
+    _sternl_msg(msg)
+    H_rows = _sternl_build_H(seed_int, n)
+    commits, data = [], []
+    for _ in range(rounds):
+        r_int = int.from_bytes(os.urandom(n // 8), 'big')
+        pi_seed = int.from_bytes(os.urandom(n // 8), 'big')
+        c, d = _sternl_round_commit(H_rows, e_int, r_int, pi_seed, n)
+        commits.append(c); data.append(d)
+    st = _sternl_fs_state(msg, [c for tr in commits for c in tr])
+    challenges = []
+    for i in range(rounds):
+        st = nl_fscx_v1(st, BitArray(_STERN_W, i))
+        challenges.append((st.uint & 0xFFFFFFFF) % 3)
+    return commits, challenges, [_sternl_respond(b, d) for b, d in zip(challenges, data)]
+
+
+def hpks_stern_l_verify(msg: 'BitArray', sig, seed_int: int, syndrome: int,
+                        n: int = STERN_LONG_N) -> bool:
+    commits, challenges, responses = sig
+    if not commits or len(commits) != len(challenges) or len(commits) != len(responses):
+        return False
+    st = _sternl_fs_state(msg, [c for tr in commits for c in tr])
+    for i, b in enumerate(challenges):
+        st = nl_fscx_v1(st, BitArray(_STERN_W, i))
+        if (st.uint & 0xFFFFFFFF) % 3 != b:
+            return False
+    H_rows = _sternl_build_H(seed_int, n)
+    t = n // 16
+    return all(_sternl_check_round(b, commits[i], responses[i], H_rows, syndrome, n, t)
+               for i, b in enumerate(challenges))
+
+
+def _sternl_simulate_round(b: int, syndrome: int, H_rows: list, n: int):
+    """The short form's HVZK simulator (_stern_simulate_round), draw for draw,
+    on the long-form primitives."""
+    t = n // 16
+    if b == 0:
+        sr = _sternl_rand(n)
+        sy = sr ^ _csprng_weight_t(n, t)
+        pi_dum = _sternl_rand(n)
+        return ((_sternl_hash(1, _sternl_b(pi_dum, n), _sternl_b(0, n)),      # unchecked
+                 _sternl_hash(2, _sternl_b(sr, n)), _sternl_hash(3, _sternl_b(sy, n))),
+                (sr, sy))
+    pi = _sternl_rand(n)
+    v  = _sternl_rand(n)
+    perm = _sternl_gen_perm(pi, n)
+    Hv   = _stern_syndrome_H(H_rows, v)
+    sv   = _stern_apply_perm(perm, v, n)
+    dum  = _sternl_rand(n)
+    if b == 1:
+        return ((_sternl_hash(1, _sternl_b(pi, n), _sternl_b(Hv, n)),
+                 _sternl_hash(2, _sternl_b(sv, n)),
+                 _sternl_hash(3, _sternl_b(dum, n))), (pi, v))           # c2 unchecked
+    return ((_sternl_hash(1, _sternl_b(pi, n), _sternl_b(Hv ^ syndrome, n)),
+             _sternl_hash(2, _sternl_b(dum, n)),                          # c1 unchecked
+             _sternl_hash(3, _sternl_b(sv, n))), (pi, v))
+
+
+def hpks_stern_l_ring_sign(msg: 'BitArray', e_int: int, j: int, ring_keys: list,
+                           n: int = STERN_LONG_N, rounds: int = None):
+    """Long-form ring signature; ring_keys = [(seed_int, syndrome), ...].  The
+    short form's member-major order and challenge splitting."""
+    if rounds is None: rounds = _STERN_F_PRODUCTION_ROUNDS
+    _sternl_msg(msg)
+    k = len(ring_keys)
+    commits = [[None] * rounds for _ in range(k)]
+    chals   = [[0] * rounds for _ in range(k)]
+    resps   = [[None] * rounds for _ in range(k)]
+    for i in range(k):
+        if i == j:
+            continue
+        seed_i, syn_i = ring_keys[i]
+        H_i = _sternl_build_H(seed_i, n)
+        for r in range(rounds):
+            b = _stern_ring_trit()
+            chals[i][r] = b
+            commits[i][r], resps[i][r] = _sternl_simulate_round(b, syn_i, H_i, n)
+    H_j = _sternl_build_H(ring_keys[j][0], n)
+    data = []
+    for r in range(rounds):
+        r_int = int.from_bytes(os.urandom(n // 8), 'big')
+        pi_seed = int.from_bytes(os.urandom(n // 8), 'big')
+        commits[j][r], d = _sternl_round_commit(H_j, e_int, r_int, pi_seed, n)
+        data.append(d)
+    st = _sternl_fs_state(msg, [c for i in range(k) for r in range(rounds)
+                                for c in commits[i][r]])
+    for r in range(rounds):
+        st = nl_fscx_v1(st, BitArray(_STERN_W, r))
+        joint = (st.uint & 0xFFFFFFFF) % 3
+        chals[j][r] = (joint - sum(chals[i][r] for i in range(k) if i != j)) % 3
+        resps[j][r] = _sternl_respond(chals[j][r], data[r])
+    return commits, chals, resps
+
+
+def hpks_stern_l_ring_verify(msg: 'BitArray', sig, ring_keys: list,
+                             n: int = STERN_LONG_N) -> bool:
+    commits, chals, resps = sig
+    k = len(ring_keys)
+    if k == 0 or len(commits) != k:
+        return False
+    rounds = len(chals[0])
+    st = _sternl_fs_state(msg, [c for i in range(k) for r in range(rounds)
+                                for c in commits[i][r]])
+    for r in range(rounds):
+        st = nl_fscx_v1(st, BitArray(_STERN_W, r))
+        if sum(chals[i][r] for i in range(k)) % 3 != (st.uint & 0xFFFFFFFF) % 3:
+            return False
+    t = n // 16
+    for i in range(k):
+        seed_i, syn_i = ring_keys[i]
+        H_i = _sternl_build_H(seed_i, n)
+        for r in range(rounds):
+            if not _sternl_check_round(chals[i][r], commits[i][r], resps[i][r],
+                                       H_i, syn_i, n, t):
+                return False
+    return True
+
+
+def hpke_stern_l_encap_with_e(seed_int: int, n: int = STERN_LONG_N):
+    """Long-form HPKE-Stern-F demo KEM: (K, ct, e') with K = H_4(seed, e')
+    (256 bits) and ct = H e'^T."""
+    e_p = _csprng_weight_t(n, n // 16)
+    ct  = _stern_syndrome_H(_sternl_build_H(seed_int, n), e_p)
+    return hpke_stern_l_decap_known(e_p, seed_int, n), ct, e_p
+
+
+def hpke_stern_l_decap_known(e_p: int, seed_int: int, n: int = STERN_LONG_N) -> 'BitArray':
+    return _sternl_hash(4, _sternl_b(seed_int, n), _sternl_b(e_p, n))
+
+
+# ---------------------------------------------------------------------------
 # ZKP-RNL: Ring-LWR Σ-protocol (Lyubashevsky-style, Fiat-Shamir compiled)
 # SecurityProofs-7.md §11.10.2
 # ---------------------------------------------------------------------------
@@ -4365,8 +4640,9 @@ def hcred_issue(m_poly, C_poly, seed_H, y_synd, n,
     Binding the pair defeats the §11.10.9 self-registered-key forgery:
     a presentation is only accepted for an issuer-signed (C, y)."""
     if issuer_n is None: issuer_n = KEYBITS
-    digest = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, b'HCRED-issue')
-    msg = BitArray(issuer_n, int.from_bytes(digest, 'big') >> (256 - issuer_n))
+    msg = _hcred_issue_msg(m_poly, C_poly, seed_H, y_synd, n, issuer_n)
+    if stern_is_long(issuer_n):          # a long-form issuer key (TODO #382)
+        return hpks_stern_l_sign(msg, issuer_e, issuer_seed, issuer_n, rounds)
     return hpks_stern_f_sign(msg, issuer_e, issuer_seed, issuer_syn,
                              issuer_n, rounds)
 
@@ -4375,9 +4651,17 @@ def hcred_cred_verify(m_poly, C_poly, seed_H, y_synd, n, cred_sig,
                       issuer_seed, issuer_syn, issuer_n=None):
     """Verify the issuer's HPKS-Stern-F signature over (m, C, seed_H, y)."""
     if issuer_n is None: issuer_n = KEYBITS
-    digest = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, b'HCRED-issue')
-    msg = BitArray(issuer_n, int.from_bytes(digest, 'big') >> (256 - issuer_n))
+    msg = _hcred_issue_msg(m_poly, C_poly, seed_H, y_synd, n, issuer_n)
+    if stern_is_long(issuer_n):
+        return hpks_stern_l_verify(msg, cred_sig, issuer_seed, issuer_syn, issuer_n)
     return hpks_stern_f_verify(msg, cred_sig, issuer_seed, issuer_syn, issuer_n)
+
+
+def _hcred_issue_msg(m_poly, C_poly, seed_H, y_synd, n, issuer_n):
+    """The issuer signs the statement digest's high min(issuer_n, 256) bits."""
+    digest = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, b'HCRED-issue')
+    w = min(issuer_n, 256)
+    return BitArray(w, int.from_bytes(digest, 'big') >> (256 - w))
 
 
 # ---------------------------------------------------------------------------

@@ -505,6 +505,48 @@ HCRED credential signature are derived from `ch_st = stern_hash(msg ‖
 commitments)` by `ch_st = nl_fscx_v1(ch_st, i)` for round `i = 0, 1, …`,
 where `i` is the WHOLE round index as an n-bit integer (not its low byte),
 and round `i`'s challenge is `(ch_st mod 2^32) mod 3`.
+
+### 11.1 The long form: N = 2304, the 128-bit set (TODO #382)
+
+`genpkey --algo hpks-stern --level 128` (and `hpke-stern`) makes a key at
+N = 2304, k = N/2 = 1152 parity rows, error weight t = N/16 = 144: about
+2^137 classical by BJMM and 2^106 by Grover-over-Prange
+(`SecurityProofsCode/stern_f_parameter_selection.py`). Its vectors are
+wider than the 256-bit BitArray, so every value is an N-bit string, N/8
+octets big-endian, integer bit `i` at octet `N/8 - 1 - i/8`, bit `i mod 8`.
+The protocol is the short form's (same commitments, challenge rule,
+responses, weight check and ds tags); these rules apply above N = 256:
+
+- **Hash.** `H_ds(x_0, x_1, …) = HFSCX-256-DS(0x31, ds ‖ x_0 ‖ x_1 ‖ …)`,
+  all 256 bits (the short form keeps the high N bits). Commitments
+  `c0 = H_1(π-seed, H·rᵀ)`, `c1 = H_2(σ(r))`, `c2 = H_3(σ(y))` are 256 bits;
+  the syndrome is hashed as an N-bit string (bit `i` = row `i`, the high
+  half zero).
+- **Matrix.** `sk = H_6(seed)`. Row `i` (0 ≤ i < N/2) is the concatenation
+  `chunk(i, 0) ‖ … ‖ chunk(i, N/256 − 1)` read as an N-bit string, where
+  `chunk(i, c) = HFSCX-256(i_hi ‖ i_lo ‖ c)` — a 3-octet message — with
+  `sk` as HFSCX-256's initial chaining value.
+- **Permutation.** σ is the short form's Fisher–Yates generator over N
+  positions with its NL-FSCX v1 PRNG keyed by the 256-bit
+  `k = H_5(π-seed)`: state `k`, key `ROL(k, 32)`, eight 32-bit draws per
+  state, `j = (v · (i + 1)) >> 32`.
+- **Message and challenges.** The signed message is 256 bits (the whole
+  HFSCX-256 pre-hash, or the input's first 32 octets). `ch_st =
+  H_0(msg ‖ c0_0 ‖ c1_0 ‖ c2_0 ‖ …)` and advances by `nl_fscx_v1(ch_st, i)`
+  at 256 bits, exactly as above; a ring signature hashes every member's
+  commitments, member-major.
+- **Demo KEM (`hpke-stern`).** `K = H_4(seed, e′)`; the payload is one
+  32-octet block, `E = fscx_revolve(P, K, 64)`.
+- **Wire.** The short form's PEM layouts with `n = 2304`: keys
+  `(e or syndrome, seed, n)`, each N/8 octets; a signature
+  `(n, rounds, commitments, challenges, responses)` with 3 × 32 commitment
+  octets and 2 × N/8 response octets a round (147,249 DER octets at 219
+  rounds); the HPKE-Stern ciphertext's `K` and `E` are 32 octets.
+
+Random draws keep the short form's order (seed, then the error; per round
+`r`, then the π-seed), and `KAT/operation_replay.json` pins keygen,
+signing and ring signing at N = 2304 in all four ports.
+
 This SPEC.md's §9 NL/PQC coverage and this pointer satisfy TODO #193's
 scope (HKEX-GF, HSKE, HPKS, HPKE, and the NL/PQC/Stern variants); a
 follow-up TODO MAY expand §11 into full Stern-F/Niederreiter algorithm

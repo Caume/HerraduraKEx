@@ -780,16 +780,16 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
             if n > 2 and L[2] > (2):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
-            if n > 3 and L[3] > (F[0] * F[1] * (5 * (F[2]//8) + 1)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[0] * F[1] * (5 * (F[2]//8) + 1))
+            if n > 3 and L[3] > (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))
             if n > 0 and enc[0][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 3 and enc[3][0] != (F[0] * F[1] * (5 * (F[2]//8) + 1)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[0] * F[1] * (5 * (F[2]//8) + 1))) and not ((F[0] * F[1] * (5 * (F[2]//8) + 1)) == 0 and enc[3][0] == 1 and L[3] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[0] * F[1] * (5 * (F[2]//8) + 1))
+            if n > 3 and enc[3][0] != (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))) and not ((F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))
             return None
     elif label == 'HERRADURA OPRF PRIVATE KEY':
         if 2 <= n <= 2:
@@ -924,8 +924,8 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 2)
             if n > 1 and L[1] > (2):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
-            if n > 2 and L[2] > (F[1] * 3 * (F[0]//8)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[1] * 3 * (F[0]//8))
+            if n > 2 and L[2] > (F[1] * 3 * min(F[0]//8, 32)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[1] * 3 * min(F[0]//8, 32))
             if n > 3 and L[3] > ((F[1] + 3)//4):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], (F[1] + 3)//4)
             if n > 4 and L[4] > (F[1] * 2 * (F[0]//8)):
@@ -934,8 +934,8 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 2 and enc[2][0] != (F[1] * 3 * (F[0]//8)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * (F[0]//8))) and not ((F[1] * 3 * (F[0]//8)) == 0 and enc[2][0] == 1 and L[2] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * (F[0]//8))
+            if n > 2 and enc[2][0] != (F[1] * 3 * min(F[0]//8, 32)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * min(F[0]//8, 32))) and not ((F[1] * 3 * min(F[0]//8, 32)) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * min(F[0]//8, 32))
             if n > 3 and enc[3][0] != ((F[1] + 3)//4) and not (enc[3][1] == 2 and enc[3][0] + 1 == ((F[1] + 3)//4)) and not (((F[1] + 3)//4) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], (F[1] + 3)//4)
             if n > 4 and enc[4][0] != (F[1] * 2 * (F[0]//8)) and not (enc[4][1] == 2 and enc[4][0] + 1 == (F[1] * 2 * (F[0]//8))) and not ((F[1] * 2 * (F[0]//8)) == 0 and enc[4][0] == 1 and L[4] == 0):
@@ -1090,20 +1090,20 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[4]//8)
             if n > 1 and L[1] > (F[4]//8):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[4]//8)
-            if n > 2 and L[2] > (F[4]//8):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[4]//8)
-            if n > 3 and L[3] > (F[4]//8):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[4]//8)
+            if n > 2 and L[2] > (min(F[4]//8, 32)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], min(F[4]//8, 32))
+            if n > 3 and L[3] > (min(F[4]//8, 32)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], min(F[4]//8, 32))
             if n > 4 and enc[4][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
             if n > 0 and enc[0][0] != (F[4]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[4]//8)
             if n > 1 and enc[1][0] != (F[4]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[4]//8)
-            if n > 2 and enc[2][0] != (F[4]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[4]//8)
-            if n > 3 and enc[3][0] != (F[4]//8) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[3][0] == 1 and L[3] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[4]//8)
+            if n > 2 and enc[2][0] != (min(F[4]//8, 32)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (min(F[4]//8, 32))) and not ((min(F[4]//8, 32)) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], min(F[4]//8, 32))
+            if n > 3 and enc[3][0] != (min(F[4]//8, 32)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (min(F[4]//8, 32))) and not ((min(F[4]//8, 32)) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], min(F[4]//8, 32))
             return None
         if 6 <= n <= 6:
             if n > 0 and L[0] > (1):
@@ -1155,8 +1155,8 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 2)
             if n > 1 and L[1] > (2):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
-            if n > 2 and L[2] > (F[1] * 3 * (F[0]//8)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[1] * 3 * (F[0]//8))
+            if n > 2 and L[2] > (F[1] * 3 * min(F[0]//8, 32)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[1] * 3 * min(F[0]//8, 32))
             if n > 3 and L[3] > ((F[1] + 3)//4):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], (F[1] + 3)//4)
             if n > 4 and L[4] > (F[1] * 2 * (F[0]//8)):
@@ -1165,8 +1165,8 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 2 and enc[2][0] != (F[1] * 3 * (F[0]//8)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * (F[0]//8))) and not ((F[1] * 3 * (F[0]//8)) == 0 and enc[2][0] == 1 and L[2] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * (F[0]//8))
+            if n > 2 and enc[2][0] != (F[1] * 3 * min(F[0]//8, 32)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * min(F[0]//8, 32))) and not ((F[1] * 3 * min(F[0]//8, 32)) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * min(F[0]//8, 32))
             if n > 3 and enc[3][0] != ((F[1] + 3)//4) and not (enc[3][1] == 2 and enc[3][0] + 1 == ((F[1] + 3)//4)) and not (((F[1] + 3)//4) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], (F[1] + 3)//4)
             if n > 4 and enc[4][0] != (F[1] * 2 * (F[0]//8)) and not (enc[4][1] == 2 and enc[4][0] + 1 == (F[1] * 2 * (F[0]//8))) and not ((F[1] * 2 * (F[0]//8)) == 0 and enc[4][0] == 1 and L[4] == 0):
@@ -1246,29 +1246,33 @@ _PARAM_SETS = (
     ('hkex-rnl', 1024, '128', True, 'production',
      '>= 2^128 classical (conjectured; SECURITY.md)', 'py go c java', None),
     ('hpks-stern', 32, None, False, 'demo',
-     'below 2^30', 'py go c java', None),
+     'below 2^24', 'py go c java', None),
     ('hpks-stern', 64, None, False, 'demo',
-     'below 2^30', 'py go c java', None),
+     'below 2^24', 'py go c java', None),
     ('hpks-stern', 128, None, False, 'demo',
-     'below 2^30', 'py go c java', None),
+     'below 2^24', 'py go c java', None),
     ('hpks-stern', 256, 'demo', True, 'demo',
-     '~2^30-2^40 (SECURITY.md)', 'py go c java', None),
+     '~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)', 'py go c java', None),
     ('hpke-stern', 32, None, False, 'demo',
-     'below 2^30', 'py go c java', None),
+     'below 2^24', 'py go c java', None),
     ('hpke-stern', 64, None, False, 'demo',
-     'below 2^30', 'py go c java', None),
+     'below 2^24', 'py go c java', None),
     ('hpke-stern', 128, None, False, 'demo',
-     'below 2^30', 'py go c java', None),
+     'below 2^24', 'py go c java', None),
     ('hpke-stern', 256, 'demo', True, 'demo',
-     '~2^30-2^40 (SECURITY.md)', 'py go c java', None),
+     '~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)', 'py go c java', None),
     ('hcred', 32, None, False, 'demo',
-     'research construction; its Stern-F half below 2^30', 'py go c java', None),
+     'research construction; its Stern-F half below 2^24', 'py go c java', None),
     ('hcred', 64, None, False, 'demo',
-     'research construction; its Stern-F half below 2^30', 'py go c java', None),
+     'research construction; its Stern-F half below 2^24', 'py go c java', None),
     ('hcred', 128, None, False, 'demo',
-     'research construction; its Stern-F half below 2^30', 'py go c java', None),
+     'research construction; its Stern-F half below 2^24', 'py go c java', None),
     ('hcred', 256, 'demo', True, 'demo',
-     'research construction; its Stern-F half ~2^30-2^40 (SECURITY.md)', 'py go c java', None),
+     'research construction; its Stern-F half ~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)', 'py go c java', None),
+    ('hpks-stern', 2304, '128', False, 'demo-only',
+     '~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3', 'py go c java', None),
+    ('hpke-stern', 2304, '128', False, 'demo-only',
+     '~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3', 'py go c java', None),
     ('hpke-stern-kem', -1, '128', True, 'demo-only',
      '2^128 classical by its parameters (BIKE-128)', 'py go c java', None),
     ('hpks-zkp-nl', 8, 'demo', True, 'demo',
@@ -1278,15 +1282,13 @@ _PARAM_LEVELS = ('demo', '128', '192', '256')
 _PARAM_FIXED = ('hpks-wots', 'hpks-xmss')
 _PARAM_OWN_BITS = ('hpks-zkp-nl',)
 _PARAM_LEVEL_NOTES = {
-    'hcred': '128-bit Stern-F parameters are TODO #382',
+    'hcred': "hcred's own key (a Ring-LWR and syndrome-decoding pair proved in ZKBoo) has no 128-bit set; the ISSUER's hpks-stern key does: genpkey --algo hpks-stern --level 128",
     'hkex-gf': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
     'hpke': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
     'hpke-nl': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
     'hpke-nl3': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
-    'hpke-stern': '128-bit Stern-F parameters are TODO #382',
     'hpks': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
     'hpks-nl': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
-    'hpks-stern': '128-bit Stern-F parameters are TODO #382',
     'oprf': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
 }
 
@@ -1470,7 +1472,7 @@ def _check_wire_fields(label, ints, fields=None):
                 sys.exit(f"{label}: session key width is {v} (expected a multiple of 8, "
                          f"16..{_suite_mod.BA_MAX_BITS})")
         elif kind == 'stern':
-            _bounded_n(v, label)
+            _bounded_stern_n(v, label)
         elif kind == 'kem_r':
             _bounded(v, _QCMDPC_R, _QCMDPC_R, 'QC-MDPC r', label)
         elif kind == 'kem_d':
@@ -1530,7 +1532,8 @@ def _read_pem_ints(path):
 _RING_MAX_K     = 64      # herradura_cli.c RING_MAX_K
 _SDF_MAX_ROUNDS = 4096    # herradura.h SDF_MAX_ROUNDS (TODO #236)
 _XMSS_MAX_H     = 20      # herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
-_STERN_MAX_N    = KEYBITS # no implementation here emits a wider Stern instance
+_STERN_MAX_N    = KEYBITS # the widest short-form Stern instance
+_STERN_LONG_N   = 2304    # the long form's one listed N (TODO #382): suite STERN_LONG_N
 
 # TODO #364: the verifier's round-count floor.  The round count travels in the
 # artifact (TODO #236), so without a floor the SIGNER chose the verifier's
@@ -1601,6 +1604,36 @@ def _bounded_n(value, where, what='n'):
     if v % 8:
         sys.exit(f"{where}: {what} is {v} (expected a multiple of 8)")
     return v
+
+
+def _bounded_stern_n(value, where, what='n'):
+    """A Stern-F code length: _bounded_n's, or the long form's N = 2304 (TODO #382)."""
+    if value == _STERN_LONG_N:
+        return value
+    return _bounded_n(value, where, what)
+
+
+# TODO #382 stage 2: the Stern-F long form (N > 256) carries its vectors as
+# integers and its commitments, message and Fiat-Shamir state at 256 bits.
+def _stern_long(n):
+    return n > _STERN_MAX_N
+
+
+def _stern_seed(seed_int, n):
+    """The seed as the suite takes it: a BitArray up to 256 bits, an int above."""
+    return seed_int if _stern_long(n) else BitArray(n, seed_int)
+
+
+def _stern_syn(seed_int, e_int, n):
+    if _stern_long(n):
+        return _suite_mod.stern_l_syndrome(seed_int, e_int, n)
+    return _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
+
+
+def _stern_msg(in_bytes, n):
+    """The signed message: min(n, 256) bits of the (pre-hashed) input."""
+    w = min(n, 256)
+    return BitArray(w, int.from_bytes(in_bytes[:w // 8].ljust(w // 8, b'\x00'), 'big'))
 
 
 # ---------------------------------------------------------------------------
@@ -1750,7 +1783,7 @@ _STERN_ALGOS        = {'hpks-stern', 'hpke-stern'}
 
 _STERN_DEMO_WARNING = (
     "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
-    "(demo parameters). 128-bit security requires N>=2144. "
+    "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
     "Do not use for production."
 )
 
@@ -1881,13 +1914,15 @@ def _rnl_derive_C(m_poly, s_poly, n):
 
 def _encode_stern_privkey(e_int, seed, n, algo):
     nbytes = n // 8
-    der = der_seq(der_int(e_int, nbytes), der_int(seed.uint, nbytes), der_int(n))
+    seed = seed.uint if isinstance(seed, BitArray) else seed
+    der = der_seq(der_int(e_int, nbytes), der_int(seed, nbytes), der_int(n))
     return pem_wrap(_PRIV_ALGOS[algo], der)
 
 
 def _encode_stern_pubkey(syn_int, seed, n, algo):
     nbytes = n // 8
-    der = der_seq(der_int(syn_int, nbytes), der_int(seed.uint, nbytes), der_int(n))
+    seed = seed.uint if isinstance(seed, BitArray) else seed
+    der = der_seq(der_int(syn_int, nbytes), der_int(seed, nbytes), der_int(n))
     return pem_wrap(_PUB_ALGOS[algo], der)
 
 
@@ -2423,10 +2458,11 @@ def _decode_asym_ct(path):
 def _encode_stern_ct(ct_syn, e_p, K_int, E_int, n):
     """HPKE-Stern-F demo ciphertext: syndrome + plaintext error (demo) + HSKE payload."""
     nbytes = n // 8
+    kbytes = min(n, 256) // 8      # K and the payload block: 256 bits above 256 (TODO #382)
     der = der_seq(der_int(ct_syn, nbytes),
                   der_int(e_p,    nbytes),   # demo: e' transmitted for brute-force decap
-                  der_int(K_int,  nbytes),
-                  der_int(E_int,  nbytes),
+                  der_int(K_int,  kbytes),
+                  der_int(E_int,  kbytes),
                   der_int(n))
     return pem_wrap(_LABEL_CT, der)
 
@@ -2555,12 +2591,13 @@ def _pack_stern_sig(sig, n):
     commits, challenges, responses = sig
     rounds  = len(commits)
     nbytes  = n // 8
+    cbytes  = min(n, 256) // 8     # commitments: 256 bits above N = 256 (TODO #382)
 
     commits_ba = bytearray()
     for c0, c1, c2 in commits:
-        commits_ba += c0.uint.to_bytes(nbytes, 'big')
-        commits_ba += c1.uint.to_bytes(nbytes, 'big')
-        commits_ba += c2.uint.to_bytes(nbytes, 'big')
+        commits_ba += c0.uint.to_bytes(cbytes, 'big')
+        commits_ba += c1.uint.to_bytes(cbytes, 'big')
+        commits_ba += c2.uint.to_bytes(cbytes, 'big')
 
     chal_bytes = bytearray((rounds + 3) // 4)
     for i, b in enumerate(challenges):
@@ -2591,17 +2628,19 @@ def _unpack_stern_sig(path):
     if label != _LABEL_SIG:
         raise ValueError(f"Expected SIGNATURE PEM, got {label!r}")
     n, rounds, c_int, ch_int, r_int = ints
-    n      = _bounded_n(n, 'verify')
+    n      = _bounded_stern_n(n, 'verify')
     rounds = _bounded(rounds, 1, _SDF_MAX_ROUNDS, 'round count', 'verify')
     nbytes = n // 8
+    cw     = min(n, 256)
+    cb     = cw // 8
 
-    commits_ba = _fit(c_int, 3 * rounds * nbytes, 'c', 'pem')
+    commits_ba = _fit(c_int, 3 * rounds * cb, 'c', 'pem')
     commits = []
     for i in range(rounds):
-        off = i * 3 * nbytes
-        c0 = BitArray(n, int.from_bytes(commits_ba[off           :off + nbytes],     'big'))
-        c1 = BitArray(n, int.from_bytes(commits_ba[off + nbytes  :off + 2 * nbytes], 'big'))
-        c2 = BitArray(n, int.from_bytes(commits_ba[off + 2*nbytes:off + 3 * nbytes], 'big'))
+        off = i * 3 * cb
+        c0 = BitArray(cw, int.from_bytes(commits_ba[off       :off + cb],     'big'))
+        c1 = BitArray(cw, int.from_bytes(commits_ba[off + cb  :off + 2 * cb], 'big'))
+        c2 = BitArray(cw, int.from_bytes(commits_ba[off + 2*cb:off + 3 * cb], 'big'))
         commits.append((c0, c1, c2))
 
     chal_nb    = (rounds + 3) // 4
@@ -2615,7 +2654,7 @@ def _unpack_stern_sig(path):
         v0  = int.from_bytes(resp_ba[off:off + nbytes],          'big')
         v1  = int.from_bytes(resp_ba[off + nbytes:off + 2*nbytes], 'big')
         b   = challenges[i]
-        if b == 0:
+        if b == 0 or _stern_long(n):     # the long form's pi_seed is an int
             responses.append((v0, v1))
         else:
             responses.append((BitArray(n, v0), v1))
@@ -2638,16 +2677,18 @@ def _pack_ring_sig(sig, n):
     rounds = len(all_challenges[0])
     nbytes = n // 8
 
-    def _vb(v):
+    cbytes = min(n, 256) // 8      # commitments: 256 bits above N = 256 (TODO #382)
+
+    def _vb(v, nb=nbytes):
         iv = v.uint if isinstance(v, BitArray) else int(v)
-        return iv.to_bytes(nbytes, 'big')
+        return iv.to_bytes(nb, 'big')
 
     blob = bytearray()
     for i in range(k):
         for r in range(rounds):
             c0, c1, c2 = all_commits[i][r]
             ra, rb     = all_responses[i][r]
-            blob += _vb(c0) + _vb(c1) + _vb(c2)
+            blob += _vb(c0, cbytes) + _vb(c1, cbytes) + _vb(c2, cbytes)
             blob += bytes([all_challenges[i][r] & 0xFF])
             blob += _vb(ra) + _vb(rb)
 
@@ -2665,10 +2706,12 @@ def _unpack_ring_sig(path):
     # below, and `verify`'s own k/n cross-checks only run after this returns.
     k      = _bounded(ints[0], 2, _RING_MAX_K,     'ring member count', 'verify')
     rounds = _bounded(ints[1], 1, _SDF_MAX_ROUNDS, 'round count',       'verify')
-    n      = _bounded_n(ints[2], 'verify')
+    n      = _bounded_stern_n(ints[2], 'verify')
     blob_int = ints[3]
     nbytes = n // 8
-    entry  = 5 * nbytes + 1
+    cw     = min(n, 256)
+    cb     = cw // 8
+    entry  = 3 * cb + 2 * nbytes + 1
     blen   = k * rounds * entry
     if _int_nbytes(blob_int) > blen:
         sys.exit(f"verify: HPKS-RING signature payload is "
@@ -2682,15 +2725,15 @@ def _unpack_ring_sig(path):
     off = 0
     for i in range(k):
         for r in range(rounds):
-            c0 = BitArray(n, int.from_bytes(blob[off:off+nbytes], 'big')); off += nbytes
-            c1 = BitArray(n, int.from_bytes(blob[off:off+nbytes], 'big')); off += nbytes
-            c2 = BitArray(n, int.from_bytes(blob[off:off+nbytes], 'big')); off += nbytes
+            c0 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
+            c1 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
+            c2 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
             b  = blob[off]; off += 1
             ra = int.from_bytes(blob[off:off+nbytes], 'big'); off += nbytes
             rb = int.from_bytes(blob[off:off+nbytes], 'big'); off += nbytes
             all_commits[i][r]    = (c0, c1, c2)
             all_challenges[i][r] = b
-            all_responses[i][r]  = ((ra if b == 0 else BitArray(n, ra)), rb)
+            all_responses[i][r]  = ((ra if b == 0 or _stern_long(n) else BitArray(n, ra)), rb)
     return (all_commits, all_challenges, all_responses), k, rounds, n
 
 
@@ -2711,7 +2754,7 @@ def _load_ring_pubkeys(ring_arg):
             ring_n = n_i
         elif n_i != ring_n:
             sys.exit("hpks-ring: all ring members must share the same n")
-        ring_keys.append((BitArray(n_i, seed_i), syn_i))
+        ring_keys.append((_stern_seed(seed_i, n_i), syn_i))
     return ring_keys, ring_n
 
 
@@ -2879,7 +2922,10 @@ def cmd_genpkey(args):
 
     elif algo in _STERN_ALGOS:
         print(_STERN_DEMO_WARNING, file=sys.stderr)
-        seed, e_int, syn = stern_f_keygen(bits)
+        if _stern_long(bits):
+            seed, e_int, syn = _suite_mod.stern_l_keygen(bits)
+        else:
+            seed, e_int, syn = stern_f_keygen(bits)
         pem_out = _encode_stern_privkey(e_int, seed, bits, algo)
 
     elif algo in _ZKP_NL_ALGOS:
@@ -3011,9 +3057,8 @@ def cmd_pkey(args):
             pem_out = _encode_rnl_pubkey(C_poly, m_poly, n, n_a)
         elif algo in _STERN_ALGOS:
             e_int, seed_int, n = ints
-            syn   = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
-            seed  = BitArray(n, seed_int)
-            pem_out = _encode_stern_pubkey(syn, seed, n, algo)
+            syn   = _stern_syn(seed_int, e_int, n)
+            pem_out = _encode_stern_pubkey(syn, seed_int, n, algo)
         elif algo in _ZKP_NL_ALGOS:
             A, B, y, n = ints
             pem_out = encode_zkp_nl_pubkey(B, y, n)
@@ -3405,12 +3450,15 @@ def cmd_enc(args):
     elif algo == 'hpke-stern':
         print(_STERN_DEMO_WARNING, file=sys.stderr)
         syn_int, seed_int, n = their_ints
-        seed    = BitArray(n, seed_int)
-        nbytes  = n // 8
+        w       = min(n, 256)          # the payload block (TODO #382: 256 bits above 256)
+        nbytes  = w // 8
         _one_block_ok(algo, len(in_bytes), nbytes)
-        P       = BitArray(n, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
-        K, ct_syn, e_p = hpke_stern_f_encap_with_e(seed, n)
-        E       = fscx_revolve(P, K, n // 4)
+        P       = BitArray(w, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
+        if _stern_long(n):
+            K, ct_syn, e_p = _suite_mod.hpke_stern_l_encap_with_e(seed_int, n)
+        else:
+            K, ct_syn, e_p = hpke_stern_f_encap_with_e(BitArray(n, seed_int), n)
+        E       = fscx_revolve(P, K, w // 4)
         _write_file(out_path, _encode_stern_ct(ct_syn, e_p, K.uint, E.uint, n))
 
     elif algo == 'hpke-stern-kem':
@@ -3565,13 +3613,16 @@ def cmd_dec(args):
         # TODO #383 stage 2: another width decrypted to garbage with exit 0
         if _n != n:
             sys.exit(f"dec: ciphertext n is {_n}, private key n is {n}")
-        seed    = BitArray(n, seed_int)
-        K_dec   = hpke_stern_f_decap(ct_syn, e_p, seed, n)
+        w       = min(n, 256)
+        if _stern_long(n):
+            K_dec = _suite_mod.hpke_stern_l_decap_known(e_p, seed_int, n)
+        else:
+            K_dec = hpke_stern_f_decap(ct_syn, e_p, BitArray(n, seed_int), n)
         if K_dec is None:
             sys.exit("HPKE-Stern-F decap failed (brute-force exhausted)")
-        E       = BitArray(n, E_int)
-        D       = fscx_revolve(E, K_dec, 3 * n // 4)
-        _write_file(out_path, D.uint.to_bytes(n // 8, 'big'))
+        E       = BitArray(w, E_int)
+        D       = fscx_revolve(E, K_dec, 3 * w // 4)
+        _write_file(out_path, D.uint.to_bytes(w // 8, 'big'))
 
     elif algo == 'hpke-stern-kem':
         key_path = args.key
@@ -3622,11 +3673,14 @@ def cmd_sign(args):
     elif algo == 'hpks-stern':
         print(_STERN_DEMO_WARNING, file=sys.stderr)
         e_int, seed_int, n = our_ints
-        seed   = BitArray(n, seed_int)
-        syn    = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
-        msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
+        msg    = _stern_msg(in_bytes, n)
         rounds = args.rounds if args.rounds is not None else _STERN_CLI_ROUNDS
-        sig    = hpks_stern_f_sign(msg, e_int, seed, syn, n, rounds)
+        if _stern_long(n):
+            sig = _suite_mod.hpks_stern_l_sign(msg, e_int, seed_int, n, rounds)
+        else:
+            seed = BitArray(n, seed_int)
+            syn  = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
+            sig  = hpks_stern_f_sign(msg, e_int, seed, syn, n, rounds)
         _write_file(args.out, _pack_stern_sig(sig, n))
 
     elif algo == 'hpks-ring':
@@ -3649,13 +3703,16 @@ def cmd_sign(args):
             sys.exit(f"hpks-ring sign: signer n={n} != ring n={ring_n}")
         # Locate the signer's own index in the ring (matched by seed).
         j = next((idx for idx, (sd, _sy) in enumerate(ring_keys)
-                  if sd.uint == seed_int), None)
+                  if (sd if isinstance(sd, int) else sd.uint) == seed_int), None)
         if j is None:
             sys.exit("hpks-ring sign: signer's public key is not in --ring "
                      "(run pkey --pubout on the signer key and include it)")
-        msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
+        msg    = _stern_msg(in_bytes, n)
         rounds = args.rounds if args.rounds is not None else _STERN_CLI_ROUNDS
-        sig    = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
+        if _stern_long(n):
+            sig = _suite_mod.hpks_stern_l_ring_sign(msg, e_int, j, ring_keys, n, rounds)
+        else:
+            sig = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
         _write_file(args.out, _pack_ring_sig(sig, n))
         print(f"Ring signature created (k={len(ring_keys)}); signer index is hidden.",
               file=sys.stderr)
@@ -3924,8 +3981,11 @@ def cmd_verify(args):
         if k != len(ring_keys):
             sys.exit(f"hpks-ring verify: signature ring size {k} != "
                      f"{len(ring_keys)} provided members")
-        msg = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        ok  = hpks_stern_ring_verify(msg, sig, ring_keys, n)
+        msg = _stern_msg(in_bytes, n)
+        if _stern_long(n):
+            ok = _suite_mod.hpks_stern_l_ring_verify(msg, sig, ring_keys, n)
+        else:
+            ok = hpks_stern_ring_verify(msg, sig, ring_keys, n)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -3969,8 +4029,8 @@ def cmd_verify(args):
     elif algo == 'hpks-stern':
         print(_STERN_DEMO_WARNING, file=sys.stderr)
         syn_int, seed_int, n = their_ints
-        seed = BitArray(n, seed_int)
-        msg  = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
+        seed = _stern_seed(seed_int, n)
+        msg  = _stern_msg(in_bytes, n)
         commits, challenges, responses, _n = _unpack_stern_sig(sig_path)
         _require_rounds(len(commits), _round_floor(args, 'verify'),
                         'hpks-stern signature', 'verify')
@@ -3978,7 +4038,10 @@ def cmd_verify(args):
         if _n != n:
             sys.exit(f"verify: signature n is {_n}, public key n is {n}")
         sig  = (commits, challenges, responses)
-        ok   = hpks_stern_f_verify(msg, sig, seed, syn_int, n)
+        if _stern_long(n):
+            ok = _suite_mod.hpks_stern_l_verify(msg, sig, seed, syn_int, n)
+        else:
+            ok = hpks_stern_f_verify(msg, sig, seed, syn_int, n)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -4526,8 +4589,8 @@ def cmd_cred_issue(args):
     if our_algo not in ('hpks-stern', 'hpke-stern'):
         sys.exit(f"cred-issue: --our must be an hpks-stern private key, got {our_algo!r}")
     e_int, seed_int, issuer_n = ints
-    issuer_seed = BitArray(issuer_n, seed_int)
-    issuer_syn  = _suite_mod._stern_syndrome(seed_int, e_int, issuer_n, issuer_n // 2)
+    issuer_seed = _stern_seed(seed_int, issuer_n)
+    issuer_syn  = _stern_syn(seed_int, e_int, issuer_n)
 
     rounds = args.rounds if args.rounds is not None else _HCRED_SIGN_ROUNDS
     print(_STERN_DEMO_WARNING, file=sys.stderr)
@@ -4585,12 +4648,14 @@ def cmd_cred_verify(args):
         commits_raw, challenges, responses, issuer_n = decode_hcred_credential(raw_cred)
         _require_rounds(len(challenges), floor, 'HCRED credential', 'cred-verify')
         # Wrap commit integers as BitArrays for hpks_stern_f_verify
-        commits = [(BitArray(issuer_n, c0), BitArray(issuer_n, c1), BitArray(issuer_n, c2))
+        cw = min(issuer_n, 256)    # commitments: 256 bits above N = 256 (TODO #382)
+        commits = [(BitArray(cw, c0), BitArray(cw, c1), BitArray(cw, c2))
                    for c0, c1, c2 in commits_raw]
         responses2 = []
         for i, (v0, v1) in enumerate(responses):
             b = challenges[i]
-            responses2.append((v0 if b == 0 else BitArray(issuer_n, v0), v1))
+            responses2.append((v0 if b == 0 or _stern_long(issuer_n)
+                               else BitArray(issuer_n, v0), v1))
         cred_sig = (commits, challenges, responses2)
 
         # Load issuer's public key (hpks-stern pub)
@@ -4602,7 +4667,7 @@ def cmd_cred_verify(args):
         # it is refused by name, as verify does (TODO #383 stages 2 and 3).
         if issuer_n != issuer_key_n:
             sys.exit(f"cred-verify: credential n is {issuer_n}, issuer key n is {issuer_key_n}")
-        issuer_seed = BitArray(issuer_n, issuer_seed_int)
+        issuer_seed = _stern_seed(issuer_seed_int, issuer_n)
 
         ok_cred = hcred_cred_verify(m, C, seed_H, syndr, pub_n,
                                     cred_sig, issuer_seed, issuer_syn_int,

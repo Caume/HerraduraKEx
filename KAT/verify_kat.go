@@ -924,6 +924,64 @@ func verifyOperationReplay(v map[string]interface{}) int {
 				fmt.Println("PASS op " + name + " verifies")
 			}
 
+		// TODO #382 stage 2: the long form's three rows (N = 2304).  Every
+		// value is an N/8-byte string, the syndrome included.
+		case "stern_l_keygen":
+			seed, e, syn := SternLKeygen(num(params, "n"))
+			check("op "+name+" seed", hex.EncodeToString(seed), str(expect, "seed"))
+			check("op "+name+" e", hex.EncodeToString(e), str(expect, "e"))
+			check("op "+name+" syndrome", hex.EncodeToString(syn), str(expect, "syndrome"))
+
+		case "hpks_stern_l_sign":
+			rounds := num(params, "rounds")
+			sig := HpksSternLSign(NewFromBytes(mustHex(str(stmt, "msg")), 0, 256),
+				mustHex(str(stmt, "e")), mustHex(str(stmt, "seed")), rounds)
+			var gc, ge, gr, wc, we, wr strings.Builder
+			for i, rd := range sig.Rounds {
+				gc.WriteString(rd.C0.Hex() + rd.C1.Hex() + rd.C2.Hex())
+				ge.WriteString(fmt.Sprint(rd.B))
+				gr.WriteString(hex.EncodeToString(rd.RespA) + hex.EncodeToString(rd.RespB))
+				for _, c := range strList(strList(expect["commits"])[i]) {
+					wc.WriteString(c.(string))
+				}
+				we.WriteString(fmt.Sprint(int(strList(expect["challenges"])[i].(float64))))
+				for _, x := range strList(strList(expect["responses"])[i]) {
+					wr.WriteString(x.(string))
+				}
+			}
+			check("op "+name+" commitments", gc.String(), wc.String())
+			check("op "+name+" challenges", ge.String(), we.String())
+			check("op "+name+" responses", gr.String(), wr.String())
+
+		case "hpks_stern_l_ring_sign":
+			k, rounds, j := num(params, "k"), num(params, "rounds"), num(params, "j")
+			seeds, syns := strList(stmt["seeds"]), strList(stmt["syndromes"])
+			ring := make([]SternLRingKey, k)
+			for i := range ring {
+				ring[i] = SternLRingKey{Seed: mustHex(seeds[i].(string)), Syndrome: mustHex(syns[i].(string))}
+			}
+			sig := HpksSternLRingSign(NewFromBytes(mustHex(str(stmt, "msg")), 0, 256),
+				mustHex(str(stmt, "e")), j, ring, rounds)
+			var gc, ge, gr, wc, we, wr strings.Builder
+			for i := 0; i < k; i++ {
+				for r := 0; r < rounds; r++ {
+					rd := sig.Members[i].Rounds[r]
+					gc.WriteString(rd.C0.Hex() + rd.C1.Hex() + rd.C2.Hex())
+					ge.WriteString(fmt.Sprint(rd.B))
+					gr.WriteString(hex.EncodeToString(rd.RespA) + hex.EncodeToString(rd.RespB))
+					for _, c := range strList(strList(strList(expect["commits"])[i])[r]) {
+						wc.WriteString(c.(string))
+					}
+					we.WriteString(fmt.Sprint(int(strList(strList(expect["challenges"])[i])[r].(float64))))
+					for _, x := range strList(strList(strList(expect["responses"])[i])[r]) {
+						wr.WriteString(x.(string))
+					}
+				}
+			}
+			check("op "+name+" commitments", gc.String(), wc.String())
+			check("op "+name+" challenges", ge.String(), we.String())
+			check("op "+name+" responses", gr.String(), wr.String())
+
 		case "rnl_sigma_sign":
 			n := num(params, "n")
 			sPoly := unpackPoly(str(stmt, "s_poly"), n, 3)

@@ -416,6 +416,10 @@ Stern identification protocol (ZKP for syndrome decoding)
 │                  hash = HFSCX-256-DS(0x31, ds ‖ items) (#348); challenge b∈{0,1,2}
 │                  via that hash of msg+commitments
 │                  response reveals permuted r, y=e⊕r, or permutation π
+│                  Long form, N=2304 (`--level 128`, TODO #382; SPEC.md §11.1): a
+│                  SEPARATE code path in every port (stern_l_* / SternL* /
+│                  SternL.java), vectors as N/8-byte strings, 256-bit commitments
+│                  and message; KAT/operation_replay.json's stern_l rows pin it
 └── HPKE-Stern-F — Niederreiter KEM: ct=H·e'^T; K=hash(seed,e')
                    (`--algo hpke-stern`: demo, decap uses known e'; `--algo hpke-stern-kem`:
                    real BGF QC-MDPC decoder, qcmdpc_keygen/encap/decap_bgf in C/Go/Python)

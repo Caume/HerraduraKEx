@@ -461,7 +461,9 @@ SECURITY = {
                               "reader rejected any count != SDF_ROUNDS, so two C builds were mutually "
                               "unreadable and cross-language HCRED interop ran only at 32 rounds. Round "
                               "count and instance hardness are independent axes -- 219 rounds over the "
-                              "deployed N=256 is still ~24-38 bits and still demo-only.",
+                              "deployed N=256 is still ~24-38 bits and still demo-only.  The 128-bit "
+                              "instance is the long form, N=2304 (genpkey --level 128, TODO #382; "
+                              "SPEC.md 11.1): 256-bit commitments, ~2^137 classical by BJMM.",
                         source=["herradura.h:1383-1392", "herradura/herradura.go:1108-1110",
                                 "TODO.md #236"]),
     "hybrid-rnl-stern": dict(status="demo-only", quantum_resistant="conjectured",
@@ -1993,13 +1995,18 @@ PARAM_OWN_BITS_RULE = ("hpks-zkp-nl",)
 _GF_ALGOS = ("hkex-gf", "hpks", "hpks-nl", "hpke", "hpke-nl", "hpke-nl3")
 # sqrt(largest prime factor of 2^n - 1): Pohlig-Hellman's cost (TODO #379's pass)
 _GF_PH = {32: "2^8", 64: "2^11", 128: "2^23", 256: "2^36"}
-_STERN_SEC = {256: "~2^30-2^40 (SECURITY.md)"}
+# TODO #382: SecurityProofsCode/stern_f_parameter_selection.py's BJMM / Prange
+# figures (k = N/2, t = N/16); 2304 is the long form's 128-bit set.
+_STERN_SEC = {256: "~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)"}
+_STERN_LONG = (2304, "~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); "
+                     "SecurityProofs-5.md 11.8.3")
 
 PARAM_LEVEL_NOTES = {a: "the GF(2^n)* family is demo-only at every width "
                         "(binary-field discrete logs fall to index calculus)"
                      for a in _GF_ALGOS + ("oprf",)}
-PARAM_LEVEL_NOTES.update({a: "128-bit Stern-F parameters are TODO #382"
-                          for a in ("hpks-stern", "hpke-stern", "hcred")})
+PARAM_LEVEL_NOTES["hcred"] = ("hcred's own key (a Ring-LWR and syndrome-decoding pair "
+                              "proved in ZKBoo) has no 128-bit set; the ISSUER's "
+                              "hpks-stern key does: genpkey --algo hpks-stern --level 128")
 
 
 def _param_rows():
@@ -2025,12 +2032,15 @@ def _param_rows():
                  ">= 2^128 classical (conjectured; SECURITY.md)", all4, None))
     for a in ("hpks-stern", "hpke-stern", "hcred"):
         for w in (32, 64, 128, 256):
-            sec = _STERN_SEC.get(w, "below 2^30")
+            sec = _STERN_SEC.get(w, "below 2^24")
             if a == "hcred":
                 sec = "research construction; its Stern-F half " + sec
             # TODO #383 stages 2 and 3 (C) and TODO #384 (Java): every CLI runs
             # Stern-F (hpks-stern, hpke-stern) and hcred at every width.
             rows.append((a, w, "demo" if w == 256 else None, w == 256, sec, all4, None))
+    # TODO #382 stage 2: the long form, N = 2304 (k = 1152, t = 144), in every CLI.
+    for a in ("hpks-stern", "hpke-stern"):
+        rows.append((a, _STERN_LONG[0], "128", False, _STERN_LONG[1], all4, None))
     rows.append(("hpke-stern-kem", -1, "128", True,
                  "2^128 classical by its parameters (BIKE-128)", all4, None))
     rows.append(("hpks-zkp-nl", 8, "demo", True,
@@ -2217,7 +2227,8 @@ def build_pem_der_items(all_labels):
 _GF_N = {0: "=f2/8", 1: "=f2/8", 2: "2"}         # (priv, pub, n)
 _GF_PUB = {0: "=f1/8", 1: "2"}                    # (pub, n)
 _STERN_KEY = {0: "=f2/8", 1: "=f2/8", 2: "2"}     # (e or syndrome, seed, n)
-_STERN_SIG = {0: "2", 1: "2", 2: "=f1*3*(f0/8)", 3: "=(f1+3)/4", 4: "=f1*2*(f0/8)"}
+# Commitments are min(n, 256) bits: 256 above N = 256, the long form (TODO #382).
+_STERN_SIG = {0: "2", 1: "2", 2: "=f1*3*min(f0/8, 32)", 3: "=(f1+3)/4", 4: "=f1*2*(f0/8)"}
 # (K_B, C_B, hint, n, hint length[, n_B]): K_B is minimal, like a session key.
 _RNL_RESP = {0: "32", 1: "=f3*2", 2: "=f3/8", 3: "2", 4: "2", 5: "=32"}
 _RNL_Q = 65537        # parameters.hkex_rnl q
@@ -2302,9 +2313,9 @@ PEM_DER_FIELD_CAPS = [
     # (leaf, %d WOTS values of n/8 bytes, h auth-path nodes of 32, h, n)
     ("HERRADURA HPKS-XMSS SIGNATURE", (5, 5), None,
      {0: "4", 1: "=%d*(f4/8)" % _WOTS_L, 2: "=f3*32", 3: "1", 4: "2"}),
-    # (k, rounds, n, k*rounds entries of c0 c1 c2 b ra rb)
+    # (k, rounds, n, k*rounds entries of c0 c1 c2 b ra rb); c0..c2 min(n, 256) bits
     ("HERRADURA HPKS-RING SIGNATURE", (4, 4), None,
-     {0: "1", 1: "2", 2: "2", 3: "=f0*f1*(5*(f2/8)+1)"}),
+     {0: "1", 1: "2", 2: "2", 3: "=f0*f1*(3*min(f2/8, 32)+2*(f2/8)+1)"}),
     ("HERRADURA OPRF PRIVATE KEY", (2, 2), None, _GF_PUB),
     ("HERRADURA OPRF CLIENT STATE", (3, 3), None, _GF_N),
     ("HERRADURA OPRF EVALUATION", (2, 2), None, _GF_PUB),
@@ -2330,11 +2341,12 @@ PEM_DER_FIELD_CAPS = [
     ("HERRADURA CIPHERTEXT", (3, 3), "f0 == 0", {0: "1", 1: "=(f2+7)/8", 2: "2"}),
     ("HERRADURA CIPHERTEXT", (3, 3), None, {0: "=(f2+7)/8", 1: "=(f2+7)/8", 2: "2"}),
     ("HERRADURA CIPHERTEXT", (4, 4), None, {0: "1", 1: "=(f3+7)/8", 2: "=(f3+7)/8", 3: "2"}),
-    # Five: hske-nla1 format 2 (2, nonce, E, tag, n), else HPKE-Stern (5 x n/8).
+    # Five: hske-nla1 format 2 (2, nonce, E, tag, n), else HPKE-Stern (ct, e', K,
+    # E, n): K and E are min(n, 256) bits, the payload block (TODO #382).
     ("HERRADURA CIPHERTEXT", (5, 5), "f0 == 2",
      {0: "1", 1: "=(f4+7)/8", 2: "=(f4+7)/8", 3: "=32", 4: "2"}),
     ("HERRADURA CIPHERTEXT", (5, 5), None,
-     {0: "=f4/8", 1: "=f4/8", 2: "=f4/8", 3: "=f4/8", 4: "2"}),
+     {0: "=f4/8", 1: "=f4/8", 2: "=min(f4/8, 32)", 3: "=min(f4/8, 32)", 4: "2"}),
     # Six: duplex (format 3 or 4, nonce, length, ciphertext, tag, n).
     ("HERRADURA CIPHERTEXT", (6, 6), None,
      {0: "1", 1: "=(f5+7)/8", 2: "6", 3: "=f2", 4: "=32", 5: "2"}),

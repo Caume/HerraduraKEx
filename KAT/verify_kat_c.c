@@ -855,6 +855,80 @@ static void op_stern_ring_sign(void)
     fclose(f);
 }
 
+/* TODO #382 stage 2: the long form's three rows (N = 2304).  Every value is an
+ * N/8-byte big-endian string, the syndrome included, so the comparisons are
+ * plain memcmps; c and resp are laid out as SternLSig holds them. */
+static void op_stern_l_check_consumed(FILE *f, long want, const char *what)
+{
+    if (ftell(f) != want) {
+        printf("FAIL op %s: consumed %ld bytes, vector says %ld\n", what, ftell(f), want);
+        failures++;
+    }
+}
+
+static void op_stern_l_keygen(void)
+{
+    FILE *f = fmemopen((void *)opr_slk_stream, sizeof opr_slk_stream, "rb");
+    uint8_t seed[STERN_L_MAXB], e[STERN_L_MAXB], syn[STERN_L_MAXB];
+    if (!f) { bad("op stern_l_keygen (fmemopen)"); return; }
+    stern_l_keygen(seed, e, syn, OPR_SLK_N, f);
+    if (memcmp(seed, opr_slk_seed, sizeof opr_slk_seed)) bad("op stern_l_keygen seed");
+    else ok("op stern_l_keygen seed");
+    if (memcmp(e, opr_slk_e, sizeof opr_slk_e)) bad("op stern_l_keygen e");
+    else ok("op stern_l_keygen e");
+    if (memcmp(syn, opr_slk_syndrome, sizeof opr_slk_syndrome)) bad("op stern_l_keygen syndrome");
+    else ok("op stern_l_keygen syndrome");
+    op_stern_l_check_consumed(f, OPR_SLK_CONSUMED, "stern_l_keygen");
+    fclose(f);
+}
+
+static void op_stern_l_sign(void)
+{
+    FILE *f = fmemopen((void *)opr_sls_stream, sizeof opr_sls_stream, "rb");
+    SternLSig sig;
+    int i, bad_at = -1;
+    if (!f) { bad("op hpks_stern_l_sign (fmemopen)"); return; }
+    stern_l_sig_alloc(&sig, OPR_SLS_N, OPR_SLS_ROUNDS);
+    hpks_stern_l_sign(&sig, opr_sls_msg, opr_sls_e, opr_sls_seed, f);
+    if (memcmp(sig.c, opr_sls_c, sizeof opr_sls_c)) bad("op hpks_stern_l_sign commitments");
+    else ok("op hpks_stern_l_sign commitments");
+    for (i = 0; i < OPR_SLS_ROUNDS; i++) if (sig.b[i] != opr_sls_challenge[i]) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL op hpks_stern_l_sign: challenge %d is %d, vector says %d\n",
+               bad_at, sig.b[bad_at], opr_sls_challenge[bad_at]);
+        failures++;
+    } else ok("op hpks_stern_l_sign challenges");
+    if (memcmp(sig.resp, opr_sls_resp, sizeof opr_sls_resp)) bad("op hpks_stern_l_sign responses");
+    else ok("op hpks_stern_l_sign responses");
+    op_stern_l_check_consumed(f, OPR_SLS_CONSUMED, "hpks_stern_l_sign");
+    stern_l_sig_free(&sig);
+    fclose(f);
+}
+
+static void op_stern_l_ring_sign(void)
+{
+    FILE *f = fmemopen((void *)opr_slr_stream, sizeof opr_slr_stream, "rb");
+    SternLRingSig sig;
+    int i, bad_at = -1;
+    if (!f) { bad("op stern_l_ring_sign (fmemopen)"); return; }
+    stern_l_ring_alloc(&sig, OPR_SLR_N, OPR_SLR_K, OPR_SLR_ROUNDS);
+    stern_l_ring_sign(&sig, opr_slr_msg, opr_slr_e, OPR_SLR_J, opr_slr_seeds, opr_slr_syns, f);
+    if (memcmp(sig.c, opr_slr_c, sizeof opr_slr_c)) bad("op stern_l_ring_sign commitments");
+    else ok("op stern_l_ring_sign commitments");
+    for (i = 0; i < OPR_SLR_K * OPR_SLR_ROUNDS; i++)
+        if (sig.b[i] != opr_slr_challenge[i]) { bad_at = i; break; }
+    if (bad_at >= 0) {
+        printf("FAIL op stern_l_ring_sign: challenge %d is %d, vector says %d\n",
+               bad_at, sig.b[bad_at], opr_slr_challenge[bad_at]);
+        failures++;
+    } else ok("op stern_l_ring_sign challenges");
+    if (memcmp(sig.resp, opr_slr_resp, sizeof opr_slr_resp)) bad("op stern_l_ring_sign responses");
+    else ok("op stern_l_ring_sign responses");
+    op_stern_l_check_consumed(f, OPR_SLR_CONSUMED, "stern_l_ring_sign");
+    stern_l_ring_free(&sig);
+    fclose(f);
+}
+
 int main(void)
 {
     HcredKkwProof proof;
@@ -927,6 +1001,10 @@ int main(void)
     op_qcmdpc_encap();
     op_zkp_nl_pp_prove();
     op_hcred_prove();
+    /* TODO #382 stage 2: the long form at N = 2304. */
+    op_stern_l_keygen();
+    op_stern_l_sign();
+    op_stern_l_ring_sign();
 
     if (failures) {
         printf("*** FAILED: %d check(s) reported [FAIL] ***\n", failures);

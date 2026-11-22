@@ -24,7 +24,8 @@
 #   5. both flags together, and either flag on a fixed-parameter algorithm.
 #   6. invariants written out here rather than read from the table, so a table
 #      edit that loosens them fails: the GF family refuses --level 128,
-#      hkex-rnl refuses 512, hkex-rnl --level 128 is n = 1024 everywhere, and
+#      hkex-rnl refuses 512, hkex-rnl --level 128 is n = 1024 everywhere,
+#      hpks-stern / hpke-stern --level 128 are N = 2304 and hcred refuses it, and
 #      Python and Go take the GF family at 32 and 64 bits.
 # Each refusal must exit 1 or 2 with its message, write no output and not crash.
 set -uo pipefail
@@ -204,6 +205,13 @@ for c in "${LANGS[@]}"; do
     done
     refuse "$c" "invariant: hkex-rnl --bits 512" "is withdrawn" --algo hkex-rnl --bits 512
     accept "$c" "invariant: hkex-rnl --level 128" 1024 0 --algo hkex-rnl --level 128
+    # TODO #382 stage 2: Stern-F's 128-bit set is the long form, N = 2304; hcred's
+    # own key has none (its issuer's hpks-stern key does).
+    for a in hpks-stern hpke-stern; do
+        accept "$c" "invariant: $a --level 128" 2304 0 --algo "$a" --level 128
+    done
+    refuse "$c" "invariant: hcred --level 128" "--level 128 is not available for --algo hcred" \
+        --algo hcred --level 128
 done
 for c in py go; do
     for a in hkex-gf hpks hpke-nl3; do

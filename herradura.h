@@ -3817,6 +3817,492 @@ static void hpke_stern_f_decap_known(BitArray *K_out,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * Stern-F long form: N > 256 (TODO #382 stage 2, v16.0.0)
+ *
+ * The 128-bit parameter set is N = 2304, k = N/2 = 1152, t = N/16 = 144
+ * (SecurityProofsCode/stern_f_parameter_selection.py: 2^137 by BJMM, 2^106 by
+ * Grover-over-Prange).  Its vectors are wider than BitArray's 256-bit capacity,
+ * so this path carries them as N/8-byte big-endian strings -- integer bit i at
+ * byte N/8-1-i/8, bit i%8, the wire's own form -- and keeps BitArray for the
+ * 256-bit values.  The syndrome is an N-bit string too (bit i = row i, the high
+ * half zero), which is how the protocol hashes it and how the PEM carries it.
+ * The protocol is the short form's; the rules that change, all from Python's
+ * long-form block (SPEC.md §11):
+ *
+ *   hash     H_ds(x...) = HFSCX-256-DS(0x31, ds || x...), all 256 bits;
+ *            commitments are 256 bits.
+ *   matrix   sk = H_6(seed); row i = chunk(i, 0) || ... || chunk(i, N/256-1),
+ *            chunk(i, c) = HFSCX-256(i_hi || i_lo || c) with sk as the initial
+ *            chaining value.
+ *   perm     the short form's Fisher-Yates generator over N positions, its
+ *            NL-FSCX v1 PRNG keyed by the 256-bit k = H_5(pi_seed); uint16_t
+ *            entries, as N > 256.
+ *   message  256 bits; the Fiat-Shamir state advances by nl_fscx_v1 at 256.
+ *
+ * Signatures hold their commitments and responses as the wire lays them out
+ * (3 x 32 and 2 x N/8 bytes a round), so the CLI's codec is a copy.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define STERN_LONG_N       2304                  /* the one listed long N    */
+#define STERN_L_MAXB       (STERN_LONG_N / 8)    /* 288                       */
+#define STERN_L_DS_PERM    5                     /* H_5(pi_seed)              */
+#define STERN_L_DS_MATRIX  6                     /* H_6(seed)                 */
+
+static int stern_is_long(int n) { return n > KEYBITS; }
+
+static void stern_l_check(int n)
+{
+    if (n <= KEYBITS || n % 256 || n > STERN_LONG_N) {
+        fprintf(stderr, "Stern-F long form: N = %d (expected a multiple of 256, 512..%d)\n",
+                n, STERN_LONG_N);
+        exit(1);
+    }
+}
+
+static void stern_l_read(uint8_t *dst, size_t len, FILE *urnd)
+{
+    if (fread(dst, 1, len, urnd) != len) {
+        fputs("ERROR: could not read from /dev/urandom\n", stderr);
+        exit(1);
+    }
+}
+
+/* H_ds over two byte strings (b may be NULL): HFSCX-256-DS(0x31, ds || a || b). */
+static void stern_l_hash2(BitArray *out, unsigned ds, const uint8_t *a, size_t alen,
+                          const uint8_t *b, size_t blen)
+{
+    size_t len = 1 + alen + blen;
+    uint8_t *buf = (uint8_t *)malloc(len);
+    if (!buf) { fprintf(stderr, "stern_l_hash2: out of memory\n"); exit(1); }
+    buf[0] = (uint8_t)ds;
+    memcpy(buf + 1, a, alen);
+    if (blen) memcpy(buf + 1 + alen, b, blen);
+    ba_zero_w(out, 256);
+    hfscx_256_ds(STERN_DS_HASH, buf, len, NULL, out->b);
+    free(buf);
+}
+
+/* The N/2 rows of H, row i at H + i * N/8.  The caller frees the result. */
+static uint8_t *stern_l_build_H(const uint8_t *seed, int n)
+{
+    int nb = n / 8, i, c;
+    uint8_t *H;
+    BitArray sk = BA_INIT;
+    stern_l_check(n);
+    H = (uint8_t *)malloc((size_t)(n / 2) * (size_t)nb);
+    if (!H) { fprintf(stderr, "stern_l_build_H: out of memory\n"); exit(1); }
+    stern_l_hash2(&sk, STERN_L_DS_MATRIX, seed, (size_t)nb, NULL, 0);
+    for (i = 0; i < n / 2; i++)
+        for (c = 0; c < n / 256; c++) {
+            uint8_t msg[3];
+            msg[0] = (uint8_t)(i >> 8); msg[1] = (uint8_t)i; msg[2] = (uint8_t)c;
+            hfscx_256(msg, 3, sk.b, H + (size_t)i * (size_t)nb + 32 * (size_t)c);
+        }
+    return H;
+}
+
+static uint64_t stern_l_load64(const uint8_t *p)
+{
+    uint64_t v = 0;
+    int k;
+    for (k = 0; k < 8; k++) v = (v << 8) | p[k];
+    return v;
+}
+
+/* syn = H e^T as an N-bit string (bit i = row i). */
+static void stern_l_syndrome_H(uint8_t *syn, const uint8_t *H, const uint8_t *e, int n)
+{
+    int nb = n / 8, i, k;
+    memset(syn, 0, (size_t)nb);
+    for (i = 0; i < n / 2; i++) {
+        const uint8_t *row = H + (size_t)i * (size_t)nb;
+        uint64_t acc = 0;
+        for (k = 0; k < nb; k += 8) acc ^= stern_l_load64(row + k) & stern_l_load64(e + k);
+        if (__builtin_popcountll(acc) & 1)
+            syn[nb - 1 - i / 8] |= (uint8_t)(1u << (i % 8));
+    }
+}
+
+static void stern_l_syndrome(uint8_t *syn, const uint8_t *seed, const uint8_t *e, int n)
+{
+    uint8_t *H = stern_l_build_H(seed, n);
+    stern_l_syndrome_H(syn, H, e, n);
+    free(H);
+}
+
+/* sigma from pi_seed: stern_gen_perm's generator, over N positions, keyed by
+ * k = H_5(pi_seed) at 256 bits. */
+static void stern_l_gen_perm(uint16_t *perm, const uint8_t *pi_seed, int n)
+{
+    BitArray k = BA_INIT, key = BA_INIT, st = BA_INIT;
+    int i, cursor = 32;
+    stern_l_hash2(&k, STERN_L_DS_PERM, pi_seed, (size_t)(n / 8), NULL, 0);
+    ba_rol_k(&key, &k, 32);
+    st = k;
+    for (i = 0; i < n; i++) perm[i] = (uint16_t)i;
+    for (i = n - 1; i > 0; i--) {
+        uint32_t v;
+        int j;
+        if (cursor + 4 > 32) { nl_fscx_v1_ba(&st, &st, &key); cursor = 0; }
+        v = ((uint32_t)st.b[cursor] << 24) | ((uint32_t)st.b[cursor + 1] << 16) |
+            ((uint32_t)st.b[cursor + 2] << 8) | (uint32_t)st.b[cursor + 3];
+        cursor += 4;
+        j = (int)(((uint64_t)v * (uint64_t)(i + 1)) >> 32);
+        { uint16_t t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+    }
+}
+
+/* out[perm[i]] = v[i] over N bits.  Oblivious in the way stern_apply_perm is
+ * (CT-03): every input bit is written into every output word under a
+ * "word == perm[i] / 64" mask, so the addresses touched do not depend on the
+ * permutation; at word rather than bit granularity, N^2/64 masked writes. */
+static void stern_l_apply_perm(uint8_t *out, const uint16_t *perm, const uint8_t *v, int n)
+{
+    uint64_t w[STERN_L_MAXB / 8];
+    int nw = n / 64, nb = n / 8, i, j;
+    memset(w, 0, sizeof w);
+    for (i = 0; i < n; i++) {
+        uint64_t bit = (uint64_t)((v[nb - 1 - i / 8] >> (i % 8)) & 1u);
+        uint32_t p = perm[i], pw = p >> 6, ps = p & 63u;
+        for (j = 0; j < nw; j++) {
+            uint32_t d = pw ^ (uint32_t)j;
+            uint64_t eq = (uint64_t)0 - (uint64_t)(((d | (0u - d)) >> 31) ^ 1u);
+            w[j] |= eq & (bit << ps);
+        }
+    }
+    for (i = 0; i < nb; i++)                      /* integer bit 8i.. at byte nb-1-i */
+        out[nb - 1 - i] = (uint8_t)(w[i / 8] >> (8 * (i % 8)));
+}
+
+/* Weight-N/16 error: stern_rand_error's 4-byte rejection scheme on N positions. */
+static void stern_l_rand_error(uint8_t *e, int n, FILE *urnd)
+{
+    static const uint64_t span = (uint64_t)1 << 32;
+    const uint64_t threshold = span - (span % (uint64_t)n);
+    int count = 0, nb = n / 8;
+    memset(e, 0, (size_t)nb);
+    while (count < n / 16) {
+        uint8_t buf[4];
+        uint64_t v;
+        unsigned pos;
+        uint8_t mask;
+        stern_l_read(buf, 4, urnd);
+        v = ((uint64_t)buf[0] << 24) | ((uint64_t)buf[1] << 16)
+          | ((uint64_t)buf[2] << 8) | (uint64_t)buf[3];
+        if (v >= threshold) continue;
+        pos = (unsigned)(v % (uint64_t)n);
+        mask = (uint8_t)(1u << (pos % 8));
+        if (e[nb - 1 - pos / 8] & mask) continue;
+        e[nb - 1 - pos / 8] |= mask;
+        count++;
+    }
+}
+
+/* Key generation at N = n: an N-bit seed, then the error, then H e^T. */
+static void stern_l_keygen(uint8_t *seed, uint8_t *e, uint8_t *syn, int n, FILE *urnd)
+{
+    stern_l_check(n);
+    if (fread(seed, 1, (size_t)(n / 8), urnd) != (size_t)(n / 8)) {
+        fputs("ERROR: could not read from /dev/urandom\n", stderr);
+        exit(1);
+    }
+    stern_l_rand_error(e, n, urnd);
+    stern_l_syndrome(syn, seed, e, n);
+}
+
+/* A long-form signature, laid out as the wire carries it:
+ *   c    rounds x (c0 || c1 || c2), 32 bytes each
+ *   b    rounds challenges
+ *   resp rounds x (resp_a || resp_b), N/8 bytes each */
+typedef struct {
+    int      n, rounds;
+    uint8_t *c;
+    int     *b;
+    uint8_t *resp;
+} SternLSig;
+
+static void stern_l_sig_alloc(SternLSig *sig, int n, int rounds)
+{
+    sig->n = n; sig->rounds = rounds;
+    sig->c    = (uint8_t *)calloc((size_t)rounds, 96);
+    sig->b    = (int *)calloc((size_t)rounds, sizeof(int));
+    sig->resp = (uint8_t *)calloc((size_t)rounds, 2 * (size_t)(n / 8));
+    if (!sig->c || !sig->b || !sig->resp) {
+        fprintf(stderr, "stern_l_sig_alloc: out of memory\n"); exit(1);
+    }
+}
+
+static void stern_l_sig_free(SternLSig *sig)
+{
+    free(sig->c); free(sig->b); free(sig->resp);
+    sig->c = sig->resp = NULL; sig->b = NULL; sig->rounds = 0;
+}
+
+/* One prover round: c (96 bytes) and the secrets sec = r || y || pi || sr || sy,
+ * r and pi already drawn by the caller (in that order). */
+static void stern_l_commit(uint8_t *c, uint8_t *sec, const uint8_t *H, const uint8_t *e, int n)
+{
+    int nb = n / 8, k;
+    uint8_t *r = sec, *y = sec + nb, *pi = sec + 2 * nb, *sr = sec + 3 * nb, *sy = sec + 4 * nb;
+    uint8_t hr[STERN_L_MAXB];
+    uint16_t perm[STERN_LONG_N];
+    BitArray h = BA_INIT;
+    for (k = 0; k < nb; k++) y[k] = e[k] ^ r[k];
+    stern_l_gen_perm(perm, pi, n);
+    stern_l_syndrome_H(hr, H, r, n);
+    stern_l_apply_perm(sr, perm, r, n);
+    stern_l_apply_perm(sy, perm, y, n);
+    stern_l_hash2(&h, 1, pi, (size_t)nb, hr, (size_t)nb); memcpy(c, h.b, 32);
+    stern_l_hash2(&h, 2, sr, (size_t)nb, NULL, 0);        memcpy(c + 32, h.b, 32);
+    stern_l_hash2(&h, 3, sy, (size_t)nb, NULL, 0);        memcpy(c + 64, h.b, 32);
+}
+
+static void stern_l_respond(uint8_t *resp, int b, const uint8_t *sec, int n)
+{
+    int nb = n / 8;
+    const uint8_t *a = b == 0 ? sec + 3 * nb : sec + 2 * nb;       /* sr | pi        */
+    const uint8_t *v = b == 0 ? sec + 4 * nb : b == 1 ? sec : sec + nb;  /* sy | r | y */
+    memcpy(resp, a, (size_t)nb);
+    memcpy(resp + nb, v, (size_t)nb);
+}
+
+/* st = H_0(msg || c), c = ncommit x 96 bytes in signing order. */
+static void stern_l_fs_state(BitArray *st, const uint8_t msg[32], const uint8_t *c,
+                             size_t ncommit)
+{
+    stern_l_hash2(st, 0, msg, 32, c, 96 * ncommit);
+}
+
+static int stern_l_next_challenge(BitArray *st, int i)
+{
+    BitArray idx = BA_INIT;
+    uint32_t v;
+    ba_zero_w(&idx, 256);
+    idx.b[31] = (uint8_t)i; idx.b[30] = (uint8_t)(i >> 8);
+    idx.b[29] = (uint8_t)(i >> 16); idx.b[28] = (uint8_t)(i >> 24);
+    nl_fscx_v1_ba(st, st, &idx);
+    v = ((uint32_t)st->b[28] << 24) | ((uint32_t)st->b[29] << 16) |
+        ((uint32_t)st->b[30] << 8) | (uint32_t)st->b[31];
+    return (int)(v % 3u);
+}
+
+/* The verifier's check of one round against H and the N-bit syndrome. */
+static int stern_l_check_round(int b, const uint8_t *c, const uint8_t *resp,
+                               const uint8_t *H, const uint8_t *syn, int n)
+{
+    int nb = n / 8, k, w = 0;
+    const uint8_t *a = resp, *v = resp + nb;
+    uint8_t hv[STERN_L_MAXB], sv[STERN_L_MAXB];
+    uint16_t perm[STERN_LONG_N];
+    BitArray h = BA_INIT;
+    if (b == 0) {
+        stern_l_hash2(&h, 2, a, (size_t)nb, NULL, 0);
+        if (memcmp(h.b, c + 32, 32)) return 0;
+        stern_l_hash2(&h, 3, v, (size_t)nb, NULL, 0);
+        if (memcmp(h.b, c + 64, 32)) return 0;
+        for (k = 0; k < nb; k++) w += __builtin_popcount((unsigned)(a[k] ^ v[k]));
+        return w == n / 16;                 /* binds wt(e) (TODO #298) */
+    }
+    if (b != 1 && b != 2) return 0;
+    stern_l_syndrome_H(hv, H, v, n);
+    if (b == 2) for (k = 0; k < nb; k++) hv[k] ^= syn[k];
+    stern_l_hash2(&h, 1, a, (size_t)nb, hv, (size_t)nb);
+    if (memcmp(h.b, c, 32)) return 0;
+    stern_l_gen_perm(perm, a, n);
+    stern_l_apply_perm(sv, perm, v, n);
+    stern_l_hash2(&h, b == 1 ? 2u : 3u, sv, (size_t)nb, NULL, 0);
+    return !memcmp(h.b, c + (b == 1 ? 32 : 64), 32);
+}
+
+/* Sign a 256-bit msg; *sig comes from stern_l_sig_alloc(sig, n, rounds). */
+static void hpks_stern_l_sign(SternLSig *sig, const uint8_t msg[32], const uint8_t *e,
+                              const uint8_t *seed, FILE *urnd)
+{
+    int n = sig->n, nb = n / 8, i;
+    uint8_t *H = stern_l_build_H(seed, n);
+    uint8_t *sec = (uint8_t *)malloc((size_t)sig->rounds * 5 * (size_t)nb);
+    BitArray st = BA_INIT;
+    if (!sec) { fprintf(stderr, "hpks_stern_l_sign: out of memory\n"); exit(1); }
+    for (i = 0; i < sig->rounds; i++) {
+        uint8_t *s = sec + (size_t)i * 5 * nb;           /* r, then pi */
+        if (fread(s, 1, (size_t)nb, urnd) != (size_t)nb ||
+            fread(s + 2 * nb, 1, (size_t)nb, urnd) != (size_t)nb) {
+            fputs("ERROR: could not read from /dev/urandom\n", stderr);
+            exit(1);
+        }
+        stern_l_commit(sig->c + 96 * (size_t)i, s, H, e, n);
+    }
+    stern_l_fs_state(&st, msg, sig->c, (size_t)sig->rounds);
+    for (i = 0; i < sig->rounds; i++) {
+        sig->b[i] = stern_l_next_challenge(&st, i);
+        stern_l_respond(sig->resp + (size_t)i * 2 * nb, sig->b[i], sec + (size_t)i * 5 * nb, n);
+    }
+    free(sec); free(H);
+}
+
+static int hpks_stern_l_verify(const SternLSig *sig, const uint8_t msg[32],
+                               const uint8_t *seed, const uint8_t *syn)
+{
+    int n = sig->n, nb = n / 8, i, ok = 1;
+    uint8_t *H;
+    BitArray st = BA_INIT;
+    if (sig->rounds < 1) return 0;
+    stern_l_fs_state(&st, msg, sig->c, (size_t)sig->rounds);
+    for (i = 0; i < sig->rounds; i++)
+        if (stern_l_next_challenge(&st, i) != sig->b[i]) return 0;
+    H = stern_l_build_H(seed, n);
+    for (i = 0; i < sig->rounds && ok; i++)
+        ok = stern_l_check_round(sig->b[i], sig->c + 96 * (size_t)i,
+                                 sig->resp + (size_t)i * 2 * nb, H, syn, n);
+    free(H);
+    return ok;
+}
+
+/* A long-form ring signature, member-major: entry (i, r) at index i*rounds + r
+ * of c (96 bytes), b and resp (2 x N/8 bytes). */
+typedef struct {
+    int      n, k, rounds;
+    uint8_t *c;
+    int     *b;
+    uint8_t *resp;
+} SternLRingSig;
+
+static void stern_l_ring_alloc(SternLRingSig *sig, int n, int k, int rounds)
+{
+    size_t m = (size_t)k * (size_t)rounds;
+    sig->n = n; sig->k = k; sig->rounds = rounds;
+    sig->c    = (uint8_t *)calloc(m, 96);
+    sig->b    = (int *)calloc(m, sizeof(int));
+    sig->resp = (uint8_t *)calloc(m, 2 * (size_t)(n / 8));
+    if (!sig->c || !sig->b || !sig->resp) {
+        fprintf(stderr, "stern_l_ring_alloc: out of memory\n"); exit(1);
+    }
+}
+
+static void stern_l_ring_free(SternLRingSig *sig)
+{
+    free(sig->c); free(sig->b); free(sig->resp);
+    sig->c = sig->resp = NULL; sig->b = NULL; sig->k = sig->rounds = 0;
+}
+
+/* stern_ring_simulate's draws, in its order, on the long-form primitives. */
+static void stern_l_simulate(uint8_t *c, uint8_t *resp, int b, const uint8_t *H,
+                             const uint8_t *syn, int n, FILE *urnd)
+{
+    int nb = n / 8, k;
+    uint8_t *a = resp, *v = resp + nb;
+    uint8_t t1[STERN_L_MAXB], t2[STERN_L_MAXB];
+    uint16_t perm[STERN_LONG_N];
+    BitArray h = BA_INIT;
+    if (b == 0) {
+        stern_l_read(a, (size_t)nb, urnd);                 /* sr uniform           */
+        stern_l_rand_error(t1, n, urnd);
+        for (k = 0; k < nb; k++) v[k] = a[k] ^ t1[k];      /* sy = sr ^ weight-t   */
+        stern_l_read(t1, (size_t)nb, urnd);                /* pi dummy             */
+        memset(t2, 0, (size_t)nb);
+        stern_l_hash2(&h, 1, t1, (size_t)nb, t2, (size_t)nb); memcpy(c, h.b, 32); /* unchecked */
+        stern_l_hash2(&h, 2, a, (size_t)nb, NULL, 0);          memcpy(c + 32, h.b, 32);
+        stern_l_hash2(&h, 3, v, (size_t)nb, NULL, 0);          memcpy(c + 64, h.b, 32);
+        return;
+    }
+    stern_l_read(a, (size_t)nb, urnd);                     /* pi                   */
+    stern_l_read(v, (size_t)nb, urnd);                     /* r or y, uniform      */
+    stern_l_gen_perm(perm, a, n);
+    stern_l_syndrome_H(t1, H, v, n);
+    if (b == 2) for (k = 0; k < nb; k++) t1[k] ^= syn[k];
+    stern_l_apply_perm(t2, perm, v, n);
+    stern_l_hash2(&h, 1, a, (size_t)nb, t1, (size_t)nb); memcpy(c, h.b, 32);
+    stern_l_read(t1, (size_t)nb, urnd);                    /* the unchecked dummy  */
+    if (b == 1) {
+        stern_l_hash2(&h, 2, t2, (size_t)nb, NULL, 0); memcpy(c + 32, h.b, 32);
+        stern_l_hash2(&h, 3, t1, (size_t)nb, NULL, 0); memcpy(c + 64, h.b, 32);
+    } else {
+        stern_l_hash2(&h, 2, t1, (size_t)nb, NULL, 0); memcpy(c + 32, h.b, 32);
+        stern_l_hash2(&h, 3, t2, (size_t)nb, NULL, 0); memcpy(c + 64, h.b, 32);
+    }
+}
+
+/* Sign as member j; seeds and syns are k x N/8 bytes.  *sig comes from
+ * stern_l_ring_alloc(sig, n, k, rounds). */
+static void stern_l_ring_sign(SternLRingSig *sig, const uint8_t msg[32], const uint8_t *e,
+                              int j, const uint8_t *seeds, const uint8_t *syns, FILE *urnd)
+{
+    int n = sig->n, nb = n / 8, k = sig->k, rounds = sig->rounds, i, r;
+    uint8_t *H, *sec;
+    BitArray st = BA_INIT;
+    for (i = 0; i < k; i++) {
+        if (i == j) continue;
+        H = stern_l_build_H(seeds + (size_t)i * nb, n);
+        for (r = 0; r < rounds; r++) {
+            size_t idx = (size_t)i * rounds + r;
+            sig->b[idx] = stern_ring_trit(urnd);
+            stern_l_simulate(sig->c + 96 * idx, sig->resp + idx * 2 * nb, sig->b[idx],
+                             H, syns + (size_t)i * nb, n, urnd);
+        }
+        free(H);
+    }
+    H = stern_l_build_H(seeds + (size_t)j * nb, n);
+    sec = (uint8_t *)malloc((size_t)rounds * 5 * (size_t)nb);
+    if (!sec) { fprintf(stderr, "stern_l_ring_sign: out of memory\n"); exit(1); }
+    for (r = 0; r < rounds; r++) {
+        uint8_t *s = sec + (size_t)r * 5 * nb;           /* r, then pi */
+        if (fread(s, 1, (size_t)nb, urnd) != (size_t)nb ||
+            fread(s + 2 * nb, 1, (size_t)nb, urnd) != (size_t)nb) {
+            fputs("ERROR: could not read from /dev/urandom\n", stderr);
+            exit(1);
+        }
+        stern_l_commit(sig->c + 96 * ((size_t)j * rounds + r), s, H, e, n);
+    }
+    stern_l_fs_state(&st, msg, sig->c, (size_t)k * rounds);
+    for (r = 0; r < rounds; r++) {
+        int joint = stern_l_next_challenge(&st, r), sim = 0;
+        size_t idx = (size_t)j * rounds + r;
+        for (i = 0; i < k; i++) if (i != j) sim += sig->b[(size_t)i * rounds + r];
+        sig->b[idx] = ((joint - sim) % 3 + 3) % 3;
+        stern_l_respond(sig->resp + idx * 2 * nb, sig->b[idx], sec + (size_t)r * 5 * nb, n);
+    }
+    free(sec); free(H);
+}
+
+static int stern_l_ring_verify(const SternLRingSig *sig, const uint8_t msg[32],
+                               const uint8_t *seeds, const uint8_t *syns)
+{
+    int n = sig->n, nb = n / 8, k = sig->k, rounds = sig->rounds, i, r, ok = 1;
+    BitArray st = BA_INIT;
+    if (k < 1 || rounds < 1) return 0;
+    stern_l_fs_state(&st, msg, sig->c, (size_t)k * rounds);
+    for (r = 0; r < rounds; r++) {
+        int joint = stern_l_next_challenge(&st, r), s = 0;
+        for (i = 0; i < k; i++) s += sig->b[(size_t)i * rounds + r];
+        if (s % 3 != joint) return 0;
+    }
+    for (i = 0; i < k && ok; i++) {
+        uint8_t *H = stern_l_build_H(seeds + (size_t)i * nb, n);
+        for (r = 0; r < rounds && ok; r++) {
+            size_t idx = (size_t)i * rounds + r;
+            ok = stern_l_check_round(sig->b[idx], sig->c + 96 * idx, sig->resp + idx * 2 * nb,
+                                     H, syns + (size_t)i * nb, n);
+        }
+        free(H);
+    }
+    return ok;
+}
+
+/* Long-form demo KEM: K = H_4(seed, e') (256 bits), ct = H e'^T, e' out. */
+static void hpke_stern_l_decap_known(BitArray *K, const uint8_t *e_p, const uint8_t *seed, int n)
+{
+    stern_l_hash2(K, 4, seed, (size_t)(n / 8), e_p, (size_t)(n / 8));
+}
+
+static void hpke_stern_l_encap(BitArray *K, uint8_t *ct, uint8_t *e_p, const uint8_t *seed,
+                               int n, FILE *urnd)
+{
+    stern_l_rand_error(e_p, n, urnd);
+    stern_l_syndrome(ct, seed, e_p, n);
+    hpke_stern_l_decap_known(K, e_p, seed, n);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Protocol Layer — high-level wrappers for library callers
  *
  * These thin functions assemble the low-level primitives into the four named
@@ -7948,6 +8434,28 @@ static int hcred_cred_verify(const int32_t m_poly[HCRED_N],
     BitArray msg = BA_INIT;
     _hcred_bind_msg(&msg, m_poly, c_poly, seed_H, syndr, issuer_seed->nbits);
     return hpks_stern_f_verify(sig, &msg, issuer_seed, issuer_syndr);
+}
+
+/* hcred_issue / hcred_cred_verify for a long-form issuer key (TODO #382): the
+ * issuer signs the whole 256-bit statement digest. */
+static void hcred_issue_l(SternLSig *sig, const int32_t m_poly[HCRED_N],
+                          const int32_t c_poly[HCRED_N], const BitArray *seed_H,
+                          const uint8_t syndr[SDF_SYNBYTES], const uint8_t *issuer_e,
+                          const uint8_t *issuer_seed, FILE *urnd)
+{
+    BitArray msg = BA_INIT;
+    _hcred_bind_msg(&msg, m_poly, c_poly, seed_H, syndr, 256);
+    hpks_stern_l_sign(sig, msg.b, issuer_e, issuer_seed, urnd);
+}
+
+static int hcred_cred_verify_l(const int32_t m_poly[HCRED_N], const int32_t c_poly[HCRED_N],
+                               const BitArray *seed_H, const uint8_t syndr[SDF_SYNBYTES],
+                               const SternLSig *sig, const uint8_t *issuer_seed,
+                               const uint8_t *issuer_syn)
+{
+    BitArray msg = BA_INIT;
+    _hcred_bind_msg(&msg, m_poly, c_poly, seed_H, syndr, 256);
+    return hpks_stern_l_verify(sig, msg.b, issuer_seed, issuer_syn);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

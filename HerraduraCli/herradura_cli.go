@@ -57,7 +57,7 @@ import (
 const (
 	ringMaxK  = 64      // herradura_cli.c RING_MAX_K
 	xmssMaxH  = 20      // herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
-	sternMaxN = 256     // the suite key width; nothing here emits a wider Stern instance
+	sternMaxN = 256     // the widest short-form Stern instance
 )
 
 // bounded returns v, or exits 1 if it falls outside [lo, hi].  `what` names the
@@ -147,7 +147,30 @@ func rnlSameRing(ours int, theirs []byte, where string) {
 }
 
 func sternWireN(b []byte, where string) int {
-	return boundedN(wireInt(b, "n", where), where)
+	return boundedSternN(wireInt(b, "n", where), where)
+}
+
+// boundedSternN is boundedN for a Stern-F code length, which may also be the
+// long form's N = 2304 (TODO #382 stage 2).
+func boundedSternN(v int, where string) int {
+	if v == SternLongN {
+		return v
+	}
+	return boundedN(v, where)
+}
+
+// sternMsg is the signed message: min(n, 256) bits of the (pre-hashed) input.
+func sternMsg(in []byte, n int) *BitArray {
+	w := n
+	if w > 256 {
+		w = 256
+	}
+	return NewBitArray(w, new(big.Int).SetBytes(msgPad(in, w/8)))
+}
+
+// sternLField is a long-form key / signature field at exactly n/8 bytes.
+func sternLField(b []byte, n int, what, where string) []byte {
+	return fitBytes(b, n/8, what, where)
 }
 
 // checkDerItemsExact reports a shared-label artifact (CIPHERTEXT, SIGNATURE)
@@ -780,6 +803,27 @@ func encodeSternPriv(e, seed *BitArray, n int, algo string) (string, error) {
 	return PemWrap(algoToPrivLbl[algo], seq), nil
 }
 
+// encodeSternLKey writes a long-form key: (e or syndrome, seed, n), each n/8 bytes.
+func encodeSternLKey(first, seed []byte, n int, label string) (string, error) {
+	a, err := derIntBig(new(big.Int).SetBytes(first), n/8)
+	if err != nil {
+		return "", err
+	}
+	b, err := derIntBig(new(big.Int).SetBytes(seed), n/8)
+	if err != nil {
+		return "", err
+	}
+	nn, err := derIntSmall(n)
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(a, b, nn)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(label, seq), nil
+}
+
 func encodeSternPub(syn *big.Int, seed *BitArray, n int, algo string) (string, error) {
 	a, err := derIntBig(syn, n/8)
 	if err != nil {
@@ -1262,8 +1306,16 @@ func alignBlob(v []byte, dstLen int) []byte {
 // (each n-bit value = n/8 bytes) per (member, round).
 
 func loadRingPubkeys(ringArg string) ([]RingKeypair, int) {
+	ring, _, n := loadRingPubkeysAny(ringArg)
+	return ring, n
+}
+
+// loadRingPubkeysAny reads the ring at either form: the short form's members
+// in the first slice, the long form's (TODO #382) in the second.
+func loadRingPubkeysAny(ringArg string) ([]RingKeypair, []SternLRingKey, int) {
 	paths := strings.Split(ringArg, ",")
 	var ring []RingKeypair
+	var ringL []SternLRingKey
 	ringN := -1
 	for _, p := range paths {
 		if p == "" {
@@ -1284,16 +1336,46 @@ func loadRingPubkeys(ringArg string) ([]RingKeypair, int) {
 			fmt.Fprintln(os.Stderr, "hpks-ring: all ring members must share the same n")
 			os.Exit(1)
 		}
+		if SternIsLong(n) {
+			ringL = append(ringL, SternLRingKey{
+				Seed:     sternLField(ints[1], n, "seed", "hpks-ring"),
+				Syndrome: sternLField(ints[0], n, "syndrome", "hpks-ring"),
+			})
+			continue
+		}
 		ring = append(ring, RingKeypair{
 			Seed:     NewBitArray(n, new(big.Int).SetBytes(ints[1])),
 			Syndrome: new(big.Int).SetBytes(ints[0]),
 		})
 	}
-	if len(ring) < 2 {
+	if len(ring)+len(ringL) < 2 {
 		fmt.Fprintln(os.Stderr, "hpks-ring: --ring needs at least 2 member public keys")
 		os.Exit(1)
 	}
-	return ring, ringN
+	return ring, ringL, ringN
+}
+
+// encodeRingSigL is encodeRingSig for the long form: 32-byte commitments,
+// n/8-byte responses.
+func encodeRingSigL(sig *SternLRingSig, n int) string {
+	nb := n / 8
+	blob := make([]byte, 0, sig.K*sig.Rounds*(3*32+2*nb+1))
+	for i := 0; i < sig.K; i++ {
+		for _, rd := range sig.Members[i].Rounds {
+			blob = append(blob, rd.C0.Bytes()...)
+			blob = append(blob, rd.C1.Bytes()...)
+			blob = append(blob, rd.C2.Bytes()...)
+			blob = append(blob, byte(rd.B))
+			blob = append(blob, rd.RespA...)
+			blob = append(blob, rd.RespB...)
+		}
+	}
+	kd, _ := derIntSmall(sig.K)
+	rdd, _ := derIntSmall(sig.Rounds)
+	nd, _ := derIntSmall(n)
+	bd, _ := derIntBig(new(big.Int).SetBytes(blob), len(blob))
+	seq, _ := DerSeqEnc(kd, rdd, nd, bd)
+	return PemWrap(lblRingSig, seq)
 }
 
 func encodeRingSig(sig *SternRingSig, n int) string {
@@ -1324,6 +1406,12 @@ func encodeRingSig(sig *SternRingSig, n int) string {
 }
 
 func decodeRingSig(path string) (*SternRingSig, int) {
+	sig, _, n := decodeRingSigAny(path)
+	return sig, n
+}
+
+// decodeRingSigAny decodes either form (the long form's in the second result).
+func decodeRingSigAny(path string) (*SternRingSig, *SternLRingSig, int) {
 	label, ints, err := readPEMInts(path)
 	if err != nil {
 		die("verify", err)
@@ -1338,9 +1426,13 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 		"ring member count", "verify")
 	rounds := bounded(wireInt(ints[1], "round count", "verify"), 1, SdfMaxRounds,
 		"round count", "verify")
-	n := boundedN(wireInt(ints[2], "n", "verify"), "verify")
+	n := boundedSternN(wireInt(ints[2], "n", "verify"), "verify")
 	nb := n / 8
-	entry := 5*nb + 1
+	cb := nb
+	if SternIsLong(n) {
+		cb = 32 // 256-bit commitments (TODO #382)
+	}
+	entry := 3*cb + 2*nb + 1
 	blen := k * rounds * entry
 	// A payload longer than (k, rounds, n) describe is a mismatch, not
 	// something to truncate; shorter is legal (DER strips leading zero bytes)
@@ -1353,6 +1445,24 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 	blob := make([]byte, blen)
 	new(big.Int).SetBytes(ints[3]).FillBytes(blob)
 
+	if SternIsLong(n) {
+		lsig := &SternLRingSig{K: k, Rounds: rounds, Members: make([]SternLSig, k)}
+		off := 0
+		cut := func(w int) []byte { v := blob[off : off+w]; off += w; return v }
+		for i := 0; i < k; i++ {
+			lsig.Members[i].Rounds = make([]SternLRound, rounds)
+			for r := 0; r < rounds; r++ {
+				rd := &lsig.Members[i].Rounds[r]
+				rd.C0 = NewFromBytes(cut(32), 0, 256)
+				rd.C1 = NewFromBytes(cut(32), 0, 256)
+				rd.C2 = NewFromBytes(cut(32), 0, 256)
+				rd.B = int(cut(1)[0])
+				rd.RespA = cut(nb)
+				rd.RespB = cut(nb)
+			}
+		}
+		return nil, lsig, n
+	}
 	sig := &SternRingSig{K: k, Rounds: rounds, Members: make([]SternSig, k)}
 	off := 0
 	take := func() *BitArray {
@@ -1373,7 +1483,7 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 			sig.Members[i].Rounds[r] = SternRound{C0: c0, C1: c1, C2: c2, B: b, RespA: ra, RespB: rb}
 		}
 	}
-	return sig, n
+	return sig, nil, n
 }
 
 // ── genpkey ──────────────────────────────────────────────────────────────────
@@ -1577,9 +1687,14 @@ func cmdGenpkey(args []string) {
 		pem, err = encodeRNLPriv(s, mBlind, n, nA)
 
 	case sternAlgos[*algo]:
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
-		seed, e, _ := SternFKeygen(n)
-		pem, err = encodeSternPriv(e, seed, n, *algo)
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
+		if SternIsLong(n) {
+			seed, e, _ := SternLKeygen(n)
+			pem, err = encodeSternLKey(e, seed, n, algoToPrivLbl[*algo])
+		} else {
+			seed, e, _ := SternFKeygen(n)
+			pem, err = encodeSternPriv(e, seed, n, *algo)
+		}
 
 	case *algo == "hpke-stern-kem":
 		sup0, sup1, h0, h1, _ := QcMdpcKeygen(nil)
@@ -1845,6 +1960,12 @@ func cmdPkey(args []string) {
 
 		case sternAlgos[algo]:
 			n    := sternWireN(ints[2], "pkey")
+			if SternIsLong(n) {
+				e    := sternLField(ints[0], n, "e", "pkey")
+				seed := sternLField(ints[1], n, "seed", "pkey")
+				pem, err = encodeSternLKey(SternLSyndrome(seed, e), seed, n, algoToPubLbl[algo])
+				break
+			}
 			e    := NewBitArray(n, new(big.Int).SetBytes(ints[0]))
 			seed := NewBitArray(n, new(big.Int).SetBytes(ints[1]))
 			syn  := SternSyndrome(seed, e)
@@ -2636,20 +2757,30 @@ func encodeAsymCT(R, E *big.Int, n int) (string, error) {
 // encodeSternCT encodes an HPKE-Stern-F KEM ciphertext.
 // K is stored for session-key extraction; e' stored for demo brute-force decap.
 func encodeSternCT(ctSyn *big.Int, ePrime, K *BitArray, E *big.Int, n int) (string, error) {
+	return encodeSternCTInts(ctSyn, ePrime.BigInt(), K.BigInt(), E, n)
+}
+
+// encodeSternCTInts: (ct, e', K, E, n); K and E are min(n, 256) bits, the
+// payload block (TODO #382).
+func encodeSternCTInts(ctSyn, ePrime, K, E *big.Int, n int) (string, error) {
 	nb := n / 8
+	kb := nb
+	if kb > 32 {
+		kb = 32
+	}
 	ca, err := derIntBig(ctSyn, nb)
 	if err != nil {
 		return "", err
 	}
-	ea, err := derIntBig(ePrime.BigInt(), nb)
+	ea, err := derIntBig(ePrime, nb)
 	if err != nil {
 		return "", err
 	}
-	ka, err := derIntBig(K.BigInt(), nb)
+	ka, err := derIntBig(K, kb)
 	if err != nil {
 		return "", err
 	}
-	enc, err := derIntBig(E, nb)
+	enc, err := derIntBig(E, kb)
 	if err != nil {
 		return "", err
 	}
@@ -2888,6 +3019,77 @@ func packSternSigLabel(sig *SternSig, n int, label string) (string, error) {
 		return "", err
 	}
 	return PemWrap(label, seq), nil
+}
+
+// packSternLSig is packSternSigLabel for the long form (TODO #382): the same
+// SEQ(n, rounds, commitments, challenges, responses), commitments 32 bytes.
+func packSternLSig(sig *SternLSig, n int, label string) (string, error) {
+	rounds := len(sig.Rounds)
+	var cBuf, rBuf []byte
+	chal := make([]byte, (rounds+3)/4)
+	for i, r := range sig.Rounds {
+		cBuf = append(append(append(cBuf, r.C0.Bytes()...), r.C1.Bytes()...), r.C2.Bytes()...)
+		chal[i/4] |= byte((r.B & 3) << ((i % 4) * 2))
+		rBuf = append(append(rBuf, r.RespA...), r.RespB...)
+	}
+	nDer, err := derIntSmall(n)
+	if err != nil {
+		return "", err
+	}
+	rDer, err := derIntSmall(rounds)
+	if err != nil {
+		return "", err
+	}
+	cDer, err := derIntBig(new(big.Int).SetBytes(cBuf), len(cBuf))
+	if err != nil {
+		return "", err
+	}
+	chDer, err := derIntBig(new(big.Int).SetBytes(chal), len(chal))
+	if err != nil {
+		return "", err
+	}
+	resDer, err := derIntBig(new(big.Int).SetBytes(rBuf), len(rBuf))
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(nDer, rDer, cDer, chDer, resDer)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(label, seq), nil
+}
+
+// unpackSternSigAny decodes either form: the long form's (TODO #382) in the
+// second result.
+func unpackSternSigAny(ints [][]byte) (*SternSig, *SternLSig, int, error) {
+	if len(ints) != 5 {
+		return nil, nil, 0, checkDerItemsExact(lblSig, ints, 5)
+	}
+	n := boundedSternN(wireInt(ints[0], "n", "verify"), "verify")
+	if !SternIsLong(n) {
+		sig, n2, err := unpackSternSig(ints)
+		return sig, nil, n2, err
+	}
+	rounds := bounded(wireInt(ints[1], "round count", "verify"), 1, SdfMaxRounds,
+		"round count", "verify")
+	nb := n / 8
+	cRaw := make([]byte, 3*rounds*32)
+	new(big.Int).SetBytes(ints[2]).FillBytes(cRaw)
+	chRaw := make([]byte, (rounds+3)/4)
+	new(big.Int).SetBytes(ints[3]).FillBytes(chRaw)
+	rRaw := make([]byte, 2*rounds*nb)
+	new(big.Int).SetBytes(ints[4]).FillBytes(rRaw)
+	sig := &SternLSig{Rounds: make([]SternLRound, rounds)}
+	for i := range sig.Rounds {
+		c := cRaw[i*96:]
+		sig.Rounds[i].C0 = NewFromBytes(c[0:32], 0, 256)
+		sig.Rounds[i].C1 = NewFromBytes(c[32:64], 0, 256)
+		sig.Rounds[i].C2 = NewFromBytes(c[64:96], 0, 256)
+		sig.Rounds[i].B = int((chRaw[i/4] >> ((i % 4) * 2)) & 3)
+		sig.Rounds[i].RespA = rRaw[i*2*nb : i*2*nb+nb]
+		sig.Rounds[i].RespB = rRaw[i*2*nb+nb : (i+1)*2*nb]
+	}
+	return nil, sig, n, nil
 }
 
 // unpackSternSig deserialises a *SternSig from DER-parsed integer fields.
@@ -3681,7 +3883,7 @@ func cmdCredIssue(args []string) {
 		fmt.Fprintln(os.Stderr, "cred-issue: --our (hpks-stern private key) required")
 		os.Exit(1)
 	}
-	fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). Do not use for production.")
+	fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 
 	cPoly, mPoly, seedH, syndr, n, lerr := loadHcredPubinfo(*in)
 	if lerr != nil {
@@ -3697,10 +3899,22 @@ func cmdCredIssue(args []string) {
 		os.Exit(1)
 	}
 	issuerN := sternWireN(ourInts[2], "cred-issue")
+	r := rounds
+	if SternIsLong(issuerN) { // a long-form issuer key (TODO #382)
+		lsig := HcredIssueL(mPoly, cPoly, seedH, syndr, n,
+			sternLField(ourInts[0], issuerN, "e", "cred-issue"),
+			sternLField(ourInts[1], issuerN, "seed", "cred-issue"), r)
+		pem, perr := packSternLSig(lsig, issuerN, lblHcredCred)
+		if perr != nil {
+			die("cred-issue", perr)
+		}
+		if werr := writeString(*out, pem); werr != nil {
+			die("cred-issue", werr)
+		}
+		return
+	}
 	issuerE := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[0]))
 	issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[1]))
-
-	r := rounds
 
 	sig := HcredIssue(mPoly, cPoly, seedH, syndr, n, issuerE, issuerSeed, r)
 	pem, perr := packSternSigLabel(sig, issuerN, lblHcredCred)
@@ -3818,11 +4032,15 @@ func cmdCredVerify(args []string) {
 		if cerr != nil {
 			die("cred-verify", cerr)
 		}
-		credSig, credN, uerr := unpackSternSig(credInts)
+		credSig, credSigL, credN, uerr := unpackSternSigAny(credInts)
 		if uerr != nil {
 			die("cred-verify", uerr)
 		}
-		requireRounds(len(credSig.Rounds), minRounds, "HCRED credential", "cred-verify")
+		if credSigL != nil {
+			requireRounds(len(credSigL.Rounds), minRounds, "HCRED credential", "cred-verify")
+		} else {
+			requireRounds(len(credSig.Rounds), minRounds, "HCRED credential", "cred-verify")
+		}
 
 		issLabel, issInts, ierr := readPEMInts(*issuerPath)
 		if ierr != nil {
@@ -3837,10 +4055,16 @@ func cmdCredVerify(args []string) {
 			fmt.Fprintf(os.Stderr, "cred-verify: credential n is %d, issuer key n is %d\n", credN, issuerN)
 			os.Exit(1)
 		}
-		issuerSyn := new(big.Int).SetBytes(issInts[0])
-		issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(issInts[1]))
-
-		okCred := HcredCredVerify(mPoly, cPoly, seedH, syndr, pubN, credSig, issuerSeed, issuerSyn)
+		var okCred bool
+		if SternIsLong(issuerN) {
+			okCred = HcredCredVerifyL(mPoly, cPoly, seedH, syndr, pubN, credSigL,
+				sternLField(issInts[1], issuerN, "seed", "cred-verify"),
+				sternLField(issInts[0], issuerN, "syndrome", "cred-verify"))
+		} else {
+			issuerSyn := new(big.Int).SetBytes(issInts[0])
+			issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(issInts[1]))
+			okCred = HcredCredVerify(mPoly, cPoly, seedH, syndr, pubN, credSig, issuerSeed, issuerSyn)
+		}
 		if !okCred {
 			fmt.Println("Verification FAILED (credential)")
 			os.Exit(1)
@@ -4026,7 +4250,7 @@ func cmdEnc(args []string) {
 		}
 
 	case "hpke-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 		if *pubkey == "" {
 			fmt.Fprintln(os.Stderr, "enc: --pubkey required for hpke-stern")
 			os.Exit(1)
@@ -4036,13 +4260,25 @@ func cmdEnc(args []string) {
 			die("enc", err)
 		}
 		n    := sternWireN(theirInts[2], "enc")
-		seed := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
-		nb   := n / 8
+		w    := n // the payload block: 256 bits above 256 (TODO #382)
+		if SternIsLong(n) {
+			w = 256
+		}
+		nb   := w / 8
 		oneBlockOK(*algo, len(inBytes), nb)
-		P    := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
-		K, ctSyn, ePrime := HpkeSternFEncap(seed, n)
-		E := FscxRevolve(P, K, n/4)
-		pem, err := encodeSternCT(ctSyn, ePrime, K, E.BigInt(), n)
+		P    := NewBitArray(w, new(big.Int).SetBytes(msgPad(inBytes, nb)))
+		var pem string
+		if SternIsLong(n) {
+			K, ct, eP := HpkeSternLEncap(sternLField(theirInts[1], n, "seed", "enc"))
+			E := FscxRevolve(P, K, w/4)
+			pem, err = encodeSternCTInts(new(big.Int).SetBytes(ct), new(big.Int).SetBytes(eP),
+				K.BigInt(), E.BigInt(), n)
+		} else {
+			seed := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
+			K, ctSyn, ePrime := HpkeSternFEncap(seed, n)
+			E := FscxRevolve(P, K, n/4)
+			pem, err = encodeSternCT(ctSyn, ePrime, K, E.BigInt(), n)
+		}
 		if err != nil {
 			die("enc", err)
 		}
@@ -4314,7 +4550,7 @@ func cmdDec(args []string) {
 		}
 
 	case "hpke-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 		if *key == "" {
 			fmt.Fprintln(os.Stderr, "dec: --key required for hpke-stern")
 			os.Exit(1)
@@ -4336,12 +4572,20 @@ func cmdDec(args []string) {
 		if cn := new(big.Int).SetBytes(ctInts[4]); !cn.IsInt64() || cn.Int64() != int64(n) {
 			die("dec", fmt.Errorf("ciphertext n is %s, private key n is %d", cn, n))
 		}
-		seed    := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
-		ePrime  := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
 		EInt    := new(big.Int).SetBytes(ctInts[3])
-		K_dec   := HpkeSternFDecapKnown(ePrime, seed)
-		E       := NewBitArray(n, EInt)
-		D       := FscxRevolve(E, K_dec, 3*n/4)
+		var K_dec *BitArray
+		w := n
+		if SternIsLong(n) { // the long form (TODO #382): K and the block are 256 bits
+			w = 256
+			K_dec = HpkeSternLDecapKnown(sternLField(ctInts[1], n, "e'", "dec"),
+				sternLField(ourInts[1], n, "seed", "dec"))
+		} else {
+			seed   := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
+			ePrime := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
+			K_dec = HpkeSternFDecapKnown(ePrime, seed)
+		}
+		E       := NewBitArray(w, EInt)
+		D       := FscxRevolve(E, K_dec, 3*w/4)
 		if err := writeBytes(*out, D.Bytes()); err != nil {
 			die("dec", err)
 		}
@@ -4518,13 +4762,20 @@ func cmdSign(args []string) {
 		}
 
 	case "hpks-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 		n    := sternWireN(ourInts[2], "sign")
-		e    := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
-		seed := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
-		msg  := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
-		sig  := HpksSternFSign(msg, e, seed, sternRounds)
-		pem, err := packSternSig(sig, n)
+		msg  := sternMsg(inBytes, n)
+		var pem string
+		if SternIsLong(n) {
+			lsig := HpksSternLSign(msg, sternLField(ourInts[0], n, "e", "sign"),
+				sternLField(ourInts[1], n, "seed", "sign"), sternRounds)
+			pem, err = packSternLSig(lsig, n, lblSig)
+		} else {
+			e    := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
+			seed := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
+			sig  := HpksSternFSign(msg, e, seed, sternRounds)
+			pem, err = packSternSig(sig, n)
+		}
 		if err != nil {
 			die("sign", err)
 		}
@@ -4533,15 +4784,14 @@ func cmdSign(args []string) {
 		}
 
 	case "hpks-ring":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 		if *ring == "" {
 			fmt.Fprintln(os.Stderr, "hpks-ring sign: --ring (comma-separated member public keys) required")
 			os.Exit(1)
 		}
 		n := sternWireN(ourInts[2], "sign")
-		e := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		signerSeed := new(big.Int).SetBytes(ourInts[1])
-		ringKeys, ringN := loadRingPubkeys(*ring)
+		ringKeys, ringKeysL, ringN := loadRingPubkeysAny(*ring)
 		if ringN != n {
 			fmt.Fprintf(os.Stderr, "hpks-ring sign: signer n=%d != ring n=%d\n", n, ringN)
 			os.Exit(1)
@@ -4549,6 +4799,12 @@ func cmdSign(args []string) {
 		j := -1
 		for idx := range ringKeys {
 			if ringKeys[idx].Seed.BigInt().Cmp(signerSeed) == 0 {
+				j = idx
+				break
+			}
+		}
+		for idx := range ringKeysL {
+			if new(big.Int).SetBytes(ringKeysL[idx].Seed).Cmp(signerSeed) == 0 {
 				j = idx
 				break
 			}
@@ -4561,19 +4817,27 @@ func cmdSign(args []string) {
 		// TODO #272: ringMaxK bounds the READER in every CLI (TODO #240), but
 		// only C's writer enforced it, so Go signed rings that every verifier
 		// -- Go's included -- then refused.
-		if len(ringKeys) > ringMaxK {
+		if len(ringKeys)+len(ringKeysL) > ringMaxK {
 			fmt.Fprintf(os.Stderr, "hpks-ring sign: ring has %d members, at most %d "+
 				"supported (a larger ring produces a signature no CLI will verify)\n",
-				len(ringKeys), ringMaxK)
+				len(ringKeys)+len(ringKeysL), ringMaxK)
 			os.Exit(1)
 		}
-		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
-		sig := HpksSternRingSign(msg, e, j, ringKeys, sternRounds)
-		pem := encodeRingSig(sig, n)
+		msg := sternMsg(inBytes, n)
+		var pem string
+		if SternIsLong(n) {
+			lsig := HpksSternLRingSign(msg, sternLField(ourInts[0], n, "e", "sign"), j,
+				ringKeysL, sternRounds)
+			pem = encodeRingSigL(lsig, n)
+		} else {
+			e := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
+			sig := HpksSternRingSign(msg, e, j, ringKeys, sternRounds)
+			pem = encodeRingSig(sig, n)
+		}
 		if err := writeString(*out, pem); err != nil {
 			die("sign", err)
 		}
-		fmt.Fprintf(os.Stderr, "Ring signature created (k=%d); signer index is hidden.\n", len(ringKeys))
+		fmt.Fprintf(os.Stderr, "Ring signature created (k=%d); signer index is hidden.\n", len(ringKeys)+len(ringKeysL))
 
 	case "hpks-wots":
 		if wotsIsUsed(*key) {
@@ -4697,20 +4961,32 @@ func cmdVerify(args []string) {
 			fmt.Fprintln(os.Stderr, "hpks-ring verify: --ring (comma-separated member public keys) required")
 			os.Exit(1)
 		}
-		ringKeys, n := loadRingPubkeys(*ring)
-		rsig, sigN := decodeRingSig(*sig)
-		requireRounds(rsig.Rounds, minRounds, "hpks-ring signature", "verify")
+		ringKeys, ringKeysL, n := loadRingPubkeysAny(*ring)
+		rsig, rsigL, sigN := decodeRingSigAny(*sig)
+		sigK, sigRounds := 0, 0
+		if rsigL != nil {
+			sigK, sigRounds = rsigL.K, rsigL.Rounds
+		} else {
+			sigK, sigRounds = rsig.K, rsig.Rounds
+		}
+		requireRounds(sigRounds, minRounds, "hpks-ring signature", "verify")
 		if sigN != n {
 			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sigN, n)
 			os.Exit(1)
 		}
-		if rsig.K != len(ringKeys) {
+		if sigK != len(ringKeys)+len(ringKeysL) {
 			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature ring size %d != %d provided members\n",
-				rsig.K, len(ringKeys))
+				sigK, len(ringKeys)+len(ringKeysL))
 			os.Exit(1)
 		}
-		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
-		if HpksSternRingVerify(msg, rsig, ringKeys) {
+		msg := sternMsg(inBytes, n)
+		var ok bool
+		if rsigL != nil {
+			ok = HpksSternLRingVerify(msg, rsigL, ringKeysL)
+		} else {
+			ok = HpksSternRingVerify(msg, rsig, ringKeys)
+		}
+		if ok {
 			fmt.Println("Signature OK")
 			os.Exit(0)
 		}
@@ -4879,26 +5155,37 @@ func cmdVerify(args []string) {
 		os.Exit(0)
 
 	case "hpks-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters). 128-bit security requires N>=2144. Do not use for production.")
-		synInt  := new(big.Int).SetBytes(theirInts[0])
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 		n       := sternWireN(theirInts[2], "verify")
-		seed    := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
-		msg     := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
+		msg     := sternMsg(inBytes, n)
 
 		_, sigInts, err := readPEMInts(*sig)
 		if err != nil {
 			die("verify", err)
 		}
-		sternSig, sigN, err := unpackSternSig(sigInts)
+		sternSig, sternSigL, sigN, err := unpackSternSigAny(sigInts)
 		if err != nil {
 			die("verify", err)
 		}
-		requireRounds(len(sternSig.Rounds), minRounds, "hpks-stern signature", "verify")
+		if sternSigL != nil {
+			requireRounds(len(sternSigL.Rounds), minRounds, "hpks-stern signature", "verify")
+		} else {
+			requireRounds(len(sternSig.Rounds), minRounds, "hpks-stern signature", "verify")
+		}
 		// TODO #383 stage 2: a signature of another width panicked in SternHash
 		if sigN != n {
 			die("verify", fmt.Errorf("signature n is %d, public key n is %d", sigN, n))
 		}
-		if HpksSternFVerify(msg, sternSig, seed, synInt) {
+		var ok bool
+		if sternSigL != nil {
+			ok = HpksSternLVerify(msg, sternSigL, sternLField(theirInts[1], n, "seed", "verify"),
+				sternLField(theirInts[0], n, "syndrome", "verify"))
+		} else {
+			synInt := new(big.Int).SetBytes(theirInts[0])
+			seed   := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
+			ok = HpksSternFVerify(msg, sternSig, seed, synInt)
+		}
+		if ok {
 			fmt.Println("Signature OK")
 			os.Exit(0)
 		} else {
@@ -6457,7 +6744,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(2); n > 2 && L(2) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && L(3) > c {
+			if c := int64(F(0) * F(1) * (3 * hkxMin(F(2)/8, 32) + 2 * (F(2)/8) + 1)); n > 3 && L(3) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if n > 0 && lz[0] == 1 {
@@ -6469,7 +6756,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+			if c := int64(F(0) * F(1) * (3 * hkxMin(F(2)/8, 32) + 2 * (F(2)/8) + 1)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
@@ -6668,7 +6955,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(2); n > 1 && L(1) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && L(2) > c {
+			if c := int64(F(1) * 3 * hkxMin(F(0)/8, 32)); n > 2 && L(2) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64((F(1) + 3)/4); n > 3 && L(3) > c {
@@ -6683,7 +6970,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+			if c := int64(F(1) * 3 * hkxMin(F(0)/8, 32)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
@@ -6913,10 +7200,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(F(4)/8); n > 1 && L(1) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64(F(4)/8); n > 2 && L(2) > c {
+			if c := int64(hkxMin(F(4)/8, 32)); n > 2 && L(2) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			if c := int64(F(4)/8); n > 3 && L(3) > c {
+			if c := int64(hkxMin(F(4)/8, 32)); n > 3 && L(3) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if n > 4 && lz[4] == 1 {
@@ -6928,10 +7215,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(F(4)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(4)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+			if c := int64(hkxMin(F(4)/8, 32)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
-			if c := int64(F(4)/8); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+			if c := int64(hkxMin(F(4)/8, 32)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
@@ -7010,7 +7297,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(2); n > 1 && L(1) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && L(2) > c {
+			if c := int64(F(1) * 3 * hkxMin(F(0)/8, 32)); n > 2 && L(2) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64((F(1) + 3)/4); n > 3 && L(3) > c {
@@ -7025,7 +7312,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+			if c := int64(F(1) * 3 * hkxMin(F(0)/8, 32)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
@@ -7161,18 +7448,20 @@ var paramSets = []paramSet{
 	{"hkex-rnl", 256, "demo", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
 	{"hkex-rnl", 512, "", false, "withdrawn", "~2^87 classical, ~2^79 quantum", "", "SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical bits, short of the 128 it was claimed to give"},
 	{"hkex-rnl", 1024, "128", true, "production", ">= 2^128 classical (conjectured; SECURITY.md)", "py go c java", ""},
-	{"hpks-stern", 32, "", false, "demo", "below 2^30", "py go c java", ""},
-	{"hpks-stern", 64, "", false, "demo", "below 2^30", "py go c java", ""},
-	{"hpks-stern", 128, "", false, "demo", "below 2^30", "py go c java", ""},
-	{"hpks-stern", 256, "demo", true, "demo", "~2^30-2^40 (SECURITY.md)", "py go c java", ""},
-	{"hpke-stern", 32, "", false, "demo", "below 2^30", "py go c java", ""},
-	{"hpke-stern", 64, "", false, "demo", "below 2^30", "py go c java", ""},
-	{"hpke-stern", 128, "", false, "demo", "below 2^30", "py go c java", ""},
-	{"hpke-stern", 256, "demo", true, "demo", "~2^30-2^40 (SECURITY.md)", "py go c java", ""},
-	{"hcred", 32, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go c java", ""},
-	{"hcred", 64, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go c java", ""},
-	{"hcred", 128, "", false, "demo", "research construction; its Stern-F half below 2^30", "py go c java", ""},
-	{"hcred", 256, "demo", true, "demo", "research construction; its Stern-F half ~2^30-2^40 (SECURITY.md)", "py go c java", ""},
+	{"hpks-stern", 32, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpks-stern", 64, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpks-stern", 128, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpks-stern", 256, "demo", true, "demo", "~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)", "py go c java", ""},
+	{"hpke-stern", 32, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpke-stern", 64, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpke-stern", 128, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpke-stern", 256, "demo", true, "demo", "~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)", "py go c java", ""},
+	{"hcred", 32, "", false, "demo", "research construction; its Stern-F half below 2^24", "py go c java", ""},
+	{"hcred", 64, "", false, "demo", "research construction; its Stern-F half below 2^24", "py go c java", ""},
+	{"hcred", 128, "", false, "demo", "research construction; its Stern-F half below 2^24", "py go c java", ""},
+	{"hcred", 256, "demo", true, "demo", "research construction; its Stern-F half ~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)", "py go c java", ""},
+	{"hpks-stern", 2304, "128", false, "demo-only", "~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3", "py go c java", ""},
+	{"hpke-stern", 2304, "128", false, "demo-only", "~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3", "py go c java", ""},
 	{"hpke-stern-kem", -1, "128", true, "demo-only", "2^128 classical by its parameters (BIKE-128)", "py go c java", ""},
 	{"hpks-zkp-nl", 8, "demo", true, "demo", "demonstration keypair; no security claim", "py go c java", ""},
 }
@@ -7181,15 +7470,13 @@ var paramLevels = []string{"demo", "128", "192", "256"}
 var paramFixed = []string{"hpks-wots", "hpks-xmss"}
 var paramOwnBits = []string{"hpks-zkp-nl"}
 var paramLevelNotes = map[string]string{
-	"hcred": "128-bit Stern-F parameters are TODO #382",
+	"hcred": "hcred's own key (a Ring-LWR and syndrome-decoding pair proved in ZKBoo) has no 128-bit set; the ISSUER's hpks-stern key does: genpkey --algo hpks-stern --level 128",
 	"hkex-gf": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
 	"hpke": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
 	"hpke-nl": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
 	"hpke-nl3": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
-	"hpke-stern": "128-bit Stern-F parameters are TODO #382",
 	"hpks": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
 	"hpks-nl": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
-	"hpks-stern": "128-bit Stern-F parameters are TODO #382",
 	"oprf": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
 }
 

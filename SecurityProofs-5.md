@@ -445,6 +445,35 @@ the relative distance, so each bit of $N$ is worth far more here.  $N = 17000$ i
 $2^{1000}$.  Depth-3 BJMM and the May-Ozerov line are not modelled; the second is galactic
 at these lengths (item 1 below).
 
+**Implemented (TODO #382 stage 2, v16.0.0).**  N = 2304 ships as `genpkey --level 128` for
+hpks-stern and hpke-stern in all four CLIs, and the same keys sign hpks-ring rings and HCRED
+credentials.  The vectors are wider than the 256-bit BitArray, so the long form (SPEC.md §11.1)
+changes the four places the short form leaned on N <= 256, and each is costed against the
+instance's 137 bits here:
+
+- *Commitments* are full 256-bit HFSCX-256 digests rather than N-bit ones.  A forger who could
+  open one commitment two ways answers all three challenges, so binding is the property that
+  matters, and it costs a collision: about 2^128 generically, which is under the instance's
+  2^137 but at the 128-bit target, and the same 256-bit hash already bounds every other
+  128-bit claim in the suite.  Hiding rests on the uniform N-bit r and pi-seed inside each
+  hashed item, as before.
+- *The matrix* is expanded from the 256-bit sk = H_6(seed) by HFSCX-256 in counter mode.  The
+  code is then one of at most 2^256 rather than uniform over all [2304, 1152] codes; an attack
+  needs structure in HFSCX-256's outputs, not in the code, which is the short form's assumption
+  (its rows were HFSCX-256 digests too).
+- *The permutation* is drawn from the 256-bit k = H_5(pi-seed), so sigma ranges over at most
+  2^256 of the 2304! permutations.  Zero-knowledge needs sigma(e) to look like a uniform
+  weight-144 vector to a verifier who never sees k; it does if the NL-FSCX v1 PRNG is
+  pseudorandom, the short form's assumption at N = 256 with a 256-bit pi-seed.
+- *The message and Fiat-Shamir state* stay 256 bits, unchanged from N = 256; 219 rounds give
+  (2/3)^219, about 2^-128.1.
+
+The quantum figure is 2^106 (Grover over Prange), so this is a 128-bit CLASSICAL set.  A
+219-round signature is 147,249 octets in DER (about 199 KB as PEM; the commitments are 21 KB of
+it), against about 35 KB at N = 256; keys are two 288-octet fields.  HCRED's own key (a
+Ring-LWR and syndrome-decoding pair proved in ZKBoo) has no 128-bit set: only its issuer's
+signature is at N = 2304.
+
 **2025–2026 ISD literature re-check (TODO #156).**  Three post-2024 ISD/syndrome-decoding
 papers were reviewed against the $N \geq 17000$ production target above, plus a
 cross-check against TODO #126's QC-MDPC parameters:

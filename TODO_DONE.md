@@ -26130,3 +26130,78 @@ verify in C or Go (MIGRATING.md section 48); at 255 rounds or fewer nothing chan
 Status: **DONE v16.0.0** — Stern-F's Fiat-Shamir step uses the whole round index in all four ports.
 
 ---
+
+### #382: a 128-bit Stern-F parameter set (N ≈ 2048), and the documented N ≥ 17000
+
+Found in TODO #379's width pass.  SECURITY.md and SecurityProofs-4/5 say Stern-F needs
+N >= 17000 for 128-bit classical security, by comparison with BIKE-128 (N ~ 24646).  BIKE's
+error weight grows like sqrt(N); Stern-F's is fixed at t = N/16, the linear-weight regime,
+where each bit of N buys far more.  A rough estimate at Stern-F's shape (k = N/2, t = N/16,
+log2 bit operations including Gaussian elimination):
+
+| N | Prange | Stern ISD (1989) |
+|---|---|---|
+| 256 | 38.7 | 30.8 |
+| 1024 | 95.0 | 78.3 |
+| 2048 | 165.1 | 143.8 |
+| 3072 | 233.9 | 209.3 |
+
+BJMM-class ISD is cheaper than Stern's, so 128 bits classical sits somewhere around
+N ~ 2048–3072, an order of magnitude below 17000.  The same documents put N = 256 at
+2^56–2^60 by BJMM/SDE; the Stern ISD figure above is ~2^31, which matches SECURITY.md's
+own "~30–40 bits".  Both documented figures need re-deriving.
+
+**Work.**
+1. Run a standard syndrome-decoding estimator (e.g. the CryptographicEstimators SD module:
+   Prange, Stern, Dumer, MMT, BJMM, May–Ozerov; classical and quantum) over N at
+   t = N/16, k = N/2, and choose the smallest N meeting 128 bits classical, recording
+   the quantum figure.  Expected near 2048.  Correct SecurityProofs-4 §11.8.x, -5 and
+   SECURITY.md's Stern rows (both the N = 256 figure and the N >= 17000 bar).
+2. Stern-F at that N in all four ports: its vectors exceed `BA_MAX_BITS` = 256, so move
+   them to the long-vector representation the QC-MDPC KEM already uses (r = 12323) rather
+   than raising the BitArray cap.  KATs, PEM layout rows (`PEM_DER_ITEMS`,
+   `PEM_DER_FIELD_CAPS`), and a row in TODO #379's parameter table as `--level 128`.
+3. Costs to state: signatures grow linearly in N (47 KB at 256, so ~380 KB at 2048 at
+   219 rounds); H is N/2 x N bits from the seed per sign/verify.  hcred and hpks-ring are
+   Stern-based too: decide whether they get the row or stay demo.
+
+New parameter set: MINOR.  Changing what an existing `--algo` defaults to would be MAJOR;
+the default stays at N = 256 unless decided otherwise.
+
+**Stage 1 done (v16.0.0): work item 1.**  `SecurityProofsCode/stern_f_parameter_selection.py`
+(a findings gate) costs (N, N/2, N/16) with Prange, Dumer, depth-2 BJMM and Grover-over-Prange,
+BJMM checked against BIKE's three published levels (within 2 bits; Dumer is 8 high).  N = 256
+is worth 2^24 by BJMM (2^38 even by Prange), so the documented 2^56-2^60 was wrong; BJMM first
+reaches 2^128 at N = 2144, so the N >= 17000 bar was ~8x too long.  Recommended 128-bit set:
+**N = 2304** (9 x 256, k = 1152, t = 144): 2^137.4 BJMM, 2^106.5 quantum.  SecurityProofs-4 §11.7,
+-5 §11.8.4, SECURITY.md, the C/Go/Python CLIs' Stern-F warning and the other copies now carry
+these figures.  The CryptographicEstimators package was not available, so it is not cross-checked.
+
+**Remaining (stage 2): work items 2 and 3** at N = 2304 -- the long-vector representation in
+all four ports, KATs, PEM rows, the `--level 128` row, and the hcred / hpks-ring decision.
+Open design questions to settle first: commitment width above 256 bits (the Stern hash yields
+256 bits, so c0/c1/c2 cannot stay N bits wide; at 256-bit commitments a 219-round signature is
+~145 KB rather than the ~380 KB estimated above), the permutation representation (C's `uint8_t`
+perm tables cap N at 256), and whether hpke-stern's demo KEM gets the row too.
+
+**Stage 2 done (v16.0.0): work items 2 and 3.**  N = 2304 ships as `--level 128` for
+hpks-stern and hpke-stern in all four CLIs, on a separate long-form code path per port
+(SPEC.md §11.1): 256-bit commitments, H's rows from HFSCX-256 in counter mode under
+H_6(seed), the permutation keyed by H_5(pi_seed), a 256-bit message.  hpks-ring rings and
+HCRED issuer keys take N = 2304 keys.  `KAT/operation_replay.json` pins keygen, signing and
+ring signing at N = 2304 in all four; `CliTest/test_stern_128.sh` runs the 4x4 matrices.
+A 219-round signature is 147,249 bytes.
+
+**Resolution.**  The three questions were decided before stage 2: N = 2304 (9 bits over
+BJMM's 2144 crossing, for model error), 256-bit commitments (signatures 147 KB rather than
+380 KB; binding then costs a 2^128 collision, at the target), and the 128-bit size for
+hpks-ring, HCRED and the hpke-stern demo KEM too.  HCRED gets it on the issuer's side only:
+its own key is a Ring-LWR and syndrome-decoding pair proved in ZKBoo, with no 2304-wide
+form, so `genpkey --algo hcred --level 128` is refused with a note naming the issuer key.
+The permutation representation question went away with the separate path (uint16_t tables
+in C).  The default stays N = 256, so nothing existing changes and there is no MIGRATING.md
+section.
+
+Status: **DONE v16.0.0** — Stern-F's 128-bit set, N = 2304, in all four ports (`--level 128`).
+
+---

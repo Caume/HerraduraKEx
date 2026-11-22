@@ -1744,6 +1744,8 @@ def gen_operation_replay() -> dict:
         "consumed": st.pos,
     })
 
+    rows.extend(_gen_stern_long_rows())
+
     return {
         "description": ("TODO #297: fixed-stream replay of whole randomised "
                         "OPERATIONS, one level above KAT/sampler_replay.json's "
@@ -1758,6 +1760,98 @@ def gen_operation_replay() -> dict:
                  "granularities; see consumed_note on that row."),
         "operations": rows,
     }
+
+
+def _gen_stern_long_rows() -> list:
+    """TODO #382 stage 2: the Stern-F long form at N = 2304 -- keygen, signing
+    and ring signing -- the short form's three Stern rows at the 128-bit set.
+    Every value but the 256-bit message, commitments and challenges is an
+    N-bit string; the syndrome is hex at N bits too (bit i = row i), the form
+    the long form hashes and the PEM carries, so no port transposes it."""
+    n = suite.STERN_LONG_N
+    t, nb = n // 16, n // 8
+    out = []
+
+    stream = det_bytes(b"op-sternl-keygen", 4 * nb)
+    with _replay(stream) as st:
+        seed, e_int, syn = suite.stern_l_keygen(n)
+    out.append({
+        "name": "stern_l_keygen",
+        "calls": {"c": "stern_l_keygen", "go": "SternLKeygen",
+                  "python": "stern_l_keygen", "java": "SternL.keygen"},
+        "params": {"n": n, "t": t, "n_rows": n // 2},
+        "statement": {},
+        "stream": stream.hex(),
+        "expect": {"seed": _nbit_hex(seed, n), "e": _nbit_hex(e_int, n),
+                   "syndrome": _nbit_hex(syn, n)},
+        "consumed": st.pos,
+    })
+
+    msg = BitArray(256, int.from_bytes(det_bytes(b"op-sternl-msg", 32), "big"))
+    rounds = 6
+    # Exactly what signing draws (r and pi_seed per round, no rejection), so a
+    # port that reads one byte more runs off the end.
+    stream = det_bytes(b"op-sternl-sign", rounds * 2 * nb)
+    with _replay(stream) as st:
+        commits, challenges, responses = suite.hpks_stern_l_sign(msg, e_int, seed, n, rounds)
+    assert set(challenges) == {0, 1, 2}, \
+        ("operation replay: the long-form sign stream must produce all three "
+         "challenge values; got %r" % (sorted(set(challenges)),))
+    assert suite.hpks_stern_l_verify(msg, (commits, challenges, responses), seed, syn, n), \
+        "operation replay: the pinned long-form signature does not verify"
+    out.append({
+        "name": "hpks_stern_l_sign",
+        "calls": {"c": "hpks_stern_l_sign", "go": "HpksSternLSign",
+                  "python": "hpks_stern_l_sign", "java": "SternL.sign"},
+        "params": {"n": n, "t": t, "n_rows": n // 2, "rounds": rounds},
+        "statement": {"msg": _nbit_hex(msg, 256), "e": _nbit_hex(e_int, n),
+                      "seed": _nbit_hex(seed, n), "syndrome": _nbit_hex(syn, n)},
+        "stream": stream.hex(),
+        "expect": {"commits": [[_nbit_hex(c, 256) for c in tr] for tr in commits],
+                   "challenges": list(challenges),
+                   "responses": [[_nbit_hex(a, n), _nbit_hex(b, n)] for a, b in responses]},
+        "consumed": st.pos,
+    })
+
+    ring_k, ring_rounds, ring_j = 2, 4, 1
+    ring_keys, ring_e = [], None
+    for idx in range(ring_k):
+        with _replay(det_bytes(b"op-sternl-ring-key-%d" % idx, 4 * nb)):
+            rs, re_int, rsyn = suite.stern_l_keygen(n)
+        ring_keys.append((rs, rsyn))
+        if idx == ring_j:
+            ring_e = re_int
+    ring_msg = BitArray(256, int.from_bytes(det_bytes(b"op-sternl-ring-msg", 32), "big"))
+    stream = det_bytes(b"op-sternl-ring-sign", 32 * nb)
+    with _replay(stream) as st:
+        rc, rch, rresp = suite.hpks_stern_l_ring_sign(ring_msg, ring_e, ring_j, ring_keys,
+                                                     n, ring_rounds)
+    sim_b = [rch[i][r] for i in range(ring_k) for r in range(ring_rounds) if i != ring_j]
+    assert 0 in sim_b and (1 in sim_b or 2 in sim_b), \
+        ("operation replay: the long-form ring stream must make the SIMULATED "
+         "member draw b = 0 and a b in {1, 2}; got %r" % (sorted(set(sim_b)),))
+    assert suite.hpks_stern_l_ring_verify(ring_msg, (rc, rch, rresp), ring_keys, n), \
+        "operation replay: the pinned long-form ring signature does not verify"
+    out.append({
+        "name": "hpks_stern_l_ring_sign",
+        "calls": {"c": "stern_l_ring_sign", "go": "HpksSternLRingSign",
+                  "python": "hpks_stern_l_ring_sign", "java": "SternL.ringSign"},
+        "params": {"n": n, "t": t, "n_rows": n // 2, "rounds": ring_rounds,
+                   "k": ring_k, "j": ring_j},
+        "statement": {"msg": _nbit_hex(ring_msg, 256), "e": _nbit_hex(ring_e, n),
+                      "seeds": [_nbit_hex(sd, n) for sd, _ in ring_keys],
+                      "syndromes": [_nbit_hex(sy, n) for _, sy in ring_keys]},
+        "stream": stream.hex(),
+        "expect": {
+            "commits": [[[_nbit_hex(c, 256) for c in rc[i][r]] for r in range(ring_rounds)]
+                        for i in range(ring_k)],
+            "challenges": [[rch[i][r] for r in range(ring_rounds)] for i in range(ring_k)],
+            "responses": [[[_nbit_hex(a, n), _nbit_hex(b, n)] for a, b in
+                           (rresp[i][r] for r in range(ring_rounds))] for i in range(ring_k)],
+        },
+        "consumed": st.pos,
+    })
+    return out
 
 
 def _c_bytes2(name: str, rows: list, per_line: int = 16) -> str:
@@ -2099,6 +2193,54 @@ def emit_operation_header(vec: dict) -> str:
                         for v in (_vec_unhex(x["aux_D"]) if x["aux_D"] else [0] * nd_)]),
           ""]
     emitted.add("hcred_prove")
+
+    # TODO #382 stage 2: the long form's three rows.  Its syndrome is already
+    # an N-bit big-endian string in C too, so nothing is transposed here.
+    r = rows["stern_l_keygen"]
+    L += ["/* Stern-F long form keygen (N = 2304): seed, then the error. */",
+          f"#define OPR_SLK_N         {r['params']['n']}",
+          f"#define OPR_SLK_CONSUMED  {r['consumed']}",
+          _c_bytes("opr_slk_stream", hx(r["stream"])),
+          _c_bytes("opr_slk_seed", hx(r["expect"]["seed"])),
+          _c_bytes("opr_slk_e", hx(r["expect"]["e"])),
+          _c_bytes("opr_slk_syndrome", hx(r["expect"]["syndrome"])), ""]
+    emitted.add("stern_l_keygen")
+
+    r = rows["hpks_stern_l_sign"]
+    e = r["expect"]
+    L += ["/* Stern-F long form signing: c is rounds x 96 bytes, resp rounds x 2N/8. */",
+          f"#define OPR_SLS_N         {r['params']['n']}",
+          f"#define OPR_SLS_ROUNDS    {r['params']['rounds']}",
+          f"#define OPR_SLS_CONSUMED  {r['consumed']}",
+          _c_bytes("opr_sls_stream", hx(r["stream"])),
+          _c_bytes("opr_sls_msg", hx(r["statement"]["msg"])),
+          _c_bytes("opr_sls_e", hx(r["statement"]["e"])),
+          _c_bytes("opr_sls_seed", hx(r["statement"]["seed"])),
+          _c_bytes("opr_sls_c", b"".join(hx(c) for tr in e["commits"] for c in tr)),
+          _c_int_list("opr_sls_challenge", e["challenges"]),
+          _c_bytes("opr_sls_resp", b"".join(hx(v) for pr in e["responses"] for v in pr)), ""]
+    emitted.add("hpks_stern_l_sign")
+
+    r = rows["hpks_stern_l_ring_sign"]
+    e, st = r["expect"], r["statement"]
+    k, rr = r["params"]["k"], r["params"]["rounds"]
+    flat = [(i, j) for i in range(k) for j in range(rr)]
+    L += ["/* Stern-F long form ring signing, member-major as SternLRingSig. */",
+          f"#define OPR_SLR_N         {r['params']['n']}",
+          f"#define OPR_SLR_K         {k}",
+          f"#define OPR_SLR_ROUNDS    {rr}",
+          f"#define OPR_SLR_J         {r['params']['j']}",
+          f"#define OPR_SLR_CONSUMED  {r['consumed']}",
+          _c_bytes("opr_slr_stream", hx(r["stream"])),
+          _c_bytes("opr_slr_msg", hx(st["msg"])),
+          _c_bytes("opr_slr_e", hx(st["e"])),
+          _c_bytes("opr_slr_seeds", b"".join(hx(x) for x in st["seeds"])),
+          _c_bytes("opr_slr_syns", b"".join(hx(x) for x in st["syndromes"])),
+          _c_bytes("opr_slr_c", b"".join(hx(c) for i, j in flat for c in e["commits"][i][j])),
+          _c_int_list("opr_slr_challenge", [e["challenges"][i][j] for i, j in flat]),
+          _c_bytes("opr_slr_resp", b"".join(hx(v) for i, j in flat for v in e["responses"][i][j])),
+          ""]
+    emitted.add("hpks_stern_l_ring_sign")
 
     # Exhaustive in the direction that decays: a row added to the JSON with no
     # block here would leave the C consumer silently short of the other three,
