@@ -842,12 +842,12 @@ static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
                            const size_t *vlens, const size_t *ew,
                            const unsigned char *lz);             /* TODO #372, #373 */
 
-/* A PEM that will not unwrap.  A base64 refusal is named in the text all four
- * CLIs share (TODO #398); any other failure keeps the plain message. */
+/* A PEM that will not unwrap, named in the text all four CLIs share: the
+ * framing (TODO #400) or the base64 body (TODO #398). */
 __attribute__((noreturn))
 static void die_pem_parse(const char *prefix, const char *path, int rc)
 {
-    const char *why = b64_strerror(rc);
+    const char *why = pem_strerror(rc);
     if (why) dievf("%scannot parse PEM from: %s: %s", prefix, path, why);
     dievf("%scannot parse PEM from: %s", prefix, path);
 }

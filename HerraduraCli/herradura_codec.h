@@ -428,50 +428,113 @@ static int pem_wrap(const char *label, const uint8_t *der, size_t der_len,
     return 0;
 }
 
-/* Parse a PEM block.
+/* pem_unwrap's framing refusals (TODO #400).  One framing for every reader:
+ *   - only whitespace (space, tab, CR, LF) before the BEGIN line and after the
+ *     END line, so a file holds exactly one block and nothing else;
+ *   - the BEGIN line is `-----BEGIN <label>-----`, then only spaces or tabs;
+ *     the label is 1 to PEM_LABEL_MAX printable ASCII characters (0x20-0x7E);
+ *   - the END line starts a line and is `-----END <the same label>-----`;
+ *   - the body, between them, decodes under b64_decode's grammar (TODO #398)
+ *     to at least one byte.
+ * Anything else is refused by name, in the same words in all four CLIs. */
+#define PEM_ERR_NO_BEGIN    (-10)
+#define PEM_ERR_PREAMBLE    (-11)
+#define PEM_ERR_BEGIN_LINE  (-12)
+#define PEM_ERR_NO_END      (-13)
+#define PEM_ERR_END_LINE    (-14)
+#define PEM_ERR_END_LABEL   (-15)
+#define PEM_ERR_TRAILER     (-16)
+#define PEM_ERR_EMPTY       (-17)
+
+/* PEM_ERR_END_LABEL's text names both labels; pem_unwrap fills it. */
+static char _pem_end_label_msg[2 * PEM_LABEL_MAX + 64];
+
+/* The shared text for a pem_unwrap / b64_decode return code, or NULL when the
+ * code names nothing (B64_ERR_CAP, a full buffer). */
+static const char *pem_strerror(int rc)
+{
+    switch (rc) {
+    case PEM_ERR_NO_BEGIN:   return "PEM: missing BEGIN marker";
+    case PEM_ERR_PREAMBLE:   return "PEM: text before the BEGIN line";
+    case PEM_ERR_BEGIN_LINE: return "PEM: malformed BEGIN line";
+    case PEM_ERR_NO_END:     return "PEM: missing END marker";
+    case PEM_ERR_END_LINE:   return "PEM: malformed END line";
+    case PEM_ERR_END_LABEL:  return _pem_end_label_msg;
+    case PEM_ERR_TRAILER:    return "PEM: text after the END line";
+    case PEM_ERR_EMPTY:      return "PEM: empty body";
+    default:                 return b64_strerror(rc);
+    }
+}
+
+static int _pem_ws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+
+/* Parse the one PEM block that is the whole of pem[0..pem_len-1].
  * label_out: caller-allocated buffer of at least PEM_LABEL_MAX+1 bytes; receives
- *   NUL-terminated label.  Returns -1 if the label exceeds PEM_LABEL_MAX characters.
+ *   the NUL-terminated label.
  * der_out / der_cap: caller-provided buffer and its capacity.
  * *der_len: receives the decoded byte count on success.
- * Returns 0 on success, -1 on malformed PEM, oversized label, or buffer too small
- * (der_cap exceeded -- nothing beyond der_out[0..der_cap-1] is ever written), or
- * a B64_ERR_* code for a body outside the base64 grammar (b64_strerror names it). */
+ * Returns 0 on success, B64_ERR_CAP (-1) if der_cap is exceeded (nothing beyond
+ * der_out[0..der_cap-1] is ever written), or a PEM_ERR_* / B64_ERR_* code for
+ * input outside the framing or the base64 grammar (pem_strerror names it). */
 static int pem_unwrap(const char *pem, size_t pem_len,
                       char *label_out, uint8_t *der_out, size_t der_cap,
                       size_t *der_len)
 {
-    const char *p = pem, *end = pem + pem_len;
+    const char *p = pem, *end = pem + pem_len, *s;
 
-    /* Locate "-----BEGIN " */
-    while (p + 11 <= end && memcmp(p, "-----BEGIN ", 11) != 0) p++;
-    if (p + 11 > end) return -1;
+    while (p < end && _pem_ws(*p)) p++;
+    if ((size_t)(end - p) < 11 || memcmp(p, "-----BEGIN ", 11) != 0) {
+        for (s = p; s + 11 <= end; s++)
+            if (memcmp(s, "-----BEGIN ", 11) == 0) return PEM_ERR_PREAMBLE;
+        return PEM_ERR_NO_BEGIN;
+    }
     p += 11;
 
-    /* Extract label: scan for "-----" boundary (labels may contain single hyphens) */
+    /* The label runs to the first "-----" on the BEGIN line. */
     const char *ls = p;
-    while (p + 5 <= end && memcmp(p, "-----", 5) != 0) p++;
-    if (p + 5 > end) return -1;
-    if (label_out) {
-        size_t ll = (size_t)(p - ls);
-        if (ll > PEM_LABEL_MAX) return -1;
-        memcpy(label_out, ls, ll);
-        label_out[ll] = '\0';
+    while (p < end && *p != '\r' && *p != '\n'
+           && !((size_t)(end - p) >= 5 && memcmp(p, "-----", 5) == 0)) {
+        if (*p < 0x20 || *p > 0x7E) return PEM_ERR_BEGIN_LINE;
+        p++;
     }
+    size_t ll = (size_t)(p - ls);
+    if ((size_t)(end - p) < 5 || memcmp(p, "-----", 5) != 0
+        || ll == 0 || ll > PEM_LABEL_MAX)
+        return PEM_ERR_BEGIN_LINE;
     p += 5;
-
-    /* Skip header line terminator */
-    while (p < end && (*p == '\r' || *p == '\n')) p++;
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+    if (p >= end || (*p != '\r' && *p != '\n')) return PEM_ERR_BEGIN_LINE;
+    if (label_out) { memcpy(label_out, ls, ll); label_out[ll] = '\0'; }
     const char *body = p;
 
-    /* Locate "-----END " */
+    /* The END line: the first "-----END " in the file, at the start of a line. */
     const char *foot = NULL;
-    const char *s;
-    for (s = body; s + 9 <= end; s++) {
+    for (s = body; s + 9 <= end; s++)
         if (memcmp(s, "-----END ", 9) == 0) { foot = s; break; }
+    if (!foot) return PEM_ERR_NO_END;
+    if (foot[-1] != '\n' && foot[-1] != '\r') return PEM_ERR_END_LINE;
+    p = foot + 9;
+    const char *es = p;
+    while (p < end && *p != '\r' && *p != '\n'
+           && !((size_t)(end - p) >= 5 && memcmp(p, "-----", 5) == 0)) p++;
+    if ((size_t)(end - p) < 5 || memcmp(p, "-----", 5) != 0) return PEM_ERR_END_LINE;
+    size_t el = (size_t)(p - es);
+    if (el != ll || memcmp(es, ls, ll) != 0) {
+        snprintf(_pem_end_label_msg, sizeof(_pem_end_label_msg),
+                 "PEM: END label '%.*s' does not match BEGIN label '%.*s'",
+                 (int)(el > PEM_LABEL_MAX ? PEM_LABEL_MAX : el), es, (int)ll, ls);
+        return PEM_ERR_END_LABEL;
     }
-    if (!foot) return -1;
+    p += 5;
+    while (p < end && _pem_ws(*p)) p++;
+    if (p != end) return PEM_ERR_TRAILER;
 
-    return b64_decode(body, (size_t)(foot - body), der_out, der_cap, der_len);
+    size_t n = 0;
+    int rc = b64_decode(body, (size_t)(foot - body), der_out, der_cap, &n);
+    if (rc != 0) return rc;
+    if (n == 0) return PEM_ERR_EMPTY;
+    if (der_len) *der_len = n;
+    return 0;
 }
 
 /* Read a PEM file from path.
@@ -715,7 +778,32 @@ static int herradura_codec_selftest(void)
         char lout[PEM_LABEL_MAX + 1];
         uint8_t dout[32];
         size_t dlen;
-        assert(pem_unwrap(bad_pem, (size_t)bp, lout, dout, sizeof(dout), &dlen) == -1);
+        assert(pem_unwrap(bad_pem, (size_t)bp, lout, dout, sizeof(dout), &dlen) == PEM_ERR_BEGIN_LINE);
+    }
+
+    /* ── 7b. the framing (TODO #400): accept-controls, then refusals ───────── */
+    {
+        static const struct { const char *pem; int rc; } fc[] = {
+            { "-----BEGIN L-----\nAAEC\n-----END L-----\n",            0 },
+            { "\n  -----BEGIN L----- \t\r\nAAEC\r\n-----END L-----",     0 },
+            { "x\n-----BEGIN L-----\nAAEC\n-----END L-----\n",         PEM_ERR_PREAMBLE },
+            { "AAEC\n-----END L-----\n",                               PEM_ERR_NO_BEGIN },
+            { "-----BEGIN L----- x\nAAEC\n-----END L-----\n",          PEM_ERR_BEGIN_LINE },
+            { "-----BEGIN -----\nAAEC\n-----END -----\n",              PEM_ERR_BEGIN_LINE },
+            { "-----BEGIN L-----\nAAEC\n",                             PEM_ERR_NO_END },
+            { "-----BEGIN L-----\nAAEC\n -----END L-----\n",           PEM_ERR_END_LINE },
+            { "-----BEGIN L-----\nAAEC\n-----END M-----\n",            PEM_ERR_END_LABEL },
+            { "-----BEGIN L-----\nAAEC\n-----END L-----\nx\n",         PEM_ERR_TRAILER },
+            { "-----BEGIN L-----\n\n-----END L-----\n",                PEM_ERR_EMPTY },
+        };
+        char lout[PEM_LABEL_MAX + 1];
+        uint8_t dout[8];
+        size_t dlen, k;
+        for (k = 0; k < sizeof(fc) / sizeof(fc[0]); k++)
+            assert(pem_unwrap(fc[k].pem, strlen(fc[k].pem), lout, dout, sizeof(dout), &dlen) == fc[k].rc);
+        /* The mismatch case above filled the label text; nothing since did. */
+        assert(strcmp(pem_strerror(PEM_ERR_END_LABEL),
+                      "PEM: END label 'M' does not match BEGIN label 'L'") == 0);
     }
 
     return 1;

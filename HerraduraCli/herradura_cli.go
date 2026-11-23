@@ -466,10 +466,10 @@ func decryptPEMFile(path, passphrase string) (string, error) {
 		return "", err
 	}
 	label, body, err := PemUnwrap(string(data))
-	if err != nil && strings.HasPrefix(err.Error(), "PEM body is not valid base64: ") {
-		return "", fmt.Errorf("cannot parse PEM from: %s: %v", path, err) // TODO #398
+	if err != nil {
+		return "", fmt.Errorf("cannot parse PEM from: %s: %v", path, err) // TODO #398, #400
 	}
-	if err != nil || len(body) == 0 {
+	if len(body) == 0 {
 		return "", fmt.Errorf("cannot parse PEM from: %s", path)
 	}
 	if label != lblEncPriv {

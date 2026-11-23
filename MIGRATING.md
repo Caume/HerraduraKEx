@@ -2452,3 +2452,37 @@ written for missing padding and non-zero bits; check the result of anything stra
 python3 -c 'import base64,sys; L=[l for l in open(sys.argv[1]).read().splitlines() if l.strip()]; b="".join(L[1:-1]).rstrip("="); b+="="*(-len(b)%4); print(L[0]); print(base64.encodebytes(base64.b64decode(b)).decode().strip()); print(L[-1])' old.pem > new.pem
 ```
 
+---
+
+## 51. A PEM file holds one block and nothing else (v18.0.0)
+
+**Who is affected:** nobody whose files came from a CLI unchanged.  What now fails, in
+every subcommand that reads a PEM:
+
+- text before the `-----BEGIN` line or after the `-----END` line, such as a comment or a
+  pasted note (C, Go and Java read these);
+- two or more blocks in one file, e.g. `cat a.pem b.pem > both.pem` (C, Go and Java read
+  the first block);
+- an END line naming a different label from its BEGIN line (all four read it);
+- an indented END line, a BEGIN or END line missing its closing `-----`, text after the
+  BEGIN marker on its line, or a label longer than 79 characters;
+- a block with no body.
+
+Blank lines and spaces around the block, and spaces or tabs after the BEGIN marker, still
+read.
+
+**What changed (TODO #400).**  The CLIs found the markers by searching the file, so they
+disagreed with Python, and with each other, on which files were PEM.  Each now runs one
+scan and names the refusal:
+
+```
+cannot parse PEM from: key.pem: PEM: text after the END line
+pkey: PEM: text before the BEGIN line
+error: PEM: END label 'HERRADURA HPKS PRIVATE KEY' does not match BEGIN label 'HERRADURA HKEX-GF PRIVATE KEY'
+```
+
+**What to do.**  Nothing for files a CLI wrote.  Put each block in its own file, keeping
+only the lines from `-----BEGIN` to `-----END` inclusive, e.g.
+`sed -n '/^-----BEGIN /,/^-----END /p' old.pem > new.pem` for a file with text around a
+single block.  A mismatched END label is a damaged file; regenerate it.
+

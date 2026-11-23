@@ -2,6 +2,38 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [18.0.0] - 2026-11-23
+
+**MAJOR: one PEM framing for every reader (TODO #400, MIGRATING.md section 51).** C, Go
+and Java searched a file for the BEGIN and END markers. So text before or after the block,
+a second block (only the first was read), and an END line naming another label all loaded
+without complaint. Python refused the first three under one vague message, and also
+accepted a mismatched END label. Every CLI now applies one framing and names each refusal.
+No file a CLI wrote is affected: every `.pem` the repo tracks is one block with nothing
+around it.
+
+### TODO #400 — the framing
+
+- **Accepted:** whitespace (space, tab, CR, LF) before the BEGIN line and after the END
+  line. The BEGIN line is `-----BEGIN <label>-----`, optionally followed by spaces or
+  tabs, and the label is 1 to 79 printable ASCII characters. The END line starts a line
+  and repeats the label. The body is #398's base64 and holds at least one byte.
+- **Refused, in the same words in all four:** `PEM: missing BEGIN marker` / `text before
+  the BEGIN line` / `malformed BEGIN line` / `missing END marker` / `malformed END line`
+  / `END label 'X' does not match BEGIN label 'Y'` / `text after the END line` / `empty
+  body`. C prints the reason after `cannot parse PEM from: PATH: `, as does `pkey
+  --decrypt` in every CLI.
+- **What each CLI accepted before:** C, Go and Java, text around the block, two blocks,
+  a mismatched END label, an indented END line and one missing its closing dashes;
+  Python, a mismatched END label. Python refused a trailing space after the BEGIN marker,
+  which the other three read. It reads now, as trailing whitespace does on body lines.
+- `CliTest/test_malformed_pem_matrix.sh` gains 100 cells. Five accepted layouts must
+  decode to the same bytes, and seventeen refusals are checked by name with nothing
+  written. The cells also cover the 79/80-character label boundary and the `--decrypt`
+  text. 69 of them fail on the v17.0.0 builds, in all four CLIs.
+  `test_passphrase_envelope.sh`'s `--decrypt` texts for a file that is not PEM now end
+  with the reason.
+
 ## [17.0.0] - 2026-11-23
 
 **MAJOR: one base64 grammar for every PEM reader (TODO #398, MIGRATING.md section 50).**

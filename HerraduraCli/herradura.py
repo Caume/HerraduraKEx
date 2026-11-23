@@ -1769,11 +1769,9 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str, path: str = '-') -> str:
     try:
         label, der = pem_unwrap(enc_pem_text)
     except ValueError as e:
-        # TODO #398: a base64 refusal keeps its name, as in the other three.
-        why = str(e)
-        if why.startswith("PEM body is not valid base64: "):
-            raise ValueError(f"cannot parse PEM from: {path}: {why}") from None
-        raise ValueError(f"cannot parse PEM from: {path}") from None
+        # TODO #398, #400: every framing or base64 refusal keeps its name, as in
+        # the other three.
+        raise ValueError(f"cannot parse PEM from: {path}: {e}") from None
     if not der:
         raise ValueError(f"cannot parse PEM from: {path}")
     if label != _LABEL_ENC_PRIV:

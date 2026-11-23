@@ -2750,11 +2750,8 @@ public final class HerraduraCli {
         try {
             b = Codec.pemUnwrap(readString(path));
         } catch (IllegalArgumentException e) {
-            String why = e.getMessage();
-            if (why != null && why.startsWith(Codec.B64_PREFIX)) {      // TODO #398
-                throw new CliError("pkey --decrypt: cannot parse PEM from: " + path + ": " + why);
-            }
-            throw new CliError("pkey --decrypt: cannot parse PEM from: " + path);
+            // TODO #398, #400: every framing or base64 refusal keeps its name.
+            throw new CliError("pkey --decrypt: cannot parse PEM from: " + path + ": " + e.getMessage());
         }
         if (b.der.length == 0) {
             throw new CliError("pkey --decrypt: cannot parse PEM from: " + path);

@@ -177,24 +177,64 @@ public final class Codec {
         public PemBlock(String label, byte[] der) { this.label = label; this.der = der; }
     }
 
-    /** Parses a single PEM block, returning its label and DER bytes. */
-    public static PemBlock pemUnwrap(String pem) {
-        final String beginMark = "-----BEGIN ";
-        int bi = pem.indexOf(beginMark);
-        if (bi < 0) throw new IllegalArgumentException("PEM: missing BEGIN marker");
-        String rest = pem.substring(bi + beginMark.length());
+    /** The longest PEM label any reader accepts (TODO #400). */
+    public static final int PEM_LABEL_MAX = 79;
 
-        int ei = rest.indexOf("-----");
-        if (ei < 0) throw new IllegalArgumentException("PEM: malformed BEGIN line");
-        String label = rest.substring(0, ei);
-        rest = rest.substring(ei + 5);
-        int i = 0;
-        while (i < rest.length() && (rest.charAt(i) == '\r' || rest.charAt(i) == '\n')) i++;
-        rest = rest.substring(i);
+    private static boolean pemWs(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 
-        int endIdx = rest.indexOf("-----END ");
-        if (endIdx < 0) throw new IllegalArgumentException("PEM: missing END marker");
-        return new PemBlock(label, b64Decode(rest.substring(0, endIdx)));
+    private static IllegalArgumentException pemErr(String m) { return new IllegalArgumentException(m); }
+
+    /**
+     * Parses the one PEM block that is the whole of pem, returning its label and
+     * DER bytes.  One framing for every reader (TODO #400), the same scan in C, Go
+     * and Python: only whitespace (space, tab, CR, LF) before the BEGIN line and
+     * after the END line, so a file holds exactly one block; the BEGIN line is
+     * {@code -----BEGIN <label>-----}, then only spaces or tabs, the label 1 to 79
+     * printable ASCII characters; the END line starts a line and repeats the label; the body
+     * decodes under b64Decode's grammar (TODO #398) to at least one byte.
+     */
+    public static PemBlock pemUnwrap(String t) {
+        int end = t.length(), p = 0;
+        while (p < end && pemWs(t.charAt(p))) p++;
+        if (!t.startsWith("-----BEGIN ", p)) {
+            if (t.indexOf("-----BEGIN ", p) >= 0) throw pemErr("PEM: text before the BEGIN line");
+            throw pemErr("PEM: missing BEGIN marker");
+        }
+        p += 11;
+        int ls = p;
+        while (p < end && t.charAt(p) != '\r' && t.charAt(p) != '\n' && !t.startsWith("-----", p)) {
+            char c = t.charAt(p);
+            if (c < 0x20 || c > 0x7E) throw pemErr("PEM: malformed BEGIN line");
+            p++;
+        }
+        String label = t.substring(ls, p);
+        if (!t.startsWith("-----", p) || label.isEmpty() || label.length() > PEM_LABEL_MAX) {
+            throw pemErr("PEM: malformed BEGIN line");
+        }
+        p += 5;
+        while (p < end && (t.charAt(p) == ' ' || t.charAt(p) == '\t')) p++;
+        if (p >= end || (t.charAt(p) != '\r' && t.charAt(p) != '\n')) {
+            throw pemErr("PEM: malformed BEGIN line");
+        }
+        int body = p;
+        int foot = t.indexOf("-----END ", body);
+        if (foot < 0) throw pemErr("PEM: missing END marker");
+        if (t.charAt(foot - 1) != '\r' && t.charAt(foot - 1) != '\n') throw pemErr("PEM: malformed END line");
+        p = foot + 9;
+        int es = p;
+        while (p < end && t.charAt(p) != '\r' && t.charAt(p) != '\n' && !t.startsWith("-----", p)) p++;
+        if (!t.startsWith("-----", p)) throw pemErr("PEM: malformed END line");
+        String el = t.substring(es, p);
+        if (!el.equals(label)) {
+            if (el.length() > PEM_LABEL_MAX) el = el.substring(0, PEM_LABEL_MAX);
+            throw pemErr("PEM: END label '" + el + "' does not match BEGIN label '" + label + "'");
+        }
+        p += 5;
+        while (p < end && pemWs(t.charAt(p))) p++;
+        if (p != end) throw pemErr("PEM: text after the END line");
+        byte[] der = b64Decode(t.substring(body, foot));
+        if (der.length == 0) throw pemErr("PEM: empty body");
+        return new PemBlock(label, der);
     }
 
     // -----------------------------------------------------------------
