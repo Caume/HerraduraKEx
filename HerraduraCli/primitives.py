@@ -46,6 +46,7 @@ HDrbg                  = _s.HDrbg
 drbg_seed              = _s.drbg_seed
 drbg_generate          = _s.drbg_generate
 drbg_reseed            = _s.drbg_reseed
+DRBG_MAX_BLOCKS        = _s.DRBG_MAX_BLOCKS
 _HFSCX256_IV_BYTES     = _s._HFSCX256_IV_BYTES
 _RNL_KDF_DC_256        = _s._RNL_KDF_DC_256
 

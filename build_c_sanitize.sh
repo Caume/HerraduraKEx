@@ -17,7 +17,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-VERSION="1.0.0"
+VERSION="$(sed -nE '1s/.*\(v([0-9]+\.[0-9]+\.[0-9]+)\).*/\1/p' README.md)"  # README title is the one version source
+: "${VERSION:=unknown}"
 SUITE_SRC="Herradura cryptographic suite.c"
 SUITE_BIN="Herradura cryptographic suite_asan"
 TESTS_SRC="CryptosuiteTests/Herradura_tests.c"

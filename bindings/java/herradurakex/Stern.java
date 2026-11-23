@@ -15,9 +15,11 @@ import java.util.List;
  * Byte-for-byte port of "Herradura cryptographic suite.py"'s
  * stern_f_keygen / hpks_stern_f_sign / hpks_stern_f_verify /
  * hpke_stern_f_encap[_with_e] / hpke_stern_f_decap and its
- * qcmdpc_keygen / qcmdpc_encap / qcmdpc_bgf_decode / qcmdpc_decap_bgf,
- * fixed at n=256 (KEYBITS), matching this binding's existing scope
- * ({@link Herradura}, {@link HerraduraNl} are likewise fixed at 256 bits).
+ * qcmdpc_keygen / qcmdpc_encap / qcmdpc_bgf_decode / qcmdpc_decap_bgf.
+ * Stern-F runs at any GF width n (32, 64, 128, 256) since TODO #384: every
+ * function that depends on n has an n-taking form, and the n-less form is the
+ * n = 256 wrapper the fixed-width callers (SelfTest, KatVerify, Demo) use.
+ * The QC-MDPC KEM has one parameter set and no width.
  *
  * Demo parameters (SecurityProofs-5.md Sec.11.8.4): N=256, t=16,
  * rounds=32 by default (~19-bit Fiat-Shamir soundness, illustration
@@ -73,15 +75,18 @@ public final class Stern {
     /** Uniform weight-t bit vector on n=256 positions via 4-byte rejection
      * sampling (eliminates modular bias), matching Python's
      * {@code _csprng_weight_t}. */
-    static BigInteger csprngWeightT(int t, SecureRandom rng) {
+    static BigInteger csprngWeightT(int t, SecureRandom rng) { return csprngWeightT(N, t, rng); }
+
+    /** The same on n positions (TODO #384). */
+    static BigInteger csprngWeightT(int n, int t, SecureRandom rng) {
         LinkedHashSet<Integer> chosen = new LinkedHashSet<>();
-        long threshold = (1L << 32) - ((1L << 32) % N);
+        long threshold = (1L << 32) - ((1L << 32) % n);
         byte[] buf = new byte[4];
         while (chosen.size() < t) {
             rng.nextBytes(buf);
             long v = ((long) (buf[0] & 0xff) << 24) | ((buf[1] & 0xff) << 16)
                     | ((buf[2] & 0xff) << 8) | (buf[3] & 0xff);
-            if (v < threshold) chosen.add((int) (v % N));
+            if (v < threshold) chosen.add((int) (v % n));
         }
         BigInteger result = BigInteger.ZERO;
         for (int p : chosen) result = result.setBit(p);
@@ -94,33 +99,49 @@ public final class Stern {
      * each item went through an NL-FSCX v1 chain as v1's B, where a zero item
      * made the round affine-nilpotent (SecurityProofs-10.md §11.75).  Matches
      * Python's {@code _stern_hash}. */
-    static BigInteger sternHash(int ds, BigInteger... items) {
+    static BigInteger sternHash(int ds, BigInteger... items) { return sternHashN(N, ds, items); }
+
+    /** The chain hash at width n: each item as n bits, the digest's high n
+     * bits out (Python's {@code _stern_hash(n, ...)}, TODO #384).  An item is
+     * masked to n bits first, as Python's is. */
+    static BigInteger sternHashN(int n, int ds, BigInteger... items) {
         // Stern's syndromes and error vectors are INTEGER objects by the
         // protocol's own definition — as they are in Go (*big.Int) and Python
         // (int) — so this layer keeps its BigInteger surface and crosses at the
         // named boundary for the bit-string work (TODO #314 pass 5).
-        byte[] buf = new byte[1 + items.length * (N / 8)];
+        BigInteger mask = BigInteger.ONE.shiftLeft(n).subtract(BigInteger.ONE);
+        byte[] buf = new byte[1 + items.length * (n / 8)];
         buf[0] = (byte) ds;
         for (int i = 0; i < items.length; i++)
-            System.arraycopy(BitArray.fromBigInteger(items[i], N).toBytes(), 0,
-                             buf, 1 + i * (N / 8), N / 8);
-        return new BigInteger(1, Hfscx256.hashDs(HerraduraNl.STERN_DS_HASH, buf));
+            System.arraycopy(BitArray.fromBigInteger(items[i].and(mask), n).toBytes(), 0,
+                             buf, 1 + i * (n / 8), n / 8);
+        return new BigInteger(1, Hfscx256.hashDs(HerraduraNl.STERN_DS_HASH, buf)).shiftRight(256 - n);
     }
 
     /** Row `row` of the public parity-check matrix H, via NL-FSCX v1 PRF
      * finalized with HFSCX-256. Matches Python's {@code _stern_matrix_row}. */
-    static BigInteger sternMatrixRow(BigInteger seedInt, int row) {
-        BitArray seed = BitArray.fromBigInteger(seedInt, N);
-        BitArray a0 = seed.xorUint(row).rotLeft(N / 8);
-        BitArray raw = Hfscx256.nlFscxRevolveV1(a0, seed, N / 4);
-        return new BigInteger(1, Hfscx256.hash(raw.toBytes()));
+    static BigInteger sternMatrixRow(BigInteger seedInt, int row) { return sternMatrixRow(seedInt, row, N); }
+
+    /** The same at width n: the digest's high n bits (TODO #384). */
+    static BigInteger sternMatrixRow(BigInteger seedInt, int row, int n) {
+        BitArray seed = BitArray.fromBigInteger(seedInt, n);
+        BitArray a0 = seed.xorUint(row).rotLeft(n / 8);
+        BitArray raw = Hfscx256.nlFscxRevolveV1(a0, seed, n / 4);
+        return new BigInteger(1, Hfscx256.hash(raw.toBytes())).shiftRight(256 - n);
     }
 
-    static BigInteger[] sternBuildH(BigInteger seedInt, int nRows) {
+    static BigInteger[] sternBuildH(BigInteger seedInt, int nRows) { return sternBuildH(seedInt, nRows, N); }
+
+    static BigInteger[] sternBuildH(BigInteger seedInt, int nRows, int n) {
         BigInteger[] rows = new BigInteger[nRows];
-        for (int i = 0; i < nRows; i++) rows[i] = sternMatrixRow(seedInt, i);
+        for (int i = 0; i < nRows; i++) rows[i] = sternMatrixRow(seedInt, i, n);
         return rows;
     }
+
+    /** Stern-F's parity rows and error weight at width n (TODO #384). */
+    public static int rowsFor(int n) { return n / 2; }
+    public static int tFor(int n) { return Math.max(2, n / 16); }
+    static BigInteger maskFor(int n) { return BigInteger.ONE.shiftLeft(n).subtract(BigInteger.ONE); }
 
     /** Syndrome s = H . e^T mod 2, from a precomputed matrix. */
     static BigInteger sternSyndromeH(BigInteger[] hRows, BigInteger eInt) {
@@ -136,18 +157,24 @@ public final class Stern {
         return sternSyndromeH(sternBuildH(seedInt, SDFNR), eInt);
     }
 
+    public static BigInteger sternSyndrome(BigInteger seedInt, BigInteger eInt, int n) {
+        return sternSyndromeH(sternBuildH(seedInt, rowsFor(n), n), eInt);
+    }
+
     /** Fisher-Yates shuffle of [0..N-1] driven by an NL-FSCX v1 PRNG: one
      * 32-bit big-endian draw per swap position (Lemire multiply-shift),
      * matching Python's {@code _stern_gen_perm}. */
-    static int[] sternGenPerm(BigInteger piSeed) {
-        BitArray key = BitArray.fromBigInteger(piSeed, N).rotLeft(N / 8);
-        int[] perm = new int[N];
-        for (int i = 0; i < N; i++) perm[i] = i;
-        BitArray st = BitArray.fromBigInteger(piSeed, N);
-        int nb = N / 8;
+    static int[] sternGenPerm(BigInteger piSeed) { return sternGenPerm(piSeed, N); }
+
+    static int[] sternGenPerm(BigInteger piSeed, int n) {
+        BitArray key = BitArray.fromBigInteger(piSeed, n).rotLeft(n / 8);
+        int[] perm = new int[n];
+        for (int i = 0; i < n; i++) perm[i] = i;
+        BitArray st = BitArray.fromBigInteger(piSeed, n);
+        int nb = n / 8;
         byte[] buf = new byte[nb];
         int cursor = nb; // force state advance on first draw
-        for (int i = N - 1; i > 0; i--) {
+        for (int i = n - 1; i > 0; i--) {
             int range = i + 1;
             if (cursor + 4 > nb) {
                 st = Hfscx256.nlFscxV1(st, key);
@@ -168,7 +195,7 @@ public final class Stern {
     /** result[perm[i]] = v[i]. */
     static BigInteger sternApplyPerm(int[] perm, BigInteger vInt) {
         BigInteger result = BigInteger.ZERO;
-        for (int i = 0; i < N; i++) {
+        for (int i = 0; i < perm.length; i++) {      // the permutation's own width
             if (vInt.testBit(i)) result = result.setBit(perm[i]);
         }
         return result;
@@ -187,10 +214,12 @@ public final class Stern {
         }
     }
 
-    public static SternKeypair sternFKeygen(SecureRandom rng) {
-        BigInteger seed = new BigInteger(N, rng).and(MASK);
-        BigInteger e = csprngWeightT(SDFT, rng);
-        BigInteger[] hRows = sternBuildH(seed, SDFNR);
+    public static SternKeypair sternFKeygen(SecureRandom rng) { return sternFKeygen(N, rng); }
+
+    public static SternKeypair sternFKeygen(int n, SecureRandom rng) {
+        BigInteger seed = new BigInteger(n, rng);
+        BigInteger e = csprngWeightT(n, tFor(n), rng);
+        BigInteger[] hRows = sternBuildH(seed, rowsFor(n), n);
         return new SternKeypair(seed, e, sternSyndromeH(hRows, e));
     }
 
@@ -212,6 +241,11 @@ public final class Stern {
     }
 
     public static SternSignature hpksSternFSign(BigInteger msg, BigInteger eInt, BigInteger seed, int rounds, SecureRandom rng) {
+        return hpksSternFSign(msg, eInt, seed, rounds, N, rng);
+    }
+
+    /** Signs at width n (TODO #384). */
+    public static SternSignature hpksSternFSign(BigInteger msg, BigInteger eInt, BigInteger seed, int rounds, int n, SecureRandom rng) {
         if (rounds < STERN_F_PRODUCTION_ROUNDS) {
             double bits = rounds * (Math.log(1.5) / Math.log(2));
             System.err.println(String.format(
@@ -219,7 +253,8 @@ public final class Stern {
                 + "production deployments require rounds >= %d for 128-bit soundness.",
                 rounds, bits, STERN_F_PRODUCTION_ROUNDS));
         }
-        BigInteger[] hRows = sternBuildH(seed, SDFNR);
+        BigInteger[] hRows = sternBuildH(seed, rowsFor(n), n);
+        BigInteger mask = maskFor(n);
 
         BigInteger[] c0 = new BigInteger[rounds];
         BigInteger[] c1 = new BigInteger[rounds];
@@ -235,20 +270,20 @@ public final class Stern {
             // both of the verifier's weight checks fell on the prover's own
             // blinding value and wt(e) was never bound -- see the b = 0 case
             // in hpksSternFVerify.
-            BigInteger r = new BigInteger(N, rng).and(MASK);
-            BigInteger y = eInt.xor(r).and(MASK);
-            BigInteger piSeed = new BigInteger(N, rng).and(MASK);
-            int[] perm = sternGenPerm(piSeed);
+            BigInteger r = new BigInteger(n, rng);
+            BigInteger y = eInt.xor(r).and(mask);
+            BigInteger piSeed = new BigInteger(n, rng);
+            int[] perm = sternGenPerm(piSeed, n);
             BigInteger hr = sternSyndromeH(hRows, r);
             BigInteger sr = sternApplyPerm(perm, r);
             BigInteger sy = sternApplyPerm(perm, y);
-            c0[i] = sternHash(1, piSeed, hr);
-            c1[i] = sternHash(2, sr);
-            c2[i] = sternHash(3, sy);
+            c0[i] = sternHashN(n, 1, piSeed, hr);
+            c1[i] = sternHashN(n, 2, sr);
+            c2[i] = sternHashN(n, 3, sy);
             rArr[i] = r; yArr[i] = y; piArr[i] = piSeed; srArr[i] = sr; syArr[i] = sy;
         }
 
-        int[] challenges = deriveChallenges(msg, c0, c1, c2, rounds);
+        int[] challenges = deriveChallenges(msg, c0, c1, c2, rounds, n);
 
         BigInteger[] resp0 = new BigInteger[rounds];
         BigInteger[] resp1 = new BigInteger[rounds];
@@ -270,7 +305,7 @@ public final class Stern {
      * commits), then one NL-FSCX v1 step per round advances the state and
      * yields that round's trit — matches Python's chained
      * {@code ch_st = nl_fscx_v1(ch_st, BitArray(n, i))}. */
-    private static int[] deriveChallenges(BigInteger msg, BigInteger[] c0, BigInteger[] c1, BigInteger[] c2, int rounds) {
+    private static int[] deriveChallenges(BigInteger msg, BigInteger[] c0, BigInteger[] c1, BigInteger[] c2, int rounds, int n) {
         BigInteger[] flat = new BigInteger[1 + 3 * rounds];
         flat[0] = msg;
         for (int i = 0; i < rounds; i++) {
@@ -278,50 +313,56 @@ public final class Stern {
             flat[2 + 3 * i] = c1[i];
             flat[3 + 3 * i] = c2[i];
         }
-        BitArray chSt = BitArray.fromBigInteger(sternHash(0, flat), N);
+        BitArray chSt = BitArray.fromBigInteger(sternHashN(n, 0, flat), n);
         int[] challenges = new int[rounds];
         BigInteger word32 = BigInteger.valueOf(0xFFFFFFFFL);
         for (int i = 0; i < rounds; i++) {
-            chSt = Hfscx256.nlFscxV1(chSt, BitArray.fromUint(i, N));
+            chSt = Hfscx256.nlFscxV1(chSt, BitArray.fromUint(i, n));
             challenges[i] = chSt.toBigInteger().and(word32).mod(BigInteger.valueOf(3)).intValueExact();
         }
         return challenges;
     }
 
     public static boolean hpksSternFVerify(BigInteger msg, SternSignature sig, BigInteger seed, BigInteger syndrome) {
+        return hpksSternFVerify(msg, sig, seed, syndrome, N);
+    }
+
+    /** Verifies at width n (TODO #384). */
+    public static boolean hpksSternFVerify(BigInteger msg, SternSignature sig, BigInteger seed, BigInteger syndrome, int n) {
         int rounds = sig.rounds();
-        int[] expected = deriveChallenges(msg, sig.c0, sig.c1, sig.c2, rounds);
+        int t = tFor(n);
+        int[] expected = deriveChallenges(msg, sig.c0, sig.c1, sig.c2, rounds, n);
         for (int i = 0; i < rounds; i++) {
             if (expected[i] != sig.challenges[i]) return false;
         }
 
-        BigInteger[] hRows = sternBuildH(seed, SDFNR);
+        BigInteger[] hRows = sternBuildH(seed, rowsFor(n), n);
         for (int i = 0; i < rounds; i++) {
             int b = sig.challenges[i];
             if (b == 0) {
                 BigInteger sr = sig.resp0[i], sy = sig.resp1[i];
-                if (!sternHash(2, sr).equals(sig.c1[i])) return false;
-                if (!sternHash(3, sy).equals(sig.c2[i])) return false;
+                if (!sternHashN(n, 2, sr).equals(sig.c1[i])) return false;
+                if (!sternHashN(n, 3, sy).equals(sig.c2[i])) return false;
                 // wt(sigma(r) ^ sigma(y)) = wt(sigma(e)) = wt(e).  THIS is the
                 // check that binds the witness to weight t; until v8.0.0 it
                 // read sr.bitCount(), which binds only the blinding value, and
                 // a Gaussian-elimination preimage of the PUBLIC syndrome then
                 // signed anything (TODO #298).
-                if (sr.xor(sy).bitCount() != SDFT) return false;
+                if (sr.xor(sy).bitCount() != t) return false;
             } else if (b == 1) {
                 BigInteger piSeed = sig.resp0[i], r = sig.resp1[i];
-                int[] perm = sternGenPerm(piSeed);
+                int[] perm = sternGenPerm(piSeed, n);
                 BigInteger hr = sternSyndromeH(hRows, r);
-                if (!sternHash(1, piSeed, hr).equals(sig.c0[i])) return false;
+                if (!sternHashN(n, 1, piSeed, hr).equals(sig.c0[i])) return false;
                 BigInteger sr = sternApplyPerm(perm, r);
-                if (!sternHash(2, sr).equals(sig.c1[i])) return false;
+                if (!sternHashN(n, 2, sr).equals(sig.c1[i])) return false;
             } else {
                 BigInteger piSeed = sig.resp0[i], y = sig.resp1[i];
-                int[] perm = sternGenPerm(piSeed);
+                int[] perm = sternGenPerm(piSeed, n);
                 BigInteger hy = sternSyndromeH(hRows, y);
-                if (!sternHash(1, piSeed, hy.xor(syndrome)).equals(sig.c0[i])) return false;
+                if (!sternHashN(n, 1, piSeed, hy.xor(syndrome)).equals(sig.c0[i])) return false;
                 BigInteger sy = sternApplyPerm(perm, y);
-                if (!sternHash(3, sy).equals(sig.c2[i])) return false;
+                if (!sternHashN(n, 3, sy).equals(sig.c2[i])) return false;
             }
         }
         return true;
@@ -340,10 +381,14 @@ public final class Stern {
     }
 
     public static SternEncapResult hpkeSternFEncapWithE(BigInteger seed, SecureRandom rng) {
-        BigInteger eP = csprngWeightT(SDFT, rng);
-        BigInteger[] hRows = sternBuildH(seed, SDFNR);
+        return hpkeSternFEncapWithE(seed, N, rng);
+    }
+
+    public static SternEncapResult hpkeSternFEncapWithE(BigInteger seed, int n, SecureRandom rng) {
+        BigInteger eP = csprngWeightT(n, tFor(n), rng);
+        BigInteger[] hRows = sternBuildH(seed, rowsFor(n), n);
         BigInteger ct = sternSyndromeH(hRows, eP);
-        BigInteger k = sternHash(4, seed, eP.and(MASK));
+        BigInteger k = sternHashN(n, 4, seed, eP);
         return new SternEncapResult(k, ct, eP);
     }
 
@@ -351,7 +396,11 @@ public final class Stern {
      * (the acknowledged demo weakness), so decap never needs to
      * brute-force enumerate weight-t candidates. */
     public static BigInteger hpkeSternFDecap(BigInteger eP, BigInteger seed) {
-        return sternHash(4, seed, eP.and(MASK));
+        return hpkeSternFDecap(eP, seed, N);
+    }
+
+    public static BigInteger hpkeSternFDecap(BigInteger eP, BigInteger seed, int n) {
+        return sternHashN(n, 4, seed, eP);
     }
 
     // -----------------------------------------------------------------

@@ -645,11 +645,11 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
             if (n > 0) HKX_WIDE(0, 1LL);
             if (n > 1) HKX_WIDE(1, 2LL);
             if (n > 2) HKX_WIDE(2, 2LL);
-            if (n > 3) HKX_WIDE(3, F(0) * F(1) * (5LL * (F(2)/8LL) + 1LL));
+            if (n > 3) HKX_WIDE(3, F(0) * F(1) * (3LL * HKX_MIN(F(2)/8LL, 32LL) + 2LL * (F(2)/8LL) + 1LL));
             if (n > 0) HKX_MINIMAL(0);
             if (n > 1) HKX_MINIMAL(1);
             if (n > 2) HKX_MINIMAL(2);
-            if (n > 3) HKX_EXACT(3, F(0) * F(1) * (5LL * (F(2)/8LL) + 1LL));
+            if (n > 3) HKX_EXACT(3, F(0) * F(1) * (3LL * HKX_MIN(F(2)/8LL, 32LL) + 2LL * (F(2)/8LL) + 1LL));
             return 0;
         }
         return 0;
@@ -762,12 +762,12 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
         if (n >= 5 && n <= 5) {
             if (n > 0) HKX_WIDE(0, 2LL);
             if (n > 1) HKX_WIDE(1, 2LL);
-            if (n > 2) HKX_WIDE(2, F(1) * 3LL * (F(0)/8LL));
+            if (n > 2) HKX_WIDE(2, F(1) * 3LL * HKX_MIN(F(0)/8LL, 32LL));
             if (n > 3) HKX_WIDE(3, (F(1) + 3LL)/4LL);
             if (n > 4) HKX_WIDE(4, F(1) * 2LL * (F(0)/8LL));
             if (n > 0) HKX_MINIMAL(0);
             if (n > 1) HKX_MINIMAL(1);
-            if (n > 2) HKX_EXACT(2, F(1) * 3LL * (F(0)/8LL));
+            if (n > 2) HKX_EXACT(2, F(1) * 3LL * HKX_MIN(F(0)/8LL, 32LL));
             if (n > 3) HKX_EXACT(3, (F(1) + 3LL)/4LL);
             if (n > 4) HKX_EXACT(4, F(1) * 2LL * (F(0)/8LL));
             return 0;
@@ -877,13 +877,13 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
             if (n > 4) HKX_WIDE(4, 2LL);
             if (n > 0) HKX_WIDE(0, F(4)/8LL);
             if (n > 1) HKX_WIDE(1, F(4)/8LL);
-            if (n > 2) HKX_WIDE(2, F(4)/8LL);
-            if (n > 3) HKX_WIDE(3, F(4)/8LL);
+            if (n > 2) HKX_WIDE(2, HKX_MIN(F(4)/8LL, 32LL));
+            if (n > 3) HKX_WIDE(3, HKX_MIN(F(4)/8LL, 32LL));
             if (n > 4) HKX_MINIMAL(4);
             if (n > 0) HKX_EXACT(0, F(4)/8LL);
             if (n > 1) HKX_EXACT(1, F(4)/8LL);
-            if (n > 2) HKX_EXACT(2, F(4)/8LL);
-            if (n > 3) HKX_EXACT(3, F(4)/8LL);
+            if (n > 2) HKX_EXACT(2, HKX_MIN(F(4)/8LL, 32LL));
+            if (n > 3) HKX_EXACT(3, HKX_MIN(F(4)/8LL, 32LL));
             return 0;
         }
         if (n >= 6 && n <= 6) {
@@ -918,12 +918,12 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
         if (n >= 5 && n <= 5) {
             if (n > 0) HKX_WIDE(0, 2LL);
             if (n > 1) HKX_WIDE(1, 2LL);
-            if (n > 2) HKX_WIDE(2, F(1) * 3LL * (F(0)/8LL));
+            if (n > 2) HKX_WIDE(2, F(1) * 3LL * HKX_MIN(F(0)/8LL, 32LL));
             if (n > 3) HKX_WIDE(3, (F(1) + 3LL)/4LL);
             if (n > 4) HKX_WIDE(4, F(1) * 2LL * (F(0)/8LL));
             if (n > 0) HKX_MINIMAL(0);
             if (n > 1) HKX_MINIMAL(1);
-            if (n > 2) HKX_EXACT(2, F(1) * 3LL * (F(0)/8LL));
+            if (n > 2) HKX_EXACT(2, F(1) * 3LL * HKX_MIN(F(0)/8LL, 32LL));
             if (n > 3) HKX_EXACT(3, (F(1) + 3LL)/4LL);
             if (n > 4) HKX_EXACT(4, F(1) * 2LL * (F(0)/8LL));
             return 0;
@@ -936,5 +936,128 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
 #undef HKX_WIDE
 #undef HKX_EXACT
 #undef HKX_MINIMAL
+
+/* TODO #379: genpkey's key parameter sets (--bits / --level). bits -1: no
+ * --bits value names the row.  ports: the CLIs that run the row today. */
+typedef struct { const char *algo; int bits; const char *level; int is_default;
+                 const char *status, *security, *ports, *withdrawn; } HkxParamSet;
+
+static const HkxParamSet HKX_PARAM_SETS[] = {
+    {"hkex-gf", 32, 0, 0, "demo",
+     "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hkex-gf", 64, 0, 0, "demo",
+     "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hkex-gf", 128, 0, 0, "demo",
+     "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hkex-gf", 256, "demo", 1, "demo",
+     "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpks", 32, 0, 0, "demo",
+     "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpks", 64, 0, 0, "demo",
+     "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpks", 128, 0, 0, "demo",
+     "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpks", 256, "demo", 1, "demo",
+     "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpks-nl", 32, 0, 0, "demo",
+     "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpks-nl", 64, 0, 0, "demo",
+     "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpks-nl", 128, 0, 0, "demo",
+     "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpks-nl", 256, "demo", 1, "demo",
+     "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke", 32, 0, 0, "demo",
+     "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke", 64, 0, 0, "demo",
+     "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke", 128, 0, 0, "demo",
+     "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke", 256, "demo", 1, "demo",
+     "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke-nl", 32, 0, 0, "demo",
+     "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke-nl", 64, 0, 0, "demo",
+     "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke-nl", 128, 0, 0, "demo",
+     "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke-nl", 256, "demo", 1, "demo",
+     "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke-nl3", 32, 0, 0, "demo",
+     "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke-nl3", 64, 0, 0, "demo",
+     "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke-nl3", 128, 0, 0, "demo",
+     "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hpke-nl3", 256, "demo", 1, "demo",
+     "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"oprf", 32, 0, 0, "demo",
+     "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"oprf", 64, 0, 0, "demo",
+     "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"oprf", 128, 0, 0, "demo",
+     "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"oprf", 256, "demo", 1, "demo",
+     "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", 0},
+    {"hkex-rnl", 32, 0, 0, "demo",
+     "far below 2^87 (not estimated)", "py go c java", 0},
+    {"hkex-rnl", 64, 0, 0, "demo",
+     "far below 2^87 (not estimated)", "py go c java", 0},
+    {"hkex-rnl", 128, 0, 0, "demo",
+     "far below 2^87 (not estimated)", "py go c java", 0},
+    {"hkex-rnl", 256, "demo", 0, "demo",
+     "far below 2^87 (not estimated)", "py go c java", 0},
+    {"hkex-rnl", 512, 0, 0, "withdrawn",
+     "~2^87 classical, ~2^79 quantum", "", "SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical bits, short of the 128 it was claimed to give"},
+    {"hkex-rnl", 1024, "128", 1, "production",
+     ">= 2^128 classical (conjectured; SECURITY.md)", "py go c java", 0},
+    {"hpks-stern", 32, 0, 0, "demo",
+     "below 2^24", "py go c java", 0},
+    {"hpks-stern", 64, 0, 0, "demo",
+     "below 2^24", "py go c java", 0},
+    {"hpks-stern", 128, 0, 0, "demo",
+     "below 2^24", "py go c java", 0},
+    {"hpks-stern", 256, "demo", 1, "demo",
+     "~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)", "py go c java", 0},
+    {"hpke-stern", 32, 0, 0, "demo",
+     "below 2^24", "py go c java", 0},
+    {"hpke-stern", 64, 0, 0, "demo",
+     "below 2^24", "py go c java", 0},
+    {"hpke-stern", 128, 0, 0, "demo",
+     "below 2^24", "py go c java", 0},
+    {"hpke-stern", 256, "demo", 1, "demo",
+     "~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)", "py go c java", 0},
+    {"hcred", 32, 0, 0, "demo",
+     "research construction; its Stern-F half below 2^24", "py go c java", 0},
+    {"hcred", 64, 0, 0, "demo",
+     "research construction; its Stern-F half below 2^24", "py go c java", 0},
+    {"hcred", 128, 0, 0, "demo",
+     "research construction; its Stern-F half below 2^24", "py go c java", 0},
+    {"hcred", 256, "demo", 1, "demo",
+     "research construction; its Stern-F half ~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)", "py go c java", 0},
+    {"hpks-stern", 2304, "128", 0, "demo-only",
+     "~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3", "py go c java", 0},
+    {"hpke-stern", 2304, "128", 0, "demo-only",
+     "~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3", "py go c java", 0},
+    {"hpke-stern-kem", -1, "128", 1, "demo-only",
+     "2^128 classical by its parameters (BIKE-128)", "py go c java", 0},
+    {"hpks-zkp-nl", 8, "demo", 1, "demo",
+     "demonstration keypair; no security claim", "py go c java", 0},
+};
+static const int HKX_PARAM_SETS_N = (int)(sizeof(HKX_PARAM_SETS) / sizeof(HKX_PARAM_SETS[0]));
+static const char *const HKX_PARAM_LEVELS[] = {"demo", "128", "192", "256", 0};
+static const char *const HKX_PARAM_FIXED[] = {"hpks-wots", "hpks-xmss", 0};
+static const char *const HKX_PARAM_OWN_BITS[] = {"hpks-zkp-nl", 0};
+static const char *const HKX_PARAM_LEVEL_NOTES[] = {
+    "hcred", "hcred's own key (a Ring-LWR and syndrome-decoding pair proved in ZKBoo) has no 128-bit set; the ISSUER's hpks-stern key does: genpkey --algo hpks-stern --level 128",
+    "hkex-gf", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+    "hpke", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+    "hpke-nl", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+    "hpke-nl3", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+    "hpks", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+    "hpks-nl", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+    "oprf", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+    0};
+#define HKX_PARAM_GAP_TODO 383   /* this CLI's narrow-width TODO */
 
 #endif /* HKX_KEY_LABEL_TABLE_H */

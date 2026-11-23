@@ -79,8 +79,9 @@ $CLI kex --algo hkex-gf --our alice.pem --their bob_pub.pem --out alice_sk.pem
 $CLI kex --algo hkex-gf --our bob.pem   --their alice_pub.pem --out bob_sk.pem
 # alice_sk.pem and bob_sk.pem now hold the same 256-bit session key
 
-# hske encrypts ONE 256-bit block, so the message is exactly 32 bytes (a shorter
-# one comes back zero-padded to 32; use hske-duplex for any length)
+# hske encrypts ONE 256-bit block, so the message is at most 32 bytes (a shorter
+# one comes back zero-padded to 32, a longer one is refused; use hske-duplex for
+# any length)
 echo -n "hello herradura, a 32-byte block" > msg.bin
 $CLI enc --algo hske --key alice_sk.pem --in msg.bin --out ct.pem
 $CLI dec --algo hske --key bob_sk.pem   --in ct.pem  --out recovered.bin
@@ -227,7 +228,8 @@ $CLI genpkey --algo hkex-gf --out bob.pem
 # Extract the public key
 $CLI pkey --in alice.pem --pubout --out alice_pub.pem
 
-# Print key parameters in human-readable form
+# Print key parameters in human-readable form: the same text in every CLI,
+# ending in the key's parameter set (`level : demo`, `security : at most 2^36 ...`)
 $CLI pkey --in alice.pem --text
 
 $CLI kex --algo hkex-gf --our alice.pem --their bob_pub.pem   --out alice_sk.pem
@@ -1105,7 +1107,9 @@ skA = h.nl_fscx_revolve_v1(kA.rotated(n // 8), kA, n // 4)
 Stern identification protocol (a zero-knowledge proof for syndrome decoding), used
 both as a Fiat-Shamir signature (HPKS-Stern-F) and as a Niederreiter-style KEM
 (HPKE-Stern-F). Parameters: C/Go/Python use N=n=256, t=16, rounds=32; assembly/Arduino
-use N=32, t=2, rounds=4.
+use N=32, t=2, rounds=4.  The 128-bit set is N=2304, t=144 (`genpkey --algo hpks-stern
+--level 128`, all four CLIs; SPEC.md §11.1): the same commands, a ~580-byte public key and a
+147 KB signature at the CLI's 219 rounds.
 
 ### HPKS-Stern-F signature (code-based PQC)
 
@@ -1359,13 +1363,13 @@ the credential to a specific institution.
 ```bash
 # ── User key generation ──────────────────────────────────────────────────────
 # Default width: n=256 in every CLI (TODO #369; Python's default was 32).
-# Python, Go and Java take --bits to choose another (--bits 32 is a fast demo
-# width that C and Java refuse); C is compiled for n=256 and has no --bits.
+# --bits 32, 64 or 128 chooses a faster demo width, in every CLI (TODO #383 / #384;
+# TODO #379's parameter-set table).
 $CLI genpkey --algo hcred --out user.pem
 
 # Extract public key (C and A receive this to verify/issue)
 $CLI pkey --in user.pem --pubout --out user_pub.pem
-$CLI pkey --in user.pem --text    # prints n, seed_H, syndr, φ(s) weight
+$CLI pkey --in user.pem --text    # prints n, seed_H, syndr, φ(s) weight, level, security
 
 # ── Issuer key (any hpks-stern keypair) ──────────────────────────────────────
 $CLI genpkey --algo hpks-stern --out issuer.pem
@@ -1422,7 +1426,10 @@ Go and Python, `CliTest/test_java_hcred_interop.sh` Java and Python).
 ### C
 
 `hcred` proves knowledge of a Ring-LWR secret `s` satisfying both the LWR relation
-and a code syndrome, via ZKBoo-(2,3) MPCitH. Fixed at `n = HCRED_N = 256` in C.
+and a code syndrome, via ZKBoo-(2,3) MPCitH. C runs it at n = 32, 64, 128 or 256
+(TODO #383 stage 3); `HCRED_N = 256` is the default and the largest, every array is
+sized for it, and each function reads n from its operands (`seed_H`'s width, the
+proof's `n`). The issuer key may be an hpks-stern key of any of those widths.
 
 ```c
 #include "herradura.h"
@@ -1430,20 +1437,26 @@ and a code syndrome, via ZKBoo-(2,3) MPCitH. Fixed at `n = HCRED_N = 256` in C.
 FILE *urnd = fopen("/dev/urandom", "rb");
 
 /* ── User key generation ─────────────────────────────────────────────────── */
+const int n = 64;                              /* 32, 64, 128 or 256 */
 int32_t m_poly[HCRED_N], s_poly[HCRED_N], c_poly[HCRED_N];
-rnl_sample_m(m_poly, urnd);                    /* public module polynomial */
-hcred_user_keygen(s_poly, c_poly, m_poly, urnd);
+rnl_poly_t a_rand;
+rnl_rand_poly(a_rand, urnd);                   /* public module polynomial: */
+for (int k = 0; k < n; k++)                    /*   m = 1 + x + x^(n-1) + a */
+    m_poly[k] = (a_rand[k] + (k == 0 || k == 1 || k == n - 1)) % RNL_Q;
+BitArray e = BA_INIT;                          /* e = phi(s), kept secret */
+hcred_user_keygen(s_poly, c_poly, &e, m_poly, urnd, n);
 
-BitArray seed_H;
-ba_rand(&seed_H, urnd);                        /* public matrix seed */
+BitArray seed_H = BA_INIT;
+ba_zero_w(&seed_H, n);                         /* n-bit public matrix seed */
+ba_rand(&seed_H, urnd);
 
 uint8_t syndr[SDF_SYNBYTES];
-hcred_syndrome(syndr, &seed_H, s_poly);        /* public syndrome */
+hcred_syndrome(syndr, &seed_H, &e);            /* public syndrome */
 
-/* ── Issue credential (issuer = any hpks-stern key) ─────────────────────── */
-BitArray issuer_seed, issuer_e;
+/* ── Issue credential (issuer = an hpks-stern key of any width) ─────────── */
+BitArray issuer_seed = BA_INIT, issuer_e = BA_INIT;
 uint8_t  issuer_syndr[SDF_SYNBYTES];
-stern_f_keygen(&issuer_seed, &issuer_e, issuer_syndr, urnd);
+stern_f_keygen(&issuer_seed, &issuer_e, issuer_syndr, urnd);   /* 256-bit here */
 
 SternSig cred;
 stern_sig_alloc(&cred, SDF_ROUNDS);   /* or SDF_PRODUCTION_ROUNDS; TODO #236 */
@@ -1457,7 +1470,7 @@ HcredProof proof;
 memset(&proof, 0, sizeof proof);
 int proved = hcred_prove(&proof, s_poly, m_poly, c_poly, &seed_H, syndr,
                           HCRED_DEMO_ROUNDS, nonce, sizeof nonce - 1, urnd);
-/* proved == 1 on success */
+/* proved == 0 on success (-1 out of memory, -2 the key fails its own statement) */
 
 /* ── Verify proof ───────────────────────────────────────────────────────── */
 int ok = hcred_verify(m_poly, c_poly, &seed_H, syndr,
@@ -1530,7 +1543,7 @@ from primitives import (hcred_phi, hcred_user_keygen, hcred_syndrome,
                          hcred_cred_verify, _HCRED_DEFAULT_N)
 import os
 
-n = _HCRED_DEFAULT_N    # 32 (demo); use 256 for C interop
+n = _HCRED_DEFAULT_N    # 32 (demo); C, Go and Python interoperate at 32-256
 
 # ── User key generation ───────────────────────────────────────────────────
 m_poly, s_poly, c_poly, seed_H, syndr = hcred_user_keygen(n)
@@ -1914,7 +1927,7 @@ for a 14-way cross-language interop test.
 | HPKS | 110 B | DLP in GF(2^256) — quantum-broken | Fastest |
 | ML-DSA-44 (reference) | 2,420 B | Module-LWE | NIST standard |
 | ZKP-RNL (n=256) | **12,292 B** | Ring-LWR (heuristic) | Smallest post-quantum option here |
-| HPKS-Stern-F (rounds=219) | 35,118 B | SD(N,t) + NL-FSCX v1 PRF | **Demo params** (N=256, ~30–40 bits); 128-bit needs N≥17000 |
+| HPKS-Stern-F (rounds=219) | 35,118 B | SD(N,t) + NL-FSCX v1 PRF | **Demo params** (N=256, ~24–38 bits); `--level 128` is N=2304 (~2^137, 147,249 B at 219 rounds) |
 | ZKP-NL (n=8, R=219) | 40,085 B | NL-FSCX OWF | CLI default (the only CLI width); toy parameters |
 | ZKP-NL (n=256, R=219) | 920 KB | NL-FSCX OWF | Library only; awaits ZKB++ (~180 KB est.) |
 
@@ -2210,6 +2223,13 @@ $J oprf-unblind --state state.pem --eval eval.pem
 PEM files produced by any implementation are byte-for-byte compatible with the
 others. See `CliTest/test_oprf_interop.sh` for a 6-way cross-language
 interop test (Python/C/Go key × blind × eval × unblind).
+
+The OPRF also runs at the GF family's demo widths, 32, 64 and 128 (TODO #385):
+`genpkey --algo oprf --bits N`, then `oprf-blind --bits N` with the same N.  The
+CLIENT STATE and EVALUATION PEMs carry n, and `oprf-eval` / `oprf-unblind` refuse
+a pair from two widths by name.  Below 256 bits `H(x)` is the high n bits of
+HFSCX-256(x); `F` prints as n/4 hex digits.  `CliTest/test_width_matrix.sh`
+runs every (blinder, evaluator) pair of the four CLIs at every width.
 
 ### OPRF library API (C)
 
@@ -2577,7 +2597,7 @@ void oprf_direct (BitArray *F, const uint8_t *x, size_t xlen, const BitArray *k)
 | HCRED default n (Python) | — | — | `_HCRED_DEFAULT_N` | 32 (demo) |
 | HCRED CLI rounds | — | — | `_HCRED_CLI_ROUNDS` | 219 |
 | HCRED demo rounds | `HCRED_DEMO_ROUNDS` | — | `_HCRED_DEMO_ROUNDS` | 4 |
-| HCRED n (C, fixed) | `HCRED_N` | — | — | 256 |
+| HCRED n (C, default and largest; 32-256 at runtime) | `HCRED_N` | — | — | 256 |
 
 Stern-F parameters scale with N: T = N/16, rows = N/4. C/Go/Python support
 N ∈ {32, 64, 128, 256}; assembly and Arduino targets are fixed at N=32 (T=2, rounds=4).
@@ -2602,7 +2622,10 @@ models that exclude quantum adversaries.
   retain algebraic structure and non-uniform bit distribution. Post-hash through
   HFSCX-256 before using the value as a symmetric key. In the CLI, pass
   `--kdf hfscx-256` to `kex`; in library code call `hfscx_256` / `Hfscx256` /
-  `hfscx_256` directly. Both parties must apply the same step.
+  `hfscx_256` directly. Both parties must apply the same step.  For hkex-gf the CLI
+  hashes the secret as exactly n/8 big-endian bytes and writes the whole digest as a
+  SESSION KEY declaring n = 256, at every width n (TODO #389), so the key works with
+  `enc --algo hske`; it is never truncated back to n bits.
 - **HKEX-RNL** rests on Ring-LWR hardness, which is conjectured quantum-hard, at
   ring dimension n=1024 since v2.7.19: ~206 classical / ~187 quantum Core-SVP bits.
   Keys generated before v2.7.19 used n=256 and are worth only ~32/~29 — regenerate
@@ -2656,8 +2679,9 @@ models that exclude quantum adversaries.
   (e.g. a server challenge). Proofs do **not** commit to identity beyond the
   public key — if the same proof is accepted by multiple verifiers, unlinkability
   holds only if different nonces are used.
-- **Demo parameter interop:** C is fixed at `HCRED_N = 256`. Python defaults to
-  `n = 32`. Cross-language interop requires `--bits 256` in Python `genpkey`.
+- **Demo parameter interop:** every CLI defaults to `n = 256` (TODO #369). The
+  narrower demo widths (`--bits 32 | 64 | 128`) run in all four CLIs (TODO #383 /
+  #384).
   All four CLIs default `cred-issue` and `cred-prove` to 219 rounds, and
   `cred-verify` refuses fewer unless given `--min-rounds N` (TODO #364).
 

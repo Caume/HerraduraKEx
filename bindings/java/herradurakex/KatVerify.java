@@ -469,7 +469,7 @@ public final class KatVerify {
                 }
             } else if ("oprf_blind_scalar".equals(name)) {
                 int bits = ((Number) params.get("bits")).intValue();
-                Oprf.Blinded bl = Oprf.blind(unhexBytes((String) params.get("input_hex")), rng);
+                Oprf.Blinded bl = Oprf.blind(unhexBytes((String) params.get("input_hex")), bits, rng);
                 fails += replayCheck("replay " + name + " r",
                         String.format("%0" + (bits / 4) + "x", bl.r),
                         (String) r.get("expect_r"));
@@ -1002,6 +1002,82 @@ public final class KatVerify {
                 } else {
                     System.out.println("PASS op " + name + " verifies");
                 }
+
+            } else if ("stern_l_keygen".equals(name)) {
+                // TODO #382 stage 2: the long form at N = 2304; every value,
+                // the syndrome included, is an N-bit hex string.
+                int n = ((Number) params.get("n")).intValue();
+                String w = "%0" + (n / 4) + "x";
+                Stern.SternKeypair kp = SternL.keygen(n, rng);
+                fails += replayCheck("op " + name + " seed", String.format(w, kp.seed),
+                        (String) expect.get("seed"));
+                fails += replayCheck("op " + name + " e", String.format(w, kp.e),
+                        (String) expect.get("e"));
+                fails += replayCheck("op " + name + " syndrome", String.format(w, kp.syndrome),
+                        (String) expect.get("syndrome"));
+
+            } else if ("hpks_stern_l_sign".equals(name)) {
+                int n = ((Number) params.get("n")).intValue();
+                int rounds = ((Number) params.get("rounds")).intValue();
+                Stern.SternSignature sig = SternL.sign(new BigInteger((String) stmt.get("msg"), 16),
+                        new BigInteger((String) stmt.get("e"), 16),
+                        new BigInteger((String) stmt.get("seed"), 16), rounds, n, rng);
+                String w = "%0" + (n / 4) + "x";
+                StringBuilder gc = new StringBuilder(), wc = new StringBuilder();
+                StringBuilder ge = new StringBuilder(), we = new StringBuilder();
+                StringBuilder gr = new StringBuilder(), wr = new StringBuilder();
+                for (int i = 0; i < rounds; i++) {
+                    gc.append(String.format("%064x%064x%064x", sig.c0[i], sig.c1[i], sig.c2[i]));
+                    for (Object c : (List<Object>) ((List<Object>) expect.get("commits")).get(i))
+                        wc.append((String) c);
+                    ge.append(sig.challenges[i]);
+                    we.append(((Number) ((List<Object>) expect.get("challenges")).get(i)).intValue());
+                    gr.append(String.format(w, sig.resp0[i])).append(String.format(w, sig.resp1[i]));
+                    for (Object x : (List<Object>) ((List<Object>) expect.get("responses")).get(i))
+                        wr.append((String) x);
+                }
+                fails += replayCheck("op " + name + " commitments", gc.toString(), wc.toString());
+                fails += replayCheck("op " + name + " challenges", ge.toString(), we.toString());
+                fails += replayCheck("op " + name + " responses", gr.toString(), wr.toString());
+
+            } else if ("hpks_stern_l_ring_sign".equals(name)) {
+                int n = ((Number) params.get("n")).intValue();
+                int k = ((Number) params.get("k")).intValue();
+                int rounds = ((Number) params.get("rounds")).intValue();
+                int j = ((Number) params.get("j")).intValue();
+                List<Object> seeds = (List<Object>) stmt.get("seeds");
+                List<Object> syns = (List<Object>) stmt.get("syndromes");
+                List<SternRing.RingKey> ring = new ArrayList<SternRing.RingKey>();
+                for (int i = 0; i < k; i++)
+                    ring.add(new SternRing.RingKey(new BigInteger((String) seeds.get(i), 16),
+                            new BigInteger((String) syns.get(i), 16)));
+                SternRing.RingSignature sig = SternL.ringSign(
+                        new BigInteger((String) stmt.get("msg"), 16),
+                        new BigInteger((String) stmt.get("e"), 16), j, ring, rounds, n, rng);
+                String w = "%0" + (n / 4) + "x";
+                StringBuilder gc = new StringBuilder(), wc = new StringBuilder();
+                StringBuilder ge = new StringBuilder(), we = new StringBuilder();
+                StringBuilder gr = new StringBuilder(), wr = new StringBuilder();
+                for (int i = 0; i < k; i++) {
+                    for (int rr2 = 0; rr2 < rounds; rr2++) {
+                        gc.append(String.format("%064x%064x%064x",
+                                sig.c0[i][rr2], sig.c1[i][rr2], sig.c2[i][rr2]));
+                        for (Object c : (List<Object>) ((List<Object>) ((List<Object>)
+                                expect.get("commits")).get(i)).get(rr2))
+                            wc.append((String) c);
+                        ge.append(sig.challenges[i][rr2]);
+                        we.append(((Number) ((List<Object>) ((List<Object>)
+                                expect.get("challenges")).get(i)).get(rr2)).intValue());
+                        gr.append(String.format(w, sig.resp0[i][rr2]))
+                          .append(String.format(w, sig.resp1[i][rr2]));
+                        for (Object x : (List<Object>) ((List<Object>) ((List<Object>)
+                                expect.get("responses")).get(i)).get(rr2))
+                            wr.append((String) x);
+                    }
+                }
+                fails += replayCheck("op " + name + " commitments", gc.toString(), wc.toString());
+                fails += replayCheck("op " + name + " challenges", ge.toString(), we.toString());
+                fails += replayCheck("op " + name + " responses", gr.toString(), wr.toString());
 
             } else if ("rnl_sigma_sign".equals(name)) {
                 int n = ((Number) params.get("n")).intValue();

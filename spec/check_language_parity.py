@@ -2389,7 +2389,7 @@ _VERDICT_FINGERPRINTS = {
     ("python", 37): "none", ("python", 38): "none",
     ("python", 39): "none", ("python", 40): "none",
     ("python", 41): "none", ("python", 42): "none",
-    ("python", 43): "e241c66aee", ("python", 44): "8d82a4b834",
+    ("python", 43): "efdf7d2d53", ("python", 44): "8d82a4b834",
     ("python", 45): "661a73d2f2", ("python", 46): "a945af0b0a",
     ("python", 47): "a9d13b319a", ("python", 48): "9ee4fb2c2e",
     ("python", 49): "a9d13b319a", ("python", 50): "4f6ccba4ce",
@@ -3932,7 +3932,9 @@ PRIMITIVES = {
         "c": r"static int hcred_prove\(",
         "go": r"func HcredProve\(",
         "python": r"^def hcred_prove\(",
-        "java": r"public static Proof prove\(",
+        # TODO #384: the n-taking overload; the 256-bit one delegates to it.
+        "java": r"public static Proof prove\(int\[\] sPoly, int\[\] mPoly, int\[\] cPoly, "
+                r"BigInteger seedH, BigInteger ySynd,\s+int rounds, byte\[\] msgBytes, int n,",
     },
     "hcred-kkw": {
         # TODO #261's seed case: Python-only until v5.5.0-v5.7.0 ported it
@@ -3990,7 +3992,7 @@ PRIMITIVES = {
         # passing with Hcred.verify deleted outright. See the uniqueness
         # check in check_primitives() below, which now fails on this class.
         "java": r"public static boolean verify\(int\[\] mPoly, int\[\] cPoly, "
-                r"BigInteger seedH, BigInteger ySynd, Proof proof",
+                r"BigInteger seedH, BigInteger ySynd, Proof proof,\s+int rounds, byte\[\] msgBytes, int n\)",
     },
     "hcred-kkw-verify": {
         "c": r"static int hcred_verify_kkw\(",
@@ -4327,7 +4329,7 @@ PRIMITIVES = {
         "c": r"static void hcred_syndrome\(",
         "go": r"^func HcredSyndrome\(",
         "python": r"^def hcred_syndrome\(",
-        "java": r"Hcred.java::public static BigInteger syndrome\(",
+        "java": r"Hcred.java::public static BigInteger syndrome\(BigInteger seedH, BigInteger eInt, int n\)",
     },
     "hcred-witness": {
         "c": r"static int _hcred_witness\(",
@@ -4378,31 +4380,31 @@ PRIMITIVES = {
         "java": r"Hcred.java::private static McpRoundResult mpcRound\(",
     },
     "hcred-bind-msg": {
-        "acknowledged":
-            "C and Go bind the credential message in a named helper; Python and "
-            "Java inline the same HFSCX-256 call inside "
-            "hcred_issue/Hcred.issue. Byte-identical by KAT/hcred_kkw.json's "
-            "issuance digest, which all four consume",
+        # Python's and Java's were inline in hcred_issue / Hcred.issue until
+        # TODO #382 stage 2 named them, to keep the issuer's message at
+        # min(issuer_n, 256) bits in one place for the long form.
         "c": r"static void _hcred_bind_msg\(",
         "go": r"^func HcredBindMsg\(",
+        "python": r"^def _hcred_issue_msg\(",
+        "java": r"Hcred.java::private static BigInteger issuerMsg\(",
     },
     "hcred-user-keygen": {
         "c": r"static void hcred_user_keygen\(",
         "go": r"^func HcredUserKeygen\(",
         "python": r"^def hcred_user_keygen\(",
-        "java": r"Hcred.java::public static UserKeypair userKeygen\(",
+        "java": r"Hcred.java::public static UserKeypair userKeygen\(int\[\] mPoly, int n,",
     },
     "hcred-issue": {
         "c": r"static void hcred_issue\(",
         "go": r"^func HcredIssue\(",
         "python": r"^def hcred_issue\(",
-        "java": r"Hcred.java::public static Stern\.SternSignature issue\(",
+        "java": r"Hcred.java::public static Stern\.SternSignature issue\([^)]*int issuerN,",
     },
     "hcred-cred-verify": {
         "c": r"static int hcred_cred_verify\(",
         "go": r"^func HcredCredVerify\(",
         "python": r"^def hcred_cred_verify\(",
-        "java": r"Hcred.java::public static boolean credVerify\(",
+        "java": r"Hcred.java::public static boolean credVerify\([^)]*int issuerN\)",
     },
     # ── HCRED-KKW preprocessing internals (TODO #261, v6.1.0) ─────────────
     # The cut-and-choose machinery under hcred-kkw/hcred-kkw-verify. Three of the
@@ -4578,19 +4580,19 @@ PRIMITIVES = {
         "c": r"static void stern_hash\(",
         "go": r"^func SternHash\(",
         "python": r"^def _stern_hash\(",
-        "java": r"Stern.java::static BigInteger sternHash\(",
+        "java": r"Stern.java::static BigInteger sternHashN\(",   # at width n (TODO #384)
     },
     "stern-matrix-row": {
         "c": r"static void stern_matrix_row\(",
         "go": r"^func SternMatrixRow\(",
         "python": r"^def _stern_matrix_row\(",
-        "java": r"Stern.java::static BigInteger sternMatrixRow\(",
+        "java": r"Stern.java::static BigInteger sternMatrixRow\(BigInteger seedInt, int row, int n\)",
     },
     "stern-build-h": {
         "c": r"static void stern_build_H\(",
         "go": r"^func SternBuildH\(",
         "python": r"^def _stern_build_H\(",
-        "java": r"Stern.java::static BigInteger\[\] sternBuildH\(",
+        "java": r"Stern.java::static BigInteger\[\] sternBuildH\(BigInteger seedInt, int nRows, int n\)",
     },
     "stern-syndrome-h": {
         "c": r"static void stern_syndrome_H\(",
@@ -4602,13 +4604,13 @@ PRIMITIVES = {
         "c": r"static void stern_syndrome\(",
         "go": r"^func SternSyndrome\(",
         "python": r"^def _stern_syndrome\(",
-        "java": r"Stern.java::public static BigInteger sternSyndrome\(",
+        "java": r"Stern.java::public static BigInteger sternSyndrome\(BigInteger seedInt, BigInteger eInt, int n\)",
     },
     "stern-gen-perm": {
         "c": r"static void stern_gen_perm\(",
         "go": r"^func SternGenPerm\(",
         "python": r"^def _stern_gen_perm\(",
-        "java": r"Stern.java::static int\[\] sternGenPerm\(",
+        "java": r"Stern.java::static int\[\] sternGenPerm\(BigInteger piSeed, int n\)",
     },
     "stern-apply-perm": {
         "c": r"static void stern_apply_perm\(",
@@ -4620,7 +4622,7 @@ PRIMITIVES = {
         "c": r"static void stern_f_keygen\(",
         "go": r"^func SternFKeygen\(",
         "python": r"^def stern_f_keygen\(",
-        "java": r"Stern.java::public static SternKeypair sternFKeygen\(",
+        "java": r"Stern.java::public static SternKeypair sternFKeygen\(int n,",
     },
     "stern-fs-challenges": {
         "acknowledged":
@@ -4640,7 +4642,7 @@ PRIMITIVES = {
         "c": r"static int stern_ring_trit\(",
         "go": r"^func sternRingTrit\(",
         "python": r"^def _stern_ring_trit\(",
-        "java": r"SternRing.java::private static int ringTrit\(",
+        "java": r"SternRing.java::static int ringTrit\(",
     },
     "stern-simulate-round": {
         # C names it stern_ring_simulate; the entry carries that name. No
@@ -4658,6 +4660,99 @@ PRIMITIVES = {
         "go": r"^func sternRingChallenges\(",
         "java": r"SternRing.java::private static int\[\] jointChallenges\(",
     },
+    # ── Stern-F long form, N > 256 (TODO #382 stage 2) ────────────────────
+    # The 128-bit set's own primitives.  KAT/operation_replay.json's three
+    # stern_l rows pin them in all four ports; these entries are what keeps a
+    # fifth helper in one port from going unseen.
+    "stern-l-hash": {
+        "c": r"static void stern_l_hash2\(",
+        "go": r"^func sternLHash\(",
+        "python": r"^def _sternl_hash\(",
+        "java": r"SternL.java::static BigInteger hash\(",
+    },
+    "stern-l-build-h": {
+        "c": r"static uint8_t \*stern_l_build_H\(",
+        "go": r"^func SternLBuildH\(",
+        "python": r"^def _sternl_build_H\(",
+        "java": r"SternL.java::public static BigInteger\[\] buildH\(",
+    },
+    "stern-l-syndrome-h": {
+        "acknowledged":
+            "Python and Java carry H's rows and e as integers at any width, so "
+            "the short form's _stern_syndrome_H / Stern.sternSyndromeH serve the "
+            "long form unchanged; C and Go hold long vectors as byte strings and "
+            "need their own",
+        "c": r"static void stern_l_syndrome_H\(",
+        "go": r"^func SternLSyndromeH\(",
+    },
+    "stern-l-gen-perm": {
+        "c": r"static void stern_l_gen_perm\(",
+        "go": r"^func sternLGenPerm\(",
+        "python": r"^def _sternl_gen_perm\(",
+        "java": r"SternL.java::static int\[\] genPerm\(",
+    },
+    "stern-l-apply-perm": {
+        "acknowledged":
+            "as stern-l-syndrome-h: Python's and Java's integer permutation "
+            "(_stern_apply_perm, Stern.sternApplyPerm) runs at any width",
+        "c": r"static void stern_l_apply_perm\(",
+        "go": r"^func sternLApplyPerm\(",
+    },
+    "stern-l-rand-error": {
+        "acknowledged":
+            "as stern-l-syndrome-h: Python's _csprng_weight_t and Java's "
+            "csprngWeightT draw on any n; C and Go write the same 4-byte "
+            "rejection scheme over byte strings",
+        "c": r"static void stern_l_rand_error\(",
+        "go": r"^func SternLRandError\(",
+    },
+    "stern-l-commit": {
+        "c": r"static void stern_l_commit\(",
+        "go": r"^func sternLCommit\(",
+        "python": r"^def _sternl_round_commit\(",
+        "java": r"SternL.java::private static BigInteger\[\] commit\(",
+    },
+    "stern-l-respond": {
+        "c": r"static void stern_l_respond\(",
+        "go": r"^func sternLRespond\(",
+        "python": r"^def _sternl_respond\(",
+        "java": r"SternL.java::private static BigInteger\[\] respond\(",
+    },
+    "stern-l-fs-state": {
+        "c": r"static void stern_l_fs_state\(",
+        "go": r"^func sternLFsState\(",
+        "python": r"^def _sternl_fs_state\(",
+        "java": r"SternL.java::private static BitArray fsState\(",
+    },
+    "stern-l-next-challenge": {
+        "acknowledged":
+            "Python writes the chain step (st = nl_fscx_v1(st, i), b = (st mod "
+            "2^32) mod 3) inline in its three loops, as its short form does "
+            "(stern-fs-challenges); Java's chain() runs all the rounds at once",
+        "c": r"static int stern_l_next_challenge\(",
+        "go": r"^func sternLNextChallenge\(",
+        "java": r"SternL.java::private static int\[\] chain\(",
+    },
+    "stern-l-ring-state": {
+        "acknowledged":
+            "C and Python hand their fs-state helper the member-major "
+            "commitments directly (the ring signature already holds them in "
+            "that order); Go and Java gather them from per-member structures",
+        "go": r"^func sternLRingState\(",
+        "java": r"SternL.java::private static BitArray ringState\(",
+    },
+    "stern-l-check-round": {
+        "c": r"static int stern_l_check_round\(",
+        "go": r"^func sternLCheckRound\(",
+        "python": r"^def _sternl_check_round\(",
+        "java": r"SternL.java::static boolean checkRound\(",
+    },
+    "stern-l-simulate": {
+        "c": r"static void stern_l_simulate\(",
+        "go": r"^func sternLSimulateRound\(",
+        "python": r"^def _sternl_simulate_round\(",
+        "java": r"SternL.java::private static BigInteger\[\] simulate\(",
+    },
     "csprng-weight-t": {
         # C and Go name the weight-t error sampler
         # stern_rand_error/SternRandError rather than after the CSPRNG; the
@@ -4665,7 +4760,7 @@ PRIMITIVES = {
         "c": r"static void stern_rand_error\(",
         "go": r"^func SternRandError\(",
         "python": r"^def _csprng_weight_t\(",
-        "java": r"Stern.java::static BigInteger csprngWeightT\(",
+        "java": r"Stern.java::static BigInteger csprngWeightT\(int n, int t,",
     },
     # ── QC-MDPC KEM internals (TODO #261, v6.1.0) ─────────────────────────
     # The bit-polynomial arithmetic and BGF decoder under hpke-stern-kem. Note the
@@ -4846,6 +4941,20 @@ PRIMITIVES = {
         "python": r"^def _rnl_reconcile_bits\(",
         "java": r"HerraduraNl.java::public static BigInteger rnlReconcileBits\(",
     },
+    # TODO #383 stage 4: the C CLI calls rnl_keygen_dim / rnl_agree_dim at the
+    # key's ring, so these two stems stopped being CLI-reachable and need rows.
+    "rnl-keygen": {
+        "c": r"static void rnl_keygen\(",
+        "go": r"^func RnlKeygen\(",
+        "python": r"^def _rnl_keygen\(",
+        "java": r"HerraduraNl.java::public static RnlKeypair rnlKeygen\(",
+    },
+    "rnl-agree": {
+        "c": r"static void rnl_agree\(",
+        "go": r"^func RnlAgree\(",
+        "python": r"^def _rnl_agree\(",
+        "java": r"HerraduraNl.java::public static RnlAgreeResult rnlAgree\(",
+    },
     "rnl-m-poly": {
         "c": r"static void rnl_m_poly\(",
         "go": r"^func RnlMPoly\(",
@@ -4941,11 +5050,9 @@ PRIMITIVES = {
     # bookkeeping -- test [47] checks the contents in all four languages and this
     # entry checks the function that produces them still exists to be checked.
     "v3-rows": {
-        "acknowledged":
-            "C stores the 47x5 + 3x7 row partition as a static table (_V3_ROWS) "
-            "rather than computing it, so there is no function to name. The "
-            "table's contents are asserted directly by test [47] in all four "
-            "languages",
+        # TODO #383: C computes the partition at any width since its chi layer
+        # left 256 bits (it returns the 5-row and 7-row counts rather than a list).
+        "c": r"static int nl_v3_rows\(",
         "go": r"^func V3Rows\(",
         "python": r"^def v3_rows\(",
         "java": r"HerraduraNl.java::public static int\[\] v3Rows\(",
@@ -5478,11 +5585,14 @@ PRIMITIVES = {
     },
     "hcred-params": {
         "acknowledged":
-            "HCRED's width is a RUNTIME argument in Python and Go and a "
-            "COMPILE-TIME constant in C (HCRED_N) and Java (Hcred.N) -- TODO "
-            "#266's finding, and the reason KAT/hcred_kkw.json ships two vector "
-            "sets. Only Python needs a parameter-derivation function; there is "
-            "nothing to port unless that split is closed first",
+            "HCRED's width is a RUNTIME argument in all four ports (C since "
+            "TODO #383 stage 3, Java since TODO #384; TODO #266 found it a "
+            "compile-time constant in both, and KAT/hcred_kkw.json still ships "
+            "two vector sets). Python derives (rows, row_bits, w_max) in one "
+            "function; C and Java write one per value (exempt under the census's "
+            "C and Java rules: hcred_row_bits / hcred_w_max ..., rowsFor / "
+            "rowBitsFor / wMaxFor), so there is no single C or Java function to "
+            "name here",
         "python": r"^def _hcred_params\(",
     },
     "hcred-issuer-msg": {
@@ -5549,7 +5659,7 @@ PRIMITIVES = {
         "go": r"^func HpkeSternFEncap\(",
         "python": r"^def hpke_stern_f_encap\(",
         "java": r"Stern.java::public static SternEncapResult "
-                r"hpkeSternFEncapWithE\(",
+                r"hpkeSternFEncapWithE\(BigInteger seed, int n,",
     },
     "hske-nl-v2-duplex-decrypt": {
         "c": r"static int hske_nl_v2_duplex_decrypt\(",
@@ -5801,6 +5911,37 @@ DECL_PATTERNS = {
 # it instead of quietly covering the next thing that matches.
 CENSUS_EXEMPT = {
     "c": [
+        (r"^(gf_mul_poly_ba|gf_poly_for)$",
+         "the GF(2^n) multiply with its polynomial already looked up, and the "
+         "lookup-or-fail wrapper around ba_gf_poly (TODO #383).  gf_pow_ba "
+         "looks the polynomial up once instead of once per multiply; gf-mul and "
+         "gf-pow remain the manifest's steps, and the lookup is BITARRAY.md 4.6's "
+         "table, which ba_gf_poly already carries under the ba_ rule"),
+        (r"^_oprf_is_(one|ord)$",
+         "x == 1 and x == 2^n - 1 at x's width, the OPRF's rejection tests (TODO "
+         "#385); Python, Go and Java write them inline as integer comparisons "
+         "(1 < k < ord).  Comparisons, not protocol steps"),
+        (r"^nl_chi_v3_rows_ba$",
+         "nl-chi-v3 evaluated one row at a time, the branch nl_chi_v3_ba takes "
+         "off 256 bits, where its bit-parallel masks do not apply (TODO #383).  "
+         "Not a second primitive: nl_chi_v3_ba is the manifest's entry and "
+         "dispatches here"),
+        (r"^hcred_(n_ok|row_bits|w_max|nb|nd|round_outs_ser)$",
+         "HCRED's parameter rules at runtime width n (TODO #383 stage 3): the "
+         "row-sum bit length, the weight bound n/4 + floor(sqrt(3n)), the share "
+         "counts and a round's serialised size, which Python computes in "
+         "_hcred_params (the hcred-params manifest row) and inline.  Parameter "
+         "rules, not protocol steps; the width matrix checks them by interop"),
+        (r"^stern_l_(check|load64|read)$",
+         "the Stern-F long form's plumbing (TODO #382): the N check, a 64-bit "
+         "big-endian load for the syndrome's word loop, and the CSPRNG read of "
+         "an N/8-byte string (ba_rand for a value wider than a BitArray).  "
+         "Python, Go and Java check N and draw bytes inline"),
+        (r"^stern_t$",
+         "Stern-F's error weight t = max(2, N/16) at width N, which Python, Go "
+         "and Java write inline where they use it (Python's `t = max(2, n // 16)`; "
+         "TODO #383 stage 2).  A parameter rule, not a protocol step: the "
+         "sdf-t PARAMETERS row is what checks it, and it reads SDF_T"),
         (r"^_?ba(33)?_", "BitArray octet plumbing (shift/compare/popcount/print/rand, "
                          "the width check, and the fallible ba_try_* surface). NOT a "
                          "protocol step in any language. Until TODO #314 pass 3 the "
@@ -5838,6 +5979,11 @@ CENSUS_EXEMPT = {
                    "fixed-width stem is what the manifest names"),
     ],
     "go": [
+        (r"^sternL(Bit|Xor|Popcount|Check|MsgCheck|Rand)$",
+         "the Stern-F long form's byte-string plumbing (TODO #382): bit read, "
+         "XOR, popcount, the N and message-width checks and the CSPRNG read.  "
+         "Go alone needs them, holding long vectors as []byte where Python and "
+         "Java use big integers and C has its own stern_l_ helpers"),
         (r"^(sternT|sternNRows|nlV3ISteps|v1ModeSteps)$", "width-scaling helpers added by TODO "
          "#295 so that SdfT, SdfNRows and I3Value GOVERN the code instead of "
          "being restated as the literal ratios n/16, n/2 and 5n/16 at the call "
@@ -5883,6 +6029,13 @@ CENSUS_EXEMPT = {
          "rnl_twiddle_ family builds"),
     ],
     "python": [
+        (r"^(_sternl_(b|check|msg|rand)|stern_is_long)$",
+         "the Stern-F long form's plumbing (TODO #382): an int as N/8 bytes, "
+         "the N and message-width checks, the CSPRNG read of an N/8-byte "
+         "string, and the N > 256 test the CLI dispatches on.  C, Go and Java "
+         "have their own (stern_l_check / stern_is_long, sternLCheck / "
+         "SternIsLong, SternL.check / isLong) under their exempt or public "
+         "surfaces"),
         (r"^(_ba_check_width|ba_gf_poly|ba_gf_mul|ba_gf_pow)$",
          "the BitArray width check and the BitArray-level GF pair (TODO #314 "
          "pass 4) -- the Python half of the family C's exempted ba_ rule covers "
@@ -5895,6 +6048,12 @@ CENSUS_EXEMPT = {
          "and what a `poly` parameter cannot enforce"),
     ],
     "java": [
+        (r"^(bytesN|genPermOnKey)$",
+         "the Stern-F long form (TODO #382): an int as N/8 bytes, and the short "
+         "form's Fisher-Yates generator with its PRNG at the 256-bit key's "
+         "width.  Python's and Go's short-form generators already run their "
+         "PRNG at the key's width and take the permutation length separately, "
+         "so they pass the key straight in; Java's sternGenPerm ties both to n"),
         (r"^(checkWidth|hexVal|zero|fromHex|fromUint|gfPoly|rnlKdfSeed|fscx)$",
          "the BitArray width check, constructors, hex decoder and the "
          "BitArray-level statics (TODO #314 pass 5) -- the Java half of the "
@@ -5922,6 +6081,18 @@ CENSUS_EXEMPT = {
                          "Python; Java factors it out because BigInteger has no "
                          "rotate. ZkpNl's own rol is a DIFFERENT function at n=32 and "
                          "is manifest-named as zkp-nl-rol"),
+        (r"^(rowsFor|rowBitsFor|wMaxFor|tFor|gen|order|r3)$",
+         "parameter rules at runtime width n (TODO #384): HCRED's rows, row-sum "
+         "bit length and weight bound (Python's _hcred_params, the hcred-params "
+         "row), Stern-F's rows n/2 and weight t = max(2, n/16), the generator g = "
+         "3 and Schnorr order 2^n - 1 at width n, and NL-FSCX v3's round count "
+         "5n/8.  Python writes each inline or in _hcred_params; C's are exempted "
+         "under its hcred_ and stern_t rules.  Parameter rules, not protocol "
+         "steps; the width matrix checks them by interop"),
+        (r"^sternHash$",
+         "the n = 256 wrapper over sternHashN, which the stern-hash manifest row "
+         "names (TODO #384).  Kept for the fixed-width callers (SelfTest, "
+         "KatVerify, Demo); the same split as C's _dim rule"),
         (r"^gateC$", "Java-only inner helper of hcred-gate-round (itself acknowledged), "
                      "one decomposition level further down"),
         (r"^(addmod|submod|mulmod|addmod3|floorMod3|maskOf|randomBig|"
@@ -6280,6 +6451,20 @@ PARAMETERS = {
                        "that is arguably its right home and C and Go are the outliers"),
     "sdf-synbytes": (["SDF_SYNBYTES", None, None, None], "local",
                      "syndrome length in bytes, for C's fixed-size buffers"),
+    # ── Stern-F long form (TODO #382 stage 2) ──
+    "stern-long-n": (["STERN_LONG_N", "SternLongN", "STERN_LONG_N", "SternL.STERN_LONG_N"],
+                     "wire", "the long form's one listed N = 2304 (k = 1152, t = 144), "
+                     "the 128-bit Stern-F set; the PEM carries it in the n field"),
+    "stern-l-ds-perm": (["STERN_L_DS_PERM", "sternLDsPerm", "_STERN_DS_PERM", "SternL.DS_PERM"],
+                        "wire", "ds tag of H_5(pi_seed), the permutation generator's key"),
+    "stern-l-ds-matrix": (["STERN_L_DS_MATRIX", "sternLDsMatrix", "_STERN_DS_MATRIX",
+                           "SternL.DS_MATRIX"], "wire",
+                          "ds tag of H_6(seed), the matrix expander's chaining value"),
+    "stern-l-w": ([None, "sternLW", "_STERN_W", "SternL.W"], "wire",
+                  "the long form's hash, commitment and message width, 256; C writes "
+                  "the literal (32 bytes, 256 bits) at its BitArray-sized sites"),
+    "stern-l-maxb": (["STERN_L_MAXB", None, None, None], "local",
+                     "N/8 at STERN_LONG_N, for C's fixed-size long-form buffers"),
     # ── HPKE-Stern-KEM (QC-MDPC) ──
     "qcmdpc-r": (["QCMDPC_R", "QcMdpcR", "_QCMDPC_R", "Stern.QCMDPC_R"], "wire",
                  "block size; TODO #276 recommends 12323"),
@@ -6923,7 +7108,7 @@ SAMPLER_REPLAY_PINNED = {
         "python": "_rnl_cbd_poly", "java": "HerraduraNl.java::rnlCbdPoly",
     },
     "rnl_rand_poly": {
-        "c": "rnl_rand_poly", "go": "RnlRandPoly",
+        "c": "rnl_rand_poly_dim", "go": "RnlRandPoly",
         "python": "_rnl_rand_poly", "java": "HerraduraNl.java::rnlRandPoly",
     },
     "stern_weight_t": {
@@ -6982,6 +7167,20 @@ OPERATION_REPLAY_PINNED = {
     "hcred_prove_kkw": {
         "c": "hcred_prove_kkw", "go": "HcredProveKkw",
         "python": "hcred_prove_kkw", "java": "Hcred.java::proveKkw",
+    },
+    # TODO #382 stage 2: the Stern-F long form at N = 2304, the short form's
+    # three Stern rows at the 128-bit set.
+    "stern_l_keygen": {
+        "c": "stern_l_keygen", "go": "SternLKeygen",
+        "python": "stern_l_keygen", "java": "SternL.java::keygen",
+    },
+    "hpks_stern_l_sign": {
+        "c": "hpks_stern_l_sign", "go": "HpksSternLSign",
+        "python": "hpks_stern_l_sign", "java": "SternL.java::sign",
+    },
+    "hpks_stern_l_ring_sign": {
+        "c": "stern_l_ring_sign", "go": "HpksSternLRingSign",
+        "python": "hpks_stern_l_ring_sign", "java": "SternL.java::ringSign",
     },
     # --- TODO #307: the four rows #305's coverage census left OWED ---------
     #
@@ -7090,6 +7289,22 @@ OPERATION_REPLAY_PINNED = {
 # ---------------------------------------------------------------------------
 REPLAY_COVERAGE = {
     # --- covered transitively, confirmed by the call graph -----------------
+    # TODO #382 stage 2: the long form's helpers that draw, reached by its
+    # ring-signing row (the simulator draws through all of them; keygen and
+    # signing draw for themselves and are pinned rows).
+    "stern_l_rand": {
+        "status": "transitive", "via": "hpks_stern_l_ring_sign",
+        "c": "stern_l_read", "go": "sternLRand", "python": "_sternl_rand",
+        "java": None,   # Java draws `new BigInteger(n, rng)` inline
+    },
+    "stern_l_rand_error": {
+        "status": "transitive", "via": "hpks_stern_l_ring_sign",
+        "c": None, "go": "SternLRandError", "python": None, "java": None,
+    },
+    "stern_l_simulate": {
+        "status": "transitive", "via": "hpks_stern_l_ring_sign",
+        "c": None, "go": None, "python": None, "java": "SternL.java::simulate",
+    },
     "rand_bitarray": {
         "status": "transitive", "via": "stern_f_keygen",
         "c": "ba_rand", "go": "NewRandBitArray", "python": "random",
@@ -7313,24 +7528,28 @@ RANDOMNESS_CENSUS = {
         "hpake_register", "hpke_encrypt", "hpks_nl_sign", "hpks_sign",
         "hpks_stern_f_sign",
         "hpkst_sign", "hske_decrypt_masked", "hske_encrypt_masked", "oprf_blind",
-        "oprf_keygen", "rnl_cbd_poly_dim", "rnl_rand_poly",
-        "rnl_sigma_sign", "stern_f_keygen", "stern_rand_error", "stern_ring_sign",
-        "stern_ring_simulate", "stern_ring_trit", "zkp_nl_keygen",
+        "oprf_keygen", "rnl_cbd_poly_dim", "rnl_rand_poly_dim",
+        "hpks_stern_l_sign", "rnl_sigma_sign", "stern_f_keygen", "stern_l_keygen",
+        "stern_l_read", "stern_l_ring_sign", "stern_rand_error",
+        "stern_ring_sign", "stern_ring_simulate", "stern_ring_trit", "zkp_nl_keygen",
         "zkp_nl_pp_prove", "zkp_nl_prove",
-    ],   # 25
+    ],   # 29
     "go": [
         "HcredProve", "HcredProveKkw", "HpakeLoginDemo", "HpakeRegister",
         "HpkeEncrypt", "HpksNlSign", "HpksSign",
         "HpksSternFSign", "HpksSternRingSign", "HpkstSign",
         "HskeDecryptMasked", "HskeEncryptMasked", "NewRandBitArray", "OprfBlind",
         "OprfKeygen", "QcMdpcEncap", "QcMdpcKeygen", "RnlCBDPoly", "RnlRandPoly",
-        "RnlSigmaSign", "SternFKeygen", "SternRandError", "ZkpNlKeygen",
-        "ZkpNlProve", "ZkpNlProvepp", "sternRingTrit", "sternSimulateRound",
-    ],   # 27
+        "HpksSternLRingSign", "HpksSternLSign", "RnlSigmaSign", "SternFKeygen",
+        "SternLKeygen", "SternLRandError", "SternRandError",
+        "ZkpNlKeygen", "ZkpNlProve", "ZkpNlProvepp", "sternLRand", "sternRingTrit",
+        "sternSimulateRound",
+    ],   # 32
     "python": [
         "_csprng_weight_t", "_dplex_encrypt", "_hcred_mpc_round", "_rnl_cbd_poly",
         "_rnl_rand_poly", "_stern_ring_trit", "_stern_simulate_round",
-        "hcred_prove_kkw",
+        "_sternl_rand", "hcred_prove_kkw", "hpks_stern_l_ring_sign", "hpks_stern_l_sign",
+        "stern_l_keygen",
         "hpake_login_demo", "hpake_register", "hpke_encrypt", "hpks_nl_sign",
         "hpks_sign", "hpks_stern_f_sign",
         "hpks_stern_ring_sign", "hpkst_sign", "hske_decrypt_masked",
@@ -7338,7 +7557,7 @@ RANDOMNESS_CENSUS = {
         "oprf_keygen", "qcmdpc_encap", "qcmdpc_keygen", "random",
         "rnl_sigma_sign", "stern_f_keygen", "zkp_nl_keygen", "zkp_nl_prove",
         "zkp_nl_prove_pp",
-    ],   # 30
+    ],   # 34
     "java": [
         "BitArray.java::random",
         "Duplex.java::encrypt", "Hcred.java::mpcRound", "Hcred.java::proveKkw",
@@ -7352,10 +7571,11 @@ RANDOMNESS_CENSUS = {
         "Oprf.java::blind", "Oprf.java::keygen",
         "Stern.java::csprngWeightT", "Stern.java::hpksSternFSign",
         "Stern.java::qcmdpcEncap", "Stern.java::qcmdpcKeygen",
-        "Stern.java::sternFKeygen", "SternRing.java::ringTrit",
+        "Stern.java::sternFKeygen", "SternL.java::keygen", "SternL.java::ringSign",
+        "SternL.java::sign", "SternL.java::simulate", "SternRing.java::ringTrit",
         "SternRing.java::sign", "SternRing.java::simulateRound", "ZkpNl.java::prove",
         "ZkpNl.java::provePp", "ZkpNl.java::randomBig",
-    ],   # 32
+    ],   # 36
 }
 
 # Per-language raw-entropy spellings.  A new way to reach the CSPRNG must be

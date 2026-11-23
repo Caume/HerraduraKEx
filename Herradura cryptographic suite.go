@@ -790,11 +790,11 @@ func main() {
 		if err != nil {
 			fmt.Println("[FAIL] OprfKeygen error:", err)
 		} else {
-			rec, err2 := HpakeRegister(pakePw, pakeK)
+			rec, err2 := HpakeRegister(pakePw, pakeK, 256)
 			if err2 != nil {
 				fmt.Println("[FAIL] HpakeRegister error:", err2)
 			} else {
-				sk, err3 := HpakeLoginDemo(rec, pakePw, pakeK)
+				sk, err3 := HpakeLoginDemo(rec, pakePw, pakeK, 256)
 				if err3 != nil {
 					fmt.Println("[FAIL] HpakeLoginDemo error:", err3)
 				} else if sk != nil {
@@ -802,7 +802,7 @@ func main() {
 				} else {
 					fmt.Println("[FAIL] aPAKE login with correct password failed!")
 				}
-				skBad, _ := HpakeLoginDemo(rec, []byte("wrong-pw"), pakeK)
+				skBad, _ := HpakeLoginDemo(rec, []byte("wrong-pw"), pakeK, 256)
 				if skBad == nil {
 					fmt.Println("+ aPAKE login with wrong password: correctly rejected")
 				} else {

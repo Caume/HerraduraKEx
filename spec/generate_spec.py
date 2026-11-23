@@ -250,7 +250,7 @@ def extract_flags_c(c_src):
         raise RuntimeError("extract_flags_c mapped no subcommands in herradura_cli.c "
                            "-- the extractor is stale, not the CLI.")
     bodies = _decl_bodies(src, r'^static\s+[A-Za-z_][\w \t\*]*\b(\w+)\s*\(')
-    pat = [r'(?:get_arg|has_flag|get_arg_multi|rounds_arg)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
+    pat = [r'(?:get_arg|has_flag|get_arg_multi|rounds_arg|num_arg)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
            # get_arg_multi2(argc, argv, "<cmd>", "--plural", "--singular", ...) — TODO #270
            r'get_arg_multi2\s*\(\s*argc\s*,\s*argv\s*,\s*"[a-z0-9\-]+"\s*,'
            r'\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"']
@@ -274,7 +274,7 @@ def extract_valued_flags_c(c_src):
         raise RuntimeError("extract_valued_flags_c mapped no subcommands in "
                            "herradura_cli.c -- the extractor is stale, not the CLI.")
     bodies = _decl_bodies(src, r'^static\s+[A-Za-z_][\w \t\*]*\b(\w+)\s*\(')
-    pat = [r'(?:get_arg|get_arg_multi|rounds_arg)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
+    pat = [r'(?:get_arg|get_arg_multi|rounds_arg|num_arg)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
            r'get_arg_multi2\s*\(\s*argc\s*,\s*argv\s*,\s*"[a-z0-9\-]+"\s*,'
            r'\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"']
     return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\s*\(\s*argc\b')
@@ -316,12 +316,45 @@ def extract_flags_java(java_src):
         src, r'^    (?:private|public|protected)\s+static\s+[\w<>,\[\] ]+?\s(\w+)\s*\(')
     pat = [r'\bopt\.(?:get|getOrDefault|containsKey)\(\s*"([a-z0-9\-]+)"',
            r'\breq\(\s*opt\s*,\s*"([a-z0-9\-]+)"',
+           # numArg(opt, "name", ...) -- TODO #380's numeric parser (bare name, as above)
+           r'\bnumArg\(\s*opt\s*,\s*"([a-z0-9\-]+)"',
            # multiPaths(opt, "<cmd>", "plural", "singular") — TODO #270.  No "--"
            # here: Java's option map is keyed without the dashes.
            r'multiPaths\(\s*opt\s*,\s*"[a-z0-9\-]+"\s*,'
            r'\s*"([a-z0-9\-]+)"\s*,\s*"([a-z0-9\-]+)"']
     return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\(\s*opt\b')
             for sub, fn in dispatch.items()}
+
+
+def extract_bool_flags_java(java_src, c_src):
+    """Java's BOOLEAN flags: names its handlers only ever test with
+    opt.containsKey, never read as a value (TODO #381).
+
+    parseOpts needs the arity: a boolean consumes no token, so `genpkey --algo
+    hpks extra` has a stray 'extra' and `--pubout=x` is refused, while a
+    value-taking flag at the end of argv is missing its value (Java stored it
+    as the string "true" and wrote a file of that name).  The set is checked
+    against C's (every flag C reads with has_flag rather than get_arg): the
+    arity of a flag is part of the shared CLI surface, so a flag boolean in one
+    CLI and valued in another is refused here rather than emitted."""
+    js = _strip_c_comments(java_src)
+    tested = set(re.findall(r'\bopt\.containsKey\(\s*"([a-z0-9\-]+)"', js))
+    valued = set()
+    for pat in (r'\bopt\.(?:get|getOrDefault)\(\s*"([a-z0-9\-]+)"',
+                r'\breq\(\s*opt\s*,\s*"([a-z0-9\-]+)"',
+                r'\bnumArg\(\s*opt\s*,\s*"([a-z0-9\-]+)"'):
+        valued |= set(re.findall(pat, js))
+    java_bool = tested - valued
+    flags_c, valued_c = extract_flags_c(c_src), extract_valued_flags_c(c_src)
+    c_bool = set()
+    for sub in flags_c:
+        c_bool |= {f.lstrip("-") for f in set(flags_c[sub]) - set(valued_c.get(sub, []))}
+    if java_bool != c_bool:
+        raise RuntimeError("boolean flags differ between the Java and C CLIs: "
+                           "Java-only %s, C-only %s (TODO #381: a flag's arity is "
+                           "shared surface)" % (sorted(java_bool - c_bool),
+                                                sorted(c_bool - java_bool)))
+    return java_bool
 
 
 def extract_const_int(src, name):
@@ -428,7 +461,9 @@ SECURITY = {
                               "reader rejected any count != SDF_ROUNDS, so two C builds were mutually "
                               "unreadable and cross-language HCRED interop ran only at 32 rounds. Round "
                               "count and instance hardness are independent axes -- 219 rounds over the "
-                              "deployed N=256 is still ~30-40 bits and still demo-only.",
+                              "deployed N=256 is still ~24-38 bits and still demo-only.  The 128-bit "
+                              "instance is the long form, N=2304 (genpkey --level 128, TODO #382; "
+                              "SPEC.md 11.1): 256-bit commitments, ~2^137 classical by BJMM.",
                         source=["herradura.h:1383-1392", "herradura/herradura.go:1108-1110",
                                 "TODO.md #236"]),
     "hybrid-rnl-stern": dict(status="demo-only", quantum_resistant="conjectured",
@@ -727,7 +762,7 @@ SECURITY = {
                        notes="Reached through the `fpe` subcommand rather than an --algo tag. "
                              "BROKEN AS NAMED: this is not format-preserving encryption in the "
                              "SP 800-38G (FF1/FF3-1) sense. It has no radix, no length and no "
-                             "domain -- it maps 32 bytes to 32 bytes, zero-pads shorter input and "
+                             "domain -- it maps exactly 32 bytes to 32 bytes (any other length is refused since v16.0.0, TODO #377) and "
                              "returns raw binary, so a 16-digit card number comes back as 32 bytes "
                              "of binary. It is additionally the SAME FUNCTION as twk whenever the "
                              "context is 12 bytes: both derive their subkey as the unseparated "
@@ -1023,18 +1058,6 @@ CLI_FLAG_PARITY = {
     # `--digest` and `rand` in v6.2.0/v6.3.0, `kex --kdf` in v6.5.0, and
     # `enc --aead` in v6.5.4 (TODO #273), which needed the AEAD primitive
     # itself rather than argument-parser wiring.
-    ("genpkey", "--bits"): (
-        ("go", "java", "python"), "acknowledged",
-        "A runtime key-width selector. The C CLI is compiled for a single KEYBITS "
-        "and a single RNL_N -- the same reason KAT/'s n=64 PEM vectors skip the C "
-        "CLI -- so there is no runtime width for the flag to set. Porting it would "
-        "mean making the C suite width-parametric, which is a far larger change than "
-        "an argument parser. hpks-zkp-nl is the exception: its n is a runtime "
-        "parameter in C too, and C reads any n <= 64 the other three write; C "
-        "generates only their default, n = 8. Where --bits exists, an explicit "
-        "value is honoured or refused by name, never read as the default -- Python, "
-        "Go and Java read `--bits 256` on hpks-zkp-nl as 'omitted' and wrote n = 8 "
-        "until TODO #374."),
     ("pake-register", "--username"): (
         ("java", "python"), "acknowledged",
         "aPAKE client identifier. It is stored in the record dict for lookup and is "
@@ -1637,6 +1660,7 @@ def generate():
             list(pem_labels_all.values())
             + [l for t in key_tag_labels(priv_algos, pem_labels_all).values() for l in t]),
         "pem_der_field_caps": build_pem_der_field_caps(),
+        "key_parameter_sets": build_key_param_sets(),
     }
     return spec
 
@@ -1727,7 +1751,7 @@ def emit_c_flag_table(flags_c, valued_c, help_lines=()):
     return "\n".join(out)
 
 
-def emit_java_flag_table(flags_java, help_lines=()):
+def emit_java_flag_table(flags_java, help_lines=(), bool_flags=()):
     """Java's allow-list.  Keyed WITHOUT the leading dashes, because that is how
     parseOpts keys its option map."""
     out = ["package herradurakex;", "",
@@ -1748,6 +1772,9 @@ def emit_java_flag_table(flags_java, help_lines=()):
         out.append('        m.put("%s", new HashSet<>(Arrays.asList(%s)));' % (sub, names))
     out += ["        FLAGS = Collections.unmodifiableMap(m);",
             "    }", "",
+            "    /** Flags that take no value (TODO #381); every other flag takes one. */",
+            "    static final Set<String> BOOLEAN = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(%s)));"
+            % ", ".join('"%s"' % f for f in sorted(bool_flags)), "",
             "    /** --help's synopsis (TODO #339). */",
             "    static final String HELP_SYNOPSIS ="]
     body = ['        "%s\\n"' % l.replace("\\", "\\\\").replace('"', '\\"') for l in help_lines]
@@ -1944,6 +1971,217 @@ PEM_DER_ITEMS = {
 }
 
 
+# ── Key parameter sets (TODO #379) ───────────────────────────────────────────
+# Which key sizes `genpkey` makes, per --algo: one row per (algo, --bits value),
+# chosen by `--bits` (kept for compatibility) or by `--level` (the size the
+# parameters are meant to reach: `demo`, or a classical strength in bits).
+# Emitted beside the key-label table into all four CLIs, each of which resolves
+# genpkey's --bits / --level against it before generating anything.
+#
+# A row's `security` is an ESTIMATE with its source; its `status` is the
+# protocol's own (SECURITY above) for a row sized to a strength level, and
+# "demo" for every other row.  `ports` lists the CLIs that generate and consume
+# the row today; the others refuse it by name, pointing at the TODO that closes
+# the gap (TODO #379 stage 1: C and Java run only each algorithm's default).
+# BITS = -1 marks a row --bits cannot name (an algorithm with no width).
+PARAM_LEVELS = ("demo", "128", "192", "256")   # 192 / 256: reserved, no rows yet
+PARAM_PORTS = ("py", "go", "c", "java")
+PARAM_PORT_GAP_TODO = {"c": 383, "java": 384}  # narrow widths in C / Java
+PARAM_FIXED_ALGOS = ("hpks-wots", "hpks-xmss")  # fixed parameters: neither flag
+# --bits is validated by the algorithm's own rule, not this table (TODO #283:
+# hpks-zkp-nl's n is any even value up to the wire bound 64).
+PARAM_OWN_BITS_RULE = ("hpks-zkp-nl",)
+
+_GF_ALGOS = ("hkex-gf", "hpks", "hpks-nl", "hpke", "hpke-nl", "hpke-nl3")
+# sqrt(largest prime factor of 2^n - 1): Pohlig-Hellman's cost (TODO #379's pass)
+_GF_PH = {32: "2^8", 64: "2^11", 128: "2^23", 256: "2^36"}
+# TODO #382: SecurityProofsCode/stern_f_parameter_selection.py's BJMM / Prange
+# figures (k = N/2, t = N/16); 2304 is the long form's 128-bit set.
+_STERN_SEC = {256: "~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)"}
+_STERN_LONG = (2304, "~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); "
+                     "SecurityProofs-5.md 11.8.3")
+
+PARAM_LEVEL_NOTES = {a: "the GF(2^n)* family is demo-only at every width "
+                        "(binary-field discrete logs fall to index calculus)"
+                     for a in _GF_ALGOS + ("oprf",)}
+PARAM_LEVEL_NOTES["hcred"] = ("hcred's own key (a Ring-LWR and syndrome-decoding pair "
+                              "proved in ZKBoo) has no 128-bit set; the ISSUER's "
+                              "hpks-stern key does: genpkey --algo hpks-stern --level 128")
+
+
+def _param_rows():
+    rows = []   # (algo, bits, level, default, security, ports, withdrawn)
+    all4 = PARAM_PORTS
+    # TODO #383 stage 1 (C) and TODO #384 (Java): every CLI runs the GF family
+    # at every width.
+    # TODO #385: the OPRF (2HashDH over GF(2^n)*) runs at the same four widths.
+    for a in _GF_ALGOS + ("oprf",):
+        for w in (32, 64, 128, 256):
+            rows.append((a, w, "demo" if w == 256 else None, w == 256,
+                         "at most %s (Pohlig-Hellman; index calculus is cheaper)" % _GF_PH[w],
+                         all4, None))
+    # TODO #383 stage 4: C runs hkex-rnl (and rnl-sigma, the hybrid) at every
+    # ring; Java already did.
+    for w in (32, 64, 128, 256):
+        rows.append(("hkex-rnl", w, "demo" if w == 256 else None, False,
+                     "far below 2^87 (not estimated)", all4, None))
+    rows.append(("hkex-rnl", 512, None, False, "~2^87 classical, ~2^79 quantum", (),
+                 "SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical "
+                 "bits, short of the 128 it was claimed to give"))
+    rows.append(("hkex-rnl", 1024, "128", True,
+                 ">= 2^128 classical (conjectured; SECURITY.md)", all4, None))
+    for a in ("hpks-stern", "hpke-stern", "hcred"):
+        for w in (32, 64, 128, 256):
+            sec = _STERN_SEC.get(w, "below 2^24")
+            if a == "hcred":
+                sec = "research construction; its Stern-F half " + sec
+            # TODO #383 stages 2 and 3 (C) and TODO #384 (Java): every CLI runs
+            # Stern-F (hpks-stern, hpke-stern) and hcred at every width.
+            rows.append((a, w, "demo" if w == 256 else None, w == 256, sec, all4, None))
+    # TODO #382 stage 2: the long form, N = 2304 (k = 1152, t = 144), in every CLI.
+    for a in ("hpks-stern", "hpke-stern"):
+        rows.append((a, _STERN_LONG[0], "128", False, _STERN_LONG[1], all4, None))
+    rows.append(("hpke-stern-kem", -1, "128", True,
+                 "2^128 classical by its parameters (BIKE-128)", all4, None))
+    rows.append(("hpks-zkp-nl", 8, "demo", True,
+                 "demonstration keypair; no security claim", all4, None))
+    return rows
+
+
+def build_key_param_sets():
+    rows, seen = [], set()
+    for algo, bits, level, default, sec, ports, withdrawn in _param_rows():
+        if algo not in SECURITY:
+            raise RuntimeError("parameter set for unknown algo %r" % algo)
+        if (algo, bits) in seen:
+            raise RuntimeError("duplicate parameter set %r" % ((algo, bits),))
+        seen.add((algo, bits))
+        if level is not None and level not in PARAM_LEVELS:
+            raise RuntimeError("parameter set %r has unknown level %r" % ((algo, bits), level))
+        if any(p not in PARAM_PORTS for p in ports):
+            raise RuntimeError("parameter set %r names unknown ports %r" % ((algo, bits), ports))
+        if withdrawn and (ports or level or default):
+            raise RuntimeError("withdrawn parameter set %r must be refused everywhere"
+                               % ((algo, bits),))
+        rows.append({"algo": algo, "bits": bits, "level": level, "default": bool(default),
+                     "status": ("withdrawn" if withdrawn else
+                                SECURITY[algo]["status"] if level not in (None, "demo")
+                                else "demo"),
+                     "security": sec, "ports": list(ports), "withdrawn": withdrawn})
+    by_algo = {}
+    for r in rows:
+        by_algo.setdefault(r["algo"], []).append(r)
+    for algo, rs in by_algo.items():
+        if sum(r["default"] for r in rs) != 1:
+            raise RuntimeError("algo %r needs exactly one default parameter set" % algo)
+        for lvl in PARAM_LEVELS:
+            if sum(r["level"] == lvl for r in rs) > 1:
+                raise RuntimeError("algo %r has two %r parameter sets" % (algo, lvl))
+        if not any(r["default"] and set(r["ports"]) == set(PARAM_PORTS) for r in rs):
+            raise RuntimeError("algo %r's default parameter set must run in every CLI" % algo)
+    for a in PARAM_FIXED_ALGOS + PARAM_OWN_BITS_RULE + tuple(PARAM_LEVEL_NOTES):
+        if a not in SECURITY:
+            raise RuntimeError("parameter-set list names unknown algo %r" % a)
+    return {"levels": list(PARAM_LEVELS), "fixed_algos": list(PARAM_FIXED_ALGOS),
+            "own_bits_rule": list(PARAM_OWN_BITS_RULE),
+            "port_gap_todo": {k: v for k, v in PARAM_PORT_GAP_TODO.items()},
+            "level_notes": dict(sorted(PARAM_LEVEL_NOTES.items())), "rows": rows}
+
+
+def _ps_ports(r):
+    return " ".join(r["ports"])
+
+
+def emit_c_param_sets(ps):
+    out = ["/* TODO #379: genpkey's key parameter sets (--bits / --level). bits -1: no",
+           " * --bits value names the row.  ports: the CLIs that run the row today. */",
+           "typedef struct { const char *algo; int bits; const char *level; int is_default;",
+           "                 const char *status, *security, *ports, *withdrawn; } HkxParamSet;", "",
+           "static const HkxParamSet HKX_PARAM_SETS[] = {"]
+    for r in ps["rows"]:
+        out.append('    {"%s", %d, %s, %d, "%s",\n     "%s", "%s", %s},'
+                   % (r["algo"], r["bits"], '"%s"' % r["level"] if r["level"] else "0",
+                      int(r["default"]), r["status"], r["security"], _ps_ports(r),
+                      '"%s"' % r["withdrawn"] if r["withdrawn"] else "0"))
+    out += ["};",
+            "static const int HKX_PARAM_SETS_N ="
+            " (int)(sizeof(HKX_PARAM_SETS) / sizeof(HKX_PARAM_SETS[0]));",
+            "static const char *const HKX_PARAM_LEVELS[] = {%s, 0};"
+            % ", ".join('"%s"' % l for l in ps["levels"]),
+            "static const char *const HKX_PARAM_FIXED[] = {%s, 0};"
+            % ", ".join('"%s"' % a for a in ps["fixed_algos"]),
+            "static const char *const HKX_PARAM_OWN_BITS[] = {%s, 0};"
+            % ", ".join('"%s"' % a for a in ps["own_bits_rule"]),
+            "static const char *const HKX_PARAM_LEVEL_NOTES[] = {"]
+    for a, note in ps["level_notes"].items():
+        out.append('    "%s", "%s",' % (a, note))
+    out += ["    0};",
+            "#define HKX_PARAM_GAP_TODO %d   /* this CLI's narrow-width TODO */"
+            % ps["port_gap_todo"]["c"], ""]
+    return out
+
+
+def emit_java_param_sets(ps):
+    out = ["    /** TODO #379: genpkey's key parameter sets: {algo, bits, level|\"\", default,",
+           "     *  status, security, ports, withdrawn|\"\"}.  bits -1: no --bits value. */",
+           "    static final String[][] PARAM_SETS = {"]
+    for r in ps["rows"]:
+        out.append('        {"%s", "%d", "%s", "%s", "%s", "%s", "%s", "%s"},'
+                   % (r["algo"], r["bits"], r["level"] or "", "1" if r["default"] else "0",
+                      r["status"], r["security"], _ps_ports(r), r["withdrawn"] or ""))
+    out += ["    };",
+            "    static final String[] PARAM_LEVELS = {%s};"
+            % ", ".join('"%s"' % l for l in ps["levels"]),
+            "    static final String[] PARAM_FIXED = {%s};"
+            % ", ".join('"%s"' % a for a in ps["fixed_algos"]),
+            "    static final String[] PARAM_OWN_BITS = {%s};"
+            % ", ".join('"%s"' % a for a in ps["own_bits_rule"]),
+            "    static final String[][] PARAM_LEVEL_NOTES = {"]
+    for a, note in ps["level_notes"].items():
+        out.append('        {"%s", "%s"},' % (a, note))
+    out += ["    };",
+            "    static final int PARAM_GAP_TODO = %d;" % ps["port_gap_todo"]["java"], ""]
+    return out
+
+
+def emit_go_param_sets(ps):
+    out = ["// TODO #379: genpkey's key parameter sets (--bits / --level); bits -1: no",
+           "// --bits value names the row.  ports: the CLIs that run the row today.",
+           "var paramSets = []paramSet{"]
+    for r in ps["rows"]:
+        out.append('\t{"%s", %d, "%s", %s, "%s", "%s", "%s", "%s"},'
+                   % (r["algo"], r["bits"], r["level"] or "", "true" if r["default"] else "false",
+                      r["status"], r["security"], _ps_ports(r), r["withdrawn"] or ""))
+    out += ["}", "",
+            "var paramLevels = []string{%s}" % ", ".join('"%s"' % l for l in ps["levels"]),
+            "var paramFixed = []string{%s}" % ", ".join('"%s"' % a for a in ps["fixed_algos"]),
+            "var paramOwnBits = []string{%s}" % ", ".join('"%s"' % a for a in ps["own_bits_rule"]),
+            "var paramLevelNotes = map[string]string{"]
+    for a, note in ps["level_notes"].items():
+        out.append('\t"%s": "%s",' % (a, note))
+    out += ["}", ""]
+    return out
+
+
+def emit_py_param_sets(ps):
+    out = ["# TODO #379: genpkey's key parameter sets (--bits / --level); bits -1: no",
+           "# --bits value names the row.  ports: the CLIs that run the row today.",
+           "_PARAM_SETS = ("]
+    for r in ps["rows"]:
+        out.append("    (%r, %d, %r, %r, %r,\n     %r, %r, %r),"
+                   % (r["algo"], r["bits"], r["level"], r["default"], r["status"],
+                      r["security"], _ps_ports(r), r["withdrawn"]))
+    out += [")",
+            "_PARAM_LEVELS = %r" % (tuple(ps["levels"]),),
+            "_PARAM_FIXED = %r" % (tuple(ps["fixed_algos"]),),
+            "_PARAM_OWN_BITS = %r" % (tuple(ps["own_bits_rule"]),),
+            "_PARAM_LEVEL_NOTES = {"]
+    for a, note in ps["level_notes"].items():
+        out.append("    %r: %r," % (a, note))
+    out += ["}", ""]
+    return out
+
+
 def build_pem_der_items(all_labels):
     unknown = sorted(set(PEM_DER_ITEMS) - set(all_labels))
     if unknown:
@@ -1989,7 +2227,8 @@ def build_pem_der_items(all_labels):
 _GF_N = {0: "=f2/8", 1: "=f2/8", 2: "2"}         # (priv, pub, n)
 _GF_PUB = {0: "=f1/8", 1: "2"}                    # (pub, n)
 _STERN_KEY = {0: "=f2/8", 1: "=f2/8", 2: "2"}     # (e or syndrome, seed, n)
-_STERN_SIG = {0: "2", 1: "2", 2: "=f1*3*(f0/8)", 3: "=(f1+3)/4", 4: "=f1*2*(f0/8)"}
+# Commitments are min(n, 256) bits: 256 above N = 256, the long form (TODO #382).
+_STERN_SIG = {0: "2", 1: "2", 2: "=f1*3*min(f0/8, 32)", 3: "=(f1+3)/4", 4: "=f1*2*(f0/8)"}
 # (K_B, C_B, hint, n, hint length[, n_B]): K_B is minimal, like a session key.
 _RNL_RESP = {0: "32", 1: "=f3*2", 2: "=f3/8", 3: "2", 4: "2", 5: "=32"}
 _RNL_Q = 65537        # parameters.hkex_rnl q
@@ -2074,9 +2313,9 @@ PEM_DER_FIELD_CAPS = [
     # (leaf, %d WOTS values of n/8 bytes, h auth-path nodes of 32, h, n)
     ("HERRADURA HPKS-XMSS SIGNATURE", (5, 5), None,
      {0: "4", 1: "=%d*(f4/8)" % _WOTS_L, 2: "=f3*32", 3: "1", 4: "2"}),
-    # (k, rounds, n, k*rounds entries of c0 c1 c2 b ra rb)
+    # (k, rounds, n, k*rounds entries of c0 c1 c2 b ra rb); c0..c2 min(n, 256) bits
     ("HERRADURA HPKS-RING SIGNATURE", (4, 4), None,
-     {0: "1", 1: "2", 2: "2", 3: "=f0*f1*(5*(f2/8)+1)"}),
+     {0: "1", 1: "2", 2: "2", 3: "=f0*f1*(3*min(f2/8, 32)+2*(f2/8)+1)"}),
     ("HERRADURA OPRF PRIVATE KEY", (2, 2), None, _GF_PUB),
     ("HERRADURA OPRF CLIENT STATE", (3, 3), None, _GF_N),
     ("HERRADURA OPRF EVALUATION", (2, 2), None, _GF_PUB),
@@ -2102,11 +2341,12 @@ PEM_DER_FIELD_CAPS = [
     ("HERRADURA CIPHERTEXT", (3, 3), "f0 == 0", {0: "1", 1: "=(f2+7)/8", 2: "2"}),
     ("HERRADURA CIPHERTEXT", (3, 3), None, {0: "=(f2+7)/8", 1: "=(f2+7)/8", 2: "2"}),
     ("HERRADURA CIPHERTEXT", (4, 4), None, {0: "1", 1: "=(f3+7)/8", 2: "=(f3+7)/8", 3: "2"}),
-    # Five: hske-nla1 format 2 (2, nonce, E, tag, n), else HPKE-Stern (5 x n/8).
+    # Five: hske-nla1 format 2 (2, nonce, E, tag, n), else HPKE-Stern (ct, e', K,
+    # E, n): K and E are min(n, 256) bits, the payload block (TODO #382).
     ("HERRADURA CIPHERTEXT", (5, 5), "f0 == 2",
      {0: "1", 1: "=(f4+7)/8", 2: "=(f4+7)/8", 3: "=32", 4: "2"}),
     ("HERRADURA CIPHERTEXT", (5, 5), None,
-     {0: "=f4/8", 1: "=f4/8", 2: "=f4/8", 3: "=f4/8", 4: "2"}),
+     {0: "=f4/8", 1: "=f4/8", 2: "=min(f4/8, 32)", 3: "=min(f4/8, 32)", 4: "2"}),
     # Six: duplex (format 3 or 4, nonce, length, ciphertext, tag, n).
     ("HERRADURA CIPHERTEXT", (6, 6), None,
      {0: "1", 1: "=(f5+7)/8", 2: "6", 3: "=f2", 4: "=32", 5: "2"}),
@@ -2864,7 +3104,7 @@ def build_key_label_acceptance(priv_algos, pem_labels):
     return rows
 
 
-def emit_c_key_table(rows, items, caps):
+def emit_c_key_table(rows, items, caps, ps):
     width = max(len(r["labels"]) for r in rows) + 1
     out = ["/* " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n * ") + " */",
            "#ifndef HKX_KEY_LABEL_TABLE_H",
@@ -2889,11 +3129,12 @@ def emit_c_key_table(rows, items, caps):
             "static const int HKX_DER_ITEMS_N ="
             " (int)(sizeof(HKX_DER_ITEMS) / sizeof(HKX_DER_ITEMS[0]));", ""]
     out += emit_c_field_caps(caps)
+    out += emit_c_param_sets(ps)
     out += ["#endif /* HKX_KEY_LABEL_TABLE_H */", ""]
     return "\n".join(out)
 
 
-def emit_java_key_table(rows, items, caps):
+def emit_java_key_table(rows, items, caps, ps):
     out = ["package herradurakex;", "",
            "/** " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n *  ") + " */",
            "final class KeyLabelTable {",
@@ -2910,6 +3151,7 @@ def emit_java_key_table(rows, items, caps):
         out.append('        {"%s", "%d", "%d"},' % (r["label"], r["min"], r["max"]))
     out += ["    };", ""]
     out += emit_java_field_caps(caps)
+    out += emit_java_param_sets(ps)
     out += ["}", ""]
     return "\n".join(out)
 
@@ -2928,7 +3170,7 @@ def _replace_region(src, begin, end, body, what):
     return pat.sub(lambda _m: "\n".join([begin] + body + [end]), src, count=1)
 
 
-def emit_go_key_region(go_src, rows, items, caps):
+def emit_go_key_region(go_src, rows, items, caps, ps):
     body = ["var keySites = []keySite{"]
     for r in rows:
         body.append('\t{"%s", "%s", "%s", "%s", []string{%s}},'
@@ -2943,10 +3185,11 @@ def emit_go_key_region(go_src, rows, items, caps):
     body.append("}")
     body.append("")
     body += emit_go_field_caps(caps)
+    body += emit_go_param_sets(ps)
     return _replace_region(go_src, GO_KEY_BEGIN, GO_KEY_END, body, "herradura_cli.go")
 
 
-def emit_py_key_region(py_src, rows, items, caps):
+def emit_py_key_region(py_src, rows, items, caps, ps):
     body = ["_KEY_SITES = {"]
     for r in rows:
         body.append("    (%r, %r, %r): (%r, (%s)),"
@@ -2962,6 +3205,8 @@ def emit_py_key_region(py_src, rows, items, caps):
     body.append("")
     body.append("")
     body += emit_py_field_caps(caps)
+    body.append("")
+    body += emit_py_param_sets(ps)
     return _replace_region(py_src, PY_KEY_BEGIN, PY_KEY_END, body, "herradura.py")
 
 
@@ -2984,20 +3229,24 @@ def main():
                                          extract_valued_flags_c(read(CLI_C)),
                                          build_help_synopsis(spec, "c"))),
         (JAVA_FLAG_TABLE, emit_java_flag_table(extract_flags_java(read(CLI_JAVA)),
-                                               build_help_synopsis(spec, "java"))),
+                                               build_help_synopsis(spec, "java"),
+                                               extract_bool_flags_java(read(CLI_JAVA),
+                                                                       read(CLI_C)))),
         # TODO #339: Go's synopsis lives in a marked region of the CLI itself.
         (CLI_GO, emit_go_key_region(
             emit_go_help_region(read(CLI_GO), build_help_synopsis(spec, "go")),
-            spec["key_label_acceptance"], spec["pem_der_items"], spec["pem_der_field_caps"])),
+            spec["key_label_acceptance"], spec["pem_der_items"], spec["pem_der_field_caps"],
+            spec["key_parameter_sets"])),
         # TODO #366: the key-label acceptance table, in all four CLIs (with
         # #367's item counts and #372's field caps).
         (C_KEY_TABLE, emit_c_key_table(spec["key_label_acceptance"], spec["pem_der_items"],
-                                       spec["pem_der_field_caps"])),
+                                       spec["pem_der_field_caps"], spec["key_parameter_sets"])),
         (JAVA_KEY_TABLE, emit_java_key_table(spec["key_label_acceptance"], spec["pem_der_items"],
-                                             spec["pem_der_field_caps"])),
+                                             spec["pem_der_field_caps"], spec["key_parameter_sets"])),
         (HERRADURA_PY, emit_py_key_region(read(HERRADURA_PY), spec["key_label_acceptance"],
                                                      spec["pem_der_items"],
-                                                     spec["pem_der_field_caps"])),
+                                                     spec["pem_der_field_caps"],
+                                                     spec["key_parameter_sets"])),
     ]
 
     if args.check:

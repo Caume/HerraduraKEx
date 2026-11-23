@@ -18,6 +18,8 @@
 #include "herradura_codec.h"
 #include "cli_flag_table.h"
 #include "key_label_table.h"   /* TODO #366 */
+#include <sys/stat.h>          /* TODO #381: read_binary_file refuses a directory */
+#include <stdarg.h>            /* dievf */
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * I/O helpers
@@ -33,6 +35,11 @@ static void die(const char *msg) { fputs(msg, stderr); fputc('\n', stderr); exit
     "(SecurityProofs-10.md 11.81, TODO #168, #354)"
 static void dief(const char *fmt, const char *s)
 { fprintf(stderr, fmt, s); fputc('\n', stderr); exit(1); }
+/* printf-style die for a message with numeric fields (TODO #383 stage 4). */
+__attribute__((format(printf, 1, 2), noreturn))
+static void dievf(const char *fmt, ...)
+{ va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
+  fputc('\n', stderr); exit(1); }
 
 /* TODO #372: nothing may follow a PEM's DER SEQUENCE; same text in all four CLIs. */
 static void die_der_trailing(const char *label, long trail)
@@ -68,6 +75,16 @@ static uint8_t *read_binary_file(const char *path, size_t *len_out)
 {
     FILE *f = (strcmp(path, "-") == 0) ? stdin : fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open: %s\n", path); exit(1); }
+    /* TODO #381: fopen succeeds on a directory and fread then returns 0, so
+     * `sign --in .` signed the empty message and `dgst --in .` printed the
+     * empty-input digest, exit 0.  Python, Go and Java refuse; so does C now. */
+    {
+        struct stat st;
+        if (fstat(fileno(f), &st) == 0 && S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "error: %s: Is a directory\n", path);
+            exit(1);
+        }
+    }
     size_t cap = 4096, n = 0;
     uint8_t *buf = malloc(cap);
     if (!buf) die("out of memory");
@@ -192,6 +209,114 @@ static void check_unknown_flags(const char *cmd, int argc, char **argv)
     }
 }
 
+/* TODO #381: the shape of the argument list, in one rule shared by all four CLIs.
+ *
+ *   - `--flag=value` is `--flag value` (Python and Go always took it; C and Java
+ *     refused it as an unknown flag).  A boolean flag takes no value, so
+ *     `--aead=x` is refused rather than read as --aead.
+ *   - A value-taking flag needs a value: at the end of argv, or followed by
+ *     another flag this subcommand knows, it is refused.  C used to ignore a
+ *     trailing `--out` and write to stdout; Java stored it as the string "true"
+ *     and wrote a file of that name.
+ *   - A token that is neither a flag nor a flag's value is refused.  C ignored
+ *     `genpkey --algo hpks extra`.
+ *
+ * A flag-shaped VALUE that is not a flag of this subcommand (a file literally
+ * named "--weird.pem") is still a value, as check_unknown_flags has it.  The
+ * threshold path lists take every following token that does not start with
+ * "--" (TODO #270), and need at least one. */
+static int hkx_set_has(const char *const *v, int n, const char *a)
+{
+    for (int j = 0; j < n; j++) if (strcmp(a, v[j]) == 0) return 1;
+    return 0;
+}
+
+static int hkx_multi_flag(const char *a)
+{
+    return strcmp(a, "--commits") == 0 || strcmp(a, "--commit") == 0 ||
+           strcmp(a, "--partials") == 0 || strcmp(a, "--partial") == 0;
+}
+
+/* Split each `--name=value` whose --name is a flag of cmd into two tokens.
+ * Returns a new argv (argc updated); the strings are never freed -- they live
+ * for the whole run, as argv does. */
+/* The rewritten argv lives for the whole run.  Held in a file-scope static so it stays
+ * reachable after main returns: LeakSanitizer otherwise reports it (and the flag names
+ * it points to) as leaked, which fails the sanitizers CI job. */
+static char **hkx_split_argv;
+
+static char **split_eq_args(const char *cmd, int *argc_io, char **argv)
+{
+    const HkxFlagSet *set = NULL;
+    for (int i = 0; i < HKX_FLAG_SETS_N; i++)
+        if (strcmp(HKX_FLAG_SETS[i].cmd, cmd) == 0) { set = &HKX_FLAG_SETS[i]; break; }
+    int argc = *argc_io;
+    if (!set) return argv;
+    char **out = malloc(sizeof(char *) * (size_t)(2 * argc + 1));
+    if (!out) die("out of memory");
+    hkx_split_argv = out;
+    int n = 0;
+    for (int i = 0; i < argc; i++) {
+        const char *a = argv[i];
+        const char *eq = (i >= 2 && a[0] == '-' && a[1] == '-') ? strchr(a, '=') : NULL;
+        if (eq) {
+            size_t k = (size_t)(eq - a);
+            char *name = malloc(k + 1);
+            if (!name) die("out of memory");
+            memcpy(name, a, k); name[k] = '\0';
+            if (hkx_set_has(set->flags, set->n, name)) {
+                if (!hkx_set_has(set->valued, set->nv, name)) {
+                    fprintf(stderr, "%s: %s takes no value\n", cmd, name);
+                    exit(2);
+                }
+                out[n++] = name;
+                out[n++] = (char *)(eq + 1);
+                continue;
+            }
+            free(name);
+        }
+        out[n++] = argv[i];
+    }
+    out[n] = NULL;
+    *argc_io = n;
+    return out;
+}
+
+static void check_arg_shape(const char *cmd, int argc, char **argv)
+{
+    const HkxFlagSet *set = NULL;
+    for (int i = 0; i < HKX_FLAG_SETS_N; i++)
+        if (strcmp(HKX_FLAG_SETS[i].cmd, cmd) == 0) { set = &HKX_FLAG_SETS[i]; break; }
+    if (!set) return;
+    for (int i = 2; i < argc; i++) {
+        const char *a = argv[i];
+        if (strcmp(a, "--help") == 0) continue;
+        if (hkx_set_has(set->valued, set->nv, a)) {
+            if (hkx_multi_flag(a)) {
+                int j = i + 1;
+                while (j < argc && strncmp(argv[j], "--", 2) != 0) j++;
+                if (j == i + 1) {
+                    fprintf(stderr, "%s: %s needs a value\n", cmd, a);
+                    exit(2);
+                }
+                i = j - 1;
+                continue;
+            }
+            if (i + 1 >= argc || hkx_set_has(set->flags, set->n, argv[i + 1])) {
+                fprintf(stderr, "%s: %s needs a value\n", cmd, a);
+                exit(2);
+            }
+            i++;                          /* its value */
+            continue;
+        }
+        if (hkx_set_has(set->flags, set->n, a)) continue;   /* boolean */
+        /* check_unknown_flags has already refused an unknown "--" token that
+         * is not a value, so what is left here is a stray positional. */
+        fprintf(stderr, "%s: unexpected argument '%s'\n", cmd, a);
+        exit(2);
+    }
+}
+
 /* TODO #366: refuse a key whose PEM label this operation does not accept.
  *
  * HKX_KEY_SITES is generated from spec/generate_spec.py's KEY_LABEL_SITES, which
@@ -301,18 +426,41 @@ static const char *digest_value(const char *cmd, const char *digest)
  * Every signing default meets the floor, so default flags interoperate. */
 #define CLI_MIN_VERIFY_ROUNDS 219   /* == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS */
 
+/* THE numeric-flag parser (TODO #375, #380): a decimal integer in [lo, hi],
+ * digits only (no sign, space, 0x, _ or exponent), refused by name otherwise.
+ * Every numeric flag goes through it, so an explicit value is never read as
+ * "omitted" and never wraps.  The message is shared with the other three CLIs. */
+static uint64_t dec_range_arg(const char *s, uint64_t lo, uint64_t hi,
+                              const char *cmd, const char *flag)
+{
+    uint64_t v = 0;
+    const char *p = s;
+    int ok = *p != '\0';
+    for (; ok && *p; p++) {
+        unsigned d = (unsigned)(*p - '0');
+        if (*p < '0' || *p > '9' || v > (hi - d) / 10) ok = 0;
+        else v = v * 10 + d;
+    }
+    if (!ok || v < lo) {
+        fprintf(stderr, "%s: %s must be a decimal integer from %llu to %llu, got '%s'\n",
+                cmd, flag, (unsigned long long)lo, (unsigned long long)hi, s);
+        exit(1);
+    }
+    return v;
+}
+
+/* The flag's value through dec_range_arg, or deflt when it is omitted. */
+static uint64_t num_arg(int argc, char **argv, const char *flag, const char *cmd,
+                        uint64_t lo, uint64_t hi, uint64_t deflt)
+{
+    const char *a = get_arg(argc, argv, flag);
+    return a ? dec_range_arg(a, lo, hi, cmd, flag) : deflt;
+}
+
 static int rounds_arg(int argc, char **argv, const char *flag, const char *cmd,
                       int deflt)
 {
-    const char *a = get_arg(argc, argv, flag);
-    if (!a) return deflt;
-    char *end = NULL;
-    long v = strtol(a, &end, 10);
-    if (!*a || *end || v < 1 || v > SDF_MAX_ROUNDS) {
-        fprintf(stderr, "%s: %s must be between 1 and %d\n", cmd, flag, SDF_MAX_ROUNDS);
-        exit(1);
-    }
-    return (int)v;
+    return (int)num_arg(argc, argv, flag, cmd, 1, SDF_MAX_ROUNDS, (uint64_t)deflt);
 }
 
 static void require_rounds(int rounds, int floor, const char *what, const char *cmd)
@@ -328,15 +476,6 @@ static void require_rounds(int rounds, int floor, const char *what, const char *
 /* ─────────────────────────────────────────────────────────────────────────────
  * BitArray / polynomial packing helpers
  * ───────────────────────────────────────────────────────────────────────────── */
-
-/* Minimal-byte pointer for a BitArray (skips leading zero bytes). */
-static void ba_min_bytes(const BitArray *ba, const uint8_t **start, size_t *len)
-{
-    size_t i;
-    for (i = 0; i < KEYBYTES && ba->b[i] == 0; i++);
-    if (i == KEYBYTES) { *start = ba->b + KEYBYTES - 1; *len = 1; }
-    else               { *start = ba->b + i; *len = KEYBYTES - i; }
-}
 
 /* Right-align src_len bytes into a KEYBYTES-wide BitArray (big-endian). */
 static void ba_from_ra(BitArray *ba, const uint8_t *src, size_t src_len)
@@ -370,28 +509,31 @@ static void ba_from_ra_n(BitArray *ba, const uint8_t *src, size_t src_len, int n
     }
 }
 
-/* Pack n Z_q polynomial coefficients into bpc-bytes-per-coeff big-endian blob.
+/* Pack n Z_q polynomial coefficients into bpc-bytes-per-coeff big-endian blob
+ * of n * bpc bytes (n is the ring dimension, TODO #383 stage 4).
  * bpc=4 for s and m (Z_q, q=65537 ≤ 17 bits); bpc=2 for C (Z_p, p=4096 ≤ 12 bits). */
-static void poly_pack(uint8_t *out, const rnl_poly_t p, int bpc)
+static void poly_pack(uint8_t *out, const int32_t *p, int n, int bpc)
 {
     int i, k;
-    for (i = 0; i < RNL_N; i++) {
+    for (i = 0; i < n; i++) {
         uint32_t v = (uint32_t)p[i];
         for (k = bpc - 1; k >= 0; k--) { out[i * bpc + k] = (uint8_t)(v & 0xFF); v >>= 8; }
     }
 }
 
-/* Unpack a bpc-bytes-per-coeff big-endian blob into a Z_q polynomial. */
-static void poly_unpack(rnl_poly_t p, const uint8_t *src, size_t src_len, int bpc)
+/* Unpack a bpc-bytes-per-coeff big-endian blob into n coefficients.  The
+ * loader's field caps (TODO #372) already hold the blob to n * bpc bytes. */
+static void poly_unpack(rnl_poly_t p, const uint8_t *src, size_t src_len, int n, int bpc)
 {
     uint8_t aligned[RNL_N * 4];
-    int total = RNL_N * bpc;
+    int total = n * bpc;
     /* Right-align in case sign byte was stripped (src_len may be total-1). */
     memset(aligned, 0, (size_t)total);
     if ((int)src_len > total) src_len = (size_t)total;
     memcpy(aligned + total - (int)src_len, src, src_len);
     int i, k;
-    for (i = 0; i < RNL_N; i++) {
+    memset(p, 0, sizeof(rnl_poly_t));
+    for (i = 0; i < n; i++) {
         uint32_t v = 0;
         for (k = 0; k < bpc; k++) v = (v << 8) | aligned[i * bpc + k];
         p[i] = (int32_t)v;
@@ -407,14 +549,14 @@ static int der_i32(const uint8_t bytes[KEYBYTES], uint8_t *out, size_t *olen)
 static int der_i_n256(uint8_t *out, size_t *olen)
 { static const uint8_t n[2] = {0x01, 0x00}; return der_int_enc(n, 2, out, olen); }
 
-/* DER INTEGER for the HKEX-RNL ring dimension and for the transmitted hint
- * length (RNL_N/2 coefficients, matching Python's hint[:n//2]).  Since TODO #223
- * RNL_N is 1024 rather than 256, so neither is der_i_n256 any more. */
+/* DER INTEGER for the HKEX-RNL ring dimension n and for the transmitted hint
+ * length (n/2 coefficients, matching Python's hint[:n//2]).  Since TODO #383
+ * stage 4 n is the key's own, not RNL_N. */
 static int der_i_uint(uint64_t v, uint8_t *out, size_t *olen);
-static int der_i_rnl_n(uint8_t *out, size_t *olen)
-{ return der_i_uint((uint64_t)RNL_N, out, olen); }
-static int der_i_rnl_hintlen(uint8_t *out, size_t *olen)
-{ return der_i_uint((uint64_t)(RNL_N / 2), out, olen); }
+static int der_i_rnl_n(int n, uint8_t *out, size_t *olen)
+{ return der_i_uint((uint64_t)n, out, olen); }
+static int der_i_rnl_hintlen(int n, uint8_t *out, size_t *olen)
+{ return der_i_uint((uint64_t)(n / 2), out, olen); }
 
 /* DER INTEGER for an unsigned value, minimal big-endian width (matches Python der_int).
  * Used for the variable ciphertext length in the HSKE-NL-V2-Duplex format. */
@@ -514,6 +656,8 @@ static void zkp_pem_peek_label(const char *path, char *label_out);
  * reader honours whatever the writer chose regardless of its own default --
  * the same contract Stern-F's round count has had since TODO #236. */
 #define PBKDF2_ITER_DEMO  1000
+/* The most any writer may choose, and the most any reader honours. */
+#define PBKDF2_ITER_MAX   100000000ULL
 
 static void pbkdf2_hfscx256(const uint8_t *password, size_t pw_len,
                             const uint8_t salt[PBKDF2_SALT_BYTES],
@@ -650,7 +794,7 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     for (i = 0; i < vlens[1]; i++) iterations = (iterations << 8) | vals[1][i];
     if (vlens[5] > 8) die("decrypt: bad plaintext length");
     for (i = 0; i < vlens[5]; i++) pt_len = (pt_len << 8) | vals[5][i];
-    if (iterations < 1 || iterations > 100000000ULL)
+    if (iterations < 1 || iterations > PBKDF2_ITER_MAX)
         die("decrypt: iteration count out of range");
     /* pt_len sizes the allocation below and must agree with the ciphertext
      * actually present -- the field class TODO #239/#240/#275 exist over.
@@ -698,12 +842,13 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
  * PEM read helpers
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* HKEX-RNL PEMs carry their ring dimension explicitly, and this build is compiled
- * for one value of RNL_N.  poly_unpack right-aligns whatever it is given into an
- * RNL_N-sized buffer, so a PEM from a different ring would be silently misread as
- * garbage rather than rejected — it produced a wrong public key with exit status 0
- * before TODO #227 added this check.  Fail loudly instead. */
-static void rnl_require_n(const void *pk, int idx, const char *what);
+/* HKEX-RNL PEMs carry their ring dimension explicitly.  Until TODO #383 stage 4
+ * this build ran RNL_N alone and refused every other n (TODO #227: before that a
+ * PEM from another ring was misread with exit 0).  It now runs every power of
+ * two from 8 to RNL_N, as Python, Go and Java do: check_der_width screens the
+ * field at load, rnl_key_n reads it, rnl_same_ring holds a peer artifact to
+ * our key's n. */
+static int rnl_key_n(const void *pk, int idx, const char *what);
 
 /* Read PEM from path or stdin; allocate DER buffer; parse DER SEQUENCE. */
 typedef struct {
@@ -717,22 +862,33 @@ typedef struct {
     int      n_items;
 } PemKey;
 
-static void rnl_require_n(const void *pkv, int idx, const char *what)
+static int rnl_n_ok(long n) { return n >= 8 && n <= RNL_N && (n & (n - 1)) == 0; }
+
+static int rnl_key_n(const void *pkv, int idx, const char *what)
 {
     const PemKey *k = (const PemKey *)pkv;
     uint64_t got = 0;
     size_t i;
     if (k->n_items <= idx)
         dief("%s: malformed HKEX-RNL PEM (no ring-dimension field)", what);
-    for (i = 0; i < k->vlens[idx] && i < 8; i++)
+    if (k->vlens[idx] > 4)
+        dievf("%s: ring dimension n is wider than 32 bits (this CLI runs n = 8..%d, "
+             "a power of two)", what, RNL_N);
+    for (i = 0; i < k->vlens[idx]; i++)
         got = (got << 8) | k->vals[idx][i];
-    if (got != (uint64_t)RNL_N) {
-        fprintf(stderr, "%s: ring dimension mismatch — PEM declares n=%llu but this "
-                        "build is compiled for RNL_N=%d.  Regenerate the key at the "
-                        "deployed ring size (TODO #223 moved it to 1024).\n",
-                what, (unsigned long long)got, RNL_N);
-        exit(1);
-    }
+    if (!rnl_n_ok((long)got))
+        dievf("%s: ring dimension n is %llu (this CLI runs n = 8..%d, a power of two)",
+             what, (unsigned long long)got, RNL_N);
+    return (int)got;
+}
+
+/* A peer artifact over another ring is not one this key can complete with:
+ * refused with Python's text (TODO #383 stage 4).  `kind` is "theirs" for a
+ * public key and "response" for a response. */
+static void rnl_same_ring(int ours, int theirs, const char *kind)
+{
+    if (ours != theirs)
+        dievf("Ring size mismatch: ours n=%d, %s n=%d", ours, kind, theirs);
 }
 
 /* A Stern/ring signature carries its own key width in item[idx].  This build
@@ -741,7 +897,7 @@ static void rnl_require_n(const void *pkv, int idx, const char *what)
  * Java readers now bound and this one does not (TODO #240).  A signature
  * declaring a different width is not one this build can check: fail loudly
  * instead of verifying it against the wrong geometry.  Same reasoning as
- * rnl_require_n above. */
+ * TODO #227's ring-dimension check above. */
 static void stern_require_n(const void *pkv, int idx, const char *what)
 {
     const PemKey *k = (const PemKey *)pkv;
@@ -801,24 +957,37 @@ static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
  * CIPHERTEXT and SIGNATURE are shared labels whose width sits in different
  * places per algorithm; their sites check it themselves. */
 typedef struct { const char *label; int item; long want; const char *what; } HkxWidthRow;
+/* TODO #383: want = HKX_W_GF is "any width with a GF(2^n) polynomial" (32, 64,
+ * 128, 256 -- BITARRAY.md 4.6), the widths the GF(2^n) family runs at. */
+#define HKX_W_GF (-1L)
+/* want = HKX_W_RNL: an HKEX-RNL ring dimension, a power of two 8..RNL_N. */
+#define HKX_W_RNL (-2L)
+/* want = HKX_W_STERN: a Stern-F code length, a GF width or STERN_LONG_N. */
+#define HKX_W_STERN (-3L)
 static const HkxWidthRow HKX_WIDTH[] = {
-    { PEM_HKEX_GF_PRIV, -1, KEYBITS, "n" },   { PEM_HKEX_GF_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKS_PRIV, -1, KEYBITS, "n" },      { PEM_HPKS_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKS_NL_PRIV, -1, KEYBITS, "n" },   { PEM_HPKS_NL_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKE_PRIV, -1, KEYBITS, "n" },      { PEM_HPKE_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKE_NL_PRIV, -1, KEYBITS, "n" },   { PEM_HPKE_NL_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKE_NL3_PRIV, -1, KEYBITS, "n" },  { PEM_HPKE_NL3_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKS_STERN_PRIV, -1, KEYBITS, "n" }, { PEM_HPKS_STERN_PUB, -1, KEYBITS, "n" },
-    { PEM_HPKE_STERN_PRIV, -1, KEYBITS, "n" }, { PEM_HPKE_STERN_PUB, -1, KEYBITS, "n" },
-    { PEM_OPRF_PRIV, -1, KEYBITS, "n" },      { PEM_OPRF_STATE, -1, KEYBITS, "n" },
-    { PEM_OPRF_EVAL, -1, KEYBITS, "n" },
+    { PEM_HKEX_GF_PRIV, -1, HKX_W_GF, "n" },   { PEM_HKEX_GF_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKS_PRIV, -1, HKX_W_GF, "n" },      { PEM_HPKS_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKS_NL_PRIV, -1, HKX_W_GF, "n" },   { PEM_HPKS_NL_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKE_PRIV, -1, HKX_W_GF, "n" },      { PEM_HPKE_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKE_NL_PRIV, -1, HKX_W_GF, "n" },   { PEM_HPKE_NL_PUB, -1, HKX_W_GF, "n" },
+    { PEM_HPKE_NL3_PRIV, -1, HKX_W_GF, "n" },  { PEM_HPKE_NL3_PUB, -1, HKX_W_GF, "n" },
+    /* TODO #383 stage 2: Stern-F runs at the same four widths, and (TODO #382)
+     * at the long form's N = 2304 */
+    { PEM_HPKS_STERN_PRIV, -1, HKX_W_STERN, "n" }, { PEM_HPKS_STERN_PUB, -1, HKX_W_STERN, "n" },
+    { PEM_HPKE_STERN_PRIV, -1, HKX_W_STERN, "n" }, { PEM_HPKE_STERN_PUB, -1, HKX_W_STERN, "n" },
+    /* TODO #385: the OPRF runs at the same four widths */
+    { PEM_OPRF_PRIV, -1, HKX_W_GF, "n" },     { PEM_OPRF_STATE, -1, HKX_W_GF, "n" },
+    { PEM_OPRF_EVAL, -1, HKX_W_GF, "n" },
     { PEM_HPKST_COMMIT, -1, KEYBITS, "n" },   { PEM_HPKST_NONCE, -1, KEYBITS, "n" },
     { PEM_HPKST_PARTIAL, -1, KEYBITS, "n" },  { PEM_HPKST_AGGREGATE, -1, KEYBITS, "n" },
     { PEM_HPKST_SIG, -1, KEYBITS, "n" },
     { PEM_HPKE_STERN_KEM_PUB, 1, QCMDPC_R, "r" },
     { PEM_HPKE_STERN_KEM_PRIV, 4, QCMDPC_R, "r" },
     { PEM_HPKE_STERN_KEM_CT, 2, QCMDPC_R, "r" },
-    { PEM_HYBRID_RESPONSE, 3, RNL_N, "n" },   { PEM_HYBRID_RESPONSE, 7, QCMDPC_R, "r" },
+    /* TODO #383 stage 4: HKEX-RNL runs every power-of-two ring up to RNL_N */
+    { PEM_HKEX_RNL_PRIV, 2, HKX_W_RNL, "n" },  { PEM_HKEX_RNL_PUB, 2, HKX_W_RNL, "n" },
+    { PEM_RNL_RESPONSE, 3, HKX_W_RNL, "n" },
+    { PEM_HYBRID_RESPONSE, 3, HKX_W_RNL, "n" }, { PEM_HYBRID_RESPONSE, 7, QCMDPC_R, "r" },
 };
 
 /* A DER INTEGER's value bytes as a width, or -1 if it is too wide to be one. */
@@ -842,6 +1011,27 @@ static void width_refuse(const char *label, const char *what, long got, long wan
     exit(1);
 }
 
+/* A GF(2^n) width this build runs: one with a listed polynomial (TODO #383). */
+static int gf_width_ok(long n)
+{
+    BitArray p = BA_INIT;
+    return n >= 16 && n <= BA_MAX_BITS && ba_gf_poly(&p, (int)n) == BA_OK;
+}
+
+static void gf_width_refuse(const char *label, long got)
+{
+    if (got < 0)
+        fprintf(stderr, "PEM '%s': n is wider than 32 bits (this CLI runs n = 32, 64, "
+                        "128 or 256)\n", label);
+    else
+        fprintf(stderr, "PEM '%s': n is %ld (this CLI runs n = 32, 64, 128 or 256)\n",
+                label, got);
+    exit(1);
+}
+
+/* A Stern-F code length: a GF width (the short form) or the long form's N. */
+static int stern_width_ok(long n) { return gf_width_ok(n) || n == STERN_LONG_N; }
+
 static void check_der_width(const PemKey *k)
 {
     for (size_t i = 0; i < sizeof HKX_WIDTH / sizeof HKX_WIDTH[0]; i++) {
@@ -850,7 +1040,18 @@ static void check_der_width(const PemKey *k)
         int idx = r->item < 0 ? k->n_items + r->item : r->item;
         if (idx < 0 || idx >= k->n_items) continue;   /* arity is check_der_items' job */
         long got = der_small(k->vals[idx], k->vlens[idx]);
-        if (got != r->want) width_refuse(k->label, r->what, got, r->want);
+        if (r->want == HKX_W_GF) {
+            if (!gf_width_ok(got)) gf_width_refuse(k->label, got);
+        } else if (r->want == HKX_W_STERN) {
+            if (!stern_width_ok(got)) gf_width_refuse(k->label, got);
+        } else if (r->want == HKX_W_RNL) {
+            if (got < 0)
+                dievf("PEM '%s': ring dimension n is wider than 32 bits (this CLI runs "
+                     "n = 8..%d, a power of two)", k->label, RNL_N);
+            if (!rnl_n_ok(got))
+                dievf("PEM '%s': ring dimension n is %ld (this CLI runs n = 8..%d, "
+                     "a power of two)", k->label, got, RNL_N);
+        } else if (got != r->want) width_refuse(k->label, r->what, got, r->want);
     }
 }
 
@@ -861,6 +1062,72 @@ static void check_item_width(const PemKey *k, int idx, long want, const char *wh
     if (idx < 0 || idx >= k->n_items) return;
     long got = der_small(k->vals[idx], k->vlens[idx]);
     if (got != want) width_refuse(k->label, what, got, want);
+}
+
+/* A GF(2^n)-family key's width n: its last DER item, already screened by
+ * check_der_width at load (TODO #383). */
+static int gf_key_width(const PemKey *k)
+{
+    long n = k->n_items > 0 ? der_small(k->vals[k->n_items - 1], k->vlens[k->n_items - 1]) : -1;
+    if (!gf_width_ok(n)) gf_width_refuse(k->label, n);
+    return (int)n;
+}
+
+/* A Stern-F key's N: gf_key_width's widths, or the long form's (TODO #382). */
+static int stern_key_width(const PemKey *k)
+{
+    long n = k->n_items > 0 ? der_small(k->vals[k->n_items - 1], k->vlens[k->n_items - 1]) : -1;
+    if (!stern_width_ok(n)) gf_width_refuse(k->label, n);
+    return (int)n;
+}
+
+/* A long-form field at exactly N/8 bytes (the loader's field caps hold it). */
+static void stern_l_field(uint8_t *dst, const PemKey *k, int idx, int n)
+{
+    der_right_align(dst, (size_t)n / 8, k->vals[idx], k->vlens[idx]);
+}
+
+/* (e or syndrome, seed, n) under `label`. */
+static void stern_l_write_key(const uint8_t *first, const uint8_t *seed, int n,
+                              const char *label, const char *out_path)
+{
+    uint8_t i1[DER_INT_LEN(STERN_L_MAXB)], i2[DER_INT_LEN(STERN_L_MAXB)], in[8];
+    size_t l1, l2, ln;
+    der_int_enc(first, (size_t)n / 8, i1, &l1);
+    der_int_enc(seed,  (size_t)n / 8, i2, &l2);
+    der_i_uint((uint64_t)n, in, &ln);
+    const uint8_t *it[3] = {i1, i2, in};
+    size_t il[3] = {l1, l2, ln};
+    seq_and_write(it, il, 3, label, out_path);
+}
+
+/* A GF(2^n) artifact's width field at a known index must be a GF width, and
+ * the width of the key it is used with (TODO #383).  The refusal reads as
+ * Python's, Go's and Java's: "<cmd>: <what> n is X, <key> n is Y". */
+static void check_item_gf_width(const PemKey *k, int idx, int want,
+                                const char *what, const char *key)
+{
+    if (idx < 0 || idx >= k->n_items) return;
+    long got = der_small(k->vals[idx], k->vlens[idx]);
+    if (!gf_width_ok(got)) gf_width_refuse(k->label, got);
+    if (got != want) {
+        fprintf(stderr, "%s n is %ld, %s n is %d\n", what, got, key, want);
+        exit(1);
+    }
+}
+
+/* DER INTEGER of a BitArray at its own width (nbits/8 octets, plus a sign
+ * octet when the top bit is set) -- Python's der_int(v, nbits // 8). */
+static int der_ba(const BitArray *ba, uint8_t *out, size_t *olen)
+{ return der_int_enc(ba->b, (size_t)(ba->nbits / 8), out, olen); }
+
+/* The message block at width n: the first n/8 octets, zero-padded on the
+ * right -- Python's in_bytes[:n // 8].ljust(n // 8, b'\x00'). */
+static void make_msg_ba_n(BitArray *msg, const uint8_t *data, size_t len, int nbits)
+{
+    size_t nb = (size_t)nbits / 8, cp = len < nb ? len : nb;
+    ba_zero_w(msg, nbits);
+    memcpy(msg->b, data, cp);
 }
 
 static void pem_key_load(PemKey *k, const char *path)
@@ -933,11 +1200,11 @@ static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, siz
             want = 4 + 3 * (size_t)((hn + 7) / 8);
         else if (hn > 0 && hn <= ZKP_NL_MAX_N && strcmp(label, PEM_ZKP_NL_PUB) == 0)
             want = 4 + 2 * (size_t)((hn + 7) / 8);
-        else if (hn == RNL_N && strcmp(label, PEM_ZKP_RNL_PROOF) == 0)
+        else if (hn <= RNL_N && strcmp(label, PEM_ZKP_RNL_PROOF) == 0)
             want = 4 + (size_t)hn * 12;
-        else if (hn == HCRED_N && strcmp(label, PEM_HCRED_PRIV) == 0)
+        else if (hcred_n_ok((int)hn) && strcmp(label, PEM_HCRED_PRIV) == 0)
             want = 4 + (size_t)hn * 8 + hn / 8 + (hn / 2 + 7) / 8;
-        else if (hn == HCRED_N && strcmp(label, PEM_HCRED_PUB) == 0)
+        else if (hcred_n_ok((int)hn) && strcmp(label, PEM_HCRED_PUB) == 0)
             want = 4 + (size_t)hn * 5 + hn / 8 + (hn / 2 + 7) / 8;
         if (want && cap > want) die_raw_trailing(label, cap - want);
     }
@@ -1159,7 +1426,7 @@ static int wots_is_used(const char *key_path)
 static void wots_write_idx(const char *key_path, int val)
 {
     char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = fopen(p, "w");
+    FILE *f = hkx_fopen_out(p, "w");
     if (f) { fprintf(f, "%d\n", val); fclose(f); }
 }
 
@@ -1205,7 +1472,7 @@ static int xmss_read_idx(const char *key_path)
 static void xmss_write_idx(const char *key_path, int val)
 {
     char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = fopen(p, "w");
+    FILE *f = hkx_fopen_out(p, "w");
     if (f) { fprintf(f, "%d\n", val); fclose(f); }
 }
 
@@ -1242,6 +1509,139 @@ static void xmss_blob_align(uint8_t *dst, size_t dst_len,
  * genpkey
  * ───────────────────────────────────────────────────────────────────────────── */
 
+/* TODO #379: resolve genpkey's --bits / --level against HKX_PARAM_SETS (the
+ * generated table in key_label_table.h).  Returns the row's bits (-1 for a row
+ * with no width), 0 when the algorithm has fixed parameters and neither flag was
+ * given, or -2 when --bits goes to the algorithm's own rule (hpks-zkp-nl).
+ * Every refusal happens here, before any key is generated, with the message the
+ * other three CLIs print.  This CLI runs only each algorithm's default row so
+ * far; the others are refused naming TODO #383. */
+static int psl_has(const char *const *list, const char *s)
+{
+    for (; *list; list++) if (strcmp(*list, s) == 0) return 1;
+    return 0;
+}
+
+static int ports_has(const char *ports, const char *port)
+{
+    size_t n = strlen(port);
+    for (const char *p = ports; *p; ) {
+        while (*p == ' ') p++;
+        const char *e = p;
+        while (*e && *e != ' ') e++;
+        if ((size_t)(e - p) == n && strncmp(p, port, n) == 0) return 1;
+        p = e;
+    }
+    return 0;
+}
+
+static int resolve_key_params(const char *algo, const char *bits_s, const char *level_s)
+{
+    char msg[1024];
+    if (psl_has(HKX_PARAM_FIXED, algo)) {
+        if (bits_s || level_s) {
+            snprintf(msg, sizeof msg, "genpkey: --algo %s has fixed parameters; "
+                     "--bits and --level do not apply", algo);
+            die(msg);
+        }
+        return 0;
+    }
+    if (bits_s && level_s) die("genpkey: give --bits or --level, not both");
+    const HkxParamSet *row = NULL, *dflt = NULL;
+    int nrows = 0;
+    for (int i = 0; i < HKX_PARAM_SETS_N; i++) {
+        if (strcmp(HKX_PARAM_SETS[i].algo, algo) != 0) continue;
+        nrows++;
+        if (HKX_PARAM_SETS[i].is_default) dflt = &HKX_PARAM_SETS[i];
+    }
+    if (!nrows) return 0;
+    if (level_s) {
+        if (!psl_has(HKX_PARAM_LEVELS, level_s)) {
+            snprintf(msg, sizeof msg, "genpkey: --level must be one of ");
+            for (int l = 0; HKX_PARAM_LEVELS[l]; l++)
+                snprintf(msg + strlen(msg), sizeof msg - strlen(msg), "%s%s",
+                         l ? ", " : "", HKX_PARAM_LEVELS[l]);
+            snprintf(msg + strlen(msg), sizeof msg - strlen(msg), ", got '%s'", level_s);
+            die(msg);
+        }
+        for (int i = 0; i < HKX_PARAM_SETS_N; i++)
+            if (strcmp(HKX_PARAM_SETS[i].algo, algo) == 0 && HKX_PARAM_SETS[i].level
+                && strcmp(HKX_PARAM_SETS[i].level, level_s) == 0)
+                row = &HKX_PARAM_SETS[i];
+        if (!row) {
+            snprintf(msg, sizeof msg, "genpkey: --level %s is not available for --algo %s "
+                     "(available: ", level_s, algo);
+            int first = 1;
+            for (int l = 0; HKX_PARAM_LEVELS[l]; l++)
+                for (int i = 0; i < HKX_PARAM_SETS_N; i++)
+                    if (strcmp(HKX_PARAM_SETS[i].algo, algo) == 0 && HKX_PARAM_SETS[i].level
+                        && strcmp(HKX_PARAM_SETS[i].level, HKX_PARAM_LEVELS[l]) == 0) {
+                        snprintf(msg + strlen(msg), sizeof msg - strlen(msg), "%s%s",
+                                 first ? "" : ", ", HKX_PARAM_LEVELS[l]);
+                        first = 0;
+                        break;
+                    }
+            snprintf(msg + strlen(msg), sizeof msg - strlen(msg), ")");
+            for (int k = 0; HKX_PARAM_LEVEL_NOTES[k]; k += 2)
+                if (strcmp(HKX_PARAM_LEVEL_NOTES[k], algo) == 0)
+                    snprintf(msg + strlen(msg), sizeof msg - strlen(msg), "; %s",
+                             HKX_PARAM_LEVEL_NOTES[k + 1]);
+            die(msg);
+        }
+    } else if (bits_s) {
+        if (psl_has(HKX_PARAM_OWN_BITS, algo)) return -2;
+        char listed[256] = "";
+        const char *first_level = NULL;
+        for (int i = 0; i < HKX_PARAM_SETS_N; i++) {
+            const HkxParamSet *r = &HKX_PARAM_SETS[i];
+            if (strcmp(r->algo, algo) != 0) continue;
+            if (!first_level && r->level) first_level = r->level;
+            if (r->bits > 0 && !r->withdrawn)
+                snprintf(listed + strlen(listed), sizeof listed - strlen(listed), "%s%d",
+                         listed[0] ? ", " : "", r->bits);
+            if (r->bits > 0) {
+                char b[16];
+                snprintf(b, sizeof b, "%d", r->bits);
+                if (strcmp(b, bits_s) == 0) row = r;
+            }
+        }
+        if (!listed[0]) {
+            snprintf(msg, sizeof msg, "genpkey: --bits does not apply to --algo %s "
+                     "(use --level %s)", algo, first_level ? first_level : "");
+            die(msg);
+        }
+        if (!row) {
+            snprintf(msg, sizeof msg, "genpkey: --bits must be one of %s for --algo %s, "
+                     "got '%s'", listed, algo, bits_s);
+            die(msg);
+        }
+        if (row->withdrawn) {
+            snprintf(msg, sizeof msg, "genpkey: --bits %d for --algo %s is withdrawn: %s",
+                     row->bits, algo, row->withdrawn);
+            die(msg);
+        }
+    } else {
+        row = dflt;
+    }
+    if (!ports_has(row->ports, "c")) {
+        char here[256] = "";
+        for (int i = 0; i < HKX_PARAM_SETS_N; i++) {
+            const HkxParamSet *r = &HKX_PARAM_SETS[i];
+            if (strcmp(r->algo, algo) == 0 && r->bits > 0 && ports_has(r->ports, "c"))
+                snprintf(here + strlen(here), sizeof here - strlen(here), "%s%d",
+                         here[0] ? ", " : "", r->bits);
+        }
+        snprintf(msg, sizeof msg, "genpkey: --algo %s at %d bits is not yet supported by "
+                 "this CLI (supported here: %s; TODO #%d)", algo, row->bits, here,
+                 HKX_PARAM_GAP_TODO);
+        die(msg);
+    }
+    if (row->bits > 0 && dflt && row->bits < dflt->bits)
+        fprintf(stderr, "WARNING: --algo %s at %d bits is a demonstration width "
+                "(estimated security: %s)\n", algo, row->bits, row->security);
+    return row->bits;
+}
+
 static void cmd_genpkey(int argc, char **argv)
 {
     const char *algo = get_arg(argc, argv, "--algo");
@@ -1252,15 +1652,19 @@ static void cmd_genpkey(int argc, char **argv)
      * the writer chose -- this default only affects what THIS build writes. */
     const char *pass_arg = get_arg(argc, argv, "--passphrase");
     if (pass_arg) {
-        const char *iter_arg = get_arg(argc, argv, "--kdf-iterations");
-        long iters = iter_arg ? strtol(iter_arg, NULL, 10) : PBKDF2_ITER_DEMO;
-        if (iters < 1 || iters > 100000000L)
-            die("genpkey: --kdf-iterations out of range (1..100000000)");
+        /* TODO #376: an empty passphrase is refused, not "encrypted" under ''
+         * -- it protects nothing, and before #376 Python and Go read it as
+         * no passphrase at all and wrote the key in the clear. */
+        if (!*pass_arg) die("genpkey: --passphrase must not be empty");
+        g_enc_iterations = (uint32_t)num_arg(argc, argv, "--kdf-iterations", "genpkey",
+                                             1, PBKDF2_ITER_MAX, PBKDF2_ITER_DEMO);
         g_enc_passphrase = pass_arg;
-        g_enc_iterations = (uint32_t)iters;
     } else if (get_arg(argc, argv, "--kdf-iterations")) {
         die("genpkey: --kdf-iterations requires --passphrase");
     }
+    /* TODO #379: every width comes from the parameter-set table. */
+    const char *bits_arg = get_arg(argc, argv, "--bits");
+    const int pbits = resolve_key_params(algo, bits_arg, get_arg(argc, argv, "--level"));
 
     FILE *urnd = fopen("/dev/urandom", "rb");
     if (!urnd) die("cannot open /dev/urandom");
@@ -1274,11 +1678,12 @@ static void cmd_genpkey(int argc, char **argv)
     for (int ci = 0; classical[ci]; ci++) {
         if (strcmp(algo, classical[ci]) != 0) continue;
         BitArray a = BA_INIT, C = BA_INIT;
+        ba_zero_w(&a, pbits);   /* TODO #383: the row's width */
         ba_rand(&a, urnd);
-        gf_pow_ba(&C, &GF_GEN, &a);
+        hkex_gf_pubkey(&a, &C);
         uint8_t ia[DER_INT_LEN(KEYBYTES)], iC[DER_INT_LEN(KEYBYTES)], in[8];
         size_t la, lC, ln;
-        der_i32(a.b, ia, &la); der_i32(C.b, iC, &lC); der_i_n256(in, &ln);
+        der_ba(&a, ia, &la); der_ba(&C, iC, &lC); der_i_uint((uint64_t)pbits, in, &ln);
         const uint8_t *it[3] = {ia, iC, in};
         size_t il[3] = {la, lC, ln};
         seq_and_write(it, il, 3, classical_labels[ci], out);
@@ -1286,29 +1691,32 @@ static void cmd_genpkey(int argc, char **argv)
     }
 
     if (strcmp(algo, "hkex-rnl") == 0) {
+        /* TODO #383 stage 4: the row's ring dimension (1024 by default) */
+        const int n = pbits;
         rnl_poly_t m_base, a_rand, m_blind, s_poly, C_poly;
-        rnl_m_poly(m_base);
-        rnl_rand_poly(a_rand, urnd);
-        rnl_poly_add(m_blind, m_base, a_rand);
-        rnl_keygen(s_poly, C_poly, m_blind, urnd);
+        rnl_m_poly_dim(m_base, n);
+        rnl_rand_poly_dim(a_rand, urnd, n);
+        rnl_poly_add_dim(m_blind, m_base, a_rand, n);
+        rnl_keygen_dim(s_poly, C_poly, m_blind, urnd, n);
 
         /* Alice's contributory nonce n_A */
         uint8_t n_A[KEYBYTES];
         if (fread(n_A, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
 
         uint8_t s_buf[RNL_N * 4], m_buf[RNL_N * 4];
-        poly_pack(s_buf, s_poly, 4);
-        poly_pack(m_buf, m_blind, 4);
+        const size_t pb = (size_t)n * 4;
+        poly_pack(s_buf, s_poly, n, 4);
+        poly_pack(m_buf, m_blind, n, 4);
 
-        size_t is_sz = DER_INT_LEN(sizeof s_buf);
-        size_t im_sz = DER_INT_LEN(sizeof m_buf);
+        size_t is_sz = DER_INT_LEN(pb);
+        size_t im_sz = DER_INT_LEN(pb);
         size_t ina_sz = DER_INT_LEN(KEYBYTES);
         uint8_t *is_der = malloc(is_sz), *im_der = malloc(im_sz), *ina_der = malloc(ina_sz);
         uint8_t in_der[8]; size_t ls, lm, ln, lna;
         if (!is_der || !im_der || !ina_der) die("out of memory");
-        der_int_enc(s_buf, sizeof s_buf, is_der, &ls);
-        der_int_enc(m_buf, sizeof m_buf, im_der, &lm);
-        der_i_rnl_n(in_der, &ln);
+        der_int_enc(s_buf, pb, is_der, &ls);
+        der_int_enc(m_buf, pb, im_der, &lm);
+        der_i_rnl_n(n, in_der, &ln);
         der_int_enc(n_A, KEYBYTES, ina_der, &lna);
         const uint8_t *it[4] = {is_der, im_der, in_der, ina_der};
         size_t il[4] = {ls, lm, ln, lna};
@@ -1319,17 +1727,24 @@ static void cmd_genpkey(int argc, char **argv)
     }
 
     if (strcmp(algo, "hpks-stern") == 0 || strcmp(algo, "hpke-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
                         "Do not use for production.\n");
         const char *label = (strcmp(algo,"hpks-stern")==0)
                              ? PEM_HPKS_STERN_PRIV : PEM_HPKE_STERN_PRIV;
+        if (stern_is_long(pbits)) {              /* TODO #382: the long form */
+            uint8_t lseed[STERN_L_MAXB], le[STERN_L_MAXB], lsyn[STERN_L_MAXB];
+            stern_l_keygen(lseed, le, lsyn, pbits, urnd);
+            stern_l_write_key(le, lseed, pbits, label, out);
+            fclose(urnd); return;
+        }
         BitArray seed = BA_INIT, e = BA_INIT;
         uint8_t syndr[SDF_SYNBYTES];
+        ba_zero_w(&seed, pbits);                 /* TODO #383: the row's N */
         stern_f_keygen(&seed, &e, syndr, urnd);
         uint8_t ie[DER_INT_LEN(KEYBYTES)], is[DER_INT_LEN(KEYBYTES)], in[8];
         size_t le, ls, ln;
-        der_i32(e.b, ie, &le); der_i32(seed.b, is, &ls); der_i_n256(in, &ln);
+        der_ba(&e, ie, &le); der_ba(&seed, is, &ls); der_i_uint((uint64_t)pbits, in, &ln);
         const uint8_t *it[3] = {ie, is, in};
         size_t il[3] = {le, ls, ln};
         seq_and_write(it, il, 3, label, out);
@@ -1338,7 +1753,22 @@ static void cmd_genpkey(int argc, char **argv)
 
     /* ZKP-NL keypair: raw binary PEM (A, B, y, n) */
     if (strcmp(algo, "hpks-zkp-nl") == 0) {
-        int nl_n = ZKP_NL_DEFAULT_N, nb = (nl_n+7)/8, k;
+        /* TODO #379: C now honours --bits here too (even, <= ZKP_NL_MAX_N, the
+         * same rule and message as the other three); zkp_nl_keygen's n is a
+         * runtime parameter, and C always read every n the others write. */
+        int nl_n = ZKP_NL_DEFAULT_N;
+        if (pbits == -2) {
+            int ok = bits_arg[0] != '\0' && strlen(bits_arg) <= 6;
+            for (const char *c = bits_arg; ok && *c; c++) ok = *c >= '0' && *c <= '9';
+            nl_n = ok ? atoi(bits_arg) : -1;
+            if (nl_n <= 0 || nl_n % 2 != 0 || nl_n > ZKP_NL_MAX_N) {
+                char zmsg[160];
+                snprintf(zmsg, sizeof zmsg, "genpkey hpks-zkp-nl: --bits must be a positive "
+                         "even integer <= %d, got %s", ZKP_NL_MAX_N, bits_arg);
+                die(zmsg);
+            }
+        }
+        int nb = (nl_n+7)/8, k;
         uint64_t A, B, y;
         zkp_nl_keygen(nl_n, urnd, &A, &B, &y);
         size_t blen = 4 + (size_t)3*nb;
@@ -1354,14 +1784,15 @@ static void cmd_genpkey(int argc, char **argv)
         free(body); fclose(urnd); return;
     }
 
-    /* OPRF server key: SEQUENCE(INTEGER(k), INTEGER(256)) */
+    /* OPRF server key: SEQUENCE(INTEGER(k), INTEGER(n)), n the row's width (TODO #385) */
     if (strcmp(algo, "oprf") == 0) {
         BitArray k = BA_INIT;
+        ba_zero_w(&k, pbits);
         oprf_keygen(&k, urnd);
         uint8_t ik[DER_INT_LEN(KEYBYTES)], in[8];
         size_t lk, ln;
-        der_i32(k.b, ik, &lk);
-        der_i_n256(in, &ln);
+        der_ba(&k, ik, &lk);
+        der_i_uint((uint64_t)pbits, in, &ln);
         const uint8_t *it[2] = {ik, in};
         size_t il[2] = {lk, ln};
         seq_and_write(it, il, 2, PEM_OPRF_PRIV, out);
@@ -1388,10 +1819,7 @@ static void cmd_genpkey(int argc, char **argv)
     /* HPKS-XMSS-F key: SEQUENCE(INTEGER(seed,32), INTEGER(h), INTEGER(next_idx=0),
      * INTEGER(leaf_hashes_blob, 32*2^h)) — mirrors the Python CLI exactly. */
     if (strcmp(algo, "hpks-xmss") == 0) {
-        const char *h_arg = get_arg(argc, argv, "--xmss-height");
-        int h_val = h_arg ? atoi(h_arg) : 10;
-        if (h_val < 1 || h_val > XMSS_MAX_H)
-            die("genpkey: --xmss-height must be in [1,20]");
+        int h_val = (int)num_arg(argc, argv, "--xmss-height", "genpkey", 1, XMSS_MAX_H, 10);
         uint8_t seed[KEYBYTES];
         if (fread(seed, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
         fprintf(stderr, "Generating XMSS tree (h=%d, %d leaves) — may take a moment...\n",
@@ -1418,45 +1846,48 @@ static void cmd_genpkey(int argc, char **argv)
         fclose(urnd); return;
     }
 
-    /* HCRED user keypair (demo parameters, N=256) */
+    /* HCRED user keypair (demo parameters) at n = 32, 64, 128 or 256 (TODO #383
+     * stage 3; the width comes from the parameter-set table, 256 by default). */
     if (strcmp(algo, "hcred") == 0) {
-        fprintf(stderr, "WARNING: HCRED at N=256 is a demonstration parameter set.\n");
-        rnl_poly_t m_base, a_rand, m_blind;
-        rnl_m_poly(m_base);
+        const int n = pbits > 0 ? pbits : HCRED_N;
+        if (!hcred_n_ok(n)) die("genpkey: hcred supports n = 32, 64, 128 or 256");
+        fprintf(stderr, "WARNING: HCRED at N=%d is a demonstration parameter set.\n", n);
+        /* m = (1 + x + x^(n-1)) + a, a uniform in Z_q^n -- Python's construction */
+        rnl_poly_t a_rand;
         rnl_rand_poly(a_rand, urnd);
-        rnl_poly_add(m_blind, m_base, a_rand);
 
         int32_t s_poly[HCRED_N], C_poly[HCRED_N], m_poly[HCRED_N];
         int k;
-        for (k = 0; k < HCRED_N; k++) m_poly[k] = m_blind[k];
+        for (k = 0; k < n; k++)
+            m_poly[k] = (int32_t)(((int64_t)a_rand[k]
+                                   + ((k == 0 || k == 1 || k == n - 1) ? 1 : 0)) % RNL_Q);
         BitArray e_ba = BA_INIT;
-        hcred_user_keygen(s_poly, C_poly, &e_ba, m_poly, urnd);
+        hcred_user_keygen(s_poly, C_poly, &e_ba, m_poly, urnd, n);
 
-        uint8_t seed_H_raw[KEYBYTES];
-        if (fread(seed_H_raw, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
         BitArray seed_H_ba = BA_INIT;
-        memcpy(seed_H_ba.b, seed_H_raw, KEYBYTES);
+        ba_zero_w(&seed_H_ba, n);
+        ba_rand(&seed_H_ba, urnd);
         uint8_t syndr[SDF_SYNBYTES];
         hcred_syndrome(syndr, &seed_H_ba, &e_ba);
 
-        /* privkey: 4B n | n×3B s | n×2B C | n×3B m | KEYBYTES seed_H | SDF_SYNBYTES syndr */
-        size_t blen = 4 + (size_t)3*HCRED_N + (size_t)2*HCRED_N
-                        + (size_t)3*HCRED_N + KEYBYTES + SDF_SYNBYTES;
+        /* privkey: 4B n | n×3B s | n×2B C | n×3B m | n/8 seed_H | n/16 syndr */
+        size_t blen = 4 + (size_t)3*n + (size_t)2*n + (size_t)3*n
+                        + (size_t)n/8 + (size_t)n/16;
         uint8_t *body = (uint8_t *)malloc(blen);
         if (!body) die("out of memory");
-        body[0]=(uint8_t)(HCRED_N>>24); body[1]=(uint8_t)(HCRED_N>>16);
-        body[2]=(uint8_t)(HCRED_N>>8);  body[3]=(uint8_t)HCRED_N;
+        body[0]=(uint8_t)(n>>24); body[1]=(uint8_t)(n>>16);
+        body[2]=(uint8_t)(n>>8);  body[3]=(uint8_t)n;
         size_t off = 4;
-        hcred_ser(body + off, s_poly, HCRED_N); off += (size_t)3*HCRED_N;
-        for (k = 0; k < HCRED_N; k++) {
+        hcred_ser(body + off, s_poly, n); off += (size_t)3*n;
+        for (k = 0; k < n; k++) {
             uint16_t v = (uint16_t)((uint32_t)C_poly[k] & 0xFFFFu);
             body[off + 2*k]   = (uint8_t)(v >> 8);
             body[off + 2*k+1] = (uint8_t)(v);
         }
-        off += (size_t)2*HCRED_N;
-        hcred_ser(body + off, m_poly, HCRED_N); off += (size_t)3*HCRED_N;
-        memcpy(body + off, seed_H_raw, KEYBYTES); off += KEYBYTES;
-        memcpy(body + off, syndr, SDF_SYNBYTES);
+        off += (size_t)2*n;
+        hcred_ser(body + off, m_poly, n); off += (size_t)3*n;
+        memcpy(body + off, seed_H_ba.b, (size_t)n/8); off += (size_t)n/8;
+        memcpy(body + off, syndr, (size_t)n/16);
         if (pem_write_file(out ? out : "-", PEM_HCRED_PRIV, body, blen) != 0)
             die("cannot write HCRED private key");
         free(body);
@@ -1519,6 +1950,20 @@ static void print_hex_field(const char *name, const uint8_t *bytes, size_t len)
     putchar('\n');
 }
 
+/* TODO #386: `pkey --text`'s closing lines, from the key's generated
+ * key_parameter_sets row (HKX_PARAM_SETS): `level` where the row has one,
+ * then `security`.  Nothing for a key no row describes (WOTS, XMSS). */
+static void print_param_lines(const char *algo, int width)
+{
+    for (int i = 0; i < HKX_PARAM_SETS_N; i++) {
+        const HkxParamSet *r = &HKX_PARAM_SETS[i];
+        if (strcmp(r->algo, algo) != 0 || r->bits != width) continue;
+        if (r->level) printf("%-10s: %s\n", "level", r->level);
+        printf("%-10s: %s\n", "security", r->security);
+        return;
+    }
+}
+
 static void cmd_pkey(int argc, char **argv)
 {
     const char *in_path  = get_arg(argc, argv, "--in");
@@ -1539,7 +1984,7 @@ static void cmd_pkey(int argc, char **argv)
         if (!out_path || strcmp(out_path, "-") == 0) {
             fputs(plain, stdout);
         } else {
-            FILE *f = fopen(out_path, "w");
+            FILE *f = hkx_fopen_out(out_path, "w");
             if (!f) dief("cannot write: %s", out_path);
             fputs(plain, f);
             fclose(f);
@@ -1550,6 +1995,17 @@ static void cmd_pkey(int argc, char **argv)
     }
     if (passphrase) die("pkey: --passphrase is only meaningful with --decrypt");
     if (!pubout && !text) die("pkey: specify --pubout or --text");
+
+    /* TODO #386: a public key is refused by label, in the same words in all
+     * four CLIs. */
+    {
+        char peek[80];
+        size_t pl;
+        zkp_pem_peek_label(in_path, peek);
+        pl = strlen(peek);
+        if (pl >= 11 && strcmp(peek + pl - 11, " PUBLIC KEY") == 0)
+            dief("pkey: '%s' is a public key (pkey reads a private key)", peek);
+    }
 
     /* ZKP-NL keys use raw binary PEM — handle before DER-based path. */
     {
@@ -1573,9 +2029,10 @@ static void cmd_pkey(int argc, char **argv)
             if (text) {
                 printf("%-10s: %s\n", "algorithm", "hpks-zkp-nl");
                 printf("%-10s: %d\n", "n", nl_n);
-                printf("%-10s: %0*lx\n", "A_private", 2*nb, (unsigned long)A);
-                printf("%-10s: %0*lx\n", "B_public",  2*nb, (unsigned long)B);
-                printf("%-10s: %0*lx\n", "y_public",  2*nb, (unsigned long)y);
+                printf("%-10s: %0*lx\n", "A (priv)", 2*nb, (unsigned long)A);
+                printf("%-10s: %0*lx\n", "B (pub)",  2*nb, (unsigned long)B);
+                printf("%-10s: %0*lx\n", "y (pub)",  2*nb, (unsigned long)y);
+                print_param_lines("hpks-zkp-nl", nl_n);
             } else {
                 size_t pub_len = 4 + (size_t)2*nb;
                 uint8_t *pub = (uint8_t *)malloc(pub_len);
@@ -1597,7 +2054,7 @@ static void cmd_pkey(int argc, char **argv)
             if (!body || blen < 4) die("pkey: malformed HCRED private key");
             int n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
                           ((uint32_t)body[2]<<8)|body[3]);
-            if (n != HCRED_N) die("pkey: unsupported HCRED n (expected 256)");
+            if (!hcred_n_ok(n)) die("pkey: unsupported HCRED n (expected 32, 64, 128 or 256)");
             /* layout: 4 | n×3 s | n×2 C | n×3 m | (n/8) seed_H | (n/16) syndr */
             size_t expected = 4 + (size_t)n*3 + (size_t)n*2 + (size_t)n*3
                               + (size_t)n/8 + (size_t)n/16;
@@ -1619,9 +2076,21 @@ static void cmd_pkey(int argc, char **argv)
                 printf("%-10s: ", "seed_H");
                 for (int j = 0; j < n/8; j++) printf("%02x", body[sh_off+j]);
                 printf("\n");
+                /* the syndrome as a big-endian integer, as Python, Go and Java
+                 * print it; the key stores it low byte first (TODO #386) */
                 printf("%-10s: ", "syndr");
-                for (int j = 0; j < n/16; j++) printf("%02x", body[sy_off+j]);
+                for (int j = n/16 - 1; j >= 0; j--) printf("%02x", body[sy_off+j]);
                 printf("\n");
+                /* W = wt(phi(s)): the coefficients of s equal to 1 */
+                {
+                    int w = 0;
+                    for (int j = 0; j < n; j++) {
+                        const uint8_t *c3 = body + 4 + (size_t)j * 3;
+                        w += (c3[0] == 0 && c3[1] == 0 && c3[2] == 1);
+                    }
+                    printf("%-10s: %d\n", "W (weight)", w);
+                }
+                print_param_lines("hcred", n);
             } else {
                 /* pubkey: 4B n | n×2B C | n×3B m | n/8 seed_H | n/16 syndr */
                 size_t pub_len = 4 + (size_t)n*2 + (size_t)n*3 + (size_t)n/8 + (size_t)n/16;
@@ -1655,8 +2124,7 @@ static void cmd_pkey(int argc, char **argv)
                 printf("%-10s: %s\n", "algorithm", "hpke-stern-kem");
                 printf("%-10s: %llu\n", "r", (unsigned long long)parse_be_uint(pk.vals[4], pk.vlens[4]));
                 printf("%-10s: %llu\n", "d", (unsigned long long)parse_be_uint(pk.vals[5], pk.vlens[5]));
-                printf("%-10s: ", "h0"); for (i=0;i<(int)pk.vlens[0];i++) printf("%02x",pk.vals[0][i]); printf("\n");
-                printf("%-10s: ", "h1"); for (i=0;i<(int)pk.vlens[1];i++) printf("%02x",pk.vals[1][i]); printf("\n");
+                print_param_lines("hpke-stern-kem", -1);
             } else {
                 /* Public key: SEQUENCE(h_pub[66], r) */
                 /* Reconstruct QcMdpcPriv, derive pub from priv */
@@ -1711,7 +2179,8 @@ static void cmd_pkey(int argc, char **argv)
     if (strcmp(k.label, PEM_OPRF_PRIV) == 0) {
         if (!text) die("pkey --pubout: oprf has no public key");
         printf("%-10s: %s\n", "algorithm", "oprf");
-        printf("%-10s: %d\n", "bits", KEYBITS);
+        printf("%-10s: %d\n", "bits", gf_key_width(&k));   /* TODO #385: the key's own */
+        print_param_lines("oprf", gf_key_width(&k));
         pem_key_free(&k);
         return;
     }
@@ -1745,18 +2214,20 @@ static void cmd_pkey(int argc, char **argv)
     /* ── Classical GF algorithms ─── */
     if (kind == 1) {
         if (k.n_items != 3) die("pkey: malformed classical private key");
+        int gn = gf_key_width(&k);   /* TODO #383 */
         BitArray priv = BA_INIT, pub = BA_INIT;
-        ba_from_ra(&priv, k.vals[0], k.vlens[0]);
-        ba_from_ra(&pub,  k.vals[1], k.vlens[1]);
+        ba_from_ra_n(&priv, k.vals[0], k.vlens[0], gn);
+        ba_from_ra_n(&pub,  k.vals[1], k.vlens[1], gn);
 
         if (text) {
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: 256\n", "bits");
-            print_hex_field("private", priv.b, KEYBYTES);
-            print_hex_field("public",  pub.b,  KEYBYTES);
+            printf("%-10s: %d\n", "bits", gn);
+            print_hex_field("private", priv.b, (size_t)gn / 8);
+            print_hex_field("public",  pub.b,  (size_t)gn / 8);
+            print_param_lines(algo, gn);
         } else {
             uint8_t ip[DER_INT_LEN(KEYBYTES)], in[8]; size_t lp, ln;
-            der_i32(pub.b, ip, &lp); der_i_n256(in, &ln);
+            der_ba(&pub, ip, &lp); der_i_uint((uint64_t)gn, in, &ln);
             const uint8_t *it[2] = {ip, in}; size_t il[2] = {lp, ln};
             seq_and_write(it, il, 2, algos[ai].pub_label, out_path);
         }
@@ -1765,10 +2236,10 @@ static void cmd_pkey(int argc, char **argv)
     /* ── HKEX-RNL ─── */
     else if (kind == 0) {
         if (k.n_items < 3) die("pkey: malformed RNL private key");
-        rnl_require_n(&k, 2, "pkey: HKEX-RNL private key");
+        const int n = rnl_key_n(&k, 2, "pkey: HKEX-RNL private key");
         rnl_poly_t s_poly, m_poly, C_poly;
-        poly_unpack(s_poly, k.vals[0], k.vlens[0], 4);
-        poly_unpack(m_poly, k.vals[1], k.vlens[1], 4);
+        poly_unpack(s_poly, k.vals[0], k.vlens[0], n, 4);
+        poly_unpack(m_poly, k.vals[1], k.vlens[1], n, 4);
 
         /* Extract Alice's nonce n_A (index 3); zero if absent (old key format) */
         uint8_t n_A[KEYBYTES];
@@ -1778,31 +2249,44 @@ static void cmd_pkey(int argc, char **argv)
 
         if (text) {
             uint8_t s_buf[RNL_N * 4];
-            poly_pack(s_buf, s_poly, 4);
+            poly_pack(s_buf, s_poly, n, 4);
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: %d\n", "n", RNL_N);   /* was a literal 256 (TODO #374) */
+            printf("%-10s: %d\n", "n", n);   /* was a literal 256 (TODO #374) */
             printf("%-10s: ", "s_packed");
-            for (size_t j = 0; j < sizeof s_buf; j++) printf("%02x", s_buf[j]);
+            for (size_t j = 0; j < (size_t)n * 4; j++) printf("%02x", s_buf[j]);
             putchar('\n');
+            /* TODO #387: C and n_A as well, as Go and Python print them */
+            {
+                rnl_poly_t ms;
+                uint8_t C_buf[RNL_N * 2];
+                rnl_poly_mul_dim(ms, m_poly, s_poly, n);
+                rnl_round_dim(C_poly, ms, RNL_Q, RNL_P, n);
+                poly_pack(C_buf, C_poly, n, 2);
+                printf("%-10s: ", "C_packed");
+                for (size_t j = 0; j < (size_t)n * 2; j++) printf("%02x", C_buf[j]);
+                putchar('\n');
+            }
+            if (k.n_items >= 4) print_hex_field("n_A", n_A, KEYBYTES);
+            print_param_lines(algo, n);
         } else {
             /* Derive C = round_p(m * s) */
             rnl_poly_t ms;
-            rnl_poly_mul(ms, m_poly, s_poly);
-            rnl_round(C_poly, ms, RNL_Q, RNL_P);
+            rnl_poly_mul_dim(ms, m_poly, s_poly, n);
+            rnl_round_dim(C_poly, ms, RNL_Q, RNL_P, n);
 
             uint8_t C_buf[RNL_N * 2], m_buf[RNL_N * 4];
-            poly_pack(C_buf, C_poly, 2);
-            poly_pack(m_buf, m_poly, 4);
+            poly_pack(C_buf, C_poly, n, 2);
+            poly_pack(m_buf, m_poly, n, 4);
 
-            size_t ic_sz = DER_INT_LEN(sizeof C_buf);
-            size_t im_sz = DER_INT_LEN(sizeof m_buf);
+            size_t ic_sz = DER_INT_LEN((size_t)n * 2);
+            size_t im_sz = DER_INT_LEN((size_t)n * 4);
             size_t ina_sz = DER_INT_LEN(KEYBYTES);
             uint8_t *ic_der = malloc(ic_sz), *im_der = malloc(im_sz), *ina_der = malloc(ina_sz);
             uint8_t in_der[8]; size_t lc, lm, ln, lna;
             if (!ic_der || !im_der || !ina_der) die("out of memory");
-            der_int_enc(C_buf, sizeof C_buf, ic_der, &lc);
-            der_int_enc(m_buf, sizeof m_buf, im_der, &lm);
-            der_i_rnl_n(in_der, &ln);
+            der_int_enc(C_buf, (size_t)n * 2, ic_der, &lc);
+            der_int_enc(m_buf, (size_t)n * 4, im_der, &lm);
+            der_i_rnl_n(n, in_der, &ln);
             der_int_enc(n_A, KEYBYTES, ina_der, &lna);
             const uint8_t *it[4] = {ic_der, im_der, in_der, ina_der};
             size_t il[4] = {lc, lm, ln, lna};
@@ -1823,7 +2307,7 @@ static void cmd_pkey(int argc, char **argv)
         hpks_wots_keygen(sk, pk, seed_ba.b, leaf_idx);
         if (text) {
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: one-time\n", "type");
+            printf("%-10s: %u\n", "leaf_idx", (unsigned)leaf_idx);   /* TODO #386 */
         } else {
             uint8_t blob[WOTS_L * KEYBYTES];
             wots_blob_pack(blob, pk);
@@ -1853,7 +2337,7 @@ static void cmd_pkey(int argc, char **argv)
         free(flat);
         if (text) {
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: %d (%zu leaves)\n", "height", h_val, num_leaves);
+            printf("%-10s: %d (%zu leaves)\n", "h", h_val, num_leaves);   /* TODO #386 */
             print_hex_field("root", root, KEYBYTES);
         } else {
             uint8_t ir[DER_INT_LEN(KEYBYTES)], ih[DER_INT_LEN(8)];
@@ -1868,33 +2352,48 @@ static void cmd_pkey(int argc, char **argv)
     /* ── Stern-F algorithms ─── */
     else {
         if (k.n_items != 3) die("pkey: malformed Stern private key");
+        int sn = stern_key_width(&k);   /* TODO #383 stage 2: the key's N */
+        if (stern_is_long(sn)) {        /* TODO #382: the long form */
+            uint8_t le[STERN_L_MAXB], lseed[STERN_L_MAXB], lsyn[STERN_L_MAXB];
+            stern_l_field(le, &k, 0, sn);
+            stern_l_field(lseed, &k, 1, sn);
+            if (text) {
+                printf("%-10s: %s\n", "algorithm", algo);
+                printf("%-10s: %d\n", "n", sn);
+                print_hex_field("e_int", le,    (size_t)sn / 8);
+                print_hex_field("seed",  lseed, (size_t)sn / 8);
+                print_param_lines(algo, sn);
+            } else {
+                stern_l_syndrome(lsyn, lseed, le, sn);
+                stern_l_write_key(lsyn, lseed, sn, algos[ai].pub_label, out_path);
+            }
+            pem_key_free(&k);
+            return;
+        }
         BitArray e = BA_INIT, seed = BA_INIT;
-        ba_from_ra(&e,    k.vals[0], k.vlens[0]);
-        ba_from_ra(&seed, k.vals[1], k.vlens[1]);
+        ba_from_ra_n(&e,    k.vals[0], k.vlens[0], sn);
+        ba_from_ra_n(&seed, k.vals[1], k.vlens[1], sn);
 
         if (text) {
             printf("%-10s: %s\n", "algorithm", algo);
-            printf("%-10s: 256\n", "n");
-            print_hex_field("e_int", e.b,    KEYBYTES);
-            print_hex_field("seed",  seed.b, KEYBYTES);
+            printf("%-10s: %d\n", "n", sn);
+            print_hex_field("e_int", e.b,    (size_t)sn / 8);
+            print_hex_field("seed",  seed.b, (size_t)sn / 8);
+            print_param_lines(algo, sn);
         } else {
             uint8_t syndr[SDF_SYNBYTES];
             stern_syndrome(syndr, &seed, &e);
 
-            /* Syndrome is SDF_SYNBYTES (16) bytes; encode as 32-byte DER INTEGER
-             * where syndrome bit i (= row i parity) occupies integer bit i.
-             * syndr[k] holds rows k*8..k*8+7 as bits 0-7, so syndr[k] goes to
-             * byte KEYBYTES-1-k (integer bits k*8..k*8+7) — matching Python/Go. */
-            uint8_t syn32[KEYBYTES]; int _sk;
-            memset(syn32, 0, KEYBYTES);
-            for (_sk = 0; _sk < SDF_SYNBYTES; _sk++)
-                syn32[KEYBYTES - 1 - _sk] = syndr[_sk];
+            /* The N/2-bit syndrome as an N-bit DER INTEGER where syndrome bit
+             * i (= row i parity) occupies integer bit i -- matching Python/Go. */
+            BitArray syn_ba = BA_INIT;
+            syndr_to_ba_w(&syn_ba, syndr, sn);
 
             uint8_t isyn[DER_INT_LEN(KEYBYTES)], is[DER_INT_LEN(KEYBYTES)], in[8];
             size_t lsyn, ls, ln;
-            der_i32(syn32, isyn, &lsyn);
-            der_i32(seed.b, is, &ls);
-            der_i_n256(in, &ln);
+            der_ba(&syn_ba, isyn, &lsyn);
+            der_ba(&seed, is, &ls);
+            der_i_uint((uint64_t)sn, in, &ln);
             const uint8_t *it[3] = {isyn, is, in};
             size_t il[3] = {lsyn, ls, ln};
             seq_and_write(it, il, 3, algos[ai].pub_label, out_path);
@@ -1996,14 +2495,44 @@ static void kem_priv_load(QcMdpcPriv *priv, QcMdpcPub *pub, const char *path)
     }
 }
 
-/* Unpack a packed 2-bit-per-coefficient hint (RNL_N/8 bytes) into RNL_N/2 raw
+/* Unpack a packed 2-bit-per-coefficient hint (n/8 bytes) into n/2 raw
  * per-coefficient bytes (values 0..3), matching Python's `hint_used` transcript
  * representation used by the combiner (bytes(hint_used) in _hybrid_rnl_stern_combine). */
-static void rnl_hint_to_raw(uint8_t raw[RNL_N / 2], const uint8_t hint[RNL_N / 8])
+static void rnl_hint_to_raw(uint8_t raw[RNL_N / 2], const uint8_t hint[RNL_N / 8], int n)
 {
     int i;
-    for (i = 0; i < RNL_N / 2; i++)
+    for (i = 0; i < n / 2; i++)
         raw[i] = (hint[i / 4] >> ((i % 4) * 2)) & 3;
+}
+
+/* The contributory KDF over a reconciled K_raw (LSB-first, rnl_agree_dim's
+ * layout) at ring dimension n: K_raw is serialised big-endian at
+ * rnl_key_bits(n) / 8 bytes, as Python's rnl_contributory_kdf(K.uint,
+ * _rnl_key_bits(n), n_a, n_b) does -- 32 bytes on every ring of at least 256,
+ * n / 8 below (TODO #383 stage 4). */
+static void rnl_kraw_kdf(uint8_t out[KEYBYTES], BitArray *K, int n,
+                         const uint8_t n_A[KEYBYTES], const uint8_t n_B[KEYBYTES])
+{
+    const int kb = rnl_key_bits(n) / 8;
+    uint8_t rev[KEYBYTES];
+    int i;
+    for (i = 0; i < kb; i++) rev[i] = K->b[kb - 1 - i];
+    rnl_contributory_kdf_len(out, rev, (size_t)kb, n_A, n_B);
+    explicit_bzero(rev, sizeof rev);
+    explicit_bzero(K, sizeof *K);
+}
+
+/* A response's hint field (big-endian, Python's packing) into rnl_agree_dim's
+ * LSB-first n/8 bytes. */
+static void rnl_hint_from_der(uint8_t hint[RNL_N / 8], const uint8_t *v, size_t vl, int n)
+{
+    uint8_t hint_rev[RNL_N / 8];
+    const size_t hb = (size_t)n / 8;
+    size_t i;
+    memset(hint_rev, 0, sizeof hint_rev);
+    if (vl > hb) { v += vl - hb; vl = hb; }
+    memcpy(hint_rev + hb - vl, v, vl);
+    for (i = 0; i < hb; i++) hint[i] = hint_rev[hb - 1 - i];
 }
 
 /* hybrid_rnl_stern_combine implements the SP 800-227 §4.6-style IND-CCA-preserving
@@ -2016,29 +2545,29 @@ static void hybrid_rnl_stern_combine(uint8_t out[KEYBYTES],
                                       const uint8_t K1[KEYBYTES], const uint8_t K2[KEYBYTES],
                                       const rnl_poly_t C_A, const rnl_poly_t m_A,
                                       const rnl_poly_t C_B, const uint8_t hint_used[RNL_N / 2],
-                                      const QcPoly *h_pub, const QcPoly *syn)
+                                      const QcPoly *h_pub, const QcPoly *syn, int n)
 {
     static const char TAG[] = "HERRADURA-HYBRID-RNL-STERN-v1";
     uint8_t C_A_buf[RNL_N * 2], m_A_buf[RNL_N * 4], C_B_buf[RNL_N * 2];
     uint8_t h_pub_buf[QCMDPC_RBYTES], syn_buf[QCMDPC_RBYTES];
-    poly_pack(C_A_buf, C_A, 2);
-    poly_pack(m_A_buf, m_A, 4);
-    poly_pack(C_B_buf, C_B, 2);
+    const size_t cb = (size_t)n * 2, mb = (size_t)n * 4, hb = (size_t)n / 2;
+    poly_pack(C_A_buf, C_A, n, 2);
+    poly_pack(m_A_buf, m_A, n, 4);
+    poly_pack(C_B_buf, C_B, n, 2);
     qcpoly_to_natural_be(h_pub_buf, h_pub);
     qcpoly_to_natural_be(syn_buf, syn);
 
-    size_t total = KEYBYTES + KEYBYTES + sizeof(C_A_buf) + sizeof(m_A_buf) +
-                   sizeof(C_B_buf) + (RNL_N / 2) + QCMDPC_RBYTES + QCMDPC_RBYTES +
-                   (sizeof(TAG) - 1);
+    size_t total = KEYBYTES + KEYBYTES + cb + mb + cb + hb +
+                   QCMDPC_RBYTES + QCMDPC_RBYTES + (sizeof(TAG) - 1);
     uint8_t *data = malloc(total);
     if (!data) die("out of memory");
     size_t off = 0;
     memcpy(data + off, K1, KEYBYTES);              off += KEYBYTES;
     memcpy(data + off, K2, KEYBYTES);               off += KEYBYTES;
-    memcpy(data + off, C_A_buf, sizeof(C_A_buf));    off += sizeof(C_A_buf);
-    memcpy(data + off, m_A_buf, sizeof(m_A_buf));    off += sizeof(m_A_buf);
-    memcpy(data + off, C_B_buf, sizeof(C_B_buf));    off += sizeof(C_B_buf);
-    memcpy(data + off, hint_used, RNL_N / 2);        off += RNL_N / 2;
+    memcpy(data + off, C_A_buf, cb);                 off += cb;
+    memcpy(data + off, m_A_buf, mb);                 off += mb;
+    memcpy(data + off, C_B_buf, cb);                 off += cb;
+    memcpy(data + off, hint_used, hb);               off += hb;
     memcpy(data + off, h_pub_buf, QCMDPC_RBYTES);    off += QCMDPC_RBYTES;
     memcpy(data + off, syn_buf, QCMDPC_RBYTES);      off += QCMDPC_RBYTES;
     memcpy(data + off, TAG, sizeof(TAG) - 1);        off += sizeof(TAG) - 1;
@@ -2084,28 +2613,39 @@ static void cmd_kex(int argc, char **argv)
         pem_key_load(&their, their_path);
         if (our.n_items < 1)   die("kex: malformed our private key");
         if (their.n_items < 1) die("kex: malformed their public key");
+        /* TODO #383: at our key's width; their key must be that width too. */
+        int gn = gf_key_width(&our);
+        check_item_gf_width(&their, their.n_items - 1, gn, "kex: their public key", "our private key");
         BitArray priv = BA_INIT, pub_theirs = BA_INIT, sk = BA_INIT;
-        ba_from_ra(&priv,       our.vals[0],   our.vlens[0]);
-        ba_from_ra(&pub_theirs, their.vals[0], their.vlens[0]);
+        ba_from_ra_n(&priv,       our.vals[0],   our.vlens[0],   gn);
+        ba_from_ra_n(&pub_theirs, their.vals[0], their.vlens[0], gn);
         if (!gf_pub_is_valid(&pub_theirs))
             die("kex: their public key is the GF(2^n)* identity/zero element "
                 "(rejected: degenerate key)");
         gf_pow_ba(&sk, &pub_theirs, &priv);
         pem_key_free(&our); pem_key_free(&their);
 
-        /* Apply KDF if requested: sk = HFSCX-256(sk) */
+        /* Apply KDF if requested: sk = HFSCX-256(sk at n/8 bytes).  TODO #389:
+         * the session key is the WHOLE 256-bit digest at every n and the PEM
+         * declares n = 256 (sk.nbits), as HKEX-RNL's session key already does;
+         * without --kdf it is the raw n-bit g^ab, declared n. */
         if (kdf) {
             uint8_t kdf_out[32];
-            hfscx_256(sk.b, KEYBYTES, NULL, kdf_out);
+            hfscx_256(sk.b, (size_t)gn / 8, NULL, kdf_out);
+            ba_zero_w(&sk, 256);
             memcpy(sk.b, kdf_out, 32);
             explicit_bzero(kdf_out, sizeof(kdf_out));
         }
 
         const uint8_t *sk_start; size_t sk_len;
-        ba_min_bytes(&sk, &sk_start, &sk_len);
+        {   /* minimal octets of sk at its own width */
+            size_t nb = (size_t)sk.nbits / 8, i0 = 0;
+            while (i0 + 1 < nb && sk.b[i0] == 0) i0++;
+            sk_start = sk.b + i0; sk_len = nb - i0;
+        }
         uint8_t isk[DER_INT_LEN(KEYBYTES)], in[8]; size_t lsk, ln;
         der_int_enc(sk_start, sk_len, isk, &lsk);
-        der_i_n256(in, &ln);
+        der_i_uint((uint64_t)sk.nbits, in, &ln);
         const uint8_t *it[2] = {isk, in}; size_t il[2] = {lsk, ln};
         seq_and_write(it, il, 2, PEM_SESSION_KEY, out_path);
         explicit_bzero(&sk, sizeof(sk));
@@ -2122,13 +2662,13 @@ static void cmd_kex(int argc, char **argv)
             PemKey our; pem_key_load(&our, our_path);
             if (our.n_items < 2)   die("kex rnl: malformed our private key");
             if (their.n_items < 2) die("kex rnl: malformed their public key");
-            rnl_require_n(&our,   2, "kex rnl: our private key");
-            rnl_require_n(&their, 2, "kex rnl: their public key");
+            const int n = rnl_key_n(&our, 2, "kex rnl: our private key");
+            rnl_same_ring(n, rnl_key_n(&their, 2, "kex rnl: their public key"), "theirs");
 
             rnl_poly_t s_B, m_A, C_A, C_B, ms;
-            poly_unpack(s_B, our.vals[0],   our.vlens[0],   4);
-            poly_unpack(C_A, their.vals[0], their.vlens[0], 2);
-            poly_unpack(m_A, their.vals[1], their.vlens[1], 4);
+            poly_unpack(s_B, our.vals[0],   our.vlens[0],   n, 4);
+            poly_unpack(C_A, their.vals[0], their.vlens[0], n, 2);
+            poly_unpack(m_A, their.vals[1], their.vlens[1], n, 4);
 
             /* Extract Alice's contributory nonce n_A (field 3 of pub key) */
             uint8_t n_A[KEYBYTES];
@@ -2138,39 +2678,33 @@ static void cmd_kex(int argc, char **argv)
 
             pem_key_free(&our); pem_key_free(&their);
 
-            if (!rnl_validate_m_blind(m_A, RNL_N))
+            if (!rnl_validate_m_blind(m_A, n))
                 die("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack");
 
             /* Derive C_B = round_p(m_A * s_B) */
-            rnl_poly_mul(ms, m_A, s_B);
-            rnl_round(C_B, ms, RNL_Q, RNL_P);
+            rnl_poly_mul_dim(ms, m_A, s_B, n);
+            rnl_round_dim(C_B, ms, RNL_Q, RNL_P, n);
 
             /* Compute K_B and hint via Peikert reconciliation */
             BitArray K_B = BA_INIT;
             uint8_t hint[RNL_N / 8];
-            if (!rnl_validate_pub(C_A, RNL_N))
+            if (!rnl_validate_pub(C_A, n))
                 die("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
-            rnl_agree(&K_B, s_B, C_A, NULL, hint);
+            rnl_agree_dim(&K_B, s_B, C_A, NULL, hint, n);
 
             /* Bob's contributory nonce n_B */
             uint8_t n_B[KEYBYTES];
             if (fread(n_B, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
 
-            /* rnl_agree output is LSB-first; reverse to big-endian before KDF */
-            uint8_t K_B_rev_raw[KEYBYTES]; int ri_kb;
-            for (ri_kb = 0; ri_kb < KEYBYTES; ri_kb++)
-                K_B_rev_raw[ri_kb] = K_B.b[KEYBYTES-1-ri_kb];
-
             /* Contributory KDF: final_key = HFSCX-256(K_B_big_endian || n_A || n_B) */
             uint8_t K_B_kdf[KEYBYTES];
-            rnl_contributory_kdf(K_B_kdf, K_B_rev_raw, n_A, n_B);
-            explicit_bzero(K_B_rev_raw, KEYBYTES);
+            rnl_kraw_kdf(K_B_kdf, &K_B, n, n_A, n_B);
             explicit_bzero(n_A, KEYBYTES);
-            explicit_bzero(&K_B, sizeof(K_B));
 
             /* Encode RESPONSE: K_B, C_B_packed, hint, n, hint_len, n_B */
             uint8_t C_B_buf[RNL_N * 2];
-            poly_pack(C_B_buf, C_B, 2);
+            const size_t cbl = (size_t)n * 2, hbl = (size_t)n / 8;
+            poly_pack(C_B_buf, C_B, n, 2);
 
             /* K_B_kdf is already big-endian (HFSCX-256 output); encode directly.
              * hint is LSB-first (rnl_reconcile_bits) — reverse for Python compat. */
@@ -2184,7 +2718,7 @@ static void cmd_kex(int argc, char **argv)
             }
 
             uint8_t hint_rev[RNL_N / 8];
-            { int ri; for (ri = 0; ri < RNL_N/8; ri++) hint_rev[ri] = hint[RNL_N/8-1-ri]; }
+            { size_t ri; for (ri = 0; ri < hbl; ri++) hint_rev[ri] = hint[hbl-1-ri]; }
 
             /* Minimum-width encoding for the session key */
             size_t kb_len = KEYBYTES;
@@ -2192,17 +2726,17 @@ static void cmd_kex(int argc, char **argv)
             while (kb_len > 1 && *kb_start == 0) { kb_start++; kb_len--; }
 
             uint8_t ik[DER_INT_LEN(KEYBYTES)];
-            size_t ic_sz = DER_INT_LEN(sizeof C_B_buf);
+            size_t ic_sz = DER_INT_LEN(cbl);
             size_t inb_sz = DER_INT_LEN(KEYBYTES);
             uint8_t *ic_der = malloc(ic_sz), *inb_der = malloc(inb_sz);
             uint8_t ih[DER_INT_LEN(RNL_N / 8)], in1[8], in2[8];
             size_t lk, lc, lh, ln1, ln2, lnb;
             if (!ic_der || !inb_der) die("out of memory");
             der_int_enc(kb_start,          kb_len,          ik,      &lk);
-            der_int_enc(C_B_buf,    sizeof C_B_buf,  ic_der,  &lc);
-            der_int_enc(hint_rev,   sizeof hint_rev,  ih,      &lh);
-            der_i_rnl_n(in1, &ln1);
-            der_i_rnl_hintlen(in2, &ln2);  /* len(hint_used) == RNL_N/2 */
+            der_int_enc(C_B_buf,    cbl,             ic_der,  &lc);
+            der_int_enc(hint_rev,   hbl,             ih,      &lh);
+            der_i_rnl_n(n, in1, &ln1);
+            der_i_rnl_hintlen(n, in2, &ln2);  /* len(hint_used) == n/2 */
             der_int_enc(n_B, KEYBYTES, inb_der, &lnb);
             const uint8_t *it[6] = {ik, ic_der, ih, in1, in2, inb_der};
             size_t il[6] = {lk, lc, lh, ln1, ln2, lnb};
@@ -2215,12 +2749,13 @@ static void cmd_kex(int argc, char **argv)
             PemKey our; pem_key_load(&our, our_path);
             if (our.n_items < 2)   die("kex rnl: malformed our private key");
             if (their.n_items < 5) die("kex rnl: malformed RNL response");
-            rnl_require_n(&our,   2, "kex rnl: our private key");
-            rnl_require_n(&their, 3, "kex rnl: RNL response");  /* n is field 3 here */
+            const int n = rnl_key_n(&our, 2, "kex rnl: our private key");
+            /* n is field 3 of a response */
+            rnl_same_ring(n, rnl_key_n(&their, 3, "kex rnl: RNL response"), "response");
 
             rnl_poly_t s_A, C_B;
-            poly_unpack(s_A, our.vals[0],   our.vlens[0],   4);
-            poly_unpack(C_B, their.vals[1], their.vlens[1], 2);
+            poly_unpack(s_A, our.vals[0],   our.vlens[0],   n, 4);
+            poly_unpack(C_B, their.vals[1], their.vlens[1], n, 2);
 
             /* Extract Alice's n_A from her private key (field 3) */
             uint8_t n_A[KEYBYTES];
@@ -2234,32 +2769,19 @@ static void cmd_kex(int argc, char **argv)
             if (their.n_items >= 6 && their.vlens[5] <= KEYBYTES)
                 memcpy(n_B + KEYBYTES - their.vlens[5], their.vals[5], their.vlens[5]);
 
-            /* Unpack hint: DER is big-endian (Python: hint[31]=bits0-7 at LSB).
-             * Right-align into hint_rev, then reverse to C byte order. */
+            /* Unpack hint: DER is big-endian (Python: hint[n/8-1]=bits0-7 at LSB). */
             uint8_t hint[RNL_N / 8];
-            { uint8_t hint_rev[RNL_N / 8]; int ri;
-              memset(hint_rev, 0, sizeof hint_rev);
-              size_t hl = their.vlens[2];
-              if (hl > sizeof hint_rev) hl = sizeof hint_rev;
-              memcpy(hint_rev + sizeof hint_rev - hl, their.vals[2], hl);
-              for (ri = 0; ri < RNL_N/8; ri++) hint[ri] = hint_rev[RNL_N/8-1-ri]; }
+            rnl_hint_from_der(hint, their.vals[2], their.vlens[2], n);
             pem_key_free(&our); pem_key_free(&their);
 
             BitArray K_A = BA_INIT;
-            if (!rnl_validate_pub(C_B, RNL_N))
+            if (!rnl_validate_pub(C_B, n))
                 die("kex hkex-rnl: peer C failed entropy check (rejected: degenerate key)");
-            rnl_agree(&K_A, s_A, C_B, hint, NULL);
-
-            /* rnl_agree output is LSB-first; reverse to big-endian for Python compat */
-            uint8_t K_A_raw_rev[KEYBYTES]; int ri_ka;
-            for (ri_ka = 0; ri_ka < KEYBYTES; ri_ka++)
-                K_A_raw_rev[ri_ka] = K_A.b[KEYBYTES-1-ri_ka];
-            explicit_bzero(&K_A, sizeof(K_A));
+            rnl_agree_dim(&K_A, s_A, C_B, hint, NULL, n);
 
             /* Contributory KDF: final_key = HFSCX-256(K_A_raw || n_A || n_B) */
             uint8_t K_A_kdf[KEYBYTES];
-            rnl_contributory_kdf(K_A_kdf, K_A_raw_rev, n_A, n_B);
-            explicit_bzero(K_A_raw_rev, KEYBYTES);
+            rnl_kraw_kdf(K_A_kdf, &K_A, n, n_A, n_B);
             explicit_bzero(n_A, KEYBYTES);
             explicit_bzero(n_B, KEYBYTES);
 
@@ -2302,11 +2824,16 @@ static void cmd_kex(int argc, char **argv)
             PemKey our; pem_key_load(&our, our_path);
             if (our.n_items < 2)   die("kex hybrid-rnl-stern: malformed our private key");
             if (their.n_items < 2) die("kex hybrid-rnl-stern: malformed their public key");
+            /* TODO #383 stage 4: the ring is our key's; the peer's must match
+             * (this branch read neither n until now) */
+            const int n = rnl_key_n(&our, 2, "kex hybrid-rnl-stern: our private key");
+            rnl_same_ring(n, rnl_key_n(&their, 2, "kex hybrid-rnl-stern: their public key"),
+                          "theirs");
 
             rnl_poly_t s_B, m_A, C_A, C_B, ms;
-            poly_unpack(s_B, our.vals[0],   our.vlens[0],   4);
-            poly_unpack(C_A, their.vals[0], their.vlens[0], 2);
-            poly_unpack(m_A, their.vals[1], their.vlens[1], 4);
+            poly_unpack(s_B, our.vals[0],   our.vlens[0],   n, 4);
+            poly_unpack(C_A, their.vals[0], their.vlens[0], n, 2);
+            poly_unpack(m_A, their.vals[1], their.vlens[1], n, 4);
 
             uint8_t n_A[KEYBYTES];
             memset(n_A, 0, KEYBYTES);
@@ -2315,31 +2842,26 @@ static void cmd_kex(int argc, char **argv)
 
             pem_key_free(&our); pem_key_free(&their);
 
-            if (!rnl_validate_m_blind(m_A, RNL_N))
+            if (!rnl_validate_m_blind(m_A, n))
                 die("kex hybrid-rnl-stern: peer m_blind failed entropy check — possible substitution attack");
 
             QcMdpcPub pub_kem;
             kem_pub_load(&pub_kem, their_kem);
 
-            rnl_poly_mul(ms, m_A, s_B);
-            rnl_round(C_B, ms, RNL_Q, RNL_P);
+            rnl_poly_mul_dim(ms, m_A, s_B, n);
+            rnl_round_dim(C_B, ms, RNL_Q, RNL_P, n);
 
             BitArray K1 = BA_INIT;
             uint8_t hint[RNL_N / 8];
-            if (!rnl_validate_pub(C_A, RNL_N))
+            if (!rnl_validate_pub(C_A, n))
                 die("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
-            rnl_agree(&K1, s_B, C_A, NULL, hint);
+            rnl_agree_dim(&K1, s_B, C_A, NULL, hint, n);
 
             uint8_t n_B[KEYBYTES];
             if (fread(n_B, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
 
-            uint8_t K1_rev[KEYBYTES]; int ri;
-            for (ri = 0; ri < KEYBYTES; ri++) K1_rev[ri] = K1.b[KEYBYTES-1-ri];
-            explicit_bzero(&K1, sizeof(K1));
-
             uint8_t K1_kdf[KEYBYTES];
-            rnl_contributory_kdf(K1_kdf, K1_rev, n_A, n_B);
-            explicit_bzero(K1_rev, KEYBYTES);
+            rnl_kraw_kdf(K1_kdf, &K1, n, n_A, n_B);
             explicit_bzero(n_A, KEYBYTES);
             if (kdf) {
                 uint8_t kdf_out[KEYBYTES];
@@ -2357,19 +2879,20 @@ static void cmd_kex(int argc, char **argv)
             qcmdpc_encap(&syn, &K2, &pub_kem, &prf);
 
             uint8_t hint_used[RNL_N / 2];
-            rnl_hint_to_raw(hint_used, hint);
+            rnl_hint_to_raw(hint_used, hint, n);
 
             uint8_t K[KEYBYTES];
             hybrid_rnl_stern_combine(K, K1_kdf, K2.b, C_A, m_A, C_B, hint_used,
-                                      &pub_kem.h_pub, &syn);
+                                      &pub_kem.h_pub, &syn, n);
             explicit_bzero(K1_kdf, KEYBYTES);
             explicit_bzero(&K2, sizeof(K2));
 
             /* Encode RESPONSE: K, C_B, hint, n, hint_len, n_B, syn, r */
             uint8_t C_B_buf[RNL_N * 2];
-            poly_pack(C_B_buf, C_B, 2);
+            const size_t cbl = (size_t)n * 2, hbl = (size_t)n / 8;
+            poly_pack(C_B_buf, C_B, n, 2);
             uint8_t hint_rev[RNL_N / 8];
-            { int rj; for (rj = 0; rj < RNL_N/8; rj++) hint_rev[rj] = hint[RNL_N/8-1-rj]; }
+            { size_t rj; for (rj = 0; rj < hbl; rj++) hint_rev[rj] = hint[hbl-1-rj]; }
             uint8_t syn_buf[QCMDPC_RBYTES];
             qcpoly_to_natural_be(syn_buf, &syn);
 
@@ -2378,7 +2901,7 @@ static void cmd_kex(int argc, char **argv)
             while (k_len > 1 && *k_start == 0) { k_start++; k_len--; }
 
             uint8_t ik[DER_INT_LEN(KEYBYTES)];
-            size_t ic_sz = DER_INT_LEN(sizeof C_B_buf);
+            size_t ic_sz = DER_INT_LEN(cbl);
             size_t inb_sz = DER_INT_LEN(KEYBYTES);
             uint8_t *ic_der = malloc(ic_sz), *inb_der = malloc(inb_sz);
             if (!ic_der || !inb_der) die("out of memory");
@@ -2386,10 +2909,10 @@ static void cmd_kex(int argc, char **argv)
             uint8_t isyn[DER_INT_LEN(QCMDPC_RBYTES)], ir[8];
             size_t lk, lc, lh, ln1, ln2, lnb, lsyn, lr;
             der_int_enc(k_start,   k_len,          ik,      &lk);
-            der_int_enc(C_B_buf,   sizeof C_B_buf,  ic_der,  &lc);
-            der_int_enc(hint_rev,  sizeof hint_rev, ih,      &lh);
-            der_i_rnl_n(in1, &ln1);   /* ring dimension, not the 256-bit key width */
-            der_i_uint(RNL_N / 2, in2, &ln2);
+            der_int_enc(C_B_buf,   cbl,            ic_der,  &lc);
+            der_int_enc(hint_rev,  hbl,            ih,      &lh);
+            der_i_rnl_n(n, in1, &ln1);   /* ring dimension, not the 256-bit key width */
+            der_i_rnl_hintlen(n, in2, &ln2);
             der_int_enc(n_B, KEYBYTES, inb_der, &lnb);
             der_int_enc(syn_buf, QCMDPC_RBYTES, isyn, &lsyn);
             der_i_uint(QCMDPC_R, ir, &lr);
@@ -2407,11 +2930,14 @@ static void cmd_kex(int argc, char **argv)
             PemKey our; pem_key_load(&our, our_path);
             if (our.n_items < 2)   die("kex hybrid-rnl-stern: malformed our private key");
             if (their.n_items < 8) die("kex hybrid-rnl-stern: malformed hybrid response");
+            const int n = rnl_key_n(&our, 2, "kex hybrid-rnl-stern: our private key");
+            rnl_same_ring(n, rnl_key_n(&their, 3, "kex hybrid-rnl-stern: hybrid response"),
+                          "response");
 
             rnl_poly_t s_A, m_A, C_A, C_B, ms;
-            poly_unpack(s_A, our.vals[0], our.vlens[0], 4);
-            poly_unpack(m_A, our.vals[1], our.vlens[1], 4);
-            poly_unpack(C_B, their.vals[1], their.vlens[1], 2);
+            poly_unpack(s_A, our.vals[0], our.vlens[0], n, 4);
+            poly_unpack(m_A, our.vals[1], our.vlens[1], n, 4);
+            poly_unpack(C_B, their.vals[1], their.vlens[1], n, 2);
 
             uint8_t n_A[KEYBYTES];
             memset(n_A, 0, KEYBYTES);
@@ -2424,12 +2950,7 @@ static void cmd_kex(int argc, char **argv)
                 memcpy(n_B + KEYBYTES - their.vlens[5], their.vals[5], their.vlens[5]);
 
             uint8_t hint[RNL_N / 8];
-            { uint8_t hint_rev[RNL_N / 8]; int ri;
-              memset(hint_rev, 0, sizeof hint_rev);
-              size_t hl = their.vlens[2];
-              if (hl > sizeof hint_rev) hl = sizeof hint_rev;
-              memcpy(hint_rev + sizeof hint_rev - hl, their.vals[2], hl);
-              for (ri = 0; ri < RNL_N/8; ri++) hint[ri] = hint_rev[RNL_N/8-1-ri]; }
+            rnl_hint_from_der(hint, their.vals[2], their.vlens[2], n);
 
             QcPoly syn;
             { uint8_t synb[QCMDPC_RBYTES];
@@ -2442,20 +2963,16 @@ static void cmd_kex(int argc, char **argv)
             QcMdpcPub  pub_kem;
             kem_priv_load(&priv_kem, &pub_kem, our_kem);
 
-            rnl_poly_mul(ms, m_A, s_A);
-            rnl_round(C_A, ms, RNL_Q, RNL_P);
+            rnl_poly_mul_dim(ms, m_A, s_A, n);
+            rnl_round_dim(C_A, ms, RNL_Q, RNL_P, n);
 
             BitArray K1 = BA_INIT;
-            if (!rnl_validate_pub(C_B, RNL_N))
+            if (!rnl_validate_pub(C_B, n))
                 die("kex hybrid-rnl-stern: peer C failed entropy check (rejected: degenerate key)");
-            rnl_agree(&K1, s_A, C_B, hint, NULL);
-            uint8_t K1_rev[KEYBYTES]; int ri2;
-            for (ri2 = 0; ri2 < KEYBYTES; ri2++) K1_rev[ri2] = K1.b[KEYBYTES-1-ri2];
-            explicit_bzero(&K1, sizeof(K1));
+            rnl_agree_dim(&K1, s_A, C_B, hint, NULL, n);
 
             uint8_t K1_kdf[KEYBYTES];
-            rnl_contributory_kdf(K1_kdf, K1_rev, n_A, n_B);
-            explicit_bzero(K1_rev, KEYBYTES);
+            rnl_kraw_kdf(K1_kdf, &K1, n, n_A, n_B);
             explicit_bzero(n_A, KEYBYTES);
             if (kdf) {
                 uint8_t kdf_out[KEYBYTES];
@@ -2472,11 +2989,11 @@ static void cmd_kex(int argc, char **argv)
             explicit_bzero(&priv_kem, sizeof(priv_kem));
 
             uint8_t hint_used[RNL_N / 2];
-            rnl_hint_to_raw(hint_used, hint);
+            rnl_hint_to_raw(hint_used, hint, n);
 
             uint8_t K[KEYBYTES];
             hybrid_rnl_stern_combine(K, K1_kdf, K2.b, C_A, m_A, C_B, hint_used,
-                                      &pub_kem.h_pub, &syn);
+                                      &pub_kem.h_pub, &syn, n);
             explicit_bzero(K1_kdf, KEYBYTES);
             explicit_bzero(&K2, sizeof(K2));
             pem_key_free(&their);
@@ -2510,7 +3027,7 @@ static void cmd_kex(int argc, char **argv)
 /* Write raw bytes to file or stdout. */
 static void write_binary_file(const char *path, const uint8_t *buf, size_t len)
 {
-    FILE *f = (!path || strcmp(path, "-") == 0) ? stdout : fopen(path, "wb");
+    FILE *f = (!path || strcmp(path, "-") == 0) ? stdout : hkx_fopen_out(path, "wb");
     if (!f) dief("cannot write: %s", path);
     fwrite(buf, 1, len, f);
     if (f != stdout) fclose(f);
@@ -2666,6 +3183,50 @@ static int der_i_byte(uint8_t v, uint8_t *out, size_t *olen)
 { return der_int_enc(&v, 1, out, olen); }
 
 /* Build msg BitArray: first KEYBYTES of data, zero-padded on the right. */
+/* TODO #378.  --aead means something only to hske-nla1, --ad only to
+ * hske-duplex, hske-duplex3 and hske-nla1.  Every other algorithm has nowhere
+ * to put associated data and no tag, so a flag given there was dropped without
+ * a word: `enc --algo hske --ad X` wrote byte-for-byte the ciphertext of no
+ * --ad.  Presence is what counts -- `--ad ''` is a flag given. */
+static int ad_algo(const char *algo)
+{
+    return strcmp(algo, "hske-duplex") == 0 || strcmp(algo, "hske-duplex3") == 0 ||
+           strcmp(algo, "hske-nla1") == 0;
+}
+
+static void aead_flags_ok(const char *cmd, const char *algo, const char *ad, int aead)
+{
+    char msg[160];
+    if (aead && strcmp(algo, "hske-nla1") != 0) {
+        snprintf(msg, sizeof msg, "%s: --aead is only for --algo hske-nla1, not '%s'",
+                 cmd, algo);
+        die(msg);
+    }
+    if (ad && !ad_algo(algo)) {
+        snprintf(msg, sizeof msg, "%s: --ad is only for --algo hske-duplex, "
+                 "hske-duplex3 or hske-nla1, not '%s'", cmd, algo);
+        die(msg);
+    }
+}
+
+/* TODO #378.  A single-block --algo encrypts exactly one block.  Longer input
+ * used to be cut to its first block with exit 0, and `dec` handed back a prefix
+ * of the message; now it is refused before anything is drawn or written. */
+static void one_block_ok(const char *algo, size_t in_len, size_t nbytes)
+{
+    if (in_len > nbytes) {
+        char msg[256];
+        snprintf(msg, sizeof msg,
+                 "enc: --algo %s encrypts one %zu-byte block; --in is %zu bytes (%s)",
+                 algo, nbytes, in_len,
+                 strncmp(algo, "hske", 4) == 0
+                     ? "use --algo hske-duplex or encfile for longer input"
+                     : "for longer input, encrypt a key with it and the message "
+                       "with --algo hske-duplex");
+        die(msg);
+    }
+}
+
 static void make_msg_ba(BitArray *msg, const uint8_t *data, size_t len)
 {
     memset(msg->b, 0, KEYBYTES);
@@ -2679,9 +3240,11 @@ static void make_msg_ba(BitArray *msg, const uint8_t *data, size_t len)
  * build's SDF_ROUNDS (TODO #236).  The round count is item[1] of the DER
  * SEQUENCE and has always been on the wire; deriving the sizes from the macro
  * instead made two builds with different SDF_ROUNDS unable to read each other. */
-#define STERN_COMMITS_BYTES_R(r) ((size_t)3 * (size_t)(r) * KEYBYTES)
-#define STERN_CHAL_BYTES_R(r)    (((size_t)(r) + 3) / 4)
-#define STERN_RESP_BYTES_R(r)    ((size_t)2 * (size_t)(r) * KEYBYTES)
+/* TODO #383 stage 2: and of the signature's own width N (nb = N/8 octets per
+ * value), item[0]. */
+#define STERN_COMMITS_BYTES_R(r, nb) ((size_t)3 * (size_t)(r) * (size_t)(nb))
+#define STERN_CHAL_BYTES_R(r)        (((size_t)(r) + 3) / 4)
+#define STERN_RESP_BYTES_R(r, nb)    ((size_t)2 * (size_t)(r) * (size_t)(nb))
 
 /* Decode item[1] of a Stern PEM as a round count, rejecting anything outside
  * [1, SDF_MAX_ROUNDS].  Returns 0 on success.  A hostile PEM must not be able
@@ -2702,21 +3265,23 @@ static void stern_sig_pack_write_lbl(const SternSig *sig, const char *label,
                                      const char *out_path)
 {
     int    rounds  = sig->rounds;
-    size_t cm_len  = STERN_COMMITS_BYTES_R(rounds);
+    int    sn      = sig->c0[0].nbits;          /* the signature's N */
+    size_t nb      = (size_t)sn / 8;
+    size_t cm_len  = STERN_COMMITS_BYTES_R(rounds, nb);
     size_t ch_len  = STERN_CHAL_BYTES_R(rounds);
-    size_t rs_len  = STERN_RESP_BYTES_R(rounds);
+    size_t rs_len  = STERN_RESP_BYTES_R(rounds, nb);
     uint8_t *commits = malloc(cm_len);
     uint8_t *chal    = malloc(ch_len);
     uint8_t *resp    = malloc(rs_len);
     if (!commits || !chal || !resp) die("out of memory");
 
-    /* Commits: c0, c1, c2 per round (each KEYBYTES bytes, big-endian). */
+    /* Commits: c0, c1, c2 per round (each nb bytes, big-endian). */
     { int i;
       for (i = 0; i < rounds; i++) {
-          size_t off = (size_t)i * 3 * KEYBYTES;
-          memcpy(commits + off,              sig->c0[i].b, KEYBYTES);
-          memcpy(commits + off + KEYBYTES,   sig->c1[i].b, KEYBYTES);
-          memcpy(commits + off + 2*KEYBYTES, sig->c2[i].b, KEYBYTES);
+          size_t off = (size_t)i * 3 * nb;
+          memcpy(commits + off,          sig->c0[i].b, nb);
+          memcpy(commits + off + nb,     sig->c1[i].b, nb);
+          memcpy(commits + off + 2 * nb, sig->c2[i].b, nb);
       }
     }
     /* Challenges: 2 bits per round, packed LSB-first within each byte. */
@@ -2725,12 +3290,12 @@ static void stern_sig_pack_write_lbl(const SternSig *sig, const char *label,
       for (i = 0; i < rounds; i++)
           chal[i / 4] |= (uint8_t)((sig->b[i] & 3) << ((i % 4) * 2));
     }
-    /* Responses: resp_a then resp_b per round (each KEYBYTES). */
+    /* Responses: resp_a then resp_b per round (each nb). */
     { int i;
       for (i = 0; i < rounds; i++) {
-          size_t off = (size_t)i * 2 * KEYBYTES;
-          memcpy(resp + off,            sig->resp_a[i].b, KEYBYTES);
-          memcpy(resp + off + KEYBYTES, sig->resp_b[i].b, KEYBYTES);
+          size_t off = (size_t)i * 2 * nb;
+          memcpy(resp + off,      sig->resp_a[i].b, nb);
+          memcpy(resp + off + nb, sig->resp_b[i].b, nb);
       }
     }
 
@@ -2747,7 +3312,7 @@ static void stern_sig_pack_write_lbl(const SternSig *sig, const char *label,
     uint8_t *irs_der = malloc(irs_sz);
     if (!ic_der || !ich_der || !irs_der) die("out of memory");
     size_t lc, lch, lrs;
-    der_i_n256(in_der, &ln);
+    der_i_uint((uint64_t)sn, in_der, &ln);
     der_i_uint((uint64_t)rounds, ir_der, &lr);
     der_int_enc(commits, cm_len, ic_der,  &lc);
     der_int_enc(chal,    ch_len, ich_der, &lch);
@@ -2767,8 +3332,12 @@ static void stern_sig_pack_and_write(const SternSig *sig, const char *out_path)
 }
 
 /* Load a SternSig written under `label`.  On success *sig is allocated with
- * the round count read from the PEM and the caller must stern_sig_free() it. */
-static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig)
+ * the round count read from the PEM and the caller must stern_sig_free() it.
+ * want_n = 0 takes any Stern-F width (32/64/128/256, TODO #383 stage 2) and
+ * the caller compares it with its key's (sig->c0[0].nbits); otherwise the
+ * signature must declare exactly want_n (hcred stays 256 until stage 3). */
+static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig,
+                              int want_n)
 {
     PemKey pk;
     int rounds;
@@ -2776,12 +3345,19 @@ static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig
     if (strcmp(pk.label, label) != 0 || pk.n_items != 5)
         { pem_key_free(&pk); return -1; }
 
-    stern_require_n(&pk, 0, "verify");
+    int sn;
+    if (want_n) { stern_require_n(&pk, 0, "verify"); sn = want_n; }
+    else {
+        long got = der_small(pk.vals[0], pk.vlens[0]);
+        if (!gf_width_ok(got)) gf_width_refuse(pk.label, got);
+        sn = (int)got;
+    }
+    size_t nb = (size_t)sn / 8;
     if (stern_decode_rounds(&pk, &rounds) != 0) { pem_key_free(&pk); return -1; }
 
-    size_t cm_len = STERN_COMMITS_BYTES_R(rounds);
+    size_t cm_len = STERN_COMMITS_BYTES_R(rounds, nb);
     size_t ch_len = STERN_CHAL_BYTES_R(rounds);
-    size_t rs_len = STERN_RESP_BYTES_R(rounds);
+    size_t rs_len = STERN_RESP_BYTES_R(rounds, nb);
 
     /* Each blob must fit the round count the same PEM declares; a longer one
      * means the two disagree, which is a malformed signature rather than a
@@ -2811,10 +3387,11 @@ static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig
     /* Unpack commits. */
     { int i;
       for (i = 0; i < rounds; i++) {
-          size_t off = (size_t)i * 3 * KEYBYTES;
-          memcpy(sig->c0[i].b, commits + off,              KEYBYTES);
-          memcpy(sig->c1[i].b, commits + off + KEYBYTES,   KEYBYTES);
-          memcpy(sig->c2[i].b, commits + off + 2*KEYBYTES, KEYBYTES);
+          size_t off = (size_t)i * 3 * nb;
+          ba_zero_w(&sig->c0[i], sn); ba_zero_w(&sig->c1[i], sn); ba_zero_w(&sig->c2[i], sn);
+          memcpy(sig->c0[i].b, commits + off,          nb);
+          memcpy(sig->c1[i].b, commits + off + nb,     nb);
+          memcpy(sig->c2[i].b, commits + off + 2 * nb, nb);
       }
     }
     /* Unpack challenges. */
@@ -2825,9 +3402,10 @@ static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig
     /* Unpack responses. */
     { int i;
       for (i = 0; i < rounds; i++) {
-          size_t off = (size_t)i * 2 * KEYBYTES;
-          memcpy(sig->resp_a[i].b, resp + off,            KEYBYTES);
-          memcpy(sig->resp_b[i].b, resp + off + KEYBYTES, KEYBYTES);
+          size_t off = (size_t)i * 2 * nb;
+          ba_zero_w(&sig->resp_a[i], sn); ba_zero_w(&sig->resp_b[i], sn);
+          memcpy(sig->resp_a[i].b, resp + off,      nb);
+          memcpy(sig->resp_b[i].b, resp + off + nb, nb);
       }
     }
 
@@ -2838,7 +3416,7 @@ static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig
 
 static int stern_sig_load(const char *path, SternSig *sig)
 {
-    return stern_sig_load_lbl(path, PEM_SIGNATURE, sig);
+    return stern_sig_load_lbl(path, PEM_SIGNATURE, sig, 0);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2851,10 +3429,12 @@ static int stern_sig_load(const char *path, SternSig *sig)
 #define RING_MAX_K 64
 
 /* Parse comma-separated hpks-stern public-key PEM paths.  Fills seeds[k] and
- * syndrs_flat[k*SDF_SYNBYTES].  Returns k (>=2). */
+ * syndrs_flat[k*SDF_SYNBYTES] (the first N/16 octets of each slot) and *n_out
+ * with the members' one width N (TODO #383 stage 2).  Returns k (>=2). */
 static int ring_load_members(const char *ring_arg, BitArray *seeds,
-                             uint8_t *syndrs_flat)
+                             uint8_t *syndrs_flat, int *n_out)
 {
+    int ring_n = 0;
     char buf[8192];
     size_t al = strlen(ring_arg);
     if (al >= sizeof buf) die("hpks-ring: --ring too long");
@@ -2872,26 +3452,32 @@ static int ring_load_members(const char *ring_arg, BitArray *seeds,
                                 "hpks-stern public key\n", tok, pub.label);
                 exit(1);
             }
-            /* pubkey: vals[0]=syndrome(32B int), vals[1]=seed, vals[2]=n */
+            /* pubkey: vals[0]=syndrome(N-bit int), vals[1]=seed, vals[2]=n */
+            int mn = gf_key_width(&pub);
+            if (ring_n == 0) ring_n = mn;
+            else if (mn != ring_n) die("hpks-ring: all ring members must share the same n");
             BitArray syn_ba = BA_INIT;
-            ba_from_ra(&seeds[k], pub.vals[1], pub.vlens[1]);
-            ba_from_ra(&syn_ba,   pub.vals[0], pub.vlens[0]);
-            /* syndrome integer stores syndr[j] at byte KEYBYTES-1-j (see pkey). */
-            { int j; for (j = 0; j < SDF_SYNBYTES; j++)
-                syndrs_flat[k * SDF_SYNBYTES + j] = syn_ba.b[KEYBYTES - 1 - j]; }
+            ba_from_ra_n(&seeds[k], pub.vals[1], pub.vlens[1], mn);
+            ba_from_ra_n(&syn_ba,   pub.vals[0], pub.vlens[0], mn);
+            /* syndrome integer stores syndr[j] at byte N/8-1-j (see pkey). */
+            { int j, nb = mn / 8; for (j = 0; j < nb / 2; j++)
+                syndrs_flat[k * SDF_SYNBYTES + j] = syn_ba.b[nb - 1 - j]; }
             pem_key_free(&pub);
             k++;
         }
         tok = strtok_r(NULL, ",", &save);
     }
     if (k < 2) die("hpks-ring: --ring needs at least 2 member public keys");
+    *n_out = ring_n;
     return k;
 }
 
 static void ring_sig_pack_and_write(const SternRingSig *sig, const char *out_path)
 {
     int k = sig->k, rounds = sig->rounds;
-    size_t entry = 5 * (size_t)KEYBYTES + 1;
+    int sn = sig->c0[0].nbits;                  /* the ring's N (TODO #383) */
+    size_t nb = (size_t)sn / 8;
+    size_t entry = 5 * nb + 1;
     size_t blen  = (size_t)k * rounds * entry;
     uint8_t *blob = (uint8_t *)malloc(blen);
     if (!blob) die("out of memory");
@@ -2900,12 +3486,12 @@ static void ring_sig_pack_and_write(const SternRingSig *sig, const char *out_pat
     for (i = 0; i < k; i++) {
         for (r = 0; r < rounds; r++) {
             int idx = i * rounds + r;
-            memcpy(blob + off, sig->c0[idx].b, KEYBYTES); off += KEYBYTES;
-            memcpy(blob + off, sig->c1[idx].b, KEYBYTES); off += KEYBYTES;
-            memcpy(blob + off, sig->c2[idx].b, KEYBYTES); off += KEYBYTES;
+            memcpy(blob + off, sig->c0[idx].b, nb); off += nb;
+            memcpy(blob + off, sig->c1[idx].b, nb); off += nb;
+            memcpy(blob + off, sig->c2[idx].b, nb); off += nb;
             blob[off++] = (uint8_t)(sig->b[idx] & 0xFF);
-            memcpy(blob + off, sig->resp_a[idx].b, KEYBYTES); off += KEYBYTES;
-            memcpy(blob + off, sig->resp_b[idx].b, KEYBYTES); off += KEYBYTES;
+            memcpy(blob + off, sig->resp_a[idx].b, nb); off += nb;
+            memcpy(blob + off, sig->resp_b[idx].b, nb); off += nb;
         }
     }
     uint8_t ik[DER_INT_LEN(8)], ir[DER_INT_LEN(8)], in[8];
@@ -2914,7 +3500,7 @@ static void ring_sig_pack_and_write(const SternRingSig *sig, const char *out_pat
     if (!ib) die("out of memory");
     der_i_uint((uint64_t)k, ik, &lk);
     der_i_uint((uint64_t)rounds, ir, &lr);
-    der_i_n256(in, &ln);
+    der_i_uint((uint64_t)sn, in, &ln);
     der_int_enc(blob, blen, ib, &lb);
     const uint8_t *it[4] = {ik, ir, in, ib};
     size_t il[4] = {lk, lr, ln, lb};
@@ -2923,8 +3509,8 @@ static void ring_sig_pack_and_write(const SternRingSig *sig, const char *out_pat
 }
 
 /* Load a ring signature into an allocated SternRingSig.  Caller frees via
- * stern_ring_free.  Returns k. */
-static int ring_sig_load(const char *path, SternRingSig *sig)
+ * stern_ring_free.  Returns k; *n_out is the signature's N (TODO #383). */
+static int ring_sig_load(const char *path, SternRingSig *sig, int *n_out)
 {
     PemKey pk;
     pem_key_load(&pk, path);
@@ -2950,10 +3536,13 @@ static int ring_sig_load(const char *path, SternRingSig *sig)
                         "(expected 1..%d)\n", (unsigned long long)r_raw, SDF_MAX_ROUNDS);
         exit(1);
     }
-    stern_require_n(&pk, 2, "verify");
+    long sn_l = der_small(pk.vals[2], pk.vlens[2]);
+    if (!gf_width_ok(sn_l)) gf_width_refuse(pk.label, sn_l);
+    int sn = (int)sn_l;
+    size_t nb = (size_t)sn / 8;
     int k      = (int)k_raw;
     int rounds = (int)r_raw;
-    size_t entry = 5 * (size_t)KEYBYTES + 1;
+    size_t entry = 5 * nb + 1;
     size_t blen  = (size_t)k * (size_t)rounds * entry;
     /* Declared-vs-actual agreement, the counterpart of the check TODO #236 gave
      * the Stern-F reader: a payload longer than (k, rounds) describe is a
@@ -2977,16 +3566,233 @@ static int ring_sig_load(const char *path, SternRingSig *sig)
     for (i = 0; i < k; i++) {
         for (r = 0; r < rounds; r++) {
             int idx = i * rounds + r;
-            memcpy(sig->c0[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
-            memcpy(sig->c1[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
-            memcpy(sig->c2[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
+            ba_zero_w(&sig->c0[idx], sn); ba_zero_w(&sig->c1[idx], sn);
+            ba_zero_w(&sig->c2[idx], sn);
+            ba_zero_w(&sig->resp_a[idx], sn); ba_zero_w(&sig->resp_b[idx], sn);
+            memcpy(sig->c0[idx].b, blob + off, nb); off += nb;
+            memcpy(sig->c1[idx].b, blob + off, nb); off += nb;
+            memcpy(sig->c2[idx].b, blob + off, nb); off += nb;
             sig->b[idx] = blob[off++];
-            memcpy(sig->resp_a[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
-            memcpy(sig->resp_b[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
+            memcpy(sig->resp_a[idx].b, blob + off, nb); off += nb;
+            memcpy(sig->resp_b[idx].b, blob + off, nb); off += nb;
         }
     }
     free(blob);
+    *n_out = sn;
     return k;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Stern-F long form (N = 2304, TODO #382 stage 2): codecs.  The layouts are
+ * the short form's with 32-byte commitments; values are N/8-byte strings.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* DER-encode the four variable items of a Stern signature or ring signature
+ * and write the SEQUENCE: `lead` small integers first, then `nb` blobs. */
+static void stern_l_write_seq(const uint64_t *lead, int nlead, const uint8_t *const *blob,
+                              const size_t *blen, int nblob, const char *label,
+                              const char *out_path)
+{
+    const uint8_t *it[8];
+    size_t il[8];
+    uint8_t small[4][8];
+    uint8_t *enc[4];
+    int i;
+    for (i = 0; i < nlead; i++) { der_i_uint(lead[i], small[i], &il[i]); it[i] = small[i]; }
+    for (i = 0; i < nblob; i++) {
+        enc[i] = (uint8_t *)malloc(DER_INT_LEN(blen[i]));
+        if (!enc[i]) die("out of memory");
+        der_int_enc(blob[i], blen[i], enc[i], &il[nlead + i]);
+        it[nlead + i] = enc[i];
+    }
+    seq_and_write(it, il, nlead + nblob, label, out_path);
+    for (i = 0; i < nblob; i++) free(enc[i]);
+}
+
+static void stern_l_sig_write(const SternLSig *sig, const char *label, const char *out_path)
+{
+    size_t ch_len = STERN_CHAL_BYTES_R(sig->rounds);
+    uint8_t *chal = (uint8_t *)calloc(ch_len, 1);
+    int i;
+    if (!chal) die("out of memory");
+    for (i = 0; i < sig->rounds; i++)
+        chal[i / 4] |= (uint8_t)((sig->b[i] & 3) << ((i % 4) * 2));
+    {
+        uint64_t lead[2] = { (uint64_t)sig->n, (uint64_t)sig->rounds };
+        const uint8_t *blob[3] = { sig->c, chal, sig->resp };
+        size_t blen[3] = { 96 * (size_t)sig->rounds, ch_len,
+                           2 * (size_t)sig->rounds * (size_t)(sig->n / 8) };
+        stern_l_write_seq(lead, 2, blob, blen, 3, label, out_path);
+    }
+    free(chal);
+}
+
+/* The width item[0] of a Stern signature PEM declares, screened as a Stern-F
+ * width; -1 if the PEM is not a five-item `label`. */
+static int stern_sig_peek_n(const char *path, const char *label)
+{
+    PemKey pk;
+    long got;
+    pem_key_load(&pk, path);
+    if (strcmp(pk.label, label) != 0 || pk.n_items != 5) { pem_key_free(&pk); return -1; }
+    got = der_small(pk.vals[0], pk.vlens[0]);
+    pem_key_free(&pk);
+    if (!stern_width_ok(got)) gf_width_refuse(label, got);
+    return (int)got;
+}
+
+/* Load a long-form signature; the caller frees it with stern_l_sig_free. */
+static int stern_l_sig_load(const char *path, const char *label, SternLSig *sig)
+{
+    PemKey pk;
+    int rounds, n, i;
+    pem_key_load(&pk, path);
+    if (strcmp(pk.label, label) != 0 || pk.n_items != 5) { pem_key_free(&pk); return -1; }
+    n = (int)der_small(pk.vals[0], pk.vlens[0]);
+    if (!stern_is_long(n) || !stern_width_ok(n) || stern_decode_rounds(&pk, &rounds) != 0)
+        { pem_key_free(&pk); return -1; }
+    size_t cm_len = 96 * (size_t)rounds, ch_len = STERN_CHAL_BYTES_R(rounds);
+    size_t rs_len = 2 * (size_t)rounds * (size_t)(n / 8);
+    if (pk.vlens[2] > cm_len || pk.vlens[3] > ch_len || pk.vlens[4] > rs_len)
+        { pem_key_free(&pk); return -1; }
+    uint8_t *chal = (uint8_t *)malloc(ch_len);
+    if (!chal) die("out of memory");
+    stern_l_sig_alloc(sig, n, rounds);
+    der_right_align(sig->c, cm_len, pk.vals[2], pk.vlens[2]);
+    der_right_align(chal, ch_len, pk.vals[3], pk.vlens[3]);
+    der_right_align(sig->resp, rs_len, pk.vals[4], pk.vlens[4]);
+    for (i = 0; i < rounds; i++) sig->b[i] = (chal[i / 4] >> ((i % 4) * 2)) & 3;
+    free(chal);
+    pem_key_free(&pk);
+    return 0;
+}
+
+/* The first --ring member's width, screened (TODO #382: picks the form). */
+static int ring_peek_n(const char *ring_arg)
+{
+    char buf[8192];
+    size_t al = strlen(ring_arg);
+    if (al >= sizeof buf) die("hpks-ring: --ring too long");
+    memcpy(buf, ring_arg, al + 1);
+    char *save = NULL, *tok = strtok_r(buf, ",", &save);
+    while (tok && !*tok) tok = strtok_r(NULL, ",", &save);
+    if (!tok) die("hpks-ring: --ring needs at least 2 member public keys");
+    PemKey pub;
+    pem_key_load(&pub, tok);
+    if (strcmp(pub.label, PEM_HPKS_STERN_PUB) != 0) {
+        fprintf(stderr, "hpks-ring: ring member %s is %s, expected hpks-stern public key\n",
+                tok, pub.label);
+        exit(1);
+    }
+    int n = stern_key_width(&pub);
+    pem_key_free(&pub);
+    return n;
+}
+
+/* ring_load_members for the long form: *seeds and *syns are k x N/8 bytes,
+ * heap-allocated for the caller to free. */
+static int ring_load_members_l(const char *ring_arg, uint8_t **seeds, uint8_t **syns,
+                               int *n_out)
+{
+    int ring_n = 0, k = 0;
+    char buf[8192];
+    size_t al = strlen(ring_arg);
+    if (al >= sizeof buf) die("hpks-ring: --ring too long");
+    memcpy(buf, ring_arg, al + 1);
+    *seeds = (uint8_t *)malloc((size_t)RING_MAX_K * STERN_L_MAXB);
+    *syns  = (uint8_t *)malloc((size_t)RING_MAX_K * STERN_L_MAXB);
+    if (!*seeds || !*syns) die("out of memory");
+    char *save = NULL, *tok = strtok_r(buf, ",", &save);
+    while (tok) {
+        if (*tok) {
+            if (k >= RING_MAX_K) die("hpks-ring: too many ring members");
+            PemKey pub;
+            pem_key_load(&pub, tok);
+            if (strcmp(pub.label, PEM_HPKS_STERN_PUB) != 0) {
+                fprintf(stderr, "hpks-ring: ring member %s is %s, expected "
+                                "hpks-stern public key\n", tok, pub.label);
+                exit(1);
+            }
+            int mn = stern_key_width(&pub);
+            if (ring_n == 0) ring_n = mn;
+            else if (mn != ring_n) die("hpks-ring: all ring members must share the same n");
+            stern_l_field(*seeds + (size_t)k * (mn / 8), &pub, 1, mn);
+            stern_l_field(*syns  + (size_t)k * (mn / 8), &pub, 0, mn);
+            pem_key_free(&pub);
+            k++;
+        }
+        tok = strtok_r(NULL, ",", &save);
+    }
+    if (k < 2) die("hpks-ring: --ring needs at least 2 member public keys");
+    *n_out = ring_n;
+    return k;
+}
+
+static void ring_sig_write_l(const SternLRingSig *sig, const char *out_path)
+{
+    size_t nb = (size_t)sig->n / 8, m = (size_t)sig->k * (size_t)sig->rounds;
+    size_t entry = 96 + 1 + 2 * nb, blen = m * entry, i;
+    uint8_t *blob = (uint8_t *)malloc(blen);
+    if (!blob) die("out of memory");
+    for (i = 0; i < m; i++) {
+        uint8_t *p = blob + i * entry;
+        memcpy(p, sig->c + 96 * i, 96);
+        p[96] = (uint8_t)(sig->b[i] & 0xFF);
+        memcpy(p + 97, sig->resp + i * 2 * nb, 2 * nb);
+    }
+    {
+        uint64_t lead[3] = { (uint64_t)sig->k, (uint64_t)sig->rounds, (uint64_t)sig->n };
+        const uint8_t *bl[1] = { blob };
+        size_t bll[1] = { blen };
+        stern_l_write_seq(lead, 3, bl, bll, 1, PEM_HPKS_RING_SIG, out_path);
+    }
+    free(blob);
+}
+
+/* ring_sig_load for the long form; the caller checks k and n against its ring. */
+static int ring_sig_load_l(const char *path, SternLRingSig *sig, int *n_out)
+{
+    PemKey pk;
+    pem_key_load(&pk, path);
+    if (strcmp(pk.label, PEM_HPKS_RING_SIG) != 0 || pk.n_items < 4)
+        dief("verify: expected HPKS-RING SIGNATURE PEM, got: %s", pk.label);
+    uint64_t k_raw = parse_be_uint(pk.vals[0], pk.vlens[0]);
+    uint64_t r_raw = parse_be_uint(pk.vals[1], pk.vlens[1]);
+    if (pk.vlens[0] == 0 || pk.vlens[0] > 4 || k_raw < 2 || k_raw > RING_MAX_K) {
+        fprintf(stderr, "verify: HPKS-RING signature declares %llu ring members "
+                        "(expected 2..%d)\n", (unsigned long long)k_raw, RING_MAX_K);
+        exit(1);
+    }
+    if (pk.vlens[1] == 0 || pk.vlens[1] > 4 || r_raw < 1 || r_raw > SDF_MAX_ROUNDS) {
+        fprintf(stderr, "verify: HPKS-RING signature declares %llu rounds "
+                        "(expected 1..%d)\n", (unsigned long long)r_raw, SDF_MAX_ROUNDS);
+        exit(1);
+    }
+    long sn = der_small(pk.vals[2], pk.vlens[2]);
+    if (!stern_width_ok(sn)) gf_width_refuse(pk.label, sn);
+    *n_out = (int)sn;
+    if (!stern_is_long((int)sn)) { pem_key_free(&pk); return -1; }  /* the short form's */
+    size_t nb = (size_t)sn / 8, m = (size_t)k_raw * (size_t)r_raw;
+    size_t entry = 96 + 1 + 2 * nb, blen = m * entry, i;
+    if (pk.vlens[3] > blen) {
+        fprintf(stderr, "verify: HPKS-RING signature payload is %zu bytes, but "
+                        "k=%d rounds=%d describe %zu\n",
+                pk.vlens[3], (int)k_raw, (int)r_raw, blen);
+        exit(1);
+    }
+    uint8_t *blob = (uint8_t *)malloc(blen);
+    if (!blob) die("out of memory");
+    der_right_align(blob, blen, pk.vals[3], pk.vlens[3]);
+    pem_key_free(&pk);
+    stern_l_ring_alloc(sig, (int)sn, (int)k_raw, (int)r_raw);
+    for (i = 0; i < m; i++) {
+        const uint8_t *p = blob + i * entry;
+        memcpy(sig->c + 96 * i, p, 96);
+        sig->b[i] = p[96];
+        memcpy(sig->resp + i * 2 * nb, p + 97, 2 * nb);
+    }
+    free(blob);
+    return (int)k_raw;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -3090,8 +3896,10 @@ static void cmd_rand(int argc, char **argv)
     }
 
     if (bytes_arg) {
-        long n = strtol(bytes_arg, NULL, 10);
-        if (n < 0) die("rand: --bytes must be non-negative");
+        /* At most one seed's worth of output (DRBG_MAX_BLOCKS blocks), the
+         * most a single request can ever return (TODO #380). */
+        long n = (long)dec_range_arg(bytes_arg, 0, DRBG_MAX_BLOCKS * KEYBYTES,
+                                     "rand", "--bytes");
         uint8_t *out = (uint8_t *)malloc((size_t)n ? (size_t)n : 1);
         if (!out) die("rand: out of memory");
         if (!drbg_generate(&d, out, (size_t)n))
@@ -3129,6 +3937,9 @@ static void cmd_enc(int argc, char **argv)
     const char *out_path   = get_arg(argc, argv, "--out");
     if (!algo)    die("enc: --algo required");
     if (!in_path) die("enc: --in required");
+    if (!out_path) die("enc: --out required");   /* TODO #381: was stdout */
+    aead_flags_ok("enc", algo, get_arg(argc, argv, "--ad"),
+                  has_flag(argc, argv, "--aead"));
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
@@ -3197,6 +4008,9 @@ static void cmd_enc(int argc, char **argv)
             snprintf(what, sizeof what, "enc %s", algo);
             sym256_ok(key_nbits, what, "key");
         }
+        one_block_ok(algo, in_len,
+                     strcmp(algo, "hske-nla1") == 0 && !has_flag(argc, argv, "--aead")
+                         ? (size_t)(key_nbits / 8) : (size_t)KEYBYTES);
 
         if (strcmp(algo, "hske") == 0) {
             BitArray E = BA_INIT;
@@ -3307,8 +4121,14 @@ static void cmd_enc(int argc, char **argv)
         strcmp(algo, "hpke-nl3") == 0) {
         /* vals[0]=pub (32 bytes), vals[1]=n */
         if (pub_k.n_items < 1) die("enc: malformed public key");
-        BitArray pub = BA_INIT, r = BA_INIT, R = BA_INIT, enc_key = BA_INIT, E = BA_INIT;
-        ba_from_ra(&pub, pub_k.vals[0], pub_k.vlens[0]);
+        int gn = gf_key_width(&pub_k);   /* TODO #383: the key's width */
+        one_block_ok(algo, in_len, (size_t)gn / 8);
+        BitArray pub = BA_INIT, r = BA_INIT, R = BA_INIT, enc_key = BA_INIT, E = BA_INIT, g = BA_INIT;
+        BitArray Pn = BA_INIT;
+        ba_from_ra_n(&pub, pub_k.vals[0], pub_k.vlens[0], gn);
+        make_msg_ba_n(&Pn, P.b, KEYBYTES, gn);
+        ba_zero_w(&r, gn);
+        gf_gen_w(&g, gn);
         pem_key_free(&pub_k);
         if (!gf_pub_is_valid(&pub))
             die("enc: public key is the GF(2^n)* identity/zero element "
@@ -3322,7 +4142,7 @@ static void cmd_enc(int argc, char **argv)
             int attempt;
             for (attempt = 0; attempt < 64; attempt++) {
                 ba_rand(&r, urnd);
-                gf_pow_ba(&R, &GF_GEN, &r);
+                gf_pow_ba(&R, &g, &r);
                 gf_pow_ba(&enc_key, &pub, &r);
                 /* hpke-nl3 has no affine-degenerate key class to sample past
                  * (SecurityProofs-8.md 11.34.4), so it takes the first draw. */
@@ -3334,20 +4154,21 @@ static void cmd_enc(int argc, char **argv)
         }
         fclose(urnd);
         if (strcmp(algo, "hpke") == 0)
-            ba_fscx_revolve(&E, &P, &enc_key, I_VALUE);
+            ba_fscx_revolve(&E, &Pn, &enc_key, gn / 4);
         else if (strcmp(algo, "hpke-nl3") == 0)
-            nl_fscx_revolve_v3_ba(&E, &P, &enc_key, R3_VALUE);
+            nl_fscx_revolve_v3_ba(&E, &Pn, &enc_key, 5 * gn / 8);
         else
-            nl_fscx_revolve_v2_ba(&E, &P, &enc_key, I_VALUE);
+            nl_fscx_revolve_v2_ba(&E, &Pn, &enc_key, gn / 4);
         uint8_t iR[DER_INT_LEN(KEYBYTES)], iE[DER_INT_LEN(KEYBYTES)], in[8];
         size_t lR, lE, ln;
-        der_i32(R.b, iR, &lR); der_i32(E.b, iE, &lE); der_i_n256(in, &ln);
+        der_ba(&R, iR, &lR); der_ba(&E, iE, &lE); der_i_uint((uint64_t)gn, in, &ln);
         const uint8_t *it[3] = {iR, iE, in}; size_t il[3] = {lR, lE, ln};
         seq_and_write(it, il, 3, PEM_CIPHERTEXT, out_path);
 
     } else if (strcmp(algo, "hpke-stern-kem") == 0) {
         /* QC-MDPC Niederreiter KEM + BGF (TODO #126). Public key: SEQUENCE(h_pub[66], r). */
         if (pub_k.n_items < 2) die("enc: malformed HPKE-Stern-KEM public key");
+        one_block_ok(algo, in_len, KEYBYTES);
         QcMdpcPub pub_kem;
         int i, k;
         {   uint8_t hpb[QCMDPC_RBYTES];
@@ -3389,13 +4210,40 @@ static void cmd_enc(int argc, char **argv)
         seq_and_write(it2, il2, 3, PEM_CIPHERTEXT, out_path);
 
     } else if (strcmp(algo, "hpke-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
                         "Do not use for production.\n");
-        /* vals[0]=syn32 (32 bytes), vals[1]=seed (32 bytes), vals[2]=n */
+        /* vals[0]=syndrome (N bits), vals[1]=seed (N bits), vals[2]=n */
         if (pub_k.n_items < 2) die("enc: malformed Stern public key");
-        BitArray seed_ba = BA_INIT, K_ba = BA_INIT, e_p = BA_INIT, E = BA_INIT;
-        ba_from_ra(&seed_ba, pub_k.vals[1], pub_k.vlens[1]);
+        int sn = stern_key_width(&pub_k);   /* TODO #383 stage 2: the key's N */
+        if (stern_is_long(sn)) {    /* TODO #382: K and the payload block are 256 bits */
+            uint8_t lseed[STERN_L_MAXB], lct[STERN_L_MAXB], lep[STERN_L_MAXB];
+            BitArray Kl = BA_INIT, El = BA_INIT, Pw = BA_INIT;
+            one_block_ok(algo, in_len, 32);
+            stern_l_field(lseed, &pub_k, 1, sn);
+            pem_key_free(&pub_k);
+            make_msg_ba_n(&Pw, P.b, KEYBYTES, 256);
+            FILE *urnd = fopen("/dev/urandom", "rb");
+            if (!urnd) die("cannot open /dev/urandom");
+            hpke_stern_l_encap(&Kl, lct, lep, lseed, sn, urnd);
+            fclose(urnd);
+            ba_fscx_revolve(&El, &Pw, &Kl, 64);
+            uint8_t ict[DER_INT_LEN(STERN_L_MAXB)], iep[DER_INT_LEN(STERN_L_MAXB)];
+            uint8_t ik[DER_INT_LEN(32)], iE[DER_INT_LEN(32)], in[8];
+            size_t lct_, lep_, lk, lE, ln;
+            der_int_enc(lct, (size_t)sn / 8, ict, &lct_);
+            der_int_enc(lep, (size_t)sn / 8, iep, &lep_);
+            der_ba(&Kl, ik, &lk); der_ba(&El, iE, &lE);
+            der_i_uint((uint64_t)sn, in, &ln);
+            const uint8_t *it[5] = {ict, iep, ik, iE, in};
+            size_t         il[5] = {lct_, lep_, lk, lE, ln};
+            seq_and_write(it, il, 5, PEM_CIPHERTEXT, out_path);
+            return;
+        }
+        one_block_ok(algo, in_len, (size_t)sn / 8);
+        BitArray seed_ba = BA_INIT, K_ba = BA_INIT, e_p = BA_INIT, E = BA_INIT, Pn = BA_INIT;
+        ba_from_ra_n(&seed_ba, pub_k.vals[1], pub_k.vlens[1], sn);
+        make_msg_ba_n(&Pn, P.b, KEYBYTES, sn);
         pem_key_free(&pub_k);
 
         FILE *urnd = fopen("/dev/urandom", "rb");
@@ -3403,18 +4251,18 @@ static void cmd_enc(int argc, char **argv)
         uint8_t ct_syndr[SDF_SYNBYTES];
         hpke_stern_f_encap(&K_ba, ct_syndr, &e_p, &seed_ba, urnd);
         fclose(urnd);
-        ba_fscx_revolve(&E, &P, &K_ba, I_VALUE);
+        ba_fscx_revolve(&E, &Pn, &K_ba, sn / 4);
 
-        /* Syndrome: zero-pad SDF_SYNBYTES → KEYBYTES. */
-        uint8_t ct32[KEYBYTES];
-        memset(ct32, 0, KEYBYTES);
-        memcpy(ct32 + KEYBYTES - SDF_SYNBYTES, ct_syndr, SDF_SYNBYTES);
+        /* The N/2-bit syndrome as an N-bit integer (bit i = row i). */
+        BitArray ct_ba = BA_INIT;
+        syndr_to_ba_w(&ct_ba, ct_syndr, sn);
 
         uint8_t ict[DER_INT_LEN(KEYBYTES)], iep[DER_INT_LEN(KEYBYTES)];
         uint8_t ik[DER_INT_LEN(KEYBYTES)],  iE[DER_INT_LEN(KEYBYTES)], in[8];
         size_t lct, lep, lk, lE, ln;
-        der_i32(ct32,   ict, &lct); der_i32(e_p.b, iep, &lep);
-        der_i32(K_ba.b, ik,  &lk);  der_i32(E.b,   iE,  &lE); der_i_n256(in, &ln);
+        der_ba(&ct_ba, ict, &lct); der_ba(&e_p, iep, &lep);
+        der_ba(&K_ba,  ik,  &lk);  der_ba(&E,   iE,  &lE);
+        der_i_uint((uint64_t)sn, in, &ln);
         const uint8_t *it[5] = {ict, iep, ik, iE, in};
         size_t         il[5] = {lct, lep, lk, lE, ln};
         seq_and_write(it, il, 5, PEM_CIPHERTEXT, out_path);
@@ -3437,6 +4285,8 @@ static void cmd_dec(int argc, char **argv)
     const char *out_path = get_arg(argc, argv, "--out");
     if (!algo)    die("dec: --algo required");
     if (!in_path) die("dec: --in required");
+    if (!out_path) die("dec: --out required");   /* TODO #381: was stdout */
+    aead_flags_ok("dec", algo, get_arg(argc, argv, "--ad"), 0);
 
     /* Load ciphertext PEM. */
     PemKey ct;
@@ -3540,6 +4390,10 @@ static void cmd_dec(int argc, char **argv)
                 return;
             }
             if (fmt != 1 || ct.n_items < 4) die("dec: bad hske-nla1 ciphertext");
+            /* TODO #378: format tag 1 has no tag to bind associated data to. */
+            if (get_arg(argc, argv, "--ad"))
+                die("dec: --ad given, but this hske-nla1 ciphertext is not an AEAD "
+                    "one (it has no tag to bind it to)");
             nla1_width_ok(key_nbits, "dec", "key");
             {   /* The ciphertext's own declared width, item[3] of format tag 1.
                    Checked against the KEY's rather than against 256 since TODO
@@ -3598,25 +4452,27 @@ static void cmd_dec(int argc, char **argv)
         strcmp(algo, "hpke-nl3") == 0) {
         /* CT: vals[0]=R, vals[1]=E, vals[2]=nbits (no format tag) */
         if (ct.n_items < 2) die("dec: malformed HPKE ciphertext");
-        check_item_width(&ct, 2, KEYBITS, "n");   /* TODO #371 */
         if (priv_k.n_items < 1) die("dec: malformed private key");
+        /* TODO #371, #383: the key's width, and the ciphertext's must match it */
+        int gn = gf_key_width(&priv_k);
+        check_item_gf_width(&ct, 2, gn, "dec: ciphertext", "private key");
         BitArray priv = BA_INIT, R = BA_INIT, E = BA_INIT, dec_key = BA_INIT, D = BA_INIT;
-        ba_from_ra(&priv, priv_k.vals[0], priv_k.vlens[0]);
-        ba_from_ra(&R,    ct.vals[0],     ct.vlens[0]);
-        ba_from_ra(&E,    ct.vals[1],     ct.vlens[1]);
+        ba_from_ra_n(&priv, priv_k.vals[0], priv_k.vlens[0], gn);
+        ba_from_ra_n(&R,    ct.vals[0],     ct.vlens[0],     gn);
+        ba_from_ra_n(&E,    ct.vals[1],     ct.vlens[1],     gn);
         pem_key_free(&ct); pem_key_free(&priv_k);
         if (!gf_pub_is_valid(&R))
             die("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
         gf_pow_ba(&dec_key, &R, &priv);
         if (strcmp(algo, "hpke") == 0)
-            ba_fscx_revolve(&D, &E, &dec_key, R_VALUE);
+            ba_fscx_revolve(&D, &E, &dec_key, 3 * gn / 4);
         else if (strcmp(algo, "hpke-nl3") == 0)
-            nl_fscx_revolve_v3_inv_ba(&D, &E, &dec_key, R3_VALUE);
+            nl_fscx_revolve_v3_inv_ba(&D, &E, &dec_key, 5 * gn / 8);
         else {
             if (!nl_v2_key_is_valid(&dec_key)) die("dec hpke-nl: " WEAK_V2_KEY_MSG);
-            nl_fscx_revolve_v2_inv_ba(&D, &E, &dec_key, I_VALUE);
+            nl_fscx_revolve_v2_inv_ba(&D, &E, &dec_key, gn / 4);
         }
-        write_binary_file(out_path, D.b, KEYBYTES);
+        write_binary_file(out_path, D.b, (size_t)gn / 8);
 
     } else if (strcmp(algo, "hpke-stern-kem") == 0) {
         /* CT: SEQUENCE(syn[66], E[32], r).  Priv: SEQUENCE(h0,h1,sup0,sup1,r,d). */
@@ -3662,20 +4518,39 @@ static void cmd_dec(int argc, char **argv)
         write_binary_file(out_path, D.b, KEYBYTES);
 
     } else if (strcmp(algo, "hpke-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
                         "Do not use for production.\n");
-        /* CT: vals[0]=ct_syn, vals[1]=e_p, vals[2]=K_int, vals[3]=E_int */
-        if (ct.n_items < 4) die("dec: malformed HPKE-Stern ciphertext");
+        /* CT: vals[0]=ct_syn, vals[1]=e_p, vals[2]=K_int, vals[3]=E_int, vals[4]=n */
+        if (ct.n_items < 5) die("dec: malformed HPKE-Stern ciphertext");
         if (priv_k.n_items < 2) die("dec: malformed Stern private key");
+        int sn = stern_key_width(&priv_k);   /* TODO #383 stage 2: the key's N */
+        if (stern_is_long(sn)) {    /* TODO #382: K and the payload block are 256 bits */
+            long cn = der_small(ct.vals[4], ct.vlens[4]);
+            if (cn != sn) {
+                fprintf(stderr, "dec: ciphertext n is %ld, private key n is %d\n", cn, sn);
+                exit(1);
+            }
+            uint8_t lseed[STERN_L_MAXB], lep[STERN_L_MAXB];
+            BitArray Kl = BA_INIT, El = BA_INIT, Dl = BA_INIT;
+            stern_l_field(lep, &ct, 1, sn);
+            ba_from_ra_n(&El, ct.vals[3], ct.vlens[3], 256);
+            stern_l_field(lseed, &priv_k, 1, sn);
+            pem_key_free(&ct); pem_key_free(&priv_k);
+            hpke_stern_l_decap_known(&Kl, lep, lseed, sn);
+            ba_fscx_revolve(&Dl, &El, &Kl, 192);
+            write_binary_file(out_path, Dl.b, 32);
+            return;
+        }
+        check_item_gf_width(&ct, 4, sn, "dec: ciphertext", "private key");
         BitArray e_p_ba = BA_INIT, E_ba = BA_INIT, seed_ba = BA_INIT, K_dec = BA_INIT, D = BA_INIT;
-        ba_from_ra(&e_p_ba,  ct.vals[1],       ct.vlens[1]);
-        ba_from_ra(&E_ba,    ct.vals[3],       ct.vlens[3]);
-        ba_from_ra(&seed_ba, priv_k.vals[1],   priv_k.vlens[1]);
+        ba_from_ra_n(&e_p_ba,  ct.vals[1],       ct.vlens[1], sn);
+        ba_from_ra_n(&E_ba,    ct.vals[3],       ct.vlens[3], sn);
+        ba_from_ra_n(&seed_ba, priv_k.vals[1],   priv_k.vlens[1], sn);
         pem_key_free(&ct); pem_key_free(&priv_k);
         hpke_stern_f_decap_known(&K_dec, &e_p_ba, &seed_ba);
-        ba_fscx_revolve(&D, &E_ba, &K_dec, R_VALUE);
-        write_binary_file(out_path, D.b, KEYBYTES);
+        ba_fscx_revolve(&D, &E_ba, &K_dec, 3 * sn / 4);
+        write_binary_file(out_path, D.b, (size_t)sn / 8);
 
     } else {
         pem_key_free(&ct); pem_key_free(&priv_k);
@@ -3787,6 +4662,15 @@ static int load_hpks_priv_for_threshold(const char *key_path,
     if (!is_hpks && !is_hpks_nl)
         dief("threshold: expected hpks or hpks-nl key; got label '%s'", k.label);
     if (k.n_items < 3) die("threshold: malformed private key (< 3 integers)");
+    /* TODO #383: hpks keys now load at 32-256 bits, but HPKS-T (its MuSig2
+     * coefficients and aggregation) is defined at 256 only; widening a
+     * narrower key would sign under a different key and exit 0. */
+    if (gf_key_width(&k) != KEYBITS) {
+        char msg[128];
+        snprintf(msg, sizeof msg, "threshold: the key is %d-bit; threshold signing "
+                 "runs at %d bits only", gf_key_width(&k), KEYBITS);
+        die(msg);
+    }
     ba_from_ra(priv_out, k.vals[0], k.vlens[0]);
     ba_from_ra(pub_out,  k.vals[1], k.vlens[1]);
     int nbits = pem_key_get_n(&k, 2);
@@ -4086,6 +4970,7 @@ static void cmd_sign(int argc, char **argv)
     if (!algo)     die("sign: --algo required");
     if (!key_path) die("sign: --key required");
     if (!in_path)  die("sign: --in required");
+    if (!out_path) die("sign: --out required");   /* TODO #381: was stdout */
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
@@ -4282,8 +5167,10 @@ static void cmd_sign(int argc, char **argv)
 
     if (strcmp(algo, "hpks") == 0 || strcmp(algo, "hpks-nl") == 0) {
         if (priv_k.n_items < 1) die("sign: malformed private key");
+        int gn = gf_key_width(&priv_k);   /* TODO #383: the key's width */
         BitArray priv = BA_INIT, R = BA_INIT, e = BA_INIT, s_ba = BA_INIT;
-        ba_from_ra(&priv, priv_k.vals[0], priv_k.vlens[0]);
+        ba_from_ra_n(&priv, priv_k.vals[0], priv_k.vlens[0], gn);
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, gn);
         pem_key_free(&priv_k);
 
         /* TODO #308: call the suite operation rather than transcribing it.
@@ -4294,7 +5181,7 @@ static void cmd_sign(int argc, char **argv)
          * returns only (R, s) -- the shape the Java CLI has always used. */
         if (strcmp(algo, "hpks") == 0) {
             hpks_sign(&msg, &priv, &R, &s_ba, urnd);
-            ba_fscx_revolve(&e, &R, &msg, I_VALUE);
+            ba_fscx_revolve(&e, &R, &msg, gn / 4);
         } else {
             hpks_nl_sign(&msg, &priv, &R, &s_ba, urnd);
             hpks_nl_challenge(&e, &R, &msg);
@@ -4303,20 +5190,41 @@ static void cmd_sign(int argc, char **argv)
         uint8_t is[DER_INT_LEN(KEYBYTES)], iR[DER_INT_LEN(KEYBYTES)];
         uint8_t ie[DER_INT_LEN(KEYBYTES)], in[8];
         size_t ls, lR, le, ln;
-        der_i32(s_ba.b, is, &ls); der_i32(R.b, iR, &lR);
-        der_i32(e.b,    ie, &le); der_i_n256(in, &ln);
+        der_ba(&s_ba, is, &ls); der_ba(&R, iR, &lR);
+        der_ba(&e,    ie, &le); der_i_uint((uint64_t)gn, in, &ln);
         const uint8_t *it[4] = {is, iR, ie, in}; size_t il[4] = {ls, lR, le, ln};
         seq_and_write(it, il, 4, PEM_SIGNATURE, out_path);
 
     } else if (strcmp(algo, "hpks-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
                         "Do not use for production.\n");
         if (priv_k.n_items < 2) die("sign: malformed Stern private key");
+        int sn = stern_key_width(&priv_k);   /* TODO #383 stage 2: the key's N */
+        if (stern_is_long(sn)) {             /* TODO #382: the long form */
+            uint8_t le[STERN_L_MAXB], lseed[STERN_L_MAXB];
+            int lr = rounds_arg(argc, argv, "--rounds", "sign", SDF_PRODUCTION_ROUNDS);
+            SternLSig lsig;
+            stern_l_field(le, &priv_k, 0, sn);
+            stern_l_field(lseed, &priv_k, 1, sn);
+            pem_key_free(&priv_k);
+            if (lr < SDF_PRODUCTION_ROUNDS)
+                fprintf(stderr, "WARNING: signing at %d rounds; %d are needed for "
+                                "128-bit Fiat-Shamir soundness ((2/3)^r), and a verifier "
+                                "refuses fewer unless given --min-rounds.\n",
+                        lr, SDF_PRODUCTION_ROUNDS);
+            stern_l_sig_alloc(&lsig, sn, lr);
+            hpks_stern_l_sign(&lsig, msg_bytes, le, lseed, urnd);
+            stern_l_sig_write(&lsig, PEM_SIGNATURE, out_path);
+            stern_l_sig_free(&lsig);
+            fclose(urnd);
+            return;
+        }
         BitArray e_ba = BA_INIT, seed_ba = BA_INIT;
-        ba_from_ra(&e_ba,    priv_k.vals[0], priv_k.vlens[0]);
-        ba_from_ra(&seed_ba, priv_k.vals[1], priv_k.vlens[1]);
+        ba_from_ra_n(&e_ba,    priv_k.vals[0], priv_k.vlens[0], sn);
+        ba_from_ra_n(&seed_ba, priv_k.vals[1], priv_k.vlens[1], sn);
         pem_key_free(&priv_k);
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, sn);
 
         /* --rounds selects the Fiat-Shamir round count (TODO #236).  The CLI
          * default is the 128-bit count, not the suite's SDF_ROUNDS demo value,
@@ -4335,20 +5243,54 @@ static void cmd_sign(int argc, char **argv)
         stern_sig_free(&sig);
 
     } else if (strcmp(algo, "hpks-ring") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
                         "Do not use for production.\n");
         const char *ring_arg = get_arg(argc, argv, "--ring");
         if (!ring_arg) die("hpks-ring sign: --ring (comma-separated member public keys) required");
         if (priv_k.n_items < 2) die("sign: malformed Stern private key");
+        int sn = stern_key_width(&priv_k);   /* TODO #383 stage 2: the key's N */
+        if (stern_is_long(sn)) {             /* TODO #382: the long form */
+            uint8_t le[STERN_L_MAXB], lseed[STERN_L_MAXB], *seeds_l, *syns_l;
+            int ring_n = 0, k, j = -1, i;
+            stern_l_field(le, &priv_k, 0, sn);
+            stern_l_field(lseed, &priv_k, 1, sn);
+            pem_key_free(&priv_k);
+            k = ring_load_members_l(ring_arg, &seeds_l, &syns_l, &ring_n);
+            if (ring_n != sn) {
+                fprintf(stderr, "hpks-ring sign: signer n=%d != ring n=%d\n", sn, ring_n);
+                exit(1);
+            }
+            for (i = 0; i < k; i++)
+                if (!memcmp(seeds_l + (size_t)i * (sn / 8), lseed, (size_t)sn / 8)) { j = i; break; }
+            if (j < 0)
+                die("hpks-ring sign: signer's public key is not in --ring "
+                    "(run pkey --pubout on the signer key and include it)");
+            SternLRingSig lr;
+            stern_l_ring_alloc(&lr, sn, k,
+                               rounds_arg(argc, argv, "--rounds", "sign", SDF_PRODUCTION_ROUNDS));
+            stern_l_ring_sign(&lr, msg_bytes, le, j, seeds_l, syns_l, urnd);
+            ring_sig_write_l(&lr, out_path);
+            stern_l_ring_free(&lr);
+            free(seeds_l); free(syns_l);
+            fprintf(stderr, "Ring signature created (k=%d); signer index is hidden.\n", k);
+            fclose(urnd);
+            return;
+        }
         BitArray e_ba = BA_INIT, signer_seed = BA_INIT;
-        ba_from_ra(&e_ba,        priv_k.vals[0], priv_k.vlens[0]);
-        ba_from_ra(&signer_seed, priv_k.vals[1], priv_k.vlens[1]);
+        ba_from_ra_n(&e_ba,        priv_k.vals[0], priv_k.vlens[0], sn);
+        ba_from_ra_n(&signer_seed, priv_k.vals[1], priv_k.vlens[1], sn);
         pem_key_free(&priv_k);
 
         BitArray seeds[RING_MAX_K]; ba_init_array(seeds, RING_MAX_K);
         uint8_t  syndrs[RING_MAX_K * SDF_SYNBYTES];
-        int k = ring_load_members(ring_arg, seeds, syndrs);
+        int ring_n = 0;
+        int k = ring_load_members(ring_arg, seeds, syndrs, &ring_n);
+        if (ring_n != sn) {
+            fprintf(stderr, "hpks-ring sign: signer n=%d != ring n=%d\n", sn, ring_n);
+            exit(1);
+        }
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, sn);
 
         int j = -1, i;
         for (i = 0; i < k; i++)
@@ -4367,39 +5309,40 @@ static void cmd_sign(int argc, char **argv)
         fprintf(stderr, "Ring signature created (k=%d); signer index is hidden.\n", k);
 
     } else if (strcmp(algo, "rnl-sigma") == 0) {
-        /* ZKP-RNL: uses hkex-rnl private key, n must equal RNL_N */
+        /* ZKP-RNL: uses an hkex-rnl private key, at its own ring dimension
+         * (TODO #383 stage 4; this was RNL_N only, refused as "n=256") */
         if (priv_k.n_items < 3) die("sign: malformed hkex-rnl private key");
-        int sig_n = pem_key_get_n(&priv_k, 2);
-        if (sig_n != RNL_N) die("sign: rnl-sigma requires n=256 key");
+        const int sig_n = rnl_key_n(&priv_k, 2, "sign: hkex-rnl private key");
         rnl_poly_t sig_s, sig_m, sig_ms, sig_Cp;
-        poly_unpack(sig_s, priv_k.vals[0], priv_k.vlens[0], 4);
-        poly_unpack(sig_m, priv_k.vals[1], priv_k.vlens[1], 4);
+        poly_unpack(sig_s, priv_k.vals[0], priv_k.vlens[0], sig_n, 4);
+        poly_unpack(sig_m, priv_k.vals[1], priv_k.vlens[1], sig_n, 4);
         pem_key_free(&priv_k);
-        rnl_poly_mul(sig_ms, sig_m, sig_s);
-        rnl_round(sig_Cp, sig_ms, RNL_Q, RNL_P);
+        rnl_poly_mul_dim(sig_ms, sig_m, sig_s, sig_n);
+        rnl_round_dim(sig_Cp, sig_ms, RNL_Q, RNL_P, sig_n);
 
         rnl_poly_t sig_w, sig_c, sig_z;
-        int r = rnl_sigma_sign(sig_s, sig_m, sig_Cp, RNL_N,
+        int r = rnl_sigma_sign(sig_s, sig_m, sig_Cp, sig_n,
                                msg.b, KEYBYTES, urnd, sig_w, sig_c, sig_z);
         if (r != 0) die("sign: rnl-sigma rejection limit reached");
 
         /* Write raw binary proof: 4B n | n×4B w | n×4B c | n×4B z */
-        size_t proof_len = 4 + (size_t)RNL_N * 12;
+        const int N = sig_n;
+        size_t proof_len = 4 + (size_t)N * 12;
         uint8_t *pbuf = (uint8_t *)malloc(proof_len);
         if (!pbuf) die("out of memory");
-        pbuf[0]=(uint8_t)(RNL_N>>24); pbuf[1]=(uint8_t)(RNL_N>>16);
-        pbuf[2]=(uint8_t)(RNL_N>>8);  pbuf[3]=(uint8_t)RNL_N;
+        pbuf[0]=(uint8_t)(N>>24); pbuf[1]=(uint8_t)(N>>16);
+        pbuf[2]=(uint8_t)(N>>8);  pbuf[3]=(uint8_t)N;
         int pi;
-        for (pi=0;pi<RNL_N;pi++) {
+        for (pi=0;pi<N;pi++) {
             uint32_t v;
             v=(uint32_t)sig_w[pi];
             pbuf[4+pi*4+0]=v>>24; pbuf[4+pi*4+1]=v>>16; pbuf[4+pi*4+2]=v>>8; pbuf[4+pi*4+3]=v;
             v=(uint32_t)sig_c[pi];
-            pbuf[4+RNL_N*4+pi*4+0]=v>>24; pbuf[4+RNL_N*4+pi*4+1]=v>>16;
-            pbuf[4+RNL_N*4+pi*4+2]=v>>8;  pbuf[4+RNL_N*4+pi*4+3]=v;
+            pbuf[4+N*4+pi*4+0]=v>>24; pbuf[4+N*4+pi*4+1]=v>>16;
+            pbuf[4+N*4+pi*4+2]=v>>8;  pbuf[4+N*4+pi*4+3]=v;
             v=(uint32_t)sig_z[pi];
-            pbuf[4+RNL_N*8+pi*4+0]=v>>24; pbuf[4+RNL_N*8+pi*4+1]=v>>16;
-            pbuf[4+RNL_N*8+pi*4+2]=v>>8;  pbuf[4+RNL_N*8+pi*4+3]=v;
+            pbuf[4+N*8+pi*4+0]=v>>24; pbuf[4+N*8+pi*4+1]=v>>16;
+            pbuf[4+N*8+pi*4+2]=v>>8;  pbuf[4+N*8+pi*4+3]=v;
         }
         if (pem_write_file(out_path ? out_path : "-", PEM_ZKP_RNL_PROOF, pbuf, proof_len) != 0)
             die("cannot write ZKP-RNL proof");
@@ -4531,14 +5474,48 @@ static void cmd_verify(int argc, char **argv)
     if (strcmp(algo, "hpks-ring") == 0) {
         const char *ring_arg = get_arg(argc, argv, "--ring");
         if (!ring_arg) die("hpks-ring verify: --ring (comma-separated member public keys) required");
+        if (stern_is_long(ring_peek_n(ring_arg))) {     /* TODO #382: the long form */
+            uint8_t *seeds_l, *syns_l;
+            int ring_n = 0, sig_n = 0;
+            int k = ring_load_members_l(ring_arg, &seeds_l, &syns_l, &ring_n);
+            SternLRingSig lr;
+            int sig_k = ring_sig_load_l(sig_path, &lr, &sig_n);
+            if (sig_k < 0) {
+                fprintf(stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sig_n, ring_n);
+                exit(1);
+            }
+            { int rr = lr.rounds;
+              if (rr < min_rounds) stern_l_ring_free(&lr);
+              require_rounds(rr, min_rounds, "hpks-ring signature", "verify"); }
+            if (sig_n != ring_n) {
+                fprintf(stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sig_n, ring_n);
+                exit(1);
+            }
+            if (sig_k != k) {
+                fprintf(stderr, "hpks-ring verify: signature ring size %d != %d "
+                                "provided members\n", sig_k, k);
+                exit(1);
+            }
+            int ok = stern_l_ring_verify(&lr, msg_bytes, seeds_l, syns_l);
+            stern_l_ring_free(&lr); free(seeds_l); free(syns_l);
+            if (ok) { puts("Signature OK");        exit(0); }
+            else    { puts("Verification FAILED"); exit(1); }
+        }
         BitArray seeds[RING_MAX_K]; ba_init_array(seeds, RING_MAX_K);
         uint8_t  syndrs[RING_MAX_K * SDF_SYNBYTES];
-        int k = ring_load_members(ring_arg, seeds, syndrs);
+        int ring_n = 0, sig_n = 0;
+        int k = ring_load_members(ring_arg, seeds, syndrs, &ring_n);
         SternRingSig rsig;
-        int sig_k = ring_sig_load(sig_path, &rsig);
+        int sig_k = ring_sig_load(sig_path, &rsig, &sig_n);
         { int rr = rsig.rounds;
           if (rr < min_rounds) stern_ring_free(&rsig);
           require_rounds(rr, min_rounds, "hpks-ring signature", "verify"); }
+        if (sig_n != ring_n) {   /* TODO #383 stage 2: Python's text */
+            stern_ring_free(&rsig);
+            fprintf(stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sig_n, ring_n);
+            exit(1);
+        }
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, ring_n);
         if (sig_k != k) {
             stern_ring_free(&rsig);
             fprintf(stderr, "hpks-ring verify: signature ring size %d != %d "
@@ -4612,8 +5589,10 @@ static void cmd_verify(int argc, char **argv)
 
     if (strcmp(algo, "hpks") == 0 || strcmp(algo, "hpks-nl") == 0) {
         if (pub_k.n_items < 1) die("verify: malformed public key");
+        int gn = gf_key_width(&pub_k);   /* TODO #383: the key's width */
         BitArray pub = BA_INIT;
-        ba_from_ra(&pub, pub_k.vals[0], pub_k.vlens[0]);
+        ba_from_ra_n(&pub, pub_k.vals[0], pub_k.vlens[0], gn);
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, gn);
         pem_key_free(&pub_k);
         if (!gf_pub_is_valid(&pub))
             die("verify: public key is the GF(2^n)* identity/zero element "
@@ -4624,22 +5603,23 @@ static void cmd_verify(int argc, char **argv)
         pem_key_load(&sig_k, sig_path);
         if (strcmp(sig_k.label, PEM_SIGNATURE) != 0 || sig_k.n_items < 3)
             die("verify: invalid signature PEM");
-        check_item_width(&sig_k, 3, KEYBITS, "n");   /* TODO #371 */
+        check_item_gf_width(&sig_k, 3, gn, "verify: signature", "public key");   /* TODO #371, #383 */
         BitArray s_ba = BA_INIT, R = BA_INIT, e_stored = BA_INIT;
-        ba_from_ra(&s_ba,     sig_k.vals[0], sig_k.vlens[0]);
-        ba_from_ra(&R,        sig_k.vals[1], sig_k.vlens[1]);
-        ba_from_ra(&e_stored, sig_k.vals[2], sig_k.vlens[2]);
+        ba_from_ra_n(&s_ba,     sig_k.vals[0], sig_k.vlens[0], gn);
+        ba_from_ra_n(&R,        sig_k.vals[1], sig_k.vlens[1], gn);
+        ba_from_ra_n(&e_stored, sig_k.vals[2], sig_k.vlens[2], gn);
         pem_key_free(&sig_k);
 
         /* Recompute e_v: fscx_revolve for hpks, hpks_nl_challenge for hpks-nl */
         BitArray e_v = BA_INIT;
         if (strcmp(algo, "hpks") == 0)
-            ba_fscx_revolve(&e_v, &R, &msg, I_VALUE);
+            ba_fscx_revolve(&e_v, &R, &msg, gn / 4);
         else
             hpks_nl_challenge(&e_v, &R, &msg);
         /* lhs = g^s * pub^e_v; OK if lhs == R */
-        BitArray lhs1 = BA_INIT, lhs2 = BA_INIT, lhs = BA_INIT;
-        gf_pow_ba(&lhs1, &GF_GEN, &s_ba);
+        BitArray lhs1 = BA_INIT, lhs2 = BA_INIT, lhs = BA_INIT, g = BA_INIT;
+        gf_gen_w(&g, gn);
+        gf_pow_ba(&lhs1, &g, &s_ba);
         gf_pow_ba(&lhs2, &pub,    &e_v);
         gf_mul_ba(&lhs, &lhs1, &lhs2);
 
@@ -4656,29 +5636,57 @@ static void cmd_verify(int argc, char **argv)
         exit(0);
 
     } else if (strcmp(algo, "hpks-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                        "(demo parameters). 128-bit security requires N>=17000. "
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                        "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
                         "Do not use for production.\n");
         if (pub_k.n_items < 2) die("verify: malformed Stern public key");
 
-        /* Extract syndr (16 bytes) from syn32 (32 bytes, right-aligned).
-         * The public key stores syndr[k] at byte KEYBYTES-1-k so that syndrome
-         * bit i occupies integer bit i (matching Python/Go convention). */
-        uint8_t syn32[KEYBYTES], syndr[SDF_SYNBYTES]; int _sk;
-        memset(syn32, 0, KEYBYTES);
-        { size_t cl = pub_k.vlens[0] < KEYBYTES ? pub_k.vlens[0] : KEYBYTES;
-          memcpy(syn32 + KEYBYTES - cl, pub_k.vals[0], cl); }
-        for (_sk = 0; _sk < SDF_SYNBYTES; _sk++)
-            syndr[_sk] = syn32[KEYBYTES - 1 - _sk];
+        /* Extract the N/16-byte syndr from the N-bit syndrome integer.  The
+         * public key stores syndr[k] at byte N/8-1-k so that syndrome bit i
+         * occupies integer bit i (matching Python/Go convention). */
+        int sn = stern_key_width(&pub_k);   /* TODO #383 stage 2: the key's N */
+        if (stern_is_long(sn)) {            /* TODO #382: the long form */
+            uint8_t lsyn[STERN_L_MAXB], lseed[STERN_L_MAXB];
+            SternLSig lsig;
+            int sig_n;
+            stern_l_field(lsyn, &pub_k, 0, sn);
+            stern_l_field(lseed, &pub_k, 1, sn);
+            pem_key_free(&pub_k);
+            sig_n = stern_sig_peek_n(sig_path, PEM_SIGNATURE);
+            if (sig_n < 0) die("verify: cannot load Stern signature");
+            if (sig_n != sn) {
+                fprintf(stderr, "verify: signature n is %d, public key n is %d\n", sig_n, sn);
+                exit(1);
+            }
+            if (stern_l_sig_load(sig_path, PEM_SIGNATURE, &lsig) != 0)
+                die("verify: cannot load Stern signature");
+            require_rounds(lsig.rounds, min_rounds, "hpks-stern signature", "verify");
+            int ok = hpks_stern_l_verify(&lsig, msg_bytes, lseed, lsyn);
+            stern_l_sig_free(&lsig);
+            if (ok) { puts("Signature OK");        exit(0); }
+            else    { puts("Verification FAILED"); exit(1); }
+        }
+        BitArray syn_ba = BA_INIT;
+        uint8_t syndr[SDF_SYNBYTES]; int _sk;
+        ba_from_ra_n(&syn_ba, pub_k.vals[0], pub_k.vlens[0], sn);
+        for (_sk = 0; _sk < sn / 16; _sk++)
+            syndr[_sk] = syn_ba.b[sn / 8 - 1 - _sk];
 
         BitArray seed_ba = BA_INIT;
-        ba_from_ra(&seed_ba, pub_k.vals[1], pub_k.vlens[1]);
+        ba_from_ra_n(&seed_ba, pub_k.vals[1], pub_k.vlens[1], sn);
         pem_key_free(&pub_k);
 
         SternSig sig;
         if (stern_sig_load(sig_path, &sig) != 0)
             die("verify: cannot load Stern signature");
         require_rounds(sig.rounds, min_rounds, "hpks-stern signature", "verify");
+        if (sig.c0[0].nbits != sn) {   /* stage 1's text for hpks */
+            fprintf(stderr, "verify: signature n is %d, public key n is %d\n",
+                    sig.c0[0].nbits, sn);
+            stern_sig_free(&sig);
+            exit(1);
+        }
+        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, sn);
 
         int ok = hpks_stern_f_verify(&sig, &msg, &seed_ba, syndr);
         stern_sig_free(&sig);
@@ -4688,37 +5696,40 @@ static void cmd_verify(int argc, char **argv)
     } else if (strcmp(algo, "rnl-sigma") == 0) {
         /* ZKP-RNL verify: pubkey = hkex-rnl public key (C_p, m, n) */
         if (pub_k.n_items < 3) die("verify: malformed hkex-rnl public key");
-        int vfy_n = pem_key_get_n(&pub_k, 2);
-        if (vfy_n != RNL_N) die("verify: rnl-sigma requires n=256 key");
+        const int vfy_n = rnl_key_n(&pub_k, 2, "verify: hkex-rnl public key");
         rnl_poly_t vfy_Cp, vfy_m;
-        poly_unpack(vfy_Cp, pub_k.vals[0], pub_k.vlens[0], 2);
-        poly_unpack(vfy_m,  pub_k.vals[1], pub_k.vlens[1], 4);
+        poly_unpack(vfy_Cp, pub_k.vals[0], pub_k.vlens[0], vfy_n, 2);
+        poly_unpack(vfy_m,  pub_k.vals[1], pub_k.vlens[1], vfy_n, 4);
         pem_key_free(&pub_k);
 
-        /* Read proof */
+        /* Read proof.  Its n must be the key's: a proof over another ring is
+         * not a proof about this key (Python's and Go's text, TODO #383). */
         size_t plen;
         uint8_t *pbuf = zkp_raw_pem_read(sig_path, PEM_ZKP_RNL_PROOF, &plen);
-        if (plen < 4 + (size_t)RNL_N*12) die("verify: truncated ZKP-RNL proof");
-        int pn = (int)(((uint32_t)pbuf[0]<<24)|((uint32_t)pbuf[1]<<16)|
-                       ((uint32_t)pbuf[2]<<8)|pbuf[3]);
-        if (pn != RNL_N) die("verify: proof n mismatch");
+        if (plen < 4) die("verify: truncated ZKP-RNL proof");
+        long pn = (long)(((uint32_t)pbuf[0]<<24)|((uint32_t)pbuf[1]<<16)|
+                         ((uint32_t)pbuf[2]<<8)|pbuf[3]);
+        if (pn != vfy_n)
+            dievf("verify: ring size mismatch (pubkey n=%d, proof n=%ld)", vfy_n, pn);
+        const int N = vfy_n;
+        if (plen < 4 + (size_t)N*12) die("verify: truncated ZKP-RNL proof");
         rnl_poly_t vfy_w, vfy_c, vfy_z;
         int pi;
-        for (pi=0;pi<RNL_N;pi++) {
+        for (pi=0;pi<N;pi++) {
             vfy_w[pi]=(int32_t)(((uint32_t)pbuf[4+pi*4]<<24)|((uint32_t)pbuf[4+pi*4+1]<<16)|
                                 ((uint32_t)pbuf[4+pi*4+2]<<8)|pbuf[4+pi*4+3]);
-            vfy_c[pi]=(int32_t)(((uint32_t)pbuf[4+RNL_N*4+pi*4]<<24)|
-                                ((uint32_t)pbuf[4+RNL_N*4+pi*4+1]<<16)|
-                                ((uint32_t)pbuf[4+RNL_N*4+pi*4+2]<<8)|
-                                pbuf[4+RNL_N*4+pi*4+3]);
-            vfy_z[pi]=(int32_t)(((uint32_t)pbuf[4+RNL_N*8+pi*4]<<24)|
-                                ((uint32_t)pbuf[4+RNL_N*8+pi*4+1]<<16)|
-                                ((uint32_t)pbuf[4+RNL_N*8+pi*4+2]<<8)|
-                                pbuf[4+RNL_N*8+pi*4+3]);
+            vfy_c[pi]=(int32_t)(((uint32_t)pbuf[4+N*4+pi*4]<<24)|
+                                ((uint32_t)pbuf[4+N*4+pi*4+1]<<16)|
+                                ((uint32_t)pbuf[4+N*4+pi*4+2]<<8)|
+                                pbuf[4+N*4+pi*4+3]);
+            vfy_z[pi]=(int32_t)(((uint32_t)pbuf[4+N*8+pi*4]<<24)|
+                                ((uint32_t)pbuf[4+N*8+pi*4+1]<<16)|
+                                ((uint32_t)pbuf[4+N*8+pi*4+2]<<8)|
+                                pbuf[4+N*8+pi*4+3]);
         }
         free(pbuf);
 
-        int ok = rnl_sigma_verify(vfy_m, vfy_Cp, RNL_N, msg.b, KEYBYTES,
+        int ok = rnl_sigma_verify(vfy_m, vfy_Cp, N, msg.b, KEYBYTES,
                                    vfy_w, vfy_c, vfy_z);
         if (ok) { puts("Signature OK");         exit(0); }
         else    { puts("Verification FAILED");  exit(1); }
@@ -4808,7 +5819,7 @@ static void cmd_encfile(int argc, char **argv)
     free(mac_data);
 
     /* Write .hkx file */
-    FILE *out = fopen(out_path, "wb");
+    FILE *out = hkx_fopen_out(out_path, "wb");
     if (!out) dief("encfile: cannot open %s for writing", out_path);
     uint8_t hdr[45];
     hdr[0]='H'; hdr[1]='K'; hdr[2]='X'; hdr[3]='1'; hdr[4]=0x01;
@@ -4923,6 +5934,19 @@ static void cmd_decfile(int argc, char **argv)
  *   Input/output: raw 32-byte block.  Key: HERRADURA SESSION KEY PEM or 0x hex, 256-bit.
  * ───────────────────────────────────────────────────────────────────────────── */
 
+/* TODO #377: fpe / twk map exactly one 32-byte block.  Longer input used to be
+ * cut to its first 32 bytes (exit 0, nothing round-tripped) and shorter input
+ * zero-padded -- on the right here, in Python and Java, on the LEFT in Go -- so
+ * any other length is refused rather than reshaped. */
+static void block32_ok(const char *cmd, size_t in_len)
+{
+    if (in_len == KEYBYTES) return;
+    char msg[160];
+    snprintf(msg, sizeof msg, "%s: --in must be exactly %d bytes (one block), got %zu",
+             cmd, KEYBYTES, in_len);
+    die(msg);
+}
+
 static void cmd_fpe(int argc, char **argv)
 {
     const char *key_path = get_arg(argc, argv, "--key");
@@ -4931,7 +5955,8 @@ static void cmd_fpe(int argc, char **argv)
     const char *out_path = get_arg(argc, argv, "--out");
     int do_enc = has_flag(argc, argv, "--encrypt");
     int do_dec = has_flag(argc, argv, "--decrypt");
-    if (!do_enc && !do_dec) die("fpe: --encrypt or --decrypt required");
+    /* TODO #377: both mode flags used to encrypt; Python and Java refused. */
+    if (do_enc == do_dec) die("fpe: exactly one of --encrypt or --decrypt required");
     if (!key_path) die("fpe: --key required");
     if (!in_path)  die("fpe: --in required");
     if (!ctx_str)  ctx_str = "";
@@ -4941,6 +5966,7 @@ static void cmd_fpe(int argc, char **argv)
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    block32_ok("fpe", in_len);
     BitArray P = BA_INIT;
     make_msg_ba(&P, in_buf, in_len);
     free(in_buf);
@@ -4974,17 +6000,22 @@ static void cmd_twk(int argc, char **argv)
     const char *out_path    = get_arg(argc, argv, "--out");
     int do_enc = has_flag(argc, argv, "--encrypt");
     int do_dec = has_flag(argc, argv, "--decrypt");
-    if (!do_enc && !do_dec) die("twk: --encrypt or --decrypt required");
+    /* TODO #377: both mode flags used to encrypt; Python and Java refused. */
+    if (do_enc == do_dec) die("twk: exactly one of --encrypt or --decrypt required");
     if (!key_path)   die("twk: --key required");
     if (!in_path)    die("twk: --in required");
-    uint64_t sector = sector_str ? (uint64_t)strtoull(sector_str, NULL, 10) : 0;
-    uint32_t bidx   = bidx_str   ? (uint32_t)strtoul(bidx_str,   NULL, 10) : 0;
+    /* TODO #375: the tweak is sector_be64 || bidx_be32.  strtoull/strtoul with
+     * no end check read "abc" as 0 and a cast wrapped --bidx mod 2^32, so two
+     * command lines naming different blocks encrypted under one tweak. */
+    uint64_t sector = sector_str ? dec_range_arg(sector_str, 0, UINT64_MAX, "twk", "--sector") : 0;
+    uint32_t bidx   = bidx_str   ? (uint32_t)dec_range_arg(bidx_str, 0, UINT32_MAX, "twk", "--bidx") : 0;
 
     BitArray K = BA_INIT;
     load_sym_key(&K, key_path, "twk");
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    block32_ok("twk", in_len);
     BitArray P = BA_INIT;
     make_msg_ba(&P, in_buf, in_len);
     free(in_buf);
@@ -5007,7 +6038,11 @@ static void cmd_oprf_blind(int argc, char **argv)
 {
     const char *in_path  = get_arg(argc, argv, "--in");
     const char *out_path = get_arg(argc, argv, "--out");
+    /* TODO #385: --bits is the GF(2^n) width, and must be the server key's n */
+    const int n = (int)num_arg(argc, argv, "--bits", "oprf-blind", 1, 1 << 16, KEYBITS);
     if (!in_path) die("oprf-blind: --in required");
+    if (!gf_width_ok(n))
+        dievf("oprf-blind: --bits must be 32, 64, 128 or 256, got %d", n);
 
     FILE *urnd = fopen("/dev/urandom", "rb");
     if (!urnd) die("cannot open /dev/urandom");
@@ -5016,16 +6051,17 @@ static void cmd_oprf_blind(int argc, char **argv)
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
 
     BitArray r = BA_INIT, alpha = BA_INIT;
+    ba_zero_w(&r, n);
     oprf_blind(in_buf, in_len, &r, &alpha, urnd);
     free(in_buf);
     fclose(urnd);
 
-    /* CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
+    /* CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(n)) */
     uint8_t ir[DER_INT_LEN(KEYBYTES)], ialpha[DER_INT_LEN(KEYBYTES)], in[8];
     size_t lr, lalpha, ln;
-    der_i32(r.b, ir, &lr);
-    der_i32(alpha.b, ialpha, &lalpha);
-    der_i_n256(in, &ln);
+    der_ba(&r, ir, &lr);
+    der_ba(&alpha, ialpha, &lalpha);
+    der_i_uint((uint64_t)n, in, &ln);
     const uint8_t *it[3] = {ir, ialpha, in};
     size_t il[3] = {lr, lalpha, ln};
     seq_and_write(it, il, 3, PEM_OPRF_STATE, out_path);
@@ -5033,13 +6069,13 @@ static void cmd_oprf_blind(int argc, char **argv)
     explicit_bzero(&r, sizeof(r));
 }
 
-static void ba_from_der_item(BitArray *dst, const uint8_t *val, size_t vlen)
+/* An OPRF artifact's value item at its width n (the last item), which
+ * pem_key_load has already checked is 32, 64, 128 or 256 (TODO #385). */
+static int oprf_item(BitArray *dst, const PemKey *k, int idx)
 {
-    /* DER INTEGER may have a leading 0x00 pad byte (sign bit); skip it. */
-    if (vlen > 0 && val[0] == 0x00) { val++; vlen--; }
-    size_t copy = vlen < KEYBYTES ? vlen : KEYBYTES;
-    memset(dst->b, 0, KEYBYTES);
-    memcpy(dst->b + KEYBYTES - copy, val, copy);
+    int n = gf_key_width(k);
+    ba_from_ra_n(dst, k->vals[idx], k->vlens[idx], n);
+    return n;
 }
 
 static void cmd_oprf_eval(int argc, char **argv)
@@ -5050,33 +6086,34 @@ static void cmd_oprf_eval(int argc, char **argv)
     if (!key_path) die("oprf-eval: --key required");
     if (!in_path)  die("oprf-eval: --in required");
 
-    /* Load server key: SEQUENCE(INTEGER(k), INTEGER(256)) */
+    /* Load server key: SEQUENCE(INTEGER(k), INTEGER(n)) */
     PemKey kpem; pem_key_load(&kpem, key_path);
     if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)
         dief("oprf-eval: expected OPRF PRIVATE KEY PEM, got '%s'", kpem.label);
-    if (kpem.n_items < 1) die("oprf-eval: malformed OPRF private key");
+    if (kpem.n_items < 2) die("oprf-eval: malformed OPRF private key");
     BitArray k = BA_INIT;
-    ba_from_der_item(&k, kpem.vals[0], kpem.vlens[0]);
+    int n = oprf_item(&k, &kpem, 0);
     pem_key_free(&kpem);
 
-    /* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
+    /* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(n)) */
     PemKey spem; pem_key_load(&spem, in_path);
     if (strcmp(spem.label, PEM_OPRF_STATE) != 0)
         dief("oprf-eval: expected OPRF CLIENT STATE PEM, got '%s'", spem.label);
-    if (spem.n_items < 2) die("oprf-eval: malformed CLIENT STATE PEM");
+    if (spem.n_items < 3) die("oprf-eval: malformed CLIENT STATE PEM");
+    check_item_gf_width(&spem, 2, n, "oprf-eval: client state", "key");
     BitArray alpha = BA_INIT;
-    ba_from_der_item(&alpha, spem.vals[1], spem.vlens[1]);
+    oprf_item(&alpha, &spem, 1);
     pem_key_free(&spem);
 
     BitArray beta = BA_INIT;
     oprf_eval(&beta, &alpha, &k);
     explicit_bzero(&k, sizeof(k));
 
-    /* EVALUATION: SEQUENCE(INTEGER(beta), INTEGER(256)) */
+    /* EVALUATION: SEQUENCE(INTEGER(beta), INTEGER(n)) */
     uint8_t ibeta[DER_INT_LEN(KEYBYTES)], in[8];
     size_t lbeta, ln;
-    der_i32(beta.b, ibeta, &lbeta);
-    der_i_n256(in, &ln);
+    der_ba(&beta, ibeta, &lbeta);
+    der_i_uint((uint64_t)n, in, &ln);
     const uint8_t *it[2] = {ibeta, in};
     size_t il[2] = {lbeta, ln};
     seq_and_write(it, il, 2, PEM_OPRF_EVAL, out_path);
@@ -5090,34 +6127,35 @@ static void cmd_oprf_unblind(int argc, char **argv)
     if (!state_path) die("oprf-unblind: --state required");
     if (!eval_path)  die("oprf-unblind: --eval required");
 
-    /* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
+    /* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(n)) */
     PemKey spem; pem_key_load(&spem, state_path);
     if (strcmp(spem.label, PEM_OPRF_STATE) != 0)
         dief("oprf-unblind: expected OPRF CLIENT STATE PEM, got '%s'", spem.label);
-    if (spem.n_items < 1) die("oprf-unblind: malformed CLIENT STATE PEM");
+    if (spem.n_items < 3) die("oprf-unblind: malformed CLIENT STATE PEM");
     BitArray r = BA_INIT;
-    ba_from_der_item(&r, spem.vals[0], spem.vlens[0]);
+    int n = oprf_item(&r, &spem, 0);
     pem_key_free(&spem);
 
-    /* Load EVALUATION: SEQUENCE(INTEGER(beta), INTEGER(256)) */
+    /* Load EVALUATION: SEQUENCE(INTEGER(beta), INTEGER(n)) */
     PemKey epem; pem_key_load(&epem, eval_path);
     if (strcmp(epem.label, PEM_OPRF_EVAL) != 0)
         dief("oprf-unblind: expected OPRF EVALUATION PEM, got '%s'", epem.label);
-    if (epem.n_items < 1) die("oprf-unblind: malformed EVALUATION PEM");
+    if (epem.n_items < 2) die("oprf-unblind: malformed EVALUATION PEM");
+    check_item_gf_width(&epem, 1, n, "oprf-unblind: evaluation", "client state");
     BitArray beta = BA_INIT;
-    ba_from_der_item(&beta, epem.vals[0], epem.vlens[0]);
+    oprf_item(&beta, &epem, 0);
     pem_key_free(&epem);
 
     BitArray F = BA_INIT;
     oprf_unblind(&F, &beta, &r);
     explicit_bzero(&r, sizeof(r));
 
-    /* Output: hex string (+ newline) */
-    int i;
+    /* Output: hex string of the n/8 bytes (+ newline) */
+    int i, nb = n / 8;
     char hex[KEYBYTES * 2 + 2];
-    for (i = 0; i < KEYBYTES; i++) sprintf(hex + 2*i, "%02x", F.b[i]);
-    hex[KEYBYTES * 2] = '\n';
-    hex[KEYBYTES * 2 + 1] = '\0';
+    for (i = 0; i < nb; i++) sprintf(hex + 2*i, "%02x", F.b[i]);
+    hex[nb * 2] = '\n';
+    hex[nb * 2 + 1] = '\0';
     write_binary_file(out_path, (const uint8_t*)hex, strlen(hex));
 }
 
@@ -5140,16 +6178,21 @@ static void cmd_pake_register(int argc, char **argv)
     const char *pw_arg   = get_arg(argc, argv, "--password");
     const char *out_path = get_arg(argc, argv, "--out");
     if (!key_path) die("pake-register: --key required");
+    /* TODO #376: a record is never written under a password nobody chose.
+     * Before #376 an omitted --password registered "demo-password", and ''
+     * registered the empty password. */
+    if (!pw_arg) die("pake-register: --password required");
+    if (!*pw_arg) die("pake-register: --password must not be empty");
+    const char *pw = pw_arg;
 
     PemKey kpem; pem_key_load(&kpem, key_path);
     if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)
         dief("pake-register: expected OPRF PRIVATE KEY PEM, got '%s'", kpem.label);
-    if (kpem.n_items < 1) die("pake-register: malformed OPRF private key");
+    if (kpem.n_items < 2) die("pake-register: malformed OPRF private key");
     BitArray oprf_k = BA_INIT;
-    ba_from_der_item(&oprf_k, kpem.vals[0], kpem.vlens[0]);
+    oprf_item(&oprf_k, &kpem, 0);   /* TODO #385: at the key's width */
     pem_key_free(&kpem);
 
-    const char *pw = pw_arg ? pw_arg : "demo-password";
     FILE *urnd = fopen("/dev/urandom", "rb");
     if (!urnd) die("cannot open /dev/urandom");
 
@@ -5176,13 +6219,15 @@ static void cmd_pake_demo(int argc, char **argv)
     const char *key_path = get_arg(argc, argv, "--key");
     const char *pw_arg   = get_arg(argc, argv, "--password");
     if (!key_path) die("pake-demo: --key required");
+    /* TODO #376: omitted, the demo uses "demo-password"; given, it must be one. */
+    if (pw_arg && !*pw_arg) die("pake-demo: --password must not be empty");
 
     PemKey kpem; pem_key_load(&kpem, key_path);
     if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)
         dief("pake-demo: expected OPRF PRIVATE KEY PEM, got '%s'", kpem.label);
-    if (kpem.n_items < 1) die("pake-demo: malformed OPRF private key");
+    if (kpem.n_items < 2) die("pake-demo: malformed OPRF private key");
     BitArray oprf_k = BA_INIT;
-    ba_from_der_item(&oprf_k, kpem.vals[0], kpem.vlens[0]);
+    oprf_item(&oprf_k, &kpem, 0);   /* TODO #385: at the key's width */
     pem_key_free(&kpem);
 
     const char *pw = pw_arg ? pw_arg : "demo-password";
@@ -5221,35 +6266,52 @@ static void cmd_pake_demo(int argc, char **argv)
  * HCRED helpers: raw-PEM key parsing
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* Parse HCRED private-key raw bytes into polys and key material.
+/* Parse HCRED private-key raw bytes into polys and key material, at the width
+ * its header declares (32, 64, 128 or 256 since TODO #383 stage 3): seed_H_ba
+ * comes back at that width, so every hcred function reads n from it.
  * Returns 0 on success, -1 on bad size/n. */
+static int hcred_body_n(const uint8_t *body, size_t blen)
+{
+    int n;
+    if (!body || blen < 4) return -1;
+    n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
+              ((uint32_t)body[2]<<8)|body[3]);
+    return hcred_n_ok(n) ? n : -1;
+}
+
+static void hcred_read_tail(const uint8_t *body, size_t off, int n,
+                            BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
+{
+    ba_zero_w(seed_H_ba, n);
+    memcpy(seed_H_ba->b, body + off, (size_t)n / 8); off += (size_t)n / 8;
+    memset(syndr, 0, SDF_SYNBYTES);
+    memcpy(syndr, body + off, (size_t)n / 16);
+}
+
 static int hcred_parse_privkey(const uint8_t *body, size_t blen,
                                 int32_t s_poly[HCRED_N], int32_t C_poly[HCRED_N],
                                 int32_t m_poly[HCRED_N],
                                 BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
 {
-    int k;
-    size_t expected = 4 + (size_t)3*HCRED_N + (size_t)2*HCRED_N
-                        + (size_t)3*HCRED_N + KEYBYTES + SDF_SYNBYTES;
+    int k, n = hcred_body_n(body, blen);
+    if (n < 0) return -1;
+    size_t expected = 4 + (size_t)3*n + (size_t)2*n + (size_t)3*n
+                        + (size_t)n/8 + (size_t)n/16;
     if (blen < expected) return -1;
-    int n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
-                  ((uint32_t)body[2]<<8)|body[3]);
-    if (n != HCRED_N) return -1;
     size_t off = 4;
-    for (k = 0; k < HCRED_N; k++) {
+    for (k = 0; k < n; k++) {
         s_poly[k] = (int32_t)(((uint32_t)body[off]<<16)|((uint32_t)body[off+1]<<8)|body[off+2]);
         off += 3;
     }
-    for (k = 0; k < HCRED_N; k++) {
+    for (k = 0; k < n; k++) {
         C_poly[k] = (int32_t)(((uint32_t)body[off]<<8)|body[off+1]);
         off += 2;
     }
-    for (k = 0; k < HCRED_N; k++) {
+    for (k = 0; k < n; k++) {
         m_poly[k] = (int32_t)(((uint32_t)body[off]<<16)|((uint32_t)body[off+1]<<8)|body[off+2]);
         off += 3;
     }
-    memcpy(seed_H_ba->b, body + off, KEYBYTES); off += KEYBYTES;
-    memcpy(syndr, body + off, SDF_SYNBYTES);
+    hcred_read_tail(body, off, n, seed_H_ba, syndr);
     return 0;
 }
 
@@ -5258,28 +6320,25 @@ static int hcred_parse_pubkey(const uint8_t *body, size_t blen,
                                int32_t C_poly[HCRED_N], int32_t m_poly[HCRED_N],
                                BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
 {
-    int k;
-    size_t expected = 4 + (size_t)2*HCRED_N + (size_t)3*HCRED_N + KEYBYTES + SDF_SYNBYTES;
+    int k, n = hcred_body_n(body, blen);
+    if (n < 0) return -1;
+    size_t expected = 4 + (size_t)2*n + (size_t)3*n + (size_t)n/8 + (size_t)n/16;
     if (blen < expected) return -1;
-    int n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
-                  ((uint32_t)body[2]<<8)|body[3]);
-    if (n != HCRED_N) return -1;
     size_t off = 4;
-    for (k = 0; k < HCRED_N; k++) {
+    for (k = 0; k < n; k++) {
         C_poly[k] = (int32_t)(((uint32_t)body[off]<<8)|body[off+1]);
         off += 2;
     }
-    for (k = 0; k < HCRED_N; k++) {
+    for (k = 0; k < n; k++) {
         m_poly[k] = (int32_t)(((uint32_t)body[off]<<16)|((uint32_t)body[off+1]<<8)|body[off+2]);
         off += 3;
     }
-    memcpy(seed_H_ba->b, body + off, KEYBYTES); off += KEYBYTES;
-    memcpy(syndr, body + off, SDF_SYNBYTES);
+    hcred_read_tail(body, off, n, seed_H_ba, syndr);
     return 0;
 }
 
 /* Load HCRED public info from either a PRIV or PUB PEM file.
- * Fills C_poly, m_poly, seed_H_ba, syndr.  Returns 0 on success. */
+ * Fills C_poly, m_poly, seed_H_ba (at the key's width), syndr.  Returns 0 on success. */
 static int hcred_load_pubinfo(const char *path,
                                int32_t C_poly[HCRED_N], int32_t m_poly[HCRED_N],
                                BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
@@ -5318,11 +6377,13 @@ static void stern_sig_write_label(const SternSig *sig, const char *label,
     stern_sig_pack_write_lbl(sig, label, out_path);
 }
 
-/* Load a SternSig from a PEM file with an expected label. Returns 0 on success.
+/* Load a SternSig from a PEM file with an expected label, at the width it
+ * declares (any Stern width since TODO #383 stage 3; the caller compares it with
+ * the issuer key's).  Returns 0 on success.
  * On success *sig is allocated; the caller must stern_sig_free() it. */
 static int stern_sig_load_label(const char *path, const char *label, SternSig *sig)
 {
-    return stern_sig_load_lbl(path, label, sig);
+    return stern_sig_load_lbl(path, label, sig, 0);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -5337,8 +6398,9 @@ static void cmd_cred_issue(int argc, char **argv)
     if (!in_path)  die("cred-issue: --in (HCRED public/private key) required");
     if (!our_path) die("cred-issue: --our (hpks-stern private key) required");
 
-    fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-                    "(demo parameters). Do not use for production.\n");
+    fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+                    "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
+                    "Do not use for production.\n");
 
     /* Load HCRED public info from --in */
     int32_t C_poly[HCRED_N], m_poly[HCRED_N];
@@ -5354,9 +6416,29 @@ static void cmd_cred_issue(int argc, char **argv)
         strcmp(issuer_k.label, PEM_HPKE_STERN_PRIV) != 0)
         die("cred-issue: --our must be an hpks-stern or hpke-stern private key");
     if (issuer_k.n_items < 2) die("cred-issue: malformed Stern private key");
+    /* Any Stern width since TODO #383 stage 3, as in Python and Go: the
+     * credential is signed at the issuer key's own n, independent of the
+     * HCRED key's. */
+    const int issuer_n = stern_key_width(&issuer_k);
+    if (stern_is_long(issuer_n)) {      /* a long-form issuer key (TODO #382) */
+        uint8_t le[STERN_L_MAXB], lseed[STERN_L_MAXB];
+        SternLSig lsig;
+        stern_l_field(le, &issuer_k, 0, issuer_n);
+        stern_l_field(lseed, &issuer_k, 1, issuer_n);
+        pem_key_free(&issuer_k);
+        FILE *urnd = fopen("/dev/urandom", "rb");
+        if (!urnd) die("cannot open /dev/urandom");
+        stern_l_sig_alloc(&lsig, issuer_n,
+                          rounds_arg(argc, argv, "--rounds", "cred-issue", SDF_PRODUCTION_ROUNDS));
+        hcred_issue_l(&lsig, m_poly, C_poly, &seed_H_ba, syndr, le, lseed, urnd);
+        fclose(urnd);
+        stern_l_sig_write(&lsig, PEM_HCRED_CRED, out_path);
+        stern_l_sig_free(&lsig);
+        return;
+    }
     BitArray issuer_e_ba = BA_INIT, issuer_seed_ba = BA_INIT;
-    ba_from_ra(&issuer_e_ba,   issuer_k.vals[0], issuer_k.vlens[0]);
-    ba_from_ra(&issuer_seed_ba, issuer_k.vals[1], issuer_k.vlens[1]);
+    ba_from_ra_n(&issuer_e_ba,   issuer_k.vals[0], issuer_k.vlens[0], issuer_n);
+    ba_from_ra_n(&issuer_seed_ba, issuer_k.vals[1], issuer_k.vlens[1], issuer_n);
     pem_key_free(&issuer_k);
 
     FILE *urnd = fopen("/dev/urandom", "rb");
@@ -5454,8 +6536,10 @@ static void cmd_cred_verify(int argc, char **argv)
     free(pbuf);
     if (used != plen) die_raw_trailing(PEM_HCRED_PROOF, plen - used);   /* TODO #372 */
 
-    int rounds = proof.rounds;
-    if (rnd_arg) rounds = atoi(rnd_arg);
+    /* hcred_verify refuses a count other than the proof's own; --rounds only
+     * asserts it (parsed strictly, TODO #380). */
+    int rounds = rnd_arg ? (int)dec_range_arg(rnd_arg, 1, SDF_MAX_ROUNDS, "cred-verify", "--rounds")
+                         : proof.rounds;
     require_rounds(proof.rounds, min_rounds, "HCRED proof", "cred-verify");
 
     /* Load public key */
@@ -5465,6 +6549,12 @@ static void cmd_cred_verify(int argc, char **argv)
     if (hcred_load_pubinfo(pubkey_path, C_poly, m_poly, &seed_H_ba, syndr) != 0) {
         hcred_proof_free(&proof);
         die("cred-verify: cannot parse public key from --pubkey");
+    }
+    if (proof.n != seed_H_ba.nbits) {   /* TODO #383 stage 3; same text in all CLIs */
+        fprintf(stderr, "cred-verify: proof n is %d, public key n is %d\n",
+                proof.n, seed_H_ba.nbits);
+        hcred_proof_free(&proof);
+        exit(1);
     }
 
     const uint8_t *msg     = msg_arg ? (const uint8_t *)msg_arg : (const uint8_t *)"";
@@ -5483,6 +6573,36 @@ static void cmd_cred_verify(int argc, char **argv)
     if (cred_path) {
         if (!issuer_path) die("cred-verify: --cred requires --issuer (hpks-stern public key)");
 
+        int cred_n = stern_sig_peek_n(cred_path, PEM_HCRED_CRED);
+        if (stern_is_long(cred_n)) {    /* a long-form credential (TODO #382) */
+            SternLSig lsig;
+            if (stern_l_sig_load(cred_path, PEM_HCRED_CRED, &lsig) != 0)
+                die("cred-verify: cannot load credential from --cred");
+            require_rounds(lsig.rounds, min_rounds, "HCRED credential", "cred-verify");
+            PemKey lk;
+            pem_key_load(&lk, issuer_path);
+            if (strcmp(lk.label, PEM_HPKS_STERN_PUB) != 0 &&
+                strcmp(lk.label, PEM_HPKE_STERN_PUB) != 0)
+                die("cred-verify: --issuer must be an hpks-stern or hpke-stern public key");
+            if (lk.n_items < 2) die("cred-verify: malformed issuer public key");
+            const int lsn = stern_key_width(&lk);
+            if (lsn != cred_n) {
+                fprintf(stderr, "cred-verify: credential n is %d, issuer key n is %d\n",
+                        cred_n, lsn);
+                exit(1);
+            }
+            uint8_t lsyn[STERN_L_MAXB], lseed[STERN_L_MAXB];
+            stern_l_field(lsyn, &lk, 0, lsn);
+            stern_l_field(lseed, &lk, 1, lsn);
+            pem_key_free(&lk);
+            int ok_l = hcred_cred_verify_l(m_poly, C_poly, &seed_H_ba, syndr, &lsig, lseed, lsyn);
+            stern_l_sig_free(&lsig);
+            if (!ok_l) { puts("Verification FAILED (credential)"); exit(1); }
+            puts("Credential OK");
+            puts("Proof OK");
+            exit(0);
+        }
+
         SternSig cred_sig;
         if (stern_sig_load_label(cred_path, PEM_HCRED_CRED, &cred_sig) != 0)
             die("cred-verify: cannot load credential from --cred");
@@ -5495,17 +6615,26 @@ static void cmd_cred_verify(int argc, char **argv)
             strcmp(iss_k.label, PEM_HPKE_STERN_PUB) != 0)
             die("cred-verify: --issuer must be an hpks-stern or hpke-stern public key");
         if (iss_k.n_items < 2) die("cred-verify: malformed issuer public key");
+        /* Any Stern width since TODO #383 stage 3; the credential must be at
+         * the issuer key's (as verify, stage 2). */
+        const int sn = gf_key_width(&iss_k);
+        if (cred_sig.c0[0].nbits != sn) {
+            fprintf(stderr, "cred-verify: credential n is %d, issuer key n is %d\n",
+                    cred_sig.c0[0].nbits, sn);
+            stern_sig_free(&cred_sig);
+            exit(1);
+        }
 
-        /* Unpack syndrome (32-byte DER int, reversed) */
-        uint8_t iss_syn32[KEYBYTES], issuer_syndr[SDF_SYNBYTES]; int _sk;
-        memset(iss_syn32, 0, KEYBYTES);
-        { size_t cl = iss_k.vlens[0] < KEYBYTES ? iss_k.vlens[0] : KEYBYTES;
-          memcpy(iss_syn32 + KEYBYTES - cl, iss_k.vals[0], cl); }
-        for (_sk = 0; _sk < SDF_SYNBYTES; _sk++)
-            issuer_syndr[_sk] = iss_syn32[KEYBYTES - 1 - _sk];
+        /* Unpack syndrome (an n-bit DER int, low byte first in syndr) */
+        BitArray iss_syn_ba = BA_INIT;
+        uint8_t issuer_syndr[SDF_SYNBYTES]; int _sk;
+        ba_from_ra_n(&iss_syn_ba, iss_k.vals[0], iss_k.vlens[0], sn);
+        memset(issuer_syndr, 0, SDF_SYNBYTES);
+        for (_sk = 0; _sk < sn / 16; _sk++)
+            issuer_syndr[_sk] = iss_syn_ba.b[sn / 8 - 1 - _sk];
 
         BitArray issuer_seed_ba = BA_INIT;
-        ba_from_ra(&issuer_seed_ba, iss_k.vals[1], iss_k.vlens[1]);
+        ba_from_ra_n(&issuer_seed_ba, iss_k.vals[1], iss_k.vlens[1], sn);
         pem_key_free(&iss_k);
 
         int ok_cred = hcred_cred_verify(m_poly, C_poly, &seed_H_ba, syndr,
@@ -5616,8 +6745,10 @@ static void usage(void)
 "    --v3: use the NL-FSCX v3 round (TODO #255).  Separate subkey domain, so v3\n"
 "    output is not v2 output; decrypt with --v3 too.\n"
 "\n"
-"  twk (--encrypt|--decrypt) --key SK --in FILE\n"
+"  twk (--encrypt|--decrypt) --key SK [--sector N] [--bidx N] --in FILE\n"
 "    Tweakable wide-block cipher (78.B).  Unique tweak per (sector, block-index).\n"
+"    --sector: decimal 0..2^64-1, --bidx: decimal 0..2^32-1 (default 0 each);\n"
+"    any other value is refused, never wrapped.\n"
 "    Key: HERRADURA SESSION KEY PEM.\n"
 "    --v3: use the NL-FSCX v3 round (TODO #255), as for fpe.\n"
 "\n"
@@ -5626,7 +6757,7 @@ static void usage(void)
 "    with an OPRF PRIVATE KEY PEM (oprf-eval --key); the client unblinds with\n"
 "    --state and --eval and prints F(k,x) as 64-char hex.\n"
 "\n"
-"PEM output goes to stdout when --out is absent or '-'.\n"
+"PEM output goes to stdout when --out is '-', or is omitted where it is optional.\n"
 "All keys are 256-bit.\n"
     );
     exit(0);
@@ -5642,7 +6773,9 @@ int main(int argc, char **argv)
         usage();
 
     const char *cmd = argv[1];
+    argv = split_eq_args(cmd, &argc, argv);   /* TODO #381 */
     check_unknown_flags(cmd, argc, argv);
+    check_arg_shape(cmd, argc, argv);         /* TODO #381 */
     check_key_labels(cmd, argc, argv);   /* TODO #366 */
     if (strcmp(cmd, "genpkey") == 0) { cmd_genpkey(argc, argv); return 0; }
     if (strcmp(cmd, "pkey")    == 0) { cmd_pkey(argc, argv);    return 0; }

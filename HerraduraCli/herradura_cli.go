@@ -33,6 +33,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"os"
 	"strconv"
@@ -56,7 +57,7 @@ import (
 const (
 	ringMaxK  = 64      // herradura_cli.c RING_MAX_K
 	xmssMaxH  = 20      // herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
-	sternMaxN = 256     // the suite key width; nothing here emits a wider Stern instance
+	sternMaxN = 256     // the widest short-form Stern instance
 )
 
 // bounded returns v, or exits 1 if it falls outside [lo, hi].  `what` names the
@@ -124,7 +125,7 @@ func wireInt(b []byte, what, where string) int {
 // rnlWireN bounds a wire-supplied HKEX-RNL ring dimension: a power of two from
 // 8 to the deployed RnlN (TODO #367).  It sizes every polynomial unpacked
 // after it, so an unbounded one panicked or ran the process out of memory.
-// C is compiled for RnlN alone and requires it exactly (rnl_require_n).
+// C reads the same range (rnl_key_n, TODO #383 stage 4).
 func rnlWireN(b []byte, where string) int {
 	v := bounded(wireInt(b, "ring dimension n", where), 8, RnlN, "ring dimension n", where)
 	if v&(v-1) != 0 {
@@ -137,7 +138,7 @@ func rnlWireN(b []byte, where string) int {
 // sternWireN bounds a wire-supplied Stern / HPKE-Stern key width (TODO #367).
 // rnlSameRing refuses a peer artifact whose ring dimension is not ours.  Go
 // used to read only its own key's n and ignore the peer's (TODO #367); Python
-// and Java refused the mismatch, and C requires RnlN of both.
+// and Java refused the mismatch, and C does (rnl_same_ring).
 func rnlSameRing(ours int, theirs []byte, where string) {
 	if t := rnlWireN(theirs, where); t != ours {
 		fmt.Fprintf(os.Stderr, "%s: ring size mismatch (ours=%d, theirs=%d)\n", where, ours, t)
@@ -146,7 +147,30 @@ func rnlSameRing(ours int, theirs []byte, where string) {
 }
 
 func sternWireN(b []byte, where string) int {
-	return boundedN(wireInt(b, "n", where), where)
+	return boundedSternN(wireInt(b, "n", where), where)
+}
+
+// boundedSternN is boundedN for a Stern-F code length, which may also be the
+// long form's N = 2304 (TODO #382 stage 2).
+func boundedSternN(v int, where string) int {
+	if v == SternLongN {
+		return v
+	}
+	return boundedN(v, where)
+}
+
+// sternMsg is the signed message: min(n, 256) bits of the (pre-hashed) input.
+func sternMsg(in []byte, n int) *BitArray {
+	w := n
+	if w > 256 {
+		w = 256
+	}
+	return NewBitArray(w, new(big.Int).SetBytes(msgPad(in, w/8)))
+}
+
+// sternLField is a long-form key / signature field at exactly n/8 bytes.
+func sternLField(b []byte, n int, what, where string) []byte {
+	return fitBytes(b, n/8, what, where)
 }
 
 // checkDerItemsExact reports a shared-label artifact (CIPHERTEXT, SIGNATURE)
@@ -309,7 +333,7 @@ func writeString(path, s string) error {
 		_, err := fmt.Fprint(os.Stdout, s)
 		return err
 	}
-	return os.WriteFile(path, []byte(s), 0644)
+	return os.WriteFile(path, []byte(s), 0600) // TODO #395: created 0600; an existing file keeps its mode
 }
 
 func writeBytes(path string, b []byte) error {
@@ -317,7 +341,7 @@ func writeBytes(path string, b []byte) error {
 		_, err := os.Stdout.Write(b)
 		return err
 	}
-	return os.WriteFile(path, b, 0644)
+	return os.WriteFile(path, b, 0600) // TODO #395: created 0600; an existing file keeps its mode
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -349,6 +373,9 @@ const envKeyBits = 256
 // in the PEM, so a reader honours whatever the writer chose regardless of its
 // own default -- the contract Stern-F's round count has had since TODO #236.
 const pbkdf2IterDemo = 1000
+
+// pbkdf2IterMax is the most any writer may choose, and the most any reader honours.
+const pbkdf2IterMax = 100000000
 
 // pbkdf2Hfscx256 is RFC 8018 PBKDF2 with the suite's own HMAC-HFSCX-256 as the
 // PRF: a standard, analysed shape rather than a bespoke construction, and
@@ -472,7 +499,7 @@ func decryptPEMFile(path, passphrase string) (string, error) {
 	}
 	// Both size work below, so both are bounded before use -- the field class
 	// TODO #239/#240/#275 exist over.
-	if iterations < 1 || iterations > 100000000 {
+	if iterations < 1 || iterations > pbkdf2IterMax {
 		return "", fmt.Errorf("iteration count out of range (%d)", iterations)
 	}
 	// The comparison runs the other way from the pre-TODO-#280 form: the
@@ -776,6 +803,27 @@ func encodeSternPriv(e, seed *BitArray, n int, algo string) (string, error) {
 	return PemWrap(algoToPrivLbl[algo], seq), nil
 }
 
+// encodeSternLKey writes a long-form key: (e or syndrome, seed, n), each n/8 bytes.
+func encodeSternLKey(first, seed []byte, n int, label string) (string, error) {
+	a, err := derIntBig(new(big.Int).SetBytes(first), n/8)
+	if err != nil {
+		return "", err
+	}
+	b, err := derIntBig(new(big.Int).SetBytes(seed), n/8)
+	if err != nil {
+		return "", err
+	}
+	nn, err := derIntSmall(n)
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(a, b, nn)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(label, seq), nil
+}
+
 func encodeSternPub(syn *big.Int, seed *BitArray, n int, algo string) (string, error) {
 	a, err := derIntBig(syn, n/8)
 	if err != nil {
@@ -891,6 +939,88 @@ func padLeftN(src []byte, n int) []byte {
 // Pass make([]byte, 32) for zero nonces when interoperating with old peers.
 // isSet reports whether the named flag was explicitly given on the command line
 // (flag.FlagSet.Visit walks only the flags that were actually set).
+// TODO #381: the shape of the argument list, in one rule shared by all four CLIs.
+//
+//   - `--flag=value` is `--flag value`.  A boolean flag takes no value, so
+//     `--aead=false` is refused instead of quietly switching AEAD off.
+//   - A value-taking flag needs a value: at the end of the list, or followed by
+//     another flag of this subcommand, it is refused.  The flag package would
+//     take `--out --algo` as the file name "--algo".
+//   - A token that is neither a flag nor a flag's value is refused.  The flag
+//     package stops at the first one and the commands never looked at the
+//     rest, so `genpkey --algo hpks extra` ran and `genpkey extra --algo hpks`
+//     ran WITHOUT its --algo.
+//   - Where Python requires --in or --out, so does this CLI (requiredFlags).
+//     They used to default to "-", so an omitted --in read stdin and an omitted
+//     --out wrote stdout; "-" still means exactly that when given.
+//
+// The threshold path lists (--commits / --commit / --partials / --partial) are
+// removed by filterMultiFlags before this runs (TODO #270).
+var requiredFlags = map[string][]string{
+	"kex": {"out"}, "dgst": {"in"}, "enc": {"in", "out"}, "dec": {"in", "out"},
+	"sign": {"in", "out"}, "verify": {"in"}, "encfile": {"in", "out"},
+	"decfile": {"in", "out"}, "fpe": {"in"}, "twk": {"in"},
+	"threshold-aggregate": {"in", "out"}, "threshold-respond": {"out"},
+	"threshold-combine": {"out"},
+}
+
+func flagOf(fs *flag.FlagSet, tok string) (*flag.Flag, string, bool) {
+	if len(tok) < 2 || tok[0] != '-' || tok == "--" {
+		return nil, "", false
+	}
+	name := strings.TrimPrefix(strings.TrimPrefix(tok, "-"), "-")
+	hasEq := false
+	if k := strings.IndexByte(name, '='); k >= 0 {
+		name, hasEq = name[:k], true
+	}
+	return fs.Lookup(name), name, hasEq
+}
+
+func isBoolFlag(f *flag.Flag) bool {
+	b, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return ok && b.IsBoolFlag()
+}
+
+func parseArgs(fs *flag.FlagSet, args []string) {
+	cmd := fs.Name()
+	for i := 0; i < len(args); i++ {
+		f, name, hasEq := flagOf(fs, args[i])
+		if f == nil {
+			continue // a value, a stray token, or an unknown flag fs.Parse reports
+		}
+		if isBoolFlag(f) {
+			if hasEq {
+				fmt.Fprintf(os.Stderr, "%s: --%s takes no value\n", cmd, name)
+				os.Exit(2)
+			}
+			continue
+		}
+		if hasEq {
+			continue
+		}
+		if i+1 >= len(args) {
+			fmt.Fprintf(os.Stderr, "%s: --%s needs a value\n", cmd, name)
+			os.Exit(2)
+		}
+		if g, _, _ := flagOf(fs, args[i+1]); g != nil {
+			fmt.Fprintf(os.Stderr, "%s: --%s needs a value\n", cmd, name)
+			os.Exit(2)
+		}
+		i++ // its value
+	}
+	fs.Parse(args)
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "%s: unexpected argument '%s'\n", cmd, fs.Arg(0))
+		os.Exit(2)
+	}
+	for _, r := range requiredFlags[cmd] {
+		if !isSet(fs, r) {
+			fmt.Fprintf(os.Stderr, "%s: --%s required\n", cmd, r)
+			os.Exit(1)
+		}
+	}
+}
+
 func isSet(fs *flag.FlagSet, name string) bool {
 	found := false
 	fs.Visit(func(f *flag.Flag) {
@@ -1104,7 +1234,7 @@ func wotsIsUsed(keyPath string) bool {
 }
 
 func wotsWriteIdx(keyPath string, val int) {
-	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0644)
+	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0600) // TODO #395: created 0600; an existing file keeps its mode
 }
 
 func wotsBlobPack(vals [WotsL]*BitArray) []byte {
@@ -1155,7 +1285,7 @@ func xmssReadIdx(keyPath string) int {
 }
 
 func xmssWriteIdx(keyPath string, val int) {
-	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0644)
+	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0600) // TODO #395: created 0600; an existing file keeps its mode
 }
 
 // alignBlob right-aligns v into a dst_len-byte slice (generic version of
@@ -1176,8 +1306,16 @@ func alignBlob(v []byte, dstLen int) []byte {
 // (each n-bit value = n/8 bytes) per (member, round).
 
 func loadRingPubkeys(ringArg string) ([]RingKeypair, int) {
+	ring, _, n := loadRingPubkeysAny(ringArg)
+	return ring, n
+}
+
+// loadRingPubkeysAny reads the ring at either form: the short form's members
+// in the first slice, the long form's (TODO #382) in the second.
+func loadRingPubkeysAny(ringArg string) ([]RingKeypair, []SternLRingKey, int) {
 	paths := strings.Split(ringArg, ",")
 	var ring []RingKeypair
+	var ringL []SternLRingKey
 	ringN := -1
 	for _, p := range paths {
 		if p == "" {
@@ -1198,16 +1336,46 @@ func loadRingPubkeys(ringArg string) ([]RingKeypair, int) {
 			fmt.Fprintln(os.Stderr, "hpks-ring: all ring members must share the same n")
 			os.Exit(1)
 		}
+		if SternIsLong(n) {
+			ringL = append(ringL, SternLRingKey{
+				Seed:     sternLField(ints[1], n, "seed", "hpks-ring"),
+				Syndrome: sternLField(ints[0], n, "syndrome", "hpks-ring"),
+			})
+			continue
+		}
 		ring = append(ring, RingKeypair{
 			Seed:     NewBitArray(n, new(big.Int).SetBytes(ints[1])),
 			Syndrome: new(big.Int).SetBytes(ints[0]),
 		})
 	}
-	if len(ring) < 2 {
+	if len(ring)+len(ringL) < 2 {
 		fmt.Fprintln(os.Stderr, "hpks-ring: --ring needs at least 2 member public keys")
 		os.Exit(1)
 	}
-	return ring, ringN
+	return ring, ringL, ringN
+}
+
+// encodeRingSigL is encodeRingSig for the long form: 32-byte commitments,
+// n/8-byte responses.
+func encodeRingSigL(sig *SternLRingSig, n int) string {
+	nb := n / 8
+	blob := make([]byte, 0, sig.K*sig.Rounds*(3*32+2*nb+1))
+	for i := 0; i < sig.K; i++ {
+		for _, rd := range sig.Members[i].Rounds {
+			blob = append(blob, rd.C0.Bytes()...)
+			blob = append(blob, rd.C1.Bytes()...)
+			blob = append(blob, rd.C2.Bytes()...)
+			blob = append(blob, byte(rd.B))
+			blob = append(blob, rd.RespA...)
+			blob = append(blob, rd.RespB...)
+		}
+	}
+	kd, _ := derIntSmall(sig.K)
+	rdd, _ := derIntSmall(sig.Rounds)
+	nd, _ := derIntSmall(n)
+	bd, _ := derIntBig(new(big.Int).SetBytes(blob), len(blob))
+	seq, _ := DerSeqEnc(kd, rdd, nd, bd)
+	return PemWrap(lblRingSig, seq)
 }
 
 func encodeRingSig(sig *SternRingSig, n int) string {
@@ -1238,6 +1406,12 @@ func encodeRingSig(sig *SternRingSig, n int) string {
 }
 
 func decodeRingSig(path string) (*SternRingSig, int) {
+	sig, _, n := decodeRingSigAny(path)
+	return sig, n
+}
+
+// decodeRingSigAny decodes either form (the long form's in the second result).
+func decodeRingSigAny(path string) (*SternRingSig, *SternLRingSig, int) {
 	label, ints, err := readPEMInts(path)
 	if err != nil {
 		die("verify", err)
@@ -1252,9 +1426,13 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 		"ring member count", "verify")
 	rounds := bounded(wireInt(ints[1], "round count", "verify"), 1, SdfMaxRounds,
 		"round count", "verify")
-	n := boundedN(wireInt(ints[2], "n", "verify"), "verify")
+	n := boundedSternN(wireInt(ints[2], "n", "verify"), "verify")
 	nb := n / 8
-	entry := 5*nb + 1
+	cb := nb
+	if SternIsLong(n) {
+		cb = 32 // 256-bit commitments (TODO #382)
+	}
+	entry := 3*cb + 2*nb + 1
 	blen := k * rounds * entry
 	// A payload longer than (k, rounds, n) describe is a mismatch, not
 	// something to truncate; shorter is legal (DER strips leading zero bytes)
@@ -1267,6 +1445,24 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 	blob := make([]byte, blen)
 	new(big.Int).SetBytes(ints[3]).FillBytes(blob)
 
+	if SternIsLong(n) {
+		lsig := &SternLRingSig{K: k, Rounds: rounds, Members: make([]SternLSig, k)}
+		off := 0
+		cut := func(w int) []byte { v := blob[off : off+w]; off += w; return v }
+		for i := 0; i < k; i++ {
+			lsig.Members[i].Rounds = make([]SternLRound, rounds)
+			for r := 0; r < rounds; r++ {
+				rd := &lsig.Members[i].Rounds[r]
+				rd.C0 = NewFromBytes(cut(32), 0, 256)
+				rd.C1 = NewFromBytes(cut(32), 0, 256)
+				rd.C2 = NewFromBytes(cut(32), 0, 256)
+				rd.B = int(cut(1)[0])
+				rd.RespA = cut(nb)
+				rd.RespB = cut(nb)
+			}
+		}
+		return nil, lsig, n
+	}
 	sig := &SternRingSig{K: k, Rounds: rounds, Members: make([]SternSig, k)}
 	off := 0
 	take := func() *BitArray {
@@ -1287,7 +1483,7 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 			sig.Members[i].Rounds[r] = SternRound{C0: c0, C1: c1, C2: c2, B: b, RespA: ra, RespB: rb}
 		}
 	}
-	return sig, n
+	return sig, nil, n
 }
 
 // ── genpkey ──────────────────────────────────────────────────────────────────
@@ -1297,43 +1493,192 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 // comparing against this value, so an explicit --bits 256 is not "unset" (#374).
 const genpkeyDefaultBits = 256
 
+// paramSet is one row of genpkey's key parameter-set table (TODO #379); the
+// rows are generated into paramSets by spec/generate_spec.py.
+type paramSet struct {
+	algo      string
+	bits      int // -1: no --bits value names this row
+	level     string
+	isDefault bool
+	status    string
+	security  string
+	ports     string // the CLIs that run this row today
+	withdrawn string
+}
+
+func strIn(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveKeyParams resolves genpkey's --bits / --level against paramSets.  It
+// returns the row's bits (-1 for a row with no width), 0 when the algorithm has
+// fixed parameters and neither flag was given, or -2 when --bits goes to the
+// algorithm's own rule (hpks-zkp-nl).  Every refusal happens here, before any
+// key is generated, with the message the other three CLIs print.
+func resolveKeyParams(algo string, bitsSet bool, bitsS string, levelSet bool, levelS string) int {
+	fail := func(f string, a ...interface{}) {
+		fmt.Fprintf(os.Stderr, f+"\n", a...)
+		os.Exit(1)
+	}
+	if strIn(paramFixed, algo) {
+		if bitsSet || levelSet {
+			fail("genpkey: --algo %s has fixed parameters; --bits and --level do not apply", algo)
+		}
+		return 0
+	}
+	if bitsSet && levelSet {
+		fail("genpkey: give --bits or --level, not both")
+	}
+	var rows []paramSet
+	for _, r := range paramSets {
+		if r.algo == algo {
+			rows = append(rows, r)
+		}
+	}
+	if len(rows) == 0 {
+		return 0
+	}
+	var row paramSet
+	found := false
+	switch {
+	case levelSet:
+		if !strIn(paramLevels, levelS) {
+			fail("genpkey: --level must be one of %s, got '%s'", strings.Join(paramLevels, ", "), levelS)
+		}
+		for _, r := range rows {
+			if r.level == levelS {
+				row, found = r, true
+			}
+		}
+		if !found {
+			var avail []string
+			for _, l := range paramLevels {
+				for _, r := range rows {
+					if r.level == l {
+						avail = append(avail, l)
+						break
+					}
+				}
+			}
+			msg := fmt.Sprintf("genpkey: --level %s is not available for --algo %s (available: %s)",
+				levelS, algo, strings.Join(avail, ", "))
+			if note, ok := paramLevelNotes[algo]; ok {
+				msg += "; " + note
+			}
+			fail("%s", msg)
+		}
+	case bitsSet:
+		if strIn(paramOwnBits, algo) {
+			return -2
+		}
+		var listed []string
+		firstLevel := ""
+		for _, r := range rows {
+			if r.bits > 0 && r.withdrawn == "" {
+				listed = append(listed, strconv.Itoa(r.bits))
+			}
+			if firstLevel == "" && r.level != "" {
+				firstLevel = r.level
+			}
+		}
+		if len(listed) == 0 {
+			fail("genpkey: --bits does not apply to --algo %s (use --level %s)", algo, firstLevel)
+		}
+		for _, r := range rows {
+			if r.bits > 0 && strconv.Itoa(r.bits) == bitsS {
+				row, found = r, true
+			}
+		}
+		if !found {
+			fail("genpkey: --bits must be one of %s for --algo %s, got '%s'",
+				strings.Join(listed, ", "), algo, bitsS)
+		}
+		if row.withdrawn != "" {
+			fail("genpkey: --bits %d for --algo %s is withdrawn: %s", row.bits, algo, row.withdrawn)
+		}
+	default:
+		for _, r := range rows {
+			if r.isDefault {
+				row = r
+			}
+		}
+	}
+	if !strIn(strings.Fields(row.ports), "go") {
+		var here []string
+		for _, r := range rows {
+			if r.bits > 0 && strIn(strings.Fields(r.ports), "go") {
+				here = append(here, strconv.Itoa(r.bits))
+			}
+		}
+		fail("genpkey: --algo %s at %d bits is not yet supported by this CLI (supported here: %s)",
+			algo, row.bits, strings.Join(here, ", "))
+	}
+	dflt := 0
+	for _, r := range rows {
+		if r.isDefault {
+			dflt = r.bits
+		}
+	}
+	if row.bits > 0 && row.bits < dflt {
+		fmt.Fprintf(os.Stderr, "WARNING: --algo %s at %d bits is a demonstration width (estimated security: %s)\n",
+			algo, row.bits, row.security)
+	}
+	return row.bits
+}
+
 func cmdGenpkey(args []string) {
 	fs := flag.NewFlagSet("genpkey", flag.ExitOnError)
 	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hpks|hpks-nl|hpke|hpke-nl|hpke-nl3|hpks-stern|hpke-stern|hcred|hpks-wots|hpks-xmss)")
-	bits := fs.Int("bits", genpkeyDefaultBits, "Key size in bits")
+	bitsS := fs.String("bits", "", "Key size in bits: key width, HKEX-RNL ring dimension or Stern-F N, from the algorithm's listed values (TODO #379); prefer --level")
+	levelS := fs.String("level", "", "Parameter set by the strength it is sized for: demo, 128 (192, 256 reserved)")
 	out  := fs.String("out", "-", "Output path (- = stdout)")
-	xmssHeight := fs.Int("xmss-height", 10, "hpks-xmss: tree height (2^H leaves)")
+	xmssHeightS := fs.String("xmss-height", "10", "hpks-xmss: tree height (2^H leaves, 1 to 20)")
 	passphrase := fs.String("passphrase", "", "Encrypt the exported private key under this passphrase (TODO #268)")
-	kdfIterations := fs.Int("kdf-iterations", pbkdf2IterDemo, "PBKDF2-HFSCX256 iterations for --passphrase")
-	fs.Parse(args)
+	kdfIterationsS := fs.String("kdf-iterations", strconv.Itoa(pbkdf2IterDemo), "PBKDF2-HFSCX256 iterations for --passphrase (1 to 100000000)")
+	parseArgs(fs, args)
+	// TODO #380: parsed strictly and range-checked before any key is generated.
+	xmssHeight := numFlag(fs, "xmss-height", xmssHeightS, 1, 20, 10)
+	kdfIterations := numFlag(fs, "kdf-iterations", kdfIterationsS, 1, pbkdf2IterMax, pbkdf2IterDemo)
 
 	if *algo == "" {
 		fmt.Fprintln(os.Stderr, "genpkey: --algo required")
 		os.Exit(1)
 	}
+	// TODO #376: a GIVEN passphrase must be non-empty.  Before #376 this read
+	// --passphrase '' as no passphrase and wrote the key in the clear, and
+	// accepted --kdf-iterations alone and ignored it.  Both are refused
+	// before any key is generated.
+	if isSet(fs, "passphrase") && *passphrase == "" {
+		fmt.Fprintln(os.Stderr, "genpkey: --passphrase must not be empty")
+		os.Exit(1)
+	}
+	if isSet(fs, "kdf-iterations") && !isSet(fs, "passphrase") {
+		fmt.Fprintln(os.Stderr, "genpkey: --kdf-iterations requires --passphrase")
+		os.Exit(1)
+	}
 
-	n := *bits
+	// TODO #379: every width comes from the parameter-set table.
+	n := resolveKeyParams(*algo, isSet(fs, "bits"), *bitsS, isSet(fs, "level"), *levelS)
 
 	var pem string
 	var err error
 
 	switch {
 	case classicalAlgos[*algo]:
-		// An unlisted --bits normalises to 256, as it always has: the width
-		// selects the GF polynomial and there is one only for 32/64/128/256.
-		if _, perr := BaGfPoly(n); perr != nil {
-			n = 256
-		}
+		// TODO #379: an unlisted --bits used to normalise silently to 256;
+		// resolveKeyParams now refuses it by name.
 		a := NewRandBitArray(n)
 		C := GfPow(GfGenBA(n), a)
 		pem, err = encodeClassicalPriv(a.BigInt(), C.BigInt(), n, *algo)
 
 	case *algo == "hkex-rnl":
-		// Ring dimension is independent of the key width (TODO #223); --bits
-		// still overrides, for interop with older/other sizes.
-		if !isSet(fs, "bits") {
-			n = RnlN
-		}
+		// Ring dimension is independent of the key width (TODO #223); the
+		// table's rows choose it (TODO #379).
 		mBase  := RnlMPoly(n)
 		aRand  := RnlRandPoly(n, RnlQ)
 		mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
@@ -1342,9 +1687,14 @@ func cmdGenpkey(args []string) {
 		pem, err = encodeRNLPriv(s, mBlind, n, nA)
 
 	case sternAlgos[*algo]:
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
-		seed, e, _ := SternFKeygen(n)
-		pem, err = encodeSternPriv(e, seed, n, *algo)
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
+		if SternIsLong(n) {
+			seed, e, _ := SternLKeygen(n)
+			pem, err = encodeSternLKey(e, seed, n, algoToPrivLbl[*algo])
+		} else {
+			seed, e, _ := SternFKeygen(n)
+			pem, err = encodeSternPriv(e, seed, n, *algo)
+		}
 
 	case *algo == "hpke-stern-kem":
 		sup0, sup1, h0, h1, _ := QcMdpcKeygen(nil)
@@ -1371,14 +1721,19 @@ func cmdGenpkey(args []string) {
 		// its default -- an explicit --bits 256 used to read as unset and wrote
 		// an n = 8 key; it now fails the range check below.
 		zkpN := ZkpNlDefaultN
-		if isSet(fs, "bits") {
-			zkpN = n
-		}
-		if zkpN <= 0 || zkpN%2 != 0 || zkpN > ZkpNlMaxN {
-			fmt.Fprintf(os.Stderr,
-				"genpkey hpks-zkp-nl: --bits must be a positive even integer <= %d, got %d\n",
-				ZkpNlMaxN, zkpN)
-			os.Exit(1)
+		if n == -2 { // TODO #379: --bits is a string now, read as decimal digits
+			v, perr := strconv.Atoi(*bitsS)
+			ok := perr == nil && *bitsS != ""
+			for _, ch := range *bitsS {
+				ok = ok && ch >= '0' && ch <= '9'
+			}
+			if !ok || v <= 0 || v%2 != 0 || v > ZkpNlMaxN {
+				fmt.Fprintf(os.Stderr,
+					"genpkey hpks-zkp-nl: --bits must be a positive even integer <= %d, got %s\n",
+					ZkpNlMaxN, *bitsS)
+				os.Exit(1)
+			}
+			zkpN = v
 		}
 		A, B, y, kerr := ZkpNlKeygen(zkpN)
 		if kerr != nil {
@@ -1426,11 +1781,7 @@ func cmdGenpkey(args []string) {
 		fmt.Fprintln(os.Stderr, "HPKS-WOTS: ONE-TIME key — it may sign exactly one message.")
 
 	case *algo == "hpks-xmss":
-		h := *xmssHeight
-		if h < 1 || h > 20 {
-			fmt.Fprintln(os.Stderr, "genpkey: --xmss-height must be in [1,20]")
-			os.Exit(1)
-		}
+		h := xmssHeight
 		fmt.Fprintf(os.Stderr, "Generating XMSS tree (h=%d, %d leaves) — may take a moment...\n",
 			h, 1<<uint(h))
 		seed := NewRandBitArray(256).Bytes()
@@ -1468,10 +1819,7 @@ func cmdGenpkey(args []string) {
 	// TODO #268.  Wrapping the finished PEM string keeps CLEARTEXT OFF DISK:
 	// the plaintext only ever exists in memory.
 	if *passphrase != "" {
-		if *kdfIterations < 1 || *kdfIterations > 100000000 {
-			die("genpkey", fmt.Errorf("--kdf-iterations out of range (1..100000000)"))
-		}
-		pem, err = encryptPEMText(pem, *passphrase, *kdfIterations)
+		pem, err = encryptPEMText(pem, *passphrase, kdfIterations)
 		if err != nil {
 			die("genpkey", err)
 		}
@@ -1483,6 +1831,22 @@ func cmdGenpkey(args []string) {
 
 // ── pkey ─────────────────────────────────────────────────────────────────────
 
+// printParamLines is `pkey --text`'s closing lines, from the key's generated
+// key_parameter_sets row (paramSets): `level` where the row has one, then
+// `security` (TODO #386).  Nothing for a key no row describes (WOTS, XMSS).
+func printParamLines(algo string, width int) {
+	for _, r := range paramSets {
+		if r.algo != algo || r.bits != width {
+			continue
+		}
+		if r.level != "" {
+			fmt.Printf("level     : %s\n", r.level)
+		}
+		fmt.Printf("security  : %s\n", r.security)
+		return
+	}
+}
+
 func cmdPkey(args []string) {
 	fs := flag.NewFlagSet("pkey", flag.ExitOnError)
 	in     := fs.String("in", "", "Input private key file")
@@ -1491,7 +1855,7 @@ func cmdPkey(args []string) {
 	out    := fs.String("out", "-", "Output path")
 	decrypt := fs.Bool("decrypt", false, "Decrypt a --passphrase-protected private key PEM (TODO #268)")
 	passphrase := fs.String("passphrase", "", "Passphrase for --decrypt")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "pkey: --in required")
@@ -1502,7 +1866,9 @@ func cmdPkey(args []string) {
 	// its own mode, not a modifier of --pubout/--text, so it is handled before
 	// the "specify --pubout or --text" check.
 	if *decrypt {
-		if *passphrase == "" {
+		// TODO #376: '' is a passphrase here, so a key C or Java encrypted
+		// under '' before #376 stays readable.
+		if !isSet(fs, "passphrase") {
 			fmt.Fprintln(os.Stderr, "pkey --decrypt: --passphrase required")
 			os.Exit(1)
 		}
@@ -1515,7 +1881,7 @@ func cmdPkey(args []string) {
 		}
 		return
 	}
-	if *passphrase != "" {
+	if isSet(fs, "passphrase") {
 		fmt.Fprintln(os.Stderr, "pkey: --passphrase is only meaningful with --decrypt")
 		os.Exit(1)
 	}
@@ -1529,6 +1895,12 @@ func cmdPkey(args []string) {
 		lbl, lerr := peekPEMLabel(*in)
 		if lerr != nil {
 			die("pkey", lerr)
+		}
+		// TODO #386: a public key is refused by label, in the same words in
+		// all four CLIs.
+		if strings.HasSuffix(lbl, " PUBLIC KEY") {
+			fmt.Fprintf(os.Stderr, "pkey: '%s' is a public key (pkey reads a private key)\n", lbl)
+			os.Exit(1)
 		}
 		if lbl == lblZkpNlPriv {
 			body, rerr := readRawPEM(*in, lblZkpNlPriv)
@@ -1551,6 +1923,7 @@ func cmdPkey(args []string) {
 				fmt.Printf("A (priv)  : %0*x\n", nb*2, A)
 				fmt.Printf("B (pub)   : %0*x\n", nb*2, B)
 				fmt.Printf("y (pub)   : %0*x\n", nb*2, y)
+				printParamLines("hpks-zkp-nl", zkpN)
 			}
 			return
 		}
@@ -1571,7 +1944,12 @@ func cmdPkey(args []string) {
 			} else {
 				fmt.Printf("algorithm : hcred\n")
 				fmt.Printf("n         : %d\n", hn)
+				// seed_H and the syndrome as big-endian integers, as the
+				// other three print them (TODO #386)
+				fmt.Printf("seed_H    : %0*x\n", hn/4, seedH.BigInt())
+				fmt.Printf("syndr     : %0*x\n", hn/8, syndr)
 				fmt.Printf("W (weight): %d\n", CountBits(HcredPhi(sPoly)))
+				printParamLines("hcred", hn)
 			}
 			return
 		}
@@ -1610,6 +1988,12 @@ func cmdPkey(args []string) {
 
 		case sternAlgos[algo]:
 			n    := sternWireN(ints[2], "pkey")
+			if SternIsLong(n) {
+				e    := sternLField(ints[0], n, "e", "pkey")
+				seed := sternLField(ints[1], n, "seed", "pkey")
+				pem, err = encodeSternLKey(SternLSyndrome(seed, e), seed, n, algoToPubLbl[algo])
+				break
+			}
 			e    := NewBitArray(n, new(big.Int).SetBytes(ints[0]))
 			seed := NewBitArray(n, new(big.Int).SetBytes(ints[1]))
 			syn  := SternSyndrome(seed, e)
@@ -1682,6 +2066,7 @@ func cmdPkey(args []string) {
 		fmt.Printf("bits      : %d\n", n)
 		fmt.Printf("private   : %0*x\n", n/4, priv)
 		fmt.Printf("public    : %0*x\n", n/4, pub)
+		printParamLines(algo, n)
 
 	case algo == "hkex-rnl":
 		n      := rnlWireN(ints[2], "pkey")
@@ -1696,6 +2081,7 @@ func cmdPkey(args []string) {
 		if len(ints) >= 4 {
 			fmt.Printf("n_A       : %x\n", padLeftN(ints[3], 32))
 		}
+		printParamLines(algo, n)
 
 	case sternAlgos[algo]:
 		n    := sternWireN(ints[2], "pkey")
@@ -1705,6 +2091,7 @@ func cmdPkey(args []string) {
 		fmt.Printf("n         : %d\n", n)
 		fmt.Printf("e_int     : %0*x\n", n/4, eBig)
 		fmt.Printf("seed      : %0*x\n", n/4, sBig)
+		printParamLines(algo, n)
 
 	// TODO #374: the four cases below were missing, so --text printed nothing
 	// and exited 0 for these keys; an unhandled label now fails.
@@ -1713,6 +2100,7 @@ func cmdPkey(args []string) {
 		fmt.Printf("algorithm : %s\n", algo)
 		fmt.Printf("r         : %d\n", QcMdpcR)
 		fmt.Printf("d         : %d\n", QcMdpcD)
+		printParamLines(algo, -1)
 
 	case algo == "hpks-wots":
 		fitBytes(ints[0], 32, "WOTS seed", "pkey")
@@ -1737,9 +2125,12 @@ func cmdPkey(args []string) {
 		fmt.Printf("root      : %x\n", HaccumRoot(leafHashes))
 
 	case algo == "oprf":
-		fitBytes(ints[0], 32, "OPRF key", "pkey")
+		// TODO #385: the key's own width (it printed genpkeyDefaultBits).
+		on := gfWidth(wireInt(ints[1], "n", lblOprfPriv), lblOprfPriv)
+		fitBytes(ints[0], on/8, "OPRF key", "pkey")
 		fmt.Printf("algorithm : %s\n", algo)
-		fmt.Printf("bits      : %d\n", genpkeyDefaultBits)
+		fmt.Printf("bits      : %d\n", on)
+		printParamLines(algo, on)
 
 	default:
 		fmt.Fprintf(os.Stderr, "pkey --text: no text form for %s\n", algo)
@@ -1758,7 +2149,7 @@ func cmdKex(args []string) {
 	kdf  := fs.String("kdf", "", "KDF applied to raw shared secret (none|hfscx-256; both sides must match)")
 	theirKem := fs.String("their-kem", "", "hybrid-rnl-stern: Alice's HPKE-Stern-KEM public key (Bob step)")
 	ourKem   := fs.String("our-kem", "", "hybrid-rnl-stern: Alice's own HPKE-Stern-KEM private key (Alice step)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("kex", fs) // TODO #366
 
 	if *algo == "" || *our == "" || *their == "" {
@@ -1779,12 +2170,16 @@ func cmdKex(args []string) {
 	}
 
 	// applyKDF returns a new BitArray with HFSCX-256 applied when --kdf is set.
+	// TODO #389: the result is the WHOLE 256-bit digest at every input width
+	// (it used to be reduced to the low n bits below 256); kex hkex-gf labels it
+	// n = 256, as HKEX-RNL's session key already is (rnlSessionBits).
 	applyKDF := func(ba *BitArray, n int) *BitArray {
 		if *kdf != "hfscx-256" {
 			return ba
 		}
+		_ = n
 		digest := Hfscx256(ba.Bytes(), nil)
-		return NewBitArray(n, new(big.Int).SetBytes(digest))
+		return NewBitArray(256, new(big.Int).SetBytes(digest))
 	}
 
 	switch *algo {
@@ -1799,6 +2194,10 @@ func cmdKex(args []string) {
 		}
 
 		n    := gfWidth(bytesToInt(ourInts[2]), "kex")
+		// TODO #383: a peer key at another width is refused, not reduced into ours
+		if tn := new(big.Int).SetBytes(theirInts[len(theirInts)-1]); !tn.IsInt64() || tn.Int64() != int64(n) {
+			die("kex", fmt.Errorf("their public key n is %s, our private key n is %d", tn, n))
+		}
 		priv := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		pub  := NewBitArray(n, new(big.Int).SetBytes(theirInts[0]))
 		if !GfPubIsValid(pub) {
@@ -1806,7 +2205,11 @@ func cmdKex(args []string) {
 		}
 
 		skBA := applyKDF(GfPow(pub, priv), n)
-		pem, err := encodeSessionKey(skBA, n)
+		skBits := n
+		if *kdf == "hfscx-256" {
+			skBits = 256 // TODO #389: the whole digest, labelled at its own width
+		}
+		pem, err := encodeSessionKey(skBA, skBits)
 		if err != nil {
 			die("kex", err)
 		}
@@ -2087,7 +2490,7 @@ func cmdDgst(args []string) {
 	algo := fs.String("algo", "hfscx-256", "Digest algorithm")
 	in   := fs.String("in", "-", "Input file (- = stdin)")
 	out  := fs.String("out", "-", "Output: - = hex to stdout; path = DIGEST PEM")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	data, err := readFile(*in)
 	if err != nil {
@@ -2162,10 +2565,10 @@ func cmdRand(args []string) {
 	state  := fs.String("state", "", "HDRBG STATE PEM to resume from and/or update")
 	pers   := fs.String("personalization", "", "Personalization string (with --seed only)")
 	reseed := fs.String("reseed", "", "Entropy file to fold into the state before generating")
-	nbytes := fs.Int("bytes", -1, "Number of output bytes to generate")
+	nbytesS := fs.String("bytes", "", "Number of output bytes to generate (0 to 33554432)")
 	asHex  := fs.Bool("hex", false, "Hex-encode the output instead of raw bytes")
 	out    := fs.String("out", "-", "Output file (default: - = stdout)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	var d *HDrbg
 	switch {
@@ -2194,12 +2597,11 @@ func cmdRand(args []string) {
 	// `--bytes -1` fell through to "nothing to do" while Python, C and Java all
 	// report "--bytes must be non-negative".  isSet distinguishes the two, which
 	// is what the other three get for free from argparse / an explicit NULL check.
-	if isSet(fs, "bytes") && *nbytes < 0 {
-		fmt.Fprintln(os.Stderr, "rand: --bytes must be non-negative")
-		os.Exit(1)
-	}
-	if *nbytes >= 0 {
-		outBytes, ok := d.DrbgGenerate(*nbytes)
+	// TODO #380: at most one seed's worth of output (DrbgMaxBlocks blocks),
+	// the most a single request can ever return; -1 means "not given".
+	nbytes := numFlag(fs, "bytes", nbytesS, 0, DrbgMaxBlocks*32, -1)
+	if nbytes >= 0 {
+		outBytes, ok := d.DrbgGenerate(nbytes)
 		if !ok {
 			fmt.Fprintln(os.Stderr, "rand: output limit reached — reseed required")
 			os.Exit(1)
@@ -2388,20 +2790,30 @@ func encodeAsymCT(R, E *big.Int, n int) (string, error) {
 // encodeSternCT encodes an HPKE-Stern-F KEM ciphertext.
 // K is stored for session-key extraction; e' stored for demo brute-force decap.
 func encodeSternCT(ctSyn *big.Int, ePrime, K *BitArray, E *big.Int, n int) (string, error) {
+	return encodeSternCTInts(ctSyn, ePrime.BigInt(), K.BigInt(), E, n)
+}
+
+// encodeSternCTInts: (ct, e', K, E, n); K and E are min(n, 256) bits, the
+// payload block (TODO #382).
+func encodeSternCTInts(ctSyn, ePrime, K, E *big.Int, n int) (string, error) {
 	nb := n / 8
+	kb := nb
+	if kb > 32 {
+		kb = 32
+	}
 	ca, err := derIntBig(ctSyn, nb)
 	if err != nil {
 		return "", err
 	}
-	ea, err := derIntBig(ePrime.BigInt(), nb)
+	ea, err := derIntBig(ePrime, nb)
 	if err != nil {
 		return "", err
 	}
-	ka, err := derIntBig(K.BigInt(), nb)
+	ka, err := derIntBig(K, kb)
 	if err != nil {
 		return "", err
 	}
-	enc, err := derIntBig(E, nb)
+	enc, err := derIntBig(E, kb)
 	if err != nil {
 		return "", err
 	}
@@ -2642,6 +3054,77 @@ func packSternSigLabel(sig *SternSig, n int, label string) (string, error) {
 	return PemWrap(label, seq), nil
 }
 
+// packSternLSig is packSternSigLabel for the long form (TODO #382): the same
+// SEQ(n, rounds, commitments, challenges, responses), commitments 32 bytes.
+func packSternLSig(sig *SternLSig, n int, label string) (string, error) {
+	rounds := len(sig.Rounds)
+	var cBuf, rBuf []byte
+	chal := make([]byte, (rounds+3)/4)
+	for i, r := range sig.Rounds {
+		cBuf = append(append(append(cBuf, r.C0.Bytes()...), r.C1.Bytes()...), r.C2.Bytes()...)
+		chal[i/4] |= byte((r.B & 3) << ((i % 4) * 2))
+		rBuf = append(append(rBuf, r.RespA...), r.RespB...)
+	}
+	nDer, err := derIntSmall(n)
+	if err != nil {
+		return "", err
+	}
+	rDer, err := derIntSmall(rounds)
+	if err != nil {
+		return "", err
+	}
+	cDer, err := derIntBig(new(big.Int).SetBytes(cBuf), len(cBuf))
+	if err != nil {
+		return "", err
+	}
+	chDer, err := derIntBig(new(big.Int).SetBytes(chal), len(chal))
+	if err != nil {
+		return "", err
+	}
+	resDer, err := derIntBig(new(big.Int).SetBytes(rBuf), len(rBuf))
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(nDer, rDer, cDer, chDer, resDer)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(label, seq), nil
+}
+
+// unpackSternSigAny decodes either form: the long form's (TODO #382) in the
+// second result.
+func unpackSternSigAny(ints [][]byte) (*SternSig, *SternLSig, int, error) {
+	if len(ints) != 5 {
+		return nil, nil, 0, checkDerItemsExact(lblSig, ints, 5)
+	}
+	n := boundedSternN(wireInt(ints[0], "n", "verify"), "verify")
+	if !SternIsLong(n) {
+		sig, n2, err := unpackSternSig(ints)
+		return sig, nil, n2, err
+	}
+	rounds := bounded(wireInt(ints[1], "round count", "verify"), 1, SdfMaxRounds,
+		"round count", "verify")
+	nb := n / 8
+	cRaw := make([]byte, 3*rounds*32)
+	new(big.Int).SetBytes(ints[2]).FillBytes(cRaw)
+	chRaw := make([]byte, (rounds+3)/4)
+	new(big.Int).SetBytes(ints[3]).FillBytes(chRaw)
+	rRaw := make([]byte, 2*rounds*nb)
+	new(big.Int).SetBytes(ints[4]).FillBytes(rRaw)
+	sig := &SternLSig{Rounds: make([]SternLRound, rounds)}
+	for i := range sig.Rounds {
+		c := cRaw[i*96:]
+		sig.Rounds[i].C0 = NewFromBytes(c[0:32], 0, 256)
+		sig.Rounds[i].C1 = NewFromBytes(c[32:64], 0, 256)
+		sig.Rounds[i].C2 = NewFromBytes(c[64:96], 0, 256)
+		sig.Rounds[i].B = int((chRaw[i/4] >> ((i % 4) * 2)) & 3)
+		sig.Rounds[i].RespA = rRaw[i*2*nb : i*2*nb+nb]
+		sig.Rounds[i].RespB = rRaw[i*2*nb+nb : (i+1)*2*nb]
+	}
+	return nil, sig, n, nil
+}
+
 // unpackSternSig deserialises a *SternSig from DER-parsed integer fields.
 func unpackSternSig(ints [][]byte) (*SternSig, int, error) {
 	if len(ints) != 5 {
@@ -2727,6 +3210,36 @@ func nla1SameWidth(keyN, ctN int, ctx string) {
 }
 
 // msgPad returns inBytes truncated/zero-padded to exactly nbytes.
+// aeadFlagsOK refuses --aead / --ad on an --algo that would ignore them
+// (TODO #378).  --aead means something only to hske-nla1, --ad only to
+// hske-duplex, hske-duplex3 and hske-nla1; anywhere else the flag was dropped
+// without a word.  Presence is what counts: `--ad ''` is a flag given.
+func aeadFlagsOK(cmd, algo string, adSet, aeadSet bool) {
+	if aeadSet && algo != "hske-nla1" {
+		fmt.Fprintf(os.Stderr, "%s: --aead is only for --algo hske-nla1, not '%s'\n", cmd, algo)
+		os.Exit(1)
+	}
+	if adSet && algo != "hske-duplex" && algo != "hske-duplex3" && algo != "hske-nla1" {
+		fmt.Fprintf(os.Stderr, "%s: --ad is only for --algo hske-duplex, hske-duplex3 "+
+			"or hske-nla1, not '%s'\n", cmd, algo)
+		os.Exit(1)
+	}
+}
+
+// oneBlockOK refuses input longer than the one block a single-block --algo
+// encrypts (TODO #378); it used to be cut to its first block with exit 0.
+func oneBlockOK(algo string, inLen, nbytes int) {
+	if inLen > nbytes {
+		hint := "for longer input, encrypt a key with it and the message with --algo hske-duplex"
+		if strings.HasPrefix(algo, "hske") {
+			hint = "use --algo hske-duplex or encfile for longer input"
+		}
+		fmt.Fprintf(os.Stderr, "enc: --algo %s encrypts one %d-byte block; --in is %d bytes (%s)\n",
+			algo, nbytes, inLen, hint)
+		os.Exit(1)
+	}
+}
+
 func msgPad(inBytes []byte, nbytes int) []byte {
 	out := make([]byte, nbytes)
 	copy(out, inBytes)
@@ -3390,9 +3903,10 @@ func cmdCredIssue(args []string) {
 	in := fs.String("in", "", "User HCRED public (or private) key PEM")
 	our := fs.String("our", "", "Issuer hpks-stern/hpke-stern private key PEM")
 	out := fs.String("out", "-", "HCRED CREDENTIAL PEM output")
-	rounds := fs.Int("rounds", 0, "Stern-F rounds (default: 219 for 128-bit soundness)")
-	fs.Parse(args)
+	roundsS := fs.String("rounds", "", "Stern-F rounds (1 to 4096; default: 219 for 128-bit soundness)")
+	parseArgs(fs, args)
 	checkKeyLabels("cred-issue", fs) // TODO #366
+	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, hcredSignRounds) // TODO #380
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "cred-issue: --in (HCRED public/private key) required")
@@ -3402,7 +3916,7 @@ func cmdCredIssue(args []string) {
 		fmt.Fprintln(os.Stderr, "cred-issue: --our (hpks-stern private key) required")
 		os.Exit(1)
 	}
-	fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). Do not use for production.")
+	fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 
 	cPoly, mPoly, seedH, syndr, n, lerr := loadHcredPubinfo(*in)
 	if lerr != nil {
@@ -3418,13 +3932,22 @@ func cmdCredIssue(args []string) {
 		os.Exit(1)
 	}
 	issuerN := sternWireN(ourInts[2], "cred-issue")
+	r := rounds
+	if SternIsLong(issuerN) { // a long-form issuer key (TODO #382)
+		lsig := HcredIssueL(mPoly, cPoly, seedH, syndr, n,
+			sternLField(ourInts[0], issuerN, "e", "cred-issue"),
+			sternLField(ourInts[1], issuerN, "seed", "cred-issue"), r)
+		pem, perr := packSternLSig(lsig, issuerN, lblHcredCred)
+		if perr != nil {
+			die("cred-issue", perr)
+		}
+		if werr := writeString(*out, pem); werr != nil {
+			die("cred-issue", werr)
+		}
+		return
+	}
 	issuerE := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[0]))
 	issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[1]))
-
-	r := hcredSignRounds
-	if *rounds > 0 {
-		r = *rounds
-	}
 
 	sig := HcredIssue(mPoly, cPoly, seedH, syndr, n, issuerE, issuerSeed, r)
 	pem, perr := packSternSigLabel(sig, issuerN, lblHcredCred)
@@ -3441,9 +3964,10 @@ func cmdCredProve(args []string) {
 	in := fs.String("in", "", "User HCRED PRIVATE KEY PEM")
 	out := fs.String("out", "-", "HCRED PROOF PEM output")
 	msg := fs.String("msg", "", "Message to bind into the proof")
-	rounds := fs.Int("rounds", 0, "ZKBoo rounds (default: 219 for 128-bit soundness)")
-	fs.Parse(args)
+	roundsS := fs.String("rounds", "", "ZKBoo rounds (1 to 4096; default: 219 for 128-bit soundness)")
+	parseArgs(fs, args)
 	checkKeyLabels("cred-prove", fs) // TODO #366
+	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, 0) // TODO #380; 0 = default
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "cred-prove: --in (HCRED private key) required")
@@ -3460,8 +3984,8 @@ func cmdCredProve(args []string) {
 	}
 
 	r := hcredCliRounds
-	if *rounds > 0 {
-		r = *rounds
+	if rounds > 0 {
+		r = rounds
 	}
 
 	proof, perr := HcredProve(sPoly, mPoly, cPoly, seedH, syndr, n, r, []byte(*msg))
@@ -3482,12 +4006,13 @@ func cmdCredVerify(args []string) {
 	credPath := fs.String("cred", "", "HCRED CREDENTIAL PEM (optional; verify issuer binding)")
 	issuerPath := fs.String("issuer", "", "Issuer hpks-stern/hpke-stern public key PEM (required with --cred)")
 	msg := fs.String("msg", "", "Message bound into the proof")
-	rounds := fs.Int("rounds", 0, "Rounds to verify (default: proof's own round count)")
-	minR := fs.Int("min-rounds", cliMinVerifyRounds,
+	roundsS := fs.String("rounds", "", "Rounds to verify (1 to 4096; default: proof's own round count)")
+	minR := fs.String("min-rounds", strconv.Itoa(cliMinVerifyRounds),
 		"Refuse a proof or credential declaring fewer rounds (TODO #364)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("cred-verify", fs) // TODO #366
-	minRounds := minRoundsValue("cred-verify", *minR)
+	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, 0) // TODO #380; 0 = proof's own
+	minRounds := numFlag(fs, "min-rounds", minR, 1, SdfMaxRounds, cliMinVerifyRounds)
 
 	if *proofPath == "" {
 		fmt.Fprintln(os.Stderr, "cred-verify: --proof required")
@@ -3502,20 +4027,26 @@ func cmdCredVerify(args []string) {
 	if rerr != nil {
 		die("cred-verify", rerr)
 	}
-	proof, _, derr := decodeHcredProof(body)
+	proof, proofN, derr := decodeHcredProof(body)
 	if derr != nil {
 		die("cred-verify", derr)
 	}
 
 	requireRounds(len(proof.Rounds), minRounds, "HCRED proof", "cred-verify")
 	r := len(proof.Rounds)
-	if *rounds > 0 {
-		r = *rounds
+	if rounds > 0 {
+		r = rounds
 	}
 
 	cPoly, mPoly, seedH, syndr, pubN, lerr := loadHcredPubinfo(*pubkeyPath)
 	if lerr != nil {
 		die("cred-verify", lerr)
+	}
+	// HcredVerify indexed a narrower proof at the key's n and panicked
+	// (TODO #383 stage 3); same text in all CLIs.
+	if proofN != pubN {
+		fmt.Fprintf(os.Stderr, "cred-verify: proof n is %d, public key n is %d\n", proofN, pubN)
+		os.Exit(1)
 	}
 
 	msgBytes := []byte(*msg)
@@ -3534,11 +4065,15 @@ func cmdCredVerify(args []string) {
 		if cerr != nil {
 			die("cred-verify", cerr)
 		}
-		credSig, _, uerr := unpackSternSig(credInts)
+		credSig, credSigL, credN, uerr := unpackSternSigAny(credInts)
 		if uerr != nil {
 			die("cred-verify", uerr)
 		}
-		requireRounds(len(credSig.Rounds), minRounds, "HCRED credential", "cred-verify")
+		if credSigL != nil {
+			requireRounds(len(credSigL.Rounds), minRounds, "HCRED credential", "cred-verify")
+		} else {
+			requireRounds(len(credSig.Rounds), minRounds, "HCRED credential", "cred-verify")
+		}
 
 		issLabel, issInts, ierr := readPEMInts(*issuerPath)
 		if ierr != nil {
@@ -3549,10 +4084,20 @@ func cmdCredVerify(args []string) {
 			os.Exit(1)
 		}
 		issuerN := sternWireN(issInts[2], "cred-verify")
-		issuerSyn := new(big.Int).SetBytes(issInts[0])
-		issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(issInts[1]))
-
-		okCred := HcredCredVerify(mPoly, cPoly, seedH, syndr, pubN, credSig, issuerSeed, issuerSyn)
+		if credN != issuerN { // panicked in the Stern verifier (TODO #383 stage 3)
+			fmt.Fprintf(os.Stderr, "cred-verify: credential n is %d, issuer key n is %d\n", credN, issuerN)
+			os.Exit(1)
+		}
+		var okCred bool
+		if SternIsLong(issuerN) {
+			okCred = HcredCredVerifyL(mPoly, cPoly, seedH, syndr, pubN, credSigL,
+				sternLField(issInts[1], issuerN, "seed", "cred-verify"),
+				sternLField(issInts[0], issuerN, "syndrome", "cred-verify"))
+		} else {
+			issuerSyn := new(big.Int).SetBytes(issInts[0])
+			issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(issInts[1]))
+			okCred = HcredCredVerify(mPoly, cPoly, seedH, syndr, pubN, credSig, issuerSeed, issuerSyn)
+		}
 		if !okCred {
 			fmt.Println("Verification FAILED (credential)")
 			os.Exit(1)
@@ -3573,14 +4118,15 @@ func cmdEnc(args []string) {
 	in     := fs.String("in", "-", "Plaintext input file")
 	out    := fs.String("out", "-", "Ciphertext output PEM file")
 	aead   := fs.Bool("aead", false, "HSKE-NL-AEAD authenticated encryption (hske-nla1 only)")
-	ad     := fs.String("ad", "", "Associated data bound into the AEAD tag (requires --aead)")
-	fs.Parse(args)
+	ad     := fs.String("ad", "", "Associated data bound into the AEAD tag (hske-duplex, hske-duplex3, or hske-nla1 with --aead; refused elsewhere)")
+	parseArgs(fs, args)
 	checkKeyLabels("enc", fs) // TODO #366
 
 	if *algo == "" {
 		fmt.Fprintln(os.Stderr, "enc: --algo required")
 		os.Exit(1)
 	}
+	aeadFlagsOK("enc", *algo, isSet(fs, "ad"), isSet(fs, "aead"))
 
 	inBytes, err := readFile(*in)
 	if err != nil {
@@ -3633,6 +4179,7 @@ func cmdEnc(args []string) {
 			sym256OK(n, "enc "+*algo, "key")
 		}
 		nb := n / 8
+		oneBlockOK(*algo, len(inBytes), nb)
 		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
 		K := NewBitArray(n, keyInt)
 
@@ -3654,7 +4201,7 @@ func cmdEnc(args []string) {
 					nonce.BigInt(), new(big.Int).SetBytes(authTag))
 				break
 			}
-			if *ad != "" {
+			if isSet(fs, "ad") {
 				fmt.Fprintln(os.Stderr, "enc: --ad requires --aead")
 				os.Exit(1)
 			}
@@ -3694,6 +4241,7 @@ func cmdEnc(args []string) {
 			die("enc", errors.New("public key is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
 		}
 		nb := n / 8
+		oneBlockOK(*algo, len(inBytes), nb)
 		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
 		// r is ours to choose, so for hpke-nl resample past the ~2^-96 short-arc
 		// weak-key class (TODO #168, #354) rather than failing an honest encryption.
@@ -3735,7 +4283,7 @@ func cmdEnc(args []string) {
 		}
 
 	case "hpke-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 		if *pubkey == "" {
 			fmt.Fprintln(os.Stderr, "enc: --pubkey required for hpke-stern")
 			os.Exit(1)
@@ -3745,12 +4293,25 @@ func cmdEnc(args []string) {
 			die("enc", err)
 		}
 		n    := sternWireN(theirInts[2], "enc")
-		seed := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
-		nb   := n / 8
-		P    := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
-		K, ctSyn, ePrime := HpkeSternFEncap(seed, n)
-		E := FscxRevolve(P, K, n/4)
-		pem, err := encodeSternCT(ctSyn, ePrime, K, E.BigInt(), n)
+		w    := n // the payload block: 256 bits above 256 (TODO #382)
+		if SternIsLong(n) {
+			w = 256
+		}
+		nb   := w / 8
+		oneBlockOK(*algo, len(inBytes), nb)
+		P    := NewBitArray(w, new(big.Int).SetBytes(msgPad(inBytes, nb)))
+		var pem string
+		if SternIsLong(n) {
+			K, ct, eP := HpkeSternLEncap(sternLField(theirInts[1], n, "seed", "enc"))
+			E := FscxRevolve(P, K, w/4)
+			pem, err = encodeSternCTInts(new(big.Int).SetBytes(ct), new(big.Int).SetBytes(eP),
+				K.BigInt(), E.BigInt(), n)
+		} else {
+			seed := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
+			K, ctSyn, ePrime := HpkeSternFEncap(seed, n)
+			E := FscxRevolve(P, K, n/4)
+			pem, err = encodeSternCT(ctSyn, ePrime, K, E.BigInt(), n)
+		}
 		if err != nil {
 			die("enc", err)
 		}
@@ -3768,6 +4329,7 @@ func cmdEnc(args []string) {
 			die("enc", err)
 		}
 		hPub := decodeKemPub(theirInts)
+		oneBlockOK(*algo, len(inBytes), 32)
 		P := NewBitArray(256, new(big.Int).SetBytes(msgPad(inBytes, 32)))
 		syn, K := QcMdpcEncap(hPub, nil)
 		Kba := NewBitArray(256, new(big.Int).SetBytes(K))
@@ -3794,14 +4356,15 @@ func cmdDec(args []string) {
 	key  := fs.String("key", "", "Key or private key file")
 	in   := fs.String("in", "-", "Ciphertext PEM input file")
 	out  := fs.String("out", "-", "Plaintext output file")
-	ad   := fs.String("ad", "", "Associated data for AEAD ciphertexts (must match enc --ad)")
-	fs.Parse(args)
+	ad   := fs.String("ad", "", "Associated data for AEAD ciphertexts (must match enc --ad; refused on algos without AEAD)")
+	parseArgs(fs, args)
 	checkKeyLabels("dec", fs) // TODO #366
 
 	if *algo == "" {
 		fmt.Fprintln(os.Stderr, "dec: --algo required")
 		os.Exit(1)
 	}
+	aeadFlagsOK("dec", *algo, isSet(fs, "ad"), false)
 
 	switch *algo {
 	case "hske-duplex", "hske-duplex3":
@@ -3948,6 +4511,12 @@ func cmdDec(args []string) {
 		case "hske":
 			D = FscxRevolve(E, K, 3*n/4)
 		case "hske-nla1":
+			// TODO #378: format tag 1 has no tag to bind associated data to.
+			if isSet(fs, "ad") {
+				fmt.Fprintln(os.Stderr, "dec: --ad given, but this hske-nla1 ciphertext "+
+					"is not an AEAD one (it has no tag to bind it to)")
+				os.Exit(1)
+			}
 			if nonceInt == nil {
 				fmt.Fprintln(os.Stderr, "dec: hske-nla1 ciphertext missing nonce")
 				os.Exit(1)
@@ -3984,6 +4553,10 @@ func cmdDec(args []string) {
 			die("dec", err)
 		}
 		n    := gfWidth(bytesToInt(ourInts[2]), "dec")
+		// TODO #383: a ciphertext at another width is refused
+		if cn := new(big.Int).SetBytes(ctInts[len(ctInts)-1]); !cn.IsInt64() || cn.Int64() != int64(n) {
+			die("dec", fmt.Errorf("ciphertext n is %s, private key n is %d", cn, n))
+		}
 		priv := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		R    := NewBitArray(n, new(big.Int).SetBytes(ctInts[0]))
 		if !GfPubIsValid(R) {
@@ -4010,7 +4583,7 @@ func cmdDec(args []string) {
 		}
 
 	case "hpke-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 		if *key == "" {
 			fmt.Fprintln(os.Stderr, "dec: --key required for hpke-stern")
 			os.Exit(1)
@@ -4027,12 +4600,25 @@ func cmdDec(args []string) {
 			die("dec", checkDerItemsExact(lblCT, ctInts, 5))
 		}
 		n       := sternWireN(ourInts[2], "dec")
-		seed    := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
-		ePrime  := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
+		// TODO #383 stage 2: a ciphertext of another width was reduced into
+		// the key's and decrypted to garbage with exit 0
+		if cn := new(big.Int).SetBytes(ctInts[4]); !cn.IsInt64() || cn.Int64() != int64(n) {
+			die("dec", fmt.Errorf("ciphertext n is %s, private key n is %d", cn, n))
+		}
 		EInt    := new(big.Int).SetBytes(ctInts[3])
-		K_dec   := HpkeSternFDecapKnown(ePrime, seed)
-		E       := NewBitArray(n, EInt)
-		D       := FscxRevolve(E, K_dec, 3*n/4)
+		var K_dec *BitArray
+		w := n
+		if SternIsLong(n) { // the long form (TODO #382): K and the block are 256 bits
+			w = 256
+			K_dec = HpkeSternLDecapKnown(sternLField(ctInts[1], n, "e'", "dec"),
+				sternLField(ourInts[1], n, "seed", "dec"))
+		} else {
+			seed   := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
+			ePrime := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
+			K_dec = HpkeSternFDecapKnown(ePrime, seed)
+		}
+		E       := NewBitArray(w, EInt)
+		D       := FscxRevolve(E, K_dec, 3*w/4)
 		if err := writeBytes(*out, D.Bytes()); err != nil {
 			die("dec", err)
 		}
@@ -4078,11 +4664,14 @@ func cmdSign(args []string) {
 	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	out    := fs.String("out", "-", "Signature PEM output file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
-	rounds := fs.Int("rounds", 0, "ZKP/Stern-F rounds (nl-zkboo, nl-zkbpp, hpks-stern, hpks-ring; "+
+	roundsS := fs.String("rounds", "", "ZKP/Stern-F rounds, 1 to 4096 (nl-zkboo, nl-zkbpp, hpks-stern, hpks-ring; "+
 		"default: 219, the 128-bit count every verifier requires unless it passes "+
 		"--min-rounds; TODO #364)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("sign", fs) // TODO #366
+	// TODO #380: an explicit 0 used to read as omitted (219), and 5000 signed
+	// a signature every verifier refuses.  0 here means "not given".
+	rounds := numFlag(fs, "rounds", roundsS, 1, SdfMaxRounds, 0)
 	digestValue("sign", digest)
 
 	if *algo == "" || *key == "" {
@@ -4099,14 +4688,14 @@ func cmdSign(args []string) {
 	}
 
 	zkpRounds := ZkpNlProdRounds
-	if *rounds > 0 {
-		zkpRounds = *rounds
+	if rounds > 0 {
+		zkpRounds = rounds
 	}
 	// The CLI default is the 128-bit count, not the suite's SdfRounds demo
 	// value: verifiers refuse fewer unless asked (TODO #364).
 	sternRounds := SdfProductionRounds
-	if *rounds > 0 {
-		sternRounds = *rounds
+	if rounds > 0 {
+		sternRounds = rounds
 	}
 
 	// ZKP-NL: raw binary PEM — must not call readPEMInts
@@ -4206,13 +4795,20 @@ func cmdSign(args []string) {
 		}
 
 	case "hpks-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 		n    := sternWireN(ourInts[2], "sign")
-		e    := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
-		seed := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
-		msg  := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
-		sig  := HpksSternFSign(msg, e, seed, sternRounds)
-		pem, err := packSternSig(sig, n)
+		msg  := sternMsg(inBytes, n)
+		var pem string
+		if SternIsLong(n) {
+			lsig := HpksSternLSign(msg, sternLField(ourInts[0], n, "e", "sign"),
+				sternLField(ourInts[1], n, "seed", "sign"), sternRounds)
+			pem, err = packSternLSig(lsig, n, lblSig)
+		} else {
+			e    := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
+			seed := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
+			sig  := HpksSternFSign(msg, e, seed, sternRounds)
+			pem, err = packSternSig(sig, n)
+		}
 		if err != nil {
 			die("sign", err)
 		}
@@ -4221,15 +4817,14 @@ func cmdSign(args []string) {
 		}
 
 	case "hpks-ring":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 		if *ring == "" {
 			fmt.Fprintln(os.Stderr, "hpks-ring sign: --ring (comma-separated member public keys) required")
 			os.Exit(1)
 		}
 		n := sternWireN(ourInts[2], "sign")
-		e := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		signerSeed := new(big.Int).SetBytes(ourInts[1])
-		ringKeys, ringN := loadRingPubkeys(*ring)
+		ringKeys, ringKeysL, ringN := loadRingPubkeysAny(*ring)
 		if ringN != n {
 			fmt.Fprintf(os.Stderr, "hpks-ring sign: signer n=%d != ring n=%d\n", n, ringN)
 			os.Exit(1)
@@ -4237,6 +4832,12 @@ func cmdSign(args []string) {
 		j := -1
 		for idx := range ringKeys {
 			if ringKeys[idx].Seed.BigInt().Cmp(signerSeed) == 0 {
+				j = idx
+				break
+			}
+		}
+		for idx := range ringKeysL {
+			if new(big.Int).SetBytes(ringKeysL[idx].Seed).Cmp(signerSeed) == 0 {
 				j = idx
 				break
 			}
@@ -4249,19 +4850,27 @@ func cmdSign(args []string) {
 		// TODO #272: ringMaxK bounds the READER in every CLI (TODO #240), but
 		// only C's writer enforced it, so Go signed rings that every verifier
 		// -- Go's included -- then refused.
-		if len(ringKeys) > ringMaxK {
+		if len(ringKeys)+len(ringKeysL) > ringMaxK {
 			fmt.Fprintf(os.Stderr, "hpks-ring sign: ring has %d members, at most %d "+
 				"supported (a larger ring produces a signature no CLI will verify)\n",
-				len(ringKeys), ringMaxK)
+				len(ringKeys)+len(ringKeysL), ringMaxK)
 			os.Exit(1)
 		}
-		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
-		sig := HpksSternRingSign(msg, e, j, ringKeys, sternRounds)
-		pem := encodeRingSig(sig, n)
+		msg := sternMsg(inBytes, n)
+		var pem string
+		if SternIsLong(n) {
+			lsig := HpksSternLRingSign(msg, sternLField(ourInts[0], n, "e", "sign"), j,
+				ringKeysL, sternRounds)
+			pem = encodeRingSigL(lsig, n)
+		} else {
+			e := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
+			sig := HpksSternRingSign(msg, e, j, ringKeys, sternRounds)
+			pem = encodeRingSig(sig, n)
+		}
 		if err := writeString(*out, pem); err != nil {
 			die("sign", err)
 		}
-		fmt.Fprintf(os.Stderr, "Ring signature created (k=%d); signer index is hidden.\n", len(ringKeys))
+		fmt.Fprintf(os.Stderr, "Ring signature created (k=%d); signer index is hidden.\n", len(ringKeys)+len(ringKeysL))
 
 	case "hpks-wots":
 		if wotsIsUsed(*key) {
@@ -4355,12 +4964,12 @@ func cmdVerify(args []string) {
 	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
 	sig    := fs.String("sig", "", "Signature PEM file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
-	minR   := fs.Int("min-rounds", cliMinVerifyRounds,
+	minR   := fs.String("min-rounds", strconv.Itoa(cliMinVerifyRounds),
 		"Refuse hpks-stern/hpks-ring/nl-zkboo/nl-zkbpp artifacts declaring fewer rounds (TODO #364)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("verify", fs) // TODO #366
 	digestValue("verify", digest)
-	minRounds := minRoundsValue("verify", *minR)
+	minRounds := numFlag(fs, "min-rounds", minR, 1, SdfMaxRounds, cliMinVerifyRounds) // TODO #380
 
 	if *algo == "" || *sig == "" {
 		fmt.Fprintln(os.Stderr, "verify: --algo and --sig required")
@@ -4385,20 +4994,32 @@ func cmdVerify(args []string) {
 			fmt.Fprintln(os.Stderr, "hpks-ring verify: --ring (comma-separated member public keys) required")
 			os.Exit(1)
 		}
-		ringKeys, n := loadRingPubkeys(*ring)
-		rsig, sigN := decodeRingSig(*sig)
-		requireRounds(rsig.Rounds, minRounds, "hpks-ring signature", "verify")
+		ringKeys, ringKeysL, n := loadRingPubkeysAny(*ring)
+		rsig, rsigL, sigN := decodeRingSigAny(*sig)
+		sigK, sigRounds := 0, 0
+		if rsigL != nil {
+			sigK, sigRounds = rsigL.K, rsigL.Rounds
+		} else {
+			sigK, sigRounds = rsig.K, rsig.Rounds
+		}
+		requireRounds(sigRounds, minRounds, "hpks-ring signature", "verify")
 		if sigN != n {
 			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sigN, n)
 			os.Exit(1)
 		}
-		if rsig.K != len(ringKeys) {
+		if sigK != len(ringKeys)+len(ringKeysL) {
 			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature ring size %d != %d provided members\n",
-				rsig.K, len(ringKeys))
+				sigK, len(ringKeys)+len(ringKeysL))
 			os.Exit(1)
 		}
-		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
-		if HpksSternRingVerify(msg, rsig, ringKeys) {
+		msg := sternMsg(inBytes, n)
+		var ok bool
+		if rsigL != nil {
+			ok = HpksSternLRingVerify(msg, rsigL, ringKeysL)
+		} else {
+			ok = HpksSternRingVerify(msg, rsig, ringKeys)
+		}
+		if ok {
 			fmt.Println("Signature OK")
 			os.Exit(0)
 		}
@@ -4567,22 +5188,37 @@ func cmdVerify(args []string) {
 		os.Exit(0)
 
 	case "hpks-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
-		synInt  := new(big.Int).SetBytes(theirInts[0])
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
 		n       := sternWireN(theirInts[2], "verify")
-		seed    := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
-		msg     := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
+		msg     := sternMsg(inBytes, n)
 
 		_, sigInts, err := readPEMInts(*sig)
 		if err != nil {
 			die("verify", err)
 		}
-		sternSig, _, err := unpackSternSig(sigInts)
+		sternSig, sternSigL, sigN, err := unpackSternSigAny(sigInts)
 		if err != nil {
 			die("verify", err)
 		}
-		requireRounds(len(sternSig.Rounds), minRounds, "hpks-stern signature", "verify")
-		if HpksSternFVerify(msg, sternSig, seed, synInt) {
+		if sternSigL != nil {
+			requireRounds(len(sternSigL.Rounds), minRounds, "hpks-stern signature", "verify")
+		} else {
+			requireRounds(len(sternSig.Rounds), minRounds, "hpks-stern signature", "verify")
+		}
+		// TODO #383 stage 2: a signature of another width panicked in SternHash
+		if sigN != n {
+			die("verify", fmt.Errorf("signature n is %d, public key n is %d", sigN, n))
+		}
+		var ok bool
+		if sternSigL != nil {
+			ok = HpksSternLVerify(msg, sternSigL, sternLField(theirInts[1], n, "seed", "verify"),
+				sternLField(theirInts[0], n, "syndrome", "verify"))
+		} else {
+			synInt := new(big.Int).SetBytes(theirInts[0])
+			seed   := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
+			ok = HpksSternFVerify(msg, sternSig, seed, synInt)
+		}
+		if ok {
 			fmt.Println("Signature OK")
 			os.Exit(0)
 		} else {
@@ -4667,7 +5303,7 @@ func cmdEncfile(args []string) {
 	key  := fs.String("key", "", "Session key file")
 	in   := fs.String("in", "-", "Plaintext input file")
 	out  := fs.String("out", "-", "Output .hkx file")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	if *algo != "hske-nla1" {
 		fmt.Fprintf(os.Stderr, "encfile: unsupported algorithm %q\n", *algo)
@@ -4750,7 +5386,7 @@ func cmdDecfile(args []string) {
 	key  := fs.String("key", "", "Session key file")
 	in   := fs.String("in", "-", "Input .hkx file")
 	out  := fs.String("out", "-", "Plaintext output file")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
 	if *algo != "hske-nla1" {
 		fmt.Fprintf(os.Stderr, "decfile: unsupported algorithm %q\n", *algo)
@@ -4856,20 +5492,33 @@ func cmdDecfile(args []string) {
 
 // ── fpe (78.A) ───────────────────────────────────────────────────────────────
 
+// block32OK — TODO #377: fpe / twk map exactly one 32-byte block.  Longer input
+// used to be cut to its first 32 bytes (exit 0, nothing round-tripped), and
+// shorter input went through big.Int.SetBytes, which pads on the LEFT where
+// Python, C and Java pad on the right, so Go's ciphertext differed from theirs.
+// Any other length is now refused rather than reshaped.
+func block32OK(cmd string, data []byte) {
+	if len(data) != 32 {
+		fmt.Fprintf(os.Stderr, "%s: --in must be exactly 32 bytes (one block), got %d\n", cmd, len(data))
+		os.Exit(1)
+	}
+}
+
 func cmdFpe(args []string) {
 	fs      := flag.NewFlagSet("fpe", flag.ExitOnError)
 	keyPath := fs.String("key",     "",  "Session key PEM")
 	ctx     := fs.String("context", "",  "Context string (tweak)")
-	in      := fs.String("in",      "-", "Input file (32-byte block)")
+	in      := fs.String("in",      "-", "Input file (exactly 32 bytes)")
 	out     := fs.String("out",     "-", "Output file")
 	doEnc   := fs.Bool("encrypt",   false, "Encrypt")
 	doDec   := fs.Bool("decrypt",   false, "Decrypt")
 	v3      := fs.Bool("v3", false, "Use the NL-FSCX v3 round (TODO #255) "+
 		"instead of v2.  Separate subkey domain; decrypt with --v3 too.")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
-	if !*doEnc && !*doDec {
-		fmt.Fprintln(os.Stderr, "fpe: --encrypt or --decrypt required")
+	// TODO #377: both mode flags used to encrypt; Python and Java refused.
+	if *doEnc == *doDec {
+		fmt.Fprintln(os.Stderr, "fpe: exactly one of --encrypt or --decrypt required")
 		os.Exit(1)
 	}
 	if *keyPath == "" {
@@ -4887,6 +5536,7 @@ func cmdFpe(args []string) {
 	if err != nil {
 		die("fpe", err)
 	}
+	block32OK("fpe", data)
 	P := NewBitArray(256, new(big.Int).SetBytes(data))
 
 	var R *BitArray
@@ -4907,27 +5557,75 @@ func cmdFpe(args []string) {
 
 // ── twk (78.B) ───────────────────────────────────────────────────────────────
 
+// decRangeArg is THE numeric-flag parser (TODO #375, #380): a decimal integer
+// in [lo, hi], digits only (no sign, space, 0x, _ or exponent), refused by name
+// otherwise.  flag.Int took 0x10 as 16 and could not tell an explicit 0 from an
+// omitted flag; every numeric flag is now an fs.String read through this, with
+// the message the other three CLIs print.
+func decRangeArg(s string, lo, hi uint64, cmd, flagName string) uint64 {
+	ok := s != ""
+	for i := 0; ok && i < len(s); i++ {
+		ok = s[i] >= '0' && s[i] <= '9'
+	}
+	v, err := strconv.ParseUint(s, 10, 64)
+	if !ok || err != nil || v < lo || v > hi {
+		fmt.Fprintf(os.Stderr, "%s: %s must be a decimal integer from %d to %d, got '%s'\n",
+			cmd, flagName, lo, hi, s)
+		os.Exit(1)
+	}
+	return v
+}
+
+// numFlag returns the named string flag through decRangeArg, or deflt when the
+// flag was not given.
+func numFlag(fs *flag.FlagSet, name string, val *string, lo, hi uint64, deflt int) int {
+	if !isSet(fs, name) {
+		return deflt
+	}
+	v := decRangeArg(*val, lo, hi, fs.Name(), "--"+name)
+	// TODO #394: every caller's hi is far below 2^31, so this never fires; it
+	// is the bound check that makes the int conversion visibly safe (CodeQL
+	// go/incorrect-integer-conversion) on a 32-bit int too.
+	if v > math.MaxInt32 {
+		fmt.Fprintf(os.Stderr, "%s: --%s: internal error: bound %d exceeds int32\n",
+			fs.Name(), name, hi)
+		os.Exit(2)
+	}
+	return int(v)
+}
+
 func cmdTwk(args []string) {
 	fs      := flag.NewFlagSet("twk", flag.ExitOnError)
 	keyPath := fs.String("key",     "",  "Session key PEM")
-	sector  := fs.Uint64("sector",  0,   "Sector number")
-	bidx    := fs.Uint("bidx",      0,   "Block index within sector")
-	in      := fs.String("in",      "-", "Input file (32-byte block)")
+	sector  := fs.String("sector",  "0", "Sector number (decimal, 0 to 2^64-1)")
+	bidx    := fs.String("bidx",    "0", "Block index within sector (decimal, 0 to 2^32-1)")
+	in      := fs.String("in",      "-", "Input file (exactly 32 bytes)")
 	out     := fs.String("out",     "-", "Output file")
 	doEnc   := fs.Bool("encrypt",   false, "Encrypt")
 	doDec   := fs.Bool("decrypt",   false, "Decrypt")
 	v3      := fs.Bool("v3", false, "Use the NL-FSCX v3 round (TODO #255) "+
 		"instead of v2.  Separate subkey domain; decrypt with --v3 too.")
-	fs.Parse(args)
+	parseArgs(fs, args)
 
-	if !*doEnc && !*doDec {
-		fmt.Fprintln(os.Stderr, "twk: --encrypt or --decrypt required")
+	// TODO #377: both mode flags used to encrypt; Python and Java refused.
+	if *doEnc == *doDec {
+		fmt.Fprintln(os.Stderr, "twk: exactly one of --encrypt or --decrypt required")
 		os.Exit(1)
 	}
 	if *keyPath == "" {
 		fmt.Fprintln(os.Stderr, "twk: --key required")
 		os.Exit(1)
 	}
+	// TODO #375: the tweak is sector_be64 || bidx_be32.  fs.Uint then
+	// uint32(*bidx) wrapped --bidx mod 2^32, so --bidx 4294967296 encrypted
+	// under block 0's tweak; flag.Uint also read 0x10 as 16.
+	sectorV := decRangeArg(*sector, 0, math.MaxUint64, "twk", "--sector")
+	bidxU := decRangeArg(*bidx, 0, math.MaxUint32, "twk", "--bidx")
+	if bidxU > math.MaxUint32 { // TODO #394: unreachable; states the bound at the conversion
+		fmt.Fprintln(os.Stderr, "twk: --bidx: internal error: exceeds 2^32-1")
+		os.Exit(2)
+	}
+	bidxV := uint32(bidxU)
 	keyBig, keyBits, err := loadKey(*keyPath)
 	if err != nil {
 		die("twk", err)
@@ -4939,18 +5637,19 @@ func cmdTwk(args []string) {
 	if err != nil {
 		die("twk", err)
 	}
+	block32OK("twk", data)
 	P := NewBitArray(256, new(big.Int).SetBytes(data))
 
 	var R *BitArray
 	switch {
 	case *doEnc && *v3:
-		R = TwkV3Encrypt(P, K.Bytes(), *sector, uint32(*bidx))
+		R = TwkV3Encrypt(P, K.Bytes(), sectorV, bidxV)
 	case *doEnc:
-		R = TwkEncrypt(P, K.Bytes(), *sector, uint32(*bidx))
+		R = TwkEncrypt(P, K.Bytes(), sectorV, bidxV)
 	case *v3:
-		R = TwkV3Decrypt(P, K.Bytes(), *sector, uint32(*bidx))
+		R = TwkV3Decrypt(P, K.Bytes(), sectorV, bidxV)
 	default:
-		R = TwkDecrypt(P, K.Bytes(), *sector, uint32(*bidx))
+		R = TwkDecrypt(P, K.Bytes(), sectorV, bidxV)
 	}
 	if err := writeBytes(*out, R.Bytes()); err != nil {
 		die("twk", err)
@@ -4959,35 +5658,79 @@ func cmdTwk(args []string) {
 
 // ── oprf-blind / oprf-eval / oprf-unblind  (TODO #80) ────────────────────────
 
+// oprfWire loads one of the OPRF's three artifacts (TODO #385): it checks the
+// label, reads the width from item nIdx (32, 64, 128 or 256) and holds every
+// other item to n bits.  The item count is already checked by readPEMInts.
+func oprfWire(where, path, label, what string, nIdx int) ([]*big.Int, int) {
+	got, ints, err := readPEMInts(path)
+	if err != nil {
+		die(where, err)
+	}
+	if got != label {
+		fmt.Fprintf(os.Stderr, "%s: expected %s PEM, got %q\n", where, what, got)
+		os.Exit(1)
+	}
+	if len(ints) <= nIdx {
+		fmt.Fprintf(os.Stderr, "%s: malformed %s PEM\n", where, what)
+		os.Exit(1)
+	}
+	n := gfWidth(wireInt(ints[nIdx], "n", label), label)
+	vals := make([]*big.Int, nIdx)
+	for i := 0; i < nIdx; i++ {
+		vals[i] = new(big.Int).SetBytes(fitBytes(ints[i], n/8, "field", label))
+	}
+	return vals, n
+}
+
+// oprfDer writes the values at n/8 bytes each, then n, as one DER SEQUENCE.
+func oprfDer(where string, n int, vals ...*big.Int) []byte {
+	items := make([][]byte, 0, len(vals)+1)
+	for _, v := range vals {
+		d, e := derIntBig(v, n/8)
+		if e != nil {
+			fmt.Fprintf(os.Stderr, "%s: DER encode error\n", where)
+			os.Exit(1)
+		}
+		items = append(items, d)
+	}
+	nDer, e := derIntSmall(n)
+	if e != nil {
+		fmt.Fprintf(os.Stderr, "%s: DER encode error\n", where)
+		os.Exit(1)
+	}
+	seq, e := DerSeqEnc(append(items, nDer)...)
+	if e != nil {
+		die(where, e)
+	}
+	return seq
+}
+
 func cmdOprfBlind(args []string) {
 	fs    := flag.NewFlagSet("oprf-blind", flag.ExitOnError)
 	inF   := fs.String("in", "", "Input bytes file (- for stdin)")
+	bitsF := fs.Int("bits", 256, "GF(2^n) width: 32, 64, 128 or 256; the server key's n (TODO #385)")
 	outF  := fs.String("out", "-", "Output OPRF CLIENT STATE PEM")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	if *inF == "" {
 		fmt.Fprintln(os.Stderr, "oprf-blind: --in required")
+		os.Exit(1)
+	}
+	n := *bitsF
+	switch n {
+	case 32, 64, 128, 256:
+	default:
+		fmt.Fprintf(os.Stderr, "oprf-blind: --bits must be 32, 64, 128 or 256, got %d\n", n)
 		os.Exit(1)
 	}
 	data, err := readFile(*inF)
 	if err != nil {
 		die("oprf-blind", err)
 	}
-	r, alpha, err := OprfBlind(data, 256)
+	r, alpha, err := OprfBlind(data, n)
 	if err != nil {
 		die("oprf-blind", err)
 	}
-	rDer, e1    := derIntBig(r, 32)
-	aDer, e2    := derIntBig(alpha, 32)
-	nDer, e3    := derIntSmall(256)
-	if e1 != nil || e2 != nil || e3 != nil {
-		fmt.Fprintln(os.Stderr, "oprf-blind: DER encode error")
-		os.Exit(1)
-	}
-	seq, e4 := DerSeqEnc(rDer, aDer, nDer)
-	if e4 != nil {
-		die("oprf-blind", e4)
-	}
-	if err := writeString(*outF, PemWrap(lblOprfState, seq)); err != nil {
+	if err := writeString(*outF, PemWrap(lblOprfState, oprfDer("oprf-blind", n, r, alpha))); err != nil {
 		die("oprf-blind", err)
 	}
 }
@@ -4997,7 +5740,7 @@ func cmdOprfEval(args []string) {
 	keyF  := fs.String("key", "", "OPRF PRIVATE KEY PEM (server key)")
 	inF   := fs.String("in", "", "OPRF CLIENT STATE PEM")
 	outF  := fs.String("out", "-", "Output OPRF EVALUATION PEM")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("oprf-eval", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "oprf-eval: --key required")
@@ -5007,48 +5750,16 @@ func cmdOprfEval(args []string) {
 		fmt.Fprintln(os.Stderr, "oprf-eval: --in required")
 		os.Exit(1)
 	}
-	/* Load server key: SEQUENCE(INTEGER(k), INTEGER(256)) */
-	kLabel, kInts, err := readPEMInts(*keyF)
-	if err != nil {
-		die("oprf-eval", err)
-	}
-	if kLabel != lblOprfPriv {
-		fmt.Fprintf(os.Stderr, "oprf-eval: expected OPRF PRIVATE KEY PEM, got %q\n", kLabel)
+	/* Server key: SEQUENCE(INTEGER(k), INTEGER(n)) */
+	kv, kn := oprfWire("oprf-eval", *keyF, lblOprfPriv, "OPRF PRIVATE KEY", 1)
+	/* CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(n)) */
+	sv, sn := oprfWire("oprf-eval", *inF, lblOprfState, "OPRF CLIENT STATE", 2)
+	if sn != kn {
+		fmt.Fprintf(os.Stderr, "oprf-eval: client state n is %d, key n is %d\n", sn, kn)
 		os.Exit(1)
 	}
-	if len(kInts) < 1 {
-		fmt.Fprintln(os.Stderr, "oprf-eval: malformed OPRF private key")
-		os.Exit(1)
-	}
-	k := new(big.Int).SetBytes(kInts[0])
-
-	/* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
-	sLabel, sInts, err := readPEMInts(*inF)
-	if err != nil {
-		die("oprf-eval", err)
-	}
-	if sLabel != lblOprfState {
-		fmt.Fprintf(os.Stderr, "oprf-eval: expected OPRF CLIENT STATE PEM, got %q\n", sLabel)
-		os.Exit(1)
-	}
-	if len(sInts) < 2 {
-		fmt.Fprintln(os.Stderr, "oprf-eval: malformed CLIENT STATE PEM")
-		os.Exit(1)
-	}
-	alpha := new(big.Int).SetBytes(sInts[1])
-
-	beta := OprfEval(alpha, k, 256)
-	bDer, e1 := derIntBig(beta, 32)
-	nDer, e2 := derIntSmall(256)
-	if e1 != nil || e2 != nil {
-		fmt.Fprintln(os.Stderr, "oprf-eval: DER encode error")
-		os.Exit(1)
-	}
-	seq, e3 := DerSeqEnc(bDer, nDer)
-	if e3 != nil {
-		die("oprf-eval", e3)
-	}
-	if err := writeString(*outF, PemWrap(lblOprfEval, seq)); err != nil {
+	beta := OprfEval(sv[1], kv[0], kn)
+	if err := writeString(*outF, PemWrap(lblOprfEval, oprfDer("oprf-eval", kn, beta))); err != nil {
 		die("oprf-eval", err)
 	}
 }
@@ -5058,7 +5769,7 @@ func cmdOprfUnblind(args []string) {
 	stateF := fs.String("state", "", "OPRF CLIENT STATE PEM")
 	evalF  := fs.String("eval",  "", "OPRF EVALUATION PEM")
 	outF   := fs.String("out", "-", "Output PRF hex")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	if *stateF == "" {
 		fmt.Fprintln(os.Stderr, "oprf-unblind: --state required")
 		os.Exit(1)
@@ -5067,38 +5778,14 @@ func cmdOprfUnblind(args []string) {
 		fmt.Fprintln(os.Stderr, "oprf-unblind: --eval required")
 		os.Exit(1)
 	}
-	/* CLIENT STATE: (r, alpha, nbits) */
-	sLabel, sInts, err := readPEMInts(*stateF)
-	if err != nil {
-		die("oprf-unblind", err)
-	}
-	if sLabel != lblOprfState {
-		fmt.Fprintf(os.Stderr, "oprf-unblind: expected OPRF CLIENT STATE PEM, got %q\n", sLabel)
+	sv, sn := oprfWire("oprf-unblind", *stateF, lblOprfState, "OPRF CLIENT STATE", 2)
+	ev, en := oprfWire("oprf-unblind", *evalF, lblOprfEval, "OPRF EVALUATION", 1)
+	if en != sn {
+		fmt.Fprintf(os.Stderr, "oprf-unblind: evaluation n is %d, client state n is %d\n", en, sn)
 		os.Exit(1)
 	}
-	if len(sInts) < 1 {
-		fmt.Fprintln(os.Stderr, "oprf-unblind: malformed CLIENT STATE PEM")
-		os.Exit(1)
-	}
-	r := new(big.Int).SetBytes(sInts[0])
-
-	/* EVALUATION: (beta, nbits) */
-	eLabel, eInts, err := readPEMInts(*evalF)
-	if err != nil {
-		die("oprf-unblind", err)
-	}
-	if eLabel != lblOprfEval {
-		fmt.Fprintf(os.Stderr, "oprf-unblind: expected OPRF EVALUATION PEM, got %q\n", eLabel)
-		os.Exit(1)
-	}
-	if len(eInts) < 1 {
-		fmt.Fprintln(os.Stderr, "oprf-unblind: malformed EVALUATION PEM")
-		os.Exit(1)
-	}
-	beta := new(big.Int).SetBytes(eInts[0])
-
-	F := OprfUnblind(beta, r, 256)
-	hex := fmt.Sprintf("%064x\n", F)
+	F := OprfUnblind(ev[0], sv[0], sn)
+	hex := fmt.Sprintf("%0*x\n", sn/4, F)
 	if err := writeString(*outF, hex); err != nil {
 		die("oprf-unblind", err)
 	}
@@ -5107,30 +5794,28 @@ func cmdOprfUnblind(args []string) {
 func cmdPakeRegister(args []string) {
 	fs    := flag.NewFlagSet("pake-register", flag.ExitOnError)
 	keyF  := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
-	pwF   := fs.String("password", "", "Password (default: demo-password)")
+	pwF   := fs.String("password", "", "Password to register (required, non-empty)")
 	outF  := fs.String("out",      "-", "Output PAKE RECORD PEM")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("pake-register", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-register: --key required")
 		os.Exit(1)
 	}
-	kLabel, kInts, err := readPEMInts(*keyF)
-	if err != nil { die("pake-register", err) }
-	if kLabel != lblOprfPriv {
-		fmt.Fprintf(os.Stderr, "pake-register: expected OPRF PRIVATE KEY PEM, got %q\n", kLabel)
+	// TODO #376: a record is never written under a password nobody chose.
+	// Before #376 an omitted or empty --password registered "demo-password".
+	if !isSet(fs, "password") {
+		fmt.Fprintln(os.Stderr, "pake-register: --password required")
 		os.Exit(1)
 	}
-	if len(kInts) < 1 {
-		fmt.Fprintln(os.Stderr, "pake-register: malformed OPRF private key")
+	if *pwF == "" {
+		fmt.Fprintln(os.Stderr, "pake-register: --password must not be empty")
 		os.Exit(1)
 	}
-	oprfKey := new(big.Int).SetBytes(kInts[0])
+	kv, kn := oprfWire("pake-register", *keyF, lblOprfPriv, "OPRF PRIVATE KEY", 1)
+	oprfKey := kv[0]
 	pw := []byte(*pwF)
-	if len(pw) == 0 {
-		pw = []byte("demo-password")
-	}
-	rec, err := HpakeRegister(pw, oprfKey)
+	rec, err := HpakeRegister(pw, oprfKey, kn)
 	if err != nil { die("pake-register", err) }
 
 	/* Encode: SEQUENCE(INTEGER(salt,32), INTEGER(B,4), INTEGER(y,4)) */
@@ -5154,29 +5839,25 @@ func cmdPakeDemo(args []string) {
 	fs   := flag.NewFlagSet("pake-demo", flag.ExitOnError)
 	keyF := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
 	pwF  := fs.String("password", "demo-password", "Password")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("pake-demo", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-demo: --key required")
 		os.Exit(1)
 	}
-	kLabel, kInts, err := readPEMInts(*keyF)
-	if err != nil { die("pake-demo", err) }
-	if kLabel != lblOprfPriv {
-		fmt.Fprintf(os.Stderr, "pake-demo: expected OPRF PRIVATE KEY PEM, got %q\n", kLabel)
+	// TODO #376: omitted, the demo uses "demo-password"; given, it must be one.
+	if *pwF == "" {
+		fmt.Fprintln(os.Stderr, "pake-demo: --password must not be empty")
 		os.Exit(1)
 	}
-	if len(kInts) < 1 {
-		fmt.Fprintln(os.Stderr, "pake-demo: malformed OPRF private key")
-		os.Exit(1)
-	}
-	oprfKey := new(big.Int).SetBytes(kInts[0])
+	kv, kn := oprfWire("pake-demo", *keyF, lblOprfPriv, "OPRF PRIVATE KEY", 1)
+	oprfKey := kv[0]
 	pw := []byte(*pwF)
 
-	rec, err := HpakeRegister(pw, oprfKey)
+	rec, err := HpakeRegister(pw, oprfKey, kn)
 	if err != nil { die("pake-demo", err) }
 
-	sk, err := HpakeLoginDemo(rec, pw, oprfKey)
+	sk, err := HpakeLoginDemo(rec, pw, oprfKey, kn)
 	if err != nil { die("pake-demo", err) }
 	if sk != nil {
 		fmt.Printf("- aPAKE login succeeded; session key: %x\n", sk)
@@ -5184,7 +5865,7 @@ func cmdPakeDemo(args []string) {
 		fmt.Fprintln(os.Stderr, "+ aPAKE login failed!")
 		os.Exit(1)
 	}
-	skBad, _ := HpakeLoginDemo(rec, []byte("wrong-password"), oprfKey)
+	skBad, _ := HpakeLoginDemo(rec, []byte("wrong-password"), oprfKey, kn)
 	if skBad == nil {
 		fmt.Println("- aPAKE correctly rejects wrong password")
 	} else {
@@ -5216,14 +5897,6 @@ func die(prefix string, err error) {
 // challenge is one of those.  219 is the 128-bit count ((2/3)^219 < 2^-128);
 // `verify` / `cred-verify --min-rounds N` lowers it.
 const cliMinVerifyRounds = 219 // == SdfProductionRounds == ZkpNlProdRounds
-
-func minRoundsValue(cmd string, v int) int {
-	if v < 1 || v > SdfMaxRounds {
-		fmt.Fprintf(os.Stderr, "%s: --min-rounds must be between 1 and %d\n", cmd, SdfMaxRounds)
-		os.Exit(1)
-	}
-	return v
-}
 
 func requireRounds(rounds, floor int, what, cmd string) {
 	if rounds >= floor {
@@ -5283,7 +5956,7 @@ Notes:
   encfile/decfile: hske-nla1 only (stream CTR-AEAD); decfile exits non-zero on auth failure.
   fpe: NOT format-preserving in the FF1/FF3-1 sense: no radix, no domain --
        32 bytes in, 32 raw bytes out. See SECURITY.md.
-  PEM output goes to stdout when --out is absent or '-'.
+  PEM output goes to stdout when --out is '-', or is omitted where it is optional.
 `)
 }
 
@@ -6118,7 +6791,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(2); n > 2 && L(2) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && L(3) > c {
+			if c := int64(F(0) * F(1) * (3 * hkxMin(F(2)/8, 32) + 2 * (F(2)/8) + 1)); n > 3 && L(3) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if n > 0 && lz[0] == 1 {
@@ -6130,7 +6803,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(0) * F(1) * (5 * (F(2)/8) + 1)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+			if c := int64(F(0) * F(1) * (3 * hkxMin(F(2)/8, 32) + 2 * (F(2)/8) + 1)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
@@ -6329,7 +7002,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(2); n > 1 && L(1) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && L(2) > c {
+			if c := int64(F(1) * 3 * hkxMin(F(0)/8, 32)); n > 2 && L(2) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64((F(1) + 3)/4); n > 3 && L(3) > c {
@@ -6344,7 +7017,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+			if c := int64(F(1) * 3 * hkxMin(F(0)/8, 32)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
@@ -6574,10 +7247,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(F(4)/8); n > 1 && L(1) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64(F(4)/8); n > 2 && L(2) > c {
+			if c := int64(hkxMin(F(4)/8, 32)); n > 2 && L(2) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			if c := int64(F(4)/8); n > 3 && L(3) > c {
+			if c := int64(hkxMin(F(4)/8, 32)); n > 3 && L(3) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
 			}
 			if n > 4 && lz[4] == 1 {
@@ -6589,10 +7262,10 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(F(4)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
 			}
-			if c := int64(F(4)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+			if c := int64(hkxMin(F(4)/8, 32)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
-			if c := int64(F(4)/8); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+			if c := int64(hkxMin(F(4)/8, 32)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
@@ -6671,7 +7344,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(2); n > 1 && L(1) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
 			}
-			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && L(2) > c {
+			if c := int64(F(1) * 3 * hkxMin(F(0)/8, 32)); n > 2 && L(2) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
 			if c := int64((F(1) + 3)/4); n > 3 && L(3) > c {
@@ -6686,7 +7359,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 1 && lz[1] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
 			}
-			if c := int64(F(1) * 3 * (F(0)/8)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
+			if c := int64(F(1) * 3 * hkxMin(F(0)/8, 32)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
 			}
 			if c := int64((F(1) + 3)/4); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
@@ -6785,6 +7458,75 @@ func hkxRuleEquals(label string, k int, x, want int64) string {
 	}
 	return fmt.Sprintf("%s: field %d is %d (expected %d)", label, k, x, want)
 }
+// TODO #379: genpkey's key parameter sets (--bits / --level); bits -1: no
+// --bits value names the row.  ports: the CLIs that run the row today.
+var paramSets = []paramSet{
+	{"hkex-gf", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hkex-gf", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hkex-gf", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hkex-gf", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpks", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpks", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpks", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpks", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpks-nl", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpks-nl", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpks-nl", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpks-nl", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke-nl", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke-nl", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke-nl", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke-nl", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke-nl3", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke-nl3", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke-nl3", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hpke-nl3", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"oprf", 32, "", false, "demo", "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"oprf", 64, "", false, "demo", "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"oprf", 128, "", false, "demo", "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"oprf", 256, "demo", true, "demo", "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)", "py go c java", ""},
+	{"hkex-rnl", 32, "", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
+	{"hkex-rnl", 64, "", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
+	{"hkex-rnl", 128, "", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
+	{"hkex-rnl", 256, "demo", false, "demo", "far below 2^87 (not estimated)", "py go c java", ""},
+	{"hkex-rnl", 512, "", false, "withdrawn", "~2^87 classical, ~2^79 quantum", "", "SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical bits, short of the 128 it was claimed to give"},
+	{"hkex-rnl", 1024, "128", true, "production", ">= 2^128 classical (conjectured; SECURITY.md)", "py go c java", ""},
+	{"hpks-stern", 32, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpks-stern", 64, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpks-stern", 128, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpks-stern", 256, "demo", true, "demo", "~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)", "py go c java", ""},
+	{"hpke-stern", 32, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpke-stern", 64, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpke-stern", 128, "", false, "demo", "below 2^24", "py go c java", ""},
+	{"hpke-stern", 256, "demo", true, "demo", "~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)", "py go c java", ""},
+	{"hcred", 32, "", false, "demo", "research construction; its Stern-F half below 2^24", "py go c java", ""},
+	{"hcred", 64, "", false, "demo", "research construction; its Stern-F half below 2^24", "py go c java", ""},
+	{"hcred", 128, "", false, "demo", "research construction; its Stern-F half below 2^24", "py go c java", ""},
+	{"hcred", 256, "demo", true, "demo", "research construction; its Stern-F half ~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)", "py go c java", ""},
+	{"hpks-stern", 2304, "128", false, "demo-only", "~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3", "py go c java", ""},
+	{"hpke-stern", 2304, "128", false, "demo-only", "~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3", "py go c java", ""},
+	{"hpke-stern-kem", -1, "128", true, "demo-only", "2^128 classical by its parameters (BIKE-128)", "py go c java", ""},
+	{"hpks-zkp-nl", 8, "demo", true, "demo", "demonstration keypair; no security claim", "py go c java", ""},
+}
+
+var paramLevels = []string{"demo", "128", "192", "256"}
+var paramFixed = []string{"hpks-wots", "hpks-xmss"}
+var paramOwnBits = []string{"hpks-zkp-nl"}
+var paramLevelNotes = map[string]string{
+	"hcred": "hcred's own key (a Ring-LWR and syndrome-decoding pair proved in ZKBoo) has no 128-bit set; the ISSUER's hpks-stern key does: genpkey --algo hpks-stern --level 128",
+	"hkex-gf": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpke": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpke-nl": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpke-nl3": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpks": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"hpks-nl": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+	"oprf": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+}
+
 // END GENERATED key-label table
 
 // pemFileLabel returns the first PEM BEGIN label in path, or "" (unreadable or
@@ -6875,14 +7617,14 @@ required):
   encfile              --algo --in --key --out
                        --algo: hske-nla1
   fpe                  --context --decrypt --encrypt --in --key --out --v3
-  genpkey              --algo --bits --kdf-iterations --out --passphrase
-                       --xmss-height
+  genpkey              --algo --bits --kdf-iterations --level --out
+                       --passphrase --xmss-height
                        --algo: hcred hkex-gf hkex-rnl hpke hpke-nl hpke-nl3
                                hpke-stern hpke-stern-kem hpks hpks-nl
                                hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf
   kex                  --algo --kdf --our --our-kem --out --their --their-kem
                        --algo: hkex-gf hkex-rnl hybrid-rnl-stern
-  oprf-blind           --in --out
+  oprf-blind           --bits --in --out
   oprf-eval            --in --key --out
   oprf-unblind         --eval --out --state
   pake-demo            --key --password
@@ -6921,6 +7663,13 @@ func loadHpksPrivForThreshold(path string) (*big.Int, *big.Int, int) {
 		os.Exit(1)
 	}
 	n    := gfWidth(wireInt(ints[2], "n", "threshold"), "threshold")
+	// TODO #388: HPKS-T (MuSig2 coefficients, aggregation, verify) is defined at
+	// 256 bits only; refuse a narrower key here, before it writes a commitment
+	// that threshold-aggregate cannot read (same message as C and Python).
+	if n != 256 {
+		fmt.Fprintf(os.Stderr, "threshold: the key is %d-bit; threshold signing runs at 256 bits only\n", n)
+		os.Exit(1)
+	}
 	priv := new(big.Int).SetBytes(fitBytes(ints[0], n/8, "private key", "threshold"))
 	pub  := new(big.Int).SetBytes(fitBytes(ints[1], n/8, "public key", "threshold"))
 	return priv, pub, n
@@ -7032,6 +7781,14 @@ func stringFlags(args []string, name string) []string {
 // so there is no defensible interleaving, and silently choosing one would produce a
 // wrong signature rather than an error.
 func multiValueFlags(args []string, cmd, plural, singular string) []string {
+	// TODO #381: a list flag given with no value is refused as such, not
+	// reported later as the list being absent.
+	for i, a := range args {
+		if (a == plural || a == singular) && (i+1 == len(args) || strings.HasPrefix(args[i+1], "--")) {
+			fmt.Fprintf(os.Stderr, "%s: %s needs a value\n", cmd, a)
+			os.Exit(2)
+		}
+	}
 	p := stringFlags(args, plural)
 	sg := stringFlags(args, singular)
 	if len(p) > 0 && len(sg) > 0 {
@@ -7050,7 +7807,7 @@ func cmdThresholdCommit(args []string) {
 	key     := fs.String("key", "", "hpks or hpks-nl private key PEM")
 	commitOut := fs.String("commit-out", "", "Output commitment PEM")
 	nonceOut  := fs.String("nonce-out",  "", "Output nonce PEM")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	checkKeyLabels("threshold-commit", fs) // TODO #366
 	if *key == "" || *commitOut == "" || *nonceOut == "" {
 		fmt.Fprintln(os.Stderr, "threshold-commit: --key, --commit-out, --nonce-out required")
@@ -7076,7 +7833,7 @@ func cmdThresholdAggregate(args []string) {
 	in     := fs.String("in", "-", "Message input file")
 	out    := fs.String("out", "-", "Output aggregate PEM")
 	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
-	fs.Parse(filterMultiFlags(args, "--commits", "--commit"))
+	parseArgs(fs, filterMultiFlags(args, "--commits", "--commit"))
 	digestValue("threshold-aggregate", digest)
 	if len(commitPaths) == 0 {
 		fmt.Fprintln(os.Stderr, "threshold-aggregate: --commits (or --commit) is required")
@@ -7154,7 +7911,7 @@ func cmdThresholdRespond(args []string) {
 	aggregate := fs.String("aggregate", "", "Aggregate PEM from coordinator")
 	nonce     := fs.String("nonce", "", "Nonce PEM from threshold-commit")
 	out       := fs.String("out", "-", "Output partial signature PEM")
-	fs.Parse(rest)
+	parseArgs(fs, rest)
 	checkKeyLabels("threshold-respond", fs) // TODO #366
 	if *key == "" || *aggregate == "" || *nonce == "" {
 		fmt.Fprintln(os.Stderr, "threshold-respond: --key, --aggregate, --nonce required")
@@ -7233,7 +7990,7 @@ func cmdThresholdCombine(args []string) {
 	fs        := flag.NewFlagSet("threshold-combine", flag.ExitOnError)
 	aggregate := fs.String("aggregate", "", "Aggregate PEM")
 	out       := fs.String("out", "-", "Output HPKST SIGNATURE PEM")
-	fs.Parse(rest)
+	parseArgs(fs, rest)
 	if *aggregate == "" {
 		fmt.Fprintln(os.Stderr, "threshold-combine: --aggregate required")
 		os.Exit(1)
@@ -7277,7 +8034,7 @@ func cmdThresholdVerify(args []string) {
 	in     := fs.String("in", "-", "Message input file")
 	sig    := fs.String("sig", "", "HPKST SIGNATURE PEM file")
 	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	digestValue("threshold-verify", digest)
 	if *sig == "" {
 		fmt.Fprintln(os.Stderr, "threshold-verify: --sig required")

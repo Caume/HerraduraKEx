@@ -701,15 +701,16 @@ def encode_hcred_credential(sig, issuer_n):
     commits, challenges, responses = sig
     rounds  = len(commits)
     nbytes  = issuer_n // 8
+    cbytes  = min(issuer_n, 256) // 8   # commitments: 256 bits above N = 256 (TODO #382)
 
     def _ba_int(v):
         return v.uint if hasattr(v, 'uint') else int(v)
 
     commits_ba = bytearray()
     for c0, c1, c2 in commits:
-        commits_ba += _ba_int(c0).to_bytes(nbytes, 'big')
-        commits_ba += _ba_int(c1).to_bytes(nbytes, 'big')
-        commits_ba += _ba_int(c2).to_bytes(nbytes, 'big')
+        commits_ba += _ba_int(c0).to_bytes(cbytes, 'big')
+        commits_ba += _ba_int(c1).to_bytes(cbytes, 'big')
+        commits_ba += _ba_int(c2).to_bytes(cbytes, 'big')
 
     chal_bytes = bytearray((rounds + 3) // 4)
     for i, b in enumerate(challenges):
@@ -746,25 +747,27 @@ def decode_hcred_credential(pem_text):
                                                ints[2], ints[3], ints[4])
     # TODO #367: n and rounds size every to_bytes below; an out-of-range one
     # (or a blob wider than they describe) was an OverflowError traceback.
-    if issuer_n % 8 or not 8 <= issuer_n <= 256:
+    # 2304: the long-form issuer key (TODO #382)
+    if issuer_n != 2304 and (issuer_n % 8 or not 8 <= issuer_n <= 256):
         raise ValueError(f"{label}: n is {issuer_n} (expected a multiple of 8, 8..256)")
     if not 1 <= rounds <= 4096:
         shown = rounds if rounds.bit_length() <= 64 else f"a {rounds.bit_length()}-bit value"
         raise ValueError(f"{label}: round count is {shown} (expected 1..4096)")
     nbytes = issuer_n // 8
-    for what, v, nb in (("commitments", c_int, 3 * rounds * nbytes),
+    cbytes = min(issuer_n, 256) // 8
+    for what, v, nb in (("commitments", c_int, 3 * rounds * cbytes),
                         ("challenges", ch_int, (rounds + 3) // 4),
                         ("responses", r_int, 2 * rounds * nbytes)):
         if v.bit_length() > 8 * nb:
             raise ValueError(f"{label}: {what} field is wider than {nb} bytes")
 
-    commits_ba = c_int.to_bytes(3 * rounds * nbytes, 'big')
+    commits_ba = c_int.to_bytes(3 * rounds * cbytes, 'big')
     commits = []
     for i in range(rounds):
-        off = i * 3 * nbytes
-        c0 = int.from_bytes(commits_ba[off:off + nbytes], 'big')
-        c1 = int.from_bytes(commits_ba[off + nbytes:off + 2*nbytes], 'big')
-        c2 = int.from_bytes(commits_ba[off + 2*nbytes:off + 3*nbytes], 'big')
+        off = i * 3 * cbytes
+        c0 = int.from_bytes(commits_ba[off:off + cbytes], 'big')
+        c1 = int.from_bytes(commits_ba[off + cbytes:off + 2*cbytes], 'big')
+        c2 = int.from_bytes(commits_ba[off + 2*cbytes:off + 3*cbytes], 'big')
         commits.append((c0, c1, c2))
 
     chal_nb    = (rounds + 3) // 4

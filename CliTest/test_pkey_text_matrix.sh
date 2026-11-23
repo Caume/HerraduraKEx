@@ -20,8 +20,19 @@
 #   2. oprf has no public half: every CLI refuses `pkey --pubout` on it, after
 #      an accept-control (--pubout on an hpks key succeeds).
 #   3. genpkey hpks-zkp-nl --bits: omitted -> n = 8, 64 -> n = 64 (accept-
-#      controls), 256 and 7 -> refused.  C has no --bits (an acknowledged
-#      cli_surface_gaps row), so this section runs on py, go and java only.
+#      controls), 256 and 7 -> refused, in all four CLIs (C gained --bits in
+#      TODO #379; until then this section ran on py, go and java only).
+#   4. (TODO #386, #387) the WHOLE --text output: for every key, the four CLIs
+#      print the same bytes.  Section 1 compared only the first line, which is
+#      how Python's hkex-rnl dump (its packed values without their leading
+#      zeros) and four different hkex-rnl, three hcred and two Stern layouts
+#      all passed it.
+#   5. (TODO #386) each dump ends in the key's key_parameter_sets row --
+#      `level : <level>` where the row has one, then `security : <estimate>` --
+#      read here from spec/herradura-protocol-spec.json, not from any CLI;
+#      WOTS and XMSS, which no row describes, carry neither line.
+#   6. (TODO #386) a public key is refused by label in every CLI with one
+#      message (Python died in a traceback), after an accept-control.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -97,7 +108,7 @@ for c in "${LANGS[@]}"; do
 done
 
 # ── 3. genpkey hpks-zkp-nl --bits ───────────────────────────────────────────
-for c in py go java; do
+for c in py go java c; do
     for case_ in "none 8" "64 64" "256 refuse" "7 refuse"; do
         set -- $case_; b=$1; want=$2; k="$TMP/zb_${c}_$b.pem"; rm -f "$k"
         bits=(); [ "$b" != none ] && bits=(--bits "$b")
@@ -120,6 +131,63 @@ for c in py go java; do
                 pass
             fi
         fi
+    done
+done
+
+# ── 4. the whole dump, identical in all four CLIs ───────────────────────────
+for p in "${LANGS[@]}"; do
+    for a in "${ALGOS[@]}"; do
+        k="$TMP/${p}_$a.pem"; [ -s "$k" ] || continue
+        ref=""
+        for c in "${LANGS[@]}"; do
+            ${CLI[$c]} pkey --in "$k" --text > "$TMP/t_$c" 2>/dev/null
+            if [ -z "$ref" ]; then ref="$TMP/t_$c"
+            elif cmp -s "$ref" "$TMP/t_$c"; then pass
+            else fail "pkey --text $a ($p's key): ${LANGS[0]} and $c differ: $(diff "$ref" "$TMP/t_$c" | head -3 | cut -c1-120 | tr '\n' ' ')"; fi
+        done
+    done
+done
+
+# ── 5. the parameter-set lines, against the spec ────────────────────────────
+python3 - "$ROOT/spec/herradura-protocol-spec.json" > "$TMP/rows" <<'PYEOF'
+import json, sys
+for r in json.load(open(sys.argv[1]))["key_parameter_sets"]["rows"]:
+    if r["default"]:
+        print("%s\t%s\t%s" % (r["algo"], r["level"] or "", r["security"]))
+PYEOF
+for a in "${ALGOS[@]}"; do
+    row=$(awk -F'\t' -v a="$a" '$1 == a' "$TMP/rows")
+    for c in "${LANGS[@]}"; do
+        k="$TMP/${c}_$a.pem"; [ -s "$k" ] || continue
+        out=$(${CLI[$c]} pkey --in "$k" --text 2>/dev/null)
+        if [ -z "$row" ]; then
+            if printf '%s\n' "$out" | grep -q '^level  *:\|^security  *:'; then
+                fail "pkey --text $a ($c): parameter lines on a key no row describes"
+            else pass; fi
+            continue
+        fi
+        lvl=$(printf '%s' "$row" | cut -f2); sec=$(printf '%s' "$row" | cut -f3)
+        want="security  : $sec"; [ -n "$lvl" ] && want=$(printf 'level     : %s\n%s' "$lvl" "$want")
+        tail_n=$(printf '%s\n' "$want" | wc -l)
+        got=$(printf '%s\n' "$out" | tail -n "$tail_n")
+        if [ "$got" = "$want" ]; then pass
+        else fail "pkey --text $a ($c): ends '$got', want '$want'"; fi
+    done
+done
+
+# ── 6. a public key is refused by label ─────────────────────────────────────
+${CLI[py]} pkey --in "$TMP/py_hpks.pem" --pubout --out "$TMP/pub.pem" >/dev/null 2>&1
+for c in "${LANGS[@]}"; do
+    if ${CLI[$c]} pkey --in "$TMP/py_hpks.pem" --text >/dev/null 2>&1; then pass
+    else fail "accept-control: pkey --text on an hpks private key failed ($c)"; fi
+    for mode in --text --pubout; do
+        ${CLI[$c]} pkey --in "$TMP/pub.pem" $mode --out "$TMP/x.pem" >/dev/null 2>"$TMP/err"; rc=$?
+        if [ $rc -eq 0 ]; then fail "pkey $mode on a public key exited 0 ($c)"
+        elif grep -qE 'Traceback|panic:|Exception in thread' "$TMP/err"; then
+            fail "pkey $mode on a public key crashed ($c): $(head -c 200 "$TMP/err")"
+        elif ! grep -qF "pkey: 'HERRADURA HPKS PUBLIC KEY' is a public key (pkey reads a private key)" "$TMP/err"; then
+            fail "pkey $mode on a public key ($c): not refused by label: $(head -c 200 "$TMP/err")"
+        else pass; fi
     done
 done
 

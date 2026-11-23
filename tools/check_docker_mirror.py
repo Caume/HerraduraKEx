@@ -95,11 +95,21 @@ EXEMPT = {
         "Needs arduino-cli plus a board target, i.e. not a host-portable build.  "
         "Excluded since TODO #139 and documented in the Dockerfile header."
     ),
+    "native-python-cli": (
+        "The Python job's non-suite half (TODO #392): the suite demo, examples, "
+        "spec/ checkers and the Python CliTest scripts.  The entrypoint's "
+        "Python target is the test suite, which native-python owns; the rest "
+        "re-checks sources the image does not change."
+    ),
     "native-interop": (
         "Its scripts drive two or more CLIs at once; the entrypoint runs "
         "CliTest/test_c_interop.sh, which is one of them, as its CLI smoke test.  "
         "Running the rest would re-run at full size what the required job already "
         "covers, which is the runtime trap TODO #289 recorded."
+    ),
+    "native-interop-width": (
+        "native-interop's test_width_matrix.sh in three shards (TODO #391); "
+        "native-interop's reason applies to it unchanged."
     ),
     "cross-lang-compat": (
         "Four-CLI matrices, so they need the Java CLI -- covered by native-java's "
@@ -114,10 +124,14 @@ EXEMPT = {
         "30 s per target of libFuzzer/go-fuzz/Hypothesis.  Needs clang and "
         "python3-hypothesis, and asserts nothing about whether the suite builds."
     ),
+    "analysis-findings-shard": (
+        "~95 min of SecurityProofsCode gates in six shards (TODO #391), and "
+        "z3-solver is a hard requirement for three of them (TODO #290).  "
+        "Categorically not a quickstart concern."
+    ),
     "analysis-findings": (
-        "~120 min of SecurityProofsCode gates, and z3-solver is a hard "
-        "requirement for three of them (TODO #290).  Categorically not a "
-        "quickstart concern."
+        "Collects analysis-findings-shard's verdict and checks the shard "
+        "partition (TODO #391); runs no gate of its own."
     ),
     "docker": (
         "The job that RUNS docker-entrypoint.sh, so it cannot be 'covered by' it "

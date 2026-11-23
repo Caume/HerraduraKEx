@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HerraduraKEx v1.5.8 — ARM Thumb-2 build script
+# HerraduraKEx — ARM Thumb-2 build script
 # Cross-compiles the suite and tests from ARM Thumb-2 assembly using
 # arm-linux-gnueabi-gcc.  Produces ELF binaries runnable under qemu-arm.
 #
@@ -17,7 +17,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-VERSION="1.5.8"
+VERSION="$(sed -nE '1s/.*\(v([0-9]+\.[0-9]+\.[0-9]+)\).*/\1/p' README.md)"  # README title is the one version source
+: "${VERSION:=unknown}"
 SUITE_SRC="Herradura cryptographic suite.s"
 SUITE_BIN="Herradura cryptographic suite_arm"
 TESTS_SRC="CryptosuiteTests/Herradura_tests.s"

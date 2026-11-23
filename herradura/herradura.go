@@ -2816,7 +2816,7 @@ func sternFsChallenges(rounds int, msg *BitArray, c0, c1, c2 []*BitArray) []int 
 	chSt := SternHash(0, flat...)
 	chals := make([]int, rounds)
 	for i := 0; i < rounds; i++ {
-		idxBA := NewBitArray(n, big.NewInt(int64(i&0xFF)))
+		idxBA := NewBitArray(n, big.NewInt(int64(i))) // whole round index (TODO #390)
 		chSt = NlFscxV1(chSt, idxBA)
 		chals[i] = int(uint32(chSt.LowUint64()) % 3)
 	}
@@ -3006,7 +3006,7 @@ func sternRingChallenges(rounds, k int, msg *BitArray,
 	chSt := SternHash(0, flat...)
 	joint := make([]int, rounds)
 	for r := 0; r < rounds; r++ {
-		idxBA := NewBitArray(n, big.NewInt(int64(r&0xFF)))
+		idxBA := NewBitArray(n, big.NewInt(int64(r))) // whole round index (TODO #390)
 		chSt = NlFscxV1(chSt, idxBA)
 		joint[r] = int(uint32(chSt.LowUint64()) % 3)
 	}
@@ -3254,6 +3254,426 @@ func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) b
 }
 
 // ---------------------------------------------------------------------------
+// Stern-F long form: N > 256 (TODO #382 stage 2, v16.0.0)
+//
+// The 128-bit parameter set is N = 2304, k = N/2 = 1152, t = N/16 = 144.  Its
+// vectors are wider than BitArray's 256-bit capacity, so this path carries
+// them as N/8-byte big-endian strings (integer bit i at byte N/8-1-i/8, bit
+// i%8) and keeps BitArray for the 256-bit values.  The protocol is the short
+// form's; the rules that change (all from Python's long-form block, which
+// SPEC.md §11 restates):
+//
+//	hash     H_ds(x...) = HFSCX-256-DS(0x31, ds || x...), all 256 bits;
+//	         commitments are 256 bits.
+//	matrix   sk = H_6(seed); row i = chunk(i, 0) || ... || chunk(i, N/256-1),
+//	         chunk(i, c) = HFSCX-256(i_hi || i_lo || c) with sk as the initial
+//	         chaining value.
+//	perm     SternGenPerm on the 256-bit k = H_5(piSeed), over N positions.
+//	message  256 bits; the Fiat-Shamir state advances by NlFscxV1 at 256 bits.
+// ---------------------------------------------------------------------------
+
+// SternLongN is the long form's one listed code length (TODO #382).
+const SternLongN = 2304
+
+const (
+	sternLW        = 256 // hash, commitment and message width
+	sternLDsPerm   = 5   // H_5(piSeed): the permutation generator's key
+	sternLDsMatrix = 6   // H_6(seed): the matrix expander's chaining value
+)
+
+// SternIsLong reports whether a Stern-F code length takes the long form.
+func SternIsLong(n int) bool { return n > 256 }
+
+func sternLCheck(n int) {
+	if n <= 256 || n%256 != 0 {
+		panic(fmt.Sprintf("Stern-F long form: N = %d (expected a multiple of 256 above 256)", n))
+	}
+}
+
+// sternLHash is H_ds = HFSCX-256-DS(0x31, ds || items), all 256 bits.
+func sternLHash(ds int, items ...[]byte) *BitArray {
+	buf := []byte{byte(ds)}
+	for _, it := range items {
+		buf = append(buf, it...)
+	}
+	return NewFromBytes(Hfscx256DS(sternDsHash, buf, nil), 0, sternLW)
+}
+
+func sternLRand(n int) []byte {
+	b := make([]byte, n/8)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("ERROR while generating random string: %s", err)
+	}
+	return b
+}
+
+func sternLBit(v []byte, i int) byte { return (v[len(v)-1-i/8] >> uint(i%8)) & 1 }
+
+func sternLXor(a, b []byte) []byte {
+	out := make([]byte, len(a))
+	for i := range a {
+		out[i] = a[i] ^ b[i]
+	}
+	return out
+}
+
+func sternLPopcount(v []byte) int {
+	c := 0
+	for _, x := range v {
+		c += bits.OnesCount8(x)
+	}
+	return c
+}
+
+// SternLBuildH returns the N/2 rows of H, each N/8 bytes.
+func SternLBuildH(seed []byte) [][]byte {
+	n := len(seed) * 8
+	sternLCheck(n)
+	sk := sternLHash(sternLDsMatrix, seed).Bytes()
+	rows := make([][]byte, n/2)
+	for i := range rows {
+		row := make([]byte, 0, n/8)
+		for c := 0; c < n/256; c++ {
+			row = append(row, Hfscx256([]byte{byte(i >> 8), byte(i), byte(c)}, sk)...)
+		}
+		rows[i] = row
+	}
+	return rows
+}
+
+// SternLSyndromeH returns H e^T as an N-bit string (bit i = row i; the high
+// half is zero), the form in which the protocol hashes it.
+func SternLSyndromeH(H [][]byte, e []byte) []byte {
+	out := make([]byte, len(e))
+	for i, row := range H {
+		p := 0
+		for k := 0; k+8 <= len(e); k += 8 {
+			p ^= bits.OnesCount64(binary.BigEndian.Uint64(row[k:]) & binary.BigEndian.Uint64(e[k:]))
+		}
+		if p&1 == 1 {
+			out[len(out)-1-i/8] |= 1 << uint(i%8)
+		}
+	}
+	return out
+}
+
+// SternLSyndrome is the one-off form (keygen, pkey --pubout).
+func SternLSyndrome(seed, e []byte) []byte { return SternLSyndromeH(SternLBuildH(seed), e) }
+
+func sternLGenPerm(piSeed []byte) []int {
+	return SternGenPerm(sternLHash(sternLDsPerm, piSeed), len(piSeed)*8)
+}
+
+func sternLApplyPerm(perm []int, v []byte) []byte {
+	out := make([]byte, len(v))
+	for i := range perm {
+		p := perm[i]
+		out[len(out)-1-p/8] |= sternLBit(v, i) << uint(p%8)
+	}
+	return out
+}
+
+// SternLRandError draws the weight-N/16 error: SternRandError's 4-byte
+// rejection scheme, byte for byte, on N positions.
+func SternLRandError(n int) []byte {
+	const span = uint64(1) << 32
+	threshold := span - span%uint64(n)
+	e := make([]byte, n/8)
+	buf := make([]byte, 4)
+	for count := 0; count < n/16; {
+		if _, err := rand.Read(buf); err != nil {
+			log.Fatalf("rand.Read: %s", err)
+		}
+		v := uint64(buf[0])<<24 | uint64(buf[1])<<16 | uint64(buf[2])<<8 | uint64(buf[3])
+		if v >= threshold {
+			continue
+		}
+		pos := int(v % uint64(n))
+		if sternLBit(e, pos) == 1 {
+			continue
+		}
+		e[len(e)-1-pos/8] |= 1 << uint(pos%8)
+		count++
+	}
+	return e
+}
+
+// SternLKeygen returns (seed, e, syndrome) at code length n: an N-bit seed,
+// then the error.
+func SternLKeygen(n int) ([]byte, []byte, []byte) {
+	sternLCheck(n)
+	seed := make([]byte, n/8)
+	if _, err := rand.Read(seed); err != nil {
+		log.Fatalf("ERROR while generating random string: %s", err)
+	}
+	e := SternLRandError(n)
+	return seed, e, SternLSyndrome(seed, e)
+}
+
+// SternLRound is one round of a long-form signature: 256-bit commitments and
+// two N/8-byte responses.
+type SternLRound struct {
+	C0, C1, C2   *BitArray
+	B            int
+	RespA, RespB []byte
+}
+
+// SternLSig is a long-form Fiat-Shamir Stern signature.
+type SternLSig struct {
+	Rounds []SternLRound
+}
+
+type sternLSecrets struct{ r, y, pi, sr, sy []byte }
+
+// sternLCommit is one prover round on the caller's uniform r and pi (drawn in
+// that order).
+func sternLCommit(H [][]byte, e, r, pi []byte, n int) (SternLRound, sternLSecrets) {
+	y := sternLXor(e, r)
+	perm := sternLGenPerm(pi)
+	hr := SternLSyndromeH(H, r)
+	sr := sternLApplyPerm(perm, r)
+	sy := sternLApplyPerm(perm, y)
+	return SternLRound{C0: sternLHash(1, pi, hr), C1: sternLHash(2, sr), C2: sternLHash(3, sy)},
+		sternLSecrets{r, y, pi, sr, sy}
+}
+
+func sternLRespond(rnd *SternLRound, s sternLSecrets) {
+	switch rnd.B {
+	case 0:
+		rnd.RespA, rnd.RespB = s.sr, s.sy
+	case 1:
+		rnd.RespA, rnd.RespB = s.pi, s.r
+	default:
+		rnd.RespA, rnd.RespB = s.pi, s.y
+	}
+}
+
+func sternLFsState(msg *BitArray, rounds []SternLRound) *BitArray {
+	items := [][]byte{msg.Bytes()}
+	for _, r := range rounds {
+		items = append(items, r.C0.Bytes(), r.C1.Bytes(), r.C2.Bytes())
+	}
+	return sternLHash(0, items...)
+}
+
+func sternLNextChallenge(st *BitArray, i int) (*BitArray, int) {
+	st = NlFscxV1(st, NewBitArray(sternLW, big.NewInt(int64(i))))
+	return st, int(uint32(st.LowUint64()) % 3)
+}
+
+func sternLCheckRound(rnd SternLRound, H [][]byte, syndrome []byte, n int) bool {
+	if len(rnd.RespA) != n/8 || len(rnd.RespB) != n/8 {
+		return false
+	}
+	switch rnd.B {
+	case 0:
+		return sternLHash(2, rnd.RespA).Equal(rnd.C1) &&
+			sternLHash(3, rnd.RespB).Equal(rnd.C2) &&
+			sternLPopcount(sternLXor(rnd.RespA, rnd.RespB)) == n/16
+	case 1:
+		sv := sternLApplyPerm(sternLGenPerm(rnd.RespA), rnd.RespB)
+		return sternLHash(1, rnd.RespA, SternLSyndromeH(H, rnd.RespB)).Equal(rnd.C0) &&
+			sternLHash(2, sv).Equal(rnd.C1)
+	case 2:
+		sv := sternLApplyPerm(sternLGenPerm(rnd.RespA), rnd.RespB)
+		hys := sternLXor(SternLSyndromeH(H, rnd.RespB), syndrome)
+		return sternLHash(1, rnd.RespA, hys).Equal(rnd.C0) && sternLHash(3, sv).Equal(rnd.C2)
+	}
+	return false
+}
+
+func sternLMsgCheck(msg *BitArray) {
+	if msg.Size() != sternLW {
+		panic("Stern-F long form: the message is 256 bits")
+	}
+}
+
+// HpksSternLSign signs a 256-bit msg with the long-form key (e, seed).
+func HpksSternLSign(msg *BitArray, e, seed []byte, rounds int) *SternLSig {
+	sternLMsgCheck(msg)
+	n := len(seed) * 8
+	H := SternLBuildH(seed)
+	sig := &SternLSig{Rounds: make([]SternLRound, rounds)}
+	sec := make([]sternLSecrets, rounds)
+	for i := range sig.Rounds {
+		r, pi := make([]byte, n/8), make([]byte, n/8)
+		if _, err := rand.Read(r); err != nil {
+			log.Fatalf("ERROR while generating random string: %s", err)
+		}
+		if _, err := rand.Read(pi); err != nil {
+			log.Fatalf("ERROR while generating random string: %s", err)
+		}
+		sig.Rounds[i], sec[i] = sternLCommit(H, e, r, pi, n)
+	}
+	st := sternLFsState(msg, sig.Rounds)
+	for i := range sig.Rounds {
+		st, sig.Rounds[i].B = sternLNextChallenge(st, i)
+		sternLRespond(&sig.Rounds[i], sec[i])
+	}
+	return sig
+}
+
+// HpksSternLVerify verifies a long-form signature against (seed, syndrome).
+func HpksSternLVerify(msg *BitArray, sig *SternLSig, seed, syndrome []byte) bool {
+	if msg.Size() != sternLW || len(sig.Rounds) == 0 {
+		return false
+	}
+	n := len(seed) * 8
+	st := sternLFsState(msg, sig.Rounds)
+	for i, r := range sig.Rounds {
+		var b int
+		st, b = sternLNextChallenge(st, i)
+		if b != r.B {
+			return false
+		}
+	}
+	H := SternLBuildH(seed)
+	for _, r := range sig.Rounds {
+		if !sternLCheckRound(r, H, syndrome, n) {
+			return false
+		}
+	}
+	return true
+}
+
+// sternLSimulateRound is sternSimulateRound, draw for draw, on the long-form
+// primitives.
+func sternLSimulateRound(b int, H [][]byte, syndrome []byte, n int) SternLRound {
+	rnd := SternLRound{B: b}
+	if b == 0 {
+		sr := sternLRand(n)
+		sy := sternLXor(sr, SternLRandError(n))
+		piDum := sternLRand(n)
+		rnd.C0 = sternLHash(1, piDum, make([]byte, n/8)) // unchecked
+		rnd.C1 = sternLHash(2, sr)
+		rnd.C2 = sternLHash(3, sy)
+		rnd.RespA, rnd.RespB = sr, sy
+		return rnd
+	}
+	pi := sternLRand(n)
+	v := sternLRand(n)
+	perm := sternLGenPerm(pi)
+	hv := SternLSyndromeH(H, v)
+	sv := sternLApplyPerm(perm, v)
+	dum := sternLRand(n)
+	if b == 1 {
+		rnd.C0, rnd.C1, rnd.C2 = sternLHash(1, pi, hv), sternLHash(2, sv), sternLHash(3, dum)
+	} else {
+		rnd.C0 = sternLHash(1, pi, sternLXor(hv, syndrome))
+		rnd.C1, rnd.C2 = sternLHash(2, dum), sternLHash(3, sv)
+	}
+	rnd.RespA, rnd.RespB = pi, v
+	return rnd
+}
+
+// SternLRingKey is a long-form ring member's public key.
+type SternLRingKey struct {
+	Seed, Syndrome []byte
+}
+
+// SternLRingSig is a long-form ring signature: Members[i].Rounds[r].
+type SternLRingSig struct {
+	K, Rounds int
+	Members   []SternLSig
+}
+
+func sternLRingState(msg *BitArray, members []SternLSig) *BitArray {
+	items := [][]byte{msg.Bytes()}
+	for _, m := range members {
+		for _, r := range m.Rounds {
+			items = append(items, r.C0.Bytes(), r.C1.Bytes(), r.C2.Bytes())
+		}
+	}
+	return sternLHash(0, items...)
+}
+
+// HpksSternLRingSign signs as member j of ring (the short form's member-major
+// order and challenge splitting).
+func HpksSternLRingSign(msg *BitArray, e []byte, j int, ring []SternLRingKey, rounds int) *SternLRingSig {
+	sternLMsgCheck(msg)
+	k := len(ring)
+	n := len(ring[j].Seed) * 8
+	sig := &SternLRingSig{K: k, Rounds: rounds, Members: make([]SternLSig, k)}
+	for i := range sig.Members {
+		sig.Members[i].Rounds = make([]SternLRound, rounds)
+	}
+	for i := 0; i < k; i++ {
+		if i == j {
+			continue
+		}
+		H := SternLBuildH(ring[i].Seed)
+		for r := 0; r < rounds; r++ {
+			sig.Members[i].Rounds[r] = sternLSimulateRound(sternRingTrit(), H, ring[i].Syndrome, n)
+		}
+	}
+	Hj := SternLBuildH(ring[j].Seed)
+	sec := make([]sternLSecrets, rounds)
+	for r := 0; r < rounds; r++ {
+		rv, pi := make([]byte, n/8), make([]byte, n/8)
+		if _, err := rand.Read(rv); err != nil {
+			log.Fatalf("ERROR while generating random string: %s", err)
+		}
+		if _, err := rand.Read(pi); err != nil {
+			log.Fatalf("ERROR while generating random string: %s", err)
+		}
+		sig.Members[j].Rounds[r], sec[r] = sternLCommit(Hj, e, rv, pi, n)
+	}
+	st := sternLRingState(msg, sig.Members)
+	for r := 0; r < rounds; r++ {
+		var joint int
+		st, joint = sternLNextChallenge(st, r)
+		sim := 0
+		for i := 0; i < k; i++ {
+			if i != j {
+				sim += sig.Members[i].Rounds[r].B
+			}
+		}
+		sig.Members[j].Rounds[r].B = ((joint-sim)%3 + 3) % 3
+		sternLRespond(&sig.Members[j].Rounds[r], sec[r])
+	}
+	return sig
+}
+
+// HpksSternLRingVerify verifies a long-form ring signature.
+func HpksSternLRingVerify(msg *BitArray, sig *SternLRingSig, ring []SternLRingKey) bool {
+	if msg.Size() != sternLW || sig.K != len(ring) || len(sig.Members) != sig.K || sig.K == 0 {
+		return false
+	}
+	st := sternLRingState(msg, sig.Members)
+	for r := 0; r < sig.Rounds; r++ {
+		var joint int
+		st, joint = sternLNextChallenge(st, r)
+		s := 0
+		for i := 0; i < sig.K; i++ {
+			s += sig.Members[i].Rounds[r].B
+		}
+		if s%3 != joint {
+			return false
+		}
+	}
+	for i := 0; i < sig.K; i++ {
+		n := len(ring[i].Seed) * 8
+		H := SternLBuildH(ring[i].Seed)
+		for _, rnd := range sig.Members[i].Rounds {
+			if !sternLCheckRound(rnd, H, ring[i].Syndrome, n) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// HpkeSternLEncap is the long-form demo KEM: (K = H_4(seed, e'), ct = H e'^T, e').
+func HpkeSternLEncap(seed []byte) (*BitArray, []byte, []byte) {
+	n := len(seed) * 8
+	eP := SternLRandError(n)
+	return HpkeSternLDecapKnown(eP, seed), SternLSyndrome(seed, eP), eP
+}
+
+// HpkeSternLDecapKnown recomputes K = H_4(seed, e') (demo only).
+func HpkeSternLDecapKnown(eP, seed []byte) *BitArray { return sternLHash(4, seed, eP) }
+
+// ---------------------------------------------------------------------------
 // ZKP-RNL: Ring-LWR Σ-protocol (Lyubashevsky-style, Fiat-Shamir compiled)
 // SecurityProofs-7.md §11.10.2
 // ---------------------------------------------------------------------------
@@ -3261,9 +3681,18 @@ func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) b
 const sigmaMaxAttempts = 1000
 
 // ZkpRnlParams returns (gamma, t) for the Ring-LWR Σ-protocol at bit-width n.
+// The ladder is C's sigma_params, Python's _SIGMA_T and Java's: t = 4, 8, 12, 16
+// at n <= 32, 64, 128 and above.  Go returned 16 for every n > 32, so at n = 64
+// and 128 its proofs and the other three's did not verify against each other
+// (TODO #383 stage 4; no test ran rnl-sigma below the default ring before).
 func ZkpRnlParams(n int) (gamma, t int) {
-	if n <= 32 {
+	switch {
+	case n <= 32:
 		return 4096, 4
+	case n <= 64:
+		return 8192, 8
+	case n <= 128:
+		return 8192, 12
 	}
 	return 8192, 16
 }
@@ -4696,10 +5125,14 @@ func oprfOrd(n int) *big.Int {
 	return new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
 }
 
+// oprfHashToField: HFSCX-256(data) as a non-zero element of GF(2^n).  Below
+// 256 bits it is the digest's HIGH n bits (BITARRAY.md 4.4's truncation, the
+// rule the Stern-F hash and HCRED's issuer message follow; TODO #385 -- it was
+// the low n bits, which no CLI reached: every one ran the OPRF at 256 only).
 func oprfHashToField(data []byte, n int) *big.Int {
 	h := Hfscx256(data, nil)
 	v := new(big.Int).SetBytes(h)
-	v.And(v, oprfOrd(n))
+	v.Rsh(v, uint(256-n))
 	if v.Sign() == 0 {
 		v.SetInt64(1)
 	}
@@ -4828,14 +5261,16 @@ func hpakeContributoryKdf(kRaw *BitArray, nA, nB []byte) []byte {
 	return Hfscx256(payload, nil)
 }
 
-// HpakeRegister creates a server-side aPAKE record for the given password and OPRF key.
-func HpakeRegister(password []byte, oprfKey *big.Int) (*HpakeRecord, error) {
+// HpakeRegister creates a server-side aPAKE record for the given password and
+// n-bit OPRF key (TODO #385: n is the key's width; the OPRF output enters the
+// witness derivation as n/8 bytes).
+func HpakeRegister(password []byte, oprfKey *big.Int, n int) (*HpakeRecord, error) {
 	rec := &HpakeRecord{}
 	if _, err := rand.Read(rec.Salt[:]); err != nil {
 		return nil, err
 	}
-	F := OprfDirect(password, oprfKey, 256)
-	fb := F.FillBytes(make([]byte, 32))
+	F := OprfDirect(password, oprfKey, n)
+	fb := F.FillBytes(make([]byte, n/8))
 	zkpA := hpakeDeriveZkpWitness(fb)
 
 	bBuf := make([]byte, 4)
@@ -4854,9 +5289,9 @@ func HpakeRegister(password []byte, oprfKey *big.Int) (*HpakeRecord, error) {
 
 // HpakeLoginDemo runs the full aPAKE login on both sides (demonstration).
 // Returns the 32-byte session key on success, or nil if the password does not match.
-func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int) ([]byte, error) {
-	F := OprfDirect(password, oprfKey, 256)
-	fb := F.FillBytes(make([]byte, 32))
+func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int, oprfN int) ([]byte, error) {
+	F := OprfDirect(password, oprfKey, oprfN)
+	fb := F.FillBytes(make([]byte, oprfN/8))
 	zkpA := hpakeDeriveZkpWitness(fb)
 
 	mask := zkpNlMask(HpakeZkpN)
@@ -6564,6 +6999,19 @@ func HcredIssue(mPoly, cPoly []int, seedH *BitArray, y *big.Int, n int,
 	issuerE, issuerSeed *BitArray, rounds int) *SternSig {
 	msg := HcredBindMsg(mPoly, cPoly, seedH, y, n, issuerSeed.Size())
 	return HpksSternFSign(msg, issuerE, issuerSeed, rounds)
+}
+
+// HcredIssueL is HcredIssue for a long-form issuer key (TODO #382): the
+// issuer signs the whole 256-bit statement digest.
+func HcredIssueL(mPoly, cPoly []int, seedH *BitArray, y *big.Int, n int,
+	issuerE, issuerSeed []byte, rounds int) *SternLSig {
+	return HpksSternLSign(HcredBindMsg(mPoly, cPoly, seedH, y, n, 256), issuerE, issuerSeed, rounds)
+}
+
+// HcredCredVerifyL is HcredCredVerify for a long-form issuer key.
+func HcredCredVerifyL(mPoly, cPoly []int, seedH *BitArray, y *big.Int, n int,
+	credSig *SternLSig, issuerSeed, issuerSyn []byte) bool {
+	return HpksSternLVerify(HcredBindMsg(mPoly, cPoly, seedH, y, n, 256), credSig, issuerSeed, issuerSyn)
 }
 
 // HcredCredVerify checks the issuer's signature over (m, C, seed_H, y).

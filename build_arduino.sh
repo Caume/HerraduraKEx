@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HerraduraKEx v1.5.8 — Arduino (AVR) build script
+# HerraduraKEx — Arduino (AVR) build script
 # Compiles the suite and test .ino files to ATmega2560 ELF binaries
 # by linking against the Arduino core library.
 #
@@ -18,7 +18,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-VERSION="1.5.8"
+VERSION="$(sed -nE '1s/.*\(v([0-9]+\.[0-9]+\.[0-9]+)\).*/\1/p' README.md)"  # README title is the one version source
+: "${VERSION:=unknown}"
 
 SUITE_INO="Herradura cryptographic suite.ino"
 SUITE_ELF="Herradura cryptographic suite_avr.elf"

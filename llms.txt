@@ -67,6 +67,8 @@ exact choices list per subcommand.
   encrypted with (NL-)FSCX_REVOLVE.
 - HPKS-Stern-F / HPKE-Stern(-KEM): Stern zero-knowledge identification protocol
   (code-based, syndrome decoding) turned into a Fiat-Shamir signature / Niederreiter KEM.
+  N = 256 by default (~2^24, demo); N = 2304 is the 128-bit set (--level 128), the "long
+  form": N-bit values as byte strings, 256-bit commitments and message (SPEC.md §11.1).
 - HPKS-ring: ring signature built on HPKS-Stern-F.
 - rnl-sigma / nl-zkboo / nl-zkbpp: Sigma-protocol and ZKBoo/ZKB++ MPC-in-the-head proofs
   over Ring-LWR / NL-FSCX statements.
@@ -106,6 +108,8 @@ drbg_, haccum_, ratchet_, fpe_, twk_, qcmdpc_. Key public entry points:
   void fpe_v3_encrypt/decrypt(...);    void twk_v3_encrypt/decrypt(...);
   void hpks_stern_f_sign(SternSig *sig, ...); int hpks_stern_f_verify(const SternSig *sig, ...);
   void hpke_stern_f_encap(...); void hpke_stern_f_decap_known(...);
+  void stern_l_keygen(...); void hpks_stern_l_sign(SternLSig *sig, ...);   /* N = 2304, #382 */
+  int hpks_stern_l_verify(...); void stern_l_ring_sign/verify(...); void hpke_stern_l_encap(...);
   void hpks_wots_keygen/sign/verify(...); void hpks_xmss_keygen/sign/verify(...);
 
 Read herradura.h directly for full signatures of NL-FSCX, Ring-LWR (rnl_*), Stern-ring,
@@ -124,6 +128,7 @@ e.g. hkex_gf_agree -> corresponding Go call in the kex flow):
   Hfscx256, Hfscx256DS, HmacHfscx256
   RnlKeygen, RnlAgree, RnlHint, RnlReconcileBits
   SternFKeygen, HpksSternFSign/Verify, HpkeSternFEncap/DecapKnown, HpksSternRingSign/Verify
+  SternLKeygen, HpksSternLSign/Verify, HpksSternLRingSign/Verify, HpkeSternLEncap  (N = 2304)
   RnlSigmaSign/Verify, ZkpNlKeygen/Prove/Verify
   HpksWotsKeygen/Sign/Verify, HpksXmssKeygen/Sign/Verify
   HcredUserKeygen/Prove/Verify, HcredIssue/CredVerify
@@ -160,9 +165,12 @@ A DER-SEQUENCE PEM with the wrong number of items fails with "malformed PEM
 '<label>': <k> DER items, expected <n>" (pem_der_items in the same file), and an
 out-of-range width, ring dimension or field size fails with a one-line bound error.
 A peer GF value (public key, ciphertext R) of 0 or 1, or an HKEX-RNL peer C that is
-zero, sparse or clustered, is refused as a degenerate key.  GF keys run at 32/64/128/256
-bits in the Go and Python CLIs and at 256 only in C and Java, which refuse any other
-declared width ("n is 128 (this CLI runs n = 256)").  Each artifact has one encoding:
+zero, sparse or clustered, is refused as a degenerate key.  GF keys, and hpks-stern /
+hpke-stern keys (hpks-ring too), run at 32/64/128/256 bits in the Python, C and Go CLIs
+(C since TODO #383 stages 1 and 2) and at 256 only in Java, which
+refuses any other declared width ("n is 128 (this CLI runs n = 256)").  A key used with a
+peer key, ciphertext or signature of another width fails ("kex: their public key n is
+128, our private key n is 64").  Each artifact has one encoding:
 bytes after a DER SEQUENCE, a raw-body PEM's last field or an .hkx tag are refused, a
 field wider than its writer pads it to fails with "<label>: field <i> is <k> bytes
 (expected at most <cap>)" (pem_der_field_caps), and an HPKS signature whose stored
@@ -172,20 +180,66 @@ its width ("is encoded in <k> bytes (expected exactly <w>)"), any other field mi
 HKEX-RNL coefficients and QC-MDPC values in range ("field <i> coefficient <j> is <v>
 (expected below <b>)", "has bits at or above r = <r>").
 
-  genpkey --algo <ID> [--bits N] [--xmss-height N] --out FILE
+Every numeric flag takes decimal digits only (no sign, space, 0x, _ or exponent) in a
+stated range, and anything else fails in all four CLIs with "<cmd>: <flag> must be a
+decimal integer from <lo> to <hi>, got '<v>'" (TODO #375, #380): --kdf-iterations
+1..100000000, --xmss-height 1..20, rand --bytes 0..33554432 (one seed's worth of DRBG
+output), every --rounds and --min-rounds 1..4096 (what every verifier accepts), twk
+--sector 0..2^64-1 and --bidx 0..2^32-1.  An explicit value is never read as the
+default: sign --rounds 0 is refused, not signed at 219.  (genpkey --bits / --level: below.)
+
+One rule for the shape of a command line, in all four CLIs (TODO #381): --flag=value
+is --flag value, and a boolean flag (--aead --decrypt --encrypt --hex --pubout --text
+--v3) refuses a value; a value-taking flag at the end of the line, or followed by another
+of its subcommand's flags, fails "<cmd>: <flag> needs a value"; a word that is neither a
+flag nor a flag's value fails "<cmd>: unexpected argument '<w>'"; --in naming a directory
+fails "Is a directory".  A flag Python's argparse requires is required in every CLI (Go
+used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spelled "-".
+(Python's own refusals keep argparse's wording.)
+
+  genpkey --algo <ID> [--bits N | --level L] [--xmss-height N] [--passphrase P [--kdf-iterations N]] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,
              hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss, hpks-wots, hcred
+    Key sizes come from one table, spec's key_parameter_sets, generated into all four
+    CLIs (TODO #379).  --level names the strength a set is sized for: demo, 128 (192 and
+    256 reserved); --bits names a row by width (key width, HKEX-RNL ring dimension or
+    Stern-F N) and is kept for compatibility.  GF family (hkex-gf hpks hpks-nl hpke
+    hpke-nl hpke-nl3) and oprf: --bits 32|64|128|256, --level demo = 256, no --level 128
+    (demo-only at every width).  hkex-rnl: 32|64|128|256 (demo), 1024 = --level 128
+    (default); 512 refused as withdrawn.  hpks-stern, hpke-stern, hcred: 32|64|128|256,
+    --level demo = 256; hpks-stern and hpke-stern also 2304 = --level 128 (TODO #382; hcred
+    refuses --level 128, its issuer's hpks-stern key is what takes it).  hpke-stern-kem: --level 128 only.  hpks-zkp-nl: --bits any even
+    n <= 64, --level demo = 8.  hpks-wots, hpks-xmss: neither flag.  Below the default a
+    stderr warning gives the estimated security.  Every listed width runs in all four
+    CLIs (TODO #383, #384, #385).  Anything else fails by name; --bits with --level fails.
+    --passphrase writes a HERRADURA ENCRYPTED PRIVATE KEY envelope.  An empty
+    passphrase, and --kdf-iterations without --passphrase, are refused by name in
+    every CLI (TODO #376; Python and Go used to write the key in the clear).
   pkey --in FILE [--pubout] [--text] [--out FILE]
+    --text prints one layout per algorithm, byte-identical in all four CLIs, ending in
+    the key's parameter-set row (`level : ...` where it has one, `security : ...`;
+    none for WOTS / XMSS).  A PUBLIC key is refused by label (TODO #386, #387).
+  pkey --decrypt --passphrase P --in FILE [--out FILE]
+    --decrypt accepts --passphrase '' so envelopes written under '' before TODO #376
+    stay readable.
   kex --algo {hkex-gf,hkex-rnl,hybrid-rnl-stern} --our FILE --their FILE --out FILE
       [--kdf {none,hfscx-256}] [--their-kem FILE] [--our-kem FILE]
     hkex-rnl is two-round: responder replies first, initiator completes with the response PEM.
     hybrid-rnl-stern is hkex-rnl plus a QC-MDPC KEM: the responder passes --their-kem
     (the initiator's hpke-stern-kem public key), the initiator --our-kem (its private key).
     Python's --kdf also accepts sp800227 (hkex-rnl only; spec cli_flag_value_gaps).
+    hkex-gf --kdf hfscx-256 at any width n: sk = HFSCX-256(g^ab as n/8 bytes), written
+    whole as a SESSION KEY declaring n = 256 (an HSKE key); without --kdf, raw g^ab at n.
   enc/dec --algo {hske,hske-nla1,hske-nla2,hske-nla3,hske-duplex,hske-duplex3,
                   hpke,hpke-nl,hpke-nl3,hpke-stern,hpke-stern-kem}
            --key|--pubkey FILE --in FILE --out FILE [--aead] [--ad STR]
     --aead/--ad apply to hske-nla1 (and both duplex variants are inherently AEAD).
+    Every other algo encrypts ONE block (32 bytes; hske-nla1 without --aead, the
+    key's width) and refuses longer input with "enc: --algo <a> encrypts one
+    <k>-byte block; --in is <l> bytes (...)"; shorter input comes back zero-padded.
+    --ad is refused at enc and dec on any algo but hske-duplex, hske-duplex3 and
+    hske-nla1, --aead on any but hske-nla1, and dec hske-nla1 --ad on a non-AEAD
+    ciphertext; --ad '' counts as given (TODO #378; they used to be dropped).
     hske-nla1 was 256-BIT ONLY from v9.0.0 (TODO #313) to v9.4.0: below 256 the
     four ports produced four different keystreams and, A1 having no
     authentication tag, dec wrote garbage and exited 0.  Since v9.5.0 (TODO #314
@@ -217,6 +271,8 @@ HKEX-RNL coefficients and QC-MDPC values in range ("field <i> coefficient <j> is
   threshold-aggregate --commits FILE... --in FILE --out FILE [--digest {hfscx-256,none}]
   threshold-respond --key FILE --commits FILE... --aggregate FILE --nonce FILE --out FILE
   threshold-combine --aggregate FILE --partials FILE... --out FILE
+    threshold-* take 256-bit hpks/hpks-nl keys only; a narrower one is refused at commit
+    (TODO #388).
     Since TODO #270 (v6.4.0) all four CLIs accept BOTH spellings of these list
     flags with BOTH syntaxes: --commits a b, --commit a --commit b, --commits a
     --commits b and --commit a b are equivalent (likewise --partials/--partial).
@@ -247,13 +303,26 @@ HKEX-RNL coefficients and QC-MDPC values in range ("field <i> coefficient <j> is
     rather than an error.  ALL FOUR CLIs, Java included: TODO #260 added Java's
     fpe and twk in v5.3.6, and this line went on saying it shipped neither until
     TODO #269 re-checked it (v6.3.0).
-  oprf-blind --in FILE --out FILE
+    twk's --sector is decimal 0..2^64-1 and --bidx decimal 0..2^32-1; every CLI
+    refuses any other value by name rather than wrapping it onto another block's
+    tweak (TODO #375).
+    --in must be exactly 32 bytes in every CLI, both modes, with or without --v3;
+    longer input used to be cut to 32 and shorter zero-padded (on the left in Go
+    only).  Exactly one of --encrypt / --decrypt (TODO #377).
+  oprf-blind --in FILE [--bits 32|64|128|256] --out FILE
   oprf-eval --key FILE --in FILE --out FILE
   oprf-unblind --state FILE --eval FILE --out FILE
+    --bits (default 256) is the GF(2^n) width and must be the server key's n: the
+    CLIENT STATE and EVALUATION PEMs carry n, and oprf-eval / oprf-unblind refuse a
+    pair from two widths by name.  Below 256 bits H(x) is the high n bits of
+    HFSCX-256(x).  pake-register / pake-demo run at the key's n (TODO #385).
   pake-register --key FILE [--username U] [--password P] --out FILE
   pake-demo --key FILE [--username U] [--password P]
     --username exists in Python and Java only; it is a lookup label, not bound into the
     record, so C and Go records are byte-comparable (spec cli_surface_gaps).
+    pake-register needs a non-empty --password in every CLI (Python alone may prompt
+    for it, on a terminal); pake-demo defaults to "demo-password" but refuses ''
+    (TODO #376).
   cred-issue --our FILE --in FILE [--rounds N] --out FILE
   cred-prove --in FILE [--msg STR] [--rounds N] --out FILE
   cred-verify --proof FILE --pubkey FILE [--msg STR] [--cred FILE --issuer FILE]

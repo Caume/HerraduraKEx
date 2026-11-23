@@ -75,8 +75,8 @@ that predate the FIPS 204 rename may still only register `Dilithium3`; either wa
 same NIST security category 3 (~128-bit) parameter set.
 
 Caveats specific to this comparison:
-- HPKS-Stern-F's demo parameters (`N=256, t=16, 32 rounds`) give only ~30-40 bits of security
-  per the CLI's own runtime warning; the code documents `N>=17000` for ~128-bit security,
+- HPKS-Stern-F's demo parameters (`N=256, t=16, 32 rounds`) give only ~24-38 bits of security
+  per the CLI's own runtime warning; the code documents `N>=2144` for ~128-bit security (TODO #382),
   which would be substantially slower again. ML-DSA-65 targets NIST category 3 (~128-bit)
   out of the box.
 - HPKS-Stern-F is measured through CLI process spawns (PEM encode/decode, file I/O per

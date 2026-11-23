@@ -148,9 +148,9 @@ def bench_dilithium(lib, alg_names=DILITHIUM3_ALG_NAMES):
 
 CAVEATS = """
 Caveats (apples-to-oranges — see TODO #127 on this suite's proof-of-concept status):
-  - HPKS-Stern-F here runs at demo parameters (N=256, t=16, 32 rounds, ~30-40 bit security
+  - HPKS-Stern-F here runs at demo parameters (N=256, t=16, 32 rounds, ~24-38 bit security
     per the CLI's own warning) rather than the production parameters the code documents
-    (N>=17000 for ~128-bit security); ML-DSA-65 is NIST-standardized (FIPS 204) at security
+    (N>=2144 for ~128-bit security, TODO #382); ML-DSA-65 is NIST-standardized (FIPS 204) at security
     category 3 (roughly 128-bit), run through liboqs's reference/optimized implementation.
   - HPKS-Stern-F is driven through CLI process spawns (PEM parsing, file I/O) rather than a
     direct library call, which adds fixed overhead ML-DSA's library-call path doesn't pay.

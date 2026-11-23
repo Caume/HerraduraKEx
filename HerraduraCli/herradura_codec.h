@@ -20,6 +20,10 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#ifndef _WIN32
+#include <fcntl.h>   /* hkx_fopen_out: open(O_CREAT, 0600), TODO #395 */
+#include <unistd.h>
+#endif
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * PEM label constants — must match Python HerraduraCli/herradura.py exactly
@@ -454,6 +458,24 @@ static int pem_read_file(const char *path, char *label_out,
     return r;
 }
 
+/* Open an output file for writing (mode "w" or "wb"), creating it 0600 (TODO
+ * #395).  Every file a CLI writes -- private keys, plaintext, shared secrets,
+ * state sidecars, and public outputs too -- comes through here, so no output
+ * is world-readable under the default umask.  A file that already exists keeps
+ * its mode: O_CREAT's mode applies only on creation, as with OpenSSL. */
+static FILE *hkx_fopen_out(const char *path, const char *mode)
+{
+#ifdef _WIN32
+    return fopen(path, mode);
+#else
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return NULL;
+    FILE *f = fdopen(fd, mode);
+    if (!f) close(fd);
+    return f;
+#endif
+}
+
 /* Write DER data as a PEM file.  Returns 0 on success, -1 on I/O error. */
 static int pem_write_file(const char *path, const char *label,
                           const uint8_t *der, size_t der_len)
@@ -464,7 +486,7 @@ static int pem_write_file(const char *path, const char *label,
     if (!buf) return -1;
     size_t written;
     pem_wrap(label, der, der_len, buf, &written);
-    FILE *f = fopen(path, "w");
+    FILE *f = hkx_fopen_out(path, "w");
     if (!f) { free(buf); return -1; }
     size_t wr = fwrite(buf, 1, written, f);
     fclose(f);

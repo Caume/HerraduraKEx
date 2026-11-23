@@ -63,6 +63,7 @@ import itertools
 import math
 import os
 import random
+import re
 import sys
 import time
 
@@ -4366,6 +4367,28 @@ def bench_zkp_nl():
 # Entry point
 # ---------------------------------------------------------------------------
 
+_SHARD_DEFAULT = 10   # seconds, for a function _SHARD_COST does not know yet
+
+
+def _parse_shard(text):
+    m = re.fullmatch(r"(\d+)/(\d+)", text)
+    if not m or not 1 <= int(m.group(1)) <= int(m.group(2)):
+        raise argparse.ArgumentTypeError(f"expected K/N with 1 <= K <= N, got {text!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def _shard_of(fns, cost, k, n):
+    """Shard k of n: a longest-first greedy over cost, ties broken by name, so
+    every runner computes the same partition (TODO #392)."""
+    c = lambda f: cost.get(f.__name__, _SHARD_DEFAULT)
+    shards, loads = [[] for _ in range(n)], [0] * n
+    for f in sorted(fns, key=lambda f: (-c(f), f.__name__)):
+        i = min(range(n), key=lambda j: (loads[j], j))
+        shards[i].append(f)
+        loads[i] += c(f)
+    return shards[k - 1]
+
+
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
@@ -4377,6 +4400,9 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--time', type=float, default=0.0,
                         metavar='T', dest='time_limit',
                         help='benchmark duration and per-test time cap in seconds')
+    parser.add_argument('--shard', type=_parse_shard, default=(1, 1),
+                        metavar='K/N', help='run only shard K of N of the test '
+                        'functions (TODO #392); default 1/1, everything')
     args = parser.parse_args()
 
     # env var fallbacks (only if CLI not set)
@@ -4412,82 +4438,139 @@ if __name__ == '__main__':
           f", RNL_SIZES={RNL_SIZES}")
     print()
 
-    print("--- Security Tests: Classical Protocols ---\n")
-    test_hkex_gf_correctness()
-    test_avalanche()
-    test_orbit_period()
-    test_bit_frequency()
-    test_hkex_gf_key_sensitivity()
-    test_hkex_gf_eve_resistance()
-    test_hpks_schnorr_correctness()
-    test_hpks_schnorr_eve_resistance()
-    test_hpke_roundtrip()
+    # The run list, in order: a string is a section header, a function a test
+    # or benchmark.  `--shard K/N` (TODO #392) runs a partition of the
+    # functions, computed by _shard_of below; headers print when their section
+    # has a function in the shard.
+    _RUN = [
+        "--- Security Tests: Classical Protocols ---\n",
+        test_hkex_gf_correctness,
+        test_avalanche,
+        test_orbit_period,
+        test_bit_frequency,
+        test_hkex_gf_key_sensitivity,
+        test_hkex_gf_eve_resistance,
+        test_hpks_schnorr_correctness,
+        test_hpks_schnorr_eve_resistance,
+        test_hpke_roundtrip,
 
-    print("--- Security Tests: PQC Extension (NL-FSCX + HKEX-RNL) ---\n")
-    test_nl_fscx_v1_nonlinearity()
-    test_nl_fscx_v2_bijective_inverse()
-    test_hske_nl_a1_correctness()
-    test_hske_nl_a2_correctness()
-    test_hkex_rnl_correctness()
-    test_hpks_nl_correctness()
-    test_hpke_nl_correctness()
+        "--- Security Tests: PQC Extension (NL-FSCX + HKEX-RNL) ---\n",
+        test_nl_fscx_v1_nonlinearity,
+        test_nl_fscx_v2_bijective_inverse,
+        test_hske_nl_a1_correctness,
+        test_hske_nl_a2_correctness,
+        test_hkex_rnl_correctness,
+        test_hpks_nl_correctness,
+        test_hpke_nl_correctness,
 
-    print("--- Security Tests: Code-Based PQC (Stern-F) ---\n")
-    test_hpks_stern_f_correctness()
-    test_hpke_stern_f_correctness()
+        "--- Security Tests: Code-Based PQC (Stern-F) ---\n",
+        test_hpks_stern_f_correctness,
+        test_hpke_stern_f_correctness,
 
-    print("--- Security Tests: Hash (HFSCX-256) ---\n")
-    test_hfscx_256()
+        "--- Security Tests: Hash (HFSCX-256) ---\n",
+        test_hfscx_256,
 
-    print("--- Security Tests: Code-Based PQC (Ring Signatures) ---\n")
-    test_hpks_stern_ring_correctness()
+        "--- Security Tests: Code-Based PQC (Ring Signatures) ---\n",
+        test_hpks_stern_ring_correctness,
 
-    print("--- Security Tests: ZKP (Ring-LWR Sigma + NL-FSCX ZKBoo) ---\n")
-    test_zkp_rnl_correctness()
-    test_zkp_nl_correctness()
+        "--- Security Tests: ZKP (Ring-LWR Sigma + NL-FSCX ZKBoo) ---\n",
+        test_zkp_rnl_correctness,
+        test_zkp_nl_correctness,
 
-    print("--- Security Tests: FPE / Tweakable / Accumulator (78.A/B/J) ---\n")
-    test_fpe_correctness()
-    test_twk_correctness()
-    test_accumulator_correctness()
+        "--- Security Tests: FPE / Tweakable / Accumulator (78.A/B/J) ---\n",
+        test_fpe_correctness,
+        test_twk_correctness,
+        test_accumulator_correctness,
 
-    print("--- Security Tests: Masking / Ratchet (78.H/C) ---\n")
-    test_masked_hske()
-    test_ratchet_forward_secrecy()
-    test_hske_nl_aead()
-    test_hdrbg()
-    test_wots_xmss()
-    test_hpkst()
+        "--- Security Tests: Masking / Ratchet (78.H/C) ---\n",
+        test_masked_hske,
+        test_ratchet_forward_secrecy,
+        test_hske_nl_aead,
+        test_hdrbg,
+        test_wots_xmss,
+        test_hpkst,
 
-    print("--- Performance Benchmarks ---\n")
-    bench_fscx()
-    bench_hkex_gf_pow()
-    bench_hkex_handshake()
-    bench_hske_roundtrip()
-    bench_hpke_roundtrip()
-    bench_nl_fscx_revolve()
-    bench_hske_nl_a1_roundtrip()
-    bench_hske_nl_a2_roundtrip()
-    bench_hkex_rnl_handshake()
-    bench_hpks_stern_f()
-    bench_zkp_rnl()
-    bench_zkp_nl()
-    bench_qcmdpc_kem()
+        "--- Performance Benchmarks ---\n",
+        bench_fscx,
+        bench_hkex_gf_pow,
+        bench_hkex_handshake,
+        bench_hske_roundtrip,
+        bench_hpke_roundtrip,
+        bench_nl_fscx_revolve,
+        bench_hske_nl_a1_roundtrip,
+        bench_hske_nl_a2_roundtrip,
+        bench_hkex_rnl_handshake,
+        bench_hpks_stern_f,
+        bench_zkp_rnl,
+        bench_zkp_nl,
+        bench_qcmdpc_kem,
 
-    # Security test [44] appended after benchmarks to preserve [32]-[43] numbering.
-    print("--- Security Test [44]: HCRED hybrid credential ---\n")
-    test_hcred()
+        # Security test [44] appended after benchmarks to preserve [32]-[43] numbering.
+        "--- Security Test [44]: HCRED hybrid credential ---\n",
+        test_hcred,
 
-    # Security test [45] appended after [44] to avoid renumbering (TODO #131).
-    test_weak_key_rejection()
-    test_fpe_twk_domain_separation()
-    test_nl_fscx_v3()
-    test_nl_fscx_v3_consumers()
-    test_rnl_m_blind_guard()
-    test_hcred_kkw()
-    test_qcmdpc_weak_key_screen()
-    test_qcprf_seed_expansion()
-    test_stern_witness_binding()
+        # Security test [45] appended after [44] to avoid renumbering (TODO #131).
+        test_weak_key_rejection,
+        test_fpe_twk_domain_separation,
+        test_nl_fscx_v3,
+        test_nl_fscx_v3_consumers,
+        test_rnl_m_blind_guard,
+        test_hcred_kkw,
+        test_qcmdpc_weak_key_screen,
+        test_qcprf_seed_expansion,
+        test_stern_witness_binding,
+    ]
+    # Seconds per function at -t 2.0, measured on an aarch64 SBC (CI runners
+    # are about 1.6x faster; only the ratios matter).  A stale figure only
+    # unbalances the shards.  A function missing here costs _SHARD_DEFAULT and
+    # still runs; an entry naming no function in _RUN is an error.
+    _SHARD_COST = {
+        "test_hkex_gf_correctness": 13, "test_avalanche": 5, "test_orbit_period": 1,
+        "test_bit_frequency": 1, "test_hkex_gf_key_sensitivity": 11,
+        "test_hkex_gf_eve_resistance": 11, "test_hpks_schnorr_correctness": 13,
+        "test_hpks_schnorr_eve_resistance": 13, "test_hpke_roundtrip": 13,
+        "test_nl_fscx_v1_nonlinearity": 5, "test_nl_fscx_v2_bijective_inverse": 9,
+        "test_hske_nl_a1_correctness": 4, "test_hske_nl_a2_correctness": 3,
+        "test_hkex_rnl_correctness": 3, "test_hpks_nl_correctness": 15,
+        "test_hpke_nl_correctness": 16, "test_hpks_stern_f_correctness": 30,
+        "test_hpke_stern_f_correctness": 45, "test_hfscx_256": 6,
+        "test_hpks_stern_ring_correctness": 3, "test_zkp_rnl_correctness": 9,
+        "test_zkp_nl_correctness": 67, "test_fpe_correctness": 6,
+        "test_twk_correctness": 6, "test_accumulator_correctness": 6,
+        "test_masked_hske": 1, "test_ratchet_forward_secrecy": 1,
+        "test_hske_nl_aead": 7, "test_hdrbg": 3, "test_wots_xmss": 45, "test_hpkst": 2,
+        "bench_fscx": 8, "bench_hkex_gf_pow": 9, "bench_hkex_handshake": 9,
+        "bench_hske_roundtrip": 8, "bench_hpke_roundtrip": 9,
+        "bench_nl_fscx_revolve": 17, "bench_hske_nl_a1_roundtrip": 8,
+        "bench_hske_nl_a2_roundtrip": 9, "bench_hkex_rnl_handshake": 9,
+        "bench_hpks_stern_f": 156, "bench_zkp_rnl": 6, "bench_zkp_nl": 73,
+        "bench_qcmdpc_kem": 9, "test_hcred": 33, "test_weak_key_rejection": 15,
+        "test_fpe_twk_domain_separation": 3, "test_nl_fscx_v3": 6,
+        "test_nl_fscx_v3_consumers": 3, "test_rnl_m_blind_guard": 1,
+        "test_hcred_kkw": 11, "test_qcmdpc_weak_key_screen": 1,
+        "test_qcprf_seed_expansion": 1, "test_stern_witness_binding": 56,
+    }
+    _run_fns = [x for x in _RUN if callable(x)]
+    _stale = sorted(set(_SHARD_COST) - {f.__name__ for f in _run_fns})
+    if _stale:
+        _emit("*** FAILED: _SHARD_COST names no function in _RUN: %s ***"
+              % ", ".join(_stale))
+        sys.exit(2)
+    _mine = {f.__name__ for f in _shard_of(_run_fns, _SHARD_COST, *args.shard)}
+    if args.shard[1] > 1:
+        print(f"--- Shard {args.shard[0]}/{args.shard[1]}: {len(_mine)} of "
+              f"{len(_run_fns)} test functions ---\n")
+    _header = None
+    for _x in _RUN:
+        if not callable(_x):
+            _header = _x
+            continue
+        if _x.__name__ not in _mine:
+            continue
+        if _header is not None:
+            print(_header)
+            _header = None
+        _x()
 
     # Cap accounting (TODO #225) — say what -t actually did, so a future ring or
     # parameter change can be told from a slower host by reading the log.

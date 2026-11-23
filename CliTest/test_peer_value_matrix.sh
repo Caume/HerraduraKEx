@@ -274,9 +274,14 @@ for l in "${LANGS[@]}"; do
 done
 
 # ── Widths: a 128-bit key from a CLI that runs 128 ───────────────────────────
-# Go and Python run GF at 32/64/128/256; C and Java at 256 only.  A CLI that
-# runs the width must agree with the others that do; one that does not must
-# refuse, naming the width -- never exit 0 with a wrong answer.
+# Which CLIs run the GF family at 128 bits is the spec's key_parameter_sets row
+# (TODO #379; C joined in #383, Java in #384).  A CLI that runs the width must
+# agree with the others that do; one that does not must refuse, naming the
+# width -- never exit 0 with a wrong answer.
+GF128_PORTS=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1]))
+print(' '.join(next(r['ports'] for r in d['key_parameter_sets']['rows'] if r['algo']=='hkex-gf' and r['bits']==128)))" \
+    "$ROOT/spec/herradura-protocol-spec.json")
+[ -n "$GF128_PORTS" ] || { echo "FAIL no hkex-gf 128 row in the spec"; exit 1; }
 W="$TMP/w"; mkdir -p "$W"
 PY=${CLI[py]}
 q $PY genpkey --algo hkex-gf --bits 128 --out "$W/a.pem"; q $PY pkey --in "$W/a.pem" --pubout --out "$W/a_pub.pem"
@@ -287,7 +292,7 @@ q $PY genpkey --algo hpks --bits 128 --out "$W/s.pem"; q $PY pkey --in "$W/s.pem
 printf 'sixteen byte msg' > "$W/m.bin"
 q $PY sign --algo hpks --key "$W/s.pem" --in "$W/m.bin" --out "$W/sig.pem"
 for l in "${LANGS[@]}"; do
-    case $l in py|go) runs=1 ;; *) runs=0 ;; esac
+    case " $GF128_PORTS " in *" $l "*) runs=1 ;; *) runs=0 ;; esac
     run "$l" kex --algo hkex-gf --our "$W/b.pem" --their "$W/a_pub.pem" --out "$W/sk_$l.pem"
     if [ $runs = 1 ]; then
         if [ "$RC" -eq 0 ] && cmp -s "$W/sk_$l.pem" "$W/sk_ref.pem"; then pass "[$l] 128-bit kex agrees with Python"

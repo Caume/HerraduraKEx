@@ -162,12 +162,14 @@ of any kind.  It maps 32 bytes to 32 bytes.  The only "format" preserved is
 the block width of the underlying permutation, which every block cipher
 preserves and none of them calls FPE.
 
-The CLI makes the mismatch concrete rather than merely terminological: input
-shorter than 32 bytes is zero-padded, and output is always 32 raw bytes.""")
+The CLI makes the mismatch concrete rather than merely terminological: it takes
+exactly 32 bytes (since v16.0.0, TODO #377, any other length is refused, so a
+16-digit card number must be padded by the caller), and output is always 32 raw
+bytes.""")
 
     kb = _SUITE.KEYBITS // 8
     pan = b'4111111111111111'          # 16 ASCII digits
-    padded = pan.ljust(kb, b'\x00')    # exactly what cmd_fpe does
+    padded = pan.ljust(kb, b'\x00')    # the caller's padding: cmd_fpe takes exactly 32 bytes (TODO #377)
     P = _SUITE.BitArray(_SUITE.KEYBITS, int.from_bytes(padded, 'big'))
     C = _SUITE.fpe_encrypt(P, b'\x22' * 32, b'ctx')
     out = C.uint.to_bytes(kb, 'big')
@@ -397,7 +399,7 @@ at HSKE-NL-A2's round count.  The verdicts below reflect the post-#242 state.
 
   fpe   BROKEN AS NAMED -- unchanged by #242, deliberately.  It is still not
         format-preserving encryption in the SP 800-38G sense: no radix, no
-        domain, 32 bytes in and 32 raw bytes out, short input zero-padded
+        domain, exactly 32 bytes in and 32 raw bytes out, other lengths refused
         (§3).  #242 scoped the naming defect out, because renaming, re-scoping
         or implementing a real FF1/FF3-1 domain is a different decision from a
         wire-format fix.  What #242 did remove is the collision with `twk`, so

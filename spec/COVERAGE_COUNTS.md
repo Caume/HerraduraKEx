@@ -12,9 +12,9 @@ named tool prints.
 
 | count | value | emitted by |
 |---|---|---|
-| suite-internal primitive manifest | 205 | `spec/check_language_parity.py` (`PRIMITIVES`, four cells each) |
-| PARAMETERS table | 88 | `spec/check_language_parity.py` (TODO #278, four cells each) |
-| findings-gating analysis scripts | 116 | `SecurityProofsCode/run_findings_gates.py --list` (TODO #289) |
+| suite-internal primitive manifest | 220 | `spec/check_language_parity.py` (`PRIMITIVES`, four cells each) |
+| PARAMETERS table | 93 | `spec/check_language_parity.py` (TODO #278, four cells each) |
+| findings-gating analysis scripts | 117 | `SecurityProofsCode/run_findings_gates.py --list` (TODO #289) |
 | fresh-sampling findings gates | 29 | `SecurityProofsCode/run_findings_gates.py --list` (`SAMPLED_GATES`, TODO #300) |
 | nominal job false-failure rate | 5.4e-05 | `SecurityProofsCode/run_findings_gates.py --list` (per `analysis-findings` run, TODO #304, #358) |
 | numbered-test flake budget | 1.0e-05 | `spec/check_language_parity.py` (summed over sampled numbered tests, TODO #316/#319) |
@@ -24,6 +24,6 @@ named tool prints.
 | rejection cells with a stated basis | 32 | `spec/check_language_parity.py` (`_REJECTION_BASES`, TODO #322) |
 | gated harnesses the sampled-test axis reads | 3 | `spec/check_language_parity.py` (`_REDUCED_HARNESSES`, beyond the four main ones, TODO #323) |
 | pinned leaf samplers | 4 | `spec/check_language_parity.py` (`KAT/sampler_replay.json`, TODO #296) |
-| pinned whole operations | 10 | `spec/check_language_parity.py` (`KAT/operation_replay.json`, TODO #297) |
+| pinned whole operations | 13 | `spec/check_language_parity.py` (`KAT/operation_replay.json`, TODO #297) |
 | replay pins still owed | 0 | `spec/check_language_parity.py` (`REPLAY_COVERAGE`, TODO #305) |
 | CLI raw-entropy sites | 56 | `spec/check_language_parity.py` (`CLI_DRAW_COVERAGE`, TODO #306) |

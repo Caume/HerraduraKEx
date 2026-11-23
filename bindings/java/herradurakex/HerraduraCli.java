@@ -126,11 +126,11 @@ public final class HerraduraCli {
         if (args[0].equals("--help") || args[0].equals("-h")) {
             System.out.print("Usage: herradurakex <command> [options]\n\n"
                 + CliFlagTable.HELP_SYNOPSIS
-                + "\nPEM output goes to stdout when --out is absent or '-'.\n");
+                + "\nPEM output goes to stdout when --out is '-', or is omitted where it is optional.\n");
             return;
         }
         String cmd = args[0];
-        Map<String, String> opt = parseOpts(args, 1);
+        Map<String, String> opt = parseOpts(cmd, args, 1);
         checkUnknownFlags(cmd, opt);
         checkKeyLabels(cmd, opt);   // TODO #366
         switch (cmd) {
@@ -246,26 +246,66 @@ public final class HerraduraCli {
         }
     }
 
-    private static Map<String, String> parseOpts(String[] args, int from) {
+    /** TODO #381: the shape of the argument list, in one rule shared by all four CLIs.
+     *
+     *  <ul>
+     *  <li>{@code --flag=value} is {@code --flag value}.  A boolean flag
+     *      ({@link CliFlagTable#BOOLEAN}) takes no value, so {@code --pubout=x} is
+     *      refused.</li>
+     *  <li>A value-taking flag needs a value: at the end of argv, or followed by
+     *      another flag of this subcommand, it is refused.  This parser used to
+     *      store a trailing {@code --out} as the string "true", and genpkey wrote
+     *      the private key to a file of that name.</li>
+     *  <li>A token that is neither a flag nor a flag's value is refused.  This
+     *      parser used to fold it into the previous flag's value, so
+     *      {@code genpkey --algo hpks extra} asked for algo "hpks extra".</li>
+     *  </ul>
+     *  Only the threshold path lists ({@link #REPEATABLE}) take every following
+     *  token that does not start with "--" (TODO #270).  A flag-shaped value that
+     *  is not a flag of this subcommand (a file named "--weird.pem") is still a
+     *  value, as in C. */
+    private static Map<String, String> parseOpts(String cmd, String[] args, int from) {
+        Set<String> known = CliFlagTable.FLAGS.getOrDefault(cmd, java.util.Collections.emptySet());
         Map<String, String> opt = new HashMap<>();
         int i = from;
         while (i < args.length) {
             String a = args[i];
-            if (!a.startsWith("--")) throw new CliError("unexpected argument: " + a);
+            if (!a.startsWith("--") || a.length() == 2) {
+                throw new CliError(cmd + ": unexpected argument '" + a + "'");
+            }
             String key = a.substring(2);
-            // Greedily consume every following non-"--" token as this
-            // flag's value(s), space-joined — matches argparse's nargs='+'
-            // for multi-value flags (e.g. --commits a.pem b.pem c.pem)
-            // while staying a no-op for the single-value case, since every
-            // other flag's value is always immediately followed by the
-            // next "--flag" or end of argv.
+            String inline = null;
+            int eq = key.indexOf('=');
+            if (eq >= 0 && known.contains(key.substring(0, eq))) {
+                inline = key.substring(eq + 1);
+                key = key.substring(0, eq);
+            }
             int j = i + 1;
-            java.util.List<String> vals = new java.util.ArrayList<>();
-            while (j < args.length && !args[j].startsWith("--")) {
-                vals.add(args[j]);
+            String val;
+            if (CliFlagTable.BOOLEAN.contains(key) || key.equals("help")) {
+                if (inline != null) throw new CliError(cmd + ": --" + key + " takes no value");
+                val = "true";
+            } else if (REPEATABLE.contains(key)) {
+                // Every following non-"--" token, space-joined -- argparse's
+                // nargs='+' (e.g. --commits a.pem b.pem c.pem).
+                java.util.List<String> vals = new java.util.ArrayList<>();
+                if (inline != null) vals.add(inline);
+                while (j < args.length && !args[j].startsWith("--")) {
+                    vals.add(args[j]);
+                    j++;
+                }
+                if (vals.isEmpty()) throw new CliError(cmd + ": --" + key + " needs a value");
+                val = String.join(" ", vals);
+            } else if (inline != null) {
+                val = inline;
+            } else {
+                if (j >= args.length || (args[j].startsWith("--")
+                        && known.contains(args[j].substring(2).split("=", 2)[0]))) {
+                    throw new CliError(cmd + ": --" + key + " needs a value");
+                }
+                val = args[j];
                 j++;
             }
-            String val = vals.isEmpty() ? "true" : String.join(" ", vals);
             // TODO #270: a REPEATED multi-value flag accumulates rather than
             // overwriting, so `--commit a --commit b` reaches the command as the
             // same space-joined list `--commits a b` does.  Scoped to the declared
@@ -412,6 +452,82 @@ public final class HerraduraCli {
     // genpkey
     // -----------------------------------------------------------------
 
+    /** TODO #379: resolve genpkey's --bits / --level against
+     *  KeyLabelTable.PARAM_SETS (generated).  Returns the row's bits (-1 for a
+     *  row with no width), 0 when the algorithm has fixed parameters and neither
+     *  flag was given, or -2 when --bits goes to the algorithm's own rule
+     *  (hpks-zkp-nl).  Every refusal happens here, before any key is generated,
+     *  with the message the other three CLIs print.  A row whose ports leave
+     *  out "java" is refused naming PARAM_GAP_TODO (TODO #384 closed the
+     *  narrow-width gap; the check stays for any row added later). */
+    static int resolveKeyParams(String algo, String bitsS, String levelS) {
+        java.util.List<String> fixed = Arrays.asList(KeyLabelTable.PARAM_FIXED);
+        java.util.List<String> levels = Arrays.asList(KeyLabelTable.PARAM_LEVELS);
+        if (fixed.contains(algo)) {
+            if (bitsS != null || levelS != null)
+                throw new CliError("genpkey: --algo " + algo + " has fixed parameters; "
+                                   + "--bits and --level do not apply");
+            return 0;
+        }
+        if (bitsS != null && levelS != null) throw new CliError("genpkey: give --bits or --level, not both");
+        java.util.List<String[]> rows = new java.util.ArrayList<>();
+        for (String[] r : KeyLabelTable.PARAM_SETS) if (r[0].equals(algo)) rows.add(r);
+        if (rows.isEmpty()) return 0;
+        String[] row = null, dflt = null;
+        for (String[] r : rows) if (r[3].equals("1")) dflt = r;
+        if (levelS != null) {
+            if (!levels.contains(levelS))
+                throw new CliError("genpkey: --level must be one of " + String.join(", ", levels)
+                                   + ", got '" + levelS + "'");
+            for (String[] r : rows) if (r[2].equals(levelS)) row = r;
+            if (row == null) {
+                java.util.List<String> avail = new java.util.ArrayList<>();
+                for (String l : levels)
+                    for (String[] r : rows) if (r[2].equals(l)) { avail.add(l); break; }
+                String m = "genpkey: --level " + levelS + " is not available for --algo " + algo
+                         + " (available: " + String.join(", ", avail) + ")";
+                for (String[] nt : KeyLabelTable.PARAM_LEVEL_NOTES)
+                    if (nt[0].equals(algo)) m += "; " + nt[1];
+                throw new CliError(m);
+            }
+        } else if (bitsS != null) {
+            if (Arrays.asList(KeyLabelTable.PARAM_OWN_BITS).contains(algo)) return -2;
+            java.util.List<String> listed = new java.util.ArrayList<>();
+            String firstLevel = null;
+            for (String[] r : rows) {
+                int b = Integer.parseInt(r[1]);
+                if (firstLevel == null && !r[2].isEmpty()) firstLevel = r[2];
+                if (b > 0 && r[7].isEmpty()) listed.add(r[1]);
+                if (b > 0 && r[1].equals(bitsS)) row = r;
+            }
+            if (listed.isEmpty())
+                throw new CliError("genpkey: --bits does not apply to --algo " + algo
+                                   + " (use --level " + firstLevel + ")");
+            if (row == null)
+                throw new CliError("genpkey: --bits must be one of " + String.join(", ", listed)
+                                   + " for --algo " + algo + ", got '" + bitsS + "'");
+            if (!row[7].isEmpty())
+                throw new CliError("genpkey: --bits " + row[1] + " for --algo " + algo
+                                   + " is withdrawn: " + row[7]);
+        } else {
+            row = dflt;
+        }
+        if (!Arrays.asList(row[6].split(" ")).contains("java")) {
+            java.util.List<String> here = new java.util.ArrayList<>();
+            for (String[] r : rows)
+                if (Integer.parseInt(r[1]) > 0 && Arrays.asList(r[6].split(" ")).contains("java"))
+                    here.add(r[1]);
+            throw new CliError("genpkey: --algo " + algo + " at " + row[1] + " bits is not yet "
+                               + "supported by this CLI (supported here: " + String.join(", ", here)
+                               + "; TODO #" + KeyLabelTable.PARAM_GAP_TODO + ")");
+        }
+        int bits = Integer.parseInt(row[1]);
+        if (bits > 0 && bits < Integer.parseInt(dflt[1]))
+            System.err.println("WARNING: --algo " + algo + " at " + bits + " bits is a demonstration "
+                               + "width (estimated security: " + row[5] + ")");
+        return bits;
+    }
+
     private static void cmdGenpkey(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "genpkey");
         String out = opt.getOrDefault("out", "-");
@@ -419,21 +535,25 @@ public final class HerraduraCli {
         // TODO #268.  The count travels in the PEM, so this default only
         // affects what THIS build writes.
         if (opt.containsKey("passphrase")) {
-            encPassphrase = opt.get("passphrase");
-            encIterations = Integer.parseInt(opt.getOrDefault("kdf-iterations",
-                                                              String.valueOf(PBKDF2_ITER_DEMO)));
-            if (encIterations < 1 || encIterations > 100000000) {
-                throw new CliError("genpkey: --kdf-iterations out of range (1..100000000)");
+            // TODO #376: an empty passphrase protects nothing; refused.
+            if (opt.get("passphrase").isEmpty()) {
+                throw new CliError("genpkey: --passphrase must not be empty");
             }
+            encPassphrase = opt.get("passphrase");
+            encIterations = numArg(opt, "kdf-iterations", 1, PBKDF2_ITER_MAX,
+                                   PBKDF2_ITER_DEMO, "genpkey");
         } else if (opt.containsKey("kdf-iterations")) {
             throw new CliError("genpkey: --kdf-iterations requires --passphrase");
         }
+        // TODO #379: every width comes from the parameter-set table.
+        final int pbits = resolveKeyParams(algo, opt.get("bits"), opt.get("level"));
 
         if (algo.equals("hpks-stern") || algo.equals("hpke-stern")) {
             sternDemoWarning();
-            Stern.SternKeypair kp = Stern.sternFKeygen(RNG);
+            Stern.SternKeypair kp = SternL.isLong(pbits)            // TODO #382: the long form
+                ? SternL.keygen(pbits, RNG) : Stern.sternFKeygen(pbits, RNG);   // TODO #384: n = the row's width
             String label = algo.equals("hpks-stern") ? Codec.PEM_HPKS_STERN_PRIV : Codec.PEM_HPKE_STERN_PRIV;
-            writeString(out, Codec.encodeSternPrivKey(label, kp.e, kp.seed));
+            writeString(out, Codec.encodeSternPrivKey(label, kp.e, kp.seed, pbits));
             return;
         }
         if (algo.equals("hpke-stern-kem")) {
@@ -442,7 +562,9 @@ public final class HerraduraCli {
             return;
         }
         if (algo.equals("oprf")) {
-            writeString(out, Codec.encodeOprfPrivKey(Oprf.keygen(RNG)));
+            // TODO #385: at the row's width
+            int on = pbits > 0 ? pbits : Herradura.N;
+            writeString(out, Codec.encodeOprfPrivKey(Oprf.keygen(on, RNG), on));
             return;
         }
         if (algo.equals("hpks-wots")) {
@@ -454,17 +576,18 @@ public final class HerraduraCli {
             return;
         }
         if (algo.equals("hcred")) {
-            int[] mBase = HerraduraNl.rnlMPoly(Herradura.N);
-            int[] aRand = HerraduraNl.rnlRandPoly(Herradura.N, HerraduraNl.RNLQ, RNG);
+            int n = pbits;   // TODO #384: the row's width
+            int[] mBase = HerraduraNl.rnlMPoly(n);
+            int[] aRand = HerraduraNl.rnlRandPoly(n, HerraduraNl.RNLQ, RNG);
             int[] mBlind = HerraduraNl.rnlPolyAdd(mBase, aRand, HerraduraNl.RNLQ);
-            Hcred.UserKeypair kp = Hcred.userKeygen(mBlind, RNG);
-            BigInteger seedH = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
-            BigInteger syndr = Hcred.syndrome(seedH, kp.e);
+            Hcred.UserKeypair kp = Hcred.userKeygen(mBlind, n, RNG);
+            BigInteger seedH = new BigInteger(n, RNG).and(Stern.maskFor(n));
+            BigInteger syndr = Hcred.syndrome(seedH, kp.e, n);
             writeString(out, Codec.encodeHcredPrivKey(kp.s, kp.c, mBlind, seedH, syndr));
             return;
         }
         if (algo.equals("hpks-xmss")) {
-            int h = opt.containsKey("xmss-height") ? Integer.parseInt(opt.get("xmss-height")) : Xmss.DEFAULT_H;
+            int h = numArg(opt, "xmss-height", 1, Codec.XMSS_MAX_H, Xmss.DEFAULT_H, "genpkey");
             // Codec.XMSS_MAX_H's own comment calls itself "genpkey's
             // --xmss-height cap", and until TODO #278 genpkey was the one path
             // that did not apply it — the decode side did.  Unbounded, `1 << h`
@@ -472,9 +595,6 @@ public final class HerraduraCli {
             // reported "h=32, 1 leaves", wrote a ONE-leaf tree labelled h = 32,
             // and exited 0.  Nothing could read it back, Java included.  C, Go
             // and Python all refuse the same input up front.
-            if (h < 1 || h > Codec.XMSS_MAX_H)
-                throw new CliError("genpkey: --xmss-height must be in [1,"
-                        + Codec.XMSS_MAX_H + "]");
             System.err.println("Generating XMSS tree (h=" + h + ", " + (1 << h) + " leaves) — may take a moment...");
             byte[] masterSeed = new byte[32];
             RNG.nextBytes(masterSeed);
@@ -495,10 +615,15 @@ public final class HerraduraCli {
             // read as omitted and wrote an n = 8 key; it now fails the range check.
             int n = ZKP_NL_DEFAULT_N;
             String nOpt = opt.get("bits");
-            if (nOpt != null) n = Integer.parseInt(nOpt);
-            if (n <= 0 || n % 2 != 0 || n > ZKP_NL_MAX_N) {
-                throw new CliError("genpkey hpks-zkp-nl: --bits must be a positive even "
-                    + "integer <= " + ZKP_NL_MAX_N + ", got " + n);
+            if (pbits == -2) {
+                // TODO #379: decimal digits only; parseInt used to throw on "abc".
+                boolean ok = !nOpt.isEmpty() && nOpt.length() <= 6
+                             && nOpt.chars().allMatch(c -> c >= '0' && c <= '9');
+                n = ok ? Integer.parseInt(nOpt) : -1;
+                if (n <= 0 || n % 2 != 0 || n > ZKP_NL_MAX_N) {
+                    throw new CliError("genpkey hpks-zkp-nl: --bits must be a positive even "
+                        + "integer <= " + ZKP_NL_MAX_N + ", got " + nOpt);
+                }
             }
             BigInteger[] kp = ZkpNl.keygen(n, RNG);
             writeString(out, Codec.encodeZkpNlPrivKey(kp[0], kp[1], kp[2], n));
@@ -506,8 +631,9 @@ public final class HerraduraCli {
         }
 
         if (algo.equals("hkex-rnl")) {
-            // Ring dimension is independent of the derived key width (TODO #223).
-            int n = HerraduraNl.RNLN;
+            // Ring dimension is independent of the derived key width (TODO #223);
+            // the parameter-set table chooses it (TODO #379).
+            int n = pbits;
             int[] mBase = HerraduraNl.rnlMPoly(n);
             int[] aRand = HerraduraNl.rnlRandPoly(n, HerraduraNl.RNLQ, RNG);
             int[] mBlind = HerraduraNl.rnlPolyAdd(mBase, aRand, HerraduraNl.RNLQ);
@@ -519,14 +645,16 @@ public final class HerraduraCli {
         }
 
         String label = privLabel(algo); // validates algo as a side effect
-        BitArray priv = BitArray.random(Herradura.N, RNG);
+        // TODO #384: the GF(2^n) family at the row's width.
+        int nb = pbits > 0 ? pbits : Herradura.N;
+        BitArray priv = BitArray.random(nb, RNG);
         BitArray pub = Herradura.hkexGfPubkey(priv); // same keypair shape for hkex-gf/hpks(-nl)/hpke(-nl)
-        String pem = Codec.encodePrivKey(label, priv.toBigInteger(), pub.toBigInteger());
+        String pem = Codec.encodePrivKey(label, priv.toBigInteger(), pub.toBigInteger(), nb);
         writeString(out, pem);
     }
 
-    /** Stern-F is demo/illustration-strength only at this binding's fixed
-     * n=256/t=16 parameters (SecurityProofs-5.md Sec.11.8.4) — mirrors the
+    /** Stern-F is demo/illustration-strength only at every width this CLI
+     * runs (n = 256, t = 16 by default; 32-128 below it, TODO #384) (SecurityProofs-5.md Sec.11.8.4) — mirrors the
      * Python/C/Go CLIs' stderr warning on every stern genpkey/sign/verify/
      * enc/dec call (not printed for hpke-stern-kem, which is production-shaped). */
     private static void sternDemoWarning() {
@@ -558,6 +686,11 @@ public final class HerraduraCli {
 
         String pemIn = readString(in);
         Codec.PemBlock block = Codec.pemUnwrap(pemIn);
+        // TODO #386: a public key is refused by label, in the same words in
+        // all four CLIs.
+        if (block.label.endsWith(" PUBLIC KEY")) {
+            throw new CliError("pkey: '" + block.label + "' is a public key (pkey reads a private key)");
+        }
         // FAIL CLOSED (TODO #268).  An envelope IS a DER SEQUENCE, so without
         // this it parses cleanly and its salt/iterations/nonce are read as
         // though they were key material -- a wrong answer with exit 0.
@@ -572,24 +705,29 @@ public final class HerraduraCli {
             if (opt.containsKey("pubout")) {
                 throw new CliError("pkey --pubout: oprf has no public key");
             }
-            Codec.decodeOprfPrivKey(pemIn);   // validates the key
+            Codec.PubKey ok = Codec.decodeOprfPrivKey(pemIn);   // validates the key
             System.out.println("algorithm : oprf");
-            System.out.println("bits      : " + Herradura.N);
+            System.out.println("bits      : " + ok.nbits);   // TODO #385: the key's own
+            printParamLines("oprf", ok.nbits);
             return;
         }
 
         if (block.label.equals(Codec.PEM_HPKS_STERN_PRIV) || block.label.equals(Codec.PEM_HPKE_STERN_PRIV)) {
             sternDemoWarning();
             Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pemIn, block.label);
-            BigInteger syndrome = Stern.sternSyndrome(pk.seed, pk.e);
+            BigInteger syndrome = SternL.isLong(pk.nbits) ? SternL.syndrome(pk.seed, pk.e, pk.nbits)
+                                                          : Stern.sternSyndrome(pk.seed, pk.e, pk.nbits);
             String pubLabel = block.label.equals(Codec.PEM_HPKS_STERN_PRIV) ? Codec.PEM_HPKS_STERN_PUB : Codec.PEM_HPKE_STERN_PUB;
             if (opt.containsKey("pubout")) {
-                writeString(out, Codec.encodeSternPubKey(pubLabel, syndrome, pk.seed));
+                writeString(out, Codec.encodeSternPubKey(pubLabel, syndrome, pk.seed, pk.nbits));
             } else if (opt.containsKey("text")) {
-                System.out.println("algorithm : " + (block.label.equals(Codec.PEM_HPKS_STERN_PRIV) ? "hpks-stern" : "hpke-stern"));
-                System.out.println("bits      : " + pk.nbits);
+                // TODO #386: the other three's fields (n, e_int, seed)
+                String sa = block.label.equals(Codec.PEM_HPKS_STERN_PRIV) ? "hpks-stern" : "hpke-stern";
+                System.out.println("algorithm : " + sa);
+                System.out.println("n         : " + pk.nbits);
+                System.out.println("e_int     : " + hex(pk.e, pk.nbits / 4));
                 System.out.println("seed      : " + hex(pk.seed, pk.nbits / 4));
-                System.out.println("syndrome  : " + hex(syndrome, pk.nbits / 8));
+                printParamLines(sa, pk.nbits);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -605,7 +743,7 @@ public final class HerraduraCli {
                 System.out.println("algorithm : hpke-stern-kem");
                 System.out.println("r         : " + pk.r);
                 System.out.println("d         : " + pk.d);
-                System.out.println("h_pub     : " + hPub.toString(16));
+                printParamLines("hpke-stern-kem", -1);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -647,7 +785,10 @@ public final class HerraduraCli {
             } else if (opt.containsKey("text")) {
                 System.out.println("algorithm : hcred");
                 System.out.println("n         : " + pk.n);
+                System.out.println("seed_H    : " + hex(pk.seedH, pk.n / 4));   // TODO #386
+                System.out.println("syndr     : " + hex(pk.syndr, pk.n / 8));
                 System.out.println("W (weight): " + Hcred.phi(pk.s).bitCount());
+                printParamLines("hcred", pk.n);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -660,9 +801,12 @@ public final class HerraduraCli {
                 writeString(out, Codec.encodeZkpNlPubKey(pk.b, pk.y, pk.n));
             } else if (opt.containsKey("text")) {
                 System.out.println("algorithm : hpks-zkp-nl");
+                int w = 2 * ((pk.n + 7) / 8);                        // TODO #386
                 System.out.println("n         : " + pk.n);
-                System.out.println("B         : " + pk.b);
-                System.out.println("y         : " + pk.y);
+                System.out.println("A (priv)  : " + hex(pk.a, w));
+                System.out.println("B (pub)   : " + hex(pk.b, w));
+                System.out.println("y (pub)   : " + hex(pk.y, w));
+                printParamLines("hpks-zkp-nl", pk.n);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -676,9 +820,13 @@ public final class HerraduraCli {
                 writeString(out, Codec.encodeRnlPubKey(c, pk.mBlind, pk.n, pk.nA));
             } else if (opt.containsKey("text")) {
                 System.out.println("algorithm : hkex-rnl");
+                // TODO #387: the whole packed s and C, as the other three
                 System.out.println("n         : " + pk.n);
-                System.out.println("s[0..4]   : " + java.util.Arrays.toString(java.util.Arrays.copyOf(pk.s, 5)));
-                System.out.println("C[0..4]   : " + java.util.Arrays.toString(java.util.Arrays.copyOf(c, 5)));
+                System.out.println("s_packed  : " + packedHex(pk.s, 4));
+                System.out.println("C_packed  : " + packedHex(c, 2));
+                if (Codec.derParseSeq(block).size() >= 4)          // a key that carries n_A
+                    System.out.println("n_A       : " + hexBytes(pk.nA));
+                printParamLines("hkex-rnl", pk.n);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -689,7 +837,7 @@ public final class HerraduraCli {
         Codec.PrivKey pk = Codec.decodePrivKey(pemIn, block.label);
 
         if (opt.containsKey("pubout")) {
-            String pem = Codec.encodePubKey(pubLabel(algo), pk.pub);
+            String pem = Codec.encodePubKey(pubLabel(algo), pk.pub, pk.nbits);
             writeString(out, pem);
         } else if (opt.containsKey("text")) {
             int hexWidth = pk.nbits / 4;
@@ -697,6 +845,7 @@ public final class HerraduraCli {
             System.out.println("bits      : " + pk.nbits);
             System.out.println("private   : " + hex(pk.priv, hexWidth));
             System.out.println("public    : " + hex(pk.pub, hexWidth));
+            printParamLines(algo, pk.nbits);
         } else {
             throw new CliError("pkey: specify --pubout or --text");
         }
@@ -733,8 +882,8 @@ public final class HerraduraCli {
         Codec.PemBlock theirBlock = Codec.pemUnwrap(theirPem);
         Codec.PubKey their = Codec.decodePubKey(theirPem, theirBlock.label);
 
-        if (our.nbits != their.nbits) {
-            throw new CliError("kex: bit-size mismatch (ours=" + our.nbits + ", theirs=" + their.nbits + ")");
+        if (our.nbits != their.nbits) {   // worded as in the other three CLIs (TODO #383)
+            throw new CliError("kex: their public key n is " + their.nbits + ", our private key n is " + our.nbits);
         }
         BitArray sk = Herradura.hkexGfAgree(BitArray.fromBigInteger(our.priv, our.nbits),
                                             BitArray.fromBigInteger(their.pub, their.nbits));
@@ -742,7 +891,9 @@ public final class HerraduraCli {
             throw new CliError("kex: their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)");
         }
         BigInteger skInt = applyKdf(sk.toBigInteger(), our.nbits, kdfOn);
-        String pem = Codec.encodeSessionKey(skInt, our.nbits);
+        // TODO #389: with --kdf the session key is the whole 256-bit digest at
+        // every width, labelled n = 256; without it, the raw n-bit g^ab.
+        String pem = Codec.encodeSessionKey(skInt, kdfOn ? 256 : our.nbits);
         writeString(out, pem);
     }
 
@@ -1085,6 +1236,7 @@ public final class HerraduraCli {
         String algo = req(opt, "algo", "enc");
         byte[] inBytes = readBytes(req(opt, "in", "enc"));
         String out = req(opt, "out", "enc");
+        aeadFlagsOK("enc", algo, opt);
 
         if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
             boolean v3 = algo.equals("hske-duplex3");
@@ -1101,6 +1253,7 @@ public final class HerraduraCli {
             int nbits = key.size();
             sym256OK(nbits, "enc hske", "key");
             int nbytes = nbits / 8;
+            oneBlockOK(algo, inBytes.length, nbytes);
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), nbits);
             BitArray e = Herradura.hskeEncrypt(p, key);
             writeString(out, encodeSymCt(e.toBigInteger(), nbits));
@@ -1108,6 +1261,7 @@ public final class HerraduraCli {
             BitArray key = loadKey(req(opt, "key", "enc"));
             int nbits = key.size();
             int nbytes = nbits / 8;
+            oneBlockOK(algo, inBytes.length, nbytes);
             byte[] block = padTrunc(inBytes, nbytes);
             BitArray nonce = BitArray.random(nbits, RNG);
             if (opt.containsKey("aead")) {
@@ -1120,7 +1274,7 @@ public final class HerraduraCli {
                                                  new BigInteger(1, c.tag), nbits));
             } else {
                 if (opt.containsKey("ad")) {
-                    throw new CliError("enc hske-nla1: --ad requires --aead");
+                    throw new CliError("enc: --ad requires --aead");
                 }
                 nla1WidthOK(nbits, "enc", "key");
                 BitArray p = BitArray.fromBytes(block, nbits);
@@ -1135,6 +1289,7 @@ public final class HerraduraCli {
                 throw new CliError("enc hske-nla2: NL-FSCX v2 weak key (delta(K) has a cyclic arc of at most n/4 bits; TODO #354)");
             }
             int nbytes = nbits / 8;
+            oneBlockOK(algo, inBytes.length, nbytes);
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), nbits);
             BitArray e = HerraduraNl.hskeNlA2Encrypt(p, key);
             writeString(out, encodeSymCt(e.toBigInteger(), nbits));
@@ -1143,6 +1298,7 @@ public final class HerraduraCli {
             BitArray key = loadKey(req(opt, "key", "enc"));
             int nbits = key.size();
             sym256OK(nbits, "enc hske-nla3", "key");
+            oneBlockOK(algo, inBytes.length, nbits / 8);
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbits / 8), nbits);
             writeString(out, encodeSymCt(HerraduraNl.hskeNlA3Encrypt(p, key).toBigInteger(), nbits));
         } else if (algo.equals("hpke")) {
@@ -1151,6 +1307,7 @@ public final class HerraduraCli {
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             int nbytes = pub.nbits / 8;
+            oneBlockOK(algo, inBytes.length, nbytes);
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), pub.nbits);
             gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = Herradura.hpkeEncrypt(p, BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
@@ -1162,6 +1319,7 @@ public final class HerraduraCli {
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
             int nbytes = pub.nbits / 8;
+            oneBlockOK(algo, inBytes.length, nbytes);
             BitArray p = BitArray.fromBytes(padTrunc(inBytes, nbytes), pub.nbits);
             gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = HerraduraNl.hpkeNlEncrypt(p, BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
@@ -1171,6 +1329,7 @@ public final class HerraduraCli {
             String pubPem = readString(req(opt, "pubkey", "enc"));
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
+            oneBlockOK(algo, inBytes.length, pub.nbits / 8);
             BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
             gfPeerOK(pub.pub, pub.nbits, "enc: public key");
             Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(BitArray.fromBytes(padTrunc(inBytes, pub.nbits / 8), pub.nbits), BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
@@ -1181,10 +1340,14 @@ public final class HerraduraCli {
             String pubPem = readString(req(opt, "pubkey", "enc"));
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
             Codec.SternPubKey pub = Codec.decodeSternPubKey(pubPem, pubBlock.label);
-            BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
-            Stern.SternEncapResult enc = Stern.hpkeSternFEncapWithE(pub.seed, RNG);
-            BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, Herradura.N), BitArray.fromBigInteger(enc.k, Herradura.N), Herradura.I_STEPS);
-            writeString(out, Codec.encodeSternCt(enc.ct, enc.eP, enc.k, e.toBigInteger()));
+            int n = pub.nbits;   // TODO #384: the key's width
+            int w = Math.min(n, 256);   // the payload block: 256 bits above 256 (TODO #382)
+            oneBlockOK(algo, inBytes.length, w / 8);
+            BigInteger p = new BigInteger(1, padTrunc(inBytes, w / 8));
+            Stern.SternEncapResult enc = SternL.isLong(n) ? SternL.encapWithE(pub.seed, n, RNG)
+                                                          : Stern.hpkeSternFEncapWithE(pub.seed, n, RNG);
+            BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, w), BitArray.fromBigInteger(enc.k, w), Herradura.iSteps(w));
+            writeString(out, Codec.encodeSternCt(enc.ct, enc.eP, enc.k, e.toBigInteger(), n));
         } else if (algo.equals("hpke-stern-kem")) {
             String pubPem = readString(req(opt, "pubkey", "enc"));
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
@@ -1192,6 +1355,7 @@ public final class HerraduraCli {
                 throw new CliError("enc hpke-stern-kem: --pubkey must be an HPKE-STERN-KEM PUBLIC KEY, got " + pubBlock.label);
             }
             Codec.KemPubKey pub = Codec.decodeKemPubKey(pubPem);
+            oneBlockOK(algo, inBytes.length, Herradura.N / 8);
             BigInteger p = new BigInteger(1, padTrunc(inBytes, Herradura.N / 8));
             Stern.QcMdpcEncapResult enc = Stern.qcmdpcEncap(pub.hPub, RNG);
             BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, Herradura.N), BitArray.fromBigInteger(enc.k, Herradura.N), Herradura.I_STEPS);
@@ -1205,6 +1369,7 @@ public final class HerraduraCli {
     private static void cmdDec(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "dec");
         String out = req(opt, "out", "dec");
+        aeadFlagsOK("dec", algo, opt);
 
         if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
             boolean v3 = algo.equals("hske-duplex3");
@@ -1248,6 +1413,11 @@ public final class HerraduraCli {
                 }
                 writeBytes(out, pt);
             } else {
+                // TODO #378: format tag 1 has no tag to bind associated data to.
+                if (opt.containsKey("ad")) {
+                    throw new CliError("dec: --ad given, but this hske-nla1 ciphertext "
+                        + "is not an AEAD one (it has no tag to bind it to)");
+                }
                 // No --aead on dec, in any of the four CLIs: the format tag is
                 // what the artifact IS, so decryption never needs telling.
                 nla1WidthOK(nbits, "dec", "key");
@@ -1283,6 +1453,7 @@ public final class HerraduraCli {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            asymSameWidth(ct.nbits, nbits);
             gfPeerOK(ct.r, nbits, "dec: ciphertext R");
             BitArray d = Herradura.hpkeDecrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
             if (d == null) throw new CliError("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
@@ -1291,6 +1462,7 @@ public final class HerraduraCli {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            asymSameWidth(ct.nbits, nbits);
             gfPeerOK(ct.r, nbits, "dec: ciphertext R");
             BitArray d = HerraduraNl.hpkeNlDecrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
             if (d == null) throw new CliError("dec: the derived key is NL-FSCX v2 weak (TODO #354)");
@@ -1299,6 +1471,7 @@ public final class HerraduraCli {
             BitArray key = loadKey(req(opt, "key", "dec"));
             int nbits = key.size();
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            asymSameWidth(ct.nbits, nbits);
             gfPeerOK(ct.r, nbits, "dec: ciphertext R");
             BitArray d = HerraduraNl.hpkeNl3Decrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
             if (d == null) throw new CliError("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
@@ -1309,8 +1482,12 @@ public final class HerraduraCli {
             Codec.PemBlock block = Codec.pemUnwrap(pem);
             Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
             Codec.SternCt ct = Codec.decodeSternCt(readString(req(opt, "in", "dec")));
-            BigInteger k = Stern.hpkeSternFDecap(ct.eP, pk.seed);
-            BitArray d = Herradura.fscxRevolve(BitArray.fromBigInteger(ct.e, Herradura.N), BitArray.fromBigInteger(k, Herradura.N), Herradura.R_STEPS);
+            int n = pk.nbits;   // TODO #384: the key's width
+            asymSameWidth(ct.nbits, n);
+            int w = Math.min(n, 256);   // TODO #382
+            BigInteger k = SternL.isLong(n) ? SternL.decapKnown(ct.eP, pk.seed, n)
+                                            : Stern.hpkeSternFDecap(ct.eP, pk.seed, n);
+            BitArray d = Herradura.fscxRevolve(BitArray.fromBigInteger(ct.e, w), BitArray.fromBigInteger(k, w), Herradura.rSteps(w));
             writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-stern-kem")) {
             String pem = readString(req(opt, "key", "dec"));
@@ -1330,6 +1507,12 @@ public final class HerraduraCli {
             throw new CliError("dec: unsupported --algo " + algo
                 + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
         }
+    }
+
+    /** TODO #383/#384: a ciphertext at another width than the key is refused by
+     *  name, worded as in the other three CLIs. */
+    private static void asymSameWidth(int ctN, int keyN) {
+        if (ctN != keyN) throw new CliError("dec: ciphertext n is " + ctN + ", private key n is " + keyN);
     }
 
     /** Loads a private key PEM and returns {priv, BigInteger(nbits)}. */
@@ -1413,12 +1596,12 @@ public final class HerraduraCli {
 
     /** Parses a comma-separated list of hpks-stern public-key PEM paths for
      * hpks-ring sign/verify, matching herradura.py's _load_ring_pubkeys.
-     * Returns the ring's member keys, all sharing Herradura.N (this port,
-     * like the rest of the CLI, is fixed at N rather than Python's
-     * variable nbits). */
-    private static List<SternRing.RingKey> loadRingPubkeys(String ringArg) throws IOException {
+     * Returns the ring's member keys, all sharing one width n (any GF width
+     * since TODO #384), as Python's does; that n is returned in nOut[0]. */
+    private static List<SternRing.RingKey> loadRingPubkeys(String ringArg, int[] nOut) throws IOException {
         String[] paths = ringArg.split(",");
         List<SternRing.RingKey> keys = new java.util.ArrayList<>();
+        int n = 0;
         for (String p : paths) {
             if (p.isEmpty()) continue;
             String pem = readString(p);
@@ -1427,8 +1610,9 @@ public final class HerraduraCli {
                 throw new CliError("hpks-ring: ring member " + p + " is " + block.label + ", expected " + Codec.PEM_HPKS_STERN_PUB);
             }
             Codec.SternPubKey pub = Codec.decodeSternPubKey(pem, block.label);
-            if (pub.nbits != Herradura.N) {
-                throw new CliError("hpks-ring: all ring members must share n=" + Herradura.N);
+            if (n == 0) n = pub.nbits;
+            if (pub.nbits != n) {
+                throw new CliError("hpks-ring: all ring members must share the same n");
             }
             keys.add(new SternRing.RingKey(pub.seed, pub.syndrome));
         }
@@ -1445,6 +1629,7 @@ public final class HerraduraCli {
                 + RING_MAX_K + " supported (a larger ring produces a signature no CLI "
                 + "will verify)");
         }
+        nOut[0] = n;
         return keys;
     }
 
@@ -1458,9 +1643,7 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            int rounds = opt.containsKey("rounds")
-                ? Integer.parseInt(opt.get("rounds")) : ZKP_CLI_ROUNDS;
-            if (rounds <= 0) throw new CliError(algo + " sign: --rounds must be positive");
+            int rounds = roundsArg(opt, ZKP_CLI_ROUNDS, "sign");
 
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1513,7 +1696,7 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : STERN_CLI_ROUNDS;
+            int rounds = roundsArg(opt, STERN_CLI_ROUNDS, "sign");
 
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1521,7 +1704,8 @@ public final class HerraduraCli {
                 throw new CliError("hpks-ring sign: signer key must be hpks-stern, got " + block.label);
             }
             Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
-            List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "sign"));
+            int[] ringNOut = new int[1];
+            List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "sign"), ringNOut);
             int j = -1;
             for (int i = 0; i < ring.size(); i++) {
                 if (ring.get(i).seed.equals(pk.seed)) { j = i; break; }
@@ -1530,8 +1714,14 @@ public final class HerraduraCli {
                 throw new CliError("hpks-ring sign: signer's public key is not in --ring "
                     + "(run pkey --pubout on the signer key and include it)");
             }
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, pk.nbits / 8));
-            SternRing.RingSignature sig = SternRing.sign(msgInt, pk.e, j, ring, rounds, RNG);
+            int ringN = ringNOut[0];
+            if (ringN != pk.nbits) {   // worded as Python's (TODO #384)
+                throw new CliError("hpks-ring sign: signer n=" + pk.nbits + " != ring n=" + ringN);
+            }
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(pk.nbits, 256) / 8));
+            SternRing.RingSignature sig = SternL.isLong(pk.nbits)    // TODO #382
+                ? SternL.ringSign(msgInt, pk.e, j, ring, rounds, pk.nbits, RNG)
+                : SternRing.sign(msgInt, pk.e, j, ring, rounds, pk.nbits, RNG);
             writeString(out, Codec.encodeRingSig(sig, pk.nbits));
             System.err.println("Ring signature created (k=" + ring.size() + "); signer index is hidden.");
             return;
@@ -1541,14 +1731,16 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : STERN_CLI_ROUNDS;
+            int rounds = roundsArg(opt, STERN_CLI_ROUNDS, "sign");
 
             String pem = readString(keyPath);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
             Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, pk.nbits / 8));
-            Stern.SternSignature sig = Stern.hpksSternFSign(msgInt, pk.e, pk.seed, rounds, RNG);
-            writeString(out, Codec.encodeSternSig(sig));
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(pk.nbits, 256) / 8));
+            Stern.SternSignature sig = SternL.isLong(pk.nbits)       // TODO #382
+                ? SternL.sign(msgInt, pk.e, pk.seed, rounds, pk.nbits, RNG)
+                : Stern.hpksSternFSign(msgInt, pk.e, pk.seed, rounds, pk.nbits, RNG);
+            writeString(out, Codec.encodeSternSig(sig, pk.nbits));
             return;
         }
         if (algo.equals("hpks-xmss")) {
@@ -1598,7 +1790,7 @@ public final class HerraduraCli {
         if (algo.equals("hpks")) {
             Herradura.Signature sig = Herradura.hpksSign(BitArray.fromBigInteger(msgInt, pk.nbits), BitArray.fromBigInteger(pk.priv, pk.nbits), RNG);
             writeString(out, Codec.encodeSchnorrSig(sig.s.toBigInteger(), sig.r.toBigInteger(),
-                Herradura.fscxRevolve(sig.r, BitArray.fromBigInteger(msgInt, pk.nbits), Herradura.I_STEPS).toBigInteger(), pk.nbits));
+                Herradura.fscxRevolve(sig.r, BitArray.fromBigInteger(msgInt, pk.nbits), Herradura.iSteps(pk.nbits)).toBigInteger(), pk.nbits));
         } else {
             Herradura.Signature sig = HerraduraNl.hpksNlSign(BitArray.fromBigInteger(msgInt, pk.nbits), BitArray.fromBigInteger(pk.priv, pk.nbits), RNG);
             writeString(out, Codec.encodeSchnorrSig(sig.s.toBigInteger(), sig.r.toBigInteger(),
@@ -1691,9 +1883,14 @@ public final class HerraduraCli {
             Codec.SternSigDecoded sig = Codec.decodeSternSig(readString(sigPath));
             requireRounds(sig.sig.challenges.length, minRounds(opt, "verify"),
                           "hpks-stern signature", "verify");
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, pub.nbits / 8));
+            if (sig.nbits != pub.nbits) {   // TODO #384, worded as the other CLIs
+                throw new CliError("verify: signature n is " + sig.nbits + ", public key n is " + pub.nbits);
+            }
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(pub.nbits, 256) / 8));
 
-            boolean ok = Stern.hpksSternFVerify(msgInt, sig.sig, pub.seed, pub.syndrome);
+            boolean ok = SternL.isLong(pub.nbits)                    // TODO #382
+                ? SternL.verify(msgInt, sig.sig, pub.seed, pub.syndrome, pub.nbits)
+                : Stern.hpksSternFVerify(msgInt, sig.sig, pub.seed, pub.syndrome, pub.nbits);
             if (ok) {
                 System.out.println("Signature OK");
             } else {
@@ -1727,19 +1924,22 @@ public final class HerraduraCli {
             return;
         }
         if (algo.equals("hpks-ring")) {
-            List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "verify"));
+            int[] ringNOut = new int[1];
+            List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "verify"), ringNOut);
+            int ringN = ringNOut[0];
             Codec.RingSigDecoded sig = Codec.decodeRingSig(readString(req(opt, "sig", "verify")));
             requireRounds(sig.sig.rounds(), minRounds(opt, "verify"), "hpks-ring signature", "verify");
-            if (sig.nbits != Herradura.N) {
-                throw new CliError("hpks-ring verify: signature n=" + sig.nbits + " != ring n=" + Herradura.N);
+            if (sig.nbits != ringN) {
+                throw new CliError("hpks-ring verify: signature n=" + sig.nbits + " != ring n=" + ringN);
             }
             if (sig.sig.ringSize() != ring.size()) {
                 throw new CliError("hpks-ring verify: signature ring size " + sig.sig.ringSize()
                     + " != " + ring.size() + " provided members");
             }
             byte[] msg = readMessage(opt, "verify");
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Herradura.N / 8));
-            boolean ok = SternRing.verify(msgInt, sig.sig, ring);
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(ringN, 256) / 8));
+            boolean ok = SternL.isLong(ringN) ? SternL.ringVerify(msgInt, sig.sig, ring, ringN)   // TODO #382
+                                              : SternRing.verify(msgInt, sig.sig, ring, ringN);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
             return;
         }
@@ -1862,13 +2062,9 @@ public final class HerraduraCli {
         }
 
         if (opt.containsKey("bytes")) {
-            int n;
-            try {
-                n = Integer.parseInt(opt.get("bytes"));
-            } catch (NumberFormatException e) {
-                throw new CliError("rand: --bytes must be an integer");
-            }
-            if (n < 0) throw new CliError("rand: --bytes must be non-negative");
+            // TODO #380: at most one seed's worth of output, the most a single
+            // request can ever return.
+            int n = numArg(opt, "bytes", 0, (int) (Hdrbg.DRBG_MAX_BLOCKS * 32), 0, "rand");
             byte[] data;
             try {
                 data = drbg.generate(n);
@@ -1948,13 +2144,19 @@ public final class HerraduraCli {
 
     private static void cmdThresholdCommit(Map<String, String> opt) throws IOException {
         Codec.PrivKey pk = loadHpksPrivKeyForThreshold(req(opt, "key", "threshold-commit"));
+        // Both outputs are named before either is written (TODO #381): asking
+        // for --nonce-out only after writing the commitment left a commitment
+        // on disk whose nonce was never saved.
+        String commitOut = req(opt, "commit-out", "threshold-commit");
+        String nonceOut  = req(opt, "nonce-out", "threshold-commit");
         if (pk.nbits != Herradura.N) {
-            throw new CliError("threshold-commit: HPKS-T requires a " + Herradura.N + "-bit key; got " + pk.nbits + "-bit");
+            // worded as in the other three CLIs (TODO #388; Java reads the key since #384)
+            throw new CliError("threshold: the key is " + pk.nbits + "-bit; threshold signing runs at 256 bits only");
         }
         BigInteger kJ = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
         BigInteger rJ = Herradura.gfPow(Herradura.GF_GEN, BitArray.fromBigInteger(kJ, Herradura.N)).toBigInteger();
-        writeString(req(opt, "commit-out", "threshold-commit"), Codec.encodeHpkstCommit(rJ, pk.pub, pk.nbits));
-        writeString(req(opt, "nonce-out", "threshold-commit"), Codec.encodeHpkstNonce(kJ, pk.nbits));
+        writeString(commitOut, Codec.encodeHpkstCommit(rJ, pk.pub, pk.nbits));
+        writeString(nonceOut, Codec.encodeHpkstNonce(kJ, pk.nbits));
     }
 
     private static void cmdThresholdAggregate(Map<String, String> opt) throws IOException {
@@ -1989,7 +2191,8 @@ public final class HerraduraCli {
     private static void cmdThresholdRespond(Map<String, String> opt) throws IOException {
         Codec.PrivKey pk = loadHpksPrivKeyForThreshold(req(opt, "key", "threshold-respond"));
         if (pk.nbits != Herradura.N) {
-            throw new CliError("threshold-respond: HPKS-T requires a " + Herradura.N + "-bit key; got " + pk.nbits + "-bit");
+            // worded as in the other three CLIs (TODO #388; Java reads the key since #384)
+            throw new CliError("threshold: the key is " + pk.nbits + "-bit; threshold signing runs at 256 bits only");
         }
         String[] commitPaths = multiPaths(opt, "threshold-respond", "commits", "commit");
         List<BigInteger> pubkeys = new java.util.ArrayList<>();
@@ -2042,43 +2245,77 @@ public final class HerraduraCli {
         sym256OK(key.size(), "fpe", "key");
         byte[] keyBytes = key.toBytes();
         byte[] ctx = opt.getOrDefault("context", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-        byte[] inBytes = readBytes(req(opt, "in", "fpe"));
-        BigInteger p = new BigInteger(1, padBlock(inBytes));
+        byte[] inBytes = block32(readBytes(req(opt, "in", "fpe")), "fpe");
         boolean v3 = opt.containsKey("v3");
-        BitArray pBa = BitArray.fromBytes(padBlock(inBytes), Herradura.N);
+        BitArray pBa = BitArray.fromBytes(inBytes, Herradura.N);
           BitArray r = doEnc
             ? (v3 ? FpeTwk.fpeV3Encrypt(pBa, keyBytes, ctx) : FpeTwk.fpeEncrypt(pBa, keyBytes, ctx))
             : (v3 ? FpeTwk.fpeV3Decrypt(pBa, keyBytes, ctx) : FpeTwk.fpeDecrypt(pBa, keyBytes, ctx));
         writeBytes(opt.getOrDefault("out", "-"), r.toBytes());
     }
 
+    /** THE numeric-flag parser (TODO #375, #380): a decimal integer from
+     *  {@code lo} to {@code hi}, both read as UNSIGNED 64-bit (so -1L is
+     *  2^64 - 1): digits only (no sign, space, 0x, _ or exponent), refused by
+     *  name otherwise, with the message the other three CLIs print. */
+    static long decRangeArg(String s, long lo, long hi, String cmd, String flag) {
+        boolean ok = s != null && !s.isEmpty() && s.chars().allMatch(c -> c >= '0' && c <= '9');
+        long v = 0;
+        if (ok) {
+            try { v = Long.parseUnsignedLong(s); } catch (NumberFormatException e) { ok = false; }
+        }
+        if (!ok || Long.compareUnsigned(v, lo) < 0 || Long.compareUnsigned(v, hi) > 0)
+            throw new CliError(cmd + ": " + flag + " must be a decimal integer from "
+                               + Long.toUnsignedString(lo) + " to "
+                               + Long.toUnsignedString(hi) + ", got '" + s + "'");
+        return v;
+    }
+
+    /** {@code --name}'s value through decRangeArg, or {@code deflt} when omitted. */
+    static int numArg(Map<String, String> opt, String name, int lo, int hi, int deflt, String cmd) {
+        String v = opt.get(name);
+        return v == null ? deflt : (int) decRangeArg(v, lo, hi, cmd, "--" + name);
+    }
+
+    /** Signing-side --rounds: held to the verifiers' 1..4096 (TODO #380). */
+    private static int roundsArg(Map<String, String> opt, int deflt, String cmd) {
+        return numArg(opt, "rounds", 1, SDF_MAX_ROUNDS, deflt, cmd);
+    }
+
     private static void cmdTwk(Map<String, String> opt) throws IOException {
         boolean doEnc = opt.containsKey("encrypt");
         boolean doDec = opt.containsKey("decrypt");
         if (doEnc == doDec) throw new CliError("twk: exactly one of --encrypt or --decrypt required");
+        // TODO #375: the tweak is sector_be64 || bidx_be32, both unsigned.  Signed
+        // parseLong / parseInt refused valid sectors >= 2^63 and indices >= 2^31
+        // and accepted -1; the other CLIs wrapped.  The bit patterns below are
+        // the unsigned values, which is what FpeTwk.twkTweak encodes.
+        long sector = opt.containsKey("sector")
+            ? decRangeArg(opt.get("sector"), 0L, -1L, "twk", "--sector") : 0L;
+        int bidx = opt.containsKey("bidx")
+            ? (int) decRangeArg(opt.get("bidx"), 0L, 0xFFFFFFFFL, "twk", "--bidx") : 0;
         BitArray key = loadKey(req(opt, "key", "twk"));
         sym256OK(key.size(), "twk", "key");
         byte[] keyBytes = key.toBytes();
-        long sector = opt.containsKey("sector") ? Long.parseLong(opt.get("sector")) : 0L;
-        int bidx = opt.containsKey("bidx") ? Integer.parseInt(opt.get("bidx")) : 0;
-        byte[] inBytes = readBytes(req(opt, "in", "twk"));
-        BigInteger p = new BigInteger(1, padBlock(inBytes));
+        byte[] inBytes = block32(readBytes(req(opt, "in", "twk")), "twk");
         boolean v3 = opt.containsKey("v3");
-        BitArray pBa = BitArray.fromBytes(padBlock(inBytes), Herradura.N);
+        BitArray pBa = BitArray.fromBytes(inBytes, Herradura.N);
           BitArray r = doEnc
             ? (v3 ? FpeTwk.twkV3Encrypt(pBa, keyBytes, sector, bidx) : FpeTwk.twkEncrypt(pBa, keyBytes, sector, bidx))
             : (v3 ? FpeTwk.twkV3Decrypt(pBa, keyBytes, sector, bidx) : FpeTwk.twkDecrypt(pBa, keyBytes, sector, bidx));
         writeBytes(opt.getOrDefault("out", "-"), r.toBytes());
     }
 
-    /** Right-pads (zero-fills) to a 32-byte block and truncates to it,
-     * matching herradura.py's {@code in_bytes.ljust(32, b'\x00')[:32]}. */
-    private static byte[] padBlock(byte[] in) {
+    /** TODO #377: fpe / twk map exactly one 32-byte block.  Longer input used to
+     *  be cut to its first 32 bytes (exit 0, nothing round-tripped) and shorter
+     *  input zero-padded, on the right here but on the LEFT in Go, so any other
+     *  length is refused rather than reshaped. */
+    private static byte[] block32(byte[] in, String cmd) {
         int blockLen = Herradura.N / 8;
-        if (in.length == blockLen) return in;
-        byte[] out = new byte[blockLen];
-        System.arraycopy(in, 0, out, 0, Math.min(in.length, blockLen));
-        return out;
+        if (in.length != blockLen)
+            throw new CliError(cmd + ": --in must be exactly " + blockLen
+                               + " bytes (one block), got " + in.length);
+        return in;
     }
 
     // -----------------------------------------------------------------
@@ -2088,21 +2325,32 @@ public final class HerraduraCli {
     private static void cmdOprfBlind(Map<String, String> opt) throws IOException {
         byte[] inBytes = readBytes(req(opt, "in", "oprf-blind"));
         String out = req(opt, "out", "oprf-blind");
-        Oprf.Blinded b = Oprf.blind(inBytes, RNG);
-        writeString(out, Codec.encodeOprfState(b.r, b.alpha));
+        // TODO #385: --bits is the GF(2^n) width, and must be the server key's n
+        int n = (int) numArg(opt, "bits", 1, 1 << 16, Herradura.N, "oprf-blind");
+        if (!Codec.gfWidthOk(n)) {
+            throw new CliError("oprf-blind: --bits must be 32, 64, 128 or 256, got " + n);
+        }
+        Oprf.Blinded b = Oprf.blind(inBytes, n, RNG);
+        writeString(out, Codec.encodeOprfState(b.r, b.alpha, n));
     }
 
     private static void cmdOprfEval(Map<String, String> opt) throws IOException {
         Codec.PubKey key = Codec.decodeOprfPrivKey(readString(req(opt, "key", "oprf-eval")));
         Codec.OprfState state = Codec.decodeOprfState(readString(req(opt, "in", "oprf-eval")));
-        BigInteger beta = Oprf.eval(state.alpha, key.pub);
-        writeString(req(opt, "out", "oprf-eval"), Codec.encodeOprfEval(beta));
+        if (state.nbits != key.nbits) {
+            throw new CliError("oprf-eval: client state n is " + state.nbits + ", key n is " + key.nbits);
+        }
+        BigInteger beta = Oprf.eval(state.alpha, key.pub, key.nbits);
+        writeString(req(opt, "out", "oprf-eval"), Codec.encodeOprfEval(beta, key.nbits));
     }
 
     private static void cmdOprfUnblind(Map<String, String> opt) throws IOException {
         Codec.OprfState state = Codec.decodeOprfState(readString(req(opt, "state", "oprf-unblind")));
         Codec.PubKey eval = Codec.decodeOprfEval(readString(req(opt, "eval", "oprf-unblind")));
-        BigInteger f = Oprf.unblind(eval.pub, state.r);
+        if (eval.nbits != state.nbits) {
+            throw new CliError("oprf-unblind: evaluation n is " + eval.nbits + ", client state n is " + state.nbits);
+        }
+        BigInteger f = Oprf.unblind(eval.pub, state.r, state.nbits);
         String out = opt.getOrDefault("out", "-");
         writeString(out, hexBytes(toFixedBytes(f, state.nbits / 8)) + "\n");
     }
@@ -2136,14 +2384,14 @@ public final class HerraduraCli {
             throw new CliError("cred-issue: --our must be an hpks-stern private key, got " + ourBlock.label);
         }
         Codec.SternPrivKey issuer = Codec.decodeSternPrivKey(ourPem, ourBlock.label);
-        BigInteger issuerSyn = Stern.sternSyndrome(issuer.seed, issuer.e);
-
-        int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : HCRED_SIGN_ROUNDS;
+        int rounds = roundsArg(opt, HCRED_SIGN_ROUNDS, "cred-issue");
         System.err.println("warning: HPKS-Stern-F/HPKE-Stern-F are demo-strength illustrations of a "
             + "code-based construction, not a production-hardened scheme at these parameters.");
+        // TODO #384: the credential is an HPKS-Stern-F signature at the ISSUER
+        // key's width, which need not be the hcred key's (Python's issuer_n).
         Stern.SternSignature credSig = Hcred.issue(pub.m, pub.c, pub.seedH, pub.syndr, pub.n,
-            issuer.e, issuer.seed, rounds, RNG);
-        writeString(opt.getOrDefault("out", "-"), Codec.encodeHcredCredential(credSig));
+            issuer.e, issuer.seed, rounds, issuer.nbits, RNG);
+        writeString(opt.getOrDefault("out", "-"), Codec.encodeHcredCredential(credSig, issuer.nbits));
     }
 
     private static void cmdCredProve(Map<String, String> opt) throws IOException {
@@ -2154,10 +2402,10 @@ public final class HerraduraCli {
         }
         Codec.HcredPrivKey pk = Codec.decodeHcredPrivKey(pem);
         byte[] msg = opt.getOrDefault("msg", "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : HCRED_CLI_ROUNDS;
+        int rounds = roundsArg(opt, HCRED_CLI_ROUNDS, "cred-prove");
         Hcred.Proof proof;
         try {
-            proof = Hcred.prove(pk.s, pk.m, pk.c, pk.seedH, pk.syndr, rounds, msg, RNG);
+            proof = Hcred.prove(pk.s, pk.m, pk.c, pk.seedH, pk.syndr, rounds, msg, pk.n, RNG);
         } catch (IllegalArgumentException e) {
             throw new CliError("cred-prove: " + e.getMessage());
         }
@@ -2170,9 +2418,12 @@ public final class HerraduraCli {
         byte[] msg = opt.getOrDefault("msg", "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
         int rounds = proof.rounds.size();
         int floor = minRounds(opt, "cred-verify");
+        if (proof.n != pub.n) {   // same text in all CLIs (TODO #383 stage 3)
+            throw new CliError("cred-verify: proof n is " + proof.n + ", public key n is " + pub.n);
+        }
         requireRounds(rounds, floor, "HCRED proof", "cred-verify");
 
-        boolean okProof = Hcred.verify(pub.m, pub.c, pub.seedH, pub.syndr, proof, rounds, msg);
+        boolean okProof = Hcred.verify(pub.m, pub.c, pub.seedH, pub.syndr, proof, rounds, msg, pub.n);
         if (!okProof) {
             System.out.println("Verification FAILED (proof)");
             System.exit(1);
@@ -2187,8 +2438,14 @@ public final class HerraduraCli {
                 throw new CliError("cred-verify: --issuer must be an hpks-stern public key, got " + issuerBlock.label);
             }
             Codec.SternPubKey issuerPub = Codec.decodeSternPubKey(issuerPem, issuerBlock.label);
+            // A credential at another width than its issuer key's failed as a
+            // forgery; it is refused by name, as the other CLIs do (TODO #384).
+            if (credSig.nbits != issuerPub.nbits) {
+                throw new CliError("cred-verify: credential n is " + credSig.nbits
+                    + ", issuer key n is " + issuerPub.nbits);
+            }
             boolean okCred = Hcred.credVerify(pub.m, pub.c, pub.seedH, pub.syndr, pub.n,
-                credSig.sig, issuerPub.seed, issuerPub.syndrome);
+                credSig.sig, issuerPub.seed, issuerPub.syndrome, issuerPub.nbits);
             if (!okCred) {
                 System.out.println("Verification FAILED (credential)");
                 System.exit(1);
@@ -2209,25 +2466,33 @@ public final class HerraduraCli {
         if (passwordOpt == null) {
             throw new CliError("pake-register: --password required (interactive prompting is not supported by this Java CLI)");
         }
+        // TODO #376: never register the empty password.
+        if (passwordOpt.isEmpty()) {
+            throw new CliError("pake-register: --password must not be empty");
+        }
         byte[] password = passwordOpt.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        Hpake.Record record = Hpake.register(username, password, key.pub, RNG);
+        Hpake.Record record = Hpake.register(username, password, key.pub, key.nbits, RNG);
         writeString(opt.getOrDefault("out", "-"), Codec.encodePakeRecord(record.salt, record.b, record.y));
     }
 
     private static void cmdPakeDemo(Map<String, String> opt) throws IOException {
         Codec.PubKey key = Codec.decodeOprfPrivKey(readString(req(opt, "key", "pake-demo")));
         String username = opt.getOrDefault("username", "demo-user");
+        // TODO #376: omitted, the demo uses "demo-password"; given, it must be one.
+        if (opt.containsKey("password") && opt.get("password").isEmpty()) {
+            throw new CliError("pake-demo: --password must not be empty");
+        }
         byte[] password = opt.getOrDefault("password", "demo-password").getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
-        Hpake.Record record = Hpake.register(username, password, key.pub, RNG);
-        byte[] sk = Hpake.loginDemo(record, password, key.pub, RNG);
+        Hpake.Record record = Hpake.register(username, password, key.pub, key.nbits, RNG);
+        byte[] sk = Hpake.loginDemo(record, password, key.pub, key.nbits, RNG);
         if (sk != null) {
             System.out.println("- aPAKE login succeeded; session key: " + hexBytes(sk));
         } else {
             System.out.println("+ aPAKE login failed!");
             System.exit(1);
         }
-        byte[] wrongSk = Hpake.loginDemo(record, "wrong-password".getBytes(java.nio.charset.StandardCharsets.UTF_8), key.pub, RNG);
+        byte[] wrongSk = Hpake.loginDemo(record, "wrong-password".getBytes(java.nio.charset.StandardCharsets.UTF_8), key.pub, key.nbits, RNG);
         if (wrongSk == null) {
             System.out.println("- aPAKE correctly rejects wrong password");
         } else {
@@ -2276,15 +2541,11 @@ public final class HerraduraCli {
     private static final int MIN_VERIFY_ROUNDS = 219; // == SDF_PRODUCTION_ROUNDS == ZKP_NL_PROD_ROUNDS
     /** sign --algo hpks-stern / hpks-ring default; was Stern.SDFR (32 demo). */
     private static final int STERN_CLI_ROUNDS = 219;
+    /** herradura.h SDF_MAX_ROUNDS: the most rounds any verifier accepts (TODO #236). */
+    private static final int SDF_MAX_ROUNDS = 4096;
 
     private static int minRounds(Map<String, String> opt, String cmd) {
-        String v = opt.get("min-rounds");
-        if (v == null) return MIN_VERIFY_ROUNDS;
-        int r;
-        try { r = Integer.parseInt(v); } catch (NumberFormatException e) { r = -1; }
-        if (r < 1 || r > 4096)
-            throw new CliError(cmd + ": --min-rounds must be between 1 and 4096");
-        return r;
+        return numArg(opt, "min-rounds", 1, SDF_MAX_ROUNDS, MIN_VERIFY_ROUNDS, cmd);
     }
 
     private static void requireRounds(int rounds, int floor, String what, String cmd) {
@@ -2331,7 +2592,18 @@ public final class HerraduraCli {
             out.flush();
             return;
         }
-        Files.write(Paths.get(path), data);
+        Path p = Paths.get(path);
+        // TODO #395: create every output 0600, so nothing the CLI writes is
+        // world-readable under the default umask.  A file that already exists
+        // keeps its mode, as O_CREAT does in the other three CLIs; on a
+        // filesystem without POSIX modes the file is created plainly.
+        try {
+            Files.createFile(p, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+        } catch (java.nio.file.FileAlreadyExistsException | UnsupportedOperationException e) {
+            // existing file: keep its mode; no POSIX attributes: default creation below
+        }
+        Files.write(p, data);
     }
 
     // -----------------------------------------------------------------
@@ -2358,6 +2630,8 @@ public final class HerraduraCli {
      *  travels in the PEM, so a reader honours whatever the writer chose --
      *  the contract Stern-F's round count has had since TODO #236. */
     private static final int PBKDF2_ITER_DEMO = 1000;
+    /** The most any writer may choose, and the most any reader honours. */
+    private static final int PBKDF2_ITER_MAX = 100000000;
 
     /** RFC 8018 PBKDF2 with the suite's own HMAC-HFSCX-256 as the PRF: a
      *  standard, analysed shape rather than a bespoke construction, and
@@ -2419,7 +2693,7 @@ public final class HerraduraCli {
         // field.  The plaintext bound is the envelope's own length -- a
         // ciphertext cannot be longer than the file carrying it -- which is
         // what C, Go and Python check too; the old 1 << 24 was merely safe.
-        if (it.get(1).signum() < 1 || it.get(1).compareTo(BigInteger.valueOf(100000000)) > 0) {
+        if (it.get(1).signum() < 1 || it.get(1).compareTo(BigInteger.valueOf(PBKDF2_ITER_MAX)) > 0) {
             throw new CliError("pkey --decrypt: iteration count out of range ("
                 + it.get(1) + ")");
         }
@@ -2485,6 +2759,33 @@ public final class HerraduraCli {
         }
     }
 
+    /** Refuses --aead / --ad on an --algo that would ignore them (TODO #378).
+     * --aead means something only to hske-nla1, --ad only to hske-duplex,
+     * hske-duplex3 and hske-nla1; anywhere else the flag was dropped without a
+     * word.  Presence is what counts: {@code --ad ''} is a flag given. */
+    private static void aeadFlagsOK(String cmd, String algo, Map<String, String> opt) {
+        if (opt.containsKey("aead") && !algo.equals("hske-nla1")) {
+            throw new CliError(cmd + ": --aead is only for --algo hske-nla1, not '" + algo + "'");
+        }
+        if (opt.containsKey("ad") && !algo.equals("hske-duplex") && !algo.equals("hske-duplex3")
+                && !algo.equals("hske-nla1")) {
+            throw new CliError(cmd + ": --ad is only for --algo hske-duplex, hske-duplex3 "
+                + "or hske-nla1, not '" + algo + "'");
+        }
+    }
+
+    /** Refuses input longer than the one block a single-block --algo
+     * encrypts (TODO #378); it used to be cut to its first block, exit 0. */
+    private static void oneBlockOK(String algo, int inLen, int nbytes) {
+        if (inLen > nbytes) {
+            String hint = algo.startsWith("hske")
+                ? "use --algo hske-duplex or encfile for longer input"
+                : "for longer input, encrypt a key with it and the message with --algo hske-duplex";
+            throw new CliError("enc: --algo " + algo + " encrypts one " + nbytes
+                + "-byte block; --in is " + inLen + " bytes (" + hint + ")");
+        }
+    }
+
     private static byte[] padTrunc(byte[] data, int nbytes) {
         byte[] out = new byte[nbytes];
         System.arraycopy(data, 0, out, 0, Math.min(nbytes, data.length));
@@ -2533,6 +2834,26 @@ public final class HerraduraCli {
         int copyLen = raw.length - rawStart;
         System.arraycopy(raw, rawStart, out, nbytes - copyLen, copyLen);
         return out;
+    }
+
+    /** TODO #386: `pkey --text`'s closing lines, from the key's generated
+     * key_parameter_sets row: `level` where the row has one, then `security`.
+     * Nothing for a key no row describes (WOTS, XMSS). */
+    private static void printParamLines(String algo, int width) {
+        for (String[] r : KeyLabelTable.PARAM_SETS) {
+            if (!r[0].equals(algo) || Integer.parseInt(r[1]) != width) continue;
+            if (!r[2].isEmpty()) System.out.println("level     : " + r[2]);
+            System.out.println("security  : " + r[5]);
+            return;
+        }
+    }
+
+    /** Coefficients as bpc big-endian bytes each, in hex (TODO #387). */
+    private static String packedHex(int[] v, int bpc) {
+        StringBuilder sb = new StringBuilder(v.length * bpc * 2);
+        for (int x : v)
+            for (int k = bpc - 1; k >= 0; k--) sb.append(String.format("%02x", (x >>> (8 * k)) & 0xFF));
+        return sb.toString();
     }
 
     private static String hex(BigInteger v, int width) {

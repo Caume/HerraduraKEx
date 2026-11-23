@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HerraduraKEx v1.5.26 — C build script
+# HerraduraKEx — C build script
 # Compiles the cryptographic suite, test suite, and CLI using gcc.
 #
 # Output binaries use the _c suffix to prevent collision with the Go build,
@@ -11,7 +11,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-VERSION="1.5.26"
+VERSION="$(sed -nE '1s/.*\(v([0-9]+\.[0-9]+\.[0-9]+)\).*/\1/p' README.md)"  # README title is the one version source
+: "${VERSION:=unknown}"
 SUITE_SRC="Herradura cryptographic suite.c"
 SUITE_BIN="Herradura cryptographic suite_c"
 TESTS_SRC="CryptosuiteTests/Herradura_tests.c"

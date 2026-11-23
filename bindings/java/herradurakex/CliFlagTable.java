@@ -25,9 +25,9 @@ final class CliFlagTable {
         m.put("enc", new HashSet<>(Arrays.asList("ad", "aead", "algo", "in", "key", "out", "pubkey")));
         m.put("encfile", new HashSet<>(Arrays.asList("algo", "in", "key", "out")));
         m.put("fpe", new HashSet<>(Arrays.asList("context", "decrypt", "encrypt", "in", "key", "out", "v3")));
-        m.put("genpkey", new HashSet<>(Arrays.asList("algo", "bits", "kdf-iterations", "out", "passphrase", "xmss-height")));
+        m.put("genpkey", new HashSet<>(Arrays.asList("algo", "bits", "kdf-iterations", "level", "out", "passphrase", "xmss-height")));
         m.put("kex", new HashSet<>(Arrays.asList("algo", "kdf", "our", "our-kem", "out", "their", "their-kem")));
-        m.put("oprf-blind", new HashSet<>(Arrays.asList("in", "out")));
+        m.put("oprf-blind", new HashSet<>(Arrays.asList("bits", "in", "out")));
         m.put("oprf-eval", new HashSet<>(Arrays.asList("in", "key", "out")));
         m.put("oprf-unblind", new HashSet<>(Arrays.asList("eval", "out", "state")));
         m.put("pake-demo", new HashSet<>(Arrays.asList("key", "password", "username")));
@@ -43,6 +43,9 @@ final class CliFlagTable {
         m.put("verify", new HashSet<>(Arrays.asList("algo", "digest", "in", "min-rounds", "pubkey", "ring", "sig")));
         FLAGS = Collections.unmodifiableMap(m);
     }
+
+    /** Flags that take no value (TODO #381); every other flag takes one. */
+    static final Set<String> BOOLEAN = Collections.unmodifiableSet(new HashSet<>(Arrays.asList("aead", "decrypt", "encrypt", "hex", "pubout", "text", "v3")));
 
     /** --help's synopsis (TODO #339). */
     static final String HELP_SYNOPSIS =
@@ -67,14 +70,14 @@ final class CliFlagTable {
         "  encfile              --algo --in --key --out\n" +
         "                       --algo: hske-nla1\n" +
         "  fpe                  --context --decrypt --encrypt --in --key --out --v3\n" +
-        "  genpkey              --algo --bits --kdf-iterations --out --passphrase\n" +
-        "                       --xmss-height\n" +
+        "  genpkey              --algo --bits --kdf-iterations --level --out\n" +
+        "                       --passphrase --xmss-height\n" +
         "                       --algo: hcred hkex-gf hkex-rnl hpke hpke-nl hpke-nl3\n" +
         "                               hpke-stern hpke-stern-kem hpks hpks-nl\n" +
         "                               hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf\n" +
         "  kex                  --algo --kdf --our --our-kem --out --their --their-kem\n" +
         "                       --algo: hkex-gf hkex-rnl hybrid-rnl-stern\n" +
-        "  oprf-blind           --in --out\n" +
+        "  oprf-blind           --bits --in --out\n" +
         "  oprf-eval            --in --key --out\n" +
         "  oprf-unblind         --eval --out --state\n" +
         "  pake-demo            --key --password --username\n" +

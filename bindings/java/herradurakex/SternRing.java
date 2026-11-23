@@ -37,7 +37,6 @@ public final class SternRing {
     private SternRing() { }
 
     private static final int N = Herradura.N; // 256
-    private static final BigInteger MASK = Herradura.MASK;
 
     /** One ring member's public key: {@code (seed, syndrome)}, matching
      * {@link Stern.SternKeypair}'s public half. */
@@ -88,7 +87,7 @@ public final class SternRing {
      * consumption-order one, which is the whole point of
      * KAT/operation_replay.json: four ports that agree on a distribution and
      * not on how they spend the stream cannot be pinned against each other. */
-    private static int ringTrit(SecureRandom rng) {
+    static int ringTrit(SecureRandom rng) {   // SternL's too (TODO #382)
         byte[] one = new byte[1];
         for (;;) {
             rng.nextBytes(one);
@@ -100,7 +99,8 @@ public final class SternRing {
     /** HVZK simulator for one Stern round given a pre-chosen challenge
      * {@code b}. Returns {@code {c0, c1, c2, resp0, resp1}}. Matches
      * Python's {@code _stern_simulate_round}. */
-    private static Object[] simulateRound(int b, BigInteger syn, BigInteger[] hRows, SecureRandom rng) {
+    private static Object[] simulateRound(int b, BigInteger syn, BigInteger[] hRows, int n, SecureRandom rng) {
+        BigInteger mask = Stern.maskFor(n);
         if (b == 0) {
             // srSim UNIFORM and sySim = srSim ^ (weight-t): a PERFECT
             // simulation of the real (sigma(r), sigma(r) ^ sigma(e)) now that
@@ -108,36 +108,36 @@ public final class SternRing {
             // uniform, so wt(sr ^ sy) was ~N/2 on every simulated round and
             // exactly t on the signer's -- ONE b = 0 round named the signer
             // straight off the public signature (TODO #298).
-            BigInteger srSim = new BigInteger(N, rng).and(MASK);
-            BigInteger sySim = srSim.xor(Stern.csprngWeightT(Stern.SDFT, rng));
-            BigInteger piDum = new BigInteger(N, rng).and(MASK);
-            BigInteger c0 = Stern.sternHash(1, piDum, BigInteger.ZERO);
-            BigInteger c1 = Stern.sternHash(2, srSim);
-            BigInteger c2 = Stern.sternHash(3, sySim);
+            BigInteger srSim = new BigInteger(n, rng).and(mask);
+            BigInteger sySim = srSim.xor(Stern.csprngWeightT(n, Stern.tFor(n), rng));
+            BigInteger piDum = new BigInteger(n, rng).and(mask);
+            BigInteger c0 = Stern.sternHashN(n, 1, piDum, BigInteger.ZERO);
+            BigInteger c1 = Stern.sternHashN(n, 2, srSim);
+            BigInteger c2 = Stern.sternHashN(n, 3, sySim);
             return new Object[] { c0, c1, c2, srSim, sySim };
         } else if (b == 1) {
-            BigInteger piSim = new BigInteger(N, rng).and(MASK);
+            BigInteger piSim = new BigInteger(n, rng).and(mask);
             // UNIFORM: the b = 1 response reveals r, and the real r is now
             // uniform (TODO #298).
-            BigInteger rSim = new BigInteger(N, rng).and(MASK);
-            int[] perm = Stern.sternGenPerm(piSim);
+            BigInteger rSim = new BigInteger(n, rng).and(mask);
+            int[] perm = Stern.sternGenPerm(piSim, n);
             BigInteger hrSim = Stern.sternSyndromeH(hRows, rSim);
             BigInteger srSim = Stern.sternApplyPerm(perm, rSim);
-            BigInteger syDum = new BigInteger(N, rng).and(MASK);
-            BigInteger c0 = Stern.sternHash(1, piSim, hrSim);
-            BigInteger c1 = Stern.sternHash(2, srSim);
-            BigInteger c2 = Stern.sternHash(3, syDum);
+            BigInteger syDum = new BigInteger(n, rng).and(mask);
+            BigInteger c0 = Stern.sternHashN(n, 1, piSim, hrSim);
+            BigInteger c1 = Stern.sternHashN(n, 2, srSim);
+            BigInteger c2 = Stern.sternHashN(n, 3, syDum);
             return new Object[] { c0, c1, c2, piSim, rSim };
         } else {
-            BigInteger piSim = new BigInteger(N, rng).and(MASK);
-            BigInteger ySim = new BigInteger(N, rng).and(MASK);
-            int[] perm = Stern.sternGenPerm(piSim);
+            BigInteger piSim = new BigInteger(n, rng).and(mask);
+            BigInteger ySim = new BigInteger(n, rng).and(mask);
+            int[] perm = Stern.sternGenPerm(piSim, n);
             BigInteger hySim = Stern.sternSyndromeH(hRows, ySim);
             BigInteger sySim = Stern.sternApplyPerm(perm, ySim);
-            BigInteger srDum = new BigInteger(N, rng).and(MASK);
-            BigInteger c0 = Stern.sternHash(1, piSim, hySim.xor(syn));
-            BigInteger c1 = Stern.sternHash(2, srDum);
-            BigInteger c2 = Stern.sternHash(3, sySim);
+            BigInteger srDum = new BigInteger(n, rng).and(mask);
+            BigInteger c0 = Stern.sternHashN(n, 1, piSim, hySim.xor(syn));
+            BigInteger c1 = Stern.sternHashN(n, 2, srDum);
+            BigInteger c2 = Stern.sternHashN(n, 3, sySim);
             return new Object[] { c0, c1, c2, piSim, ySim };
         }
     }
@@ -147,7 +147,7 @@ public final class SternRing {
      * in range(k): for r in range(rounds): flat += commits[i][r]) — the
      * ring construction, unlike single-party HPKS-Stern-F, cannot reuse
      * {@code Stern}'s round-major {@code deriveChallenges} helper. */
-    private static BigInteger fiatShamirSeed(BigInteger msg, BigInteger[][] c0, BigInteger[][] c1, BigInteger[][] c2) {
+    private static BigInteger fiatShamirSeed(BigInteger msg, BigInteger[][] c0, BigInteger[][] c1, BigInteger[][] c2, int n) {
         int k = c0.length, rounds = c0[0].length;
         BigInteger[] flat = new BigInteger[1 + 3 * k * rounds];
         flat[0] = msg;
@@ -159,7 +159,7 @@ public final class SternRing {
                 flat[idx++] = c2[i][r];
             }
         }
-        return Stern.sternHash(0, flat);
+        return Stern.sternHashN(n, 0, flat);
     }
 
     /** {@code joint_b[r]} for every round, derived by chaining
@@ -184,6 +184,12 @@ public final class SternRing {
      * @param ringKeys the ring's public keys
      */
     public static RingSignature sign(BigInteger msg, BigInteger eInt, int j, List<RingKey> ringKeys, int rounds, SecureRandom rng) {
+        return sign(msg, eInt, j, ringKeys, rounds, N, rng);
+    }
+
+    /** Signs over a ring of n-bit keys (TODO #384). */
+    public static RingSignature sign(BigInteger msg, BigInteger eInt, int j, List<RingKey> ringKeys, int rounds, int n, SecureRandom rng) {
+        BigInteger mask = Stern.maskFor(n);
         int k = ringKeys.size();
         BigInteger[][] c0 = new BigInteger[k][rounds];
         BigInteger[][] c1 = new BigInteger[k][rounds];
@@ -196,11 +202,11 @@ public final class SternRing {
         for (int i = 0; i < k; i++) {
             if (i == j) continue;
             RingKey member = ringKeys.get(i);
-            BigInteger[] hRowsI = Stern.sternBuildH(member.seed, Stern.SDFNR);
+            BigInteger[] hRowsI = Stern.sternBuildH(member.seed, Stern.rowsFor(n), n);
             for (int r = 0; r < rounds; r++) {
                 int b = ringTrit(rng);
                 challenges[i][r] = b;
-                Object[] sim = simulateRound(b, member.syndrome, hRowsI, rng);
+                Object[] sim = simulateRound(b, member.syndrome, hRowsI, n, rng);
                 c0[i][r] = (BigInteger) sim[0];
                 c1[i][r] = (BigInteger) sim[1];
                 c2[i][r] = (BigInteger) sim[2];
@@ -211,31 +217,31 @@ public final class SternRing {
 
         // Step 2 — commit phase for the real signer j.
         RingKey signerKey = ringKeys.get(j);
-        BigInteger[] hRowsJ = Stern.sternBuildH(signerKey.seed, Stern.SDFNR);
+        BigInteger[] hRowsJ = Stern.sternBuildH(signerKey.seed, Stern.rowsFor(n), n);
         BigInteger[] rArr = new BigInteger[rounds];
         BigInteger[] yArr = new BigInteger[rounds];
         BigInteger[] piArr = new BigInteger[rounds];
         BigInteger[] srArr = new BigInteger[rounds];
         BigInteger[] syArr = new BigInteger[rounds];
         for (int r = 0; r < rounds; r++) {
-            BigInteger rInt = new BigInteger(N, rng).and(MASK);
-            BigInteger yInt = eInt.xor(rInt).and(MASK);
-            BigInteger piSeed = new BigInteger(N, rng).and(MASK);
-            int[] perm = Stern.sternGenPerm(piSeed);
+            BigInteger rInt = new BigInteger(n, rng).and(mask);
+            BigInteger yInt = eInt.xor(rInt).and(mask);
+            BigInteger piSeed = new BigInteger(n, rng).and(mask);
+            int[] perm = Stern.sternGenPerm(piSeed, n);
             BigInteger hr = Stern.sternSyndromeH(hRowsJ, rInt);
             BigInteger sr = Stern.sternApplyPerm(perm, rInt);
             BigInteger sy = Stern.sternApplyPerm(perm, yInt);
-            c0[j][r] = Stern.sternHash(1, piSeed, hr);
-            c1[j][r] = Stern.sternHash(2, sr);
-            c2[j][r] = Stern.sternHash(3, sy);
+            c0[j][r] = Stern.sternHashN(n, 1, piSeed, hr);
+            c1[j][r] = Stern.sternHashN(n, 2, sr);
+            c2[j][r] = Stern.sternHashN(n, 3, sy);
             rArr[r] = rInt; yArr[r] = yInt; piArr[r] = piSeed; srArr[r] = sr; syArr[r] = sy;
         }
 
         // Step 3 — Fiat-Shamir over msg + all k*rounds*3 commits (member-major).
-        BigInteger seed = fiatShamirSeed(msg, c0, c1, c2);
+        BigInteger seed = fiatShamirSeed(msg, c0, c1, c2, n);
 
         // Step 4 — assign the real signer's per-round challenge via challenge splitting.
-        int[] joint = jointChallenges(BitArray.fromBigInteger(seed, Herradura.N), rounds);
+        int[] joint = jointChallenges(BitArray.fromBigInteger(seed, n), rounds);
         for (int r = 0; r < rounds; r++) {
             int simSum = 0;
             for (int i = 0; i < k; i++) if (i != j) simSum += challenges[i][r];
@@ -265,12 +271,17 @@ public final class SternRing {
      * by {@link #sign} for any member of {@code ringKeys} without
      * revealing which member signed. */
     public static boolean verify(BigInteger msg, RingSignature sig, List<RingKey> ringKeys) {
+        return verify(msg, sig, ringKeys, N);
+    }
+
+    /** Verifies over a ring of n-bit keys (TODO #384). */
+    public static boolean verify(BigInteger msg, RingSignature sig, List<RingKey> ringKeys, int n) {
         int k = ringKeys.size();
         int rounds = sig.rounds();
         if (k != sig.ringSize()) return false;
 
-        BigInteger seed = fiatShamirSeed(msg, sig.c0, sig.c1, sig.c2);
-        int[] joint = jointChallenges(BitArray.fromBigInteger(seed, Herradura.N), rounds);
+        BigInteger seed = fiatShamirSeed(msg, sig.c0, sig.c1, sig.c2, n);
+        int[] joint = jointChallenges(BitArray.fromBigInteger(seed, n), rounds);
         for (int r = 0; r < rounds; r++) {
             int sum = 0;
             for (int i = 0; i < k; i++) sum += sig.challenges[i][r];
@@ -279,29 +290,29 @@ public final class SternRing {
 
         for (int i = 0; i < k; i++) {
             RingKey member = ringKeys.get(i);
-            BigInteger[] hRowsI = Stern.sternBuildH(member.seed, Stern.SDFNR);
+            BigInteger[] hRowsI = Stern.sternBuildH(member.seed, Stern.rowsFor(n), n);
             for (int r = 0; r < rounds; r++) {
                 int b = sig.challenges[i][r];
                 if (b == 0) {
                     BigInteger sr = sig.resp0[i][r], sy = sig.resp1[i][r];
-                    if (!Stern.sternHash(2, sr).equals(sig.c1[i][r])) return false;
-                    if (!Stern.sternHash(3, sy).equals(sig.c2[i][r])) return false;
+                    if (!Stern.sternHashN(n, 2, sr).equals(sig.c1[i][r])) return false;
+                    if (!Stern.sternHashN(n, 3, sy).equals(sig.c2[i][r])) return false;
                     // binds wt(e) -- see Stern.hpksSternFVerify (TODO #298)
-                    if (sr.xor(sy).bitCount() != Stern.SDFT) return false;
+                    if (sr.xor(sy).bitCount() != Stern.tFor(n)) return false;
                 } else if (b == 1) {
                     BigInteger piSeed = sig.resp0[i][r], rInt = sig.resp1[i][r];
-                    int[] perm = Stern.sternGenPerm(piSeed);
+                    int[] perm = Stern.sternGenPerm(piSeed, n);
                     BigInteger hr = Stern.sternSyndromeH(hRowsI, rInt);
-                    if (!Stern.sternHash(1, piSeed, hr).equals(sig.c0[i][r])) return false;
+                    if (!Stern.sternHashN(n, 1, piSeed, hr).equals(sig.c0[i][r])) return false;
                     BigInteger sr = Stern.sternApplyPerm(perm, rInt);
-                    if (!Stern.sternHash(2, sr).equals(sig.c1[i][r])) return false;
+                    if (!Stern.sternHashN(n, 2, sr).equals(sig.c1[i][r])) return false;
                 } else {
                     BigInteger piSeed = sig.resp0[i][r], yInt = sig.resp1[i][r];
-                    int[] perm = Stern.sternGenPerm(piSeed);
+                    int[] perm = Stern.sternGenPerm(piSeed, n);
                     BigInteger hy = Stern.sternSyndromeH(hRowsI, yInt);
-                    if (!Stern.sternHash(1, piSeed, hy.xor(member.syndrome)).equals(sig.c0[i][r])) return false;
+                    if (!Stern.sternHashN(n, 1, piSeed, hy.xor(member.syndrome)).equals(sig.c0[i][r])) return false;
                     BigInteger sy = Stern.sternApplyPerm(perm, yInt);
-                    if (!Stern.sternHash(3, sy).equals(sig.c2[i][r])) return false;
+                    if (!Stern.sternHashN(n, 3, sy).equals(sig.c2[i][r])) return false;
                 }
             }
         }

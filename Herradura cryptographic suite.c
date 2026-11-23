@@ -744,7 +744,7 @@ int main(void)
         rnl_poly_add(hc_m, hc_m, hc_rand);
         ba_rand(&hc_seed_H, urnd);
 
-        hcred_user_keygen(hc_s, hc_c, &hc_e_ba, hc_m, urnd);
+        hcred_user_keygen(hc_s, hc_c, &hc_e_ba, hc_m, urnd, HCRED_N);
         hcred_syndrome(hc_syndr, &hc_seed_H, &hc_e_ba);
 
         stern_f_keygen(&hc_isd, &hc_ie, hc_isyndr, urnd);

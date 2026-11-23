@@ -64,9 +64,11 @@
 #if KEYBYTES < 2
 #  error "KEYBITS must be >= 16"
 #endif
-#if KEYBITS != 256
-#  error "GF polynomial constants are only defined for KEYBITS=256 in this build"
-#endif
+/* KEYBITS is the DEFAULT width -- what BA_INIT and the fixed-width protocols
+ * (HSKE, OPRF, the hash-based signatures) run at.  The GF(2^n) family takes its
+ * width from its operands since TODO #383: ba_gf_poly() looks the polynomial
+ * up by width and refuses an unlisted one (BA_E_NO_POLY, BITARRAY.md 4.6), which
+ * replaced this build's `#if KEYBITS != 256 #error`. */
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * BitArray — variable width, big-endian octets (TODO #314 pass 2)
@@ -651,15 +653,21 @@ static void ba_fscx_revolve(BitArray *result, const BitArray *a,
         return;
     }
 
-    /* M^steps * A, building the stride table 2^u mod KEYBITS by doubling as we
-       go so nothing overflows for a large step count. */
+    /* M^steps * A, building the stride table 2^u mod n by doubling as we
+       go so nothing overflows for a large step count.  n is the operands'
+       width (TODO #383: it was KEYBITS, and the accumulator below was born at
+       256 bits, so a narrower closed-form call failed E_MIXED_WIDTH). */
+    {
+        BaStatus st = ba_same_width(a, b);
+        if (st != BA_OK) BA_FAIL(st, "ba_fscx_revolve");
+    }
     acc = *a;
-    s = 1 % KEYBITS;
+    s = 1 % a->nbits;
     for (rem = steps; rem; rem >>= 1) {
         strides[nstr++] = s;
         if (rem & 1)
             ba_m_pow2_mul(&acc, s);
-        s = (s * 2) % KEYBITS;
+        s = (s * 2) % a->nbits;
     }
 
     /* S_steps * B, from the recurrence
@@ -667,12 +675,12 @@ static void ba_fscx_revolve(BitArray *result, const BitArray *a,
        walked from the deepest level up.  With Y = M^(2^u) at level u both
        multipliers are sparse, and k at level u is just steps >> u.  s_acc
        carries S_k(Y) * B; q carries the correction (Y^2)^(k/2) * B. */
-    memset(s_acc.b, 0, KEYBYTES);        /* S_0 = 0 */
+    ba_zero_w(&s_acc, a->nbits);         /* S_0 = 0 */
     q = *b;                              /* M^0 * B = B */
     for (u = nstr - 1; u >= 0; u--) {
         ba_one_plus_m_pow2_mul(&s_acc, strides[u]);
         if ((steps >> u) & 1) {
-            for (i = 0; i < KEYBYTES; i++)
+            for (i = 0; i < a->nbits / 8; i++)
                 s_acc.b[i] ^= q.b[i];
             ba_m_pow2_mul(&q, strides[u]);
         }
@@ -728,57 +736,88 @@ static int ba_shr1(BitArray *a)
     return carry;
 }
 
-/* GF(2^KEYBITS) multiplication: dst = a * b mod GF_POLY.
-   Shift-and-XOR: O(KEYBITS) iterations. */
-/* SA-02/03: constant-time GF(2^KEYBITS) multiply.
-   All branches replaced with bitmask selects so execution time is
-   independent of the value of either operand (private key). */
-static void gf_mul_ba(BitArray *dst, const BitArray *a, const BitArray *b)
+static BaStatus ba_gf_poly(BitArray *dst, int n);   /* defined with the BITARRAY.md ops */
+
+/* dst = a * b mod poly at the operands' width (poly already looked up).
+   SA-02/03: constant-time -- all branches are bitmask selects, so execution
+   time is independent of either operand (the private key). */
+static void gf_mul_poly_ba(BitArray *dst, const BitArray *a, const BitArray *b,
+                           const BitArray *poly)
 {
     BitArray r = BA_INIT, aa = BA_INIT, bb = BA_INIT;
     uint8_t bit_mask, carry_mask;
-    int i, k;
-    memset(r.b, 0, KEYBYTES);
+    int i, k, n = a->nbits, nb = ba_nbytes(a);
+    ba_zero_w(&r, n);
     aa = *a;
     bb = *b;
-    for (i = 0; i < KEYBITS; i++) {
+    for (i = 0; i < n; i++) {
         /* CT: XOR aa into r iff LSB of bb is set */
-        bit_mask = (uint8_t)(0u - (bb.b[KEYBYTES - 1] & 1u));
-        for (k = 0; k < KEYBYTES; k++)
+        bit_mask = (uint8_t)(0u - (bb.b[nb - 1] & 1u));
+        for (k = 0; k < nb; k++)
             r.b[k] ^= aa.b[k] & bit_mask;
-        /* CT: reduce aa by GF_POLY iff its MSB is set */
+        /* CT: reduce aa by poly iff its MSB is set */
         carry_mask = (uint8_t)(0u - (aa.b[0] >> 7));
         ba_shl1(&aa);
-        for (k = 0; k < KEYBYTES; k++)
-            aa.b[k] ^= GF_POLY.b[k] & carry_mask;
+        for (k = 0; k < nb; k++)
+            aa.b[k] ^= poly->b[k] & carry_mask;
         ba_shr1(&bb);
     }
     *dst = r;
 }
 
-/* SA-02: constant-time GF(2^KEYBITS) exponentiation.
-   Iterates exactly KEYBITS times (no early exit on leading zeros) and
-   uses CT select instead of a conditional call, so loop count and
-   branch pattern are independent of the exponent (private key). */
+/* The polynomial for a's width, or a hard failure: a GF(2^n) operation at a
+   width with no listed polynomial is a caller bug (the CLIs screen widths at
+   the PEM boundary), never a silent default (TODO #383). */
+static void gf_poly_for(BitArray *poly, const BitArray *a, const char *what)
+{
+    BaStatus st = ba_gf_poly(poly, a->nbits);
+    if (st != BA_OK) BA_FAIL(st, what);
+}
+
+/* GF(2^n) multiplication at the operands' common width: dst = a * b mod p(x). */
+static void gf_mul_ba(BitArray *dst, const BitArray *a, const BitArray *b)
+{
+    BitArray poly = BA_INIT;
+    BaStatus st = ba_same_width(a, b);
+    if (st != BA_OK) BA_FAIL(st, "gf_mul_ba");
+    gf_poly_for(&poly, a, "gf_mul_ba");
+    gf_mul_poly_ba(dst, a, b, &poly);
+}
+
+/* SA-02: constant-time GF(2^n) exponentiation, n = base's width.
+   Iterates exactly n times (no early exit on leading zeros) and uses CT
+   select instead of a conditional call, so loop count and branch pattern are
+   independent of the exponent (private key).  exp has base's width. */
 static void gf_pow_ba(BitArray *dst, const BitArray *base, const BitArray *exp)
 {
-    BitArray r = BA_INIT, b = BA_INIT, e = BA_INIT, tmp = BA_INIT;
+    BitArray r = BA_INIT, b = BA_INIT, e = BA_INIT, tmp = BA_INIT, poly = BA_INIT;
     uint8_t bit, sel;
-    int i, k;
-    memset(r.b, 0, KEYBYTES);
-    r.b[KEYBYTES - 1] = 1;   /* multiplicative identity */
+    int i, k, n = base->nbits, nb;
+    BaStatus st = ba_same_width(base, exp);
+    if (st != BA_OK) BA_FAIL(st, "gf_pow_ba");
+    gf_poly_for(&poly, base, "gf_pow_ba");
+    nb = ba_nbytes(base);
+    ba_zero_w(&r, n);
+    r.b[nb - 1] = 1;   /* multiplicative identity */
     b = *base;
     e = *exp;
-    for (i = 0; i < KEYBITS; i++) {
-        bit = e.b[KEYBYTES - 1] & 1u;
-        gf_mul_ba(&tmp, &r, &b);        /* always compute r*b */
-        sel = (uint8_t)(0u - bit);      /* 0xFF if bit set, 0x00 if not */
-        for (k = 0; k < KEYBYTES; k++) /* CT select: r = bit ? tmp : r */
+    for (i = 0; i < n; i++) {
+        bit = e.b[nb - 1] & 1u;
+        gf_mul_poly_ba(&tmp, &r, &b, &poly);   /* always compute r*b */
+        sel = (uint8_t)(0u - bit);             /* 0xFF if bit set, 0x00 if not */
+        for (k = 0; k < nb; k++)               /* CT select: r = bit ? tmp : r */
             r.b[k] = (r.b[k] & ~sel) | (tmp.b[k] & sel);
-        gf_mul_ba(&b, &b, &b);
+        gf_mul_poly_ba(&b, &b, &b, &poly);
         ba_shr1(&e);
     }
     *dst = r;
+}
+
+/* The generator g = x + 1 = 3 at width n. */
+static void gf_gen_w(BitArray *g, int n)
+{
+    ba_zero_w(g, n);
+    g->b[n / 8 - 1] = 0x03;
 }
 
 /* Returns 1 if pub is a valid, non-degenerate GF(2^KEYBITS)* public element:
@@ -790,8 +829,9 @@ static void gf_pow_ba(BitArray *dst, const BitArray *base, const BitArray *exp)
 static int gf_pub_is_valid(const BitArray *pub)
 {
     BitArray one = BA_INIT;
-    memset(one.b, 0, KEYBYTES);
-    one.b[KEYBYTES - 1] = 1;
+    if (ba_check_width(pub->nbits) != BA_OK) return 0;
+    ba_zero_w(&one, pub->nbits);
+    one.b[ba_nbytes(pub) - 1] = 1;
     if (ba_is_zero(pub)) return 0;
     if (ba_equal(pub, &one)) return 0;
     return 1;
@@ -901,23 +941,27 @@ static void ba_mul_mod2n(BitArray *dst, const BitArray *a, const BitArray *b)
     }
 }
 
-/* Full 512-bit schoolbook multiply, then reduce mod (2^256-1).
-   Reduction: (lo + hi) mod (2^256-1), where hi*2^256 + lo = a*b. */
+/* dst = a*b mod (2^n - 1) at the operands' common width n (the order of
+   GF(2^n)*).  Full 2n-bit schoolbook product, then (lo + hi) mod (2^n - 1),
+   where hi*2^n + lo = a*b.  Width-generic since TODO #383 (was 256 only). */
 static void ba_mul_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
 {
-    uint8_t full[2 * KEYBYTES];   /* little-endian 512-bit product */
-    uint8_t lo[KEYBYTES];
+    uint8_t full[2 * BA_MAX_BYTES];   /* little-endian 2n-bit product */
+    uint8_t lo[BA_MAX_BYTES];
     uint16_t carry;
-    int i, j, all_ff;
+    int i, j, all_ff, nb;
+    BaStatus st = ba_same_width(a, b);
+    if (st != BA_OK) BA_FAIL(st, "ba_mul_mod_ord");
+    nb = ba_nbytes(a);
 
     /* SA-04: removed `if (!ai) continue` — unconditional outer loop so
        execution time does not leak zero bytes in the private key scalar. */
     memset(full, 0, sizeof(full));
-    for (i = 0; i < KEYBYTES; i++) {
-        uint8_t ai = a->b[KEYBYTES - 1 - i];
+    for (i = 0; i < nb; i++) {
+        uint8_t ai = a->b[nb - 1 - i];
         carry = 0;
-        for (j = 0; j < KEYBYTES; j++) {
-            uint16_t prod = (uint16_t)ai * b->b[KEYBYTES - 1 - j]
+        for (j = 0; j < nb; j++) {
+            uint16_t prod = (uint16_t)ai * b->b[nb - 1 - j]
                             + full[i + j] + carry;
             full[i + j] = (uint8_t)prod;
             carry = prod >> 8;
@@ -925,7 +969,7 @@ static void ba_mul_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
         {
             int k;
             /* SA-04: unconditional carry propagation — no early exit on carry==0 */
-            for (k = i + KEYBYTES; k < 2 * KEYBYTES; k++) {
+            for (k = i + nb; k < 2 * nb; k++) {
                 uint16_t s = (uint16_t)full[k] + carry;
                 full[k] = (uint8_t)s;
                 carry = s >> 8;
@@ -933,36 +977,41 @@ static void ba_mul_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
         }
     }
     carry = 0;
-    for (i = 0; i < KEYBYTES; i++) {
-        uint16_t s = (uint16_t)full[i] + full[KEYBYTES + i] + carry;
+    for (i = 0; i < nb; i++) {
+        uint16_t s = (uint16_t)full[i] + full[nb + i] + carry;
         lo[i] = (uint8_t)s;
         carry = s >> 8;
     }
     if (carry) {
         carry = 1;
         /* SA-04: unconditional carry propagation */
-        for (i = 0; i < KEYBYTES; i++) {
+        for (i = 0; i < nb; i++) {
             uint16_t s = (uint16_t)lo[i] + carry;
             lo[i] = (uint8_t)s;
             carry = s >> 8;
         }
-        if (carry) { memset(lo, 0, KEYBYTES); lo[0] = 1; }
+        if (carry) { memset(lo, 0, (size_t)nb); lo[0] = 1; }
     } else {
         /* SA-04: no early-exit break in all_ff scan */
         all_ff = 1;
-        for (i = 0; i < KEYBYTES; i++) all_ff &= (lo[i] == 0xFF);
-        if (all_ff) memset(lo, 0, KEYBYTES);
+        for (i = 0; i < nb; i++) all_ff &= (lo[i] == 0xFF);
+        if (all_ff) memset(lo, 0, (size_t)nb);
     }
-    for (i = 0; i < KEYBYTES; i++)
-        dst->b[KEYBYTES - 1 - i] = lo[i];
+    dst->nbits = a->nbits;
+    for (i = 0; i < nb; i++)
+        dst->b[nb - 1 - i] = lo[i];
 }
 
-/* dst = (a - b) mod (2^256-1) */
+/* dst = (a - b) mod (2^n - 1) at the common width (was 256 only). */
 static void ba_sub_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
 {
     int16_t borrow = 0;
-    int i, all_ff;
-    for (i = KEYBYTES - 1; i >= 0; i--) {
+    int i, all_ff, nb;
+    BaStatus st = ba_same_width(a, b);
+    if (st != BA_OK) BA_FAIL(st, "ba_sub_mod_ord");
+    nb = ba_nbytes(a);
+    dst->nbits = a->nbits;
+    for (i = nb - 1; i >= 0; i--) {
         int16_t d = (int16_t)(uint16_t)a->b[i] - (uint16_t)b->b[i] + borrow;
         dst->b[i] = (uint8_t)d;
         borrow = d >> 8;
@@ -970,7 +1019,7 @@ static void ba_sub_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
     if (borrow) {
         /* SA-04: CT subtract-1 — propagate borrow unconditionally */
         uint16_t sub1 = 1;
-        for (i = KEYBYTES - 1; i >= 0; i--) {
+        for (i = nb - 1; i >= 0; i--) {
             uint16_t d = (uint16_t)dst->b[i] - sub1;
             dst->b[i] = (uint8_t)d;
             sub1 = (d >> 8) & 1u;
@@ -978,8 +1027,8 @@ static void ba_sub_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
     }
     /* SA-04: no early-exit break in all_ff scan */
     all_ff = 1;
-    for (i = 0; i < KEYBYTES; i++) all_ff &= (dst->b[i] == 0xFF);
-    if (all_ff) memset(dst->b, 0, KEYBYTES);
+    for (i = 0; i < nb; i++) all_ff &= (dst->b[i] == 0xFF);
+    if (all_ff) memset(dst->b, 0, (size_t)nb);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1001,13 +1050,26 @@ static const uint64_t MINV256_TBL[4] = {
     UINT64_C(0xb6db6db6db6db6db)   /* k=192..255 */
 };
 
-/* M^{-1}(x): apply precomputed rotation table (MINV256_TBL). */
+/* M^{-1}(x).  At n = 256 the precomputed rotation table (MINV256_TBL).  At
+   any other width M^(n/2-1) in closed form, fscx_revolve(x, 0, n/2-1) -- with
+   B = 0 each FSCX step is just M -- which is M^-1 exactly when ord(M) divides
+   n/2, i.e. at the powers of two; the M(v) = x check below refuses the rest,
+   as Python's _m_inv does (TODO #356, #383). */
 static void m_inv_ba(BitArray *result, const BitArray *x)
 {
     BitArray r = BA_INIT, rot = BA_INIT;
     int k;
+    if (x->nbits != 256) {
+        BitArray z = BA_INIT, chk = BA_INIT;
+        ba_zero_w(&z, x->nbits);
+        ba_fscx_revolve(&r, x, &z, x->nbits / 2 - 1);
+        ba_fscx(&chk, &r, &z);
+        if (!ba_equal(&chk, x)) BA_FAIL(BA_E_WIDTH, "m_inv_ba (no M^-1 at this width)");
+        *result = r;
+        return;
+    }
     r = *x;   /* k=0 term */
-    for (k = 1; k < KEYBITS; k++) {
+    for (k = 1; k < 256; k++) {
         if ((MINV256_TBL[k >> 6] >> (k & 63)) & 1) {
             ba_rol_k(&rot, x, k);
             ba_xor(&r, &r, &rot);
@@ -1042,8 +1104,10 @@ static void nl_fscx_revolve_v1_ba(BitArray *result, const BitArray *a,
 /* delta(B) = ROL(B * floor((B+1)/2) mod 2^n, n/4) */
 static void nl_fscx_delta_v2_ba(BitArray *delta, const BitArray *b)
 {
-    BitArray b1 = BA_INIT, half = BA_INIT, prod = BA_INIT;
-    ba_add_mod2n(&b1, b, &ONE_BA);
+    BitArray b1 = BA_INIT, half = BA_INIT, prod = BA_INIT, one = BA_INIT;
+    ba_zero_w(&one, b->nbits);
+    one.b[b->nbits / 8 - 1] = 1;   /* 1 at b's width (TODO #383) */
+    ba_add_mod2n(&b1, b, &one);
     half = b1; ba_shr1(&half);
     ba_mul_mod2n(&prod, b, &half);
     ba_rol_quarter(delta, &prod);
@@ -1126,10 +1190,11 @@ static void nl_fscx_v2_inv_ba(BitArray *result, const BitArray *y, const BitArra
  * bounds carry over verbatim.  Wire-format breaking; see MIGRATING.md §9. */
 static inline void nl_fscx_v2_rc_ba(BitArray *st, int i)
 {
-    st->b[KEYBYTES - 1] ^= (uint8_t)( (unsigned)i        & 0xff);
-    st->b[KEYBYTES - 2] ^= (uint8_t)(((unsigned)i >> 8)  & 0xff);
-    st->b[KEYBYTES - 3] ^= (uint8_t)(((unsigned)i >> 16) & 0xff);
-    st->b[KEYBYTES - 4] ^= (uint8_t)(((unsigned)i >> 24) & 0xff);
+    int nb = st->nbits / 8;   /* the state's width (TODO #383); every width is >= 32 bits here */
+    st->b[nb - 1] ^= (uint8_t)( (unsigned)i        & 0xff);
+    st->b[nb - 2] ^= (uint8_t)(((unsigned)i >> 8)  & 0xff);
+    st->b[nb - 3] ^= (uint8_t)(((unsigned)i >> 16) & 0xff);
+    st->b[nb - 4] ^= (uint8_t)(((unsigned)i >> 24) & 0xff);
 }
 
 static void nl_fscx_revolve_v2_ba(BitArray *result, const BitArray *a,
@@ -1299,10 +1364,49 @@ static void ba_shr_k(BitArray *dst, const BitArray *a, int k)
  * 7-row; b_{i+2} is (x >> 2) except at a row's top TWO bits, supplied by
  * (x << 3) / (x << 5).  Validated bit-exactly against a per-row reference in
  * test [47] and in benchmarks/v3_round_cost.c. */
+/* The chi row partition at width n: n5 5-bit rows (from bit 0 up), then n7
+ * 7-bit rows -- the partition with the fewest 7-rows, as Python's v3_rows.
+ * Returns 0 if n admits none (n < 5, or n in {6, 8, 9, 11, 13}). */
+static int nl_v3_rows(int n, int *n5, int *n7)
+{
+    int k;
+    for (k = 0; 7 * k <= n; k++)
+        if ((n - 7 * k) % 5 == 0) { *n5 = (n - 7 * k) / 5; *n7 = k; return 1; }
+    return 0;
+}
+
+/* Bit i (LSB = 0) of a big-endian BitArray. */
+#define NL_V3_BIT(a, i) (((a)->b[(a)->nbits / 8 - 1 - ((i) >> 3)] >> ((i) & 7)) & 1u)
+
+/* chi at a width other than 256, one row at a time (TODO #383): the masks
+ * below are 256-bit literals, and the narrower widths are demo widths where a
+ * per-bit loop costs nothing that matters. */
+static void nl_chi_v3_rows_ba(BitArray *out, const BitArray *x)
+{
+    int n5, n7, g, off = 0, j, nb = x->nbits / 8;
+    BitArray r = BA_INIT;
+    if (!nl_v3_rows(x->nbits, &n5, &n7)) BA_FAIL(BA_E_WIDTH, "nl_chi_v3 (no row partition)");
+    ba_zero_w(&r, x->nbits);
+    for (g = 0; g < n5 + n7; g++) {
+        int L = (g < n5) ? 5 : 7;
+        for (j = 0; j < L; j++) {
+            unsigned b0 = NL_V3_BIT(x, off + j);
+            unsigned b1 = NL_V3_BIT(x, off + (j + 1) % L);
+            unsigned b2 = NL_V3_BIT(x, off + (j + 2) % L);
+            unsigned o  = b0 ^ ((b1 ^ 1u) & b2);
+            int i = off + j;
+            r.b[nb - 1 - (i >> 3)] |= (uint8_t)(o << (i & 7));
+        }
+        off += L;
+    }
+    *out = r;
+}
+
 static void nl_chi_v3_ba(BitArray *out, const BitArray *x)
 {
     BitArray s1 = BA_INIT, s2 = BA_INIT, s3 = BA_INIT, s4 = BA_INIT, s5 = BA_INIT, s6 = BA_INIT, r1 = BA_INIT, r2 = BA_INIT, t = BA_INIT;
     int i;
+    if (x->nbits != 256) { nl_chi_v3_rows_ba(out, x); return; }
     ba_shr_k(&s1, x, 1);
     ba_shl_k(&s2, x, 4);
     ba_shl_k(&s3, x, 6);
@@ -1355,20 +1459,21 @@ static const uint8_t _V3_CHI7_INV[128] = {
  * big-endian BitArray lives in byte KEYBYTES-1-(i/8) at bit position i%8. */
 static void nl_chi_v3_inv_ba(BitArray *out, const BitArray *y)
 {
-    int g, off = 0, j;
-    memset(out->b, 0, KEYBYTES);
-    for (g = 0; g < 50; g++) {
-        int L = (g < 47) ? 5 : 7;
+    int g, off = 0, j, n5, n7, nb = y->nbits / 8;
+    if (!nl_v3_rows(y->nbits, &n5, &n7)) BA_FAIL(BA_E_WIDTH, "nl_chi_v3_inv (no row partition)");
+    ba_zero_w(out, y->nbits);
+    for (g = 0; g < n5 + n7; g++) {
+        int L = (g < n5) ? 5 : 7;
         unsigned v = 0, u;
         for (j = 0; j < L; j++) {
             int i = off + j;
-            v |= (unsigned)((y->b[KEYBYTES - 1 - (i >> 3)] >> (i & 7)) & 1) << j;
+            v |= (unsigned)((y->b[nb - 1 - (i >> 3)] >> (i & 7)) & 1) << j;
         }
         u = (L == 5) ? _V3_CHI5_INV[v] : _V3_CHI7_INV[v];
         for (j = 0; j < L; j++) {
             int i = off + j;
             if ((u >> j) & 1u)
-                out->b[KEYBYTES - 1 - (i >> 3)] |= (uint8_t)(1u << (i & 7));
+                out->b[nb - 1 - (i >> 3)] |= (uint8_t)(1u << (i & 7));
         }
         off += L;
     }
@@ -2445,9 +2550,10 @@ static void rnl_ntt(int32_t *a, int n, int q, int invert)
 
 /* Negacyclic multiply: h = f*g in Z_q[x]/(x^n+1) via NTT. O(n log n).
    ψ = 3^((q-1)/(2n)) is a primitive 2n-th root; ψ^n ≡ -1 encodes the wrap. */
-/* h = f*g in Z_q[x]/(x^n+1) at an explicit dimension.  n must be RNL_N or
-   RNL_ALT_N — the only two the twiddle tables cover.  Python's _rnl_poly_mul and
-   Go's RnlPolyMul have always taken n; this brings C into line (TODO #223). */
+/* h = f*g in Z_q[x]/(x^n+1) at an explicit dimension: n = RNL_N or RNL_ALT_N
+   by NTT (the two the twiddle tables cover), any other power of two below
+   RNL_N by schoolbook.  Python's _rnl_poly_mul and Go's RnlPolyMul have always
+   taken n; this brings C into line (TODO #223, #383). */
 static void rnl_poly_mul_dim(int32_t *h, const int32_t *f, const int32_t *g, int n)
 {
     int32_t fa[RNL_N], ga[RNL_N], ha[RNL_N];   /* RNL_N is the larger of the two */
@@ -2461,6 +2567,22 @@ static void rnl_poly_mul_dim(int32_t *h, const int32_t *f, const int32_t *g, int
     } else if (n == RNL_N) {
         psi_pow = rnl_tw.psi_pow;     psi_inv_pow = rnl_tw.psi_inv_pow;
         inv_n   = rnl_tw.inv_n;
+    } else if (n >= 2 && n < RNL_N && (n & (n - 1)) == 0) {
+        /* The other power-of-two rings (HCRED at 32-128, TODO #383 stage 3;
+           HKEX-RNL at 8-512, stage 4) have no twiddle table; the negacyclic
+           product mod x^n + 1 is schoolbook here.  Every loop bound is public
+           (n), so the operation count does not depend on f or g. */
+        int64_t acc[RNL_N];
+        int j;
+        for (i = 0; i < n; i++) acc[i] = 0;
+        for (i = 0; i < n; i++)
+            for (j = 0; j < n; j++) {
+                int64_t p = (int64_t)(uint32_t)f[i] * (uint32_t)g[j] % RNL_Q;
+                if (i + j < n) acc[i + j] += p;
+                else           acc[i + j - n] += RNL_Q - p;
+            }
+        for (i = 0; i < n; i++) h[i] = (int32_t)(acc[i] % RNL_Q);
+        return;
     } else {
         /* No twiddle table for this dimension.  Falling through to the RNL_N
            table would silently produce garbage, which for a key-exchange
@@ -2486,10 +2608,15 @@ static void rnl_poly_mul(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
     rnl_poly_mul_dim(h, f, g, RNL_N);
 }
 
-static void rnl_poly_add(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
+static void rnl_poly_add_dim(int32_t *h, const int32_t *f, const int32_t *g, int n)
 {
     int i;
-    for (i = 0; i < RNL_N; i++) h[i] = (f[i] + g[i]) % RNL_Q;
+    for (i = 0; i < n; i++) h[i] = (f[i] + g[i]) % RNL_Q;
+}
+
+static void rnl_poly_add(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
+{
+    rnl_poly_add_dim(h, f, g, RNL_N);
 }
 
 static void rnl_round_dim(int32_t *out, const int32_t *in, int from_q, int to_p, int n)
@@ -2516,24 +2643,36 @@ static void rnl_lift(rnl_poly_t out, const int32_t *in, int from_p, int to_q)
     rnl_lift_dim(out, in, from_p, to_q, RNL_N);
 }
 
-/* m(x) = 1 + x + x^{n-1} */
-static void rnl_m_poly(rnl_poly_t p)
+/* m(x) = 1 + x + x^{n-1}, at ring dimension n (TODO #383 stage 4) */
+static void rnl_m_poly_dim(int32_t *p, int n)
 {
-    memset(p, 0, sizeof(rnl_poly_t));
-    p[0] = p[1] = p[RNL_N - 1] = 1;
+    memset(p, 0, (size_t)n * sizeof(int32_t));
+    p[0] = p[1] = p[n - 1] = 1;
 }
 
-static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
+static void rnl_m_poly(rnl_poly_t p)
+{
+    rnl_m_poly_dim(p, RNL_N);
+}
+
+/* n uniform coefficients in Z_q (3-byte rejection sampling), as Python's
+ * _rnl_rand_poly(n, q): same reads in the same order at every n. */
+static void rnl_rand_poly_dim(int32_t *p, FILE *urnd, int n)
 {
     static const uint32_t threshold = (1u << 24) - ((1u << 24) % RNL_Q);
     int i = 0;
-    while (i < RNL_N) {
+    while (i < n) {
         uint8_t buf[3];
         if (fread(buf, 3, 1, urnd) != 1) { fputs("urandom error\n", stderr); exit(1); }
         uint32_t v = ((uint32_t)buf[0] << 16) | ((uint32_t)buf[1] << 8) | buf[2];
         if (v < threshold)
             p[i++] = (int32_t)(v % RNL_Q);
     }
+}
+
+static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
+{
+    rnl_rand_poly_dim(p, urnd, RNL_N);
 }
 
 /* CBD(eta=1): 4 coefficients per byte — bit-pairs (0-1),(2-3),(4-5),(6-7).
@@ -2640,22 +2779,35 @@ static int rnl_validate_pub(const rnl_poly_t poly, int n)
  * the per-session nonces contributed by Alice and Bob respectively.
  * Both nonces must be KEYBYTES (32) bytes. Zero-valued nonces are
  * accepted (they arise when talking to older implementations). */
+/* K_raw is k_len bytes: rnl_key_bits(n) / 8, which is KEYBYTES at every
+ * deployed ring and n / 8 below n = KEYBITS (Python's
+ * rnl_contributory_kdf(k, n_bits, ...) serialises K_raw at n_bits // 8). */
+static void rnl_contributory_kdf_len(uint8_t out[KEYBYTES],
+                                     const uint8_t *k_raw, size_t k_len,
+                                     const uint8_t n_a[KEYBYTES],
+                                     const uint8_t n_b[KEYBYTES])
+{
+    uint8_t buf[3 * KEYBYTES];
+    if (k_len > KEYBYTES) { fputs("rnl_contributory_kdf: K_raw too wide\n", stderr); exit(1); }
+    memcpy(buf,                 k_raw, k_len);
+    memcpy(buf + k_len,         n_a,   KEYBYTES);
+    memcpy(buf + k_len + KEYBYTES, n_b, KEYBYTES);
+    hfscx_256(buf, k_len + 2 * KEYBYTES, NULL, out);
+    explicit_bzero(buf, sizeof buf);
+}
+
 static void rnl_contributory_kdf(uint8_t out[KEYBYTES],
                                   const uint8_t k_raw[KEYBYTES],
                                   const uint8_t n_a[KEYBYTES],
                                   const uint8_t n_b[KEYBYTES])
 {
-    uint8_t buf[3 * KEYBYTES];
-    memcpy(buf,                k_raw, KEYBYTES);
-    memcpy(buf +     KEYBYTES, n_a,   KEYBYTES);
-    memcpy(buf + 2 * KEYBYTES, n_b,   KEYBYTES);
-    hfscx_256(buf, sizeof buf, NULL, out);
-    explicit_bzero(buf, sizeof buf);
+    rnl_contributory_kdf_len(out, k_raw, KEYBYTES, n_a, n_b);
 }
 
 /* keygen: s=CBD(eta=1) private, C=round_p(m_blind * s) */
-/* Keygen at an explicit ring dimension; n must be RNL_N or RNL_ALT_N.  HCRED
-   uses RNL_ALT_N (256) while HKEX-RNL uses RNL_N (1024) — TODO #223. */
+/* Keygen at an explicit ring dimension: any power of two up to RNL_N (the
+   product's rule).  HCRED runs at 32-256, HKEX-RNL at RNL_N (1024) by default
+   and 8-512 when a key says so -- TODO #223, #383. */
 static void rnl_keygen_dim(int32_t *s_out, int32_t *c_out,
                            const int32_t *m_blind, FILE *urnd, int n)
 {
@@ -2671,33 +2823,53 @@ static void rnl_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
     rnl_keygen_dim(s_out, c_out, m_blind, urnd, RNL_N);
 }
 
-/* 2-bit Peikert cross-rounding hint for first RNL_N/2 coefficients, packed 2 bits/coeff.
-   h[i] = floor((8*c + q/4) / q) % 4 */
-static void rnl_hint(uint8_t hint[RNL_N / 8], const rnl_poly_t K_poly)
+/* The raw reconciliation width at ring dimension n (Python's _rnl_key_bits):
+ * KEYBITS on a ring at least that wide, n on a narrower one, which can supply
+ * only n bits (2 from each of n/2 coefficients). */
+static int rnl_key_bits(int n)
+{
+    return n >= KEYBITS ? KEYBITS : n;
+}
+
+/* 2-bit Peikert cross-rounding hint for the first n/2 coefficients, packed 2
+   bits/coeff into n/8 bytes.  h[i] = floor((8*c + q/4) / q) % 4 */
+static void rnl_hint_dim(uint8_t *hint, const int32_t *K_poly, int n)
 {
     int i;
-    memset(hint, 0, RNL_N / 8);
-    for (i = 0; i < RNL_N / 2; i++) {
+    memset(hint, 0, (size_t)n / 8);
+    for (i = 0; i < n / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
         uint32_t r = (uint32_t)(((uint64_t)8 * c + RNL_Q / 4) / RNL_Q) % 4;
         hint[i / 4] |= (uint8_t)(r << ((i % 4) * 2));
     }
 }
 
-/* Extract KEYBITS key bits: 2 bits per coefficient from KEYBITS/2 coefficients.
+static void rnl_hint(uint8_t hint[RNL_N / 8], const rnl_poly_t K_poly)
+{
+    rnl_hint_dim(hint, K_poly, RNL_N);
+}
+
+/* Extract key_bits key bits: 2 bits per coefficient from key_bits/2
+   coefficients, LSB-first into out->b[0 .. key_bits/8 - 1].
    b[i] = floor((4*c + (2*h+1)*(q/4)) / q) % 4 */
-static void rnl_reconcile_bits(BitArray *out, const rnl_poly_t K_poly,
-                                const uint8_t hint[RNL_N / 8])
+static void rnl_reconcile_bits_dim(BitArray *out, const int32_t *K_poly,
+                                   const uint8_t *hint, int key_bits)
 {
     int i;
     const uint32_t qq = RNL_Q / 4;
     memset(out->b, 0, sizeof(out->b));
-    for (i = 0; i < KEYBITS / 2; i++) {
+    for (i = 0; i < key_bits / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
         uint32_t h = (hint[i / 4] >> ((i % 4) * 2)) & 3u;
         uint32_t b = (uint32_t)(((uint64_t)4 * c + (uint64_t)(2*h+1) * qq) / RNL_Q) % RNL_PP;
         out->b[i / 4] |= (uint8_t)(b << ((i % 4) * 2));
     }
+}
+
+static void rnl_reconcile_bits(BitArray *out, const rnl_poly_t K_poly,
+                                const uint8_t hint[RNL_N / 8])
+{
+    rnl_reconcile_bits_dim(out, K_poly, hint, KEYBITS);
 }
 
 /* agree: compute raw key with Peikert reconciliation.
@@ -2708,19 +2880,28 @@ static void rnl_reconcile_bits(BitArray *out, const rnl_poly_t K_poly,
    provides key agreement only; the caller is responsible for authenticating the
    transcript (e.g. via HPKS-NL or a MAC over b_pub||m_blind) before using the
    derived key.                                                                 */
+/* At ring dimension n (TODO #383 stage 4): s, c_other n coefficients; the
+   hint is n/8 bytes; out receives rnl_key_bits(n) bits, LSB-first. */
+static void rnl_agree_dim(BitArray *out, const int32_t *s, const int32_t *c_other,
+                          const uint8_t *hint_in, uint8_t *hint_out, int n)
+{
+    rnl_poly_t c_lifted, k_poly;
+    rnl_lift_dim(c_lifted, c_other, RNL_P, RNL_Q, n);
+    rnl_poly_mul_dim(k_poly, s, c_lifted, n);
+    if (!hint_in) {
+        rnl_hint_dim(hint_out, k_poly, n);
+        rnl_reconcile_bits_dim(out, k_poly, hint_out, rnl_key_bits(n));
+    } else {
+        rnl_reconcile_bits_dim(out, k_poly, hint_in, rnl_key_bits(n));
+    }
+    explicit_bzero(k_poly, sizeof k_poly);
+}
+
 static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
                       const int32_t c_other[RNL_N],
                       const uint8_t *hint_in, uint8_t *hint_out)
 {
-    rnl_poly_t c_lifted, k_poly;
-    rnl_lift(c_lifted, c_other, RNL_P, RNL_Q);
-    rnl_poly_mul(k_poly, s, c_lifted);
-    if (!hint_in) {
-        rnl_hint(hint_out, k_poly);
-        rnl_reconcile_bits(out, k_poly, hint_out);
-    } else {
-        rnl_reconcile_bits(out, k_poly, hint_in);
-    }
+    rnl_agree_dim(out, s, c_other, hint_in, hint_out, RNL_N);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2741,6 +2922,13 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
 #define SDF_PRODUCTION_ROUNDS 219          /* rounds for 128-bit soundness       */
 #define SDF_SYNBYTES        (SDF_N_ROWS / 8) /* syndrome bytes: 16               */
 
+/* TODO #383 stage 2: Stern-F runs at any listed width N in {32, 64, 128, 256}
+ * (Python's stern_f_keygen(n)): N/2 parity-check rows, weight t = max(2, N/16),
+ * every value N bits, the chain hash truncated to its HIGH N bits.  The
+ * macros above are the 256-bit values and the array bounds (N <= KEYBITS);
+ * the functions below take N from their operands (seed, e, msg). */
+static int stern_t(int n) { int t = n * SDF_T / KEYBITS; return t > 2 ? t : 2; }
+
 #if SDF_ROUNDS < SDF_PRODUCTION_ROUNDS
 #pragma message("WARNING: SDF_ROUNDS < SDF_PRODUCTION_ROUNDS (219). " \
     "Stern signatures have sub-128-bit soundness. For production use, " \
@@ -2755,22 +2943,26 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
  * B, and a zero item (B = 0) made the round affine-nilpotent: it shrank the
  * chain state's image to 2^(n/2) points and left a commitment to a zero item
  * about n/4 bits of binding (§11.75).  The items now reach only HFSCX-256's
- * message input.  Every item is KEYBITS wide. */
+ * message input.  Every item is N bits wide (N = items[0]'s width). */
 static void stern_hash(BitArray *out, const BitArray *items, int n_items, unsigned ds)
 {
-    size_t len = 1 + (size_t)n_items * KEYBYTES;
+    /* Every item is N bits, N = items[0]'s width; the digest's HIGH N bits are
+     * the result (Python's _stern_hash, TODO #383). */
+    int nb = n_items > 0 ? ba_nbytes(&items[0]) : KEYBYTES;
+    size_t len = 1 + (size_t)n_items * (size_t)nb;
     uint8_t *buf = (uint8_t *)malloc(len), digest[32];
     BitArray h = BA_INIT;
     int i;
     if (!buf) { fprintf(stderr, "stern_hash: out of memory\n"); exit(1); }
     buf[0] = (uint8_t)(ds & 0xFF);
     for (i = 0; i < n_items; i++) {
-        if (ba_nbytes(&items[i]) != KEYBYTES) BA_FAIL(BA_E_MIXED_WIDTH, "stern_hash");
-        memcpy(buf + 1 + (size_t)i * KEYBYTES, items[i].b, KEYBYTES);
+        if (ba_nbytes(&items[i]) != nb) BA_FAIL(BA_E_MIXED_WIDTH, "stern_hash");
+        memcpy(buf + 1 + (size_t)i * (size_t)nb, items[i].b, (size_t)nb);
     }
     hfscx_256_ds(STERN_DS_HASH, buf, len, NULL, digest);
     free(buf);
-    memcpy(h.b, digest, KEYBYTES);
+    ba_zero_w(&h, nb * 8);
+    memcpy(h.b, digest, (size_t)nb);
     *out = h;
 }
 
@@ -2779,33 +2971,39 @@ static void stern_hash(BitArray *out, const BitArray *items, int n_items, unsign
  * is indistinguishable from a uniform binary matrix (TODO #88, v1.9.35). */
 static void stern_matrix_row(BitArray *out, const BitArray *seed, int row)
 {
+    /* At the seed's width N: v1 revolve at N/4 steps (I_VALUE at 256), the
+     * HFSCX-256 digest of its N/8 bytes, high N bits kept (TODO #383). */
     BitArray sxr = *seed, a0;
     uint8_t digest[32];
-    sxr.b[KEYBYTES - 1] ^= (uint8_t)(row & 0xFF);
-    ba_rol_k(&a0, &sxr, KEYBITS / 8);
-    nl_fscx_revolve_v1_ba(out, &a0, seed, I_VALUE);
-    hfscx_256(out->b, KEYBYTES, NULL, digest);
-    memcpy(out->b, digest, KEYBYTES);
+    int n = seed->nbits, nb = ba_nbytes(seed);
+    sxr.b[nb - 1] ^= (uint8_t)(row & 0xFF);
+    ba_rol_k(&a0, &sxr, n / 8);
+    nl_fscx_revolve_v1_ba(out, &a0, seed, n / 4);
+    hfscx_256(out->b, (size_t)nb, NULL, digest);
+    memcpy(out->b, digest, (size_t)nb);
 }
 
-/* Build all SDF_N_ROWS rows of parity-check matrix H from seed.
+/* Build all N/2 rows of parity-check matrix H from seed (N = seed's width;
+   H has room for SDF_N_ROWS).
    Hot paths (sign/verify) call this once and reuse H via stern_syndrome_H. */
 static void stern_build_H(BitArray *H, const BitArray *seed)
 {
     int i;
-    for (i = 0; i < SDF_N_ROWS; i++)
+    for (i = 0; i < seed->nbits / 2; i++)
         stern_matrix_row(&H[i], seed, i);
 }
 
-/* Syndrome from prebuilt H: s = H*e^T mod 2, packed into syndr[SDF_SYNBYTES]. */
+/* Syndrome from prebuilt H: s = H*e^T mod 2, packed into syndr[N/16 bytes]
+   (N = e's width; at most SDF_SYNBYTES).  H must be built at that width. */
 static void stern_syndrome_H(uint8_t *syndr, const BitArray *H,
                               const BitArray *e)
 {
-    int i;
-    memset(syndr, 0, SDF_SYNBYTES);
-    for (i = 0; i < SDF_N_ROWS; i++) {
+    int i, nb = ba_nbytes(e), rows = e->nbits / 2;
+    if (H[0].nbits != e->nbits) BA_FAIL(BA_E_MIXED_WIDTH, "stern_syndrome_H");
+    memset(syndr, 0, (size_t)rows / 8);
+    for (i = 0; i < rows; i++) {
         int pc = 0, k;
-        for (k = 0; k < KEYBYTES; k++)
+        for (k = 0; k < nb; k++)
             pc ^= __builtin_popcount(H[i].b[k] & e->b[k]);
         if (pc & 1)
             syndr[i / 8] |= (uint8_t)(1u << (i % 8));
@@ -2822,15 +3020,22 @@ static void stern_syndrome(uint8_t *syndr, const BitArray *seed,
     stern_syndrome_H(syndr, H, e);
 }
 
-/* Pack syndrome into lower half of a BitArray (upper bytes = 0). */
+/* Pack an n/2-bit syndrome into the lower half of an n-bit BitArray (upper
+ * bytes = 0). */
+static void syndr_to_ba_w(BitArray *out, const uint8_t *syndr, int n)
+{
+    int k, nb = n / 8;
+    ba_zero_w(out, n);
+    /* Store syndr[k] (rows k*8..k*8+7) at byte nb-1-k so that syndrome
+     * bit i lands at integer bit i, matching Python/Go's big.Int convention. */
+    for (k = 0; k < nb / 2; k++)
+        out->b[nb - 1 - k] = syndr[k];
+}
+
+/* The 256-bit form, kept for its callers (tests, KAT verifier, dudect). */
 static void syndr_to_ba(BitArray *out, const uint8_t *syndr)
 {
-    int k;
-    memset(out->b, 0, KEYBYTES);
-    /* Store syndr[k] (rows k*8..k*8+7) at byte KEYBYTES-1-k so that syndrome
-     * bit i lands at integer bit i, matching Python/Go's big.Int convention. */
-    for (k = 0; k < SDF_SYNBYTES; k++)
-        out->b[KEYBYTES - 1 - k] = syndr[k];
+    syndr_to_ba_w(out, syndr, KEYBITS);
 }
 
 /* Fisher-Yates shuffle [0..N-1] driven by NL-FSCX v1 PRNG.
@@ -2847,17 +3052,18 @@ static void syndr_to_ba(BitArray *out, const uint8_t *syndr)
    language) must derive the same permutation from the same pi_seed. */
 static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
 {
+    /* The PRNG runs at pi_seed's width (Python: n = pi_seed.size, TODO #383). */
     BitArray key = BA_INIT, st = BA_INIT;
-    int i, cursor;
+    int i, cursor, nb = ba_nbytes(pi_seed);
     for (i = 0; i < N; i++) perm[i] = (uint8_t)i;
-    ba_rol_k(&key, pi_seed, KEYBITS / 8);
+    ba_rol_k(&key, pi_seed, pi_seed->nbits / 8);
     st = *pi_seed;
-    cursor = KEYBYTES;                          /* force state advance on first draw */
+    cursor = nb;                                /* force state advance on first draw */
     for (i = N - 1; i > 0; i--) {
         uint64_t range = (uint64_t)(i + 1);
         uint32_t v;
         int j;
-        if (cursor + 4 > KEYBYTES) {
+        if (cursor + 4 > nb) {
             nl_fscx_v1_ba(&st, &st, &key);
             cursor = 0;
         }
@@ -2886,10 +3092,10 @@ static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
 static void stern_apply_perm(BitArray *out, const uint8_t *perm,
                               const BitArray *v, int N)
 {
-    int i, j;
-    memset(out->b, 0, KEYBYTES);
+    int i, j, nb = ba_nbytes(v);
+    ba_zero_w(out, v->nbits);                  /* at v's width (TODO #383) */
     for (i = 0; i < N; i++) {
-        int byt      = KEYBYTES - 1 - i / 8;
+        int byt      = nb - 1 - i / 8;
         int bit      = i % 8;
         uint8_t vb   = (v->b[byt] >> bit) & 1u;
         uint8_t vmask = (uint8_t)(-(int8_t)vb);   /* 0x00 or 0xFF */
@@ -2898,7 +3104,7 @@ static void stern_apply_perm(BitArray *out, const uint8_t *perm,
             uint32_t d       = (uint32_t)(pi ^ (uint8_t)j);
             uint32_t iszero  = ((d | (0u - d)) >> 31) ^ 1u;   /* 1 if d==0 */
             uint8_t eq       = (uint8_t)(0u - iszero);        /* 0xFF or 0x00 */
-            int ob  = KEYBYTES - 1 - j / 8;
+            int ob  = nb - 1 - j / 8;
             int obb = j % 8;
             out->b[ob] |= eq & vmask & (uint8_t)(1u << obb);
         }
@@ -2923,11 +3129,14 @@ static void stern_apply_perm(BitArray *out, const uint8_t *perm,
  * SecurityProofsCode/stern_ct_demo.py exists to say the leak is still there. */
 static void stern_rand_error(BitArray *e, FILE *urnd)
 {
+    /* weight t = max(2, n/16) on n positions, n = e's width as the caller set
+     * it (Python's _csprng_weight_t(n, t); TODO #383 stage 2) */
     static const uint64_t span = (uint64_t)1 << 32;
-    const uint64_t threshold = span - (span % (uint64_t)KEYBITS);
-    int count = 0;
-    memset(e->b, 0, KEYBYTES);
-    while (count < SDF_T) {
+    const int n = e->nbits;
+    const uint64_t threshold = span - (span % (uint64_t)n);
+    int count = 0, t = stern_t(n), nb = n / 8;
+    ba_zero_w(e, n);
+    while (count < t) {
         uint8_t buf[4];
         uint64_t v;
         unsigned int pos;
@@ -2938,19 +3147,22 @@ static void stern_rand_error(BitArray *e, FILE *urnd)
         v = ((uint64_t)buf[0] << 24) | ((uint64_t)buf[1] << 16)
           | ((uint64_t)buf[2] << 8)  | (uint64_t)buf[3];
         if (v >= threshold) continue;
-        pos = (unsigned int)(v % (uint64_t)KEYBITS);
+        pos = (unsigned int)(v % (uint64_t)n);
         mask = (uint8_t)(1u << (pos % 8));
-        if (e->b[KEYBYTES - 1 - pos / 8] & mask) continue;   /* already chosen */
-        e->b[KEYBYTES - 1 - pos / 8] |= mask;
+        if (e->b[nb - 1 - pos / 8] & mask) continue;   /* already chosen */
+        e->b[nb - 1 - pos / 8] |= mask;
         count++;
     }
 }
 
+
 /* Key generation: random seed, weight-t error e, syndrome = H*e^T. */
+/* At the width N the caller gave *seed (ba_zero_w(seed, N); 256 for BA_INIT). */
 static void stern_f_keygen(BitArray *seed, BitArray *e, uint8_t *syndr,
                             FILE *urnd)
 {
     ba_rand(seed, urnd);
+    ba_zero_w(e, seed->nbits);
     stern_rand_error(e, urnd);
     stern_syndrome(syndr, seed, e);
 }
@@ -2976,14 +3188,20 @@ static void stern_fs_challenges(int *chals, int rounds,
     free(flat);
 
     for (i = 0; i < rounds; i++) {
-        BitArray idx_ba = { KEYBITS, {0} };
+        BitArray idx_ba = BA_INIT;
         uint32_t v;
-        idx_ba.b[KEYBYTES - 1] = (uint8_t)(i & 0xFF);
+        int nb = ba_nbytes(msg);               /* at msg's width (TODO #383) */
+        ba_zero_w(&idx_ba, msg->nbits);
+        /* the whole round index, big-endian (TODO #390; was i & 0xFF) */
+        idx_ba.b[nb - 1] = (uint8_t)i;
+        idx_ba.b[nb - 2] = (uint8_t)(i >> 8);
+        idx_ba.b[nb - 3] = (uint8_t)(i >> 16);
+        idx_ba.b[nb - 4] = (uint8_t)(i >> 24);
         nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
-        v = ((uint32_t)ch_st.b[KEYBYTES - 4] << 24)
-          | ((uint32_t)ch_st.b[KEYBYTES - 3] << 16)
-          | ((uint32_t)ch_st.b[KEYBYTES - 2] << 8)
-          |  ch_st.b[KEYBYTES - 1];
+        v = ((uint32_t)ch_st.b[nb - 4] << 24)
+          | ((uint32_t)ch_st.b[nb - 3] << 16)
+          | ((uint32_t)ch_st.b[nb - 2] << 8)
+          |  ch_st.b[nb - 1];
         chals[i] = (int)(v % 3u);
     }
 }
@@ -3056,11 +3274,12 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
     uint8_t  *Hr = (uint8_t  *)malloc((size_t)rounds * SDF_SYNBYTES);
     BitArray H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
     uint8_t perm[KEYBITS];
-    int i;
+    int i, n = seed->nbits;                    /* N from the key (TODO #383) */
 
     if (!r || !y || !pi || !sr || !sy || !Hr) {
         fprintf(stderr, "hpks_stern_f_sign: out of memory\n"); exit(1);
     }
+    if (e->nbits != n || msg->nbits != n) BA_FAIL(BA_E_MIXED_WIDTH, "hpks_stern_f_sign");
     ba_init_array(r, rounds);  ba_init_array(y, rounds);  ba_init_array(pi, rounds);
     ba_init_array(sr, rounds); ba_init_array(sy, rounds);
 
@@ -3072,14 +3291,14 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
          * weight-t, which put both of the verifier's weight checks on the
          * prover's own blinding value and left wt(e) unbound entirely -- see
          * hpks_stern_f_verify's b = 0 case. */
-        ba_rand(&r[i], urnd);
+        ba_zero_w(&r[i], n);  ba_rand(&r[i], urnd);
         ba_xor(&y[i], e, &r[i]);
-        ba_rand(&pi[i], urnd);
+        ba_zero_w(&pi[i], n); ba_rand(&pi[i], urnd);
         stern_syndrome_H(Hr + i * SDF_SYNBYTES, H_mat, &r[i]);
-        stern_gen_perm(perm, &pi[i], KEYBITS);
-        stern_apply_perm(&sr[i], perm, &r[i], KEYBITS);
-        stern_apply_perm(&sy[i], perm, &y[i], KEYBITS);
-        items[0] = pi[i]; syndr_to_ba(&items[1], Hr + i * SDF_SYNBYTES);
+        stern_gen_perm(perm, &pi[i], n);
+        stern_apply_perm(&sr[i], perm, &r[i], n);
+        stern_apply_perm(&sy[i], perm, &y[i], n);
+        items[0] = pi[i]; syndr_to_ba_w(&items[1], Hr + i * SDF_SYNBYTES, n);
         stern_hash(&sig->c0[i], items, 2, 1);
         stern_hash(&sig->c1[i], &sr[i], 1, 2);
         stern_hash(&sig->c2[i], &sy[i], 1, 3);
@@ -3106,9 +3325,15 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
     int *chals;
     BitArray H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
     uint8_t perm[KEYBITS];
-    int i;
+    int i, n = seed->nbits, t = stern_t(n);    /* N from the key (TODO #383) */
 
     if (rounds < 1) return 0;
+    /* every value must be at the key's width: a caller that let a signature of
+     * another width through would otherwise abort in stern_hash */
+    if (msg->nbits != n) return 0;
+    for (i = 0; i < rounds; i++)
+        if (sig->c0[i].nbits != n || sig->c1[i].nbits != n || sig->c2[i].nbits != n ||
+            sig->resp_a[i].nbits != n || sig->resp_b[i].nbits != n) return 0;
     chals = (int *)malloc((size_t)rounds * sizeof(int));
     if (!chals) { fprintf(stderr, "hpks_stern_f_verify: out of memory\n"); exit(1); }
 
@@ -3138,16 +3363,16 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
              * Gaussian elimination away from the PUBLIC key: universal forgery
              * (TODO #298). */
             ba_xor(&xr, &sig->resp_a[i], &sig->resp_b[i]);
-            if (ba_popcount(&xr) != SDF_T) return 0;
+            if (ba_popcount(&xr) != t) return 0;
         } else if (bv == 1) {
             uint8_t Hr[SDF_SYNBYTES];
             BitArray items[2], sr2 = BA_INIT; ba_init_array(items, 2);
             stern_syndrome_H(Hr, H_mat, &sig->resp_b[i]);
-            items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hr);
+            items[0] = sig->resp_a[i]; syndr_to_ba_w(&items[1], Hr, n);
             stern_hash(&tmp, items, 2, 1);
             if (!ba_equal(&tmp, &sig->c0[i])) return 0;
-            stern_gen_perm(perm, &sig->resp_a[i], KEYBITS);
-            stern_apply_perm(&sr2, perm, &sig->resp_b[i], KEYBITS);
+            stern_gen_perm(perm, &sig->resp_a[i], n);
+            stern_apply_perm(&sr2, perm, &sig->resp_b[i], n);
             stern_hash(&tmp, &sr2, 1, 2);
             if (!ba_equal(&tmp, &sig->c1[i])) return 0;
         } else {
@@ -3155,12 +3380,12 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
             BitArray items[2], sy2 = BA_INIT; ba_init_array(items, 2);
             int k;
             stern_syndrome_H(Hy, H_mat, &sig->resp_b[i]);
-            for (k = 0; k < SDF_SYNBYTES; k++) Hys[k] = Hy[k] ^ syndr[k];
-            items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hys);
+            for (k = 0; k < n / 16; k++) Hys[k] = Hy[k] ^ syndr[k];
+            items[0] = sig->resp_a[i]; syndr_to_ba_w(&items[1], Hys, n);
             stern_hash(&tmp, items, 2, 1);
             if (!ba_equal(&tmp, &sig->c0[i])) return 0;
-            stern_gen_perm(perm, &sig->resp_a[i], KEYBITS);
-            stern_apply_perm(&sy2, perm, &sig->resp_b[i], KEYBITS);
+            stern_gen_perm(perm, &sig->resp_a[i], n);
+            stern_apply_perm(&sy2, perm, &sig->resp_b[i], n);
             stern_hash(&tmp, &sy2, 1, 3);
             if (!ba_equal(&tmp, &sig->c2[i])) return 0;
         }
@@ -3255,13 +3480,18 @@ static void stern_ring_challenges(int *joint_out, int rounds, int k,
     }
     /* derive one joint challenge per round */
     for (r = 0; r < rounds; r++) {
-        memset(idx_ba.b, 0, KEYBYTES);
-        idx_ba.b[KEYBYTES - 1] = (uint8_t)(r & 0xFF);
+        int nb = ba_nbytes(msg);               /* at msg's width (TODO #383) */
+        ba_zero_w(&idx_ba, msg->nbits);
+        /* the whole round index, big-endian (TODO #390; was r & 0xFF) */
+        idx_ba.b[nb - 1] = (uint8_t)r;
+        idx_ba.b[nb - 2] = (uint8_t)(r >> 8);
+        idx_ba.b[nb - 3] = (uint8_t)(r >> 16);
+        idx_ba.b[nb - 4] = (uint8_t)(r >> 24);
         nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
-        v = ((uint32_t)ch_st.b[KEYBYTES - 4] << 24)
-          | ((uint32_t)ch_st.b[KEYBYTES - 3] << 16)
-          | ((uint32_t)ch_st.b[KEYBYTES - 2] << 8)
-          |  ch_st.b[KEYBYTES - 1];
+        v = ((uint32_t)ch_st.b[nb - 4] << 24)
+          | ((uint32_t)ch_st.b[nb - 3] << 16)
+          | ((uint32_t)ch_st.b[nb - 2] << 8)
+          |  ch_st.b[nb - 1];
         joint_out[r] = (int)(v % 3u);
     }
 }
@@ -3307,6 +3537,9 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
 {
     uint8_t  perm[KEYBITS], Hr_sim[SDF_SYNBYTES];
     BitArray items[2], pi_sim = BA_INIT, r_sim = BA_INIT, y_sim = BA_INIT, sr_sim = BA_INIT, sy_sim = BA_INIT; ba_init_array(items, 2);
+    int n = H_mat[0].nbits;                    /* the member's N (TODO #383) */
+    ba_zero_w(&pi_sim, n); ba_zero_w(&r_sim, n); ba_zero_w(&y_sim, n);
+    ba_zero_w(&sr_sim, n); ba_zero_w(&sy_sim, n);
 
     if (b == 0) {
         /* c1 = hash(sr_sim wt-t), c2 = hash(sy_sim random), c0 dummy.
@@ -3340,7 +3573,8 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
          * wt(sr ^ sy) was ~n/2 on every simulated round and exactly t on the
          * signer's: ONE b = 0 round named the signer, off the public
          * signature, with no statistics at all (TODO #298). */
-        BitArray zero = BA_INIT, pi_dum = BA_INIT, se_sim = BA_INIT; memset(zero.b, 0, KEYBYTES);
+        BitArray zero = BA_INIT, pi_dum = BA_INIT, se_sim = BA_INIT;
+        ba_zero_w(&zero, n); ba_zero_w(&pi_dum, n); ba_zero_w(&se_sim, n);
         ba_rand(&sr_sim, urnd);
         stern_rand_error(&se_sim, urnd);
         ba_xor(&sy_sim, &sr_sim, &se_sim);
@@ -3358,11 +3592,11 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
         /* UNIFORM: the b = 1 response reveals r, and the real r is now
          * uniform (TODO #298). */
         ba_rand(&r_sim, urnd);
-        stern_gen_perm(perm, &pi_sim, KEYBITS);
+        stern_gen_perm(perm, &pi_sim, n);
         stern_syndrome_H(Hr_sim, H_mat, &r_sim);
-        stern_apply_perm(&sr_sim, perm, &r_sim, KEYBITS);
+        stern_apply_perm(&sr_sim, perm, &r_sim, n);
         ba_rand(&sy_sim, urnd);
-        items[0] = pi_sim; syndr_to_ba(&items[1], Hr_sim);
+        items[0] = pi_sim; syndr_to_ba_w(&items[1], Hr_sim, n);
         stern_hash(&sig->c0[idx], items, 2, 1);
         stern_hash(&sig->c1[idx], &sr_sim, 1, 2);
         stern_hash(&sig->c2[idx], &sy_sim, 1, 3);  /* unchecked */
@@ -3375,12 +3609,12 @@ static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
         int k2;
         ba_rand(&pi_sim, urnd);
         ba_rand(&y_sim,  urnd);
-        stern_gen_perm(perm, &pi_sim, KEYBITS);
+        stern_gen_perm(perm, &pi_sim, n);
         stern_syndrome_H(Hr_sim, H_mat, &y_sim);
-        for (k2 = 0; k2 < SDF_SYNBYTES; k2++) Hys[k2] = Hr_sim[k2] ^ syndr[k2];
-        stern_apply_perm(&sy_sim, perm, &y_sim, KEYBITS);
+        for (k2 = 0; k2 < n / 16; k2++) Hys[k2] = Hr_sim[k2] ^ syndr[k2];
+        stern_apply_perm(&sy_sim, perm, &y_sim, n);
         ba_rand(&sr_sim, urnd);
-        items[0] = pi_sim; syndr_to_ba(&items[1], Hys);
+        items[0] = pi_sim; syndr_to_ba_w(&items[1], Hys, n);
         stern_hash(&sig->c0[idx], items, 2, 1);
         stern_hash(&sig->c1[idx], &sr_sim, 1, 2);  /* unchecked */
         stern_hash(&sig->c2[idx], &sy_sim, 1, 3);
@@ -3435,18 +3669,19 @@ static void stern_ring_sign(SternRingSig *sig,
     {
         BitArray H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
         uint8_t perm[KEYBITS];
+        int n = seeds[j].nbits;                /* the ring's N (TODO #383) */
         stern_build_H(H_mat, &seeds[j]);
         for (r = 0; r < rounds; r++) {
             int idx = j * rounds + r;
             BitArray items[2]; ba_init_array(items, 2);
-            ba_rand(&r_tmp[r], urnd);
+            ba_zero_w(&r_tmp[r], n);  ba_rand(&r_tmp[r], urnd);
             ba_xor(&y_tmp[r], e, &r_tmp[r]);
-            ba_rand(&pi_tmp[r], urnd);
+            ba_zero_w(&pi_tmp[r], n); ba_rand(&pi_tmp[r], urnd);
             stern_syndrome_H(Hr_tmp + r * SDF_SYNBYTES, H_mat, &r_tmp[r]);
-            stern_gen_perm(perm, &pi_tmp[r], KEYBITS);
-            stern_apply_perm(&sr_tmp[r], perm, &r_tmp[r], KEYBITS);
-            stern_apply_perm(&sy_tmp[r], perm, &y_tmp[r], KEYBITS);
-            items[0] = pi_tmp[r]; syndr_to_ba(&items[1], Hr_tmp + r * SDF_SYNBYTES);
+            stern_gen_perm(perm, &pi_tmp[r], n);
+            stern_apply_perm(&sr_tmp[r], perm, &r_tmp[r], n);
+            stern_apply_perm(&sy_tmp[r], perm, &y_tmp[r], n);
+            items[0] = pi_tmp[r]; syndr_to_ba_w(&items[1], Hr_tmp + r * SDF_SYNBYTES, n);
             stern_hash(&sig->c0[idx], items, 2, 1);
             stern_hash(&sig->c1[idx], &sr_tmp[r], 1, 2);
             stern_hash(&sig->c2[idx], &sy_tmp[r], 1, 3);
@@ -3508,11 +3743,16 @@ static int stern_ring_verify(const SternRingSig *sig,
         BitArray H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
         uint8_t perm[KEYBITS];
         const uint8_t *syn_i = syndrs_flat + i * SDF_SYNBYTES;
+        int n = seeds[i].nbits, t = stern_t(n);
+        if (n != msg->nbits) return 0;         /* one N for the ring (TODO #383) */
         stern_build_H(H_mat, &seeds[i]);
         for (r = 0; r < rounds; r++) {
             int idx = i * rounds + r;
             int bv  = sig->b[idx];
             BitArray tmp = BA_INIT;
+            if (sig->c0[idx].nbits != n || sig->c1[idx].nbits != n ||
+                sig->c2[idx].nbits != n || sig->resp_a[idx].nbits != n ||
+                sig->resp_b[idx].nbits != n) return 0;
             if (bv == 0) {
                 BitArray xr = BA_INIT;
                 stern_hash(&tmp, &sig->resp_a[idx], 1, 2);
@@ -3521,16 +3761,16 @@ static int stern_ring_verify(const SternRingSig *sig,
                 if (!ba_equal(&tmp, &sig->c2[idx])) return 0;
                 /* binds wt(e) -- see hpks_stern_f_verify (TODO #298) */
                 ba_xor(&xr, &sig->resp_a[idx], &sig->resp_b[idx]);
-                if (ba_popcount(&xr) != SDF_T) return 0;
+                if (ba_popcount(&xr) != t) return 0;
             } else if (bv == 1) {
                 uint8_t Hr[SDF_SYNBYTES];
                 BitArray items[2], sr2 = BA_INIT; ba_init_array(items, 2);
                 stern_syndrome_H(Hr, H_mat, &sig->resp_b[idx]);
-                items[0] = sig->resp_a[idx]; syndr_to_ba(&items[1], Hr);
+                items[0] = sig->resp_a[idx]; syndr_to_ba_w(&items[1], Hr, n);
                 stern_hash(&tmp, items, 2, 1);
                 if (!ba_equal(&tmp, &sig->c0[idx])) return 0;
-                stern_gen_perm(perm, &sig->resp_a[idx], KEYBITS);
-                stern_apply_perm(&sr2, perm, &sig->resp_b[idx], KEYBITS);
+                stern_gen_perm(perm, &sig->resp_a[idx], n);
+                stern_apply_perm(&sr2, perm, &sig->resp_b[idx], n);
                 stern_hash(&tmp, &sr2, 1, 2);
                 if (!ba_equal(&tmp, &sig->c1[idx])) return 0;
             } else {
@@ -3538,12 +3778,12 @@ static int stern_ring_verify(const SternRingSig *sig,
                 BitArray items[2], sy2 = BA_INIT; ba_init_array(items, 2);
                 int k2;
                 stern_syndrome_H(Hy, H_mat, &sig->resp_b[idx]);
-                for (k2 = 0; k2 < SDF_SYNBYTES; k2++) Hys[k2] = Hy[k2] ^ syn_i[k2];
-                items[0] = sig->resp_a[idx]; syndr_to_ba(&items[1], Hys);
+                for (k2 = 0; k2 < n / 16; k2++) Hys[k2] = Hy[k2] ^ syn_i[k2];
+                items[0] = sig->resp_a[idx]; syndr_to_ba_w(&items[1], Hys, n);
                 stern_hash(&tmp, items, 2, 1);
                 if (!ba_equal(&tmp, &sig->c0[idx])) return 0;
-                stern_gen_perm(perm, &sig->resp_a[idx], KEYBITS);
-                stern_apply_perm(&sy2, perm, &sig->resp_b[idx], KEYBITS);
+                stern_gen_perm(perm, &sig->resp_a[idx], n);
+                stern_apply_perm(&sy2, perm, &sig->resp_b[idx], n);
                 stern_hash(&tmp, &sy2, 1, 3);
                 if (!ba_equal(&tmp, &sig->c2[idx])) return 0;
             }
@@ -3557,6 +3797,7 @@ static void hpke_stern_f_encap(BitArray *K_out, uint8_t *ct, BitArray *e_out,
                                 const BitArray *seed, FILE *urnd)
 {
     BitArray items[2]; ba_init_array(items, 2);
+    ba_zero_w(e_out, seed->nbits);             /* at the key's N (TODO #383) */
     stern_rand_error(e_out, urnd);
     stern_syndrome(ct, seed, e_out);
     items[0] = *seed;
@@ -3573,6 +3814,492 @@ static void hpke_stern_f_decap_known(BitArray *K_out,
     items[0] = *seed;
     items[1] = *e_p;
     stern_hash(K_out, items, 2, 4);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Stern-F long form: N > 256 (TODO #382 stage 2, v16.0.0)
+ *
+ * The 128-bit parameter set is N = 2304, k = N/2 = 1152, t = N/16 = 144
+ * (SecurityProofsCode/stern_f_parameter_selection.py: 2^137 by BJMM, 2^106 by
+ * Grover-over-Prange).  Its vectors are wider than BitArray's 256-bit capacity,
+ * so this path carries them as N/8-byte big-endian strings -- integer bit i at
+ * byte N/8-1-i/8, bit i%8, the wire's own form -- and keeps BitArray for the
+ * 256-bit values.  The syndrome is an N-bit string too (bit i = row i, the high
+ * half zero), which is how the protocol hashes it and how the PEM carries it.
+ * The protocol is the short form's; the rules that change, all from Python's
+ * long-form block (SPEC.md §11):
+ *
+ *   hash     H_ds(x...) = HFSCX-256-DS(0x31, ds || x...), all 256 bits;
+ *            commitments are 256 bits.
+ *   matrix   sk = H_6(seed); row i = chunk(i, 0) || ... || chunk(i, N/256-1),
+ *            chunk(i, c) = HFSCX-256(i_hi || i_lo || c) with sk as the initial
+ *            chaining value.
+ *   perm     the short form's Fisher-Yates generator over N positions, its
+ *            NL-FSCX v1 PRNG keyed by the 256-bit k = H_5(pi_seed); uint16_t
+ *            entries, as N > 256.
+ *   message  256 bits; the Fiat-Shamir state advances by nl_fscx_v1 at 256.
+ *
+ * Signatures hold their commitments and responses as the wire lays them out
+ * (3 x 32 and 2 x N/8 bytes a round), so the CLI's codec is a copy.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define STERN_LONG_N       2304                  /* the one listed long N    */
+#define STERN_L_MAXB       (STERN_LONG_N / 8)    /* 288                       */
+#define STERN_L_DS_PERM    5                     /* H_5(pi_seed)              */
+#define STERN_L_DS_MATRIX  6                     /* H_6(seed)                 */
+
+static int stern_is_long(int n) { return n > KEYBITS; }
+
+static void stern_l_check(int n)
+{
+    if (n <= KEYBITS || n % 256 || n > STERN_LONG_N) {
+        fprintf(stderr, "Stern-F long form: N = %d (expected a multiple of 256, 512..%d)\n",
+                n, STERN_LONG_N);
+        exit(1);
+    }
+}
+
+static void stern_l_read(uint8_t *dst, size_t len, FILE *urnd)
+{
+    if (fread(dst, 1, len, urnd) != len) {
+        fputs("ERROR: could not read from /dev/urandom\n", stderr);
+        exit(1);
+    }
+}
+
+/* H_ds over two byte strings (b may be NULL): HFSCX-256-DS(0x31, ds || a || b). */
+static void stern_l_hash2(BitArray *out, unsigned ds, const uint8_t *a, size_t alen,
+                          const uint8_t *b, size_t blen)
+{
+    size_t len = 1 + alen + blen;
+    uint8_t *buf = (uint8_t *)malloc(len);
+    if (!buf) { fprintf(stderr, "stern_l_hash2: out of memory\n"); exit(1); }
+    buf[0] = (uint8_t)ds;
+    memcpy(buf + 1, a, alen);
+    if (blen) memcpy(buf + 1 + alen, b, blen);
+    ba_zero_w(out, 256);
+    hfscx_256_ds(STERN_DS_HASH, buf, len, NULL, out->b);
+    free(buf);
+}
+
+/* The N/2 rows of H, row i at H + i * N/8.  The caller frees the result. */
+static uint8_t *stern_l_build_H(const uint8_t *seed, int n)
+{
+    int nb = n / 8, i, c;
+    uint8_t *H;
+    BitArray sk = BA_INIT;
+    stern_l_check(n);
+    H = (uint8_t *)malloc((size_t)(n / 2) * (size_t)nb);
+    if (!H) { fprintf(stderr, "stern_l_build_H: out of memory\n"); exit(1); }
+    stern_l_hash2(&sk, STERN_L_DS_MATRIX, seed, (size_t)nb, NULL, 0);
+    for (i = 0; i < n / 2; i++)
+        for (c = 0; c < n / 256; c++) {
+            uint8_t msg[3];
+            msg[0] = (uint8_t)(i >> 8); msg[1] = (uint8_t)i; msg[2] = (uint8_t)c;
+            hfscx_256(msg, 3, sk.b, H + (size_t)i * (size_t)nb + 32 * (size_t)c);
+        }
+    return H;
+}
+
+static uint64_t stern_l_load64(const uint8_t *p)
+{
+    uint64_t v = 0;
+    int k;
+    for (k = 0; k < 8; k++) v = (v << 8) | p[k];
+    return v;
+}
+
+/* syn = H e^T as an N-bit string (bit i = row i). */
+static void stern_l_syndrome_H(uint8_t *syn, const uint8_t *H, const uint8_t *e, int n)
+{
+    int nb = n / 8, i, k;
+    memset(syn, 0, (size_t)nb);
+    for (i = 0; i < n / 2; i++) {
+        const uint8_t *row = H + (size_t)i * (size_t)nb;
+        uint64_t acc = 0;
+        for (k = 0; k < nb; k += 8) acc ^= stern_l_load64(row + k) & stern_l_load64(e + k);
+        if (__builtin_popcountll(acc) & 1)
+            syn[nb - 1 - i / 8] |= (uint8_t)(1u << (i % 8));
+    }
+}
+
+static void stern_l_syndrome(uint8_t *syn, const uint8_t *seed, const uint8_t *e, int n)
+{
+    uint8_t *H = stern_l_build_H(seed, n);
+    stern_l_syndrome_H(syn, H, e, n);
+    free(H);
+}
+
+/* sigma from pi_seed: stern_gen_perm's generator, over N positions, keyed by
+ * k = H_5(pi_seed) at 256 bits. */
+static void stern_l_gen_perm(uint16_t *perm, const uint8_t *pi_seed, int n)
+{
+    BitArray k = BA_INIT, key = BA_INIT, st = BA_INIT;
+    int i, cursor = 32;
+    stern_l_hash2(&k, STERN_L_DS_PERM, pi_seed, (size_t)(n / 8), NULL, 0);
+    ba_rol_k(&key, &k, 32);
+    st = k;
+    for (i = 0; i < n; i++) perm[i] = (uint16_t)i;
+    for (i = n - 1; i > 0; i--) {
+        uint32_t v;
+        int j;
+        if (cursor + 4 > 32) { nl_fscx_v1_ba(&st, &st, &key); cursor = 0; }
+        v = ((uint32_t)st.b[cursor] << 24) | ((uint32_t)st.b[cursor + 1] << 16) |
+            ((uint32_t)st.b[cursor + 2] << 8) | (uint32_t)st.b[cursor + 3];
+        cursor += 4;
+        j = (int)(((uint64_t)v * (uint64_t)(i + 1)) >> 32);
+        { uint16_t t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+    }
+}
+
+/* out[perm[i]] = v[i] over N bits.  Oblivious in the way stern_apply_perm is
+ * (CT-03): every input bit is written into every output word under a
+ * "word == perm[i] / 64" mask, so the addresses touched do not depend on the
+ * permutation; at word rather than bit granularity, N^2/64 masked writes. */
+static void stern_l_apply_perm(uint8_t *out, const uint16_t *perm, const uint8_t *v, int n)
+{
+    uint64_t w[STERN_L_MAXB / 8];
+    int nw = n / 64, nb = n / 8, i, j;
+    memset(w, 0, sizeof w);
+    for (i = 0; i < n; i++) {
+        uint64_t bit = (uint64_t)((v[nb - 1 - i / 8] >> (i % 8)) & 1u);
+        uint32_t p = perm[i], pw = p >> 6, ps = p & 63u;
+        for (j = 0; j < nw; j++) {
+            uint32_t d = pw ^ (uint32_t)j;
+            uint64_t eq = (uint64_t)0 - (uint64_t)(((d | (0u - d)) >> 31) ^ 1u);
+            w[j] |= eq & (bit << ps);
+        }
+    }
+    for (i = 0; i < nb; i++)                      /* integer bit 8i.. at byte nb-1-i */
+        out[nb - 1 - i] = (uint8_t)(w[i / 8] >> (8 * (i % 8)));
+}
+
+/* Weight-N/16 error: stern_rand_error's 4-byte rejection scheme on N positions. */
+static void stern_l_rand_error(uint8_t *e, int n, FILE *urnd)
+{
+    static const uint64_t span = (uint64_t)1 << 32;
+    const uint64_t threshold = span - (span % (uint64_t)n);
+    int count = 0, nb = n / 8;
+    memset(e, 0, (size_t)nb);
+    while (count < n / 16) {
+        uint8_t buf[4];
+        uint64_t v;
+        unsigned pos;
+        uint8_t mask;
+        stern_l_read(buf, 4, urnd);
+        v = ((uint64_t)buf[0] << 24) | ((uint64_t)buf[1] << 16)
+          | ((uint64_t)buf[2] << 8) | (uint64_t)buf[3];
+        if (v >= threshold) continue;
+        pos = (unsigned)(v % (uint64_t)n);
+        mask = (uint8_t)(1u << (pos % 8));
+        if (e[nb - 1 - pos / 8] & mask) continue;
+        e[nb - 1 - pos / 8] |= mask;
+        count++;
+    }
+}
+
+/* Key generation at N = n: an N-bit seed, then the error, then H e^T. */
+static void stern_l_keygen(uint8_t *seed, uint8_t *e, uint8_t *syn, int n, FILE *urnd)
+{
+    stern_l_check(n);
+    if (fread(seed, 1, (size_t)(n / 8), urnd) != (size_t)(n / 8)) {
+        fputs("ERROR: could not read from /dev/urandom\n", stderr);
+        exit(1);
+    }
+    stern_l_rand_error(e, n, urnd);
+    stern_l_syndrome(syn, seed, e, n);
+}
+
+/* A long-form signature, laid out as the wire carries it:
+ *   c    rounds x (c0 || c1 || c2), 32 bytes each
+ *   b    rounds challenges
+ *   resp rounds x (resp_a || resp_b), N/8 bytes each */
+typedef struct {
+    int      n, rounds;
+    uint8_t *c;
+    int     *b;
+    uint8_t *resp;
+} SternLSig;
+
+static void stern_l_sig_alloc(SternLSig *sig, int n, int rounds)
+{
+    sig->n = n; sig->rounds = rounds;
+    sig->c    = (uint8_t *)calloc((size_t)rounds, 96);
+    sig->b    = (int *)calloc((size_t)rounds, sizeof(int));
+    sig->resp = (uint8_t *)calloc((size_t)rounds, 2 * (size_t)(n / 8));
+    if (!sig->c || !sig->b || !sig->resp) {
+        fprintf(stderr, "stern_l_sig_alloc: out of memory\n"); exit(1);
+    }
+}
+
+static void stern_l_sig_free(SternLSig *sig)
+{
+    free(sig->c); free(sig->b); free(sig->resp);
+    sig->c = sig->resp = NULL; sig->b = NULL; sig->rounds = 0;
+}
+
+/* One prover round: c (96 bytes) and the secrets sec = r || y || pi || sr || sy,
+ * r and pi already drawn by the caller (in that order). */
+static void stern_l_commit(uint8_t *c, uint8_t *sec, const uint8_t *H, const uint8_t *e, int n)
+{
+    int nb = n / 8, k;
+    uint8_t *r = sec, *y = sec + nb, *pi = sec + 2 * nb, *sr = sec + 3 * nb, *sy = sec + 4 * nb;
+    uint8_t hr[STERN_L_MAXB];
+    uint16_t perm[STERN_LONG_N];
+    BitArray h = BA_INIT;
+    for (k = 0; k < nb; k++) y[k] = e[k] ^ r[k];
+    stern_l_gen_perm(perm, pi, n);
+    stern_l_syndrome_H(hr, H, r, n);
+    stern_l_apply_perm(sr, perm, r, n);
+    stern_l_apply_perm(sy, perm, y, n);
+    stern_l_hash2(&h, 1, pi, (size_t)nb, hr, (size_t)nb); memcpy(c, h.b, 32);
+    stern_l_hash2(&h, 2, sr, (size_t)nb, NULL, 0);        memcpy(c + 32, h.b, 32);
+    stern_l_hash2(&h, 3, sy, (size_t)nb, NULL, 0);        memcpy(c + 64, h.b, 32);
+}
+
+static void stern_l_respond(uint8_t *resp, int b, const uint8_t *sec, int n)
+{
+    int nb = n / 8;
+    const uint8_t *a = b == 0 ? sec + 3 * nb : sec + 2 * nb;       /* sr | pi        */
+    const uint8_t *v = b == 0 ? sec + 4 * nb : b == 1 ? sec : sec + nb;  /* sy | r | y */
+    memcpy(resp, a, (size_t)nb);
+    memcpy(resp + nb, v, (size_t)nb);
+}
+
+/* st = H_0(msg || c), c = ncommit x 96 bytes in signing order. */
+static void stern_l_fs_state(BitArray *st, const uint8_t msg[32], const uint8_t *c,
+                             size_t ncommit)
+{
+    stern_l_hash2(st, 0, msg, 32, c, 96 * ncommit);
+}
+
+static int stern_l_next_challenge(BitArray *st, int i)
+{
+    BitArray idx = BA_INIT;
+    uint32_t v;
+    ba_zero_w(&idx, 256);
+    idx.b[31] = (uint8_t)i; idx.b[30] = (uint8_t)(i >> 8);
+    idx.b[29] = (uint8_t)(i >> 16); idx.b[28] = (uint8_t)(i >> 24);
+    nl_fscx_v1_ba(st, st, &idx);
+    v = ((uint32_t)st->b[28] << 24) | ((uint32_t)st->b[29] << 16) |
+        ((uint32_t)st->b[30] << 8) | (uint32_t)st->b[31];
+    return (int)(v % 3u);
+}
+
+/* The verifier's check of one round against H and the N-bit syndrome. */
+static int stern_l_check_round(int b, const uint8_t *c, const uint8_t *resp,
+                               const uint8_t *H, const uint8_t *syn, int n)
+{
+    int nb = n / 8, k, w = 0;
+    const uint8_t *a = resp, *v = resp + nb;
+    uint8_t hv[STERN_L_MAXB], sv[STERN_L_MAXB];
+    uint16_t perm[STERN_LONG_N];
+    BitArray h = BA_INIT;
+    if (b == 0) {
+        stern_l_hash2(&h, 2, a, (size_t)nb, NULL, 0);
+        if (memcmp(h.b, c + 32, 32)) return 0;
+        stern_l_hash2(&h, 3, v, (size_t)nb, NULL, 0);
+        if (memcmp(h.b, c + 64, 32)) return 0;
+        for (k = 0; k < nb; k++) w += __builtin_popcount((unsigned)(a[k] ^ v[k]));
+        return w == n / 16;                 /* binds wt(e) (TODO #298) */
+    }
+    if (b != 1 && b != 2) return 0;
+    stern_l_syndrome_H(hv, H, v, n);
+    if (b == 2) for (k = 0; k < nb; k++) hv[k] ^= syn[k];
+    stern_l_hash2(&h, 1, a, (size_t)nb, hv, (size_t)nb);
+    if (memcmp(h.b, c, 32)) return 0;
+    stern_l_gen_perm(perm, a, n);
+    stern_l_apply_perm(sv, perm, v, n);
+    stern_l_hash2(&h, b == 1 ? 2u : 3u, sv, (size_t)nb, NULL, 0);
+    return !memcmp(h.b, c + (b == 1 ? 32 : 64), 32);
+}
+
+/* Sign a 256-bit msg; *sig comes from stern_l_sig_alloc(sig, n, rounds). */
+static void hpks_stern_l_sign(SternLSig *sig, const uint8_t msg[32], const uint8_t *e,
+                              const uint8_t *seed, FILE *urnd)
+{
+    int n = sig->n, nb = n / 8, i;
+    uint8_t *H = stern_l_build_H(seed, n);
+    uint8_t *sec = (uint8_t *)malloc((size_t)sig->rounds * 5 * (size_t)nb);
+    BitArray st = BA_INIT;
+    if (!sec) { fprintf(stderr, "hpks_stern_l_sign: out of memory\n"); exit(1); }
+    for (i = 0; i < sig->rounds; i++) {
+        uint8_t *s = sec + (size_t)i * 5 * nb;           /* r, then pi */
+        if (fread(s, 1, (size_t)nb, urnd) != (size_t)nb ||
+            fread(s + 2 * nb, 1, (size_t)nb, urnd) != (size_t)nb) {
+            fputs("ERROR: could not read from /dev/urandom\n", stderr);
+            exit(1);
+        }
+        stern_l_commit(sig->c + 96 * (size_t)i, s, H, e, n);
+    }
+    stern_l_fs_state(&st, msg, sig->c, (size_t)sig->rounds);
+    for (i = 0; i < sig->rounds; i++) {
+        sig->b[i] = stern_l_next_challenge(&st, i);
+        stern_l_respond(sig->resp + (size_t)i * 2 * nb, sig->b[i], sec + (size_t)i * 5 * nb, n);
+    }
+    free(sec); free(H);
+}
+
+static int hpks_stern_l_verify(const SternLSig *sig, const uint8_t msg[32],
+                               const uint8_t *seed, const uint8_t *syn)
+{
+    int n = sig->n, nb = n / 8, i, ok = 1;
+    uint8_t *H;
+    BitArray st = BA_INIT;
+    if (sig->rounds < 1) return 0;
+    stern_l_fs_state(&st, msg, sig->c, (size_t)sig->rounds);
+    for (i = 0; i < sig->rounds; i++)
+        if (stern_l_next_challenge(&st, i) != sig->b[i]) return 0;
+    H = stern_l_build_H(seed, n);
+    for (i = 0; i < sig->rounds && ok; i++)
+        ok = stern_l_check_round(sig->b[i], sig->c + 96 * (size_t)i,
+                                 sig->resp + (size_t)i * 2 * nb, H, syn, n);
+    free(H);
+    return ok;
+}
+
+/* A long-form ring signature, member-major: entry (i, r) at index i*rounds + r
+ * of c (96 bytes), b and resp (2 x N/8 bytes). */
+typedef struct {
+    int      n, k, rounds;
+    uint8_t *c;
+    int     *b;
+    uint8_t *resp;
+} SternLRingSig;
+
+static void stern_l_ring_alloc(SternLRingSig *sig, int n, int k, int rounds)
+{
+    size_t m = (size_t)k * (size_t)rounds;
+    sig->n = n; sig->k = k; sig->rounds = rounds;
+    sig->c    = (uint8_t *)calloc(m, 96);
+    sig->b    = (int *)calloc(m, sizeof(int));
+    sig->resp = (uint8_t *)calloc(m, 2 * (size_t)(n / 8));
+    if (!sig->c || !sig->b || !sig->resp) {
+        fprintf(stderr, "stern_l_ring_alloc: out of memory\n"); exit(1);
+    }
+}
+
+static void stern_l_ring_free(SternLRingSig *sig)
+{
+    free(sig->c); free(sig->b); free(sig->resp);
+    sig->c = sig->resp = NULL; sig->b = NULL; sig->k = sig->rounds = 0;
+}
+
+/* stern_ring_simulate's draws, in its order, on the long-form primitives. */
+static void stern_l_simulate(uint8_t *c, uint8_t *resp, int b, const uint8_t *H,
+                             const uint8_t *syn, int n, FILE *urnd)
+{
+    int nb = n / 8, k;
+    uint8_t *a = resp, *v = resp + nb;
+    uint8_t t1[STERN_L_MAXB], t2[STERN_L_MAXB];
+    uint16_t perm[STERN_LONG_N];
+    BitArray h = BA_INIT;
+    if (b == 0) {
+        stern_l_read(a, (size_t)nb, urnd);                 /* sr uniform           */
+        stern_l_rand_error(t1, n, urnd);
+        for (k = 0; k < nb; k++) v[k] = a[k] ^ t1[k];      /* sy = sr ^ weight-t   */
+        stern_l_read(t1, (size_t)nb, urnd);                /* pi dummy             */
+        memset(t2, 0, (size_t)nb);
+        stern_l_hash2(&h, 1, t1, (size_t)nb, t2, (size_t)nb); memcpy(c, h.b, 32); /* unchecked */
+        stern_l_hash2(&h, 2, a, (size_t)nb, NULL, 0);          memcpy(c + 32, h.b, 32);
+        stern_l_hash2(&h, 3, v, (size_t)nb, NULL, 0);          memcpy(c + 64, h.b, 32);
+        return;
+    }
+    stern_l_read(a, (size_t)nb, urnd);                     /* pi                   */
+    stern_l_read(v, (size_t)nb, urnd);                     /* r or y, uniform      */
+    stern_l_gen_perm(perm, a, n);
+    stern_l_syndrome_H(t1, H, v, n);
+    if (b == 2) for (k = 0; k < nb; k++) t1[k] ^= syn[k];
+    stern_l_apply_perm(t2, perm, v, n);
+    stern_l_hash2(&h, 1, a, (size_t)nb, t1, (size_t)nb); memcpy(c, h.b, 32);
+    stern_l_read(t1, (size_t)nb, urnd);                    /* the unchecked dummy  */
+    if (b == 1) {
+        stern_l_hash2(&h, 2, t2, (size_t)nb, NULL, 0); memcpy(c + 32, h.b, 32);
+        stern_l_hash2(&h, 3, t1, (size_t)nb, NULL, 0); memcpy(c + 64, h.b, 32);
+    } else {
+        stern_l_hash2(&h, 2, t1, (size_t)nb, NULL, 0); memcpy(c + 32, h.b, 32);
+        stern_l_hash2(&h, 3, t2, (size_t)nb, NULL, 0); memcpy(c + 64, h.b, 32);
+    }
+}
+
+/* Sign as member j; seeds and syns are k x N/8 bytes.  *sig comes from
+ * stern_l_ring_alloc(sig, n, k, rounds). */
+static void stern_l_ring_sign(SternLRingSig *sig, const uint8_t msg[32], const uint8_t *e,
+                              int j, const uint8_t *seeds, const uint8_t *syns, FILE *urnd)
+{
+    int n = sig->n, nb = n / 8, k = sig->k, rounds = sig->rounds, i, r;
+    uint8_t *H, *sec;
+    BitArray st = BA_INIT;
+    for (i = 0; i < k; i++) {
+        if (i == j) continue;
+        H = stern_l_build_H(seeds + (size_t)i * nb, n);
+        for (r = 0; r < rounds; r++) {
+            size_t idx = (size_t)i * rounds + r;
+            sig->b[idx] = stern_ring_trit(urnd);
+            stern_l_simulate(sig->c + 96 * idx, sig->resp + idx * 2 * nb, sig->b[idx],
+                             H, syns + (size_t)i * nb, n, urnd);
+        }
+        free(H);
+    }
+    H = stern_l_build_H(seeds + (size_t)j * nb, n);
+    sec = (uint8_t *)malloc((size_t)rounds * 5 * (size_t)nb);
+    if (!sec) { fprintf(stderr, "stern_l_ring_sign: out of memory\n"); exit(1); }
+    for (r = 0; r < rounds; r++) {
+        uint8_t *s = sec + (size_t)r * 5 * nb;           /* r, then pi */
+        if (fread(s, 1, (size_t)nb, urnd) != (size_t)nb ||
+            fread(s + 2 * nb, 1, (size_t)nb, urnd) != (size_t)nb) {
+            fputs("ERROR: could not read from /dev/urandom\n", stderr);
+            exit(1);
+        }
+        stern_l_commit(sig->c + 96 * ((size_t)j * rounds + r), s, H, e, n);
+    }
+    stern_l_fs_state(&st, msg, sig->c, (size_t)k * rounds);
+    for (r = 0; r < rounds; r++) {
+        int joint = stern_l_next_challenge(&st, r), sim = 0;
+        size_t idx = (size_t)j * rounds + r;
+        for (i = 0; i < k; i++) if (i != j) sim += sig->b[(size_t)i * rounds + r];
+        sig->b[idx] = ((joint - sim) % 3 + 3) % 3;
+        stern_l_respond(sig->resp + idx * 2 * nb, sig->b[idx], sec + (size_t)r * 5 * nb, n);
+    }
+    free(sec); free(H);
+}
+
+static int stern_l_ring_verify(const SternLRingSig *sig, const uint8_t msg[32],
+                               const uint8_t *seeds, const uint8_t *syns)
+{
+    int n = sig->n, nb = n / 8, k = sig->k, rounds = sig->rounds, i, r, ok = 1;
+    BitArray st = BA_INIT;
+    if (k < 1 || rounds < 1) return 0;
+    stern_l_fs_state(&st, msg, sig->c, (size_t)k * rounds);
+    for (r = 0; r < rounds; r++) {
+        int joint = stern_l_next_challenge(&st, r), s = 0;
+        for (i = 0; i < k; i++) s += sig->b[(size_t)i * rounds + r];
+        if (s % 3 != joint) return 0;
+    }
+    for (i = 0; i < k && ok; i++) {
+        uint8_t *H = stern_l_build_H(seeds + (size_t)i * nb, n);
+        for (r = 0; r < rounds && ok; r++) {
+            size_t idx = (size_t)i * rounds + r;
+            ok = stern_l_check_round(sig->b[idx], sig->c + 96 * idx, sig->resp + idx * 2 * nb,
+                                     H, syns + (size_t)i * nb, n);
+        }
+        free(H);
+    }
+    return ok;
+}
+
+/* Long-form demo KEM: K = H_4(seed, e') (256 bits), ct = H e'^T, e' out. */
+static void hpke_stern_l_decap_known(BitArray *K, const uint8_t *e_p, const uint8_t *seed, int n)
+{
+    stern_l_hash2(K, 4, seed, (size_t)(n / 8), e_p, (size_t)(n / 8));
+}
+
+static void hpke_stern_l_encap(BitArray *K, uint8_t *ct, uint8_t *e_p, const uint8_t *seed,
+                               int n, FILE *urnd)
+{
+    stern_l_rand_error(e_p, n, urnd);
+    stern_l_syndrome(ct, seed, e_p, n);
+    hpke_stern_l_decap_known(K, e_p, seed, n);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -3595,10 +4322,12 @@ static void hpke_stern_f_decap_known(BitArray *K_out,
  * See docs/TUTORIAL.md for complete usage examples.
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* HKEX-GF: derive public key pub = g^priv in GF(2^KEYBITS)*. */
+/* HKEX-GF: derive public key pub = g^priv in GF(2^n)*, n = priv's width. */
 static inline void hkex_gf_pubkey(const BitArray *priv, BitArray *pub)
 {
-    gf_pow_ba(pub, &GF_GEN, priv);
+    BitArray g = BA_INIT;
+    gf_gen_w(&g, priv->nbits);
+    gf_pow_ba(pub, &g, priv);
 }
 
 /* HKEX-GF: derive shared secret shared = their_pub^my_priv in GF(2^KEYBITS)*.
@@ -3634,10 +4363,13 @@ static inline void hske_decrypt(const BitArray *ct, const BitArray *key,
 static inline void hpks_sign(const BitArray *msg, const BitArray *priv,
                                BitArray *R_out, BitArray *s_out, FILE *urnd)
 {
-    BitArray k = BA_INIT, e = BA_INIT, ae = BA_INIT;
+    BitArray k = BA_INIT, e = BA_INIT, ae = BA_INIT, g = BA_INIT;
+    int n = priv->nbits;   /* every value below is at the key's width (TODO #383) */
+    ba_zero_w(&k, n);
+    gf_gen_w(&g, n);
     ba_rand(&k, urnd);
-    gf_pow_ba(R_out, &GF_GEN, &k);
-    ba_fscx_revolve(&e, R_out, msg, I_VALUE);
+    gf_pow_ba(R_out, &g, &k);
+    ba_fscx_revolve(&e, R_out, msg, n / 4);
     ba_mul_mod_ord(&ae, priv, &e);
     ba_sub_mod_ord(s_out, &k, &ae);
 }
@@ -3651,9 +4383,11 @@ static inline void hpks_sign(const BitArray *msg, const BitArray *priv,
 static inline void hpks_nl_sign(const BitArray *msg, const BitArray *priv,
                                   BitArray *R_out, BitArray *s_out, FILE *urnd)
 {
-    BitArray k = BA_INIT, e = BA_INIT, ae = BA_INIT;
+    BitArray k = BA_INIT, e = BA_INIT, ae = BA_INIT, g = BA_INIT;
+    ba_zero_w(&k, priv->nbits);
+    gf_gen_w(&g, priv->nbits);
     ba_rand(&k, urnd);
-    gf_pow_ba(R_out, &GF_GEN, &k);
+    gf_pow_ba(R_out, &g, &k);
     hpks_nl_challenge(&e, R_out, msg);
     ba_mul_mod_ord(&ae, priv, &e);
     ba_sub_mod_ord(s_out, &k, &ae);
@@ -3666,10 +4400,12 @@ static inline void hpks_nl_sign(const BitArray *msg, const BitArray *priv,
 static inline int hpks_verify(const BitArray *msg, const BitArray *pub,
                                 const BitArray *R, const BitArray *s)
 {
-    BitArray e = BA_INIT, gs = BA_INIT, Ce = BA_INIT, lhs = BA_INIT;
+    BitArray e = BA_INIT, gs = BA_INIT, Ce = BA_INIT, lhs = BA_INIT, g = BA_INIT;
     if (!gf_pub_is_valid(pub)) return 0;
-    ba_fscx_revolve(&e, R, msg, I_VALUE);
-    gf_pow_ba(&gs, &GF_GEN, s);
+    if (pub->nbits != R->nbits || pub->nbits != s->nbits || pub->nbits != msg->nbits) return 0;
+    gf_gen_w(&g, pub->nbits);
+    ba_fscx_revolve(&e, R, msg, pub->nbits / 4);
+    gf_pow_ba(&gs, &g, s);
     gf_pow_ba(&Ce, pub, &e);
     gf_mul_ba(&lhs, &gs, &Ce);
     return ba_equal(&lhs, R);
@@ -3683,12 +4419,14 @@ static inline int hpks_verify(const BitArray *msg, const BitArray *pub,
 static inline int hpke_encrypt(const BitArray *pt, const BitArray *pub,
                                  BitArray *R_out, BitArray *ct_out, FILE *urnd)
 {
-    BitArray r = BA_INIT, enc_key = BA_INIT;
+    BitArray r = BA_INIT, enc_key = BA_INIT, g = BA_INIT;
     if (!gf_pub_is_valid(pub)) return 0;
+    ba_zero_w(&r, pub->nbits);
+    gf_gen_w(&g, pub->nbits);
     ba_rand(&r, urnd);
-    gf_pow_ba(R_out, &GF_GEN, &r);
+    gf_pow_ba(R_out, &g, &r);
     gf_pow_ba(&enc_key, pub, &r);
-    ba_fscx_revolve(ct_out, pt, &enc_key, I_VALUE);
+    ba_fscx_revolve(ct_out, pt, &enc_key, pub->nbits / 4);
     return 1;
 }
 
@@ -3701,7 +4439,7 @@ static inline int hpke_decrypt(const BitArray *ct, const BitArray *R,
     BitArray dec_key = BA_INIT;
     if (!gf_pub_is_valid(R)) return 0;
     gf_pow_ba(&dec_key, R, priv);
-    ba_fscx_revolve(pt_out, ct, &dec_key, R_VALUE);
+    ba_fscx_revolve(pt_out, ct, &dec_key, 3 * R->nbits / 4);
     return 1;
 }
 
@@ -5022,7 +5760,8 @@ static inline void ratchet_erase(BitArray *state)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * 80 — Oblivious PRF (OPRF) over GF(2^KEYBITS)*  (TODO #80)
+ * 80 — Oblivious PRF (OPRF) over GF(2^n)*  (TODO #80; n = 32, 64, 128 or 256
+ * since TODO #385 -- every function runs at its operands' width)
  * Protocol: 2HashDH — F(k, x) = gf_pow(H(x), k)
  *   Client blinds: alpha = H(x)^r   (r random, gcd(r, ORD) == 1)
  *   Server evals:  beta  = alpha^k
@@ -5057,20 +5796,19 @@ static int _ba33_iszero(const uint8_t *a)
     return 1;
 }
 
-/* ba_modinv_ord: compute dst = a^{-1} mod (2^KEYBITS-1) via binary extended GCD.
+/* ba_modinv_ord: compute dst = a^{-1} mod (2^n-1) via binary extended GCD,
+   at a's width n (TODO #385; it was 2^KEYBITS-1 only).
    Requires gcd(a, ORD) == 1; result is undefined if gcd != 1.
-   ORD = 2^256-1 is all-0xFF bytes.
+   ORD = 2^n-1 is n/8 all-0xFF bytes.
    Uses 33-byte (257-bit) big-endian arrays for the Bezout coefficients to
-   avoid overflow when adding ORD to make them positive. */
+   avoid overflow when adding ORD to make them positive; an n-bit value sits
+   in the low n/8 bytes, so the same arithmetic serves every width. */
 static void ba_modinv_ord(BitArray *dst, const BitArray *a)
 {
-    static const uint8_t ORD33[33] = {
-        0x00,
-        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
-        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
-        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
-        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF
-    };
+    uint8_t ORD33[33];
+    const int nb = ba_nbytes(a), off = 33 - nb;
+    memset(ORD33, 0, sizeof ORD33);
+    memset(ORD33 + off, 0xFF, (size_t)nb);
     /* 257-bit big-endian unsigned arithmetic helpers (inline, avoiding recursion) */
 #define ADD33(dst33, a33, b33) do { \
         uint16_t _c = 0; int _i; \
@@ -5104,8 +5842,8 @@ static void ba_modinv_ord(BitArray *dst, const BitArray *a)
     int i;
 
     /* u = a (zero-extend to 33 bytes) */
-    u[0] = 0;
-    memcpy(u + 1, a->b, KEYBYTES);
+    memset(u, 0, 33);
+    memcpy(u + off, a->b, (size_t)nb);
     /* v = ORD */
     memcpy(v, ORD33, 33);
     /* x1 = 1, x2 = 0 */
@@ -5113,7 +5851,7 @@ static void ba_modinv_ord(BitArray *dst, const BitArray *a)
     memset(x2, 0, 33);
 
     /* Binary extended GCD: invariant a*x1 ≡ u (mod ORD), a*x2 ≡ v (mod ORD) */
-    for (i = 0; i < 2 * KEYBITS + 64; i++) {
+    for (i = 0; i < 2 * a->nbits + 64; i++) {
         if (IS_ZERO33(u)) break;
 
         if (!IS_ODD33(u)) {
@@ -5141,16 +5879,17 @@ static void ba_modinv_ord(BitArray *dst, const BitArray *a)
     }
     /* At exit: if u != 0, gcd was found via u; coefficient is x1.
        Otherwise v == gcd (should be 1) and x2 is the inverse. */
+    dst->nbits = a->nbits;
     if (!IS_ZERO33(u))
-        memcpy(dst->b, u + 1, KEYBYTES);  /* fallback: shouldn't happen if gcd==1 */
+        memcpy(dst->b, u + off, (size_t)nb);  /* fallback: shouldn't happen if gcd==1 */
     else
-        memcpy(dst->b, x2 + 1, KEYBYTES);
+        memcpy(dst->b, x2 + off, (size_t)nb);
 
     /* Reduce mod ORD: if result is all-0xFF (== ORD), set to 0
        (ORD ≡ 0 mod ORD; this can't be a valid inverse of any element != 0) */
     { int all_ff = 1;
-      for (i = 0; i < KEYBYTES; i++) all_ff &= (dst->b[i] == 0xFF);
-      if (all_ff) memset(dst->b, 0, KEYBYTES);
+      for (i = 0; i < nb; i++) all_ff &= (dst->b[i] == 0xFF);
+      if (all_ff) memset(dst->b, 0, (size_t)nb);
     }
 
 #undef ADD33
@@ -5161,19 +5900,41 @@ static void ba_modinv_ord(BitArray *dst, const BitArray *a)
 #undef IS_ODD33
 }
 
-/* oprf_hash_to_field: HFSCX-256(data) → non-zero element of GF(2^KEYBITS)*. */
-static void oprf_hash_to_field(BitArray *dst, const uint8_t *data, size_t dlen)
+/* _oprf_is_one / _oprf_is_ord: x == 1 / x == 2^n - 1 at x's width n. */
+static int _oprf_is_one(const BitArray *x)
 {
-    hfscx_256(data, dlen, NULL, dst->b);
-    if (ba_is_zero(dst))
-        dst->b[KEYBYTES - 1] = 1;   /* map 0 → 1 (negligible probability) */
+    int i, nb = ba_nbytes(x), acc = 0;
+    for (i = 0; i < nb - 1; i++) acc |= x->b[i];
+    return acc == 0 && x->b[nb - 1] == 1;
+}
+static int _oprf_is_ord(const BitArray *x)
+{
+    int i, nb = ba_nbytes(x), all_ff = 1;
+    for (i = 0; i < nb; i++) all_ff &= (x->b[i] == 0xFF);
+    return all_ff;
 }
 
-/* oprf_keygen: fill key with a random element of [2, 2^KEYBITS-2].
-   urnd must be an open handle to /dev/urandom (or equivalent). */
+/* oprf_hash_to_field: HFSCX-256(data) → non-zero element of GF(2^n)*, n =
+   dst->nbits.  Below 256 bits it is the digest's HIGH n bits (BITARRAY.md
+   4.4's truncation, as the Stern-F hash and HCRED's issuer message; TODO #385). */
+static void oprf_hash_to_field(BitArray *dst, const uint8_t *data, size_t dlen)
+{
+    uint8_t h[KEYBYTES];
+    int nb = ba_nbytes(dst);
+    hfscx_256(data, dlen, NULL, h);
+    memcpy(dst->b, h, (size_t)nb);
+    if (ba_is_zero(dst))
+        dst->b[nb - 1] = 1;   /* map 0 → 1 (negligible probability) */
+}
+
+/* oprf_keygen: fill key with a random element of [2, 2^n-2], n = key->nbits.
+   urnd must be an open handle to /dev/urandom (or equivalent).  TODO #385:
+   2^n-1 is refused too, as Python, Go and Java refuse it (k = ORD is k = 0
+   in the exponent: F would be 1 for every input).  Unreachable at 256 bits by
+   chance (p = 2^-256), reachable at 32 (2^-32). */
 static void oprf_keygen(BitArray *key, FILE *urnd)
 {
-    do { ba_rand(key, urnd); } while (ba_is_zero(key) || ba_cmp256(key, &ONE_BA) == 0);
+    do { ba_rand(key, urnd); } while (ba_is_zero(key) || _oprf_is_one(key) || _oprf_is_ord(key));
 }
 
 /* oprf_blind: client step — hash x and blind with random scalar r.
@@ -5185,6 +5946,7 @@ static void oprf_blind(const uint8_t *x, size_t xlen,
                        BitArray *r_out, BitArray *alpha_out, FILE *urnd)
 {
     BitArray hx = BA_INIT, r_inv = BA_INIT, check = BA_INIT;
+    hx.nbits = r_out->nbits;   /* TODO #385: the caller sets the width */
     oprf_hash_to_field(&hx, x, xlen);
     /* TODO #296: this was a do/while whose zero-or-one rejection used `continue`
      * -- which in a do/while jumps to the CONDITION, not to the top of the body.
@@ -5199,11 +5961,11 @@ static void oprf_blind(const uint8_t *x, size_t xlen,
      * and is the shape Go, Python and Java already had. */
     for (;;) {
         ba_rand(r_out, urnd);
-        if (ba_is_zero(r_out) || ba_cmp256(r_out, &ONE_BA) == 0) continue;
+        if (ba_is_zero(r_out) || _oprf_is_one(r_out)) continue;
         /* verify gcd(r, ORD) == 1 by checking r * r^{-1} == 1 mod ORD */
         ba_modinv_ord(&r_inv, r_out);
         ba_mul_mod_ord(&check, r_out, &r_inv);
-        if (ba_cmp256(&check, &ONE_BA) == 0) break;
+        if (_oprf_is_one(&check)) break;
     }
     gf_pow_ba(alpha_out, &hx, r_out);
 }
@@ -5226,6 +5988,7 @@ static void oprf_unblind(BitArray *F, const BitArray *beta, const BitArray *r)
 static void oprf_direct(BitArray *F, const uint8_t *x, size_t xlen, const BitArray *k)
 {
     BitArray hx = BA_INIT;
+    hx.nbits = k->nbits;       /* TODO #385: at the key's width */
     oprf_hash_to_field(&hx, x, xlen);
     gf_pow_ba(F, &hx, k);
 }
@@ -5260,13 +6023,14 @@ typedef struct {
     uint32_t y;
 } HpakeRecord;
 
-/* Derive 32-bit ZKBoo witness: lower 4 bytes of hfscx_256(oprf_out || "ZKP-A"). */
-static uint32_t _hpake_zkp_witness(const uint8_t oprf_out[KEYBYTES])
+/* Derive 32-bit ZKBoo witness: lower 4 bytes of hfscx_256(oprf_out || "ZKP-A").
+   oprf_out is the OPRF output at the key's width, len = n/8 bytes (TODO #385). */
+static uint32_t _hpake_zkp_witness(const uint8_t *oprf_out, size_t len)
 {
     uint8_t buf[KEYBYTES + 5], h[KEYBYTES];
-    memcpy(buf, oprf_out, KEYBYTES);
-    memcpy(buf + KEYBYTES, "ZKP-A", 5);
-    hfscx_256(buf, sizeof buf, NULL, h);
+    memcpy(buf, oprf_out, len);
+    memcpy(buf + len, "ZKP-A", 5);
+    hfscx_256(buf, len + 5, NULL, h);
     return ((uint32_t)h[28] << 24) | ((uint32_t)h[29] << 16)
          | ((uint32_t)h[30] <<  8) |  (uint32_t)h[31];
 }
@@ -5289,7 +6053,7 @@ static void hpake_register(HpakeRecord *rec,
     BitArray F = BA_INIT;
     if (fread(rec->salt, 1, 32, urnd) != 32) { fputs("urnd fail\n", stderr); exit(1); }
     oprf_direct(&F, password, pwlen, oprf_key);
-    uint32_t zkp_A = _hpake_zkp_witness(F.b);
+    uint32_t zkp_A = _hpake_zkp_witness(F.b, (size_t)ba_nbytes(&F));
     if (fread(b_bytes, 1, 4, urnd) != 4)     { fputs("urnd fail\n", stderr); exit(1); }
     rec->B = ((uint32_t)b_bytes[0] << 24) | ((uint32_t)b_bytes[1] << 16)
            | ((uint32_t)b_bytes[2] <<  8) |  (uint32_t)b_bytes[3];
@@ -5305,7 +6069,7 @@ static int hpake_login_demo(uint8_t session_key[KEYBYTES],
 {
     BitArray F = BA_INIT;
     oprf_direct(&F, password, pwlen, oprf_key);
-    uint32_t zkp_A = _hpake_zkp_witness(F.b);
+    uint32_t zkp_A = _hpake_zkp_witness(F.b, (size_t)ba_nbytes(&F));
 
     /* Fast reject: wrong password won't satisfy the ZKBoo statement */
     if ((uint32_t)zkp_nl_f1((uint64_t)zkp_A, (uint64_t)rec->B, HPAKE_ZKP_N) != rec->y)
@@ -5787,6 +6551,34 @@ typedef char hcred_n_matches_rnl_alt_n[(HCRED_N == RNL_ALT_N) ? 1 : -1];
 /* Bytes in the 3-party serialised outputs for one proof round */
 #define HCRED_ROUND_OUTS_SER 28809
 
+/* HCRED at runtime n (TODO #383 stage 3).  HCRED_N is the default and the
+ * LARGEST width: every array below is sized for it, and the constants above
+ * are its values.  A narrower credential runs the same circuit at n = 32, 64
+ * or 128, its width read from its operands (seed_H's nbits, the proof's n),
+ * with Python's _hcred_params rules:
+ *   rows = n/2;  row_bits = bit length of n (an integer row sum lies in [0, n]);
+ *   w_max = n/4 + floor(sqrt(3n)) -- Python's int(n/4 + 4*sqrt(3n/16)), exact
+ *   here because 3n is never a perfect square at a power of two.
+ * HCRED-KKW stays at HCRED_N in C (not wired to any CLI). */
+static int hcred_n_ok(int n) { return n == 32 || n == 64 || n == 128 || n == 256; }
+static int hcred_row_bits(int n) { int b = 0; while ((1 << b) <= n) b++; return b; }
+static int hcred_w_max(int n)
+{
+    int r = 0;
+    while ((r + 1) * (r + 1) <= 3 * n) r++;
+    return n / 4 + r;
+}
+static int hcred_nb(int n) { return (n / 2) * hcred_row_bits(n); }
+static int hcred_nd(int n) { return n * HCRED_EPS_BITS; }
+static size_t hcred_round_outs_ser(int n)
+{
+    return (size_t)9 * (size_t)(2 * n + hcred_nb(n) + hcred_nd(n) + 1 + n);
+}
+typedef char hcred_row_bits_at_n[(HCRED_ROW_BITS == 9 && HCRED_W_MAX == 91 &&
+                                  HCRED_ROUND_OUTS_SER == 9 * (2 * HCRED_N + HCRED_NB
+                                                               + HCRED_ND + 1 + HCRED_N))
+                                 ? 1 : -1];
+
 typedef struct {
     int32_t ter[3][HCRED_N];
     int32_t bit[3][HCRED_NB];
@@ -5813,6 +6605,7 @@ typedef struct {
 } HcredRound;
 
 typedef struct {
+    int        n;        /* the credential's width (TODO #383 stage 3) */
     int        W;
     int        rounds;
     HcredRound *rd;
@@ -5880,6 +6673,8 @@ static void hcred_tape_draws(HcredTape *t, int32_t *out, int k)
 
 /* Statement hash: H(HCRED-stmt || n_4B || ser(m) || ser(c) || seed_H || y_BE || msg).
    y_BE: syndrome bytes in big-endian order (reversed vs C's LSB-first layout). */
+/* The width is seed_H's (TODO #383 stage 3): n = seed_H->nbits, n/8 seed bytes,
+   (n/2)/8 syndrome bytes. */
 static void hcred_stmt_hash(uint8_t out[KEYBYTES],
                              const int32_t m_poly[HCRED_N],
                              const int32_t c_poly[HCRED_N],
@@ -5887,19 +6682,21 @@ static void hcred_stmt_hash(uint8_t out[KEYBYTES],
                              const uint8_t syndr[SDF_SYNBYTES],
                              const uint8_t *msg, size_t msg_len)
 {
-    size_t sz = 10 + 4 + 3*HCRED_N + 3*HCRED_N + KEYBYTES + SDF_SYNBYTES + msg_len;
+    const int n = seed_H->nbits, seedb = ba_nbytes(seed_H), synb = n / 16;
+    size_t sz = 10 + 4 + 3*(size_t)n + 3*(size_t)n + (size_t)seedb + (size_t)synb + msg_len;
     uint8_t *buf = (uint8_t *)malloc(sz);
     size_t off = 0;
     int k;
     if (!buf) { fprintf(stderr, "hcred_stmt_hash: OOM\n"); exit(1); }
     memcpy(buf + off, "HCRED-stmt", 10); off += 10;
-    buf[off++] = 0; buf[off++] = 0; buf[off++] = 1; buf[off++] = 0; /* n=256 BE */
-    hcred_ser(buf + off, m_poly, HCRED_N); off += 3*HCRED_N;
-    hcred_ser(buf + off, c_poly, HCRED_N); off += 3*HCRED_N;
-    memcpy(buf + off, seed_H->b, KEYBYTES); off += KEYBYTES;
-    /* Python/Go serialise y as a big-endian integer: byte k = syndr[15-k] */
-    for (k = 0; k < SDF_SYNBYTES; k++)
-        buf[off++] = syndr[SDF_SYNBYTES - 1 - k];
+    buf[off++] = (uint8_t)(n >> 24); buf[off++] = (uint8_t)(n >> 16);
+    buf[off++] = (uint8_t)(n >> 8);  buf[off++] = (uint8_t)n;          /* n BE */
+    hcred_ser(buf + off, m_poly, n); off += 3*(size_t)n;
+    hcred_ser(buf + off, c_poly, n); off += 3*(size_t)n;
+    memcpy(buf + off, seed_H->b, (size_t)seedb); off += (size_t)seedb;
+    /* Python/Go serialise y as a big-endian integer: byte k = syndr[synb-1-k] */
+    for (k = 0; k < synb; k++)
+        buf[off++] = syndr[synb - 1 - k];
     if (msg && msg_len)
         memcpy(buf + off, msg, msg_len);
     hfscx_256(buf, sz, NULL, out);
@@ -5907,13 +6704,14 @@ static void hcred_stmt_hash(uint8_t out[KEYBYTES],
 }
 
 /* φ_A: positive-support bitmap of s — bit i set iff s_poly[i] == 1. */
-static void hcred_phi(BitArray *e_out, const int32_t s_poly[HCRED_N])
+static void hcred_phi(BitArray *e_out, const int32_t s_poly[HCRED_N], int n)
 {
-    int i;
-    memset(e_out->b, 0, KEYBYTES);
-    for (i = 0; i < HCRED_N; i++)
+    int i, nb;
+    ba_zero_w(e_out, n);
+    nb = ba_nbytes(e_out);
+    for (i = 0; i < n; i++)
         if (s_poly[i] == 1)
-            e_out->b[KEYBYTES-1-i/8] |= (uint8_t)(1u << (i%8));
+            e_out->b[nb-1-i/8] |= (uint8_t)(1u << (i%8));
 }
 
 /* User key generation: s ← CBD(1), C = round(m·s), e = φ(s).
@@ -5934,16 +6732,17 @@ static void hcred_phi(BitArray *e_out, const int32_t s_poly[HCRED_N])
  * useless, so the right place to refuse it is where it is made, and the rate
  * becomes ZERO rather than smaller.  It costs one extra draw in about 15 000
  * here and removes at most 6.5e-5 of the key space. */
-static void hcred_user_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
-                               BitArray *e_out, const int32_t m_poly[RNL_N],
-                               FILE *urnd)
+static void hcred_user_keygen(int32_t s_out[HCRED_N], int32_t c_out[HCRED_N],
+                               BitArray *e_out, const int32_t m_poly[HCRED_N],
+                               FILE *urnd, int n)
 {
     int w;
+    if (!hcred_n_ok(n)) { fprintf(stderr, "hcred_user_keygen: unsupported n=%d\n", n); exit(1); }
     for (;;) {
-        rnl_keygen_dim(s_out, c_out, m_poly, urnd, HCRED_N);
-        hcred_phi(e_out, s_out);
+        rnl_keygen_dim(s_out, c_out, m_poly, urnd, n);
+        hcred_phi(e_out, s_out, n);
         w = ba_popcount(e_out);
-        if (w >= 1 && w <= HCRED_W_MAX) return;
+        if (w >= 1 && w <= hcred_w_max(n)) return;
     }
 }
 
@@ -5966,17 +6765,18 @@ static int _hcred_witness(int *W_out, int32_t beta[HCRED_NB], int32_t delta[HCRE
     BitArray e_ba = BA_INIT;
     int32_t ms[RNL_N], lift_c[RNL_N];
     const int32_t q = RNL_Q, hq = (int32_t)(RNL_Q / 2);
+    const int n = H[0].nbits, rows = n / 2, rb = hcred_row_bits(n);
     int i, r, t, W = 0;
 
     int syndrome_ok = 1, range_ok = 1;
 
-    hcred_phi(&e_ba, s_poly);
-    for (i = 0; i < HCRED_N; i++)
+    hcred_phi(&e_ba, s_poly, n);
+    for (i = 0; i < n; i++)
         if (s_poly[i] == 1) W++;
     *W_out = W;
 
-    rnl_poly_mul_dim(ms, m_poly, s_poly, HCRED_N);
-    rnl_lift_dim(lift_c, c_poly, RNL_P, RNL_Q, HCRED_N);
+    rnl_poly_mul_dim(ms, m_poly, s_poly, n);
+    rnl_lift_dim(lift_c, c_poly, RNL_P, RNL_Q, n);
 
     /* CT-02 (TODO #129 Batch 5): both loops below always run to completion
      * instead of returning as soon as a row/coefficient fails -- a failure
@@ -5986,18 +6786,18 @@ static int _hcred_witness(int *W_out, int32_t beta[HCRED_NB], int32_t delta[HCRE
      * (SecurityProofs-7.md SS11.11 records it as a low-severity finding since
      * this function only ever runs on the prover's own internally-consistent
      * witness, never on externally-timeable input, but fixing it is cheap). */
-    for (r = 0; r < HCRED_ROWS; r++) {
+    for (r = 0; r < rows; r++) {
         int sr = 0, kb, syndr_bit;
-        for (kb = 0; kb < KEYBYTES; kb++)
+        for (kb = 0; kb < n / 8; kb++)
             sr += __builtin_popcount(H[r].b[kb] & e_ba.b[kb]);
         syndr_bit = (syndr[r/8] >> (r%8)) & 1;
         syndrome_ok &= ((sr & 1) == syndr_bit);
-        for (t = 0; t < HCRED_ROW_BITS; t++)
-            beta[r * HCRED_ROW_BITS + t] = (sr >> t) & 1;
+        for (t = 0; t < rb; t++)
+            beta[r * rb + t] = (sr >> t) & 1;
     }
     if (!syndrome_ok) return -1;
 
-    for (i = 0; i < HCRED_N; i++) {
+    for (i = 0; i < n; i++) {
         int32_t d = (int32_t)((((int64_t)ms[i] - lift_c[i]) % q + q) % q);
         int32_t v;
         if (d > hq) d -= q;
@@ -6015,19 +6815,21 @@ static int _hcred_witness(int *W_out, int32_t beta[HCRED_NB], int32_t delta[HCRE
     return 0;
 }
 
-/* Serialize one round's outputs (3 parties) into buf (must be HCRED_ROUND_OUTS_SER bytes). */
-static void _hcred_outs_ser(uint8_t *buf, const HcredOuts *outs)
+/* Serialize one round's outputs (3 parties) into buf (must be
+   hcred_round_outs_ser(n) bytes). */
+static void _hcred_outs_ser(uint8_t *buf, const HcredOuts *outs, int n)
 {
+    const int nb = hcred_nb(n), nd = hcred_nd(n), rows = n / 2;
     size_t off = 0;
     int j;
     for (j = 0; j < 3; j++) {
-        hcred_ser(buf+off, outs->ter[j],   HCRED_N);    off += 3*HCRED_N;
-        hcred_ser(buf+off, outs->bit[j],   HCRED_NB);   off += 3*HCRED_NB;
-        hcred_ser(buf+off, outs->del_sh[j],HCRED_ND);   off += 3*HCRED_ND;
-        hcred_ser(buf+off, &outs->wsh[j],  1);           off += 3;
-        hcred_ser(buf+off, outs->s_out[j], HCRED_ROWS); off += 3*HCRED_ROWS;
-        hcred_ser(buf+off, outs->y_out[j], HCRED_ROWS); off += 3*HCRED_ROWS;
-        hcred_ser(buf+off, outs->rnd[j],   HCRED_N);    off += 3*HCRED_N;
+        hcred_ser(buf+off, outs->ter[j],   n);    off += 3*(size_t)n;
+        hcred_ser(buf+off, outs->bit[j],   nb);   off += 3*(size_t)nb;
+        hcred_ser(buf+off, outs->del_sh[j],nd);   off += 3*(size_t)nd;
+        hcred_ser(buf+off, &outs->wsh[j],  1);    off += 3;
+        hcred_ser(buf+off, outs->s_out[j], rows); off += 3*(size_t)rows;
+        hcred_ser(buf+off, outs->y_out[j], rows); off += 3*(size_t)rows;
+        hcred_ser(buf+off, outs->rnd[j],   n);    off += 3*(size_t)n;
     }
 }
 
@@ -6045,35 +6847,37 @@ static void _hcred_party_out(HcredOuts *outs, int j,
                               const BitArray H[SDF_N_ROWS])
 {
     const int64_t q = RNL_Q, inv2 = (RNL_Q + 1) / 2;
+    const int n = H[0].nbits, nbyt = n / 8, rows = n / 2, rb = hcred_row_bits(n);
+    const int nb = hcred_nb(n), nd = hcred_nd(n);
     int32_t eJ[HCRED_N], ms_j[RNL_N];
     int32_t wsh = 0;
     int i, r, t;
 
-    for (i = 0; i < HCRED_N; i++) {
+    for (i = 0; i < n; i++) {
         int64_t sum = (int64_t)a_j[i] + shS_j[i];
         eJ[i] = (int32_t)((sum % q * inv2) % q);
     }
-    for (i = 0; i < HCRED_N; i++)
+    for (i = 0; i < n; i++)
         outs->ter[j][i] = (int32_t)(((int64_t)b_j[i] - shS_j[i] + q) % q);
-    for (i = 0; i < HCRED_NB; i++)
+    for (i = 0; i < nb; i++)
         outs->bit[j][i] = (int32_t)(((int64_t)g_j[i] - shB_j[i] + q) % q);
-    for (i = 0; i < HCRED_ND; i++)
+    for (i = 0; i < nd; i++)
         outs->del_sh[j][i] = (int32_t)(((int64_t)h_j[i] - shD_j[i] + q) % q);
-    for (i = 0; i < HCRED_N; i++)
+    for (i = 0; i < n; i++)
         wsh = (int32_t)(((int64_t)wsh + eJ[i]) % q);
     outs->wsh[j] = wsh;
-    for (r = 0; r < HCRED_ROWS; r++) {
+    for (r = 0; r < rows; r++) {
         int32_t acc = 0, dec = 0;
-        for (i = 0; i < HCRED_N; i++)
-            if ((H[r].b[KEYBYTES-1-i/8] >> (i%8)) & 1u)
+        for (i = 0; i < n; i++)
+            if ((H[r].b[nbyt-1-i/8] >> (i%8)) & 1u)
                 acc = (int32_t)(((int64_t)acc + eJ[i]) % q);
-        for (t = 0; t < HCRED_ROW_BITS; t++)
-            dec = (int32_t)((dec + (int64_t)(1<<t) * shB_j[r*HCRED_ROW_BITS+t]) % q);
+        for (t = 0; t < rb; t++)
+            dec = (int32_t)((dec + (int64_t)(1<<t) * shB_j[r*rb+t]) % q);
         outs->s_out[j][r] = (int32_t)(((int64_t)acc - dec + q) % q);
-        outs->y_out[j][r] = (int32_t)(shB_j[r*HCRED_ROW_BITS] % q);
+        outs->y_out[j][r] = (int32_t)(shB_j[r*rb] % q);
     }
-    rnl_poly_mul_dim(ms_j, m_poly, shS_j, HCRED_N);
-    for (i = 0; i < HCRED_N; i++) {
+    rnl_poly_mul_dim(ms_j, m_poly, shS_j, n);
+    for (i = 0; i < n; i++) {
         int32_t dec = 0;
         for (t = 0; t < HCRED_EPS_BITS; t++)
             dec = (int32_t)((dec + (int64_t)(1<<t) * shD_j[i*HCRED_EPS_BITS+t]) % q);
@@ -6081,8 +6885,8 @@ static void _hcred_party_out(HcredOuts *outs, int j,
     }
 }
 
-/* Compute commitment for party j in round ri (stmt-bound). */
-static void _hcred_commit(uint8_t out[KEYBYTES], int j, int ri,
+/* Compute commitment for party j in round ri (stmt-bound), at width n. */
+static void _hcred_commit(uint8_t out[KEYBYTES], int n, int j, int ri,
                            const uint8_t stmt[KEYBYTES],
                            const uint8_t seed[KEYBYTES],
                            const int32_t aux_s[HCRED_N],
@@ -6094,11 +6898,12 @@ static void _hcred_commit(uint8_t out[KEYBYTES], int j, int ri,
                            const int32_t h_j[HCRED_ND],
                            const HcredOuts *outs)
 {
+    const int nb = hcred_nb(n), nd = hcred_nd(n), rows = n / 2;
     size_t sz = 9 + KEYBYTES + 3 + KEYBYTES
-                + (j == 2 ? 3*(HCRED_N + HCRED_NB + HCRED_ND) : 0)
-                + 3*(HCRED_N + HCRED_N + HCRED_NB + HCRED_ND)
-                + 3*(HCRED_N + HCRED_NB + HCRED_ND)
-                + 3*(1 + HCRED_ROWS + HCRED_ROWS + HCRED_N);
+                + (j == 2 ? 3*(size_t)(n + nb + nd) : 0)
+                + 3*(size_t)(n + n + nb + nd)
+                + 3*(size_t)(n + nb + nd)
+                + 3*(size_t)(1 + rows + rows + n);
     uint8_t *buf = (uint8_t *)malloc(sz);
     size_t off = 0;
     if (!buf) { fprintf(stderr, "_hcred_commit: OOM\n"); exit(1); }
@@ -6109,21 +6914,21 @@ static void _hcred_commit(uint8_t out[KEYBYTES], int j, int ri,
     buf[off++] = (uint8_t)(ri);
     memcpy(buf+off, seed, KEYBYTES);  off += KEYBYTES;
     if (j == 2) {
-        hcred_ser(buf+off, aux_s, HCRED_N);  off += 3*HCRED_N;
-        hcred_ser(buf+off, aux_b, HCRED_NB); off += 3*HCRED_NB;
-        hcred_ser(buf+off, aux_d, HCRED_ND); off += 3*HCRED_ND;
+        hcred_ser(buf+off, aux_s, n);  off += 3*(size_t)n;
+        hcred_ser(buf+off, aux_b, nb); off += 3*(size_t)nb;
+        hcred_ser(buf+off, aux_d, nd); off += 3*(size_t)nd;
     }
-    hcred_ser(buf+off, a_j, HCRED_N);        off += 3*HCRED_N;
-    hcred_ser(buf+off, b_j, HCRED_N);        off += 3*HCRED_N;
-    hcred_ser(buf+off, g_j, HCRED_NB);       off += 3*HCRED_NB;
-    hcred_ser(buf+off, h_j, HCRED_ND);       off += 3*HCRED_ND;
-    hcred_ser(buf+off, outs->ter[j],    HCRED_N);    off += 3*HCRED_N;
-    hcred_ser(buf+off, outs->bit[j],    HCRED_NB);   off += 3*HCRED_NB;
-    hcred_ser(buf+off, outs->del_sh[j], HCRED_ND);   off += 3*HCRED_ND;
-    hcred_ser(buf+off, &outs->wsh[j],   1);            off += 3;
-    hcred_ser(buf+off, outs->s_out[j],  HCRED_ROWS); off += 3*HCRED_ROWS;
-    hcred_ser(buf+off, outs->y_out[j],  HCRED_ROWS); off += 3*HCRED_ROWS;
-    hcred_ser(buf+off, outs->rnd[j],    HCRED_N);    off += 3*HCRED_N;
+    hcred_ser(buf+off, a_j, n);        off += 3*(size_t)n;
+    hcred_ser(buf+off, b_j, n);        off += 3*(size_t)n;
+    hcred_ser(buf+off, g_j, nb);       off += 3*(size_t)nb;
+    hcred_ser(buf+off, h_j, nd);       off += 3*(size_t)nd;
+    hcred_ser(buf+off, outs->ter[j],    n);    off += 3*(size_t)n;
+    hcred_ser(buf+off, outs->bit[j],    nb);   off += 3*(size_t)nb;
+    hcred_ser(buf+off, outs->del_sh[j], nd);   off += 3*(size_t)nd;
+    hcred_ser(buf+off, &outs->wsh[j],   1);    off += 3;
+    hcred_ser(buf+off, outs->s_out[j],  rows); off += 3*(size_t)rows;
+    hcred_ser(buf+off, outs->y_out[j],  rows); off += 3*(size_t)rows;
+    hcred_ser(buf+off, outs->rnd[j],    n);    off += 3*(size_t)n;
     hfscx_256(buf, off, NULL, out);
     free(buf);
 }
@@ -6205,9 +7010,14 @@ static int hcred_prove(HcredProof *proof,
     int *chals;
     size_t coms_total, outs_total;
     const int64_t q = RNL_Q;
+    const int n = seed_H->nbits, rows = n / 2, rb = hcred_row_bits(n);
+    const int nb = hcred_nb(n), nd = hcred_nd(n);
+    const size_t outs_per = hcred_round_outs_ser(n);
+    (void)rows; (void)rb;
 
-    beta  = (int32_t *)malloc(HCRED_NB * sizeof(int32_t));
-    delta = (int32_t *)malloc(HCRED_ND * sizeof(int32_t));
+    if (!hcred_n_ok(n)) return -1;
+    beta  = (int32_t *)malloc(nb * sizeof(int32_t));
+    delta = (int32_t *)malloc(nd * sizeof(int32_t));
     if (!beta || !delta) { free(beta); free(delta); return -1; }
 
     stern_build_H(H, seed_H);
@@ -6216,23 +7026,24 @@ static int hcred_prove(HcredProof *proof,
     }
     hcred_stmt_hash(stmt, m_poly, c_poly, seed_H, syndr, msg, msg_len);
 
+    proof->n = n;
     proof->W = W;
     proof->rounds = rounds;
     proof->rd = (HcredRound *)calloc((size_t)rounds, sizeof(HcredRound));
 
     coms_total = (size_t)rounds * 3 * KEYBYTES;
-    outs_total = (size_t)rounds * HCRED_ROUND_OUTS_SER;
+    outs_total = (size_t)rounds * outs_per;
 
     execs    = (_HcredExec *)malloc((size_t)rounds * sizeof(_HcredExec));
     coms_ser = (uint8_t *)malloc(coms_total);
     outs_ser = (uint8_t *)malloc(outs_total);
-    shS_all  = (int32_t *)malloc(3 * HCRED_N  * sizeof(int32_t));
-    shB_all  = (int32_t *)malloc(3 * HCRED_NB * sizeof(int32_t));
-    shD_all  = (int32_t *)malloc(3 * HCRED_ND * sizeof(int32_t));
-    R1_all   = (int32_t *)malloc(3 * HCRED_N  * sizeof(int32_t));
-    R2_all   = (int32_t *)malloc(3 * HCRED_N  * sizeof(int32_t));
-    R3_all   = (int32_t *)malloc(3 * HCRED_NB * sizeof(int32_t));
-    R4_all   = (int32_t *)malloc(3 * HCRED_ND * sizeof(int32_t));
+    shS_all  = (int32_t *)malloc(3 * n  * sizeof(int32_t));
+    shB_all  = (int32_t *)malloc(3 * nb * sizeof(int32_t));
+    shD_all  = (int32_t *)malloc(3 * nd * sizeof(int32_t));
+    R1_all   = (int32_t *)malloc(3 * n  * sizeof(int32_t));
+    R2_all   = (int32_t *)malloc(3 * n  * sizeof(int32_t));
+    R3_all   = (int32_t *)malloc(3 * nb * sizeof(int32_t));
+    R4_all   = (int32_t *)malloc(3 * nd * sizeof(int32_t));
     chals    = NULL;
 
     if (!proof->rd || !execs || !coms_ser || !outs_ser || !shS_all ||
@@ -6252,37 +7063,37 @@ static int hcred_prove(HcredProof *proof,
         }
         /* Draw shS, shB, shD from tapes 0 and 1; derive party 2 from secrets */
         for (j = 0; j < 2; j++) {
-            hcred_tape_draws(&tp[j], shS_all + j*HCRED_N,  HCRED_N);
-            hcred_tape_draws(&tp[j], shB_all + j*HCRED_NB, HCRED_NB);
-            hcred_tape_draws(&tp[j], shD_all + j*HCRED_ND, HCRED_ND);
+            hcred_tape_draws(&tp[j], shS_all + j*n,  n);
+            hcred_tape_draws(&tp[j], shB_all + j*nb, nb);
+            hcred_tape_draws(&tp[j], shD_all + j*nd, nd);
         }
-        for (i = 0; i < HCRED_N; i++)
-            shS_all[2*HCRED_N+i] = (int32_t)((((int64_t)s_poly[i]
-                - shS_all[i] - shS_all[HCRED_N+i]) % q + q) % q);
-        for (i = 0; i < HCRED_NB; i++)
-            shB_all[2*HCRED_NB+i] = (int32_t)((((int64_t)beta[i]
-                - shB_all[i] - shB_all[HCRED_NB+i]) % q + q) % q);
-        for (i = 0; i < HCRED_ND; i++)
-            shD_all[2*HCRED_ND+i] = (int32_t)((((int64_t)delta[i]
-                - shD_all[i] - shD_all[HCRED_ND+i]) % q + q) % q);
-        memcpy(ex->shS2, shS_all + 2*HCRED_N,  HCRED_N  * sizeof(int32_t));
-        memcpy(ex->shB2, shB_all + 2*HCRED_NB, HCRED_NB * sizeof(int32_t));
-        memcpy(ex->shD2, shD_all + 2*HCRED_ND, HCRED_ND * sizeof(int32_t));
+        for (i = 0; i < n; i++)
+            shS_all[2*n+i] = (int32_t)((((int64_t)s_poly[i]
+                - shS_all[i] - shS_all[n+i]) % q + q) % q);
+        for (i = 0; i < nb; i++)
+            shB_all[2*nb+i] = (int32_t)((((int64_t)beta[i]
+                - shB_all[i] - shB_all[nb+i]) % q + q) % q);
+        for (i = 0; i < nd; i++)
+            shD_all[2*nd+i] = (int32_t)((((int64_t)delta[i]
+                - shD_all[i] - shD_all[nd+i]) % q + q) % q);
+        memcpy(ex->shS2, shS_all + 2*n,  n  * sizeof(int32_t));
+        memcpy(ex->shB2, shB_all + 2*nb, nb * sizeof(int32_t));
+        memcpy(ex->shD2, shD_all + 2*nd, nd * sizeof(int32_t));
         /* Draw R1..R4 from all 3 tapes */
         for (j = 0; j < 3; j++) {
-            hcred_tape_draws(&tp[j], R1_all + j*HCRED_N,  HCRED_N);
-            hcred_tape_draws(&tp[j], R2_all + j*HCRED_N,  HCRED_N);
-            hcred_tape_draws(&tp[j], R3_all + j*HCRED_NB, HCRED_NB);
-            hcred_tape_draws(&tp[j], R4_all + j*HCRED_ND, HCRED_ND);
+            hcred_tape_draws(&tp[j], R1_all + j*n,  n);
+            hcred_tape_draws(&tp[j], R2_all + j*n,  n);
+            hcred_tape_draws(&tp[j], R3_all + j*nb, nb);
+            hcred_tape_draws(&tp[j], R4_all + j*nd, nd);
         }
         /* Compute a[j] = shS[j]^2 + shS[k]*shS[j] + shS[j]*shS[k] + R1[j] - R1[k] mod q */
         for (j = 0; j < 3; j++) {
-            int32_t *shSj = shS_all + j*HCRED_N;
+            int32_t *shSj = shS_all + j*n;
             k = (j + 1) % 3;
-            int32_t *shSk = shS_all + k*HCRED_N;
-            int32_t *R1j  = R1_all  + j*HCRED_N;
-            int32_t *R1k  = R1_all  + k*HCRED_N;
-            for (i = 0; i < HCRED_N; i++) {
+            int32_t *shSk = shS_all + k*n;
+            int32_t *R1j  = R1_all  + j*n;
+            int32_t *R1k  = R1_all  + k*n;
+            for (i = 0; i < n; i++) {
                 int64_t v = (int64_t)shSj[i]*shSj[i] + (int64_t)shSk[i]*shSj[i]
                           + (int64_t)shSj[i]*shSk[i] + R1j[i] - R1k[i];
                 ex->a[j][i] = (int32_t)((v % q + q) % q);
@@ -6290,34 +7101,34 @@ static int hcred_prove(HcredProof *proof,
         }
         /* Compute b[j], g[j], h[j] */
         for (j = 0; j < 3; j++) {
-            int32_t *shSj = shS_all + j*HCRED_N;
+            int32_t *shSj = shS_all + j*n;
             k = (j + 1) % 3;
-            int32_t *shSk = shS_all + k*HCRED_N;
-            int32_t *shBj = shB_all + j*HCRED_NB;
-            int32_t *shBk = shB_all + k*HCRED_NB;
-            int32_t *shDj = shD_all + j*HCRED_ND;
-            int32_t *shDk = shD_all + k*HCRED_ND;
-            int32_t *R2j  = R2_all  + j*HCRED_N;
-            int32_t *R2k  = R2_all  + k*HCRED_N;
-            int32_t *R3j  = R3_all  + j*HCRED_NB;
-            int32_t *R3k  = R3_all  + k*HCRED_NB;
-            int32_t *R4j  = R4_all  + j*HCRED_ND;
-            int32_t *R4k  = R4_all  + k*HCRED_ND;
-            for (i = 0; i < HCRED_N; i++) {
+            int32_t *shSk = shS_all + k*n;
+            int32_t *shBj = shB_all + j*nb;
+            int32_t *shBk = shB_all + k*nb;
+            int32_t *shDj = shD_all + j*nd;
+            int32_t *shDk = shD_all + k*nd;
+            int32_t *R2j  = R2_all  + j*n;
+            int32_t *R2k  = R2_all  + k*n;
+            int32_t *R3j  = R3_all  + j*nb;
+            int32_t *R3k  = R3_all  + k*nb;
+            int32_t *R4j  = R4_all  + j*nd;
+            int32_t *R4k  = R4_all  + k*nd;
+            for (i = 0; i < n; i++) {
                 int64_t v = (int64_t)ex->a[j][i]*shSj[i]
                           + (int64_t)ex->a[k][i]*shSj[i]
                           + (int64_t)ex->a[j][i]*shSk[i]
                           + R2j[i] - R2k[i];
                 ex->b_arr[j][i] = (int32_t)((v % q + q) % q);
             }
-            for (i = 0; i < HCRED_NB; i++) {
+            for (i = 0; i < nb; i++) {
                 int64_t v = (int64_t)shBj[i]*shBj[i]
                           + (int64_t)shBk[i]*shBj[i]
                           + (int64_t)shBj[i]*shBk[i]
                           + R3j[i] - R3k[i];
                 ex->g[j][i] = (int32_t)((v % q + q) % q);
             }
-            for (i = 0; i < HCRED_ND; i++) {
+            for (i = 0; i < nd; i++) {
                 int64_t v = (int64_t)shDj[i]*shDj[i]
                           + (int64_t)shDk[i]*shDj[i]
                           + (int64_t)shDj[i]*shDk[i]
@@ -6329,16 +7140,16 @@ static int hcred_prove(HcredProof *proof,
         for (j = 0; j < 3; j++)
             _hcred_party_out(&rd->outs, j,
                 ex->a[j], ex->b_arr[j], ex->g[j], ex->h_arr[j],
-                shS_all + j*HCRED_N, shB_all + j*HCRED_NB, shD_all + j*HCRED_ND,
+                shS_all + j*n, shB_all + j*nb, shD_all + j*nd,
                 m_poly, H);
         for (j = 0; j < 3; j++) {
-            _hcred_commit(rd->coms[j], j, ri, stmt, ex->seeds[j],
+            _hcred_commit(rd->coms[j], n, j, ri, stmt, ex->seeds[j],
                           ex->shS2, ex->shB2, ex->shD2,
                           ex->a[j], ex->b_arr[j], ex->g[j], ex->h_arr[j], &rd->outs);
             memcpy(coms_ser + (size_t)ri*3*KEYBYTES + (size_t)j*KEYBYTES,
                    rd->coms[j], KEYBYTES);
         }
-        _hcred_outs_ser(outs_ser + (size_t)ri * HCRED_ROUND_OUTS_SER, &rd->outs);
+        _hcred_outs_ser(outs_ser + (size_t)ri * outs_per, &rd->outs, n);
     }
 
     chals = (int *)malloc((size_t)rounds * sizeof(int));
@@ -6352,15 +7163,15 @@ static int hcred_prove(HcredProof *proof,
         int cp1 = (c + 1) % 3;
         memcpy(rd->seed_c,  ex->seeds[c],    KEYBYTES);
         memcpy(rd->seed_c1, ex->seeds[cp1],  KEYBYTES);
-        memcpy(rd->a1, ex->a[cp1],     HCRED_N  * sizeof(int32_t));
-        memcpy(rd->b1, ex->b_arr[cp1], HCRED_N  * sizeof(int32_t));
-        memcpy(rd->g1, ex->g[cp1],     HCRED_NB * sizeof(int32_t));
-        memcpy(rd->h1, ex->h_arr[cp1], HCRED_ND * sizeof(int32_t));
+        memcpy(rd->a1, ex->a[cp1],     n  * sizeof(int32_t));
+        memcpy(rd->b1, ex->b_arr[cp1], n  * sizeof(int32_t));
+        memcpy(rd->g1, ex->g[cp1],     nb * sizeof(int32_t));
+        memcpy(rd->h1, ex->h_arr[cp1], nd * sizeof(int32_t));
         rd->has_aux = (c == 2 || cp1 == 2) ? 1 : 0;
         if (rd->has_aux) {
-            memcpy(rd->aux_s, ex->shS2, HCRED_N  * sizeof(int32_t));
-            memcpy(rd->aux_b, ex->shB2, HCRED_NB * sizeof(int32_t));
-            memcpy(rd->aux_d, ex->shD2, HCRED_ND * sizeof(int32_t));
+            memcpy(rd->aux_s, ex->shS2, n  * sizeof(int32_t));
+            memcpy(rd->aux_b, ex->shB2, nb * sizeof(int32_t));
+            memcpy(rd->aux_d, ex->shD2, nd * sizeof(int32_t));
         }
     }
 
@@ -6399,14 +7210,20 @@ static int hcred_verify(const int32_t m_poly[HCRED_N],
     size_t coms_total, outs_total;
     const int64_t q = RNL_Q, inv2 = (RNL_Q + 1) / 2;
     int result = 1, ri, j, i, r, t, pi;
+    const int n = seed_H->nbits, rows = n / 2, rb = hcred_row_bits(n);
+    const int nb = hcred_nb(n), nd = hcred_nd(n);
+    const size_t outs_per = hcred_round_outs_ser(n);
 
-    if (proof->W < 1 || proof->W > HCRED_W_MAX || proof->rounds != rounds)
+    /* The proof's width must be the statement's (TODO #383 stage 3). */
+    if (!hcred_n_ok(n) || proof->n != n)
+        return 0;
+    if (proof->W < 1 || proof->W > hcred_w_max(n) || proof->rounds != rounds)
         return 0;
 
     hcred_stmt_hash(stmt, m_poly, c_poly, seed_H, syndr, msg, msg_len);
 
     coms_total = (size_t)rounds * 3 * KEYBYTES;
-    outs_total = (size_t)rounds * HCRED_ROUND_OUTS_SER;
+    outs_total = (size_t)rounds * outs_per;
     coms_ser = (uint8_t *)malloc(coms_total);
     outs_ser = (uint8_t *)malloc(outs_total);
     if (!coms_ser || !outs_ser) { free(coms_ser); free(outs_ser); return 0; }
@@ -6415,35 +7232,35 @@ static int hcred_verify(const int32_t m_poly[HCRED_N],
         const HcredRound *rd = &proof->rd[ri];
         for (j = 0; j < 3; j++)
             memcpy(coms_ser + (size_t)ri*3*KEYBYTES + (size_t)j*KEYBYTES, rd->coms[j], KEYBYTES);
-        _hcred_outs_ser(outs_ser + (size_t)ri * HCRED_ROUND_OUTS_SER, &rd->outs);
+        _hcred_outs_ser(outs_ser + (size_t)ri * outs_per, &rd->outs, n);
     }
 
     stern_build_H(H, seed_H);
-    rnl_lift_dim(lift_c, c_poly, RNL_P, RNL_Q, HCRED_N);
+    rnl_lift_dim(lift_c, c_poly, RNL_P, RNL_Q, n);
 
     chals = (int *)malloc((size_t)rounds * sizeof(int));
     if (!chals) { free(coms_ser); free(outs_ser); return 0; }
     _hcred_challenges(chals, rounds, stmt, coms_ser, coms_total, outs_ser, outs_total);
 
-    shSC  = (int32_t *)malloc(HCRED_N  * sizeof(int32_t));
-    shBC  = (int32_t *)malloc(HCRED_NB * sizeof(int32_t));
-    shDC  = (int32_t *)malloc(HCRED_ND * sizeof(int32_t));
-    shSC1 = (int32_t *)malloc(HCRED_N  * sizeof(int32_t));
-    shBC1 = (int32_t *)malloc(HCRED_NB * sizeof(int32_t));
-    shDC1 = (int32_t *)malloc(HCRED_ND * sizeof(int32_t));
-    R1C   = (int32_t *)malloc(HCRED_N  * sizeof(int32_t));
-    R2C   = (int32_t *)malloc(HCRED_N  * sizeof(int32_t));
-    R3C   = (int32_t *)malloc(HCRED_NB * sizeof(int32_t));
-    R4C   = (int32_t *)malloc(HCRED_ND * sizeof(int32_t));
-    R1C1  = (int32_t *)malloc(HCRED_N  * sizeof(int32_t));
-    R2C1  = (int32_t *)malloc(HCRED_N  * sizeof(int32_t));
-    R3C1  = (int32_t *)malloc(HCRED_NB * sizeof(int32_t));
-    R4C1  = (int32_t *)malloc(HCRED_ND * sizeof(int32_t));
-    aC    = (int32_t *)malloc(HCRED_N  * sizeof(int32_t));
-    bC    = (int32_t *)malloc(HCRED_N  * sizeof(int32_t));
-    gC    = (int32_t *)malloc(HCRED_NB * sizeof(int32_t));
-    hC    = (int32_t *)malloc(HCRED_ND * sizeof(int32_t));
-    eJ    = (int32_t *)malloc(HCRED_N  * sizeof(int32_t));
+    shSC  = (int32_t *)malloc(n  * sizeof(int32_t));
+    shBC  = (int32_t *)malloc(nb * sizeof(int32_t));
+    shDC  = (int32_t *)malloc(nd * sizeof(int32_t));
+    shSC1 = (int32_t *)malloc(n  * sizeof(int32_t));
+    shBC1 = (int32_t *)malloc(nb * sizeof(int32_t));
+    shDC1 = (int32_t *)malloc(nd * sizeof(int32_t));
+    R1C   = (int32_t *)malloc(n  * sizeof(int32_t));
+    R2C   = (int32_t *)malloc(n  * sizeof(int32_t));
+    R3C   = (int32_t *)malloc(nb * sizeof(int32_t));
+    R4C   = (int32_t *)malloc(nd * sizeof(int32_t));
+    R1C1  = (int32_t *)malloc(n  * sizeof(int32_t));
+    R2C1  = (int32_t *)malloc(n  * sizeof(int32_t));
+    R3C1  = (int32_t *)malloc(nb * sizeof(int32_t));
+    R4C1  = (int32_t *)malloc(nd * sizeof(int32_t));
+    aC    = (int32_t *)malloc(n  * sizeof(int32_t));
+    bC    = (int32_t *)malloc(n  * sizeof(int32_t));
+    gC    = (int32_t *)malloc(nb * sizeof(int32_t));
+    hC    = (int32_t *)malloc(nd * sizeof(int32_t));
+    eJ    = (int32_t *)malloc(n  * sizeof(int32_t));
     ms_j  = (int32_t *)malloc(RNL_N    * sizeof(int32_t));
     if (!shSC || !shBC || !shDC || !shSC1 || !shBC1 || !shDC1 ||
         !R1C || !R2C || !R3C || !R4C || !R1C1 || !R2C1 || !R3C1 || !R4C1 ||
@@ -6461,19 +7278,19 @@ static int hcred_verify(const int32_t m_poly[HCRED_N],
         int c = chals[ri], cp1 = (c + 1) % 3;
 
         /* --- output-sum constraints --- */
-        for (i = 0; i < HCRED_N && result; i++)
+        for (i = 0; i < n && result; i++)
             if (((int64_t)outs->ter[0][i]+outs->ter[1][i]+outs->ter[2][i]) % q != 0) result = 0;
-        for (i = 0; i < HCRED_NB && result; i++)
+        for (i = 0; i < nb && result; i++)
             if (((int64_t)outs->bit[0][i]+outs->bit[1][i]+outs->bit[2][i]) % q != 0) result = 0;
-        for (i = 0; i < HCRED_ND && result; i++)
+        for (i = 0; i < nd && result; i++)
             if (((int64_t)outs->del_sh[0][i]+outs->del_sh[1][i]+outs->del_sh[2][i]) % q != 0) result = 0;
         if (result && ((int64_t)outs->wsh[0]+outs->wsh[1]+outs->wsh[2]) % q != proof->W % q) result = 0;
-        for (r = 0; r < HCRED_ROWS && result; r++) {
+        for (r = 0; r < rows && result; r++) {
             int syndr_bit = (syndr[r/8] >> (r%8)) & 1;
             if (((int64_t)outs->s_out[0][r]+outs->s_out[1][r]+outs->s_out[2][r]) % q != 0) result = 0;
             if (result && (int)(((int64_t)outs->y_out[0][r]+outs->y_out[1][r]+outs->y_out[2][r]) % q) != syndr_bit) result = 0;
         }
-        for (i = 0; i < HCRED_N && result; i++) {
+        for (i = 0; i < n && result; i++) {
             int32_t want = (int32_t)(((int64_t)lift_c[i] - HCRED_EPS_OFF + q) % q);
             if ((int32_t)(((int64_t)outs->rnd[0][i]+outs->rnd[1][i]+outs->rnd[2][i]) % q) != want) result = 0;
         }
@@ -6484,45 +7301,45 @@ static int hcred_verify(const int32_t m_poly[HCRED_N],
         hcred_tape_init(&tC,  rd->seed_c);
         hcred_tape_init(&tC1, rd->seed_c1);
         if (c != 2) {
-            hcred_tape_draws(&tC, shSC, HCRED_N);
-            hcred_tape_draws(&tC, shBC, HCRED_NB);
-            hcred_tape_draws(&tC, shDC, HCRED_ND);
+            hcred_tape_draws(&tC, shSC, n);
+            hcred_tape_draws(&tC, shBC, nb);
+            hcred_tape_draws(&tC, shDC, nd);
         } else {
-            memcpy(shSC, rd->aux_s, HCRED_N  * sizeof(int32_t));
-            memcpy(shBC, rd->aux_b, HCRED_NB * sizeof(int32_t));
-            memcpy(shDC, rd->aux_d, HCRED_ND * sizeof(int32_t));
+            memcpy(shSC, rd->aux_s, n  * sizeof(int32_t));
+            memcpy(shBC, rd->aux_b, nb * sizeof(int32_t));
+            memcpy(shDC, rd->aux_d, nd * sizeof(int32_t));
         }
         if (cp1 != 2) {
-            hcred_tape_draws(&tC1, shSC1, HCRED_N);
-            hcred_tape_draws(&tC1, shBC1, HCRED_NB);
-            hcred_tape_draws(&tC1, shDC1, HCRED_ND);
+            hcred_tape_draws(&tC1, shSC1, n);
+            hcred_tape_draws(&tC1, shBC1, nb);
+            hcred_tape_draws(&tC1, shDC1, nd);
         } else {
-            memcpy(shSC1, rd->aux_s, HCRED_N  * sizeof(int32_t));
-            memcpy(shBC1, rd->aux_b, HCRED_NB * sizeof(int32_t));
-            memcpy(shDC1, rd->aux_d, HCRED_ND * sizeof(int32_t));
+            memcpy(shSC1, rd->aux_s, n  * sizeof(int32_t));
+            memcpy(shBC1, rd->aux_b, nb * sizeof(int32_t));
+            memcpy(shDC1, rd->aux_d, nd * sizeof(int32_t));
         }
-        hcred_tape_draws(&tC,  R1C,  HCRED_N);  hcred_tape_draws(&tC,  R2C,  HCRED_N);
-        hcred_tape_draws(&tC,  R3C,  HCRED_NB); hcred_tape_draws(&tC,  R4C,  HCRED_ND);
-        hcred_tape_draws(&tC1, R1C1, HCRED_N);  hcred_tape_draws(&tC1, R2C1, HCRED_N);
-        hcred_tape_draws(&tC1, R3C1, HCRED_NB); hcred_tape_draws(&tC1, R4C1, HCRED_ND);
+        hcred_tape_draws(&tC,  R1C,  n);  hcred_tape_draws(&tC,  R2C,  n);
+        hcred_tape_draws(&tC,  R3C,  nb); hcred_tape_draws(&tC,  R4C,  nd);
+        hcred_tape_draws(&tC1, R1C1, n);  hcred_tape_draws(&tC1, R2C1, n);
+        hcred_tape_draws(&tC1, R3C1, nb); hcred_tape_draws(&tC1, R4C1, nd);
 
         /* --- recompute a_C, b_C, g_C, h_C --- */
-        for (i = 0; i < HCRED_N; i++) {
+        for (i = 0; i < n; i++) {
             int64_t v = (int64_t)shSC[i]*shSC[i] + (int64_t)shSC1[i]*shSC[i]
                       + (int64_t)shSC[i]*shSC1[i] + R1C[i] - R1C1[i];
             aC[i] = (int32_t)((v % q + q) % q);
         }
-        for (i = 0; i < HCRED_N; i++) {
+        for (i = 0; i < n; i++) {
             int64_t v = (int64_t)aC[i]*shSC[i] + (int64_t)rd->a1[i]*shSC[i]
                       + (int64_t)aC[i]*shSC1[i] + R2C[i] - R2C1[i];
             bC[i] = (int32_t)((v % q + q) % q);
         }
-        for (i = 0; i < HCRED_NB; i++) {
+        for (i = 0; i < nb; i++) {
             int64_t v = (int64_t)shBC[i]*shBC[i] + (int64_t)shBC1[i]*shBC[i]
                       + (int64_t)shBC[i]*shBC1[i] + R3C[i] - R3C1[i];
             gC[i] = (int32_t)((v % q + q) % q);
         }
-        for (i = 0; i < HCRED_ND; i++) {
+        for (i = 0; i < nd; i++) {
             int64_t v = (int64_t)shDC[i]*shDC[i] + (int64_t)shDC1[i]*shDC[i]
                       + (int64_t)shDC[i]*shDC1[i] + R4C[i] - R4C1[i];
             hC[i] = (int32_t)((v % q + q) % q);
@@ -6544,35 +7361,35 @@ static int hcred_verify(const int32_t m_poly[HCRED_N],
             int32_t wsh = 0;
             j = parties[pi];
 
-            for (i = 0; i < HCRED_N && result; i++)
+            for (i = 0; i < n && result; i++)
                 if ((int32_t)(((int64_t)b3[j][i]-shS3[j][i]+q)%q) != outs->ter[j][i]) result=0;
-            for (i = 0; i < HCRED_NB && result; i++)
+            for (i = 0; i < nb && result; i++)
                 if ((int32_t)(((int64_t)g3[j][i]-shB3[j][i]+q)%q) != outs->bit[j][i]) result=0;
-            for (i = 0; i < HCRED_ND && result; i++)
+            for (i = 0; i < nd && result; i++)
                 if ((int32_t)(((int64_t)h3[j][i]-shD3[j][i]+q)%q) != outs->del_sh[j][i]) result=0;
             if (!result) break;
 
-            for (i = 0; i < HCRED_N; i++) {
+            for (i = 0; i < n; i++) {
                 int64_t sum = (int64_t)a3[j][i] + shS3[j][i];
                 eJ[i] = (int32_t)((sum % q * inv2) % q);
                 wsh = (int32_t)(((int64_t)wsh + eJ[i]) % q);
             }
             if (wsh != outs->wsh[j]) { result = 0; break; }
 
-            for (r = 0; r < HCRED_ROWS && result; r++) {
+            for (r = 0; r < rows && result; r++) {
                 int32_t acc = 0, dec = 0;
-                for (i = 0; i < HCRED_N; i++)
-                    if ((H[r].b[KEYBYTES-1-i/8] >> (i%8)) & 1u)
+                for (i = 0; i < n; i++)
+                    if ((H[r].b[n/8-1-i/8] >> (i%8)) & 1u)
                         acc = (int32_t)(((int64_t)acc + eJ[i]) % q);
-                for (t = 0; t < HCRED_ROW_BITS; t++)
-                    dec = (int32_t)((dec + (int64_t)(1<<t)*shB3[j][r*HCRED_ROW_BITS+t]) % q);
+                for (t = 0; t < rb; t++)
+                    dec = (int32_t)((dec + (int64_t)(1<<t)*shB3[j][r*rb+t]) % q);
                 if ((int32_t)(((int64_t)acc - dec + q) % q) != outs->s_out[j][r]) result = 0;
-                if (result && (int32_t)(shB3[j][r*HCRED_ROW_BITS] % q) != outs->y_out[j][r]) result = 0;
+                if (result && (int32_t)(shB3[j][r*rb] % q) != outs->y_out[j][r]) result = 0;
             }
             if (!result) break;
 
-            rnl_poly_mul_dim(ms_j, m_poly, shS3[j], HCRED_N);
-            for (i = 0; i < HCRED_N && result; i++) {
+            rnl_poly_mul_dim(ms_j, m_poly, shS3[j], n);
+            for (i = 0; i < n && result; i++) {
                 int32_t dec = 0;
                 for (t = 0; t < HCRED_EPS_BITS; t++)
                     dec = (int32_t)((dec + (int64_t)(1<<t)*shD3[j][i*HCRED_EPS_BITS+t]) % q);
@@ -6581,7 +7398,7 @@ static int hcred_verify(const int32_t m_poly[HCRED_N],
             if (!result) break;
 
             seedJ = (j == c) ? rd->seed_c : rd->seed_c1;
-            _hcred_commit(com_check, j, ri, stmt, seedJ,
+            _hcred_commit(com_check, n, j, ri, stmt, seedJ,
                           rd->has_aux ? rd->aux_s : NULL,
                           rd->has_aux ? rd->aux_b : NULL,
                           rd->has_aux ? rd->aux_d : NULL,
@@ -7573,17 +8390,21 @@ done:
     return result;
 }
 
-/* Issuer-signature message: truncated stmt_hash with "HCRED-issue" as context. */
+/* Issuer-signature message: stmt_hash with "HCRED-issue" as context, truncated
+   to its HIGH issuer_n bits (BITARRAY.md §4.4), so an issuer key of any Stern
+   width signs it (TODO #383 stage 3; Python/Go HcredBindMsg). */
 static void _hcred_bind_msg(BitArray *out,
                              const int32_t m_poly[HCRED_N],
                              const int32_t c_poly[HCRED_N],
                              const BitArray *seed_H,
-                             const uint8_t syndr[SDF_SYNBYTES])
+                             const uint8_t syndr[SDF_SYNBYTES],
+                             int issuer_n)
 {
     uint8_t digest[KEYBYTES];
     hcred_stmt_hash(digest, m_poly, c_poly, seed_H, syndr,
                     (const uint8_t *)"HCRED-issue", 11);
-    memcpy(out->b, digest, KEYBYTES);
+    ba_zero_w(out, issuer_n);
+    memcpy(out->b, digest, (size_t)ba_nbytes(out));
 }
 
 /* Issue credential: HPKS-Stern-F signature over (m, C, seed_H, y). */
@@ -7597,7 +8418,7 @@ static void hcred_issue(SternSig *sig,
                          FILE *urnd)
 {
     BitArray msg = BA_INIT;
-    _hcred_bind_msg(&msg, m_poly, c_poly, seed_H, syndr);
+    _hcred_bind_msg(&msg, m_poly, c_poly, seed_H, syndr, issuer_seed->nbits);
     hpks_stern_f_sign(sig, &msg, issuer_e, issuer_seed, urnd);
 }
 
@@ -7611,8 +8432,30 @@ static int hcred_cred_verify(const int32_t m_poly[HCRED_N],
                               const uint8_t issuer_syndr[SDF_SYNBYTES])
 {
     BitArray msg = BA_INIT;
-    _hcred_bind_msg(&msg, m_poly, c_poly, seed_H, syndr);
+    _hcred_bind_msg(&msg, m_poly, c_poly, seed_H, syndr, issuer_seed->nbits);
     return hpks_stern_f_verify(sig, &msg, issuer_seed, issuer_syndr);
+}
+
+/* hcred_issue / hcred_cred_verify for a long-form issuer key (TODO #382): the
+ * issuer signs the whole 256-bit statement digest. */
+static void hcred_issue_l(SternLSig *sig, const int32_t m_poly[HCRED_N],
+                          const int32_t c_poly[HCRED_N], const BitArray *seed_H,
+                          const uint8_t syndr[SDF_SYNBYTES], const uint8_t *issuer_e,
+                          const uint8_t *issuer_seed, FILE *urnd)
+{
+    BitArray msg = BA_INIT;
+    _hcred_bind_msg(&msg, m_poly, c_poly, seed_H, syndr, 256);
+    hpks_stern_l_sign(sig, msg.b, issuer_e, issuer_seed, urnd);
+}
+
+static int hcred_cred_verify_l(const int32_t m_poly[HCRED_N], const int32_t c_poly[HCRED_N],
+                               const BitArray *seed_H, const uint8_t syndr[SDF_SYNBYTES],
+                               const SternLSig *sig, const uint8_t *issuer_seed,
+                               const uint8_t *issuer_syn)
+{
+    BitArray msg = BA_INIT;
+    _hcred_bind_msg(&msg, m_poly, c_poly, seed_H, syndr, 256);
+    return hpks_stern_l_verify(sig, msg.b, issuer_seed, issuer_syn);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -7622,15 +8465,15 @@ static int hcred_cred_verify(const int32_t m_poly[HCRED_N],
  *   4B n(BE) | 4B W(BE) | 4B rounds(BE)
  *   per round:
  *     3×KEYBYTES   coms
- *     HCRED_ROUND_OUTS_SER   outs
+ *     hcred_round_outs_ser(n) outs   (every count below is at the proof's own n)
  *     KEYBYTES     seed_c
  *     KEYBYTES     seed_c1
- *     HCRED_N×3    a1
- *     HCRED_N×3    b1
- *     HCRED_NB×3   g1
- *     HCRED_ND×3   h1
+ *     n×3          a1
+ *     n×3          b1
+ *     nb×3         g1        (nb = (n/2)·hcred_row_bits(n))
+ *     nd×3         h1        (nd = 5n)
  *     1B           has_aux
- *     [if has_aux: HCRED_N×3 aux_s | HCRED_NB×3 aux_b | HCRED_ND×3 aux_d]
+ *     [if has_aux: n×3 aux_s | nb×3 aux_b | nd×3 aux_d]
  * ───────────────────────────────────────────────────────────────────────────── */
 
 /* Serialize an HcredProof to a heap-allocated byte buffer.
@@ -7639,9 +8482,11 @@ static int hcred_cred_verify(const int32_t m_poly[HCRED_N],
 static uint8_t *hcred_proof_serialize(const HcredProof *proof, size_t *out_len)
 {
     int ri, j;
-    size_t per_fixed = (size_t)3*KEYBYTES + HCRED_ROUND_OUTS_SER + 2*KEYBYTES
-                     + (size_t)3*(HCRED_N + HCRED_N + HCRED_NB + HCRED_ND) + 1;
-    size_t per_aux   = (size_t)3*(HCRED_N + HCRED_NB + HCRED_ND);
+    const int n = proof->n, nb = hcred_nb(n), nd = hcred_nd(n);
+    const size_t outs_per = hcred_round_outs_ser(n);
+    size_t per_fixed = (size_t)3*KEYBYTES + outs_per + 2*KEYBYTES
+                     + (size_t)3*(n + n + nb + nd) + 1;
+    size_t per_aux   = (size_t)3*(n + nb + nd);
     size_t total = 12;
     for (ri = 0; ri < proof->rounds; ri++)
         total += per_fixed + (proof->rd[ri].has_aux ? per_aux : 0);
@@ -7650,8 +8495,8 @@ static uint8_t *hcred_proof_serialize(const HcredProof *proof, size_t *out_len)
     if (!buf) return NULL;
 
     size_t off = 0;
-    buf[off++] = (uint8_t)(HCRED_N >> 24); buf[off++] = (uint8_t)(HCRED_N >> 16);
-    buf[off++] = (uint8_t)(HCRED_N >> 8);  buf[off++] = (uint8_t)(HCRED_N);
+    buf[off++] = (uint8_t)(n >> 24); buf[off++] = (uint8_t)(n >> 16);
+    buf[off++] = (uint8_t)(n >> 8);  buf[off++] = (uint8_t)(n);
     buf[off++] = (uint8_t)(proof->W >> 24); buf[off++] = (uint8_t)(proof->W >> 16);
     buf[off++] = (uint8_t)(proof->W >> 8);  buf[off++] = (uint8_t)(proof->W);
     buf[off++] = (uint8_t)(proof->rounds >> 24); buf[off++] = (uint8_t)(proof->rounds >> 16);
@@ -7662,21 +8507,21 @@ static uint8_t *hcred_proof_serialize(const HcredProof *proof, size_t *out_len)
         /* commitments */
         for (j = 0; j < 3; j++) { memcpy(buf + off, rd->coms[j], KEYBYTES); off += KEYBYTES; }
         /* output shares */
-        _hcred_outs_ser(buf + off, &rd->outs); off += HCRED_ROUND_OUTS_SER;
+        _hcred_outs_ser(buf + off, &rd->outs, n); off += outs_per;
         /* seeds */
         memcpy(buf + off, rd->seed_c,  KEYBYTES); off += KEYBYTES;
         memcpy(buf + off, rd->seed_c1, KEYBYTES); off += KEYBYTES;
         /* linear masks */
-        hcred_ser(buf + off, rd->a1, HCRED_N);  off += (size_t)3*HCRED_N;
-        hcred_ser(buf + off, rd->b1, HCRED_N);  off += (size_t)3*HCRED_N;
-        hcred_ser(buf + off, rd->g1, HCRED_NB); off += (size_t)3*HCRED_NB;
-        hcred_ser(buf + off, rd->h1, HCRED_ND); off += (size_t)3*HCRED_ND;
+        hcred_ser(buf + off, rd->a1, n);  off += (size_t)3*n;
+        hcred_ser(buf + off, rd->b1, n);  off += (size_t)3*n;
+        hcred_ser(buf + off, rd->g1, nb); off += (size_t)3*nb;
+        hcred_ser(buf + off, rd->h1, nd); off += (size_t)3*nd;
         /* optional aux shares */
         buf[off++] = rd->has_aux ? 1 : 0;
         if (rd->has_aux) {
-            hcred_ser(buf + off, rd->aux_s, HCRED_N);  off += (size_t)3*HCRED_N;
-            hcred_ser(buf + off, rd->aux_b, HCRED_NB); off += (size_t)3*HCRED_NB;
-            hcred_ser(buf + off, rd->aux_d, HCRED_ND); off += (size_t)3*HCRED_ND;
+            hcred_ser(buf + off, rd->aux_s, n);  off += (size_t)3*n;
+            hcred_ser(buf + off, rd->aux_b, nb); off += (size_t)3*nb;
+            hcred_ser(buf + off, rd->aux_d, nd); off += (size_t)3*nd;
         }
     }
     *out_len = off;
@@ -7700,8 +8545,10 @@ static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data,
                        ((uint32_t)data[6]<<8)|data[7]);
     int rounds = (int)(((uint32_t)data[8]<<24)|((uint32_t)data[9]<<16)|
                        ((uint32_t)data[10]<<8)|data[11]);
-    if (n != HCRED_N || rounds < 1) return -1;
+    if (!hcred_n_ok(n) || rounds < 1) return -1;   /* any listed width (TODO #383) */
+    const int nb = hcred_nb(n), nd = hcred_nd(n), rows = n / 2;
 
+    proof->n      = n;
     proof->W      = W;
     proof->rounds = rounds;
     proof->rd     = (HcredRound *)calloc((size_t)rounds, sizeof(HcredRound));
@@ -7731,30 +8578,30 @@ static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data,
         }
         /* output shares */
         for (j = 0; j < 3; j++) {
-            _HPSER_D3(rd->outs.ter[j],    HCRED_N);
-            _HPSER_D3(rd->outs.bit[j],    HCRED_NB);
-            _HPSER_D3(rd->outs.del_sh[j], HCRED_ND);
+            _HPSER_D3(rd->outs.ter[j],    n);
+            _HPSER_D3(rd->outs.bit[j],    nb);
+            _HPSER_D3(rd->outs.del_sh[j], nd);
             _HPSER_D3(&rd->outs.wsh[j],   1);
-            _HPSER_D3(rd->outs.s_out[j],  HCRED_ROWS);
-            _HPSER_D3(rd->outs.y_out[j],  HCRED_ROWS);
-            _HPSER_D3(rd->outs.rnd[j],    HCRED_N);
+            _HPSER_D3(rd->outs.s_out[j],  rows);
+            _HPSER_D3(rd->outs.y_out[j],  rows);
+            _HPSER_D3(rd->outs.rnd[j],    n);
         }
         /* seeds */
         _HPSER_NEED(2*KEYBYTES);
         memcpy(rd->seed_c,  data + off, KEYBYTES); off += KEYBYTES;
         memcpy(rd->seed_c1, data + off, KEYBYTES); off += KEYBYTES;
         /* linear masks */
-        _HPSER_D3(rd->a1, HCRED_N);
-        _HPSER_D3(rd->b1, HCRED_N);
-        _HPSER_D3(rd->g1, HCRED_NB);
-        _HPSER_D3(rd->h1, HCRED_ND);
+        _HPSER_D3(rd->a1, n);
+        _HPSER_D3(rd->b1, n);
+        _HPSER_D3(rd->g1, nb);
+        _HPSER_D3(rd->h1, nd);
         /* optional aux shares */
         _HPSER_NEED(1);
         rd->has_aux = data[off++];
         if (rd->has_aux) {
-            _HPSER_D3(rd->aux_s, HCRED_N);
-            _HPSER_D3(rd->aux_b, HCRED_NB);
-            _HPSER_D3(rd->aux_d, HCRED_ND);
+            _HPSER_D3(rd->aux_s, n);
+            _HPSER_D3(rd->aux_b, nb);
+            _HPSER_D3(rd->aux_d, nd);
         }
     }
 

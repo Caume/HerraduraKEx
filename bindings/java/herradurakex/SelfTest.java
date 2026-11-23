@@ -339,12 +339,12 @@ public final class SelfTest {
 
         // OPRF: blind/eval/unblind must equal the direct (non-oblivious) evaluation.
         {
-            BigInteger k = Oprf.keygen(rng);
+            BigInteger k = Oprf.keygen(Herradura.N, rng);
             byte[] x = "self-test oprf input".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-            Oprf.Blinded blinded = Oprf.blind(x, rng);
-            BigInteger beta = Oprf.eval(blinded.alpha, k);
-            BigInteger f1 = Oprf.unblind(beta, blinded.r);
-            BigInteger f2 = Oprf.direct(x, k);
+            Oprf.Blinded blinded = Oprf.blind(x, Herradura.N, rng);
+            BigInteger beta = Oprf.eval(blinded.alpha, k, Herradura.N);
+            BigInteger f1 = Oprf.unblind(beta, blinded.r, Herradura.N);
+            BigInteger f2 = Oprf.direct(x, k, Herradura.N);
             if (!f1.equals(f2)) {
                 System.out.println("FAIL [15] oprf round-trip: blind/eval/unblind != direct");
                 fails++;
@@ -466,12 +466,12 @@ public final class SelfTest {
         // aPAKE: register + login with the correct password succeeds and
         // derives a session key; login with the wrong password fails.
         {
-            BigInteger oprfKey = Oprf.keygen(rng);
+            BigInteger oprfKey = Oprf.keygen(Herradura.N, rng);
             byte[] password = "self-test pake password".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-            Hpake.Record record = Hpake.register("self-test-user", password, oprfKey, rng);
-            byte[] sk = Hpake.loginDemo(record, password, oprfKey, rng);
+            Hpake.Record record = Hpake.register("self-test-user", password, oprfKey, Herradura.N, rng);
+            byte[] sk = Hpake.loginDemo(record, password, oprfKey, Herradura.N, rng);
             byte[] wrongSk = Hpake.loginDemo(record,
-                "wrong password".getBytes(java.nio.charset.StandardCharsets.US_ASCII), oprfKey, rng);
+                "wrong password".getBytes(java.nio.charset.StandardCharsets.US_ASCII), oprfKey, Herradura.N, rng);
             if (sk == null || wrongSk != null) {
                 System.out.println("FAIL [20] hpake round-trip (correct_login=" + (sk != null)
                     + " wrong_login_rejected=" + (wrongSk == null) + ")");

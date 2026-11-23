@@ -163,6 +163,62 @@ $CLI_PY fpe --key "$TMP/sk2.pem" --context "$COLLIDE_CTX" \
 diff_ "fpe: a different session key gives different output" \
       "$TMP/fpe_py.bin" "$TMP/fpe_key2.bin"
 
+# ── 6. Exactly one 32-byte block, one mode (TODO #377) ───────────────────────
+# Until v16.0.0 every CLI cut longer input to its first 32 bytes (exit 0, and
+# nothing round-tripped) and zero-padded shorter input -- on the right in
+# Python, C and Java, on the LEFT in Go, so Go's ciphertext differed at every
+# length but 32.  The sections above only ever fed 32 bytes.  Now any other
+# length is refused by name, with no output written; and C and Go, which
+# encrypted when given both --encrypt and --decrypt, refuse that as Python and
+# Java did.  Sections 1-3 are this section's accept-control at v2; the --v3
+# rows below are its accept-control at v3.
+tweak_args() {   # the tweak flags for $1 (fpe | twk)
+    if [ "$1" = fpe ]; then echo "--context $COLLIDE_CTX"
+    else echo "--sector $COLLIDE_SECTOR --bidx $COLLIDE_BIDX"; fi
+}
+refused() {      # label, expected stderr substring, command...
+    local label=$1 want=$2; shift 2
+    rm -f "$TMP/r_out.bin"
+    local out rc
+    out=$("$@" --out "$TMP/r_out.bin" 2>&1) && rc=0 || rc=$?
+    if [ "$rc" -eq 0 ]; then bad "$label: accepted (rc=0)"
+    elif [ "$rc" -gt 2 ]; then bad "$label: crashed (rc=$rc): $out"
+    elif ! grep -qF -- "$want" <<<"$out"; then bad "$label: wrong message: $out"
+    elif [ -e "$TMP/r_out.bin" ]; then bad "$label: refused but wrote output"
+    else ok "$label"; fi
+}
+for n in 0 1 31 33 64; do head -c "$n" /dev/urandom > "$TMP/len$n.bin"; done
+for l in $langs; do
+    CLI=$(cli_for "$l")
+    for cmd in fpe twk; do
+        # accept-control at v3: a 32-byte block round-trips
+        # shellcheck disable=SC2046
+        $CLI $cmd --key "$TMP/sk.pem" $(tweak_args $cmd) --v3 --encrypt \
+                  --in "$TMP/pt.bin" --out "$TMP/v3_$cmd.bin"
+        # shellcheck disable=SC2046
+        $CLI $cmd --key "$TMP/sk.pem" $(tweak_args $cmd) --v3 --decrypt \
+                  --in "$TMP/v3_$cmd.bin" --out "$TMP/v3_rt_$cmd.bin"
+        same "[$l] $cmd --v3: a 32-byte block round-trips" "$TMP/pt.bin" "$TMP/v3_rt_$cmd.bin"
+        for mode in --encrypt --decrypt; do
+            for n in 0 1 31 33 64; do
+                for v in "" --v3; do
+                    # shellcheck disable=SC2046
+                    refused "[$l] $cmd $mode $v: $n-byte --in refused" \
+                        "$cmd: --in must be exactly 32 bytes (one block), got $n" \
+                        $CLI $cmd --key "$TMP/sk.pem" $(tweak_args $cmd) $mode $v \
+                                  --in "$TMP/len$n.bin"
+                done
+            done
+        done
+        if [ "$l" = py ]; then want="not allowed with argument"
+        else want="$cmd: exactly one of --encrypt or --decrypt required"; fi
+        # shellcheck disable=SC2046
+        refused "[$l] $cmd --encrypt --decrypt refused" "$want" \
+            $CLI $cmd --key "$TMP/sk.pem" $(tweak_args $cmd) --encrypt --decrypt \
+                      --in "$TMP/pt.bin"
+    done
+done
+
 echo ""
 echo "Results: $PASS PASS / $FAIL FAIL"
 [ "$FAIL" -eq 0 ]

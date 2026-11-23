@@ -2,6 +2,738 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [16.0.5] - 2026-11-22
+
+**Every file the four CLIs create is mode 0600 (TODO #395).** Output bytes do not change.
+
+### TODO #395 — output file modes
+
+- No CLI used to set a file mode, so under the usual 022 umask private keys, decrypted
+  PEMs, shared secrets, plaintext and DRBG state were readable by every local user. Each
+  CLI's write helpers now create files 0600: C `hkx_fopen_out` (`herradura_codec.h`),
+  Go `os.WriteFile(..., 0600)`, Python `_open_out`, Java `createFile` with `rw-------`.
+- The rule covers every output, public keys, signatures and ciphertexts included;
+  sharing one may now need a `chmod`. A file that already exists keeps its mode.
+- New `CliTest/test_file_modes.sh` (native-interop, 60 cells across the four CLIs),
+  with a `touch` control and an existing-file cell; shown to fail on a 0644 build.
+
+## [16.0.4] - 2026-11-22
+
+**The Go CLI's numeric-flag conversions check their bound (TODO #394).** No flag accepts
+or refuses anything it did not before.
+
+### TODO #394 — Go integer conversions
+
+- `numFlag` checks the parsed value against `math.MaxInt32` before converting to `int`,
+  and `twk` checks `--bidx` against `math.MaxUint32` before converting to `uint32`. Both
+  values were already bounded by `decRangeArg`; the checks make that visible to CodeQL
+  (`go/incorrect-integer-conversion`) and keep the conversion safe on a 32-bit `int`.
+- Filed TODO #395: no CLI creates private-key files with mode 0600.
+
+## [16.0.3] - 2026-11-22
+
+**The build scripts print the release version (TODO #393).** Nothing built changes.
+
+### TODO #393 — build-script versions
+
+- The six build scripts (`build_c.sh`, `build_go.sh`, `build_arm.sh`, `build_asm_i386.sh`,
+  `build_arduino.sh`, `build_c_sanitize.sh`) read `VERSION` from the README title line
+  instead of a hardcoded value; they had printed versions between v1.0.0 and v1.5.28. The
+  fallback, if the title stops matching, is `unknown`.
+- The header comments of those scripts and `run_arduino.sh` no longer name a version.
+
+## [16.0.2] - 2026-11-22
+
+**The Python test suite runs as two CI shards (TODO #392).** No test changes what it asserts.
+
+### TODO #392 — the Python test suite, sharded
+
+- **`Herradura_tests.py --shard K/N`.** The entry point's call sequence is one run list,
+  `_RUN`. A shard runs a partition of its 54 functions, computed by a longest-first greedy
+  over the measured `_SHARD_COST` seconds; a function missing from the table still runs,
+  and an entry naming no function exits 2. Locally the two shards print the same 54 test
+  numbers, each once, and the same 106 `[PASS]` lines as an unsharded run, in 343 s and
+  409 s against 832 s.
+- **`native-python` is a two-shard matrix of the suite; `native-python-cli` runs the rest**
+  of what the job ran (demo, examples, `spec/` checkers, QC-MDPC gates, Mcp, Python
+  CliTest), unchanged. The 16.3 min job becomes about 4.5 min shards beside a 7.5 min job.
+- Python `[43]`'s verdict fingerprint was re-pinned: the last marker's span reaches the
+  entry point, whose new `*** FAILED` line moved the hash. No test's decision changed.
+
+## [16.0.1] - 2026-11-22
+
+**CI finishes in about 20 minutes instead of about 95 (TODO #391).** No test asserts
+anything new or anything less; three jobs run their work in parallel instead of in series.
+
+### TODO #391 — CI's slow jobs, split into shards
+
+- **The findings gates run as six shards.** `analysis-findings` ran its 117 gates one after
+  another for 90-94 min, nearly all of CI's wall clock. `run_findings_gates.py --shard K/N`
+  now runs one shard, and the job is a six-way matrix, `analysis-findings-shard`, at about
+  16 min each. The shards are COMPUTED, not listed: a longest-first greedy over
+  `SecurityProofsCode/gate_durations.json` (seconds per gate, measured on a runner), ties
+  broken by name. Every shard still discovers the whole set and runs every coverage check,
+  so a gate cannot fall between shards; one the table does not know yet costs 120 s and
+  lands on the lightest shard, and a stale figure only unbalances them. A table entry that
+  names no gate fails, like every curated table here.
+- **`analysis-findings` collects the six.** It keeps the check name, runs
+  `--verify-shards 6` (each gate in exactly one shard, the busiest under a 1200 s budget,
+  both shown to fire: a stale entry and a 3-shard split at 1882 s fail), prints the whole-job
+  false-failure rate once, and fails if any shard failed. `--record-durations <log>...`
+  refreshes the table from runner output.
+- **`test_width_matrix.sh` runs as three shards.** It was about 15 of `native-interop`'s
+  28 min. `HKX_SHARD=K/N` keeps the spec rows K-1 mod N and runs the mixed-width sections
+  in shard 1 only; unset, the script runs whole. It runs in the new `native-interop-width`
+  job, a three-way matrix; `native-interop` keeps the other 31 scripts.
+- **`cross-lang-compat` no longer waits for `native-python`.** Its matrices build the CLIs
+  they use; it waited 8.5 min for a suite run it does not depend on. It still waits for the
+  C, Go and Java jobs, which take 2-4 min.
+
+## [16.0.0] - 2026-11-18
+
+**MAJOR: CLI input fixes from the v15.0.0 CLI audit (TODO #375-#390), in
+eighteen parts so far.** C and Go wrapped `twk --bidx` mod 2^32, so two block numbers could share one tweak;
+all four CLIs now refuse a `--bidx` or `--sector` outside its field (TODO #375, MIGRATING.md
+section 37). Python and Go wrote a private key in the clear when given
+`--passphrase ''`, and PAKE registered a password nobody chose; an empty or missing secret
+is now refused by name in all four (TODO #376, section 38). Every numeric flag now takes
+decimal digits in a stated range, parsed by one routine per CLI; `sign --rounds 0` no
+longer signs at 219 and `rand --bytes abc` no longer writes 0 bytes (TODO #380, section 39).
+A single-block `enc` now refuses input longer than its block instead of encrypting the
+first 32 bytes, and `--ad` / `--aead` are refused wherever they used to be dropped
+(TODO #378, section 40).
+All four CLIs now share one rule for the shape of a command line: no directory as input,
+no flag missing its value, no stray words, `--flag=value` everywhere, and the same
+required flags (TODO #381, section 41).
+`fpe` and `twk` now take exactly one 32-byte block: longer input was cut to 32 bytes with
+exit 0, and Go padded shorter input on the other side from the other three CLIs (TODO #377,
+section 42).
+`genpkey` key sizes now come from one parameter-set table generated into all four CLIs,
+chosen by `--bits` or the new `--level`; Go no longer panics or silently writes 256 bits,
+Python no longer tracebacks and Java no longer ignores `--bits` (TODO #379, section 43).
+The C CLI now runs the GF(2^n) family at 32, 64, 128 and 256 bits, byte-identical with
+Python and Go, and a key used with a peer key or ciphertext of another width is refused
+instead of answered (TODO #383 stage 1, section 44).
+Below 256 bits, `kex --kdf hfscx-256` now writes the whole 256-bit digest labelled n = 256
+in all CLIs (Python and C wrote an unreadable key, Go kept the low bits), and Python and
+Go refuse a narrower key at `threshold-commit` as C does (TODO #389, #388, section 45).
+C now also runs hpks-stern, hpke-stern and hpks-ring at 32, 64, 128 and 256 bits, and a
+Stern signature or ciphertext of another width than its key is refused in Python, Go and
+C (Go panicked; Python and Go decrypted with exit 0) (TODO #383 stage 2, section 46).
+C now also runs hcred at 32, 64, 128 and 256 bits and issues credentials under an
+hpks-stern key of any width, and a proof or credential of another width than its key is
+refused by name in Python, Go and C (Go panicked) (TODO #383 stage 3).
+C now also runs hkex-rnl, rnl-sigma and hybrid-rnl-stern on every ring the spec lists, which
+completes TODO #383: C runs every listed width. Go's rnl-sigma used a different challenge
+weight at n = 64 and 128, so its proofs there did not verify in the other CLIs (TODO #383
+stage 4, section 47).
+Java now also runs the GF(2^n) family, hpks-stern, hpke-stern, hpks-ring and hcred at 32,
+64, 128 and 256 bits, byte-identical with the other three, which completes the
+narrow-width work: every CLI runs every width the spec lists (TODO #384; no artifact or
+flag changes, so no MIGRATING.md section).
+The OPRF now runs at 32, 64, 128 and 256 bits in all four CLIs: `genpkey --algo oprf
+--bits N`, and a new `oprf-blind --bits N` (default 256); a client state or evaluation of
+another width than its key is refused by name (TODO #385; 256-bit artifacts are
+unchanged, so no MIGRATING.md section).
+Above 255 rounds, C's and Go's Stern-F signatures (hpks-stern, hpks-ring, HCRED
+credentials) now verify in Python and Java and theirs in C and Go: C and Go fed each
+round's challenge step the round index's low byte instead of the whole index
+(TODO #390, section 48).
+Stern-F's documented security figures are re-derived: N = 256 is worth about 2^24 by BJMM, not
+2^56-2^60, and 128 bits needs N >= 2144, not N >= 17000; N = 2304 is the recommended 128-bit set
+(TODO #382 stage 1; documentation and warning text only).
+Stern-F's 128-bit set ships: `genpkey --algo hpks-stern --level 128` (or `hpke-stern`) makes
+an N = 2304 key in all four CLIs, and the same keys sign hpks-ring rings and HCRED
+credentials. Keys, signatures and ciphertexts at N <= 256 are unchanged (TODO #382 stage 2;
+a new parameter set, so no MIGRATING.md section).
+`pkey --text` now prints the same text in all four CLIs for every key type, ending in the
+key's parameter set (`level`, `security`), and a public key is refused by label instead of
+crashing Python (TODO #386, #387, section 49).
+
+### TODO #386 / #387 — `pkey --text`: one layout, and the key's parameter set
+
+- **One layout per algorithm.** The fields most CLIs already printed: hkex-rnl `n`,
+  `s_packed` (4 bytes a coefficient), `C_packed` (2), `n_A` where the key carries it;
+  Stern-F `n`, `e_int`, `seed`; hcred `n`, `seed_H`, `syndr` (big-endian), `W (weight)`;
+  ZKP-NL `n`, `A (priv)`, `B (pub)`, `y (pub)` in hex; KEM `r`, `d`; WOTS `leaf_idx`;
+  XMSS `h`, `root`; the GF family and OPRF unchanged.  Fixed on the way: Python's hkex-rnl
+  dump formatted the packed values at n and n/2 hex digits instead of 8n and 4n, so it
+  lost their leading zeros (TODO #387); C printed hcred's syndrome low byte first and no W,
+  hkex-rnl's s alone, no WOTS leaf index; Go and Java printed no hcred seed or syndrome;
+  Java printed Stern-F's `syndrome` for `e_int` and five hkex-rnl coefficients.
+- **The parameter set (TODO #386).** Every dump ends in the key's key_parameter_sets row,
+  looked up by (algo, width) in the table already generated into each CLI: `level : <level>`
+  where the row has one, then `security : <estimate>`.  WOTS and XMSS, which have no row,
+  print neither.
+- **Public keys.** `pkey --text` and `--pubout` on a public key are refused in every CLI with
+  `pkey: '<label>' is a public key (pkey reads a private key)`; Python unpacked it as a
+  private key and died in a traceback.
+- **Tests.** `test_pkey_text_matrix.sh` gains three sections: the whole dump compared
+  across the four CLIs for every producer and key type (section 1 compared the first line
+  only, which is how every divergence above passed); the closing lines against
+  spec/herradura-protocol-spec.json's rows, read independently of the CLIs; and the
+  public-key refusal after an accept-control.  516 assertions; against the previous build
+  116 of them fail.  `test_width_matrix.sh` now scores the Stern, hcred and hkex-rnl
+  `--text` cells it reported as n/a, and `test_stern_128.sh` compares the whole N = 2304
+  dump in all four CLIs.  MIGRATING.md section 49 lists the renamed fields.
+
+### TODO #382 stage 2 — Stern-F at N = 2304, the 128-bit set
+
+- **What ships.** A key parameter row `hpks-stern` / `hpke-stern` at 2304, level 128, in all
+  four CLIs (`--level 128` or `--bits 2304`). The default stays N = 256. `hpks-ring` takes a
+  ring of 2304 keys; `cred-issue` / `cred-verify` take a 2304 issuer key. HCRED's own key has
+  no 128-bit set: it is a Ring-LWR and syndrome-decoding pair proved in ZKBoo, and
+  `genpkey --algo hcred --level 128` is refused with a note pointing at the issuer's key.
+- **The long form (SPEC.md §11.1).** A separate code path in each port (`stern_l_*` in
+  herradura.h, `SternL*` in Go, `stern_l_*` / `_sternl_*` in Python, `SternL.java`), since
+  N-bit vectors do not fit the 256-bit BitArray: C and Go carry them as N/8-byte strings,
+  Python and Java as integers. Above N = 256 every hash keeps all 256 bits, so commitments
+  are 32 bytes (the decision taken for stage 2); H's rows come from HFSCX-256 in counter
+  mode under sk = H_6(seed); the permutation generator is keyed by the 256-bit
+  k = H_5(pi_seed); the message and Fiat-Shamir state are 256 bits. The protocol,
+  challenge rule, weight check and draw order are the short form's. C's permutation is
+  applied obliviously at word granularity, as stern_apply_perm is at bit granularity.
+- **Sizes and cost.** Keys are two 288-byte fields. A 219-round signature is 147,249 bytes in
+  DER (about 199 KB of PEM), against about 35 KB at N = 256. On the aarch64 board this was
+  built on, a 219-round sign / verify takes 0.38 / 0.26 s in C, 0.60 / 0.42 s in Go,
+  0.90 / 0.66 s in Java and 8.2 / 6.5 s in Python, which expands H (10,368 HFSCX-256 calls)
+  in pure Python.
+- **Pins.** `KAT/operation_replay.json` gains `stern_l_keygen`, `hpks_stern_l_sign` and
+  `hpks_stern_l_ring_sign` at N = 2304, reproduced byte for byte, with bytes consumed, by
+  the C, Go and Java consumers. The language-parity manifest, parameter, raw-entropy and
+  replay censuses carry the new primitives. No existing vector moved.
+- **Tests.** New `CliTest/test_stern_128.sh` (cross-lang-compat): keys, hpks-stern (4x4 at 8
+  rounds, and a 219-round signature at the default floor), hpks-ring, hpke-stern and a
+  long-form HCRED issuer as 4x4 matrices, 128 assertions. Rejection controls run in every
+  verifier: changed message, corrupted response, wrong key, an N = 256 signature against an
+  N = 2304 key, and the default round floor. Two checks are about one implementation each:
+  the matrix rule restated from SPEC.md must reproduce C's and Go's public syndromes (its
+  low-byte variant must not), and a signature's DER fields must have the long form's sizes.
+  `test_key_params.sh` gains the invariants `--level 128` = 2304 for hpks-stern and
+  hpke-stern, and a refusal for hcred.
+- **Wire rules.** The 'stern' width check in all four CLIs accepts 2304 besides the short
+  widths. `PEM_DER_FIELD_CAPS` sizes commitments as `min(n/8, 32)` bytes (signature, HCRED
+  credential, ring signature) and the HPKE-Stern ciphertext's K and E the same way. Every
+  cap is unchanged at N <= 256.
+- **Documents.** SPEC.md §11.1 (new), an implementation note in SecurityProofs-5 §11.8.4
+  costing the four changed places (256-bit commitments bind at about 2^128, under the
+  instance's 2^137 but at the target), SECURITY.md's Stern-F, HPKS-Ring and HCRED rows,
+  TUTORIAL, llms.txt and CLAUDE.md. The CLIs' Stern-F warning now names N = 2304
+  (`--level 128`) as the 128-bit set.
+
+### TODO #382 stage 1 — Stern-F's instance, costed
+
+- **The estimate.** New findings gate `SecurityProofsCode/stern_f_parameter_selection.py`:
+  Prange, Dumer (the model `qcmdpc_parameter_selection.py` uses), depth-2 BJMM (MMT at
+  e1 = 0) and Grover-over-Prange over Stern-F's shape (N, N/2, N/16), memory unconstrained.
+  It first runs the message attack at BIKE's three published levels: BJMM lands within 2 bits
+  of each (+1.1, -0.1, -0.3) and Dumer 8 bits high, so BJMM is used uncorrected. Stern-F's
+  rows are seed-expanded independently, so no quasi-cyclic speedup applies, and the planted
+  error is the only solution (2^-45 spurious at N = 256, 2^-380 at 2304).
+- **Findings.** N = 256 costs 2^24.3 by BJMM, 2^27.4 by Dumer and 2^38.3 by Prange; the
+  documented "BJMM/SDE ~2^56-2^60" is not approached by any estimator. BJMM first reaches
+  2^128 at N = 2144; N = 2048 is short at 2^122.3. The documented N >= 17000 (BIKE-128's
+  length, whose error weight grows like sqrt(N) where Stern-F's is N/16) is worth 2^1035.
+  Recommended 128-bit set: N = 2304 (9 x 256, k = 1152, t = 144), 2^137.4 by BJMM and 2^106.5
+  quantum, about 9 bits over the crossing. The CryptographicEstimators package was not
+  available here, so the BIKE calibration is the cross-check.
+- **Documents.** SecurityProofs-4 §11.7's Stern-F rows and note, a correction in
+  SecurityProofs-5 §11.8.4 (with the table), SECURITY.md's Stern-F and HPKS-Ring rows,
+  SecurityProofs-7 and -10, TUTORIAL, BENCHMARKS, the spec notes, and the C / Go / Python
+  CLIs' Stern-F stderr warning (now "~24-38 bits ... requires N>=2144"). SecurityProofs-4
+  falls to 683 math expressions and SecurityProofs-5 rises to 693.
+- **Not yet.** Stern-F at N = 2304 in the four ports (TODO #382 work items 2 and 3) is the
+  next stage; #382 stays open.
+
+### TODO #390 — Stern-F's Fiat-Shamir round index above 255 rounds
+
+- **Decision.** The whole round index, as Python and Java (and the C test harness's
+  32- / 64- / 128-bit Stern copies) already used: `nl_fscx_v1(ch_st, BitArray(n, i))`.
+  The low byte would have repeated the step's input every 256 rounds, and it would have
+  changed Python's and Java's signatures instead. SPEC.md §11 now states the rule.
+- **C and Go.** `stern_fs_challenges` / `stern_ring_challenges` (herradura.h) write the
+  index's low four bytes big-endian (rounds are capped at 4096); Go's
+  `sternFsChallenges` / `sternRingChallenges` pass `i` whole. The C test harness's
+  256-bit copy writes two bytes. At 255 rounds or fewer every signature is unchanged,
+  so the default 219 and every KAT are as before.
+- **Tests.** `test_round_floor.sh` signs hpks-stern, hpks-ring and an HCRED credential
+  at 300 rounds with each CLI and verifies each in all four (48 cells), and recomputes
+  each signer's hpks-stern challenges from the signature by the stated rule, which must
+  match and whose low-byte variant must not: 276 PASS, 0 FAIL (was 224). Against the
+  pre-#390 C and Go CLIs it fails 26: the 24 cross cells between {Python, Java} and
+  {C, Go}, and the rule check for C and Go, which reports the low-byte rule.
+
+### TODO #385 — OPRF below 256 bits
+
+- **Decision.** OPRF gets the GF family's 32 / 64 / 128 demo rows, as TODO #379's decision
+  table already listed it, rather than staying at 256. It is the same GF(2^n)*
+  exponentiation as HKEX-GF, so the rows carry the same Pohlig-Hellman estimates.
+- **The four suites.** `oprf_keygen` / `blind` / `eval` / `unblind` / `direct` run at width
+  n in Python (`n` argument, default `KEYBITS`), C (the operands' width) and Java (an `n`
+  argument); Go's already took n. Below 256 bits the hash-to-field `H(x)` is the HIGH n
+  bits of HFSCX-256(x), BITARRAY.md 4.4's truncation and the rule the Stern-F hash and
+  HCRED's issuer message follow. Go's took the low bits, which no CLI reached. At 256 bits
+  both rules give the same value, so the KAT and sampler-replay vectors are unchanged.
+  C's `ba_modinv_ord` was hard-wired to 2^256 - 1 and now inverts modulo 2^n - 1 at its
+  operand's width. C's `oprf_keygen` now also refuses k = 2^n - 1, as the other three do:
+  that k is 0 in the exponent, so F = 1 for every input. A random draw hits it with
+  probability 2^-256 at 256 bits but 2^-32 at 32. The aPAKE (`hpake_register` /
+  `login_demo`) runs the OPRF at the key's width, with the output entering the witness
+  derivation as n/8 bytes.
+- **The four CLIs.** `genpkey --algo oprf --bits 32|64|128|256`. `oprf-blind --bits N`
+  (default 256, refusing any other value with `--bits must be 32, 64, 128 or 256, got
+  X`) writes a CLIENT STATE of n/8-byte fields carrying n. `oprf-eval` runs at the key's
+  n and refuses a state of another width (`client state n is 128, key n is 64`).
+  `oprf-unblind` refuses an evaluation of another width (`evaluation n is 128, client
+  state n is 64`) and prints F as n/4 hex digits (Go printed 64 at every width).
+  `pkey --text` prints the key's own n (Go, C and Java printed 256 whatever the key
+  said). `pake-register` and `pake-demo` run at the key's n. The three OPRF labels'
+  width field is a GF width in every reader (it was 256 only).
+- **Tests.** `test_width_matrix.sh` gains an OPRF section, its rows read from the spec.
+  For a key from each CLI, `pkey --text` reads the same in every CLI, and every
+  (blinder, evaluator) pair unblinds to H(x)^k. That value is recomputed in the script
+  from HFSCX-256's high n bits and the suite's `gf_pow`, a check on the rule itself
+  that the four CLIs agreeing with each other cannot satisfy. Another input gives
+  another F, `pake-demo` runs at the width, and the mixed-width refusals follow
+  same-width accept-controls. The section has 388 checks, all passing. With the
+  reference switched to the LOW n bits it fails 204 (every 32 / 64 / 128 check, none at
+  256); on the pre-#385 CLIs with the new rows it fails 100 of 124. The whole matrix is
+  3956 PASS, 0 FAIL, 156 n/a (it was 3568 / 0 / 156). `mixed()` now passes its expected text to grep after `--`, so a message
+  starting with `--bits` is matched rather than read as an option.
+- **Census.** C's `_oprf_is_one` / `_oprf_is_ord` get a CENSUS_EXEMPT reason: they are
+  comparisons the other ports write inline.
+
+### TODO #384 — Java runs every listed width
+
+- **The Java protocol layer.** Every function whose result depends on n now takes it,
+  from its operands or an `n` argument, as Python's does. `Herradura`: `gfPow` iterates
+  the operand's width, and HPKS/HPKE use g = 3, i = n/4, r = 3n/4 and the order 2^n - 1
+  at the key's width. `HerraduraNl`: NL-FSCX v2's delta rotates by n/4 of B's own width
+  (it rotated by 64 at every width), v3's chi rows and its 5n/8 round count follow the
+  width, and M^-1's rotation table is built per width; HPKS-NL and HPKE-NL / -NL3 follow.
+  `Stern` and `SternRing`: rows n/2, weight t = max(2, n/16), n-bit permutations, and
+  every chain hash and parity-matrix row is the digest's high n bits (Python's
+  `_stern_hash(n, ...)` and `_stern_matrix_row`). `Hcred`: the prover, verifier, keygen
+  and syndrome take n, with rows, row bits and the weight bound from Python's
+  `_hcred_params(n)`; the issuer message is the statement digest's high issuer-n bits.
+  The n-less signatures remain as the n = 256 wrappers, so SelfTest, KatVerify, Demo,
+  `KAT/` and the sampler and operation replays pass unchanged. HCRED-KKW stays at 256
+  (it has no CLI surface), as in C.
+- **The Java codec.** GF-family keys, ciphertexts and signatures, Stern-F keys,
+  ciphertexts and signatures, and HCRED keys, proofs and credentials are written at the
+  key's width and read at any GF width (32, 64, 128, 256), refusing any other as C does:
+  `PEM '...': n is 48 (this CLI runs n = 32, 64, 128 or 256)`. They were written at 32
+  bytes and refused anything but 256.
+- **The Java CLI.** `genpkey --bits 32|64|128` for the eleven rows, and `pkey`, `kex`,
+  `enc` / `dec`, `sign` / `verify` (hpks, hpks-nl, hpks-stern, hpks-ring) and
+  `cred-issue` / `cred-prove` / `cred-verify` run at the key's width; `kex --kdf
+  hfscx-256` writes the whole digest labelled n = 256, as TODO #389 made the others do.
+  A credential is issued at the issuer key's width, as in Python. A key used with an
+  artifact of another width is refused with the other CLIs' text (`their public key n is
+  128, our private key n is 64`, `ciphertext n is ...`, `signature n is ...`, `all ring
+  members must share the same n`, `proof n is ...`, `credential n is ...`); Java's kex
+  said `bit-size mismatch` and its ring reader `must share n=256`. `threshold-commit` and
+  `threshold-respond` now read a narrower hpks key and refuse it with the other CLIs' text
+  (`threshold: the key is 64-bit; threshold signing runs at 256 bits only`, TODO #388)
+  instead of the PEM width message, and `test_threshold_interop.sh` drops its Java case. "java" joins every
+  narrow row's ports (OPRF stays at 256 in every CLI, TODO #385).
+- **Tests.** `test_width_matrix.sh` reads the ports from the spec, so the Java cells run
+  as soon as the rows list Java: every pair with Java on one side, the Java mixed-width
+  refusals and their accept-controls. Restricted to Python and Java, the GF family,
+  Stern-F and hcred pass 714 checks with 0 FAIL; on the pre-#384 Java (with the new rows),
+  hkex-gf, hpks, hpke-nl3, Stern-F and hcred fail 135 of 503. The whole matrix is 3568 PASS, 0 FAIL, 156 n/a (it was 2735 / 0 / 102). Java's Stern and hcred
+  `pkey --text` cells stay n/a (TODO #386).
+- **Census.** The Java manifest markers for the overloaded Stern-F and HCRED functions
+  name the n-taking overload; the width rules (`rowsFor`, `tFor`, `gen`, `order`, `r3`,
+  ...) and the `sternHash` wrapper get CENSUS_EXEMPT reasons, as C's do.
+  `SecurityProofsCode/v1_remaining_sites.py` tables Java's `sternMatrixRow` step as
+  `n / 4` (it was `N / 4`), as stage 2 of #383 did for C's.
+
+### TODO #383 (stage 4) — C runs hkex-rnl at every ring; #383 is done
+
+- **`herradura.h`.** New dimension-taking RNL helpers: `rnl_m_poly_dim`,
+  `rnl_rand_poly_dim`, `rnl_poly_add_dim`, `rnl_hint_dim` (n/2 coefficients into n/8
+  bytes), `rnl_reconcile_bits_dim`, `rnl_agree_dim`, `rnl_key_bits` (KEYBITS on a ring of
+  at least 256, n below it, Python's `_rnl_key_bits`) and `rnl_contributory_kdf_len`
+  (K_raw at `rnl_key_bits(n)` / 8 bytes). The fixed-width functions are now wrappers at
+  `RNL_N`, so the deployed ring computes exactly what it did: KAT/hkex_rnl.json, the
+  sampler and operation replays and the suite tests pass unchanged. The schoolbook branch
+  of `rnl_poly_mul_dim` now covers every power of two below `RNL_N` (it stopped at 256).
+- **The C CLI.** `genpkey --algo hkex-rnl --bits 32|64|128|256`, `pkey`, both `kex` roles,
+  `--kdf hfscx-256`, hybrid-rnl-stern and rnl-sigma `sign` / `verify` run on the key's
+  own ring. The reader takes any power of two from 8 to 1024, as Python, Go and Java do,
+  and refuses a peer key or response over another ring with Python's text: `Ring size
+  mismatch: ours n=64, theirs n=128` (`response n=128` at the completing step). C's
+  hybrid read neither ring before: a mismatched peer key failed further in, on the
+  m_blind entropy check. `verify --algo rnl-sigma` refuses a proof over another ring with
+  `ring size mismatch (pubkey n=64, proof n=128)`, as Python and Go word it; it used to
+  say `rnl-sigma requires n=256 key` at every ring but 1024. "c" joins hkex-rnl's narrow
+  rows' ports.
+- **Go's rnl-sigma.** `ZkpRnlParams` returned a challenge weight t = 16 at every n > 32.
+  C's `sigma_params`, Python's `_SIGMA_T` and Java use 8 at n = 64 and 12 at n = 128, so
+  at those two rings Go's proofs failed in the other three CLIs and theirs failed in Go.
+  No test ran rnl-sigma below the default ring before; Go now uses the same ladder.
+  MIGRATING.md section 47: a proof Go wrote at 64 or 128 before this release must be
+  re-signed.
+- **Tests.** `test_width_matrix.sh` covers hkex-rnl on every listed ring and CLI pair,
+  1024 included. The reader responds to the writer's key and the writer completes, with
+  and without `--kdf hfscx-256` and over hybrid-rnl-stern (under lib_dfr.sh's retry
+  policy), and both sides hold one session key, declared n = 256. The writer's rnl-sigma
+  proof verifies under the reader, and not on a changed message. Each of the five
+  mixed-ring refusals (kex and hybrid in both roles, rnl-sigma verify) runs after a
+  same-ring accept-control in every CLI. The hkex-rnl section is 780 PASS, 0 FAIL; on
+  the stage-3 build it fails 22 checks (C refuses every narrow ring, Go's rnl-sigma
+  fails at 64 and 128). The whole matrix is 2735 PASS, 0 FAIL, 102 n/a. hkex-rnl's `pkey --text` has four
+  layouts at every ring, 1024 included, so its 60 cross-CLI cells print as n/a; that
+  joins TODO #387.
+- **Census.** `spec/check_language_parity.py` gains `rnl-keygen` and `rnl-agree`
+  manifest rows (207 entries, spec/COVERAGE_COUNTS.md): the C CLI now calls their `_dim`
+  twins, so the stems are no longer CLI-reachable. The raw-entropy census and the `rnl_rand_poly` sampler pin name C's
+  `rnl_rand_poly_dim`, the function that now reads the stream.
+
+### TODO #383 (stage 3) — C runs hcred at every width
+
+- **`herradura.h`.** HCRED's ZKBoo prover and verifier, the statement hash, phi, the
+  witness, the per-party outputs, the commitments and the proof codec take n from their
+  operands -- `seed_H`'s width, and a new `n` field in `HcredProof` -- with Python's
+  `_hcred_params` rules: n/2 rows, a row sum of bit-length(n) bits, and the weight bound
+  w_max = n/4 + floor(sqrt(3n)) (91 at 256, 17 at 32), computed in integers.
+  `hcred_user_keygen` takes n. `HCRED_N` = 256 stays the default and the bound every
+  array is sized for; a static assert holds the 256-bit constants to the new functions.
+  `rnl_poly_mul_dim` gains a schoolbook branch for the power-of-two rings below 256, which
+  have no NTT table (the negacyclic product, loop bounds public). The issuance message is
+  the statement digest's high issuer-n bits (BITARRAY.md §4.4), so the issuer key may be
+  hpks-stern at any width, as in Python and Go. HCRED-KKW stays at 256 in C; no CLI uses
+  it. At 256 bits nothing changes: KAT/hcred_kkw.json, the operation replays and the suite
+  tests pass as before.
+- **The C CLI.** `genpkey --algo hcred --bits 32|64|128` (m = 1 + x + x^(n-1) plus a
+  uniform polynomial, Python's construction), `pkey`, `cred-prove`, `cred-verify` and the
+  key and proof readers run at the key's own n; `cred-issue` and `cred-verify` take an
+  issuer key of any Stern width, and the stage-2 refusal of a narrower issuer is gone.
+  "c" joins hcred's narrow rows' ports.
+- **Mixed widths.** A 128-bit proof against a 64-bit key, or a 128-bit credential under
+  a 64-bit issuer key: Go indexed past the narrower value and panicked on both; Python
+  refused the first and failed the second as a forgery. All three now refuse with
+  `cred-verify: proof n is 128, public key n is 64` / `cred-verify: credential n is 128,
+  issuer key n is 64`. Every input refused here was refused before, by a panic or a
+  failed verification, so there is no MIGRATING.md section.
+- **Tests.** `test_width_matrix.sh` covers hcred at every width and CLI pair: the
+  writer's proof verifies under the reader and not under another message; a credential
+  the writer issues over the reader's key verifies under the reader and not under another
+  issuer; and the two mixed-width refusals, each after a same-width accept-control.
+  1955 PASS, 0 FAIL; on the stage-2 build (this test and spec) it fails 11 checks.
+  hcred's `pkey --text` has three layouts at every width, 256 included (Python, C, and
+  Go with Java); its 30 cross-CLI cells print as n/a and the dump joins TODO #386.
+- **Docs.** TUTORIAL.md's C example used an `hcred_user_keygen` without its `e`
+  argument, a `rnl_sample_m` that does not exist, and called 1 success; it now compiles
+  and runs, at n = 64. A stale `v1_remaining_sites.py` table row (stage 2 changed
+  `stern_matrix_row`'s step count to `n / 4`) is updated.
+
+### TODO #383 (stage 2) — C runs Stern-F at every width
+
+- **`herradura.h`.** Every Stern-F function takes N from its operand, as Python's take
+  `n`: `stern_hash` hashes N-bit items and keeps the digest's high N bits; the matrix row
+  revolves NL-FSCX v1 for N/4 steps and keeps N bits; H has N/2 rows; the permutation
+  PRNG, `stern_apply_perm`, the challenge chain and the error sampler (weight
+  `stern_t(N)` = max(2, N/16)) all run at N; sign, verify, the ring and the KEM follow,
+  and verify refuses a value of another width rather than aborting. `stern_rand_error`
+  and `stern_f_keygen` draw at the width their operand already has, so every 256-bit
+  caller (the suite tests, KAT verifiers, dudect) is unchanged; the KATs and the
+  fixed-stream replays pass as before.
+- **The C CLI.** Stern keys load at any of the four widths; `genpkey`, `pkey`, `sign` /
+  `verify` (hpks-stern, hpks-ring), `enc` / `dec` (hpke-stern) and the signature, ring and
+  ciphertext codecs size every field from the artifact's own n. "c" joins those rows'
+  ports. The hcred issuer stays 256-bit in C until stage 3, refused by name.
+- **Mixed widths.** A 64-bit Stern key with a 128-bit signature: Go panicked in
+  `SternHash`, Python failed inside `_stern_hash`; with a 128-bit hpke-stern ciphertext,
+  Python and Go reduced it into the key's width and wrote garbage with exit 0. All three
+  now refuse with `verify: signature n is 128, public key n is 64` /
+  `dec: ciphertext n is 128, private key n is 64`. Ring members of two widths, and a ring
+  signature of another width, were already refused; C now uses Python's text for both.
+- **Tests.** `test_width_matrix.sh` covers hpks-stern (sign/verify with and without
+  `--digest`, at 16 rounds, with a changed-message control), hpks-ring (a ring of every
+  listed CLI's key) and hpke-stern at every width and CLI pair, and the mixed-width
+  cases with same-width accept-controls: 1709 PASS, also through the ASan+UBSan C build.
+  On the stage-1 build (this test and spec) it fails 99 checks. Java's Stern `pkey
+  --text` dump differs in its fields at 256 bits (TODO #386); those 12 cells print as
+  n/a.
+- **Found, filed.** Stern-F's challenge chain feeds the round number whole in Python and
+  Java and as its low byte in C and Go, so a signature of more than 255 rounds verifies
+  in only two CLIs (TODO #390, needs a decision).
+
+### TODO #388 and #389 — threshold and `kex --kdf` at narrow widths
+
+- **#389, the defect.** The HFSCX-256 digest is 256 bits whatever n the key exchange ran
+  at. Below 256 bits, Python (and C since #383 stage 1) wrote all 256 digest bits into a
+  SESSION KEY declaring n = 64 (say), which every CLI's reader refused ("field 0 is 32
+  bytes (expected at most 8)"); Go kept the digest's LOW n bits, against BITARRAY.md 4.4's
+  high-bit truncation, so the two wrote different keys from one exchange.
+- **#389, the rule (decided).** `sk = HFSCX-256(g^ab as exactly n/8 big-endian bytes)`,
+  the whole digest, written as `SESSION KEY { sk, 256 }`: the key declares its own width,
+  as HKEX-RNL's session key already does (TODO #228), and keys HSKE in every CLI. Nothing
+  truncates it. Without `--kdf` the key is the raw n-bit g^ab, labelled n, as before. At
+  256 bits nothing changes. SPEC.md section 4.2 states the rule; a 256-bit digest of a
+  64-bit secret still holds at most 64 bits of entropy.
+- **#388, the defect.** HPKS-T is defined at 256 bits only. Python's and Go's
+  `threshold-commit` accepted a 64-bit hpks key and wrote a 64-bit commitment their own
+  `threshold-aggregate` then refused (Go by width, Python with an `OverflowError`
+  traceback). They now refuse at commit with C's text, `threshold: the key is 64-bit;
+  threshold signing runs at 256 bits only`; Java refuses at load (it runs 256 only).
+- **Tests.** `test_width_matrix.sh` checks `--kdf` at every width, not only 256: both
+  directions agree, the key equals HFSCX-256 of the raw n/8-byte secret with n = 256
+  (checked against Python's suite, since all CLIs agreeing on a wrong rule would pass
+  the comparison), and the reader uses it as an HSKE key; 1215 PASS. `test_threshold_interop.sh`
+  refuses 64- and 128-bit hpks / hpks-nl keys at `threshold-commit` in all four CLIs, after
+  a 256-bit accept-control. Against this tree with the two fixes reverted, the width
+  matrix fails 66 checks (every narrow `--kdf` cell) and the threshold test fails at its
+  first narrow key.
+
+### TODO #383 (stage 1) — C runs the GF(2^n) family at every width
+
+- **The gap.** `key_parameter_sets` lists hkex-gf, hpks, hpks-nl, hpke, hpke-nl and
+  hpke-nl3 at 32, 64, 128 and 256 bits; Python and Go ran them all, C only 256
+  (`#if KEYBITS != 256 #error` in `herradura.h`, and every CLI path sized from `KEYBYTES`).
+- **`herradura.h`.** The GF(2^n) operations take their width from the operand:
+  `gf_mul_ba` / `gf_pow_ba` look the polynomial up with `ba_gf_poly` (BITARRAY.md 4.6;
+  `BA_E_NO_POLY` for an unlisted width) and stay constant-time; `gf_gen_w`,
+  `gf_pub_is_valid`, `ba_mul_mod_ord` / `ba_sub_mod_ord` (mod 2^n - 1), `hkex_gf_pubkey`,
+  `hpks_sign` / `hpks_nl_sign` / `hpks_verify` and `hpke_encrypt` / `hpke_decrypt` follow.
+  NL-FSCX v2's delta built its 1 at 256 bits and its round constant indexed `KEYBYTES`;
+  M^-1 is the 256-bit table at 256 and the closed form M^(n/2-1) elsewhere (checked
+  M(v) = x, as Python's `_m_inv`); v3's chi layer runs any 5/7 row partition (Python's
+  `v3_rows`) and keeps the bit-parallel masks at 256. `ba_fscx_revolve`'s closed form
+  zeroed its accumulator at 256 bits, so any narrower call with at least 8 steps failed
+  `E_MIXED_WIDTH`; it is born at the operands' width now. 256-bit output is unchanged:
+  the KATs, the C suite and every CliTest script pass as before.
+- **The C CLI.** The width table accepts any GF width for the family's labels; `genpkey`,
+  `pkey`, `kex`, `enc` / `dec` and `sign` / `verify` read and write every value at the
+  key's width (`der_ba`, `make_msg_ba_n`). "c" joins those rows' ports, so
+  `test_key_params.sh` now expects C to accept them.
+- **Mixed widths.** Python and Go reduced a 128-bit peer key or ciphertext into a 64-bit
+  key's width in `kex` and `dec` and exited 0; all three now refuse with
+  `kex: their public key n is 128, our private key n is 64` /
+  `dec: ciphertext n is 128, private key n is 64`, the shape `verify` already used.
+- **Threshold.** HPKS-T is defined at 256 bits only; C refuses a narrower hpks key at
+  `threshold-commit` by name rather than widening it. Python and Go accepted it and failed
+  at `threshold-aggregate` (TODO #388, resolved above).
+- **Tests.** New `CliTest/test_width_matrix.sh`: for every GF-family row and every pair of
+  CLIs the row lists, `pkey --pubout` / `--text` identical, `kex` both ways, signatures
+  verified both ways with and without `--digest` (and a changed message refused),
+  encryption both ways; a CLI the row does not list (Java) refuses by width; and the
+  mixed-width refusals with same-width accept-controls. 1102 PASS; against the pre-#383
+  build (with this spec) it fails 28 checks: C at every narrow row, and the mixed-width
+  cases. `test_peer_value_matrix.sh` reads which CLIs run 128 bits from the spec.
+- **Found, filed.** `kex --kdf hfscx-256` below 256 bits: Python (and now C) write a
+  256-bit digest under an n-bit SESSION KEY that no reader accepts, while Go keeps the
+  digest's low bits (TODO #389, resolved above). Python's `pkey --text` on a public key
+  dies on a tuple unpack (noted under TODO #386).
+
+### TODO #379 — `genpkey` key sizes come from one table; new `--level`
+
+- **The defect.** `genpkey --bits` outside hpks-zkp-nl: Go honoured it unchecked and
+  panicked (index out of range) at 0, 7, 100 and 512 on hkex-rnl, hcred and Stern, hung on
+  `oprf --bits 7`, wrote an n = 256 OPRF key for `--bits 64`, and silently wrote 256-bit
+  classical keys for any unlisted width. Python raised `IndexError`, `OverflowError` and
+  `BaError: E_WIDTH` tracebacks. Java ignored the flag on every algorithm but hpks-zkp-nl.
+  C had no `--bits`.
+- **Measured first.** Python and Go already run 32, 64, 128 and 256 on every GF-family,
+  Stern and hcred algorithm and every hkex-rnl ring from 32, and agree on every operation
+  in both directions; C and Java ran only the defaults (Java also every hkex-rnl ring).
+  512 and 1024 were left out: every port caps BitArray at 256 and the GF family is
+  demo-only at any width (binary-field index calculus; Pohlig–Hellman alone is 2^36 at 256,
+  2^103 at 512, 2^164 at 1024), while 128-bit Stern-F needs a longer code (TODO #382).
+- **The fix.** One curated table, `key_parameter_sets` in `spec/generate_spec.py`,
+  generated beside the key-label table into all four CLIs: per (algo, `--bits`) row, its
+  `--level`, default, status, estimated security with source, the CLIs that run it, and a
+  withdrawal reason. The generator refuses inconsistent tables. One resolver per CLI runs
+  before any key is generated, with shared messages. New `--level` (`demo`, `128`; `192`
+  and `256` reserved); `--bits` kept; both together refused; fixed-parameter algorithms
+  refuse either; hkex-rnl 512 refused as withdrawn; the GF family refuses `--level 128`
+  naming why. C gains `--bits` (hpks-zkp-nl honours it, as in the others) and Java honours
+  it on hkex-rnl. Rows a CLI cannot run yet are refused "not yet supported by this CLI"
+  naming TODO #383 (C) or #384 (Java). The `cli_surface_gaps` row for `genpkey --bits` is
+  gone.
+- **Test.** New `CliTest/test_key_params.sh` (native-interop), driven by the generated
+  spec: every algorithm's default in every CLI (read back at its width by every CLI), every
+  row by `--bits` and every `--level` in every CLI (accepted and read back by every CLI
+  the row lists, or refused by name), 13 unlisted `--bits` values and 5 malformed `--level`
+  names per algorithm, both flags, the fixed-parameter algorithms, and invariants written
+  out by hand. 1588 PASS. On the TODO #377 build it had failed 869 checks (about 290 bad
+  values accepted, 87 crashes -- Python tracebacks and Go panics -- and the rest refused
+  under another message, C having no `--bits`) when the old Go's hang on `oprf --bits`
+  stopped it at a 50-minute cap. `test_pkey_text_matrix.sh`'s hpks-zkp-nl `--bits`
+  section now includes C.
+- **Docs.** llms.txt (genpkey), TUTORIAL (hcred widths), spec/README.md, MIGRATING §43.
+  Follow-ups filed: #383–#387.
+
+### TODO #377 — `fpe` / `twk` take exactly one 32-byte block
+
+- **The defect.** In all four CLIs, `fpe` and `twk` cut input longer than 32 bytes to its
+  first 32, wrote 32 bytes and exited 0, so nothing past the block round-tripped. Shorter
+  input was zero-padded on the right by Python, C and Java, but Go built the block with
+  `big.Int.SetBytes`, which pads on the left, so Go's ciphertext differed from the other
+  three at every length but 32. C and Go encrypted when given both `--encrypt` and
+  `--decrypt`; Python and Java refused.
+- **The fix.** One check per CLI (C `block32_ok`, Go `block32OK`, Java `block32`, Python
+  `_block32_in`), run after the key loads and before anything is written: any length but 32
+  is refused ("`<cmd>: --in must be exactly 32 bytes (one block), got <n>`"). C and Go now
+  refuse both mode flags with Java's message, "`<cmd>: exactly one of --encrypt or
+  --decrypt required`". Java's `padBlock` is gone. Help text says "exactly 32 bytes".
+- **Test.** `CliTest/test_fpe_twk.sh` gains section 6: per CLI and per subcommand, a 32-byte
+  `--v3` round-trip (the accept-control at v3; sections 1-3 are the one at v2), then
+  lengths 0, 1, 31, 33 and 64 in both modes, with and without `--v3`, and both mode flags
+  together, each refused by name with no output and no crash. 235 PASS on this build; on
+  the v16.0.0 TODO #381 build, 164 FAIL: all 160 wrong-length cases and C's and Go's 4
+  two-mode cases accepted.
+- **Docs.** SECURITY.md's FPE row and the spec's `fpe` note no longer say short input is
+  zero-padded; `SecurityProofsCode/rand_fpe_twk_analysis.py`'s §3 text says the caller pads
+  now. llms.txt (fpe/twk), MIGRATING §42.
+
+### TODO #381 — one rule for the shape of a command line
+
+- **The defect.** C read `--in DIR` as an empty file, so `sign --in .` signed the empty
+  message, exit 0. Java stored a trailing `--out` as the string `true`, and
+  `genpkey --algo hpks --out` wrote the private key to a file named `true`; C wrote it to
+  stdout; `--out --algo hpks` gave Go and C an output file named `--algo`. C and Go
+  ignored stray words (Go stopped parsing at the first, so `genpkey extra --algo hpks`
+  ran without its `--algo`); Java joined them to the previous value. `--flag=value`
+  worked only in Python and Go, and Go read `--aead=false`. Go defaulted 19 `--in` /
+  `--out` flags to stdin / stdout where Python and Java required them, and C did so for
+  `enc`, `dec` and `sign --out`. Java's `threshold-commit` wrote the commitment before
+  asking for `--nonce-out`, and Go reported an empty `--commit` as the list being absent.
+- **The fix.** One rule, Python's argparse as the reference. C: `read_binary_file`
+  refuses a directory; `split_eq_args` and `check_arg_shape` run before dispatch. Go:
+  every `fs.Parse` goes through `parseArgs`, which checks the same shape, refuses what
+  the flag package leaves in `fs.Args()`, and enforces a `requiredFlags` table. Java:
+  `parseOpts` knows each flag's arity from a new generated `CliFlagTable.BOOLEAN`, which
+  `spec/generate_spec.py` derives from Java's source and refuses to emit if it disagrees
+  with C's. Messages: "`<cmd>: <flag> needs a value`", "`<cmd>: unexpected argument
+  '<w>'`", "`<cmd>: <flag> takes no value`", "`<cmd>: --in required`"; Python's stay
+  argparse's. `-` still means stdin / stdout. The C, Go and Java help note on stdout now
+  says it applies where `--out` is optional.
+- **Test.** New `CliTest/test_arg_hygiene.sh` (native-interop). Accept-controls: one
+  complete command for each of 24 subcommands runs in every CLI; `--flag=value` matches
+  `--flag value`; `-` reads stdin and writes stdout. Then 67 refusals per CLI: every
+  flag Python requires, omitted in turn (refused as missing, by name); `--in DIR` at five
+  readers; a flag missing its value, a stray word, a boolean given a value. 380 PASS on
+  this build; on the TODO #378 build, 59 FAIL (C 19, Go 28, Java 12, Python 0): 35
+  accepted, 19 refused under another message, one refusal that still wrote output, and
+  `--flag=value` refused by C and Java. All 82 CliTest scripts pass.
+- **Not changed.** Python's argparse still accepts abbreviated flags (`--alg` for
+  `--algo`); the other three refuse them.
+- **Docs.** llms.txt (a command-line paragraph); MIGRATING §41.
+
+### TODO #378 — single-block `enc` refuses long input; `--ad` / `--aead` only where used
+
+- **The defect.** In all four CLIs, `enc --algo hske | hske-nla1 | hske-nla2 | hske-nla3 |
+  hpke | hpke-nl | hpke-nl3 | hpke-stern | hpke-stern-kem` kept the first block of a longer
+  input, dropped the rest and exited 0, and `dec` returned that prefix.
+  `enc --algo hske --ad X` wrote byte-for-byte the ciphertext of no `--ad`, `dec` took
+  `--ad` on any algo, and `--aead` on `hske` / `hpke` was ignored. `dec --algo hske-nla1
+  --ad X` on a non-AEAD ciphertext ignored X. Python and Go read `--ad ''` as no `--ad`,
+  so `enc --algo hske-nla1 --ad ''` passed their "--ad requires --aead" check.
+- **The fix.** Two checks per CLI, named alike (C `aead_flags_ok` / `one_block_ok`, Go
+  `aeadFlagsOK` / `oneBlockOK`, Java `aeadFlagsOK` / `oneBlockOK`, Python
+  `_aead_flags_ok` / `_one_block_ok`). `--aead` is refused on any algo but `hske-nla1`;
+  `--ad` at `enc` and `dec` on any algo but `hske-duplex`, `hske-duplex3` and `hske-nla1`;
+  `dec hske-nla1 --ad` on a format-1 ciphertext. Presence counts, so `--ad ''` is a flag
+  given. Input longer than the block is refused before any randomness is drawn or file
+  written ("`enc: --algo <a> encrypts one <k>-byte block; --in is <l> bytes (...)`"),
+  pointing to `hske-duplex` / `encfile`. The block is the width each port encrypts at: 32
+  bytes, or the key's width for `hske-nla1` without `--aead`. Shorter input is still
+  zero-padded. Java's "--ad requires --aead" message lost its `hske-nla1` prefix to match
+  the other three. Python and Go `--ad` help text names the algos.
+- **Test.** New `CliTest/test_single_block_enc.sh` (native-interop). Accept-controls:
+  exactly one block encrypts in every CLI and decrypts under all four (8 algos, 4×4); a
+  5-byte input comes back zero-padded; `hske-nla1` at a 64-bit key (a second width, an
+  8-byte block) round-trips 8 bytes; `--ad hdr` and `--ad ''` round-trip under
+  `hske-duplex`, `hske-duplex3` and `hske-nla1 --aead`, and a wrong `--ad` fails the tag.
+  Then 44 refusal cases per CLI, each refused by name with no output and no crash. 432 PASS
+  on this build; on the TODO #380 build, 172 FAIL: 170 accepted, and Java's 2 "--ad
+  requires --aead" cases refused under the old prefix.  `test_sym_width.sh`'s 32-bit hex
+  key case encrypted a 16-byte message and read back its first 4 bytes, relying on the
+  truncation; it now encrypts the 4-byte block itself.
+- **Docs.** TUTORIAL (the `hske` block note), llms.txt (enc/dec), MIGRATING §40.
+
+### TODO #380 — numeric flags are parsed strictly, in stated ranges
+
+- **The defect.** No CLI had one strict number parser. C mixed `atoi` and `strtol` with
+  no end-pointer check, so `rand --bytes abc` wrote 0 bytes and exited 0, and
+  `--xmss-height` was `atoi`. Go's `flag.Int` read `0x10` as 16 and could not tell an
+  explicit 0 from an omitted flag. `sign --rounds 0` signed at 219 in Python and Go, and
+  Java wrote a 0-round signature; Go and Java signed 5000 rounds, which every verifier
+  refuses; Python crashed on `-1` (`IndexError`) and ran without end on 100000.
+  Python's `genpkey --kdf-iterations 0` wrote an envelope only Python would read, with
+  no upper bound, and its `pkey --decrypt` honoured any declared count.
+- **The fix.** One parser per CLI, generalised from TODO #375's: C `dec_range_arg` (with
+  `num_arg` for a flag that may be omitted), Go `decRangeArg` / `numFlag` (every numeric
+  flag is now an `fs.String`), Java `decRangeArg` / `numArg` / `roundsArg`, Python
+  `_dec_range_arg` as an argparse `type`, so it sees only a value actually given. Decimal
+  digits only, refused with "`<cmd>: <flag> must be a decimal integer from <lo> to <hi>,
+  got '<v>'`". Ranges: `--kdf-iterations` 1..10^8, `--xmss-height` 1..20, `rand --bytes`
+  0..33554432 (`DRBG_MAX_BLOCKS` 32-byte blocks), every `--rounds` / `--min-rounds`
+  1..4096, the verifiers' own bound. Python's envelope reader now bounds the iteration
+  count as the other three do. `spec/generate_spec.py`'s C flag scrapers learned
+  `num_arg`. `genpkey --bits` is left to TODO #379.
+- **Test.** New `CliTest/test_numeric_flags.sh` (native-interop): accept-controls at each
+  range's low edge in all four CLIs (byte-identical `rand` output, `007` read as 7,
+  1-round artifacts that verify at `--min-rounds 1`), then 12 bad values at each of 12
+  flag sites, each refused by the shared message with no output, no crash and no hang.
+  622 PASS on this build. On the TODO #376 build, 548 FAIL: 162 bad values accepted,
+  crashing or hanging (among them some the audit had not measured: `+1` accepted
+  everywhere, C's `--kdf-iterations 1e3` read as 1, Go's `--xmss-height 0x10` building a
+  2^16-leaf tree, Go's `cred-verify --rounds -1` read as omitted), and 386 refused under
+  another message. `test_param_bounds.sh` and `test_rand.sh` now expect the shared
+  message.
+- **Docs.** llms.txt (a numeric-flag paragraph); MIGRATING §39.
+
+### TODO #376 — an empty or missing passphrase or password is refused
+
+- **The defect.** Python and Go tested `--passphrase` for truthiness, so
+  `genpkey --passphrase ''` wrote an unencrypted private key and exited 0. C and Java
+  encrypted under `''`, and Python and Go could not then decrypt those keys
+  (`pkey --decrypt` read `''` as missing). Python and Go accepted and ignored
+  `--kdf-iterations` without `--passphrase`. `pake-register` with no `--password`
+  registered `demo-password` in C and Go; Python prompted and, with no terminal, died
+  with an `EOFError` traceback. `--password ''` registered the empty password in C, Go
+  and Java. `pake-demo --password ''` ran in all four.
+- **The fix.** All four refuse, by name and before writing anything: an empty
+  `genpkey --passphrase`, `--kdf-iterations` without `--passphrase`, a missing or empty
+  `pake-register --password`, and an empty `pake-demo --password`. Go tells a given
+  flag from an omitted one with `isSet`; Python's `--kdf-iterations` default is now
+  `None`. Python prompts for an omitted `pake-register` password only when stdin is a
+  terminal, and refuses an empty answer. `pkey --decrypt --passphrase ''` is accepted
+  in all four, so envelopes written under `''` stay readable.
+- **Test.** New `CliTest/test_empty_secrets.sh` (native-interop). Accept-controls: every
+  CLI's envelope decrypts under every CLI, a legacy `''` envelope decrypts in all four,
+  and PAKE register/demo succeed with a password. Then six refusals per CLI, each by
+  name, with no output and no traceback. 60 PASS on this build; 23 FAIL on the
+  TODO #375 build, one per case the audit found.
+- **Docs.** llms.txt (genpkey `--passphrase`, `pkey --decrypt`, PAKE passwords);
+  MIGRATING §38.
+
+### TODO #375 — `twk --bidx` / `--sector` name exactly one tweak
+
+- **The defect.** The tweak is `sector_be64 || bidx_be32`. C read `--bidx` with
+  `(uint32_t)strtoul(s, NULL, 10)` and Go with `flag.Uint` then `uint32()`. So
+  `--bidx 4294967296` and `--bidx 9223372036854775808` encrypted under block 0's tweak,
+  measured as byte-identical ciphertext. C, with no end-pointer check, also read `abc`
+  as 0 and `-1` as the maximum, and its `--sector` did the same. Go read `0x10` as 16.
+  Java parsed both flags as signed (`parseInt`, `parseLong`), refusing valid indices from
+  2^31 and sectors from 2^63. Python took any int and crashed with an `OverflowError`
+  traceback outside the field.
+- **The fix.** One strict parser per CLI: C `dec_uint_arg`, Go `decUintArg`, Java
+  `decUintArg` (unsigned, with the same bit pattern `FpeTwk.twkTweak` encodes), Python
+  `_dec_uint_arg`. It takes decimal digits only (no sign, space, `0x`, `_` or exponent),
+  `--bidx` 0..2^32 - 1 and `--sector` 0..2^64 - 1. Anything else is refused by name
+  before the key is read. In-range values encrypt exactly as before.
+- **Test.** New `CliTest/test_twk_tweak_range.sh` (native-interop). It checks nine
+  (sector, bidx) pairs at the field edges in all four CLIs: byte-identical ciphertext,
+  a decrypt that round-trips, no two pairs sharing a ciphertext, and `007` read as 7.
+  Then 13 bad values per flag, each refused by name with no output written.
+  153 PASS on this build; 109 FAIL on the v15.0.0 build.
+- **Docs.** C's `twk` help note and llms.txt state the ranges; MIGRATING §37.
+
 ## [15.0.0] - 2026-11-12
 
 **MAJOR: security fixes in seven parts.** All seven change what an existing `--algo`

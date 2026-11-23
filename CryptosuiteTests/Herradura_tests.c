@@ -2629,7 +2629,8 @@ static void stern_fs_challenges_t(int *chals, int rounds,
     for (i = 0; i < rounds; i++) {
         BitArray idx_ba = { KEYBITS, {0} };
         uint32_t v;
-        idx_ba.b[KEYBYTES - 1] = (uint8_t)(i & 0xFF);
+        idx_ba.b[KEYBYTES - 1] = (uint8_t)i;  /* whole index (TODO #390) */
+        idx_ba.b[KEYBYTES - 2] = (uint8_t)(i >> 8);
         nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
         v = ((uint32_t)ch_st.b[KEYBYTES-4]<<24)|((uint32_t)ch_st.b[KEYBYTES-3]<<16)
           | ((uint32_t)ch_st.b[KEYBYTES-2]<<8)|ch_st.b[KEYBYTES-1];
@@ -5563,7 +5564,7 @@ int main(int argc, char *argv[])
             rnl_poly_add_n(m_b, m_base, a_rand, HCRED_N);
             ba_rand(&seed_H, urnd_fp);
 
-            hcred_user_keygen(s, c_poly, &e_ba, m_b, urnd_fp);
+            hcred_user_keygen(s, c_poly, &e_ba, m_b, urnd_fp, HCRED_N);
             hcred_syndrome(syndr, &seed_H, &e_ba);
 
             proof.rd = NULL;
@@ -5589,7 +5590,7 @@ int main(int argc, char *argv[])
                 ok_synd++;
 
             /* key tamper: use a different C */
-            hcred_user_keygen(s2, c2_poly, &e2_ba, m_b, urnd_fp);
+            hcred_user_keygen(s2, c2_poly, &e2_ba, m_b, urnd_fp, HCRED_N);
             if (!hcred_verify(m_b, c2_poly, &seed_H, syndr, &proof, R,
                               hcred_msg, sizeof(hcred_msg)-1))
                 ok_key++;
@@ -6135,7 +6136,7 @@ int main(int argc, char *argv[])
             rnl_rand_poly(kk_rand, urnd_fp);
             rnl_poly_add(kk_m, kk_m, kk_rand);
             ba_rand(&kk_seed_H, urnd_fp);
-            hcred_user_keygen(kk_s, kk_c, &kk_e, kk_m, urnd_fp);
+            hcred_user_keygen(kk_s, kk_c, &kk_e, kk_m, urnd_fp, HCRED_N);
             hcred_syndrome(kk_syndr, &kk_seed_H, &kk_e);
             if (hcred_prove_kkw(&kp, kk_s, kk_m, kk_c, &kk_seed_H, kk_syndr,
                                 KKW_N_PAR, KKW_M, KKW_TAU,

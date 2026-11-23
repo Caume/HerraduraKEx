@@ -45,7 +45,7 @@
       "security": {
         "status": "broken",
         "quantum_resistant": "conjectured",
-        "notes": "Reached through the `fpe` subcommand rather than an --algo tag. BROKEN AS NAMED: this is not format-preserving encryption in the SP 800-38G (FF1/FF3-1) sense. It has no radix, no length and no domain -- it maps 32 bytes to 32 bytes, zero-pads shorter input and returns raw binary, so a 16-digit card number comes back as 32 bytes of binary. It is additionally the SAME FUNCTION as twk whenever the context is 12 bytes: both derive their subkey as the unseparated HFSCX-256(key || tweak), so `twk --decrypt` undoes `fpe --encrypt`, verified byte-identical across the C, Go and Python CLIs. As a construction it is HSKE-NL-A2's nl_fscx_revolve_v2. Do not use where the output format must survive. TODO #242 (v4.0.0) fixed everything about it except the name: it is now domain-separated from twk with tag 0x20, its key/tweak boundary is length-encoded, its derived subkey is rejection-sampled away from the degenerate affine class, and it runs at R_VALUE=192 rather than I_VALUE=64. Renaming it, re-scoping it, or implementing a real FF1/FF3-1 domain is a separate decision and remains open. Wire-format breaking in v4.0.0 -- every earlier fpe ciphertext is undecryptable, silently, since the output is an unauthenticated permutation; see MIGRATING.md section 8.",
+        "notes": "Reached through the `fpe` subcommand rather than an --algo tag. BROKEN AS NAMED: this is not format-preserving encryption in the SP 800-38G (FF1/FF3-1) sense. It has no radix, no length and no domain -- it maps exactly 32 bytes to 32 bytes (any other length is refused since v16.0.0, TODO #377) and returns raw binary, so a 16-digit card number comes back as 32 bytes of binary. It is additionally the SAME FUNCTION as twk whenever the context is 12 bytes: both derive their subkey as the unseparated HFSCX-256(key || tweak), so `twk --decrypt` undoes `fpe --encrypt`, verified byte-identical across the C, Go and Python CLIs. As a construction it is HSKE-NL-A2's nl_fscx_revolve_v2. Do not use where the output format must survive. TODO #242 (v4.0.0) fixed everything about it except the name: it is now domain-separated from twk with tag 0x20, its key/tweak boundary is length-encoded, its derived subkey is rejection-sampled away from the degenerate affine class, and it runs at R_VALUE=192 rather than I_VALUE=64. Renaming it, re-scoping it, or implementing a real FF1/FF3-1 domain is a separate decision and remains open. Wire-format breaking in v4.0.0 -- every earlier fpe ciphertext is undecryptable, silently, since the output is an unauthenticated permutation; see MIGRATING.md section 8.",
         "source": [
           "Herradura cryptographic suite.py fpe_encrypt/fpe_decrypt",
           "herradura.h fpe_encrypt",
@@ -567,7 +567,7 @@
         "status": "demo-only",
         "quantum_resistant": "conjectured",
         "classical_security_bits": "~56-60 at shipped SDF_ROUNDS=32 (production requires SDF_PRODUCTION_ROUNDS=219 for 128-bit soundness)",
-        "notes": "Fiat-Shamir signature from the Stern identification protocol (syndrome decoding). Shipped SDF_ROUNDS=32 is a demo parameter; herradura.h emits a #pragma message warning at compile time when SDF_ROUNDS < SDF_PRODUCTION_ROUNDS. The round count is a per-signature wire field (item[1] of the DER SEQUENCE), not a compile-time constant: all four CLIs accept `sign --rounds` and any reader accepts any count in [1, SDF_MAX_ROUNDS] regardless of its own SDF_ROUNDS, which is only the signing default (TODO #236). Before that the C reader rejected any count != SDF_ROUNDS, so two C builds were mutually unreadable and cross-language HCRED interop ran only at 32 rounds. Round count and instance hardness are independent axes -- 219 rounds over the deployed N=256 is still ~30-40 bits and still demo-only.",
+        "notes": "Fiat-Shamir signature from the Stern identification protocol (syndrome decoding). Shipped SDF_ROUNDS=32 is a demo parameter; herradura.h emits a #pragma message warning at compile time when SDF_ROUNDS < SDF_PRODUCTION_ROUNDS. The round count is a per-signature wire field (item[1] of the DER SEQUENCE), not a compile-time constant: all four CLIs accept `sign --rounds` and any reader accepts any count in [1, SDF_MAX_ROUNDS] regardless of its own SDF_ROUNDS, which is only the signing default (TODO #236). Before that the C reader rejected any count != SDF_ROUNDS, so two C builds were mutually unreadable and cross-language HCRED interop ran only at 32 rounds. Round count and instance hardness are independent axes -- 219 rounds over the deployed N=256 is still ~24-38 bits and still demo-only.  The 128-bit instance is the long form, N=2304 (genpkey --level 128, TODO #382; SPEC.md 11.1): 256-bit commitments, ~2^137 classical by BJMM.",
         "source": [
           "herradura.h:1383-1392",
           "herradura/herradura.go:1108-1110",
@@ -2063,12 +2063,18 @@
         "python": true
       },
       "--bits": {
-        "c": false,
+        "c": true,
         "go": true,
         "java": true,
         "python": true
       },
       "--kdf-iterations": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--level": {
         "c": true,
         "go": true,
         "java": true,
@@ -2138,6 +2144,12 @@
       }
     },
     "oprf-blind": {
+      "--bits": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
       "--in": {
         "c": true,
         "go": true,
@@ -2624,21 +2636,6 @@
       ],
       "status": "acknowledged",
       "reason": "An EXTRA flag rather than a missing one: C and Go let the caller override the round count a proof declares, defaulting to the proof's own. Python and Java always use the proof's. The round count travels in the PEM (TODO #236), so the default is identical in all four and the flag only widens what C and Go will attempt; it cannot make them accept a proof the others reject."
-    },
-    {
-      "kind": "flag",
-      "subcommand": "genpkey",
-      "flag": "--bits",
-      "present_in": [
-        "go",
-        "java",
-        "python"
-      ],
-      "missing_from": [
-        "c"
-      ],
-      "status": "acknowledged",
-      "reason": "A runtime key-width selector. The C CLI is compiled for a single KEYBITS and a single RNL_N -- the same reason KAT/'s n=64 PEM vectors skip the C CLI -- so there is no runtime width for the flag to set. Porting it would mean making the C suite width-parametric, which is a far larger change than an argument parser. hpks-zkp-nl is the exception: its n is a runtime parameter in C too, and C reads any n <= 64 the other three write; C generates only their default, n = 8. Where --bits exists, an explicit value is honoured or refused by name, never read as the default -- Python, Go and Java read `--bits 256` on hpks-zkp-nl as 'omitted' and wrote n = 8 until TODO #374."
     },
     {
       "kind": "flag",
@@ -4441,7 +4438,7 @@
         },
         {
           "field": 3,
-          "cap": "f0*f1*(5*(f2/8)+1)",
+          "cap": "f0*f1*(3*min(f2/8, 32)+2*(f2/8)+1)",
           "exact": true
         }
       ],
@@ -4671,7 +4668,7 @@
         },
         {
           "field": 2,
-          "cap": "f1*3*(f0/8)",
+          "cap": "f1*3*min(f0/8, 32)",
           "exact": true
         },
         {
@@ -4942,12 +4939,12 @@
         },
         {
           "field": 2,
-          "cap": "f4/8",
+          "cap": "min(f4/8, 32)",
           "exact": true
         },
         {
           "field": 3,
-          "cap": "f4/8",
+          "cap": "min(f4/8, 32)",
           "exact": true
         }
       ],
@@ -5039,7 +5036,7 @@
         },
         {
           "field": 2,
-          "cap": "f1*3*(f0/8)",
+          "cap": "f1*3*min(f0/8, 32)",
           "exact": true
         },
         {
@@ -5055,5 +5052,781 @@
       ],
       "rules": []
     }
-  ]
+  ],
+  "key_parameter_sets": {
+    "levels": [
+      "demo",
+      "128",
+      "192",
+      "256"
+    ],
+    "fixed_algos": [
+      "hpks-wots",
+      "hpks-xmss"
+    ],
+    "own_bits_rule": [
+      "hpks-zkp-nl"
+    ],
+    "port_gap_todo": {
+      "c": 383,
+      "java": 384
+    },
+    "level_notes": {
+      "hcred": "hcred's own key (a Ring-LWR and syndrome-decoding pair proved in ZKBoo) has no 128-bit set; the ISSUER's hpks-stern key does: genpkey --algo hpks-stern --level 128",
+      "hkex-gf": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+      "hpke": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+      "hpke-nl": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+      "hpke-nl3": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+      "hpks": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+      "hpks-nl": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
+      "oprf": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)"
+    },
+    "rows": [
+      {
+        "algo": "hkex-gf",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hkex-gf",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hkex-gf",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hkex-gf",
+        "bits": 256,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks",
+        "bits": 256,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks-nl",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks-nl",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks-nl",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks-nl",
+        "bits": 256,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke",
+        "bits": 256,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-nl",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-nl",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-nl",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-nl",
+        "bits": 256,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-nl3",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-nl3",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-nl3",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-nl3",
+        "bits": 256,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "oprf",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^8 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "oprf",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^11 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "oprf",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "at most 2^23 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "oprf",
+        "bits": 256,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "at most 2^36 (Pohlig-Hellman; index calculus is cheaper)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hkex-rnl",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "far below 2^87 (not estimated)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hkex-rnl",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "far below 2^87 (not estimated)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hkex-rnl",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "far below 2^87 (not estimated)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hkex-rnl",
+        "bits": 256,
+        "level": "demo",
+        "default": false,
+        "status": "demo",
+        "security": "far below 2^87 (not estimated)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hkex-rnl",
+        "bits": 512,
+        "level": null,
+        "default": false,
+        "status": "withdrawn",
+        "security": "~2^87 classical, ~2^79 quantum",
+        "ports": [],
+        "withdrawn": "SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical bits, short of the 128 it was claimed to give"
+      },
+      {
+        "algo": "hkex-rnl",
+        "bits": 1024,
+        "level": "128",
+        "default": true,
+        "status": "production",
+        "security": ">= 2^128 classical (conjectured; SECURITY.md)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks-stern",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "below 2^24",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks-stern",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "below 2^24",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks-stern",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "below 2^24",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks-stern",
+        "bits": 256,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-stern",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "below 2^24",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-stern",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "below 2^24",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-stern",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "below 2^24",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-stern",
+        "bits": 256,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hcred",
+        "bits": 32,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "research construction; its Stern-F half below 2^24",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hcred",
+        "bits": 64,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "research construction; its Stern-F half below 2^24",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hcred",
+        "bits": 128,
+        "level": null,
+        "default": false,
+        "status": "demo",
+        "security": "research construction; its Stern-F half below 2^24",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hcred",
+        "bits": 256,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "research construction; its Stern-F half ~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks-stern",
+        "bits": 2304,
+        "level": "128",
+        "default": false,
+        "status": "demo-only",
+        "security": "~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-stern",
+        "bits": 2304,
+        "level": "128",
+        "default": false,
+        "status": "demo-only",
+        "security": "~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpke-stern-kem",
+        "bits": -1,
+        "level": "128",
+        "default": true,
+        "status": "demo-only",
+        "security": "2^128 classical by its parameters (BIKE-128)",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      },
+      {
+        "algo": "hpks-zkp-nl",
+        "bits": 8,
+        "level": "demo",
+        "default": true,
+        "status": "demo",
+        "security": "demonstration keypair; no security claim",
+        "ports": [
+          "py",
+          "go",
+          "c",
+          "java"
+        ],
+        "withdrawn": null
+      }
+    ]
+  }
 }

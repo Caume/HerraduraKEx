@@ -69,7 +69,7 @@ from primitives import (
     hske_nl_aead_encrypt, hske_nl_aead_decrypt,
     hske_nl_v2_duplex_encrypt, hske_nl_v2_duplex_decrypt,
     hske_nl_v3_duplex_encrypt, hske_nl_v3_duplex_decrypt,
-    HDrbg, drbg_seed, drbg_generate, drbg_reseed,
+    HDrbg, drbg_seed, drbg_generate, drbg_reseed, DRBG_MAX_BLOCKS,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul, rnl_validate_m_blind as _rnl_validate_m_blind,
     rnl_validate_pub as _rnl_validate_pub, gf_pub_is_valid,
@@ -780,16 +780,16 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
             if n > 2 and L[2] > (2):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
-            if n > 3 and L[3] > (F[0] * F[1] * (5 * (F[2]//8) + 1)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[0] * F[1] * (5 * (F[2]//8) + 1))
+            if n > 3 and L[3] > (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))
             if n > 0 and enc[0][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 3 and enc[3][0] != (F[0] * F[1] * (5 * (F[2]//8) + 1)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[0] * F[1] * (5 * (F[2]//8) + 1))) and not ((F[0] * F[1] * (5 * (F[2]//8) + 1)) == 0 and enc[3][0] == 1 and L[3] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[0] * F[1] * (5 * (F[2]//8) + 1))
+            if n > 3 and enc[3][0] != (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))) and not ((F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))
             return None
     elif label == 'HERRADURA OPRF PRIVATE KEY':
         if 2 <= n <= 2:
@@ -924,8 +924,8 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 2)
             if n > 1 and L[1] > (2):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
-            if n > 2 and L[2] > (F[1] * 3 * (F[0]//8)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[1] * 3 * (F[0]//8))
+            if n > 2 and L[2] > (F[1] * 3 * min(F[0]//8, 32)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[1] * 3 * min(F[0]//8, 32))
             if n > 3 and L[3] > ((F[1] + 3)//4):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], (F[1] + 3)//4)
             if n > 4 and L[4] > (F[1] * 2 * (F[0]//8)):
@@ -934,8 +934,8 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 2 and enc[2][0] != (F[1] * 3 * (F[0]//8)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * (F[0]//8))) and not ((F[1] * 3 * (F[0]//8)) == 0 and enc[2][0] == 1 and L[2] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * (F[0]//8))
+            if n > 2 and enc[2][0] != (F[1] * 3 * min(F[0]//8, 32)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * min(F[0]//8, 32))) and not ((F[1] * 3 * min(F[0]//8, 32)) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * min(F[0]//8, 32))
             if n > 3 and enc[3][0] != ((F[1] + 3)//4) and not (enc[3][1] == 2 and enc[3][0] + 1 == ((F[1] + 3)//4)) and not (((F[1] + 3)//4) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], (F[1] + 3)//4)
             if n > 4 and enc[4][0] != (F[1] * 2 * (F[0]//8)) and not (enc[4][1] == 2 and enc[4][0] + 1 == (F[1] * 2 * (F[0]//8))) and not ((F[1] * 2 * (F[0]//8)) == 0 and enc[4][0] == 1 and L[4] == 0):
@@ -1090,20 +1090,20 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[4]//8)
             if n > 1 and L[1] > (F[4]//8):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[4]//8)
-            if n > 2 and L[2] > (F[4]//8):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[4]//8)
-            if n > 3 and L[3] > (F[4]//8):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[4]//8)
+            if n > 2 and L[2] > (min(F[4]//8, 32)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], min(F[4]//8, 32))
+            if n > 3 and L[3] > (min(F[4]//8, 32)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], min(F[4]//8, 32))
             if n > 4 and enc[4][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
             if n > 0 and enc[0][0] != (F[4]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[4]//8)
             if n > 1 and enc[1][0] != (F[4]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[4]//8)
-            if n > 2 and enc[2][0] != (F[4]//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[2][0] == 1 and L[2] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[4]//8)
-            if n > 3 and enc[3][0] != (F[4]//8) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[3][0] == 1 and L[3] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[4]//8)
+            if n > 2 and enc[2][0] != (min(F[4]//8, 32)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (min(F[4]//8, 32))) and not ((min(F[4]//8, 32)) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], min(F[4]//8, 32))
+            if n > 3 and enc[3][0] != (min(F[4]//8, 32)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (min(F[4]//8, 32))) and not ((min(F[4]//8, 32)) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], min(F[4]//8, 32))
             return None
         if 6 <= n <= 6:
             if n > 0 and L[0] > (1):
@@ -1155,8 +1155,8 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 2)
             if n > 1 and L[1] > (2):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
-            if n > 2 and L[2] > (F[1] * 3 * (F[0]//8)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[1] * 3 * (F[0]//8))
+            if n > 2 and L[2] > (F[1] * 3 * min(F[0]//8, 32)):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], F[1] * 3 * min(F[0]//8, 32))
             if n > 3 and L[3] > ((F[1] + 3)//4):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], (F[1] + 3)//4)
             if n > 4 and L[4] > (F[1] * 2 * (F[0]//8)):
@@ -1165,14 +1165,133 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 2 and enc[2][0] != (F[1] * 3 * (F[0]//8)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * (F[0]//8))) and not ((F[1] * 3 * (F[0]//8)) == 0 and enc[2][0] == 1 and L[2] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * (F[0]//8))
+            if n > 2 and enc[2][0] != (F[1] * 3 * min(F[0]//8, 32)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[1] * 3 * min(F[0]//8, 32))) and not ((F[1] * 3 * min(F[0]//8, 32)) == 0 and enc[2][0] == 1 and L[2] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[1] * 3 * min(F[0]//8, 32))
             if n > 3 and enc[3][0] != ((F[1] + 3)//4) and not (enc[3][1] == 2 and enc[3][0] + 1 == ((F[1] + 3)//4)) and not (((F[1] + 3)//4) == 0 and enc[3][0] == 1 and L[3] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], (F[1] + 3)//4)
             if n > 4 and enc[4][0] != (F[1] * 2 * (F[0]//8)) and not (enc[4][1] == 2 and enc[4][0] + 1 == (F[1] * 2 * (F[0]//8))) and not ((F[1] * 2 * (F[0]//8)) == 0 and enc[4][0] == 1 and L[4] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 4, enc[4][0], F[1] * 2 * (F[0]//8))
             return None
     return None
+
+# TODO #379: genpkey's key parameter sets (--bits / --level); bits -1: no
+# --bits value names the row.  ports: the CLIs that run the row today.
+_PARAM_SETS = (
+    ('hkex-gf', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hkex-gf', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hkex-gf', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hkex-gf', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpks', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpks', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpks', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpks', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpks-nl', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpks-nl', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpks-nl', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpks-nl', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke-nl', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke-nl', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke-nl', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke-nl', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke-nl3', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke-nl3', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke-nl3', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hpke-nl3', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('oprf', 32, None, False, 'demo',
+     'at most 2^8 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('oprf', 64, None, False, 'demo',
+     'at most 2^11 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('oprf', 128, None, False, 'demo',
+     'at most 2^23 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('oprf', 256, 'demo', True, 'demo',
+     'at most 2^36 (Pohlig-Hellman; index calculus is cheaper)', 'py go c java', None),
+    ('hkex-rnl', 32, None, False, 'demo',
+     'far below 2^87 (not estimated)', 'py go c java', None),
+    ('hkex-rnl', 64, None, False, 'demo',
+     'far below 2^87 (not estimated)', 'py go c java', None),
+    ('hkex-rnl', 128, None, False, 'demo',
+     'far below 2^87 (not estimated)', 'py go c java', None),
+    ('hkex-rnl', 256, 'demo', False, 'demo',
+     'far below 2^87 (not estimated)', 'py go c java', None),
+    ('hkex-rnl', 512, None, False, 'withdrawn',
+     '~2^87 classical, ~2^79 quantum', '', 'SECURITY.md withdraws ring dimension 512 (HKEX-RNL-128): about 87 classical bits, short of the 128 it was claimed to give'),
+    ('hkex-rnl', 1024, '128', True, 'production',
+     '>= 2^128 classical (conjectured; SECURITY.md)', 'py go c java', None),
+    ('hpks-stern', 32, None, False, 'demo',
+     'below 2^24', 'py go c java', None),
+    ('hpks-stern', 64, None, False, 'demo',
+     'below 2^24', 'py go c java', None),
+    ('hpks-stern', 128, None, False, 'demo',
+     'below 2^24', 'py go c java', None),
+    ('hpks-stern', 256, 'demo', True, 'demo',
+     '~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)', 'py go c java', None),
+    ('hpke-stern', 32, None, False, 'demo',
+     'below 2^24', 'py go c java', None),
+    ('hpke-stern', 64, None, False, 'demo',
+     'below 2^24', 'py go c java', None),
+    ('hpke-stern', 128, None, False, 'demo',
+     'below 2^24', 'py go c java', None),
+    ('hpke-stern', 256, 'demo', True, 'demo',
+     '~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)', 'py go c java', None),
+    ('hcred', 32, None, False, 'demo',
+     'research construction; its Stern-F half below 2^24', 'py go c java', None),
+    ('hcred', 64, None, False, 'demo',
+     'research construction; its Stern-F half below 2^24', 'py go c java', None),
+    ('hcred', 128, None, False, 'demo',
+     'research construction; its Stern-F half below 2^24', 'py go c java', None),
+    ('hcred', 256, 'demo', True, 'demo',
+     'research construction; its Stern-F half ~2^24 by BJMM, ~2^38 by Prange (SECURITY.md)', 'py go c java', None),
+    ('hpks-stern', 2304, '128', False, 'demo-only',
+     '~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3', 'py go c java', None),
+    ('hpke-stern', 2304, '128', False, 'demo-only',
+     '~2^137 classical (BJMM), ~2^106 quantum (Grover-over-Prange); SecurityProofs-5.md 11.8.3', 'py go c java', None),
+    ('hpke-stern-kem', -1, '128', True, 'demo-only',
+     '2^128 classical by its parameters (BIKE-128)', 'py go c java', None),
+    ('hpks-zkp-nl', 8, 'demo', True, 'demo',
+     'demonstration keypair; no security claim', 'py go c java', None),
+)
+_PARAM_LEVELS = ('demo', '128', '192', '256')
+_PARAM_FIXED = ('hpks-wots', 'hpks-xmss')
+_PARAM_OWN_BITS = ('hpks-zkp-nl',)
+_PARAM_LEVEL_NOTES = {
+    'hcred': "hcred's own key (a Ring-LWR and syndrome-decoding pair proved in ZKBoo) has no 128-bit set; the ISSUER's hpks-stern key does: genpkey --algo hpks-stern --level 128",
+    'hkex-gf': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpke': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpke-nl': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpke-nl3': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpks': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'hpks-nl': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+    'oprf': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
+}
+
 # END GENERATED key-label table
 
 
@@ -1245,6 +1364,7 @@ _PBKDF2_SALT_BYTES    = 16
 # floor (or higher) at the cost of a multi-minute wait, matching this repo's existing
 # demo-vs-production-parameter pattern (e.g. Stern-F rounds=32 demo / 219 production).
 _PBKDF2_HFSCX256_ITER_DEMO = 1_000
+_PBKDF2_HFSCX256_ITER_MAX  = 100_000_000  # the most any writer may choose, or reader honour
 _PBKDF2_HFSCX256_ITER_PROD = 200_000
 
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
@@ -1267,6 +1387,17 @@ def _read_file(path):
         return f.read()
 
 
+def _open_out(path, mode):
+    """Open an output file for writing, creating it 0600 (TODO #395).
+
+    Every file the CLI writes comes through here, public outputs included, so
+    nothing it produces is world-readable under the default umask.  A file that
+    already exists keeps its mode: O_CREAT's mode applies only on creation.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_BINARY', 0)
+    return os.fdopen(os.open(path, flags, 0o600), mode)
+
+
 def _write_file(path, data):
     if path == '-':
         if isinstance(data, str):
@@ -1275,7 +1406,7 @@ def _write_file(path, data):
             sys.stdout.buffer.write(data)
         return
     mode = 'w' if isinstance(data, str) else 'wb'
-    with open(path, mode) as f:
+    with _open_out(path, mode) as f:
         f.write(data)
 
 
@@ -1301,6 +1432,10 @@ for _pr, _pu in _GF_LABELS:
 for _a in ('hpks-stern', 'hpke-stern'):
     _WIRE_FIELDS[_PRIV_ALGOS[_a]] = [(2, 'stern')]
     _WIRE_FIELDS[_PUB_ALGOS[_a]] = [(2, 'stern')]
+# TODO #385: the OPRF runs at the GF family's four widths.
+_WIRE_FIELDS[_PRIV_ALGOS['oprf']] = [(1, 'gf'), (0, ('fitn', 1))]
+_WIRE_FIELDS['HERRADURA OPRF CLIENT STATE'] = [(2, 'gf'), (0, ('fitn', 2)), (1, ('fitn', 2))]
+_WIRE_FIELDS['HERRADURA OPRF EVALUATION'] = [(1, 'gf'), (0, ('fitn', 1))]
 _WIRE_FIELDS[_PRIV_ALGOS['hkex-rnl']] = [(2, 'rnl'), (3, 32)]
 _WIRE_FIELDS[_PUB_ALGOS['hkex-rnl']] = [(2, 'rnl'), (3, 32)]
 _WIRE_FIELDS[_PRIV_ALGOS['hpke-stern-kem']] = [(4, 'kem_r'), (5, 'kem_d'),
@@ -1348,7 +1483,7 @@ def _check_wire_fields(label, ints, fields=None):
                 sys.exit(f"{label}: session key width is {v} (expected a multiple of 8, "
                          f"16..{_suite_mod.BA_MAX_BITS})")
         elif kind == 'stern':
-            _bounded_n(v, label)
+            _bounded_stern_n(v, label)
         elif kind == 'kem_r':
             _bounded(v, _QCMDPC_R, _QCMDPC_R, 'QC-MDPC r', label)
         elif kind == 'kem_d':
@@ -1408,7 +1543,8 @@ def _read_pem_ints(path):
 _RING_MAX_K     = 64      # herradura_cli.c RING_MAX_K
 _SDF_MAX_ROUNDS = 4096    # herradura.h SDF_MAX_ROUNDS (TODO #236)
 _XMSS_MAX_H     = 20      # herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
-_STERN_MAX_N    = KEYBITS # no implementation here emits a wider Stern instance
+_STERN_MAX_N    = KEYBITS # the widest short-form Stern instance
+_STERN_LONG_N   = 2304    # the long form's one listed N (TODO #382): suite STERN_LONG_N
 
 # TODO #364: the verifier's round-count floor.  The round count travels in the
 # artifact (TODO #236), so without a floor the SIGNER chose the verifier's
@@ -1427,7 +1563,7 @@ def _round_floor(args, where):
     v = getattr(args, 'min_rounds', None)
     if v is None:
         return _MIN_VERIFY_ROUNDS
-    return _bounded(v, 1, _SDF_MAX_ROUNDS, '--min-rounds', where)
+    return v   # already held to 1.._SDF_MAX_ROUNDS by its argparse type (TODO #380)
 
 
 def _require_rounds(rounds, floor, what, where):
@@ -1436,6 +1572,22 @@ def _require_rounds(rounds, floor, what, where):
         sys.exit(f"{where}: {what} declares {rounds} rounds, below the --min-rounds "
                  f"floor of {floor} ({_MIN_VERIFY_ROUNDS} = 128-bit Fiat-Shamir "
                  f"soundness); pass --min-rounds {rounds} to accept it anyway")
+
+
+def _dec_range_arg(s, lo, hi, cmd, flag):
+    """THE numeric-flag parser (TODO #375, #380): a decimal integer in [lo, hi],
+    digits only (no sign, space, 0x, underscore or exponent), refused by name
+    otherwise, with the message the other three CLIs print.  argparse's int()
+    alone takes ' 1', '+1', '-1' and '1_0', and has no range."""
+    if not s or not all('0' <= c <= '9' for c in s) or not lo <= int(s) <= hi:
+        sys.exit(f"{cmd}: {flag} must be a decimal integer from {lo} to {hi}, got '{s}'")
+    return int(s)
+
+
+def _dec_type(cmd, flag, lo, hi):
+    """An argparse `type` running _dec_range_arg: it is applied only to a value
+    actually given, so an explicit 0 is refused rather than read as omitted."""
+    return lambda s: _dec_range_arg(s, lo, hi, cmd, flag)
 
 
 def _bounded(value, lo, hi, what, where):
@@ -1463,6 +1615,36 @@ def _bounded_n(value, where, what='n'):
     if v % 8:
         sys.exit(f"{where}: {what} is {v} (expected a multiple of 8)")
     return v
+
+
+def _bounded_stern_n(value, where, what='n'):
+    """A Stern-F code length: _bounded_n's, or the long form's N = 2304 (TODO #382)."""
+    if value == _STERN_LONG_N:
+        return value
+    return _bounded_n(value, where, what)
+
+
+# TODO #382 stage 2: the Stern-F long form (N > 256) carries its vectors as
+# integers and its commitments, message and Fiat-Shamir state at 256 bits.
+def _stern_long(n):
+    return n > _STERN_MAX_N
+
+
+def _stern_seed(seed_int, n):
+    """The seed as the suite takes it: a BitArray up to 256 bits, an int above."""
+    return seed_int if _stern_long(n) else BitArray(n, seed_int)
+
+
+def _stern_syn(seed_int, e_int, n):
+    if _stern_long(n):
+        return _suite_mod.stern_l_syndrome(seed_int, e_int, n)
+    return _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
+
+
+def _stern_msg(in_bytes, n):
+    """The signed message: min(n, 256) bits of the (pre-hashed) input."""
+    w = min(n, 256)
+    return BitArray(w, int.from_bytes(in_bytes[:w // 8].ljust(w // 8, b'\x00'), 'big'))
 
 
 # ---------------------------------------------------------------------------
@@ -1535,6 +1717,10 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
         raise ValueError("declared plaintext length does not match ciphertext")
     if ct_int.bit_length() > 8 * pt_len:
         raise ValueError("declared plaintext length does not match ciphertext")
+    # TODO #380: the bound C, Go and Java apply.  Without it Python alone read
+    # (and, before #380, wrote) a 0-iteration envelope.
+    if not 1 <= iterations <= _PBKDF2_HFSCX256_ITER_MAX:
+        raise ValueError(f"iteration count out of range ({iterations})")
     salt = _fit(salt_int, _PBKDF2_SALT_BYTES, 'salt', 'pem')
     ct   = _fit(ct_int, pt_len, 'ct', 'pem')
     tag  = _fit(tag_int, 32, 'tag', 'pem')
@@ -1607,8 +1793,8 @@ def _r3(nbits):
 _STERN_ALGOS        = {'hpks-stern', 'hpke-stern'}
 
 _STERN_DEMO_WARNING = (
-    "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
-    "(demo parameters). 128-bit security requires N>=17000. "
+    "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
+    "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
     "Do not use for production."
 )
 
@@ -1739,13 +1925,15 @@ def _rnl_derive_C(m_poly, s_poly, n):
 
 def _encode_stern_privkey(e_int, seed, n, algo):
     nbytes = n // 8
-    der = der_seq(der_int(e_int, nbytes), der_int(seed.uint, nbytes), der_int(n))
+    seed = seed.uint if isinstance(seed, BitArray) else seed
+    der = der_seq(der_int(e_int, nbytes), der_int(seed, nbytes), der_int(n))
     return pem_wrap(_PRIV_ALGOS[algo], der)
 
 
 def _encode_stern_pubkey(syn_int, seed, n, algo):
     nbytes = n // 8
-    der = der_seq(der_int(syn_int, nbytes), der_int(seed.uint, nbytes), der_int(n))
+    seed = seed.uint if isinstance(seed, BitArray) else seed
+    der = der_seq(der_int(syn_int, nbytes), der_int(seed, nbytes), der_int(n))
     return pem_wrap(_PUB_ALGOS[algo], der)
 
 
@@ -1847,7 +2035,8 @@ def _xmss_read_idx(key_path: str, h: int) -> int:
 
 
 def _xmss_write_idx(key_path: str, next_idx: int):
-    open(_xmss_state_path(key_path), 'w').write(str(next_idx) + '\n')
+    with _open_out(_xmss_state_path(key_path), 'w') as f:
+        f.write(str(next_idx) + '\n')
 
 
 # ---------------------------------------------------------------------------
@@ -1935,7 +2124,8 @@ def _wots_is_used(key_path: str) -> bool:
 
 
 def _wots_mark_used(key_path: str):
-    open(_xmss_state_path(key_path), 'w').write('1\n')
+    with _open_out(_xmss_state_path(key_path), 'w') as f:
+        f.write('1\n')
 
 
 def _load_zkp_nl_privkey(path):
@@ -2281,10 +2471,11 @@ def _decode_asym_ct(path):
 def _encode_stern_ct(ct_syn, e_p, K_int, E_int, n):
     """HPKE-Stern-F demo ciphertext: syndrome + plaintext error (demo) + HSKE payload."""
     nbytes = n // 8
+    kbytes = min(n, 256) // 8      # K and the payload block: 256 bits above 256 (TODO #382)
     der = der_seq(der_int(ct_syn, nbytes),
                   der_int(e_p,    nbytes),   # demo: e' transmitted for brute-force decap
-                  der_int(K_int,  nbytes),
-                  der_int(E_int,  nbytes),
+                  der_int(K_int,  kbytes),
+                  der_int(E_int,  kbytes),
                   der_int(n))
     return pem_wrap(_LABEL_CT, der)
 
@@ -2413,12 +2604,13 @@ def _pack_stern_sig(sig, n):
     commits, challenges, responses = sig
     rounds  = len(commits)
     nbytes  = n // 8
+    cbytes  = min(n, 256) // 8     # commitments: 256 bits above N = 256 (TODO #382)
 
     commits_ba = bytearray()
     for c0, c1, c2 in commits:
-        commits_ba += c0.uint.to_bytes(nbytes, 'big')
-        commits_ba += c1.uint.to_bytes(nbytes, 'big')
-        commits_ba += c2.uint.to_bytes(nbytes, 'big')
+        commits_ba += c0.uint.to_bytes(cbytes, 'big')
+        commits_ba += c1.uint.to_bytes(cbytes, 'big')
+        commits_ba += c2.uint.to_bytes(cbytes, 'big')
 
     chal_bytes = bytearray((rounds + 3) // 4)
     for i, b in enumerate(challenges):
@@ -2449,17 +2641,19 @@ def _unpack_stern_sig(path):
     if label != _LABEL_SIG:
         raise ValueError(f"Expected SIGNATURE PEM, got {label!r}")
     n, rounds, c_int, ch_int, r_int = ints
-    n      = _bounded_n(n, 'verify')
+    n      = _bounded_stern_n(n, 'verify')
     rounds = _bounded(rounds, 1, _SDF_MAX_ROUNDS, 'round count', 'verify')
     nbytes = n // 8
+    cw     = min(n, 256)
+    cb     = cw // 8
 
-    commits_ba = _fit(c_int, 3 * rounds * nbytes, 'c', 'pem')
+    commits_ba = _fit(c_int, 3 * rounds * cb, 'c', 'pem')
     commits = []
     for i in range(rounds):
-        off = i * 3 * nbytes
-        c0 = BitArray(n, int.from_bytes(commits_ba[off           :off + nbytes],     'big'))
-        c1 = BitArray(n, int.from_bytes(commits_ba[off + nbytes  :off + 2 * nbytes], 'big'))
-        c2 = BitArray(n, int.from_bytes(commits_ba[off + 2*nbytes:off + 3 * nbytes], 'big'))
+        off = i * 3 * cb
+        c0 = BitArray(cw, int.from_bytes(commits_ba[off       :off + cb],     'big'))
+        c1 = BitArray(cw, int.from_bytes(commits_ba[off + cb  :off + 2 * cb], 'big'))
+        c2 = BitArray(cw, int.from_bytes(commits_ba[off + 2*cb:off + 3 * cb], 'big'))
         commits.append((c0, c1, c2))
 
     chal_nb    = (rounds + 3) // 4
@@ -2473,7 +2667,7 @@ def _unpack_stern_sig(path):
         v0  = int.from_bytes(resp_ba[off:off + nbytes],          'big')
         v1  = int.from_bytes(resp_ba[off + nbytes:off + 2*nbytes], 'big')
         b   = challenges[i]
-        if b == 0:
+        if b == 0 or _stern_long(n):     # the long form's pi_seed is an int
             responses.append((v0, v1))
         else:
             responses.append((BitArray(n, v0), v1))
@@ -2496,16 +2690,18 @@ def _pack_ring_sig(sig, n):
     rounds = len(all_challenges[0])
     nbytes = n // 8
 
-    def _vb(v):
+    cbytes = min(n, 256) // 8      # commitments: 256 bits above N = 256 (TODO #382)
+
+    def _vb(v, nb=nbytes):
         iv = v.uint if isinstance(v, BitArray) else int(v)
-        return iv.to_bytes(nbytes, 'big')
+        return iv.to_bytes(nb, 'big')
 
     blob = bytearray()
     for i in range(k):
         for r in range(rounds):
             c0, c1, c2 = all_commits[i][r]
             ra, rb     = all_responses[i][r]
-            blob += _vb(c0) + _vb(c1) + _vb(c2)
+            blob += _vb(c0, cbytes) + _vb(c1, cbytes) + _vb(c2, cbytes)
             blob += bytes([all_challenges[i][r] & 0xFF])
             blob += _vb(ra) + _vb(rb)
 
@@ -2523,10 +2719,12 @@ def _unpack_ring_sig(path):
     # below, and `verify`'s own k/n cross-checks only run after this returns.
     k      = _bounded(ints[0], 2, _RING_MAX_K,     'ring member count', 'verify')
     rounds = _bounded(ints[1], 1, _SDF_MAX_ROUNDS, 'round count',       'verify')
-    n      = _bounded_n(ints[2], 'verify')
+    n      = _bounded_stern_n(ints[2], 'verify')
     blob_int = ints[3]
     nbytes = n // 8
-    entry  = 5 * nbytes + 1
+    cw     = min(n, 256)
+    cb     = cw // 8
+    entry  = 3 * cb + 2 * nbytes + 1
     blen   = k * rounds * entry
     if _int_nbytes(blob_int) > blen:
         sys.exit(f"verify: HPKS-RING signature payload is "
@@ -2540,15 +2738,15 @@ def _unpack_ring_sig(path):
     off = 0
     for i in range(k):
         for r in range(rounds):
-            c0 = BitArray(n, int.from_bytes(blob[off:off+nbytes], 'big')); off += nbytes
-            c1 = BitArray(n, int.from_bytes(blob[off:off+nbytes], 'big')); off += nbytes
-            c2 = BitArray(n, int.from_bytes(blob[off:off+nbytes], 'big')); off += nbytes
+            c0 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
+            c1 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
+            c2 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
             b  = blob[off]; off += 1
             ra = int.from_bytes(blob[off:off+nbytes], 'big'); off += nbytes
             rb = int.from_bytes(blob[off:off+nbytes], 'big'); off += nbytes
             all_commits[i][r]    = (c0, c1, c2)
             all_challenges[i][r] = b
-            all_responses[i][r]  = ((ra if b == 0 else BitArray(n, ra)), rb)
+            all_responses[i][r]  = ((ra if b == 0 or _stern_long(n) else BitArray(n, ra)), rb)
     return (all_commits, all_challenges, all_responses), k, rounds, n
 
 
@@ -2569,7 +2767,7 @@ def _load_ring_pubkeys(ring_arg):
             ring_n = n_i
         elif n_i != ring_n:
             sys.exit("hpks-ring: all ring members must share the same n")
-        ring_keys.append((BitArray(n_i, seed_i), syn_i))
+        ring_keys.append((_stern_seed(seed_i, n_i), syn_i))
     return ring_keys, ring_n
 
 
@@ -2610,6 +2808,36 @@ def _load_key(path):
 _SYM_256_ALGOS = ('hske', 'hske-nla2', 'hske-nla3')
 
 
+# TODO #378.  Which --algo values each AEAD flag means anything for.  Every
+# other algorithm has nowhere to put associated data and no tag, so a flag
+# given there would be dropped without a word -- the ciphertext of
+# `enc --algo hske --ad X` was byte-for-byte that of no --ad.
+_AD_ALGOS = ('hske-duplex', 'hske-duplex3', 'hske-nla1')
+
+
+def _aead_flags_ok(cmd, algo, ad, aead=False):
+    """Refuse --aead / --ad on an --algo that would ignore them (TODO #378).
+    Presence is what counts: `--ad ''` is a flag given, not one omitted."""
+    if aead and algo != 'hske-nla1':
+        sys.exit(f"{cmd}: --aead is only for --algo hske-nla1, not '{algo}'")
+    if ad is not None and algo not in _AD_ALGOS:
+        sys.exit(f"{cmd}: --ad is only for --algo hske-duplex, hske-duplex3 "
+                 f"or hske-nla1, not '{algo}'")
+
+
+def _one_block_ok(algo, in_len, nbytes):
+    """Refuse input longer than the one block a single-block --algo encrypts
+    (TODO #378).  The CLIs used to keep the first `nbytes` and drop the rest,
+    exit 0, and let `dec` hand back a prefix of the message."""
+    if in_len > nbytes:
+        hint = ("use --algo hske-duplex or encfile for longer input"
+                if algo.startswith('hske') else
+                "for longer input, encrypt a key with it and the message "
+                "with --algo hske-duplex")
+        sys.exit(f"enc: --algo {algo} encrypts one {nbytes}-byte block; "
+                 f"--in is {in_len} bytes ({hint})")
+
+
 def _sym256_ok(nbits, ctx, what='key'):
     """sys.exit unless *nbits* is 256 (TODO #356)."""
     if nbits != 256:
@@ -2620,12 +2848,75 @@ def _sym256_ok(nbits, ctx, what='key'):
 # Sub-command: genpkey
 # ---------------------------------------------------------------------------
 
+def _resolve_key_params(algo, bits_s, level_s, port='py'):
+    """TODO #379: resolve genpkey's --bits / --level against _PARAM_SETS (the
+    generated table).  Returns the row's bits (-1 for a row with no width), or
+    None when the algorithm has fixed parameters and neither flag was given, or
+    the string 'own' when --bits goes to the algorithm's own rule (hpks-zkp-nl).
+    Every refusal happens here, before any key is generated."""
+    if algo in _PARAM_FIXED:
+        if bits_s is not None or level_s is not None:
+            sys.exit(f"genpkey: --algo {algo} has fixed parameters; "
+                     f"--bits and --level do not apply")
+        return None
+    if bits_s is not None and level_s is not None:
+        sys.exit("genpkey: give --bits or --level, not both")
+    rows = [r for r in _PARAM_SETS if r[0] == algo]
+    if not rows:
+        return None
+    if level_s is not None:
+        if level_s not in _PARAM_LEVELS:
+            sys.exit(f"genpkey: --level must be one of {', '.join(_PARAM_LEVELS)}, "
+                     f"got '{level_s}'")
+        match = [r for r in rows if r[2] == level_s]
+        if not match:
+            avail = ', '.join(l for l in _PARAM_LEVELS if any(r[2] == l for r in rows))
+            note = _PARAM_LEVEL_NOTES.get(algo)
+            sys.exit(f"genpkey: --level {level_s} is not available for --algo {algo} "
+                     f"(available: {avail})" + (f"; {note}" if note else ""))
+        row = match[0]
+    elif bits_s is not None:
+        if algo in _PARAM_OWN_BITS:
+            return 'own'
+        listed = [r for r in rows if r[1] > 0 and not r[7]]
+        if not listed:
+            sys.exit(f"genpkey: --bits does not apply to --algo {algo} "
+                     f"(use --level {next(r[2] for r in rows if r[2])})")
+        match = [r for r in rows if r[1] > 0 and str(r[1]) == bits_s]
+        if not match:
+            sys.exit(f"genpkey: --bits must be one of "
+                     f"{', '.join(str(r[1]) for r in listed)} for --algo {algo}, got '{bits_s}'")
+        row = match[0]
+        if row[7]:
+            sys.exit(f"genpkey: --bits {row[1]} for --algo {algo} is withdrawn: {row[7]}")
+    else:
+        row = next(r for r in rows if r[3])
+    if port not in row[6].split():
+        here = ', '.join(str(r[1]) for r in rows if port in r[6].split() and r[1] > 0)
+        sys.exit(f"genpkey: --algo {algo} at {row[1]} bits is not yet supported by "
+                 f"this CLI (supported here: {here})")
+    dflt = next(r for r in rows if r[3])[1]
+    if 0 < row[1] < dflt:
+        print(f"WARNING: --algo {algo} at {row[1]} bits is a demonstration width "
+              f"(estimated security: {row[5]})", file=sys.stderr)
+    return row[1]
+
+
 def cmd_genpkey(args):
     algo = args.algo
-    bits = args.bits or KEYBITS
+    # TODO #376: a GIVEN passphrase must be non-empty.  Before #376 this read
+    # --passphrase '' as no passphrase and wrote the key in the clear, and
+    # accepted --kdf-iterations alone and ignored it.  Both are refused before
+    # any key is generated.
+    if args.passphrase == '':
+        sys.exit("genpkey: --passphrase must not be empty")
+    if args.kdf_iterations is not None and args.passphrase is None:
+        sys.exit("genpkey: --kdf-iterations requires --passphrase")
+    # TODO #379: every width comes from the parameter-set table.
+    bits = _resolve_key_params(algo, args.bits, args.level)
 
     if algo in _CLASSICAL_GF_ALGOS:
-        poly    = GF_POLY.get(bits, GF_POLY[256])
+        poly    = GF_POLY[bits]
         a       = BitArray.random(bits)
         C       = BitArray(bits, gf_pow(GF_GEN, a.uint, poly, bits))
         pem_out = _encode_classical_privkey(a.uint, C.uint, bits, algo)
@@ -2634,7 +2925,7 @@ def cmd_genpkey(args):
         # Ring dimension is independent of the derived key width (TODO #223):
         # the ring must be 1024 for 128-bit security, the session key stays
         # KEYBITS.  --bits still overrides, for interop with older/other sizes.
-        n       = args.bits or RNLN
+        n       = bits
         m_base  = _rnl_m_poly(n)
         a_rand  = _rnl_rand_poly(n, RNLQ)
         m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)   # randomised m_blind
@@ -2644,13 +2935,22 @@ def cmd_genpkey(args):
 
     elif algo in _STERN_ALGOS:
         print(_STERN_DEMO_WARNING, file=sys.stderr)
-        seed, e_int, syn = stern_f_keygen(bits)
+        if _stern_long(bits):
+            seed, e_int, syn = _suite_mod.stern_l_keygen(bits)
+        else:
+            seed, e_int, syn = stern_f_keygen(bits)
         pem_out = _encode_stern_privkey(e_int, seed, bits, algo)
 
     elif algo in _ZKP_NL_ALGOS:
         # TODO #374: "unset" is args.bits is None, not bits == KEYBITS -- an
         # explicit --bits 256 used to read as unset and wrote an n = 8 key.
-        n = args.bits if args.bits is not None else _ZKP_NL_DEFAULT_N
+        n = _ZKP_NL_DEFAULT_N
+        if bits == 'own':
+            # TODO #379: the flag is now a string, read as decimal digits here.
+            if not (args.bits.isascii() and args.bits.isdigit()):
+                sys.exit(f'genpkey hpks-zkp-nl: --bits must be a positive even '
+                         f'integer <= {_ZKP_NL_MAX_N}, got {args.bits}')
+            n = int(args.bits)
         # TODO #283: _ZKP_NL_MAX_N is a WIRE bound, and until v6.7.1 it was
         # enforced only on the way IN -- codec.decode_zkp_nl_privkey applies it,
         # genpkey did not -- so this was the one path in the Python CLI that
@@ -2668,7 +2968,7 @@ def cmd_genpkey(args):
         pem_out = encode_zkp_nl_privkey(A, B, y, n)
 
     elif algo == 'oprf':
-        k   = oprf_keygen()
+        k   = oprf_keygen(bits)            # TODO #385: at the --bits width
         der = der_seq(der_int(k, bits // 8), der_int(bits))
         pem_out = pem_wrap(_PRIV_ALGOS['oprf'], der)
 
@@ -2685,8 +2985,6 @@ def cmd_genpkey(args):
         # for 2^32 leaves and the process simply never returns; C and Go refuse
         # the same input up front, and Java did not either (it wrapped `1 << h`
         # on an int and wrote a ONE-leaf tree labelled h = 32, exit 0).
-        if not 1 <= h_val <= _XMSS_MAX_H:
-            sys.exit(f'genpkey: --xmss-height must be in [1,{_XMSS_MAX_H}]')
         master_seed = _sec.token_bytes(32)
         print(f"Generating XMSS tree (h={h_val}, {1<<h_val} leaves) — may take a moment…",
               file=sys.stderr)
@@ -2711,7 +3009,7 @@ def cmd_genpkey(args):
         # TODO #369: an omitted --bits means n = 256 (_HCRED_CLI_N), as in C, Go
         # and Java -- it meant the suite's demo width, 32, which C and Java
         # refuse.  --bits N still chooses N; --bits 32 is the fast demo width.
-        n = args.bits if args.bits is not None else _HCRED_CLI_N
+        n = bits
         m_base  = _suite_mod._rnl_m_poly(n)
         a_rand  = _suite_mod._rnl_rand_poly(n, RNLQ)
         m_blind = [(m_base[i] + a_rand[i]) % RNLQ for i in range(n)]
@@ -2727,9 +3025,10 @@ def cmd_genpkey(args):
     else:
         sys.exit(f"Unknown algorithm: {algo!r}")
 
-    passphrase = getattr(args, 'passphrase', None)
-    if passphrase:
-        iterations = getattr(args, 'kdf_iterations', _PBKDF2_HFSCX256_ITER_DEMO)
+    passphrase = args.passphrase
+    if passphrase is not None:
+        iterations = (args.kdf_iterations if args.kdf_iterations is not None
+                      else _PBKDF2_HFSCX256_ITER_DEMO)
         pem_out = _encrypt_pem(pem_out, passphrase, iterations)
 
     _write_file(args.out or '-', pem_out)
@@ -2739,6 +3038,16 @@ def cmd_genpkey(args):
 # Sub-command: pkey
 # ---------------------------------------------------------------------------
 
+def _param_text_lines(algo, width):
+    """TODO #386: `pkey --text`'s closing lines, from the key's
+    key_parameter_sets row: `level` where the row has one, then `security`.
+    Nothing for a key no row describes (WOTS, XMSS, an unlisted width)."""
+    for a, b, level, _dflt, _status, sec, _ports, _wd in _PARAM_SETS:
+        if a == algo and b == width:
+            return ([f"level     : {level}"] if level else []) + [f"security  : {sec}"]
+    return []
+
+
 def cmd_pkey(args):
     in_path = getattr(args, 'in')
 
@@ -2746,8 +3055,10 @@ def cmd_pkey(args):
         # TODO #166: recover the original cleartext PEM (any algorithm) from a
         # passphrase-encrypted envelope. The result is byte-for-byte the original
         # PEM, so it can be fed to any other subcommand unmodified.
+        # TODO #376: '' is a passphrase here, so a key C or Java encrypted
+        # under '' before #376 stays readable.
         passphrase = args.passphrase
-        if not passphrase:
+        if passphrase is None:
             sys.exit("pkey --decrypt: --passphrase required")
         enc_text = _read_file(in_path).decode('ascii')
         try:
@@ -2756,6 +3067,12 @@ def cmd_pkey(args):
             sys.exit(f"pkey --decrypt: {e}")
         _write_file(args.out or '-', plain_pem)
         return
+
+    # TODO #386: a public key is refused by label, in the same words in all
+    # four CLIs (Python unpacked it as a private key and died in a traceback).
+    _lbl, _ = _read_pem(in_path)
+    if _lbl.endswith(' PUBLIC KEY'):
+        sys.exit(f"pkey: '{_lbl}' is a public key (pkey reads a private key)")
 
     algo, ints = _decode_privkey(in_path)
 
@@ -2769,9 +3086,8 @@ def cmd_pkey(args):
             pem_out = _encode_rnl_pubkey(C_poly, m_poly, n, n_a)
         elif algo in _STERN_ALGOS:
             e_int, seed_int, n = ints
-            syn   = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
-            seed  = BitArray(n, seed_int)
-            pem_out = _encode_stern_pubkey(syn, seed, n, algo)
+            syn   = _stern_syn(seed_int, e_int, n)
+            pem_out = _encode_stern_pubkey(syn, seed_int, n, algo)
         elif algo in _ZKP_NL_ALGOS:
             A, B, y, n = ints
             pem_out = encode_zkp_nl_pubkey(B, y, n)
@@ -2797,8 +3113,13 @@ def cmd_pkey(args):
         _write_file(args.out or '-', pem_out)
 
     elif args.text:
+        # TODO #386 / #387: one layout per algorithm, identical in all four
+        # CLIs, ending in the key's parameter-set row (level, security) where
+        # key_parameter_sets has one for its (algo, width).
+        tw = None                        # the width the row is looked up by
         if algo in _CLASSICAL_GF_ALGOS:
             priv_int, pub_int, nbits = ints
+            tw = nbits
             print(f"algorithm : {algo}")
             print(f"bits      : {nbits}")
             print(f"private   : {priv_int:0{nbits//4}x}")
@@ -2808,19 +3129,25 @@ def cmd_pkey(args):
             C_poly = _rnl_derive_C(m_poly, s_poly, n)
             C_packed, _ = pack_poly(C_poly, 2)
             s_packed, _ = pack_poly(s_poly, 4)
+            tw = n
             print(f"algorithm : {algo}")
             print(f"n         : {n}")
-            print(f"s_packed  : {s_packed:0{n}x}")
-            print(f"C_packed  : {C_packed:0{n//2}x}")
-            print(f"n_A       : {n_a.hex()}")
+            # 4 and 2 bytes a coefficient, every leading zero kept (TODO #387:
+            # the widths were n and n/2 digits, so the dump lost its zeros)
+            print(f"s_packed  : {s_packed:0{8 * n}x}")
+            print(f"C_packed  : {C_packed:0{4 * n}x}")
+            if len(ints) >= 4:           # a key that carries Alice's nonce
+                print(f"n_A       : {n_a.hex()}")
         elif algo in _STERN_ALGOS:
             e_int, seed_int, n = ints
+            tw = n
             print(f"algorithm : {algo}")
             print(f"n         : {n}")
             print(f"e_int     : {e_int:0{n//4}x}")
             print(f"seed      : {seed_int:0{n//4}x}")
         elif algo == 'hcred':
             s, C, m, seed_H_int, syndr, n = ints
+            tw = n
             print(f"algorithm : hcred")
             print(f"n         : {n}")
             print(f"seed_H    : {seed_H_int:0{n//4}x}")
@@ -2830,6 +3157,7 @@ def cmd_pkey(args):
         # nothing and exited 0 for these keys; an unhandled label now fails.
         elif algo in _ZKP_NL_ALGOS:
             A, B, y, n = ints
+            tw = n
             w = 2 * ((n + 7) // 8)
             print(f"algorithm : {algo}")
             print(f"n         : {n}")
@@ -2838,6 +3166,7 @@ def cmd_pkey(args):
             print(f"y (pub)   : {y:0{w}x}")
         elif algo == 'hpke-stern-kem':
             _decode_kem_privkey(in_path)          # validates the key
+            tw = -1                               # the row --bits cannot name
             print(f"algorithm : {algo}")
             print(f"r         : {_QCMDPC_R}")
             print(f"d         : {_QCMDPC_D}")
@@ -2852,10 +3181,13 @@ def cmd_pkey(args):
             print(f"root      : {root.hex() if isinstance(root, bytes) else format(root, '064x')}")
         elif algo == 'oprf':
             _k, nbits = _load_oprf_key(in_path)
+            tw = nbits
             print(f"algorithm : {algo}")
             print(f"bits      : {nbits}")
         else:
             sys.exit(f"pkey --text: no text form for {algo!r}")
+        for line in _param_text_lines(algo, tw):
+            print(line)
     else:
         sys.exit("Specify --pubout or --text")
 
@@ -2883,11 +3215,19 @@ def cmd_kex(args):
         their_algo, their_ints = _decode_pubkey(their_path)
         priv_int, _, nbits = our_ints
         pub_int = their_ints[0]
+        # TODO #383: a peer key at another width is refused, not reduced into ours
+        if their_ints[-1] != nbits:
+            sys.exit(f"kex: their public key n is {their_ints[-1]}, our private key n is {nbits}")
         if not gf_pub_is_valid(pub_int):
             sys.exit("kex: their public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         sk_int  = _apply_kdf(gf_pow(pub_int, priv_int, poly, nbits), nbits)
-        _write_file(args.out, _encode_session_key(sk_int, nbits))
+        # TODO #389: with --kdf hfscx-256 the session key IS the whole 256-bit
+        # digest of the n-bit shared value, at every n, and is labelled n = 256
+        # (as HKEX-RNL's session key already is, TODO #228); without --kdf it is
+        # the raw n-bit g^ab, labelled n.
+        sk_bits = 256 if kdf_mode == 'hfscx-256' else nbits
+        _write_file(args.out, _encode_session_key(sk_int, sk_bits))
 
     elif algo == 'hkex-rnl':
         # Detect protocol step from the type of --their file
@@ -3029,6 +3369,7 @@ def cmd_enc(args):
     algo     = args.algo
     in_bytes = _read_file(getattr(args, 'in'))
     out_path = args.out
+    _aead_flags_ok('enc', algo, args.ad, args.aead)
 
     # ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) ──────────────
     if algo in ('hske-duplex', 'hske-duplex3'):
@@ -3058,6 +3399,7 @@ def cmd_enc(args):
         if algo in _SYM_256_ALGOS:
             _sym256_ok(nbits, f"enc {algo}")
         nbytes  = nbits // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         in_padded = in_bytes[:nbytes].ljust(nbytes, b'\x00')
         P = BitArray(nbits, int.from_bytes(in_padded, 'big'))
         K = BitArray(nbits, key_int)
@@ -3078,7 +3420,7 @@ def cmd_enc(args):
                     'hske-nla1', int.from_bytes(ct, 'big'), nbits,
                     nonce_int=N_nonce.uint, tag_int=int.from_bytes(tag, 'big')))
                 return
-            if args.ad:
+            if args.ad is not None:
                 sys.exit("enc: --ad requires --aead")
             _nla1_width_ok(nbits, 'enc')
             E = hske_nla1_encrypt(P, K, N_nonce)
@@ -3108,6 +3450,7 @@ def cmd_enc(args):
         pub_int, nbits = their_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         nbytes  = nbits // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         P       = BitArray(nbits, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
         r       = BitArray.random(nbits)
         R       = BitArray(nbits, gf_pow(GF_GEN, r.uint, poly, nbits))
@@ -3119,6 +3462,7 @@ def cmd_enc(args):
         pub_int, nbits = their_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         nbytes  = nbits // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         P       = BitArray(nbits, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
         # r is ours to choose, so resample past the ~2^-96 short-arc weak-key
         # class (TODO #168, #354) rather than failing an honest encryption.
@@ -3138,6 +3482,7 @@ def cmd_enc(args):
         _v3_width_ok(nbits, 'enc hpke-nl3')
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         nbytes  = nbits // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         P       = BitArray(nbits, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
         # No resampling loop, unlike hpke-nl: v3 has no affine-degenerate key
         # class to sample past (SecurityProofs-8.md §11.34.4).
@@ -3150,16 +3495,21 @@ def cmd_enc(args):
     elif algo == 'hpke-stern':
         print(_STERN_DEMO_WARNING, file=sys.stderr)
         syn_int, seed_int, n = their_ints
-        seed    = BitArray(n, seed_int)
-        nbytes  = n // 8
-        P       = BitArray(n, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
-        K, ct_syn, e_p = hpke_stern_f_encap_with_e(seed, n)
-        E       = fscx_revolve(P, K, n // 4)
+        w       = min(n, 256)          # the payload block (TODO #382: 256 bits above 256)
+        nbytes  = w // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
+        P       = BitArray(w, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
+        if _stern_long(n):
+            K, ct_syn, e_p = _suite_mod.hpke_stern_l_encap_with_e(seed_int, n)
+        else:
+            K, ct_syn, e_p = hpke_stern_f_encap_with_e(BitArray(n, seed_int), n)
+        E       = fscx_revolve(P, K, w // 4)
         _write_file(out_path, _encode_stern_ct(ct_syn, e_p, K.uint, E.uint, n))
 
     elif algo == 'hpke-stern-kem':
         h_pub, r = _decode_kem_pubkey(pubkey_path)
         nbytes = KEYBITS // 8
+        _one_block_ok(algo, len(in_bytes), nbytes)
         P = BitArray(KEYBITS, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
         syn, K_int = qcmdpc_encap(h_pub)
         K = BitArray(KEYBITS, K_int)
@@ -3177,6 +3527,7 @@ def cmd_enc(args):
 def cmd_dec(args):
     algo     = args.algo
     out_path = args.out
+    _aead_flags_ok('dec', algo, args.ad)
 
     # ── HSKE-NL-V2/V3-Duplex AEAD (arbitrary-length, single-pass) ──────────
     if algo in ('hske-duplex', 'hske-duplex3'):
@@ -3227,6 +3578,10 @@ def cmd_dec(args):
             _write_file(out_path, pt)
             return
 
+        if algo == 'hske-nla1' and args.ad is not None:
+            # TODO #378: format tag 1 has no tag to bind associated data to.
+            sys.exit("dec: --ad given, but this hske-nla1 ciphertext is not "
+                     "an AEAD one (it has no tag to bind it to)")
         if algo == 'hske':
             D = fscx_revolve(E, K, 3 * nbits // 4)
         elif algo == 'hske-nla1':
@@ -3258,6 +3613,8 @@ def cmd_dec(args):
         priv_int, _, nbits = our_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if _nb != nbits:   # TODO #383: a ciphertext at another width is refused
+            sys.exit(f"dec: ciphertext n is {_nb}, private key n is {nbits}")
         if not gf_pub_is_valid(R_int):
             sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
@@ -3269,6 +3626,8 @@ def cmd_dec(args):
         priv_int, _, nbits = our_ints
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if _nb != nbits:   # TODO #383: a ciphertext at another width is refused
+            sys.exit(f"dec: ciphertext n is {_nb}, private key n is {nbits}")
         if not gf_pub_is_valid(R_int):
             sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
@@ -3283,6 +3642,8 @@ def cmd_dec(args):
         _v3_width_ok(nbits, 'dec hpke-nl3')
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        if _nb != nbits:   # TODO #383: a ciphertext at another width is refused
+            sys.exit(f"dec: ciphertext n is {_nb}, private key n is {nbits}")
         if not gf_pub_is_valid(R_int):
             sys.exit("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)")
         E       = BitArray(nbits, E_int)
@@ -3294,13 +3655,19 @@ def cmd_dec(args):
         print(_STERN_DEMO_WARNING, file=sys.stderr)
         e_int, seed_int, n = our_ints
         ct_syn, e_p, K_int, E_int, _n = _decode_stern_ct(getattr(args, 'in'))
-        seed    = BitArray(n, seed_int)
-        K_dec   = hpke_stern_f_decap(ct_syn, e_p, seed, n)
+        # TODO #383 stage 2: another width decrypted to garbage with exit 0
+        if _n != n:
+            sys.exit(f"dec: ciphertext n is {_n}, private key n is {n}")
+        w       = min(n, 256)
+        if _stern_long(n):
+            K_dec = _suite_mod.hpke_stern_l_decap_known(e_p, seed_int, n)
+        else:
+            K_dec = hpke_stern_f_decap(ct_syn, e_p, BitArray(n, seed_int), n)
         if K_dec is None:
             sys.exit("HPKE-Stern-F decap failed (brute-force exhausted)")
-        E       = BitArray(n, E_int)
-        D       = fscx_revolve(E, K_dec, 3 * n // 4)
-        _write_file(out_path, D.uint.to_bytes(n // 8, 'big'))
+        E       = BitArray(w, E_int)
+        D       = fscx_revolve(E, K_dec, 3 * w // 4)
+        _write_file(out_path, D.uint.to_bytes(w // 8, 'big'))
 
     elif algo == 'hpke-stern-kem':
         key_path = args.key
@@ -3351,11 +3718,14 @@ def cmd_sign(args):
     elif algo == 'hpks-stern':
         print(_STERN_DEMO_WARNING, file=sys.stderr)
         e_int, seed_int, n = our_ints
-        seed   = BitArray(n, seed_int)
-        syn    = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
-        msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        rounds = getattr(args, 'rounds', None) or _STERN_CLI_ROUNDS
-        sig    = hpks_stern_f_sign(msg, e_int, seed, syn, n, rounds)
+        msg    = _stern_msg(in_bytes, n)
+        rounds = args.rounds if args.rounds is not None else _STERN_CLI_ROUNDS
+        if _stern_long(n):
+            sig = _suite_mod.hpks_stern_l_sign(msg, e_int, seed_int, n, rounds)
+        else:
+            seed = BitArray(n, seed_int)
+            syn  = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
+            sig  = hpks_stern_f_sign(msg, e_int, seed, syn, n, rounds)
         _write_file(args.out, _pack_stern_sig(sig, n))
 
     elif algo == 'hpks-ring':
@@ -3378,13 +3748,16 @@ def cmd_sign(args):
             sys.exit(f"hpks-ring sign: signer n={n} != ring n={ring_n}")
         # Locate the signer's own index in the ring (matched by seed).
         j = next((idx for idx, (sd, _sy) in enumerate(ring_keys)
-                  if sd.uint == seed_int), None)
+                  if (sd if isinstance(sd, int) else sd.uint) == seed_int), None)
         if j is None:
             sys.exit("hpks-ring sign: signer's public key is not in --ring "
                      "(run pkey --pubout on the signer key and include it)")
-        msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        rounds = getattr(args, 'rounds', None) or _STERN_CLI_ROUNDS
-        sig    = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
+        msg    = _stern_msg(in_bytes, n)
+        rounds = args.rounds if args.rounds is not None else _STERN_CLI_ROUNDS
+        if _stern_long(n):
+            sig = _suite_mod.hpks_stern_l_ring_sign(msg, e_int, j, ring_keys, n, rounds)
+        else:
+            sig = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
         _write_file(args.out, _pack_ring_sig(sig, n))
         print(f"Ring signature created (k={len(ring_keys)}); signer index is hidden.",
               file=sys.stderr)
@@ -3409,7 +3782,7 @@ def cmd_sign(args):
         if our_algo != 'hpks-zkp-nl':
             sys.exit(f"nl-zkboo sign: expected hpks-zkp-nl key, got {our_algo!r}")
         A, B, y, n = our_ints
-        rounds = getattr(args, 'rounds', None) or _ZKP_CLI_ROUNDS
+        rounds = args.rounds if args.rounds is not None else _ZKP_CLI_ROUNDS
         # Pad/truncate to 32 bytes to match C/Go behavior.  TODO #261 found this
         # line missing here while it was present in the nl-zkbpp branch below:
         # C passes `msg_bytes, KEYBYTES` and Go `msgPad(inBytes, 32)`, so an
@@ -3426,7 +3799,7 @@ def cmd_sign(args):
         if our_algo != 'hpks-zkp-nl':
             sys.exit(f"nl-zkbpp sign: expected hpks-zkp-nl key, got {our_algo!r}")
         A, B, y, n = our_ints
-        rounds = getattr(args, 'rounds', None) or _ZKP_CLI_ROUNDS
+        rounds = args.rounds if args.rounds is not None else _ZKP_CLI_ROUNDS
         # Pad/truncate to 32 bytes to match C/Go behavior
         msg = (in_bytes + b'\x00' * 32)[:32]
         proof_rounds = zkp_nl_prove_pp(A, B, y, n, rounds, msg)
@@ -3473,6 +3846,11 @@ def _load_hpks_privkey_for_threshold(key_path):
     if algo not in ('hpks', 'hpks-nl'):
         sys.exit(f"threshold: expected hpks or hpks-nl key, got {algo!r}")
     priv_int, pub_int, nbits = ints   # nbits already held to the GF widths (_WIRE_FIELDS)
+    # TODO #388: HPKS-T (MuSig2 coefficients, aggregation, verify) is defined at
+    # 256 bits only; refuse a narrower key here, before it writes a commitment
+    # that threshold-aggregate cannot read (same message as C and Go).
+    if nbits != 256:
+        sys.exit(f"threshold: the key is {nbits}-bit; threshold signing runs at 256 bits only")
     _fit(priv_int, nbits // 8, 'private key', 'threshold')
     _fit(pub_int, nbits // 8, 'public key', 'threshold')
     return ints  # (priv_int, pub_int, nbits)
@@ -3648,8 +4026,11 @@ def cmd_verify(args):
         if k != len(ring_keys):
             sys.exit(f"hpks-ring verify: signature ring size {k} != "
                      f"{len(ring_keys)} provided members")
-        msg = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        ok  = hpks_stern_ring_verify(msg, sig, ring_keys, n)
+        msg = _stern_msg(in_bytes, n)
+        if _stern_long(n):
+            ok = _suite_mod.hpks_stern_l_ring_verify(msg, sig, ring_keys, n)
+        else:
+            ok = hpks_stern_ring_verify(msg, sig, ring_keys, n)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -3693,13 +4074,19 @@ def cmd_verify(args):
     elif algo == 'hpks-stern':
         print(_STERN_DEMO_WARNING, file=sys.stderr)
         syn_int, seed_int, n = their_ints
-        seed = BitArray(n, seed_int)
-        msg  = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
+        seed = _stern_seed(seed_int, n)
+        msg  = _stern_msg(in_bytes, n)
         commits, challenges, responses, _n = _unpack_stern_sig(sig_path)
         _require_rounds(len(commits), _round_floor(args, 'verify'),
                         'hpks-stern signature', 'verify')
+        # TODO #383 stage 2: another width failed inside _stern_hash
+        if _n != n:
+            sys.exit(f"verify: signature n is {_n}, public key n is {n}")
         sig  = (commits, challenges, responses)
-        ok   = hpks_stern_f_verify(msg, sig, seed, syn_int, n)
+        if _stern_long(n):
+            ok = _suite_mod.hpks_stern_l_verify(msg, sig, seed, syn_int, n)
+        else:
+            ok = hpks_stern_f_verify(msg, sig, seed, syn_int, n)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -3988,8 +4375,6 @@ def cmd_rand(args):
         drbg_reseed(drbg, _read_file(args.reseed))
 
     if args.bytes is not None:
-        if args.bytes < 0:
-            sys.exit("rand: --bytes must be non-negative")
         try:
             out = drbg_generate(drbg, args.bytes)
         except RuntimeError as e:
@@ -4014,15 +4399,24 @@ def cmd_rand(args):
 # Sub-command: fpe (78.A)
 # ---------------------------------------------------------------------------
 
+def _block32_in(path, cmd):
+    """TODO #377: fpe / twk map exactly one 32-byte block.  Longer input used to
+    be cut to its first 32 bytes (exit 0, nothing round-tripped) and shorter
+    input zero-padded -- on the right here, C and Java, on the LEFT in Go -- so
+    any other length is refused rather than reshaped."""
+    data = _read_file(path)
+    if len(data) != 32:
+        sys.exit(f'{cmd}: --in must be exactly 32 bytes (one block), got {len(data)}')
+    return data
+
+
 def cmd_fpe(args):
     key_int, nbits = _load_key(args.key)
     _sym256_ok(nbits, 'fpe')
     key_bytes = _fit(key_int, nbits // 8, 'key', 'pem')
     ctx_bytes = args.context.encode() if args.context else b''
-    in_bytes  = _read_file(getattr(args, 'in'))
-    if len(in_bytes) < 32:
-        in_bytes = in_bytes.ljust(32, b'\x00')
-    P = BitArray(KEYBITS, int.from_bytes(in_bytes[:32], 'big'))
+    in_bytes  = _block32_in(getattr(args, 'in'), 'fpe')
+    P = BitArray(KEYBITS, int.from_bytes(in_bytes, 'big'))
     v3 = getattr(args, 'v3', False)
     if args.encrypt:
         R = fpe_v3_encrypt(P, key_bytes, ctx_bytes) if v3 else \
@@ -4034,7 +4428,7 @@ def cmd_fpe(args):
     if args.out == '-':
         sys.stdout.buffer.write(out_bytes)
     else:
-        with open(args.out, 'wb') as f:
+        with _open_out(args.out, 'wb') as f:
             f.write(out_bytes)
 
 
@@ -4043,25 +4437,27 @@ def cmd_fpe(args):
 # ---------------------------------------------------------------------------
 
 def cmd_twk(args):
+    # TODO #375: the tweak is sector_be64 || bidx_be32.  argparse int took
+    # -1 and 2^32 here and the suite then died with an OverflowError traceback.
+    sector = _dec_range_arg(args.sector, 0, 2**64 - 1, 'twk', '--sector')
+    bidx = _dec_range_arg(args.bidx, 0, 2**32 - 1, 'twk', '--bidx')
     key_int, nbits = _load_key(args.key)
     _sym256_ok(nbits, 'twk')
     key_bytes = _fit(key_int, nbits // 8, 'key', 'pem')
-    in_bytes  = _read_file(getattr(args, 'in'))
-    if len(in_bytes) < 32:
-        in_bytes = in_bytes.ljust(32, b'\x00')
-    P = BitArray(KEYBITS, int.from_bytes(in_bytes[:32], 'big'))
+    in_bytes  = _block32_in(getattr(args, 'in'), 'twk')
+    P = BitArray(KEYBITS, int.from_bytes(in_bytes, 'big'))
     v3 = getattr(args, 'v3', False)
     if args.encrypt:
-        R = twk_v3_encrypt(P, key_bytes, args.sector, args.bidx) if v3 else \
-            twk_encrypt(P, key_bytes, args.sector, args.bidx)
+        R = twk_v3_encrypt(P, key_bytes, sector, bidx) if v3 else \
+            twk_encrypt(P, key_bytes, sector, bidx)
     else:
-        R = twk_v3_decrypt(P, key_bytes, args.sector, args.bidx) if v3 else \
-            twk_decrypt(P, key_bytes, args.sector, args.bidx)
+        R = twk_v3_decrypt(P, key_bytes, sector, bidx) if v3 else \
+            twk_decrypt(P, key_bytes, sector, bidx)
     out_bytes = R.uint.to_bytes(KEYBITS // 8, 'big')
     if args.out == '-':
         sys.stdout.buffer.write(out_bytes)
     else:
-        with open(args.out, 'wb') as f:
+        with _open_out(args.out, 'wb') as f:
             f.write(out_bytes)
 
 
@@ -4075,19 +4471,24 @@ def _load_oprf_key(path):
     if label != _PRIV_ALGOS['oprf']:
         sys.exit(f"Expected OPRF PRIVATE KEY PEM, got {label!r}")
     k_int, nbits = ints
-    # TODO #367: the OPRF runs at KEYBITS only (Go and C ignore the field);
-    # an unbounded width reached der_int's to_bytes as an OverflowError.
-    nbits = _bounded(nbits, KEYBITS, KEYBITS, 'n', 'oprf')
-    _fit(k_int, nbits // 8, 'OPRF key', 'oprf')
+    # TODO #385: n is 32, 64, 128 or 256, checked with the key's other fields
+    # by _der_items (_WIRE_FIELDS); it was KEYBITS only (TODO #367).
     return k_int, nbits
+
+
+# TODO #385: the OPRF's three artifacts carry n, and a pair from different
+# widths is refused by name, as the other GF-family operations refuse one.
+_OPRF_WIDTHS = (32, 64, 128, 256)
 
 
 def cmd_oprf_blind(args):
     """Client step 1: hash input and blind with random scalar r.
     Writes OPRF CLIENT STATE PEM (r + alpha) to --out; alpha is sent to server."""
     in_bytes = _read_file(getattr(args, 'in'))
-    r, alpha = oprf_blind(in_bytes)
-    nbits    = KEYBITS
+    nbits    = args.bits
+    if nbits not in _OPRF_WIDTHS:
+        sys.exit(f"oprf-blind: --bits must be 32, 64, 128 or 256, got {nbits}")
+    r, alpha = oprf_blind(in_bytes, nbits)
     der      = der_seq(der_int(r,     nbits // 8),
                        der_int(alpha, nbits // 8),
                        der_int(nbits))
@@ -4101,8 +4502,10 @@ def cmd_oprf_eval(args):
     label, ints  = _read_pem_ints(getattr(args, 'in'))
     if label != _LABEL_OPRF_STATE:
         sys.exit(f"Expected OPRF CLIENT STATE PEM, got {label!r}")
-    _r, alpha, _nb = ints
-    beta  = oprf_eval(alpha, k_int)
+    _r, alpha, state_n = ints
+    if state_n != nbits:
+        sys.exit(f"oprf-eval: client state n is {state_n}, key n is {nbits}")
+    beta  = oprf_eval(alpha, k_int, nbits)
     der   = der_seq(der_int(beta, nbits // 8), der_int(nbits))
     _write_file(args.out, pem_wrap(_LABEL_OPRF_EVAL, der))
 
@@ -4117,9 +4520,11 @@ def cmd_oprf_unblind(args):
     label_e, ints_e = _read_pem_ints(getattr(args, 'eval'))
     if label_e != _LABEL_OPRF_EVAL:
         sys.exit(f"Expected OPRF EVALUATION PEM, got {label_e!r}")
-    beta, _nb = ints_e
+    beta, eval_n = ints_e
+    if eval_n != nbits:
+        sys.exit(f"oprf-unblind: evaluation n is {eval_n}, client state n is {nbits}")
 
-    F      = oprf_unblind(beta, r)
+    F      = oprf_unblind(beta, r, nbits)
     F_hex  = F.to_bytes(nbits // 8, 'big').hex()
     _write_file(args.out, F_hex + '\n')
 
@@ -4130,14 +4535,25 @@ def cmd_oprf_unblind(args):
 
 def cmd_pake_register(args):
     """Register a new user for aPAKE.  Outputs HERRADURA PAKE RECORD PEM."""
-    oprf_key, _nbits = _load_oprf_key(args.key)
+    oprf_key, nbits = _load_oprf_key(args.key)
     username = args.username or "user"
-    if args.password:
-        password = args.password.encode()
-    else:
+    # TODO #376: a record is never written under a password nobody chose.  An
+    # omitted --password prompts only when there is a terminal to prompt on;
+    # '' (given or typed) is refused, as in the other three CLIs.
+    if args.password is not None:
+        password = args.password
+    elif sys.stdin.isatty():
         import getpass
-        password = getpass.getpass(f"Password for {username!r}: ").encode()
-    record  = hpake_register(username, password, oprf_key)
+        try:
+            password = getpass.getpass(f"Password for {username!r}: ")
+        except (EOFError, KeyboardInterrupt):
+            sys.exit("\npake-register: no password entered")
+    else:
+        sys.exit("pake-register: --password required (stdin is not a terminal to prompt on)")
+    if password == '':
+        sys.exit("pake-register: --password must not be empty")
+    password = password.encode()
+    record  = hpake_register(username, password, oprf_key, nbits)
     salt_b  = record['salt']
     B_int   = record['B']
     y_int   = record['y']
@@ -4167,18 +4583,21 @@ def _load_pake_record(path):
 
 def cmd_pake_demo(args):
     """aPAKE demo: run full registration + login on both sides and show session key."""
-    oprf_key, _nbits = _load_oprf_key(args.key)
+    oprf_key, nbits = _load_oprf_key(args.key)
     username  = args.username or "demo-user"
-    password  = (args.password or "demo-password").encode()
-    record    = hpake_register(username, password, oprf_key)
-    sk        = hpake_login_demo(record, password, oprf_key)
+    # TODO #376: omitted, the demo uses "demo-password"; given, it must be one.
+    if args.password == '':
+        sys.exit("pake-demo: --password must not be empty")
+    password  = args.password.encode()
+    record    = hpake_register(username, password, oprf_key, nbits)
+    sk        = hpake_login_demo(record, password, oprf_key, nbits)
     if sk is not None:
         print(f"- aPAKE login succeeded; session key: {sk.hex()}")
     else:
         print("+ aPAKE login failed!")
         sys.exit(1)
     # Also test wrong password
-    wrong_sk  = hpake_login_demo(record, b"wrong-password", oprf_key)
+    wrong_sk  = hpake_login_demo(record, b"wrong-password", oprf_key, nbits)
     if wrong_sk is None:
         print("- aPAKE correctly rejects wrong password")
     else:
@@ -4215,10 +4634,10 @@ def cmd_cred_issue(args):
     if our_algo not in ('hpks-stern', 'hpke-stern'):
         sys.exit(f"cred-issue: --our must be an hpks-stern private key, got {our_algo!r}")
     e_int, seed_int, issuer_n = ints
-    issuer_seed = BitArray(issuer_n, seed_int)
-    issuer_syn  = _suite_mod._stern_syndrome(seed_int, e_int, issuer_n, issuer_n // 2)
+    issuer_seed = _stern_seed(seed_int, issuer_n)
+    issuer_syn  = _stern_syn(seed_int, e_int, issuer_n)
 
-    rounds = getattr(args, 'rounds', None) or _HCRED_SIGN_ROUNDS
+    rounds = args.rounds if args.rounds is not None else _HCRED_SIGN_ROUNDS
     print(_STERN_DEMO_WARNING, file=sys.stderr)
     cred_sig = hcred_issue(m, C, seed_H, syndr, n,
                            e_int, issuer_seed, issuer_syn,
@@ -4236,7 +4655,7 @@ def cmd_cred_prove(args):
     s, C, m, seed_H_int, syndr, n = decode_hcred_privkey(raw)
     seed_H  = BitArray(n, seed_H_int)
     msg     = (args.msg or '').encode()
-    rounds  = getattr(args, 'rounds', None) or _HCRED_CLI_ROUNDS
+    rounds  = args.rounds if args.rounds is not None else _HCRED_CLI_ROUNDS
     try:
         proof = hcred_prove(s, m, C, seed_H, syndr, n=n, rounds=rounds,
                             msg_bytes=msg)
@@ -4254,8 +4673,8 @@ def cmd_cred_verify(args):
 
     # Load user's public key
     C, m, seed_H, syndr, pub_n = _load_hcred_pubkey(args.pubkey)
-    if proof_n != pub_n:
-        sys.exit(f"cred-verify: proof n={proof_n} does not match public key n={pub_n}")
+    if proof_n != pub_n:   # same text in all CLIs (TODO #383 stage 3)
+        sys.exit(f"cred-verify: proof n is {proof_n}, public key n is {pub_n}")
 
     msg    = (args.msg or '').encode()
     rounds = len(proof['rounds'])
@@ -4274,20 +4693,26 @@ def cmd_cred_verify(args):
         commits_raw, challenges, responses, issuer_n = decode_hcred_credential(raw_cred)
         _require_rounds(len(challenges), floor, 'HCRED credential', 'cred-verify')
         # Wrap commit integers as BitArrays for hpks_stern_f_verify
-        commits = [(BitArray(issuer_n, c0), BitArray(issuer_n, c1), BitArray(issuer_n, c2))
+        cw = min(issuer_n, 256)    # commitments: 256 bits above N = 256 (TODO #382)
+        commits = [(BitArray(cw, c0), BitArray(cw, c1), BitArray(cw, c2))
                    for c0, c1, c2 in commits_raw]
         responses2 = []
         for i, (v0, v1) in enumerate(responses):
             b = challenges[i]
-            responses2.append((v0 if b == 0 else BitArray(issuer_n, v0), v1))
+            responses2.append((v0 if b == 0 or _stern_long(issuer_n)
+                               else BitArray(issuer_n, v0), v1))
         cred_sig = (commits, challenges, responses2)
 
         # Load issuer's public key (hpks-stern pub)
         issuer_algo, issuer_ints = _decode_pubkey(args.issuer)
         if issuer_algo not in ('hpks-stern', 'hpke-stern'):
             sys.exit(f"cred-verify: --issuer must be an hpks-stern public key, got {issuer_algo!r}")
-        issuer_syn_int, issuer_seed_int, _ = issuer_ints
-        issuer_seed = BitArray(issuer_n, issuer_seed_int)
+        issuer_syn_int, issuer_seed_int, issuer_key_n = issuer_ints
+        # A credential at another width than its issuer key's failed as a forgery;
+        # it is refused by name, as verify does (TODO #383 stages 2 and 3).
+        if issuer_n != issuer_key_n:
+            sys.exit(f"cred-verify: credential n is {issuer_n}, issuer key n is {issuer_key_n}")
+        issuer_seed = _stern_seed(issuer_seed_int, issuer_n)
 
         ok_cred = hcred_cred_verify(m, C, seed_H, syndr, pub_n,
                                     cred_sig, issuer_seed, issuer_syn_int,
@@ -4314,16 +4739,21 @@ def build_parser():
     # genpkey
     gp = sub.add_parser('genpkey', help='Generate a private key')
     gp.add_argument('--algo', required=True, choices=list(_PRIV_ALGOS) + ['hcred'])
-    gp.add_argument('--bits', type=int, default=None,
-                    help='Key size in bits (default 256; Stern: matrix dimension N)')
-    gp.add_argument('--xmss-height', type=int, default=10, dest='xmss_height',
+    gp.add_argument('--bits', default=None,
+                    help='Key size in bits: the key width, the HKEX-RNL ring dimension or '
+                         'the Stern-F code length N, from the algorithm\'s listed values '
+                         '(TODO #379); kept for compatibility -- prefer --level')
+    gp.add_argument('--level', default=None,
+                    help='Parameter set by the strength it is sized for: demo, 128 '
+                         '(192 and 256 reserved).  Not every algorithm has every level')
+    gp.add_argument('--xmss-height', type=_dec_type('genpkey', '--xmss-height', 1, _XMSS_MAX_H), default=10, dest='xmss_height',
                     help='XMSS tree height (default 10 → 1024 leaves)')
     gp.add_argument('--out', default='-')
     gp.add_argument('--passphrase', default=None,
                     help='Encrypt the exported private key PEM under this passphrase '
                          '(TODO #166; PBKDF2-HFSCX256 + HSKE-NL-AEAD). Omit for the '
                          'existing cleartext behavior.')
-    gp.add_argument('--kdf-iterations', type=int, default=_PBKDF2_HFSCX256_ITER_DEMO,
+    gp.add_argument('--kdf-iterations', type=_dec_type('genpkey', '--kdf-iterations', 1, _PBKDF2_HFSCX256_ITER_MAX), default=None,
                     help=f'PBKDF2-HFSCX256 iteration count for --passphrase (default '
                          f'{_PBKDF2_HFSCX256_ITER_DEMO}, demo-speed; NIST SP 800-132 '
                          f'recommends >={_PBKDF2_HFSCX256_ITER_PROD}, which takes '
@@ -4377,7 +4807,8 @@ def build_parser():
     en.add_argument('--aead', action='store_true',
                     help='HSKE-NL-AEAD authenticated encryption (hske-nla1 only)')
     en.add_argument('--ad', default=None,
-                    help='associated data bound into the AEAD tag (requires --aead)')
+                    help='associated data bound into the AEAD tag (hske-duplex, '
+                         'hske-duplex3, or hske-nla1 with --aead; refused elsewhere)')
 
     # dec
     de = sub.add_parser('dec', help='Decrypt')
@@ -4390,7 +4821,8 @@ def build_parser():
     de.add_argument('--in',  required=True, dest='in')
     de.add_argument('--out', required=True)
     de.add_argument('--ad', default=None,
-                    help='associated data for AEAD ciphertexts (must match enc --ad)')
+                    help='associated data for AEAD ciphertexts (must match enc --ad; '
+                         'refused on algos without AEAD)')
 
     # sign
     sg = sub.add_parser('sign', help='Sign a message or generate a ZKP')
@@ -4406,7 +4838,7 @@ def build_parser():
                     help='Pre-hash: hfscx-256=hash full input then sign the 32-byte '
                          'digest (default; TODO #365), none=pad/truncate input to '
                          'the block size, so only its first bytes are signed')
-    sg.add_argument('--rounds', type=int, default=None,
+    sg.add_argument('--rounds', type=_dec_type('sign', '--rounds', 1, _SDF_MAX_ROUNDS), default=None,
                     help='ZKP/Stern-F rounds (nl-zkboo, hpks-stern, hpks-ring; '
                          'default: 219, the 128-bit count every verifier requires '
                          'unless it passes --min-rounds; TODO #364)')
@@ -4424,7 +4856,7 @@ def build_parser():
     vf.add_argument('--digest', default='hfscx-256', choices=['none', 'hfscx-256'],
                     help='Pre-hash: must match the value used during signing '
                          '(default: hfscx-256; none = pad/truncate to 32 bytes)')
-    vf.add_argument('--min-rounds', type=int, default=None, dest='min_rounds',
+    vf.add_argument('--min-rounds', type=_dec_type('verify', '--min-rounds', 1, _SDF_MAX_ROUNDS), default=None, dest='min_rounds',
                     help='Refuse hpks-stern/hpks-ring/nl-zkboo/nl-zkbpp artifacts declaring fewer Fiat-Shamir rounds '
                          '(default: 219, 128-bit soundness; TODO #364)')
 
@@ -4517,7 +4949,7 @@ def build_parser():
                     help='Personalization string (with --seed only)')
     rd.add_argument('--reseed', default=None,
                     help='Entropy file to fold into the state before generating')
-    rd.add_argument('--bytes', type=int, default=None,
+    rd.add_argument('--bytes', type=_dec_type('rand', '--bytes', 0, DRBG_MAX_BLOCKS * 32), default=None,
                     help='Number of output bytes to generate')
     rd.add_argument('--hex', action='store_true',
                     help='Hex-encode the output instead of raw bytes')
@@ -4532,7 +4964,7 @@ def build_parser():
     fp.add_argument('--context', default='',
                     help='Context/tweak string (optional)')
     fp.add_argument('--in',     required=True, dest='in',
-                    help='Input file (32 bytes)')
+                    help='Input file (exactly 32 bytes)')
     fp.add_argument('--out',    default='-',
                     help='Output file (raw 32 bytes); - for stdout')
     fp.add_argument('--v3', action='store_true',
@@ -4548,12 +4980,12 @@ def build_parser():
                         help='Tweakable wide-block encrypt/decrypt a 256-bit block (78.B)')
     tw.add_argument('--key',    required=True,
                     help='256-bit session key: a SESSION KEY PEM or a 0x hex file')
-    tw.add_argument('--sector', type=int, default=0,
-                    help='Sector number (default 0)')
-    tw.add_argument('--bidx',   type=int, default=0,
-                    help='Block index within sector (default 0)')
+    tw.add_argument('--sector', default='0',
+                    help='Sector number, decimal 0 to 2^64-1 (default 0)')
+    tw.add_argument('--bidx',   default='0',
+                    help='Block index within sector, decimal 0 to 2^32-1 (default 0)')
     tw.add_argument('--in',    required=True, dest='in',
-                    help='Input file (32 bytes)')
+                    help='Input file (exactly 32 bytes)')
     tw.add_argument('--out',   default='-',
                     help='Output file (raw 32 bytes); - for stdout')
     tw.add_argument('--v3', action='store_true',
@@ -4569,6 +5001,10 @@ def build_parser():
                         help='OPRF client step 1: hash input and blind (TODO #80)')
     ob.add_argument('--in',  required=True, dest='in',
                     help='Input bytes to blind (file or - for stdin)')
+    ob.add_argument('--bits', type=_dec_type('oprf-blind', '--bits', 1, 1 << 16),
+                    default=KEYBITS,
+                    help='GF(2^n) width: 32, 64, 128 or 256 (default 256); must be '
+                         'the server key\'s n (TODO #385)')
     ob.add_argument('--out', default='-',
                     help='OPRF CLIENT STATE PEM output (keep secret; contains r + alpha)')
 
@@ -4621,7 +5057,7 @@ def build_parser():
                     help='Issuer hpks-stern PRIVATE KEY PEM')
     ci.add_argument('--in',     required=True, dest='in',
                     help='User HCRED PUBLIC KEY (or PRIVATE KEY) PEM')
-    ci.add_argument('--rounds', type=int, default=None,
+    ci.add_argument('--rounds', type=_dec_type('cred-issue', '--rounds', 1, _SDF_MAX_ROUNDS), default=None,
                     help=f'Stern-F rounds (default: {_HCRED_SIGN_ROUNDS} for 128-bit soundness)')
     ci.add_argument('--out',    default='-',
                     help='HCRED CREDENTIAL PEM output')
@@ -4633,7 +5069,7 @@ def build_parser():
                     help='User HCRED PRIVATE KEY PEM')
     cp.add_argument('--msg',    default='',
                     help='Presentation nonce / message (default: empty)')
-    cp.add_argument('--rounds', type=int, default=None,
+    cp.add_argument('--rounds', type=_dec_type('cred-prove', '--rounds', 1, _SDF_MAX_ROUNDS), default=None,
                     help=f'ZKBoo rounds (default: {_HCRED_CLI_ROUNDS} for 128-bit soundness)')
     cp.add_argument('--out',    default='-',
                     help='HCRED PROOF PEM output')
@@ -4651,7 +5087,7 @@ def build_parser():
                     help='Issuer hpks-stern PUBLIC KEY PEM (required with --cred)')
     cv.add_argument('--msg',     default='',
                     help='Presentation nonce / message (must match cred-prove --msg)')
-    cv.add_argument('--min-rounds', type=int, default=None, dest='min_rounds',
+    cv.add_argument('--min-rounds', type=_dec_type('cred-verify', '--min-rounds', 1, _SDF_MAX_ROUNDS), default=None, dest='min_rounds',
                     help='Refuse a proof or credential declaring fewer Fiat-Shamir rounds '
                          '(default: 219, 128-bit soundness; TODO #364)')
 

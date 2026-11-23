@@ -200,8 +200,31 @@ jobs:
             bash "$f"
           done
 
+  # TODO #392.  The Python test suite was 8.8 of this job's 16.3 min, so it runs
+  # as two shards (Herradura_tests.py --shard K/2, a partition computed from
+  # its _SHARD_COST table) and native-python-cli below runs the job's other
+  # steps beside them.  Both shards together run each numbered test once.
   native-python:
-    name: Python (tests + CliTest)
+    name: Python test suite (shard ${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3
+
+      - name: Python test suite
+        run: python3 CryptosuiteTests/Herradura_tests.py -t 2.0 --shard ${{ matrix.shard }}/2
+
+  native-python-cli:
+    name: Python (CliTest + checks)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -223,9 +246,6 @@ jobs:
       # verdict, via the demo's own "[FAIL]"-marker exit code.
       - name: Python suite demo runs to completion
         run: python3 "Herradura cryptographic suite.py"
-
-      - name: Python test suite
-        run: python3 CryptosuiteTests/Herradura_tests.py -t 2.0
 
       # TODO #329. The Python integration example and four benchmarks, none of
       # which any job ran. docs/examples/python/hello_herradura.py is what
@@ -423,7 +443,10 @@ jobs:
                    CliTest/test_kat_pem.sh CliTest/test_fpe_twk.sh \
                    CliTest/test_v3_family.sh CliTest/test_zkp_hybrid_family.sh \
                    CliTest/test_unknown_flags.sh CliTest/test_passphrase_envelope.sh \
-                   CliTest/test_pkey_text_matrix.sh; do
+                   CliTest/test_pkey_text_matrix.sh CliTest/test_twk_tweak_range.sh \
+                   CliTest/test_empty_secrets.sh CliTest/test_numeric_flags.sh \
+                   CliTest/test_single_block_enc.sh CliTest/test_arg_hygiene.sh \
+                   CliTest/test_key_params.sh CliTest/test_file_modes.sh; do
             echo "=== $f ==="
             bash "$f"
           done
@@ -441,7 +464,9 @@ jobs:
                     test_stern_kem.sh test_wots.sh test_zkbpp.sh test_zkp_default_rounds.sh \
                     test_kat_pem.sh test_fpe_twk.sh test_v3_family.sh \
                     test_zkp_hybrid_family.sh test_unknown_flags.sh \
-                    test_passphrase_envelope.sh test_pkey_text_matrix.sh"
+                    test_passphrase_envelope.sh test_pkey_text_matrix.sh test_twk_tweak_range.sh \
+                    test_empty_secrets.sh test_numeric_flags.sh test_single_block_enc.sh test_arg_hygiene.sh \
+                    test_key_params.sh test_file_modes.sh test_width_matrix.sh"
           cd CliTest
           missing=0
           for f in *.sh; do
@@ -450,6 +475,7 @@ jobs:
             case "$f" in test_malformed_pem_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #240)
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_round_floor.sh) continue ;; esac        # claimed by cross-lang-compat (TODO #364)
+            case "$f" in test_stern_128.sh) continue ;; esac          # claimed by cross-lang-compat (TODO #382)
             case "$f" in test_key_label_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #366)
             case "$f" in test_der_items_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #367)
             case "$f" in test_peer_value_matrix.sh) continue ;; esac   # claimed by cross-lang-compat (TODO #371)
@@ -733,13 +759,51 @@ jobs:
             bash "$f"
           done
 
+  # TODO #391. test_width_matrix.sh was about 15 of native-interop's 28 min, so
+  # it runs here as three parallel shards over the spec's parameter-set rows
+  # (HKX_SHARD=K/N: rows K-1 mod N, the mixed-width sections in shard 1).  The
+  # three together run the whole script once; native-interop's coverage guard
+  # still claims it, because that guard lists scripts, not jobs.
+  native-interop-width:
+    name: Width matrix (shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3 default-jdk-headless
+
+      - name: Build C
+        run: ./build_c.sh
+
+      - name: Build Go
+        run: ./build_go.sh
+
+      - name: Build Java bindings
+        run: bash bindings/java/build.sh
+
+      - name: CliTest — every operation at every listed width
+        env:
+          HKX_SHARD: ${{ matrix.shard }}/3
+        run: bash CliTest/test_width_matrix.sh
+
   # TODO #207: independent of the four native-* build/test jobs above —
   # those prove each language's own suite/CLI passes its own tests; this
   # proves the cryptographic algorithms themselves interoperate correctly
   # *among* all four language CLIs (not just each against Python).
   cross-lang-compat:
     name: 4-language (C/Go/Python/Java) crypto compatibility matrix
-    needs: [native-c, native-go, native-python, native-java]
+    # TODO #391: not native-python, whose 8.5 min suite run this job used to
+    # wait for.  The matrices build the CLIs they use themselves; the three
+    # build jobs below finish in 2-4 min and still stop a broken build early.
+    needs: [native-c, native-go, native-java]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -780,6 +844,14 @@ jobs:
       # message beside an accept-control on the same artifact.
       - name: Fiat-Shamir round-floor matrix
         run: bash CliTest/test_round_floor.sh
+
+      # TODO #382 stage 2: Stern-F's 128-bit set, N = 2304 (the long form).
+      # Keys, hpks-stern, hpks-ring, hpke-stern and a long-form HCRED issuer as
+      # 4x4 matrices, with rejection controls beside every acceptance and two
+      # checks about ONE implementation: the matrix rule restated from SPEC.md
+      # and the signature's field sizes.
+      - name: Stern-F 128-bit set (N = 2304) matrix
+        run: bash CliTest/test_stern_128.sh
 
       # TODO #366: every CLI refuses a key whose PEM label the operation does not
       # accept, per the spec's generated key_label_acceptance table.  Each row is
@@ -1002,9 +1074,20 @@ jobs:
             --show-leak-kinds=definite,indirect \
             /tmp/herr_tests_valgrind -r 3 -t 0.2
 
-  analysis-findings:
-    name: SecurityProofsCode findings gates (TODO #289)
+  analysis-findings-shard:
+    name: SecurityProofsCode findings gates (shard ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
+    # TODO #391.  The gates ran in series in ONE job, about 95 min on a runner
+    # and the whole of CI's wall clock.  They run as six shards now, a partition
+    # the runner COMPUTES from SecurityProofsCode/gate_durations.json (see its
+    # header): each shard still discovers the whole set and runs every coverage
+    # check, so sharding cannot drop a gate.  fail-fast is off because the
+    # runner's point is WHICH gates failed.  `analysis-findings` below collects
+    # the six and keeps the job's check name and its whole-job banner.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     # BLOCKING since TODO #317 (v9.5.6). This job ran `continue-on-error: true`
     # from TODO #289 until then, on TODO #185's route for the `arduino` job:
     # promote once a pass history exists. Three things had to be true first,
@@ -1045,7 +1128,10 @@ jobs:
     # aarch64 SBC that is an upper bound on a runner. The headroom is for the
     # heavy tail (five scripts are over five minutes each), not for a hang --
     # the runner has its own per-script timeout for that.
-    timeout-minutes: 240
+    # TODO #391: per shard now.  Each is estimated at about 16 min; the
+    # headroom is for a slow runner, and the runner's per-script timeout is
+    # what catches a hang.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -1131,8 +1217,28 @@ jobs:
       # and discarding it. It is 73 gating and 7 declared non-gating now, and
       # the runner FAILS on a script that is neither, so a new analysis script
       # cannot quietly join the uncovered set.
-      - name: Every findings gate still reproduces
-        run: python3 SecurityProofsCode/run_findings_gates.py --quick
+      - name: Every findings gate in this shard still reproduces
+        run: python3 SecurityProofsCode/run_findings_gates.py --quick --shard ${{ matrix.shard }}/6
+
+  # TODO #391: the six shards' verdict, under the job name they replaced.  It
+  # re-checks the partition (every gate in exactly one shard, the busiest under
+  # the runner's budget) and prints the whole-job banner, whose false-failure
+  # rate is one figure for all six shards, not six.
+  analysis-findings:
+    name: SecurityProofsCode findings gates (TODO #289)
+    needs: [analysis-findings-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The shards are a partition of every gate
+        run: python3 SecurityProofsCode/run_findings_gates.py --verify-shards 6
+
+      - name: Every shard passed
+        run: |
+          echo "analysis-findings-shard: ${{ needs.analysis-findings-shard.result }}"
+          [ "${{ needs.analysis-findings-shard.result }}" = success ]
 
   docker:
     name: Docker quickstart (image + entrypoint smoke run)

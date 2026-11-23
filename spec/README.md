@@ -130,9 +130,9 @@ acknowledgement whose gap has closed must be removed, or the next reader inherit
 reason for something that is no longer true.
 
 `status` separates the two legitimate answers the repo already uses in practice.
-`acknowledged` is a deliberate per-language scope decision — `genpkey --bits` is
-absent from C because the C CLI is compiled for a single `KEYBITS` and `RNL_N`, so
-there is no runtime width for the flag to set. `defect` is a real asymmetry that is
+`acknowledged` is a deliberate per-language scope decision (`genpkey --bits` was one,
+absent from C, until TODO #379 gave every CLI the flag and moved the per-CLI WIDTH
+differences into `key_parameter_sets`' `ports`). `defect` is a real asymmetry that is
 merely recorded and counted. **#267 closes on this mechanism, not on the ports**, so
 `defect` rows are an expected steady state here rather than a failing one.
 

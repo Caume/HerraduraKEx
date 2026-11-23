@@ -202,7 +202,7 @@ EXPECTED = {
     ("herradura.h", "hske_nla1_encrypt", "3 * base.nbits / 4"): (1, "a1"),
     ("herradura.h", "_wots_h_ba", "V1_MODE_STEPS"): (1, "wots"),
     ("herradura.h", "drbg_generate", "I_VALUE"): (1, "drbg"),
-    ("herradura.h", "stern_matrix_row", "I_VALUE"): (1, "stern_matrix"),
+    ("herradura.h", "stern_matrix_row", "n / 4"): (1, "stern_matrix"),
     ("herradura.h", "ratchet_advance", "1"): (1, "ratchet"),
     ("herradura.h", "_hpake_rnl_kdf", "KEYBITS / 4"): (1, "rnl_kdf"),
     ("herradura.h", "qcprf_refill", "I_VALUE"): (1, "qcprf"),
@@ -259,7 +259,8 @@ def _fill_expected():
         (J + "Hpake.java", "rnlKdf", "Herradura.N / 4"): (1, "rnl_kdf"),
         (J + "KatVerify.java", "verifyRnl", "keyBits / 4"): (1, "rnl_kdf"),
         (J + "Ratchet.java", "advance", "1"): (1, "ratchet"),
-        (J + "Stern.java", "sternMatrixRow", "N / 4"): (1, "stern_matrix"),
+        # n / 4 at the key's width since TODO #384 (it was N / 4, fixed at 256)
+        (J + "Stern.java", "sternMatrixRow", "n / 4"): (1, "stern_matrix"),
         (J + "Stern.java", "refill", "N / 4"): (1, "qcprf"),
         (J + "Wots.java", "h", "Hfscx256.V1_MODE_STEPS"): (1, "wots"),
     })
@@ -298,7 +299,7 @@ B_SETTER = {
     "ratchet": "a fixed domain constant",
 }
 
-N4 = {"I_VALUE", "64", "n/4", "n // 4", "nbits // 4", "N / 4", "KEYBITS / 4",
+N4 = {"I_VALUE", "64", "n/4", "n / 4", "n // 4", "nbits // 4", "N / 4", "KEYBITS / 4",
       "KEYBITS // 4", "kRaw.Size()/4", "256/4", "iValue", "Herradura.I_STEPS",
       "I_STEPS", "Herradura.N / 4", "keyBits / 4", "keyBits/4", "key_n // 4", "keyN/4"}
 
@@ -493,7 +494,7 @@ def section_4():
   2^254-work preimage (§11.75).  No rating moves: every protocol they serve is
   Demo-only or Research for an independent reason -- HPKS-NL and HPKS-T fall to
   Pohlig-Hellman over GF(2^256)* (~2^36.5), Stern-F and its ring / KEM / credential
-  uses sit at N = 256 (~30-40 bits).  The change is MAJOR: every HPKS-NL / HPKS-T /
+  uses sit at N = 256 (~24-38 bits).  The change is MAJOR: every HPKS-NL / HPKS-T /
   Stern-F signature, ring signature, credential and HPKE-Stern-F key changes.""")
 
 

@@ -540,25 +540,25 @@ public final class Demo {
         // ── OPRF / aPAKE ──────────────────────────────────────────────────
         out("\n--- OPRF [2HashDH oblivious PRF over GF(2^" + n + ")*]");
         {
-            BigInteger k = Oprf.keygen(rng);
+            BigInteger k = Oprf.keygen(Herradura.N, rng);
             byte[] x = "oprf-demo-input".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-            Oprf.Blinded blinded = Oprf.blind(x, rng);
-            BigInteger beta = Oprf.eval(blinded.alpha, k);
-            BigInteger f1 = Oprf.unblind(beta, blinded.r);
-            BigInteger f2 = Oprf.direct(x, k);
+            Oprf.Blinded blinded = Oprf.blind(x, Herradura.N, rng);
+            BigInteger beta = Oprf.eval(blinded.alpha, k, Herradura.N);
+            BigInteger f1 = Oprf.unblind(beta, blinded.r, Herradura.N);
+            BigInteger f2 = Oprf.direct(x, k, Herradura.N);
             out(f1.equals(f2) ? "+ OPRF blind/eval/unblind round-trip correct"
                                 : "[FAIL] OPRF round-trip failed!");
         }
 
         out("\n*** aPAKE (80) — HKEX-RNL + ZKBoo + OPRF augmented PAKE");
         {
-            BigInteger oprfKey = Oprf.keygen(rng);
+            BigInteger oprfKey = Oprf.keygen(Herradura.N, rng);
             byte[] pw = "s3cr3t-pw".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-            Hpake.Record record = Hpake.register("alice", pw, oprfKey, rng);
-            byte[] skPake = Hpake.loginDemo(record, pw, oprfKey, rng);
+            Hpake.Record record = Hpake.register("alice", pw, oprfKey, Herradura.N, rng);
+            byte[] skPake = Hpake.loginDemo(record, pw, oprfKey, Herradura.N, rng);
             out(skPake != null ? "+ aPAKE login with correct password: session key established"
                                  : "[FAIL] aPAKE login with correct password failed!");
-            byte[] badSk = Hpake.loginDemo(record, "wrong-pw".getBytes(java.nio.charset.StandardCharsets.US_ASCII), oprfKey, rng);
+            byte[] badSk = Hpake.loginDemo(record, "wrong-pw".getBytes(java.nio.charset.StandardCharsets.US_ASCII), oprfKey, Herradura.N, rng);
             out(badSk == null ? "+ aPAKE login with wrong password: correctly rejected"
                                 : "[FAIL] aPAKE login with wrong password ACCEPTED (security failure)!");
         }

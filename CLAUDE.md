@@ -70,8 +70,8 @@ SecurityProofs.md          — split index (redirects to Parts 1–10)
 SecurityProofs-1.md        — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md        — §2–§8: Protocol, security and quantum analysis · summary tables (409 math expressions)
 SecurityProofs-3.md        — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
-SecurityProofs-4.md        — §11–§11.8.2: NL-FSCX v1/v2 · HKEX-RNL (693 math expressions)
-SecurityProofs-5.md        — §11.8.3–§11.8.10: PQ signature options · HPKE-Stern-KEM (672 math expressions)
+SecurityProofs-4.md        — §11–§11.8.2: NL-FSCX v1/v2 · HKEX-RNL (683 math expressions)
+SecurityProofs-5.md        — §11.8.3–§11.8.10: PQ signature options · HPKE-Stern-KEM (693 math expressions)
 SecurityProofs-6.md        — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md        — §11.10–§11.13, §11.15–§11.33: ZKP extensions · research reviews (698 math expressions)
 SecurityProofs-8.md        — §11.34–§11.36: NL-FSCX v3 · asymptotic slopes (436 math expressions)
@@ -270,14 +270,22 @@ themselves, and **any `[FAIL]` fails the build**.
 
 ### CI
 
-`.github/workflows/ci.yml` runs thirteen jobs on every push/PR, **all required**:
-`native-c`, `native-go`, `native-python` (build + suite tests + that language's own
-`CliTest/` scripts), `native-interop` (multi-CLI scripts, plus the CliTest coverage guard
-and the DFR guard), `native-java`, `cross-lang-compat` (4×4 matrices:
-`test_cross_lang_matrix.sh`, `test_malformed_pem_matrix.sh`, and others), `arm-i386`
-(qemu), `katex` (+ part-index check), `arduino` (simavr), `fuzz-smoke`, `sanitizers`
-(ASan+UBSan + valgrind), `analysis-findings` (`run_findings_gates.py`) and `docker`
-(image build + reduced-cap entrypoint).  The two QC-MDPC gates also run in `native-python`
+`.github/workflows/ci.yml` runs sixteen jobs on every push/PR, **all required**:
+`native-c`, `native-go` (build + suite tests + that language's own `CliTest/` scripts),
+`native-python` (the Python test suite in two shards, `--shard K/2`), `native-python-cli`
+(the Python demo, examples, `spec/` checkers and Python `CliTest/` scripts),
+`native-interop` (multi-CLI scripts, plus the CliTest coverage guard
+and the DFR guard), `native-interop-width` (`test_width_matrix.sh` in three shards,
+`HKX_SHARD=K/3`), `native-java`, `cross-lang-compat` (4×4 matrices:
+`test_cross_lang_matrix.sh`, `test_malformed_pem_matrix.sh`, and others; it waits for
+the C, Go and Java jobs, not Python's), `arm-i386` (qemu), `katex` (+ part-index check),
+`arduino` (simavr), `fuzz-smoke`, `sanitizers` (ASan+UBSan + valgrind),
+`analysis-findings-shard` (`run_findings_gates.py --shard K/6`), `analysis-findings`
+(collects the six shards and checks the partition) and `docker` (image build +
+reduced-cap entrypoint).  The matrix jobs (TODO #391, #392) keep a push near 20 min of
+wall clock; the Python suite's shards come from its own `_SHARD_COST` table, and a
+findings shard is balanced from `SecurityProofsCode/gate_durations.json`, which
+`--record-durations <log>` refreshes and which may go stale without dropping a gate.  The two QC-MDPC gates also run in `native-python-cli`
 on purpose (defense in depth, TODO #336).  `.github/workflows/codeql.yml` is a separate,
 non-blocking CodeQL matrix (TODO #189).  Every step that installs packages (apt-get, npm,
 pip) carries `timeout-minutes: 20`, so a stalled mirror fails in minutes instead of the
@@ -304,6 +312,7 @@ HTEST_ROUNDS=200 HTEST_TIME=1.5 ./CryptosuiteTests/Herradura_tests_c  # env-var 
 
 cd CryptosuiteTests && go run Herradura_tests.go -r 500 -t 2.0
 python3 CryptosuiteTests/Herradura_tests.py -r 500 -t 2.0
+python3 CryptosuiteTests/Herradura_tests.py -t 2.0 --shard 1/2   # one CI shard (TODO #392)
 
 java -cp bindings/java herradurakex.SelfTest
 java -cp bindings/java herradurakex.Bench [-r N] [-t S]
@@ -361,6 +370,8 @@ python3 SecurityProofsCode/hkex_gf_test.py
 python3 SecurityProofsCode/qcmdpc_bgf_variants.py --quick   # ~11 min; --full ~72 min
 python3 SecurityProofsCode/run_findings_gates.py --list     # the set, incl. NON_GATING
 python3 SecurityProofsCode/run_findings_gates.py            # all gates, --quick; ~120 min on an aarch64 SBC
+python3 SecurityProofsCode/run_findings_gates.py --shard 2/6  # one CI shard (TODO #391)
+python3 SecurityProofsCode/run_findings_gates.py --verify-shards 6  # the partition CI uses
 ```
 
 ## Core Cryptographic Architecture
@@ -416,6 +427,10 @@ Stern identification protocol (ZKP for syndrome decoding)
 │                  hash = HFSCX-256-DS(0x31, ds ‖ items) (#348); challenge b∈{0,1,2}
 │                  via that hash of msg+commitments
 │                  response reveals permuted r, y=e⊕r, or permutation π
+│                  Long form, N=2304 (`--level 128`, TODO #382; SPEC.md §11.1): a
+│                  SEPARATE code path in every port (stern_l_* / SternL* /
+│                  SternL.java), vectors as N/8-byte strings, 256-bit commitments
+│                  and message; KAT/operation_replay.json's stern_l rows pin it
 └── HPKE-Stern-F — Niederreiter KEM: ct=H·e'^T; K=hash(seed,e')
                    (`--algo hpke-stern`: demo, decap uses known e'; `--algo hpke-stern-kem`:
                    real BGF QC-MDPC decoder, qcmdpc_keygen/encap/decap_bgf in C/Go/Python)

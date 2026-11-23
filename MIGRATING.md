@@ -1988,3 +1988,429 @@ already on disk are unchanged and still load wherever they did.
 
 **Why this is MAJOR.** It changes what an existing `--algo` produces, the 2.0.0 surface.
 It ships inside 15.0.0 so there is one migration.
+
+## 37. `twk --bidx` and `--sector` refuse values outside their fields (v16.0.0)
+
+**Who is affected:** a script that passes `twk` a `--bidx` of 2^32 or more, a `--sector`
+of 2^64 or more, or a value that is not plain decimal digits (`-1`, `+1`, `0x10`, `1e3`,
+`abc`, a value with spaces). Also Java users with a block index from 2^31 to 2^32 - 1 or a
+sector of 2^63 or more, which Java used to refuse.
+
+**What changed (TODO #375).** The tweak is `sector_be64 || bidx_be32`. C and Go wrapped
+`--bidx` mod 2^32, so `--bidx 4294967296` encrypted under exactly the tweak of
+`--bidx 0`: two blocks the caller numbered differently shared a tweak, and equal
+plaintexts gave equal ciphertexts. C also read `abc` as 0 and `-1` as the largest
+value. Java parsed both flags as signed and refused valid indices. Python crashed with
+an `OverflowError` traceback. Now all four accept decimal digits only, `--bidx` from 0 to
+2^32 - 1 and `--sector` from 0 to 2^64 - 1, and refuse anything else before reading the key:
+
+```
+twk: --bidx must be a decimal integer from 0 to 4294967295, got '4294967296'
+```
+
+Every in-range value gives the same ciphertext as before, in every CLI that accepted it.
+
+**What to do.** Pass the block index your scheme means, in range. If a script relied on
+the wrap (for example a counter that ran past 2^32 - 1), the blocks it wrote past the
+wrap share tweaks with earlier blocks. Decrypt them with the old build and re-encrypt
+under distinct (sector, bidx) pairs, for instance by moving to the next sector.
+
+**Why this is MAJOR.** It refuses input an existing subcommand accepted, the 2.0.0
+surface.
+
+## 38. An empty or missing passphrase or password is refused (v16.0.0)
+
+**Who is affected:** a script that passes `genpkey --passphrase ''`, passes
+`--kdf-iterations` without `--passphrase`, runs `pake-register` without `--password`, or
+passes `pake-register --password ''` or `pake-demo --password ''`.
+
+**What changed (TODO #376).** Before 16.0.0 the four CLIs disagreed, and in two cases
+gave the caller less protection than asked for:
+
+- `genpkey --passphrase ''`: Python and Go read `''` as no passphrase and wrote the
+  private key **in the clear**, exiting 0. C and Java wrote an envelope under `''`, which
+  Python and Go then could not decrypt.
+- `genpkey --kdf-iterations N` alone: Python and Go ignored it; C and Java refused.
+- `pake-register` with no `--password`: C and Go registered the password
+  `demo-password`; Java refused; Python prompted and, with no terminal, crashed with an
+  `EOFError` traceback. With `--password ''`, C, Go and Java registered the empty
+  password.
+
+All four now refuse each case by name, before any key or record is written:
+
+```
+genpkey: --passphrase must not be empty
+genpkey: --kdf-iterations requires --passphrase
+pake-register: --password required
+pake-register: --password must not be empty
+pake-demo: --password must not be empty
+```
+
+Python's `pake-register` still prompts for an omitted password when stdin is a
+terminal; an empty answer is refused, and with no terminal it refuses instead of
+prompting. `pake-demo` with no `--password` still runs under `demo-password`.
+
+**What stays readable.** `pkey --decrypt --passphrase ''` is accepted by all four, so an
+envelope C or Java wrote under `''` before 16.0.0 can still be decrypted, now by Python
+and Go as well. Decrypt it and re-encrypt under a real passphrase:
+
+```
+herradura_cli pkey --decrypt --passphrase '' --in old.pem --out plain.pem
+```
+
+A PAKE record registered under `demo-password` or `''` by an omitted or empty
+`--password` protects nothing; re-register the user with a chosen password.
+
+**Why this is MAJOR.** It refuses input existing subcommands accepted, the 2.0.0 surface.
+
+## 39. Numeric flags take decimal digits in a stated range (v16.0.0)
+
+**Who is affected:** a script that passes a numeric flag a value that is not plain
+decimal digits (`0x10`, `+5`, ` 5`, `1e3`, `abc`, `''`), or a value outside the flag's
+range, or `0` meaning "the default".
+
+**What changed (TODO #380).** No CLI had one strict number parser, and they disagreed:
+
+- `rand --bytes abc` (or `''`, `1.5`, `5x`): C wrote 0 bytes and exited 0. Go read
+  `--bytes 0x10` as 16 bytes. Python and Java refused.
+- `sign --rounds 0`: Python and Go signed at the default 219, Java wrote a 0-round
+  signature every verifier refuses, and C refused. `--rounds 5000`: Go and Java wrote a
+  signature every verifier refuses (they accept at most 4096). Python crashed on
+  `--rounds -1` and ran without end on `--rounds 100000`. The same parsing sat behind
+  `cred-issue` and `cred-prove --rounds`.
+- `genpkey --kdf-iterations 0`: Python wrote an envelope with 0 PBKDF2-HFSCX-256
+  iterations, which only Python would decrypt, and took any count, however large.
+- `genpkey --xmss-height abc`: C read it with `atoi`.
+
+All four now share one rule. Each flag takes decimal digits only, in this range, and
+anything else is refused before work starts:
+
+| flag | range |
+|---|---|
+| `genpkey --kdf-iterations` | 1 to 100000000 |
+| `genpkey --xmss-height` | 1 to 20 |
+| `rand --bytes` | 0 to 33554432 (one seed's worth of DRBG output) |
+| `sign`, `cred-issue`, `cred-prove --rounds`; `verify`, `cred-verify --min-rounds`; `cred-verify --rounds` (C, Go) | 1 to 4096 |
+
+```
+sign: --rounds must be a decimal integer from 1 to 4096, got '0'
+```
+
+The messages for `--xmss-height`, `rand --bytes` and `--min-rounds` changed to this
+form. Python's `pkey --decrypt` now also refuses an envelope declaring an iteration
+count outside 1 to 100000000, as C, Go and Java already did.
+
+**What to do.** Write the number in decimal. Omit `--rounds` for the default rather than
+passing 0. A request for more than 33554432 bytes of `rand` output was never satisfiable
+from one seed; split it across reseeds. A 0-iteration envelope that Python wrote can be
+decrypted only by Python 15.x or earlier; decrypt it there and re-encrypt.
+
+**Why this is MAJOR.** It refuses input existing subcommands accepted, the 2.0.0 surface.
+
+## 40. Single-block `enc` refuses long input; `--ad` / `--aead` only where they are used (v16.0.0)
+
+**Who is affected:** a script that passes `enc` a message longer than one block under a
+single-block `--algo`, or passes `--ad` or `--aead` to an `--algo` that does not use it.
+
+**What changed (TODO #378).** In all four CLIs:
+
+- `enc --algo hske | hske-nla1 | hske-nla2 | hske-nla3 | hpke | hpke-nl | hpke-nl3 |
+  hpke-stern | hpke-stern-kem` encrypts one block (32 bytes; for `hske-nla1` without
+  `--aead`, the key's width). Longer input was cut to its first block with exit 0, and
+  `dec` returned that prefix. It is now refused:
+
+  ```
+  enc: --algo hske encrypts one 32-byte block; --in is 64 bytes (use --algo hske-duplex or encfile for longer input)
+  ```
+
+  Shorter input is still accepted and comes back from `dec` zero-padded to the block, as
+  before.
+- `--ad` is used only by `hske-duplex`, `hske-duplex3` and `hske-nla1 --aead`. Anywhere
+  else it was dropped: `enc --algo hske --ad X` wrote the same ciphertext as no `--ad`.
+  `enc` and `dec` now refuse it (`enc: --ad is only for --algo hske-duplex, hske-duplex3
+  or hske-nla1, not 'hske'`). `dec --algo hske-nla1 --ad X` on a ciphertext written
+  without `--aead` is refused too, since that ciphertext has no tag to bind X to.
+- `--aead` is used only by `hske-nla1`; `enc` now refuses it elsewhere.
+- `--ad ''` counts as given. Python and Go used to treat it as absent, so `enc --algo
+  hske-nla1 --ad ''` without `--aead` was accepted by those two; all four now refuse it.
+
+**What to do.** Encrypt a message of any length with `--algo hske-duplex` (or
+`hske-duplex3`), or a file with `encfile`. With a public-key algorithm, encrypt a 32-byte
+key and the message under that key with `hske-duplex`. Drop `--ad` / `--aead` where the
+algorithm does not use them; if you meant to bind associated data, switch to an algorithm
+that does. Ciphertexts written before this change decrypt as before.
+
+**Why this is MAJOR.** It refuses input existing `--algo` values accepted, the 2.0.0
+surface.
+
+## 41. One rule for the shape of a command line (v16.0.0)
+
+**Who is affected:** a script that leaves out `--in` or `--out` and relies on the Go CLI
+(or, for `enc`, `dec` and `sign --out`, the C CLI) to read stdin or write stdout; that
+passes a directory as `--in` to the C CLI; that leaves a stray word on the command line;
+or that writes `--flag=value` for a flag that takes no value.
+
+**What changed (TODO #381).** All four CLIs now follow one rule:
+
+- **A directory is not input.** The C CLI read `--in DIR` as an empty file: `sign --in .`
+  signed the empty message and `dgst --in .` printed the empty-input digest, exit 0.
+  It now refuses, as the other three did (`error: .: Is a directory`).
+- **A flag that takes a value needs one.** At the end of the command line, or followed by
+  another flag of the same subcommand, it is refused (`genpkey: --out needs a value`).
+  Java used to store a trailing `--out` as the string `true` and write the private key to
+  a file named `true`; C wrote it to stdout; `--out --algo hpks` gave Go and C an output
+  file named `--algo`. A value that merely looks like a flag but is not one of the
+  subcommand's (a file named `--weird.pem`) is still a value.
+- **No stray words.** A word that is neither a flag nor a flag's value is refused
+  (`genpkey: unexpected argument 'extra'`). C and Go ignored it; Go stopped reading at the
+  first one, so `genpkey extra --algo hpks` ran without its `--algo`. Java joined it to the
+  previous value. Only the threshold path lists (`--commits a b c`) take several words.
+- **`--flag=value` is `--flag value`** in all four; it used to work only in Python and Go.
+  A flag that takes no value refuses one (`pkey: --pubout takes no value`), where Go read
+  `--aead=false` as switching AEAD off.
+- **Required flags are the same everywhere.** Where Python requires `--in` or `--out`, so
+  do C, Go and Java. Go defaulted 19 of them to `-` (`kex`, `enc`, `dec`, `sign`,
+  `encfile`, `decfile` and the threshold commands' `--out`; `dgst`, `enc`, `dec`, `sign`,
+  `verify`, `encfile`, `decfile`, `fpe`, `twk` and `threshold-aggregate`'s `--in`), and C
+  wrote `enc`, `dec` and `sign` output to stdout without `--out`.
+
+**What to do.** To read stdin or write stdout, say so: `--in -`, `--out -` work in all
+four CLIs, as before. Name a file, not a directory, as `--in`. Remove stray words, and
+drop `=value` from boolean flags (`--pubout`, `--aead`, `--text`, `--hex`, `--encrypt`,
+`--decrypt`, `--v3`).
+
+**Why this is MAJOR.** It refuses command lines existing subcommands accepted, the 2.0.0
+surface.
+
+## 42. `fpe` and `twk` take exactly one 32-byte block (v16.0.0)
+
+**Who is affected:** a script that passes `fpe` or `twk` an `--in` that is not exactly 32
+bytes, or passes both `--encrypt` and `--decrypt` to the C or Go CLI.
+
+**What changed (TODO #377).** Both subcommands map one 32-byte block to one 32-byte block.
+In all four CLIs:
+
+- Longer input was cut to its first 32 bytes with exit 0, so a 64-byte `twk --encrypt`
+  lost half the data and nothing round-tripped. Shorter input was zero-padded, on the
+  right in Python, C and Java but on the LEFT in Go, so Go's ciphertext for any length but
+  32 differed from the other three. Any length but 32 is now refused, in both modes and
+  with or without `--v3`:
+
+  ```
+  twk: --in must be exactly 32 bytes (one block), got 33
+  ```
+- C and Go encrypted when given both `--encrypt` and `--decrypt`; they now refuse it
+  (`fpe: exactly one of --encrypt or --decrypt required`), as Java did. Python still
+  refuses it through argparse.
+
+**What to do.** Pad or split the data to 32-byte blocks yourself before calling `fpe` or
+`twk`, and decide how the padding is removed after decryption. For a message of any length,
+use `enc --algo hske-duplex` or `encfile` instead. 32-byte inputs give the same output as
+before in all four CLIs. Ciphertext is always 32 bytes, so existing ciphertext decrypts in
+every CLI as before. One that Go wrote from a short input decrypts to the zero padding
+first and the data last, where the other three CLIs put the padding last.
+
+**Why this is MAJOR.** It refuses input existing subcommands accepted, the 2.0.0 surface.
+
+## 43. `genpkey` key sizes come from one table; new `--level` (v16.0.0)
+
+**Who is affected:** a script that passes `genpkey --bits` a value outside the algorithm's
+listed widths, passes `--bits` to `hpks-wots`, `hpks-xmss` or `hpke-stern-kem`, or relies
+on Java ignoring `--bits`.
+
+**What changed (TODO #379).** Every key size `genpkey` makes now comes from one table,
+`key_parameter_sets` in the spec, generated into all four CLIs:
+
+| `--algo` | `--bits` | `--level` |
+|---|---|---|
+| hkex-gf, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3 | 32, 64, 128, 256 (default) | `demo` = 256; no `128`: this family is demo-only at every width |
+| oprf | 256 | `demo` |
+| hkex-rnl (the ring dimension) | 32, 64, 128, 256, 1024 (default) | `demo` = 256, `128` = 1024 |
+| hpks-stern, hpke-stern, hcred | 32, 64, 128, 256 (default) | `demo` = 256 |
+| hpke-stern-kem | none | `128` (its only set) |
+| hpks-zkp-nl | any even n up to 64, as before | `demo` = 8 |
+| hpks-wots, hpks-xmss | none | none |
+
+- Anything else is refused by name before a key is generated
+  (`genpkey: --bits must be one of 32, 64, 128, 256 for --algo hpks, got '100'`). Go
+  used to write a 256-bit key for an unlisted classical width and panic on hkex-rnl,
+  hcred and Stern; Python raised tracebacks; Java ignored the flag and wrote the default.
+- `hkex-rnl --bits 512` is refused as withdrawn (SECURITY.md: about 87 classical bits).
+- `--level` is new; `--bits` stays for compatibility. Giving both is refused.
+- Widths below the default print a stderr warning with the estimated security.
+- Widths below 256 run in Python and Go (and hkex-rnl's in Java). C and Java refuse them
+  with `not yet supported by this CLI (supported here: ...; TODO #383)` (`#384` for Java)
+  instead of failing later or writing the default. C now has `--bits` (for hpks-zkp-nl,
+  every even n up to 64, and each default).
+
+**What to do.** Use `--level demo` or `--level 128`, or a listed `--bits` value. Drop
+`--bits` from `hpks-wots`, `hpks-xmss` and `hpke-stern-kem`. With no flag the defaults are
+unchanged, and existing keys read as before.
+
+**Why this is MAJOR.** It refuses `--bits` values existing `--algo` values accepted, the
+2.0.0 surface.
+
+## 44. C runs the GF(2^n) family at 32-128 bits; mixed widths are refused (v16.0.0)
+
+**Who is affected:** a script that uses a GF-family key (hkex-gf, hpks, hpks-nl, hpke,
+hpke-nl, hpke-nl3) narrower than 256 bits, or that passes a key of one width with a peer
+key or ciphertext of another.
+
+**What changed (TODO #383, stage 1).**
+
+- The C CLI now runs the GF(2^n) family at 32, 64, 128 and 256 bits: `genpkey --bits`,
+  `pkey`, `kex`, `enc` / `dec` and `sign` / `verify`, byte-identical with Python and Go in
+  both directions. It used to refuse a narrower key with `this CLI runs n = 256`, and
+  `genpkey` with `not yet supported by this CLI`. Java still runs 256 only (TODO #384).
+- A key used with a peer key, ciphertext or signature of another width is refused in
+  Python, Go and C, with the same text:
+  `kex: their public key n is 128, our private key n is 64`,
+  `dec: ciphertext n is 128, private key n is 64`,
+  `verify: signature n is 128, public key n is 64` (`verify` already refused). Python and
+  Go used to reduce the peer's value into the key's width and exit 0 with a key or
+  plaintext nobody else derived.
+- C's threshold commands refuse an hpks key narrower than 256 bits by name; HPKS-T is
+  defined at 256 only (Python and Go since TODO #388, section 45).
+
+**What to do.** Use keys of one width on both sides. Existing 256-bit keys, ciphertexts and
+signatures read exactly as before.
+
+**Why this is MAJOR.** `kex` and `dec` now refuse inputs Python and Go accepted, the 2.0.0
+surface.
+
+## 45. `kex --kdf hfscx-256` below 256 bits; narrow keys at `threshold-commit` (v16.0.0)
+
+**Who is affected:** a script that runs `kex --algo hkex-gf --kdf hfscx-256` with keys
+narrower than 256 bits, or that passes a narrower hpks / hpks-nl key to
+`threshold-commit`. Nothing changes at 256 bits.
+
+**What changed (TODO #389).** With `--kdf hfscx-256`, the session key is now the same in
+every CLI at every width n:
+
+1. the raw shared secret g^ab is serialised as exactly n/8 big-endian bytes (leading
+   zero bytes kept), e.g. 8 bytes at n = 64;
+2. those bytes are hashed with HFSCX-256, giving 32 bytes;
+3. the SESSION KEY PEM holds that whole digest and declares `n = 256`, its own width,
+   not the n of the exchange: `SEQUENCE { INTEGER digest, INTEGER 256 }`.
+
+The key therefore keys HSKE (`enc --algo hske --key sk.pem`) like any 256-bit session key,
+the same way HKEX-RNL's session key (a digest, labelled 256) always has. Before:
+
+- Python, and C since section 44, wrote the 256-bit digest under `n = 64`, a key no CLI
+  could read back (`field 0 is 32 bytes (expected at most 8)`);
+- Go kept the digest's low 64 bits and declared `n = 64`, so it disagreed with the others.
+
+Without `--kdf`, the session key is still the raw n-bit g^ab declaring `n`. The digest does
+not add entropy: a 64-bit exchange still yields at most 64 bits (and the demonstration
+widths far less security; see `genpkey`'s warnings).
+
+**What changed (TODO #388).** Python and Go now refuse an hpks or hpks-nl key narrower
+than 256 bits at `threshold-commit` with
+`threshold: the key is 64-bit; threshold signing runs at 256 bits only`, as C does. They
+used to write a commitment that their own `threshold-aggregate` then refused (Python with
+a traceback). Java refuses such a key at load.
+
+**What to do.** Re-run a narrow-width `kex --kdf hfscx-256` that wrote a Go session key;
+the old Go value (the digest's low bits) is not what any CLI derives now. Use 256-bit keys
+for threshold signing.
+
+**Why this is MAJOR.** It changes what an existing `--algo` / `--kdf` combination produces
+(Go's narrow session keys) and refuses input Python and Go accepted.
+
+## 46. C runs Stern-F at 32-128 bits; mixed Stern widths are refused (v16.0.0)
+
+**Who is affected:** a script that uses an hpks-stern or hpke-stern key narrower than 256
+bits (including in an hpks-ring), or that passes a Stern signature or ciphertext of one
+width with a key of another.
+
+**What changed (TODO #383, stage 2).**
+
+- The C CLI now runs hpks-stern, hpke-stern and hpks-ring at 32, 64, 128 and 256 bits,
+  byte-identical with Python and Go in both directions. It used to refuse a narrower key
+  with `this CLI runs n = 256`. Java still runs 256 only (TODO #384), and C's hcred
+  issuer stays 256-bit (stage 3).
+- A Stern signature or hpke-stern ciphertext whose width is not its key's is refused in
+  Python, Go and C with `verify: signature n is 128, public key n is 64` /
+  `dec: ciphertext n is 128, private key n is 64`. Go used to panic in `verify`, Python
+  failed inside its hash, and both decrypted a mismatched ciphertext to garbage with
+  exit 0.
+
+**What to do.** Use one width for a key and its signatures and ciphertexts. Existing
+256-bit keys, signatures and ciphertexts read exactly as before.
+
+**Why this is MAJOR.** `dec` now refuses input Python and Go accepted, the 2.0.0 surface.
+
+## 47. C runs hkex-rnl at every ring; Go's rnl-sigma at n = 64 and 128 (v16.0.0)
+
+**Who is affected:** a script that uses an hkex-rnl key on a ring narrower than 1024
+(`genpkey --algo hkex-rnl --bits 32|64|128|256`) with the C CLI, or with rnl-sigma; or
+that keeps an rnl-sigma proof the Go CLI wrote with a 64- or 128-bit key.
+
+**What changed (TODO #383, stage 4).**
+
+- The C CLI now runs hkex-rnl, rnl-sigma and hybrid-rnl-stern at 32, 64, 128 and 256 as
+  well as the deployed 1024, byte-identical with Python, Go and Java in both roles. It
+  used to refuse a narrower key with `ring dimension mismatch — PEM declares n=64 but
+  this build is compiled for RNL_N=1024`. A key used with a peer key or response over
+  another ring is refused with `Ring size mismatch: ours n=64, theirs n=128` (`response
+  n=128` at the completing step); C's hybrid-rnl-stern read neither ring before and
+  failed further in.
+- Go's rnl-sigma used a challenge weight of t = 16 at every ring above 32. C, Python and
+  Java use t = 8 at n = 64 and t = 12 at n = 128, so at those two rings a Go proof did
+  not verify in the other three CLIs, nor theirs in Go. Go now uses the same weights.
+  A proof Go wrote at n = 64 or 128 before this release no longer verifies in Go either.
+  At 32, 256 and 1024 nothing changes.
+
+**What to do.** Re-sign any rnl-sigma proof the Go CLI made with a 64- or 128-bit
+hkex-rnl key. Keys, responses and session keys at every ring, and every proof at 32,
+256 and 1024, read exactly as before.
+
+**Why this is MAJOR.** Go's `verify --algo rnl-sigma` now refuses a stored proof it
+accepted before, which makes an existing artifact unreadable by a newer build.
+
+## 48. Stern-F signatures above 255 rounds from the C and Go CLIs (v16.0.0)
+
+**Who is affected:** anyone who keeps an hpks-stern or hpks-ring signature, or an HCRED
+credential, that the C or Go CLI wrote with `--rounds` above 255.  The default (219
+rounds) and every count up to 255 are not affected.
+
+**What changed (TODO #390).** Each Fiat-Shamir round advances the challenge state with
+`nl_fscx_v1(ch_st, i)`.  Python and Java used the whole round number `i`; C and Go used
+`i & 0xFF`.  The two agree below 256 rounds, so above that a C or Go signature did not
+verify in Python or Java, nor theirs in C or Go.  C and Go now use the whole round
+number, as SPEC.md §11 states.  A signature or credential C or Go wrote above 255 rounds
+before this release no longer verifies in C or Go either.
+
+**What to do.** Re-sign, or re-issue, any such artifact.  Keys, and every signature and
+credential at 255 rounds or fewer, read exactly as before.
+
+**Why this is MAJOR.** C's and Go's `verify` and `cred-verify` now refuse a stored
+artifact they accepted before, which makes an existing artifact unreadable by a newer
+build.
+
+## 49. `pkey --text` prints one layout in all four CLIs (v16.0.0)
+
+**Who is affected:** anyone who parses `pkey --text` output.  No key, signature or
+ciphertext changes; `--pubout` writes the same bytes as before.
+
+**What changed (TODO #386, #387).** The four CLIs printed different text for the same
+key: hkex-rnl had four layouts (Python dropped the packed values' leading zeros, C printed
+`s_packed` alone, Java five coefficients); hcred three (C printed the syndrome low byte
+first, Go and Java only `W`); Java's Stern-F dump printed `bits` and `syndrome` for `n` and
+`e_int`; C labelled XMSS's height `height` and printed no WOTS leaf index; the ZKP-NL and
+KEM dumps differed in labels and fields.  Every CLI now prints one layout per algorithm
+(the fields most of them already printed), and every dump the parameter table describes
+ends in two new lines, `level` (where the row has one) and `security`.  `pkey` on a PUBLIC
+key is refused in every CLI with `pkey: '<label>' is a public key (pkey reads a private
+key)` (Python died in a traceback; the other three said "unrecognised label").
+
+**What to do.** Read fields by their `name :` prefix, and expect the two closing lines.
+Specifically: C's XMSS `height` is now `h`, its WOTS `type : one-time` is now
+`leaf_idx : <n>`, and its ZKP-NL `A_private` / `B_public` / `y_public` are now
+`A (priv)` / `B (pub)` / `y (pub)`; C's hcred `syndr` is now big-endian; C's KEM `h0` /
+`h1` and Java's `h_pub` lines are gone; Java's Stern-F `bits` / `syndrome` are now `n` /
+`e_int`, its hkex-rnl `s[0..4]` / `C[0..4]` are now `s_packed` / `C_packed` / `n_A`, and its
+ZKP-NL `B` / `y` are hex under the labels above.
+
+**Why it is listed.** `--text` is display output, not a stored artifact, so this is not a
+wire break; it is here because a script reading those fields would break.
