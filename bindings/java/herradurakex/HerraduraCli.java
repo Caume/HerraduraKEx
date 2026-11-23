@@ -177,8 +177,8 @@ public final class HerraduraCli {
      *
      *  KeyLabelTable is generated from spec/generate_spec.py's KEY_LABEL_SITES,
      *  which holds the reasoning; C, Go and Python carry the same rows.  Only KEY
-     *  labels are judged (ending in PRIVATE KEY or PUBLIC KEY, other than the
-     *  passphrase envelope): a response, session key or hex key goes on to the
+     *  labels are judged (ending in PRIVATE KEY or PUBLIC KEY; the passphrase
+     *  envelope is refused by name, TODO #397): a response, session key or hex key goes on to the
      *  loader, whose own message is the more specific one.  The message is
      *  printed bare, without the "error: " prefix, so it reads the same in all
      *  four CLIs. */
@@ -191,7 +191,17 @@ public final class HerraduraCli {
             String[] paths = r[2].equals("--ring") ? v.split(",", -1) : new String[] { v };
             for (String p : paths) {
                 String label = pemFileLabel(p.trim());
-                if (label == null || label.equals("HERRADURA ENCRYPTED PRIVATE KEY")
+                // TODO #397: an envelope is refused here, by name, in every key
+                // slot; four slots' loaders read it as key material and exited 0.
+                if (Codec.PEM_ENC_PRIV.equals(label)) {
+                    String where = algo.isEmpty() ? cmd : cmd + " --algo " + algo;
+                    String q = p.trim();
+                    System.err.println(where + ": " + q + " is a passphrase-encrypted private key; "
+                        + "decrypt it first with `pkey --decrypt --passphrase ... --in " + q
+                        + " --out plain.pem`");
+                    System.exit(1);
+                }
+                if (label == null
                         || !(label.endsWith("PRIVATE KEY") || label.endsWith("PUBLIC KEY")))
                     continue;
                 boolean ok = false;
@@ -2735,15 +2745,24 @@ public final class HerraduraCli {
 
     /** Recovers the cleartext PEM, or throws -- never returns unverified bytes. */
     private static String decryptPemFile(String path, String passphrase) throws IOException {
-        Codec.PemBlock b = Codec.pemUnwrap(readString(path));
+        // TODO #397: every refusal here reads as the other three CLIs' does.
+        Codec.PemBlock b;
+        try {
+            b = Codec.pemUnwrap(readString(path));
+        } catch (IllegalArgumentException e) {
+            throw new CliError("pkey --decrypt: cannot parse PEM from: " + path);
+        }
+        if (b.der.length == 0) {
+            throw new CliError("pkey --decrypt: cannot parse PEM from: " + path);
+        }
         if (!b.label.equals(Codec.PEM_ENC_PRIV)) {
-            throw new CliError("pkey --decrypt: expected " + Codec.PEM_ENC_PRIV
-                + ", got " + b.label);
+            throw new CliError("pkey --decrypt: expected PEM label '" + Codec.PEM_ENC_PRIV
+                + "', got '" + b.label + "'");
         }
         List<BigInteger> it = Codec.derParseSeq(b);
-        if (it.size() != 6) {
-            throw new CliError("pkey --decrypt: malformed envelope ("
-                + it.size() + " fields, want 6)");
+        if (it.size() != 6) {   // behind Codec's #367 item check; kept in its words
+            throw new CliError("malformed PEM '" + Codec.PEM_ENC_PRIV + "': "
+                + it.size() + " DER items, expected 6");
         }
         // Both size work below, so both are bounded before use -- the field
         // class TODO #239/#240/#275 exist over.  The bounds are checked on the
@@ -2759,8 +2778,7 @@ public final class HerraduraCli {
         }
         if (it.get(5).signum() < 1
                 || it.get(5).compareTo(BigInteger.valueOf(b.der.length)) > 0) {
-            throw new CliError("pkey --decrypt: declared plaintext length out of range ("
-                + it.get(5) + ")");
+            throw new CliError("pkey --decrypt: declared plaintext length does not match ciphertext");
         }
         int iterations = it.get(1).intValueExact();
         int ptLen = it.get(5).intValueExact();

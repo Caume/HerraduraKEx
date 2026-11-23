@@ -486,10 +486,14 @@ static int pem_write_file(const char *path, const char *label,
     if (!buf) return -1;
     size_t written;
     pem_wrap(label, der, der_len, buf, &written);
-    FILE *f = hkx_fopen_out(path, "w");
+    /* TODO #399: "-" is stdout, as everywhere else in the CLI.  Before #399 it
+     * was opened as a FILE NAMED "-", so every raw-body PEM written without
+     * --out (ZKP-NL and HCRED keys and proofs, ZKP-RNL proofs) landed there. */
+    int to_stdout = strcmp(path, "-") == 0;
+    FILE *f = to_stdout ? stdout : hkx_fopen_out(path, "w");
     if (!f) { free(buf); return -1; }
     size_t wr = fwrite(buf, 1, written, f);
-    fclose(f);
+    if (to_stdout) fflush(f); else fclose(f);
     free(buf);
     return (wr == written) ? 0 : -1;
 }

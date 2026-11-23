@@ -458,9 +458,19 @@ func leftPad(b []byte, width int) []byte {
 // decryptPEMFile recovers the cleartext PEM, or fails -- it never returns
 // unverified bytes.
 func decryptPEMFile(path, passphrase string) (string, error) {
-	body, err := readRawPEM(path, lblEncPriv)
+	// TODO #397: every refusal here reads as the other three CLIs' does after
+	// `pkey --decrypt: `.  The file is read here rather than by readRawPEM,
+	// whose label text other readers share.
+	data, err := readFile(path)
 	if err != nil {
 		return "", err
+	}
+	label, body, err := PemUnwrap(string(data))
+	if err != nil || len(body) == 0 {
+		return "", fmt.Errorf("cannot parse PEM from: %s", path)
+	}
+	if label != lblEncPriv {
+		return "", fmt.Errorf("expected PEM label '%s', got '%s'", lblEncPriv, label)
 	}
 	items, enc, err := derParseLabeled(lblEncPriv, body)
 	if err != nil {
@@ -7618,7 +7628,7 @@ func pemFileLabel(path string) string {
 
 // checkKeyLabels refuses a key whose PEM label this operation does not accept
 // (TODO #366).  Only KEY labels are judged (ending in PRIVATE KEY or PUBLIC KEY,
-// other than the passphrase envelope): a response, session key or hex key goes
+// the passphrase envelope is refused by name, TODO #397): a response, session key or hex key goes
 // on to the loader, whose own message is the more specific one.
 func checkKeyLabels(cmd string, fs *flag.FlagSet) {
 	algo := ""
@@ -7639,7 +7649,19 @@ func checkKeyLabels(cmd string, fs *flag.FlagSet) {
 		}
 		for _, p := range paths {
 			label := pemFileLabel(strings.TrimSpace(p))
-			if label == "" || label == "HERRADURA ENCRYPTED PRIVATE KEY" ||
+			// TODO #397: an envelope is refused here, by name, in every key
+			// slot; four slots' loaders read it as key material and exited 0.
+			if label == lblEncPriv {
+				where := cmd
+				if algo != "" {
+					where = cmd + " --algo " + algo
+				}
+				q := strings.TrimSpace(p)
+				fmt.Fprintf(os.Stderr, "%s: %s is a passphrase-encrypted private key; decrypt it "+
+					"first with `pkey --decrypt --passphrase ... --in %s --out plain.pem`\n", where, q, q)
+				os.Exit(1)
+			}
+			if label == "" ||
 				!(strings.HasSuffix(label, "PRIVATE KEY") || strings.HasSuffix(label, "PUBLIC KEY")) {
 				continue
 			}

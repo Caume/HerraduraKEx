@@ -41,6 +41,16 @@ static void dievf(const char *fmt, ...)
 { va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
   fputc('\n', stderr); exit(1); }
 
+/* TODO #268, #397: an envelope handed to a subcommand that wants a cleartext
+ * key is refused by name, with the path (C printed `<file>` until #397), in
+ * the same words as the other three CLIs. */
+static void die_encrypted_key(const char *path)
+{
+    fprintf(stderr, "%s is a passphrase-encrypted private key; decrypt it first with "
+            "`pkey --decrypt --passphrase ... --in %s --out plain.pem`\n", path, path);
+    exit(1);
+}
+
 /* TODO #372: nothing may follow a PEM's DER SEQUENCE; same text in all four CLIs. */
 static void die_der_trailing(const char *label, long trail)
 {
@@ -425,7 +435,17 @@ static void check_key_label(const HkxKeySite *r, const char *cmd, const char *al
 {
     char label[128];
     pem_file_label(path, label, sizeof(label));
-    if (!label[0] || strcmp(label, PEM_ENC_PRIV) == 0 ||
+    /* TODO #397: an envelope is refused HERE, by name, in every key slot.  It
+     * used to be passed on to the loader "for its more specific message", but
+     * an envelope is a valid DER SEQUENCE and four slots' loaders (nl-zkboo /
+     * nl-zkbpp --key, cred-issue / cred-prove --in) read it as key material and
+     * exited 0 -- TODO #268's failure, in every CLI. */
+    if (strcmp(label, PEM_ENC_PRIV) == 0) {
+        if (algo[0]) fprintf(stderr, "%s --algo %s: ", cmd, algo);
+        else         fprintf(stderr, "%s: ", cmd);
+        die_encrypted_key(path);
+    }
+    if (!label[0] ||
         !(ends_with(label, "PRIVATE KEY") || ends_with(label, "PUBLIC KEY")))
         return;
     for (int k = 0; r->labels[k]; k++)
@@ -824,8 +844,23 @@ static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
 
 static char *decrypt_pem_file(const char *in_path, const char *passphrase)
 {
-    size_t blen;
-    uint8_t *body = zkp_raw_pem_read(in_path, PEM_ENC_PRIV, &blen);
+    /* TODO #397: every refusal this function owns reads `pkey --decrypt: ...`,
+     * in the same words as the other three CLIs.  It reads the file itself
+     * rather than through zkp_raw_pem_read, whose texts other readers share. */
+    size_t raw_len, blen = 0;
+    uint8_t *raw = read_binary_file(in_path, &raw_len);
+    char enc_label[80] = {0};
+    uint8_t *body = (uint8_t *)malloc(raw_len ? raw_len : 1);
+    if (!body) die("out of memory");
+    if (pem_unwrap((char *)raw, raw_len, enc_label, body, raw_len ? raw_len : 1, &blen) != 0
+        || blen == 0)
+        dief("pkey --decrypt: cannot parse PEM from: %s", in_path);
+    free(raw);
+    if (strcmp(enc_label, PEM_ENC_PRIV) != 0) {
+        fprintf(stderr, "pkey --decrypt: expected PEM label '%s', got '%s'\n",
+                PEM_ENC_PRIV, enc_label);
+        exit(1);
+    }
     /* Room for more than six, so a seventh item is SEEN and refused rather
      * than silently dropped by der_parse_seq's max_items cap (TODO #367). */
     const uint8_t *vals[16];
@@ -837,7 +872,7 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
         die_der_trailing(PEM_ENC_PRIV, trail);
     der_scan_or_die(PEM_ENC_PRIV, body, blen, ew, lz);   /* TODO #373 */
     if (der_parse_seq(body, blen, vals, vlens, 16, &n_out) != 0)
-        die("decrypt: malformed ENCRYPTED PRIVATE KEY envelope");
+        die("pkey --decrypt: malformed ENCRYPTED PRIVATE KEY envelope");
     check_der_items(PEM_ENC_PRIV, n_out);
     check_der_caps(PEM_ENC_PRIV, n_out, vals, vlens, ew, lz);
     /* The salt, nonce, ciphertext and tag are FIXED-WIDTH byte strings carried
@@ -850,7 +885,7 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
      * back correctly, because both restore the width from an integer
      * (`int.to_bytes(N)` / `BigInteger` left-padding).  TODO #280. */
     if (vlens[0] > PBKDF2_SALT_BYTES || vlens[2] > KEYBYTES || vlens[4] > 32)
-        die("decrypt: malformed ENCRYPTED PRIVATE KEY envelope (field width)");
+        die("pkey --decrypt: malformed ENCRYPTED PRIVATE KEY envelope (field width)");
     uint8_t salt_b[PBKDF2_SALT_BYTES], nonce_b[KEYBYTES], tag_b[32];
     memset(salt_b, 0, sizeof salt_b);
     memset(nonce_b, 0, sizeof nonce_b);
@@ -861,12 +896,13 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
 
     uint64_t iterations = 0, pt_len = 0;
     size_t i;
-    if (vlens[1] == 0 || vlens[1] > 4) die("decrypt: bad iteration count");
+    if (vlens[1] == 0 || vlens[1] > 4 || vlens[5] > 8)
+        die("pkey --decrypt: malformed ENCRYPTED PRIVATE KEY envelope (header width)");
     for (i = 0; i < vlens[1]; i++) iterations = (iterations << 8) | vals[1][i];
-    if (vlens[5] > 8) die("decrypt: bad plaintext length");
     for (i = 0; i < vlens[5]; i++) pt_len = (pt_len << 8) | vals[5][i];
     if (iterations < 1 || iterations > PBKDF2_ITER_MAX)
-        die("decrypt: iteration count out of range");
+        dievf("pkey --decrypt: iteration count out of range (%llu)",
+              (unsigned long long)iterations);
     /* pt_len sizes the allocation below and must agree with the ciphertext
      * actually present -- the field class TODO #239/#240/#275 exist over.
      * The comparison runs the other way from the pre-TODO-#280 form: the
@@ -880,7 +916,7 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
      * it -- or a hostile PEM naming 2^62 bytes sizes the allocation below.
      * TODO #239/#240 exist over exactly this. */
     if (pt_len == 0 || vlens[3] > pt_len || pt_len > blen)
-        die("decrypt: declared plaintext length does not match ciphertext");
+        die("pkey --decrypt: declared plaintext length does not match ciphertext");
 
     uint8_t keyb[32];
     BitArray key = BA_INIT, nonce = BA_INIT;
@@ -902,7 +938,7 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     if (!hske_nl_aead_decrypt(&key, &nonce, NULL, 0,
                               ct_b, (size_t)pt_len,
                               tag_b, (uint8_t *)pt))
-        die("pkey --decrypt: wrong passphrase or corrupted/tampered file"); /* TODO #396: the other CLIs' text */
+        die("pkey --decrypt: wrong passphrase or corrupted/tampered file");
     free(ct_b);
     pt[pt_len] = '\0';
     free(body);
@@ -1216,8 +1252,7 @@ static void pem_key_load(PemKey *k, const char *path)
      * though they were key material -- a wrong answer with exit 0, which is
      * exactly the failure mode #274 found for the flag itself. */
     if (strcmp(k->label, PEM_ENC_PRIV) == 0)
-        dief("%s is a passphrase-encrypted private key; decrypt it first with "
-             "`pkey --decrypt --passphrase ... --in <file> --out plain.pem`", path);
+        die_encrypted_key(path);
     long trail = der_seq_trailing(k->der, k->der_len);
     if (trail > 0)                                   /* TODO #372 */
         die_der_trailing(k->label, trail);
@@ -1240,8 +1275,7 @@ static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, siz
         char peek_lbl[80] = {0};
         zkp_pem_peek_label(path, peek_lbl);
         if (strcmp(peek_lbl, PEM_ENC_PRIV) == 0)
-            dief("%s is a passphrase-encrypted private key; decrypt it first with "
-                 "`pkey --decrypt --passphrase ... --in <file> --out plain.pem`", path);
+            die_encrypted_key(path);
     }
     size_t raw_len;
     uint8_t *raw = read_binary_file(path, &raw_len);
@@ -1852,8 +1886,10 @@ static void cmd_genpkey(int argc, char **argv)
         for (k=0;k<nb;k++) body[4+k]       = (uint8_t)(A>>(8*(nb-1-k)));
         for (k=0;k<nb;k++) body[4+nb+k]    = (uint8_t)(B>>(8*(nb-1-k)));
         for (k=0;k<nb;k++) body[4+2*nb+k]  = (uint8_t)(y>>(8*(nb-1-k)));
-        if (pem_write_file(out ? out : "-", PEM_ZKP_NL_PRIV, body, blen) != 0)
-            die("cannot write ZKP-NL private key");
+        /* TODO #399: through write_pem_file, the choke point that applies
+         * --passphrase.  Calling the codec's pem_write_file directly wrote this
+         * key IN THE CLEAR under --passphrase, exit 0. */
+        write_pem_file(out ? out : "-", PEM_ZKP_NL_PRIV, body, blen);
         free(body); fclose(urnd); return;
     }
 
@@ -1961,8 +1997,10 @@ static void cmd_genpkey(int argc, char **argv)
         hcred_ser(body + off, m_poly, n); off += (size_t)3*n;
         memcpy(body + off, seed_H_ba.b, (size_t)n/8); off += (size_t)n/8;
         memcpy(body + off, syndr, (size_t)n/16);
-        if (pem_write_file(out ? out : "-", PEM_HCRED_PRIV, body, blen) != 0)
-            die("cannot write HCRED private key");
+        /* TODO #399: through write_pem_file, the choke point that applies
+         * --passphrase.  Calling the codec's pem_write_file directly wrote this
+         * key IN THE CLEAR under --passphrase, exit 0. */
+        write_pem_file(out ? out : "-", PEM_HCRED_PRIV, body, blen);
         free(body);
         fclose(urnd); return;
     }

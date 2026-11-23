@@ -625,34 +625,6 @@ Status: **OPEN**
 ---
 
 
-### #397: pkey --decrypt's refusals read differently in each CLI
-
-Found closing TODO #396.  Measured on crafted envelopes, the shared DER checks (item
-count #367, field caps #372, canonical encoding #373) already give one text everywhere,
-but every refusal `pkey --decrypt` owns does not:
-
-- iteration count out of range: C `decrypt: iteration count out of range`; the other
-  three `pkey --decrypt: iteration count out of range (N)`.
-- wrong label: C `expected PEM label 'X', got 'Y'`, Go the same with `%q` quotes, Java
-  `expected X, got Y`, Python `Expected 'X' PEM, got 'Y'`.
-- not PEM / undecodable body: C `cannot parse PEM from: PATH`, Python `Not a valid PEM
-  block` / `Empty DER input`, Go and Java their base64 library's text; C reported an
-  empty body as `decrypt: malformed ... envelope`.
-- defense-in-depth checks now behind the caps (C `decrypt: bad iteration count`, `bad
-  plaintext length`; Java `declared plaintext length out of range (N)`): reachable only
-  if a cap changes, but they should not drift.
-- the refusal every OTHER subcommand gives an envelope: C prints the placeholder
-  `<file>` instead of the path, Python a different sentence.
-
-Make each one text, the same in all four CLIs, under the `pkey --decrypt:` prefix, and
-add a case per refusal to `CliTest/test_passphrase_envelope.sh` that asserts the exact
-text in every CLI.  Out of scope: the lead every CLI puts on the SHARED PEM/DER layer's
-messages (C none, Java `error:`, Python and Go the command), which is CLI-wide.
-
-Status: **OPEN**
-
----
-
 ### #398: C and Python decode a PEM body with invalid base64 characters
 
 Found during TODO #397.  One `!` inserted into a valid private key's base64: C and

@@ -2,6 +2,34 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [16.1.1] - 2026-11-23
+
+**Security fix: C's `genpkey --passphrase` wrote hpks-zkp-nl and hcred private keys in
+the clear (TODO #399).** Also one set of `pkey --decrypt` refusals in all four CLIs, and
+an encrypted key refused by name in every key slot (TODO #397).
+
+### TODO #399 — cleartext keys under --passphrase (C)
+
+- `genpkey --algo hpks-zkp-nl|hcred --passphrase P` in the C CLI wrote the private key
+  unencrypted and exited 0. Any such key on disk should be treated as unprotected and
+  replaced (no subcommand encrypts an existing key; generate a new one). The other
+  thirteen algorithms, and all fifteen in Python, Go and Java, were not affected.
+- C wrote every raw-body PEM sent to stdout (ZKP-NL / HCRED keys, ZKP-NL / ZKP-RNL / HCRED
+  proofs) to a file named `-` in the working directory instead; it now writes to stdout.
+- `CliTest/test_passphrase_envelope.sh` now checks every algorithm with every writer.
+
+### TODO #397 — pkey --decrypt refusals; the envelope at every key slot
+
+- `pkey --decrypt` prints one text per refusal in all four CLIs: `cannot parse PEM
+  from`, `expected PEM label ...`, `iteration count out of range (N)`, `wrong passphrase
+  or corrupted/tampered file`. C omitted the count and the `pkey --decrypt:` prefix.
+- An encrypted key in any key slot is refused by the key-label check, by name and path,
+  in all four CLIs. Several loaders (most of Java's, three of Python's) had refused it
+  only with another key's message, Java's GF loaders by misreading it as a key. C's
+  refusal printed `<file>` instead of the path.
+- Filed TODO #398: C and Python decode PEM bodies containing invalid base64 characters,
+  which Go and Java refuse.
+
 ## [16.1.0] - 2026-11-22
 
 **Passphrases and passwords can come from a file (TODO #396).** The inline flags work as
