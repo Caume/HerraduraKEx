@@ -10,6 +10,27 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
+### #402: SPEC.md does not say what a PEM reader accepts
+
+SPEC.md's PEM/DER section (the "PEM wrapping" bullet) describes only the writer: the
+armor lines and 76-character base64 lines.  Since #398 and #400 all four CLIs read with
+one grammar (the base64 alphabet, padding and zero pad bits, where whitespace may go; one
+block per file, matching labels of 1 to 79 printable characters, nothing but whitespace
+around the block, a non-empty body) and refuse anything else in the same words.  That
+grammar is written down only in the four readers' comments, TODO_DONE.md and MIGRATING.md
+sections 50 and 51.  A fifth implementation working from SPEC.md would have to guess it,
+and the likeliest guess, a lenient RFC 7468 reader, is what C, Go and Java were before
+#400.
+
+Add the reader's rules to SPEC.md, in the order the readers check them (so the refusal a
+file gets is specified too), with the refusal texts, and name
+`CliTest/test_malformed_pem_matrix.sh` as the conformance cases.  Documentation only:
+PATCH.
+
+Status: **OPEN**
+
+---
+
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
