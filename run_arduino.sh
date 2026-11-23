@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HerraduraKEx v1.6.1 — Arduino (AVR) run script
+# HerraduraKEx — Arduino (AVR) run script
 # Runs the ATmega2560 ELF binaries under simavr (AVR cycle-accurate emulator).
 # Output appears on the emulated UART0; simavr writes it to stderr with ANSI
 # color codes.  Both firmware UART output and simavr status lines go to stderr.

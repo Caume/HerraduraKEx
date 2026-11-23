@@ -2,6 +2,18 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [16.0.3] - 2026-11-22
+
+**The build scripts print the release version (TODO #393).** Nothing built changes.
+
+### TODO #393 — build-script versions
+
+- The six build scripts (`build_c.sh`, `build_go.sh`, `build_arm.sh`, `build_asm_i386.sh`,
+  `build_arduino.sh`, `build_c_sanitize.sh`) read `VERSION` from the README title line
+  instead of a hardcoded value; they had printed versions between v1.0.0 and v1.5.28. The
+  fallback, if the title stops matching, is `unknown`.
+- The header comments of those scripts and `run_arduino.sh` no longer name a version.
+
 ## [16.0.2] - 2026-11-22
 
 **The Python test suite runs as two CI shards (TODO #392).** No test changes what it asserts.

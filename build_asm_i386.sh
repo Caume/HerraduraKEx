@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HerraduraKEx v1.5.8 — NASM i386 build script
+# HerraduraKEx — NASM i386 build script
 # Assembles the suite and tests from NASM i386 source using nasm + ld.
 # Produces static ELF32 binaries runnable under qemu-i386.
 #
@@ -17,7 +17,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-VERSION="1.5.8"
+VERSION="$(sed -nE '1s/.*\(v([0-9]+\.[0-9]+\.[0-9]+)\).*/\1/p' README.md)"  # README title is the one version source
+: "${VERSION:=unknown}"
 SUITE_SRC="Herradura cryptographic suite.asm"
 SUITE_OBJ="/tmp/herr_suite32.o"
 SUITE_BIN="Herradura cryptographic suite_i386"

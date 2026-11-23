@@ -26408,3 +26408,27 @@ the suite as parallel shards, and the job's other steps beside them.
 Status: **DONE v16.0.2** — the Python test suite runs as two CI shards, beside a separate job for the rest of the Python checks.
 
 ---
+
+### #393: the build scripts print a stale version
+
+Found while checking the tree at v16.0.2.  Each build script carried its own hardcoded
+`VERSION` and a version in its header comment, last touched when it was written:
+`build_go.sh` printed `v1.5.28` on every build, `build_c.sh` `v1.5.26`, `build_arm.sh`,
+`build_asm_i386.sh` and `build_arduino.sh` `v1.5.8`, `build_c_sanitize.sh` `v1.0.0`, and
+`run_arduino.sh`'s header said `v1.6.1`.  No checker reads these files, so the drift was
+invisible to `tools/check_fast.sh`.
+
+**Done (v16.0.3).**
+- The six build scripts read `VERSION` from the README title line, the one place a release
+  bump already edits, and fall back to `unknown` if the title stops matching.  Every script
+  `cd`s to the repo root first, and the Docker image copies `README.md`, so the read works
+  in both places.
+- The header comments of all seven scripts no longer name a version.
+
+**Resolution.**
+- Deriving the version, rather than bumping seven literals, removes the thing that drifts
+  instead of adding a checker to catch it.
+
+Status: **DONE v16.0.3** — the build scripts take their version from the README title instead of a stale hardcoded one.
+
+---
