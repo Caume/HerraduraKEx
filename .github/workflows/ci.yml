@@ -66,6 +66,13 @@ jobs:
       - name: C test suite
         run: ./CryptosuiteTests/Herradura_tests_c -t 2.0
 
+      # TODO #401. herradura_codec.h's self-test (base64, the #398 grammar, DER,
+      # PEM and the #400 framing table) existed and nothing compiled it; #398 and
+      # #400 ran it from a scratch file.  build_c.sh builds the driver, which
+      # refuses an NDEBUG build (every check is an assert).
+      - name: C codec self-test
+        run: ./HerraduraCli/codec_selftest_c
+
       # TODO #324. The poisoned build was introduced by #314 pass 2 and widened
       # by #315, which wrote that "the whole C tree is poison-built and RUN now"
       # -- describing a MANUAL invocation that left no artifact, so it could not
@@ -1055,6 +1062,9 @@ jobs:
 
       - name: Security test suite under ASan+UBSan
         run: ./CryptosuiteTests/Herradura_tests_asan -t 2.0
+
+      - name: C codec self-test under ASan+UBSan (TODO #401)
+        run: ./HerraduraCli/codec_selftest_asan
 
       - name: CLI integration tests against the ASan+UBSan CLI
         run: |

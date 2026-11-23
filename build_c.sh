@@ -19,6 +19,8 @@ TESTS_SRC="CryptosuiteTests/Herradura_tests.c"
 TESTS_BIN="CryptosuiteTests/Herradura_tests_c"
 CLI_SRC="HerraduraCli/herradura_cli.c"
 CLI_BIN="HerraduraCli/herradura_cli"
+CODEC_SRC="HerraduraCli/codec_selftest.c"
+CODEC_BIN="HerraduraCli/codec_selftest_c"
 
 # ── dependency check ──────────────────────────────────────────────────────────
 if ! command -v gcc &>/dev/null; then
@@ -41,8 +43,13 @@ echo "  Compiling CLI..."
 gcc -O2 -o "${CLI_BIN}" "${CLI_SRC}"
 echo "    -> ${CLI_BIN}"
 
+echo "  Compiling codec self-test (TODO #401)..."
+gcc -O2 -o "${CODEC_BIN}" "${CODEC_SRC}"
+echo "    -> ${CODEC_BIN}"
+
 echo ""
 echo "Build complete. Run:"
 echo "  ./${SUITE_BIN}"
 echo "  ./${TESTS_BIN} [-r ROUNDS] [-t SECONDS]"
 echo "  ./${CLI_BIN} --help"
+echo "  ./${CODEC_BIN}"

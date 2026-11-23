@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [18.0.1] - 2026-11-23
+
+**The C codec's self-test is built and run (TODO #401).** `herradura_codec_selftest()`
+in `HerraduraCli/herradura_codec.h` (base64, the #398 grammar, DER, PEM and the #400
+framing table, 46 asserts) was compiled by nothing; #398 and #400 ran it from a scratch
+file. C was the one port whose codec unit test was not gated.
+
+- New driver `HerraduraCli/codec_selftest.c`. `build_c.sh` builds it as
+  `HerraduraCli/codec_selftest_c` and `build_c_sanitize.sh` as `codec_selftest_asan`.
+  It exits non-zero unless the self-test returns 1; a failed assert aborts first.
+- It refuses to compile under `-DNDEBUG` (`#error`): every check is an assert, several
+  with the call under test inside, so an NDEBUG build would pass having checked nothing.
+- `ci.yml` runs it in `native-c` and, under ASan+UBSan, in `sanitizers`.
+- Shown to fire: with the non-zero-padding-bits refusal or the END-label comparison
+  removed from the header, the driver aborts (rc 134) on the matching assert; with the
+  self-test returning 0, it prints `[FAIL]` and exits 1. Unmodified, it passes in both
+  builds.
+- The header's comment named a `codec_test.c` that never existed; it names the driver.
+
 ## [18.0.0] - 2026-11-23
 
 **MAJOR: one PEM framing for every reader (TODO #400, MIGRATING.md section 51).** C, Go

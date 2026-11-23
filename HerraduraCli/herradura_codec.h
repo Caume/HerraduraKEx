@@ -8,8 +8,8 @@
  * HerraduraCli/codec.py; Python-generated PEM files can be read by this
  * codec and vice versa.
  *
- * Build: gcc -O2 -DHERRADURA_CODEC_SELFTEST -o codec_test codec_test.c
- * (include this header in codec_test.c, call herradura_codec_selftest())
+ * The driver is HerraduraCli/codec_selftest.c (TODO #401): build_c.sh builds it
+ * as HerraduraCli/codec_selftest_c and CI's native-c and sanitizers jobs run it.
  */
 
 #ifndef HERRADURA_CODEC_H

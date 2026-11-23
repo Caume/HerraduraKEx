@@ -30,6 +30,7 @@ HerraduraCli/
   herradura.py / herradura_cli.c / herradura_cli.go — OpenSSL-style CLIs (Java's is in
                                          bindings/java)
   herradura_codec.h / codec.py         — PEM/DER encode-decode helpers
+  codec_selftest.c                     — runs herradura_codec.h's self-test (TODO #401)
   primitives.py                        — suite import shim for the Python CLI
   go.mod                               — module herradurakex/cli
 CliTest/                   — CLI integration + cross-language interop scripts.  ci.yml's
@@ -166,7 +167,8 @@ survives without it.
 Use the build scripts when building everything; they apply the correct flags, output names, and dependency checks.
 
 ```bash
-./build_c.sh          # compiles suite, tests, and HerraduraCli/herradura_cli
+./build_c.sh          # compiles suite, tests, HerraduraCli/herradura_cli and the codec
+                      # self-test HerraduraCli/codec_selftest_c (TODO #401)
 ./build_go.sh         # compiles suite, tests, and HerraduraCli/herradura_cli_go
 ./build_arm.sh        # ARM Thumb-2 suite + tests (requires arm-linux-gnueabi-gcc)
 ./build_asm_i386.sh   # NASM i386 suite + tests (auto-detects elf_i386-capable linker)

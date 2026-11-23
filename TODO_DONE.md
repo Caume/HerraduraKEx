@@ -26764,3 +26764,36 @@ builds 69 of them fail, in all four CLIs.
 Status: **DONE v18.0.0** — one PEM framing for every reader; each refusal is named in the same words in all four CLIs (MIGRATING.md section 51).
 
 ---
+
+### #401: nothing runs the C codec's self-test
+
+`HerraduraCli/herradura_codec.h` carries `herradura_codec_selftest()` behind
+`HERRADURA_CODEC_SELFTEST`: base64 round trips, the #398 base64 grammar, the DER
+encoder/decoder, PEM wrap/unwrap and the #400 framing table, 46 `assert`s in all.  No
+build script compiles it and no CI job runs it; the header's own comment names a
+`codec_test.c` that does not exist.  #398 and #400 added cases to it and both were run
+from a scratch file, by hand.  Python's codec has `Fuzz/`, Go's has `go test`, Java's
+`SelfTest`; C's is the one port whose codec unit test is not gated.
+
+There is a second trap in the same function: every check is an `assert`, several with
+the call under test inside it, so a build with `-DNDEBUG` would compile the calls away
+and return 1 having checked nothing.
+
+Add a driver that `build_c.sh` (and `build_c_sanitize.sh`) builds, refuses to compile
+under `NDEBUG`, and exits non-zero unless the self-test returns 1; run it in `native-c`
+and under ASan+UBSan in `sanitizers`; show it fails on a broken codec.  Test-only:
+PATCH.
+
+Resolution (v18.0.1).  `HerraduraCli/codec_selftest.c` includes the header with
+`HERRADURA_CODEC_SELFTEST`, refuses an `NDEBUG` build with `#error`, and exits non-zero
+unless the self-test returns 1.  `build_c.sh` builds it as `codec_selftest_c`,
+`build_c_sanitize.sh` as `codec_selftest_asan`; `ci.yml` runs the first in `native-c`
+and the second in `sanitizers`.  Negative controls, each a copy of the header with one
+change: the non-zero-padding-bits refusal removed, the driver aborts on the
+`AAECAx==` assert (rc 134); the END-label comparison removed, it aborts on the #400
+framing table (rc 134); the self-test returning 0, it prints `[FAIL]` and exits 1.  The
+real header passes in both builds.
+
+Status: **DONE v18.0.1** — the C codec self-test is built by both C build scripts and run in native-c and sanitizers.
+
+---
