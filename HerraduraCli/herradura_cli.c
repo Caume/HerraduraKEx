@@ -158,6 +158,77 @@ static int has_flag(int argc, char **argv, const char *flag)
     return 0;
 }
 
+/* TODO #396: the longest secret --passphrase-file / --password-file may hold. */
+#define SECRET_FILE_MAX 1024
+
+/* Strict UTF-8 (RFC 3629): no overlong forms, no surrogates, nothing above
+ * U+10FFFF -- what Go's utf8.Valid, Python's decode and Java's REPORTing
+ * decoder accept, so the four CLIs agree on which files are refused. */
+static int utf8_valid(const unsigned char *s, size_t n)
+{
+    size_t i = 0;
+    while (i < n) {
+        unsigned c = s[i];
+        size_t len; unsigned lo = 0x80, hi = 0xBF;
+        if (c < 0x80) { i++; continue; }
+        else if (c >= 0xC2 && c <= 0xDF) len = 2;
+        else if (c >= 0xE0 && c <= 0xEF) { len = 3; if (c == 0xE0) lo = 0xA0; if (c == 0xED) hi = 0x9F; }
+        else if (c >= 0xF0 && c <= 0xF4) { len = 4; if (c == 0xF0) lo = 0x90; if (c == 0xF4) hi = 0x8F; }
+        else return 0;
+        if (i + len > n) return 0;
+        if (s[i + 1] < lo || s[i + 1] > hi) return 0;
+        for (size_t k = 2; k < len; k++)
+            if (s[i + k] < 0x80 || s[i + k] > 0xBF) return 0;
+        i += len;
+    }
+    return 1;
+}
+
+/* TODO #396: the value of --NAME (`inline`) or --NAME-file (`path`), whichever
+ * was given; NULL when neither was.  The file form keeps the secret off the
+ * command line, where any local user can read it.  The secret is the file's
+ * bytes with at most one trailing line ending removed; it must be one line of
+ * valid UTF-8 with no NUL and at most SECRET_FILE_MAX bytes, so all four CLIs
+ * hash the same bytes.  The caller applies the inline flag's own checks
+ * (#376) to the result.  `flag` is the inline flag's name, e.g. "--passphrase". */
+static const char *secret_arg(const char *cmd, const char *flag, const char *inline_val,
+                              const char *path, int stdin_taken)
+{
+    if (!path) return inline_val;
+    if (inline_val) {
+        fprintf(stderr, "%s: give only one of %s or %s-file\n", cmd, flag, flag);
+        exit(1);
+    }
+    if (strcmp(path, "-") == 0 && stdin_taken) {
+        fprintf(stderr, "%s: %s-file -: another input already reads stdin\n", cmd, flag);
+        exit(1);
+    }
+    FILE *f = strcmp(path, "-") == 0 ? stdin : fopen(path, "rb");
+    if (!f) { fprintf(stderr, "%s: cannot read %s-file %s\n", cmd, flag, path); exit(1); }
+    static char buf[SECRET_FILE_MAX + 4];
+    size_t n = fread(buf, 1, SECRET_FILE_MAX + 3, f);
+    int err = ferror(f);
+    if (f != stdin) fclose(f);
+    if (err) { fprintf(stderr, "%s: cannot read %s-file %s\n", cmd, flag, path); exit(1); }
+    if (n >= 2 && buf[n - 2] == '\r' && buf[n - 1] == '\n') n -= 2;
+    else if (n >= 1 && buf[n - 1] == '\n') n -= 1;
+    buf[n] = '\0';
+    if (n > SECRET_FILE_MAX) {
+        fprintf(stderr, "%s: %s-file holds more than %d bytes\n", cmd, flag, SECRET_FILE_MAX);
+        exit(1);
+    }
+    if (memchr(buf, '\0', n)) {
+        fprintf(stderr, "%s: %s-file holds a NUL byte\n", cmd, flag); exit(1);
+    }
+    if (memchr(buf, '\r', n) || memchr(buf, '\n', n)) {
+        fprintf(stderr, "%s: %s-file must hold one line\n", cmd, flag); exit(1);
+    }
+    if (!utf8_valid((const unsigned char *)buf, n)) {
+        fprintf(stderr, "%s: %s-file is not valid UTF-8\n", cmd, flag); exit(1);
+    }
+    return buf;
+}
+
 /* TODO #274: refuse a flag this subcommand does not read.
  *
  * get_arg/has_flag SCAN for the flags they want and say nothing about the rest,
@@ -831,7 +902,7 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     if (!hske_nl_aead_decrypt(&key, &nonce, NULL, 0,
                               ct_b, (size_t)pt_len,
                               tag_b, (uint8_t *)pt))
-        die("decrypt: wrong passphrase or corrupted/tampered file");
+        die("pkey --decrypt: wrong passphrase or corrupted/tampered file"); /* TODO #396: the other CLIs' text */
     free(ct_b);
     pt[pt_len] = '\0';
     free(body);
@@ -1650,7 +1721,9 @@ static void cmd_genpkey(int argc, char **argv)
 
     /* TODO #268.  The count travels in the PEM, so a reader honours whatever
      * the writer chose -- this default only affects what THIS build writes. */
-    const char *pass_arg = get_arg(argc, argv, "--passphrase");
+    const char *pass_arg = secret_arg("genpkey", "--passphrase",
+                                      get_arg(argc, argv, "--passphrase"),
+                                      get_arg(argc, argv, "--passphrase-file"), 0);
     if (pass_arg) {
         /* TODO #376: an empty passphrase is refused, not "encrypted" under ''
          * -- it protects nothing, and before #376 Python and Go read it as
@@ -1971,8 +2044,11 @@ static void cmd_pkey(int argc, char **argv)
     int pubout = has_flag(argc, argv, "--pubout");
     int text   = has_flag(argc, argv, "--text");
     int decrypt = has_flag(argc, argv, "--decrypt");
-    const char *passphrase = get_arg(argc, argv, "--passphrase");
     if (!in_path) die("pkey: --in required");
+    const char *passphrase = secret_arg("pkey", "--passphrase",
+                                        get_arg(argc, argv, "--passphrase"),
+                                        get_arg(argc, argv, "--passphrase-file"),
+                                        strcmp(in_path, "-") == 0);
 
     /* TODO #268: --decrypt reverses genpkey --passphrase, recovering the PEM
      * byte-for-byte so it can be fed to any other subcommand unmodified.  It is
@@ -6175,9 +6251,12 @@ static uint32_t _pake_der_uint32(const uint8_t *val, size_t vlen)
 static void cmd_pake_register(int argc, char **argv)
 {
     const char *key_path = get_arg(argc, argv, "--key");
-    const char *pw_arg   = get_arg(argc, argv, "--password");
     const char *out_path = get_arg(argc, argv, "--out");
     if (!key_path) die("pake-register: --key required");
+    const char *pw_arg   = secret_arg("pake-register", "--password",
+                                      get_arg(argc, argv, "--password"),
+                                      get_arg(argc, argv, "--password-file"),
+                                      strcmp(key_path, "-") == 0);
     /* TODO #376: a record is never written under a password nobody chose.
      * Before #376 an omitted --password registered "demo-password", and ''
      * registered the empty password. */
@@ -6217,8 +6296,11 @@ static void cmd_pake_register(int argc, char **argv)
 static void cmd_pake_demo(int argc, char **argv)
 {
     const char *key_path = get_arg(argc, argv, "--key");
-    const char *pw_arg   = get_arg(argc, argv, "--password");
     if (!key_path) die("pake-demo: --key required");
+    const char *pw_arg   = secret_arg("pake-demo", "--password",
+                                      get_arg(argc, argv, "--password"),
+                                      get_arg(argc, argv, "--password-file"),
+                                      strcmp(key_path, "-") == 0);
     /* TODO #376: omitted, the demo uses "demo-password"; given, it must be one. */
     if (pw_arg && !*pw_arg) die("pake-demo: --password must not be empty");
 

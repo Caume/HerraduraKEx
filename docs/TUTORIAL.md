@@ -2719,6 +2719,12 @@ $CLI pkey --pubout --in alice_enc.pem --out pub.pem   # error: decrypt it first
 $CLI pkey --decrypt --in alice_enc.pem --passphrase "correct horse battery staple" \
           --out alice.pem
 $CLI pkey --pubout --in alice.pem --out alice_pub.pem
+
+# A passphrase on the command line is visible to every local user (ps, /proc) and
+# lands in shell history.  --passphrase-file reads it from a file, or from stdin with -.
+printf '%s\n' "correct horse battery staple" > pass.txt && chmod 600 pass.txt
+$CLI genpkey --algo hkex-gf --passphrase-file pass.txt --out bob_enc.pem
+$CLI pkey --decrypt --in bob_enc.pem --passphrase-file - --out bob.pem < pass.txt
 ```
 
 - Wraps the *entire* generated PEM (any algorithm) under a new
@@ -2734,6 +2740,9 @@ $CLI pkey --pubout --in alice.pem --out alice_pub.pem
   crash or silently-wrong key.
 - All four CLIs take `genpkey --passphrase` and `pkey --decrypt`, and decrypt each
   other's files (`CliTest/test_passphrase_envelope.sh`).
+- `--passphrase-file` (and `pake-register` / `pake-demo --password-file`) take the
+  file's single line, one trailing line ending removed, in all four CLIs (TODO #396,
+  `CliTest/test_secret_files.sh`).
 
 ### Constant-time status
 

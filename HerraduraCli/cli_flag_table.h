@@ -21,8 +21,8 @@ static const char *const hkx_flags_encfile[] = {"--algo", "--in", "--key", "--ou
 static const char *const hkx_valued_encfile[] = {"--algo", "--in", "--key", "--out"};
 static const char *const hkx_flags_fpe[] = {"--context", "--decrypt", "--encrypt", "--in", "--key", "--out", "--v3"};
 static const char *const hkx_valued_fpe[] = {"--context", "--in", "--key", "--out"};
-static const char *const hkx_flags_genpkey[] = {"--algo", "--bits", "--kdf-iterations", "--level", "--out", "--passphrase", "--xmss-height"};
-static const char *const hkx_valued_genpkey[] = {"--algo", "--bits", "--kdf-iterations", "--level", "--out", "--passphrase", "--xmss-height"};
+static const char *const hkx_flags_genpkey[] = {"--algo", "--bits", "--kdf-iterations", "--level", "--out", "--passphrase", "--passphrase-file", "--xmss-height"};
+static const char *const hkx_valued_genpkey[] = {"--algo", "--bits", "--kdf-iterations", "--level", "--out", "--passphrase", "--passphrase-file", "--xmss-height"};
 static const char *const hkx_flags_kex[] = {"--algo", "--kdf", "--our", "--our-kem", "--out", "--their", "--their-kem"};
 static const char *const hkx_valued_kex[] = {"--algo", "--kdf", "--our", "--our-kem", "--out", "--their", "--their-kem"};
 static const char *const hkx_flags_oprf_blind[] = {"--bits", "--in", "--out"};
@@ -31,12 +31,12 @@ static const char *const hkx_flags_oprf_eval[] = {"--in", "--key", "--out"};
 static const char *const hkx_valued_oprf_eval[] = {"--in", "--key", "--out"};
 static const char *const hkx_flags_oprf_unblind[] = {"--eval", "--out", "--state"};
 static const char *const hkx_valued_oprf_unblind[] = {"--eval", "--out", "--state"};
-static const char *const hkx_flags_pake_demo[] = {"--key", "--password"};
-static const char *const hkx_valued_pake_demo[] = {"--key", "--password"};
-static const char *const hkx_flags_pake_register[] = {"--key", "--out", "--password"};
-static const char *const hkx_valued_pake_register[] = {"--key", "--out", "--password"};
-static const char *const hkx_flags_pkey[] = {"--decrypt", "--in", "--out", "--passphrase", "--pubout", "--text"};
-static const char *const hkx_valued_pkey[] = {"--in", "--out", "--passphrase"};
+static const char *const hkx_flags_pake_demo[] = {"--key", "--password", "--password-file"};
+static const char *const hkx_valued_pake_demo[] = {"--key", "--password", "--password-file"};
+static const char *const hkx_flags_pake_register[] = {"--key", "--out", "--password", "--password-file"};
+static const char *const hkx_valued_pake_register[] = {"--key", "--out", "--password", "--password-file"};
+static const char *const hkx_flags_pkey[] = {"--decrypt", "--in", "--out", "--passphrase", "--passphrase-file", "--pubout", "--text"};
+static const char *const hkx_valued_pkey[] = {"--in", "--out", "--passphrase", "--passphrase-file"};
 static const char *const hkx_flags_rand[] = {"--bytes", "--hex", "--out", "--personalization", "--reseed", "--seed", "--state"};
 static const char *const hkx_valued_rand[] = {"--bytes", "--out", "--personalization", "--reseed", "--seed", "--state"};
 static const char *const hkx_flags_sign[] = {"--algo", "--digest", "--in", "--key", "--out", "--ring", "--rounds"};
@@ -67,14 +67,14 @@ static const HkxFlagSet HKX_FLAG_SETS[] = {
     {"enc", hkx_flags_enc, 7, hkx_valued_enc, 6},
     {"encfile", hkx_flags_encfile, 4, hkx_valued_encfile, 4},
     {"fpe", hkx_flags_fpe, 7, hkx_valued_fpe, 4},
-    {"genpkey", hkx_flags_genpkey, 7, hkx_valued_genpkey, 7},
+    {"genpkey", hkx_flags_genpkey, 8, hkx_valued_genpkey, 8},
     {"kex", hkx_flags_kex, 7, hkx_valued_kex, 7},
     {"oprf-blind", hkx_flags_oprf_blind, 3, hkx_valued_oprf_blind, 3},
     {"oprf-eval", hkx_flags_oprf_eval, 3, hkx_valued_oprf_eval, 3},
     {"oprf-unblind", hkx_flags_oprf_unblind, 3, hkx_valued_oprf_unblind, 3},
-    {"pake-demo", hkx_flags_pake_demo, 2, hkx_valued_pake_demo, 2},
-    {"pake-register", hkx_flags_pake_register, 3, hkx_valued_pake_register, 3},
-    {"pkey", hkx_flags_pkey, 6, hkx_valued_pkey, 3},
+    {"pake-demo", hkx_flags_pake_demo, 3, hkx_valued_pake_demo, 3},
+    {"pake-register", hkx_flags_pake_register, 4, hkx_valued_pake_register, 4},
+    {"pkey", hkx_flags_pkey, 7, hkx_valued_pkey, 4},
     {"rand", hkx_flags_rand, 7, hkx_valued_rand, 6},
     {"sign", hkx_flags_sign, 7, hkx_valued_sign, 7},
     {"threshold-aggregate", hkx_flags_threshold_aggregate, 5, hkx_valued_threshold_aggregate, 5},
@@ -111,7 +111,7 @@ static const char HKX_HELP_SYNOPSIS[] =
     "                       --algo: hske-nla1\n"
     "  fpe                  --context --decrypt --encrypt --in --key --out --v3\n"
     "  genpkey              --algo --bits --kdf-iterations --level --out\n"
-    "                       --passphrase --xmss-height\n"
+    "                       --passphrase --passphrase-file --xmss-height\n"
     "                       --algo: hcred hkex-gf hkex-rnl hpke hpke-nl hpke-nl3\n"
     "                               hpke-stern hpke-stern-kem hpks hpks-nl\n"
     "                               hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf\n"
@@ -120,9 +120,10 @@ static const char HKX_HELP_SYNOPSIS[] =
     "  oprf-blind           --bits --in --out\n"
     "  oprf-eval            --in --key --out\n"
     "  oprf-unblind         --eval --out --state\n"
-    "  pake-demo            --key --password\n"
-    "  pake-register        --key --out --password\n"
-    "  pkey                 --decrypt --in --out --passphrase --pubout --text\n"
+    "  pake-demo            --key --password --password-file\n"
+    "  pake-register        --key --out --password --password-file\n"
+    "  pkey                 --decrypt --in --out --passphrase --passphrase-file\n"
+    "                       --pubout --text\n"
     "  rand                 --bytes --hex --out --personalization --reseed --seed\n"
     "                       --state\n"
     "  sign                 --algo --digest --in --key --out --ring --rounds\n"

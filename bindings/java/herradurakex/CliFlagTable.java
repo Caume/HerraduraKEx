@@ -25,14 +25,14 @@ final class CliFlagTable {
         m.put("enc", new HashSet<>(Arrays.asList("ad", "aead", "algo", "in", "key", "out", "pubkey")));
         m.put("encfile", new HashSet<>(Arrays.asList("algo", "in", "key", "out")));
         m.put("fpe", new HashSet<>(Arrays.asList("context", "decrypt", "encrypt", "in", "key", "out", "v3")));
-        m.put("genpkey", new HashSet<>(Arrays.asList("algo", "bits", "kdf-iterations", "level", "out", "passphrase", "xmss-height")));
+        m.put("genpkey", new HashSet<>(Arrays.asList("algo", "bits", "kdf-iterations", "level", "out", "passphrase", "passphrase-file", "xmss-height")));
         m.put("kex", new HashSet<>(Arrays.asList("algo", "kdf", "our", "our-kem", "out", "their", "their-kem")));
         m.put("oprf-blind", new HashSet<>(Arrays.asList("bits", "in", "out")));
         m.put("oprf-eval", new HashSet<>(Arrays.asList("in", "key", "out")));
         m.put("oprf-unblind", new HashSet<>(Arrays.asList("eval", "out", "state")));
-        m.put("pake-demo", new HashSet<>(Arrays.asList("key", "password", "username")));
-        m.put("pake-register", new HashSet<>(Arrays.asList("key", "out", "password", "username")));
-        m.put("pkey", new HashSet<>(Arrays.asList("decrypt", "in", "out", "passphrase", "pubout", "text")));
+        m.put("pake-demo", new HashSet<>(Arrays.asList("key", "password", "password-file", "username")));
+        m.put("pake-register", new HashSet<>(Arrays.asList("key", "out", "password", "password-file", "username")));
+        m.put("pkey", new HashSet<>(Arrays.asList("decrypt", "in", "out", "passphrase", "passphrase-file", "pubout", "text")));
         m.put("rand", new HashSet<>(Arrays.asList("bytes", "hex", "out", "personalization", "reseed", "seed", "state")));
         m.put("sign", new HashSet<>(Arrays.asList("algo", "digest", "in", "key", "out", "ring", "rounds")));
         m.put("threshold-aggregate", new HashSet<>(Arrays.asList("commit", "commits", "digest", "in", "out")));
@@ -71,7 +71,7 @@ final class CliFlagTable {
         "                       --algo: hske-nla1\n" +
         "  fpe                  --context --decrypt --encrypt --in --key --out --v3\n" +
         "  genpkey              --algo --bits --kdf-iterations --level --out\n" +
-        "                       --passphrase --xmss-height\n" +
+        "                       --passphrase --passphrase-file --xmss-height\n" +
         "                       --algo: hcred hkex-gf hkex-rnl hpke hpke-nl hpke-nl3\n" +
         "                               hpke-stern hpke-stern-kem hpks hpks-nl\n" +
         "                               hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf\n" +
@@ -80,9 +80,10 @@ final class CliFlagTable {
         "  oprf-blind           --bits --in --out\n" +
         "  oprf-eval            --in --key --out\n" +
         "  oprf-unblind         --eval --out --state\n" +
-        "  pake-demo            --key --password --username\n" +
-        "  pake-register        --key --out --password --username\n" +
-        "  pkey                 --decrypt --in --out --passphrase --pubout --text\n" +
+        "  pake-demo            --key --password --password-file --username\n" +
+        "  pake-register        --key --out --password --password-file --username\n" +
+        "  pkey                 --decrypt --in --out --passphrase --passphrase-file\n" +
+        "                       --pubout --text\n" +
         "  rand                 --bytes --hex --out --personalization --reseed --seed\n" +
         "                       --state\n" +
         "  sign                 --algo --digest --in --key --out --ring --rounds\n" +

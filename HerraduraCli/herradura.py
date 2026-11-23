@@ -1410,6 +1410,49 @@ def _write_file(path, data):
         f.write(data)
 
 
+# TODO #396: the longest secret --passphrase-file / --password-file may hold.
+_SECRET_FILE_MAX = 1024
+
+
+def _secret_arg(cmd, flag, inline, path, stdin_taken=False):
+    """The value of --FLAG or --FLAG-file, whichever was given (TODO #396).
+
+    Returns None when neither was.  The file form keeps the secret off the
+    command line, where any local user can read it.  The secret is the file's
+    bytes with at most one trailing line ending removed; it must be one line of
+    valid UTF-8 with no NUL and at most _SECRET_FILE_MAX bytes, so all four
+    CLIs hash the same bytes.  The caller applies the inline flag's own checks
+    (#376) to the result."""
+    if path is None:
+        return inline
+    if inline is not None:
+        sys.exit(f"{cmd}: give only one of --{flag} or --{flag}-file")
+    if path == '-' and stdin_taken:
+        sys.exit(f"{cmd}: --{flag}-file -: another input already reads stdin")
+    try:
+        if path == '-':
+            raw = sys.stdin.buffer.read(_SECRET_FILE_MAX + 3)
+        else:
+            with open(path, 'rb') as f:
+                raw = f.read(_SECRET_FILE_MAX + 3)
+    except OSError:
+        sys.exit(f"{cmd}: cannot read --{flag}-file {path}")
+    if raw.endswith(b'\r\n'):
+        raw = raw[:-2]
+    elif raw.endswith(b'\n'):
+        raw = raw[:-1]
+    if len(raw) > _SECRET_FILE_MAX:
+        sys.exit(f"{cmd}: --{flag}-file holds more than {_SECRET_FILE_MAX} bytes")
+    if b'\0' in raw:
+        sys.exit(f"{cmd}: --{flag}-file holds a NUL byte")
+    if b'\r' in raw or b'\n' in raw:
+        sys.exit(f"{cmd}: --{flag}-file must hold one line")
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        sys.exit(f"{cmd}: --{flag}-file is not valid UTF-8")
+
+
 def _read_pem(path):
     raw = _read_file(path)
     return pem_unwrap(raw.decode('ascii') if isinstance(raw, bytes) else raw)
@@ -2908,6 +2951,8 @@ def cmd_genpkey(args):
     # --passphrase '' as no passphrase and wrote the key in the clear, and
     # accepted --kdf-iterations alone and ignored it.  Both are refused before
     # any key is generated.
+    args.passphrase = _secret_arg('genpkey', 'passphrase', args.passphrase,
+                                  args.passphrase_file)
     if args.passphrase == '':
         sys.exit("genpkey: --passphrase must not be empty")
     if args.kdf_iterations is not None and args.passphrase is None:
@@ -3050,6 +3095,8 @@ def _param_text_lines(algo, width):
 
 def cmd_pkey(args):
     in_path = getattr(args, 'in')
+    passphrase = _secret_arg('pkey', 'passphrase', args.passphrase,
+                             args.passphrase_file, stdin_taken=(in_path == '-'))
 
     if getattr(args, 'decrypt', False):
         # TODO #166: recover the original cleartext PEM (any algorithm) from a
@@ -3057,7 +3104,6 @@ def cmd_pkey(args):
         # PEM, so it can be fed to any other subcommand unmodified.
         # TODO #376: '' is a passphrase here, so a key C or Java encrypted
         # under '' before #376 stays readable.
-        passphrase = args.passphrase
         if passphrase is None:
             sys.exit("pkey --decrypt: --passphrase required")
         enc_text = _read_file(in_path).decode('ascii')
@@ -3067,6 +3113,9 @@ def cmd_pkey(args):
             sys.exit(f"pkey --decrypt: {e}")
         _write_file(args.out or '-', plain_pem)
         return
+    # As in the other three CLIs (TODO #396 closed Python's gap).
+    if passphrase is not None:
+        sys.exit("pkey: --passphrase is only meaningful with --decrypt")
 
     # TODO #386: a public key is refused by label, in the same words in all
     # four CLIs (Python unpacked it as a private key and died in a traceback).
@@ -4535,6 +4584,9 @@ def cmd_oprf_unblind(args):
 
 def cmd_pake_register(args):
     """Register a new user for aPAKE.  Outputs HERRADURA PAKE RECORD PEM."""
+    # TODO #396: resolved before --key is read, so `-` twice is refused first.
+    args.password = _secret_arg('pake-register', 'password', args.password,
+                                args.password_file, stdin_taken=(args.key == '-'))
     oprf_key, nbits = _load_oprf_key(args.key)
     username = args.username or "user"
     # TODO #376: a record is never written under a password nobody chose.  An
@@ -4583,8 +4635,13 @@ def _load_pake_record(path):
 
 def cmd_pake_demo(args):
     """aPAKE demo: run full registration + login on both sides and show session key."""
+    # TODO #396: resolved before --key is read, so `-` twice is refused first.
+    args.password = _secret_arg('pake-demo', 'password', args.password,
+                                args.password_file, stdin_taken=(args.key == '-'))
     oprf_key, nbits = _load_oprf_key(args.key)
     username  = args.username or "demo-user"
+    if args.password is None:
+        args.password = 'demo-password'
     # TODO #376: omitted, the demo uses "demo-password"; given, it must be one.
     if args.password == '':
         sys.exit("pake-demo: --password must not be empty")
@@ -4753,6 +4810,9 @@ def build_parser():
                     help='Encrypt the exported private key PEM under this passphrase '
                          '(TODO #166; PBKDF2-HFSCX256 + HSKE-NL-AEAD). Omit for the '
                          'existing cleartext behavior.')
+    gp.add_argument('--passphrase-file', default=None, dest='passphrase_file',
+                    help='Read the passphrase from FILE (- = stdin) instead of the '
+                         'command line, where other local users can see it (TODO #396)')
     gp.add_argument('--kdf-iterations', type=_dec_type('genpkey', '--kdf-iterations', 1, _PBKDF2_HFSCX256_ITER_MAX), default=None,
                     help=f'PBKDF2-HFSCX256 iteration count for --passphrase (default '
                          f'{_PBKDF2_HFSCX256_ITER_DEMO}, demo-speed; NIST SP 800-132 '
@@ -4769,6 +4829,9 @@ def build_parser():
                          'back to cleartext; requires --passphrase.')
     pk.add_argument('--passphrase', default=None,
                     help='Passphrase for --decrypt.')
+    pk.add_argument('--passphrase-file', default=None, dest='passphrase_file',
+                    help='Read the --decrypt passphrase from FILE (- = stdin) instead '
+                         'of the command line (TODO #396)')
     pk.add_argument('--out', default='-')
 
     # kex
@@ -5037,6 +5100,9 @@ def build_parser():
                     help='Username to register (default: "user")')
     pr.add_argument('--password', default=None,
                     help='Password (omit to prompt interactively)')
+    pr.add_argument('--password-file', default=None, dest='password_file',
+                    help='Read the password from FILE (- = stdin) instead of the '
+                         'command line, where other local users can see it (TODO #396)')
     pr.add_argument('--out', default='-',
                     help='PAKE RECORD PEM output')
 
@@ -5047,8 +5113,11 @@ def build_parser():
                     help='OPRF PRIVATE KEY PEM')
     pd.add_argument('--username', default='demo-user',
                     help='Demo username (default: "demo-user")')
-    pd.add_argument('--password', default='demo-password',
+    pd.add_argument('--password', default=None,
                     help='Demo password (default: "demo-password")')
+    pd.add_argument('--password-file', default=None, dest='password_file',
+                    help='Read the password from FILE (- = stdin) instead of the '
+                         'command line, where other local users can see it (TODO #396)')
 
     # cred-issue (128)
     ci = sub.add_parser('cred-issue',
