@@ -155,30 +155,69 @@ static int _b64_val(char c)
     if (c >= '0' && c <= '9') return c - '0' + 52;
     if (c == '+') return 62;
     if (c == '/') return 63;
-    return -1; /* whitespace, '=', or invalid — skip */
+    return -1;
 }
 
-/* Decode base64 (whitespace and '=' padding ignored) into out, which holds at
- * most out_cap bytes. Returns 0 on success, -1 on bad input or if the decoded
- * output would exceed out_cap (nothing beyond out[0..out_cap-1] is written).
- * *out_len is set to the number of bytes written (only on success). */
+/* b64_decode's refusals (TODO #398).  One base64 grammar for every reader:
+ * the alphabet A-Z a-z 0-9 + /, with space, tab, CR and LF allowed anywhere
+ * between characters (RFC 7468's lax form; every writer emits LF lines, and a
+ * CRLF file must still read).  Padding is REQUIRED: the characters number a
+ * multiple of 4 and '=' appears only as the last one or two of them.  The bits
+ * the padding leaves over must be zero, so one DER has exactly one body (the
+ * base64 counterpart of TODO #373's canonical DER).  Anything else is refused by
+ * name, with the same text in all four CLIs. */
+#define B64_ERR_CAP      (-1)   /* output would exceed out_cap */
+#define B64_ERR_CHAR     (-2)
+#define B64_ERR_PAD      (-3)
+#define B64_ERR_LEN      (-4)
+#define B64_ERR_BITS     (-5)
+
+/* The shared text for a b64_decode / pem_unwrap return code, or NULL when the
+ * code is not a base64 refusal. */
+static const char *b64_strerror(int rc)
+{
+    switch (rc) {
+    case B64_ERR_CHAR: return "PEM body is not valid base64: invalid character";
+    case B64_ERR_PAD:  return "PEM body is not valid base64: misplaced padding";
+    case B64_ERR_LEN:  return "PEM body is not valid base64: length is not a multiple of 4";
+    case B64_ERR_BITS: return "PEM body is not valid base64: non-zero bits after the last byte";
+    default:           return NULL;
+    }
+}
+
+/* Decode base64 under the grammar above into out, which holds at most out_cap
+ * bytes.  Returns 0 on success, B64_ERR_CAP if the decoded output would exceed
+ * out_cap (nothing beyond out[0..out_cap-1] is written), or a B64_ERR_* code
+ * for input outside the grammar.  *out_len is set only on success. */
 static int b64_decode(const char *in, size_t in_len,
                       uint8_t *out, size_t out_cap, size_t *out_len)
 {
     uint32_t acc = 0;
-    int bits = 0;
-    size_t n = 0, i;
+    int bits = 0, pad = 0;
+    size_t n = 0, chars = 0, i;
     for (i = 0; i < in_len; i++) {
-        int v = _b64_val(in[i]);
-        if (v < 0) continue;
+        char c = in[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        if (c == '=') {
+            /* '=' completes the last quad: only at its third or fourth place. */
+            if (++pad > 2 || (chars % 4) < 2) return B64_ERR_PAD;
+            chars++;
+            continue;
+        }
+        int v = _b64_val(c);
+        if (v < 0) return B64_ERR_CHAR;
+        if (pad) return B64_ERR_PAD;      /* data after the padding */
+        chars++;
         acc = (acc << 6) | (uint32_t)v;
         bits += 6;
         if (bits >= 8) {
             bits -= 8;
-            if (n >= out_cap) return -1;
+            if (n >= out_cap) return B64_ERR_CAP;
             out[n++] = (uint8_t)((acc >> bits) & 0xFF);
         }
     }
+    if (chars % 4) return B64_ERR_LEN;
+    if (pad && (acc & ((1u << bits) - 1u))) return B64_ERR_BITS;
     if (out_len) *out_len = n;
     return 0;
 }
@@ -395,7 +434,8 @@ static int pem_wrap(const char *label, const uint8_t *der, size_t der_len,
  * der_out / der_cap: caller-provided buffer and its capacity.
  * *der_len: receives the decoded byte count on success.
  * Returns 0 on success, -1 on malformed PEM, oversized label, or buffer too small
- * (der_cap exceeded -- nothing beyond der_out[0..der_cap-1] is ever written). */
+ * (der_cap exceeded -- nothing beyond der_out[0..der_cap-1] is ever written), or
+ * a B64_ERR_* code for a body outside the base64 grammar (b64_strerror names it). */
 static int pem_unwrap(const char *pem, size_t pem_len,
                       char *label_out, uint8_t *der_out, size_t der_cap,
                       size_t *der_len)
@@ -530,6 +570,24 @@ static int herradura_codec_selftest(void)
 
         b64_encode(orig, 6, b64, &b64_len);
         assert(b64_decode(b64, b64_len, dec, sizeof(dec), NULL) == -1);
+    }
+
+    /* ── 1c. the base64 grammar (TODO #398): accept-controls, then refusals ── */
+    {
+        uint8_t dec[8];
+        size_t dl;
+        assert(b64_decode("AAECAw==", 8, dec, sizeof(dec), &dl) == 0 && dl == 4);
+        assert(b64_decode("AA EC\r\nAw\t==\n", 13, dec, sizeof(dec), &dl) == 0 && dl == 4);
+        assert(b64_decode("AAEC", 4, dec, sizeof(dec), &dl) == 0 && dl == 3);
+        assert(b64_decode("AA!CAw==", 8, dec, sizeof(dec), NULL) == B64_ERR_CHAR);
+        assert(b64_decode("AA\vECAw==", 9, dec, sizeof(dec), NULL) == B64_ERR_CHAR);
+        assert(b64_decode("AA=CAw==", 8, dec, sizeof(dec), NULL) == B64_ERR_PAD);
+        assert(b64_decode("AAECAw===", 9, dec, sizeof(dec), NULL) == B64_ERR_PAD);
+        assert(b64_decode("AAECAw==AAAA", 12, dec, sizeof(dec), NULL) == B64_ERR_PAD);
+        assert(b64_decode("AAECA===", 8, dec, sizeof(dec), NULL) == B64_ERR_PAD);
+        assert(b64_decode("AAECAw", 6, dec, sizeof(dec), NULL) == B64_ERR_LEN);
+        assert(b64_decode("AAECAx==", 8, dec, sizeof(dec), NULL) == B64_ERR_BITS);
+        assert(b64_strerror(B64_ERR_CAP) == NULL && b64_strerror(B64_ERR_CHAR) != NULL);
     }
 
     /* ── 2. Base64 known-answer (Python base64.b64encode(b'\x00\x01\x02\x03')

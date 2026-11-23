@@ -105,16 +105,57 @@ public final class Codec {
         return sb.toString();
     }
 
-    /** Strips whitespace then decodes standard base64. */
+    /**
+     * Decodes a PEM body under the one base64 grammar every CLI reads (TODO #398):
+     * the alphabet A-Z a-z 0-9 + /, with space, tab, CR and LF allowed anywhere
+     * between characters (RFC 7468's lax form).  Padding is REQUIRED: the
+     * characters number a multiple of 4 and '=' is only the last one or two of
+     * them.  The bits the padding leaves over must be zero, so one DER has one
+     * body.  Hand-written rather than java.util.Base64, whose basic decoder
+     * accepts a body with no padding and non-zero trailing bits, so that the four
+     * CLIs run the same loop and refuse the same files with the same words.
+     */
     static byte[] b64Decode(String s) {
-        StringBuilder clean = new StringBuilder(s.length());
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(s.length() * 3 / 4 + 1);
+        int acc = 0, bits = 0, pad = 0, chars = 0;
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
-            if (c != ' ' && c != '\n' && c != '\r' && c != '\t') {
-                clean.append(c);
+            if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+            if (c == '=') {
+                pad++;
+                if (pad > 2 || chars % 4 < 2) throw new IllegalArgumentException(B64_PAD);
+                chars++;
+                continue;
+            }
+            int v = b64Val(c);
+            if (v < 0) throw new IllegalArgumentException(B64_CHAR);
+            if (pad > 0) throw new IllegalArgumentException(B64_PAD);
+            chars++;
+            acc = ((acc << 6) | v) & 0xFFFF;
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out.write((acc >> bits) & 0xFF);
             }
         }
-        return Base64.getDecoder().decode(clean.toString());
+        if (chars % 4 != 0) throw new IllegalArgumentException(B64_LEN);
+        if (pad > 0 && (acc & ((1 << bits) - 1)) != 0) throw new IllegalArgumentException(B64_BITS);
+        return out.toByteArray();
+    }
+
+    static final String B64_PREFIX = "PEM body is not valid base64: ";
+    private static final String B64_CHAR = B64_PREFIX + "invalid character";
+    private static final String B64_PAD  = B64_PREFIX + "misplaced padding";
+    private static final String B64_LEN  = B64_PREFIX + "length is not a multiple of 4";
+    private static final String B64_BITS = B64_PREFIX + "non-zero bits after the last byte";
+
+    private static int b64Val(char c) {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
     }
 
     // -----------------------------------------------------------------
@@ -153,13 +194,7 @@ public final class Codec {
 
         int endIdx = rest.indexOf("-----END ");
         if (endIdx < 0) throw new IllegalArgumentException("PEM: missing END marker");
-        byte[] der;
-        try {
-            der = b64Decode(rest.substring(0, endIdx));
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("PEM: base64 decode: " + e.getMessage(), e);
-        }
-        return new PemBlock(label, der);
+        return new PemBlock(label, b64Decode(rest.substring(0, endIdx)));
     }
 
     // -----------------------------------------------------------------

@@ -73,15 +73,76 @@ func b64Encode(data []byte) string {
 	return sb.String()
 }
 
-// b64Decode strips whitespace then decodes standard base64.
+// b64Decode decodes a PEM body under the one base64 grammar every CLI reads
+// (TODO #398): the alphabet A-Z a-z 0-9 + /, with space, tab, CR and LF allowed
+// anywhere between characters (RFC 7468's lax form).  Padding is REQUIRED: the
+// characters number a multiple of 4 and '=' is only the last one or two of them.
+// The bits the padding leaves over must be zero, so one DER has one body.
+// Hand-written rather than encoding/base64, whose StdEncoding accepts non-zero
+// trailing bits, so that C, Go, Python and Java run the same loop and refuse the
+// same files with the same words.
 func b64Decode(s string) ([]byte, error) {
-	clean := strings.Map(func(r rune) rune {
-		if r == ' ' || r == '\n' || r == '\r' || r == '\t' {
-			return -1
+	out := make([]byte, 0, len(s)*3/4)
+	var acc uint32
+	bits, pad, chars := 0, 0, 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+			continue
 		}
-		return r
-	}, s)
-	return base64.StdEncoding.DecodeString(clean)
+		if c == '=' {
+			pad++
+			if pad > 2 || chars%4 < 2 {
+				return nil, errB64Pad
+			}
+			chars++
+			continue
+		}
+		v := b64Val(c)
+		if v < 0 {
+			return nil, errB64Char
+		}
+		if pad > 0 {
+			return nil, errB64Pad
+		}
+		chars++
+		acc = acc<<6 | uint32(v)
+		bits += 6
+		if bits >= 8 {
+			bits -= 8
+			out = append(out, byte(acc>>uint(bits)))
+		}
+	}
+	if chars%4 != 0 {
+		return nil, errB64Len
+	}
+	if pad > 0 && acc&(1<<uint(bits)-1) != 0 {
+		return nil, errB64Bits
+	}
+	return out, nil
+}
+
+var (
+	errB64Char = errors.New("PEM body is not valid base64: invalid character")
+	errB64Pad  = errors.New("PEM body is not valid base64: misplaced padding")
+	errB64Len  = errors.New("PEM body is not valid base64: length is not a multiple of 4")
+	errB64Bits = errors.New("PEM body is not valid base64: non-zero bits after the last byte")
+)
+
+func b64Val(c byte) int {
+	switch {
+	case c >= 'A' && c <= 'Z':
+		return int(c - 'A')
+	case c >= 'a' && c <= 'z':
+		return int(c-'a') + 26
+	case c >= '0' && c <= '9':
+		return int(c-'0') + 52
+	case c == '+':
+		return 62
+	case c == '/':
+		return 63
+	}
+	return -1
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +186,7 @@ func PemUnwrap(pem string) (label string, der []byte, err error) {
 	}
 	der, err = b64Decode(rest[:endIdx])
 	if err != nil {
-		return "", nil, fmt.Errorf("PEM: base64 decode: %w", err)
+		return "", nil, err
 	}
 	return label, der, nil
 }

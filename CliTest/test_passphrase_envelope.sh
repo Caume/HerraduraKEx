@@ -234,7 +234,8 @@ E8_CASES=(
   "e8_same|wrong|pkey --decrypt: wrong passphrase or corrupted/tampered file"
   "plain8|$PHRASE|pkey --decrypt: expected PEM label 'HERRADURA ENCRYPTED PRIVATE KEY', got 'HERRADURA HKEX-GF PRIVATE KEY'"
   "e8_notpem|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_notpem.pem"
-  "e8_b64|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_b64.pem"
+  # TODO #398: a base64 refusal names its reason after the path.
+  "e8_b64|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_b64.pem: PEM body is not valid base64: invalid character"
   "e8_empty|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_empty.pem"
 )
 for r in $LANGS; do

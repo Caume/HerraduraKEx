@@ -621,24 +621,3 @@ at n = 256 would remove the conjecture.
 Status: **OPEN**
 
 ---
-
----
-
-
-### #398: C and Python decode a PEM body with invalid base64 characters
-
-Found during TODO #397.  One `!` inserted into a valid private key's base64: C and
-Python skip it and `pkey --pubout` exits 0; Go and Java refuse the file (`illegal base64
-data at input byte 10` / `Illegal base64 character 21`).  So the four CLIs disagree on
-which files are PEM at all, on every subcommand, and C and Python accept bytes that are
-not part of the encoding -- the same shape #372 closed for bytes after the DER, one layer
-out.  An envelope body of only invalid characters decodes to nothing in C.
-
-Decide one base64 grammar for every reader (alphabet, padding, line breaks and
-whitespace allowed between lines), refuse anything else by name in all four, and add the
-cases to `CliTest/test_malformed_pem_matrix.sh`.  Check first that no artifact this repo
-or its KATs ship relies on the leniency.
-
-Status: **OPEN**
-
----

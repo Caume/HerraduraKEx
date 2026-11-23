@@ -2,6 +2,40 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [17.0.0] - 2026-11-23
+
+**MAJOR: one base64 grammar for every PEM reader (TODO #398, MIGRATING.md section 50).**
+C and Python decoded a PEM body containing characters outside the base64 alphabet,
+skipping them, so one `!` in a key left `pkey --pubout` exiting 0 while Go and Java
+refused the same file. Every CLI now reads one grammar and refuses anything else by name.
+No file a CLI wrote is affected; all 19 `.pem` files the repo ships, the KATs among them,
+read as before.
+
+### TODO #398 — the base64 grammar
+
+- **Accepted:** the alphabet `A-Z a-z 0-9 + /`, with space, tab, CR and LF anywhere
+  between characters (RFC 7468's lax form; LF, CRLF and CR-only files all read).
+  Padding is required: the characters number a multiple of 4, and `=` is only the last
+  one or two of them. The bits under the padding must be zero, so one DER has exactly
+  one body (the base64 counterpart of TODO #373).
+- **Refused, in the same words in all four:** `PEM body is not valid base64: invalid
+  character` / `misplaced padding` / `length is not a multiple of 4` / `non-zero bits
+  after the last byte`. C, and `pkey --decrypt` in every CLI, print it after `cannot
+  parse PEM from: PATH: `.
+- **What each CLI accepted before:** C, any character outside the alphabet (skipped), a
+  missing padding, a body one character off a quad, a third `=`; Python, characters
+  outside the alphabet, `=` mid-body, and `\v` / `\f` (its line splitting deleted
+  them); Java, a missing padding; all four, non-zero bits under the padding. Python
+  printed a `UnicodeDecodeError` text for a non-ASCII byte; it now says `invalid
+  character`.
+- Each CLI decodes with one hand-written loop (`b64_decode` in `herradura_codec.h`,
+  `b64_decode_strict` in `codec.py`, `b64Decode` in `herradura/codec.go` and
+  `Codec.java`) instead of its language's library, whose rules differ.
+- `CliTest/test_malformed_pem_matrix.sh` gains 219 cells. They use one pinned KAT fixture
+  per padding count. Eight accepted layouts must decode to the same bytes, and every
+  refusal is checked by name with nothing written. 120 of the cells fail on the pre-fix
+  builds, in all four CLIs. The C codec self-test gains the same cases.
+
 ## [16.1.1] - 2026-11-23
 
 **Security fix: C's `genpkey --passphrase` wrote hpks-zkp-nl and hcred private keys in

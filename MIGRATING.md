@@ -2414,3 +2414,41 @@ ZKP-NL `B` / `y` are hex under the labels above.
 
 **Why it is listed.** `--text` is display output, not a stored artifact, so this is not a
 wire break; it is here because a script reading those fields would break.
+
+---
+
+## 50. PEM bodies must be valid, canonical base64 (v17.0.0)
+
+**Who is affected:** nobody whose files came from a CLI unchanged.  What now fails, in
+every subcommand that reads a PEM:
+
+- a body with a character outside `A-Z a-z 0-9 + /`, `=` and the whitespace below,
+  e.g. `!`, `-`, `_`, a vertical tab or a non-ASCII byte (C and Python skipped them);
+- a body whose padding was stripped, or that is not a whole number of 4-character
+  groups (C and Java read them);
+- a `=` anywhere but the last one or two characters, or a third `=` (C and Python);
+- a body whose last character carries non-zero bits under the padding (all four read it,
+  so one key had up to sixteen byte-different bodies).
+
+Space, tab, CR and LF between characters still read, so re-wrapped, CRLF and CR-only
+files are unaffected.
+
+**What changed (TODO #398).**  The four CLIs decoded base64 with four sets of rules, so
+they disagreed on which files were PEM at all.  Each now runs one hand-written loop under
+one grammar and names the refusal:
+
+```
+cannot parse PEM from: key.pem: PEM body is not valid base64: invalid character
+pkey: PEM body is not valid base64: misplaced padding
+error: PEM body is not valid base64: length is not a multiple of 4
+```
+
+**What to do.**  Nothing for files a CLI wrote.  A file edited by hand, or produced by a
+tool that strips padding, can be re-encoded.  Python's lenient `base64.b64decode` ignores
+the bits under the padding, so this one-liner writes the body back canonically (it is
+written for missing padding and non-zero bits; check the result of anything stranger):
+
+```
+python3 -c 'import base64,sys; L=[l for l in open(sys.argv[1]).read().splitlines() if l.strip()]; b="".join(L[1:-1]).rstrip("="); b+="="*(-len(b)%4); print(L[0]); print(base64.encodebytes(base64.b64decode(b)).decode().strip()); print(L[-1])' old.pem > new.pem
+```
+

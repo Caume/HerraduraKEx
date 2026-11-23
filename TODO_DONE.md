@@ -26661,3 +26661,50 @@ that algorithm's label.  `test_passphrase_envelope.sh`'s matrix used hkex-gf onl
 Status: **DONE v16.1.1** — C's genpkey encrypts hpks-zkp-nl and hcred keys under --passphrase, and its raw-body PEMs reach stdout.
 
 ---
+
+### #398: C and Python decode a PEM body with invalid base64 characters
+
+Found during TODO #397.  One `!` inserted into a valid private key's base64: C and
+Python skip it and `pkey --pubout` exits 0; Go and Java refuse the file (`illegal base64
+data at input byte 10` / `Illegal base64 character 21`).  So the four CLIs disagree on
+which files are PEM at all, on every subcommand, and C and Python accept bytes that are
+not part of the encoding -- the same shape #372 closed for bytes after the DER, one layer
+out.  An envelope body of only invalid characters decodes to nothing in C.
+
+Decide one base64 grammar for every reader (alphabet, padding, line breaks and
+whitespace allowed between lines), refuse anything else by name in all four, and add the
+cases to `CliTest/test_malformed_pem_matrix.sh`.  Check first that no artifact this repo
+or its KATs ship relies on the leniency.
+
+Resolution (v17.0.0).  The grammar, in all four CLIs (`b64_decode` in `herradura_codec.h`,
+`b64_decode_strict` in `codec.py`, `b64Decode` in `herradura/codec.go` and `Codec.java`, one
+hand-written loop each):
+
+- the alphabet `A-Z a-z 0-9 + /`; space, tab, CR and LF anywhere between characters
+  (RFC 7468's lax form; LF, CRLF and CR-only files all read);
+- padding REQUIRED: the characters number a multiple of 4 and `=` is only the last one or
+  two of them;
+- the bits the padding leaves over are zero, so one DER has exactly one body (the base64
+  counterpart of #373).
+
+Each refusal reads `PEM body is not valid base64: invalid character` / `misplaced padding`
+/ `length is not a multiple of 4` / `non-zero bits after the last byte`; C and every
+`pkey --decrypt` print it after `cannot parse PEM from: PATH: `.  Before the fix, beyond
+the `!` above: C also took a body missing its padding, one character short of a quad, a
+third `=` and `\v`; Python took `=` mid-body and `\v` (its `str.splitlines()` framing
+splits at `\v` and `\f`, deleting them before the decoder; it now splits at CRLF, CR
+or LF only, which also keeps `\x85` and `\x1c`-`\x1e` in the body now that it reads bytes
+as latin-1) and died with a `UnicodeDecodeError` text on a non-ASCII
+byte; Java took a body missing its padding; all four took non-zero bits under the padding.
+
+All 19 `.pem` files in the repo, the KATs among them, read under the grammar.  MAJOR
+anyway: an unpadded or non-canonical body some CLI read before is refused now, and
+CLAUDE.md counts a change to what an existing input accepts as MAJOR (#373 and #376 set
+the precedent).  `CliTest/test_malformed_pem_matrix.sh` gains 219 cells: one pinned KAT
+fixture per padding count, eight accepted layouts read to the same bytes, and every
+refusal by name with nothing written; on the pre-fix builds 120 of them fail, in all four
+CLIs.
+
+Status: **DONE v17.0.0** — one base64 grammar for every PEM reader; each refusal is named in the same words in all four CLIs (MIGRATING.md section 50).
+
+---
