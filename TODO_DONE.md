@@ -26797,3 +26797,35 @@ real header passes in both builds.
 Status: **DONE v18.0.1** — the C codec self-test is built by both C build scripts and run in native-c and sanitizers.
 
 ---
+
+### #402: SPEC.md does not say what a PEM reader accepts
+
+SPEC.md's PEM/DER section (the "PEM wrapping" bullet) describes only the writer: the
+armor lines and 76-character base64 lines.  Since #398 and #400 all four CLIs read with
+one grammar (the base64 alphabet, padding and zero pad bits, where whitespace may go; one
+block per file, matching labels of 1 to 79 printable characters, nothing but whitespace
+around the block, a non-empty body) and refuse anything else in the same words.  That
+grammar is written down only in the four readers' comments, TODO_DONE.md and MIGRATING.md
+sections 50 and 51.  A fifth implementation working from SPEC.md would have to guess it,
+and the likeliest guess, a lenient RFC 7468 reader, is what C, Go and Java were before
+#400.
+
+Add the reader's rules to SPEC.md, in the order the readers check them (so the refusal a
+file gets is specified too), with the refusal texts, and name
+`CliTest/test_malformed_pem_matrix.sh` as the conformance cases.  Documentation only:
+PATCH.
+
+Resolution (v18.0.2).  SPEC.md §10.1, "Reading a PEM file", sets out the reader as seven
+checks in scan order: the text before the block, the BEGIN line (label 1 to 79
+characters, 0x20 to 0x7E, then only spaces or tabs), the END line (at a line start, with
+its closing dashes), label match, only whitespace after the block, the base64 body
+(alphabet, padding place, length a multiple of 4, zero pad bits; whitespace anywhere),
+and a non-empty body.  It gives each refusal's text and the `cannot parse PEM from: PATH: `
+prefix of the C CLI and every `pkey --decrypt`, and names
+`CliTest/test_malformed_pem_matrix.sh` as the conformance cases.  Each rule was read off
+`herradura_codec.h`'s `pem_unwrap` and `b64_decode`; the texts were checked against all
+four CLIs on a trailing-text file and a mismatched-label file.
+
+Status: **DONE v18.0.2** — SPEC.md §10.1 specifies the PEM reader, its check order and its refusal texts.
+
+---

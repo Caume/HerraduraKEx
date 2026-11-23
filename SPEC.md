@@ -482,6 +482,70 @@ NIST-CAVP-`.rsp`-style) and against any of the four PEM-producing CLIs
 directly (`CliTest/test_c_interop.sh`, `test_go_interop.sh` exercise
 exactly this).
 
+### 10.1 Reading a PEM file (TODO #398, #400)
+
+The bullet above is the WRITER's format: LF line ends, 76-character base64
+lines, nothing before the BEGIN line, one LF after the END line.  A READER
+accepts a little more than that and refuses everything else.  These rules
+apply to every PEM file every CLI reads, whatever its label and whichever
+section of this document defines it.  All four readers (`pem_unwrap` in C
+and Python, `PemUnwrap` in Go, `Codec.pemUnwrap` in Java) scan in the order
+below, so the refusal a file gets is specified as well as the fact of one.
+Whitespace means space, tab, CR or LF, and nothing else (a vertical tab, a
+form feed or a non-ASCII byte is not whitespace).
+
+1. **Before the block:** only whitespace.  If the first non-whitespace
+   characters are not `-----BEGIN ` (with its space), the file is refused:
+   `PEM: text before the BEGIN line` when `-----BEGIN ` appears later in
+   the file, `PEM: missing BEGIN marker` when it never does.
+2. **The BEGIN line:** `-----BEGIN `, then the label, then `-----`, then
+   only spaces or tabs up to a CR or LF.  The label runs to the first
+   `-----` on the line and is 1 to 79 characters, each printable ASCII
+   (0x20 to 0x7E, so a space is allowed inside it).  Any other shape,
+   including an empty or 80-character label, a control character in it, a
+   missing closing `-----`, other text after it, or a file that ends on
+   this line, is `PEM: malformed BEGIN line`.
+3. **The END line:** the first `-----END ` after the BEGIN line.  None at
+   all is `PEM: missing END marker`.  It must start a line (the character
+   before it is CR or LF; an indented END line is refused) and be followed
+   on the same line by `-----`; otherwise `PEM: malformed END line`.
+4. **The labels match**, byte for byte; otherwise
+   `PEM: END label 'E' does not match BEGIN label 'B'`, with E cut to 79
+   characters.
+5. **After the block:** only whitespace to the end of the file, so a file
+   holds exactly one block; anything else, including a second block, is
+   `PEM: text after the END line`.  A final line ending is optional.
+6. **The body**, everything between the BEGIN line's line end and the END
+   line, is base64: the alphabet `A-Z a-z 0-9 + /`, with whitespace allowed
+   anywhere between characters (so CRLF files, any line length, one long
+   line and blank lines all read).  The reader scans it once, and the
+   first of these two it meets is the refusal:
+   - a character outside the alphabet, `=` and whitespace (`-`, `_`, a
+     vertical tab, a non-ASCII byte) is
+     `PEM body is not valid base64: invalid character`;
+   - a `=` in the first or second place of a group of four, a third `=`,
+     or an alphabet character after a `=` is
+     `PEM body is not valid base64: misplaced padding`;
+   - after the scan, if the characters (`=` included, whitespace not) do not number
+     a multiple of 4, `PEM body is not valid base64: length is not a
+     multiple of 4` (padding is required, never implied);
+   - then, if the bits the padding leaves over are not all zero,
+     `PEM body is not valid base64: non-zero bits after the last byte`, so
+     one DER encoding has exactly one body.
+7. **The body is not empty:** a body that decodes to no bytes (nothing, or
+   only whitespace) is `PEM: empty body`.
+
+Only then is the DER parsed, under each label's own rules.  The quoted
+texts are the reasons, identical in all four CLIs; each CLI may put its own
+prefix before one (the C CLI, and `pkey --decrypt` in every CLI, print
+`cannot parse PEM from: PATH: ` and then the reason).  The conformance cases
+are `CliTest/test_malformed_pem_matrix.sh`: the accepted layouts (CRLF, CR
+only, spaces and tabs inside and after body lines, 64-character and
+single-line bodies, a blank line,
+whitespace around the block, no final line ending, blanks after the BEGIN
+line) each decode to the same bytes, and every refusal above is checked by
+its text in all four CLIs, with the 79/80-character label boundary.
+
 ## 11. Code-Based (Stern ZKID) Variants
 
 HPKS-Stern-F and HPKE-Stern-F/-KEM (§9, `hpks-stern`/`hpke-stern`/

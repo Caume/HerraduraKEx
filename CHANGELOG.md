@@ -2,6 +2,24 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [18.0.2] - 2026-11-23
+
+**SPEC.md says what a PEM reader accepts (TODO #402).** Its PEM bullet described only
+the writer. The reader grammar all four CLIs share since #398 and #400 was written down
+only in their comments, TODO_DONE.md and MIGRATING.md, so a fifth implementation would
+have had to guess it.
+
+- New SPEC.md §10.1, "Reading a PEM file": the seven checks in the order every reader
+  makes them, so the refusal a file gets is specified too. They cover whitespace around
+  the block, the BEGIN line and its 1-79 printable-character label, the END line, label
+  match, one block per file, the base64 body (alphabet, required padding, zero pad bits,
+  whitespace anywhere) and a non-empty body.
+- Each refusal's text, which is the same in all four CLIs, and the prefix the C CLI and
+  every `pkey --decrypt` put before it. Checked against all four on one mismatched-label
+  and one trailing-text file.
+- `CliTest/test_malformed_pem_matrix.sh` named as the conformance cases.
+- Documentation only; no reader changes.
+
 ## [18.0.1] - 2026-11-23
 
 **The C codec's self-test is built and run (TODO #401).** `herradura_codec_selftest()`
