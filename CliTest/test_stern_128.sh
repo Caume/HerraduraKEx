@@ -23,8 +23,9 @@
 #   - a signature's DER fields must have the long form's sizes (32-byte
 #     commitments, N/8-byte responses).
 # Every acceptance has rejection controls beside it: a changed message, a
-# corrupted response, the wrong key, and a short-form signature against a
-# long-form key, each refused by every verifier.
+# corrupted response, the wrong key, a wrong issuer, and a short-form signature
+# against a long-form key, each refused by every verifier.  The sampled ones
+# (message, key, issuer) run on a separate RJ-round artifact; see RJ below.
 #
 # Claimed by ci.yml's cross-lang-compat job (all four CLIs built).
 set -euo pipefail
@@ -36,6 +37,15 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
 R=8          # reduced Fiat-Shamir rounds for the matrix (verifiers get --min-rounds)
+# A rejection gets its own round count (CLAUDE.md: "Stern rejection tests need
+# their own round count").  A changed message, a wrong key or a wrong issuer is
+# caught only by a round whose challenge reaches the check it breaks, so a
+# forged artifact survives each round with probability about 1/3: at R = 8 that
+# is 1.5e-4, at the 4 rounds the ring and hcred matrices use it is 1/81 (and a
+# CI run did hit it: every verifier accepted one wrong-issuer credential).  At
+# RJ rounds it is (1/3)^24 ~ 3.5e-12.  Each RJ artifact is accepted by every
+# verifier first, so a verifier that refuses everything cannot pass.
+RJ=24
 N=2304
 
 declare -A CLI=()
@@ -191,14 +201,19 @@ PYEOF
 ${CLI[c]} genpkey --algo hpks-stern --bits 256 --out "$TMP/k256.pem" 2>/dev/null
 ${CLI[c]} sign --algo hpks-stern --key "$TMP/k256.pem" --in "$TMP/msg.bin" --rounds $R \
     --out "$TMP/s256.pem" 2>/dev/null
+${CLI[c]} sign --algo hpks-stern --key "$TMP/k_go.pem" --in "$TMP/msg.bin" --rounds $RJ \
+    --out "$TMP/s_rj.pem" 2>/dev/null || fail "hpks-stern $RJ-round sign (c)"
 for v in "${LANGS[@]}"; do
     V=${CLI[$v]}
+    accepts "hpks-stern $RJ-round signature ($v), the rejections' control" $V verify \
+        --algo hpks-stern --pubkey "$TMP/k_go_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/s_rj.pem" \
+        --min-rounds $RJ
     rejects "hpks-stern changed message ($v)" $V verify --algo hpks-stern \
-        --pubkey "$TMP/k_go_pub.pem" --in "$TMP/msg2.bin" --sig "$TMP/s_go.pem" --min-rounds $R
+        --pubkey "$TMP/k_go_pub.pem" --in "$TMP/msg2.bin" --sig "$TMP/s_rj.pem" --min-rounds $RJ
     rejects "hpks-stern corrupted response ($v)" $V verify --algo hpks-stern \
         --pubkey "$TMP/k_go_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/s_bad.pem" --min-rounds $R
     rejects "hpks-stern wrong key ($v)" $V verify --algo hpks-stern \
-        --pubkey "$TMP/k_py_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/s_go.pem" --min-rounds $R
+        --pubkey "$TMP/k_py_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/s_rj.pem" --min-rounds $RJ
     rejects "hpks-stern N=256 signature, N=2304 key ($v)" $V verify --algo hpks-stern \
         --pubkey "$TMP/k_go_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/s256.pem" --min-rounds $R
     rejects "hpks-stern $R-round signature at the default floor ($v)" $V verify --algo hpks-stern \
@@ -219,13 +234,17 @@ for s in "${LANGS[@]}"; do
     ${CLI[$s]} sign --algo hpks-ring --key "$key" --ring "$RING" --in "$TMP/msg.bin" \
         --rounds 4 --out "$TMP/r_$s.pem" 2>/dev/null || fail "hpks-ring sign ($s)"
 done
+${CLI[c]} sign --algo hpks-ring --key "$TMP/k_c.pem" --ring "$RING" --in "$TMP/msg.bin" \
+    --rounds $RJ --out "$TMP/r_rj.pem" 2>/dev/null || fail "hpks-ring $RJ-round sign (c)"
 for v in "${LANGS[@]}"; do
     for s in "${LANGS[@]}"; do
         accepts "hpks-ring $s->$v" ${CLI[$v]} verify --algo hpks-ring --ring "$RING" \
             --in "$TMP/msg.bin" --sig "$TMP/r_$s.pem" --min-rounds 4
     done
+    accepts "hpks-ring $RJ-round signature ($v), the rejection's control" ${CLI[$v]} verify \
+        --algo hpks-ring --ring "$RING" --in "$TMP/msg.bin" --sig "$TMP/r_rj.pem" --min-rounds $RJ
     rejects "hpks-ring changed message ($v)" ${CLI[$v]} verify --algo hpks-ring --ring "$RING" \
-        --in "$TMP/msg2.bin" --sig "$TMP/r_c.pem" --min-rounds 4
+        --in "$TMP/msg2.bin" --sig "$TMP/r_rj.pem" --min-rounds $RJ
 done
 
 # ── hpke-stern (the demo KEM) ─────────────────────────────────────────────────
@@ -259,15 +278,20 @@ for s in "${LANGS[@]}"; do
     ${CLI[$s]} cred-issue --our "$TMP/k_c.pem" --in "$TMP/hc_pub.pem" --rounds 4 \
         --out "$TMP/cred_$s.pem" 2>/dev/null || fail "cred-issue ($s)"
 done
+${CLI[c]} cred-issue --our "$TMP/k_c.pem" --in "$TMP/hc_pub.pem" --rounds $RJ \
+    --out "$TMP/cred_rj.pem" 2>/dev/null || fail "cred-issue $RJ rounds (c)"
 for v in "${LANGS[@]}"; do
     for s in "${LANGS[@]}"; do
         accepts "hcred credential $s->$v" ${CLI[$v]} cred-verify --proof "$TMP/proof.pem" \
             --pubkey "$TMP/hc_pub.pem" --msg nonce --min-rounds 4 \
             --cred "$TMP/cred_$s.pem" --issuer "$TMP/k_c_pub.pem"
     done
+    accepts "hcred $RJ-round credential ($v), the rejection's control" ${CLI[$v]} cred-verify \
+        --proof "$TMP/proof.pem" --pubkey "$TMP/hc_pub.pem" --msg nonce --min-rounds 4 \
+        --cred "$TMP/cred_rj.pem" --issuer "$TMP/k_c_pub.pem"
     rejects "hcred credential, wrong issuer ($v)" ${CLI[$v]} cred-verify --proof "$TMP/proof.pem" \
         --pubkey "$TMP/hc_pub.pem" --msg nonce --min-rounds 4 \
-        --cred "$TMP/cred_c.pem" --issuer "$TMP/k_go_pub.pem"
+        --cred "$TMP/cred_rj.pem" --issuer "$TMP/k_go_pub.pem"
 done
 
 # ── Levels the table does not list ────────────────────────────────────────────

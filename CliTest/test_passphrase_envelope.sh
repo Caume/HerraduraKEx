@@ -233,10 +233,10 @@ E8_CASES=(
   "e8_tag|$PHRASE|pkey --decrypt: wrong passphrase or corrupted/tampered file"
   "e8_same|wrong|pkey --decrypt: wrong passphrase or corrupted/tampered file"
   "plain8|$PHRASE|pkey --decrypt: expected PEM label 'HERRADURA ENCRYPTED PRIVATE KEY', got 'HERRADURA HKEX-GF PRIVATE KEY'"
-  "e8_notpem|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_notpem.pem"
-  # TODO #398: a base64 refusal names its reason after the path.
+  "e8_notpem|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_notpem.pem: PEM: missing BEGIN marker"
+  # TODO #398, #400: every PEM refusal names its reason after the path.
   "e8_b64|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_b64.pem: PEM body is not valid base64: invalid character"
-  "e8_empty|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_empty.pem"
+  "e8_empty|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_empty.pem: PEM: missing BEGIN marker"
 )
 for r in $LANGS; do
     if ${CLI[$r]} pkey --decrypt --passphrase "$PHRASE" --in "$TMP/e8_same.pem" \

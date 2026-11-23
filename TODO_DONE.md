@@ -26708,3 +26708,59 @@ CLIs.
 Status: **DONE v17.0.0** — one base64 grammar for every PEM reader; each refusal is named in the same words in all four CLIs (MIGRATING.md section 50).
 
 ---
+
+### #400: the four CLIs frame a PEM file differently
+
+Found after TODO #398.  #398 gave every reader one grammar for the base64 BODY; the lines
+around it still differ.  Measured on v17.0.0 with one hkex-gf key, `pkey --pubout`:
+
+| file | Python | C, Go, Java |
+|---|---|---|
+| a line of text before `-----BEGIN` | refused (`Not a valid PEM block`) | exit 0 |
+| a line of text after `-----END` | refused | exit 0 |
+| two PEM blocks in one file | refused, as `invalid character` | exit 0, the first block read |
+| END label differs from the BEGIN label | exit 0 | exit 0 |
+| BEGIN and END with nothing between | `Empty DER input` | three other texts |
+
+So the four disagree on which files are PEM at all, a file holding two keys reads as its
+first in three CLIs, and none checks that the END line closes the block the BEGIN line
+opened.  The same shape #372 closed for bytes after the DER and #398 for the body.
+
+Decide one framing for every reader (what may precede BEGIN and follow END, one block per
+file, matching labels, an empty body), refuse anything else by name in all four, and add
+the cases to `CliTest/test_malformed_pem_matrix.sh`.  Checked before filing: every `.pem`
+the repo tracks is one block with matching labels and nothing around it, and no test or
+example concatenates PEM files.  Refusing input some CLI reads today is MAJOR (#398's
+precedent), with a MIGRATING.md section.
+
+Resolution (v18.0.0).  The framing, in all four CLIs (`pem_unwrap` in `herradura_codec.h`
+and `codec.py`, `PemUnwrap` in `herradura/codec.go`, `Codec.pemUnwrap`; one scan each, in
+the same order):
+
+- only whitespace (space, tab, CR, LF) before the BEGIN line and after the END line, so a
+  file holds exactly one block;
+- the BEGIN line is `-----BEGIN <label>-----`, then only spaces or tabs; the label is 1 to
+  79 printable ASCII characters (C's existing `PEM_LABEL_MAX`);
+- the END line starts a line and is `-----END <the same label>-----`;
+- the body decodes under #398's grammar to at least one byte.
+
+Each refusal is named in the same words: `PEM: missing BEGIN marker`, `text before the
+BEGIN line`, `malformed BEGIN line`, `missing END marker`, `malformed END line`, `END label
+'X' does not match BEGIN label 'Y'`, `text after the END line`, `empty body`.  Every
+`pkey --decrypt`, and C everywhere, prints it after `cannot parse PEM from: PATH: `; the
+`--decrypt` texts for a file that is not PEM gain the reason too.
+
+Before the fix C, Go and Java also took an indented END line and one missing its closing
+dashes; C named none of these refusals.  Python refused a trailing space after the BEGIN
+marker, which the other three read; the framing allows it everywhere, as it allows
+trailing whitespace on body lines and after END.
+
+MAJOR: a file with text around its block, a second block or a mismatched END label read
+in C, Go and Java before.  `CliTest/test_malformed_pem_matrix.sh` gains 100 cells (571/0):
+five accepted layouts read to the same bytes, seventeen refusals by name with nothing
+written, the 79/80-character label boundary, and the `--decrypt` text.  On the v17.0.0
+builds 69 of them fail, in all four CLIs.
+
+Status: **DONE v18.0.0** — one PEM framing for every reader; each refusal is named in the same words in all four CLIs (MIGRATING.md section 51).
+
+---

@@ -211,6 +211,108 @@ for l in "${LANGS[@]}"; do
     else fail "b64: pkey --decrypt message ($l): $(head -c 200 "$B64/se")"; fi
 done
 
+# ── TODO #400: one framing for every reader ────────────────────────────────
+# Until #400 C, Go and Java searched for the BEGIN and END markers anywhere, so
+# text before or after the block, a second block, and an END line naming another
+# label all read (Python refused the first three, under one vague message).  The
+# framing now: only whitespace before the BEGIN line and after the END line; the
+# BEGIN line `-----BEGIN <label>-----` then only spaces or tabs, the label 1-79
+# printable ASCII characters; the END line at the start of a line, repeating the
+# label; a body of at least one byte.  Fixture: n64_alice_priv.pem (pkey
+# --pubout), and the envelope for the --decrypt reader.
+echo ""
+echo "=== TODO #400: PEM framing ==="
+FR=$TMP/frame; mkdir -p "$FR"
+fr_mut() {
+    python3 - "$1" "$2" "$3" <<'PYEOF'
+import sys
+src, op, out = sys.argv[1], sys.argv[2], sys.argv[3]
+t = open(src).read()
+lines = t.rstrip('\n').split('\n')
+head, foot, body = lines[0], lines[-1], lines[1:-1]
+label = head[len('-----BEGIN '):-5]
+j = lambda *ls: '\n'.join(ls) + '\n'
+ops = {
+    'leadblank':  '\n\n' + t,
+    'leadspace':  '  \t\n' + t,
+    'trailblank': t + '\n  \t\n\n',
+    'noeol':      t.rstrip('\n'),
+    'beginsp':    j(head + ' \t', *body, foot),
+    'pre':        'a comment line\n' + t,
+    'presame':    'note: ' + t,
+    'nobegin':    j(*body, foot),
+    'post':       t + 'a trailing line\n',
+    'two':        t + t,
+    'postsame':   j(head, *body, foot + 'x'),
+    'mism':       j(head, *body, foot.replace(label, 'HERRADURA OTHER KEY')),
+    'noend':      j(head, *body),
+    'endindent':  j(head, *body, '  ' + foot),
+    'endopen':    j(head, *body, foot[:-5]),
+    'beginextra': j(head + ' extra', *body, foot),
+    'beginopen':  j(head[:-5], *body, foot),
+    'nolabel':    j('-----BEGIN -----', *body, '-----END -----'),
+    'label80':    j('-----BEGIN ' + 'L' * 80 + '-----', *body, '-----END ' + 'L' * 80 + '-----'),
+    'label79':    j('-----BEGIN ' + 'L' * 79 + '-----', *body, '-----END ' + 'L' * 79 + '-----'),
+    'ctrllabel':  j('-----BEGIN HERRADURA\x01KEY-----', *body, '-----END HERRADURA\x01KEY-----'),
+    'emptybody':  j(head, foot),
+    'blankbody':  j(head, '   ', '', foot),
+}
+open(out, 'w').write(ops[op])
+PYEOF
+}
+FX=$KATP/n64_alice_priv.pem
+FR_OK="leadblank leadspace trailblank noeol beginsp"
+FR_BAD=("pre|PEM: text before the BEGIN line" "presame|PEM: text before the BEGIN line"
+        "nobegin|PEM: missing BEGIN marker"
+        "post|PEM: text after the END line" "two|PEM: text after the END line"
+        "postsame|PEM: text after the END line"
+        "mism|PEM: END label 'HERRADURA OTHER KEY' does not match BEGIN label 'HERRADURA HKEX-RNL PRIVATE KEY'"
+        "noend|PEM: missing END marker"
+        "endindent|PEM: malformed END line" "endopen|PEM: malformed END line"
+        "beginextra|PEM: malformed BEGIN line" "beginopen|PEM: malformed BEGIN line"
+        "nolabel|PEM: malformed BEGIN line" "label80|PEM: malformed BEGIN line"
+        "ctrllabel|PEM: malformed BEGIN line"
+        "emptybody|PEM: empty body" "blankbody|PEM: empty body")
+for op in $FR_OK label79; do fr_mut "$FX" $op "$FR/$op.pem"; done
+for c in "${FR_BAD[@]}"; do fr_mut "$FX" "${c%%|*}" "$FR/${c%%|*}.pem"; done
+fr_mut "$KATP/enc_priv.pem" post "$FR/enc_post.pem"
+
+for l in "${LANGS[@]}"; do
+    X=${CLI[$l]}
+    if ! $X pkey --in "$FX" --pubout --out "$FR/ref_$l" >/dev/null 2>&1; then
+        fail "frame: pristine fixture is refused ($l)"; continue
+    fi
+    pass "frame: pristine fixture reads ($l)"
+    for op in $FR_OK; do
+        rm -f "$FR/out"
+        if $X pkey --in "$FR/$op.pem" --pubout --out "$FR/out" >/dev/null 2>&1 \
+           && cmp -s "$FR/ref_$l" "$FR/out"; then pass "frame: $op reads to the same bytes ($l)"
+        else fail "frame: $op is refused or reads differently ($l)"; fi
+    done
+    for c in "${FR_BAD[@]}"; do
+        op=${c%%|*}; want=${c#*|}
+        rm -f "$FR/out"
+        rc=0; $X pkey --in "$FR/$op.pem" --pubout --out "$FR/out" >/dev/null 2>"$FR/se" || rc=$?
+        if [ $rc -eq 0 ]; then fail "frame: $op accepted ($l)"
+        elif grep -Eq "$CRASH" "$FR/se"; then fail "frame: $op crashed ($l): $(head -c 200 "$FR/se")"
+        elif ! grep -qF -- "$want" "$FR/se"; then fail "frame: $op message ($l): $(head -c 200 "$FR/se")"
+        elif [ -e "$FR/out" ]; then fail "frame: $op wrote output ($l)"
+        else pass "frame: $op refused: $want ($l)"; fi
+    done
+    # The boundary: a 79-character label passes the framing and is then refused
+    # as an unknown label -- by the loader, not as a malformed BEGIN line.
+    rc=0; $X pkey --in "$FR/label79.pem" --pubout --out "$FR/out" >/dev/null 2>"$FR/se" || rc=$?
+    if [ $rc -ne 0 ] && ! grep -q 'PEM: malformed BEGIN line' "$FR/se" && ! grep -Eq "$CRASH" "$FR/se"; then
+        pass "frame: a 79-character label passes the framing ($l)"
+    else fail "frame: label79 ($l): rc=$rc $(head -c 200 "$FR/se")"; fi
+    # The envelope reader names its path and the reason.
+    rc=0; $X pkey --decrypt --passphrase "$KAT_PASS" --in "$FR/enc_post.pem" --out "$FR/out" \
+        >/dev/null 2>"$FR/se" || rc=$?
+    want="pkey --decrypt: cannot parse PEM from: $FR/enc_post.pem: PEM: text after the END line"
+    if [ $rc -ne 0 ] && grep -qF -- "$want" "$FR/se"; then pass "frame: pkey --decrypt names the path and the reason ($l)"
+    else fail "frame: pkey --decrypt message ($l): $(head -c 200 "$FR/se")"; fi
+done
+
 echo ""
 echo "Results: $PASS PASS / $FAIL FAIL (languages: ${LANGS[*]})"
 [ "$FAIL" -eq 0 ]

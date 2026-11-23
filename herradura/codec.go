@@ -163,30 +163,85 @@ func PemWrap(label string, der []byte) string {
 	return sb.String()
 }
 
-// PemUnwrap parses a single PEM block, returning the label and DER bytes.
+// PemLabelMax is the longest PEM label any reader accepts (TODO #400).
+const PemLabelMax = 79
+
+func pemWS(c byte) bool { return c == ' ' || c == '\t' || c == '\r' || c == '\n' }
+
+// PemUnwrap parses the one PEM block that is the whole of pem, returning the
+// label and DER bytes.  One framing for every reader (TODO #400), the same scan
+// in C, Python and Java: only whitespace (space, tab, CR, LF) before the BEGIN
+// line and after the END line, so a file holds exactly one block; the BEGIN
+// line is `-----BEGIN <label>-----`, then only spaces or tabs, the label 1 to 79
+// printable ASCII characters; the END line starts a line and repeats the label; the body
+// decodes under b64Decode's grammar (TODO #398) to at least one byte.
 func PemUnwrap(pem string) (label string, der []byte, err error) {
-	const beginMark = "-----BEGIN "
-	bi := strings.Index(pem, beginMark)
-	if bi < 0 {
+	t, end := pem, len(pem)
+	p := 0
+	for p < end && pemWS(t[p]) {
+		p++
+	}
+	if !strings.HasPrefix(t[p:], "-----BEGIN ") {
+		if strings.Contains(t[p:], "-----BEGIN ") {
+			return "", nil, errors.New("PEM: text before the BEGIN line")
+		}
 		return "", nil, errors.New("PEM: missing BEGIN marker")
 	}
-	rest := pem[bi+len(beginMark):]
-
-	ei := strings.Index(rest, "-----")
-	if ei < 0 {
+	p += 11
+	ls := p
+	for p < end && t[p] != '\r' && t[p] != '\n' && !strings.HasPrefix(t[p:], "-----") {
+		if t[p] < 0x20 || t[p] > 0x7E {
+			return "", nil, errors.New("PEM: malformed BEGIN line")
+		}
+		p++
+	}
+	label = t[ls:p]
+	if !strings.HasPrefix(t[p:], "-----") || len(label) == 0 || len(label) > PemLabelMax {
 		return "", nil, errors.New("PEM: malformed BEGIN line")
 	}
-	label = rest[:ei]
-	rest = rest[ei+5:]
-	rest = strings.TrimLeft(rest, "\r\n")
-
-	endIdx := strings.Index(rest, "-----END ")
-	if endIdx < 0 {
+	p += 5
+	for p < end && (t[p] == ' ' || t[p] == '\t') {
+		p++
+	}
+	if p >= end || (t[p] != '\r' && t[p] != '\n') {
+		return "", nil, errors.New("PEM: malformed BEGIN line")
+	}
+	body := p
+	fi := strings.Index(t[body:], "-----END ")
+	if fi < 0 {
 		return "", nil, errors.New("PEM: missing END marker")
 	}
-	der, err = b64Decode(rest[:endIdx])
+	foot := body + fi
+	if t[foot-1] != '\r' && t[foot-1] != '\n' {
+		return "", nil, errors.New("PEM: malformed END line")
+	}
+	p = foot + 9
+	es := p
+	for p < end && t[p] != '\r' && t[p] != '\n' && !strings.HasPrefix(t[p:], "-----") {
+		p++
+	}
+	if !strings.HasPrefix(t[p:], "-----") {
+		return "", nil, errors.New("PEM: malformed END line")
+	}
+	if el := t[es:p]; el != label {
+		if len(el) > PemLabelMax {
+			el = el[:PemLabelMax]
+		}
+		return "", nil, fmt.Errorf("PEM: END label '%s' does not match BEGIN label '%s'", el, label)
+	}
+	p += 5
+	for p < end && pemWS(t[p]) {
+		p++
+	}
+	if p != end {
+		return "", nil, errors.New("PEM: text after the END line")
+	}
+	der, err = b64Decode(t[body:foot])
 	if err != nil {
 		return "", nil, err
+	}
+	if len(der) == 0 {
+		return "", nil, errors.New("PEM: empty body")
 	}
 	return label, der, nil
 }

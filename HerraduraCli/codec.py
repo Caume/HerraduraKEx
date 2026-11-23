@@ -1,7 +1,6 @@
 # HerraduraCli/codec.py — PEM and minimal DER codec
-# No external dependencies; uses only base64 and re from stdlib.
+# No external dependencies; uses only base64 from stdlib.
 import base64
-import re
 
 # ---------------------------------------------------------------------------
 # Bounds for the packed (non-DER) wire formats — TODO #275.
@@ -251,22 +250,66 @@ def pem_wrap(label: str, data: bytes) -> str:
     return f"-----BEGIN {label}-----\n{b64}\n-----END {label}-----\n"
 
 
-def pem_unwrap(pem_text: str) -> tuple:
-    """Unwrap a PEM block; return (label, binary_data).
+PEM_LABEL_MAX = 79
+_PEM_WS = ' \t\r\n'
 
-    Raises ValueError on any malformed input."""
-    # Split at CRLF, CR or LF only, not str.splitlines(): that also breaks at
-    # \v, \f, \x1c-\x1e and \x85, which would delete them from the body before
-    # the base64 grammar could refuse them (TODO #398).
-    text = pem_text.strip(' \t\r\n')
-    lines = re.split(r'\r\n|\r|\n', text) if text else []
-    if not lines:
-        raise ValueError("Not a valid PEM block")
-    if not (lines[0].startswith('-----BEGIN ') and lines[0].endswith('-----')
-            and lines[-1].startswith('-----END ') and lines[-1].endswith('-----')):
-        raise ValueError("Not a valid PEM block")
-    label = lines[0][len('-----BEGIN '):-len('-----')]
-    return label, b64_decode_strict('\n'.join(lines[1:-1]))
+
+def pem_unwrap(pem_text: str) -> tuple:
+    """Unwrap the one PEM block that is the whole of *pem_text*; return
+    (label, binary_data).  Raises ValueError on any malformed input.
+
+    One framing for every reader (TODO #400), the same scan in C, Go and Java:
+    only whitespace (space, tab, CR, LF) before the BEGIN line and after the
+    END line, so a file holds exactly one block; the BEGIN line is
+    `-----BEGIN <label>-----`, then only spaces or tabs, the label 1 to 79
+    printable ASCII characters;
+    the END line starts a line and repeats the label; the body decodes under
+    b64_decode_strict's grammar (TODO #398) to at least one byte."""
+    t, end = pem_text, len(pem_text)
+    p = 0
+    while p < end and t[p] in _PEM_WS:
+        p += 1
+    if not t.startswith('-----BEGIN ', p):
+        if t.find('-----BEGIN ', p) >= 0:
+            raise ValueError("PEM: text before the BEGIN line")
+        raise ValueError("PEM: missing BEGIN marker")
+    p += 11
+    ls = p
+    while p < end and t[p] not in '\r\n' and not t.startswith('-----', p):
+        if not ' ' <= t[p] <= '~':
+            raise ValueError("PEM: malformed BEGIN line")
+        p += 1
+    label = t[ls:p]
+    if not t.startswith('-----', p) or not 1 <= len(label) <= PEM_LABEL_MAX:
+        raise ValueError("PEM: malformed BEGIN line")
+    p += 5
+    while p < end and t[p] in ' \t':
+        p += 1
+    if p >= end or t[p] not in '\r\n':
+        raise ValueError("PEM: malformed BEGIN line")
+    body = p
+    foot = t.find('-----END ', body)
+    if foot < 0:
+        raise ValueError("PEM: missing END marker")
+    if t[foot - 1] not in '\r\n':
+        raise ValueError("PEM: malformed END line")
+    p = es = foot + 9
+    while p < end and t[p] not in '\r\n' and not t.startswith('-----', p):
+        p += 1
+    if not t.startswith('-----', p):
+        raise ValueError("PEM: malformed END line")
+    if t[es:p] != label:
+        raise ValueError(f"PEM: END label '{t[es:p][:PEM_LABEL_MAX]}' does not match "
+                         f"BEGIN label '{label}'")
+    p += 5
+    while p < end and t[p] in _PEM_WS:
+        p += 1
+    if p != end:
+        raise ValueError("PEM: text after the END line")
+    data = b64_decode_strict(t[body:foot])
+    if not data:
+        raise ValueError("PEM: empty body")
+    return label, data
 
 
 _B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
