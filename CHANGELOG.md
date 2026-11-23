@@ -2,6 +2,19 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [16.0.4] - 2026-11-22
+
+**The Go CLI's numeric-flag conversions check their bound (TODO #394).** No flag accepts
+or refuses anything it did not before.
+
+### TODO #394 — Go integer conversions
+
+- `numFlag` checks the parsed value against `math.MaxInt32` before converting to `int`,
+  and `twk` checks `--bidx` against `math.MaxUint32` before converting to `uint32`. Both
+  values were already bounded by `decRangeArg`; the checks make that visible to CodeQL
+  (`go/incorrect-integer-conversion`) and keep the conversion safe on a 32-bit `int`.
+- Filed TODO #395: no CLI creates private-key files with mode 0600.
+
 ## [16.0.3] - 2026-11-22
 
 **The build scripts print the release version (TODO #393).** Nothing built changes.

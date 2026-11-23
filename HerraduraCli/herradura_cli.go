@@ -5582,7 +5582,16 @@ func numFlag(fs *flag.FlagSet, name string, val *string, lo, hi uint64, deflt in
 	if !isSet(fs, name) {
 		return deflt
 	}
-	return int(decRangeArg(*val, lo, hi, fs.Name(), "--"+name))
+	v := decRangeArg(*val, lo, hi, fs.Name(), "--"+name)
+	// TODO #394: every caller's hi is far below 2^31, so this never fires; it
+	// is the bound check that makes the int conversion visibly safe (CodeQL
+	// go/incorrect-integer-conversion) on a 32-bit int too.
+	if v > math.MaxInt32 {
+		fmt.Fprintf(os.Stderr, "%s: --%s: internal error: bound %d exceeds int32\n",
+			fs.Name(), name, hi)
+		os.Exit(2)
+	}
+	return int(v)
 }
 
 func cmdTwk(args []string) {
@@ -5611,7 +5620,12 @@ func cmdTwk(args []string) {
 	// uint32(*bidx) wrapped --bidx mod 2^32, so --bidx 4294967296 encrypted
 	// under block 0's tweak; flag.Uint also read 0x10 as 16.
 	sectorV := decRangeArg(*sector, 0, math.MaxUint64, "twk", "--sector")
-	bidxV := uint32(decRangeArg(*bidx, 0, math.MaxUint32, "twk", "--bidx"))
+	bidxU := decRangeArg(*bidx, 0, math.MaxUint32, "twk", "--bidx")
+	if bidxU > math.MaxUint32 { // TODO #394: unreachable; states the bound at the conversion
+		fmt.Fprintln(os.Stderr, "twk: --bidx: internal error: exceeds 2^32-1")
+		os.Exit(2)
+	}
+	bidxV := uint32(bidxU)
 	keyBig, keyBits, err := loadKey(*keyPath)
 	if err != nil {
 		die("twk", err)

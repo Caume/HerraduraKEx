@@ -26432,3 +26432,27 @@ invisible to `tools/check_fast.sh`.
 Status: **DONE v16.0.3** — the build scripts take their version from the README title instead of a stale hardcoded one.
 
 ---
+
+### #394: the Go CLI's numeric-flag conversions state their bound
+
+Found by CodeQL on PR #377 (`go/incorrect-integer-conversion`, two high alerts).
+`numFlag` returned `int(decRangeArg(...))` and `cmdTwk` took `uint32(decRangeArg(...,
+math.MaxUint32, ...))`.  Both were already safe: `decRangeArg` refuses anything above the
+caller's `hi`, the largest `hi` passed to `numFlag` is `DrbgMaxBlocks*32` = 2^25, and
+`--bidx`'s is 2^32-1.  CodeQL cannot follow a bound passed as a parameter.
+
+**Done (v16.0.4).**
+- `numFlag` checks the parsed value against `math.MaxInt32` before converting, so the
+  conversion is safe on a 32-bit `int` too; `cmdTwk` checks `--bidx` against
+  `math.MaxUint32`.  Neither check can fire with the current callers; each exits 2 with
+  an internal-error message if a future caller widens a bound past it.
+- `test_numeric_flags.sh` (622/0), `test_arg_hygiene.sh` (380/0) and
+  `test_fpe_twk.sh` (235/0) pass unchanged.
+
+**Resolution.**
+- The third alert on that PR (`cpp/cleartext-storage-file`, `pkey --decrypt`) is the
+  feature, but it exposed that no CLI creates key files 0600; filed as TODO #395.
+
+Status: **DONE v16.0.4** — the Go CLI's two numeric-flag conversions check their bound before narrowing.
+
+---
