@@ -2,6 +2,21 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [16.0.5] - 2026-11-22
+
+**Every file the four CLIs create is mode 0600 (TODO #395).** Output bytes do not change.
+
+### TODO #395 — output file modes
+
+- No CLI used to set a file mode, so under the usual 022 umask private keys, decrypted
+  PEMs, shared secrets, plaintext and DRBG state were readable by every local user. Each
+  CLI's write helpers now create files 0600: C `hkx_fopen_out` (`herradura_codec.h`),
+  Go `os.WriteFile(..., 0600)`, Python `_open_out`, Java `createFile` with `rw-------`.
+- The rule covers every output, public keys, signatures and ciphertexts included;
+  sharing one may now need a `chmod`. A file that already exists keeps its mode.
+- New `CliTest/test_file_modes.sh` (native-interop, 60 cells across the four CLIs),
+  with a `touch` control and an existing-file cell; shown to fail on a 0644 build.
+
 ## [16.0.4] - 2026-11-22
 
 **The Go CLI's numeric-flag conversions check their bound (TODO #394).** No flag accepts

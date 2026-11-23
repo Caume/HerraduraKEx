@@ -26456,3 +26456,55 @@ caller's `hi`, the largest `hi` passed to `numFlag` is `DrbgMaxBlocks*32` = 2^25
 Status: **DONE v16.0.4** — the Go CLI's two numeric-flag conversions check their bound before narrowing.
 
 ---
+
+### #395: private-key files are created world-readable under the default umask
+
+Found by CodeQL on PR #377 (`cpp/cleartext-storage-file`, `HerraduraCli/herradura_cli.c`,
+`pkey --decrypt --out FILE`).  The alert itself is the feature: `--decrypt` exists to
+write the plaintext PEM.  What it points at is real, though: no CLI in any language sets
+a file mode.  C uses `fopen(path, "w")`, Go `os.WriteFile`/`os.Create` with 0644 or
+0666, Python `open(path, "w")`, Java `Files.write`, so under a usual 022 umask every
+private key `genpkey`, `pkey --decrypt` and the other key-writing paths produce is
+readable by every local user.  OpenSSL writes private keys 0600.
+
+Create every file that holds secret material (private-key PEMs, plaintext `pkey
+--decrypt` output, session keys, derived secrets from `kex --out`) with mode 0600 in all
+four CLIs: C `open(O_WRONLY|O_CREAT|O_TRUNC, 0600)` + `fdopen`, Go `os.OpenFile(...,
+0600)`, Python `os.open(..., 0o600)`, Java `PosixFilePermissions` where the filesystem
+supports them.  Public-key, ciphertext and signature outputs keep the default.  Open
+questions: whether an existing file at the path is chmod'ed or left alone (OpenSSL leaves
+it), and Windows/Java behaviour where POSIX modes do not exist.  Needs a CliTest script
+that checks `stat -c %a` on every secret-producing (subcommand, --algo) cell across the
+four CLIs, with a public-key control showing the check distinguishes the two.
+
+
+**Done (v16.0.5).**
+- Every file each CLI creates is mode 0600, public outputs included (the rule is
+  per write helper, not per output, so there is nothing to classify and nothing to
+  drift).  C: `hkx_fopen_out` in `herradura_codec.h` (`open(O_CREAT|O_TRUNC, 0600)` +
+  `fdopen`), used by `pem_write_file` and the CLI's five other write sites.  Go: the
+  four `os.WriteFile` calls take 0600.  Python: `_open_out`, used by `_write_file`, the
+  WOTS/XMSS state writes and the `fpe` / `twk` outputs.  Java: `writeBytes` creates the
+  file with `rw-------` before writing; on a filesystem without POSIX modes it creates
+  it plainly.
+- A file that already exists keeps its mode (O_CREAT semantics, as OpenSSL).
+- New `CliTest/test_file_modes.sh` (native-interop): per CLI under umask 022, 15 cells,
+  60 in all.  A `touch` control shows 644; private key, public key, kex session key,
+  encrypted and decrypted private key, `rand --out` and `--state`, `twk --out`,
+  `encfile`, `decfile` (with a round trip), the WOTS `.idx` sidecar are 600; an existing
+  0644 file overwritten by `genpkey` stays 644 and was rewritten.  Shown to fire: with
+  Go's writers put back to 0644, all 11 Go mode cells failed.
+
+**Resolution.**
+- All outputs rather than secret ones: secret output reaches far past private keys
+  (plaintext, shared secrets, RNL/hybrid responses carrying Bob's session key, DRBG and
+  OPRF state, HPKST nonces, PAKE records, sidecars), and a classification table over
+  every (subcommand, --algo) cell would have to be right everywhere and stay right.  A
+  public key at 0600 costs a `chmod` to share; a secret at 0644 is a leak.
+- Existing files keep their mode, so a file the user made 0644 on purpose is not
+  silently changed.
+- Not MAJOR: no artifact, flag or `--algo` behaviour changes; output bytes are identical.
+
+Status: **DONE v16.0.5** — every file the four CLIs create is mode 0600; an existing file keeps its mode.
+
+---

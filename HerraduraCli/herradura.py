@@ -1387,6 +1387,17 @@ def _read_file(path):
         return f.read()
 
 
+def _open_out(path, mode):
+    """Open an output file for writing, creating it 0600 (TODO #395).
+
+    Every file the CLI writes comes through here, public outputs included, so
+    nothing it produces is world-readable under the default umask.  A file that
+    already exists keeps its mode: O_CREAT's mode applies only on creation.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_BINARY', 0)
+    return os.fdopen(os.open(path, flags, 0o600), mode)
+
+
 def _write_file(path, data):
     if path == '-':
         if isinstance(data, str):
@@ -1395,7 +1406,7 @@ def _write_file(path, data):
             sys.stdout.buffer.write(data)
         return
     mode = 'w' if isinstance(data, str) else 'wb'
-    with open(path, mode) as f:
+    with _open_out(path, mode) as f:
         f.write(data)
 
 
@@ -2024,7 +2035,8 @@ def _xmss_read_idx(key_path: str, h: int) -> int:
 
 
 def _xmss_write_idx(key_path: str, next_idx: int):
-    open(_xmss_state_path(key_path), 'w').write(str(next_idx) + '\n')
+    with _open_out(_xmss_state_path(key_path), 'w') as f:
+        f.write(str(next_idx) + '\n')
 
 
 # ---------------------------------------------------------------------------
@@ -2112,7 +2124,8 @@ def _wots_is_used(key_path: str) -> bool:
 
 
 def _wots_mark_used(key_path: str):
-    open(_xmss_state_path(key_path), 'w').write('1\n')
+    with _open_out(_xmss_state_path(key_path), 'w') as f:
+        f.write('1\n')
 
 
 def _load_zkp_nl_privkey(path):
@@ -4415,7 +4428,7 @@ def cmd_fpe(args):
     if args.out == '-':
         sys.stdout.buffer.write(out_bytes)
     else:
-        with open(args.out, 'wb') as f:
+        with _open_out(args.out, 'wb') as f:
             f.write(out_bytes)
 
 
@@ -4444,7 +4457,7 @@ def cmd_twk(args):
     if args.out == '-':
         sys.stdout.buffer.write(out_bytes)
     else:
-        with open(args.out, 'wb') as f:
+        with _open_out(args.out, 'wb') as f:
             f.write(out_bytes)
 
 

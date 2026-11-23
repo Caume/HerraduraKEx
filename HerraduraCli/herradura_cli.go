@@ -333,7 +333,7 @@ func writeString(path, s string) error {
 		_, err := fmt.Fprint(os.Stdout, s)
 		return err
 	}
-	return os.WriteFile(path, []byte(s), 0644)
+	return os.WriteFile(path, []byte(s), 0600) // TODO #395: created 0600; an existing file keeps its mode
 }
 
 func writeBytes(path string, b []byte) error {
@@ -341,7 +341,7 @@ func writeBytes(path string, b []byte) error {
 		_, err := os.Stdout.Write(b)
 		return err
 	}
-	return os.WriteFile(path, b, 0644)
+	return os.WriteFile(path, b, 0600) // TODO #395: created 0600; an existing file keeps its mode
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1234,7 +1234,7 @@ func wotsIsUsed(keyPath string) bool {
 }
 
 func wotsWriteIdx(keyPath string, val int) {
-	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0644)
+	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0600) // TODO #395: created 0600; an existing file keeps its mode
 }
 
 func wotsBlobPack(vals [WotsL]*BitArray) []byte {
@@ -1285,7 +1285,7 @@ func xmssReadIdx(keyPath string) int {
 }
 
 func xmssWriteIdx(keyPath string, val int) {
-	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0644)
+	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0600) // TODO #395: created 0600; an existing file keeps its mode
 }
 
 // alignBlob right-aligns v into a dst_len-byte slice (generic version of

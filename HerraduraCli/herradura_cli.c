@@ -1426,7 +1426,7 @@ static int wots_is_used(const char *key_path)
 static void wots_write_idx(const char *key_path, int val)
 {
     char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = fopen(p, "w");
+    FILE *f = hkx_fopen_out(p, "w");
     if (f) { fprintf(f, "%d\n", val); fclose(f); }
 }
 
@@ -1472,7 +1472,7 @@ static int xmss_read_idx(const char *key_path)
 static void xmss_write_idx(const char *key_path, int val)
 {
     char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = fopen(p, "w");
+    FILE *f = hkx_fopen_out(p, "w");
     if (f) { fprintf(f, "%d\n", val); fclose(f); }
 }
 
@@ -1984,7 +1984,7 @@ static void cmd_pkey(int argc, char **argv)
         if (!out_path || strcmp(out_path, "-") == 0) {
             fputs(plain, stdout);
         } else {
-            FILE *f = fopen(out_path, "w");
+            FILE *f = hkx_fopen_out(out_path, "w");
             if (!f) dief("cannot write: %s", out_path);
             fputs(plain, f);
             fclose(f);
@@ -3027,7 +3027,7 @@ static void cmd_kex(int argc, char **argv)
 /* Write raw bytes to file or stdout. */
 static void write_binary_file(const char *path, const uint8_t *buf, size_t len)
 {
-    FILE *f = (!path || strcmp(path, "-") == 0) ? stdout : fopen(path, "wb");
+    FILE *f = (!path || strcmp(path, "-") == 0) ? stdout : hkx_fopen_out(path, "wb");
     if (!f) dief("cannot write: %s", path);
     fwrite(buf, 1, len, f);
     if (f != stdout) fclose(f);
@@ -5819,7 +5819,7 @@ static void cmd_encfile(int argc, char **argv)
     free(mac_data);
 
     /* Write .hkx file */
-    FILE *out = fopen(out_path, "wb");
+    FILE *out = hkx_fopen_out(out_path, "wb");
     if (!out) dief("encfile: cannot open %s for writing", out_path);
     uint8_t hdr[45];
     hdr[0]='H'; hdr[1]='K'; hdr[2]='X'; hdr[3]='1'; hdr[4]=0x01;

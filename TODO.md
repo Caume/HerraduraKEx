@@ -624,27 +624,3 @@ Status: **OPEN**
 
 ---
 
-
-### #395: private-key files are created world-readable under the default umask
-
-Found by CodeQL on PR #377 (`cpp/cleartext-storage-file`, `HerraduraCli/herradura_cli.c`,
-`pkey --decrypt --out FILE`).  The alert itself is the feature: `--decrypt` exists to
-write the plaintext PEM.  What it points at is real, though: no CLI in any language sets
-a file mode.  C uses `fopen(path, "w")`, Go `os.WriteFile`/`os.Create` with 0644 or
-0666, Python `open(path, "w")`, Java `Files.write`, so under a usual 022 umask every
-private key `genpkey`, `pkey --decrypt` and the other key-writing paths produce is
-readable by every local user.  OpenSSL writes private keys 0600.
-
-Create every file that holds secret material (private-key PEMs, plaintext `pkey
---decrypt` output, session keys, derived secrets from `kex --out`) with mode 0600 in all
-four CLIs: C `open(O_WRONLY|O_CREAT|O_TRUNC, 0600)` + `fdopen`, Go `os.OpenFile(...,
-0600)`, Python `os.open(..., 0o600)`, Java `PosixFilePermissions` where the filesystem
-supports them.  Public-key, ciphertext and signature outputs keep the default.  Open
-questions: whether an existing file at the path is chmod'ed or left alone (OpenSSL leaves
-it), and Windows/Java behaviour where POSIX modes do not exist.  Needs a CliTest script
-that checks `stat -c %a` on every secret-producing (subcommand, --algo) cell across the
-four CLIs, with a public-key control showing the check distinguishes the two.
-
-Status: **OPEN**
-
----

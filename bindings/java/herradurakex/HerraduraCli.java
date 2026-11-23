@@ -2592,7 +2592,18 @@ public final class HerraduraCli {
             out.flush();
             return;
         }
-        Files.write(Paths.get(path), data);
+        Path p = Paths.get(path);
+        // TODO #395: create every output 0600, so nothing the CLI writes is
+        // world-readable under the default umask.  A file that already exists
+        // keeps its mode, as O_CREAT does in the other three CLIs; on a
+        // filesystem without POSIX modes the file is created plainly.
+        try {
+            Files.createFile(p, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+        } catch (java.nio.file.FileAlreadyExistsException | UnsupportedOperationException e) {
+            // existing file: keep its mode; no POSIX attributes: default creation below
+        }
+        Files.write(p, data);
     }
 
     // -----------------------------------------------------------------
