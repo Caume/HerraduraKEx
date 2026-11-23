@@ -197,7 +197,7 @@ fails "Is a directory".  A flag Python's argparse requires is required in every 
 used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spelled "-".
 (Python's own refusals keep argparse's wording.)
 
-  genpkey --algo <ID> [--bits N | --level L] [--xmss-height N] [--passphrase P [--kdf-iterations N]] --out FILE
+  genpkey --algo <ID> [--bits N | --level L] [--xmss-height N] [--passphrase P | --passphrase-file F [--kdf-iterations N]] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,
              hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss, hpks-wots, hcred
     Key sizes come from one table, spec's key_parameter_sets, generated into all four
@@ -215,11 +215,16 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     --passphrase writes a HERRADURA ENCRYPTED PRIVATE KEY envelope.  An empty
     passphrase, and --kdf-iterations without --passphrase, are refused by name in
     every CLI (TODO #376; Python and Go used to write the key in the clear).
+    --passphrase-file F reads it from F instead (`-` = stdin), keeping it off the
+    command line, where other local users can read it (TODO #396).  The secret is F's
+    bytes minus at most one trailing \n or \r\n; more than 1024 bytes, a NUL, another
+    CR/LF, invalid UTF-8, or both forms at once are refused by name.  Same rule for
+    pkey --passphrase-file and pake-* --password-file.
   pkey --in FILE [--pubout] [--text] [--out FILE]
     --text prints one layout per algorithm, byte-identical in all four CLIs, ending in
     the key's parameter-set row (`level : ...` where it has one, `security : ...`;
     none for WOTS / XMSS).  A PUBLIC key is refused by label (TODO #386, #387).
-  pkey --decrypt --passphrase P --in FILE [--out FILE]
+  pkey --decrypt (--passphrase P | --passphrase-file F) --in FILE [--out FILE]
     --decrypt accepts --passphrase '' so envelopes written under '' before TODO #376
     stay readable.
   kex --algo {hkex-gf,hkex-rnl,hybrid-rnl-stern} --our FILE --their FILE --out FILE
@@ -316,8 +321,8 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     CLIENT STATE and EVALUATION PEMs carry n, and oprf-eval / oprf-unblind refuse a
     pair from two widths by name.  Below 256 bits H(x) is the high n bits of
     HFSCX-256(x).  pake-register / pake-demo run at the key's n (TODO #385).
-  pake-register --key FILE [--username U] [--password P] --out FILE
-  pake-demo --key FILE [--username U] [--password P]
+  pake-register --key FILE [--username U] [--password P | --password-file F] --out FILE
+  pake-demo --key FILE [--username U] [--password P | --password-file F]
     --username exists in Python and Java only; it is a lookup label, not bound into the
     record, so C and Go records are byte-comparable (spec cli_surface_gaps).
     pake-register needs a non-empty --password in every CLI (Python alone may prompt

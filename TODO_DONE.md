@@ -26508,3 +26508,64 @@ four CLIs, with a public-key control showing the check distinguishes the two.
 Status: **DONE v16.0.5** — every file the four CLIs create is mode 0600; an existing file keeps its mode.
 
 ---
+
+### #396: passphrases and passwords can only be given on the command line
+
+Found while closing TODO #395.  `genpkey --passphrase`, `pkey --decrypt --passphrase`,
+`pake-register --password` and `pake-demo --password` take the secret as a command-line
+argument in all four CLIs; the only alternative is the Python CLI's terminal prompt when
+`pake-register --password` is omitted.  On Linux any local user can read another
+process's arguments (`ps`, `/proc/<pid>/cmdline`) while it runs, and the value lands in
+shell history: the same threat as #395, through a different channel.
+
+Add a file form beside each flag, in all four CLIs, with one meaning:
+
+- `--passphrase-file FILE` (genpkey, pkey) and `--password-file FILE` (pake-register,
+  pake-demo).  `FILE` may be `-` for stdin.
+- The secret is the file's bytes with at most ONE trailing line ending (`\n` or `\r\n`)
+  removed.  Any other CR or LF, a NUL byte, invalid UTF-8 (every CLI hashes the
+  secret's UTF-8 bytes, and Java would otherwise substitute U+FFFD), or more than 1024
+  bytes is refused by name.  An unreadable file is refused.
+- Giving both forms of one secret is refused; `-` is refused when another input of the
+  same command is also stdin (`pkey --in -`, `pake-* --key -`).
+- Once read, the value goes through exactly the checks the inline flag does (#376):
+  refused when empty for genpkey and pake-*, accepted for `pkey --decrypt`, required
+  for pake-register.  The inline flags keep working unchanged.
+
+A new CliTest script checks, per CLI: the file form decrypts what the inline form
+encrypted (and the reverse) for the envelope, and gives byte-identical PAKE records'
+login behaviour; stdin works; each refusal fires with an accept-control first.
+
+
+**Done (v16.1.0).**
+- `--passphrase-file FILE` on genpkey and pkey, `--password-file FILE` on pake-register
+  and pake-demo, in all four CLIs, with the meaning above.  One helper per CLI: C
+  `secret_arg` (with a strict RFC 3629 `utf8_valid`), Go `resolveSecret`, Python
+  `_secret_arg`, Java `resolveSecret`.  Go, Java and Python store the file's secret as
+  the inline flag; C returns it in its place; either way every #376 check runs unchanged.
+  Messages are the same text in all four.  The flag tables, help synopses and spec
+  regenerated from the parsers; no parity row was needed.
+- Two gaps closed on the way: Python's `pkey` now refuses `--passphrase` without
+  `--decrypt`, as the other three did; C's wrong-passphrase message now reads
+  `pkey --decrypt: wrong passphrase or corrupted/tampered file`, as the other three did.
+- New `CliTest/test_secret_files.sh` (native-interop), 116 cells across the four CLIs:
+  accept-controls first (inline-encrypted key decrypts from LF, CRLF, bare and stdin
+  files to the same bytes; the reverse; exactly 1024 bytes; a non-ASCII UTF-8
+  passphrase C took inline decrypts from a file in every CLI; pake-register and
+  pake-demo from a file), then 19 refusals per CLI with the exact message, no output
+  and no crash.  Shown to fire: with C's UTF-8 check disabled, exactly the three
+  UTF-8 cells (invalid, surrogate, overlong) failed for C.
+- llms.txt synopses and docs/TUTORIAL.md (a file / stdin example, run in all four CLIs).
+
+**Resolution.**
+- A file form, not an environment variable: environment variables are inherited by
+  children and readable in `/proc/<pid>/environ` by the same user, and a file carries
+  the permissions its owner gives it.  No terminal prompt was added: three CLIs would
+  need one each, and `--passphrase-file -` already serves an interactive pipe.
+- Strict, not OpenSSL's first-line rule: a second line silently ignored would make two
+  different files the same passphrase, and refusing it costs nothing.
+- MINOR (16.1.0): four new flags, nothing removed or changed in what existing ones do.
+
+Status: **DONE v16.1.0** — genpkey/pkey take --passphrase-file and pake-register/pake-demo --password-file in all four CLIs, keeping the secret off the command line.
+
+---

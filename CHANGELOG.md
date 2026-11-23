@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [16.1.0] - 2026-11-22
+
+**Passphrases and passwords can come from a file (TODO #396).** The inline flags work as
+before.
+
+### TODO #396 — secret files
+
+- **New flags, all four CLIs:** `genpkey` / `pkey --passphrase-file FILE` and
+  `pake-register` / `pake-demo --password-file FILE`, with `-` for stdin. A secret on the
+  command line is readable by every local user through `ps` or `/proc/<pid>/cmdline`
+  and lands in shell history; a file is not.
+- The secret is the file's bytes with at most one trailing `\n` or `\r\n` removed. More
+  than 1024 bytes, a NUL, any other CR or LF, invalid UTF-8, both forms of one secret,
+  and `-` when another input is stdin are refused by name, in the same words in all
+  four CLIs. The inline flag's existing checks (TODO #376) then apply unchanged.
+- Python's `pkey` now refuses `--passphrase` without `--decrypt`, and C's wrong-passphrase
+  message matches the other three CLIs (`pkey --decrypt: wrong passphrase ...`).
+- New `CliTest/test_secret_files.sh` (native-interop, 116 cells); llms.txt and
+  docs/TUTORIAL.md show the file form.
+
 ## [16.0.5] - 2026-11-22
 
 **Every file the four CLIs create is mode 0600 (TODO #395).** Output bytes do not change.

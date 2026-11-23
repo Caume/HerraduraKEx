@@ -532,6 +532,7 @@ public final class HerraduraCli {
         String algo = req(opt, "algo", "genpkey");
         String out = opt.getOrDefault("out", "-");
 
+        resolveSecret(opt, "genpkey", "passphrase", opt.get("passphrase-file"), false);
         // TODO #268.  The count travels in the PEM, so this default only
         // affects what THIS build writes.
         if (opt.containsKey("passphrase")) {
@@ -670,6 +671,7 @@ public final class HerraduraCli {
         String in = req(opt, "in", "pkey");
         String out = opt.getOrDefault("out", "-");
 
+        resolveSecret(opt, "pkey", "passphrase", opt.get("passphrase-file"), "-".equals(in));
         // TODO #268: --decrypt reverses genpkey --passphrase, recovering the
         // PEM byte-for-byte so it can be fed to any other subcommand
         // unmodified.  Its own mode, not a modifier of --pubout/--text.
@@ -2460,6 +2462,8 @@ public final class HerraduraCli {
     // -----------------------------------------------------------------
 
     private static void cmdPakeRegister(Map<String, String> opt) throws IOException {
+        resolveSecret(opt, "pake-register", "password", opt.get("password-file"),
+                      "-".equals(opt.get("key")));
         Codec.PubKey key = Codec.decodeOprfPrivKey(readString(req(opt, "key", "pake-register")));
         String username = opt.getOrDefault("username", "user");
         String passwordOpt = opt.get("password");
@@ -2476,6 +2480,8 @@ public final class HerraduraCli {
     }
 
     private static void cmdPakeDemo(Map<String, String> opt) throws IOException {
+        resolveSecret(opt, "pake-demo", "password", opt.get("password-file"),
+                      "-".equals(opt.get("key")));
         Codec.PubKey key = Codec.decodeOprfPrivKey(readString(req(opt, "key", "pake-demo")));
         String username = opt.getOrDefault("username", "demo-user");
         // TODO #376: omitted, the demo uses "demo-password"; given, it must be one.
@@ -2583,6 +2589,60 @@ public final class HerraduraCli {
 
     private static String readString(String path) throws IOException {
         return new String(readBytes(path), java.nio.charset.StandardCharsets.US_ASCII);
+    }
+
+    /** The longest secret --passphrase-file / --password-file may hold (TODO #396). */
+    static final int SECRET_FILE_MAX = 1024;
+
+    /**
+     * TODO #396: when --NAME-file was given, read it into opt as --NAME, so
+     * every check the inline flag already has (#376) applies to it unchanged.
+     * The file form keeps the secret off the command line, where any local
+     * user can read it.  The secret is the file's bytes with at most one
+     * trailing line ending removed; it must be one line of valid UTF-8 with
+     * no NUL and at most SECRET_FILE_MAX bytes, so all four CLIs hash the
+     * same bytes (a lenient decode would substitute U+FFFD).
+     */
+    private static void resolveSecret(Map<String, String> opt, String cmd, String name,
+                                      String path, boolean stdinTaken) {
+        String fileFlag = name + "-file";
+        if (path == null) return;
+        if (opt.containsKey(name)) {
+            throw new CliError(cmd + ": give only one of --" + name + " or --" + fileFlag);
+        }
+        if (path.equals("-") && stdinTaken) {
+            throw new CliError(cmd + ": --" + fileFlag + " -: another input already reads stdin");
+        }
+        byte[] raw;
+        try (InputStream in = path.equals("-") ? System.in : Files.newInputStream(Paths.get(path))) {
+            raw = in.readNBytes(SECRET_FILE_MAX + 3);
+        } catch (IOException | java.nio.file.InvalidPathException e) {
+            throw new CliError(cmd + ": cannot read --" + fileFlag + " " + path);
+        }
+        int n = raw.length;
+        if (n >= 2 && raw[n - 2] == '\r' && raw[n - 1] == '\n') n -= 2;
+        else if (n >= 1 && raw[n - 1] == '\n') n -= 1;
+        raw = Arrays.copyOf(raw, n);
+        if (n > SECRET_FILE_MAX) {
+            throw new CliError(cmd + ": --" + fileFlag + " holds more than " + SECRET_FILE_MAX + " bytes");
+        }
+        for (byte b : raw) {
+            if (b == 0) throw new CliError(cmd + ": --" + fileFlag + " holds a NUL byte");
+        }
+        for (byte b : raw) {
+            if (b == '\r' || b == '\n') throw new CliError(cmd + ": --" + fileFlag + " must hold one line");
+        }
+        String value;
+        try {
+            value = java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(raw)).toString();
+        } catch (java.nio.charset.CharacterCodingException e) {
+            throw new CliError(cmd + ": --" + fileFlag + " is not valid UTF-8");
+        }
+        opt.remove(fileFlag);
+        opt.put(name, value);
     }
 
     private static void writeBytes(String path, byte[] data) throws IOException {

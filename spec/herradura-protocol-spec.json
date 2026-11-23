@@ -2092,6 +2092,12 @@
         "java": true,
         "python": true
       },
+      "--passphrase-file": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
       "--xmss-height": {
         "c": true,
         "go": true,
@@ -2216,6 +2222,12 @@
         "java": true,
         "python": true
       },
+      "--password-file": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
       "--username": {
         "c": false,
         "go": false,
@@ -2237,6 +2249,12 @@
         "python": true
       },
       "--password": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--password-file": {
         "c": true,
         "go": true,
         "java": true,
@@ -2269,6 +2287,12 @@
         "python": true
       },
       "--passphrase": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--passphrase-file": {
         "c": true,
         "go": true,
         "java": true,

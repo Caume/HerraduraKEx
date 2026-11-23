@@ -38,6 +38,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	. "herradurakex/herradura"
 )
@@ -1021,6 +1022,65 @@ func parseArgs(fs *flag.FlagSet, args []string) {
 	}
 }
 
+// secretFileMax is the longest secret --passphrase-file / --password-file may
+// hold (TODO #396).
+const secretFileMax = 1024
+
+// resolveSecret reads --NAME-file, when given, into the --NAME flag itself
+// (TODO #396), so every check the inline flag already has (#376) applies to
+// the file's secret unchanged.  The file form keeps the secret off the command
+// line, where any local user can read it.  The secret is the file's bytes with
+// at most one trailing line ending removed; it must be one line of valid UTF-8
+// with no NUL and at most secretFileMax bytes, so all four CLIs hash the same
+// bytes.  stdinTaken refuses `-` when another input already reads stdin.
+func resolveSecret(fs *flag.FlagSet, cmd, name string, path *string, stdinTaken bool) {
+	fileFlag := name + "-file"
+	if !isSet(fs, fileFlag) {
+		return
+	}
+	fail := func(msg string) {
+		fmt.Fprintf(os.Stderr, "%s: %s\n", cmd, msg)
+		os.Exit(1)
+	}
+	if isSet(fs, name) {
+		fail(fmt.Sprintf("give only one of --%s or --%s", name, fileFlag))
+	}
+	if *path == "-" && stdinTaken {
+		fail(fmt.Sprintf("--%s -: another input already reads stdin", fileFlag))
+	}
+	var src io.Reader
+	if *path == "-" {
+		src = os.Stdin
+	} else {
+		f, err := os.Open(*path)
+		if err != nil {
+			fail(fmt.Sprintf("cannot read --%s %s", fileFlag, *path))
+		}
+		defer f.Close()
+		src = f
+	}
+	raw, err := io.ReadAll(io.LimitReader(src, secretFileMax+3))
+	if err != nil {
+		fail(fmt.Sprintf("cannot read --%s %s", fileFlag, *path))
+	}
+	if n := len(raw); n >= 2 && raw[n-2] == '\r' && raw[n-1] == '\n' {
+		raw = raw[:n-2]
+	} else if n >= 1 && raw[n-1] == '\n' {
+		raw = raw[:n-1]
+	}
+	switch {
+	case len(raw) > secretFileMax:
+		fail(fmt.Sprintf("--%s holds more than %d bytes", fileFlag, secretFileMax))
+	case strings.IndexByte(string(raw), 0) >= 0:
+		fail(fmt.Sprintf("--%s holds a NUL byte", fileFlag))
+	case strings.ContainsAny(string(raw), "\r\n"):
+		fail(fmt.Sprintf("--%s must hold one line", fileFlag))
+	case !utf8.Valid(raw):
+		fail(fmt.Sprintf("--%s is not valid UTF-8", fileFlag))
+	}
+	_ = fs.Set(name, string(raw))
+}
+
 func isSet(fs *flag.FlagSet, name string) bool {
 	found := false
 	fs.Visit(func(f *flag.Flag) {
@@ -1639,8 +1699,10 @@ func cmdGenpkey(args []string) {
 	out  := fs.String("out", "-", "Output path (- = stdout)")
 	xmssHeightS := fs.String("xmss-height", "10", "hpks-xmss: tree height (2^H leaves, 1 to 20)")
 	passphrase := fs.String("passphrase", "", "Encrypt the exported private key under this passphrase (TODO #268)")
+	passphraseFile := fs.String("passphrase-file", "", "Read the passphrase from FILE (- = stdin), off the command line (TODO #396)")
 	kdfIterationsS := fs.String("kdf-iterations", strconv.Itoa(pbkdf2IterDemo), "PBKDF2-HFSCX256 iterations for --passphrase (1 to 100000000)")
 	parseArgs(fs, args)
+	resolveSecret(fs, "genpkey", "passphrase", passphraseFile, false)
 	// TODO #380: parsed strictly and range-checked before any key is generated.
 	xmssHeight := numFlag(fs, "xmss-height", xmssHeightS, 1, 20, 10)
 	kdfIterations := numFlag(fs, "kdf-iterations", kdfIterationsS, 1, pbkdf2IterMax, pbkdf2IterDemo)
@@ -1855,7 +1917,9 @@ func cmdPkey(args []string) {
 	out    := fs.String("out", "-", "Output path")
 	decrypt := fs.Bool("decrypt", false, "Decrypt a --passphrase-protected private key PEM (TODO #268)")
 	passphrase := fs.String("passphrase", "", "Passphrase for --decrypt")
+	passphraseFile := fs.String("passphrase-file", "", "Read the --decrypt passphrase from FILE (- = stdin) (TODO #396)")
 	parseArgs(fs, args)
+	resolveSecret(fs, "pkey", "passphrase", passphraseFile, *in == "-")
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "pkey: --in required")
@@ -5795,8 +5859,10 @@ func cmdPakeRegister(args []string) {
 	fs    := flag.NewFlagSet("pake-register", flag.ExitOnError)
 	keyF  := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
 	pwF   := fs.String("password", "", "Password to register (required, non-empty)")
+	pwFileF := fs.String("password-file", "", "Read the password from FILE (- = stdin), off the command line (TODO #396)")
 	outF  := fs.String("out",      "-", "Output PAKE RECORD PEM")
 	parseArgs(fs, args)
+	resolveSecret(fs, "pake-register", "password", pwFileF, *keyF == "-")
 	checkKeyLabels("pake-register", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-register: --key required")
@@ -5839,7 +5905,9 @@ func cmdPakeDemo(args []string) {
 	fs   := flag.NewFlagSet("pake-demo", flag.ExitOnError)
 	keyF := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
 	pwF  := fs.String("password", "demo-password", "Password")
+	pwFileF := fs.String("password-file", "", "Read the password from FILE (- = stdin), off the command line (TODO #396)")
 	parseArgs(fs, args)
+	resolveSecret(fs, "pake-demo", "password", pwFileF, *keyF == "-")
 	checkKeyLabels("pake-demo", fs) // TODO #366
 	if *keyF == "" {
 		fmt.Fprintln(os.Stderr, "pake-demo: --key required")
@@ -7618,7 +7686,7 @@ required):
                        --algo: hske-nla1
   fpe                  --context --decrypt --encrypt --in --key --out --v3
   genpkey              --algo --bits --kdf-iterations --level --out
-                       --passphrase --xmss-height
+                       --passphrase --passphrase-file --xmss-height
                        --algo: hcred hkex-gf hkex-rnl hpke hpke-nl hpke-nl3
                                hpke-stern hpke-stern-kem hpks hpks-nl
                                hpks-stern hpks-wots hpks-xmss hpks-zkp-nl oprf
@@ -7627,9 +7695,10 @@ required):
   oprf-blind           --bits --in --out
   oprf-eval            --in --key --out
   oprf-unblind         --eval --out --state
-  pake-demo            --key --password
-  pake-register        --key --out --password
-  pkey                 --decrypt --in --out --passphrase --pubout --text
+  pake-demo            --key --password --password-file
+  pake-register        --key --out --password --password-file
+  pkey                 --decrypt --in --out --passphrase --passphrase-file
+                       --pubout --text
   rand                 --bytes --hex --out --personalization --reseed --seed
                        --state
   sign                 --algo --digest --in --key --out --ring --rounds
