@@ -842,6 +842,16 @@ static void check_der_caps(const char *label, int n, const uint8_t *const *vals,
                            const size_t *vlens, const size_t *ew,
                            const unsigned char *lz);             /* TODO #372, #373 */
 
+/* A PEM that will not unwrap.  A base64 refusal is named in the text all four
+ * CLIs share (TODO #398); any other failure keeps the plain message. */
+__attribute__((noreturn))
+static void die_pem_parse(const char *prefix, const char *path, int rc)
+{
+    const char *why = b64_strerror(rc);
+    if (why) dievf("%scannot parse PEM from: %s: %s", prefix, path, why);
+    dievf("%scannot parse PEM from: %s", prefix, path);
+}
+
 static char *decrypt_pem_file(const char *in_path, const char *passphrase)
 {
     /* TODO #397: every refusal this function owns reads `pkey --decrypt: ...`,
@@ -852,9 +862,9 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     char enc_label[80] = {0};
     uint8_t *body = (uint8_t *)malloc(raw_len ? raw_len : 1);
     if (!body) die("out of memory");
-    if (pem_unwrap((char *)raw, raw_len, enc_label, body, raw_len ? raw_len : 1, &blen) != 0
-        || blen == 0)
-        dief("pkey --decrypt: cannot parse PEM from: %s", in_path);
+    int prc = pem_unwrap((char *)raw, raw_len, enc_label, body, raw_len ? raw_len : 1, &blen);
+    if (prc != 0 || blen == 0)
+        die_pem_parse("pkey --decrypt: ", in_path, prc);
     free(raw);
     if (strcmp(enc_label, PEM_ENC_PRIV) != 0) {
         fprintf(stderr, "pkey --decrypt: expected PEM label '%s', got '%s'\n",
@@ -1244,8 +1254,9 @@ static void pem_key_load(PemKey *k, const char *path)
     size_t der_cap = raw_len;  /* base64 expands ≤ raw, so DER ≤ raw_len */
     k->der = malloc(der_cap);
     if (!k->der) die("out of memory");
-    if (pem_unwrap((char *)raw, raw_len, k->label, k->der, der_cap, &k->der_len) != 0)
-        dief("cannot parse PEM from: %s", path);
+    int prc = pem_unwrap((char *)raw, raw_len, k->label, k->der, der_cap, &k->der_len);
+    if (prc != 0)
+        die_pem_parse("", path, prc);
     free(raw);
     /* FAIL CLOSED (TODO #268).  An encrypted envelope IS a DER SEQUENCE, so
      * without this it parses cleanly and its salt/iterations/nonce are read as
@@ -1286,8 +1297,9 @@ static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, siz
     /* pem_read_file opens the file itself; raw is only for sizing */
     free(raw);
     size_t written;
-    if (pem_read_file(path, label, buf, cap, &written) != 0)
-        dief("cannot parse PEM from: %s", path);
+    int prc = pem_read_file(path, label, buf, cap, &written);
+    if (prc != 0)
+        die_pem_parse("", path, prc);
     cap = written;
     if (expect_label && strcmp(label, expect_label) != 0) {
         free(buf);

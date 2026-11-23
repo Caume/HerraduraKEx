@@ -1,6 +1,7 @@
 # HerraduraCli/codec.py — PEM and minimal DER codec
-# No external dependencies; uses only base64 from stdlib.
+# No external dependencies; uses only base64 and re from stdlib.
 import base64
+import re
 
 # ---------------------------------------------------------------------------
 # Bounds for the packed (non-DER) wire formats — TODO #275.
@@ -254,18 +255,61 @@ def pem_unwrap(pem_text: str) -> tuple:
     """Unwrap a PEM block; return (label, binary_data).
 
     Raises ValueError on any malformed input."""
-    lines = pem_text.strip().splitlines()
+    # Split at CRLF, CR or LF only, not str.splitlines(): that also breaks at
+    # \v, \f, \x1c-\x1e and \x85, which would delete them from the body before
+    # the base64 grammar could refuse them (TODO #398).
+    text = pem_text.strip(' \t\r\n')
+    lines = re.split(r'\r\n|\r|\n', text) if text else []
     if not lines:
         raise ValueError("Not a valid PEM block")
     if not (lines[0].startswith('-----BEGIN ') and lines[0].endswith('-----')
             and lines[-1].startswith('-----END ') and lines[-1].endswith('-----')):
         raise ValueError("Not a valid PEM block")
     label = lines[0][len('-----BEGIN '):-len('-----')]
-    b64 = ''.join(lines[1:-1])
-    try:
-        return label, base64.b64decode(b64)
-    except Exception as e:
-        raise ValueError(f"PEM: base64 decode failed: {e}")
+    return label, b64_decode_strict('\n'.join(lines[1:-1]))
+
+
+_B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+_B64_VAL = {c: i for i, c in enumerate(_B64_ALPHABET)}
+
+
+def b64_decode_strict(text: str) -> bytes:
+    """Decode a PEM body under the one base64 grammar every CLI reads (TODO #398).
+
+    The alphabet A-Z a-z 0-9 + /, with space, tab, CR and LF allowed anywhere
+    between characters (RFC 7468's lax form).  Padding is REQUIRED: the
+    characters number a multiple of 4 and '=' is only the last one or two of
+    them.  The bits the padding leaves over must be zero, so one DER has one
+    body.  Hand-written rather than base64.b64decode, which skips characters
+    outside the alphabet and accepts '=' mid-body; the same loop runs in C, Go
+    and Java, so the four refuse the same files with the same words."""
+    out = bytearray()
+    acc = bits = pad = chars = 0
+    for c in text:
+        if c in ' \t\r\n':
+            continue
+        if c == '=':
+            pad += 1
+            if pad > 2 or chars % 4 < 2:
+                raise ValueError("PEM body is not valid base64: misplaced padding")
+            chars += 1
+            continue
+        v = _B64_VAL.get(c)
+        if v is None:
+            raise ValueError("PEM body is not valid base64: invalid character")
+        if pad:
+            raise ValueError("PEM body is not valid base64: misplaced padding")
+        chars += 1
+        acc = ((acc << 6) | v) & 0xFFFF
+        bits += 6
+        if bits >= 8:
+            bits -= 8
+            out.append((acc >> bits) & 0xFF)
+    if chars % 4:
+        raise ValueError("PEM body is not valid base64: length is not a multiple of 4")
+    if pad and acc & ((1 << bits) - 1):
+        raise ValueError("PEM body is not valid base64: non-zero bits after the last byte")
+    return bytes(out)
 
 
 # ---------------------------------------------------------------------------

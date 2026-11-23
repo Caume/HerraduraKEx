@@ -1461,9 +1461,17 @@ def _secret_arg(cmd, flag, inline, path, stdin_taken=False):
         sys.exit(f"{cmd}: --{flag}-file is not valid UTF-8")
 
 
+def _read_pem_text(path):
+    # latin-1 maps each byte to one character, so a non-ASCII byte in a PEM
+    # body reaches the base64 grammar and is refused there by name ("invalid
+    # character", TODO #398) instead of as a UnicodeDecodeError.  Every label
+    # and every valid body is ASCII, so nothing that read before reads
+    # differently.
+    return _read_file(path).decode('latin-1')
+
+
 def _read_pem(path):
-    raw = _read_file(path)
-    return pem_unwrap(raw.decode('ascii') if isinstance(raw, bytes) else raw)
+    return pem_unwrap(_read_pem_text(path))
 
 
 # TODO #367: the width and fixed-size fields of each DER-SEQUENCE label, checked
@@ -1760,7 +1768,11 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str, path: str = '-') -> str:
     `pkey --decrypt: `."""
     try:
         label, der = pem_unwrap(enc_pem_text)
-    except ValueError:              # binascii.Error is a ValueError too
+    except ValueError as e:
+        # TODO #398: a base64 refusal keeps its name, as in the other three.
+        why = str(e)
+        if why.startswith("PEM body is not valid base64: "):
+            raise ValueError(f"cannot parse PEM from: {path}: {why}") from None
         raise ValueError(f"cannot parse PEM from: {path}") from None
     if not der:
         raise ValueError(f"cannot parse PEM from: {path}")
@@ -2189,13 +2201,13 @@ def _wots_mark_used(key_path: str):
 
 def _load_zkp_nl_privkey(path):
     """Load a ZKP-NL private key PEM; return (A, B, y, n)."""
-    pem_text = _read_file(path).decode('ascii')
+    pem_text = _read_pem_text(path)
     return decode_zkp_nl_privkey(pem_text)
 
 
 def _load_zkp_nl_pubkey(path):
     """Load a ZKP-NL public key PEM; return (B, y, n)."""
-    pem_text = _read_file(path).decode('ascii')
+    pem_text = _read_pem_text(path)
     return decode_zkp_nl_pubkey(pem_text)
 
 
@@ -2205,7 +2217,7 @@ def _decode_privkey(path):
     For ZKP-NL keys the fields_list contains raw bytes (not DER integers);
     use _load_zkp_nl_privkey() directly when algo is known to be hpks-zkp-nl.
     """
-    raw = _read_file(path).decode('ascii')
+    raw = _read_pem_text(path)
     label, _ = pem_unwrap(raw)
     if label == _LABEL_ENC_PRIV:
         # TODO #397: the other three CLIs' words.
@@ -2227,7 +2239,7 @@ def _decode_privkey(path):
 
 def _decode_pubkey(path):
     """Load a public key PEM; return (algo, fields_list)."""
-    raw = _read_file(path).decode('ascii')
+    raw = _read_pem_text(path)
     label, _ = pem_unwrap(raw)
     if label == _PUB_ALGOS.get('hpks-zkp-nl'):
         B, y, n = decode_zkp_nl_pubkey(raw)
@@ -3124,7 +3136,7 @@ def cmd_pkey(args):
         if passphrase is None:
             sys.exit("pkey --decrypt: --passphrase required")
         try:
-            enc_text = _read_file(in_path).decode('ascii')
+            enc_text = _read_pem_text(in_path)
         except UnicodeDecodeError:
             sys.exit(f"pkey --decrypt: cannot parse PEM from: {in_path}")
         try:
@@ -3971,7 +3983,7 @@ def cmd_threshold_aggregate(args):
     pubkeys  = []
     nbits    = None
     for cp in commit_paths:
-        text = _read_file(cp).decode('ascii')
+        text = _read_pem_text(cp)
         R_j, C_j, n = decode_hpkst_commit(text)
         if nbits is None:
             nbits = n
@@ -4006,18 +4018,18 @@ def cmd_threshold_respond(args):
                                '--commit', args.commit)
     pubkeys      = []
     for cp in commit_paths:
-        text = _read_file(cp).decode('ascii')
+        text = _read_pem_text(cp)
         _R_j, C_j, n = decode_hpkst_commit(text)
         pubkeys.append(BitArray(n, C_j))
 
     # Load aggregate PEM
-    agg_text       = _read_file(args.aggregate).decode('ascii')
+    agg_text       = _read_pem_text(args.aggregate)
     R_val, C_agg_val, e_val, n2 = decode_hpkst_aggregate(agg_text)
     if n2 != nbits:
         sys.exit("respond: aggregate n mismatch with key")
 
     # Load nonce PEM
-    nonce_text     = _read_file(args.nonce).decode('ascii')
+    nonce_text     = _read_pem_text(args.nonce)
     k_j_val, n3   = decode_hpkst_nonce(nonce_text)
     if n3 != nbits:
         sys.exit("respond: nonce n mismatch with key")
@@ -4041,14 +4053,14 @@ def cmd_threshold_respond(args):
 def cmd_threshold_combine(args):
     """Phase 4 (coordinator): read all partial PEMs, write final HPKST SIGNATURE PEM."""
     # Load aggregate PEM for R and C_agg
-    agg_text           = _read_file(args.aggregate).decode('ascii')
+    agg_text           = _read_pem_text(args.aggregate)
     R_val, C_agg_val, _e_val, nbits = decode_hpkst_aggregate(agg_text)
 
     ord_n  = (1 << nbits) - 1
     s_acc  = 0
     for pp in _multi_flag('threshold-combine', '--partials', args.partials,
                           '--partial', args.partial):
-        text = _read_file(pp).decode('ascii')
+        text = _read_pem_text(pp)
         s_j, n = decode_hpkst_partial(text)
         if n != nbits:
             sys.exit("combine: partial n mismatch")
@@ -4070,7 +4082,7 @@ def cmd_verify(args):
     sig_path    = args.sig
 
     if algo == 'hpks-t':
-        sig_text       = _read_file(sig_path).decode('ascii')
+        sig_text       = _read_pem_text(sig_path)
         C_agg_val, R_val, s_val, nbits = decode_hpkst_sig(sig_text)
         msg   = BitArray(nbits, int.from_bytes(in_bytes[:nbits // 8].ljust(nbits // 8, b'\x00'), 'big'))
         C_agg = BitArray(nbits, C_agg_val)
@@ -4168,7 +4180,7 @@ def cmd_verify(args):
         if their_algo != 'hkex-rnl':
             sys.exit(f"rnl-sigma verify: expected hkex-rnl pubkey, got {their_algo!r}")
         C_poly, m_poly, n, _ = _decode_rnl_pubkey(their_ints)
-        sig_pem = _read_file(sig_path).decode('ascii')
+        sig_pem = _read_pem_text(sig_path)
         w, c, z, proof_n = decode_zkp_rnl_proof(sig_pem)
         if proof_n != n:
             raise ValueError(f"ring size mismatch (pubkey n={n}, proof n={proof_n})")
@@ -4187,7 +4199,7 @@ def cmd_verify(args):
         if their_algo != 'hpks-zkp-nl':
             sys.exit(f"nl-zkboo verify: expected hpks-zkp-nl pubkey, got {their_algo!r}")
         B, y, n = their_ints
-        sig_pem = _read_file(sig_path).decode('ascii')
+        sig_pem = _read_pem_text(sig_path)
         proof_rounds, proof_n = decode_zkp_nl_proof(sig_pem)
         # A proof carries its own width; one for a different n is not a proof
         # about this key.  C checked this; Python and Go did not (TODO #275).
@@ -4211,7 +4223,7 @@ def cmd_verify(args):
         if their_algo != 'hpks-zkp-nl':
             sys.exit(f"nl-zkbpp verify: expected hpks-zkp-nl pubkey, got {their_algo!r}")
         B, y, n = their_ints
-        sig_pem = _read_file(sig_path).decode('ascii')
+        sig_pem = _read_pem_text(sig_path)
         proof_rounds, _n = decode_zkp_nl_pp_proof(sig_pem)
         rounds = len(proof_rounds)
         _require_rounds(rounds, _round_floor(args, 'verify'), 'nl-zkbpp proof', 'verify')
@@ -4691,7 +4703,7 @@ _HCRED_SIGN_ROUNDS = 219   # Stern-F rounds for issuer credential (prod soundnes
 
 def _load_hcred_pubkey(path):
     """Return (C_poly, m_poly, seed_H_BitArray, syndr_int, n) from HCRED PUBLIC KEY PEM."""
-    raw = _read_file(path).decode('ascii')
+    raw = _read_pem_text(path)
     label, _ = pem_unwrap(raw)
     if label == _LABEL_HCRED_PRIV:
         s, C, m, seed_H_int, syndr, n = decode_hcred_privkey(raw)
@@ -4725,7 +4737,7 @@ def cmd_cred_issue(args):
 
 def cmd_cred_prove(args):
     """Generate an HCRED presentation proof (ZKBoo MPCitH)."""
-    raw = _read_file(getattr(args, 'in')).decode('ascii')
+    raw = _read_pem_text(getattr(args, 'in'))
     label, _ = pem_unwrap(raw)
     if label != _LABEL_HCRED_PRIV:
         sys.exit(f"cred-prove: --in must be an HCRED PRIVATE KEY PEM, got {label!r}")
@@ -4745,7 +4757,7 @@ def cmd_cred_prove(args):
 def cmd_cred_verify(args):
     """Verify an HCRED presentation proof and optionally the issuer credential."""
     # Load proof
-    raw_proof = _read_file(args.proof).decode('ascii')
+    raw_proof = _read_pem_text(args.proof)
     proof, proof_n = decode_hcred_proof(raw_proof)
 
     # Load user's public key
@@ -4766,7 +4778,7 @@ def cmd_cred_verify(args):
 
     # Optional issuer credential check
     if args.cred:
-        raw_cred = _read_file(args.cred).decode('ascii')
+        raw_cred = _read_pem_text(args.cred)
         commits_raw, challenges, responses, issuer_n = decode_hcred_credential(raw_cred)
         _require_rounds(len(challenges), floor, 'HCRED credential', 'cred-verify')
         # Wrap commit integers as BitArrays for hpks_stern_f_verify
