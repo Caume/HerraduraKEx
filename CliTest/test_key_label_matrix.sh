@@ -21,6 +21,12 @@
 #     since their loaders derive the public fields from it), and the first
 #     key type in REFUSE_ORDER the row does not accept -- hpke-nl3 for the GF
 #     rows, hkex-gf for the Stern rows (the confusions TODO #366 measured).
+#   * TODO #397: in every slot that takes a private key, the home key's
+#     passphrase-encrypted envelope must be refused BY NAME (TODO #268's
+#     fail-closed rule) in the shared words.  An envelope is a valid DER
+#     SEQUENCE, so a slot that does not check parses its salt and iteration
+#     count as key material; Java's kex and sign did, refusing only by accident
+#     of the envelope's width field.
 # The script's command templates must cover the spec's rows exactly, both
 # directions, so a new row without a test fails rather than going unchecked.
 #
@@ -72,6 +78,8 @@ TAGS="hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern
 for t in $TAGS; do
     extra=(); [ "$t" = hpks-xmss ] && extra=(--xmss-height 4)
     $C genpkey --algo "$t" "${extra[@]}" --out "$F/$t.pem" 2>/dev/null
+    $C genpkey --algo "$t" "${extra[@]}" --passphrase pw --kdf-iterations 1 \
+        --out "$F/${t}_enc.pem" 2>/dev/null                 # TODO #397
     $C pkey --in "$F/$t.pem" --pubout --out "$F/${t}_pub.pem" 2>/dev/null || true
 done
 printf 'key label test message, 32 by.' > "$F/msg.bin"
@@ -197,6 +205,16 @@ for lang in "${LANGS[@]}"; do
             if echo "$OUT" | grep -q "wrong key type"; then fail "$id: family key $t refused: $OUT"
             else pass "$id: family key $t not refused by the label check"; fi
         done
+        # TODO #397: the home key's envelope, refused by name (private slots)
+        if [ "$role" = priv ] || [ "$other" = "" ]; then
+            if [ -f "$F/${home}_enc.pem" ]; then
+                run_cell "$lang" "$argv" "$F/${home}_enc.pem"
+                if [ "$RC" -ne 0 ] && echo "$OUT" | grep -qF \
+                    "$TMP/w/k.pem is a passphrase-encrypted private key; decrypt it first with \`pkey --decrypt --passphrase ... --in $TMP/w/k.pem --out plain.pem\`"; then
+                    pass "$id: encrypted $home key refused by name"
+                else fail "$id: encrypted $home key not refused by name (rc=$RC): $(echo "$OUT" | head -2)"; fi
+            else fail "$id: no encrypted $home fixture"; fi
+        fi
         # refusals, matched on the check's own message
         foreign=""
         for t in $REFUSE_ORDER; do

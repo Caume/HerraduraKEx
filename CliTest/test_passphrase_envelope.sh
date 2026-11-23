@@ -203,6 +203,103 @@ for r in $LANGS; do
   done
 done
 
+# ── 8: every refusal pkey --decrypt owns, in the same words (TODO #397) ─────
+# Until #397 C said `decrypt: iteration count out of range` without the count,
+# the four disagreed on a wrong label and on a file that is not PEM, and C's
+# fail-closed refusal printed `<file>` instead of the path.  Each envelope is a
+# one-field edit of a real one; the unedited re-encoding is the accept-control.
+${CLI[c]} genpkey --algo hkex-gf --passphrase "$PHRASE" --kdf-iterations 1 --out "$TMP/e8.pem"
+${CLI[c]} genpkey --algo hkex-gf --out "$TMP/plain8.pem"
+python3 - "$ROOT" "$TMP" <<'PYEOF'
+import importlib.util, sys
+root, tmp = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("codec", root + "/HerraduraCli/codec.py")
+c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
+label, der = c.pem_unwrap(open(tmp + "/e8.pem").read())
+salt, it, nonce, ct, tag, ptl = c.der_parse_seq(der)
+def emit(name, it=it, tag=tag):
+    f = [c.der_int(salt, 16), c.der_int(it), c.der_int(nonce, 32), c.der_int(ct, ptl),
+         c.der_int(tag, 32), c.der_int(ptl)]
+    open(f"{tmp}/{name}.pem", "w").write(c.pem_wrap(label, c.der_seq(*f)))
+emit("e8_same"); emit("e8_iter0", it=0); emit("e8_iterhi", it=100000001)
+emit("e8_tag", tag=tag ^ 1)
+PYEOF
+echo garbage > "$TMP/e8_notpem.pem"
+printf -- '-----BEGIN HERRADURA ENCRYPTED PRIVATE KEY-----\n!!!!\n-----END HERRADURA ENCRYPTED PRIVATE KEY-----\n' > "$TMP/e8_b64.pem"
+: > "$TMP/e8_empty.pem"
+E8_CASES=(
+  "e8_iter0|$PHRASE|pkey --decrypt: iteration count out of range (0)"
+  "e8_iterhi|$PHRASE|pkey --decrypt: iteration count out of range (100000001)"
+  "e8_tag|$PHRASE|pkey --decrypt: wrong passphrase or corrupted/tampered file"
+  "e8_same|wrong|pkey --decrypt: wrong passphrase or corrupted/tampered file"
+  "plain8|$PHRASE|pkey --decrypt: expected PEM label 'HERRADURA ENCRYPTED PRIVATE KEY', got 'HERRADURA HKEX-GF PRIVATE KEY'"
+  "e8_notpem|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_notpem.pem"
+  "e8_b64|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_b64.pem"
+  "e8_empty|$PHRASE|pkey --decrypt: cannot parse PEM from: $TMP/e8_empty.pem"
+)
+for r in $LANGS; do
+    if ${CLI[$r]} pkey --decrypt --passphrase "$PHRASE" --in "$TMP/e8_same.pem" \
+          --out "$TMP/e8_ok_$r.pem" >/dev/null 2>&1 \
+       && head -1 "$TMP/e8_ok_$r.pem" | grep -q 'BEGIN HERRADURA HKEX-GF PRIVATE KEY'; then
+        pass "[$r] the re-encoded control envelope decrypts"
+    else
+        fail "[$r] the re-encoded control envelope does not decrypt"
+    fi
+    for case in "${E8_CASES[@]}"; do
+        f=${case%%|*}; rest=${case#*|}; pw=${rest%%|*}; want=${rest#*|}
+        out=$(${CLI[$r]} pkey --decrypt --passphrase "$pw" --in "$TMP/$f.pem" \
+                  --out "$TMP/e8_never.pem" 2>&1) && rc=0 || rc=$?
+        if [ "$rc" -ne 0 ] && [ "$(printf '%s' "$out" | head -1)" = "$want" ] && [ ! -e "$TMP/e8_never.pem" ]; then
+            pass "[$r] $f: '$want'"
+        else
+            fail "[$r] $f: rc=$rc, got '$(printf '%s' "$out" | head -1)', want '$want'"
+        fi
+        rm -f "$TMP/e8_never.pem"
+    done
+    want="$TMP/e8.pem is a passphrase-encrypted private key; decrypt it first with \`pkey --decrypt --passphrase ... --in $TMP/e8.pem --out plain.pem\`"
+    out=$(${CLI[$r]} pkey --pubout --in "$TMP/e8.pem" --out "$TMP/e8_never.pem" 2>&1) && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF -- "$want"; then
+        pass "[$r] fail-closed refusal names the path in the shared words"
+    else
+        fail "[$r] fail-closed refusal: rc=$rc, got '$(printf '%s' "$out" | head -1)'"
+    fi
+done
+
+# ── 9: every algorithm, every writer (TODO #399) ────────────────────────────
+# Section 1 used hkex-gf alone, which is how C's genpkey wrote hpks-zkp-nl and
+# hcred keys IN THE CLEAR under --passphrase, exit 0, without a test noticing:
+# those two have raw bodies and bypassed the one write path that encrypts.
+# Each writer's envelope is decrypted by itself and by C, and must give a key
+# of the algorithm's own label (the label C's cleartext genpkey writes).
+ALGOS9="hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern
+        hpke-stern-kem hpks-zkp-nl oprf hpks-xmss hpks-wots hcred"
+for t in $ALGOS9; do
+    extra=""; [ "$t" = hpks-xmss ] && extra="--xmss-height 4"
+    # shellcheck disable=SC2086
+    want=$(${CLI[c]} genpkey --algo "$t" $extra 2>/dev/null | head -1)
+    for w in $LANGS; do
+        # shellcheck disable=SC2086
+        if ! ${CLI[$w]} genpkey --algo "$t" $extra --passphrase "$PHRASE" --kdf-iterations 1 \
+                --out "$TMP/a9_${t}_$w.pem" >/dev/null 2>&1; then
+            fail "[$w] genpkey --algo $t --passphrase failed"; continue
+        fi
+        if [ "$(head -1 "$TMP/a9_${t}_$w.pem")" != "-----BEGIN HERRADURA ENCRYPTED PRIVATE KEY-----" ]; then
+            fail "[$w] genpkey --algo $t --passphrase wrote '$(head -1 "$TMP/a9_${t}_$w.pem")' (a CLEARTEXT key)"
+            continue
+        fi
+        for r in $w c; do
+            if ${CLI[$r]} pkey --decrypt --passphrase "$PHRASE" --in "$TMP/a9_${t}_$w.pem" \
+                  --out "$TMP/a9_${t}_${w}_$r.pem" >/dev/null 2>&1 \
+               && [ "$(head -1 "$TMP/a9_${t}_${w}_$r.pem")" = "$want" ]; then
+                pass "[$w] $t envelope -> [$r] decrypts to '$want'"
+            else
+                fail "[$w] $t envelope -> [$r] did not decrypt to '$want'"
+            fi
+            [ "$w" = c ] && break
+        done
+    done
+done
+
 echo
 echo "test_passphrase_envelope: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

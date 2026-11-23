@@ -1311,7 +1311,8 @@ def _check_key_labels(cmd, algo, values):
     """TODO #366: refuse a key whose PEM label this operation does not accept.
 
     *values* maps each key flag to its argument.  Only KEY labels are judged
-    (ending in PRIVATE KEY or PUBLIC KEY, other than the passphrase envelope):
+    (ending in PRIVATE KEY or PUBLIC KEY; the passphrase envelope is refused
+    by name, TODO #397):
     a response, session key or hex key goes on to the loader, whose own
     message is the more specific one."""
     for (c, a, flag), (tags, labels) in _KEY_SITES.items():
@@ -1320,7 +1321,14 @@ def _check_key_labels(cmd, algo, values):
         paths = values[flag].split(',') if flag == '--ring' else [values[flag]]
         for path in paths:
             label = _pem_file_label(path.strip())
-            if (label is None or label == _LABEL_ENC_PRIV or
+            # TODO #397: an envelope is refused here, by name, in every key
+            # slot; four slots' loaders read it as key material and exited 0.
+            if label == _LABEL_ENC_PRIV:
+                where = f"{cmd} --algo {algo}" if algo else cmd
+                q = path.strip()
+                sys.exit(f"{where}: {q} is a passphrase-encrypted private key; decrypt it "
+                         f"first with `pkey --decrypt --passphrase ... --in {q} --out plain.pem`")
+            if (label is None or
                     not label.endswith(('PRIVATE KEY', 'PUBLIC KEY'))):
                 continue
             if label not in labels:
@@ -1744,12 +1752,20 @@ def _encrypt_pem(pem_text: str, passphrase: str,
     return pem_wrap(_LABEL_ENC_PRIV, der)
 
 
-def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
+def _decrypt_pem(enc_pem_text: str, passphrase: str, path: str = '-') -> str:
     """Inverse of `_encrypt_pem`. Raises ValueError on a wrong passphrase or a
-    corrupted/tampered envelope (AEAD tag mismatch) — never returns garbage."""
-    label, der = pem_unwrap(enc_pem_text)
+    corrupted/tampered envelope (AEAD tag mismatch) — never returns garbage.
+
+    TODO #397: each message is the one the other three CLIs print after
+    `pkey --decrypt: `."""
+    try:
+        label, der = pem_unwrap(enc_pem_text)
+    except ValueError:              # binascii.Error is a ValueError too
+        raise ValueError(f"cannot parse PEM from: {path}") from None
+    if not der:
+        raise ValueError(f"cannot parse PEM from: {path}")
     if label != _LABEL_ENC_PRIV:
-        raise ValueError(f"Expected {_LABEL_ENC_PRIV!r} PEM, got {label!r}")
+        raise ValueError(f"expected PEM label '{_LABEL_ENC_PRIV}', got '{label}'")
     salt_int, iterations, nonce_int, ct_int, tag_int, pt_len = _der_items(label, der)
     # pt_len comes off the wire and sizes the allocation below: `to_bytes` of a
     # declared 2^62 raised MemoryError before TODO #280, with no bound anywhere
@@ -2192,9 +2208,10 @@ def _decode_privkey(path):
     raw = _read_file(path).decode('ascii')
     label, _ = pem_unwrap(raw)
     if label == _LABEL_ENC_PRIV:
+        # TODO #397: the other three CLIs' words.
         raise ValueError(
-            f"{path!r} is a passphrase-encrypted private key (TODO #166) — "
-            f"decrypt it first with: pkey --decrypt --in {path} --passphrase ... --out plain.pem"
+            f"{path} is a passphrase-encrypted private key; decrypt it first with "
+            f"`pkey --decrypt --passphrase ... --in {path} --out plain.pem`"
         )
     if label == _PRIV_ALGOS.get('hpks-zkp-nl'):
         A, B, y, n = decode_zkp_nl_privkey(raw)
@@ -3106,9 +3123,12 @@ def cmd_pkey(args):
         # under '' before #376 stays readable.
         if passphrase is None:
             sys.exit("pkey --decrypt: --passphrase required")
-        enc_text = _read_file(in_path).decode('ascii')
         try:
-            plain_pem = _decrypt_pem(enc_text, passphrase)
+            enc_text = _read_file(in_path).decode('ascii')
+        except UnicodeDecodeError:
+            sys.exit(f"pkey --decrypt: cannot parse PEM from: {in_path}")
+        try:
+            plain_pem = _decrypt_pem(enc_text, passphrase, in_path)
         except ValueError as e:
             sys.exit(f"pkey --decrypt: {e}")
         _write_file(args.out or '-', plain_pem)

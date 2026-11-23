@@ -26569,3 +26569,95 @@ login behaviour; stdin works; each refusal fires with an accept-control first.
 Status: **DONE v16.1.0** — genpkey/pkey take --passphrase-file and pake-register/pake-demo --password-file in all four CLIs, keeping the secret off the command line.
 
 ---
+
+### #397: pkey --decrypt's refusals read differently in each CLI
+
+Found closing TODO #396.  Measured on crafted envelopes, the shared DER checks (item
+count #367, field caps #372, canonical encoding #373) already give one text everywhere,
+but every refusal `pkey --decrypt` owns does not:
+
+- iteration count out of range: C `decrypt: iteration count out of range`; the other
+  three `pkey --decrypt: iteration count out of range (N)`.
+- wrong label: C `expected PEM label 'X', got 'Y'`, Go the same with `%q` quotes, Java
+  `expected X, got Y`, Python `Expected 'X' PEM, got 'Y'`.
+- not PEM / undecodable body: C `cannot parse PEM from: PATH`, Python `Not a valid PEM
+  block` / `Empty DER input`, Go and Java their base64 library's text; C reported an
+  empty body as `decrypt: malformed ... envelope`.
+- defense-in-depth checks now behind the caps (C `decrypt: bad iteration count`, `bad
+  plaintext length`; Java `declared plaintext length out of range (N)`): reachable only
+  if a cap changes, but they should not drift.
+- the refusal every OTHER subcommand gives an envelope: C prints the placeholder
+  `<file>` instead of the path, Python a different sentence.
+
+Make each one text, the same in all four CLIs, under the `pkey --decrypt:` prefix, and
+add a case per refusal to `CliTest/test_passphrase_envelope.sh` that asserts the exact
+text in every CLI.  Out of scope: the lead every CLI puts on the SHARED PEM/DER layer's
+messages (C none, Java `error:`, Python and Go the command), which is CLI-wide.
+
+
+**Done (v16.1.1).**
+- Every refusal `pkey --decrypt` owns is one line, the same in all four CLIs:
+  `cannot parse PEM from: PATH` (not PEM, undecodable or empty body), `expected PEM label
+  'HERRADURA ENCRYPTED PRIVATE KEY', got 'L'`, `iteration count out of range (N)`, `wrong
+  passphrase or corrupted/tampered file`, and the defense-in-depth texts behind the caps
+  (`malformed ENCRYPTED PRIVATE KEY envelope (field width)` / `(header width)`,
+  `declared plaintext length does not match ciphertext`), each after `pkey --decrypt: `.
+  C and Go read the file in the decoder rather than through their shared raw-PEM reader,
+  whose label text other readers use; Python and Java catch their PEM library's errors.
+- The fail-closed refusal prints the path in all four (C printed `<file>`; Python had its
+  own sentence), through one C helper, `die_encrypted_key`.
+- **Scope grew: the envelope is refused at EVERY key slot.**  The four key-label checks
+  (TODO #366) skipped the envelope label "so the loader could say something more
+  specific", and many loaders did not: Java's kex, sign, dec, threshold-*, oprf-eval,
+  pake-* and cred-issue said `expected X, got ENCRYPTED PRIVATE KEY` or, for hkex-gf /
+  hpks / hpks-nl, `n is wider than 32 bits`, reading the envelope's DER as a key and
+  refusing only because its length field happened to be wide; Python's oprf / pake /
+  hybrid --our-kem loaders said `Expected ... got ...`.  Each check now refuses the
+  envelope by name, `CMD[ --algo A]: PATH is a passphrase-encrypted private key; ...`.
+- `CliTest/test_key_label_matrix.sh` gains the probe that found it: in every private
+  (and "either") slot, the home key's envelope must be refused in those words.  Before
+  the fix 43 cells failed; 16 of them exited 0, which turned out to be TODO #399.
+- `CliTest/test_passphrase_envelope.sh` section 8: each refusal's exact first line in
+  every CLI, on one-field edits of a real envelope, with the unedited re-encoding as the
+  accept-control.  Against the pre-#397 C build, all seven C cases failed.
+
+**Resolution.**
+- The lead on the SHARED PEM/DER layer's messages still differs (C none, Java
+  `error:`, Python and Go the command); that is CLI-wide and was out of scope.
+- C's and Python's lenient base64 is TODO #398.
+
+Status: **DONE v16.1.1** — pkey --decrypt's refusals read the same in all four CLIs, and every key slot refuses an encrypted key by name.
+
+---
+
+### #399: C's genpkey writes hpks-zkp-nl and hcred keys in the clear under --passphrase
+
+Found during TODO #397, by its envelope probe.  `genpkey --algo hpks-zkp-nl --passphrase
+P` and `genpkey --algo hcred --passphrase P` in the C CLI wrote a CLEARTEXT private key
+and exited 0; the other thirteen algorithms, and all fifteen in the other three CLIs,
+write the envelope.  These two have raw (non-DER) bodies and called the codec's
+`pem_write_file` directly, past `write_pem_file`, the one place that applies the
+envelope (TODO #268's "single write choke point").  It is #274's failure exactly: a user
+asks for an encrypted key and gets one on disk in the clear, with success reported.
+
+Route both through `write_pem_file`, and add a test that, for every algorithm and every
+CLI, `genpkey --passphrase` writes an envelope that every other CLI decrypts to a key of
+that algorithm's label.  `test_passphrase_envelope.sh`'s matrix used hkex-gf only.
+
+
+**Done (v16.1.1).**
+- Both raw-body private keys go through `write_pem_file`, so `--passphrase` applies.
+- **Found while showing the test fires:** the codec's `pem_write_file` opened `"-"` as a
+  file NAMED `-`, so every raw-body PEM written to stdout -- ZKP-NL and HCRED keys and
+  public keys, ZKP-NL proofs and signatures, ZKP-RNL and HCRED proofs -- landed in a file
+  called `-` in the working directory instead (cleartext, for the private keys).  It now
+  writes to stdout, as every other C path does.
+- `CliTest/test_passphrase_envelope.sh` section 9: all fifteen algorithms, every writer;
+  the envelope must be on disk and decrypt (by the writer and by C) to the label C's
+  cleartext genpkey writes.  Against the pre-fix C build it failed both algorithms, in
+  the writer's own cell and in every other writer's (whose expected label, read from
+  C's stdout, came back empty).
+
+Status: **DONE v16.1.1** — C's genpkey encrypts hpks-zkp-nl and hcred keys under --passphrase, and its raw-body PEMs reach stdout.
+
+---
