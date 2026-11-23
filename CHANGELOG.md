@@ -34,6 +34,17 @@ around it.
   `test_passphrase_envelope.sh`'s `--decrypt` texts for a file that is not PEM now end
   with the reason.
 
+### Test fix — Stern rejections at their own round count
+
+- `CliTest/test_stern_128.sh` refused a wrong issuer, a wrong key and a changed message
+  on artifacts signed at the matrix's reduced rounds (4 for hpks-ring and hcred, 8 for
+  hpks-stern). A forged artifact survives a round whose challenge never reaches the
+  check it breaks, about 1/3 per round, so those cells failed 1 run in 81 at 4 rounds:
+  a CI run of this PR saw every verifier accept one wrong-issuer credential, and 5 of
+  300 fresh 4-round C credentials verify under the wrong issuer. Those rejections now
+  run on separate 24-round artifacts, (1/3)^24 ~ 3.5e-12, each accepted by every
+  verifier first. The interop cells keep their reduced rounds. 144 cells, was 132.
+
 ## [17.0.0] - 2026-11-23
 
 **MAJOR: one base64 grammar for every PEM reader (TODO #398, MIGRATING.md section 50).**
