@@ -350,11 +350,8 @@ public final class Codec {
     public static List<BigInteger> derParseSeq(PemBlock b) {
         // TODO #367: the item count, against the generated table, before any
         // decoder indexes the list.  Same text in all four CLIs.
-        int trail = derSeqTrailing(b.der);                    // TODO #372
-        if (trail > 0) {
-            throw new IllegalArgumentException("malformed PEM '" + b.label + "': "
-                + trail + " bytes after the DER SEQUENCE");
-        }
+        String bad = derSeqCheck(b.label, b.der);             // TODO #405
+        if (bad != null) throw new IllegalArgumentException(bad);
         List<BigInteger> ints = derParseSeq(b.der);
         DerEnc enc = derSeqScan(b.der, b.label);              // TODO #373
         for (String[] r : KeyLabelTable.DER_ITEMS) {
@@ -433,19 +430,52 @@ public final class Codec {
         }
     }
 
-    /** Bytes after the outer DER SEQUENCE, or -1 when der does not start with a
-     * well-formed SEQUENCE header whose body fits.  Every CLI refuses a non-zero
-     * count (TODO #372), so an artifact has exactly one encoding. */
-    public static int derSeqTrailing(byte[] der) {
-        if (der.length == 0 || der[0] != 0x30) return -1;
-        try {
-            Len l = derDecLen(der, 1);
-            if (l.length < 0) return -1;          // a 4-byte length past 2^31
-            long end = 1L + l.consumed + l.length;
-            return end > der.length ? -1 : (int) (der.length - end);
-        } catch (IllegalArgumentException e) {
-            return -1;
+    /** TODO #405: the DER length field at d[p], read no further than lim:
+     *  {fault, length, bytes taken}, fault 0 well formed and minimal, 1
+     *  truncated, 2 longer than 4 bytes, 3 not in its shortest form.  The
+     *  length is a long: a 4-byte one past 2^31 does not fit an int. */
+    private static long[] derReadLen(byte[] d, int p, int lim) {
+        if (p >= lim) return new long[]{1, 0, 0};
+        int b = d[p] & 0xff;
+        if (b < 0x80) return new long[]{0, b, 1};
+        int nb = b & 0x7f;
+        if (nb > 4) return new long[]{2, 0, 0};
+        if (nb > lim - p - 1) return new long[]{1, 0, 0};
+        long x = 0;
+        for (int i = 0; i < nb; i++) x = (x << 8) | (d[p + 1 + i] & 0xff);
+        boolean minimal = nb != 0 && d[p + 1] != 0 && !(nb == 1 && x < 0x80);
+        return new long[]{minimal ? 0 : 3, x, 1 + nb};
+    }
+
+    private static final String[] DER_LEN_TEXT = {"", "DER length field truncated",
+        "DER length field longer than 4 bytes", "DER length not in its shortest form"};
+
+    /** TODO #405: the DER reader's refusal, specified (SPEC.md section 10.2).
+     *  One left-to-right walk of a SEQUENCE of INTEGERs; the first fault met
+     *  is the refusal, in the text all four CLIs print.  Returns null for a
+     *  well-formed SEQUENCE; derParseSeq and derSeqScan cannot fail after it. */
+    static String derSeqCheck(String label, byte[] der) {
+        String where = "malformed PEM '" + label + "': ";
+        if (der.length == 0 || der[0] != 0x30) return where + "not a DER SEQUENCE";
+        long[] r = derReadLen(der, 1, der.length);
+        if (r[0] != 0) return where + DER_LEN_TEXT[(int) r[0]];
+        long off = 1 + r[2];
+        if (r[1] > der.length - off) return where + "DER SEQUENCE body truncated";
+        if (r[1] < der.length - off) return where + (der.length - off - r[1]) + " bytes after the DER SEQUENCE";
+        for (int n = 0; off < der.length; n++) {
+            int o = (int) off;
+            if (der[o] != 0x02) {
+                return where + String.format("field %d is not an INTEGER (tag 0x%02x)", n, der[o] & 0xff);
+            }
+            r = derReadLen(der, o + 1, der.length);
+            if (r[0] != 0) return where + DER_LEN_TEXT[(int) r[0]];
+            off += 1 + r[2];
+            if (r[1] > der.length - off) return where + "field " + n + " runs past the DER SEQUENCE";
+            if (r[1] == 0) return where + "field " + n + " is an empty INTEGER";
+            if ((der[(int) off] & 0x80) != 0) return where + "field " + n + " is a negative INTEGER";
+            off += r[1];
         }
+        return null;
     }
 
     /** Parses a DER SEQUENCE of INTEGERs; {@link #derParseSeq(PemBlock)} also

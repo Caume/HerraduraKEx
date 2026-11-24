@@ -597,21 +597,16 @@ func hkxMin(a, b int64) int64 {
 	return b
 }
 
-// derParseLabeled is DerParseSeq with the PEM label in the trailing-data
-// message every CLI prints (TODO #372).
+// derParseLabeled is DerParseSeq behind DerSeqCheck (TODO #405), whose
+// refusal names the PEM label in the text every CLI prints; DerSeqScan then
+// gives each item's encoding (TODO #373) for the field checks.
 func derParseLabeled(label string, der []byte) ([][]byte, DerEnc, error) {
-	if t, err := DerSeqTrailing(der); err == nil && t > 0 {
-		return nil, DerEnc{}, fmt.Errorf("malformed PEM '%s': %d bytes after the DER SEQUENCE", label, t)
+	if msg := DerSeqCheck(label, der); msg != "" {
+		return nil, DerEnc{}, errors.New(msg)
 	}
-	// TODO #373: one encoding of the lengths and signs.
-	enc, kind, bad := DerSeqScan(der)
-	switch kind {
-	case 1:
-		return nil, enc, fmt.Errorf("malformed PEM '%s': DER length not in its shortest form", label)
-	case 2:
-		return nil, enc, fmt.Errorf("malformed PEM '%s': field %d is a negative INTEGER", label, bad)
-	case 3:
-		return nil, enc, fmt.Errorf("malformed PEM '%s': field %d is an empty INTEGER", label, bad)
+	enc, kind, _ := DerSeqScan(der)
+	if kind != 0 {
+		return nil, enc, fmt.Errorf("malformed PEM '%s': cannot parse DER", label)
 	}
 	ints, err := DerParseSeq(der)
 	return ints, enc, err

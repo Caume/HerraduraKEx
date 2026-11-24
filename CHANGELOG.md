@@ -2,6 +2,42 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [18.0.5] - 2026-11-23
+
+**One refusal for a malformed DER SEQUENCE, the same in all four CLIs (TODO #405).** #404
+held the four DER parsers to one verdict but not to one reason. Only the item count (#367),
+the trailing bytes (#372) and the length and sign encodings (#373) had a shared text; every
+other structural fault was worded differently in each CLI. The C CLI said only
+`cannot parse DER from: PATH` (`pkey --decrypt`: `malformed ENCRYPTED PRIVATE KEY
+envelope`), Go and Java printed bare `DER: ...` texts without the label, and Python had its
+own. The checks also ran in a different order in each, so a SEQUENCE breaking two rules was
+refused for a different one.
+
+- **New SPEC.md section 10.2, "Reading the DER SEQUENCE".** One left-to-right walk; the
+  first fault met is the refusal, after `malformed PEM 'LABEL': `: `not a DER SEQUENCE`,
+  `DER length field truncated`, `DER length field longer than 4 bytes`,
+  `DER length not in its shortest form`, `DER SEQUENCE body truncated`,
+  `N bytes after the DER SEQUENCE`, `field N is not an INTEGER (tag 0xTT)`,
+  `field N runs past the DER SEQUENCE`, `field N is an empty INTEGER`,
+  `field N is a negative INTEGER`. The item count and the field checks follow, unchanged.
+- **One function per language** runs it, first in every CLI's DER loader:
+  `der_seq_check` (C `herradura_codec.h`, Python `codec.py`), `DerSeqCheck` (Go
+  `herradura/codec.go`), `Codec.derSeqCheck` (Java). It replaces C's `der_seq_trailing`,
+  Go's `DerSeqTrailing` and Java's `derSeqTrailing`, which it covers. The C codec
+  self-test checks each text.
+- **What changes for a malformed file:** the text, and, for a file breaking two rules,
+  which one is named: the SEQUENCE length's form is now checked before the trailing
+  bytes, as it is read. Nothing is accepted or refused that was not before: on the
+  test's 60,000 inputs every parser gives v18.0.4's verdict and values on every one.
+- **`CliTest/test_der_reader_diff.sh` compares the refusal text too**, and its coverage
+  floor is named by section 10.2's refusals. CLI cells check six of them by full
+  text through the four real CLIs, and the envelope `pkey --decrypt` reads.
+  - Controls: against v18.0.4 the parsers disagree on 8,362 of 20,000 inputs, six
+    coverage kinds are unreached and every new CLI cell fails. One planted fault per
+    parser fails it: Python naming a 5-byte length with a 0x00 as non-minimal (164 of
+    20,000), Go dropping the tag from its text (1,140), Java numbering one field from 1
+    (196), C checking trailing bytes before the length's form (200).
+
 ## [18.0.4] - 2026-11-23
 
 **A differential test of the four DER parsers, and the two defects it found (TODO #404).**

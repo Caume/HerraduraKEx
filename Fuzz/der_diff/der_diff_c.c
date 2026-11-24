@@ -4,8 +4,10 @@
  * stdin: one case per line, the DER bytes in hex.  stdout: one line per case,
  * "OK v/w/z ..." (each INTEGER's value in minimal hex, its encoded width and
  * lead, as der_seq_scan reports them) or "ERR <message hex>".  The steps and
- * texts are pem_key_load's (herradura_cli.c), for the label "L": the trailing
- * bytes, then der_seq_scan, then der_parse_seq.  The CLI stores 16 items; this
+ * texts are pem_key_load's (herradura_cli.c), for the label "L":
+ * der_seq_check (TODO #405), then der_seq_scan, then der_parse_seq, which
+ * cannot fail after the check (a failure is printed as EXC, a finding).  The
+ * CLI stores 16 items; this
  * driver stores DIFF_MAX so it can print every value -- the 16-item path is
  * held by the codec self-test and by the test's CLI cells.
  */
@@ -38,7 +40,7 @@ static size_t vlens[DIFF_MAX];
 int main(void)
 {
     size_t cap = 1 << 16, len;
-    char *line = malloc(cap), msg[160];
+    char *line = malloc(cap), msg[256];
     int c;
     if (!line) return 2;
     for (;;) {
@@ -56,18 +58,15 @@ int main(void)
             if (h < 0 || l < 0) { fprintf(stderr, "bad hex\n"); return 2; }
             d[i] = (uint8_t)(h << 4 | l);
         }
-        long trail = der_seq_trailing(d, n);
         int bad = 0, rc, k = 0;
-        if (trail > 0) {
-            snprintf(msg, sizeof msg, "malformed PEM 'L': %ld bytes after the DER SEQUENCE", trail);
+        if (der_seq_check("L", d, n, msg, sizeof msg)) {
             err(msg);
-        } else if ((rc = der_seq_scan(d, n, ew, lz, DIFF_MAX, &bad)) >= 1 && rc <= 3) {
-            if (rc == 1) snprintf(msg, sizeof msg, "malformed PEM 'L': DER length not in its shortest form");
-            else snprintf(msg, sizeof msg, "malformed PEM 'L': field %d is %s INTEGER", bad,
-                          rc == 2 ? "a negative" : "an empty");
+        } else if ((rc = der_seq_scan(d, n, ew, lz, DIFF_MAX, &bad)) != 0) {
+            snprintf(msg, sizeof msg, "EXC der_seq_scan returned %d after der_seq_check passed", rc);
             err(msg);
         } else if ((rc = der_parse_seq(d, n, vals, vlens, DIFF_MAX, &k)) != 0) {
-            err(rc == DER_ERR_ITEMS ? "more items than the driver stores" : "cannot parse DER from: PATH");
+            err(rc == DER_ERR_ITEMS ? "more items than the driver stores"
+                                    : "EXC der_parse_seq failed after der_seq_check passed");
         } else {
             fputs("OK", stdout);
             for (int j = 0; j < k; j++) {

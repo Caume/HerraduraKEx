@@ -4,9 +4,9 @@
 // stdin: one case per line, the DER bytes in hex.  stdout: one line per case,
 // "OK v/w/z ..." (value in minimal hex, encoded width, lead) or
 // "ERR <message hex>".  It calls what HerraduraCli calls for a DER PEM:
-// Codec.derParseSeq(PemBlock) (trailing bytes, the parse, the scan; a label in
-// no table, "L", skips the item count and field checks) and then derSeqScan
-// for the encodings.  It is in package herradurakex for derSeqScan, which is
+// Codec.derParseSeq(PemBlock) (derSeqCheck, TODO #405, then the parse and the
+// scan, which cannot fail after it; a label in no table, "L", skips the item
+// count and field checks) and then derSeqScan for the encodings.  It is in package herradurakex for derSeqScan, which is
 // package-private.  A RuntimeException other than IllegalArgumentException is
 // printed as a refusal named EXC, so the test sees it.
 package herradurakex;

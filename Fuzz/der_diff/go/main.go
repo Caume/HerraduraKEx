@@ -4,7 +4,8 @@
 // stdin: one case per line, the DER bytes in hex.  stdout: one line per case,
 // "OK v/w/z ..." (value in minimal hex, encoded width, lead) or
 // "ERR <message hex>".  The steps and texts are herradura_cli.go's
-// derParseLabeled for the label "L": DerSeqTrailing, DerSeqScan, DerParseSeq.
+// derParseLabeled for the label "L": DerSeqCheck (TODO #405), then DerSeqScan
+// and DerParseSeq, which cannot fail after it (a failure is printed as EXC).
 package main
 
 import (
@@ -19,22 +20,16 @@ import (
 )
 
 func verdict(d []byte) string {
-	const label = "L"
-	if t, err := DerSeqTrailing(d); err == nil && t > 0 {
-		return fmt.Sprintf("malformed PEM '%s': %d bytes after the DER SEQUENCE", label, t)
+	if msg := DerSeqCheck("L", d); msg != "" {
+		return msg
 	}
 	enc, kind, bad := DerSeqScan(d)
-	switch kind {
-	case 1:
-		return fmt.Sprintf("malformed PEM '%s': DER length not in its shortest form", label)
-	case 2:
-		return fmt.Sprintf("malformed PEM '%s': field %d is a negative INTEGER", label, bad)
-	case 3:
-		return fmt.Sprintf("malformed PEM '%s': field %d is an empty INTEGER", label, bad)
+	if kind != 0 {
+		return fmt.Sprintf("EXC DerSeqScan kind %d (item %d) after DerSeqCheck passed", kind, bad)
 	}
 	ints, err := DerParseSeq(d)
 	if err != nil {
-		return err.Error()
+		return "EXC DerParseSeq after DerSeqCheck passed: " + err.Error()
 	}
 	var b strings.Builder
 	b.WriteString("\x00OK")

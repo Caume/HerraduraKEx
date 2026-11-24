@@ -340,22 +340,77 @@ func DerSeqEnc(items ...[]byte) ([]byte, error) {
 	return out, nil
 }
 
-// DerSeqTrailing returns the number of bytes after the outer DER SEQUENCE in
-// der, or an error when der does not start with a well-formed SEQUENCE header
-// whose body fits.  Every CLI refuses a non-zero count (TODO #372), so an
-// artifact has exactly one encoding.
-func DerSeqTrailing(der []byte) (int, error) {
+// derReadLen reads the DER length field at d[p], no further than lim
+// (TODO #405): 0 when well formed and minimal (v the length, c the bytes it
+// took), 1 truncated, 2 longer than 4 bytes, 3 not in its shortest form.
+func derReadLen(d []byte, p, lim int) (v, c, fault int) {
+	if p >= lim {
+		return 0, 0, 1
+	}
+	b := d[p]
+	if b < 0x80 {
+		return int(b), 1, 0
+	}
+	nb := int(b & 0x7f)
+	if nb > 4 {
+		return 0, 0, 2
+	}
+	if nb > lim-p-1 {
+		return 0, 0, 1
+	}
+	x := 0
+	for i := 0; i < nb; i++ {
+		x = x<<8 | int(d[p+1+i])
+	}
+	if nb == 0 || d[p+1] == 0 || (nb == 1 && x < 0x80) {
+		return x, 1 + nb, 3
+	}
+	return x, 1 + nb, 0
+}
+
+var derLenText = [...]string{"", "DER length field truncated", "DER length field longer than 4 bytes",
+	"DER length not in its shortest form"}
+
+// DerSeqCheck is the DER reader's refusal, specified (TODO #405, SPEC.md
+// section 10.2): one left-to-right walk of a SEQUENCE of INTEGERs, the first
+// fault met is the refusal, in the text all four CLIs print.  It returns ""
+// for a well-formed SEQUENCE; DerSeqScan and DerParseSeq cannot fail after it.
+func DerSeqCheck(label string, der []byte) string {
+	where := fmt.Sprintf("malformed PEM '%s': ", label)
 	if len(der) == 0 || der[0] != 0x30 {
-		return 0, errors.New("DER: not a SEQUENCE")
+		return where + "not a DER SEQUENCE"
 	}
-	bodyLen, consumed, err := derDecLen(der[1:])
-	if err != nil {
-		return 0, fmt.Errorf("DER SEQUENCE length: %w", err)
+	v, c, f := derReadLen(der, 1, len(der))
+	if f != 0 {
+		return where + derLenText[f]
 	}
-	if bodyLen > len(der)-1-consumed {
-		return 0, errors.New("DER: SEQUENCE body truncated")
+	off := 1 + c
+	if v > len(der)-off {
+		return where + "DER SEQUENCE body truncated"
 	}
-	return len(der) - 1 - consumed - bodyLen, nil
+	if v < len(der)-off {
+		return where + fmt.Sprintf("%d bytes after the DER SEQUENCE", len(der)-off-v)
+	}
+	for n := 0; off < len(der); n++ {
+		if der[off] != 0x02 {
+			return where + fmt.Sprintf("field %d is not an INTEGER (tag 0x%02x)", n, der[off])
+		}
+		if v, c, f = derReadLen(der, off+1, len(der)); f != 0 {
+			return where + derLenText[f]
+		}
+		off += 1 + c
+		if v > len(der)-off {
+			return where + fmt.Sprintf("field %d runs past the DER SEQUENCE", n)
+		}
+		if v == 0 {
+			return where + fmt.Sprintf("field %d is an empty INTEGER", n)
+		}
+		if der[off]&0x80 != 0 {
+			return where + fmt.Sprintf("field %d is a negative INTEGER", n)
+		}
+		off += v
+	}
+	return ""
 }
 
 // DerEnc is how each INTEGER of a DER SEQUENCE is ENCODED (TODO #373), which

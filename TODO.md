@@ -10,31 +10,6 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #405: the four CLIs refuse a malformed DER SEQUENCE with different texts
-
-#404's differential holds the four DER parsers to one verdict, but not to one REASON.
-Only the item count (#367), the trailing bytes (#372) and the length and sign encodings
-(#373) have a shared text; every other structural fault (no SEQUENCE tag, a truncated or
-over-long length field, a body past the end, an item that is not an INTEGER, an INTEGER
-past the body) is worded differently in each CLI.  The C CLI says only
-`cannot parse DER from: PATH` (and `pkey --decrypt` only `malformed ENCRYPTED PRIVATE
-KEY envelope`), Go and Java print bare `DER: ...` texts without the label, and Python
-has its own.  The checks also run in a different order (C and Go: trailing bytes, the
-encoding scan, the parse; Java: trailing, parse, scan; Python: parse, scan), so a
-SEQUENCE breaking two rules is refused for a different one in each CLI.
-
-Specify the DER reader the way #398 and #400 specified the PEM reader: one left-to-right
-walk, the first fault met is the refusal, one text for each, prefixed with the PEM label
-as #372's and #373's already are.  Implement it once per language, call it first in every
-CLI's DER loader, write it up in SPEC.md beside section 10.1, and make
-`test_der_reader_diff.sh` compare the refusal TEXT as well as the verdict.
-
-Refusal text only: nothing accepted today is refused, nothing refused is accepted.
-
-Status: **OPEN**
-
----
-
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
