@@ -28,12 +28,57 @@ rule #372/#373 set for DER (one artifact, one encoding), and two where the CLIs 
 | ZKB++ proof `n` = 1 or 2 against an n=8 key (same byte width) | refuses | **verifies** | **verifies** | refuses |
 | HCRED private key with a coefficient ≥ q (65537) or ≥ p (4096) | accepts, **writes the raw value** | accepts, reduces it | accepts, reduces it | accepts, reduces it |
 
+A second probe (2026-11-24, all four CLIs, ZKP-NL at n = 12 so bits above n exist)
+found more of the same class, each a valid artifact re-encoded:
+
+| re-encoding | all four CLIs |
+|---|---|
+| ZKB++ round with e = 2 carrying a `share2` (`has_share2` = 1, nb bytes inserted; the writer sets it only for e != 2) | verify |
+| ZKB++ `out_e` with a bit above n set | verify |
+| ZKBoo view share with a bit above n set | verify |
+| ZKP-NL private key with a bit of A above n set | accept, same public key |
+| HCRED proof round carrying an aux block its challenge does not need | verify |
+| HCRED proof coefficient + q (e.g. `a1[0]`) | verify |
+| HCRED public key `m[0]` + q | verify (cred-verify) |
+
+(ZKP-RNL proofs with w ± q, ZKP-NL public keys and ZKB++ `share2` or gate padding bits
+with a bit flipped all FAIL in all four.)  The ZKBoo view's gate bytes and the share's
+bit n - 1, which the verifier does not check at all, are #409.
+
 Fix: every reader requires the writer's encoding — a view length and a gate length
-exactly the size for n, `has_share2` / `has_aux` in {0, 1}, a proof `n` equal to the
-key's `n`, HCRED `s`/`m` below q and `C` below p — with one refusal text per rule in all
-four CLIs.  Each new refusal gets an accept-control (the writer's encoding still
+exactly the size for n, `has_share2` equal to (e != 2), `has_aux` in {0, 1} (and every
+HCRED verifier refuses an aux block its challenge does not need), a proof `n` equal to
+the key's `n`, no bit above n in a fixed-width ZKP-NL field, and every HCRED Z_q value
+below q and Z_p value below p — with one refusal text per rule in all four CLIs.  Each new refusal gets an accept-control (the writer's encoding still
 verifies) and #406's differential drops these rows from its known findings.  Lands after
 #407.
+
+Status: **OPEN**
+
+---
+
+### #409: ZKBoo signatures verify with view bits the verifier never reads
+
+A ZKBoo (`nl-zkboo`) view is `share | tape | out | gate bytes`, and each gate byte is
+written as `a_i | c_i << 1 | ao_i << 2`.  The commitment covers only the tape and the
+output share, and `zkp_nl_verify` (and its Go, Python and Java ports) reads only bit 2 of
+each gate byte and bits 0..n-2 of the share.  So, in all four CLIs (probe of
+2026-11-24, n = 12):
+
+- setting bit 7 (or any of bits 3-7) of a gate byte verifies;
+- flipping bit 0 (the copy of `a_i`) or bit 1 (`c_i`) of a gate byte verifies;
+- flipping bit n - 1 of a revealed share verifies.
+
+Each is a second valid signature made from one, without the key: ZKBoo signatures are
+not strongly unforgeable.  #408's encoding rules cannot close it: bits 0 and 1 are
+determined by values the verifier recomputes, so the verifier must check them, and the
+share's bit n - 1 is unconstrained by the protocol as implemented, so closing it needs
+the share to be derived (from the tape, as ZKB++ does) or committed.
+
+Decide whether to fix ZKBoo (a verifier check on gate bits 0-7, plus a protocol change
+for the share, which is MAJOR and breaks existing signatures) or to mark `nl-zkboo`
+superseded by `nl-zkbpp`, which commits its shares through the seeds.  Either way,
+record it in SECURITY.md.
 
 Status: **OPEN**
 
