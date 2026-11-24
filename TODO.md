@@ -10,6 +10,29 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
+### #406: nothing compares the four CLIs' raw-body PEM readers beyond named cases
+
+#403 and #404 hold the PEM reader and the DER parser to one verdict.  Nine labels carry
+no DER at all: their body is packed bytes, a 4-byte `n` (and for proofs a round count,
+and for HCRED a `W`) followed by fixed-size blocks and, in the proofs, per-round length
+bytes (`len_p1` / `len_p2`, `gates_len`, `has_share2`, `has_aux`).  They are ZKP-RNL PROOF,
+ZKP-NL PRIVATE KEY / PUBLIC KEY / PROOF, ZKP-NL-PP SIGNATURE, and HCRED PRIVATE KEY /
+PUBLIC KEY / PROOF.  Each CLI reads them with its own hand-written code (in C, inline in
+the subcommands, exiting on the first fault), held together only by the named cases of
+`lib_malformed.sh` and `test_canonical_encoding_matrix.sh`.
+
+Add a differential for them: seeded mutations of each artifact (header fields at edge
+values, the per-round length bytes, truncation, trailing bytes, random byte edits), each
+read by all four CLIs through the subcommand that reads it, and a test failing on any
+artifact the CLIs give a different verdict (accepted / verification failed / refused) or,
+for a key, a different output.  A coverage floor over the outcomes, controls that fire,
+and a pre-change run.  If it finds an artifact one CLI accepts and another refuses, that
+is reported before any reader is changed.
+
+Status: **OPEN**
+
+---
+
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
