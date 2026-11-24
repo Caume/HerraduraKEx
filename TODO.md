@@ -33,6 +33,65 @@ Status: **OPEN**
 
 ---
 
+### #407: four raw-body PEM readers crash or over-read on a short length byte
+
+#406's prototype (about 2,200 mutations of the nine raw-body artifacts, read by all four
+CLIs, C under ASan) found readers that crash instead of refusing.  Every one of these
+inputs is already rejected or crashes today, so refusing them cleanly changes no verdict
+on a well-formed file: this is a PATCH.
+
+| input | C | Go | Python | Java |
+|---|---|---|---|---|
+| ZKBoo view one byte short (`len_p1`/`len_p2` below the view size for n) | heap over-read | panic, index out of range | IndexError traceback | `Index … out of bounds` |
+| ZKB++ `gates_len` below ceil((n-1)/8) (n=64, gates_len=0) | heap over-read | fails verification | IndexError in `_zkpp_unpack_bits` | fails verification |
+| truncated ZKP-NL / HCRED key and proof bodies | refuses | refuses | refuses | uncaught `Index N out of bounds for length M` (about 80 cases) |
+| HCRED proof `W` out of range | no bound, "Verification FAILED (proof)" | `HCRED proof: W out of range (N)` | same | same |
+
+The two C over-reads are in verifiers, on bytes the signer controls (`zkp_nl_unpack_proof`,
+`zkp_nl_pp_unpack_proof`; `zkp_nl_pp_verify` computes the gate length from n and reads
+that many bytes whatever `gates_len` says).
+
+Fix: each reader refuses a view shorter than its size for n, a gate field shorter than
+ceil((n-1)/8), and a body that ends before its last block, with one text in all four
+CLIs; Java bounds-checks before indexing instead of surfacing the exception; C bounds `W`
+with the text the others use.  Ship it with #406's differential, which asserts no crash
+(traceback, panic, `Index … out of bounds`, ASan report) on any mutation and records
+#408's re-encodings as known findings, so it passes on the patched behaviour and #408
+flips them.  Accept-controls: the unmutated fixtures verify in all four.
+
+Status: **OPEN**
+
+---
+
+### #408: raw-body PEMs accept encodings no writer produces (MAJOR)
+
+**This item is MAJOR**: it changes what existing `--algo` values accept (`nl-zkboo`, `nl-zkbpp`
+and the HCRED subcommands), so it needs a
+`MIGRATING.md` entry.  No CLI writes any of the encodings below, so no file a CLI
+produced becomes unreadable; the break is for hand-made or re-encoded files only.
+
+#406's prototype found raw-body artifacts accepted in a second encoding, against the
+rule #372/#373 set for DER (one artifact, one encoding), and two where the CLIs disagree:
+
+| re-encoding of a valid artifact | C | Go | Python | Java |
+|---|---|---|---|---|
+| ZKBoo view length +1, one byte appended | verifies | verifies | verifies | verifies |
+| ZKB++ `has_share2` = 2 instead of 1 | verifies | verifies | verifies | verifies |
+| ZKB++ one extra gate byte (`gates_len`+1) | **verifies** | rejects | rejects | rejects |
+| ZKB++ proof `n` = 1 or 2 against an n=8 key (same byte width) | refuses | **verifies** | **verifies** | refuses |
+| HCRED private key with a coefficient ≥ q (65537) or ≥ p (4096) | accepts, **writes the raw value** | accepts, reduces it | accepts, reduces it | accepts, reduces it |
+
+Fix: every reader requires the writer's encoding — a view length and a gate length
+exactly the size for n, `has_share2` / `has_aux` in {0, 1}, a proof `n` equal to the
+key's `n`, HCRED `s`/`m` below q and `C` below p — with one refusal text per rule in all
+four CLIs.  Each new refusal gets an accept-control (the writer's encoding still
+verifies) and #406's differential drops these rows from its known findings.  Lands after
+#407.
+
+Status: **OPEN**
+
+---
+
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
