@@ -10,6 +10,35 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
+### #408: raw-body PEMs accept encodings no writer produces (MAJOR)
+
+**This item is MAJOR**: it changes what existing `--algo` values accept (`nl-zkboo`, `nl-zkbpp`
+and the HCRED subcommands), so it needs a
+`MIGRATING.md` entry.  No CLI writes any of the encodings below, so no file a CLI
+produced becomes unreadable; the break is for hand-made or re-encoded files only.
+
+#406's prototype found raw-body artifacts accepted in a second encoding, against the
+rule #372/#373 set for DER (one artifact, one encoding), and two where the CLIs disagree:
+
+| re-encoding of a valid artifact | C | Go | Python | Java |
+|---|---|---|---|---|
+| ZKBoo view length +1, one byte appended | verifies | verifies | verifies | verifies |
+| ZKB++ `has_share2` = 2 instead of 1 | verifies | verifies | verifies | verifies |
+| ZKB++ one extra gate byte (`gates_len`+1) | **verifies** | rejects | rejects | rejects |
+| ZKB++ proof `n` = 1 or 2 against an n=8 key (same byte width) | refuses | **verifies** | **verifies** | refuses |
+| HCRED private key with a coefficient ≥ q (65537) or ≥ p (4096) | accepts, **writes the raw value** | accepts, reduces it | accepts, reduces it | accepts, reduces it |
+
+Fix: every reader requires the writer's encoding — a view length and a gate length
+exactly the size for n, `has_share2` / `has_aux` in {0, 1}, a proof `n` equal to the
+key's `n`, HCRED `s`/`m` below q and `C` below p — with one refusal text per rule in all
+four CLIs.  Each new refusal gets an accept-control (the writer's encoding still
+verifies) and #406's differential drops these rows from its known findings.  Lands after
+#407.
+
+Status: **OPEN**
+
+---
+
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been

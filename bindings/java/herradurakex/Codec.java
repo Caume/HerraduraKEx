@@ -430,6 +430,24 @@ public final class Codec {
         }
     }
 
+    /** TODO #407: a per-round length byte shorter than the field n fixes.  The
+     * verifiers read the full size for n, so a shorter field was read past;
+     * refused at the length byte, before the truncation checks.  Same text in
+     * all four CLIs. */
+    static void rawShort(String label, int round, String field, int got, int n, int need) {
+        if (got < need) {
+            throw new IllegalArgumentException("malformed PEM '" + label + "': round " + round
+                + " " + field + " is " + got + " bytes, n=" + n + " needs " + need);
+        }
+    }
+
+    /** One body byte, or the wire-format error a truncated body gets (TODO #407):
+     * never a raw JDK index message. */
+    private static int u8(byte[] b, int off) {
+        if (off < 0 || off >= b.length) throw new IllegalArgumentException("PEM body truncated");
+        return b[off] & 0xff;
+    }
+
     /** TODO #405: the DER length field at d[p], read no further than lim:
      *  {fault, length, bytes taken}, fault 0 well formed and minimal, 1
      *  truncated, 2 longer than 4 bytes, 3 not in its shortest form.  The
@@ -992,6 +1010,7 @@ public final class Codec {
     }
 
     private static int rd4(byte[] b, int off) {
+        if (off < 0 || (long) off + 4 > b.length) throw new IllegalArgumentException("PEM body truncated");
         return ((b[off] & 0xff) << 24) | ((b[off + 1] & 0xff) << 16)
              | ((b[off + 2] & 0xff) << 8) | (b[off + 3] & 0xff);
     }
@@ -1118,15 +1137,18 @@ public final class Codec {
         if (n <= 0 || n > ZkpNl.MAX_N || r <= 0 || r > ZkpNl.MAX_ROUNDS)
             throw new IllegalArgumentException("ZKP-NL proof: bad header (n=" + n + ", rounds=" + r + ")");
         java.util.List<ZkpNl.ProofRound> rounds = new ArrayList<>(r);
+        int viewNeed = 2 * ((n + 7) / 8) + 32 + n - 1;   // the view the verifier reads
         for (int j = 0; j < r; j++) {
             ZkpNl.ProofRound pr = new ZkpNl.ProofRound();
             pr.com0 = sub(body, off, 32); off += 32;
             pr.com1 = sub(body, off, 32); off += 32;
             pr.com2 = sub(body, off, 32); off += 32;
-            pr.e = body[off] & 0xff; off += 1;
-            int l1 = ((body[off] & 0xff) << 8) | (body[off + 1] & 0xff); off += 2;
+            pr.e = u8(body, off); off += 1;
+            int l1 = (u8(body, off) << 8) | u8(body, off + 1); off += 2;
+            rawShort(PEM_ZKP_NL_PROOF, j, "view_p1", l1, n, viewNeed);
             pr.viewP1 = sub(body, off, l1); off += l1;
-            int l2 = ((body[off] & 0xff) << 8) | (body[off + 1] & 0xff); off += 2;
+            int l2 = (u8(body, off) << 8) | u8(body, off + 1); off += 2;
+            rawShort(PEM_ZKP_NL_PROOF, j, "view_p2", l2, n, viewNeed);
             pr.viewP2 = sub(body, off, l2); off += l2;
             rounds.add(pr);
         }
@@ -1176,17 +1198,19 @@ public final class Codec {
         if (n <= 0 || n > ZkpNl.MAX_N || r <= 0 || r > ZkpNl.MAX_ROUNDS)
             throw new IllegalArgumentException("ZKB++ proof: bad header (n=" + n + ", rounds=" + r + ")");
         int nb = (n + 7) / 8;
+        int gatesNeed = (Math.max(n - 1, 1) + 7) / 8;   // the gate bytes the verifier reads
         java.util.List<ZkpNl.PpRound> rounds = new ArrayList<>(r);
         for (int j = 0; j < r; j++) {
             ZkpNl.PpRound pr = new ZkpNl.PpRound();
             pr.comE = sub(body, off, 32); off += 32;
-            pr.e = body[off] & 0xff; off += 1;
+            pr.e = u8(body, off); off += 1;
             pr.outE = sub(body, off, nb); off += nb;
             pr.seedP1 = sub(body, off, ZkpNl.ZKPP_SEED_BYTES); off += ZkpNl.ZKPP_SEED_BYTES;
             pr.seedP2 = sub(body, off, ZkpNl.ZKPP_SEED_BYTES); off += ZkpNl.ZKPP_SEED_BYTES;
-            int gl = body[off] & 0xff; off += 1;
+            int gl = u8(body, off); off += 1;
+            rawShort(PEM_ZKP_NL_PP_SIG, j, "gates_p2", gl, n, gatesNeed);
             pr.gatesP2 = sub(body, off, gl); off += gl;
-            int has = body[off] & 0xff; off += 1;
+            int has = u8(body, off); off += 1;
             if (has != 0) { pr.share2 = sub(body, off, nb); off += nb; }
             else pr.share2 = new byte[0];
             rounds.add(pr);
@@ -1951,6 +1975,7 @@ public final class Codec {
     }
 
     private static int readBe32(byte[] data, int off) {
+        if (off < 0 || (long) off + 4 > data.length) throw new IllegalArgumentException("packed body truncated");
         return ((data[off] & 0xff) << 24) | ((data[off + 1] & 0xff) << 16)
              | ((data[off + 2] & 0xff) << 8) | (data[off + 3] & 0xff);
     }
@@ -1966,6 +1991,7 @@ public final class Codec {
     }
 
     private static BigInteger fromLE(byte[] data, int off, int nbytes) {
+        if (off < 0 || (long) off + nbytes > data.length) throw new IllegalArgumentException("packed body truncated");
         byte[] rev = new byte[nbytes];
         for (int i = 0; i < nbytes; i++) rev[i] = data[off + nbytes - 1 - i];
         return new BigInteger(1, rev);
@@ -2161,7 +2187,7 @@ public final class Codec {
             int nb = rows * rowBits, nd = n * Hcred.EPS_BITS;
             int[] g1 = deser3(body, off, nb); off += nb * 3;
             int[] h1 = deser3(body, off, nd); off += nd * 3;
-            boolean hasAux = body[off] != 0; off += 1;
+            boolean hasAux = u8(body, off) != 0; off += 1;
             int[] auxS = null, auxB = null, auxD = null;
             if (hasAux) {
                 auxS = deser3(body, off, n); off += n * 3;

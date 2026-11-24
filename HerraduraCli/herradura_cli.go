@@ -576,6 +576,15 @@ func rawEnd(label string, body []byte, off int) error {
 	return nil
 }
 
+// rawShort is TODO #407's refusal of a per-round length byte shorter than the
+// field n fixes: the verifiers read the full size for n, so a shorter field
+// was read past.  Checked at the length byte, before the truncation checks;
+// same text in all four CLIs.
+func rawShort(label string, round int, field string, got, n, need int) error {
+	return fmt.Errorf("malformed PEM '%s': round %d %s is %d bytes, n=%d needs %d",
+		label, round, field, got, n, need)
+}
+
 // checkDerCaps holds each field to the generated PEM_DER_FIELD_CAPS width
 // (TODO #372): no field wider than its writer pads it to.
 // checkDerCaps runs the generated field check: #372's widths, #373's
@@ -3510,6 +3519,7 @@ func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
 	}
 	off := 8
 	proof = make([]ZkpNlRound, R)
+	viewNeed := 2*((n+7)/8) + 32 + n - 1 // the view zkpNlVerify reads (n >= 1)
 	for j := 0; j < R; j++ {
 		// 96B commitments + 1B e + 2B len_p1 = 99, not 97: the length field
 		// itself has to be in range before it can be read.
@@ -3521,6 +3531,9 @@ func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
 		copy(proof[j].Com2[:], body[off:off+32]); off += 32
 		proof[j].E = int(body[off]); off++
 		l1 := int(body[off])<<8 | int(body[off+1]); off += 2
+		if l1 < viewNeed {
+			return nil, 0, rawShort(lblZkpNlProof, j, "view_p1", l1, n, viewNeed)
+		}
 		if l1 > len(body)-off {
 			return nil, 0, fmt.Errorf("ZKP-NL proof round %d view1 truncated", j)
 		}
@@ -3529,6 +3542,9 @@ func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
 			return nil, 0, fmt.Errorf("ZKP-NL proof round %d view2 truncated", j)
 		}
 		l2 := int(body[off])<<8 | int(body[off+1]); off += 2
+		if l2 < viewNeed {
+			return nil, 0, rawShort(lblZkpNlProof, j, "view_p2", l2, n, viewNeed)
+		}
 		if l2 > len(body)-off {
 			return nil, 0, fmt.Errorf("ZKP-NL proof round %d view2 truncated", j)
 		}
@@ -3581,6 +3597,10 @@ func decodeZkpNlPpProof(body []byte) (proof []ZkpNlPpRound, n int, err error) {
 		return nil, 0, fmt.Errorf("ZKP-NL-PP proof: rounds out of range (%d)", R)
 	}
 	nb := (n + 7) / 8
+	gatesNeed := 1 // the gate bytes zkpNlPpVerify reads for n (TODO #407)
+	if n > 1 {
+		gatesNeed = (n - 1 + 7) / 8
+	}
 	off := 8
 	proof = make([]ZkpNlPpRound, R)
 	for j := 0; j < R; j++ {
@@ -3598,6 +3618,9 @@ func decodeZkpNlPpProof(body []byte) (proof []ZkpNlPpRound, n int, err error) {
 			return nil, 0, fmt.Errorf("ZKP-NL-PP proof round %d truncated (gates_len)", j)
 		}
 		gl := int(body[off]); off++
+		if gl < gatesNeed {
+			return nil, 0, rawShort(lblZkpNlPpSig, j, "gates_p2", gl, n, gatesNeed)
+		}
 		if off+gl+1 > len(body) {
 			return nil, 0, fmt.Errorf("ZKP-NL-PP proof round %d truncated (gates)", j)
 		}

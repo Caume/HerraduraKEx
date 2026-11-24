@@ -39,6 +39,14 @@ Run everything with a short time budget per target:
   runs its CLI's generic DER steps.  `CliTest/test_der_reader_diff.sh` fails on a
   different verdict, different values or encodings, a different refusal text (SPEC.md
   section 10.2, TODO #405), or any crash.
+- **`raw_body_diff/`** (TODO #406) — the same for the eight raw-body PEMs (ZKP-NL,
+  ZKP-RNL, HCRED), which have no DER and, in C, no reader outside the subcommands:
+  `gen_cases.py SEED FIXDIR OUTDIR COUNT HCPROOF_COUNT` writes seeded mutations of one
+  fixture of each (header and per-round length fields at edge values, truncation,
+  trailing bytes, byte edits), and `CliTest/test_raw_body_diff.sh` reads every one
+  through the four real CLIs, failing on any crash or any case they answer differently
+  (SPEC.md section 10.3).  `HKX_RAWDIFF_C_BIN=HerraduraCli/herradura_cli_asan` runs the
+  C side under ASan.
 - **`herradura/codec_fuzz_test.go`** (`FuzzPemUnwrap`, `FuzzDerParseSeq`) — the Go codec
   equivalents in `herradura/codec.go`. Run directly with `go test -fuzz=<name>` from
   the repo root, or via `run_fuzz.sh`.

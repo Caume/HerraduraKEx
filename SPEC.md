@@ -591,6 +591,27 @@ parsers in process, which must give identical results, refusal texts
 included, and each refusal above checked by its text through the four real
 CLIs.
 
+### 10.3 Raw-body PEMs (TODO #406, #407)
+
+Eight labels carry packed bytes instead of DER: ZKP-RNL PROOF, ZKP-NL
+PRIVATE KEY / PUBLIC KEY / PROOF, ZKP-NL-PP SIGNATURE and HCRED PRIVATE
+KEY / PUBLIC KEY / PROOF.  A 4-byte big-endian `n` leads (then the round
+count, and for an HCRED proof `W` before it), and every block after it is
+sized from those.  Besides the header bounds and the trailing-byte rule
+(`malformed PEM 'LABEL': N bytes after its last field`, TODO #372), a reader
+refuses a per-round length byte shorter than the field `n` fixes, at the
+length byte and before any truncation check:
+`malformed PEM 'LABEL': round J FIELD is L bytes, n=N needs M`, where FIELD
+is `view_p1` or `view_p2` (ZKBoo, M = 2*ceil(n/8) + 32 + n - 1) or `gates_p2`
+(ZKB++, M = ceil(max(n - 1, 1)/8)).  An HCRED proof's `W` must lie in
+1..256: `HCRED proof: W out of range (W)`.  The texts are the same in all four
+CLIs.  `CliTest/test_raw_body_diff.sh` sends seeded mutations of each
+artifact through the four real CLIs and fails on any crash or any case
+they answer differently, except TODO #408's recorded encodings, which
+some CLIs still accept: a view or gate field longer than `n` needs, a
+`has_share2` other than 0 or 1, a ZKB++ proof `n` other than the key's,
+and an HCRED coefficient not below q or p.
+
 ## 11. Code-Based (Stern ZKID) Variants
 
 HPKS-Stern-F and HPKE-Stern-F/-KEM (§9, `hpks-stern`/`hpke-stern`/

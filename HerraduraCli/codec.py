@@ -46,6 +46,16 @@ def _packed_end(body: bytes, off: int, label: str) -> None:
         raise ValueError(f"malformed PEM '{label}': {len(body) - off} bytes after its last field")
 
 
+def _packed_short(label: str, round_: int, field: str, got: int, n: int, need: int) -> None:
+    """TODO #407: a per-round length byte shorter than the field n fixes.  The
+    verifiers read the full size for n, so a shorter field was read past;
+    refuse it at the length byte, before the truncation checks.  Same text in
+    all four CLIs."""
+    if got < need:
+        raise ValueError(f"malformed PEM '{label}': round {round_} {field} is {got} bytes, "
+                         f"n={n} needs {need}")
+
+
 # ---------------------------------------------------------------------------
 # DER helpers
 # ---------------------------------------------------------------------------
@@ -579,6 +589,7 @@ def decode_zkp_nl_proof(pem_text: str) -> tuple:
     n   = _packed_n(body, 0, _ZKP_NL_MAX_N, "ZKP-NL proof: n")
     R   = _packed_n(body, 4, _ZKP_NL_MAX_ROUNDS, "ZKP-NL proof: rounds")
     off = 8
+    view_need = 2 * ((n + 7) // 8) + 32 + n - 1    # the view the verifier reads
     rounds = []
     for j in range(R):
         w = f"ZKP-NL proof round {j}:"
@@ -589,9 +600,11 @@ def decode_zkp_nl_proof(pem_text: str) -> tuple:
         e     = eb[0]
         lb, off = _packed_take(body, off, 2, w)
         l1    = int.from_bytes(lb, 'big')
+        _packed_short(label, j, "view_p1", l1, n, view_need)
         vp1, off = _packed_take(body, off, l1, w + " view1")
         lb, off = _packed_take(body, off, 2, w)
         l2    = int.from_bytes(lb, 'big')
+        _packed_short(label, j, "view_p2", l2, n, view_need)
         vp2, off = _packed_take(body, off, l2, w + " view2")
         rounds.append({'com_0': com_0, 'com_1': com_1, 'com_2': com_2,
                        'e': e, 'view_p1': vp1, 'view_p2': vp2})
@@ -647,6 +660,7 @@ def decode_zkp_nl_pp_proof(pem_text: str) -> tuple:
     R   = _packed_n(body, 4, _ZKP_NL_MAX_ROUNDS, "ZKB++ proof: rounds")
     off = 8
     nb  = (n + 7) // 8
+    gates_need = (max(n - 1, 1) + 7) // 8     # the gate bytes the verifier reads
     rounds = []
     for j in range(R):
         w = f"ZKB++ proof round {j}:"
@@ -658,6 +672,7 @@ def decode_zkp_nl_pp_proof(pem_text: str) -> tuple:
         seed_p2, off = _packed_take(body, off, _ZKPP_SEED_BYTES, w)
         gb, off      = _packed_take(body, off, 1, w)
         gl           = gb[0]
+        _packed_short(label, j, "gates_p2", gl, n, gates_need)
         gates_p2, off = _packed_take(body, off, gl, w + " gates")
         hb, off      = _packed_take(body, off, 1, w)
         has_s2       = hb[0]

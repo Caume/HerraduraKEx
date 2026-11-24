@@ -86,6 +86,18 @@ static void die_raw_trailing(const char *label, size_t extra)
     exit(1);
 }
 
+/* TODO #407: a per-round length byte shorter than the field n fixes.  The
+ * verifiers read the full size for n whatever the length byte says, so a
+ * shorter field was read past (a heap over-read under ASan); refuse it at the
+ * length byte, before the truncation checks, with one text in all four CLIs. */
+static void die_raw_short(const char *label, int round, const char *field,
+                          size_t got, int n, size_t need)
+{
+    fprintf(stderr, "malformed PEM '%s': round %d %s is %zu bytes, n=%d needs %zu\n",
+            label, round, field, got, n, need);
+    exit(1);
+}
+
 static uint8_t *read_binary_file(const char *path, size_t *len_out)
 {
     FILE *f = (strcmp(path, "-") == 0) ? stdin : fopen(path, "rb");
@@ -1394,6 +1406,8 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
     ZkpNlRound *proof = (ZkpNlRound *)malloc((size_t)rounds * sizeof(ZkpNlRound));
     if (!proof) die("out of memory");
     const uint8_t *p = buf + 8;
+    /* The view size zkp_nl_verify reads for n (herradura.h zkp_nl_prove). */
+    const size_t view_need = (size_t)(2 * ((n + 7) / 8)) + 32 + (n > 1 ? (size_t)(n - 1) : 0);
     int j;
     for (j = 0; j < rounds; j++) {
         /* 96B commitments + 1B e + 2B len_p1 = 99 must be present before the
@@ -1405,6 +1419,7 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
         memcpy(proof[j].com_2, p, 32); p += 32;
         proof[j].e = *p++;
         size_t l1 = ((size_t)p[0] << 8) | p[1]; p += 2;
+        if (l1 < view_need) die_raw_short(PEM_ZKP_NL_PROOF, j, "view_p1", l1, n, view_need);
         if (p + l1 > buf + blen) die("truncated ZKP-NL proof view");
         proof[j].view_p1  = (uint8_t *)malloc(l1);
         if (!proof[j].view_p1) die("out of memory");
@@ -1416,6 +1431,7 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
          * running off the allocation -- latent, not a memory-safety fault. */
         if (p + 2 > buf + blen) die("truncated ZKP-NL proof view");
         size_t l2 = ((size_t)p[0] << 8) | p[1]; p += 2;
+        if (l2 < view_need) die_raw_short(PEM_ZKP_NL_PROOF, j, "view_p2", l2, n, view_need);
         if (p + l2 > buf + blen) die("truncated ZKP-NL proof view");
         proof[j].view_p2  = (uint8_t *)malloc(l2);
         if (!proof[j].view_p2) die("out of memory");
@@ -1471,6 +1487,7 @@ static ZkpNlPpRound *zkp_nl_pp_unpack_proof(const uint8_t *buf, size_t blen,
                                               int *n_out, int *rounds_out)
 {
     int n, rounds, nb, j;
+    size_t gates_need;
     ZkpNlPpRound *proof;
     const uint8_t *p;
     if (blen < 8) die("ZKP-NL-PP proof too short");
@@ -1484,6 +1501,8 @@ static ZkpNlPpRound *zkp_nl_pp_unpack_proof(const uint8_t *buf, size_t blen,
         die("ZKP-NL-PP proof: rounds out of range");
     *n_out = n; *rounds_out = rounds;
     nb = (n + 7) / 8;
+    /* The gate bytes zkp_nl_pp_verify reads for n (TODO #407). */
+    gates_need = (size_t)((n > 1 ? n - 1 : 1) + 7) / 8;
     proof = (ZkpNlPpRound *)malloc((size_t)rounds * sizeof(ZkpNlPpRound));
     if (!proof) die("out of memory");
     p = buf + 8;
@@ -1499,6 +1518,7 @@ static ZkpNlPpRound *zkp_nl_pp_unpack_proof(const uint8_t *buf, size_t blen,
         memcpy(proof[j].seed_p2, p, ZKPP_SEED_BYTES); p += ZKPP_SEED_BYTES;
         if (p >= buf + blen) die("truncated ZKP-NL-PP proof (gates_len)");
         gl = *p++;
+        if (gl < gates_need) die_raw_short(PEM_ZKP_NL_PP_SIG, j, "gates_p2", gl, n, gates_need);
         if (p + gl + 1 > buf + blen) die("truncated ZKP-NL-PP proof (gates)");
         proof[j].gates_p2 = (uint8_t *)malloc(gl ? gl : 1);
         if (!proof[j].gates_p2) die("out of memory");
@@ -6669,6 +6689,15 @@ static void cmd_cred_verify(int argc, char **argv)
     /* Load proof */
     size_t plen;
     uint8_t *pbuf = zkp_raw_pem_read(proof_path, PEM_HCRED_PROOF, &plen);
+    /* TODO #407: W indexes the statement; bound it as Go, Python and Java do,
+     * with their text, before the body is read. */
+    if (plen >= 8) {
+        uint32_t W = ((uint32_t)pbuf[4]<<24)|((uint32_t)pbuf[5]<<16)|((uint32_t)pbuf[6]<<8)|pbuf[7];
+        if (W == 0 || W > HCRED_N) {
+            fprintf(stderr, "HCRED proof: W out of range (%u)\n", (unsigned)W);
+            exit(1);
+        }
+    }
     HcredProof proof;
     memset(&proof, 0, sizeof(proof));
     size_t used = 0;
