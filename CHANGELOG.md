@@ -2,6 +2,66 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [18.0.6] - 2026-11-24
+
+**The raw-body PEM readers refuse cleanly instead of crashing, and a differential holds
+the four CLIs to one result on them (TODO #406, #407).** Eight artifacts carry packed bytes,
+not DER: ZKP-RNL PROOF, ZKP-NL PRIVATE KEY / PUBLIC KEY / PROOF, ZKP-NL-PP SIGNATURE and
+HCRED PRIVATE KEY / PUBLIC KEY / PROOF. Each CLI reads them with its own code, and nothing
+compared them beyond the named cases of `lib_malformed.sh` and the canonical-encoding
+matrix. A prototype differential (about 2,200 mutations, C under ASan) found:
+
+- **A ZKBoo view one byte shorter than n needs** (`len_p1` / `len_p2`): a heap over-read in
+  C's verifier, a Go panic, a Python `IndexError` traceback and a raw Java
+  `Index ... out of bounds`. The verifiers read the full view for n whatever the length
+  byte says.
+- **A ZKB++ gate field shorter than n needs** (`gates_len` below ceil((n-1)/8)): a heap
+  over-read in C and a Python traceback; Go and Java reported a failed verification.
+- **Truncated ZKP-NL and HCRED key and proof bodies**: about 80 raw Java
+  `Index N out of bounds for length M` messages (a header or trailing field read without
+  a bounds check).
+- **An HCRED proof `W` out of range**: refused by Go, Python and Java; the C CLI read it
+  unbounded and reported `Verification FAILED (proof)`.
+
+Every one of those inputs was already rejected or crashed, so the fixes change no verdict
+on a well-formed file:
+
+- **One refusal for a short per-round field, in all four CLIs** (SPEC.md new section
+  10.3), checked at the length byte before the truncation checks:
+  `malformed PEM 'LABEL': round J FIELD is L bytes, n=N needs M`, FIELD `view_p1`,
+  `view_p2` (ZKBoo) or `gates_p2` (ZKB++). C `die_raw_short`, Go `rawShort`, Python
+  `_packed_short`, Java `Codec.rawShort`.
+- **The C CLI bounds `W`** before reading the proof body, with the others' text,
+  `HCRED proof: W out of range (W)`.
+- **Java bounds-checks every raw-body read** (`rd4`, `readBe32`, `fromLE` and a new `u8`
+  for the single length bytes), so a truncated body gets `PEM body truncated` /
+  `packed body truncated` instead of a JDK index message.
+
+**New `CliTest/test_raw_body_diff.sh`**, in CI's `cross-lang-compat` job, about 2.5 min:
+fixtures of the eight artifacts (ZKP-NL also at n = 64), written by one CLI; seeded
+mutations of each (`Fuzz/raw_body_diff/gen_cases.py`: header and per-round length fields
+at edge values, truncation, trailing bytes, one byte flipped past the header, byte edits)
+read by all four CLIs through the subcommand that reads them. It fails on any crash (a
+traceback, a panic, a raw JDK message, an ASan report, an exit status other than 0 or 1),
+on any case the CLIs answer differently (OK with the written key's hash / verification
+failed / refused), and on a coverage floor per artifact. Named cells check the new
+refusals by full text at n = 8 and 64, every unmutated fixture is read by every CLI, and
+stand-in crashes must each be classed CRASH. `HKX_RAWDIFF_C_BIN` runs it against
+`herradura_cli_asan`.
+
+**Still accepted, recorded for TODO #408 (MAJOR):** a ZKBoo view one byte long and a
+ZKB++ `has_share2` of 2 (all four CLIs verify both); a ZKB++ gate field one byte long (C
+verifies it, the others do not); a ZKB++ proof `n` of 1 or 2 against an n = 8 key (Go and
+Python verify it, C and Java refuse); an HCRED private key with a coefficient not below q
+or p (all accept it; C writes the raw value into the public key, the others reduce it).
+The test prints these as KNOWN and sets aside generated cases of the last two shapes; the
+divergent cells are its negative control and must still divide the CLIs.
+
+Controls: the test against v18.0.5's readers fails 10 checks (16 crashes, 1 disagreement,
+all 8 refusal cells); with the fix, 42 PASS on seed 1 and, with the C side under ASan, on
+seeds 2 and 3. The 1,790-case prototype run now shows no crash and only #408's two
+divergent shapes.
+
 ## [18.0.5] - 2026-11-23
 
 **One refusal for a malformed DER SEQUENCE, the same in all four CLIs (TODO #405).** #404

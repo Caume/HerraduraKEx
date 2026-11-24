@@ -483,6 +483,7 @@ jobs:
             case "$f" in test_malformed_pem_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #240)
             case "$f" in test_pem_reader_diff.sh) continue ;; esac    # claimed by cross-lang-compat (TODO #403)
             case "$f" in test_der_reader_diff.sh) continue ;; esac    # claimed by cross-lang-compat (TODO #404)
+            case "$f" in test_raw_body_diff.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #406)
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_round_floor.sh) continue ;; esac        # claimed by cross-lang-compat (TODO #364)
             case "$f" in test_stern_128.sh) continue ;; esac          # claimed by cross-lang-compat (TODO #382)
@@ -850,6 +851,12 @@ jobs:
       # parser may crash.  Needs the C and Go CLIs built above for its CLI cells.
       - name: DER parser differential
         run: bash CliTest/test_der_reader_diff.sh
+
+      # TODO #406 / #407: the eight raw-body PEMs (ZKP-NL, ZKP-RNL, HCRED) have no
+      # DER and no in-process reader to compare, so their seeded mutations go
+      # through the four real CLIs: one result per case, and no CLI may crash.
+      - name: Raw-body PEM differential
+        run: bash CliTest/test_raw_body_diff.sh
 
       # TODO #269: --digest is a 4-way concern for the same reason. The gap it
       # guards (Java had no --digest at all) was invisible to every existing

@@ -26952,3 +26952,70 @@ text or order fault per parser fails it (164 to 1,140 disagreements).
 Status: **DONE v18.0.5** — one DER refusal order and text in all four CLIs (SPEC.md section 10.2), compared by the DER differential.
 
 ---
+
+### #406: nothing compares the four CLIs' raw-body PEM readers beyond named cases
+
+#403 and #404 hold the PEM reader and the DER parser to one verdict.  Nine labels carry
+no DER at all: their body is packed bytes, a 4-byte `n` (and for proofs a round count,
+and for HCRED a `W`) followed by fixed-size blocks and, in the proofs, per-round length
+bytes (`len_p1` / `len_p2`, `gates_len`, `has_share2`, `has_aux`).  They are ZKP-RNL PROOF,
+ZKP-NL PRIVATE KEY / PUBLIC KEY / PROOF, ZKP-NL-PP SIGNATURE, and HCRED PRIVATE KEY /
+PUBLIC KEY / PROOF.  Each CLI reads them with its own hand-written code (in C, inline in
+the subcommands, exiting on the first fault), held together only by the named cases of
+`lib_malformed.sh` and `test_canonical_encoding_matrix.sh`.
+
+Add a differential for them: seeded mutations of each artifact (header fields at edge
+values, the per-round length bytes, truncation, trailing bytes, random byte edits), each
+read by all four CLIs through the subcommand that reads it, and a test failing on any
+artifact the CLIs give a different verdict (accepted / verification failed / refused) or,
+for a key, a different output.  A coverage floor over the outcomes, controls that fire,
+and a pre-change run.  If it finds an artifact one CLI accepts and another refuses, that
+is reported before any reader is changed.
+
+Resolution: `CliTest/test_raw_body_diff.sh` (CI `cross-lang-compat`) and
+`Fuzz/raw_body_diff/gen_cases.py`.  The prototype's findings were reported before any
+reader changed and filed as #407 (crashes and over-reads, fixed alongside) and #408 (the
+encodings some CLIs accept, MAJOR).  The test fails on a crash, a disagreement outside
+#408's recorded shapes, or a coverage floor per artifact; named cells check #407's
+refusals by text; v18.0.5's readers fail it (16 crashes, 1 disagreement, 8 cells).
+
+Status: **DONE v18.0.6** — the raw-body differential, through all four CLIs, in CI.
+
+---
+
+### #407: four raw-body PEM readers crash or over-read on a short length byte
+
+#406's prototype (about 2,200 mutations of the nine raw-body artifacts, read by all four
+CLIs, C under ASan) found readers that crash instead of refusing.  Every one of these
+inputs is already rejected or crashes today, so refusing them cleanly changes no verdict
+on a well-formed file: this is a PATCH.
+
+| input | C | Go | Python | Java |
+|---|---|---|---|---|
+| ZKBoo view one byte short (`len_p1`/`len_p2` below the view size for n) | heap over-read | panic, index out of range | IndexError traceback | `Index … out of bounds` |
+| ZKB++ `gates_len` below ceil((n-1)/8) (n=64, gates_len=0) | heap over-read | fails verification | IndexError in `_zkpp_unpack_bits` | fails verification |
+| truncated ZKP-NL / HCRED key and proof bodies | refuses | refuses | refuses | uncaught `Index N out of bounds for length M` (about 80 cases) |
+| HCRED proof `W` out of range | no bound, "Verification FAILED (proof)" | `HCRED proof: W out of range (N)` | same | same |
+
+The two C over-reads are in verifiers, on bytes the signer controls (`zkp_nl_unpack_proof`,
+`zkp_nl_pp_unpack_proof`; `zkp_nl_pp_verify` computes the gate length from n and reads
+that many bytes whatever `gates_len` says).
+
+Fix: each reader refuses a view shorter than its size for n, a gate field shorter than
+ceil((n-1)/8), and a body that ends before its last block, with one text in all four
+CLIs; Java bounds-checks before indexing instead of surfacing the exception; C bounds `W`
+with the text the others use.  Ship it with #406's differential, which asserts no crash
+(traceback, panic, `Index … out of bounds`, ASan report) on any mutation and records
+#408's re-encodings as known findings, so it passes on the patched behaviour and #408
+flips them.  Accept-controls: the unmutated fixtures verify in all four.
+
+Resolution: one text for a short per-round field in all four CLIs (SPEC.md section
+10.3), checked at the length byte: `malformed PEM 'LABEL': round J FIELD is L bytes, n=N
+needs M` (C `die_raw_short`, Go `rawShort`, Python `_packed_short`, Java
+`Codec.rawShort`); C bounds `W` with the others' text; Java's raw-body reads are
+bounds-checked (`rd4`, `readBe32`, `fromLE`, `u8`).  #406's test checks each refusal at
+n = 8 and 64 and finds no crash, the C side under ASan included.
+
+Status: **DONE v18.0.6** — short views and gate fields refused cleanly, C bounds HCRED W, Java raw reads bounds-checked.
+
+---
