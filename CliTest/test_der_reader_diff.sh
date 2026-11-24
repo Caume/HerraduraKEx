@@ -8,24 +8,24 @@
 # length, tag, sign and trailing-byte rules, and byte edits of the DER in every
 # KAT PEM) go to one driver per language (Fuzz/der_diff/), each running its
 # CLI's generic DER steps in process.  The test fails when two parsers:
-#   * give an input different verdicts (one accepts, another refuses), or
-#   * accept it with different values, encoded widths or leads (TODO #373);
+#   * give an input different verdicts (one accepts, another refuses),
+#   * accept it with different values, encoded widths or leads (TODO #373), or
+#   * refuse it with different TEXTS (TODO #405: SPEC.md section 10.2 names the
+#     one refusal a malformed SEQUENCE gets, the first fault of a left-to-right
+#     walk, and every CLI's der_seq_check / DerSeqCheck / derSeqCheck prints it);
 # and when any parser CRASHES (an exception that is not its refusal), even if
 # the others agree.
 #
-# Refusal TEXTS are not compared: the structural ones were never one set across
-# the four, and their checks run in a different order in each, so a file
-# breaking two rules is refused for a different one.  Only #372's and #373's
-# texts are shared (see TODO #404).
-#
 # Coverage: the agreed cases must reach an accept, an accept of more than 16
-# items (past the C CLI's store), and each kind of refusal (named by the Go
-# parser's text), so a drifting generator cannot pass vacuously.
+# items (past the C CLI's store), and each of section 10.2's refusals, so a
+# drifting generator cannot pass vacuously.
 #
-# Then three CLI cells, through the four real CLIs: a key with 17 DER items, one
-# whose 17th item is negative, and one with an INTEGER length past 2^31.  Before
-# TODO #404 the C CLI stopped at item 16 (it said "16 DER items" and never saw
-# item 17) and the Java CLI crashed on the third ("error: -1").
+# Then CLI cells, through the four real CLIs, each refusal checked by its full
+# text: a key with 17 DER items, one whose 17th item is negative, one with an
+# INTEGER length past 2^31 (before TODO #404 the C CLI stopped at item 16 and the
+# Java CLI crashed on it, "error: -1"), and one structural fault per kind of
+# section 10.2 refusal, the envelope `pkey --decrypt` reads among them (before
+# TODO #405 the C CLI named none of them: "cannot parse DER from: PATH").
 #
 # HKX_DERDIFF_SEEDS (default "1 2 3") and HKX_DERDIFF_COUNT (default 20000 per
 # seed) size the run.  Claimed by ci.yml's cross-lang-compat job.
@@ -83,21 +83,20 @@ import sys
 tmp, count = sys.argv[1], int(sys.argv[2])
 k = sys.argv.index('--')
 langs, seeds = sys.argv[3:k], sys.argv[k + 1:]
-oracle = 'go' if 'go' in langs else None     # coverage is named by Go's texts
+oracle = langs[0]                  # the texts agree, so any parser names the kind
 
-KINDS = ['OK', 'OK, more than 16 items', 'bytes after the DER SEQUENCE',
-         'DER length not in its shortest form', 'is a negative INTEGER', 'is an empty INTEGER',
-         'DER: not a SEQUENCE', 'DER: SEQUENCE body truncated', 'DER: expected INTEGER tag',
-         'DER: INTEGER length exceeds SEQUENCE body', 'length field too large',
-         'empty length field']
+KINDS = ['OK', 'OK, more than 16 items', 'not a DER SEQUENCE', 'DER length field truncated',
+         'DER length field longer than 4 bytes', 'DER length not in its shortest form',
+         'DER SEQUENCE body truncated', 'bytes after the DER SEQUENCE', 'is not an INTEGER',
+         'runs past the DER SEQUENCE', 'is an empty INTEGER', 'is a negative INTEGER']
 seen = dict.fromkeys(KINDS, 0)
 
 def msg(line):
     f = line.split(' ', 1)
     return bytes.fromhex(f[1]).decode('utf-8', 'replace') if f[0] == 'ERR' and len(f) > 1 else ''
 
-def key(line):                                   # what must agree
-    return line if line.startswith('OK') else 'ERR'
+def key(line):                     # what must agree: the whole line (TODO #405)
+    return line
 
 bad = crashes = 0
 for s in seeds:
@@ -120,8 +119,6 @@ for s in seeds:
                     r = rs[l]
                     print(f'    {l:5} ' + (r[:150] if r.startswith('OK') else 'ERR ' + msg(r)[:140]))
             continue
-        if oracle is None:
-            continue
         r = rs[oracle]
         if r.startswith('OK'):
             seen['OK'] += 1
@@ -137,15 +134,14 @@ for s in seeds:
 total = count * len(seeds)
 print(f'AGREE {total - bad} {total}')
 print(f'CRASHES {crashes}')
-if oracle:
-    for kind, n in seen.items():
-        print(f'KIND {n} {kind}')
+for kind, n in seen.items():
+    print(f'KIND {n} {kind}')
 PYEOF
 
 grep '^DIFF\|^CRASH\|^    ' "$TMP/verdict" || true
 read -r _ agree total < <(grep '^AGREE' "$TMP/verdict" || echo "AGREE 0 0")
 if [ "$total" -gt 0 ] && [ "$agree" -eq "$total" ]; then
-    pass "all ${#LANGS[@]} parsers give the same verdict, values and encodings on all $total cases (seeds: $SEEDS)"
+    pass "all ${#LANGS[@]} parsers give the same verdict, values, encodings and refusal text on all $total cases (seeds: $SEEDS)"
 else
     fail "parsers disagree on $((total - agree)) of $total cases (first ones above)"
 fi
@@ -158,10 +154,10 @@ if grep -q '^KIND' "$TMP/verdict"; then
         else fail "coverage: no agreed case reaches '$kind' (the generator no longer exercises it, or every case that did is a disagreement above)"; fi
     done < <(grep '^KIND' "$TMP/verdict")
 else
-    echo "NOTE: coverage n/a -- it is named by the Go parser's texts, and Go is not under test"
+    fail "coverage: the comparison printed no KIND lines"
 fi
 
-# ── CLI cells: past item 16, and a length past 2^31 ───────────────────────────
+# ── CLI cells: past item 16, a length past 2^31, and section 10.2's refusals ──
 declare -A CLI=()
 CLI[py]="python3 $ROOT/HerraduraCli/herradura.py"
 [ -x HerraduraCli/herradura_cli ]    && CLI[c]="$ROOT/HerraduraCli/herradura_cli"
@@ -172,46 +168,54 @@ import os, sys
 sys.path.insert(0, os.path.join(os.getcwd(), 'HerraduraCli'))
 import codec
 t, lab = sys.argv[1], 'HERRADURA HKEX-GF PRIVATE KEY'
+def put(name, der, label=lab):
+    open(f'{t}/{name}.pem', 'w').write(codec.pem_wrap(label, bytes(der)))
+i1, i2 = codec.der_int(1), codec.der_int(2)
 items = [codec.der_int(i + 1) for i in range(17)]
-open(f'{t}/k17.pem', 'w').write(codec.pem_wrap(lab, codec.der_seq(*items)))
+put('k17', codec.der_seq(*items))
 items[16] = b'\x02\x01\x83'
-open(f'{t}/k17neg.pem', 'w').write(codec.pem_wrap(lab, codec.der_seq(*items)))
-big = bytearray(codec.der_seq(codec.der_int(1), codec.der_int(2)) + b'\x02\x84\xff\xff\xff\xff')
+put('k17neg', codec.der_seq(*items))
+big = bytearray(codec.der_seq(i1, i2) + b'\x02\x84\xff\xff\xff\xff')
 big[1] = len(big) - 2
-open(f'{t}/kbig.pem', 'w').write(codec.pem_wrap(lab, bytes(big)))
+put('kbig', big)
+# one structural fault per kind of SPEC.md section 10.2 refusal
+put('knotseq', b'\x31' + codec.der_seq(i1, i2)[1:])
+put('klenlong', b'\x30\x85\x00\x00\x00\x00\x06' + i1 + i2)
+put('ktrunc', codec.der_seq(i1, i2)[:-1])
+put('klentrunc', b'\x30\x04' + i1 + b'\x02')
+put('ktag', codec.der_seq(i1, b'\x04\x01\x02'))
+# the envelope pkey --decrypt reads: field 1 is not an INTEGER
+put('kenv', codec.der_seq(i1, b'\x04\x01\x02', i1, i1, i1, i1), 'HERRADURA ENCRYPTED PRIVATE KEY')
 # the control: a real three-item key, which every CLI must read
-open(f'{t}/k3.pem', 'w').write(codec.pem_wrap(lab, codec.der_seq(
-    codec.der_int(5, 32), codec.der_int(9, 32), codec.der_int(256))))
+put('k3', codec.der_seq(codec.der_int(5, 32), codec.der_int(9, 32), codec.der_int(256)))
 PYEOF
-cell() {   # name, file, expected text ('' = must succeed)
-    local name="$1" f="$2" want="$3" l out rc
+cell() {   # name, file, expected text ('' = must succeed), command (default: pkey)
+    local name="$1" f="$2" want="$3" how="${4:-pkey}" l out rc
     for l in c go py java; do
         [ -n "${CLI[$l]:-}" ] || continue
-        out=$(${CLI[$l]} pkey --in "$TMP/$f" --pubout --out "$TMP/o_$l.pem" 2>&1) && rc=0 || rc=$?
+        if [ "$how" = decrypt ]; then
+            out=$(${CLI[$l]} pkey --decrypt --passphrase pw --in "$TMP/$f" --out "$TMP/o_$l.pem" 2>&1) && rc=0 || rc=$?
+        else
+            out=$(${CLI[$l]} pkey --in "$TMP/$f" --pubout --out "$TMP/o_$l.pem" 2>&1) && rc=0 || rc=$?
+        fi
         if [ -z "$want" ]; then
             if [ "$rc" -eq 0 ]; then pass "$name ($l)"; else fail "$name ($l): rc=$rc $out"; fi
         elif [ "$rc" -ne 0 ] && [[ "$out" == *"$want"* ]]; then pass "$name ($l)"
         else fail "$name ($l): rc=$rc, expected '$want': $out"; fi
     done
 }
+K="malformed PEM 'HERRADURA HKEX-GF PRIVATE KEY'"
 cell "a 3-item key reads (control)" k3.pem ""
-cell "17 DER items: refused with the true count" k17.pem \
-    "malformed PEM 'HERRADURA HKEX-GF PRIVATE KEY': 17 DER items, expected 3"
-cell "item 17 negative: refused at item 17" k17neg.pem \
-    "malformed PEM 'HERRADURA HKEX-GF PRIVATE KEY': field 16 is a negative INTEGER"
-for l in go py java; do        # C names a structural refusal by the file
-    [ -n "${CLI[$l]:-}" ] || continue
-    out=$(${CLI[$l]} pkey --in "$TMP/kbig.pem" --pubout --out "$TMP/o.pem" 2>&1) && rc=0 || rc=$?
-    if [ "$rc" -ne 0 ] && [[ "$out" == *"DER: INTEGER length exceeds SEQUENCE body"* ]]; then
-        pass "an INTEGER length past 2^31: refused by name ($l)"
-    else fail "an INTEGER length past 2^31 ($l): rc=$rc: $out"; fi
-done
-if [ -n "${CLI[c]:-}" ]; then
-    out=$(${CLI[c]} pkey --in "$TMP/kbig.pem" --pubout --out "$TMP/o.pem" 2>&1) && rc=0 || rc=$?
-    if [ "$rc" -ne 0 ] && [[ "$out" == *"cannot parse DER from:"* ]]; then
-        pass "an INTEGER length past 2^31: refused (c)"
-    else fail "an INTEGER length past 2^31 (c): rc=$rc: $out"; fi
-fi
+cell "17 DER items: refused with the true count" k17.pem "$K: 17 DER items, expected 3"
+cell "item 17 negative: refused at item 17" k17neg.pem "$K: field 16 is a negative INTEGER"
+cell "an INTEGER length past 2^31" kbig.pem "$K: field 2 runs past the DER SEQUENCE"
+cell "not a SEQUENCE" knotseq.pem "$K: not a DER SEQUENCE"
+cell "a 5-byte length field" klenlong.pem "$K: DER length field longer than 4 bytes"
+cell "a body past the end" ktrunc.pem "$K: DER SEQUENCE body truncated"
+cell "a length field cut off" klentrunc.pem "$K: DER length field truncated"
+cell "an item that is not an INTEGER" ktag.pem "$K: field 1 is not an INTEGER (tag 0x04)"
+cell "pkey --decrypt: an envelope item that is not an INTEGER" kenv.pem \
+    "malformed PEM 'HERRADURA ENCRYPTED PRIVATE KEY': field 1 is not an INTEGER (tag 0x04)" decrypt
 
 echo ""
 echo "Results: $PASS PASS / $FAIL FAIL (parsers: ${LANGS[*]})"

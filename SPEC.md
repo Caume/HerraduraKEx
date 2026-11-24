@@ -550,6 +550,47 @@ its text in all four CLIs, with the 79/80-character label boundary.
 `CliTest/test_pem_reader_diff.sh` adds volume: 60,000 generated inputs, each
 read by all four readers in process, which must give identical results.
 
+### 10.2 Reading the DER SEQUENCE (TODO #405)
+
+Every DER-bodied PEM (a key, a ciphertext, a signature, an envelope) is one
+SEQUENCE of INTEGERs.  Every CLI reads it with one walk, left to right
+(`der_seq_check` in C and Python, `DerSeqCheck` in Go, `Codec.derSeqCheck`
+in Java), and the first of these faults the walk meets is the refusal.  Each
+text below follows `malformed PEM 'LABEL': `, where LABEL is the PEM's.
+
+1. **The tag:** the first byte is not 0x30: `not a DER SEQUENCE`.
+2. **The SEQUENCE length**, then each INTEGER's length below, is read as it
+   is met:
+   - its first byte, or one of the bytes that byte announces, is past the
+     end (for an INTEGER, past the end of the SEQUENCE body):
+     `DER length field truncated`;
+   - it announces more than four length bytes:
+     `DER length field longer than 4 bytes`;
+   - it is not in its shortest form (long form for a length under 0x80,
+     a leading 0x00 length byte, or BER's indefinite 0x80):
+     `DER length not in its shortest form`.
+3. **The body** is longer than what follows the length:
+   `DER SEQUENCE body truncated`; shorter, with N bytes left over:
+   `N bytes after the DER SEQUENCE`.
+4. **Each item** in turn, numbered from 0 as field N:
+   - its tag is not 0x02: `field N is not an INTEGER (tag 0xTT)`, with TT the
+     tag in two lowercase hex digits;
+   - its length (rule 2), then: the content runs past the body,
+     `field N runs past the DER SEQUENCE`; there is none,
+     `field N is an empty INTEGER`; its first bit is set with no 0x00 sign
+     byte, `field N is a negative INTEGER`.
+
+Only a SEQUENCE passing all of these is counted and its fields checked, in
+the texts §10's generated tables give: the item count
+(`N DER items, expected M`, TODO #367), then each field's width, encoding
+and value (TODO #372, #373).  A file breaking several rules is refused for
+the first in this order, and the order and texts are the same in all four
+CLIs, `pkey --decrypt`'s envelope included.  The conformance test is
+`CliTest/test_der_reader_diff.sh`: 60,000 generated inputs read by all four
+parsers in process, which must give identical results, refusal texts
+included, and each refusal above checked by its text through the four real
+CLIs.
+
 ## 11. Code-Based (Stern ZKID) Variants
 
 HPKS-Stern-F and HPKE-Stern-F/-KEM (§9, `hpks-stern`/`hpke-stern`/

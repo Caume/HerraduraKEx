@@ -305,18 +305,6 @@ static int der_seq_enc(const uint8_t **items, const size_t *item_lens,
     return 0;
 }
 
-/* Bytes after the outer DER SEQUENCE in der[0..len-1]: >= 0, or -1 when der
- * does not start with a well-formed SEQUENCE header whose body fits.  Every
- * CLI refuses a non-zero count (TODO #372), so an artifact has one encoding. */
-static long der_seq_trailing(const uint8_t *der, size_t len)
-{
-    size_t consumed, body_len;
-    if (!len || der[0] != 0x30) return -1;
-    if (_der_dec_len(der + 1, len - 1, &body_len, &consumed) < 0) return -1;
-    if (body_len > len - 1 - consumed) return -1;
-    return (long)(len - 1 - consumed - body_len);
-}
-
 /* TODO #373: how each INTEGER of a DER SEQUENCE is ENCODED, which
  * der_parse_seq's sign-byte strip forgets.  For item i: ew[i] is its encoded
  * width (content length less a 0x00 the set top bit needs) and lz[i] is 1 when
@@ -414,6 +402,82 @@ static int der_parse_seq(const uint8_t *der, size_t len,
     }
     if (n_out) *n_out = n;
     return n > max_items ? DER_ERR_ITEMS : 0;
+}
+
+/* TODO #405: the DER reader's refusal, specified (SPEC.md section 10.2).  One
+ * left-to-right walk of a SEQUENCE of INTEGERs; the first fault met is the
+ * refusal, in the text all four CLIs print.  A length field at d[p], read no
+ * further than lim: 0 when well formed and minimal (*v the length, *c the
+ * bytes it took), 1 truncated, 2 longer than 4 bytes, 3 not in its shortest
+ * form.  der_seq_check returns 0 on a well-formed SEQUENCE, else 1 with the
+ * refusal in msg.  Run it before der_seq_scan and der_parse_seq, which then
+ * cannot fail. */
+static int _der_read_len(const uint8_t *d, size_t p, size_t lim, size_t *v, size_t *c)
+{
+    if (p >= lim) return 1;
+    uint8_t b = d[p];
+    if (b < 0x80) { *v = b; *c = 1; return 0; }
+    int nb = b & 0x7f, i;
+    if (nb > 4) return 2;
+    if ((size_t)nb > lim - p - 1) return 1;
+    size_t x = 0;
+    for (i = 0; i < nb; i++) x = (x << 8) | d[p + 1 + (size_t)i];
+    *v = x; *c = 1 + (size_t)nb;
+    if (nb == 0 || d[p + 1] == 0 || (nb == 1 && x < 0x80)) return 3;
+    return 0;
+}
+static int der_seq_check(const char *label, const uint8_t *der, size_t len,
+                         char *msg, size_t cap)
+{
+    static const char *const LEN_TXT[] = {
+        "", "DER length field truncated", "DER length field longer than 4 bytes",
+        "DER length not in its shortest form" };
+    size_t v = 0, c = 0, off;
+    int r, n;
+    if (!len || der[0] != 0x30) {
+        snprintf(msg, cap, "malformed PEM '%s': not a DER SEQUENCE", label);
+        return 1;
+    }
+    if ((r = _der_read_len(der, 1, len, &v, &c)) != 0) {
+        snprintf(msg, cap, "malformed PEM '%s': %s", label, LEN_TXT[r]);
+        return 1;
+    }
+    off = 1 + c;
+    if (v > len - off) {
+        snprintf(msg, cap, "malformed PEM '%s': DER SEQUENCE body truncated", label);
+        return 1;
+    }
+    if (v < len - off) {
+        snprintf(msg, cap, "malformed PEM '%s': %zu bytes after the DER SEQUENCE",
+                 label, len - off - v);
+        return 1;
+    }
+    for (n = 0; off < len; n++) {
+        if (der[off] != 0x02) {
+            snprintf(msg, cap, "malformed PEM '%s': field %d is not an INTEGER (tag 0x%02x)",
+                     label, n, der[off]);
+            return 1;
+        }
+        if ((r = _der_read_len(der, off + 1, len, &v, &c)) != 0) {
+            snprintf(msg, cap, "malformed PEM '%s': %s", label, LEN_TXT[r]);
+            return 1;
+        }
+        off += 1 + c;
+        if (v > len - off) {
+            snprintf(msg, cap, "malformed PEM '%s': field %d runs past the DER SEQUENCE", label, n);
+            return 1;
+        }
+        if (v == 0) {
+            snprintf(msg, cap, "malformed PEM '%s': field %d is an empty INTEGER", label, n);
+            return 1;
+        }
+        if (der[off] & 0x80) {
+            snprintf(msg, cap, "malformed PEM '%s': field %d is a negative INTEGER", label, n);
+            return 1;
+        }
+        off += v;
+    }
+    return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -733,6 +797,31 @@ static int herradura_codec_selftest(void)
         assert(n_out == 2);
         assert(vlens[0] == 1 && vals[0][0] == 42);
         assert(vlens[1] == 2 && vals[1][0] == 0x01 && vals[1][1] == 0x00);
+
+        /* TODO #405: der_seq_check, the accept-control first (the known-answer
+         * SEQUENCE above), then one input per refusal, each with its text. */
+        {
+            static const struct { const char *hex; size_t n; const char *want; } C[] = {
+                { "\x31\x00", 2, "not a DER SEQUENCE" },
+                { "\x30", 1, "DER length field truncated" },
+                { "\x30\x85\x00\x00\x00\x00\x00", 7, "DER length field longer than 4 bytes" },
+                { "\x30\x81\x03\x02\x01\x01", 6, "DER length not in its shortest form" },
+                { "\x30\x04\x02\x01\x01", 5, "DER SEQUENCE body truncated" },
+                { "\x30\x03\x02\x01\x01\x00\x00", 7, "2 bytes after the DER SEQUENCE" },
+                { "\x30\x06\x02\x01\x01\x04\x01\x01", 8, "field 1 is not an INTEGER (tag 0x04)" },
+                { "\x30\x04\x02\x01\x01\x02", 6, "DER length field truncated" },
+                { "\x30\x06\x02\x01\x01\x02\x02\x01", 8, "field 1 runs past the DER SEQUENCE" },
+                { "\x30\x05\x02\x01\x01\x02\x00", 7, "field 1 is an empty INTEGER" },
+                { "\x30\x06\x02\x01\x01\x02\x01\x80", 8, "field 1 is a negative INTEGER" },
+            };
+            char m[160], w[160];
+            assert(der_seq_check("L", seq, seq_len, m, sizeof m) == 0);
+            for (size_t i = 0; i < sizeof C / sizeof C[0]; i++) {
+                snprintf(w, sizeof w, "malformed PEM 'L': %s", C[i].want);
+                assert(der_seq_check("L", (const uint8_t *)C[i].hex, C[i].n, m, sizeof m) == 1);
+                assert(strcmp(m, w) == 0);
+            }
+        }
 
         /* TODO #404: past max_items, every item is still walked.  Three
          * INTEGERs read with room for two: DER_ERR_ITEMS and the true count,

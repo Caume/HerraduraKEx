@@ -37,8 +37,8 @@ Run everything with a short time budget per target:
   sign and trailing-byte rules, and byte edits of the DER in every KAT PEM; one driver
   per parser (`der_diff_c.c`, `go/main.go`, `der_diff_py.py`, `herradurakex/DerDiff.java`)
   runs its CLI's generic DER steps.  `CliTest/test_der_reader_diff.sh` fails on a
-  different verdict, different values or encodings, or any crash; refusal texts are not
-  compared (they were never one set across the four).
+  different verdict, different values or encodings, a different refusal text (SPEC.md
+  section 10.2, TODO #405), or any crash.
 - **`herradura/codec_fuzz_test.go`** (`FuzzPemUnwrap`, `FuzzDerParseSeq`) — the Go codec
   equivalents in `herradura/codec.go`. Run directly with `go test -fuzz=<name>` from
   the repo root, or via `run_fuzz.sh`.

@@ -51,10 +51,15 @@ static void die_encrypted_key(const char *path)
     exit(1);
 }
 
-/* TODO #372: nothing may follow a PEM's DER SEQUENCE; same text in all four CLIs. */
-static void die_der_trailing(const char *label, long trail)
+/* TODO #405: the first structural fault of a DER SEQUENCE, in the text all
+ * four CLIs print (SPEC.md section 10.2).  Covers #372's trailing bytes and
+ * #373's lengths and signs, so der_scan_or_die and der_parse_seq cannot fail
+ * after it. */
+static void der_check_or_die(const char *label, const uint8_t *der, size_t len)
 {
-    fprintf(stderr, "malformed PEM '%s': %ld bytes after the DER SEQUENCE\n", label, trail);
+    char msg[256];
+    if (!der_seq_check(label, der, len, msg, sizeof msg)) return;
+    fprintf(stderr, "%s\n", msg);
     exit(1);
 }
 /* TODO #373: a SEQUENCE's lengths and signs have one encoding each.  Fills
@@ -877,9 +882,7 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     size_t vlens[16], ew[16];
     unsigned char lz[16];
     int n_out = 0;
-    long trail = der_seq_trailing(body, blen);
-    if (trail > 0)                                   /* TODO #372 */
-        die_der_trailing(PEM_ENC_PRIV, trail);
+    der_check_or_die(PEM_ENC_PRIV, body, blen);          /* TODO #405 */
     der_scan_or_die(PEM_ENC_PRIV, body, blen, ew, lz);   /* TODO #373 */
     int drc = der_parse_seq(body, blen, vals, vlens, 16, &n_out);
     if (drc == DER_ERR_ITEMS) {                      /* TODO #404: the true count */
@@ -1269,9 +1272,7 @@ static void pem_key_load(PemKey *k, const char *path)
      * exactly the failure mode #274 found for the flag itself. */
     if (strcmp(k->label, PEM_ENC_PRIV) == 0)
         die_encrypted_key(path);
-    long trail = der_seq_trailing(k->der, k->der_len);
-    if (trail > 0)                                   /* TODO #372 */
-        die_der_trailing(k->label, trail);
+    der_check_or_die(k->label, k->der, k->der_len);   /* TODO #405 */
     der_scan_or_die(k->label, k->der, k->der_len, k->ew, k->lz);   /* TODO #373 */
     int prc2 = der_parse_seq(k->der, k->der_len, k->vals, k->vlens, 16, &k->n_items);
     if (prc2 == DER_ERR_ITEMS) {                     /* TODO #404: the true count */

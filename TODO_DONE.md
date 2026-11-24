@@ -26917,3 +26917,38 @@ checks; unifying them, as #398 and #400 did for PEM, is left for a later item.
 Status: **DONE v18.0.4** — a 60,000-case differential holds the four DER parsers to one verdict; C reads past item 16 and Java no longer crashes on a length past 2^31.
 
 ---
+
+### #405: the four CLIs refuse a malformed DER SEQUENCE with different texts
+
+#404's differential holds the four DER parsers to one verdict, but not to one REASON.
+Only the item count (#367), the trailing bytes (#372) and the length and sign encodings
+(#373) have a shared text; every other structural fault (no SEQUENCE tag, a truncated or
+over-long length field, a body past the end, an item that is not an INTEGER, an INTEGER
+past the body) is worded differently in each CLI.  The C CLI says only
+`cannot parse DER from: PATH` (and `pkey --decrypt` only `malformed ENCRYPTED PRIVATE
+KEY envelope`), Go and Java print bare `DER: ...` texts without the label, and Python
+has its own.  The checks also run in a different order (C and Go: trailing bytes, the
+encoding scan, the parse; Java: trailing, parse, scan; Python: parse, scan), so a
+SEQUENCE breaking two rules is refused for a different one in each CLI.
+
+Specify the DER reader the way #398 and #400 specified the PEM reader: one left-to-right
+walk, the first fault met is the refusal, one text for each, prefixed with the PEM label
+as #372's and #373's already are.  Implement it once per language, call it first in every
+CLI's DER loader, write it up in SPEC.md beside section 10.1, and make
+`test_der_reader_diff.sh` compare the refusal TEXT as well as the verdict.
+
+Refusal text only: nothing accepted today is refused, nothing refused is accepted.
+
+Resolution: SPEC.md section 10.2 specifies the walk and its ten texts.  One function per
+language runs it first in every CLI's DER loader: `der_seq_check` (C, Python), `DerSeqCheck`
+(Go), `Codec.derSeqCheck` (Java); it replaces the three `*_trailing` helpers.
+`test_der_reader_diff.sh` now compares the whole result line, refusal text included, its
+coverage floor is named by section 10.2's texts, and CLI cells check six of them, and the
+`pkey --decrypt` envelope, by full text in all four CLIs.  Over the test's 60,000 inputs
+every parser gives v18.0.4's verdict and values on every case, so only texts changed.
+Controls: v18.0.4 disagrees on 8,362 of 20,000 texts and fails every new cell; one planted
+text or order fault per parser fails it (164 to 1,140 disagreements).
+
+Status: **DONE v18.0.5** — one DER refusal order and text in all four CLIs (SPEC.md section 10.2), compared by the DER differential.
+
+---

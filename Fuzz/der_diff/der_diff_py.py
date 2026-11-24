@@ -5,7 +5,8 @@ differential (TODO #404; CliTest/test_der_reader_diff.sh drives it).
 stdin: one case per line, the DER bytes in hex.  stdout: one line per case,
 "OK v/w/z ..." (value in minimal hex, encoded width, lead) or
 "ERR <message hex>".  The steps are codec._der_count's for the label "L",
-without the item count: der_parse_seq, then der_scan.  An exception other than
+without the item count: der_parse_seq (which runs der_seq_check first, TODO
+#405), then der_scan.  An exception other than
 ValueError is printed as a refusal named EXC, so the test sees it.
 """
 import os

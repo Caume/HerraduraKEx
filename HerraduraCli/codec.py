@@ -167,13 +167,78 @@ def _der_count(label: str, data: bytes, want: int, gf_idx: int = None) -> list:
     return ints
 
 
+def _der_read_len(d: bytes, p: int, lim: int):
+    """TODO #405: the DER length field at d[p], read no further than lim.
+    (fault, length, bytes taken): fault 0 well formed and minimal, 1 truncated,
+    2 longer than 4 bytes, 3 not in its shortest form."""
+    if p >= lim:
+        return 1, 0, 0
+    b = d[p]
+    if b < 0x80:
+        return 0, b, 1
+    nb = b & 0x7f
+    if nb > 4:
+        return 2, 0, 0
+    if nb > lim - p - 1:
+        return 1, 0, 0
+    x = int.from_bytes(d[p + 1:p + 1 + nb], 'big')
+    if nb == 0 or d[p + 1] == 0 or (nb == 1 and x < 0x80):
+        return 3, x, 1 + nb
+    return 0, x, 1 + nb
+
+
+_DER_LEN_TEXT = ('', 'DER length field truncated', 'DER length field longer than 4 bytes',
+                 'DER length not in its shortest form')
+
+
+def der_seq_check(data: bytes, label: str):
+    """TODO #405: the DER reader's refusal, specified (SPEC.md section 10.2).
+    One left-to-right walk of a SEQUENCE of INTEGERs; the first fault met is
+    the refusal, in the text all four CLIs print.  Returns None for a
+    well-formed SEQUENCE, else that text; der_parse_seq and der_scan cannot
+    fail after it."""
+    where = f"malformed PEM '{label}': "
+    if not data or data[0] != 0x30:
+        return where + 'not a DER SEQUENCE'
+    f, v, c = _der_read_len(data, 1, len(data))
+    if f:
+        return where + _DER_LEN_TEXT[f]
+    off = 1 + c
+    if v > len(data) - off:
+        return where + 'DER SEQUENCE body truncated'
+    if v < len(data) - off:
+        return where + f'{len(data) - off - v} bytes after the DER SEQUENCE'
+    n = 0
+    while off < len(data):
+        if data[off] != 0x02:
+            return where + f'field {n} is not an INTEGER (tag 0x{data[off]:02x})'
+        f, v, c = _der_read_len(data, off + 1, len(data))
+        if f:
+            return where + _DER_LEN_TEXT[f]
+        off += 1 + c
+        if v > len(data) - off:
+            return where + f'field {n} runs past the DER SEQUENCE'
+        if v == 0:
+            return where + f'field {n} is an empty INTEGER'
+        if data[off] & 0x80:
+            return where + f'field {n} is a negative INTEGER'
+        off += v
+        n += 1
+    return None
+
+
 def der_parse_seq(data: bytes, label: str = None) -> list:
     """Decode a DER SEQUENCE of INTEGERs; return list of Python ints.
 
     Raises ValueError on any malformed input (never lets an IndexError
     escape from an attacker-controlled length field), including bytes after
     the SEQUENCE (TODO #372): every artifact has exactly one encoding.  label,
-    when given, names the PEM in that message, as every CLI's loader does."""
+    when given, runs der_seq_check first (TODO #405), so a malformed SEQUENCE
+    is refused in the text every CLI's loader prints."""
+    if label is not None:
+        msg = der_seq_check(data, label)
+        if msg:
+            raise ValueError(msg)
     if not data:
         raise ValueError("Empty DER input")
     if data[0] != 0x30:
