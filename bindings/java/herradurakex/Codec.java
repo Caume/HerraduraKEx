@@ -227,6 +227,15 @@ public final class Codec {
         String el = t.substring(es, p);
         if (!el.equals(label)) {
             if (el.length() > PEM_LABEL_MAX) el = el.substring(0, PEM_LABEL_MAX);
+            // Echoed with every character outside 0x20-0x7E as '?' (TODO #403): the
+            // END label was never screened, and raw it reached stderr differently
+            // per CLI.  readString's US-ASCII read makes each non-ASCII byte one U+FFFD.
+            StringBuilder shown = new StringBuilder(el.length());
+            for (int i = 0; i < el.length(); i++) {
+                char c = el.charAt(i);
+                shown.append(c >= 0x20 && c <= 0x7E ? c : '?');
+            }
+            el = shown.toString();
             throw pemErr("PEM: END label '" + el + "' does not match BEGIN label '" + label + "'");
         }
         p += 5;

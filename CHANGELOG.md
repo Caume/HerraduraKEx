@@ -2,7 +2,38 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
-## [18.0.2] - 2026-11-23
+## [18.0.3] - 2026-11-23
+
+**A differential test of the four PEM readers, and the one disagreement it found (TODO
+#403).** SPEC.md §10.1 says every reader gives a file the same verdict. Until now only
+`test_malformed_pem_matrix.sh`'s ~100 named cases checked that; the fuzz harnesses check
+only that a reader does not crash, and none covered Java.
+
+- **The disagreement:** the `PEM: END label 'E' does not match BEGIN label 'B'` refusal
+  echoed the END label raw, and unlike the BEGIN label it is never screened. So the four
+  CLIs wrote different bytes for one file: an `0xE9` in it reached stderr as `E9` from C
+  and Go, `C3 A9` from Python (its latin-1 read, UTF-8 out) and `EF BF BD` from Java (its
+  US-ASCII read). C's text stopped at a NUL; the others carried the NUL, and any control
+  byte, such as a terminal escape, onto stderr. All four now show each character outside
+  0x20-0x7E as `?`. No file reads differently; only that one refusal text changes, and only
+  for a label holding such a byte. SPEC.md §10.1 step 4 says so, and the C codec self-test
+  pins it (a label with `0xE9`, NUL and ESC).
+- **New `CliTest/test_pem_reader_diff.sh`**, in CI's `cross-lang-compat` job:
+  - `Fuzz/pem_diff/gen_cases.py` writes 20,000 seeded inputs per seed (three seeds).
+    Half are blocks assembled part by part, each part usually well formed and sometimes
+    not, so most cases break zero or one §10.1 rule. Half are one to four byte edits of
+    every `KAT/pem/*.pem`.
+  - One driver per reader (`Fuzz/pem_diff/`: C, Go, Python, Java) reads the bytes as its
+    CLI reads a file and answers with the label and DER or the refusal text, in process.
+    60,000 cases take about 40 s.
+  - It fails on any case two readers answer differently, printing the seed and index.
+  - It fails unless the agreed cases reach an accept and all twelve §10.1 refusals, so a
+    generator that drifts cannot pass vacuously. About 15% of cases are accepted.
+- **Shown to fire:** on the v18.0.2 readers, 565 of 60,000 cases disagree, every one on the
+  echoed END label. With one reader changed at a time, the test fails: Python accepting an
+  80-character label (169 of 20,000 cases), Java skipping the pad-bits check (291), Go
+  reading text after the END line (1,019). A 6-case run fails the coverage floor.
+
 
 **SPEC.md says what a PEM reader accepts (TODO #402).** Its PEM bullet described only
 the writer. The reader grammar all four CLIs share since #398 and #400 was written down

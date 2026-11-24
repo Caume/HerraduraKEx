@@ -26829,3 +26829,45 @@ four CLIs on a trailing-text file and a mismatched-label file.
 Status: **DONE v18.0.2** — SPEC.md §10.1 specifies the PEM reader, its check order and its refusal texts.
 
 ---
+
+### #403: nothing compares the four PEM readers beyond the hand-picked cases
+
+SPEC.md §10.1 (TODO #402) says every reader gives a file the same verdict: the same
+label and DER, or the same refusal text.  `CliTest/test_malformed_pem_matrix.sh` checks
+that on about 100 hand-picked files.  The fuzz harnesses (`Fuzz/fuzz_pem_unwrap.c`,
+`fuzz_b64_decode.c`, `fuzz_codec_py.py`, `herradura/codec_fuzz_test.go`) check only that a
+reader does not crash, each on its own, and none covers Java.  #400 is what that leaves:
+C, Go and Java accepted files Python refused, and nothing noticed until the readers were
+compared by hand.
+
+Add a differential: one seeded generator of PEM-shaped input (blocks assembled to
+straddle each §10.1 rule, and byte-level mutations of the KAT PEMs), one in-process driver
+per reader fed the bytes as its CLI reads a file, and a test failing on any case two
+readers answer differently.  It must reach every §10.1 outcome, so a generator that
+drifts cannot pass vacuously, and be shown to fire on a planted one-reader difference.
+Run it in `cross-lang-compat`.  Test-only unless it finds a disagreement: PATCH.
+
+Resolution (v18.0.3).  `CliTest/test_pem_reader_diff.sh` builds four in-process drivers
+(`Fuzz/pem_diff/pem_diff_c.c`, `go/main.go`, `pem_diff_py.py`, `PemDiff.java`), each fed
+the bytes as its CLI reads a file (C raw, Go `string(bytes)`, Python latin-1, Java
+US-ASCII) and printing the label and DER, or the refusal text encoded as the CLI writes
+it.  `Fuzz/pem_diff/gen_cases.py` generates the inputs: 20,000 per seed, seeds 1 to 3,
+half assembled part by part with each part usually well formed, half byte edits of every
+KAT PEM.  The test fails on any disagreement, and unless the agreed cases reach an accept
+and all twelve §10.1 refusals.  It runs in `cross-lang-compat`, about 40 s.
+
+Its first run found one disagreement, which the matrix's ASCII-only mismatch case could
+not: the END-label refusal echoed the END label raw.  An `0xE9` in it reached stderr as
+`E9` (C, Go), `C3 A9` (Python) or `EF BF BD` (Java); C stopped at a NUL; control bytes
+went to the terminal.  All four now show each character outside 0x20-0x7E as `?`
+(SPEC.md §10.1 step 4; a C self-test case pins it).  Only that refusal text changes, so
+PATCH.
+
+Negative controls: against the v18.0.2 readers 565 of 60,000 cases disagree, all on that
+message.  A planted one-reader change fails it each time: Python's label limit at 80
+(169 of 20,000), Java without the pad-bits check (291), Go reading text after END
+(1,019).  A 6-case run fails the coverage floor.
+
+Status: **DONE v18.0.3** — a 60,000-case differential holds the four PEM readers to one verdict; the END-label refusal no longer echoes raw bytes.
+
+---
