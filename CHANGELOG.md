@@ -2,6 +2,56 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [19.0.0] - 2026-11-24
+
+**BREAKING (CLI accept surface): the raw-body ZKP-NL and HCRED files must be in their
+writer's encoding (TODO #408; MIGRATING.md section 52).** #406's differential, and a
+second probe at n = 12 (where an n-bit field has bits above n), found valid artifacts
+re-encoded in ways no CLI writes that some or all of the four CLIs still accepted:
+
+| re-encoding of a valid artifact | before |
+|---|---|
+| ZKBoo view, ZKB++ gate field one byte long | all verify; the long gate field only in C |
+| ZKB++ `has_share2` = 2; a `share2` sent with e = 2 | all verify |
+| ZKB++ proof `n` of 13 (or 1) against an n = 12 key | Go and Python verify; C and Java refuse |
+| a bit above n in a ZKBoo view share, ZKB++ `out_e`, a ZKP-NL private key's A | all accept |
+| an HCRED private key coefficient not below q / p | all accept; C writes a different public key |
+| an HCRED public key or proof value + q | all verify |
+| an HCRED proof aux block its challenge does not open | all verify |
+
+Every one is now refused, with one text in all four CLIs (SPEC.md section 10.3, rewritten):
+
+- **Lengths:** C `die_raw_len`, Go `rawLen`, Python `_packed_len`, Java `Codec.rawLen`
+  (#407's `*_short` helpers) refuse any length other than the size n fixes.
+- **Flags:** a ZKB++ `has_share2` must be (e != 2); an HCRED `has_aux` 0 or 1. Every
+  HCRED verifier (`herradura.h`, `herradura/herradura.go`, the Python suite,
+  `Hcred.java`) also fails a round with an aux block its challenge does not open.
+- **Bits above n** in every n-bit field: `raw_bits_or_die` / `rawBits` / `_packed_bits` /
+  `Codec.rawBits`.
+- **HCRED values**, keys and proofs, the first in wire order:
+  `value V at byte OFF is not below Q` (`hcred_vals_or_die` / `hcredVals` / `_hcred_vals`
+  / `Codec.hcredVals`, and a proof walker in each).
+- **Proof n:** `verify` compares the proof's n with the key's before reading the body,
+  `verify: proof n mismatch with pubkey n (P vs K)`, in all four (Go and Python did not
+  compare for ZKB++; C printed no numbers).
+
+No CLI writes any of these, so no file a CLI produced becomes unreadable: every writer's
+n = 12 ZKBoo and ZKB++ signature verifies in all four CLIs, and the pinned PEM KATs read
+unchanged.
+
+**`CliTest/test_raw_body_diff.sh`** drops its KNOWN set-aside: any disagreement now fails
+it. Its ZKP-NL fixtures move to n = 12; the comparison's negative control is a planted
+verdict change, which must be reported as exactly one disagreement; a ZKB++ fixture with
+rounds of both kinds and an HCRED proof with and without aux blocks are written as
+accept-controls (signed again until they have both, a choice of fixture). 28 cells check
+#407's and #408's refusals by full text at n = 12 and 64, and the unopened aux block as a
+failed verification. Against v18.0.6 it fails 21 checks (every #408 cell, and 4 generated
+cases the CLIs answer differently); with the fix, 61 PASS.
+
+**New TODO #409:** a ZKBoo signature still verifies with the gate-byte bits and the share
+bit n - 1 that `zkp_nl_verify` never reads (bits 0, 1 and 3-7 of each gate byte); no
+encoding rule can close that, so it is filed for a verifier and protocol decision.
+
 ## [18.0.6] - 2026-11-24
 
 **The raw-body PEM readers refuse cleanly instead of crashing, and a differential holds

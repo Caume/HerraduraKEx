@@ -7295,7 +7295,10 @@ static int hcred_verify(const int32_t m_poly[HCRED_N],
             if ((int32_t)(((int64_t)outs->rnd[0][i]+outs->rnd[1][i]+outs->rnd[2][i]) % q) != want) result = 0;
         }
         if (!result) break;
-        if ((c == 2 || cp1 == 2) && !rd->has_aux) { result = 0; break; }
+        /* The aux block is there exactly when an opened party is party 2: a
+         * block the challenge does not open would be a second encoding of the
+         * same proof, unread (TODO #408). */
+        if ((c == 2 || cp1 == 2) != (rd->has_aux != 0)) { result = 0; break; }
 
         /* --- reconstruct tapes --- */
         hcred_tape_init(&tC,  rd->seed_c);

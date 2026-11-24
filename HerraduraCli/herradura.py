@@ -1461,6 +1461,17 @@ def _secret_arg(cmd, flag, inline, path, stdin_taken=False):
         sys.exit(f"{cmd}: --{flag}-file is not valid UTF-8")
 
 
+def _zkp_proof_n_first(sig_pem: str, n: int) -> None:
+    """TODO #408: a ZKP-NL proof over another n is not about this key, and its
+    fields are sized from its own n, so compare before reading them.  Same
+    text in all four CLIs."""
+    _lbl, body = pem_unwrap(sig_pem)
+    if len(body) >= 4:
+        pn = int.from_bytes(body[:4], 'big')
+        if pn != n:
+            raise ValueError(f"proof n mismatch with pubkey n ({pn} vs {n})")
+
+
 def _read_pem_text(path):
     # latin-1 maps each byte to one character, so a non-ASCII byte in a PEM
     # body reaches the base64 grammar and is refused there by name ("invalid
@@ -4198,6 +4209,7 @@ def cmd_verify(args):
             sys.exit(f"nl-zkboo verify: expected hpks-zkp-nl pubkey, got {their_algo!r}")
         B, y, n = their_ints
         sig_pem = _read_pem_text(sig_path)
+        _zkp_proof_n_first(sig_pem, n)
         proof_rounds, proof_n = decode_zkp_nl_proof(sig_pem)
         # A proof carries its own width; one for a different n is not a proof
         # about this key.  C checked this; Python and Go did not (TODO #275).
@@ -4222,6 +4234,7 @@ def cmd_verify(args):
             sys.exit(f"nl-zkbpp verify: expected hpks-zkp-nl pubkey, got {their_algo!r}")
         B, y, n = their_ints
         sig_pem = _read_pem_text(sig_path)
+        _zkp_proof_n_first(sig_pem, n)
         proof_rounds, _n = decode_zkp_nl_pp_proof(sig_pem)
         rounds = len(proof_rounds)
         _require_rounds(rounds, _round_floor(args, 'verify'), 'nl-zkbpp proof', 'verify')

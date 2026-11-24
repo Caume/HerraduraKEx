@@ -534,6 +534,8 @@ public final class Hcred {
             }
 
             if ((c == 2 || cp1 == 2) && (rd.auxS == null || rd.auxB == null || rd.auxD == null)) return false;
+            // ... and only then: an unopened aux block would be a second encoding (TODO #408).
+            if (!(c == 2 || cp1 == 2) && (rd.auxS != null || rd.auxB != null || rd.auxD != null)) return false;
 
             HcredTape tC = new HcredTape(rd.seedC), tC1 = new HcredTape(rd.seedC1);
             int[] shSc = (c != 2) ? tC.draws(N) : rd.auxS.clone();

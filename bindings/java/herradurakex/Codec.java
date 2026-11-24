@@ -430,15 +430,49 @@ public final class Codec {
         }
     }
 
-    /** TODO #407: a per-round length byte shorter than the field n fixes.  The
-     * verifiers read the full size for n, so a shorter field was read past;
-     * refused at the length byte, before the truncation checks.  Same text in
-     * all four CLIs. */
-    static void rawShort(String label, int round, String field, int got, int n, int need) {
-        if (got < need) {
+    /** A per-round length byte other than the size n fixes: a shorter field was
+     * read past (TODO #407), a longer one carried bytes nothing reads, a second
+     * encoding (TODO #408).  Refused at the length byte, before the truncation
+     * checks.  Same text in all four CLIs. */
+    static void rawLen(String label, int round, String field, int got, int n, int need) {
+        if (got != need) {
             throw new IllegalArgumentException("malformed PEM '" + label + "': round " + round
                 + " " + field + " is " + got + " bytes, n=" + n + " needs " + need);
         }
+    }
+
+    /** TODO #408: an nb-byte big-endian field of an n-bit value has no bit above
+     * n; the writers mask every one and nothing reads the extra bits, so a set
+     * one is a second encoding.  round < 0 for a key field. */
+    static void rawBits(String label, int round, String field, byte[] b, int off, int n) {
+        int spare = (n + 7) / 8 * 8 - n;
+        if (spare != 0 && ((u8(b, off) >> (8 - spare)) != 0)) {
+            throw new IllegalArgumentException("malformed PEM '" + label + "': "
+                + (round >= 0 ? "round " + round + " " : "") + field + " has bits above n=" + n);
+        }
+    }
+
+    /** TODO #408: every HCRED coefficient is written reduced, Z_q (3 bytes) below
+     * q = 65537 and Z_p (2 bytes) below p = 4096.  Checks cnt values of width w
+     * from off; returns the offset after them. */
+    static int hcredVals(String label, byte[] b, int off, int cnt, int w) {
+        int lim = w == 3 ? 65537 : 4096;
+        for (int i = 0; i < cnt; i++) {
+            if ((long) off + w > b.length) return off;   // the reader's own truncation check
+            int v = ((b[off] & 0xff) << 8) | (b[off + 1] & 0xff);
+            if (w == 3) v = (v << 8) | (b[off + 2] & 0xff);
+            if (v >= lim)
+                throw new IllegalArgumentException("malformed PEM '" + label + "': value " + v
+                    + " at byte " + off + " is not below " + lim);
+            off += w;
+        }
+        return off;
+    }
+
+    /** The 4-byte n a raw-body PEM leads with, or -1 if the body is shorter. */
+    public static int rawBodyN(String pem) {
+        byte[] body = pemUnwrap(pem).der;
+        return body.length >= 4 ? rd4(body, 0) : -1;
     }
 
     /** One body byte, or the wire-format error a truncated body gets (TODO #407):
@@ -1066,6 +1100,9 @@ public final class Codec {
         if (n <= 0 || n > 1 << 20) throw new IllegalArgumentException("ZKP-NL: bad n " + n);
         int nb = (n + 7) / 8;
         rawEnd(PEM_ZKP_NL_PRIV, body, 4 + 3 * nb);
+        rawBits(PEM_ZKP_NL_PRIV, -1, "A", body, 4, n);           // TODO #408
+        rawBits(PEM_ZKP_NL_PRIV, -1, "B", body, 4 + nb, n);
+        rawBits(PEM_ZKP_NL_PRIV, -1, "y", body, 4 + 2 * nb, n);
         return new ZkpNlPrivKey(new BigInteger(1, sub(body, 4, nb)),
                                 new BigInteger(1, sub(body, 4 + nb, nb)),
                                 new BigInteger(1, sub(body, 4 + 2 * nb, nb)), n);
@@ -1095,6 +1132,8 @@ public final class Codec {
         if (n <= 0 || n > 1 << 20) throw new IllegalArgumentException("ZKP-NL: bad n " + n);
         int nb = (n + 7) / 8;
         rawEnd(PEM_ZKP_NL_PUB, body, 4 + 2 * nb);
+        rawBits(PEM_ZKP_NL_PUB, -1, "B", body, 4, n);            // TODO #408
+        rawBits(PEM_ZKP_NL_PUB, -1, "y", body, 4 + nb, n);
         return new ZkpNlPubKey(new BigInteger(1, sub(body, 4, nb)),
                                new BigInteger(1, sub(body, 4 + nb, nb)), n);
     }
@@ -1137,7 +1176,8 @@ public final class Codec {
         if (n <= 0 || n > ZkpNl.MAX_N || r <= 0 || r > ZkpNl.MAX_ROUNDS)
             throw new IllegalArgumentException("ZKP-NL proof: bad header (n=" + n + ", rounds=" + r + ")");
         java.util.List<ZkpNl.ProofRound> rounds = new ArrayList<>(r);
-        int viewNeed = 2 * ((n + 7) / 8) + 32 + n - 1;   // the view the verifier reads
+        int nbv = (n + 7) / 8;
+        int viewNeed = 2 * nbv + 32 + n - 1;   // the view the verifier reads
         for (int j = 0; j < r; j++) {
             ZkpNl.ProofRound pr = new ZkpNl.ProofRound();
             pr.com0 = sub(body, off, 32); off += 32;
@@ -1145,11 +1185,17 @@ public final class Codec {
             pr.com2 = sub(body, off, 32); off += 32;
             pr.e = u8(body, off); off += 1;
             int l1 = (u8(body, off) << 8) | u8(body, off + 1); off += 2;
-            rawShort(PEM_ZKP_NL_PROOF, j, "view_p1", l1, n, viewNeed);
-            pr.viewP1 = sub(body, off, l1); off += l1;
+            rawLen(PEM_ZKP_NL_PROOF, j, "view_p1", l1, n, viewNeed);
+            pr.viewP1 = sub(body, off, l1);
+            rawBits(PEM_ZKP_NL_PROOF, j, "view_p1 share", body, off, n);
+            rawBits(PEM_ZKP_NL_PROOF, j, "view_p1 out", body, off + nbv + 32, n);
+            off += l1;
             int l2 = (u8(body, off) << 8) | u8(body, off + 1); off += 2;
-            rawShort(PEM_ZKP_NL_PROOF, j, "view_p2", l2, n, viewNeed);
-            pr.viewP2 = sub(body, off, l2); off += l2;
+            rawLen(PEM_ZKP_NL_PROOF, j, "view_p2", l2, n, viewNeed);
+            pr.viewP2 = sub(body, off, l2);
+            rawBits(PEM_ZKP_NL_PROOF, j, "view_p2 share", body, off, n);
+            rawBits(PEM_ZKP_NL_PROOF, j, "view_p2 out", body, off + nbv + 32, n);
+            off += l2;
             rounds.add(pr);
         }
         rawEnd(PEM_ZKP_NL_PROOF, body, off);
@@ -1204,14 +1250,23 @@ public final class Codec {
             ZkpNl.PpRound pr = new ZkpNl.PpRound();
             pr.comE = sub(body, off, 32); off += 32;
             pr.e = u8(body, off); off += 1;
+            rawBits(PEM_ZKP_NL_PP_SIG, j, "out_e", body, off, n);
             pr.outE = sub(body, off, nb); off += nb;
             pr.seedP1 = sub(body, off, ZkpNl.ZKPP_SEED_BYTES); off += ZkpNl.ZKPP_SEED_BYTES;
             pr.seedP2 = sub(body, off, ZkpNl.ZKPP_SEED_BYTES); off += ZkpNl.ZKPP_SEED_BYTES;
             int gl = u8(body, off); off += 1;
-            rawShort(PEM_ZKP_NL_PP_SIG, j, "gates_p2", gl, n, gatesNeed);
+            rawLen(PEM_ZKP_NL_PP_SIG, j, "gates_p2", gl, n, gatesNeed);
             pr.gatesP2 = sub(body, off, gl); off += gl;
             int has = u8(body, off); off += 1;
-            if (has != 0) { pr.share2 = sub(body, off, nb); off += nb; }
+            int needS2 = pr.e != 2 ? 1 : 0;   // the writer sends share2 exactly when e != 2 (TODO #408)
+            if (has != needS2)
+                throw new IllegalArgumentException("malformed PEM '" + PEM_ZKP_NL_PP_SIG + "': round " + j
+                    + " has_share2 is " + has + ", e=" + pr.e + " needs " + needS2);
+            if (has != 0) {
+                pr.share2 = sub(body, off, nb);
+                rawBits(PEM_ZKP_NL_PP_SIG, j, "share2", body, off, n);
+                off += nb;
+            }
             else pr.share2 = new byte[0];
             rounds.add(pr);
         }
@@ -2031,6 +2086,8 @@ public final class Codec {
         BigInteger seedH = new BigInteger(1, slice(body, off, hcredSeedNb(n))); off += hcredSeedNb(n);
         BigInteger syndr = fromLE(body, off, hcredSyndrNb(n));
         rawEnd(PEM_HCRED_PRIV, body, off + hcredSyndrNb(n));
+        hcredVals(PEM_HCRED_PRIV, body, hcredVals(PEM_HCRED_PRIV, body,
+                  hcredVals(PEM_HCRED_PRIV, body, 4, n, 3), n, 2), n, 3);   // s, C, m (TODO #408)
         return new HcredPrivKey(s, c, m, seedH, syndr, n);
     }
 
@@ -2067,6 +2124,7 @@ public final class Codec {
         BigInteger seedH = new BigInteger(1, slice(body, off, hcredSeedNb(n))); off += hcredSeedNb(n);
         BigInteger syndr = fromLE(body, off, hcredSyndrNb(n));
         rawEnd(PEM_HCRED_PUB, body, off + hcredSyndrNb(n));
+        hcredVals(PEM_HCRED_PUB, body, hcredVals(PEM_HCRED_PUB, body, 4, n, 2), n, 3);   // C, m (TODO #408)
         return new HcredPubKey(c, m, seedH, syndr, n);
     }
 
@@ -2203,7 +2261,30 @@ public final class Codec {
         Hcred.Proof proof = new Hcred.Proof();
         proof.W = w; proof.rounds = rds; proof.n = n;
         rawEnd(PEM_HCRED_PROOF, body, off);
+        hcredProofVals(body, n, rounds);                        // TODO #408
         return proof;
+    }
+
+    /** TODO #408: an accepted HCRED proof body walked in wire order: every Z_q
+     * value below q, each has_aux 0 or 1. */
+    private static void hcredProofVals(byte[] b, int n, int rounds) {
+        int rows = Hcred.rowsFor(n), nb = rows * Hcred.rowBitsFor(n), nd = n * Hcred.EPS_BITS;
+        int off = 12;
+        for (int r = 0; r < rounds; r++) {
+            off += 96;
+            for (int j = 0; j < 3; j++)
+                for (int c : new int[] { n, nb, nd, 1, rows, rows, n })
+                    off = hcredVals(PEM_HCRED_PROOF, b, off, c, 3);
+            off += 64;
+            off = hcredVals(PEM_HCRED_PROOF, b, off, 2 * n + nb + nd, 3);
+            if (off >= b.length) return;
+            int ha = b[off] & 0xff;
+            if (ha > 1)
+                throw new IllegalArgumentException("malformed PEM '" + PEM_HCRED_PROOF + "': round " + r
+                    + " has_aux is " + ha + ", expected 0 or 1");
+            off += 1;
+            if (ha == 1) off = hcredVals(PEM_HCRED_PROOF, b, off, n + nb + nd, 3);
+        }
     }
 
     // -----------------------------------------------------------------

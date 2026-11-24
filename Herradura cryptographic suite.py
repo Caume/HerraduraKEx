@@ -4104,6 +4104,11 @@ def hcred_verify(m_poly, C_poly, seed_H, y_synd, proof, n=None,
         if 2 in (c, cp1) and (rd['aux_s'] is None or rd['aux_B'] is None
                               or rd['aux_D'] is None):
             return False
+        # ... and only then: an aux block the challenge does not open would be a
+        # second encoding of the same proof, unread (TODO #408).
+        if 2 not in (c, cp1) and (rd['aux_s'] is not None or rd['aux_B'] is not None
+                                  or rd['aux_D'] is not None):
+            return False
         t_c, t_c1 = _HcredTape(rd['seed_c']), _HcredTape(rd['seed_c1'])
         sh_s_c  = t_c.draws(n)  if c   != 2 else list(rd['aux_s'])
         sh_B_c  = t_c.draws(nb) if c   != 2 else list(rd['aux_B'])

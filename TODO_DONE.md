@@ -27019,3 +27019,60 @@ n = 8 and 64 and finds no crash, the C side under ASan included.
 Status: **DONE v18.0.6** — short views and gate fields refused cleanly, C bounds HCRED W, Java raw reads bounds-checked.
 
 ---
+
+### #408: raw-body PEMs accept encodings no writer produces (MAJOR)
+
+**This item is MAJOR**: it changes what existing `--algo` values accept (`nl-zkboo`, `nl-zkbpp`
+and the HCRED subcommands), so it needs a
+`MIGRATING.md` entry.  No CLI writes any of the encodings below, so no file a CLI
+produced becomes unreadable; the break is for hand-made or re-encoded files only.
+
+#406's prototype found raw-body artifacts accepted in a second encoding, against the
+rule #372/#373 set for DER (one artifact, one encoding), and two where the CLIs disagree:
+
+| re-encoding of a valid artifact | C | Go | Python | Java |
+|---|---|---|---|---|
+| ZKBoo view length +1, one byte appended | verifies | verifies | verifies | verifies |
+| ZKB++ `has_share2` = 2 instead of 1 | verifies | verifies | verifies | verifies |
+| ZKB++ one extra gate byte (`gates_len`+1) | **verifies** | rejects | rejects | rejects |
+| ZKB++ proof `n` = 1 or 2 against an n=8 key (same byte width) | refuses | **verifies** | **verifies** | refuses |
+| HCRED private key with a coefficient ≥ q (65537) or ≥ p (4096) | accepts, **writes the raw value** | accepts, reduces it | accepts, reduces it | accepts, reduces it |
+
+A second probe (2026-11-24, all four CLIs, ZKP-NL at n = 12 so bits above n exist)
+found more of the same class, each a valid artifact re-encoded:
+
+| re-encoding | all four CLIs |
+|---|---|
+| ZKB++ round with e = 2 carrying a `share2` (`has_share2` = 1, nb bytes inserted; the writer sets it only for e != 2) | verify |
+| ZKB++ `out_e` with a bit above n set | verify |
+| ZKBoo view share with a bit above n set | verify |
+| ZKP-NL private key with a bit of A above n set | accept, same public key |
+| HCRED proof round carrying an aux block its challenge does not need | verify |
+| HCRED proof coefficient + q (e.g. `a1[0]`) | verify |
+| HCRED public key `m[0]` + q | verify (cred-verify) |
+
+(ZKP-RNL proofs with w ± q, ZKP-NL public keys and ZKB++ `share2` or gate padding bits
+with a bit flipped all FAIL in all four.)  The ZKBoo view's gate bytes and the share's
+bit n - 1, which the verifier does not check at all, are #409.
+
+Fix: every reader requires the writer's encoding — a view length and a gate length
+exactly the size for n, `has_share2` equal to (e != 2), `has_aux` in {0, 1} (and every
+HCRED verifier refuses an aux block its challenge does not need), a proof `n` equal to
+the key's `n`, no bit above n in a fixed-width ZKP-NL field, and every HCRED Z_q value
+below q and Z_p value below p — with one refusal text per rule in all four CLIs.  Each new refusal gets an accept-control (the writer's encoding still
+verifies) and #406's differential drops these rows from its known findings.  Lands after
+#407.
+
+Resolution: every reader requires the writer's encoding, one text per rule in all four
+CLIs (SPEC.md section 10.3 rewritten; MIGRATING.md section 52): exact view and gate
+lengths, `has_share2` = (e != 2), `has_aux` in {0, 1}, no bit above n in an n-bit field,
+every HCRED Z_q / Z_p value below q / p, and the proof's n compared with the key's before
+the body is read.  Every HCRED verifier fails an unopened aux block.
+`test_raw_body_diff.sh` lost its KNOWN set-aside, moved to n = 12 and checks each rule by
+text (28 cells); v18.0.6 fails it 21 times.  No writer's output changed: every CLI's
+n = 12 signatures verify in all four and the PEM KATs read unchanged.  The ZKBoo view's
+unread bits are #409.
+
+Status: **DONE v19.0.0** — raw-body ZKP-NL and HCRED files must be in their writer's encoding (MAJOR).
+
+---

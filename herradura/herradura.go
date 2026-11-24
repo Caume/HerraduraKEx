@@ -5998,8 +5998,13 @@ func HcredVerify(mPoly, cPoly []int, seedH *BitArray, y *big.Int,
 				return false
 			}
 		}
-		if (c == 2 || cp1 == 2) &&
-			(rd.AuxS == nil || rd.AuxB == nil || rd.AuxD == nil) {
+		// The aux block is there exactly when an opened party is party 2: an
+		// unopened one would be a second encoding of the proof (TODO #408).
+		needAux := c == 2 || cp1 == 2
+		if needAux && (rd.AuxS == nil || rd.AuxB == nil || rd.AuxD == nil) {
+			return false
+		}
+		if !needAux && (rd.AuxS != nil || rd.AuxB != nil || rd.AuxD != nil) {
 			return false
 		}
 		tC := &hcredTape{seed: rd.SeedC}
