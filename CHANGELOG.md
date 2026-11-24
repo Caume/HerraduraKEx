@@ -2,7 +2,45 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
-## [18.0.3] - 2026-11-23
+## [18.0.4] - 2026-11-23
+
+**A differential test of the four DER parsers, and the two defects it found (TODO #404).**
+#403 holds the PEM readers to one verdict; the DER SEQUENCE-of-INTEGERs parser behind them
+was held together only by named cases.
+
+- **C stopped at item 16.** `der_parse_seq` and `der_seq_scan` walked at most `max_items`
+  items (16 in the CLI) and returned success, so items 17 and later were never parsed or
+  scanned. No label allows that many, so every CLI still refused such a key, but C named
+  the wrong fault: `16 DER items, expected 3` for a 17-item key, and the same for one whose
+  17th item is negative, where Go, Python and Java say `field 16 is a negative INTEGER`.
+  Both now walk every item and store the first `max_items`, and `der_parse_seq` returns
+  `DER_ERR_ITEMS` with the true count. C now prints what the other three print, and a
+  label in no item table can no longer pass with its first 16 items read.
+- **Java crashed on an INTEGER length past 2^31.** `derDecLen` read the 4-byte length
+  into an `int`, and the negative value reached `new byte[-1]`: the CLI printed
+  `error: -1`. It is now `DER: INTEGER length exceeds SEQUENCE body`, as in Go and Python.
+- **New `CliTest/test_der_reader_diff.sh`**, in CI's `cross-lang-compat` job, about 35 s:
+  - `Fuzz/der_diff/gen_cases.py` writes 20,000 seeded DER inputs per seed (three seeds):
+    SEQUENCEs built item by item, each part usually well formed (an INTEGER empty,
+    negative, with a needed or needless 0x00; a non-minimal, BER, five-byte, off-by-one
+    or past-2^31 length; another tag; 0 to 20 items; trailing bytes; truncation), and byte
+    edits of the DER in every KAT PEM.
+  - One driver per parser (`Fuzz/der_diff/`) runs its CLI's generic DER steps in process.
+  - It fails on a different verdict, on different values, encoded widths or leads, and on
+    any crash. Refusal texts are not compared: the structural ones were never one set
+    across the four, and the checks run in a different order in each.
+  - A coverage floor over the agreed cases: an accept, an accept of more than 16 items,
+    and eleven kinds of refusal. About 40% of cases are accepted.
+  - CLI cells through the four real CLIs: a 3-item key reads (the control); a 17-item key
+    and a key whose 17th item is negative are refused with the true count and at item 17;
+    an INTEGER length past 2^31 is refused by name.
+- **Shown to fire:** on the v18.0.3 parsers, Java crashes on 208 of 60,000 cases and three
+  CLI cells fail (C's `16 DER items` twice, Java's `error: -1`). With one parser changed
+  at a time it fails: Python accepting BER's 0x80 length (5 of 20,000 cases), Go skipping
+  the negative-INTEGER check (224), Java misreporting a needless 0x00 lead (1,035, values
+  only), C accepting an empty INTEGER (140). A 6-case run fails the coverage floor.
+- The C codec self-test pins the walk past `max_items`.
+
 
 **A differential test of the four PEM readers, and the one disagreement it found (TODO
 #403).** SPEC.md §10.1 says every reader gives a file the same verdict. Until now only

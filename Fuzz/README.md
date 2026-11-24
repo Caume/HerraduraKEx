@@ -32,6 +32,13 @@ Run everything with a short time budget per target:
   label and DER or its refusal text.  `CliTest/test_pem_reader_diff.sh` builds the
   drivers, runs them and fails on any disagreement; it runs in CI's `cross-lang-compat`
   job.  The only one of these targets that covers Java's reader.
+- **`der_diff/`** (TODO #404) — the same differential for the DER SEQUENCE-of-INTEGERs
+  parser: `gen_cases.py SEED COUNT` writes SEQUENCEs built to straddle the length, tag,
+  sign and trailing-byte rules, and byte edits of the DER in every KAT PEM; one driver
+  per parser (`der_diff_c.c`, `go/main.go`, `der_diff_py.py`, `herradurakex/DerDiff.java`)
+  runs its CLI's generic DER steps.  `CliTest/test_der_reader_diff.sh` fails on a
+  different verdict, different values or encodings, or any crash; refusal texts are not
+  compared (they were never one set across the four).
 - **`herradura/codec_fuzz_test.go`** (`FuzzPemUnwrap`, `FuzzDerParseSeq`) — the Go codec
   equivalents in `herradura/codec.go`. Run directly with `go test -fuzz=<name>` from
   the repo root, or via `run_fuzz.sh`.

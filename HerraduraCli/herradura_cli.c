@@ -881,7 +881,12 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     if (trail > 0)                                   /* TODO #372 */
         die_der_trailing(PEM_ENC_PRIV, trail);
     der_scan_or_die(PEM_ENC_PRIV, body, blen, ew, lz);   /* TODO #373 */
-    if (der_parse_seq(body, blen, vals, vlens, 16, &n_out) != 0)
+    int drc = der_parse_seq(body, blen, vals, vlens, 16, &n_out);
+    if (drc == DER_ERR_ITEMS) {                      /* TODO #404: the true count */
+        check_der_items(PEM_ENC_PRIV, n_out);
+        die("pkey --decrypt: malformed ENCRYPTED PRIVATE KEY envelope");
+    }
+    if (drc != 0)
         die("pkey --decrypt: malformed ENCRYPTED PRIVATE KEY envelope");
     check_der_items(PEM_ENC_PRIV, n_out);
     check_der_caps(PEM_ENC_PRIV, n_out, vals, vlens, ew, lz);
@@ -1268,7 +1273,12 @@ static void pem_key_load(PemKey *k, const char *path)
     if (trail > 0)                                   /* TODO #372 */
         die_der_trailing(k->label, trail);
     der_scan_or_die(k->label, k->der, k->der_len, k->ew, k->lz);   /* TODO #373 */
-    if (der_parse_seq(k->der, k->der_len, k->vals, k->vlens, 16, &k->n_items) != 0)
+    int prc2 = der_parse_seq(k->der, k->der_len, k->vals, k->vlens, 16, &k->n_items);
+    if (prc2 == DER_ERR_ITEMS) {                     /* TODO #404: the true count */
+        check_der_items(k->label, k->n_items);       /* every listed label exits */
+        dievf("malformed PEM '%s': %d DER items, more than this CLI reads", k->label, k->n_items);
+    }
+    if (prc2 != 0)
         dief("cannot parse DER from: %s", path);
     check_der_items(k->label, k->n_items);
     check_der_width(k);
