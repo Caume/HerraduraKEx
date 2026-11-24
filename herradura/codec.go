@@ -227,7 +227,15 @@ func PemUnwrap(pem string) (label string, der []byte, err error) {
 		if len(el) > PemLabelMax {
 			el = el[:PemLabelMax]
 		}
-		return "", nil, fmt.Errorf("PEM: END label '%s' does not match BEGIN label '%s'", el, label)
+		// Echoed with every byte outside 0x20-0x7E as '?' (TODO #403): the END
+		// label was never screened, and raw it reached stderr differently per CLI.
+		shown := []byte(el)
+		for i, c := range shown {
+			if c < 0x20 || c > 0x7E {
+				shown[i] = '?'
+			}
+		}
+		return "", nil, fmt.Errorf("PEM: END label '%s' does not match BEGIN label '%s'", shown, label)
 	}
 	p += 5
 	for p < end && pemWS(t[p]) {

@@ -25,6 +25,13 @@ Run everything with a short time budget per target:
 - **`fuzz_b64_decode.c`** — `herradura_codec.h`'s `b64_decode`.
 - **`fuzz_der_parse_seq.c`** — `herradura_codec.h`'s `der_parse_seq`.
 - **`fuzz_pem_unwrap.c`** — `herradura_codec.h`'s `pem_unwrap` (PEM parse + base64 decode).
+- **`pem_diff/`** (TODO #403) — a DIFFERENTIAL, not a crash fuzzer: `gen_cases.py SEED
+  COUNT` writes seeded PEM-shaped inputs (blocks built to straddle each SPEC.md §10.1
+  rule, and byte-level mutations of `KAT/pem/*.pem`), and one driver per reader
+  (`pem_diff_c.c`, `go/main.go`, `pem_diff_py.py`, `PemDiff.java`) answers each with its
+  label and DER or its refusal text.  `CliTest/test_pem_reader_diff.sh` builds the
+  drivers, runs them and fails on any disagreement; it runs in CI's `cross-lang-compat`
+  job.  The only one of these targets that covers Java's reader.
 - **`herradura/codec_fuzz_test.go`** (`FuzzPemUnwrap`, `FuzzDerParseSeq`) — the Go codec
   equivalents in `herradura/codec.go`. Run directly with `go test -fuzz=<name>` from
   the repo root, or via `run_fuzz.sh`.

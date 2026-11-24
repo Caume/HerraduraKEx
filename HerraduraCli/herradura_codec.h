@@ -520,9 +520,18 @@ static int pem_unwrap(const char *pem, size_t pem_len,
     if ((size_t)(end - p) < 5 || memcmp(p, "-----", 5) != 0) return PEM_ERR_END_LINE;
     size_t el = (size_t)(p - es);
     if (el != ll || memcmp(es, ls, ll) != 0) {
+        /* The END label is echoed with every byte outside 0x20-0x7E as '?' (TODO
+         * #403): it was never screened, and echoed raw it reached stderr
+         * differently in each CLI (C stopped at a NUL) and could carry control
+         * bytes. */
+        char shown[PEM_LABEL_MAX + 1];
+        size_t sn = el > PEM_LABEL_MAX ? PEM_LABEL_MAX : el, k;
+        for (k = 0; k < sn; k++)
+            shown[k] = (es[k] >= 0x20 && es[k] <= 0x7E) ? es[k] : '?';
+        shown[sn] = '\0';
         snprintf(_pem_end_label_msg, sizeof(_pem_end_label_msg),
-                 "PEM: END label '%.*s' does not match BEGIN label '%.*s'",
-                 (int)(el > PEM_LABEL_MAX ? PEM_LABEL_MAX : el), es, (int)ll, ls);
+                 "PEM: END label '%s' does not match BEGIN label '%.*s'",
+                 shown, (int)ll, ls);
         return PEM_ERR_END_LABEL;
     }
     p += 5;
@@ -804,6 +813,13 @@ static int herradura_codec_selftest(void)
         /* The mismatch case above filled the label text; nothing since did. */
         assert(strcmp(pem_strerror(PEM_ERR_END_LABEL),
                       "PEM: END label 'M' does not match BEGIN label 'L'") == 0);
+        /* TODO #403: an unscreened END label is echoed with '?' for each byte
+         * outside 0x20-0x7E -- here a non-ASCII byte, a NUL and an ESC. */
+        static const char nul_end[] = "-----BEGIN L-----\nAAEC\n-----END L\xe9\0\x1b-----\n";
+        assert(pem_unwrap(nul_end, sizeof(nul_end) - 1, lout, dout, sizeof(dout), &dlen)
+               == PEM_ERR_END_LABEL);
+        assert(strcmp(pem_strerror(PEM_ERR_END_LABEL),
+                      "PEM: END label 'L\?\?\?' does not match BEGIN label 'L'") == 0);
     }
 
     return 1;

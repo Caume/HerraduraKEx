@@ -299,7 +299,11 @@ def pem_unwrap(pem_text: str) -> tuple:
     if not t.startswith('-----', p):
         raise ValueError("PEM: malformed END line")
     if t[es:p] != label:
-        raise ValueError(f"PEM: END label '{t[es:p][:PEM_LABEL_MAX]}' does not match "
+        # The END label is echoed with every character outside 0x20-0x7E as '?':
+        # unlike the BEGIN label it was never screened, and echoed raw it reached
+        # stderr differently in each CLI (and could carry control bytes; #403).
+        shown = ''.join(c if ' ' <= c <= '~' else '?' for c in t[es:p][:PEM_LABEL_MAX])
+        raise ValueError(f"PEM: END label '{shown}' does not match "
                          f"BEGIN label '{label}'")
     p += 5
     while p < end and t[p] in _PEM_WS:

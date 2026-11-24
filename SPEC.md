@@ -511,7 +511,9 @@ form feed or a non-ASCII byte is not whitespace).
    on the same line by `-----`; otherwise `PEM: malformed END line`.
 4. **The labels match**, byte for byte; otherwise
    `PEM: END label 'E' does not match BEGIN label 'B'`, with E cut to 79
-   characters.
+   characters and each character of it outside 0x20 to 0x7E shown as `?`
+   (the END label is not screened the way the BEGIN label is, so its bytes
+   are never echoed raw; TODO #403).
 5. **After the block:** only whitespace to the end of the file, so a file
    holds exactly one block; anything else, including a second block, is
    `PEM: text after the END line`.  A final line ending is optional.
@@ -545,6 +547,8 @@ single-line bodies, a blank line,
 whitespace around the block, no final line ending, blanks after the BEGIN
 line) each decode to the same bytes, and every refusal above is checked by
 its text in all four CLIs, with the 79/80-character label boundary.
+`CliTest/test_pem_reader_diff.sh` adds volume: 60,000 generated inputs, each
+read by all four readers in process, which must give identical results.
 
 ## 11. Code-Based (Stern ZKID) Variants
 
