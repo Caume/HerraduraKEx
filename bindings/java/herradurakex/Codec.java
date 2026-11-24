@@ -474,7 +474,11 @@ public final class Codec {
             offset++;
             Len vl = derDecLen(der, offset);
             offset += vl.consumed;
-            if (vl.length > end - offset) {
+            // vl.length < 0: a 4-byte length past 2^31, read into an int.  It
+            // used to reach new byte[-1] (NegativeArraySizeException; the CLI
+            // printed "error: -1").  C, Go and Python read it as the large
+            // length it is and refuse it here (TODO #404).
+            if (vl.length < 0 || vl.length > end - offset) {
                 throw new IllegalArgumentException("DER: INTEGER length exceeds SEQUENCE body");
             }
             byte[] vp = new byte[vl.length];

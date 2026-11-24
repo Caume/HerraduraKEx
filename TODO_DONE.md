@@ -26871,3 +26871,49 @@ message.  A planted one-reader change fails it each time: Python's label limit a
 Status: **DONE v18.0.3** — a 60,000-case differential holds the four PEM readers to one verdict; the END-label refusal no longer echoes raw bytes.
 
 ---
+
+### #404: nothing compares the four DER parsers beyond the named cases
+
+#403's differential holds the four PEM readers to one verdict.  The DER parser behind
+them (`der_parse_seq` / `der_seq_scan` / `der_seq_trailing` in C, Python's
+`der_parse_seq` / `der_scan`, Go's `DerParseSeq` / `DerSeqScan` / `DerSeqTrailing`,
+Java's `derParseSeq` / `derSeqScan` / `derSeqTrailing`) is held together only by the
+named cases of `test_der_items_matrix.sh` and `test_canonical_encoding_matrix.sh`, and the
+fuzz harnesses check only for crashes, without Java.
+
+Add the same kind of differential for the DER layer: seeded DER inputs (SEQUENCEs built
+to straddle the length, tag, sign and trailing-byte rules, and byte edits of the DER in
+every KAT PEM), one in-process driver per parser, and a test failing on any input the
+four parsers give a different verdict, or accept with different values or encodings.
+A coverage floor and planted one-parser differences, as #403's.  The structural refusal
+TEXTS are not one set across the four today (only #372's and #373's are), and their
+checks run in different orders, so this item compares verdicts and values, not texts.
+Test-only unless it finds a disagreement: PATCH.
+
+Resolution (v18.0.4).  `CliTest/test_der_reader_diff.sh` feeds 60,000 seeded DER inputs
+(`Fuzz/der_diff/gen_cases.py`) to four in-process drivers, each running its CLI's generic
+DER steps (C: `der_seq_trailing`, `der_seq_scan`, `der_parse_seq`; Go:
+`DerSeqTrailing`, `DerSeqScan`, `DerParseSeq`; Python: `der_parse_seq`, `der_scan`; Java:
+`derParseSeq(PemBlock)`, `derSeqScan`), and fails on a different verdict, different values
+or encodings, or a crash.  A coverage floor over the agreed cases, and CLI cells through
+the four real CLIs.  In `cross-lang-compat`, about 35 s.
+
+It found two defects.  C's `der_parse_seq` and `der_seq_scan` stopped at `max_items` (16
+in the CLI) and returned success, so C refused a 17-item key as `16 DER items` and never
+saw a fault in item 17; both now walk every item, store the first `max_items`, and
+`der_parse_seq` returns `DER_ERR_ITEMS` with the true count.  Java crashed on an INTEGER
+length past 2^31 (`new byte[-1]`, printed `error: -1`); it now refuses it by name.  No CLI
+accepts anything it refused before: every label allows fewer than 16 items, and Java's
+crash was already a refusal.  Only refusal texts change, so PATCH.
+
+Negative controls: on the v18.0.3 parsers, 208 Java crashes and three failing CLI cells.
+A planted one-parser change fails it each time: Python accepting BER's 0x80 length (5 of
+20,000), Go without the negative-INTEGER check (224), Java misreporting a needless lead
+(1,035), C accepting an empty INTEGER (140).  A 6-case run fails the coverage floor.
+
+The structural refusal texts still differ across the four, and so does the order of the
+checks; unifying them, as #398 and #400 did for PEM, is left for a later item.
+
+Status: **DONE v18.0.4** — a 60,000-case differential holds the four DER parsers to one verdict; C reads past item 16 and Java no longer crashes on a length past 2^31.
+
+---

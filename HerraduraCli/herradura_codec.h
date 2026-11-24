@@ -324,7 +324,9 @@ static long der_seq_trailing(const uint8_t *der, size_t len)
  * (the SEQUENCE's or an item's) is not in its shortest form; 2 when item *bad
  * is negative (top bit set, no sign byte); 3 when item *bad is empty; -1 on a
  * structure der_parse_seq refuses anyway.  Every CLI refuses 1-3, so a
- * SEQUENCE has one encoding of its lengths and signs. */
+ * SEQUENCE has one encoding of its lengths and signs.  EVERY item is checked;
+ * ew / lz are filled for the first max_items only (TODO #404: the scan used to
+ * stop at max_items, so a fault in item 17 went unseen). */
 static int _der_len_minimal(const uint8_t *buf, size_t buf_len)
 {
     if (!buf_len || buf[0] < 0x80) return 1;
@@ -343,7 +345,7 @@ static int der_seq_scan(const uint8_t *der, size_t len, size_t *ew,
     offset += consumed;
     if (body_len > len - offset) return -1;
     end = offset + body_len;
-    while (offset < end && n < max_items) {
+    while (offset < end) {
         if (der[offset] != 0x02) return -1;
         offset++;
         if (offset >= end) return -1;
@@ -355,8 +357,10 @@ static int der_seq_scan(const uint8_t *der, size_t len, size_t *ew,
         if (vlen == 0) return 3;
         if (der[offset] & 0x80) return 2;
         int sign = vlen > 1 && der[offset] == 0 && (der[offset + 1] & 0x80);
-        ew[n] = vlen - (size_t)sign;
-        lz[n] = (unsigned char)(sign ? 2 : (vlen > 1 && der[offset] == 0) ? 1 : 0);
+        if (n < max_items) {
+            ew[n] = vlen - (size_t)sign;
+            lz[n] = (unsigned char)(sign ? 2 : (vlen > 1 && der[offset] == 0) ? 1 : 0);
+        }
         n++;
         offset += vlen;
     }
@@ -366,7 +370,12 @@ static int der_seq_scan(const uint8_t *der, size_t len, size_t *ew,
 /* Parse a DER SEQUENCE of INTEGERs into pointer+length pairs.
  * vals[i] points into der (no copy); leading 0x00 sign bytes are skipped so
  * each val_lens[i] gives the true unsigned byte width (matching Python).
- * Returns 0 on success, -1 on parse error. */
+ * Returns 0 on success, -1 on parse error, DER_ERR_ITEMS when every item parses
+ * but there are more than max_items of them: only the first max_items are
+ * stored, and *n_out is the TRUE count, for the caller's item-count refusal
+ * (TODO #404: the walk used to stop at max_items and return 0, so the items
+ * after the 16th were never parsed and the count read 16). */
+#define DER_ERR_ITEMS (-2)
 static int der_parse_seq(const uint8_t *der, size_t len,
                          const uint8_t **vals, size_t *val_lens,
                          int max_items, int *n_out)
@@ -384,7 +393,7 @@ static int der_parse_seq(const uint8_t *der, size_t len,
     /* Nothing may follow the SEQUENCE (TODO #372). */
     if (body_len != len - offset) return -1;
     size_t end = offset + body_len;
-    while (offset < end && n < max_items) {
+    while (offset < end) {
         if (der[offset] != 0x02) return -1;
         offset++;
         if (offset > end) return -1;
@@ -396,13 +405,15 @@ static int der_parse_seq(const uint8_t *der, size_t len,
         size_t vl = vlen;
         /* strip leading 0x00 sign byte (matches Python der_parse_seq) */
         if (vl > 1 && vp[0] == 0x00) { vp++; vl--; }
-        vals[n]     = vp;
-        val_lens[n] = vl;
+        if (n < max_items) {
+            vals[n]     = vp;
+            val_lens[n] = vl;
+        }
         n++;
         offset += vlen; /* advance past original content (incl. any sign byte) */
     }
     if (n_out) *n_out = n;
-    return 0;
+    return n > max_items ? DER_ERR_ITEMS : 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -722,6 +733,21 @@ static int herradura_codec_selftest(void)
         assert(n_out == 2);
         assert(vlens[0] == 1 && vals[0][0] == 42);
         assert(vlens[1] == 2 && vals[1][0] == 0x01 && vals[1][1] == 0x00);
+
+        /* TODO #404: past max_items, every item is still walked.  Three
+         * INTEGERs read with room for two: DER_ERR_ITEMS and the true count,
+         * the two stored items intact.  Then the third made negative: the scan
+         * (room for two) still reports item 2. */
+        static uint8_t three[] = {0x30,0x09,0x02,0x01,0x01,0x02,0x01,0x02,0x02,0x01,0x03};
+        assert(der_parse_seq(three, sizeof(three), vals, vlens, 2, &n_out) == DER_ERR_ITEMS);
+        assert(n_out == 3 && vals[0][0] == 1 && vals[1][0] == 2);
+        assert(der_parse_seq(three, sizeof(three), vals, vlens, 3, &n_out) == 0 && n_out == 3);
+        size_t ew2[2];
+        unsigned char lz2[2];
+        int bad = -1;
+        assert(der_seq_scan(three, sizeof(three), ew2, lz2, 2, &bad) == 0);
+        three[10] = 0x83;
+        assert(der_seq_scan(three, sizeof(three), ew2, lz2, 2, &bad) == 2 && bad == 2);
     }
 
     /* ── 5. PEM known-answer + round-trip ───────────────────────────────────── */
