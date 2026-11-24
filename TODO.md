@@ -10,6 +10,28 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
+### #404: nothing compares the four DER parsers beyond the named cases
+
+#403's differential holds the four PEM readers to one verdict.  The DER parser behind
+them (`der_parse_seq` / `der_seq_scan` / `der_seq_trailing` in C, Python's
+`der_parse_seq` / `der_scan`, Go's `DerParseSeq` / `DerSeqScan` / `DerSeqTrailing`,
+Java's `derParseSeq` / `derSeqScan` / `derSeqTrailing`) is held together only by the
+named cases of `test_der_items_matrix.sh` and `test_canonical_encoding_matrix.sh`, and the
+fuzz harnesses check only for crashes, without Java.
+
+Add the same kind of differential for the DER layer: seeded DER inputs (SEQUENCEs built
+to straddle the length, tag, sign and trailing-byte rules, and byte edits of the DER in
+every KAT PEM), one in-process driver per parser, and a test failing on any input the
+four parsers give a different verdict, or accept with different values or encodings.
+A coverage floor and planted one-parser differences, as #403's.  The structural refusal
+TEXTS are not one set across the four today (only #372's and #373's are), and their
+checks run in different orders, so this item compares verdicts and values, not texts.
+Test-only unless it finds a disagreement: PATCH.
+
+Status: **OPEN**
+
+---
+
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
