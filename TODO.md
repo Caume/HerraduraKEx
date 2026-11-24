@@ -10,6 +10,27 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
+### #403: nothing compares the four PEM readers beyond the hand-picked cases
+
+SPEC.md §10.1 (TODO #402) says every reader gives a file the same verdict: the same
+label and DER, or the same refusal text.  `CliTest/test_malformed_pem_matrix.sh` checks
+that on about 100 hand-picked files.  The fuzz harnesses (`Fuzz/fuzz_pem_unwrap.c`,
+`fuzz_b64_decode.c`, `fuzz_codec_py.py`, `herradura/codec_fuzz_test.go`) check only that a
+reader does not crash, each on its own, and none covers Java.  #400 is what that leaves:
+C, Go and Java accepted files Python refused, and nothing noticed until the readers were
+compared by hand.
+
+Add a differential: one seeded generator of PEM-shaped input (blocks assembled to
+straddle each §10.1 rule, and byte-level mutations of the KAT PEMs), one in-process driver
+per reader fed the bytes as its CLI reads a file, and a test failing on any case two
+readers answer differently.  It must reach every §10.1 outcome, so a generator that
+drifts cannot pass vacuously, and be shown to fire on a planted one-reader difference.
+Run it in `cross-lang-compat`.  Test-only unless it finds a disagreement: PATCH.
+
+Status: **OPEN**
+
+---
+
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
