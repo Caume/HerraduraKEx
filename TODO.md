@@ -10,34 +10,6 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #414: the unauthenticated encryption modes accept any key and any ciphertext silently
-
-Found by #410's wrong-secret matrix.  `dec` under the WRONG key exits 0 and writes garbage,
-in all four CLIs, for every mode without a tag:
-- `hske`, `hske-nla1` without `--aead`, `hske-nla2` and `hske-nla3`;
-- `hpke`, `hpke-nl` and `hpke-nl3`;
-- `hpke-stern`, and `hpke-stern-kem` (its implicit rejection is by design, #235).
-
-The authenticated modes (`hske-nla1 --aead`, `hske-duplex`, `hske-duplex3`,
-`encfile`/`decfile`, the passphrase envelope) all refuse, and the matrix holds them to
-it.  Neither SECURITY.md nor `--help` says which modes are unauthenticated, i.e.
-malleable and with no integrity.  A user who sees exit 0 has no reason to think the
-output is wrong.
-
-To do:
-1. Measure each mode's malleability: does a bit flipped in the ciphertext flip a
-   predictable plaintext bit?
-2. State "no integrity" per mode in SECURITY.md, `--help` and SPEC.md.
-3. Make `enc` and `dec` of an unauthenticated mode print a warning to stderr.
-4. Consider making `--aead` the default for `hske-nla1`, which is MAJOR.
-
-The matrix gains one cell per mode: an informational line now, and an assertion once the
-warning ships.
-
-Status: **OPEN**
-
----
-
 ### #415: Fiat-Shamir challenges that omit the public key
 
 Found by #410 part C.  These transcripts hash the message and commitments but not the

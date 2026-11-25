@@ -1257,12 +1257,24 @@ public final class HerraduraCli {
                 + "use --algo hpke-stern-kem");
     }
 
+    /** TODO #414: say on stderr that this mode cannot detect a modified ciphertext
+     *  or a wrong key, from the generated KeyLabelTable.ENC_INTEGRITY table. */
+    private static void warnNoIntegrity(String sub, String algo, boolean authenticated) {
+        for (String[] r : KeyLabelTable.ENC_INTEGRITY) {
+            if (!r[0].equals(algo)) continue;
+            if (r[1].equals("none") || (r[1].equals("aead-flag") && !authenticated))
+                System.err.println(sub + ": warning: " + r[2]);
+            return;
+        }
+    }
+
     private static void cmdEnc(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "enc");
         retiredHpkeStern("enc", algo);
         byte[] inBytes = readBytes(req(opt, "in", "enc"));
         String out = req(opt, "out", "enc");
         aeadFlagsOK("enc", algo, opt);
+        warnNoIntegrity("enc", algo, opt.containsKey("aead"));
 
         if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
             boolean v3 = algo.equals("hske-duplex3");
@@ -1384,6 +1396,8 @@ public final class HerraduraCli {
         retiredHpkeStern("dec", algo);
         String out = req(opt, "out", "dec");
         aeadFlagsOK("dec", algo, opt);
+        // hske-nla1's integrity is the ciphertext's (format tag 2): warned below.
+        warnNoIntegrity("dec", algo, algo.equals("hske-nla1"));
 
         if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
             boolean v3 = algo.equals("hske-duplex3");
@@ -1432,6 +1446,7 @@ public final class HerraduraCli {
                     throw new CliError("dec: --ad given, but this hske-nla1 ciphertext "
                         + "is not an AEAD one (it has no tag to bind it to)");
                 }
+                warnNoIntegrity("dec", algo, false);
                 // No --aead on dec, in any of the four CLIs: the format tag is
                 // what the artifact IS, so decryption never needs telling.
                 nla1WidthOK(nbits, "dec", "key");

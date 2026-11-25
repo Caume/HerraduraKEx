@@ -59,6 +59,9 @@ final class CliFlagTable {
         "                       --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex\n" +
         "                               hske-duplex3 hpke hpke-nl hpke-nl3\n" +
         "                               hpke-stern-kem\n" +
+        "                       NO INTEGRITY (TODO #414): hske hske-nla1 (unless --aead)\n" +
+        "                               hske-nla2 hske-nla3 hpke hpke-nl hpke-nl3\n" +
+        "                               hpke-stern-kem\n" +
         "  decfile              --algo --in --key --out\n" +
         "                       --algo: hske-nla1\n" +
         "  dgst                 --algo --in --out\n" +
@@ -66,6 +69,9 @@ final class CliFlagTable {
         "  enc                  --ad --aead --algo --in --key --out --pubkey\n" +
         "                       --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex\n" +
         "                               hske-duplex3 hpke hpke-nl hpke-nl3\n" +
+        "                               hpke-stern-kem\n" +
+        "                       NO INTEGRITY (TODO #414): hske hske-nla1 (unless --aead)\n" +
+        "                               hske-nla2 hske-nla3 hpke hpke-nl hpke-nl3\n" +
         "                               hpke-stern-kem\n" +
         "  encfile              --algo --in --key --out\n" +
         "                       --algo: hske-nla1\n" +

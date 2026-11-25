@@ -4307,6 +4307,15 @@ func retiredHpkeStern(sub, algo string) {
 	}
 }
 
+// warnNoIntegrity says on stderr that this mode cannot detect a modified
+// ciphertext or a wrong key, from the generated encIntegrity table (TODO #414).
+func warnNoIntegrity(sub, algo string, authenticated bool) {
+	r, ok := encIntegrity[algo]
+	if ok && (r[0] == "none" || (r[0] == "aead-flag" && !authenticated)) {
+		fmt.Fprintf(os.Stderr, "%s: warning: %s\n", sub, r[1])
+	}
+}
+
 func cmdEnc(args []string) {
 	fs := flag.NewFlagSet("enc", flag.ExitOnError)
 	algo   := fs.String("algo", "", "Encryption algorithm")
@@ -4325,6 +4334,7 @@ func cmdEnc(args []string) {
 		os.Exit(1)
 	}
 	aeadFlagsOK("enc", *algo, isSet(fs, "ad"), isSet(fs, "aead"))
+	warnNoIntegrity("enc", *algo, *aead)
 
 	inBytes, err := readFile(*in)
 	if err != nil {
@@ -4527,6 +4537,8 @@ func cmdDec(args []string) {
 		os.Exit(1)
 	}
 	aeadFlagsOK("dec", *algo, isSet(fs, "ad"), false)
+	// hske-nla1's integrity is the ciphertext's (format tag 2): warned below.
+	warnNoIntegrity("dec", *algo, *algo == "hske-nla1")
 
 	switch *algo {
 	case "hske-duplex", "hske-duplex3":
@@ -4679,6 +4691,7 @@ func cmdDec(args []string) {
 					"is not an AEAD one (it has no tag to bind it to)")
 				os.Exit(1)
 			}
+			warnNoIntegrity("dec", *algo, false)
 			if nonceInt == nil {
 				fmt.Fprintln(os.Stderr, "dec: hske-nla1 ciphertext missing nonce")
 				os.Exit(1)
@@ -7632,6 +7645,31 @@ var paramLevelNotes = map[string]string{
 	"oprf": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
 }
 
+// TODO #414: each enc/dec --algo's integrity (tag | none | aead-flag) and the
+// warning enc/dec print to stderr when there is no tag.
+var encIntegrity = map[string][2]string{
+	"hske": {"none",
+		"--algo hske has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping ciphertext bit j flips plaintext bits j and j +/- n/4 under every key); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+	"hske-nla1": {"aead-flag",
+		"--algo hske-nla1 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (without --aead, flipping ciphertext bit j flips plaintext bit j); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+	"hske-nla2": {"none",
+		"--algo hske-nla2 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+	"hske-nla3": {"none",
+		"--algo hske-nla3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+	"hske-duplex": {"tag",
+		""},
+	"hske-duplex3": {"tag",
+		""},
+	"hpke": {"none",
+		"--algo hpke has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+	"hpke-nl": {"none",
+		"--algo hpke-nl has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+	"hpke-nl3": {"none",
+		"--algo hpke-nl3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+	"hpke-stern-kem": {"none",
+		"--algo hpke-stern-kem has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key; a corrupt syndrome decrypts to garbage by design, as implicit rejection requires (TODO #235)); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+}
+
 // END GENERATED key-label table
 
 // pemFileLabel returns the first PEM BEGIN label in path, or "" (unreadable or
@@ -7724,6 +7762,9 @@ required):
                        --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex
                                hske-duplex3 hpke hpke-nl hpke-nl3
                                hpke-stern-kem
+                       NO INTEGRITY (TODO #414): hske hske-nla1 (unless --aead)
+                               hske-nla2 hske-nla3 hpke hpke-nl hpke-nl3
+                               hpke-stern-kem
   decfile              --algo --in --key --out
                        --algo: hske-nla1
   dgst                 --algo --in --out
@@ -7731,6 +7772,9 @@ required):
   enc                  --ad --aead --algo --in --key --out --pubkey
                        --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex
                                hske-duplex3 hpke hpke-nl hpke-nl3
+                               hpke-stern-kem
+                       NO INTEGRITY (TODO #414): hske hske-nla1 (unless --aead)
+                               hske-nla2 hske-nla3 hpke hpke-nl hpke-nl3
                                hpke-stern-kem
   encfile              --algo --in --key --out
                        --algo: hske-nla1

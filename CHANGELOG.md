@@ -2,6 +2,49 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [21.0.1] - 2026-11-25
+
+**The unauthenticated encryption modes now say so (TODO #414).**  Found by #410's
+wrong-secret matrix: `dec` under the wrong key, or of a modified ciphertext, exits 0 and
+writes wrong bytes in all four CLIs for every mode without a tag, and neither SECURITY.md
+nor `--help` said which modes those are.
+
+- **Measured.**  Flipping one bit of the ciphertext's E field, in all four CLIs:
+  `hske`, `hpke` and `hpke-stern-kem` flip plaintext bits j and j ± n/4 (E's part of
+  `fscx_revolve` is M^(3n/4) = M^(n/4) = I ⊕ ROL^(n/4) ⊕ ROR^(n/4)), and `hske-nla1`
+  without `--aead` flips bit j, the same under every key, so anyone holding a ciphertext
+  can change chosen plaintext bits.  `hske-nla2`, `hske-nla3`, `hpke-nl` and `hpke-nl3`
+  change about half the block, which nothing detects either.
+- **One table.**  `ENC_INTEGRITY` in `spec/generate_spec.py` states each enc/dec `--algo`'s
+  integrity (`tag`, `none`, or `aead-flag` for hske-nla1) and malleability.  It is the
+  spec's new `enc_integrity` array and is generated into all four CLIs beside the
+  key-label table.
+- **A warning.**  `enc` and `dec` of an untagged mode print `<sub>: warning: --algo <a>
+  has no integrity check: ...` to stderr, with what a flip does and what to use instead.
+  `dec --algo hske-nla1` warns only for a format-tag-1 ciphertext.  Exit status and output
+  are unchanged.
+- **Documented.**  The C, Go and Java `--help` synopses gain a generated `NO INTEGRITY`
+  line under `enc` and `dec`, and Python's gains an epilog.  SECURITY.md has a new
+  "Integrity of the encryption modes" section, and SPEC.md §12 and llms.txt say the same.
+- **Tested.**  `CliTest/test_wrong_secret_matrix.sh` (89 to 134 checks) gains four cells
+  per untagged mode, read from the spec table:
+  - `enc` warns;
+  - the control decrypts and warns;
+  - the wrong key gives exit 0, garbage and the warning;
+  - the measured malleability class matches the table, and a predictable mode's flip
+    pattern matches the warning's text exactly.
+
+  Tagged modes must print no warning.  Negative controls show that a CLI with its
+  stderr dropped fails three cells, and that a wrong malleability claim fails in both
+  directions.
+- **A #413 leftover.**  `CliTest/test_single_block_enc.sh` still ran `enc`/`dec --algo
+  hpke-stern`, removed by v21.0.0, so 24 of its cells failed.  It drops hpke-stern from
+  its lists and passes 392 of 392.
+- **Not done: `--aead` as hske-nla1's default.**  #414's fourth item was considered and
+  declined.  It is MAJOR, it changes what `enc --algo hske-nla1` writes, and `--aead`
+  needs a 256-bit key where plain hske-nla1 takes any width from 16 to 256 bits.  The
+  warning now names the tagged modes instead.
+
 ## [21.0.0] - 2026-11-25
 
 **BREAKING (CLI accept surface): `enc` / `dec --algo hpke-stern` are removed (TODO #413;

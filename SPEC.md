@@ -728,3 +728,16 @@ particular:
 - Nonce/counter reuse breaks HPKS (§6.2 step 1), HPKE (§7.1 step 1), and
   HSKE-NL-A1 (§9.2) — each MUST use a fresh, non-repeating value per
   operation under a given key.
+- Integrity (TODO #414): only `hske-duplex`, `hske-duplex3`, `hske-nla1 --aead`
+  (ciphertext format tag 2) and `encfile` carry an authentication tag.  Every
+  other `enc --algo` — `hske`, `hske-nla1` without `--aead`, `hske-nla2`,
+  `hske-nla3`, `hpke`, `hpke-nl`, `hpke-nl3` and `hpke-stern-kem` — has NO
+  integrity: `dec` of a modified ciphertext, or under the wrong key, writes
+  wrong bytes and exits 0.  `hske`, `hske-nla1`, `hpke` and `hpke-stern-kem` are
+  moreover predictably malleable, being linear in E: flipping bit j of E flips
+  plaintext bit j (`hske-nla1`, E = P ⊕ keystream) or bits j and j ± n/4 (the
+  rest: E's part of `fscx_revolve` is M^(3n/4) = M^(n/4) = I ⊕ ROL^(n/4) ⊕
+  ROR^(n/4)), whatever the key.  The NL-FSCX v2/v3 modes spread a flip over
+  about half the block, which is still undetected.  The machine-readable
+  statement is the spec's `enc_integrity` table; every CLI prints its warning to
+  stderr on `enc` and `dec` of an untagged mode.

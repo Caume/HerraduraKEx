@@ -68,12 +68,13 @@ for b in 256 64; do
     fix $PY kex --algo hkex-gf --our "$TMP/ga$b.pem" --their "$TMP/gbp$b.pem" --out "$TMP/sk$b.pem"
 done
 SK="$TMP/sk256.pem"; SK64="$TMP/sk64.pem"
-for a in hpke hpke-nl hpke-nl3 hpke-stern hpke-stern-kem; do
+for a in hpke hpke-nl hpke-nl3 hpke-stern-kem; do
     fix $CC genpkey --algo $a --out "$TMP/$a.pem"
     fix $CC pkey --in "$TMP/$a.pem" --pubout --out "$TMP/$a.pub.pem"
 done
 SYM1=(hske hske-nla1 hske-nla2 hske-nla3)          # single-block, --key
-ASYM1=(hpke hpke-nl hpke-nl3 hpke-stern)           # single-block, --pubkey
+ASYM1=(hpke hpke-nl hpke-nl3)                      # single-block, --pubkey
+# (hpke-stern left this list when TODO #413 removed its enc/dec, v21.0.0.)
 # keyflag <algo>: the enc key arguments for an algo; deckey: the dec ones.
 keyflag() { case $1 in hske*) echo "--key $SK" ;; *) echo "--pubkey $TMP/$1.pub.pem" ;; esac; }
 deckey()  { case $1 in hske*) echo "--key $SK" ;; *) echo "--key $TMP/$1.pem" ;; esac; }

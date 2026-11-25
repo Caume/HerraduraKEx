@@ -3428,6 +3428,21 @@ static int ad_algo(const char *algo)
            strcmp(algo, "hske-nla1") == 0;
 }
 
+/* TODO #414: say on stderr that this mode cannot detect a modified ciphertext
+ * or a wrong key, from the generated HKX_ENC_INTEGRITY table. */
+static void warn_no_integrity(const char *cmd, const char *algo, int authenticated)
+{
+    int i;
+    for (i = 0; i < HKX_ENC_INTEGRITY_N; i++) {
+        const HkxEncIntegrity *r = &HKX_ENC_INTEGRITY[i];
+        if (strcmp(r->algo, algo) != 0) continue;
+        if (strcmp(r->integrity, "none") == 0 ||
+            (strcmp(r->integrity, "aead-flag") == 0 && !authenticated))
+            fprintf(stderr, "%s: warning: %s\n", cmd, r->warning);
+        return;
+    }
+}
+
 static void aead_flags_ok(const char *cmd, const char *algo, const char *ad, int aead)
 {
     char msg[160];
@@ -4186,6 +4201,7 @@ static void cmd_enc(int argc, char **argv)
     if (!out_path) die("enc: --out required");   /* TODO #381: was stdout */
     aead_flags_ok("enc", algo, get_arg(argc, argv, "--ad"),
                   has_flag(argc, argv, "--aead"));
+    warn_no_integrity("enc", algo, has_flag(argc, argv, "--aead"));
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
@@ -4476,6 +4492,8 @@ static void cmd_dec(int argc, char **argv)
     if (!in_path) die("dec: --in required");
     if (!out_path) die("dec: --out required");   /* TODO #381: was stdout */
     aead_flags_ok("dec", algo, get_arg(argc, argv, "--ad"), 0);
+    /* hske-nla1's integrity is the ciphertext's (format tag 2): warned below. */
+    warn_no_integrity("dec", algo, strcmp(algo, "hske-nla1") == 0);
 
     /* Load ciphertext PEM. */
     PemKey ct;
@@ -4583,6 +4601,7 @@ static void cmd_dec(int argc, char **argv)
             if (get_arg(argc, argv, "--ad"))
                 die("dec: --ad given, but this hske-nla1 ciphertext is not an AEAD "
                     "one (it has no tag to bind it to)");
+            warn_no_integrity("dec", algo, 0);
             nla1_width_ok(key_nbits, "dec", "key");
             {   /* The ciphertext's own declared width, item[3] of format tag 1.
                    Checked against the KEY's rather than against 256 since TODO

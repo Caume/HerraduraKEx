@@ -1668,6 +1668,8 @@ def generate():
             + [l for t in key_tag_labels(priv_algos, pem_labels_all).values() for l in t]),
         "pem_der_field_caps": build_pem_der_field_caps(),
         "key_parameter_sets": build_key_param_sets(),
+        "enc_integrity": build_enc_integrity(extract_choices(py_src, "en"),
+                                             extract_choices(py_src, "de")),
     }
     return spec
 
@@ -1839,6 +1841,16 @@ def build_help_synopsis(spec, lang):
         if row.get("has_algo_flag"):
             tags = [t for t, impls in row["algos"].items() if lang in impls]
             lines += _wrap_words(tags, " " * pad + "--algo: ", " " * (pad + 8))
+            if sub in ("enc", "dec"):   # TODO #414
+                words = []
+                for r in spec["enc_integrity"]:
+                    if r["algo"] in tags and r["integrity"] == "none":
+                        words.append(r["algo"])
+                    elif r["algo"] in tags and r["integrity"] == "aead-flag":
+                        words += [r["algo"], "(unless", "--aead)"]
+                if words:
+                    lines += _wrap_words(words, " " * pad + "NO INTEGRITY (TODO #414): ",
+                                         " " * (pad + 8))
     return lines
 
 
@@ -2101,6 +2113,120 @@ def build_key_param_sets():
 
 def _ps_ports(r):
     return " ".join(r["ports"])
+
+
+# ── Integrity of each enc/dec --algo (TODO #414) ──────────────────────────
+#
+# #410's wrong-secret matrix found that `dec` under the WRONG key exits 0 and
+# writes garbage for every mode without a tag, and nothing said which modes those
+# are.  This table is that statement.  integrity: "tag" (dec verifies a tag and
+# exits non-zero on a mismatch), "none" (no tag: a modified ciphertext or a wrong
+# key decrypts to wrong bytes with exit 0), or "aead-flag" (hske-nla1: none unless
+# --aead, i.e. a format-tag-2 ciphertext).  malleability is what a one-bit flip
+# of the ciphertext's E field does to the plaintext, MEASURED in all four CLIs by
+# CliTest/test_wrong_secret_matrix.sh: "predictable" (a fixed pattern, the same
+# under every key and plaintext: the mode is linear in E), or "diffuse" (about
+# half the block, varying with the key, but still undetected).  Every CLI prints
+# `<sub>: warning: <warning>` to stderr on enc and dec of a mode with no tag,
+# from the generated copy of this table, and the matrix holds them to it.
+_SYM_ADVICE = ("for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or "
+               "encfile")
+_ASYM_ADVICE = ("no asymmetric mode has a tag: sign the ciphertext, or agree a key "
+                "with kex and use an authenticated symmetric mode")
+_LIN = "flipping ciphertext bit j flips plaintext bits j and j +/- n/4 under every key"
+_LIN_E = "flipping bit j of E flips plaintext bits j and j +/- n/4 under every key"
+_DIFFUSE = "a flipped bit scrambles about half the block, and nothing detects it"
+ENC_INTEGRITY = {
+    "hske":           ("none", "predictable", _LIN, _SYM_ADVICE),
+    "hske-nla1":      ("aead-flag", "predictable",
+                       "without --aead, flipping ciphertext bit j flips plaintext bit j",
+                       _SYM_ADVICE),
+    "hske-nla2":      ("none", "diffuse", _DIFFUSE, _SYM_ADVICE),
+    "hske-nla3":      ("none", "diffuse", _DIFFUSE, _SYM_ADVICE),
+    "hske-duplex":    ("tag", None, None, None),
+    "hske-duplex3":   ("tag", None, None, None),
+    "hpke":           ("none", "predictable", _LIN_E, _ASYM_ADVICE),
+    "hpke-nl":        ("none", "diffuse", _DIFFUSE, _ASYM_ADVICE),
+    "hpke-nl3":       ("none", "diffuse", _DIFFUSE, _ASYM_ADVICE),
+    "hpke-stern-kem": ("none", "predictable",
+                       _LIN_E + "; a corrupt syndrome decrypts to garbage by design, as "
+                         "implicit rejection requires (TODO #235)", _ASYM_ADVICE),
+}
+
+
+def build_enc_integrity(enc_tags, dec_tags):
+    if set(enc_tags) != set(dec_tags):
+        raise RuntimeError("enc and dec take different --algo tags: %r"
+                           % sorted(set(enc_tags) ^ set(dec_tags)))
+    if set(ENC_INTEGRITY) != set(enc_tags):
+        raise RuntimeError("ENC_INTEGRITY does not match enc's --algo tags: %r"
+                           % sorted(set(ENC_INTEGRITY) ^ set(enc_tags)))
+    rows = []
+    for algo in enc_tags:
+        integ, mall, detail, advice = ENC_INTEGRITY[algo]
+        if integ not in ("tag", "none", "aead-flag"):
+            raise RuntimeError("ENC_INTEGRITY[%r]: unknown integrity %r" % (algo, integ))
+        if (integ == "tag") != (mall is None):
+            raise RuntimeError("ENC_INTEGRITY[%r]: a tagged mode has no malleability "
+                               "entry, an untagged one must have one" % algo)
+        warning = None
+        if integ != "tag":
+            warning = ("--algo %s has no integrity check: a modified ciphertext or the "
+                       "wrong key decrypts to wrong bytes with exit 0 (%s); %s (TODO #414)"
+                       % (algo, detail, advice))
+        rows.append({"algo": algo, "integrity": integ, "malleability": mall,
+                     "warning": warning})
+    return rows
+
+
+def _c_str(s):
+    return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def emit_c_enc_integrity(rows):
+    out = ["/* TODO #414: each enc/dec --algo's integrity: \"tag\", \"none\", or \"aead-flag\"",
+           " * (none unless --aead).  warning: what enc/dec print to stderr when there is",
+           " * no tag (0 for a tagged mode). */",
+           "typedef struct { const char *algo, *integrity, *warning; } HkxEncIntegrity;", "",
+           "static const HkxEncIntegrity HKX_ENC_INTEGRITY[] = {"]
+    for r in rows:
+        out.append("    {\"%s\", \"%s\",\n     %s}," % (r["algo"], r["integrity"],
+                                                       _c_str(r["warning"]) if r["warning"] else "0"))
+    out += ["};",
+            "static const int HKX_ENC_INTEGRITY_N ="
+            " (int)(sizeof(HKX_ENC_INTEGRITY) / sizeof(HKX_ENC_INTEGRITY[0]));", ""]
+    return out
+
+
+def emit_java_enc_integrity(rows):
+    out = ["    /** TODO #414: {algo, integrity (tag | none | aead-flag), stderr warning|\"\"}. */",
+           "    static final String[][] ENC_INTEGRITY = {"]
+    for r in rows:
+        out.append("        {\"%s\", \"%s\",\n         %s}," % (r["algo"], r["integrity"],
+                                                             _c_str(r["warning"] or "")))
+    out += ["    };", ""]
+    return out
+
+
+def emit_go_enc_integrity(rows):
+    out = ["// TODO #414: each enc/dec --algo's integrity (tag | none | aead-flag) and the",
+           "// warning enc/dec print to stderr when there is no tag.",
+           "var encIntegrity = map[string][2]string{"]
+    for r in rows:
+        out.append("\t\"%s\": {\"%s\",\n\t\t%s}," % (r["algo"], r["integrity"],
+                                                 _c_str(r["warning"] or "")))
+    out += ["}", ""]
+    return out
+
+
+def emit_py_enc_integrity(rows):
+    out = ["# TODO #414: each enc/dec --algo's integrity (tag | none | aead-flag) and the",
+           "# warning enc/dec print to stderr when there is no tag.",
+           "_ENC_INTEGRITY = {"]
+    for r in rows:
+        out.append("    %r: (%r,\n        %r)," % (r["algo"], r["integrity"], r["warning"]))
+    out += ["}", ""]
+    return out
 
 
 def emit_c_param_sets(ps):
@@ -3113,7 +3239,7 @@ def build_key_label_acceptance(priv_algos, pem_labels):
     return rows
 
 
-def emit_c_key_table(rows, items, caps, ps):
+def emit_c_key_table(rows, items, caps, ps, integ):
     width = max(len(r["labels"]) for r in rows) + 1
     out = ["/* " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n * ") + " */",
            "#ifndef HKX_KEY_LABEL_TABLE_H",
@@ -3139,11 +3265,12 @@ def emit_c_key_table(rows, items, caps, ps):
             " (int)(sizeof(HKX_DER_ITEMS) / sizeof(HKX_DER_ITEMS[0]));", ""]
     out += emit_c_field_caps(caps)
     out += emit_c_param_sets(ps)
+    out += emit_c_enc_integrity(integ)
     out += ["#endif /* HKX_KEY_LABEL_TABLE_H */", ""]
     return "\n".join(out)
 
 
-def emit_java_key_table(rows, items, caps, ps):
+def emit_java_key_table(rows, items, caps, ps, integ):
     out = ["package herradurakex;", "",
            "/** " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n *  ") + " */",
            "final class KeyLabelTable {",
@@ -3161,6 +3288,7 @@ def emit_java_key_table(rows, items, caps, ps):
     out += ["    };", ""]
     out += emit_java_field_caps(caps)
     out += emit_java_param_sets(ps)
+    out += emit_java_enc_integrity(integ)
     out += ["}", ""]
     return "\n".join(out)
 
@@ -3179,7 +3307,7 @@ def _replace_region(src, begin, end, body, what):
     return pat.sub(lambda _m: "\n".join([begin] + body + [end]), src, count=1)
 
 
-def emit_go_key_region(go_src, rows, items, caps, ps):
+def emit_go_key_region(go_src, rows, items, caps, ps, integ):
     body = ["var keySites = []keySite{"]
     for r in rows:
         body.append('\t{"%s", "%s", "%s", "%s", []string{%s}},'
@@ -3195,10 +3323,11 @@ def emit_go_key_region(go_src, rows, items, caps, ps):
     body.append("")
     body += emit_go_field_caps(caps)
     body += emit_go_param_sets(ps)
+    body += emit_go_enc_integrity(integ)
     return _replace_region(go_src, GO_KEY_BEGIN, GO_KEY_END, body, "herradura_cli.go")
 
 
-def emit_py_key_region(py_src, rows, items, caps, ps):
+def emit_py_key_region(py_src, rows, items, caps, ps, integ):
     body = ["_KEY_SITES = {"]
     for r in rows:
         body.append("    (%r, %r, %r): (%r, (%s)),"
@@ -3216,6 +3345,7 @@ def emit_py_key_region(py_src, rows, items, caps, ps):
     body += emit_py_field_caps(caps)
     body.append("")
     body += emit_py_param_sets(ps)
+    body += emit_py_enc_integrity(integ)
     return _replace_region(py_src, PY_KEY_BEGIN, PY_KEY_END, body, "herradura.py")
 
 
@@ -3245,17 +3375,20 @@ def main():
         (CLI_GO, emit_go_key_region(
             emit_go_help_region(read(CLI_GO), build_help_synopsis(spec, "go")),
             spec["key_label_acceptance"], spec["pem_der_items"], spec["pem_der_field_caps"],
-            spec["key_parameter_sets"])),
+            spec["key_parameter_sets"], spec["enc_integrity"])),
         # TODO #366: the key-label acceptance table, in all four CLIs (with
         # #367's item counts and #372's field caps).
         (C_KEY_TABLE, emit_c_key_table(spec["key_label_acceptance"], spec["pem_der_items"],
-                                       spec["pem_der_field_caps"], spec["key_parameter_sets"])),
+                                       spec["pem_der_field_caps"], spec["key_parameter_sets"],
+                                       spec["enc_integrity"])),
         (JAVA_KEY_TABLE, emit_java_key_table(spec["key_label_acceptance"], spec["pem_der_items"],
-                                             spec["pem_der_field_caps"], spec["key_parameter_sets"])),
+                                             spec["pem_der_field_caps"], spec["key_parameter_sets"],
+                                             spec["enc_integrity"])),
         (HERRADURA_PY, emit_py_key_region(read(HERRADURA_PY), spec["key_label_acceptance"],
                                                      spec["pem_der_items"],
                                                      spec["pem_der_field_caps"],
-                                                     spec["key_parameter_sets"])),
+                                                     spec["key_parameter_sets"],
+                                                     spec["enc_integrity"])),
     ]
 
     if args.check:

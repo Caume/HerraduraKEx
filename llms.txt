@@ -259,6 +259,13 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     hske-duplex3 ciphertexts carry format tag 4, hske-duplex's tag 3, so each
     refuses the other's artifact at the parser.  All four CLIs ship both duplex
     versions.
+    NO INTEGRITY (TODO #414, v21.0.1): only hske-duplex, hske-duplex3, hske-nla1
+    --aead and encfile carry a tag.  Every other algo decrypts a modified
+    ciphertext or a wrong key to wrong bytes with exit 0, and enc and dec print
+    "<sub>: warning: --algo <a> has no integrity check: ..." to stderr (the text
+    is the spec's enc_integrity table).  hske, hske-nla1, hpke and hpke-stern-kem
+    are predictably malleable: flipping bit j of E flips plaintext bit j
+    (hske-nla1) or bits j and j +/- n/4 (the others), under every key.
   sign --algo {hpks,hpks-nl,hpks-stern,rnl-sigma,nl-zkboo,nl-zkbpp,hpks-xmss,hpks-wots,hpks-ring}
        --key FILE [--ring FILE1,FILE2,...] --in FILE --out FILE
        [--digest {hfscx-256,none}] [--rounds N]

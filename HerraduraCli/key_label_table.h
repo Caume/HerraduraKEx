@@ -1045,4 +1045,33 @@ static const char *const HKX_PARAM_LEVEL_NOTES[] = {
     0};
 #define HKX_PARAM_GAP_TODO 383   /* this CLI's narrow-width TODO */
 
+/* TODO #414: each enc/dec --algo's integrity: "tag", "none", or "aead-flag"
+ * (none unless --aead).  warning: what enc/dec print to stderr when there is
+ * no tag (0 for a tagged mode). */
+typedef struct { const char *algo, *integrity, *warning; } HkxEncIntegrity;
+
+static const HkxEncIntegrity HKX_ENC_INTEGRITY[] = {
+    {"hske", "none",
+     "--algo hske has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping ciphertext bit j flips plaintext bits j and j +/- n/4 under every key); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+    {"hske-nla1", "aead-flag",
+     "--algo hske-nla1 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (without --aead, flipping ciphertext bit j flips plaintext bit j); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+    {"hske-nla2", "none",
+     "--algo hske-nla2 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+    {"hske-nla3", "none",
+     "--algo hske-nla3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+    {"hske-duplex", "tag",
+     0},
+    {"hske-duplex3", "tag",
+     0},
+    {"hpke", "none",
+     "--algo hpke has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+    {"hpke-nl", "none",
+     "--algo hpke-nl has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+    {"hpke-nl3", "none",
+     "--algo hpke-nl3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+    {"hpke-stern-kem", "none",
+     "--algo hpke-stern-kem has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key; a corrupt syndrome decrypts to garbage by design, as implicit rejection requires (TODO #235)); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+};
+static const int HKX_ENC_INTEGRITY_N = (int)(sizeof(HKX_ENC_INTEGRITY) / sizeof(HKX_ENC_INTEGRITY[0]));
+
 #endif /* HKX_KEY_LABEL_TABLE_H */

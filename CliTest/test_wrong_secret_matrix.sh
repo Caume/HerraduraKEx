@@ -20,6 +20,9 @@
 # (both widths), hpks-wots, hpks-xmss, HCRED proofs and credentials,
 # hske-nla1 --aead, hske-duplex, hske-duplex3, encfile / decfile, and pkey
 # --decrypt; nl-zkboo / nl-zkbpp are test_raw_body_diff.sh's wrongA cells.
+# The modes with NO tag cannot refuse a wrong key, so their cells (TODO #414)
+# assert the opposite and say so: exit 0 with garbage, the stderr warning the
+# spec's enc_integrity table names, and the measured malleability class.
 #
 # Every cell has an ACCEPT-CONTROL beside it (the honest artifact, or the
 # patched prover handed the true key), so a CLI that rejects everything fails.
@@ -238,6 +241,136 @@ for a in "hske-nla1 --aead:p32" "hske-duplex:p3k" "hske-duplex3:p3k"; do
     PLAIN="$TMP/$p" cell "$t under the WRONG key" BAD dec --algo $t --key "$TMP/k2.pem" --in "$TMP/ct_$t" --out "$TMP/o"
     PLAIN="$TMP/$p" cell "$t with one bit flipped" BAD dec --algo $t --key "$TMP/k1.pem" --in "$TMP/ct_${t}_x" --out "$TMP/o"
 done
+# The warning is printed only where there is no tag (TODO #414): its control.
+for a in "hske-nla1 --aead" hske-duplex hske-duplex3; do
+    t=${a%% *}; r=""; ok=1
+    for l in "${LANGS[@]}"; do
+        eval "${CLI[$l]} enc --algo $a --key '$TMP/k1.pem' --in '$TMP/p32' --out '$TMP/q'" 2>"$TMP/e1" >/dev/null; rc1=$?
+        eval "${CLI[$l]} dec --algo $t --key '$TMP/k1.pem' --in '$TMP/q' --out '$TMP/o'" 2>"$TMP/e2" >/dev/null; rc2=$?
+        if [ $rc1 -eq 0 ] && [ $rc2 -eq 0 ] && cmp -s "$TMP/o" "$TMP/p32" && ! grep -q 'warning' "$TMP/e1" "$TMP/e2"
+        then r="$r $l=QUIET"; else r="$r $l=WARNED/FAILED"; ok=0; fi
+    done
+    [ $ok = 1 ] && pass "$a: enc and dec print no integrity warning (it has a tag):$r" || fail "$a: a tagged mode warned or failed:$r"
+done
+
+# ── unauthenticated modes (TODO #414) ─────────────────────────────────────────
+# Every --algo with no tag decrypts a wrong key's or a modified ciphertext's
+# bytes with exit 0.  spec/herradura-protocol-spec.json's enc_integrity says
+# which modes those are, what a one-bit flip of E does to the plaintext, and the
+# warning enc and dec print to stderr; these cells hold every CLI to all three.
+# malleability is MEASURED: two (key, plaintext) pairs, the same bit of E flipped
+# in each, decrypted under the right key -- "predictable" when the two plaintext
+# differences are equal (the mode is linear in E, so the attacker knows which
+# plaintext bits a flip changes without knowing the key), "diffuse" when they
+# differ.  Equal differences from a nonlinear map would be a 2^-n coincidence,
+# so neither verdict is sampled.  hpke-stern-kem decapsulates, so the fixture
+# step retries per CliTest/lib_dfr.sh (a DFR event is a mismatch, TODO #235).
+. "$ROOT/CliTest/lib_dfr.sh"
+integ() { python3 -c "import json,sys
+for r in json.load(open('spec/herradura-protocol-spec.json'))['enc_integrity']:
+    if r['algo'] == sys.argv[1]: print(r[sys.argv[2]] or '')" "$1" "$2"; }
+flipE() { python3 - "$1" "$2" "$3" <<'PYEOF'
+import sys, base64
+t = open(sys.argv[1]).read().split('\n')
+b = bytearray(base64.b64decode(''.join(l for l in t[1:] if l and not l.startswith('-----'))))
+def ln(p):
+    if b[p] < 0x80: return b[p], p + 1
+    k = b[p] & 0x7f; return int.from_bytes(b[p + 1:p + 1 + k], 'big'), p + 1 + k
+_, p = ln(1); items = []
+while p < len(b):
+    l, q = ln(p + 1); items.append((q, l)); p = q + l
+q, l = items[-2]                  # E: the item before n (or r) in every untagged layout
+byte, off = divmod(int(sys.argv[3]), 8)
+assert byte < l - 1               # never the leading byte, so the DER stays minimal
+b[q + l - 1 - byte] ^= 1 << off
+open(sys.argv[2], 'w').write(t[0] + '\n' + base64.encodebytes(bytes(b)).decode() + t[0].replace('BEGIN', 'END') + '\n')
+PYEOF
+}
+delta() { python3 -c "import sys;a=open(sys.argv[1],'rb').read();b=open(sys.argv[2],'rb').read();print(bytes(x^y for x,y in zip(a,b)).hex() if len(a)==len(b) else 'LEN')" "$1" "$2"; }
+# The difference enc_integrity's warning states for a flip of bit 77 of E at
+# n = 256: bit 77 alone for hske-nla1 (E = P xor keystream), else bits 77 and
+# 77 +/- 64 (the E-part of fscx_revolve is M^(3n/4) = M^(n/4) = I + ROL^64 +
+# ROR^64, since M^(n/2) = I and squaring is linear over GF(2)).
+pattern() { python3 -c "import sys
+v = 1 << 77 if sys.argv[1] == 'hske-nla1' else (1 << 77) | (1 << 141) | (1 << 13)
+print(v.to_bytes(32, 'big').hex())" "$1"; }
+# warned FILE SUB ALGO -- FILE holds exactly the table's warning line for SUB
+warned() { local w; w="$2: warning: $(integ "$3" warning)"; [ -n "$(integ "$3" warning)" ] && grep -qxF -- "$w" "$1"; }
+pub "$TMP/g1.pem" "$TMP/g1p.pem"; pub "$TMP/g3.pem" "$TMP/g3p.pem"
+mk --algo hpke-nl3 --out "$TMP/n1.pem"; mk --algo hpke-nl3 --out "$TMP/n2.pem"
+pub "$TMP/n1.pem" "$TMP/n1p.pem"; pub "$TMP/n2.pem" "$TMP/n2p.pem"
+mk --algo hpke-stern-kem --out "$TMP/q1.pem"; mk --algo hpke-stern-kem --out "$TMP/q2.pem"
+pub "$TMP/q1.pem" "$TMP/q1p.pem"; pub "$TMP/q2.pem" "$TMP/q2p.pem"
+head -c 32 /dev/urandom > "$TMP/pa"; head -c 32 /dev/urandom > "$TMP/pb"
+# unauth ALGO WANT-MALLEABILITY ENC-A DEC-A ENC-B DEC-B (key flags of pair A and B)
+unauth() {
+    local a=$1 want=$2 ea=$3 da=$4 eb=$5 db=$6 l P x attempt r1="" r2="" r3="" r4="" o1=1 o2=1 o3=1 o4=1 dA dB m
+    for x in a b; do
+        attempt=1
+        while :; do
+            if [ $x = a ]; then $G enc --algo $a $ea --in "$TMP/pa" --out "$TMP/u_a" >/dev/null 2>&1
+                 $G dec --algo $a $da --in "$TMP/u_a" --out "$TMP/o" >/dev/null 2>&1; cmp -s "$TMP/o" "$TMP/pa" && break
+            else $G enc --algo $a $eb --in "$TMP/pb" --out "$TMP/u_b" >/dev/null 2>&1
+                 $G dec --algo $a $db --in "$TMP/u_b" --out "$TMP/o" >/dev/null 2>&1; cmp -s "$TMP/o" "$TMP/pb" && break; fi
+            dfr_retryable "$attempt" || { fail "fixture: $a pair $x does not round-trip"; return; }
+            dfr_report_retry "unauth $a" "$attempt"; attempt=$((attempt + 1))
+        done
+        flipE "$TMP/u_$x" "$TMP/u_${x}x" 77 || { fail "fixture: flip E of $a"; return; }
+    done
+    for l in "${LANGS[@]}"; do
+        P="${CLI[$l]}"
+        eval "$P enc --algo $a $ea --in '$TMP/pa' --out '$TMP/q'" >/dev/null 2>"$TMP/e"
+        if [ $? -eq 0 ] && warned "$TMP/e" enc "$a"; then r1="$r1 $l=WARNED"; else r1="$r1 $l=SILENT"; o1=0; fi
+        eval "$P dec --algo $a $da --in '$TMP/u_a' --out '$TMP/o'" >/dev/null 2>"$TMP/e"
+        if [ $? -eq 0 ] && cmp -s "$TMP/o" "$TMP/pa" && warned "$TMP/e" dec "$a"; then r2="$r2 $l=OK+WARNED"; else r2="$r2 $l=BAD"; o2=0; fi
+        rm -f "$TMP/o"; eval "$P dec --algo $a $db --in '$TMP/u_a' --out '$TMP/o'" >/dev/null 2>"$TMP/e"
+        if [ $? -eq 0 ] && [ -s "$TMP/o" ] && ! cmp -s "$TMP/o" "$TMP/pa" && warned "$TMP/e" dec "$a"
+        then r3="$r3 $l=GARBAGE+WARNED"; else r3="$r3 $l=OTHER"; o3=0; fi
+        rm -f "$TMP/o"; eval "$P dec --algo $a $da --in '$TMP/u_ax' --out '$TMP/o'" >/dev/null 2>&1; dA=$(delta "$TMP/o" "$TMP/pa")
+        rm -f "$TMP/o"; eval "$P dec --algo $a $db --in '$TMP/u_bx' --out '$TMP/o'" >/dev/null 2>&1; dB=$(delta "$TMP/o" "$TMP/pb")
+        if [ "$dA" = LEN ] || [ "$dB" = LEN ] || [ -z "${dA//0/}" ]; then m=BROKEN
+        elif [ "$dA" != "$dB" ]; then m=diffuse
+        elif [ "$dA" = "$(pattern $a)" ]; then m=predictable; else m=UNSTATED-PATTERN; fi
+        r4="$r4 $l=$m"; [ "$m" = "$want" ] || o4=0
+    done
+    [ $o1 = 1 ] && pass "$a: enc warns that it has no integrity:$r1" || fail "$a: enc did not warn:$r1"
+    [ $o2 = 1 ] && pass "$a control: dec recovers the plaintext, and warns:$r2" || fail "$a control:$r2"
+    [ $o3 = 1 ] && pass "$a under the WRONG key: exit 0 and garbage, with the warning (no tag):$r3" || fail "$a under the WRONG key:$r3"
+    [ $o4 = 1 ] && pass "$a malleability, one bit of E flipped: $want, as enc_integrity says:$r4" || fail "$a malleability (want $want):$r4"
+}
+K1="--key $TMP/k1.pem"; K2="--key $TMP/k2.pem"
+for a in $(python3 -c "import json
+for r in json.load(open('spec/herradura-protocol-spec.json'))['enc_integrity']:
+    if r['integrity'] != 'tag': print(r['algo'])"); do
+    m=$(integ $a malleability)
+    case $a in
+        hske*)          unauth $a "$m" "$K1" "$K1" "$K2" "$K2" ;;
+        hpke|hpke-nl)   unauth $a "$m" "--pubkey $TMP/g1p.pem" "--key $TMP/g1.pem" "--pubkey $TMP/g3p.pem" "--key $TMP/g3.pem" ;;
+        hpke-nl3)       unauth $a "$m" "--pubkey $TMP/n1p.pem" "--key $TMP/n1.pem" "--pubkey $TMP/n2p.pem" "--key $TMP/n2.pem" ;;
+        hpke-stern-kem) unauth $a "$m" "--pubkey $TMP/q1p.pem" "--key $TMP/q1.pem" "--pubkey $TMP/q2p.pem" "--key $TMP/q2.pem" ;;
+        *)              fail "$a: enc_integrity names a mode this test has no keys for" ;;
+    esac
+done
+# Negative controls: each new check must fire.  A CLI whose stderr is dropped
+# must fail the warning cells, and a diffuse mode must fail a "predictable"
+# claim (and a predictable one a "diffuse" claim).
+before=$FAIL; saved=$(declare -p CLI)
+for l in "${LANGS[@]}"; do
+    printf '#!/bin/sh\nexec %s "$@" 2>/dev/null\n' "${CLI[$l]}" > "$TMP/silent_$l"; chmod +x "$TMP/silent_$l"
+    CLI[$l]="$TMP/silent_$l"
+done
+unauth hske "$(integ hske malleability)" "$K1" "$K1" "$K2" "$K2" >/dev/null
+eval "$saved"
+[ $FAIL -eq $((before + 3)) ] && pass "control: a CLI that prints no warning fails the enc, control and WRONG-key cells" \
+    || fail "control: a silent CLI failed $((FAIL - before)) cells, not 3"
+FAIL=$before
+for x in "hske-nla2 predictable" "hske diffuse"; do
+    before=$FAIL; set -- $x
+    unauth $1 $2 "$K1" "$K1" "$K2" "$K2" >/dev/null
+    if [ $FAIL -eq $((before + 1)) ]; then FAIL=$before; pass "control: $1 fails the malleability cell when it is claimed to be $2"
+    else FAIL=$before; fail "control: $1 claimed $2 did not fail exactly the malleability cell"; fi
+done
+
 $G encfile --algo hske-nla1 --key "$TMP/k1.pem" --in "$TMP/p3k" --out "$TMP/f.hkx" >/dev/null 2>&1
 if need "$TMP/f.hkx" "encfile"; then
     python3 -c "import sys;b=bytearray(open(sys.argv[1],'rb').read());b[len(b)//2]^=1;open(sys.argv[2],'wb').write(b)" "$TMP/f.hkx" "$TMP/fx.hkx"

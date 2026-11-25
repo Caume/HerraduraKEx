@@ -48,6 +48,32 @@ any of these classifications.
 treat it as a proof-of-concept for the underlying math, not a component to deploy where
 real confidentiality or authenticity guarantees are required.
 
+## Integrity of the encryption modes
+
+Status says nothing about integrity, so it is stated here (TODO #414).  Only four
+encryption paths carry an authentication tag and refuse a modified ciphertext or a
+wrong key: `hske-duplex`, `hske-duplex3`, `hske-nla1 --aead` and `encfile` /
+`decfile`.  Every other `enc --algo` has **no integrity**: `dec` writes wrong bytes
+and exits 0, and since v21.0.1 every CLI prints a warning to stderr on `enc` and
+`dec` of one.  Measured in all four CLIs by `CliTest/test_wrong_secret_matrix.sh`,
+flipping one bit of the ciphertext's E field:
+
+| `--algo` | Integrity | A one-bit flip of E |
+|---|---|---|
+| `hske` | none | **predictable:** plaintext bits j and j ± n/4 flip, under every key |
+| `hske-nla1` (no `--aead`) | none | **predictable:** plaintext bit j flips (E = P ⊕ keystream) |
+| `hske-nla2`, `hske-nla3` | none | diffuse: about half the block changes, undetected |
+| `hpke` | none | **predictable:** plaintext bits j and j ± n/4 flip, under every key |
+| `hpke-nl`, `hpke-nl3` | none | diffuse: about half the block changes, undetected |
+| `hpke-stern-kem` | none | **predictable** through E; a corrupt syndrome decrypts to garbage by design (implicit rejection, TODO #235) |
+| `hske-duplex`, `hske-duplex3`, `hske-nla1 --aead`, `encfile` | tag | refused: `dec` exits non-zero |
+
+A predictable mode lets anyone who holds a ciphertext change chosen plaintext bits
+without the key.  No asymmetric mode has a tag: sign the ciphertext, or agree a key
+with `kex` and use an authenticated symmetric mode.  `fpe` and `twk` are
+permutations with no tag either; they fail by returning wrong bytes.  The spec's
+`enc_integrity` table is the machine-readable form of this section.
+
 ## Side-Channel Posture
 
 Timing and other physical side channels are audited **only in the C implementation**, and

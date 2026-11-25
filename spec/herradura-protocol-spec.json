@@ -5798,5 +5798,67 @@
         "withdrawn": null
       }
     ]
-  }
+  },
+  "enc_integrity": [
+    {
+      "algo": "hske",
+      "integrity": "none",
+      "malleability": "predictable",
+      "warning": "--algo hske has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping ciphertext bit j flips plaintext bits j and j +/- n/4 under every key); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"
+    },
+    {
+      "algo": "hske-nla1",
+      "integrity": "aead-flag",
+      "malleability": "predictable",
+      "warning": "--algo hske-nla1 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (without --aead, flipping ciphertext bit j flips plaintext bit j); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"
+    },
+    {
+      "algo": "hske-nla2",
+      "integrity": "none",
+      "malleability": "diffuse",
+      "warning": "--algo hske-nla2 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"
+    },
+    {
+      "algo": "hske-nla3",
+      "integrity": "none",
+      "malleability": "diffuse",
+      "warning": "--algo hske-nla3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"
+    },
+    {
+      "algo": "hske-duplex",
+      "integrity": "tag",
+      "malleability": null,
+      "warning": null
+    },
+    {
+      "algo": "hske-duplex3",
+      "integrity": "tag",
+      "malleability": null,
+      "warning": null
+    },
+    {
+      "algo": "hpke",
+      "integrity": "none",
+      "malleability": "predictable",
+      "warning": "--algo hpke has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"
+    },
+    {
+      "algo": "hpke-nl",
+      "integrity": "none",
+      "malleability": "diffuse",
+      "warning": "--algo hpke-nl has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"
+    },
+    {
+      "algo": "hpke-nl3",
+      "integrity": "none",
+      "malleability": "diffuse",
+      "warning": "--algo hpke-nl3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"
+    },
+    {
+      "algo": "hpke-stern-kem",
+      "integrity": "none",
+      "malleability": "predictable",
+      "warning": "--algo hpke-stern-kem has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key; a corrupt syndrome decrypts to garbage by design, as implicit rejection requires (TODO #235)); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"
+    }
+  ]
 }

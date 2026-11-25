@@ -374,6 +374,21 @@
         }
       }
     },
+    "enc_integrity": {
+      "type": "array",
+      "description": "Whether each enc/dec --algo detects a modified ciphertext or a wrong key (TODO #414). integrity: \"tag\" (dec verifies a tag and exits non-zero on a mismatch), \"none\" (no tag: wrong bytes with exit 0), or \"aead-flag\" (none unless --aead). malleability: what a one-bit flip of the ciphertext does to the plaintext, measured by CliTest/test_wrong_secret_matrix.sh -- \"predictable\" (a fixed pattern under every key) or \"diffuse\" (about half the block, undetected); null for a tagged mode. warning: the line every CLI prints to stderr, after '<subcommand>: warning: ', on enc and dec of a mode with no tag. Curated in spec/generate_spec.py and emitted beside the key-label table into all four CLIs.",
+      "items": {
+        "type": "object",
+        "required": ["algo", "integrity", "malleability", "warning"],
+        "additionalProperties": false,
+        "properties": {
+          "algo": {"type": "string"},
+          "integrity": {"enum": ["tag", "none", "aead-flag"]},
+          "malleability": {"enum": ["predictable", "diffuse", null]},
+          "warning": {"type": ["string", "null"]}
+        }
+      }
+    },
     "key_label_acceptance": {
       "type": "array",
       "description": "Which key PEM labels each (subcommand, --algo, key flag) accepts (TODO #366). Curated policy in spec/generate_spec.py, emitted into all four CLIs (HerraduraCli/key_label_table.h, bindings/java/herradurakex/KeyLabelTable.java, and generated regions of herradura_cli.go and herradura.py). A key whose label is not listed is refused with 'wrong key type'. Public-key slots accept PUBLIC labels only. `algo` is empty for subcommands without --algo; `pkey` reads any key and has no row.",
