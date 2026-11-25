@@ -70,6 +70,139 @@ Status: **OPEN**
 
 ---
 
+### #412: `verify --algo hpks-t` binds the signature to no public key
+
+Found by #410's wrong-secret matrix (`CliTest/test_wrong_secret_matrix.sh`, a KNOWN cell).
+An HPKS-T signature carries its aggregate key C_agg, and `verify --algo hpks-t` checks the
+signature against that embedded key only.  `--pubkey` is optional, and when it is given
+it is ignored.  So a threshold signature made by ANY group of keys, an attacker's own
+included, verifies, even beside an unrelated `--pubkey`.  This holds in all four CLIs
+(C `herradura_cli.c`'s `/* hpks-t: C_agg is embedded in the sig -- no pubkey file needed */`).
+"Signature OK" therefore proves only that someone signed, not who.
+
+The fix is to make the verifier take the key it is to trust and compare it with C_agg,
+refusing a mismatch.  That key is either the aggregate public key or the member public
+keys, from which the verifier recomputes C_agg with the signers' μ coefficients.
+`--pubkey` (or a `--ring`-style member list) becomes required.  **MAJOR:** `verify
+--algo hpks-t` without a key stops working.  The KNOWN cell becomes two ordinary cells:
+an unrelated key must FAIL, and the group's own key must verify.  While there, check that
+the μ coefficients bind every member key, so that no rogue-key choice of one member's
+public key sets C_agg; the signer computes them (`hpkst_sign`), and the verifier should
+too.
+
+Status: **OPEN**
+
+---
+
+### #413: `hpke-stern` ciphertexts decrypt without the private key
+
+Found by #410's dead-value audit.  Python's `dec --algo hpke-stern` decodes a `K_int` field
+from the ciphertext and never reads it, and the matrix then confirmed the consequence
+in all four CLIs.  The HPKE-Stern-F ciphertext carries the error vector e' (and the
+session key derived from it).  K = hpke_stern_f_decap(syndrome, e', seed) needs only the
+PUBLIC seed, so anyone holding the ciphertext and the public key recovers the plaintext:
+`CliTest/test_wrong_secret_matrix.sh` does exactly that, as a KNOWN cell, with no private
+key.  This is the "demo: decap uses known e'" construction, but SECURITY.md's HPKE-Stern-F
+row does not say that it gives NO confidentiality, and `--help` presents `enc --algo
+hpke-stern` beside the real encryption modes.  The N = 2304 form
+(`hpke_stern_l_decap_known`) is the same.
+
+Decide between two fixes, and record the choice in SECURITY.md:
+- **Remove the mode:** retire `--algo hpke-stern` in favour of `hpke-stern-kem`, which
+  decodes with the private key.  This is MAJOR.
+- **Keep it as a demonstration:** make that unmissable.  `enc` would refuse it without an
+  explicit flag and print a warning that the ciphertext is decryptable by anyone.  The
+  ciphertext would drop the redundant K field, and the SECURITY.md row would say "no
+  confidentiality".
+
+Either way, the KNOWN cell becomes an ordinary one.
+
+Status: **OPEN**
+
+---
+
+### #414: the unauthenticated encryption modes accept any key and any ciphertext silently
+
+Found by #410's wrong-secret matrix.  `dec` under the WRONG key exits 0 and writes garbage,
+in all four CLIs, for every mode without a tag:
+- `hske`, `hske-nla1` without `--aead`, `hske-nla2` and `hske-nla3`;
+- `hpke`, `hpke-nl` and `hpke-nl3`;
+- `hpke-stern`, and `hpke-stern-kem` (its implicit rejection is by design, #235).
+
+The authenticated modes (`hske-nla1 --aead`, `hske-duplex`, `hske-duplex3`,
+`encfile`/`decfile`, the passphrase envelope) all refuse, and the matrix holds them to
+it.  Neither SECURITY.md nor `--help` says which modes are unauthenticated, i.e.
+malleable and with no integrity.  A user who sees exit 0 has no reason to think the
+output is wrong.
+
+To do:
+1. Measure each mode's malleability: does a bit flipped in the ciphertext flip a
+   predictable plaintext bit?
+2. State "no integrity" per mode in SECURITY.md, `--help` and SPEC.md.
+3. Make `enc` and `dec` of an unauthenticated mode print a warning to stderr.
+4. Consider making `--aead` the default for `hske-nla1`, which is MAJOR.
+
+The matrix gains one cell per mode: an informational line now, and an assertion once the
+warning ships.
+
+Status: **OPEN**
+
+---
+
+### #415: Fiat-Shamir challenges that omit the public key
+
+Found by #410 part C.  These transcripts hash the message and commitments but not the
+signer's public key:
+- the HPKS-Stern-F challenge, short and long form (`ch_st` over msg ‖ commits;
+  `_sternl_fs_state`);
+- the ring signature's challenge (not even the ring's keys);
+- the Schnorr-family challenges: HPKS's `fscx_revolve(R, msg)`, and
+  HFSCX-256-DS(0x30, R ‖ msg) for HPKS-NL and HPKS-T.
+
+ZKBoo, ZKB++, ZKP-RNL and HCRED all bind their statement.  The matrix shows no forgery
+under a FIXED honest key: every wrong-secret cell fails, because the Stern b = 2 branch
+and the Schnorr equation read the key.  But this is the weak Fiat-Shamir pattern: a
+proof that is not bound to its statement leaves room for key-substitution and
+statement-choice attacks (an adversary picks the key after the transcript).  For the
+ring, a signature might be re-attributed to another ring, which needs analysis.
+
+To do:
+1. For each scheme, establish what an adversary gains: a second public key under which a
+   given signature verifies (duplicate-signature key selection), or a ring signature
+   valid for another ring.
+2. Either prefix the key and the ring into the challenge (a wire change, MAJOR), or
+   record in SECURITY.md why the omission is safe.
+
+Status: **OPEN**
+
+---
+
+### #416: the Python test harness tests its own copies, not the shipped suite
+
+Found by #410 part D.  `CryptosuiteTests/Herradura_tests.py` imports nothing from
+`Herradura cryptographic suite.py`.  It reimplements 79 of the suite's functions, among them
+every verifier its numbered tests exercise: `_zkp_nl_verify`, `hcred_verify`,
+`hpks_stern_f_verify`, `_rnl_sigma_verify`, the NL-FSCX rounds and `gf_pow`.  Its
+`[FAIL]`-gated results therefore hold the COPY to its own expectations.  #409 is what
+that costs: the harness's ZKBoo copy had the shipped bug and its tests passed.  C's harness
+uses `herradura.h`, Go's the package and Java's `SelfTest` the shipped classes, so
+Python is the one port whose numbered tests do not test what ships.  `SecurityProofsCode/`
+has the same split: about 20 scripts load the shipped suite on purpose, and the rest carry
+models (`zkp_pqc_exploration.py`'s was #409's other blind spot).
+
+To do:
+1. List every harness function that shadows a suite function.
+2. Either import the suite's function, or add a parity check that fails when the two
+   diverge on the same inputs: for a randomised prover, cross-verify both ways and
+   compare verdicts on the matrix's wrong-secret artifacts.
+3. Do the same for every `SecurityProofsCode/` model whose verdict SecurityProofs cites
+   about a shipped protocol.
+4. Record the rule in CLAUDE.md's "Rules for writing tests".
+
+Status: **OPEN**
+
+---
+
 ### #411: a general security review of the shipped code
 
 The project has had targeted audits: the constant-time audits (#129, #182, #249), the parser
@@ -113,6 +246,11 @@ user's data.  The analysis-only code in `SecurityProofsCode/` is out of scope, e
 - **Supply chain and CI:** the CI actions pinned to a commit, install steps bounded (#353),
   the Docker base image, and the "no third-party dependency" property of shipped code
   checked by a tool, not by habit.
+- **Verifiers read by hand (from #410 B):** for each Go and Java verifier and decryptor,
+  every check its paper protocol makes, and where it makes it.  #410's tools (gcc's
+  unused-variable warnings, an AST pass over the Python) cover C and Python only.  The
+  Go and Java compilers do not flag a value that is computed and never read, so those two
+  ports are held only by the four-CLI matrix's behaviour.
 - **Documentation honesty:** SECURITY.md's maturity levels against what the review finds.
   Every protocol marked demo or research says so in `--help` as well.
 
