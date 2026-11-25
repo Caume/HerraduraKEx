@@ -28,11 +28,11 @@
 # coincidence; every one is made at the shipped round count (Stern 219, HCRED
 # 32: (1/3)^32 = 5e-16), so no cell is a sampled verdict.
 #
+# hpks-t was a KNOWN cell until TODO #412 (v20.0.0) bound the signature to
+# --pubkey's group; it now has ordinary cells.
 # KNOWN cells record a defect this test found and a TODO now owns.  Each passes
 # while the defect stands and FAILS once it is fixed, so the fix must turn the
 # cell into an ordinary one:
-#   * #412: verify --algo hpks-t reads no public key -- a threshold signature
-#     from ANY group verifies, even beside an unrelated --pubkey;
 #   * #413: an hpke-stern ciphertext carries its session key's inputs, so its
 #     plaintext is recovered from the ciphertext and the public key alone.
 # Claimed by ci.yml's cross-lang-compat job.
@@ -176,9 +176,8 @@ for a in hpks-wots "hpks-xmss --xmss-height 3"; do
     need "$TMP/${n}_2" "sign $n" && cell "$n OTHER key" BAD verify --algo $n --pubkey "$TMP/${n}1p.pem" --in "$TMP/m" --sig "$TMP/${n}_2"
 done
 
-# ── HPKS-T: KNOWN (#412) ──────────────────────────────────────────────────────
-for i in a b z; do mk --algo hpks --out "$TMP/k$i.pem"; done
-pub "$TMP/kz.pem" "$TMP/kzp.pem"
+# ── HPKS-T: the signature must be --pubkey's group's (TODO #412) ─────────────
+for i in a b z; do mk --algo hpks --out "$TMP/k$i.pem"; pub "$TMP/k$i.pem" "$TMP/k${i}p.pem"; done
 for i in a b; do $G threshold-commit --key "$TMP/k$i.pem" --commit-out "$TMP/c$i.pem" --nonce-out "$TMP/n$i.pem" >/dev/null 2>&1; done
 $G threshold-aggregate --commit "$TMP/ca.pem" --commit "$TMP/cb.pem" --in "$TMP/m" --out "$TMP/agg.pem" >/dev/null 2>&1
 for i in a b; do
@@ -187,8 +186,12 @@ for i in a b; do
 done
 $G threshold-combine --aggregate "$TMP/agg.pem" --partial "$TMP/pa.pem" --partial "$TMP/pb.pem" --out "$TMP/t.pem" >/dev/null 2>&1
 need "$TMP/t.pem" "threshold-combine" && {
-    cell "hpks-t control" OK verify --algo hpks-t --in "$TMP/m" --sig "$TMP/t.pem"
-    cell "hpks-t: any group's signature beside an unrelated --pubkey" KNOWN:412 verify --algo hpks-t --pubkey "$TMP/kzp.pem" --in "$TMP/m" --sig "$TMP/t.pem"
+    cell "hpks-t control (the group's keys)" OK verify --algo hpks-t --pubkey "$TMP/kap.pem,$TMP/kbp.pem" --in "$TMP/m" --sig "$TMP/t.pem"
+    cell "hpks-t control (the group's keys, other order)" OK verify --algo hpks-t --pubkey "$TMP/kbp.pem,$TMP/kap.pem" --in "$TMP/m" --sig "$TMP/t.pem"
+    cell "hpks-t: an unrelated key" BAD verify --algo hpks-t --pubkey "$TMP/kzp.pem" --in "$TMP/m" --sig "$TMP/t.pem"
+    cell "hpks-t: one member alone" BAD verify --algo hpks-t --pubkey "$TMP/kap.pem" --in "$TMP/m" --sig "$TMP/t.pem"
+    cell "hpks-t: the group and an outsider" BAD verify --algo hpks-t --pubkey "$TMP/kap.pem,$TMP/kbp.pem,$TMP/kzp.pem" --in "$TMP/m" --sig "$TMP/t.pem"
+    cell "hpks-t: no --pubkey" BAD verify --algo hpks-t --in "$TMP/m" --sig "$TMP/t.pem"
 }
 
 # ── HCRED proofs and credentials (n = 32, 32 rounds) ──────────────────────────

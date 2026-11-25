@@ -2528,6 +2528,12 @@
         "java": false,
         "python": false
       },
+      "--pubkey": {
+        "c": false,
+        "go": true,
+        "java": false,
+        "python": false
+      },
       "--sig": {
         "c": false,
         "go": true,
@@ -3287,6 +3293,20 @@
       ],
       "labels": [
         "HERRADURA HPKS-WOTS PUBLIC KEY"
+      ]
+    },
+    {
+      "subcommand": "verify",
+      "algo": "hpks-t",
+      "flag": "--pubkey",
+      "role": "pub",
+      "accepts": [
+        "hpks",
+        "hpks-nl"
+      ],
+      "labels": [
+        "HERRADURA HPKS PUBLIC KEY",
+        "HERRADURA HPKS-NL PUBLIC KEY"
       ]
     },
     {

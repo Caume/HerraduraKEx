@@ -1903,6 +1903,9 @@ KEY_LABEL_SITES = (
                          ("hpks-xmss", ["hpks-xmss"]), ("hpks-wots", ["hpks-wots"]))
        for sub, flag, role in (("sign", "--key", "priv"),
                                ("verify", "--ring" if algo == "hpks-ring" else "--pubkey", "pub"))]
+    # TODO #412: the group an HPKS-T signature is checked against, a comma-
+    # separated list (the checkers split it, as they split --ring).
+    + [("verify", "hpks-t", "--pubkey", "pub", ["hpks", "hpks-nl"])]
     + [("threshold-commit", "", "--key", "priv", ["hpks", "hpks-nl"]),
        ("threshold-respond", "", "--key", "priv", ["hpks", "hpks-nl"]),
        ("oprf-eval", "", "--key", "priv", ["oprf"]),

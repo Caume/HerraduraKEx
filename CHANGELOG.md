@@ -2,6 +2,40 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [20.0.0] - 2026-11-24
+
+**BREAKING (CLI accept surface): `verify --algo hpks-t` needs the signing group's public
+keys (TODO #412; MIGRATING.md section 54).**  Found by #410's wrong-secret matrix.  An
+HPKS-T signature carries its aggregate key C_agg, and every CLI verified it against that
+embedded key and nothing else, ignoring `--pubkey`.  So a threshold signature made by ANY
+group verified, even beside an unrelated `--pubkey`, in all four CLIs.
+
+What changed, in all four CLIs (C's `cmd_threshold_verify`, Go's `threshold-verify`, which
+`verify` forwards to, and Python's and Java's `verify` branch):
+- **The group:** `--pubkey` is required, as the group's member public keys,
+  comma-separated.  Their order does not matter, since L is built sorted.
+- **The check:** each key must be an HPKS or HPKS-NL public key at 256 bits that passes
+  `gf_pub_is_valid`.  The verifier recomputes C_agg = Π C_j^μ_j with the signers'
+  MuSig-style μ_j = H(L, C_j), the same function `threshold-aggregate` uses, so no
+  member's key choice can set the aggregate on its own.
+- **The verdict:** a signature carrying any other C_agg fails, with `verify: the
+  signature's aggregate key is not the one --pubkey gives` and `Verification FAILED`, exit
+  1.  No `--pubkey` gives `verify: hpks-t needs --pubkey: the signing group's public keys,
+  comma-separated`.
+
+The key-label checkers split hpks-t's `--pubkey` the way they split `--ring`, and
+`KEY_LABEL_SITES` gains the row (hpks, hpks-nl).  No signature file changes, and an honest
+group's signatures verify against that group.
+
+Tests:
+- `test_wrong_secret_matrix.sh`'s KNOWN cell becomes six ordinary ones: the group in
+  either order verifies; an unrelated key, one member alone, the group plus an outsider,
+  and no `--pubkey` are each refused or FAILED in every CLI.
+- `test_threshold_sign.sh` checks another group and a missing key.
+- `test_key_label_matrix.sh` gets a one-member threshold signature for its template.
+- `test_threshold_interop.sh`, `test_digest_matrix.sh` and `lib_der_fixtures.sh` pass the
+  group.
+
 ## [19.0.1] - 2026-11-24
 
 **TODO #410: every acceptance decision probed with a wrong secret (new test; five defects

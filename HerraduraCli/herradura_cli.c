@@ -524,7 +524,10 @@ static void check_key_labels(const char *cmd, int argc, char **argv)
         if (strcmp(r->cmd, cmd) != 0 || strcmp(r->algo, algo) != 0) continue;
         const char *v = get_arg(argc, argv, r->flag);
         if (!v || !*v) continue;
-        if (strcmp(r->flag, "--ring") != 0) { check_key_label(r, cmd, algo, v); continue; }
+        /* A key LIST: hpks-ring's --ring, and hpks-t's --pubkey (TODO #412). */
+        int is_list = strcmp(r->flag, "--ring") == 0 ||
+                      (strcmp(r->flag, "--pubkey") == 0 && strcmp(algo, "hpks-t") == 0);
+        if (!is_list) { check_key_label(r, cmd, algo, v); continue; }
         char path[4096];
         for (const char *p = v; *p; ) {
             const char *c = strchr(p, ',');
@@ -5181,6 +5184,55 @@ static void cmd_threshold_verify(int argc, char **argv)
     ba_from_ra(&s,     sk.vals[2], sk.vlens[2]);
     pem_key_free(&sk);
 
+    /* TODO #412: the signature carries its aggregate key, and checking it
+     * against that key alone proves only that SOME group signed.  The group to
+     * trust is --pubkey's: every member's public key, comma-separated (L is
+     * built sorted, so their order does not matter).  The signature must carry
+     * exactly the aggregate those keys give. */
+    const char *pub_arg = get_arg(argc, argv, "--pubkey");
+    if (!pub_arg || !*pub_arg)
+        die("verify: hpks-t needs --pubkey: the signing group's public keys, comma-separated");
+    size_t np = 1;
+    for (const char *c = pub_arg; *c; c++) if (*c == ',') np++;
+    BitArray *members = (BitArray *)calloc(np, sizeof *members);
+    uint8_t (*mu)[KEYBYTES] = (uint8_t (*)[KEYBYTES])malloc(np * KEYBYTES);
+    if (!members || !mu) die("verify: oom");
+    size_t j = 0;
+    for (const char *p = pub_arg; j < np; j++) {
+        const char *c = strchr(p, ',');
+        size_t len = c ? (size_t)(c - p) : strlen(p);
+        char path[4096];
+        while (len && (*p == ' ' || *p == '\t')) { p++; len--; }
+        while (len && (p[len-1] == ' ' || p[len-1] == '\t')) len--;
+        if (len >= sizeof path) die("verify: hpks-t --pubkey path too long");
+        memcpy(path, p, len); path[len] = '\0';
+        PemKey pk; pem_key_load(&pk, path);
+        if (pk.n_items < 1) die("verify: malformed public key");
+        int gn = gf_key_width(&pk);
+        if (gn != KEYBITS) {
+            fprintf(stderr, "verify: hpks-t public keys are %d-bit; %s is %d-bit\n",
+                    KEYBITS, path, gn);
+            exit(1);
+        }
+        members[j] = (BitArray)BA_INIT;
+        ba_from_ra_n(&members[j], pk.vals[0], pk.vlens[0], gn);
+        pem_key_free(&pk);
+        if (!gf_pub_is_valid(&members[j]))
+            die("verify: public key is the GF(2^n)* identity/zero element "
+                "(rejected: degenerate key)");
+        p = c ? c + 1 : p + len;
+    }
+    { size_t llen;
+      uint8_t *L_bytes = _hpkst_build_L(members, np, &llen);
+      BitArray expect = BA_INIT;
+      _hpkst_aggregate(members, np, L_bytes, llen, mu, &expect);
+      free(L_bytes); free(mu); free(members);
+      if (memcmp(expect.b, C_agg.b, KEYBYTES) != 0) {
+          fputs("verify: the signature's aggregate key is not the one --pubkey gives\n", stderr);
+          puts("Verification FAILED");
+          exit(1);
+      } }
+
     int ok = hpkst_verify(&C_agg, &R, &s, &msg);
     if (ok) { puts("Signature OK");        exit(0); }
     else    { puts("Verification FAILED"); exit(1); }
@@ -5695,7 +5747,7 @@ static void cmd_verify(int argc, char **argv)
     BitArray msg = BA_INIT;
     memcpy(msg.b, msg_bytes, KEYBYTES);
 
-    /* hpks-t: C_agg is embedded in the sig — no pubkey file needed. */
+    /* hpks-t: checked against --pubkey's group (TODO #412), in cmd_threshold_verify. */
     if (strcmp(algo, "hpks-t") == 0) {
         cmd_threshold_verify(argc, argv);
         return;  /* cmd_threshold_verify exits via exit() — this is a safeguard */
@@ -7013,14 +7065,15 @@ static void usage(void)
 "    nl-zkboo:  pubkey = hpks-zkp-nl public key; sig = ZKP-NL PROOF PEM.\n"
 "    nl-zkbpp:  pubkey = hpks-zkp-nl public key; sig = ZKP-NL-PP SIGNATURE PEM (ZKB++).\n"
 "    hpks-ring: --ring = member public keys; verifies anonymously (no signer revealed).\n"
-"    hpks-t:    --pubkey not required; C_agg is embedded in the signature.\n"
+"    hpks-t:    --pubkey = the signing group's public keys, comma-separated\n"
+"               (any order); the signature must be that group's (TODO #412).\n"
 "\n"
 "  threshold-commit / -aggregate / -respond / -combine  (HPKS-T, four phases)\n"
 "    1 commit: each signer writes a nonce and a commitment PEM.\n"
 "    2 aggregate (coordinator): --commit is repeatable; computes the challenge.\n"
 "    3 respond: each signer produces a partial signature scalar.\n"
 "    4 combine (coordinator): --partial is repeatable; writes HPKST SIGNATURE PEM.\n"
-"    Verify with: verify --algo hpks-t --in FILE --sig SIG.pem\n"
+"    Verify with: verify --algo hpks-t --pubkey P0,P1,... --in FILE --sig SIG.pem\n"
 "\n"
 "  dgst --in FILE\n"
 "    Compute HFSCX-256 digest.  Without --out: hex to stdout.\n"

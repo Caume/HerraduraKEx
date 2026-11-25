@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -188,7 +189,9 @@ public final class HerraduraCli {
             if (!r[0].equals(cmd) || !r[1].equals(algo)) continue;
             String v = opt.get(r[2].substring(2));
             if (v == null || v.isEmpty()) continue;
-            String[] paths = r[2].equals("--ring") ? v.split(",", -1) : new String[] { v };
+            // A key LIST: hpks-ring's --ring, and hpks-t's --pubkey (TODO #412).
+            boolean isList = r[2].equals("--ring") || (r[2].equals("--pubkey") && algo.equals("hpks-t"));
+            String[] paths = isList ? v.split(",", -1) : new String[] { v };
             for (String p : paths) {
                 String label = pemFileLabel(p.trim());
                 // TODO #397: an envelope is refused here, by name, in every key
@@ -1935,6 +1938,32 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-t")) {
             Codec.HpkstSig sig = Codec.decodeHpkstSig(readString(req(opt, "sig", "verify")));
+            // TODO #412: the signature carries its aggregate key, and checking it
+            // against that key alone proves only that SOME group signed.  The
+            // group to trust is --pubkey's: every member's public key, comma-
+            // separated (L is built sorted, so their order does not matter).  The
+            // signature must carry exactly the aggregate those keys give.
+            String group = opt.get("pubkey");
+            if (group == null || group.isEmpty()) {
+                throw new CliError("verify: hpks-t needs --pubkey: the signing group's public keys, comma-separated");
+            }
+            List<BigInteger> members = new ArrayList<>();
+            for (String p : group.split(",", -1)) {
+                String path = p.trim();
+                String pem = readString(path);
+                Codec.PubKey pk = Codec.decodePubKey(pem, Codec.pemUnwrap(pem).label);
+                if (pk.nbits != sig.nbits) {
+                    throw new CliError("verify: hpks-t public keys are " + sig.nbits + "-bit; "
+                        + path + " is " + pk.nbits + "-bit");
+                }
+                gfPeerOK(pk.pub, pk.nbits, "verify: public key");
+                members.add(pk.pub);
+            }
+            if (!HpksT.aggregatePublicKeys(members).cAgg.equals(sig.cAgg)) {
+                System.err.println("verify: the signature's aggregate key is not the one --pubkey gives");
+                System.out.println("Verification FAILED");
+                System.exit(1);
+            }
             byte[] msg = readMessage(opt, "verify");
             BigInteger msgInt = new BigInteger(1, padTrunc(msg, sig.nbits / 8));
             boolean ok = HpksT.verify(sig.cAgg, sig.r, sig.s, msgInt);

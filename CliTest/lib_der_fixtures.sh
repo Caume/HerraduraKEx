@@ -41,6 +41,7 @@ q $C oprf-eval --key "$F/oprf.pem" --in "$F/oprf_state.pem" --out "$F/oprf_eval.
 q $C genpkey --algo hpks --out "$F/t2.pem"
 q $C threshold-commit --key "$F/hpks.pem" --commit-out "$F/c1.pem" --nonce-out "$F/n1.pem"
 q $C threshold-commit --key "$F/t2.pem" --commit-out "$F/c2.pem" --nonce-out "$F/n2.pem"
+q $C pkey --in "$F/t2.pem" --pubout --out "$F/t2_pub.pem"
 q $C threshold-aggregate --commit "$F/c1.pem" --commit "$F/c2.pem" --in "$F/msg.bin" --out "$F/agg.pem"
 q $C threshold-respond --key "$F/hpks.pem" --commit "$F/c1.pem" --commit "$F/c2.pem" \
     --aggregate "$F/agg.pem" --nonce "$F/n1.pem" --out "$F/p1.pem"
@@ -92,7 +93,7 @@ T["HERRADURA HPKST COMMITMENT"]="c1.pem|threshold-aggregate --commit {X} --commi
 T["HERRADURA HPKST NONCE"]="n1.pem|threshold-respond --key {F}/hpks.pem --commit {F}/c1.pem --commit {F}/c2.pem --aggregate {F}/agg.pem --nonce {X} --out {O}"
 T["HERRADURA HPKST AGGREGATE"]="agg.pem|threshold-respond --key {F}/hpks.pem --commit {F}/c1.pem --commit {F}/c2.pem --aggregate {X} --nonce {F}/n1.pem --out {O}"
 T["HERRADURA HPKST PARTIAL"]="p1.pem|threshold-combine --aggregate {F}/agg.pem --partial {X} --partial {F}/p2.pem --out {O}"
-T["HERRADURA HPKST SIGNATURE"]="tsig.pem|verify --algo hpks-t --in {F}/msg.bin --sig {X}"
+T["HERRADURA HPKST SIGNATURE"]="tsig.pem|verify --algo hpks-t --pubkey {F}/hpks_pub.pem,{F}/t2_pub.pem --in {F}/msg.bin --sig {X}"
 T["HERRADURA HCRED CREDENTIAL"]="cred.pem|cred-verify --min-rounds 1 --proof {F}/proof.pem --pubkey {F}/hcred_pub.pem --msg n --cred {X} --issuer {F}/hpks-stern_pub.pem"
 T["HERRADURA SESSION KEY"]="sk.pem|enc --algo hske --key {X} --in {F}/msg.bin --out {O}"
 T["HERRADURA HDRBG STATE"]="drbg.pem|rand --state {X} --bytes 8 --out {O}"

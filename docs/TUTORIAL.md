@@ -2014,11 +2014,17 @@ python3 HerraduraCli/herradura.py threshold-combine \
 **Verify:**
 
 ```bash
-python3 HerraduraCli/herradura.py verify --algo hpks-t --in message.bin --sig final_sig.pem
+python3 HerraduraCli/herradura.py pkey --in alice_hpks.pem --pubout --out alice_pub.pem
+python3 HerraduraCli/herradura.py pkey --in bob_hpks.pem   --pubout --out bob_pub.pem
+python3 HerraduraCli/herradura.py verify --algo hpks-t \
+  --pubkey alice_pub.pem,bob_pub.pem --in message.bin --sig final_sig.pem
 ```
 
-No `--pubkey` flag is needed: the aggregate public key C_agg is embedded in
-`final_sig.pem` (HPKST SIGNATURE PEM).
+`--pubkey` names the group you trust: every member's public key, comma-separated,
+in any order.  `final_sig.pem` (HPKST SIGNATURE PEM) carries the aggregate key
+C_agg it was made under, and the verifier recomputes C_agg from these keys and
+rejects a signature that carries any other.  Until v20.0.0 the verifier read no
+key at all, so a signature from ANY group verified (TODO #412).
 
 ### C CLI equivalent
 
@@ -2049,7 +2055,7 @@ $C threshold-combine \
   --partial alice_partial.pem --partial bob_partial.pem \
   --out final_sig.pem
 
-$C verify --algo hpks-t --in message.bin --sig final_sig.pem
+$C verify --algo hpks-t --pubkey alice_pub.pem,bob_pub.pem --in message.bin --sig final_sig.pem
 ```
 
 The Go CLI (`herradura_cli_go`) and Java's `herradurakex.HerraduraCli` use the same

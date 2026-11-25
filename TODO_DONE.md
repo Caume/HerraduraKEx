@@ -27238,3 +27238,44 @@ The Stern-F (both forms), ring and Schnorr-family challenges omit the public key
 Status: **DONE v19.0.1** — wrong-secret matrix across four CLIs (81 cells, 2 KNOWN); found #412-#416.
 
 ---
+
+### #412: `verify --algo hpks-t` binds the signature to no public key
+
+Found by #410's wrong-secret matrix (`CliTest/test_wrong_secret_matrix.sh`, a KNOWN cell).
+An HPKS-T signature carries its aggregate key C_agg, and `verify --algo hpks-t` checks the
+signature against that embedded key only.  `--pubkey` is optional, and when it is given
+it is ignored.  So a threshold signature made by ANY group of keys, an attacker's own
+included, verifies, even beside an unrelated `--pubkey`.  This holds in all four CLIs
+(C `herradura_cli.c`'s `/* hpks-t: C_agg is embedded in the sig -- no pubkey file needed */`).
+"Signature OK" therefore proves only that someone signed, not who.
+
+The fix is to make the verifier take the key it is to trust and compare it with C_agg,
+refusing a mismatch.  That key is either the aggregate public key or the member public
+keys, from which the verifier recomputes C_agg with the signers' μ coefficients.
+`--pubkey` (or a `--ring`-style member list) becomes required.  **MAJOR:** `verify
+--algo hpks-t` without a key stops working.  The KNOWN cell becomes two ordinary cells:
+an unrelated key must FAIL, and the group's own key must verify.  While there, check that
+the μ coefficients bind every member key, so that no rogue-key choice of one member's
+public key sets C_agg; the signer computes them (`hpkst_sign`), and the verifier should
+too.
+
+**Resolution.**  All four CLIs now require `--pubkey`: the group's member public keys,
+comma-separated, in any order.  C's `cmd_threshold_verify`, Go's `threshold-verify` (which
+`verify --algo hpks-t` forwards to), and Python's and Java's `verify` branch each:
+- load each key (HPKS or HPKS-NL, 256-bit, screened by `gf_pub_is_valid`);
+- recompute C_agg with the signers' own aggregation, μ_j = H(sorted L, C_j);
+- fail any signature whose embedded C_agg differs.
+
+The μ coefficients bind every member's key, so the rogue-key question is answered by the
+aggregation the verifier now recomputes.  The key-label checkers treat hpks-t's `--pubkey`
+as a list, the way they treat `--ring`, and `KEY_LABEL_SITES` has the row.  The tests:
+- `test_wrong_secret_matrix.sh`'s KNOWN cell is six ordinary cells;
+- `test_threshold_sign.sh` checks another group and a missing key;
+- `test_key_label_matrix.sh` has the template, over a one-member signature;
+- the interop, digest and DER-fixture scripts pass the group.
+
+MIGRATING.md section 54.
+
+Status: **DONE v20.0.0** — `verify --algo hpks-t` requires and checks the signing group's public keys (MAJOR).
+
+---

@@ -5252,10 +5252,10 @@ func cmdVerify(args []string) {
 		os.Exit(1)
 	}
 
-	// hpks-t: C_agg is embedded in sig — no pubkey file needed.
+	// hpks-t: checked against --pubkey's group (TODO #412), in cmdThresholdVerify.
 	if *algo == "hpks-t" {
-		// Pass --in, --sig, --digest directly from parsed values.
-		tvArgs := []string{"--sig", *sig, "--in", *in}
+		// Pass --in, --sig, --digest and --pubkey directly from parsed values.
+		tvArgs := []string{"--sig", *sig, "--in", *in, "--pubkey", *pubkey}
 		// digestValue normalised none to "", which threshold-verify would now
 		// read as the hfscx-256 default (TODO #365): forward it explicitly.
 		fwd := *digest
@@ -6249,6 +6249,7 @@ var keySites = []keySite{
 	{"verify", "hpks-xmss", "--pubkey", "hpks-xmss", []string{"HERRADURA HPKS-XMSS PUBLIC KEY"}},
 	{"sign", "hpks-wots", "--key", "hpks-wots", []string{"HERRADURA HPKS-WOTS PRIVATE KEY"}},
 	{"verify", "hpks-wots", "--pubkey", "hpks-wots", []string{"HERRADURA HPKS-WOTS PUBLIC KEY"}},
+	{"verify", "hpks-t", "--pubkey", "hpks, hpks-nl", []string{"HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY"}},
 	{"threshold-commit", "", "--key", "hpks, hpks-nl", []string{"HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"}},
 	{"threshold-respond", "", "--key", "hpks, hpks-nl", []string{"HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"}},
 	{"oprf-eval", "", "--key", "oprf", []string{"HERRADURA OPRF PRIVATE KEY"}},
@@ -7809,7 +7810,8 @@ func checkKeyLabels(cmd string, fs *flag.FlagSet) {
 			continue
 		}
 		paths := []string{f.Value.String()}
-		if r.flag == "--ring" {
+		// A key LIST: hpks-ring's --ring, and hpks-t's --pubkey (TODO #412).
+		if r.flag == "--ring" || (r.flag == "--pubkey" && algo == "hpks-t") {
 			paths = strings.Split(paths[0], ",")
 		}
 		for _, p := range paths {
@@ -7895,7 +7897,7 @@ required):
   threshold-combine    --aggregate --out --partial --partials
   threshold-commit     --commit-out --key --nonce-out
   threshold-respond    --aggregate --commit --commits --key --nonce --out
-  threshold-verify     --digest --in --sig
+  threshold-verify     --digest --in --pubkey --sig
   twk                  --bidx --decrypt --encrypt --in --key --out --sector
                        --v3
   verify               --algo --digest --in --min-rounds --pubkey --ring --sig
@@ -8290,6 +8292,7 @@ func cmdThresholdVerify(args []string) {
 	in     := fs.String("in", "-", "Message input file")
 	sig    := fs.String("sig", "", "HPKST SIGNATURE PEM file")
 	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
+	pubkey := fs.String("pubkey", "", "the signing group's public keys, comma-separated (TODO #412)")
 	parseArgs(fs, args)
 	digestValue("threshold-verify", digest)
 	if *sig == "" {
@@ -8311,6 +8314,46 @@ func cmdThresholdVerify(args []string) {
 	R    := new(big.Int).SetBytes(sigInts[1])
 	s    := new(big.Int).SetBytes(sigInts[2])
 	n    := 256
+
+	// TODO #412: the signature carries its aggregate key, and checking it
+	// against that key alone proves only that SOME group signed.  The group to
+	// trust is --pubkey's: every member's public key, comma-separated (L is
+	// built sorted, so their order does not matter).  The signature must carry
+	// exactly the aggregate those keys give.
+	if *pubkey == "" {
+		fmt.Fprintln(os.Stderr, "verify: hpks-t needs --pubkey: the signing group's public keys, comma-separated")
+		os.Exit(1)
+	}
+	var members []*big.Int
+	for _, p := range strings.Split(*pubkey, ",") {
+		p = strings.TrimSpace(p)
+		lbl, ints, perr := readPEMInts(p)
+		if perr != nil {
+			die("verify", perr)
+		}
+		if lbl != lblHpksPub && lbl != lblHpksNLPub {
+			fmt.Fprintf(os.Stderr, "verify --algo hpks-t: wrong key type: --pubkey holds '%s'; accepted: hpks, hpks-nl\n", lbl)
+			os.Exit(1)
+		}
+		if len(ints) < 2 {
+			die("verify", errors.New("malformed public key"))
+		}
+		nj := gfWidth(bytesToInt(ints[len(ints)-1]), "verify")
+		if nj != n {
+			fmt.Fprintf(os.Stderr, "verify: hpks-t public keys are %d-bit; %s is %d-bit\n", n, p, nj)
+			os.Exit(1)
+		}
+		pk := new(big.Int).SetBytes(ints[0])
+		if !GfPubIsValid(NewBitArray(n, pk)) {
+			die("verify", errors.New("public key is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
+		}
+		members = append(members, pk)
+	}
+	if expect, _ := HpkstAggregatePublickeys(members); expect.Cmp(Cagg) != 0 {
+		fmt.Fprintln(os.Stderr, "verify: the signature's aggregate key is not the one --pubkey gives")
+		fmt.Println("Verification FAILED")
+		os.Exit(1)
+	}
 
 	msg := msgPad(inBytes, n/8)
 	if HpkstVerify(Cagg, R, s, msg) {

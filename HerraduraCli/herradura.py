@@ -170,6 +170,7 @@ _KEY_SITES = {
     ('verify', 'hpks-xmss', '--pubkey'): ('hpks-xmss', ('HERRADURA HPKS-XMSS PUBLIC KEY',)),
     ('sign', 'hpks-wots', '--key'): ('hpks-wots', ('HERRADURA HPKS-WOTS PRIVATE KEY',)),
     ('verify', 'hpks-wots', '--pubkey'): ('hpks-wots', ('HERRADURA HPKS-WOTS PUBLIC KEY',)),
+    ('verify', 'hpks-t', '--pubkey'): ('hpks, hpks-nl', ('HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY',)),
     ('threshold-commit', '', '--key'): ('hpks, hpks-nl', ('HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY',)),
     ('threshold-respond', '', '--key'): ('hpks, hpks-nl', ('HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY',)),
     ('oprf-eval', '', '--key'): ('oprf', ('HERRADURA OPRF PRIVATE KEY',)),
@@ -1318,7 +1319,9 @@ def _check_key_labels(cmd, algo, values):
     for (c, a, flag), (tags, labels) in _KEY_SITES.items():
         if c != cmd or a != (algo or '') or not values.get(flag):
             continue
-        paths = values[flag].split(',') if flag == '--ring' else [values[flag]]
+        # A key LIST: hpks-ring's --ring, and hpks-t's --pubkey (TODO #412).
+        is_list = flag == '--ring' or (flag == '--pubkey' and a == 'hpks-t')
+        paths = values[flag].split(',') if is_list else [values[flag]]
         for path in paths:
             label = _pem_file_label(path.strip())
             # TODO #397: an envelope is refused here, by name, in every key
@@ -4093,6 +4096,30 @@ def cmd_verify(args):
     if algo == 'hpks-t':
         sig_text       = _read_pem_text(sig_path)
         C_agg_val, R_val, s_val, nbits = decode_hpkst_sig(sig_text)
+        # TODO #412: the signature carries its aggregate key, and checking it
+        # against that key alone proves only that SOME group signed.  The group
+        # to trust is --pubkey's: every member's public key, comma-separated (L
+        # is built sorted, so their order does not matter).  The signature must
+        # carry exactly the aggregate those keys give.
+        if not pubkey_path:
+            sys.exit("verify: hpks-t needs --pubkey: the signing group's public keys, "
+                     "comma-separated")
+        members = []
+        for path in pubkey_path.split(','):
+            path = path.strip()
+            _a, ints = _decode_pubkey(path)
+            pub_int, n_j = ints[0], ints[-1]
+            if n_j != nbits:
+                sys.exit(f"verify: hpks-t public keys are {nbits}-bit; {path} is {n_j}-bit")
+            if not gf_pub_is_valid(pub_int):
+                sys.exit("verify: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
+            members.append(BitArray(nbits, pub_int))
+        expect, _coeffs = hpkst_aggregate_pubkeys(members)
+        if expect.uint != C_agg_val:
+            print("verify: the signature's aggregate key is not the one --pubkey gives",
+                  file=sys.stderr)
+            print("Verification FAILED")
+            sys.exit(1)
         msg   = BitArray(nbits, int.from_bytes(in_bytes[:nbits // 8].ljust(nbits // 8, b'\x00'), 'big'))
         C_agg = BitArray(nbits, C_agg_val)
         R     = BitArray(nbits, R_val)

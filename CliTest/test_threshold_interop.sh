@@ -79,14 +79,14 @@ nargs_threshold_sign() {
 
 verify_all() {
   local label="$1"
-  $PY verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
+  $PY verify --algo hpks-t --pubkey "$GROUP" --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
     || fail "$label" "Python verify failed"
-  $C  verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
+  $C  verify --algo hpks-t --pubkey "$GROUP" --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
     || fail "$label" "C verify failed"
-  $GO verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
+  $GO verify --algo hpks-t --pubkey "$GROUP" --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
     || fail "$label" "Go verify failed"
   if [ "$HAVE_JAVA" -eq 1 ]; then
-    $JAVA verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
+    $JAVA verify --algo hpks-t --pubkey "$GROUP" --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
       || fail "$label" "Java verify failed"
   fi
   pass "$label → Python/C/Go$([ "$HAVE_JAVA" -eq 1 ] && echo "/Java") verify"
@@ -97,6 +97,10 @@ echo "=== HPKS-T cross-language interop tests ==="
 # Generate shared keys with Python
 $PY genpkey --algo hpks-nl --out "$TMPDIR/alice.pem"
 $PY genpkey --algo hpks-nl --out "$TMPDIR/bob.pem"
+# TODO #412: the group the signatures are verified against.
+$PY pkey --in "$TMPDIR/alice.pem" --pubout --out "$TMPDIR/alice_pub.pem"
+$PY pkey --in "$TMPDIR/bob.pem" --pubout --out "$TMPDIR/bob_pub.pem"
+GROUP="$TMPDIR/alice_pub.pem,$TMPDIR/bob_pub.pem"
 
 # 1. Pure Python
 nargs_threshold_sign "$PY" "$MSG" "$TMPDIR/alice.pem" "$TMPDIR/bob.pem"

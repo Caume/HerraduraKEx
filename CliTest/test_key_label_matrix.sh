@@ -107,6 +107,10 @@ $C cred-prove --in "$F/hcred.pem" --msg n --rounds 2 --out "$F/proof.pem" 2>/dev
 $C cred-issue --our "$F/hpks-stern.pem" --in "$F/hcred_pub.pem" --rounds 2 --out "$F/cred.pem" 2>/dev/null
 $C threshold-commit --key "$F/hpks.pem" --commit-out "$F/commit.pem" --nonce-out "$F/nonce.pem"
 $C threshold-aggregate --commits "$F/commit.pem" --in "$F/msg.bin" --out "$F/agg.pem" 2>/dev/null
+# TODO #412: a one-member threshold signature, verified against that member.
+$C threshold-respond --key "$F/hpks.pem" --commits "$F/commit.pem" --aggregate "$F/agg.pem" \
+       --nonce "$F/nonce.pem" --out "$F/partial.pem" 2>/dev/null
+$C threshold-combine --aggregate "$F/agg.pem" --partials "$F/partial.pem" --out "$F/tsig.pem" 2>/dev/null
 
 # ── Templates: "cmd|algo|flag" -> "home tag|argv" ({X} key, {F} fixtures, {O} out)
 declare -A T=()
@@ -133,6 +137,7 @@ for a in hpks hpks-nl hpks-stern rnl-sigma nl-zkboo nl-zkbpp hpks-xmss hpks-wots
 done
 T["sign|hpks-ring|--key"]="hpks-stern|sign --algo hpks-ring --rounds 2 --key {X} --ring {F}/hpks-stern_pub.pem,{F}/m2_pub.pem --in {F}/msg.bin --out {O}"
 T["verify|hpks-ring|--ring"]="hpks-stern|verify --algo hpks-ring --min-rounds 2 --ring {X},{F}/m2_pub.pem --in {F}/msg.bin --sig {F}/sig_hpks-ring.pem"
+T["verify|hpks-t|--pubkey"]="hpks|verify --algo hpks-t --pubkey {X} --in {F}/msg.bin --sig {F}/tsig.pem"
 T["threshold-commit||--key"]="hpks|threshold-commit --key {X} --commit-out {O} --nonce-out {O}.nonce"
 T["threshold-respond||--key"]="hpks|threshold-respond --key {X} --commits {F}/commit.pem --aggregate {F}/agg.pem --nonce {F}/nonce.pem --out {O}"
 T["oprf-eval||--key"]="oprf|oprf-eval --key {X} --in {F}/oprf_state.pem --out {O}"

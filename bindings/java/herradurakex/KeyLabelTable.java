@@ -43,6 +43,7 @@ final class KeyLabelTable {
         {"verify", "hpks-xmss", "--pubkey", "hpks-xmss", "HERRADURA HPKS-XMSS PUBLIC KEY"},
         {"sign", "hpks-wots", "--key", "hpks-wots", "HERRADURA HPKS-WOTS PRIVATE KEY"},
         {"verify", "hpks-wots", "--pubkey", "hpks-wots", "HERRADURA HPKS-WOTS PUBLIC KEY"},
+        {"verify", "hpks-t", "--pubkey", "hpks, hpks-nl", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY"},
         {"threshold-commit", "", "--key", "hpks, hpks-nl", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"},
         {"threshold-respond", "", "--key", "hpks, hpks-nl", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"},
         {"oprf-eval", "", "--key", "oprf", "HERRADURA OPRF PRIVATE KEY"},

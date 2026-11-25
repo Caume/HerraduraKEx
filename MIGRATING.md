@@ -2558,3 +2558,42 @@ Treat any old ZKBoo signature as unauthenticated: there is no way to tell one ma
 the key from one made without it, so do not "convert" old signatures by trusting them
 once.  If you need a signature that was sound before v19.0.0 too, ZKB++ (`nl-zkbpp`) was
 never affected.
+
+## 54. `verify --algo hpks-t` needs the signing group's public keys (v20.0.0)
+
+**Who is affected:** anyone who verifies HPKS-T threshold signatures.  A command
+line without `--pubkey` is now refused:
+
+```
+verify: hpks-t needs --pubkey: the signing group's public keys, comma-separated
+```
+
+The signature files themselves are unchanged.  Every signature an honest group made
+before v20.0.0 still verifies, against that group's keys.
+
+**Why (TODO #412).**  An HPKS-T signature carries the aggregate key C_agg it was made
+under, and the verifier used to check the signature against that embedded key and
+nothing else.  It read no key from the command line, and ignored `--pubkey` when it was
+given.  So a threshold signature made by ANY group of keys, an attacker's own included,
+said "Signature OK".  That proved only that somebody signed.  The verifier now
+recomputes C_agg from the keys you name, with the same MuSig-style coefficients the
+signers use, and fails a signature that carries any other:
+
+```
+verify: the signature's aggregate key is not the one --pubkey gives
+Verification FAILED
+```
+
+**What to do.**  Pass the group's public keys, comma-separated.  Their order does not
+matter: the aggregate is built from them sorted.
+
+```
+pkey --in alice.pem --pubout --out alice_pub.pem      # once per member
+verify --algo hpks-t --pubkey alice_pub.pem,bob_pub.pem --in msg --sig sig.pem
+```
+
+Each key must be an HPKS or HPKS-NL public key at 256 bits; a private key is refused,
+as everywhere else `verify` takes a public key.  Go's `threshold-verify` subcommand
+takes the same `--pubkey`.  Re-check any signature you accepted before v20.0.0 against
+the group you meant: the old verifier would have accepted one from any group.
+

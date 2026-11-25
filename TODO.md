@@ -10,30 +10,6 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #412: `verify --algo hpks-t` binds the signature to no public key
-
-Found by #410's wrong-secret matrix (`CliTest/test_wrong_secret_matrix.sh`, a KNOWN cell).
-An HPKS-T signature carries its aggregate key C_agg, and `verify --algo hpks-t` checks the
-signature against that embedded key only.  `--pubkey` is optional, and when it is given
-it is ignored.  So a threshold signature made by ANY group of keys, an attacker's own
-included, verifies, even beside an unrelated `--pubkey`.  This holds in all four CLIs
-(C `herradura_cli.c`'s `/* hpks-t: C_agg is embedded in the sig -- no pubkey file needed */`).
-"Signature OK" therefore proves only that someone signed, not who.
-
-The fix is to make the verifier take the key it is to trust and compare it with C_agg,
-refusing a mismatch.  That key is either the aggregate public key or the member public
-keys, from which the verifier recomputes C_agg with the signers' μ coefficients.
-`--pubkey` (or a `--ring`-style member list) becomes required.  **MAJOR:** `verify
---algo hpks-t` without a key stops working.  The KNOWN cell becomes two ordinary cells:
-an unrelated key must FAIL, and the group's own key must verify.  While there, check that
-the μ coefficients bind every member key, so that no rogue-key choice of one member's
-public key sets C_agg; the signer computes them (`hpkst_sign`), and the verifier should
-too.
-
-Status: **OPEN**
-
----
-
 ### #413: `hpke-stern` ciphertexts decrypt without the private key
 
 Found by #410's dead-value audit.  Python's `dec --algo hpke-stern` decodes a `K_int` field

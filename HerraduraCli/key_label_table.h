@@ -80,6 +80,8 @@ static const HkxKeySite HKX_KEY_SITES[] = {
      {"HERRADURA HPKS-WOTS PRIVATE KEY", 0}},
     {"verify", "hpks-wots", "--pubkey", "hpks-wots",
      {"HERRADURA HPKS-WOTS PUBLIC KEY", 0}},
+    {"verify", "hpks-t", "--pubkey", "hpks, hpks-nl",
+     {"HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", 0}},
     {"threshold-commit", "", "--key", "hpks, hpks-nl",
      {"HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", 0}},
     {"threshold-respond", "", "--key", "hpks, hpks-nl",

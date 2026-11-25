@@ -862,7 +862,7 @@ jobs:
       # TODO #410: every acceptance decision probed with a WRONG secret -- another
       # key's, a spliced private key's, and #409's own cheat (a wrong witness for
       # the true statement, from a patched prover) -- through the four CLIs, each
-      # cell beside an accept-control.  Its KNOWN cells are TODO #412 and #413.
+      # cell beside an accept-control.  Its KNOWN cell is TODO #413.
       - name: Wrong-secret matrix
         run: bash CliTest/test_wrong_secret_matrix.sh
 
