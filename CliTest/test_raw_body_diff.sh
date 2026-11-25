@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CliTest/test_raw_body_diff.sh — TODO #406 / #407 / #408: the four CLIs'
+# CliTest/test_raw_body_diff.sh — TODO #406 / #407 / #408 / #409: the four CLIs'
 # raw-body PEM readers, compared on generated input.
 #
 # test_pem_reader_diff.sh and test_der_reader_diff.sh (TODO #403, #404) hold the
@@ -40,6 +40,12 @@
 #     than (e != 2), a proof n other than the key's, a bit above n in a key or
 #     proof field, an HCRED value not below q or p, an HCRED has_aux of 2, and
 #     an HCRED aux block the challenge does not open (verification FAILED);
+#   * TODO #409's ZKBoo cells, each verification FAILED in every CLI: a
+#     signature whose prover used a WRONG A (before #409 every CLI accepted it:
+#     the verifier never related the output shares to y), and one bit changed
+#     in a valid signature's view -- gate-byte bits 7, 0 and 1, the share's bit
+#     n - 1, an output share -- which before #409 the verifier never read; the
+#     wrong-A signature is made for ZKB++ too, which was never affected;
 #   * the crash detector's own controls: a traceback, a panic and a raw JDK
 #     message from stand-in commands must each be classed CRASH.
 #
@@ -92,6 +98,21 @@ for b in 12 64; do
     mk sign --algo nl-zkboo --key "$FX/zk$s.pem" --in "$FX/m.txt" --rounds 4 --out "$FX/zkboo$s.pem"
     mk sign --algo nl-zkbpp --key "$FX/zk$s.pem" --in "$FX/m.txt" --rounds 4 --out "$FX/zkbpp$s.pem"
 done
+# TODO #409: the key pair's B and y with another A (its lowest bit flipped), so
+# that a signature made from it proves a witness the public key does not have.
+# Such a proof survives only if every round's recomputed challenge re-matches,
+# (1/3)^rounds; at the default 219 rounds that is 2^-347, where 4 would fail
+# this test one run in 81.
+python3 - "$FX/zk.pem" "$FX/zk_wrongA.pem" <<'PYEOF'
+import base64, sys
+t = open(sys.argv[1]).read().split('\n'); lab = t[0][11:-5]
+b = bytearray(base64.b64decode(''.join(l for l in t[1:] if l and not l.startswith('-----'))))
+nb = (int.from_bytes(b[:4], 'big') + 7) // 8
+b[4 + nb - 1] ^= 1
+open(sys.argv[2], 'w').write(f'-----BEGIN {lab}-----\n{base64.encodebytes(bytes(b)).decode()}-----END {lab}-----\n')
+PYEOF
+mk sign --algo nl-zkboo --key "$FX/zk_wrongA.pem" --in "$FX/m.txt" --out "$FX/zkboo_wrongA.pem"
+mk sign --algo nl-zkbpp --key "$FX/zk_wrongA.pem" --in "$FX/m.txt" --out "$FX/zkbpp_wrongA.pem"
 # The has_share2 cells need a ZKB++ round with e = 2 and one without, and the
 # has_aux cells an HCRED round with an aux block and one without.  The
 # challenge decides which a round is, so sign until a fixture has both: a
@@ -293,7 +314,7 @@ if grep -q '^KIND' "$TMP/verdict"; then
 else fail "coverage: the comparison printed no KIND lines"; fi
 
 
-# ── named cells: TODO #407's and #408's refusals, by their text ──────────────
+# ── named cells: TODO #407's and #408's refusals by their text; #409's ───────
 # Each is made from a valid fixture; cells.lst says what every CLI must do:
 # "KIND FILE TEXT" (refuse with TEXT) or "KIND FILE =FAILED" (verify, and fail).
 python3 - "$FX" "$TMP/cells" <<'PYEOF'
@@ -372,6 +393,19 @@ lab, b = rd('zk.pem'); d = bytearray(b); d[4] |= 0x80
 cell('zkpriv', 'bits_A', lab, d, f"malformed PEM '{lab}': A has bits above n=12")
 lab, b = rd('zk_pub.pem'); d = bytearray(b); d[6] |= 0x80
 cell('zkpub', 'bits_y', lab, d, f"malformed PEM '{lab}': y has bits above n=12")
+# #409: ZKBoo signatures the verifier must fail.  A prover with a wrong A ...
+for kind, f in (('zkboo', 'zkboo_wrongA.pem'), ('zkbpp', 'zkbpp_wrongA.pem')):
+    lab, b = rd(f)
+    cell(kind, f'wrongA_{kind}', lab, b, '=FAILED')
+# ... and one bit of a valid view (n = 12, nb = 2: share | tape | out | gates)
+lab, b = rd('zkboo.pem'); V = zkboo_views(b)
+for rnd, which, wname, off, bit, name in (
+        (0, 0, 'p1', 2 * 2 + 32, 7, 'gate_bit7'), (0, 0, 'p1', 2 * 2 + 32, 0, 'gate_bit0'),
+        (1, 1, 'p2', 2 * 2 + 32 + 1, 1, 'gate_bit1'), (0, 0, 'p1', 0, 3, 'share_bit11'),
+        (1, 1, 'p2', 0, 3, 'share_bit11'), (0, 1, 'p2', 2 + 32 + 1, 0, 'out_bit0')):
+    _, vo, _ = V[rnd][which]
+    d = bytearray(b); d[vo + off] ^= 1 << bit
+    cell('zkboo', f'{name}_{wname}_r{rnd}', lab, d, '=FAILED')
 # #408: HCRED values not below q / p, in each artifact
 def bump(f, off, w, by):
     lab, b = rd(f); d = bytearray(b)

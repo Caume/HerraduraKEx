@@ -174,6 +174,25 @@ def _measure_offweight_witness(H, rounds, trials):
     return acc, wit, alt, ctrl
 
 
+def _zkboo_seed(H, proof, B, y, n, msg):
+    """The ZKBoo Fiat-Shamir seed, recomputed exactly as the verifier does
+    since TODO #409: over every round's three commitments, then every round's
+    three output shares (the hidden party's is y ^ out_p1 ^ out_p2), then B, y
+    and msg."""
+    nb = (n + 7) // 8
+    mask = (1 << n) - 1
+    block = outs = b""
+    for r in proof:
+        e = r["e"]
+        o = [0, 0, 0]
+        o[(e + 1) % 3] = int.from_bytes(r["view_p1"][nb + 32:2 * nb + 32], "big")
+        o[(e + 2) % 3] = int.from_bytes(r["view_p2"][nb + 32:2 * nb + 32], "big")
+        o[e] = (y ^ o[(e + 1) % 3] ^ o[(e + 2) % 3]) & mask
+        block += r["com_0"] + r["com_1"] + r["com_2"]
+        outs += b"".join(v.to_bytes(nb, "big") for v in o)
+    return H._zkp_nl_h(block, outs, B.to_bytes(nb, "big"), y.to_bytes(nb, "big"), msg)
+
+
 def _measure_zkboo_poke(H, rounds, trials):
     """[22]: one bit flipped in round 0's com_1.  Detecting event is NOT the
     opening of the poked commitment -- it is the Fiat-Shamir recomputation,
@@ -198,10 +217,7 @@ def _measure_zkboo_poke(H, rounds, trials):
         out = H._zkp_nl_verify(B, y, n, rounds, H.ZKP_MSG, tam)
         # The witness: recompute the challenges over the TAMPERED commitments,
         # exactly as the verifier's first loop does.
-        coms = [[r["com_0"], r["com_1"], r["com_2"]] for r in tam]
-        block = b"".join(b"".join(c) for c in coms)
-        seed = H._zkp_nl_h(block, B.to_bytes(nb, "big"),
-                           y.to_bytes(nb, "big"), H.ZKP_MSG)
+        seed = _zkboo_seed(H, tam, B, y, n, H.ZKP_MSG)
         fs_ok = all(H._zkp_nl_h(seed, j.to_bytes(4, "big"))[0] % 3 == tam[j]["e"]
                     for j in range(rounds))
         # The second term: com_1 is opened iff p1 == 1 or p2 == 1, i.e. iff
@@ -267,7 +283,7 @@ def _measure_zkpnl_message(H, rounds, trials):
     """TODO #322, java [19]/[28]: the ZKP-NL family's message-tamper rejection.
 
     Detecting event: the verifier RECOMPUTES each round's Fiat-Shamir trit from
-    a seed over (commitments, B, y, msg) and compares it to the stored one, so a
+    a seed over (commitments, output shares, B, y, msg) and compares it to the stored one, so a
     tampered message survives exactly when every recomputed trit re-matches --
     (1/3)^rounds, with ONE factor, because the message reaches nothing else.
 
@@ -293,10 +309,7 @@ def _measure_zkpnl_message(H, rounds, trials):
         other = H.ZKP_MSG + b"-tampered"
         out = H._zkp_nl_verify(B, y, n, rounds, other, proof)
         # The witness, recomputed exactly as the verifier's first loop does.
-        block = b"".join(b"".join([r["com_0"], r["com_1"], r["com_2"]])
-                         for r in proof)
-        seed = H._zkp_nl_h(block, B.to_bytes(nb, "big"),
-                           y.to_bytes(nb, "big"), other)
+        seed = _zkboo_seed(H, proof, B, y, n, other)
         fs_ok = all(H._zkp_nl_h(seed, j.to_bytes(4, "big"))[0] % 3 == proof[j]["e"]
                     for j in range(rounds))
         acc += bool(out)

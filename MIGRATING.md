@@ -2527,5 +2527,34 @@ regenerated with `sign` / `cred-prove`.  A refused key that a CLI did not write 
 reduced by hand (each field to its value mod 2^n, q or p), but regenerating it is
 simpler.
 
-Not covered here: a ZKBoo signature still verifies with gate-byte bits and a share bit
-the verifier never reads (TODO #409).
+The same release changes the ZKBoo transcript itself; see section 53.
+
+## 53. ZKBoo signatures are bound to their statement (v19.0.0)
+
+**Who is affected:** anyone holding an `nl-zkboo` signature (`HERRADURA ZKP-NL PROOF`)
+made before v19.0.0.  It no longer verifies in any CLI.  ZKP-NL keys, ZKB++ (`nl-zkbpp`)
+signatures and everything else are unchanged; the PAKE demos, which run ZKBoo inside one
+process, need nothing.
+
+**Why (TODO #409).**  The ZKBoo verifier, in all four ports, never related the proof's
+output shares to the public y: it checked one bit of each gate byte and commitments over
+the tape and output share alone.  A signature made from ANY private value A verified
+under the public key (B, y), at every round count, in all four CLIs:
+
+```
+sign   --algo nl-zkboo --key key_with_another_A.pem --in m.txt --out sig.pem
+verify --algo nl-zkboo --pubkey pub.pem --in m.txt --sig sig.pem   # "Signature OK" before v19.0.0
+```
+
+So a pre-v19.0.0 ZKBoo signature proves nothing about its signer.  The fix is standard
+ZKBoo: each commitment covers the party's whole view, the Fiat-Shamir seed binds every
+round's three output shares (the verifier infers the hidden one from y), and the
+verifier checks every gate byte and both revealed output shares (SPEC.md section 10.3).
+The PEM layout is unchanged, so an old signature still reads; it fails verification
+(`Verification FAILED`).
+
+**What to do.**  Re-sign with `sign --algo nl-zkboo` under v19.0.0 using the same key.
+Treat any old ZKBoo signature as unauthenticated: there is no way to tell one made with
+the key from one made without it, so do not "convert" old signatures by trusting them
+once.  If you need a signature that was sound before v19.0.0 too, ZKB++ (`nl-zkbpp`) was
+never affected.

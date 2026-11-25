@@ -10,33 +10,6 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #409: ZKBoo signatures verify with view bits the verifier never reads
-
-A ZKBoo (`nl-zkboo`) view is `share | tape | out | gate bytes`, and each gate byte is
-written as `a_i | c_i << 1 | ao_i << 2`.  The commitment covers only the tape and the
-output share, and `zkp_nl_verify` (and its Go, Python and Java ports) reads only bit 2 of
-each gate byte and bits 0..n-2 of the share.  So, in all four CLIs (probe of
-2026-11-24, n = 12):
-
-- setting bit 7 (or any of bits 3-7) of a gate byte verifies;
-- flipping bit 0 (the copy of `a_i`) or bit 1 (`c_i`) of a gate byte verifies;
-- flipping bit n - 1 of a revealed share verifies.
-
-Each is a second valid signature made from one, without the key: ZKBoo signatures are
-not strongly unforgeable.  #408's encoding rules cannot close it: bits 0 and 1 are
-determined by values the verifier recomputes, so the verifier must check them, and the
-share's bit n - 1 is unconstrained by the protocol as implemented, so closing it needs
-the share to be derived (from the tape, as ZKB++ does) or committed.
-
-Decide whether to fix ZKBoo (a verifier check on gate bits 0-7, plus a protocol change
-for the share, which is MAJOR and breaks existing signatures) or to mark `nl-zkboo`
-superseded by `nl-zkbpp`, which commits its shares through the seeds.  Either way,
-record it in SECURITY.md.
-
-Status: **OPEN**
-
----
-
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been

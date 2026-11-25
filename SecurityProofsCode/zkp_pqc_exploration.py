@@ -698,13 +698,40 @@ def _evaluate_circuit(shares, tapes, B, n):
 
 # ── ZKBoo prover ─────────────────────────────────────────────────────────────
 
-def zkboo_prove(A, B, n=_ZK_N, rounds=_ZK_R):
+def _zk_view_bytes(share, tape, out, gate_views, n):
+    """A party's whole view as bytes -- what each commitment covers since
+    TODO #409, matching the shipped herradura.h / suite transcript."""
+    nb = (n + 7) // 8
+    return (share.to_bytes(nb, 'big') + tape + out.to_bytes(nb, 'big')
+            + bytes(a | (c << 1) | (o << 2) for a, c, o in gate_views))
+
+
+def _zk_out_share(p, share, carries, B, n):
+    """Party p's output share from its input share and carries (the linear
+    tail of _evaluate_circuit), which the verifier recomputes (TODO #409)."""
+    mask = (1 << n) - 1
+    s = 0
+    for i in range(n):
+        s ^= (((share >> i) & 1) ^ ((B >> i) & 1) ^ carries[i]) << i
+    lin = (share ^ _rol(share, 1, n) ^ _rol(share, n - 1, n)) & mask
+    if p == 0:
+        lin ^= (B ^ _rol(B, 1, n) ^ _rol(B, n - 1, n)) & mask
+    return (lin ^ _rol(s, n // 4, n)) & mask
+
+
+def zkboo_prove(A, B, n=_ZK_N, rounds=_ZK_R, y=None):
     """
     ZKBoo non-interactive proof that prover knows A s.t. F1(A,B) = y.
     Returns: proof dict with 'coms', 'challenges', 'responses'.
+
+    y is the statement the proof CLAIMS; by default F1(A, B).  A cheating
+    prover passes the public y it does not have a preimage for (TODO #409).
     """
     mask = (1 << n) - 1
-    y    = _f1(A, B, n)
+    if y is None:
+        y = _f1(A, B, n)
+    nb = (n + 7) // 8
+    out_block = b''
 
     all_coms   = []   # rounds × 3 commitments
     all_views  = []   # rounds × 3 views (for response phase)
@@ -722,19 +749,22 @@ def zkboo_prove(A, B, n=_ZK_N, rounds=_ZK_R):
 
         out_shares, gate_views = _evaluate_circuit(shares, tapes, B, n)
 
-        # Commitments
+        # Commitments, each over the party's whole view (TODO #409)
         coms = []
         for p in range(3):
             c = _H(j.to_bytes(4, 'big'), p.to_bytes(1, 'big'),
-                   tapes[p], out_shares[p].to_bytes((n + 7) // 8, 'big'))
+                   _zk_view_bytes(shares[p], tapes[p], out_shares[p],
+                                  gate_views[p], n))
             coms.append(c)
         all_coms.append(coms)
         all_views.append((shares, tapes, out_shares, gate_views))
         com_block += b''.join(coms)
+        out_block += b''.join(o.to_bytes(nb, 'big') for o in out_shares)
 
-    # Fiat-Shamir challenge: derive hidden party for each round
-    ch_seed  = _H(com_block, B.to_bytes((n + 7) // 8, 'big'),
-                  y.to_bytes((n + 7) // 8, 'big'))
+    # Fiat-Shamir challenge over the commitments AND all three output shares
+    # of every round (TODO #409), then B and y
+    ch_seed  = _H(com_block, out_block, B.to_bytes(nb, 'big'),
+                  y.to_bytes(nb, 'big'))
     challenges = []
     for j in range(rounds):
         h = _H(ch_seed, j.to_bytes(4, 'big'))
@@ -766,79 +796,67 @@ def zkboo_prove(A, B, n=_ZK_N, rounds=_ZK_R):
 def zkboo_verify(proof):
     """
     Returns True iff the proof is accepting.
-    Checks: (a) AND gate consistency for revealed party (e+1)%3,
-            (b) output share consistency,
-            (c) commitments match.
+    Checks, per round (TODO #409, as the shipped verifiers do since v19.0.0):
+            (a) every gate view of both revealed parties, exactly,
+            (b) both revealed output shares, recomputed from the views,
+            (c) both commitments, over the whole view;
+    then (d) the Fiat-Shamir challenges, recomputed over every round's three
+    output shares with the hidden one taken as y ^ out_p1 ^ out_p2 -- the only
+    step that relates the proof to y.  Before #409 this model, like the shipped
+    code, did (a) for p1's AND outputs alone, never did (b), and computed the
+    hidden share in (d) without using it, so a proof from ANY A verified; its
+    §3.5 cheat failed only because it hashed the wrong y.
     """
     y  = proof['y']
     B  = proof['B']
     n  = proof['n']
     mask = (1 << n) - 1
+    nb = (n + 7) // 8
 
     coms       = proof['coms']
     challenges = proof['challenges']
     responses  = proof['responses']
 
-    # Re-derive Fiat-Shamir challenge
+    out_block = b''
+    for j, e in enumerate(challenges):
+        resp = responses[j]
+        p1, p2 = (e + 1) % 3, (e + 2) % 3
+        sh1, sh2 = resp['shares_p1'], resp['shares_p2']
+        car1, car2 = [0] * n, [0] * n
+        c1 = c2 = 0
+        for i in range(n - 1):
+            a1, a2, Bi = (sh1 >> i) & 1, (sh2 >> i) & 1, (B >> i) & 1
+            r1 = _prg_bit(resp['tape_p1'], i)
+            r2 = _prg_bit(resp['tape_p2'], i)
+            and1 = (a1 & c1) ^ (a1 & c2) ^ (a2 & c1) ^ r1 ^ r2
+            and2 = resp['views_p2'][i][2]
+            if (tuple(resp['views_p1'][i]) != (a1, c1, and1)
+                    or tuple(resp['views_p2'][i]) != (a2, c2, and2)):
+                return False
+            c1 = (Bi * a1) ^ and1 ^ (Bi * c1)
+            c2 = (Bi * a2) ^ and2 ^ (Bi * c2)
+            car1[i + 1], car2[i + 1] = c1, c2
+        out_p1, out_p2 = resp['out_p1'], resp['out_p2']
+        if (_zk_out_share(p1, sh1, car1, B, n) != out_p1
+                or _zk_out_share(p2, sh2, car2, B, n) != out_p2):
+            return False
+        c_p1 = _H(j.to_bytes(4, 'big'), p1.to_bytes(1, 'big'),
+                  _zk_view_bytes(sh1, resp['tape_p1'], out_p1, resp['views_p1'], n))
+        c_p2 = _H(j.to_bytes(4, 'big'), p2.to_bytes(1, 'big'),
+                  _zk_view_bytes(sh2, resp['tape_p2'], out_p2, resp['views_p2'], n))
+        if c_p1 != coms[j][p1] or c_p2 != coms[j][p2]:
+            return False
+        outs = [0, 0, 0]
+        outs[e], outs[p1], outs[p2] = (y ^ out_p1 ^ out_p2) & mask, out_p1, out_p2
+        out_block += b''.join(o.to_bytes(nb, 'big') for o in outs)
+
     com_block = b''.join(b''.join(coms[j]) for j in range(len(coms)))
-    ch_seed   = _H(com_block, B.to_bytes((n + 7) // 8, 'big'),
-                   y.to_bytes((n + 7) // 8, 'big'))
+    ch_seed   = _H(com_block, out_block, B.to_bytes(nb, 'big'),
+                   y.to_bytes(nb, 'big'))
     for j in range(len(challenges)):
         h = _H(ch_seed, j.to_bytes(4, 'big'))
         if int.from_bytes(h[:1], 'big') % 3 != challenges[j]:
             return False
-
-    for j, e in enumerate(challenges):
-        resp = responses[j]
-        p1, p2 = (e + 1) % 3, (e + 2) % 3
-
-        out_p1 = resp['out_p1']
-        out_p2 = resp['out_p2']
-        # Infer hidden party's output share
-        out_pe = (y ^ out_p1 ^ out_p2) & mask
-
-        # Check commitments
-        c_p1 = _H(j.to_bytes(4, 'big'), p1.to_bytes(1, 'big'),
-                  resp['tape_p1'], out_p1.to_bytes((n + 7) // 8, 'big'))
-        c_p2 = _H(j.to_bytes(4, 'big'), p2.to_bytes(1, 'big'),
-                  resp['tape_p2'], out_p2.to_bytes((n + 7) // 8, 'big'))
-        if c_p1 != coms[j][p1] or c_p2 != coms[j][p2]:
-            return False
-
-        # Re-evaluate party p1's AND gates and check against recorded views
-        # p1's computation uses shares from p1 and p2 (both revealed)
-        shares_check = {p1: resp['shares_p1'], p2: resp['shares_p2']}
-        carry_check  = {p1: 0, p2: 0}   # carry[0] = 0
-
-        gate_id = 0
-        ok = True
-        for i in range(n - 1):
-            ai_p1 = (shares_check[p1] >> i) & 1
-            ai_p2 = (shares_check[p2] >> i) & 1
-            ci_p1 = carry_check[p1]
-            ci_p2 = carry_check[p2]
-            Bi    = (B >> i) & 1
-
-            # Recompute p1's AND gate output
-            ri_p1 = _prg_bit(resp['tape_p1'], gate_id)
-            ri_p2 = _prg_bit(resp['tape_p2'], gate_id)
-            gate_id += 1
-
-            # z_{p1} = ai_p1·ci_p1 ^ ai_p1·ci_p2 ^ ai_p2·ci_p1 ^ r_{p1} ^ r_{p2}
-            exp_and_p1 = ((ai_p1 & ci_p1) ^ (ai_p1 & ci_p2) ^
-                          (ai_p2 & ci_p1) ^ ri_p1 ^ ri_p2)
-
-            if resp['views_p1'][i][2] != exp_and_p1:
-                ok = False
-                break
-
-            # Advance carry shares for p1 and p2
-            carry_check[p1] = (Bi * ai_p1) ^ exp_and_p1 ^ (Bi * ci_p1)
-            carry_check[p2] = (Bi * ai_p2) ^ resp['views_p2'][i][2] ^ (Bi * ci_p2)
-
-        if not ok:
-            return False
-
     return True
 
 
@@ -873,12 +891,14 @@ def _cheat_prove_zkboo(B, y_target, n=_ZK_N, rounds=_ZK_R):
     """
     mask = (1 << n) - 1
     A_wrong = (y_target ^ 0xFF) & mask   # deliberately wrong witness
-    # Return a proof for the wrong witness — commitments will be consistent
-    # internally but the output shares won't XOR to y_target.
-    proof = zkboo_prove(A_wrong, B, n, rounds)
-    # Override the public output so verification checks against correct y
-    proof['y'] = y_target
-    return proof
+    # An honest run on the wrong witness, CLAIMING the public y_target: its
+    # Fiat-Shamir hash takes y_target, as a real cheater's would.  Before
+    # TODO #409 it hashed F1(A_wrong, B) and swapped y in afterwards, a cheat
+    # no adversary makes; the honest-claim one verified every time.  Now the
+    # views are consistent but the output shares do not XOR to y_target, so
+    # the verifier's hidden share differs from the committed one and every
+    # round's challenge has to re-match by chance.
+    return zkboo_prove(A_wrong, B, n, rounds, y=y_target)
 
 
 # THE TRIAL THAT IS NOT A CHEAT (TODO #304).  Both soundness experiments below
@@ -942,9 +962,10 @@ def section3_soundness():
           f"n={_ZK_N}, R={_ZK_R})")
     t0 = time.time()
     tried, passed = _zkboo_cheat_sample(SOUND)
-    # The Fiat-Shamir ch_seed includes y (the public target).  The cheating prover's
-    # proof was built with F1(A_wrong, B) ≠ y, so ch_seed differs → per-round challenge
-    # matches by coincidence with probability 1/3, all R rounds independently: (1/3)^R.
+    # The Fiat-Shamir ch_seed takes every round's three output shares, the hidden
+    # one as y ^ out_p1 ^ out_p2 (TODO #409).  The cheating prover's shares XOR to
+    # F1(A_wrong, B) ≠ y, so the verifier's ch_seed differs from the prover's → each
+    # round's challenge matches by coincidence with probability 1/3: (1/3)^R.
     # Expected passes ≈ (1/3)^R × (cheats actually attempted); the trials where the
     # "wrong" witness was a genuine preimage are excluded above, not counted here.
     expected = (1 / 3) ** _ZK_R * tried
@@ -952,7 +973,7 @@ def section3_soundness():
     print(f"  Cheat passes : {passed}/{tried}   "
           f"({SOUND - tried} trial(s) discarded: the wrong witness was a "
           f"genuine preimage, so the proof was honest)")
-    print(f"  Note: FS challenge includes y; wrong A causes ch_seed mismatch.")
+    print(f"  Note: FS challenge binds all output shares; wrong A causes ch_seed mismatch.")
     print(f"        Per-round coincidence prob ≈ 1/3 → expected ≈ {expected:.1f} passes.")
     # TODO #299's REPLICATION (applied by TODO #304).  The bar follows the
     # statistic, but even with the honest-proof trials discarded it still fires

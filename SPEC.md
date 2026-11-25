@@ -625,8 +625,14 @@ verifier fails a round whose aux block the challenge does not open, as it
 fails one that lacks a needed block.  `CliTest/test_raw_body_diff.sh` sends
 seeded mutations of each artifact through the four real CLIs and fails on
 any crash or any case they answer differently, and checks every refusal
-above by its text.  Not yet covered: the ZKBoo view's gate-byte bits and
-share bit n - 1, which the verifier does not read (TODO #409).
+above by its text.  No encoding rule reaches a ZKBoo view's gate-byte bits
+or its share's bit n - 1; the verifier does (TODO #409): each commitment is
+`HFSCX-256(j ‖ p ‖ view)` over the whole view, every gate byte must be
+exactly `a_i | c_i << 1 | ao_i << 2`, both revealed output shares are
+recomputed from their views, and the Fiat-Shamir seed is
+`HFSCX-256(commitments ‖ output shares ‖ B ‖ y ‖ msg)`, with every round's
+three output shares in party order and the hidden one taken as
+`y ^ out_p1 ^ out_p2` -- the ZKB++ transcript's order.
 
 ## 11. Code-Based (Stern ZKID) Variants
 

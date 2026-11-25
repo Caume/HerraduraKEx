@@ -2,6 +2,7 @@ package herradurakex;
 
 import java.nio.charset.StandardCharsets;
 import java.math.BigInteger;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -229,11 +230,9 @@ public final class ZkpNl {
         int nb = (n + 7) / 8;
 
         byte[][][] allComs = new byte[rounds][][];
-        BigInteger[][] allShares = new BigInteger[rounds][];
-        byte[][][] allTapes = new byte[rounds][][];
-        BigInteger[][] allOutShares = new BigInteger[rounds][];
-        int[][][][] allGateViews = new int[rounds][][][];
         List<byte[]> comBlockParts = new ArrayList<>(rounds * 3);
+        List<byte[]> outBlockParts = new ArrayList<>(rounds * 3);
+        byte[][][] allViews = new byte[rounds][][];
 
         for (int j = 0; j < rounds; j++) {
             BigInteger s0 = randomBig(nb, rng).and(mask);
@@ -244,16 +243,21 @@ public final class ZkpNl {
             for (int p = 0; p < 3; p++) { tapes[p] = new byte[32]; rng.nextBytes(tapes[p]); }
 
             CircuitResult cr = evaluateCircuit(shares, tapes, b, n);
+            // Each commitment covers the party's WHOLE view (TODO #409).
             byte[][] coms = new byte[3][];
+            byte[][] views = new byte[3][];
             for (int p = 0; p < 3; p++) {
-                coms[p] = h(be4(j), new byte[] { (byte) p }, tapes[p], toFixedBytes(cr.outShares[p], nb));
+                views[p] = packView(p, shares, tapes, cr.outShares, cr.gateViews, nb, n);
+                coms[p] = h(be4(j), new byte[] { (byte) p }, views[p]);
+                outBlockParts.add(toFixedBytes(cr.outShares[p], nb));
             }
-            allComs[j] = coms; allShares[j] = shares; allTapes[j] = tapes;
-            allOutShares[j] = cr.outShares; allGateViews[j] = cr.gateViews;
+            allComs[j] = coms; allViews[j] = views;
             comBlockParts.add(coms[0]); comBlockParts.add(coms[1]); comBlockParts.add(coms[2]);
         }
-        byte[] comBlock = concatAll(comBlockParts);
-        byte[] chSeed = h(comBlock, toFixedBytes(b, nb), toFixedBytes(y, nb), msgBytes);
+        // Fiat-Shamir: all commitments, all three output shares of every
+        // round, B, y, msg -- the ZKB++ transcript's order (TODO #409).
+        byte[] chSeed = h(concatAll(comBlockParts), concatAll(outBlockParts),
+                          toFixedBytes(b, nb), toFixedBytes(y, nb), msgBytes);
 
         List<ProofRound> out = new ArrayList<>(rounds);
         for (int j = 0; j < rounds; j++) {
@@ -263,8 +267,8 @@ public final class ZkpNl {
             ProofRound rd = new ProofRound();
             rd.com0 = allComs[j][0]; rd.com1 = allComs[j][1]; rd.com2 = allComs[j][2];
             rd.e = e;
-            rd.viewP1 = packView(p1, allShares[j], allTapes[j], allOutShares[j], allGateViews[j], nb, n);
-            rd.viewP2 = packView(p2, allShares[j], allTapes[j], allOutShares[j], allGateViews[j], nb, n);
+            rd.viewP1 = allViews[j][p1];
+            rd.viewP2 = allViews[j][p2];
             out.add(rd);
         }
         return out;
@@ -280,7 +284,16 @@ public final class ZkpNl {
     }
 
     /** ZKBoo verifier: verify a proof that the prover knows A such that
-     * nl_fscx_v1(A, B) = y. */
+     * nl_fscx_v1(A, B) = y.
+     *
+     * TODO #409: before v19.0.0 this checked only bit 2 of p1's gate bytes and
+     * the two commitments, which covered the tape and output share alone; it
+     * never related the output shares to y, so a proof made from ANY A
+     * verified.  It now checks, per round: every gate byte of both revealed
+     * views exactly (a_i | c_i << 1 | ao_i << 2, nothing above), both output
+     * shares against the views, both commitments over the whole view; and,
+     * through the Fiat-Shamir seed, which binds all three output shares, that
+     * the hidden party's share is y ^ out_p1 ^ out_p2. */
     public static boolean verify(BigInteger b, BigInteger y, int n, int rounds, byte[] msgBytes,
                                   List<ProofRound> proofRounds) {
         // rounds == 0 makes every loop below run zero times, and the method
@@ -290,45 +303,56 @@ public final class ZkpNl {
         if (n <= 0 || rounds <= 0 || rounds > MAX_ROUNDS
                 || proofRounds.size() != rounds) return false;
         int nb = (n + 7) / 8;
-        byte[][][] comsList = new byte[rounds][][];
-        int[] challenges = new int[rounds];
+        int viewLen = 2 * nb + 32 + (n - 1);
+        BigInteger mask = maskOf(n);
         List<byte[]> comBlockParts = new ArrayList<>(rounds * 3);
-        for (int j = 0; j < rounds; j++) {
-            ProofRound r = proofRounds.get(j);
-            comsList[j] = new byte[][] { r.com0, r.com1, r.com2 };
-            challenges[j] = r.e;
-            comBlockParts.add(r.com0); comBlockParts.add(r.com1); comBlockParts.add(r.com2);
-        }
-        byte[] comBlock = concatAll(comBlockParts);
-        byte[] chSeed = h(comBlock, toFixedBytes(b, nb), toFixedBytes(y, nb), msgBytes);
-        for (int j = 0; j < rounds; j++) {
-            byte[] hh = h(chSeed, be4(j));
-            if ((hh[0] & 0xff) % 3 != challenges[j]) return false;
-        }
+        List<byte[]> outBlockParts = new ArrayList<>(rounds * 3);
 
         for (int j = 0; j < rounds; j++) {
-            int e = challenges[j];
             ProofRound resp = proofRounds.get(j);
+            int e = resp.e;
+            if (e < 0 || e > 2 || resp.viewP1 == null || resp.viewP2 == null
+                    || resp.viewP1.length != viewLen || resp.viewP2.length != viewLen) return false;
             int p1 = (e + 1) % 3, p2 = (e + 2) % 3;
             UnpackedView v1 = unpackView(resp.viewP1, nb, n);
             UnpackedView v2 = unpackView(resp.viewP2, nb, n);
+            if (v1.share.or(v2.share).or(v1.outShare).or(v2.outShare).andNot(mask).signum() != 0)
+                return false;
+            int gOff = 2 * nb + 32;
 
-            byte[] cP1 = h(be4(j), new byte[] { (byte) p1 }, v1.tape, toFixedBytes(v1.outShare, nb));
-            byte[] cP2 = h(be4(j), new byte[] { (byte) p2 }, v2.tape, toFixedBytes(v2.outShare, nb));
-            if (!Arrays.equals(cP1, comsList[j][p1]) || !Arrays.equals(cP2, comsList[j][p2])) return false;
-
-            int carryP1 = 0, carryP2 = 0;
+            int[] car1 = new int[n], car2 = new int[n];
+            int c1 = 0, c2 = 0;
             for (int i = 0; i < n - 1; i++) {
-                int aiP1 = v1.share.testBit(i) ? 1 : 0;
-                int aiP2 = v2.share.testBit(i) ? 1 : 0;
-                int ciP1 = carryP1, ciP2 = carryP2;
+                int a1 = v1.share.testBit(i) ? 1 : 0;
+                int a2 = v2.share.testBit(i) ? 1 : 0;
                 int bi = b.testBit(i) ? 1 : 0;
-                int riP1 = prgBit(v1.tape, i), riP2 = prgBit(v2.tape, i);
-                int expAndP1 = (aiP1 & ciP1) ^ (aiP1 & ciP2) ^ (aiP2 & ciP1) ^ riP1 ^ riP2;
-                if (v1.gv[i][2] != expAndP1) return false;
-                carryP1 = (bi * aiP1) ^ expAndP1 ^ (bi * ciP1);
-                carryP2 = (bi * aiP2) ^ v2.gv[i][2] ^ (bi * ciP2);
+                int r1 = prgBit(v1.tape, i), r2 = prgBit(v2.tape, i);
+                int and1 = (a1 & c1) ^ (a1 & c2) ^ (a2 & c1) ^ r1 ^ r2;
+                int and2 = v2.gv[i][2];
+                if ((resp.viewP1[gOff + i] & 0xff) != (a1 | (c1 << 1) | (and1 << 2))
+                        || (resp.viewP2[gOff + i] & 0xff) != (a2 | (c2 << 1) | (and2 << 2))) return false;
+                c1 = (bi & a1) ^ and1 ^ (bi & c1);
+                c2 = (bi & a2) ^ and2 ^ (bi & c2);
+                car1[i + 1] = c1; car2[i + 1] = c2;
             }
+            if (!ppOutShare(p1, v1.share, car1, b, n).equals(v1.outShare)
+                    || !ppOutShare(p2, v2.share, car2, b, n).equals(v2.outShare)) return false;
+
+            byte[][] coms = { resp.com0, resp.com1, resp.com2 };
+            byte[] cP1 = h(be4(j), new byte[] { (byte) p1 }, resp.viewP1);
+            byte[] cP2 = h(be4(j), new byte[] { (byte) p2 }, resp.viewP2);
+            if (!MessageDigest.isEqual(cP1, coms[p1]) || !MessageDigest.isEqual(cP2, coms[p2])) return false;
+
+            BigInteger[] outs = new BigInteger[3];
+            outs[e] = y.xor(v1.outShare).xor(v2.outShare).and(mask);
+            outs[p1] = v1.outShare; outs[p2] = v2.outShare;
+            comBlockParts.add(resp.com0); comBlockParts.add(resp.com1); comBlockParts.add(resp.com2);
+            for (int p = 0; p < 3; p++) outBlockParts.add(toFixedBytes(outs[p], nb));
+        }
+        byte[] chSeed = h(concatAll(comBlockParts), concatAll(outBlockParts),
+                          toFixedBytes(b, nb), toFixedBytes(y, nb), msgBytes);
+        for (int j = 0; j < rounds; j++) {
+            if ((h(chSeed, be4(j))[0] & 0xff) % 3 != proofRounds.get(j).e) return false;
         }
         return true;
     }

@@ -4144,9 +4144,10 @@ func ZkpNlProve(A, B, y uint64, n, rounds int, msg []byte) ([]ZkpNlRound, error)
 		tapes     [3][]byte
 		outShares [3]uint64
 		gateViews [3][]byte
+		views     [3][]byte
 	}
 	allData := make([]roundData, rounds)
-	var comBlock []byte
+	var comBlock, outBlock []byte
 
 	buf := make([]byte, nb)
 	for j := 0; j < rounds; j++ {
@@ -4179,35 +4180,21 @@ func ZkpNlProve(A, B, y uint64, n, rounds int, msg []byte) ([]ZkpNlRound, error)
 		rd.outShares = outShares
 		rd.gateViews = gateViews
 
+		// Each commitment covers the party's WHOLE view (TODO #409).
 		jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
 		for p := 0; p < 3; p++ {
-			osBuf := make([]byte, nb)
-			os := outShares[p]
-			for i := nb - 1; i >= 0; i-- {
-				osBuf[i] = byte(os)
-				os >>= 8
-			}
-			h := zkpNlH(jBuf, []byte{byte(p)}, tapes[p], osBuf)
+			rd.views[p] = zkpNlPackView(s[p], tapes[p], outShares[p], gateViews[p], n, nb)
+			h := zkpNlH(jBuf, []byte{byte(p)}, rd.views[p])
 			copy(rd.coms[p][:], h)
 			comBlock = append(comBlock, h...)
+			outBlock = append(outBlock, zkpNlBE(outShares[p], nb)...)
 		}
 		allData[j] = rd
 	}
 
-	// Fiat-Shamir challenge seed
-	nBuf := make([]byte, nb)
-	bVal := B
-	for i := nb - 1; i >= 0; i-- {
-		nBuf[i] = byte(bVal)
-		bVal >>= 8
-	}
-	yBuf := make([]byte, nb)
-	yVal := y
-	for i := nb - 1; i >= 0; i-- {
-		yBuf[i] = byte(yVal)
-		yVal >>= 8
-	}
-	chSeed := zkpNlH(comBlock, nBuf, yBuf, msg)
+	// Fiat-Shamir challenge seed: all commitments, all three output shares of
+	// every round, B, y, msg -- the ZKB++ transcript's order (TODO #409).
+	chSeed := zkpNlH(comBlock, outBlock, zkpNlBE(B, nb), zkpNlBE(y, nb), msg)
 
 	result := make([]ZkpNlRound, rounds)
 	for j := 0; j < rounds; j++ {
@@ -4222,13 +4209,32 @@ func ZkpNlProve(A, B, y uint64, n, rounds int, msg []byte) ([]ZkpNlRound, error)
 		result[j].Com1 = rd.coms[1]
 		result[j].Com2 = rd.coms[2]
 		result[j].E = e
-		result[j].ViewP1 = zkpNlPackView(rd.shares[p1], rd.tapes[p1], rd.outShares[p1], rd.gateViews[p1], n, nb)
-		result[j].ViewP2 = zkpNlPackView(rd.shares[p2], rd.tapes[p2], rd.outShares[p2], rd.gateViews[p2], n, nb)
+		result[j].ViewP1 = rd.views[p1]
+		result[j].ViewP2 = rd.views[p2]
 	}
 	return result, nil
 }
 
+// zkpNlBE is v as nb big-endian bytes.
+func zkpNlBE(v uint64, nb int) []byte {
+	b := make([]byte, nb)
+	for i := nb - 1; i >= 0; i-- {
+		b[i] = byte(v)
+		v >>= 8
+	}
+	return b
+}
+
 // ZkpNlVerify verifies a ZKBoo proof that prover knows A s.t. nl_fscx_v1(A, B) = y.
+//
+// TODO #409: before v19.0.0 this checked only bit 2 of p1's gate bytes and the
+// two commitments, which covered the tape and output share alone; it never
+// related the output shares to y, so a proof made from ANY A verified.  It now
+// checks, per round: every gate byte of both revealed views exactly
+// (a_i | c_i << 1 | ao_i << 2, nothing above), both output shares against the
+// views, both commitments over the whole view; and, through the Fiat-Shamir
+// seed, which binds all three output shares, that the hidden party's share is
+// y ^ out_p1 ^ out_p2.
 func ZkpNlVerify(B, y uint64, n, rounds int, msg []byte, proof []ZkpNlRound) bool {
 	// Without this, rounds == 0 makes every loop below run zero times and the
 	// function returns true for any message under any key (TODO #275).
@@ -4245,102 +4251,73 @@ func ZkpNlVerify(B, y uint64, n, rounds int, msg []byte, proof []ZkpNlRound) boo
 		return false
 	}
 	nb := (n + 7) / 8
+	mask := zkpNlMask(n)
+	viewLen := 2*nb + 32 + (n - 1)
 
-	// Reconstruct commitment block and Fiat-Shamir seed
-	var comBlock []byte
-	for _, r := range proof {
-		comBlock = append(comBlock, r.Com0[:]...)
-		comBlock = append(comBlock, r.Com1[:]...)
-		comBlock = append(comBlock, r.Com2[:]...)
-	}
-	nBuf := make([]byte, nb)
-	bVal := B
-	for i := nb - 1; i >= 0; i-- {
-		nBuf[i] = byte(bVal)
-		bVal >>= 8
-	}
-	yBuf := make([]byte, nb)
-	yVal := y
-	for i := nb - 1; i >= 0; i-- {
-		yBuf[i] = byte(yVal)
-		yVal >>= 8
-	}
-	chSeed := zkpNlH(comBlock, nBuf, yBuf, msg)
-
-	eqBytes := func(a []byte, b [32]byte) bool {
-		if len(a) < 32 {
-			return false
-		}
-		for i := 0; i < 32; i++ {
-			if a[i] != b[i] {
-				return false
-			}
-		}
-		return true
-	}
-
-	osBuf := func(v uint64) []byte {
-		b := make([]byte, nb)
-		for i := nb - 1; i >= 0; i-- {
-			b[i] = byte(v)
-			v >>= 8
-		}
-		return b
-	}
-
-	for j, r := range proof {
-		jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
-		h := zkpNlH(chSeed, jBuf)
-		e := int(h[0]) % 3
-		if e != r.E {
+	var comBlock, outBlock []byte
+	for j := range proof {
+		r := &proof[j]
+		e := r.E
+		if e < 0 || e > 2 || len(r.ViewP1) != viewLen || len(r.ViewP2) != viewLen {
 			return false
 		}
 		p1 := (e + 1) % 3
 		p2 := (e + 2) % 3
-
 		shareP1, tapeP1, outP1, gvP1 := zkpNlUnpackView(r.ViewP1, n, nb)
 		shareP2, tapeP2, outP2, gvP2 := zkpNlUnpackView(r.ViewP2, n, nb)
-
-		// Verify commitments for revealed parties
-		c1h := zkpNlH(jBuf, []byte{byte(p1)}, tapeP1, osBuf(outP1))
-		if !eqBytes(c1h, r.comAt(p1)) {
-			return false
-		}
-		c2h := zkpNlH(jBuf, []byte{byte(p2)}, tapeP2, osBuf(outP2))
-		if !eqBytes(c2h, r.comAt(p2)) {
+		if (shareP1|shareP2|outP1|outP2)&^mask != 0 {
 			return false
 		}
 
-		// Re-evaluate p1's AND gates using both revealed shares
-		var carryP1, carryP2 uint64
+		car1 := make([]int, n)
+		car2 := make([]int, n)
+		c1, c2 := 0, 0
 		for i := 0; i < n-1; i++ {
-			aiP1 := int((shareP1 >> uint(i)) & 1)
-			aiP2 := int((shareP2 >> uint(i)) & 1)
-			ciP1 := int((carryP1 >> uint(i)) & 1)
-			ciP2 := int((carryP2 >> uint(i)) & 1)
+			a1 := int((shareP1 >> uint(i)) & 1)
+			a2 := int((shareP2 >> uint(i)) & 1)
 			Bi := int((B >> uint(i)) & 1)
-
-			riP1 := zkpNlPrgBit(tapeP1, i)
-			riP2 := zkpNlPrgBit(tapeP2, i)
-
-			expAndP1 := (aiP1 & ciP1) ^ (aiP1 & ciP2) ^ (aiP2 & ciP1) ^ riP1 ^ riP2
-			if int((gvP1[i]>>2)&1) != expAndP1 {
+			r1 := zkpNlPrgBit(tapeP1, i)
+			r2 := zkpNlPrgBit(tapeP2, i)
+			and1 := (a1 & c1) ^ (a1 & c2) ^ (a2 & c1) ^ r1 ^ r2
+			and2 := int((gvP2[i] >> 2) & 1)
+			if gvP1[i] != byte(a1|c1<<1|and1<<2) || gvP2[i] != byte(a2|c2<<1|and2<<2) {
 				return false
 			}
-			andOutP2 := int((gvP2[i] >> 2) & 1)
+			c1 = (Bi & a1) ^ and1 ^ (Bi & c1)
+			c2 = (Bi & a2) ^ and2 ^ (Bi & c2)
+			car1[i+1] = c1
+			car2[i+1] = c2
+		}
+		if zkppOutShare(p1, shareP1, car1, B, n) != outP1 ||
+			zkppOutShare(p2, shareP2, car2, B, n) != outP2 {
+			return false
+		}
 
-			cNextP1 := (Bi * aiP1) ^ expAndP1 ^ (Bi * ciP1)
-			if cNextP1 == 1 {
-				carryP1 |= 1 << uint(i+1)
-			} else {
-				carryP1 &^= 1 << uint(i+1)
-			}
-			cNextP2 := (Bi * aiP2) ^ andOutP2 ^ (Bi * ciP2)
-			if cNextP2 == 1 {
-				carryP2 |= 1 << uint(i+1)
-			} else {
-				carryP2 &^= 1 << uint(i+1)
-			}
+		jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
+		c1h := zkpNlH(jBuf, []byte{byte(p1)}, r.ViewP1)
+		c2h := zkpNlH(jBuf, []byte{byte(p2)}, r.ViewP2)
+		cp1, cp2 := r.comAt(p1), r.comAt(p2)
+		if subtle.ConstantTimeCompare(c1h, cp1[:]) != 1 ||
+			subtle.ConstantTimeCompare(c2h, cp2[:]) != 1 {
+			return false
+		}
+		var outs [3]uint64
+		outs[e] = (y ^ outP1 ^ outP2) & mask
+		outs[p1] = outP1
+		outs[p2] = outP2
+		comBlock = append(comBlock, r.Com0[:]...)
+		comBlock = append(comBlock, r.Com1[:]...)
+		comBlock = append(comBlock, r.Com2[:]...)
+		for p := 0; p < 3; p++ {
+			outBlock = append(outBlock, zkpNlBE(outs[p], nb)...)
+		}
+	}
+
+	chSeed := zkpNlH(comBlock, outBlock, zkpNlBE(B, nb), zkpNlBE(y, nb), msg)
+	for j := range proof {
+		jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
+		if int(zkpNlH(chSeed, jBuf)[0])%3 != proof[j].E {
+			return false
 		}
 	}
 	return true

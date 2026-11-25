@@ -108,9 +108,11 @@ $$z_i = (x_i \wedge y_i) \oplus (x_i \wedge y_{i+1}) \oplus (x_{i+1} \wedge y_i)
 
 where indices are taken mod 3.  One verifies $z_0 \oplus z_1 \oplus z_2 = x \wedge y$.
 
-**Protocol ($R$ rounds, Fiat-Shamir).**  Each round: (1) share $A = s_0 \oplus s_1 \oplus s_2$ with random $s_0, s_1$; (2) evaluate the circuit recording per-party gate views; (3) commit $\text{com}_i = H(j, i, k_i, \text{out}_i)$ for each party $i$; (4) derive challenge $e \in \{0,1,2\}$ via $H(\text{all commitments}, B, y)$; (5) reveal views of parties $(e+1) \bmod 3$ and $(e+2) \bmod 3$.
+**Protocol ($R$ rounds, Fiat-Shamir).**  Each round: (1) share $A = s_0 \oplus s_1 \oplus s_2$ with random $s_0, s_1$; (2) evaluate the circuit recording per-party gate views; (3) commit $\text{com}_i = H(j, i, \text{view}_i)$ for each party $i$, over its whole view (input share, tape, output share, gate bytes); (4) derive challenge $e \in \{0,1,2\}$ via $H(\text{all commitments}, \text{all output shares}, B, y)$; (5) reveal views of parties $(e+1) \bmod 3$ and $(e+2) \bmod 3$.
 
-**Verification.** For each round the verifier: (a) re-derives party $(e+1)$'s AND gate outputs from the two revealed views (using shares of parties $e+1$ and $e+2$, both known); (b) checks commitments for the two revealed parties; (c) infers the hidden output as $\text{out}_e = y \oplus \text{out}_{e+1} \oplus \text{out}_{e+2}$.
+**Verification.** For each round the verifier: (a) re-derives party $(e+1)$'s AND gate outputs from the two revealed views (using shares of parties $e+1$ and $e+2$, both known), and requires every gate byte of both views to be exactly what the shares and carries give; (b) recomputes both revealed parties' output shares from their views; (c) checks commitments for the two revealed parties; (d) infers the hidden output as $\text{out}_e = y \oplus \text{out}_{e+1} \oplus \text{out}_{e+2}$ and recomputes the challenge over it, which is what ties the proof to `y`.
+
+**TODO #409 (v19.0.0).** Before v19.0.0 the shipped verifiers, in all four languages, did (a) for one bit of each gate byte and (c) over the tape and output share alone, and computed the hidden output in (d) but never used it: no output share was related to `y`, so a proof made from any `A` verified, at every round count, in every CLI.  Every bit of a view the verifier did not read could also be changed.  Steps (a)-(d) and the commitment and challenge in (3) and (4) are what v19.0.0 ships; the transcript layout is unchanged, and signatures made before it no longer verify.
 
 **Soundness.** A cheating prover without $A$ can prepare at most two consistent view-pairs out of three.  Soundness error per round: $2/3$.  For 128-bit soundness: $R = \lceil 128 / \log_2(3/2) \rceil = 219$ rounds — identical to the HPKS-Stern-F threshold (§11.8.4).
 
@@ -121,7 +123,7 @@ where indices are taken mod 3.  One verifies $z_0 \oplus z_1 \oplus z_2 = x \wed
 | Completeness (honest prover) | 1 000 | 0 failures [PASS] |
 | Soundness (wrong $A$, FS mismatch) | 200 | $\approx (1/3)^R \times 200 \approx 1$–$2$ coincidental [PASS] |
 
-The Fiat-Shamir seed includes $y$; a cheating prover supplying wrong $A$ (so $F_1(A,B) \neq y$) faces a different challenge in re-derivation, causing failure in all but $\approx (1/3)^R$ trials by coincidence.
+The Fiat-Shamir seed takes every round's three output shares, the hidden one as the verifier infers it from $y$; a cheating prover running honestly on a wrong $A$ (so $F_1(A,B) \neq y$) committed shares that do not XOR to `y`, so it faces a different challenge in re-derivation, causing failure in all but $\approx (1/3)^R$ trials by coincidence.  Until TODO #409 this table was measured on a model whose verifier, like the shipped ones, never related the output shares to `y`: its cheat failed only because it hashed `F1(A, B)` in place of `y`, and the same cheat hashing `y` verified in 297 of 297 trials.
 
 **Proof sizes (ZKBoo):**
 
