@@ -2941,47 +2941,6 @@ func encodeAsymCT(R, E *big.Int, n int) (string, error) {
 	return PemWrap(lblCT, seq), nil
 }
 
-// encodeSternCT encodes an HPKE-Stern-F KEM ciphertext.
-// K is stored for session-key extraction; e' stored for demo brute-force decap.
-func encodeSternCT(ctSyn *big.Int, ePrime, K *BitArray, E *big.Int, n int) (string, error) {
-	return encodeSternCTInts(ctSyn, ePrime.BigInt(), K.BigInt(), E, n)
-}
-
-// encodeSternCTInts: (ct, e', K, E, n); K and E are min(n, 256) bits, the
-// payload block (TODO #382).
-func encodeSternCTInts(ctSyn, ePrime, K, E *big.Int, n int) (string, error) {
-	nb := n / 8
-	kb := nb
-	if kb > 32 {
-		kb = 32
-	}
-	ca, err := derIntBig(ctSyn, nb)
-	if err != nil {
-		return "", err
-	}
-	ea, err := derIntBig(ePrime, nb)
-	if err != nil {
-		return "", err
-	}
-	ka, err := derIntBig(K, kb)
-	if err != nil {
-		return "", err
-	}
-	enc, err := derIntBig(E, kb)
-	if err != nil {
-		return "", err
-	}
-	nn, err := derIntSmall(n)
-	if err != nil {
-		return "", err
-	}
-	seq, err := DerSeqEnc(ca, ea, ka, enc, nn)
-	if err != nil {
-		return "", err
-	}
-	return PemWrap(lblCT, seq), nil
-}
-
 // ── Signature encoding helpers ────────────────────────────────────────────────
 
 func encodeSchnorrSig(s, R, e *big.Int, n int) (string, error) {
@@ -4335,6 +4294,19 @@ func cmdCredVerify(args []string) {
 
 // ── enc ───────────────────────────────────────────────────────────────────────
 
+// retiredHpkeStern refuses `enc`/`dec --algo hpke-stern` (TODO #413, v21.0.0).
+// The demo ciphertext carried the error vector e', and K = hash(seed, e') needs
+// only the PUBLIC seed, so anyone holding the ciphertext and the public key
+// decrypted it.
+func retiredHpkeStern(sub, algo string) {
+	if algo == "hpke-stern" {
+		fmt.Fprintf(os.Stderr, "%s: --algo hpke-stern was removed in v21.0.0 (TODO #413): "+
+			"its ciphertext carried the error vector, so anyone could decrypt it; "+
+			"use --algo hpke-stern-kem\n", sub)
+		os.Exit(1)
+	}
+}
+
 func cmdEnc(args []string) {
 	fs := flag.NewFlagSet("enc", flag.ExitOnError)
 	algo   := fs.String("algo", "", "Encryption algorithm")
@@ -4345,6 +4317,7 @@ func cmdEnc(args []string) {
 	aead   := fs.Bool("aead", false, "HSKE-NL-AEAD authenticated encryption (hske-nla1 only)")
 	ad     := fs.String("ad", "", "Associated data bound into the AEAD tag (hske-duplex, hske-duplex3, or hske-nla1 with --aead; refused elsewhere)")
 	parseArgs(fs, args)
+	retiredHpkeStern("enc", *algo)
 	checkKeyLabels("enc", fs) // TODO #366
 
 	if *algo == "" {
@@ -4507,43 +4480,6 @@ func cmdEnc(args []string) {
 			die("enc", err)
 		}
 
-	case "hpke-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
-		if *pubkey == "" {
-			fmt.Fprintln(os.Stderr, "enc: --pubkey required for hpke-stern")
-			os.Exit(1)
-		}
-		_, theirInts, err := readPEMInts(*pubkey)
-		if err != nil {
-			die("enc", err)
-		}
-		n    := sternWireN(theirInts[2], "enc")
-		w    := n // the payload block: 256 bits above 256 (TODO #382)
-		if SternIsLong(n) {
-			w = 256
-		}
-		nb   := w / 8
-		oneBlockOK(*algo, len(inBytes), nb)
-		P    := NewBitArray(w, new(big.Int).SetBytes(msgPad(inBytes, nb)))
-		var pem string
-		if SternIsLong(n) {
-			K, ct, eP := HpkeSternLEncap(sternLField(theirInts[1], n, "seed", "enc"))
-			E := FscxRevolve(P, K, w/4)
-			pem, err = encodeSternCTInts(new(big.Int).SetBytes(ct), new(big.Int).SetBytes(eP),
-				K.BigInt(), E.BigInt(), n)
-		} else {
-			seed := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
-			K, ctSyn, ePrime := HpkeSternFEncap(seed, n)
-			E := FscxRevolve(P, K, n/4)
-			pem, err = encodeSternCT(ctSyn, ePrime, K, E.BigInt(), n)
-		}
-		if err != nil {
-			die("enc", err)
-		}
-		if err := writeString(*out, pem); err != nil {
-			die("enc", err)
-		}
-
 	case "hpke-stern-kem":
 		if *pubkey == "" {
 			fmt.Fprintln(os.Stderr, "enc: --pubkey required for hpke-stern-kem")
@@ -4583,6 +4519,7 @@ func cmdDec(args []string) {
 	out  := fs.String("out", "-", "Plaintext output file")
 	ad   := fs.String("ad", "", "Associated data for AEAD ciphertexts (must match enc --ad; refused on algos without AEAD)")
 	parseArgs(fs, args)
+	retiredHpkeStern("dec", *algo)
 	checkKeyLabels("dec", fs) // TODO #366
 
 	if *algo == "" {
@@ -4803,47 +4740,6 @@ func cmdDec(args []string) {
 			}
 			D = NlFscxRevolveV2Inv(E, decKey, n/4)
 		}
-		if err := writeBytes(*out, D.Bytes()); err != nil {
-			die("dec", err)
-		}
-
-	case "hpke-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
-		if *key == "" {
-			fmt.Fprintln(os.Stderr, "dec: --key required for hpke-stern")
-			os.Exit(1)
-		}
-		_, ourInts, err := readPEMInts(*key)
-		if err != nil {
-			die("dec", err)
-		}
-		_, ctInts, err := readPEMInts(*in)
-		if err != nil {
-			die("dec", err)
-		}
-		if len(ctInts) != 5 {
-			die("dec", checkDerItemsExact(lblCT, ctInts, 5))
-		}
-		n       := sternWireN(ourInts[2], "dec")
-		// TODO #383 stage 2: a ciphertext of another width was reduced into
-		// the key's and decrypted to garbage with exit 0
-		if cn := new(big.Int).SetBytes(ctInts[4]); !cn.IsInt64() || cn.Int64() != int64(n) {
-			die("dec", fmt.Errorf("ciphertext n is %s, private key n is %d", cn, n))
-		}
-		EInt    := new(big.Int).SetBytes(ctInts[3])
-		var K_dec *BitArray
-		w := n
-		if SternIsLong(n) { // the long form (TODO #382): K and the block are 256 bits
-			w = 256
-			K_dec = HpkeSternLDecapKnown(sternLField(ctInts[1], n, "e'", "dec"),
-				sternLField(ourInts[1], n, "seed", "dec"))
-		} else {
-			seed   := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
-			ePrime := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
-			K_dec = HpkeSternFDecapKnown(ePrime, seed)
-		}
-		E       := NewBitArray(w, EInt)
-		D       := FscxRevolve(E, K_dec, 3*w/4)
 		if err := writeBytes(*out, D.Bytes()); err != nil {
 			die("dec", err)
 		}
@@ -6227,8 +6123,6 @@ var keySites = []keySite{
 	{"dec", "hpke-nl", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
 	{"enc", "hpke-nl3", "--pubkey", "hpke-nl3", []string{"HERRADURA HPKE-NL3 PUBLIC KEY"}},
 	{"dec", "hpke-nl3", "--key", "hpke-nl3", []string{"HERRADURA HPKE-NL3 PRIVATE KEY"}},
-	{"enc", "hpke-stern", "--pubkey", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
-	{"dec", "hpke-stern", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
 	{"enc", "hpke-stern-kem", "--pubkey", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PUBLIC KEY"}},
 	{"dec", "hpke-stern-kem", "--key", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PRIVATE KEY"}},
 	{"sign", "hpks", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
@@ -7448,7 +7342,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			}
 			return ""
 		}
-		if n >= 5 && n <= 5 && (F(0) == 2) {
+		if n >= 5 && n <= 5 {
 			if c := int64(1); n > 0 && L(0) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
@@ -7478,39 +7372,6 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			}
 			if c := int64((F(4) + 7)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
-			}
-			return ""
-		}
-		if n >= 5 && n <= 5 {
-			if c := int64(2); n > 4 && L(4) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
-			}
-			if c := int64(F(4)/8); n > 0 && L(0) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
-			}
-			if c := int64(F(4)/8); n > 1 && L(1) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
-			}
-			if c := int64(hkxMin(F(4)/8, 32)); n > 2 && L(2) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
-			}
-			if c := int64(hkxMin(F(4)/8, 32)); n > 3 && L(3) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
-			}
-			if n > 4 && lz[4] == 1 {
-				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
-			}
-			if c := int64(F(4)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
-				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
-			}
-			if c := int64(F(4)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
-				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
-			}
-			if c := int64(hkxMin(F(4)/8, 32)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
-				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
-			}
-			if c := int64(hkxMin(F(4)/8, 32)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
-				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
 		}
@@ -7861,7 +7722,7 @@ required):
                        --rounds
   dec                  --ad --algo --in --key --out
                        --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex
-                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern
+                               hske-duplex3 hpke hpke-nl hpke-nl3
                                hpke-stern-kem
   decfile              --algo --in --key --out
                        --algo: hske-nla1
@@ -7869,7 +7730,7 @@ required):
                        --algo: hfscx-256 hfscx-256-ds
   enc                  --ad --aead --algo --in --key --out --pubkey
                        --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex
-                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern
+                               hske-duplex3 hpke hpke-nl hpke-nl3
                                hpke-stern-kem
   encfile              --algo --in --key --out
                        --algo: hske-nla1

@@ -486,9 +486,16 @@ SECURITY = {
                         source=["SECURITY.md (HYBRID-RNL-STERN note)", "TODO_DONE.md #167",
                                 "SecurityProofs-5.md 11.8.7"]),
     "hpke-stern": dict(status="demo-only", quantum_resistant="conjectured",
-                        notes="Niederreiter KEM (Stern-based). Demo uses a known error vector e'; production "
-                              "requires an actual QC-MDPC syndrome decoder, not yet implemented.",
-                        source=["CLAUDE.md:228", "TODO.md #126 (6896-6924)"]),
+                        notes="Niederreiter KEM (Stern-based). Demo uses a known error vector e'. "
+                              "NO CONFIDENTIALITY: the CLI ciphertext carried e', and K = hash(seed, e') "
+                              "needs only the PUBLIC seed, so anyone holding the ciphertext and the "
+                              "public key decrypted it (found by TODO #410). TODO #413 (v21.0.0) removed "
+                              "enc/dec --algo hpke-stern from every CLI; hpke-stern-kem decodes with the "
+                              "private key. The tag remains a genpkey key type, a Stern signing key "
+                              "(the same error vector + seed as hpks-stern), and the suites keep the "
+                              "library functions as a demonstration.",
+                        source=["CLAUDE.md:228", "TODO.md #126 (6896-6924)", "TODO_DONE.md #413",
+                                "MIGRATING.md section 55"]),
     "hpke-stern-kem": dict(status="demo-only", quantum_resistant="conjectured",
                         notes="Niederreiter/QC-MDPC KEM with a real Black-Gray-Flip (BGF) "
                               "syndrome decoder (qcmdpc_keygen/encap/decap_bgf) -- unlike "
@@ -1864,7 +1871,8 @@ def emit_go_help_region(go_src, lines):
 #
 # Two families are deliberately shared.  GF: hkex-gf, hpks, hpks-nl, hpke and
 # hpke-nl are the same GF(2^n)* key pair (SPEC.md §7: "HPKE reuses HKEX-GF key
-# pairs").  STERN: hpks-stern and hpke-stern hold the same error vector + seed.
+# pairs").  STERN: hpks-stern and hpke-stern hold the same error vector + seed
+# (since TODO #413 an hpke-stern key is only a Stern signing key: enc/dec retired).
 # hpke-nl3 is NOT in the GF family: it has its own labels (TUTORIAL: "an
 # hpke-nl key is not an hpke-nl3 key").  Public-key slots accept PUBLIC labels
 # only; a private key passed as --pubkey was mis-parsed by every CLI before.
@@ -1894,7 +1902,7 @@ KEY_LABEL_SITES = (
      ("kex", "hybrid-rnl-stern", "--their-kem", "pub", _KF_KEM)]
     + [(sub, algo, flag, role, fam)
        for algo, fam in (("hpke", _KF_GF), ("hpke-nl", _KF_GF), ("hpke-nl3", ["hpke-nl3"]),
-                         ("hpke-stern", _KF_STERN), ("hpke-stern-kem", _KF_KEM))
+                         ("hpke-stern-kem", _KF_KEM))
        for sub, flag, role in (("enc", "--pubkey", "pub"), ("dec", "--key", "priv"))]
     + [(sub, algo, flag, role, fam)
        for algo, fam in (("hpks", _KF_GF), ("hpks-nl", _KF_GF), ("hpks-stern", _KF_STERN),
@@ -2344,12 +2352,10 @@ PEM_DER_FIELD_CAPS = [
     ("HERRADURA CIPHERTEXT", (3, 3), "f0 == 0", {0: "1", 1: "=(f2+7)/8", 2: "2"}),
     ("HERRADURA CIPHERTEXT", (3, 3), None, {0: "=(f2+7)/8", 1: "=(f2+7)/8", 2: "2"}),
     ("HERRADURA CIPHERTEXT", (4, 4), None, {0: "1", 1: "=(f3+7)/8", 2: "=(f3+7)/8", 3: "2"}),
-    # Five: hske-nla1 format 2 (2, nonce, E, tag, n), else HPKE-Stern (ct, e', K,
-    # E, n): K and E are min(n, 256) bits, the payload block (TODO #382).
-    ("HERRADURA CIPHERTEXT", (5, 5), "f0 == 2",
-     {0: "1", 1: "=(f4+7)/8", 2: "=(f4+7)/8", 3: "=32", 4: "2"}),
+    # Five: hske-nla1 format 2 (2, nonce, E, tag, n).  The HPKE-Stern demo
+    # layout (ct, e', K, E, n) shared this count until TODO #413 retired it.
     ("HERRADURA CIPHERTEXT", (5, 5), None,
-     {0: "=f4/8", 1: "=f4/8", 2: "=min(f4/8, 32)", 3: "=min(f4/8, 32)", 4: "2"}),
+     {0: "1", 1: "=(f4+7)/8", 2: "=(f4+7)/8", 3: "=32", 4: "2"}),
     # Six: duplex (format 3 or 4, nonce, length, ciphertext, tag, n).
     ("HERRADURA CIPHERTEXT", (6, 6), None,
      {0: "1", 1: "=(f5+7)/8", 2: "6", 3: "=f2", 4: "=32", 5: "2"}),

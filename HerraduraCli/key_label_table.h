@@ -36,10 +36,6 @@ static const HkxKeySite HKX_KEY_SITES[] = {
      {"HERRADURA HPKE-NL3 PUBLIC KEY", 0}},
     {"dec", "hpke-nl3", "--key", "hpke-nl3",
      {"HERRADURA HPKE-NL3 PRIVATE KEY", 0}},
-    {"enc", "hpke-stern", "--pubkey", "hpks-stern, hpke-stern",
-     {"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY", 0}},
-    {"dec", "hpke-stern", "--key", "hpks-stern, hpke-stern",
-     {"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY", 0}},
     {"enc", "hpke-stern-kem", "--pubkey", "hpke-stern-kem",
      {"HERRADURA HPKE-STERN-KEM PUBLIC KEY", 0}},
     {"dec", "hpke-stern-kem", "--key", "hpke-stern-kem",
@@ -862,7 +858,7 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
             if (n > 2) HKX_EXACT(2, (F(3) + 7LL)/8LL);
             return 0;
         }
-        if (n >= 5 && n <= 5 && (F(0) == 2LL)) {
+        if (n >= 5 && n <= 5) {
             if (n > 0) HKX_WIDE(0, 1LL);
             if (n > 3) HKX_WIDE(3, 32LL);
             if (n > 4) HKX_WIDE(4, 2LL);
@@ -873,19 +869,6 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
             if (n > 4) HKX_MINIMAL(4);
             if (n > 1) HKX_EXACT(1, (F(4) + 7LL)/8LL);
             if (n > 2) HKX_EXACT(2, (F(4) + 7LL)/8LL);
-            return 0;
-        }
-        if (n >= 5 && n <= 5) {
-            if (n > 4) HKX_WIDE(4, 2LL);
-            if (n > 0) HKX_WIDE(0, F(4)/8LL);
-            if (n > 1) HKX_WIDE(1, F(4)/8LL);
-            if (n > 2) HKX_WIDE(2, HKX_MIN(F(4)/8LL, 32LL));
-            if (n > 3) HKX_WIDE(3, HKX_MIN(F(4)/8LL, 32LL));
-            if (n > 4) HKX_MINIMAL(4);
-            if (n > 0) HKX_EXACT(0, F(4)/8LL);
-            if (n > 1) HKX_EXACT(1, F(4)/8LL);
-            if (n > 2) HKX_EXACT(2, HKX_MIN(F(4)/8LL, 32LL));
-            if (n > 3) HKX_EXACT(3, HKX_MIN(F(4)/8LL, 32LL));
             return 0;
         }
         if (n >= 6 && n <= 6) {

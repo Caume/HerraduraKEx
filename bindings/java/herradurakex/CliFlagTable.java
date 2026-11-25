@@ -57,7 +57,7 @@ final class CliFlagTable {
         "  cred-verify          --cred --issuer --min-rounds --msg --proof --pubkey\n" +
         "  dec                  --ad --algo --in --key --out\n" +
         "                       --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex\n" +
-        "                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern\n" +
+        "                               hske-duplex3 hpke hpke-nl hpke-nl3\n" +
         "                               hpke-stern-kem\n" +
         "  decfile              --algo --in --key --out\n" +
         "                       --algo: hske-nla1\n" +
@@ -65,7 +65,7 @@ final class CliFlagTable {
         "                       --algo: hfscx-256 hfscx-256-ds\n" +
         "  enc                  --ad --aead --algo --in --key --out --pubkey\n" +
         "                       --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex\n" +
-        "                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern\n" +
+        "                               hske-duplex3 hpke hpke-nl hpke-nl3\n" +
         "                               hpke-stern-kem\n" +
         "  encfile              --algo --in --key --out\n" +
         "                       --algo: hske-nla1\n" +

@@ -1458,39 +1458,6 @@ public final class Codec {
         return new SternPubKey(ints.get(0), ints.get(1), sternWidth(ints.get(2), b.label));
     }
 
-    /** Encodes an HPKE-Stern-F (demo) ciphertext: SEQUENCE(ct_syn, e_p, K, E, n). */
-    public static String encodeSternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e) {
-        return encodeSternCt(ctSyn, eP, k, e, Herradura.N);
-    }
-
-    public static String encodeSternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e, int n) {
-        int nb = n / 8;
-        int kb = commitBytes(n);   // K and the payload block: 256 bits above 256 (TODO #382)
-        byte[] der = derSeq(derInt(ctSyn, nb), derInt(eP, nb), derInt(k, kb), derInt(e, kb),
-                             derInt(BigInteger.valueOf(n), -1));
-        return pemWrap(PEM_CIPHERTEXT, der);
-    }
-
-    public static final class SternCt {
-        public final BigInteger ctSyn;
-        public final BigInteger eP;
-        public final BigInteger k;
-        public final BigInteger e;
-        public final int nbits;
-        SternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e, int nbits) {
-            this.ctSyn = ctSyn; this.eP = eP; this.k = k; this.e = e; this.nbits = nbits;
-        }
-    }
-
-    public static SternCt decodeSternCt(String pem) {
-        PemBlock b = pemUnwrap(pem);
-        if (!b.label.equals(PEM_CIPHERTEXT)) {
-            throw new IllegalArgumentException("Expected " + PEM_CIPHERTEXT + ", got " + b.label);
-        }
-        List<BigInteger> ints = derParseSeq(b);
-        return new SternCt(ints.get(0), ints.get(1), ints.get(2), ints.get(3), ints.get(4).intValueExact());
-    }
-
     /**
      * Encodes an HPKS-Stern-F signature: SEQUENCE(n, rounds, commits_packed,
      * challenges_packed, responses_packed). commits_packed is

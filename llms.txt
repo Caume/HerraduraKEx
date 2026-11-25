@@ -27,7 +27,9 @@
 ## convention for functions in every language binding)
 Key exchange:     hkex-gf, hkex-rnl, hybrid-rnl-stern
 Symmetric enc:    hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3
-Asymmetric enc:   hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem
+Asymmetric enc:   hpke, hpke-nl, hpke-nl3, hpke-stern-kem
+                  (hpke-stern is a genpkey tag only: its enc/dec were removed in
+                  v21.0.0, TODO #413 -- the ciphertext let anyone decrypt it)
 Signatures:       hpks, hpks-nl, hpks-stern, hpks-ring, hpks-wots, hpks-xmss,
                   hpks-zkp-nl (genpkey) / nl-zkboo, nl-zkbpp (sign/verify), rnl-sigma,
                   hpks-t (threshold, via threshold-* subcommands)
@@ -236,7 +238,7 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     hkex-gf --kdf hfscx-256 at any width n: sk = HFSCX-256(g^ab as n/8 bytes), written
     whole as a SESSION KEY declaring n = 256 (an HSKE key); without --kdf, raw g^ab at n.
   enc/dec --algo {hske,hske-nla1,hske-nla2,hske-nla3,hske-duplex,hske-duplex3,
-                  hpke,hpke-nl,hpke-nl3,hpke-stern,hpke-stern-kem}
+                  hpke,hpke-nl,hpke-nl3,hpke-stern-kem}
            --key|--pubkey FILE --in FILE --out FILE [--aead] [--ad STR]
     --aead/--ad apply to hske-nla1 (and both duplex variants are inherently AEAD).
     Every other algo encrypts ONE block (32 bytes; hske-nla1 without --aead, the

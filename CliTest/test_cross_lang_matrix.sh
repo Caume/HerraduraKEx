@@ -187,7 +187,7 @@ matrix_asym_enc() {
 matrix_asym_enc hpke
 matrix_asym_enc hpke-nl
 matrix_asym_enc hpke-nl3          # TODO #255
-matrix_asym_enc hpke-stern
+# hpke-stern left the matrix with enc/dec --algo hpke-stern (TODO #413).
 
 # hpke-stern-kem has a nonzero decoding-failure rate (DFR) by design — retry
 # with a fresh keypair on a DFR event rather than treating it as a hard fail.

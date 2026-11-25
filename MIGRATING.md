@@ -2597,3 +2597,36 @@ as everywhere else `verify` takes a public key.  Go's `threshold-verify` subcomm
 takes the same `--pubkey`.  Re-check any signature you accepted before v20.0.0 against
 the group you meant: the old verifier would have accepted one from any group.
 
+
+## 55. `enc` / `dec --algo hpke-stern` are removed (v21.0.0)
+
+**Who is affected:** anyone who encrypted with `--algo hpke-stern`.  Both directions are
+now refused, in every CLI and at every width:
+
+```
+enc: --algo hpke-stern was removed in v21.0.0 (TODO #413): its ciphertext carried the error vector, so anyone could decrypt it; use --algo hpke-stern-kem
+```
+
+(Python prints the same reason through argparse, exit 2.)  `hpke-stern` keys are NOT
+affected: `genpkey --algo hpke-stern` still writes one, and it signs and verifies under
+`--algo hpks-stern`, `hpks-ring` and the HCRED issuer slots exactly as before.
+
+**Why (TODO #413).**  The HPKE-Stern-F ciphertext carried the error vector e′ beside its
+syndrome, and the session key is K = hash(seed, e′).  The seed is in the PUBLIC key, so
+anyone holding a ciphertext and the public key computed K and the plaintext.  The mode
+gave no confidentiality at all; #410's wrong-secret matrix did exactly that with no
+private key.  Keeping it behind a flag would have kept a ciphertext format whose only
+property is that it is readable by everyone, so the mode is gone instead.
+
+**What to do.**  Encrypt with `--algo hpke-stern-kem`, which decodes with the private
+key.  It needs its own key type:
+
+```
+genpkey --algo hpke-stern-kem --out kem.pem
+pkey --in kem.pem --pubout --out kem_pub.pem
+enc --algo hpke-stern-kem --pubkey kem_pub.pem --in msg --out ct.pem
+dec --algo hpke-stern-kem --key kem.pem --in ct.pem --out msg.out
+```
+
+**Treat every `hpke-stern` ciphertext ever written as public**, and re-encrypt anything
+that needed to stay secret.  To read an old one, use a v20 build; anyone else can too.

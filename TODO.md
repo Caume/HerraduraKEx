@@ -10,33 +10,6 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #413: `hpke-stern` ciphertexts decrypt without the private key
-
-Found by #410's dead-value audit.  Python's `dec --algo hpke-stern` decodes a `K_int` field
-from the ciphertext and never reads it, and the matrix then confirmed the consequence
-in all four CLIs.  The HPKE-Stern-F ciphertext carries the error vector e' (and the
-session key derived from it).  K = hpke_stern_f_decap(syndrome, e', seed) needs only the
-PUBLIC seed, so anyone holding the ciphertext and the public key recovers the plaintext:
-`CliTest/test_wrong_secret_matrix.sh` does exactly that, as a KNOWN cell, with no private
-key.  This is the "demo: decap uses known e'" construction, but SECURITY.md's HPKE-Stern-F
-row does not say that it gives NO confidentiality, and `--help` presents `enc --algo
-hpke-stern` beside the real encryption modes.  The N = 2304 form
-(`hpke_stern_l_decap_known`) is the same.
-
-Decide between two fixes, and record the choice in SECURITY.md:
-- **Remove the mode:** retire `--algo hpke-stern` in favour of `hpke-stern-kem`, which
-  decodes with the private key.  This is MAJOR.
-- **Keep it as a demonstration:** make that unmissable.  `enc` would refuse it without an
-  explicit flag and print a warning that the ciphertext is decryptable by anyone.  The
-  ciphertext would drop the redundant K field, and the SECURITY.md row would say "no
-  confidentiality".
-
-Either way, the KNOWN cell becomes an ordinary one.
-
-Status: **OPEN**
-
----
-
 ### #414: the unauthenticated encryption modes accept any key and any ciphertext silently
 
 Found by #410's wrong-secret matrix.  `dec` under the WRONG key exits 0 and writes garbage,

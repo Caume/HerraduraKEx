@@ -2,6 +2,45 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [21.0.0] - 2026-11-25
+
+**BREAKING (CLI accept surface): `enc` / `dec --algo hpke-stern` are removed (TODO #413;
+MIGRATING.md section 55).**  Found by #410's wrong-secret matrix.  The HPKE-Stern-F demo
+ciphertext carried the error vector e′, and K = hash(seed, e′) needs only the public
+seed, so anyone holding a ciphertext and the public key decrypted it.  This was true in
+all four CLIs, at every width, the N = 2304 form included.  Of #413's two fixes, the mode
+is removed rather than kept behind a flag: its format had no confidentiality to label.
+`hpke-stern-kem`, which decodes with the private key, is the Stern-family encryption mode.
+
+What changed, in all four CLIs:
+- **Refused:** `enc` and `dec --algo hpke-stern` exit non-zero, naming the reason and
+  `hpke-stern-kem`, before any key or ciphertext is read.  Python's argparse `--algo`
+  choices drop the tag, so the generated C, Go and Java synopses drop it too.
+- **Removed:** the encap/decap branches, and the ciphertext codecs: Python's
+  `_encode_stern_ct`/`_decode_stern_ct`, Go's `encodeSternCT`/`encodeSternCTInts`, and
+  Java's `Codec.encodeSternCt`/`decodeSternCt`/`SternCt`.
+- **Spec tables:** `KEY_LABEL_SITES` loses the enc/dec hpke-stern rows.
+  `PEM_DER_FIELD_CAPS` loses the 5-item HPKE-Stern ciphertext layout, so a 5-item
+  CIPHERTEXT is held to hske-nla1's layout.
+- **Kept:** `hpke-stern` keys.  `genpkey --algo hpke-stern` still works, and the key
+  signs as a Stern key, as before.  The suites keep `hpke_stern_f_*` / `hpke_stern_l_*` as
+  library demonstrations.
+
+SECURITY.md's Stern-F row and the spec's hpke-stern note now say the mode gave no
+confidentiality.
+
+Tests:
+- `test_wrong_secret_matrix.sh`'s KNOWN cell becomes ordinary ones: the key still signs
+  (the control); `enc` is refused; `dec` of a v20-format ciphertext, with the right key,
+  is refused.  No KNOWN cell remains.
+- `test_encrypt.sh`, `test_c_encrypt.sh` and `test_go_encrypt.sh` check both refusals,
+  that the refusal points to hpke-stern-kem and writes nothing, and that the key signs.
+- `test_stern_128.sh` checks the refusal at N = 2304 in every CLI.
+- `test_java_stern_interop.sh` swaps hpke-stern keys between Java and Python and signs.
+- `test_width_matrix.sh` runs sign/verify on hpke-stern keys at every width.
+- `test_cross_lang_matrix.sh`, `test_canonical_encoding_matrix.sh`, the DER fixtures, the
+  key-label matrix and the CLI fuzzer drop the hpke-stern enc/dec cells.
+
 ## [20.0.0] - 2026-11-24
 
 **BREAKING (CLI accept surface): `verify --algo hpks-t` needs the signing group's public

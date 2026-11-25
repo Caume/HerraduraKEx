@@ -101,8 +101,8 @@ def random_file_pool(tmpdir, count=12):
 # build found none); this mode does, within seconds.
 STRUCTURED = [
     ("kex", ["hkex-gf", "hkex-rnl", "hybrid-rnl-stern"], ["--our", "--their", "--our-kem", "--their-kem"]),
-    ("enc", ["hpke", "hpke-nl", "hpke-nl3", "hpke-stern", "hpke-stern-kem", "hske", "hske-nla1"], ["--pubkey", "--key"]),
-    ("dec", ["hpke", "hpke-nl", "hpke-nl3", "hpke-stern", "hpke-stern-kem", "hske", "hske-nla1", "hske-duplex"], ["--key", "--in"]),
+    ("enc", ["hpke", "hpke-nl", "hpke-nl3", "hpke-stern-kem", "hske", "hske-nla1"], ["--pubkey", "--key"]),
+    ("dec", ["hpke", "hpke-nl", "hpke-nl3", "hpke-stern-kem", "hske", "hske-nla1", "hske-duplex"], ["--key", "--in"]),
     ("sign", ["hpks", "hpks-nl", "hpks-stern", "rnl-sigma", "hpks-xmss", "hpks-wots"], ["--key"]),
     ("verify", ["hpks", "hpks-nl", "hpks-stern", "rnl-sigma", "hpks-xmss", "hpks-wots"], ["--pubkey", "--sig"]),
     ("pkey", [""], ["--in"]),

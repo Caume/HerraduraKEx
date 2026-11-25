@@ -1052,8 +1052,10 @@ still decode.
 
 HPKE-Stern-F in the suite uses this construction: the ciphertext is the syndrome
 `ct = H · e'^T`, and the shared secret is `K = Hash(seed, e')`.  Two algo tags exist:
-`--algo hpke-stern` is the demo, which decapsulates from a known e', while
-`--algo hpke-stern-kem` ships a real Black-Gray-Flip (BGF) QC-MDPC decoder
+`--algo hpke-stern` was the demo, which decapsulated from a known e' carried
+in the ciphertext -- so anyone holding the ciphertext and the public key could
+decrypt it, and v21.0.0 (TODO #413) removed its `enc`/`dec` (an `hpke-stern` key
+remains a Stern signing key) -- while `--algo hpke-stern-kem` ships a real Black-Gray-Flip (BGF) QC-MDPC decoder
 (`qcmdpc_keygen`/`qcmdpc_encap`/`qcmdpc_decap_bgf`) and needs no plaintext error
 vector at decapsulation.  The KEM tag is still demo-only, for a different reason:
 since v7.0.0 it runs at BIKE-128's parameters (r = 12323, d = 71, t = 134), which

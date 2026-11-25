@@ -883,7 +883,7 @@ jobs:
         run: bash CliTest/test_round_floor.sh
 
       # TODO #382 stage 2: Stern-F's 128-bit set, N = 2304 (the long form).
-      # Keys, hpks-stern, hpks-ring, hpke-stern and a long-form HCRED issuer as
+      # Keys, hpks-stern, hpks-ring, the hpke-stern refusal and a long-form HCRED issuer as
       # 4x4 matrices, with rejection controls beside every acceptance and two
       # checks about ONE implementation: the matrix rule restated from SPEC.md
       # and the signature's field sizes.

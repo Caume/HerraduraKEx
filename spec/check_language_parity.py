@@ -5661,6 +5661,28 @@ PRIMITIVES = {
         "java": r"Stern.java::public static SternEncapResult "
                 r"hpkeSternFEncapWithE\(BigInteger seed, int n,",
     },
+    # TODO #413: the CLIs stopped calling these when enc/dec --algo hpke-stern
+    # were removed; they stay in every suite as the demo KEM's decap and its
+    # N = 2304 form, so they are filed here rather than exempted.
+    "hpke-stern-f-decap": {
+        "c": r"static void hpke_stern_f_decap_known\(",
+        "go": r"^func HpkeSternFDecapKnown\(",
+        "python": r"^def hpke_stern_f_decap\(",
+        "java": r"Stern.java::public static BigInteger hpkeSternFDecap\(BigInteger eP, "
+                r"BigInteger seed, int n\)",
+    },
+    "hpke-stern-l-encap": {
+        "c": r"static void hpke_stern_l_encap\(",
+        "go": r"^func HpkeSternLEncap\(",
+        "python": r"^def hpke_stern_l_encap_with_e\(",
+        "java": r"SternL.java::public static Stern.SternEncapResult encapWithE\(",
+    },
+    "hpke-stern-l-decap": {
+        "c": r"static void hpke_stern_l_decap_known\(",
+        "go": r"^func HpkeSternLDecapKnown\(",
+        "python": r"^def hpke_stern_l_decap_known\(",
+        "java": r"SternL.java::public static BigInteger decapKnown\(",
+    },
     "hske-nl-v2-duplex-decrypt": {
         "c": r"static int hske_nl_v2_duplex_decrypt\(",
         "go": r"^func HskeNlV2DuplexDecrypt\(",
@@ -6039,6 +6061,11 @@ CENSUS_EXEMPT = {
          "rnl_twiddle_ family builds"),
     ],
     "python": [
+        (r"^hpke_stern_f_encap_with_e$",
+         "hpke-stern-f-encap returning e' beside (K, ct) -- the demo KEM's encap "
+         "with the error vector its known-e' decap needs.  hpke_stern_f_encap is "
+         "the manifest's entry; the CLI called this variant until TODO #413 "
+         "removed enc --algo hpke-stern, and Java's marker is its own WithE twin"),
         (r"^(_sternl_(b|check|msg|rand)|stern_is_long)$",
          "the Stern-F long form's plumbing (TODO #382): an int as N/8 bytes, "
          "the N and message-width checks, the CSPRNG read of an N/8-byte "
@@ -6058,6 +6085,11 @@ CENSUS_EXEMPT = {
          "and what a `poly` parameter cannot enforce"),
     ],
     "java": [
+        (r"^rSteps$",
+         "3n/4, HSKE's decrypt round count at width n, beside iSteps' n/4 -- a "
+         "parameter rule, not a protocol step (the r = 3n/4 in CLAUDE.md).  The "
+         "CLI's hpke-stern dec called it until TODO #413; Herradura.java's own "
+         "HSKE/HPKE decrypt still does"),
         (r"^(bytesN|genPermOnKey)$",
          "the Stern-F long form (TODO #382): an int as N/8 bytes, and the short "
          "form's Fisher-Yates generator with its PRNG at the 256-bit key's "

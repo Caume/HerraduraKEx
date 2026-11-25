@@ -83,7 +83,7 @@ for t in $TAGS; do
     $C pkey --in "$F/$t.pem" --pubout --out "$F/${t}_pub.pem" 2>/dev/null || true
 done
 printf 'key label test message, 32 by.' > "$F/msg.bin"
-for a in hpke hpke-nl hpke-nl3 hpke-stern hpke-stern-kem; do
+for a in hpke hpke-nl hpke-nl3 hpke-stern-kem; do
     $C enc --algo $a --pubkey "$F/${a}_pub.pem" --in "$F/msg.bin" --out "$F/ct_$a.pem" 2>/dev/null
 done
 signwith() {   # algo, key tag, extra sign args...
@@ -122,7 +122,7 @@ T["kex|hybrid-rnl-stern|--our"]="hkex-rnl|kex --algo hybrid-rnl-stern --our {X} 
 T["kex|hybrid-rnl-stern|--their"]="hkex-rnl|kex --algo hybrid-rnl-stern --our {F}/rnl2.pem --their {X} --their-kem {F}/hpke-stern-kem_pub.pem --out {O}"
 T["kex|hybrid-rnl-stern|--their-kem"]="hpke-stern-kem|kex --algo hybrid-rnl-stern --our {F}/rnl2.pem --their {F}/hkex-rnl_pub.pem --their-kem {X} --out {O}"
 T["kex|hybrid-rnl-stern|--our-kem"]="hpke-stern-kem|kex --algo hybrid-rnl-stern --our {F}/hkex-rnl.pem --our-kem {X} --their {F}/hyb_resp.pem --out {O}"
-for a in hpke hpke-nl hpke-nl3 hpke-stern hpke-stern-kem; do
+for a in hpke hpke-nl hpke-nl3 hpke-stern-kem; do
     T["enc|$a|--pubkey"]="$a|enc --algo $a --pubkey {X} --in {F}/msg.bin --out {O}"
     T["dec|$a|--key"]="$a|dec --algo $a --key {X} --in {F}/ct_$a.pem --out {O}"
 done

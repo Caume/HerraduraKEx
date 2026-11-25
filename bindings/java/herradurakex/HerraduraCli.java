@@ -1247,8 +1247,19 @@ public final class HerraduraCli {
         return new DuplexCt(nonce, ct, tag, nbits);
     }
 
+    /** TODO #413 (v21.0.0): {@code enc}/{@code dec --algo hpke-stern} are gone.  The
+     *  demo ciphertext carried the error vector e', and K = hash(seed, e') needs only
+     *  the PUBLIC seed, so anyone holding the ciphertext and the public key decrypted it. */
+    private static void retiredHpkeStern(String sub, String algo) {
+        if (algo.equals("hpke-stern"))
+            throw new CliError(sub + ": --algo hpke-stern was removed in v21.0.0 (TODO #413): "
+                + "its ciphertext carried the error vector, so anyone could decrypt it; "
+                + "use --algo hpke-stern-kem");
+    }
+
     private static void cmdEnc(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "enc");
+        retiredHpkeStern("enc", algo);
         byte[] inBytes = readBytes(req(opt, "in", "enc"));
         String out = req(opt, "out", "enc");
         aeadFlagsOK("enc", algo, opt);
@@ -1350,19 +1361,6 @@ public final class HerraduraCli {
             Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(BitArray.fromBytes(padTrunc(inBytes, pub.nbits / 8), pub.nbits), BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
             if (ct == null) throw new CliError("enc: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
-        } else if (algo.equals("hpke-stern")) {
-            sternDemoWarning();
-            String pubPem = readString(req(opt, "pubkey", "enc"));
-            Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
-            Codec.SternPubKey pub = Codec.decodeSternPubKey(pubPem, pubBlock.label);
-            int n = pub.nbits;   // TODO #384: the key's width
-            int w = Math.min(n, 256);   // the payload block: 256 bits above 256 (TODO #382)
-            oneBlockOK(algo, inBytes.length, w / 8);
-            BigInteger p = new BigInteger(1, padTrunc(inBytes, w / 8));
-            Stern.SternEncapResult enc = SternL.isLong(n) ? SternL.encapWithE(pub.seed, n, RNG)
-                                                          : Stern.hpkeSternFEncapWithE(pub.seed, n, RNG);
-            BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, w), BitArray.fromBigInteger(enc.k, w), Herradura.iSteps(w));
-            writeString(out, Codec.encodeSternCt(enc.ct, enc.eP, enc.k, e.toBigInteger(), n));
         } else if (algo.equals("hpke-stern-kem")) {
             String pubPem = readString(req(opt, "pubkey", "enc"));
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
@@ -1377,12 +1375,13 @@ public final class HerraduraCli {
             writeString(out, Codec.encodeKemCt(enc.syn, e.toBigInteger()));
         } else {
             throw new CliError("enc: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern-kem)");
         }
     }
 
     private static void cmdDec(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "dec");
+        retiredHpkeStern("dec", algo);
         String out = req(opt, "out", "dec");
         aeadFlagsOK("dec", algo, opt);
 
@@ -1491,19 +1490,6 @@ public final class HerraduraCli {
             BitArray d = HerraduraNl.hpkeNl3Decrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
             if (d == null) throw new CliError("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeBytes(out, d.toBytes());
-        } else if (algo.equals("hpke-stern")) {
-            sternDemoWarning();
-            String pem = readString(req(opt, "key", "dec"));
-            Codec.PemBlock block = Codec.pemUnwrap(pem);
-            Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
-            Codec.SternCt ct = Codec.decodeSternCt(readString(req(opt, "in", "dec")));
-            int n = pk.nbits;   // TODO #384: the key's width
-            asymSameWidth(ct.nbits, n);
-            int w = Math.min(n, 256);   // TODO #382
-            BigInteger k = SternL.isLong(n) ? SternL.decapKnown(ct.eP, pk.seed, n)
-                                            : Stern.hpkeSternFDecap(ct.eP, pk.seed, n);
-            BitArray d = Herradura.fscxRevolve(BitArray.fromBigInteger(ct.e, w), BitArray.fromBigInteger(k, w), Herradura.rSteps(w));
-            writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-stern-kem")) {
             String pem = readString(req(opt, "key", "dec"));
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1520,7 +1506,7 @@ public final class HerraduraCli {
             writeBytes(out, d.toBytes());
         } else {
             throw new CliError("dec: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern-kem)");
         }
     }
 

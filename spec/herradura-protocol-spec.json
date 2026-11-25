@@ -385,8 +385,6 @@
         "kind": "algo_flag",
         "algo_tag": "hpke-stern",
         "subcommands": [
-          "dec",
-          "enc",
           "genpkey"
         ]
       },
@@ -399,10 +397,12 @@
       "security": {
         "status": "demo-only",
         "quantum_resistant": "conjectured",
-        "notes": "Niederreiter KEM (Stern-based). Demo uses a known error vector e'; production requires an actual QC-MDPC syndrome decoder, not yet implemented.",
+        "notes": "Niederreiter KEM (Stern-based). Demo uses a known error vector e'. NO CONFIDENTIALITY: the CLI ciphertext carried e', and K = hash(seed, e') needs only the PUBLIC seed, so anyone holding the ciphertext and the public key decrypted it (found by TODO #410). TODO #413 (v21.0.0) removed enc/dec --algo hpke-stern from every CLI; hpke-stern-kem decodes with the private key. The tag remains a genpkey key type, a Stern signing key (the same error vector + seed as hpks-stern), and the suites keep the library functions as a demonstration.",
         "source": [
           "CLAUDE.md:228",
-          "TODO.md #126 (6896-6924)"
+          "TODO.md #126 (6896-6924)",
+          "TODO_DONE.md #413",
+          "MIGRATING.md section 55"
         ]
       }
     },
@@ -1330,12 +1330,6 @@
           "java",
           "python"
         ],
-        "hpke-stern": [
-          "c",
-          "go",
-          "java",
-          "python"
-        ],
         "hpke-stern-kem": [
           "c",
           "go",
@@ -1402,12 +1396,6 @@
           "python"
         ],
         "hpke-nl3": [
-          "c",
-          "go",
-          "java",
-          "python"
-        ],
-        "hpke-stern": [
           "c",
           "go",
           "java",
@@ -2985,34 +2973,6 @@
       ],
       "labels": [
         "HERRADURA HPKE-NL3 PRIVATE KEY"
-      ]
-    },
-    {
-      "subcommand": "enc",
-      "algo": "hpke-stern",
-      "flag": "--pubkey",
-      "role": "pub",
-      "accepts": [
-        "hpks-stern",
-        "hpke-stern"
-      ],
-      "labels": [
-        "HERRADURA HPKS-STERN PUBLIC KEY",
-        "HERRADURA HPKE-STERN PUBLIC KEY"
-      ]
-    },
-    {
-      "subcommand": "dec",
-      "algo": "hpke-stern",
-      "flag": "--key",
-      "role": "priv",
-      "accepts": [
-        "hpks-stern",
-        "hpke-stern"
-      ],
-      "labels": [
-        "HERRADURA HPKS-STERN PRIVATE KEY",
-        "HERRADURA HPKE-STERN PRIVATE KEY"
       ]
     },
     {
@@ -4930,7 +4890,7 @@
       "label": "HERRADURA CIPHERTEXT",
       "min_items": 5,
       "max_items": 5,
-      "when": "f0 == 2",
+      "when": "",
       "caps": [
         {
           "field": 0,
@@ -4955,40 +4915,6 @@
         {
           "field": 2,
           "cap": "(f4+7)/8",
-          "exact": true
-        }
-      ],
-      "rules": []
-    },
-    {
-      "label": "HERRADURA CIPHERTEXT",
-      "min_items": 5,
-      "max_items": 5,
-      "when": "",
-      "caps": [
-        {
-          "field": 4,
-          "cap": "2",
-          "exact": false
-        },
-        {
-          "field": 0,
-          "cap": "f4/8",
-          "exact": true
-        },
-        {
-          "field": 1,
-          "cap": "f4/8",
-          "exact": true
-        },
-        {
-          "field": 2,
-          "cap": "min(f4/8, 32)",
-          "exact": true
-        },
-        {
-          "field": 3,
-          "cap": "min(f4/8, 32)",
           "exact": true
         }
       ],

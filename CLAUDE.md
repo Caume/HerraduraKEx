@@ -434,7 +434,8 @@ Stern identification protocol (ZKP for syndrome decoding)
 │                  SternL.java), vectors as N/8-byte strings, 256-bit commitments
 │                  and message; KAT/operation_replay.json's stern_l rows pin it
 └── HPKE-Stern-F — Niederreiter KEM: ct=H·e'^T; K=hash(seed,e')
-                   (`--algo hpke-stern`: demo, decap uses known e'; `--algo hpke-stern-kem`:
+                   (`hpke-stern`: suite demo, decap uses known e'; its CLI enc/dec were
+                   removed by TODO #413, the key tag remains a Stern key; `hpke-stern-kem`:
                    real BGF QC-MDPC decoder, qcmdpc_keygen/encap/decap_bgf in C/Go/Python)
 ```
 

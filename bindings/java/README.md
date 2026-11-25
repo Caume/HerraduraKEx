@@ -143,8 +143,8 @@ scope for this binding.
   `pake-register`, `pake-demo`) for the classical quartet (`--algo
   hkex-gf`/`hpks`/`hpke`, plus `hske` for symmetric enc/dec), the NL/PQC
   quartet (`--algo hkex-rnl`/`hske-nla1`/`hske-nla2`/`hpks-nl`/
-  `hpke-nl`), the Stern-F family (`--algo hpks-stern`/`hpke-stern`/
-  `hpke-stern-kem`), OPRF/HPKS-WOTS-F/HPKS-XMSS-F (`--algo oprf`/
+  `hpke-nl`), the Stern-F family (`--algo hpks-stern`/`hpke-stern-kem`, and
+  `hpke-stern` keys, whose enc/dec TODO #413 removed), OPRF/HPKS-WOTS-F/HPKS-XMSS-F (`--algo oprf`/
   `hpks-wots`/`hpks-xmss`), HCRED (`--algo hcred`), and aPAKE. `kex
   --algo hkex-rnl` is two-round, matching the other CLIs' convention:
   Bob responds first (`--our` his priv key, `--their` Alice's pub key)

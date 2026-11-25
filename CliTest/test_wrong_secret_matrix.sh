@@ -30,11 +30,10 @@
 #
 # hpks-t was a KNOWN cell until TODO #412 (v20.0.0) bound the signature to
 # --pubkey's group; it now has ordinary cells.
+# hpke-stern was a KNOWN cell until TODO #413 (v21.0.0) retired its enc/dec.
 # KNOWN cells record a defect this test found and a TODO now owns.  Each passes
 # while the defect stands and FAILS once it is fixed, so the fix must turn the
-# cell into an ordinary one:
-#   * #413: an hpke-stern ciphertext carries its session key's inputs, so its
-#     plaintext is recovered from the ciphertext and the public key alone.
+# cell into an ordinary one.  None is open.
 # Claimed by ci.yml's cross-lang-compat job.
 set -uo pipefail
 
@@ -255,25 +254,34 @@ if need "$TMP/env_plain.pem" "pkey --decrypt"; then
     PLAIN="$TMP/env_plain.pem" cell "pkey --decrypt under the WRONG passphrase" BAD pkey --decrypt --in "$TMP/env.pem" --passphrase wrong --out "$TMP/o"
 fi
 
-# ── HPKE-Stern-F: KNOWN (#413) ────────────────────────────────────────────────
+# ── HPKE-Stern-F: retired (TODO #413) ───────────────────────────────────────
+# Until v21.0.0 the ciphertext carried e', and K = hash(seed, e') needs only the
+# PUBLIC seed, so the plaintext came from the ciphertext and public key alone
+# (a KNOWN cell here).  enc and dec --algo hpke-stern are now refused, a v20
+# ciphertext included; the key still signs, which is the accept-control.
 mk --algo hpke-stern --out "$TMP/hs.pem"; pub "$TMP/hs.pem" "$TMP/hsp.pem"
-$G enc --algo hpke-stern --pubkey "$TMP/hsp.pem" --in "$TMP/p32" --out "$TMP/hs_ct" >/dev/null 2>&1
-if need "$TMP/hs_ct" "enc hpke-stern"; then
-    # Decrypt WITHOUT the private key: the ciphertext's own e' and the public
-    # seed give the session key.  Run as a one-line "CLI" so cell() can class it.
-    cat > "$TMP/nokey.py" <<PYEOF
-import sys; sys.path.insert(0, '$ROOT/HerraduraCli'); sys.argv = ['x']
+python3 - "$TMP/hsp.pem" "$TMP/hs_ct" <<'PYEOF'
+import sys, os
+root = os.getcwd()
+sys.path.insert(0, os.path.join(root, 'HerraduraCli'))
 import herradura as H
-syn, e_p, _K, E, n = H._decode_stern_ct('$TMP/hs_ct')
-seed = H._read_pem_ints('$TMP/hsp.pem')[1][1]
-K = H.hpke_stern_f_decap(syn, e_p, H.BitArray(n, seed), n)
-w = min(n, 256)
-open('$TMP/o', 'wb').write(H.fscx_revolve(H.BitArray(w, E), K, 3 * w // 4).uint.to_bytes(w // 8, 'big'))
+pub, out = sys.argv[1], sys.argv[2]
+syn, seed, n = H._read_pem_ints(pub)[1]
+S = H._suite_mod
+K, ct, e = S.hpke_stern_f_encap_with_e(S.BitArray(n, seed), n)
+E = S.fscx_revolve(S.BitArray(n, int.from_bytes(b'x' * (n // 8), 'big')), K, n // 4)
+u = lambda v: v if isinstance(v, int) else v.uint
+der = H.der_seq(H.der_int(u(ct), n // 8), H.der_int(u(e), n // 8), H.der_int(u(K), n // 8),
+                H.der_int(E.uint, n // 8), H.der_int(n))
+open(out, 'w').write(H.pem_wrap('HERRADURA CIPHERTEXT', der))
 PYEOF
-    LANGS_SAVED=("${LANGS[@]}"); LANGS=(py)
-    PLAIN="$TMP/p32" VERIFIER="python3 $TMP/nokey.py #" \
-        cell "hpke-stern: plaintext from the ciphertext and public key alone" KNOWN:413 x
-    LANGS=("${LANGS_SAVED[@]}")
+if need "$TMP/hs_ct" "a v20-format hpke-stern ciphertext"; then
+    cell "hpke-stern key control: it still signs as a Stern key" OK \
+        sign --algo hpks-stern --key "$TMP/hs.pem" --in "$TMP/m" --out "$TMP/hs_sig" \
+        "&&" "${CLI[${LANGS[0]}]}" verify --algo hpks-stern --pubkey "$TMP/hsp.pem" --in "$TMP/m" --sig "$TMP/hs_sig"
+    cell "enc --algo hpke-stern (retired)" BAD enc --algo hpke-stern --pubkey "$TMP/hsp.pem" --in "$TMP/p32" --out "$TMP/o"
+    PLAIN="$TMP/p32" cell "dec --algo hpke-stern of a v20 ciphertext, with the key" BAD \
+        dec --algo hpke-stern --key "$TMP/hs.pem" --in "$TMP/hs_ct" --out "$TMP/o"
 fi
 
 # ── negative control: a verifier that accepts everything must fail the cells ─

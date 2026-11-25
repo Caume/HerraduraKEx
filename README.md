@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v20.0.0)
+# Herradura Cryptographic Suite (v21.0.0)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -93,7 +93,7 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 **Code-based PQC (v1.5.18)** — the signature and KEM here rest on a different post-quantum hardness assumption, syndrome decoding (SD), via the Stern zero-knowledge identification protocol made non-interactive (Fiat-Shamir):
 
 10. **HPKS-Stern-F** — Fiat-Shamir Stern ZKP signature. Security reduces to EUF-CMA ≤ SD($n$, $t$) + NL-FSCX v1 PRF — i.e. forging a signature ("EUF-CMA", existential unforgeability under chosen-message attack) would require either breaking syndrome decoding or the NL-FSCX v1 pseudorandom function ("PRF", an output indistinguishable from random without the key). Protocol: commit $(c_0, c_1, c_2)$; challenge $b \in \{0,1,2\}$ via NL-FSCX hash; response reveals permuted $r$, $y = e \oplus r$, or permutation $\pi$. Parameters (C/Go/Python): $N = n = 256$, $t = 16$, rounds $= 32$ (demo default; production needs 219, see the caveats section below — `herradura.h` emits a build warning at any count below `SDF_PRODUCTION_ROUNDS`; benchmarks use 4–8 rounds for throughput measurement). Assembly/Arduino: $N = 32$, $t = 2$, rounds $= 4$.
-11. **HPKE-Stern-F** — Niederreiter KEM: $\mathit{ct} = H \cdot e'^T$; $K = \text{hash}(\mathit{seed}, e')$. The CLI's `hpke-stern` algo tag is a demo that decaps from a known $e'$; the separate `hpke-stern-kem` algo tag uses a real Black-Gray-Flip (BGF) QC-MDPC syndrome decoder (`qcmdpc_keygen`/`qcmdpc_encap`/`qcmdpc_decap_bgf` in all three suites) and does not need the plaintext error vector at decap.
+11. **HPKE-Stern-F** — Niederreiter KEM: $\mathit{ct} = H \cdot e'^T$; $K = \text{hash}(\mathit{seed}, e')$. The CLI's `hpke-stern` tag no longer encrypts (its ciphertext carried $e'$, so anyone could decrypt it; TODO #413) and survives only as a Stern key type; the separate `hpke-stern-kem` algo tag uses a real Black-Gray-Flip (BGF) QC-MDPC syndrome decoder (`qcmdpc_keygen`/`qcmdpc_encap`/`qcmdpc_decap_bgf` in all three suites) and does not need the plaintext error vector at decap.
 
 Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino (all six targets at v1.5.19).
 
@@ -426,8 +426,9 @@ visible without having to search `TODO_DONE.md`.
   Production-grade parameters require N on the order of 17,000+ for 128-bit security —
   a substantially larger, unimplemented configuration. Treat both protocols as
   reference implementations of the Stern ZKP construction, not as production-ready code
-  signing or KEM at their current defaults. This caveat covers the `hpke-stern` CLI algo
-  tag specifically (its decap needs the plaintext error vector); the separate
+  signing or KEM at their current defaults. The `hpke-stern` CLI algo tag no longer
+  encrypts: its ciphertext carried the plaintext error vector, so anyone could decrypt
+  it, and v21.0.0 removed its `enc`/`dec` (TODO #413); the separate
   `hpke-stern-kem` tag uses a real BGF QC-MDPC decoder instead and doesn't share that
   particular limitation, but is demo-only for its own reasons: since v7.0.0 (TODO #276) it
   runs at BIKE-128's parameters (r = 12323, d = 71, t = 134), adopted verbatim together

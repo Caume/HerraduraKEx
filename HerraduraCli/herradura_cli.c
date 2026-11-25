@@ -4162,6 +4162,17 @@ static void cmd_rand(int argc, char **argv)
  * enc
  * ───────────────────────────────────────────────────────────────────────────── */
 
+/* TODO #413 (v21.0.0): `enc`/`dec --algo hpke-stern` are gone.  The demo
+ * ciphertext carried the error vector e', and K = hash(seed, e') needs only the
+ * PUBLIC seed, so anyone holding the ciphertext and the public key decrypted it. */
+static void retired_hpke_stern(const char *sub, const char *algo)
+{
+    if (strcmp(algo, "hpke-stern") == 0)
+        dief("%s: --algo hpke-stern was removed in v21.0.0 (TODO #413): its "
+             "ciphertext carried the error vector, so anyone could decrypt it; "
+             "use --algo hpke-stern-kem", sub);
+}
+
 static void cmd_enc(int argc, char **argv)
 {
     const char *algo       = get_arg(argc, argv, "--algo");
@@ -4170,6 +4181,7 @@ static void cmd_enc(int argc, char **argv)
     const char *in_path    = get_arg(argc, argv, "--in");
     const char *out_path   = get_arg(argc, argv, "--out");
     if (!algo)    die("enc: --algo required");
+    retired_hpke_stern("enc", algo);
     if (!in_path) die("enc: --in required");
     if (!out_path) die("enc: --out required");   /* TODO #381: was stdout */
     aead_flags_ok("enc", algo, get_arg(argc, argv, "--ad"),
@@ -4443,64 +4455,6 @@ static void cmd_enc(int argc, char **argv)
         const uint8_t *it2[3] = {isyn, iE, ir}; size_t il2[3] = {lsyn, lE, lr};
         seq_and_write(it2, il2, 3, PEM_CIPHERTEXT, out_path);
 
-    } else if (strcmp(algo, "hpke-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
-                        "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
-                        "Do not use for production.\n");
-        /* vals[0]=syndrome (N bits), vals[1]=seed (N bits), vals[2]=n */
-        if (pub_k.n_items < 2) die("enc: malformed Stern public key");
-        int sn = stern_key_width(&pub_k);   /* TODO #383 stage 2: the key's N */
-        if (stern_is_long(sn)) {    /* TODO #382: K and the payload block are 256 bits */
-            uint8_t lseed[STERN_L_MAXB], lct[STERN_L_MAXB], lep[STERN_L_MAXB];
-            BitArray Kl = BA_INIT, El = BA_INIT, Pw = BA_INIT;
-            one_block_ok(algo, in_len, 32);
-            stern_l_field(lseed, &pub_k, 1, sn);
-            pem_key_free(&pub_k);
-            make_msg_ba_n(&Pw, P.b, KEYBYTES, 256);
-            FILE *urnd = fopen("/dev/urandom", "rb");
-            if (!urnd) die("cannot open /dev/urandom");
-            hpke_stern_l_encap(&Kl, lct, lep, lseed, sn, urnd);
-            fclose(urnd);
-            ba_fscx_revolve(&El, &Pw, &Kl, 64);
-            uint8_t ict[DER_INT_LEN(STERN_L_MAXB)], iep[DER_INT_LEN(STERN_L_MAXB)];
-            uint8_t ik[DER_INT_LEN(32)], iE[DER_INT_LEN(32)], in[8];
-            size_t lct_, lep_, lk, lE, ln;
-            der_int_enc(lct, (size_t)sn / 8, ict, &lct_);
-            der_int_enc(lep, (size_t)sn / 8, iep, &lep_);
-            der_ba(&Kl, ik, &lk); der_ba(&El, iE, &lE);
-            der_i_uint((uint64_t)sn, in, &ln);
-            const uint8_t *it[5] = {ict, iep, ik, iE, in};
-            size_t         il[5] = {lct_, lep_, lk, lE, ln};
-            seq_and_write(it, il, 5, PEM_CIPHERTEXT, out_path);
-            return;
-        }
-        one_block_ok(algo, in_len, (size_t)sn / 8);
-        BitArray seed_ba = BA_INIT, K_ba = BA_INIT, e_p = BA_INIT, E = BA_INIT, Pn = BA_INIT;
-        ba_from_ra_n(&seed_ba, pub_k.vals[1], pub_k.vlens[1], sn);
-        make_msg_ba_n(&Pn, P.b, KEYBYTES, sn);
-        pem_key_free(&pub_k);
-
-        FILE *urnd = fopen("/dev/urandom", "rb");
-        if (!urnd) die("cannot open /dev/urandom");
-        uint8_t ct_syndr[SDF_SYNBYTES];
-        hpke_stern_f_encap(&K_ba, ct_syndr, &e_p, &seed_ba, urnd);
-        fclose(urnd);
-        ba_fscx_revolve(&E, &Pn, &K_ba, sn / 4);
-
-        /* The N/2-bit syndrome as an N-bit integer (bit i = row i). */
-        BitArray ct_ba = BA_INIT;
-        syndr_to_ba_w(&ct_ba, ct_syndr, sn);
-
-        uint8_t ict[DER_INT_LEN(KEYBYTES)], iep[DER_INT_LEN(KEYBYTES)];
-        uint8_t ik[DER_INT_LEN(KEYBYTES)],  iE[DER_INT_LEN(KEYBYTES)], in[8];
-        size_t lct, lep, lk, lE, ln;
-        der_ba(&ct_ba, ict, &lct); der_ba(&e_p, iep, &lep);
-        der_ba(&K_ba,  ik,  &lk);  der_ba(&E,   iE,  &lE);
-        der_i_uint((uint64_t)sn, in, &ln);
-        const uint8_t *it[5] = {ict, iep, ik, iE, in};
-        size_t         il[5] = {lct, lep, lk, lE, ln};
-        seq_and_write(it, il, 5, PEM_CIPHERTEXT, out_path);
-
     } else {
         pem_key_free(&pub_k);
         dief("enc: unsupported algorithm: %s", algo);
@@ -4518,6 +4472,7 @@ static void cmd_dec(int argc, char **argv)
     const char *in_path  = get_arg(argc, argv, "--in");
     const char *out_path = get_arg(argc, argv, "--out");
     if (!algo)    die("dec: --algo required");
+    retired_hpke_stern("dec", algo);
     if (!in_path) die("dec: --in required");
     if (!out_path) die("dec: --out required");   /* TODO #381: was stdout */
     aead_flags_ok("dec", algo, get_arg(argc, argv, "--ad"), 0);
@@ -4750,41 +4705,6 @@ static void cmd_dec(int argc, char **argv)
         qcmdpc_decap_bgf(&K_dec, &syn, &priv);
         ba_fscx_revolve(&D, &E_ba, &K_dec, R_VALUE);
         write_binary_file(out_path, D.b, KEYBYTES);
-
-    } else if (strcmp(algo, "hpke-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
-                        "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
-                        "Do not use for production.\n");
-        /* CT: vals[0]=ct_syn, vals[1]=e_p, vals[2]=K_int, vals[3]=E_int, vals[4]=n */
-        if (ct.n_items < 5) die("dec: malformed HPKE-Stern ciphertext");
-        if (priv_k.n_items < 2) die("dec: malformed Stern private key");
-        int sn = stern_key_width(&priv_k);   /* TODO #383 stage 2: the key's N */
-        if (stern_is_long(sn)) {    /* TODO #382: K and the payload block are 256 bits */
-            long cn = der_small(ct.vals[4], ct.vlens[4]);
-            if (cn != sn) {
-                fprintf(stderr, "dec: ciphertext n is %ld, private key n is %d\n", cn, sn);
-                exit(1);
-            }
-            uint8_t lseed[STERN_L_MAXB], lep[STERN_L_MAXB];
-            BitArray Kl = BA_INIT, El = BA_INIT, Dl = BA_INIT;
-            stern_l_field(lep, &ct, 1, sn);
-            ba_from_ra_n(&El, ct.vals[3], ct.vlens[3], 256);
-            stern_l_field(lseed, &priv_k, 1, sn);
-            pem_key_free(&ct); pem_key_free(&priv_k);
-            hpke_stern_l_decap_known(&Kl, lep, lseed, sn);
-            ba_fscx_revolve(&Dl, &El, &Kl, 192);
-            write_binary_file(out_path, Dl.b, 32);
-            return;
-        }
-        check_item_gf_width(&ct, 4, sn, "dec: ciphertext", "private key");
-        BitArray e_p_ba = BA_INIT, E_ba = BA_INIT, seed_ba = BA_INIT, K_dec = BA_INIT, D = BA_INIT;
-        ba_from_ra_n(&e_p_ba,  ct.vals[1],       ct.vlens[1], sn);
-        ba_from_ra_n(&E_ba,    ct.vals[3],       ct.vlens[3], sn);
-        ba_from_ra_n(&seed_ba, priv_k.vals[1],   priv_k.vlens[1], sn);
-        pem_key_free(&ct); pem_key_free(&priv_k);
-        hpke_stern_f_decap_known(&K_dec, &e_p_ba, &seed_ba);
-        ba_fscx_revolve(&D, &E_ba, &K_dec, 3 * sn / 4);
-        write_binary_file(out_path, D.b, (size_t)sn / 8);
 
     } else {
         pem_key_free(&ct); pem_key_free(&priv_k);

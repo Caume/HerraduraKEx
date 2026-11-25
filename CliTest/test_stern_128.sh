@@ -11,7 +11,7 @@
 #   hpks-stern  every CLI signs, every CLI verifies (4x4), at a reduced round
 #               count; one 219-round C signature verified at the default floor
 #   hpks-ring   a two-member ring, 4x4
-#   hpke-stern  every CLI encrypts a 32-byte block, every CLI decrypts it
+#   hpke-stern  every CLI refuses enc --algo hpke-stern (retired by TODO #413)
 #   hcred       a long-form issuer's credential, issued by every CLI and checked
 #               by every CLI's cred-verify
 #
@@ -247,27 +247,16 @@ for v in "${LANGS[@]}"; do
         --in "$TMP/msg2.bin" --sig "$TMP/r_rj.pem" --min-rounds $RJ
 done
 
-# ── hpke-stern (the demo KEM) ─────────────────────────────────────────────────
+# ── hpke-stern: retired (TODO #413) ───────────────────────────────────────────
+# The demo KEM's ciphertext carried the error vector, so anyone decrypted it;
+# enc and dec --algo hpke-stern are refused at N = 2304 as at every width.
 ${CLI[c]} genpkey --algo hpke-stern --level 128 --out "$TMP/e.pem" 2>/dev/null
 ${CLI[c]} pkey --in "$TMP/e.pem" --pubout --out "$TMP/e_pub.pem" 2>/dev/null
 for s in "${LANGS[@]}"; do
-    ${CLI[$s]} enc --algo hpke-stern --pubkey "$TMP/e_pub.pem" --in "$TMP/pt.bin" \
-        --out "$TMP/ct_$s.pem" 2>/dev/null || fail "hpke-stern enc ($s)"
-done
-for v in "${LANGS[@]}"; do
-    for s in "${LANGS[@]}"; do
-        if ${CLI[$v]} dec --algo hpke-stern --key "$TMP/e.pem" --in "$TMP/ct_$s.pem" \
-               --out "$TMP/d.bin" 2>/dev/null && cmp -s "$TMP/d.bin" "$TMP/pt.bin"; then
-            pass "hpke-stern $s->$v"
-        else fail "hpke-stern $s->$v: plaintext differs"; fi
-    done
-done
-head -c 33 /dev/urandom > "$TMP/pt33.bin"
-for s in "${LANGS[@]}"; do
-    if ${CLI[$s]} enc --algo hpke-stern --pubkey "$TMP/e_pub.pem" --in "$TMP/pt33.bin" \
-           --out "$TMP/x.pem" >/dev/null 2>&1; then
-        fail "hpke-stern accepted a 33-byte plaintext ($s): the block is 32 bytes at N = $N"
-    else pass "hpke-stern refuses a 33-byte plaintext ($s)"; fi
+    if ${CLI[$s]} enc --algo hpke-stern --pubkey "$TMP/e_pub.pem" --in "$TMP/pt.bin" \
+           --out "$TMP/x.pem" >/dev/null 2>&1 || [ -e "$TMP/x.pem" ]; then
+        fail "hpke-stern enc accepted, or wrote output ($s)"; rm -f "$TMP/x.pem"
+    else pass "hpke-stern enc refused at N = $N ($s)"; fi
 done
 
 # ── hcred: a long-form issuer ─────────────────────────────────────────────────

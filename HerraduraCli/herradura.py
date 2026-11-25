@@ -77,7 +77,6 @@ from primitives import (
     hpks_sign, hpks_nl_sign,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
     hpks_stern_ring_sign, hpks_stern_ring_verify,
-    hpke_stern_f_encap_with_e, hpke_stern_f_decap,
     qcmdpc_keygen, qcmdpc_encap, qcmdpc_decap_bgf, qcmdpc_bgf_decode,
     _QCMDPC_R, _QCMDPC_D, _QCMDPC_T,
     _qcp_inv, _qcp_mul,
@@ -148,8 +147,6 @@ _KEY_SITES = {
     ('dec', 'hpke-nl', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
     ('enc', 'hpke-nl3', '--pubkey'): ('hpke-nl3', ('HERRADURA HPKE-NL3 PUBLIC KEY',)),
     ('dec', 'hpke-nl3', '--key'): ('hpke-nl3', ('HERRADURA HPKE-NL3 PRIVATE KEY',)),
-    ('enc', 'hpke-stern', '--pubkey'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
-    ('dec', 'hpke-stern', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
     ('enc', 'hpke-stern-kem', '--pubkey'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PUBLIC KEY',)),
     ('dec', 'hpke-stern-kem', '--key'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PRIVATE KEY',)),
     ('sign', 'hpks', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
@@ -1062,7 +1059,7 @@ def _der_field_check(label, v, enc):
             if n > 2 and enc[2][0] != ((F[3] + 7)//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == ((F[3] + 7)//8)) and not (((F[3] + 7)//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], (F[3] + 7)//8)
             return None
-        if 5 <= n <= 5 and (F[0] == 2):
+        if 5 <= n <= 5:
             if n > 0 and L[0] > (1):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 1)
             if n > 3 and L[3] > (32):
@@ -1083,28 +1080,6 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[4] + 7)//8)
             if n > 2 and enc[2][0] != ((F[4] + 7)//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == ((F[4] + 7)//8)) and not (((F[4] + 7)//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], (F[4] + 7)//8)
-            return None
-        if 5 <= n <= 5:
-            if n > 4 and L[4] > (2):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], 2)
-            if n > 0 and L[0] > (F[4]//8):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[4]//8)
-            if n > 1 and L[1] > (F[4]//8):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[4]//8)
-            if n > 2 and L[2] > (min(F[4]//8, 32)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], min(F[4]//8, 32))
-            if n > 3 and L[3] > (min(F[4]//8, 32)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], min(F[4]//8, 32))
-            if n > 4 and enc[4][1] == 1:
-                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
-            if n > 0 and enc[0][0] != (F[4]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[4]//8)
-            if n > 1 and enc[1][0] != (F[4]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[4]//8)
-            if n > 2 and enc[2][0] != (min(F[4]//8, 32)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (min(F[4]//8, 32))) and not ((min(F[4]//8, 32)) == 0 and enc[2][0] == 1 and L[2] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], min(F[4]//8, 32))
-            if n > 3 and enc[3][0] != (min(F[4]//8, 32)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (min(F[4]//8, 32))) and not ((min(F[4]//8, 32)) == 0 and enc[3][0] == 1 and L[3] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], min(F[4]//8, 32))
             return None
         if 6 <= n <= 6:
             if n > 0 and L[0] > (1):
@@ -2548,30 +2523,6 @@ def _decode_asym_ct(path):
     return R_int, E_int, nbits
 
 
-# ---------------------------------------------------------------------------
-# Ciphertext serialization (HPKE-Stern-F KEM)
-# ---------------------------------------------------------------------------
-
-def _encode_stern_ct(ct_syn, e_p, K_int, E_int, n):
-    """HPKE-Stern-F demo ciphertext: syndrome + plaintext error (demo) + HSKE payload."""
-    nbytes = n // 8
-    kbytes = min(n, 256) // 8      # K and the payload block: 256 bits above 256 (TODO #382)
-    der = der_seq(der_int(ct_syn, nbytes),
-                  der_int(e_p,    nbytes),   # demo: e' transmitted for brute-force decap
-                  der_int(K_int,  kbytes),
-                  der_int(E_int,  kbytes),
-                  der_int(n))
-    return pem_wrap(_LABEL_CT, der)
-
-
-def _decode_stern_ct(path):
-    label, ints = _read_pem_ints(path)
-    if label != _LABEL_CT:
-        raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
-    ct_syn, e_p, K_int, E_int, n = ints
-    return ct_syn, e_p, K_int, E_int, n
-
-
 _LABEL_KEM_PRIV = 'HERRADURA HPKE-STERN-KEM PRIVATE KEY'
 _LABEL_KEM_PUB  = 'HERRADURA HPKE-STERN-KEM PUBLIC KEY'
 _QCMDPC_RBYTES  = (_QCMDPC_R + 7) // 8  # 66
@@ -3585,20 +3536,6 @@ def cmd_enc(args):
         E       = nl_fscx_revolve_v3(P, enc_key, _r3(nbits))
         _write_file(out_path, _encode_asym_ct(R.uint, E.uint, nbits))
 
-    elif algo == 'hpke-stern':
-        print(_STERN_DEMO_WARNING, file=sys.stderr)
-        syn_int, seed_int, n = their_ints
-        w       = min(n, 256)          # the payload block (TODO #382: 256 bits above 256)
-        nbytes  = w // 8
-        _one_block_ok(algo, len(in_bytes), nbytes)
-        P       = BitArray(w, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
-        if _stern_long(n):
-            K, ct_syn, e_p = _suite_mod.hpke_stern_l_encap_with_e(seed_int, n)
-        else:
-            K, ct_syn, e_p = hpke_stern_f_encap_with_e(BitArray(n, seed_int), n)
-        E       = fscx_revolve(P, K, w // 4)
-        _write_file(out_path, _encode_stern_ct(ct_syn, e_p, K.uint, E.uint, n))
-
     elif algo == 'hpke-stern-kem':
         h_pub, r = _decode_kem_pubkey(pubkey_path)
         nbytes = KEYBITS // 8
@@ -3743,24 +3680,6 @@ def cmd_dec(args):
         dec_key = BitArray(nbits, gf_pow(R_int, priv_int, poly, nbits))
         D       = nl_fscx_revolve_v3_inv(E, dec_key, _r3(nbits))
         _write_file(out_path, D.uint.to_bytes(nbits // 8, 'big'))
-
-    elif algo == 'hpke-stern':
-        print(_STERN_DEMO_WARNING, file=sys.stderr)
-        e_int, seed_int, n = our_ints
-        ct_syn, e_p, K_int, E_int, _n = _decode_stern_ct(getattr(args, 'in'))
-        # TODO #383 stage 2: another width decrypted to garbage with exit 0
-        if _n != n:
-            sys.exit(f"dec: ciphertext n is {_n}, private key n is {n}")
-        w       = min(n, 256)
-        if _stern_long(n):
-            K_dec = _suite_mod.hpke_stern_l_decap_known(e_p, seed_int, n)
-        else:
-            K_dec = hpke_stern_f_decap(ct_syn, e_p, BitArray(n, seed_int), n)
-        if K_dec is None:
-            sys.exit("HPKE-Stern-F decap failed (brute-force exhausted)")
-        E       = BitArray(w, E_int)
-        D       = fscx_revolve(E, K_dec, 3 * w // 4)
-        _write_file(out_path, D.uint.to_bytes(w // 8, 'big'))
 
     elif algo == 'hpke-stern-kem':
         key_path = args.key
@@ -4856,6 +4775,18 @@ def cmd_cred_verify(args):
 # Argument parser
 # ---------------------------------------------------------------------------
 
+def _retired_hpke_stern(algo):
+    """argparse type for enc/dec --algo: refuse hpke-stern with the reason
+    (TODO #413, v21.0.0).  The demo ciphertext carried the error vector e', and
+    K = hash(seed, e') needs only the PUBLIC seed, so anyone holding the
+    ciphertext and the public key decrypted it."""
+    if algo == 'hpke-stern':
+        raise argparse.ArgumentTypeError(
+            "--algo hpke-stern was removed in v21.0.0 (TODO #413): its ciphertext "
+            "carried the error vector, so anyone could decrypt it; use --algo hpke-stern-kem")
+    return algo
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog='herradura',
@@ -4931,8 +4862,8 @@ def build_parser():
     en.add_argument('--algo', required=True,
                     choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-nla3',
                              'hske-duplex', 'hske-duplex3',
-                             'hpke', 'hpke-nl', 'hpke-nl3',
-                             'hpke-stern', 'hpke-stern-kem'])
+                             'hpke', 'hpke-nl', 'hpke-nl3', 'hpke-stern-kem'],
+                    type=_retired_hpke_stern)
     en.add_argument('--key',    default=None)
     en.add_argument('--pubkey', default=None)
     en.add_argument('--in',  required=True, dest='in')
@@ -4948,8 +4879,8 @@ def build_parser():
     de.add_argument('--algo', required=True,
                     choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-nla3',
                              'hske-duplex', 'hske-duplex3',
-                             'hpke', 'hpke-nl', 'hpke-nl3',
-                             'hpke-stern', 'hpke-stern-kem'])
+                             'hpke', 'hpke-nl', 'hpke-nl3', 'hpke-stern-kem'],
+                    type=_retired_hpke_stern)
     de.add_argument('--key',    default=None)
     de.add_argument('--in',  required=True, dest='in')
     de.add_argument('--out', required=True)
