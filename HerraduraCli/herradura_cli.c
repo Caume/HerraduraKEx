@@ -86,16 +86,55 @@ static void die_raw_trailing(const char *label, size_t extra)
     exit(1);
 }
 
-/* TODO #407: a per-round length byte shorter than the field n fixes.  The
- * verifiers read the full size for n whatever the length byte says, so a
- * shorter field was read past (a heap over-read under ASan); refuse it at the
- * length byte, before the truncation checks, with one text in all four CLIs. */
-static void die_raw_short(const char *label, int round, const char *field,
-                          size_t got, int n, size_t need)
+/* TODO #407, #408: a per-round length byte other than the size n fixes.  A
+ * shorter field was read past (the verifiers read the full size for n: a heap
+ * over-read under ASan, #407); a longer one carried bytes nothing reads, a
+ * second encoding of the same artifact (#408).  Refused at the length byte,
+ * before the truncation checks, with one text in all four CLIs. */
+static void die_raw_len(const char *label, int round, const char *field,
+                        size_t got, int n, size_t need)
 {
     fprintf(stderr, "malformed PEM '%s': round %d %s is %zu bytes, n=%d needs %zu\n",
             label, round, field, got, n, need);
     exit(1);
+}
+
+/* TODO #408: an nb-byte big-endian field of an n-bit value has no bit above n;
+ * the writers mask every one, and the readers do not look at the extra bits,
+ * so a set one is a second encoding.  `round` < 0 for a key field. */
+static void raw_bits_or_die(const char *label, int round, const char *field,
+                            const uint8_t *v, int n)
+{
+    int nb = (n + 7) / 8, spare = nb * 8 - n;
+    if (spare && (v[0] >> (8 - spare))) {
+        if (round >= 0)
+            fprintf(stderr, "malformed PEM '%s': round %d %s has bits above n=%d\n",
+                    label, round, field, n);
+        else
+            fprintf(stderr, "malformed PEM '%s': %s has bits above n=%d\n", label, field, n);
+        exit(1);
+    }
+}
+
+/* TODO #408: every HCRED coefficient is written reduced, Z_q (3 bytes) below
+ * q = 65537 and Z_p (2 bytes) below p = 4096; a larger one names the same
+ * value twice.  Walks `cnt` values from *off, same text in all four CLIs. */
+static void hcred_vals_or_die(const char *label, const uint8_t *b, size_t len,
+                              size_t *off, int cnt, int w)
+{
+    const uint32_t lim = w == 3 ? 65537u : 4096u;
+    int i;
+    for (i = 0; i < cnt; i++) {
+        if (*off + (size_t)w > len) return;      /* the reader's truncation check */
+        uint32_t v = w == 3 ? ((uint32_t)b[*off] << 16) | ((uint32_t)b[*off+1] << 8) | b[*off+2]
+                            : ((uint32_t)b[*off] << 8) | b[*off+1];
+        if (v >= lim) {
+            fprintf(stderr, "malformed PEM '%s': value %u at byte %zu is not below %u\n",
+                    label, (unsigned)v, *off, (unsigned)lim);
+            exit(1);
+        }
+        *off += (size_t)w;
+    }
 }
 
 static uint8_t *read_binary_file(const char *path, size_t *len_out)
@@ -1347,6 +1386,27 @@ static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, siz
         else if (hcred_n_ok((int)hn) && strcmp(label, PEM_HCRED_PUB) == 0)
             want = 4 + (size_t)hn * 5 + hn / 8 + (hn / 2 + 7) / 8;
         if (want && cap > want) die_raw_trailing(label, cap - want);
+        /* TODO #408: then each field holds a value its writer could write. */
+        if (want && cap == want) {
+            int nb = (int)(hn + 7) / 8;
+            if (strcmp(label, PEM_ZKP_NL_PRIV) == 0) {
+                raw_bits_or_die(label, -1, "A", buf + 4, (int)hn);
+                raw_bits_or_die(label, -1, "B", buf + 4 + nb, (int)hn);
+                raw_bits_or_die(label, -1, "y", buf + 4 + 2 * nb, (int)hn);
+            } else if (strcmp(label, PEM_ZKP_NL_PUB) == 0) {
+                raw_bits_or_die(label, -1, "B", buf + 4, (int)hn);
+                raw_bits_or_die(label, -1, "y", buf + 4 + nb, (int)hn);
+            } else if (strcmp(label, PEM_HCRED_PRIV) == 0) {
+                size_t off = 4;
+                hcred_vals_or_die(label, buf, cap, &off, (int)hn, 3);   /* s */
+                hcred_vals_or_die(label, buf, cap, &off, (int)hn, 2);   /* C */
+                hcred_vals_or_die(label, buf, cap, &off, (int)hn, 3);   /* m */
+            } else if (strcmp(label, PEM_HCRED_PUB) == 0) {
+                size_t off = 4;
+                hcred_vals_or_die(label, buf, cap, &off, (int)hn, 2);   /* C */
+                hcred_vals_or_die(label, buf, cap, &off, (int)hn, 3);   /* m */
+            }
+        }
     }
     *olen = cap;
     return buf;
@@ -1407,7 +1467,8 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
     if (!proof) die("out of memory");
     const uint8_t *p = buf + 8;
     /* The view size zkp_nl_verify reads for n (herradura.h zkp_nl_prove). */
-    const size_t view_need = (size_t)(2 * ((n + 7) / 8)) + 32 + (n > 1 ? (size_t)(n - 1) : 0);
+    const int nb = (n + 7) / 8;
+    const size_t view_need = (size_t)(2 * nb) + 32 + (n > 1 ? (size_t)(n - 1) : 0);
     int j;
     for (j = 0; j < rounds; j++) {
         /* 96B commitments + 1B e + 2B len_p1 = 99 must be present before the
@@ -1419,8 +1480,10 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
         memcpy(proof[j].com_2, p, 32); p += 32;
         proof[j].e = *p++;
         size_t l1 = ((size_t)p[0] << 8) | p[1]; p += 2;
-        if (l1 < view_need) die_raw_short(PEM_ZKP_NL_PROOF, j, "view_p1", l1, n, view_need);
+        if (l1 != view_need) die_raw_len(PEM_ZKP_NL_PROOF, j, "view_p1", l1, n, view_need);
         if (p + l1 > buf + blen) die("truncated ZKP-NL proof view");
+        raw_bits_or_die(PEM_ZKP_NL_PROOF, j, "view_p1 share", p, n);
+        raw_bits_or_die(PEM_ZKP_NL_PROOF, j, "view_p1 out", p + nb + 32, n);
         proof[j].view_p1  = (uint8_t *)malloc(l1);
         if (!proof[j].view_p1) die("out of memory");
         memcpy(proof[j].view_p1, p, l1); p += l1;
@@ -1431,8 +1494,10 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
          * running off the allocation -- latent, not a memory-safety fault. */
         if (p + 2 > buf + blen) die("truncated ZKP-NL proof view");
         size_t l2 = ((size_t)p[0] << 8) | p[1]; p += 2;
-        if (l2 < view_need) die_raw_short(PEM_ZKP_NL_PROOF, j, "view_p2", l2, n, view_need);
+        if (l2 != view_need) die_raw_len(PEM_ZKP_NL_PROOF, j, "view_p2", l2, n, view_need);
         if (p + l2 > buf + blen) die("truncated ZKP-NL proof view");
+        raw_bits_or_die(PEM_ZKP_NL_PROOF, j, "view_p2 share", p, n);
+        raw_bits_or_die(PEM_ZKP_NL_PROOF, j, "view_p2 out", p + nb + 32, n);
         proof[j].view_p2  = (uint8_t *)malloc(l2);
         if (!proof[j].view_p2) die("out of memory");
         memcpy(proof[j].view_p2, p, l2); p += l2;
@@ -1513,20 +1578,29 @@ static ZkpNlPpRound *zkp_nl_pp_unpack_proof(const uint8_t *buf, size_t blen,
             die("truncated ZKP-NL-PP proof");
         memcpy(proof[j].com_e, p, 32); p += 32;
         proof[j].e = *p++;
+        raw_bits_or_die(PEM_ZKP_NL_PP_SIG, j, "out_e", p, n);
         for (k = 0; k < nb; k++) proof[j].out_e[k] = *p++;
         memcpy(proof[j].seed_p1, p, ZKPP_SEED_BYTES); p += ZKPP_SEED_BYTES;
         memcpy(proof[j].seed_p2, p, ZKPP_SEED_BYTES); p += ZKPP_SEED_BYTES;
         if (p >= buf + blen) die("truncated ZKP-NL-PP proof (gates_len)");
         gl = *p++;
-        if (gl < gates_need) die_raw_short(PEM_ZKP_NL_PP_SIG, j, "gates_p2", gl, n, gates_need);
+        if (gl != gates_need) die_raw_len(PEM_ZKP_NL_PP_SIG, j, "gates_p2", gl, n, gates_need);
         if (p + gl + 1 > buf + blen) die("truncated ZKP-NL-PP proof (gates)");
         proof[j].gates_p2 = (uint8_t *)malloc(gl ? gl : 1);
         if (!proof[j].gates_p2) die("out of memory");
         memcpy(proof[j].gates_p2, p, gl); p += gl;
         proof[j].gates_len = gl;
         proof[j].has_share2 = *p++;
+        /* TODO #408: the writer sends share2 exactly when e != 2 (the opened
+         * parties are then 0 and 1 and nothing reads it otherwise). */
+        if (proof[j].has_share2 != (proof[j].e != 2 ? 1 : 0)) {
+            fprintf(stderr, "malformed PEM '%s': round %d has_share2 is %d, e=%d needs %d\n",
+                    PEM_ZKP_NL_PP_SIG, j, proof[j].has_share2, proof[j].e, proof[j].e != 2 ? 1 : 0);
+            exit(1);
+        }
         if (proof[j].has_share2) {
             if (p + nb > buf + blen) die("truncated ZKP-NL-PP proof (share2)");
+            raw_bits_or_die(PEM_ZKP_NL_PP_SIG, j, "share2", p, n);
             for (k = 0; k < nb; k++) proof[j].share2[k] = *p++;
         } else {
             memset(proof[j].share2, 0, sizeof(proof[j].share2));
@@ -5703,10 +5777,18 @@ static void cmd_verify(int argc, char **argv)
         size_t prflen;
         uint8_t *prfbuf = zkp_raw_pem_read(sig_path, PEM_ZKP_NL_PROOF, &prflen);
         int prf_n, prf_rounds;
+        /* TODO #408: a proof over another n is not about this key, and its
+         * fields are sized from its own n, so compare before reading them. */
+        if (prflen >= 4) {
+            long hn = (long)(((uint32_t)prfbuf[0]<<24)|((uint32_t)prfbuf[1]<<16)|
+                             ((uint32_t)prfbuf[2]<<8)|prfbuf[3]);
+            if (hn != nl_n)
+                dievf("verify: proof n mismatch with pubkey n (%ld vs %d)", hn, nl_n);
+        }
         ZkpNlRound *zk_proof = zkp_nl_unpack_proof(prfbuf, prflen, &prf_n, &prf_rounds);
         free(prfbuf);
         require_rounds(prf_rounds, min_rounds, "nl-zkboo proof", "verify");
-        if (prf_n != nl_n) die("verify: proof n mismatch with pubkey n");
+        if (prf_n != nl_n) dievf("verify: proof n mismatch with pubkey n (%d vs %d)", prf_n, nl_n);
         int ok = zkp_nl_verify(zkB, zky, nl_n, prf_rounds, msg.b, KEYBYTES, zk_proof);
         zkp_nl_proof_free(zk_proof, prf_rounds);
         if (ok) { puts("Signature OK");         exit(0); }
@@ -5731,10 +5813,18 @@ static void cmd_verify(int argc, char **argv)
         size_t prflen;
         uint8_t *prfbuf = zkp_raw_pem_read(sig_path, PEM_ZKP_NL_PP_SIG, &prflen);
         int prf_n, prf_rounds;
+        /* TODO #408: a proof over another n is not about this key, and its
+         * fields are sized from its own n, so compare before reading them. */
+        if (prflen >= 4) {
+            long hn = (long)(((uint32_t)prfbuf[0]<<24)|((uint32_t)prfbuf[1]<<16)|
+                             ((uint32_t)prfbuf[2]<<8)|prfbuf[3]);
+            if (hn != nl_n)
+                dievf("verify: proof n mismatch with pubkey n (%ld vs %d)", hn, nl_n);
+        }
         ZkpNlPpRound *pp_proof = zkp_nl_pp_unpack_proof(prfbuf, prflen, &prf_n, &prf_rounds);
         free(prfbuf);
         require_rounds(prf_rounds, min_rounds, "nl-zkbpp proof", "verify");
-        if (prf_n != nl_n) die("verify: proof n mismatch with pubkey n");
+        if (prf_n != nl_n) dievf("verify: proof n mismatch with pubkey n (%d vs %d)", prf_n, nl_n);
         int ok = zkp_nl_pp_verify(zkB, zky, nl_n, prf_rounds, msg.b, KEYBYTES, pp_proof);
         zkp_nl_pp_proof_free(pp_proof, prf_rounds);
         if (ok) { puts("Signature OK");         exit(0); }
@@ -6500,6 +6590,37 @@ static int hcred_parse_pubkey(const uint8_t *body, size_t blen,
     return 0;
 }
 
+/* TODO #408: an HCRED proof as its writer writes it -- every Z_q value below q
+ * and each has_aux 0 or 1 -- walked in wire order over a body
+ * hcred_proof_deserialize has already accepted, so every field is present. */
+static void hcred_proof_vals_or_die(const uint8_t *b, size_t len, int n, int rounds)
+{
+    const int nb = hcred_nb(n), nd = hcred_nd(n), rows = n / 2;
+    size_t off = 12;
+    int r, j;
+    for (r = 0; r < rounds; r++) {
+        off += 3 * KEYBYTES;                                   /* commitments */
+        for (j = 0; j < 3; j++) {                              /* output shares */
+            hcred_vals_or_die(PEM_HCRED_PROOF, b, len, &off, n, 3);
+            hcred_vals_or_die(PEM_HCRED_PROOF, b, len, &off, nb, 3);
+            hcred_vals_or_die(PEM_HCRED_PROOF, b, len, &off, nd, 3);
+            hcred_vals_or_die(PEM_HCRED_PROOF, b, len, &off, 1, 3);
+            hcred_vals_or_die(PEM_HCRED_PROOF, b, len, &off, rows, 3);
+            hcred_vals_or_die(PEM_HCRED_PROOF, b, len, &off, rows, 3);
+            hcred_vals_or_die(PEM_HCRED_PROOF, b, len, &off, n, 3);
+        }
+        off += 2 * KEYBYTES;                                   /* seeds */
+        hcred_vals_or_die(PEM_HCRED_PROOF, b, len, &off, 2 * n + nb + nd, 3);   /* a1 b1 g1 h1 */
+        if (off >= len) return;
+        if (b[off] > 1) {
+            fprintf(stderr, "malformed PEM '%s': round %d has_aux is %d, expected 0 or 1\n",
+                    PEM_HCRED_PROOF, r, b[off]);
+            exit(1);
+        }
+        if (b[off++]) hcred_vals_or_die(PEM_HCRED_PROOF, b, len, &off, n + nb + nd, 3);
+    }
+}
+
 /* Load HCRED public info from either a PRIV or PUB PEM file.
  * Fills C_poly, m_poly, seed_H_ba (at the key's width), syndr.  Returns 0 on success. */
 static int hcred_load_pubinfo(const char *path,
@@ -6705,8 +6826,9 @@ static void cmd_cred_verify(int argc, char **argv)
         free(pbuf);
         die("cred-verify: cannot deserialize proof");
     }
-    free(pbuf);
     if (used != plen) die_raw_trailing(PEM_HCRED_PROOF, plen - used);   /* TODO #372 */
+    hcred_proof_vals_or_die(pbuf, plen, proof.n, proof.rounds);         /* TODO #408 */
+    free(pbuf);
 
     /* hcred_verify refuses a count other than the proof's own; --rounds only
      * asserts it (parsed strictly, TODO #380). */

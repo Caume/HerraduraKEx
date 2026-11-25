@@ -4678,17 +4678,42 @@ static uint64_t zkp_nl_rol(uint64_t x, int r, int n)
     return r ? ((x << r) | (x >> (n - r))) & mask : x & mask;
 }
 
-/* Commitment: HFSCX-256( j(4B) || p(1B) || tape(32B) || out_share(nb B) ). */
+/* Commitment: HFSCX-256( j(4B) || p(1B) || view ), over the party's WHOLE packed
+ * view, share || tape || out_share || gate bytes (TODO #409; before v19.0.0 it
+ * covered the tape and output share alone, leaving the share and gate bytes
+ * free to change after the challenge). */
 static void zkp_nl_commit(uint8_t out[32], int j, int p,
-                          const uint8_t tape[32], uint64_t out_share, int nb)
+                          const uint8_t *view, size_t view_len)
 {
-    uint8_t buf[4 + 1 + 32 + 8];  /* nb ≤ 8 for n ≤ ZKP_NL_MAX_N = 64 */
-    int k;
+    uint8_t buf[4 + 1 + 8 + 32 + 8 + ZKP_NL_MAX_N];
     buf[0]=(uint8_t)(j>>24); buf[1]=(uint8_t)(j>>16); buf[2]=(uint8_t)(j>>8); buf[3]=(uint8_t)j;
     buf[4] = (uint8_t)p;
-    memcpy(buf + 5, tape, 32);
-    for (k = 0; k < nb; k++) buf[5+32+k] = (uint8_t)(out_share >> (8*(nb-1-k)));
-    hfscx_256(buf, (size_t)(5 + 32 + nb), NULL, out);
+    memcpy(buf + 5, view, view_len);
+    hfscx_256(buf, 5 + view_len, NULL, out);
+}
+
+/* The Fiat-Shamir seed of a ZKBoo proof (TODO #409): HFSCX-256 over every
+ * round's three commitments, then every round's three output shares (nb bytes
+ * each, party order), then B, y and msg -- the ZKB++ transcript's order. */
+static void zkp_nl_ch_seed(uint8_t seed[32], const uint8_t *coms, const uint64_t *outs,
+                           int rounds, int nb, uint64_t B, uint64_t y,
+                           const uint8_t *msg, size_t mlen)
+{
+    size_t cb = (size_t)rounds*3*32, ob = (size_t)rounds*3*(size_t)nb;
+    size_t ch_len = cb + ob + 2*(size_t)nb + mlen, o;
+    uint8_t *ch_buf = (uint8_t *)malloc(ch_len);
+    int t, k;
+    if (!ch_buf) { fputs("OOM\n", stderr); exit(1); }
+    memcpy(ch_buf, coms, cb);
+    for (t = 0; t < rounds*3; t++)
+        for (k = 0; k < nb; k++)
+            ch_buf[cb + (size_t)t*nb + k] = (uint8_t)(outs[t] >> (8*(nb-1-k)));
+    o = cb + ob;
+    for (k = 0; k < nb; k++) ch_buf[o+k]    = (uint8_t)(B >> (8*(nb-1-k)));
+    for (k = 0; k < nb; k++) ch_buf[o+nb+k] = (uint8_t)(y >> (8*(nb-1-k)));
+    if (mlen) memcpy(ch_buf + o + 2*nb, msg, mlen);
+    hfscx_256(ch_buf, ch_len, NULL, seed);
+    free(ch_buf);
 }
 
 /* One PRG bit from tape and gate index. */
@@ -4859,22 +4884,17 @@ static ZkpNlRound *zkp_nl_prove(uint64_t A, uint64_t B, uint64_t y, int n, int r
                         all_gv+(j*3+1)*gv_stride,
                         all_gv+(j*3+2)*gv_stride);
 
-        for (p = 0; p < 3; p++)
-            zkp_nl_commit(all_coms+(j*3+p)*32, j, p,
-                          all_tp+(j*3+p)*32, all_out[j*3+p], nb);
+        for (p = 0; p < 3; p++) {
+            uint8_t vbuf[8 + 32 + 8 + ZKP_NL_MAX_N];
+            zkp_nl_pack_view(vbuf, all_sh[j*3+p], all_tp+(j*3+p)*32,
+                             all_out[j*3+p], all_gv+(j*3+p)*gv_stride, n, nb);
+            zkp_nl_commit(all_coms+(j*3+p)*32, j, p, vbuf, view_len);
+        }
     }
 
-    /* Phase 2: Fiat-Shamir challenge seed = hash(all_coms || B_bytes || y_bytes || msg). */
-    size_t ch_len = (size_t)rounds*3*32 + (size_t)nb + (size_t)nb + mlen;
-    uint8_t *ch_buf = (uint8_t *)malloc(ch_len);
-    if (!ch_buf) { fputs("OOM\n", stderr); exit(1); }
-    memcpy(ch_buf, all_coms, (size_t)rounds*3*32);
-    for (k = 0; k < nb; k++) ch_buf[rounds*3*32+k]    = (uint8_t)(B >> (8*(nb-1-k)));
-    for (k = 0; k < nb; k++) ch_buf[rounds*3*32+nb+k]  = (uint8_t)(y >> (8*(nb-1-k)));
-    if (mlen) memcpy(ch_buf+rounds*3*32+nb+nb, msg, mlen);
+    /* Phase 2: the Fiat-Shamir challenge seed (zkp_nl_ch_seed). */
     uint8_t ch_seed[32];
-    hfscx_256(ch_buf, ch_len, NULL, ch_seed);
-    free(ch_buf);
+    zkp_nl_ch_seed(ch_seed, all_coms, all_out, rounds, nb, B, y, msg, mlen);
 
     /* Phase 3: derive per-round challenges and pack views. */
     for (j = 0; j < rounds; j++) {
@@ -4904,67 +4924,102 @@ static ZkpNlRound *zkp_nl_prove(uint64_t A, uint64_t B, uint64_t y, int n, int r
     return proof;
 }
 
-/* Verify a ZKBoo proof.  Returns 1 if valid, 0 otherwise. */
+/* Party `party`'s output share from its input share and carry bits: the linear
+ * tail of zkp_nl_eval_3p.  Both verifiers recompute revealed shares with it
+ * (ZKB++ always, ZKBoo since TODO #409). */
+static uint64_t zkpp_out_share(int party, uint64_t share, const int *carries,
+                                uint64_t B, int n)
+{
+    uint64_t mask = (n >= 64) ? UINT64_MAX : (1ULL << n) - 1ULL;
+    uint64_t sum_s = 0;
+    uint64_t rot, lin;
+    int i;
+    for (i = 0; i < n; i++) {
+        int bit_i = (int)((share >> i) & 1) ^ (int)((B >> i) & 1) ^ carries[i];
+        sum_s ^= (uint64_t)bit_i << i;
+    }
+    rot = zkp_nl_rol(sum_s, n/4, n);
+    lin = (share ^ zkp_nl_rol(share,1,n) ^ zkp_nl_rol(share,n-1,n)) & mask;
+    if (party == 0)
+        lin ^= (B ^ zkp_nl_rol(B,1,n) ^ zkp_nl_rol(B,n-1,n)) & mask;
+    return (lin ^ rot) & mask;
+}
+
+/* Verify a ZKBoo proof.  Returns 1 if valid, 0 otherwise.
+ *
+ * TODO #409: before v19.0.0 this checked only bit 2 of p1's gate bytes and the
+ * two commitments, which covered the tape and output share alone; it never
+ * related the output shares to y, so a proof made from ANY A verified.  It now
+ * checks, per round: every gate byte of both revealed views exactly
+ * (a_i | c_i << 1 | ao_i << 2, nothing above), both output shares against the
+ * views, both commitments over the whole view; and, through the Fiat-Shamir
+ * seed, which binds all three output shares, that the hidden party's share is
+ * y ^ out_p1 ^ out_p2. */
 static int zkp_nl_verify(uint64_t B, uint64_t y, int n, int rounds,
                           const uint8_t *msg, size_t mlen, ZkpNlRound *proof)
 {
     if (n <= 0 || n > ZKP_NL_MAX_N || rounds <= 0 || rounds > 4096) return 0;
-    int nb = (n + 7) / 8, j, k;
+    int nb = (n + 7) / 8, j, k, ok = 1;
+    uint64_t mask = (n >= 64) ? UINT64_MAX : (1ULL << n) - 1ULL;
+    size_t view_len = (size_t)(2*nb) + 32 + (size_t)(n - 1);
+    uint8_t  *coms = (uint8_t *)malloc((size_t)rounds * 3 * 32);
+    uint64_t *outs = (uint64_t *)malloc((size_t)rounds * 3 * sizeof(uint64_t));
+    if (!coms || !outs) { fputs("OOM\n", stderr); exit(1); }
 
-    /* Recompute FS challenge seed. */
-    size_t ch_len = (size_t)rounds*3*32 + (size_t)nb + (size_t)nb + mlen;
-    uint8_t *ch_buf = (uint8_t *)malloc(ch_len);
-    if (!ch_buf) { fputs("OOM\n", stderr); exit(1); }
-    for (j = 0; j < rounds; j++) {
-        memcpy(ch_buf+j*3*32+0*32, proof[j].com_0, 32);
-        memcpy(ch_buf+j*3*32+1*32, proof[j].com_1, 32);
-        memcpy(ch_buf+j*3*32+2*32, proof[j].com_2, 32);
-    }
-    for (k = 0; k < nb; k++) ch_buf[rounds*3*32+k]    = (uint8_t)(B >> (8*(nb-1-k)));
-    for (k = 0; k < nb; k++) ch_buf[rounds*3*32+nb+k]  = (uint8_t)(y >> (8*(nb-1-k)));
-    if (mlen) memcpy(ch_buf+rounds*3*32+nb+nb, msg, mlen);
-    uint8_t ch_seed[32];
-    hfscx_256(ch_buf, ch_len, NULL, ch_seed);
-    free(ch_buf);
-
-    for (j = 0; j < rounds; j++) {
-        uint8_t ext[36], h[32];
-        memcpy(ext, ch_seed, 32);
-        ext[32]=(uint8_t)(j>>24); ext[33]=(uint8_t)(j>>16);
-        ext[34]=(uint8_t)(j>>8);  ext[35]=(uint8_t)j;
-        hfscx_256(ext, 36, NULL, h);
-        if (h[0] % 3 != (int)proof[j].e) return 0;
-
-        int e = proof[j].e, p1 = (e+1)%3, p2 = (e+2)%3;
+    for (j = 0; j < rounds && ok; j++) {
+        int e = proof[j].e, p1 = (e+1)%3, p2 = (e+2)%3, i;
         uint64_t sh_p1, sh_p2, out_p1, out_p2;
         const uint8_t *tp_p1, *tp_p2, *gv_p1, *gv_p2;
+        int car1[ZKP_NL_MAX_N], car2[ZKP_NL_MAX_N], c1 = 0, c2 = 0;
+        const uint8_t *pc[3] = { proof[j].com_0, proof[j].com_1, proof[j].com_2 };
+        uint8_t c_p1[32], c_p2[32];
+
+        if (e < 0 || e > 2 || proof[j].view_len != view_len) { ok = 0; break; }
         zkp_nl_unpack_view(proof[j].view_p1, n, nb, &sh_p1, &tp_p1, &out_p1, &gv_p1);
         zkp_nl_unpack_view(proof[j].view_p2, n, nb, &sh_p2, &tp_p2, &out_p2, &gv_p2);
+        if ((sh_p1 | sh_p2 | out_p1 | out_p2) & ~mask) { ok = 0; break; }
 
-        uint8_t c_p1[32], c_p2[32];
-        zkp_nl_commit(c_p1, j, p1, tp_p1, out_p1, nb);
-        zkp_nl_commit(c_p2, j, p2, tp_p2, out_p2, nb);
-        const uint8_t *coms[3] = { proof[j].com_0, proof[j].com_1, proof[j].com_2 };
-        if (!ct_eq32(c_p1, coms[p1]) || !ct_eq32(c_p2, coms[p2])) return 0;
-
-        /* Re-evaluate p1's AND gates using both revealed shares/tapes; check gate views. */
-        uint64_t carry_p1 = 0, carry_p2 = 0;
-        int i;
+        car1[0] = car2[0] = 0;
         for (i = 0; i < n - 1; i++) {
-            int ai_p1 = (int)((sh_p1 >> i) & 1), ai_p2 = (int)((sh_p2 >> i) & 1);
-            int ci_p1 = (int)carry_p1,             ci_p2 = (int)carry_p2;
-            int Bi    = (int)((B >> i) & 1);
-            int ri_p1 = zkp_nl_prg_bit(tp_p1, i), ri_p2 = zkp_nl_prg_bit(tp_p2, i);
+            int a1 = (int)((sh_p1 >> i) & 1), a2 = (int)((sh_p2 >> i) & 1);
+            int Bi = (int)((B >> i) & 1);
+            int r1 = zkp_nl_prg_bit(tp_p1, i), r2 = zkp_nl_prg_bit(tp_p2, i);
+            int and1 = (a1&c1) ^ (a1&c2) ^ (a2&c1) ^ r1 ^ r2;
+            int and2 = (gv_p2[i] >> 2) & 1;
+            if (gv_p1[i] != (uint8_t)(a1 | (c1 << 1) | (and1 << 2)) ||
+                gv_p2[i] != (uint8_t)(a2 | (c2 << 1) | (and2 << 2))) { ok = 0; break; }
+            c1 = (Bi&a1) ^ and1 ^ (Bi&c1);
+            c2 = (Bi&a2) ^ and2 ^ (Bi&c2);
+            car1[i+1] = c1; car2[i+1] = c2;
+        }
+        if (!ok) break;
+        if (zkpp_out_share(p1, sh_p1, car1, B, n) != out_p1 ||
+            zkpp_out_share(p2, sh_p2, car2, B, n) != out_p2) { ok = 0; break; }
 
-            int exp_ao_p1 = (ai_p1&ci_p1)^(ai_p1&ci_p2)^(ai_p2&ci_p1)^ri_p1^ri_p2;
-            if (((gv_p1[i] >> 2) & 1) != exp_ao_p1) return 0;
+        zkp_nl_commit(c_p1, j, p1, proof[j].view_p1, view_len);
+        zkp_nl_commit(c_p2, j, p2, proof[j].view_p2, view_len);
+        if (!ct_eq32(c_p1, pc[p1]) || !ct_eq32(c_p2, pc[p2])) { ok = 0; break; }
 
-            carry_p1 = (uint64_t)((Bi&ai_p1) ^ exp_ao_p1 ^ (Bi&ci_p1));
-            int ao_p2 = (gv_p2[i] >> 2) & 1;
-            carry_p2 = (uint64_t)((Bi&ai_p2) ^ ao_p2      ^ (Bi&ci_p2));
+        for (k = 0; k < 3; k++) memcpy(coms + (j*3+k)*32, pc[k], 32);
+        outs[j*3+e]  = (y ^ out_p1 ^ out_p2) & mask;
+        outs[j*3+p1] = out_p1;
+        outs[j*3+p2] = out_p2;
+    }
+
+    if (ok) {
+        uint8_t ch_seed[32];
+        zkp_nl_ch_seed(ch_seed, coms, outs, rounds, nb, B, y, msg, mlen);
+        for (j = 0; j < rounds; j++) {
+            uint8_t ext[36], h[32];
+            memcpy(ext, ch_seed, 32);
+            ext[32]=(uint8_t)(j>>24); ext[33]=(uint8_t)(j>>16);
+            ext[34]=(uint8_t)(j>>8);  ext[35]=(uint8_t)j;
+            hfscx_256(ext, 36, NULL, h);
+            if (h[0] % 3 != (int)proof[j].e) { ok = 0; break; }
         }
     }
-    return 1;
+    free(coms); free(outs);
+    return ok;
 }
 
 /* ─── ZKB++ compact encoding (Chase et al. 2017) ─────────────────────────── */
@@ -5027,25 +5082,6 @@ static void zkpp_commit(int j, int party,
     for (k = 0; k < nb; k++) wp[k] = (uint8_t)(out_share >> (8*(nb-1-k)));
     hfscx_256(buf, tlen, NULL, out_com);
     free(buf);
-}
-
-/* Recompute party p's output share from its input share and per-bit carry values. */
-static uint64_t zkpp_out_share(int party, uint64_t share, const int *carries,
-                                uint64_t B, int n)
-{
-    uint64_t mask = (n >= 64) ? UINT64_MAX : (1ULL << n) - 1ULL;
-    uint64_t sum_s = 0;
-    uint64_t rot, lin;
-    int i;
-    for (i = 0; i < n; i++) {
-        int bit_i = (int)((share >> i) & 1) ^ (int)((B >> i) & 1) ^ carries[i];
-        sum_s ^= (uint64_t)bit_i << i;
-    }
-    rot = zkp_nl_rol(sum_s, n/4, n);
-    lin = (share ^ zkp_nl_rol(share,1,n) ^ zkp_nl_rol(share,n-1,n)) & mask;
-    if (party == 0)
-        lin ^= (B ^ zkp_nl_rol(B,1,n) ^ zkp_nl_rol(B,n-1,n)) & mask;
-    return (lin ^ rot) & mask;
 }
 
 /* Bit-pack n_gates AND-gate output bits (bit 2 of each gate view byte), LSB-first. */
@@ -7295,7 +7331,10 @@ static int hcred_verify(const int32_t m_poly[HCRED_N],
             if ((int32_t)(((int64_t)outs->rnd[0][i]+outs->rnd[1][i]+outs->rnd[2][i]) % q) != want) result = 0;
         }
         if (!result) break;
-        if ((c == 2 || cp1 == 2) && !rd->has_aux) { result = 0; break; }
+        /* The aux block is there exactly when an opened party is party 2: a
+         * block the challenge does not open would be a second encoding of the
+         * same proof, unread (TODO #408). */
+        if ((c == 2 || cp1 == 2) != (rd->has_aux != 0)) { result = 0; break; }
 
         /* --- reconstruct tapes --- */
         hcred_tape_init(&tC,  rd->seed_c);

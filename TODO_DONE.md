@@ -27019,3 +27019,117 @@ n = 8 and 64 and finds no crash, the C side under ASan included.
 Status: **DONE v18.0.6** — short views and gate fields refused cleanly, C bounds HCRED W, Java raw reads bounds-checked.
 
 ---
+
+### #408: raw-body PEMs accept encodings no writer produces (MAJOR)
+
+**This item is MAJOR**: it changes what existing `--algo` values accept (`nl-zkboo`, `nl-zkbpp`
+and the HCRED subcommands), so it needs a
+`MIGRATING.md` entry.  No CLI writes any of the encodings below, so no file a CLI
+produced becomes unreadable; the break is for hand-made or re-encoded files only.
+
+#406's prototype found raw-body artifacts accepted in a second encoding, against the
+rule #372/#373 set for DER (one artifact, one encoding), and two where the CLIs disagree:
+
+| re-encoding of a valid artifact | C | Go | Python | Java |
+|---|---|---|---|---|
+| ZKBoo view length +1, one byte appended | verifies | verifies | verifies | verifies |
+| ZKB++ `has_share2` = 2 instead of 1 | verifies | verifies | verifies | verifies |
+| ZKB++ one extra gate byte (`gates_len`+1) | **verifies** | rejects | rejects | rejects |
+| ZKB++ proof `n` = 1 or 2 against an n=8 key (same byte width) | refuses | **verifies** | **verifies** | refuses |
+| HCRED private key with a coefficient ≥ q (65537) or ≥ p (4096) | accepts, **writes the raw value** | accepts, reduces it | accepts, reduces it | accepts, reduces it |
+
+A second probe (2026-11-24, all four CLIs, ZKP-NL at n = 12 so bits above n exist)
+found more of the same class, each a valid artifact re-encoded:
+
+| re-encoding | all four CLIs |
+|---|---|
+| ZKB++ round with e = 2 carrying a `share2` (`has_share2` = 1, nb bytes inserted; the writer sets it only for e != 2) | verify |
+| ZKB++ `out_e` with a bit above n set | verify |
+| ZKBoo view share with a bit above n set | verify |
+| ZKP-NL private key with a bit of A above n set | accept, same public key |
+| HCRED proof round carrying an aux block its challenge does not need | verify |
+| HCRED proof coefficient + q (e.g. `a1[0]`) | verify |
+| HCRED public key `m[0]` + q | verify (cred-verify) |
+
+(ZKP-RNL proofs with w ± q, ZKP-NL public keys and ZKB++ `share2` or gate padding bits
+with a bit flipped all FAIL in all four.)  The ZKBoo view's gate bytes and the share's
+bit n - 1, which the verifier does not check at all, are #409.
+
+Fix: every reader requires the writer's encoding — a view length and a gate length
+exactly the size for n, `has_share2` equal to (e != 2), `has_aux` in {0, 1} (and every
+HCRED verifier refuses an aux block its challenge does not need), a proof `n` equal to
+the key's `n`, no bit above n in a fixed-width ZKP-NL field, and every HCRED Z_q value
+below q and Z_p value below p — with one refusal text per rule in all four CLIs.  Each new refusal gets an accept-control (the writer's encoding still
+verifies) and #406's differential drops these rows from its known findings.  Lands after
+#407.
+
+Resolution: every reader requires the writer's encoding, one text per rule in all four
+CLIs (SPEC.md section 10.3 rewritten; MIGRATING.md section 52): exact view and gate
+lengths, `has_share2` = (e != 2), `has_aux` in {0, 1}, no bit above n in an n-bit field,
+every HCRED Z_q / Z_p value below q / p, and the proof's n compared with the key's before
+the body is read.  Every HCRED verifier fails an unopened aux block.
+`test_raw_body_diff.sh` lost its KNOWN set-aside, moved to n = 12 and checks each rule by
+text (28 cells); v18.0.6 fails it 21 times.  No writer's output changed: every CLI's
+n = 12 signatures verify in all four and the PEM KATs read unchanged.  The ZKBoo view's
+unread bits are #409.
+
+Status: **DONE v19.0.0** — raw-body ZKP-NL and HCRED files must be in their writer's encoding (MAJOR).
+
+---
+
+### #409: ZKBoo signatures verify with view bits the verifier never reads
+
+A ZKBoo (`nl-zkboo`) view is `share | tape | out | gate bytes`, and each gate byte is
+written as `a_i | c_i << 1 | ao_i << 2`.  The commitment covers only the tape and the
+output share, and `zkp_nl_verify` (and its Go, Python and Java ports) reads only bit 2 of
+each gate byte and bits 0..n-2 of the share.  So, in all four CLIs (probe of
+2026-11-24, n = 12):
+
+- setting bit 7 (or any of bits 3-7) of a gate byte verifies;
+- flipping bit 0 (the copy of `a_i`) or bit 1 (`c_i`) of a gate byte verifies;
+- flipping bit n - 1 of a revealed share verifies.
+
+Each is a second valid signature made from one, without the key: ZKBoo signatures are
+not strongly unforgeable.  #408's encoding rules cannot close it: bits 0 and 1 are
+determined by values the verifier recomputes, so the verifier must check them, and the
+share's bit n - 1 is unconstrained by the protocol as implemented, so closing it needs
+the share to be derived (from the tape, as ZKB++ does) or committed.
+
+Decide whether to fix ZKBoo (a verifier check on gate bits 0-7, plus a protocol change
+for the share, which is MAJOR and breaks existing signatures) or to mark `nl-zkboo`
+superseded by `nl-zkbpp`, which commits its shares through the seeds.  Either way,
+record it in SECURITY.md.
+
+**Found while fixing it (2026-11-24): the ZKBoo verifier was universally forgeable.**  It
+never related the output shares to y: the hidden party's share was computed (Python even
+named it `out_pe`) and never used, and no revealed output share was recomputed from its
+view.  So `sign --algo nl-zkboo` with a private key whose A is not a preimage (A = 0, or
+the lowest bit flipped) gave a signature that every CLI verified, in all 16 signer/verifier
+pairs, at the default 219 rounds.  That decides the question above: retiring `nl-zkboo`
+would leave a forgeable verifier shipped, so ZKBoo is fixed.  The gate-bit and share-bit
+findings above are the same gap seen from the encoding side.
+
+**MAJOR (wire format):** the commitment and the Fiat-Shamir seed change, so every ZKBoo
+signature made before this release stops verifying; the PEM layout is unchanged.  Folded
+into v19.0.0 (#408's MAJOR, not yet released) rather than a second MAJOR.  MIGRATING.md
+section 53.
+
+**Resolution.**  The ZKBoo transcript is now standard ZKBoo, in all four ports
+(`herradura.h`, `herradura/herradura.go`, the Python suite, `ZkpNl.java`): each commitment
+is HFSCX-256(j ‖ p ‖ view) over the whole view; the seed is HFSCX-256 over the commitments,
+then every round's three output shares, then B, y, msg (ZKB++'s order); the verifier
+requires every gate byte of both revealed views to be exactly a_i | c_i << 1 | ao_i << 2,
+recomputes both revealed output shares, and takes the hidden one as y ^ out_p1 ^ out_p2.
+The Python test harness's own copy and `SecurityProofsCode/zkp_pqc_exploration.py`'s model
+had the same hole (the model's §3.5 cheat failed only because it hashed the wrong y; with
+y, the old model accepted 297 of 297) and are fixed with it; `spec/measure_sampled_rates.py`
+recomputes the new seed.  `CliTest/test_raw_body_diff.sh` gains 8 cells (wrong-A
+signatures for ZKBoo and ZKB++ at 219 rounds; gate-byte bits 7, 0, 1, share bit n - 1 in
+either view, an output-share bit), every one verification FAILED in all four CLIs; against
+the pre-fix code 6 of them fail (ZKB++'s wrong-A cell and the output-share bit, which the
+old commitment covered, pass on both).  KAT/operation_replay.json's zkp_nl_prove row
+regenerated (same stream, same draws).
+
+Status: **DONE v19.0.0** — ZKBoo verifier was universally forgeable; whole-view commitments, output shares bound in the challenge, exact gate bytes (MAJOR).
+
+---

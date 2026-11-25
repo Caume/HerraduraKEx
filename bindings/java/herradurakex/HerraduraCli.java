@@ -1838,8 +1838,14 @@ public final class HerraduraCli {
             }
             Codec.ZkpNlPubKey pub = Codec.decodeZkpNlPubKey(pubPem);
             boolean ok;
+            // TODO #408: a proof over another n is not about this key, and its
+            // fields are sized from its own n, so compare before reading them.
+            String sigPem = readString(sigPath);
+            int hn = Codec.rawBodyN(sigPem);
+            if (hn >= 0 && hn != pub.n)
+                throw new CliError("verify: proof n mismatch with pubkey n (" + hn + " vs " + pub.n + ")");
             if (algo.equals("nl-zkboo")) {
-                Codec.ZkpNlProof pr = Codec.decodeZkpNlProof(readString(sigPath));
+                Codec.ZkpNlProof pr = Codec.decodeZkpNlProof(sigPem);
                 requireRounds(pr.rounds.size(), minRounds(opt, "verify"), "nl-zkboo proof", "verify");
                 // The round count travels in the PEM, as it does for Stern-F
                 // (TODO #236); the verifier holds it to --min-rounds (TODO #364).
@@ -1851,7 +1857,7 @@ public final class HerraduraCli {
                 ok = ZkpNl.verify(pub.b, pub.y, pub.n, pr.rounds.size(),
                                   padTrunc(msg, 32), pr.rounds);
             } else {
-                Codec.ZkpNlPpProof pr = Codec.decodeZkpNlPpProof(readString(sigPath));
+                Codec.ZkpNlPpProof pr = Codec.decodeZkpNlPpProof(sigPem);
                 requireRounds(pr.rounds.size(), minRounds(opt, "verify"), "nl-zkbpp proof", "verify");
                 if (pr.n != pub.n)
                     throw new CliError("verify: proof n mismatch with pubkey n ("

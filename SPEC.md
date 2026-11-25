@@ -591,26 +591,48 @@ parsers in process, which must give identical results, refusal texts
 included, and each refusal above checked by its text through the four real
 CLIs.
 
-### 10.3 Raw-body PEMs (TODO #406, #407)
+### 10.3 Raw-body PEMs (TODO #406, #407, #408)
 
 Eight labels carry packed bytes instead of DER: ZKP-RNL PROOF, ZKP-NL
 PRIVATE KEY / PUBLIC KEY / PROOF, ZKP-NL-PP SIGNATURE and HCRED PRIVATE
 KEY / PUBLIC KEY / PROOF.  A 4-byte big-endian `n` leads (then the round
 count, and for an HCRED proof `W` before it), and every block after it is
-sized from those.  Besides the header bounds and the trailing-byte rule
-(`malformed PEM 'LABEL': N bytes after its last field`, TODO #372), a reader
-refuses a per-round length byte shorter than the field `n` fixes, at the
-length byte and before any truncation check:
-`malformed PEM 'LABEL': round J FIELD is L bytes, n=N needs M`, where FIELD
-is `view_p1` or `view_p2` (ZKBoo, M = 2*ceil(n/8) + 32 + n - 1) or `gates_p2`
-(ZKB++, M = ceil(max(n - 1, 1)/8)).  An HCRED proof's `W` must lie in
-1..256: `HCRED proof: W out of range (W)`.  The texts are the same in all four
-CLIs.  `CliTest/test_raw_body_diff.sh` sends seeded mutations of each
-artifact through the four real CLIs and fails on any crash or any case
-they answer differently, except TODO #408's recorded encodings, which
-some CLIs still accept: a view or gate field longer than `n` needs, a
-`has_share2` other than 0 or 1, a ZKB++ proof `n` other than the key's,
-and an HCRED coefficient not below q or p.
+sized from those.  A reader accepts exactly the encoding its writer
+produces.  Besides the header bounds and the trailing-byte rule
+(`malformed PEM 'LABEL': N bytes after its last field`, TODO #372), it
+refuses, each with one text, the same in all four CLIs:
+
+- a per-round length byte other than the size `n` fixes, at the length
+  byte and before any truncation check:
+  `malformed PEM 'LABEL': round J FIELD is L bytes, n=N needs M`, where
+  FIELD is `view_p1` or `view_p2` (ZKBoo, M = 2*ceil(n/8) + 32 + n - 1) or
+  `gates_p2` (ZKB++, M = ceil(max(n - 1, 1)/8));
+- a ZKB++ `has_share2` other than 1 for e != 2 and 0 for e = 2:
+  `malformed PEM 'LABEL': round J has_share2 is V, e=E needs W`;
+- a bit above `n` in an n-bit field (ZKP-NL key A, B, y; a ZKBoo view's
+  share and output; ZKB++ `out_e` and `share2`):
+  `malformed PEM 'LABEL': [round J ]FIELD has bits above n=N`;
+- an HCRED Z_q value (3 bytes) not below q = 65537 or Z_p value (2 bytes)
+  not below p = 4096, in a key or a proof, the first in wire order:
+  `malformed PEM 'LABEL': value V at byte OFF is not below Q`;
+- an HCRED proof `has_aux` other than 0 or 1:
+  `malformed PEM 'LABEL': round J has_aux is V, expected 0 or 1`;
+- an HCRED proof `W` outside 1..256: `HCRED proof: W out of range (W)`.
+
+`verify` compares a ZKP-NL proof's `n` with the public key's before reading
+the rest: `verify: proof n mismatch with pubkey n (P vs K)`.  An HCRED
+verifier fails a round whose aux block the challenge does not open, as it
+fails one that lacks a needed block.  `CliTest/test_raw_body_diff.sh` sends
+seeded mutations of each artifact through the four real CLIs and fails on
+any crash or any case they answer differently, and checks every refusal
+above by its text.  No encoding rule reaches a ZKBoo view's gate-byte bits
+or its share's bit n - 1; the verifier does (TODO #409): each commitment is
+`HFSCX-256(j ‖ p ‖ view)` over the whole view, every gate byte must be
+exactly `a_i | c_i << 1 | ao_i << 2`, both revealed output shares are
+recomputed from their views, and the Fiat-Shamir seed is
+`HFSCX-256(commitments ‖ output shares ‖ B ‖ y ‖ msg)`, with every round's
+three output shares in party order and the hidden one taken as
+`y ^ out_p1 ^ out_p2` -- the ZKB++ transcript's order.
 
 ## 11. Code-Based (Stern ZKID) Variants
 

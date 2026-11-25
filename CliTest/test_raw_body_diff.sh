@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# CliTest/test_raw_body_diff.sh — TODO #406 / #407: the four CLIs' raw-body PEM
-# readers, compared on generated input.
+# CliTest/test_raw_body_diff.sh — TODO #406 / #407 / #408 / #409: the four CLIs'
+# raw-body PEM readers, compared on generated input.
 #
 # test_pem_reader_diff.sh and test_der_reader_diff.sh (TODO #403, #404) hold the
 # PEM reader and the DER parser to one verdict.  Eight artifacts carry no DER:
@@ -22,22 +22,30 @@
 #   * on any CRASH: a Python traceback, a Go panic, a Java "Index ... out of
 #     bounds" or other raw JDK message, an ASan report, an exit status other
 #     than 0 or 1 -- whatever the other CLIs say;
-#   * when the CLIs give a case different results, unless it is one of TODO
-#     #408's recorded non-canonical encodings (below), which is counted and
-#     printed as KNOWN.
+#   * when the CLIs give a case different results (the comparison's own
+#     negative control: one planted disagreement must be flagged).
 # Coverage: every artifact's agreed cases must reach REFUSED, and its other
 # outcomes as listed in FLOOR, so a drifting generator cannot pass vacuously.
 #
 # Then named cells, through all four CLIs:
-#   * controls: every unmutated fixture, at n = 8 and n = 64 for ZKP-NL, is read
-#     by every CLI (a key to the same public key);
+#   * controls: every unmutated fixture, at n = 12 (so that bits above n exist)
+#     and n = 64 for ZKP-NL, is read by every CLI (a key to the same public key);
 #   * TODO #407's refusals, by their full text: a ZKBoo view and a ZKB++ gate
 #     field shorter than n needs (before #407: a heap over-read in C, a panic
 #     in Go, a traceback in Python, a raw index message in Java) and an HCRED W
 #     out of range (before #407 the C CLI read it unbounded);
-#   * TODO #408's KNOWN cells, printed with each CLI's verdict: encodings no
-#     writer produces that some or all CLIs accept.  The divergent ones double
-#     as the comparison's negative control: it must flag them.
+#   * TODO #408's refusals, by their full text: each a VALID artifact
+#     re-encoded in a way no writer produces, which before #408 some or all
+#     CLIs accepted -- a view or gate field one byte long, has_share2 other
+#     than (e != 2), a proof n other than the key's, a bit above n in a key or
+#     proof field, an HCRED value not below q or p, an HCRED has_aux of 2, and
+#     an HCRED aux block the challenge does not open (verification FAILED);
+#   * TODO #409's ZKBoo cells, each verification FAILED in every CLI: a
+#     signature whose prover used a WRONG A (before #409 every CLI accepted it:
+#     the verifier never related the output shares to y), and one bit changed
+#     in a valid signature's view -- gate-byte bits 7, 0 and 1, the share's bit
+#     n - 1, an output share -- which before #409 the verifier never read; the
+#     wrong-A signature is made for ZKB++ too, which was never affected;
 #   * the crash detector's own controls: a traceback, a panic and a raw JDK
 #     message from stand-in commands must each be classed CRASH.
 #
@@ -83,12 +91,56 @@ FX="$TMP/fx"; mkdir -p "$FX" "$TMP/cases" "$TMP/out"
 P="${CLI[${LANGS[0]}]}"
 echo "raw-body differential message" > "$FX/m.txt"
 mk() { $P "$@" >/dev/null 2>"$TMP/mk.err" || { echo "FAIL fixture: ${LANGS[0]} $*: $(head -c 300 "$TMP/mk.err")"; exit 1; }; }
-for b in 8 64; do
+for b in 12 64; do
     s=""; [ "$b" = 64 ] && s=64
     mk genpkey --algo hpks-zkp-nl --bits "$b" --out "$FX/zk$s.pem"
     mk pkey --in "$FX/zk$s.pem" --pubout --out "$FX/zk${s}_pub.pem"
     mk sign --algo nl-zkboo --key "$FX/zk$s.pem" --in "$FX/m.txt" --rounds 4 --out "$FX/zkboo$s.pem"
     mk sign --algo nl-zkbpp --key "$FX/zk$s.pem" --in "$FX/m.txt" --rounds 4 --out "$FX/zkbpp$s.pem"
+done
+# TODO #409: the key pair's B and y with another A (its lowest bit flipped), so
+# that a signature made from it proves a witness the public key does not have.
+# Such a proof survives only if every round's recomputed challenge re-matches,
+# (1/3)^rounds; at the default 219 rounds that is 2^-347, where 4 would fail
+# this test one run in 81.
+python3 - "$FX/zk.pem" "$FX/zk_wrongA.pem" <<'PYEOF'
+import base64, sys
+t = open(sys.argv[1]).read().split('\n'); lab = t[0][11:-5]
+b = bytearray(base64.b64decode(''.join(l for l in t[1:] if l and not l.startswith('-----'))))
+nb = (int.from_bytes(b[:4], 'big') + 7) // 8
+b[4 + nb - 1] ^= 1
+open(sys.argv[2], 'w').write(f'-----BEGIN {lab}-----\n{base64.encodebytes(bytes(b)).decode()}-----END {lab}-----\n')
+PYEOF
+mk sign --algo nl-zkboo --key "$FX/zk_wrongA.pem" --in "$FX/m.txt" --out "$FX/zkboo_wrongA.pem"
+mk sign --algo nl-zkbpp --key "$FX/zk_wrongA.pem" --in "$FX/m.txt" --out "$FX/zkbpp_wrongA.pem"
+# The has_share2 cells need a ZKB++ round with e = 2 and one without, and the
+# has_aux cells an HCRED round with an aux block and one without.  The
+# challenge decides which a round is, so sign until a fixture has both: a
+# choice of fixture, not of verdict (each try misses with probability
+# (2/3)^8 + (1/3)^8 = 3.9% for ZKB++, (2/3)^4 + (1/3)^4 = 21% for HCRED).
+has_both() {   # file, kind
+    python3 - "$1" "$2" <<'PYEOF'
+import base64, sys
+t = open(sys.argv[1]).read().split('\n')
+b = base64.b64decode(''.join(l for l in t[1:] if l and not l.startswith('-----')))
+n = int.from_bytes(b[:4], 'big'); seen = set()
+if sys.argv[2] == 'zkbpp':
+    nb, p = (n + 7) // 8, 8
+    while p < len(b):
+        o = p + 33 + nb + 32; h = o + 1 + b[o]
+        seen.add(b[p + 32] == 2); p = h + 1 + (nb if b[h] else 0)
+else:
+    rows, nd = n // 2, 5 * n; nbb = rows * n.bit_length()
+    fixed = 96 + 3 * (n + nbb + nd + 1 + 2 * rows + n) * 3 + 64 + (2 * n + nbb + nd) * 3
+    p = 12
+    while p < len(b):
+        h = p + fixed; seen.add(b[h]); p = h + 1 + ((n + nbb + nd) * 3 if b[h] else 0)
+sys.exit(0 if len(seen) == 2 else 1)
+PYEOF
+}
+for try in 1 2 3 4 5 6 7 8 9 10; do
+    mk sign --algo nl-zkbpp --key "$FX/zk.pem" --in "$FX/m.txt" --rounds 8 --out "$FX/zkbpp8r.pem"
+    has_both "$FX/zkbpp8r.pem" zkbpp && break
 done
 mk genpkey --algo hkex-rnl --out "$FX/rs.pem"
 mk pkey --in "$FX/rs.pem" --pubout --out "$FX/rs_pub.pem"
@@ -98,7 +150,10 @@ mk pkey --in "$FX/iss.pem" --pubout --out "$FX/iss_pub.pem"
 mk genpkey --algo hcred --out "$FX/hc.pem"
 mk pkey --in "$FX/hc.pem" --pubout --out "$FX/hc_pub.pem"
 mk cred-issue --our "$FX/iss.pem" --in "$FX/hc_pub.pem" --rounds 4 --out "$FX/cred.pem"
-mk cred-prove --in "$FX/hc.pem" --msg nonce --rounds 4 --out "$FX/hcproof.pem"
+for try in 1 2 3 4 5 6 7 8 9 10; do
+    mk cred-prove --in "$FX/hc.pem" --msg nonce --rounds 4 --out "$FX/hcproof.pem"
+    has_both "$FX/hcproof.pem" hcproof && break
+done
 
 # ── one run: LANG KIND FILE -> "FILE LANG VERDICT | detail" ───────────────────
 cat > "$TMP/run.sh" <<'SHEOF'
@@ -128,7 +183,7 @@ elif [ $rc -eq 0 ]; then
     case $kind in zkpriv|hcpriv) v="OK:$(md5sum < "$o" | cut -c1-12)" ;; *) v=OK ;; esac
 elif printf '%s' "$so" | grep -q FAIL; then v=FAILED
 else v=REFUSED; fi
-echo "$(basename "$f") $lang $v | $(printf '%s' "$all" | tr '\n' ' ' | cut -c1-200)"
+echo "$(basename "$f") $lang $v | $(printf '%s' "$all" | tr '\n' ' ' | cut -c1-500)"
 rm -f "$o" "$o.err"
 SHEOF
 chmod +x "$TMP/run.sh"
@@ -151,7 +206,7 @@ for f in py go java; do
 done
 
 # ── controls: every fixture is read by every CLI ──────────────────────────────
-CTRL="zkpriv:zk.pem zkpub:zk_pub.pem zkboo:zkboo.pem zkbpp:zkbpp.pem zkboo64:zkboo64.pem
+CTRL="zkpriv:zk.pem zkpub:zk_pub.pem zkboo:zkboo.pem zkbpp:zkbpp.pem zkbpp:zkbpp8r.pem zkboo64:zkboo64.pem
       zkbpp64:zkbpp64.pem rnlsig:rnlsig.pem hcpriv:hc.pem hcpub:hc_pub.pem hcproof:hcproof.pem"
 mkdir -p "$TMP/ctrl"
 for kf in $CTRL; do cp "$FX/${kf#*:}" "$TMP/ctrl/${kf#*:}"; done
@@ -174,9 +229,9 @@ ncases=$(wc -l < "$TMP/list.txt")
 while read -r kind name _; do for l in "${LANGS[@]}"; do echo "$l $kind $TMP/cases/$name"; done; done \
     < "$TMP/list.txt" | xargs -P "$JOBS" -n 3 "$TMP/run.sh" > "$TMP/res.txt"
 
-python3 - "$TMP" "$FX" "${LANGS[@]}" > "$TMP/verdict" <<'PYEOF' || true
+cat > "$TMP/compare.py" <<'PYEOF'
 import base64, sys
-tmp, fx, langs = sys.argv[1], sys.argv[2], sys.argv[3:]
+tmp, resfile, langs = sys.argv[1], sys.argv[2], sys.argv[3:]
 
 def body(path):
     t = open(path).read().split('\n')
@@ -185,42 +240,18 @@ def body(path):
 def u32(b, o=0):
     return int.from_bytes(b[o:o + 4], 'big')
 
-# TODO #408's recorded non-canonical encodings: a disagreement on a case of
-# this shape is KNOWN, not a failure, until #408 makes every CLI refuse it.
-def known(kind, b):
-    if kind in ('hcpriv', 'hcpub'):
-        n = u32(b)
-        if n not in (32, 64, 128, 256):
-            return None
-        lay = [(3, 65537), (2, 4096), (3, 65537)] if kind == 'hcpriv' else [(2, 4096), (3, 65537)]
-        if len(b) != 4 + sum(w for w, _ in lay) * n + n // 8 + (n // 2 + 7) // 8:
-            return None
-        off = 4
-        for w, lim in lay:
-            for i in range(n):
-                if int.from_bytes(b[off + w * i:off + w * (i + 1)], 'big') >= lim:
-                    return 'HCRED coefficient not below q / p'
-            off += w * n
-        return None
-    if kind == 'zkbpp':
-        n0 = u32(body(f'{fx}/zkbpp.pem'))
-        n = u32(b)
-        if n != n0 and 0 < n and (n + 7) // 8 == (n0 + 7) // 8:
-            return 'ZKB++ proof n differs from the key n'
-    return None
-
 kinds = {}
 for line in open(f'{tmp}/list.txt'):
     k, name, how = line.split()
     kinds[name] = (k, how)
 res = {}
-for line in open(f'{tmp}/res.txt'):
-    head, _, detail = line.partition(' | ')
-    name, lang, v = head.split(' ')
+for line in open(resfile):
+    head, _, detail = line.partition(' |')
+    name, lang, v = head.split()[:3]
     res.setdefault(name, {})[lang] = (v, detail.strip())
 
 seen = {}
-bad = crashes = nknown = missing = 0
+bad = crashes = missing = 0
 for name, (kind, how) in sorted(kinds.items()):
     r = res.get(name, {})
     if set(r) != set(langs):
@@ -234,12 +265,6 @@ for name, (kind, how) in sorted(kinds.items()):
         continue
     vs = {r[l][0] for l in langs}
     if len(vs) > 1:
-        why = known(kind, body(f'{tmp}/cases/{name}'))
-        if why:
-            nknown += 1
-            if nknown <= 6:
-                print(f'KNOWN #408 {name} ({how}), {why}: ' + ', '.join(f'{l} {r[l][0]}' for l in langs))
-            continue
         bad += 1
         if bad <= 8:
             print(f'DIFF {name} ({how}):')
@@ -252,7 +277,6 @@ for name, (kind, how) in sorted(kinds.items()):
 print(f'CASES {len(kinds)} MISSING {missing}')
 print(f'DISAGREE {bad}')
 print(f'CRASHES {crashes}')
-print(f'KNOWNCOUNT {nknown}')
 FLOOR = {'zkpriv': 'OK REFUSED', 'hcpriv': 'OK REFUSED', 'zkpub': 'FAILED REFUSED',
          'zkboo': 'FAILED REFUSED', 'zkbpp': 'FAILED REFUSED', 'rnlsig': 'FAILED REFUSED',
          'hcpub': 'OK REFUSED', 'hcproof': 'REFUSED'}
@@ -260,17 +284,25 @@ for kind, outs in FLOOR.items():
     for v in outs.split():
         print(f'KIND {seen.get((kind, v), 0)} {kind} {v}')
 PYEOF
+python3 "$TMP/compare.py" "$TMP" "$TMP/res.txt" "${LANGS[@]}" > "$TMP/verdict" || true
+# The comparison's negative control: the same results with ONE verdict changed
+# must be reported as one disagreement.
+awk -v l="${LANGS[0]}" '!done && $2 == l { sub(/^[^ ]+ [^ ]+ [^ ]+/, $1 " " $2 " PLANTED"); done = 1 } { print }' \
+    "$TMP/res.txt" > "$TMP/res_planted.txt"
+python3 "$TMP/compare.py" "$TMP" "$TMP/res_planted.txt" "${LANGS[@]}" > "$TMP/verdict_planted" || true
 
-grep '^DIFF \|^CRASH \|^KNOWN #408\|^    ' "$TMP/verdict" || true
+grep '^DIFF \|^CRASH \|^    ' "$TMP/verdict" || true
 read -r _ ntot _ nmiss < <(grep '^CASES' "$TMP/verdict" || echo "CASES 0 MISSING 0")
 if [ "$ntot" -eq "$ncases" ] && [ "$nmiss" -eq 0 ] && [ "$ntot" -gt 0 ]; then
     pass "every CLI answered all $ntot generated cases (seeds: $SEEDS)"
 else fail "of $ncases generated cases, $ntot were listed and $nmiss lack an answer from some CLI"; fi
 read -r _ nbad < <(grep '^DISAGREE' "$TMP/verdict" || echo "DISAGREE -1")
-read -r _ nknown < <(grep '^KNOWNCOUNT' "$TMP/verdict" || echo "KNOWNCOUNT 0")
 if [ "$nbad" -eq 0 ]; then
-    pass "all ${#LANGS[@]} CLIs give every generated case the same result ($nknown TODO #408 KNOWN cases set aside)"
+    pass "all ${#LANGS[@]} CLIs give every generated case the same result"
 else fail "the CLIs disagree on $nbad generated cases (first ones above)"; fi
+read -r _ nplant < <(grep '^DISAGREE' "$TMP/verdict_planted" || echo "DISAGREE -1")
+if [ "$nplant" -eq $((nbad + 1)) ]; then pass "control: one planted verdict change is reported as one disagreement"
+else fail "control: a planted verdict change gave $nplant disagreements, expected $((nbad + 1))"; fi
 read -r _ ncr < <(grep '^CRASHES' "$TMP/verdict" || echo "CRASHES -1")
 if [ "$ncr" -eq 0 ]; then pass "no CLI crashed on any generated case"
 else fail "a CLI crashed on $ncr generated cases (first ones above)"; fi
@@ -281,109 +313,148 @@ if grep -q '^KIND' "$TMP/verdict"; then
     done < <(grep '^KIND' "$TMP/verdict")
 else fail "coverage: the comparison printed no KIND lines"; fi
 
-# ── named cells: TODO #407's refusals and TODO #408's KNOWN encodings ─────────
+
+# ── named cells: TODO #407's and #408's refusals by their text; #409's ───────
+# Each is made from a valid fixture; cells.lst says what every CLI must do:
+# "KIND FILE TEXT" (refuse with TEXT) or "KIND FILE =FAILED" (verify, and fail).
 python3 - "$FX" "$TMP/cells" <<'PYEOF'
 import base64, os, sys
 fx, out = sys.argv[1], sys.argv[2]
 os.makedirs(out, exist_ok=True)
+lst = open(f'{out}/cells.lst', 'w')
 def rd(f):
     t = open(f'{fx}/{f}').read().split('\n')
     return t[0][11:-5], bytearray(base64.b64decode(''.join(l for l in t[1:] if l and not l.startswith('-----'))))
-def wr(name, lab, b):
+def cell(kind, name, lab, b, want):
     open(f'{out}/{name}.pem', 'w').write(
         f'-----BEGIN {lab}-----\n{base64.encodebytes(bytes(b)).decode()}-----END {lab}-----\n')
-def zkboo_views(b):                   # [(len offset, view offset, len)] for both views of every round
+    lst.write(f'{kind} {name} {want}\n')
+def u32(b, o=0): return int.from_bytes(b[o:o + 4], 'big')
+def zkboo_views(b):        # per round: ((len off, view off, len) for view_p1, for view_p2)
     p, v = 8, []
     while p < len(b):
-        q = p + 97
-        l1 = int.from_bytes(b[q:q + 2], 'big')
-        r = q + 2 + l1
-        l2 = int.from_bytes(b[r:r + 2], 'big')
-        v.append(((q, q + 2, l1), (r, r + 2, l2)))
-        p = r + 2 + l2
+        q = p + 97; l1 = int.from_bytes(b[q:q + 2], 'big')
+        r = q + 2 + l1; l2 = int.from_bytes(b[r:r + 2], 'big')
+        v.append(((q, q + 2, l1), (r, r + 2, l2))); p = r + 2 + l2
     return v
-def zkbpp_gates(b):                   # [(gates_len offset, has_share2 offset)] per round
-    nb = (int.from_bytes(b[:4], 'big') + 7) // 8
-    p, g = 8, []
+def zkbpp_rounds(b):       # per round: (round off, e, gates_len off, has_share2 off)
+    nb = (u32(b) + 7) // 8; p, g = 8, []
     while p < len(b):
-        o = p + 33 + nb + 32
-        h = o + 1 + b[o]
-        g.append((o, h))
-        p = h + 1 + (nb if b[h] else 0)
+        o = p + 33 + nb + 32; h = o + 1 + b[o]
+        g.append((p, b[p + 32], o, h)); p = h + 1 + (nb if b[h] else 0)
     return g
-def shorten_view(b, rnd, which):
+def resize_view(b, rnd, which, delta):
     lo, vo, l = zkboo_views(b)[rnd][which]
     d = bytearray(b)
-    del d[vo + l - 1]
-    d[lo:lo + 2] = (l - 1).to_bytes(2, 'big')
-    return d
-for s in ('', '64'):
-    lab, b = rd(f'zkboo{s}.pem')
-    wr(f'short_v1{s}', lab, shorten_view(b, 0, 0))
-    wr(f'short_v2{s}', lab, shorten_view(b, 1, 1))
-    lab, b = rd(f'zkbpp{s}.pem')
-    o, _ = zkbpp_gates(b)[0]
+    if delta < 0: del d[vo + l - 1]
+    else: d.insert(vo + l, 0)
+    d[lo:lo + 2] = (l + delta).to_bytes(2, 'big')
+    return d, l + delta, l
+def resize_gates(b, delta):
+    _, _, o, _ = zkbpp_rounds(b)[0]
     d = bytearray(b); gl = d[o]
-    del d[o + 1:o + 1 + gl]
-    d[o] = 0
-    wr(f'short_g{s}', lab, d)
-lab, b = rd('hcproof.pem')
+    if delta < 0: del d[o + gl]
+    else: d.insert(o + 1 + gl, 0)
+    d[o] = gl + delta
+    return d, gl + delta, gl
+P, PP = 'HERRADURA ZKP-NL PROOF', 'HERRADURA ZKP-NL-PP SIGNATURE'
+for s, n in (('', 12), ('64', 64)):
+    lab, b = rd(f'zkboo{s}.pem')
+    for which, rnd, name in ((0, 0, 'view_p1'), (1, 1, 'view_p2')):
+        for delta, tag in ((-1, 'short'), (1, 'long')):     # #407 short, #408 long
+            d, got, need = resize_view(b, rnd, which, delta)
+            cell(f'zkboo{s}', f'{tag}_{name}{s}', lab, d,
+                 f"malformed PEM '{P}': round {rnd} {name} is {got} bytes, n={n} needs {need}")
+    lab, b = rd(f'zkbpp{s}.pem')
+    for delta, tag in ((-1, 'short'), (1, 'long')):
+        d, got, need = resize_gates(b, delta)
+        cell(f'zkbpp{s}', f'{tag}_gates{s}', lab, d,
+             f"malformed PEM '{PP}': round 0 gates_p2 is {got} bytes, n={n} needs {need}")
+# #408: a proof over another n (13 has the key's byte width, 1 does not)
+for kind, f, pn in (('zkboo', 'zkboo.pem', 1), ('zkbpp', 'zkbpp.pem', 13)):
+    lab, b = rd(f); d = bytearray(b); d[0:4] = pn.to_bytes(4, 'big')
+    cell(kind, f'n{pn}_{kind}', lab, d, f'proof n mismatch with pubkey n ({pn} vs 12)')
+# #408: has_share2 other than (e != 2), both ways, at n = 12 with 8 rounds
+lab, b = rd('zkbpp8r.pem'); g = zkbpp_rounds(b); nb = 2
+j, (p, e, o, h) = next((j, r) for j, r in enumerate(g) if r[1] != 2)
+d = bytearray(b); d[h] = 2
+cell('zkbpp', 'has_share2_2', lab, d, f"malformed PEM '{PP}': round {j} has_share2 is 2, e={e} needs 1")
+j, (p, e, o, h) = next((j, r) for j, r in enumerate(g) if r[1] == 2)
+d = bytearray(b); d[h] = 1; d[h + 1:h + 1] = bytes(nb)
+cell('zkbpp', 'share2_unneeded', lab, d, f"malformed PEM '{PP}': round {j} has_share2 is 1, e=2 needs 0")
+# #408: a bit above n = 12 (nb = 2: the top four bits of the first byte)
+lab, b = rd('zkboo.pem'); _, vo, _ = zkboo_views(b)[0][0]
+d = bytearray(b); d[vo] |= 0x80
+cell('zkboo', 'bits_view_share', lab, d, f"malformed PEM '{P}': round 0 view_p1 share has bits above n=12")
+lab, b = rd('zkbpp.pem'); p, e, o, h = zkbpp_rounds(b)[0]
+d = bytearray(b); d[p + 33] |= 0x80
+cell('zkbpp', 'bits_out_e', lab, d, f"malformed PEM '{PP}': round 0 out_e has bits above n=12")
+lab, b = rd('zk.pem'); d = bytearray(b); d[4] |= 0x80
+cell('zkpriv', 'bits_A', lab, d, f"malformed PEM '{lab}': A has bits above n=12")
+lab, b = rd('zk_pub.pem'); d = bytearray(b); d[6] |= 0x80
+cell('zkpub', 'bits_y', lab, d, f"malformed PEM '{lab}': y has bits above n=12")
+# #409: ZKBoo signatures the verifier must fail.  A prover with a wrong A ...
+for kind, f in (('zkboo', 'zkboo_wrongA.pem'), ('zkbpp', 'zkbpp_wrongA.pem')):
+    lab, b = rd(f)
+    cell(kind, f'wrongA_{kind}', lab, b, '=FAILED')
+# ... and one bit of a valid view (n = 12, nb = 2: share | tape | out | gates)
+lab, b = rd('zkboo.pem'); V = zkboo_views(b)
+for rnd, which, wname, off, bit, name in (
+        (0, 0, 'p1', 2 * 2 + 32, 7, 'gate_bit7'), (0, 0, 'p1', 2 * 2 + 32, 0, 'gate_bit0'),
+        (1, 1, 'p2', 2 * 2 + 32 + 1, 1, 'gate_bit1'), (0, 0, 'p1', 0, 3, 'share_bit11'),
+        (1, 1, 'p2', 0, 3, 'share_bit11'), (0, 1, 'p2', 2 + 32 + 1, 0, 'out_bit0')):
+    _, vo, _ = V[rnd][which]
+    d = bytearray(b); d[vo + off] ^= 1 << bit
+    cell('zkboo', f'{name}_{wname}_r{rnd}', lab, d, '=FAILED')
+# #408: HCRED values not below q / p, in each artifact
+def bump(f, off, w, by):
+    lab, b = rd(f); d = bytearray(b)
+    v = int.from_bytes(d[off:off + w], 'big') + by
+    d[off:off + w] = v.to_bytes(w, 'big')
+    return lab, d, v
+lab, b = rd('hc.pem'); hn = u32(b)
+lab, d, v = bump('hc.pem', 4 + 3 * hn + 2 * hn, 3, 65537)          # m[0]
+cell('hcpriv', 'hc_priv_m', lab, d, f"malformed PEM '{lab}': value {v} at byte {4 + 5 * hn} is not below 65537")
+lab, d, v = bump('hc.pem', 4 + 3 * hn, 2, 4096)                      # C[0]
+cell('hcpriv', 'hc_priv_C', lab, d, f"malformed PEM '{lab}': value {v} at byte {4 + 3 * hn} is not below 4096")
+lab, d, v = bump('hc_pub.pem', 4 + 2 * hn, 3, 65537)                # m[0]
+cell('hcpub', 'hc_pub_m', lab, d, f"malformed PEM '{lab}': value {v} at byte {4 + 2 * hn} is not below 65537")
+lab, b = rd('hcproof.pem'); n = u32(b); R = u32(b, 8)
+rows, nd = n // 2, 5 * n; nbb = rows * n.bit_length()
+outs = 3 * (n + nbb + nd + 1 + 2 * rows + n) * 3
+fixed = 96 + outs + 64 + (2 * n + nbb + nd) * 3; aux = (n + nbb + nd) * 3
+p, rs = 12, []
+for r in range(R):
+    h = p + fixed; rs.append((p, h, b[h])); p = h + 1 + (aux if b[h] else 0)
+a1 = rs[0][0] + 96 + outs + 64
+lab, d, v = bump('hcproof.pem', a1, 3, 65537)
+cell('hcproof', 'hc_proof_a1', lab, d, f"malformed PEM '{lab}': value {v} at byte {a1} is not below 65537")
+j, (p, h, ha) = next((j, r) for j, r in enumerate(rs) if r[2] == 1)
+d = bytearray(b); d[h] = 2
+cell('hcproof', 'has_aux_2', lab, d, f"malformed PEM '{lab}': round {j} has_aux is 2, expected 0 or 1")
+j, (p, h, ha) = next((j, r) for j, r in enumerate(rs) if r[2] == 0)
+d = bytearray(b); d[h] = 1; d[h + 1:h + 1] = bytes(aux)
+cell('hcproof', 'aux_unneeded', lab, d, '=FAILED')
+# #407: an HCRED W out of range
 for w in (0, 257):
     d = bytearray(b); d[4:8] = w.to_bytes(4, 'big')
-    wr(f'w{w}', lab, d)
-# TODO #408's KNOWN encodings, each made from a valid artifact
-lab, b = rd('zkboo.pem')
-lo, vo, l = zkboo_views(b)[0][0]
-d = bytearray(b); d.insert(vo + l, 0); d[lo:lo + 2] = (l + 1).to_bytes(2, 'big')
-wr('k_view_long', lab, d)
-lab, b = rd('zkbpp.pem')
-g = zkbpp_gates(b)
-d = bytearray(b)
-h = next(h for _, h in g if d[h] == 1)
-d[h] = 2
-wr('k_has2', lab, d)
-o, _ = g[0]
-d = bytearray(b); d.insert(o + 1 + d[o], 0); d[o] += 1
-wr('k_gate_extra', lab, d)
-d = bytearray(b); d[0:4] = (1).to_bytes(4, 'big')
-wr('k_n1', lab, d)
-lab, b = rd('hc.pem')
-d = bytearray(b); n = int.from_bytes(d[:4], 'big')
-mo = 4 + 3 * n + 2 * n                      # m[0], a Z_q coefficient
-d[mo:mo + 3] = (65537 + int.from_bytes(d[mo:mo + 3], 'big')).to_bytes(3, 'big')
-wr('k_hc_coef', lab, d)
+    cell('hcproof', f'w{w}', lab, d, f'HCRED proof: W out of range ({w})')
 PYEOF
-CELLS="zkboo:short_v1 zkboo:short_v2 zkboo64:short_v164 zkboo64:short_v264 zkbpp:short_g zkbpp64:short_g64
-       hcproof:w0 hcproof:w257 zkboo:k_view_long zkbpp:k_has2 zkbpp:k_gate_extra zkbpp:k_n1 hcpriv:k_hc_coef"
-for kc in $CELLS; do for l in "${LANGS[@]}"; do echo "$l ${kc%%:*} $TMP/cells/${kc#*:}.pem"; done; done \
-    | xargs -P "$JOBS" -n 3 "$TMP/run.sh" > "$TMP/cells.txt"
-want() {   # cell, expected text: every CLI must refuse with it
-    local c="$1" t="$2" l line ok=1
+while read -r kind name _; do for l in "${LANGS[@]}"; do echo "$l $kind $TMP/cells/$name.pem"; done; done \
+    < "$TMP/cells/cells.lst" | xargs -P "$JOBS" -n 3 "$TMP/run.sh" > "$TMP/cells.txt"
+while read -r kind name want; do
+    ok=1
     for l in "${LANGS[@]}"; do
-        line=$(grep "^$c.pem $l " "$TMP/cells.txt" || true)
-        case "$line" in *" REFUSED | "*"$t"*) ;; *) ok=0; echo "    $l: ${line:0:200}" ;; esac
+        line=$(grep "^$name.pem $l " "$TMP/cells.txt" || true)
+        if [ "$want" = "=FAILED" ]; then
+            case "$line" in *" FAILED | "*) ;; *) ok=0; echo "    $l: ${line:0:200}" ;; esac
+        else
+            case "$line" in *" REFUSED | "*"$want"*) ;; *) ok=0; echo "    $l: ${line:0:200}" ;; esac
+        fi
     done
-    if [ $ok = 1 ]; then pass "$c: every CLI refuses it: $t"; else fail "$c: not refused as '$t' by every CLI (above)"; fi
-}
-want short_v1     "malformed PEM 'HERRADURA ZKP-NL PROOF': round 0 view_p1 is 40 bytes, n=8 needs 41"
-want short_v2     "malformed PEM 'HERRADURA ZKP-NL PROOF': round 1 view_p2 is 40 bytes, n=8 needs 41"
-want short_v164   "malformed PEM 'HERRADURA ZKP-NL PROOF': round 0 view_p1 is 110 bytes, n=64 needs 111"
-want short_v264   "malformed PEM 'HERRADURA ZKP-NL PROOF': round 1 view_p2 is 110 bytes, n=64 needs 111"
-want short_g      "malformed PEM 'HERRADURA ZKP-NL-PP SIGNATURE': round 0 gates_p2 is 0 bytes, n=8 needs 1"
-want short_g64    "malformed PEM 'HERRADURA ZKP-NL-PP SIGNATURE': round 0 gates_p2 is 0 bytes, n=64 needs 8"
-want w0           "HCRED proof: W out of range (0)"
-want w257         "HCRED proof: W out of range (257)"
-# TODO #408: printed, not scored; the divergent ones must be flagged by the
-# comparison (the same rule the generated cases go through).
-for c in k_view_long k_has2 k_gate_extra k_n1 k_hc_coef; do
-    vs=$(grep "^$c.pem " "$TMP/cells.txt" | awk '{print $2 "=" $3}' | sort | tr '\n' ' ')
-    echo "KNOWN #408 $c: $vs"
-done
-for c in k_gate_extra k_n1 k_hc_coef; do
-    n=$(grep "^$c.pem " "$TMP/cells.txt" | awk '{print $3}' | sort -u | wc -l)
-    if [ "$n" -gt 1 ]; then pass "control: the comparison flags $c, where the CLIs differ (TODO #408)"
-    else fail "control: $c no longer divides the CLIs: TODO #408 may have landed; move it to a refusal cell"; fi
-done
+    if [ "$want" = "=FAILED" ]; then w="fails verification"; else w="refuses it: $want"; fi
+    if [ $ok = 1 ]; then pass "$name: every CLI $w"; else fail "$name: not every CLI $w (above)"; fi
+done < "$TMP/cells/cells.lst"
 
 echo "Results: $PASS PASS / $FAIL FAIL (CLIs: ${LANGS[*]})"
 [ "$FAIL" -eq 0 ]

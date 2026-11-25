@@ -2486,3 +2486,75 @@ only the lines from `-----BEGIN` to `-----END` inclusive, e.g.
 `sed -n '/^-----BEGIN /,/^-----END /p' old.pem > new.pem` for a file with text around a
 single block.  A mismatched END label is a damaged file; regenerate it.
 
+
+---
+
+## 52. Raw-body ZKP-NL and HCRED files must be in their writer's encoding (v19.0.0)
+
+**Who is affected:** nobody whose files came from a CLI unchanged.  Every CLI writes
+these exactly; what now fails was a hand-made or re-encoded file, a valid artifact
+changed in a way that some or all of the four CLIs still accepted:
+
+- **`nl-zkboo` / `nl-zkbpp` signatures:** a ZKBoo view or ZKB++ gate field longer than
+  n needs; a ZKB++ `has_share2` other than 1 for e = 0 or 1 and 0 for e = 2 (a share the
+  verifier never reads); a proof whose n is not the public key's (Go and Python verified
+  one of the same byte width); a bit above n in a view's share or output, in `out_e` or in
+  `share2`.
+- **ZKP-NL keys:** a bit above n in A, B or y (a private key with one gave the same
+  public key).
+- **HCRED keys and proofs:** a Z_q value not below q = 65537 or a Z_p value not below
+  p = 4096, anywhere in the private key, the public key or the proof (C wrote a different
+  public key from such a private key than Go, Python and Java did); a proof's `has_aux`
+  other than 0 or 1.  A proof carrying an aux block its challenge does not open now FAILS
+  verification in all four CLIs instead of verifying.
+
+**What changed (TODO #408).**  #372 and #373 held DER artifacts to one encoding; the
+eight raw-body PEMs had no such rule, and `CliTest/test_raw_body_diff.sh` (TODO #406)
+found each case above.  Every reader now refuses them with one text, the same in all
+four CLIs (SPEC.md section 10.3):
+
+```
+malformed PEM 'HERRADURA ZKP-NL PROOF': round 0 view_p1 is 48 bytes, n=12 needs 47
+malformed PEM 'HERRADURA ZKP-NL-PP SIGNATURE': round 3 has_share2 is 1, e=2 needs 0
+malformed PEM 'HERRADURA ZKP-NL PRIVATE KEY': A has bits above n=12
+malformed PEM 'HERRADURA HCRED PUBLIC KEY': value 119245 at byte 516 is not below 65537
+malformed PEM 'HERRADURA HCRED PROOF': round 2 has_aux is 2, expected 0 or 1
+verify: proof n mismatch with pubkey n (13 vs 12)
+```
+
+**What to do.**  Nothing for files a CLI wrote.  A refused signature or proof is
+regenerated with `sign` / `cred-prove`.  A refused key that a CLI did not write can be
+reduced by hand (each field to its value mod 2^n, q or p), but regenerating it is
+simpler.
+
+The same release changes the ZKBoo transcript itself; see section 53.
+
+## 53. ZKBoo signatures are bound to their statement (v19.0.0)
+
+**Who is affected:** anyone holding an `nl-zkboo` signature (`HERRADURA ZKP-NL PROOF`)
+made before v19.0.0.  It no longer verifies in any CLI.  ZKP-NL keys, ZKB++ (`nl-zkbpp`)
+signatures and everything else are unchanged; the PAKE demos, which run ZKBoo inside one
+process, need nothing.
+
+**Why (TODO #409).**  The ZKBoo verifier, in all four ports, never related the proof's
+output shares to the public y: it checked one bit of each gate byte and commitments over
+the tape and output share alone.  A signature made from ANY private value A verified
+under the public key (B, y), at every round count, in all four CLIs:
+
+```
+sign   --algo nl-zkboo --key key_with_another_A.pem --in m.txt --out sig.pem
+verify --algo nl-zkboo --pubkey pub.pem --in m.txt --sig sig.pem   # "Signature OK" before v19.0.0
+```
+
+So a pre-v19.0.0 ZKBoo signature proves nothing about its signer.  The fix is standard
+ZKBoo: each commitment covers the party's whole view, the Fiat-Shamir seed binds every
+round's three output shares (the verifier infers the hidden one from y), and the
+verifier checks every gate byte and both revealed output shares (SPEC.md section 10.3).
+The PEM layout is unchanged, so an old signature still reads; it fails verification
+(`Verification FAILED`).
+
+**What to do.**  Re-sign with `sign --algo nl-zkboo` under v19.0.0 using the same key.
+Treat any old ZKBoo signature as unauthenticated: there is no way to tell one made with
+the key from one made without it, so do not "convert" old signatures by trusting them
+once.  If you need a signature that was sound before v19.0.0 too, ZKB++ (`nl-zkbpp`) was
+never affected.

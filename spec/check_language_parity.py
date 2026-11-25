@@ -5958,6 +5958,12 @@ CENSUS_EXEMPT = {
          "the xorshift and degree helpers). The five members that ARE protocol steps "
          "— qcp_mul, qcp_mul_sparse, qcp_inv, qcprf_refill, qcprf_idx_bytes — are "
          "excluded from this rule and carry manifest entries"),
+        (r"^zkp_nl_ch_seed$",
+         "the ZKBoo Fiat-Shamir seed over commitments, output shares, B, y and "
+         "msg (TODO #409), one buffer shared by zkp_nl_prove and zkp_nl_verify. "
+         "Python, Go and Java hash the same concatenation inline in both; the "
+         "zkp-nl prove/verify rows and operation_replay's zkp_nl_prove row are "
+         "what hold the four to one transcript"),
         (r"^_u256_(load|store)$", "load/store of hfscx-256-compress's four-word 256-bit value (TODO #369). Python holds it as one int and needs neither"),
         (r"_be64$", "big-endian 8-byte packing helper. Go has encoding/binary and "
                     "Python has int.to_bytes; there is nothing to port"),
@@ -5979,6 +5985,10 @@ CENSUS_EXEMPT = {
                    "fixed-width stem is what the manifest names"),
     ],
     "go": [
+        (r"^zkpNlBE$",
+         "v as nb big-endian bytes for the ZKBoo transcript (TODO #409). C "
+         "writes the loop inline, Python has int.to_bytes and Java "
+         "ZkpNl.toFixedBytes; there is nothing to port"),
         (r"^sternL(Bit|Xor|Popcount|Check|MsgCheck|Rand)$",
          "the Stern-F long form's byte-string plumbing (TODO #382): bit read, "
          "XOR, popcount, the N and message-width checks and the CSPRNG read.  "

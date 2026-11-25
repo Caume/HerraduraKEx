@@ -1194,30 +1194,37 @@ def _zkp_nl_keygen(n):
     return A, B, y
 
 
+def _zkp_nl_out_share(p, share, carries, B, n):
+    """Party p's output share from its input share and carry bits: the linear
+    tail of _zkp_nl_evaluate_circuit (the suite's _zkpp_out_share).  The ZKBoo
+    verifier recomputes both revealed parties' shares with it (TODO #409)."""
+    mask = (1 << n) - 1
+    sum_share = 0
+    for i in range(n):
+        sum_share ^= (((share >> i) & 1) ^ ((B >> i) & 1) ^ carries[i]) << i
+    rot = _zkp_nl_rol(sum_share, n // 4, n)
+    lin = (share ^ _zkp_nl_rol(share, 1, n) ^ _zkp_nl_rol(share, n - 1, n)) & mask
+    if p == 0:
+        lin ^= (B ^ _zkp_nl_rol(B, 1, n) ^ _zkp_nl_rol(B, n - 1, n)) & mask
+    return (lin ^ rot) & mask
+
+
 def _zkp_nl_prove(A, B, y, n, rounds, msg_bytes):
+    """ZKBoo prover: prove knowledge of A s.t. nl_fscx_v1(A, B) = y.
+
+    Returns a list of `rounds` dicts, each with keys:
+      com_0, com_1, com_2  — 32-byte HFSCX-256 commitments
+      e                    — hidden party index ∈ {0, 1, 2}
+      view_p1, view_p2     — bytes encoding revealed parties' shares, tape, and gate views
+    """
     mask = (1 << n) - 1
     nb   = (n + 7) // 8
+
     all_coms  = []
     all_views = []
     com_block = b''
-    for j in range(rounds):
-        s0 = int.from_bytes(os.urandom(nb), 'big') & mask
-        s1 = int.from_bytes(os.urandom(nb), 'big') & mask
-        s2 = (A ^ s0 ^ s1) & mask
-        shares = [s0, s1, s2]
-        tapes  = [os.urandom(32) for _ in range(3)]
-        out_shares, gate_views = _zkp_nl_evaluate_circuit(shares, tapes, B, n)
-        coms = [
-            _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p]),
-                      tapes[p], out_shares[p].to_bytes(nb, 'big'))
-            for p in range(3)
-        ]
-        all_coms.append(coms)
-        all_views.append((shares, tapes, out_shares, gate_views))
-        com_block += b''.join(coms)
-    ch_seed = _zkp_nl_h(
-        com_block, B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'), msg_bytes
-    )
+    out_block = b''
+
     def _pack_view(p_idx, shares_l, tapes_l, out_shares_l, gate_views_l):
         view  = shares_l[p_idx].to_bytes(nb, 'big')
         view += tapes_l[p_idx]
@@ -1225,71 +1232,132 @@ def _zkp_nl_prove(A, B, y, n, rounds, msg_bytes):
         for in0, in1, out in gate_views_l[p_idx]:
             view += bytes([in0 | (in1 << 1) | (out << 2)])
         return view
+
+    for j in range(rounds):
+        s0 = int.from_bytes(os.urandom(nb), 'big') & mask
+        s1 = int.from_bytes(os.urandom(nb), 'big') & mask
+        s2 = (A ^ s0 ^ s1) & mask
+        shares = [s0, s1, s2]
+        tapes  = [os.urandom(32) for _ in range(3)]
+
+        out_shares, gate_views = _zkp_nl_evaluate_circuit(shares, tapes, B, n)
+
+        views = [_pack_view(p, shares, tapes, out_shares, gate_views)
+                 for p in range(3)]
+        # Each commitment covers the party's WHOLE view (TODO #409).
+        coms = [_zkp_nl_h(j.to_bytes(4, 'big'), bytes([p]), views[p])
+                for p in range(3)]
+        all_coms.append(coms)
+        all_views.append(views)
+        com_block += b''.join(coms)
+        out_block += b''.join(o.to_bytes(nb, 'big') for o in out_shares)
+
+    # Fiat-Shamir: bind all commitments, all three output shares of every
+    # round (so the verifier's out_e = y ^ out_p1 ^ out_p2 is checked), B, y
+    # and msg_bytes -- the ZKB++ transcript's order (TODO #409).
+    ch_seed = _zkp_nl_h(
+        com_block, out_block, B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'),
+        msg_bytes
+    )
+
     rounds_out = []
     for j in range(rounds):
         h = _zkp_nl_h(ch_seed, j.to_bytes(4, 'big'))
         e = h[0] % 3
         p1, p2 = (e + 1) % 3, (e + 2) % 3
-        shares, tapes, out_shares, gate_views = all_views[j]
         rounds_out.append({
             'com_0':   all_coms[j][0],
             'com_1':   all_coms[j][1],
             'com_2':   all_coms[j][2],
             'e':       e,
-            'view_p1': _pack_view(p1, shares, tapes, out_shares, gate_views),
-            'view_p2': _pack_view(p2, shares, tapes, out_shares, gate_views),
+            'view_p1': all_views[j][p1],
+            'view_p2': all_views[j][p2],
         })
     return rounds_out
 
 
 def _zkp_nl_verify(B, y, n, rounds, msg_bytes, proof_rounds):
+    """ZKBoo verifier: verify proof that prover knows A s.t. nl_fscx_v1(A, B) = y.
+
+    Returns True iff all rounds verify.
+    """
+    # rounds == 0 would make every loop below run zero times and fall through to
+    # `return True` — accepting any message under any key (TODO #275).
+    #
+    # n is bounded only below: _ZKP_NL_MAX_N is a WIRE bound, enforced by
+    # codec.py's decoders, not a limit on a library caller's own width.
+    if (n <= 0 or rounds <= 0 or len(proof_rounds) != rounds):
+        return False
     mask = (1 << n) - 1
     nb   = (n + 7) // 8
-    coms_list  = [[r['com_0'], r['com_1'], r['com_2']] for r in proof_rounds]
-    challenges = [r['e'] for r in proof_rounds]
-    com_block = b''.join(b''.join(coms) for coms in coms_list)
-    ch_seed   = _zkp_nl_h(
-        com_block, B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'), msg_bytes
-    )
-    for j in range(rounds):
-        h = _zkp_nl_h(ch_seed, j.to_bytes(4, 'big'))
-        if h[0] % 3 != challenges[j]:
+    view_size = nb + 32 + nb + (n - 1)   # share + tape + out + gate bytes
+
+    # TODO #409: before v19.0.0 this checked only bit 2 of p1's gate bytes and
+    # the two commitments, which covered the tape and output share alone; it
+    # never related the output shares to y, so a proof made from ANY A
+    # verified.  It now checks, per round: every gate byte of both revealed
+    # views exactly (a_i | c_i << 1 | ao_i << 2, nothing above), both output
+    # shares against the views, both commitments over the whole view; and
+    # through the Fiat-Shamir hash, which binds all three output shares, that
+    # the hidden party's share is y ^ out_p1 ^ out_p2.
+    com_block = b''
+    out_block = b''
+    for j, resp in enumerate(proof_rounds):
+        e = resp['e']
+        if e not in (0, 1, 2):
             return False
-    def _unpack_view(view_bytes):
-        share = int.from_bytes(view_bytes[:nb], 'big')
-        tape  = view_bytes[nb:nb + 32]
-        out_s = int.from_bytes(view_bytes[nb + 32:nb + 32 + nb], 'big')
-        gv = []
-        for k in range(n - 1):
-            b3 = view_bytes[nb + 32 + nb + k]
-            gv.append((b3 & 1, (b3 >> 1) & 1, (b3 >> 2) & 1))
-        return share, tape, out_s, gv
-    for j, e in enumerate(challenges):
-        resp = proof_rounds[j]
         p1, p2 = (e + 1) % 3, (e + 2) % 3
-        share_p1, tape_p1, out_p1, gv_p1 = _unpack_view(resp['view_p1'])
-        share_p2, tape_p2, out_p2, gv_p2 = _unpack_view(resp['view_p2'])
-        c_p1 = _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p1]),
-                          tape_p1, out_p1.to_bytes(nb, 'big'))
-        c_p2 = _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p2]),
-                          tape_p2, out_p2.to_bytes(nb, 'big'))
-        if c_p1 != coms_list[j][p1] or c_p2 != coms_list[j][p2]:
+        v1, v2 = resp['view_p1'], resp['view_p2']
+        if len(v1) != view_size or len(v2) != view_size:
             return False
-        carry_p1, carry_p2 = 0, 0
+        share_p1 = int.from_bytes(v1[:nb], 'big')
+        share_p2 = int.from_bytes(v2[:nb], 'big')
+        tape_p1, tape_p2 = v1[nb:nb + 32], v2[nb:nb + 32]
+        out_p1 = int.from_bytes(v1[nb + 32:2 * nb + 32], 'big')
+        out_p2 = int.from_bytes(v2[nb + 32:2 * nb + 32], 'big')
+        gv_p1, gv_p2 = v1[2 * nb + 32:], v2[2 * nb + 32:]
+        if (share_p1 | share_p2 | out_p1 | out_p2) & ~mask:
+            return False
+
+        carries_1 = [0] * n
+        carries_2 = [0] * n
+        c1 = c2 = 0
         for i in range(n - 1):
-            ai_p1 = (share_p1 >> i) & 1
-            ai_p2 = (share_p2 >> i) & 1
-            ci_p1 = carry_p1
-            ci_p2 = carry_p2
-            Bi    = (B >> i) & 1
-            ri_p1 = _zkp_nl_prg_bit(tape_p1, i)
-            ri_p2 = _zkp_nl_prg_bit(tape_p2, i)
-            exp_and_p1 = ((ai_p1 & ci_p1) ^ (ai_p1 & ci_p2)
-                          ^ (ai_p2 & ci_p1) ^ ri_p1 ^ ri_p2)
-            if gv_p1[i][2] != exp_and_p1:
+            a1 = (share_p1 >> i) & 1
+            a2 = (share_p2 >> i) & 1
+            Bi = (B >> i) & 1
+            r1 = _zkp_nl_prg_bit(tape_p1, i)
+            r2 = _zkp_nl_prg_bit(tape_p2, i)
+            and_p1 = (a1 & c1) ^ (a1 & c2) ^ (a2 & c1) ^ r1 ^ r2
+            and_p2 = (gv_p2[i] >> 2) & 1
+            if gv_p1[i] != (a1 | (c1 << 1) | (and_p1 << 2)):
                 return False
-            carry_p1 = (Bi * ai_p1) ^ exp_and_p1 ^ (Bi * ci_p1)
-            carry_p2 = (Bi * ai_p2) ^ gv_p2[i][2] ^ (Bi * ci_p2)
+            if gv_p2[i] != (a2 | (c2 << 1) | (and_p2 << 2)):
+                return False
+            c1 = (Bi * a1) ^ and_p1 ^ (Bi * c1)
+            c2 = (Bi * a2) ^ and_p2 ^ (Bi * c2)
+            carries_1[i + 1] = c1
+            carries_2[i + 1] = c2
+
+        if (_zkp_nl_out_share(p1, share_p1, carries_1, B, n) != out_p1
+                or _zkp_nl_out_share(p2, share_p2, carries_2, B, n) != out_p2):
+            return False
+        out_e = (y ^ out_p1 ^ out_p2) & mask
+
+        coms = [resp['com_0'], resp['com_1'], resp['com_2']]
+        if (_zkp_nl_h(j.to_bytes(4, 'big'), bytes([p1]), v1) != coms[p1]
+                or _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p2]), v2) != coms[p2]):
+            return False
+        outs = [0, 0, 0]
+        outs[e], outs[p1], outs[p2] = out_e, out_p1, out_p2
+        com_block += b''.join(coms)
+        out_block += b''.join(o.to_bytes(nb, 'big') for o in outs)
+
+    ch_seed = _zkp_nl_h(com_block, out_block,
+                        B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'), msg_bytes)
+    for j, resp in enumerate(proof_rounds):
+        if _zkp_nl_h(ch_seed, j.to_bytes(4, 'big'))[0] % 3 != resp['e']:
+            return False
     return True
 
 

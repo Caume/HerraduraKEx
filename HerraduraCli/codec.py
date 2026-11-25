@@ -46,14 +46,39 @@ def _packed_end(body: bytes, off: int, label: str) -> None:
         raise ValueError(f"malformed PEM '{label}': {len(body) - off} bytes after its last field")
 
 
-def _packed_short(label: str, round_: int, field: str, got: int, n: int, need: int) -> None:
-    """TODO #407: a per-round length byte shorter than the field n fixes.  The
-    verifiers read the full size for n, so a shorter field was read past;
-    refuse it at the length byte, before the truncation checks.  Same text in
-    all four CLIs."""
-    if got < need:
+def _packed_len(label: str, round_: int, field: str, got: int, n: int, need: int) -> None:
+    """A per-round length byte other than the size n fixes: a shorter field was
+    read past (TODO #407), a longer one carried bytes nothing reads, a second
+    encoding (TODO #408).  Refused at the length byte, before the truncation
+    checks.  Same text in all four CLIs."""
+    if got != need:
         raise ValueError(f"malformed PEM '{label}': round {round_} {field} is {got} bytes, "
                          f"n={n} needs {need}")
+
+
+def _packed_bits(label: str, round_, field: str, v: bytes, n: int) -> None:
+    """TODO #408: an nb-byte big-endian field of an n-bit value has no bit above
+    n; the writers mask every one and nothing reads the extra bits, so a set one
+    is a second encoding.  round_ is None for a key field."""
+    spare = (n + 7) // 8 * 8 - n
+    if spare and v[0] >> (8 - spare):
+        where = f"round {round_} " if round_ is not None else ""
+        raise ValueError(f"malformed PEM '{label}': {where}{field} has bits above n={n}")
+
+
+def _hcred_vals(label: str, b: bytes, off: int, cnt: int, w: int) -> int:
+    """TODO #408: every HCRED coefficient is written reduced, Z_q (3 bytes)
+    below q = 65537 and Z_p (2 bytes) below p = 4096.  Checks cnt values of
+    width w from off; returns the offset after them."""
+    lim = 65537 if w == 3 else 4096
+    for _ in range(cnt):
+        if off + w > len(b):
+            return off                       # the reader's own truncation check
+        v = int.from_bytes(b[off:off + w], 'big')
+        if v >= lim:
+            raise ValueError(f"malformed PEM '{label}': value {v} at byte {off} is not below {lim}")
+        off += w
+    return off
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +565,8 @@ def decode_zkp_nl_privkey(pem_text: str) -> tuple:
     B  = int.from_bytes(body[4 + nb:4 + 2 * nb], 'big')
     y  = int.from_bytes(body[4 + 2 * nb:4 + 3 * nb], 'big')
     _packed_end(body, 4 + 3 * nb, label)
+    for i, f in enumerate("ABy"):                       # TODO #408
+        _packed_bits(label, None, f, body[4 + i * nb:], n)
     return A, B, y, n
 
 
@@ -562,6 +589,8 @@ def decode_zkp_nl_pubkey(pem_text: str) -> tuple:
     B  = int.from_bytes(body[4:4 + nb], 'big')
     y  = int.from_bytes(body[4 + nb:4 + 2 * nb], 'big')
     _packed_end(body, 4 + 2 * nb, label)
+    for i, f in enumerate("By"):                        # TODO #408
+        _packed_bits(label, None, f, body[4 + i * nb:], n)
     return B, y, n
 
 
@@ -589,7 +618,8 @@ def decode_zkp_nl_proof(pem_text: str) -> tuple:
     n   = _packed_n(body, 0, _ZKP_NL_MAX_N, "ZKP-NL proof: n")
     R   = _packed_n(body, 4, _ZKP_NL_MAX_ROUNDS, "ZKP-NL proof: rounds")
     off = 8
-    view_need = 2 * ((n + 7) // 8) + 32 + n - 1    # the view the verifier reads
+    nb  = (n + 7) // 8
+    view_need = 2 * nb + 32 + n - 1    # the view the verifier reads
     rounds = []
     for j in range(R):
         w = f"ZKP-NL proof round {j}:"
@@ -600,12 +630,16 @@ def decode_zkp_nl_proof(pem_text: str) -> tuple:
         e     = eb[0]
         lb, off = _packed_take(body, off, 2, w)
         l1    = int.from_bytes(lb, 'big')
-        _packed_short(label, j, "view_p1", l1, n, view_need)
+        _packed_len(label, j, "view_p1", l1, n, view_need)
         vp1, off = _packed_take(body, off, l1, w + " view1")
+        _packed_bits(label, j, "view_p1 share", vp1, n)
+        _packed_bits(label, j, "view_p1 out", vp1[nb + 32:], n)
         lb, off = _packed_take(body, off, 2, w)
         l2    = int.from_bytes(lb, 'big')
-        _packed_short(label, j, "view_p2", l2, n, view_need)
+        _packed_len(label, j, "view_p2", l2, n, view_need)
         vp2, off = _packed_take(body, off, l2, w + " view2")
+        _packed_bits(label, j, "view_p2 share", vp2, n)
+        _packed_bits(label, j, "view_p2 out", vp2[nb + 32:], n)
         rounds.append({'com_0': com_0, 'com_1': com_1, 'com_2': com_2,
                        'e': e, 'view_p1': vp1, 'view_p2': vp2})
     _packed_end(body, off, label)
@@ -668,16 +702,22 @@ def decode_zkp_nl_pp_proof(pem_text: str) -> tuple:
         eb, off      = _packed_take(body, off, 1, w)
         e            = eb[0]
         out_e, off   = _packed_take(body, off, nb, w)
+        _packed_bits(label, j, "out_e", out_e, n)
         seed_p1, off = _packed_take(body, off, _ZKPP_SEED_BYTES, w)
         seed_p2, off = _packed_take(body, off, _ZKPP_SEED_BYTES, w)
         gb, off      = _packed_take(body, off, 1, w)
         gl           = gb[0]
-        _packed_short(label, j, "gates_p2", gl, n, gates_need)
+        _packed_len(label, j, "gates_p2", gl, n, gates_need)
         gates_p2, off = _packed_take(body, off, gl, w + " gates")
         hb, off      = _packed_take(body, off, 1, w)
         has_s2       = hb[0]
+        need_s2      = 1 if e != 2 else 0     # the writer sends share2 exactly when e != 2 (TODO #408)
+        if has_s2 != need_s2:
+            raise ValueError(f"malformed PEM '{label}': round {j} has_share2 is {has_s2}, "
+                             f"e={e} needs {need_s2}")
         if has_s2:
             share2, off = _packed_take(body, off, nb, w + " share2")
+            _packed_bits(label, j, "share2", share2, n)
         else:
             share2 = b''
         rounds.append({'com_e': com_e, 'e': e, 'out_e': out_e,
@@ -821,6 +861,9 @@ def decode_hcred_privkey(pem_text):
     _packed_end(body, 4 + 8 * n + seed_nb + syndr_nb, label)
     if len(body) != 4 + 8 * n + seed_nb + syndr_nb:
         raise ValueError(f"HCRED private key: body length does not match n={n}")
+    o = 4
+    for w in (3, 2, 3):                                 # s, C, m (TODO #408)
+        o = _hcred_vals(label, body, o, n, w)
     s,   off = _hcred_deser3(body, off, n)
     C,   off = _hcred_deser2(body, off, n)
     m,   off = _hcred_deser3(body, off, n)
@@ -856,6 +899,9 @@ def decode_hcred_pubkey(pem_text):
     _packed_end(body, 4 + 5 * n + seed_nb + syndr_nb, label)
     if len(body) != 4 + 5 * n + seed_nb + syndr_nb:
         raise ValueError(f"HCRED public key: body length does not match n={n}")
+    o = 4
+    for w in (2, 3):                                    # C, m (TODO #408)
+        o = _hcred_vals(label, body, o, n, w)
     C,   off = _hcred_deser2(body, off, n)
     m,   off = _hcred_deser3(body, off, n)
     seed_H   = int.from_bytes(body[off:off + seed_nb], 'big'); off += seed_nb
@@ -1014,7 +1060,8 @@ def decode_hcred_proof(pem_text):
         b1, off = _hcred_deser3(body, off, n)
         g1, off = _hcred_deser3(body, off, nb)
         h1, off = _hcred_deser3(body, off, nd)
-        has_aux = body[off]; off += 1
+        hb, off = _packed_take(body, off, 1, "HCRED proof: has_aux")
+        has_aux = hb[0]
         if has_aux:
             aux_s, off = _hcred_deser3(body, off, n)
             aux_B, off = _hcred_deser3(body, off, nb)
@@ -1026,7 +1073,30 @@ def decode_hcred_proof(pem_text):
                        'a1': a1, 'b1': b1, 'g1': g1, 'h1': h1,
                        'aux_s': aux_s, 'aux_B': aux_B, 'aux_D': aux_D})
     _packed_end(body, off, label)
+    _hcred_proof_vals(body, n, R)                       # TODO #408
     return {'W': W, 'rounds': rounds}, n
+
+
+def _hcred_proof_vals(b: bytes, n: int, R: int) -> None:
+    """TODO #408: an accepted HCRED proof body walked in wire order: every Z_q
+    value below q, each has_aux 0 or 1."""
+    nb, nd, rows, _ = _hcred_nb_nd(n)
+    off = 12
+    for r in range(R):
+        off += 96
+        for _ in range(3):
+            for c in (n, nb, nd, 1, rows, rows, n):
+                off = _hcred_vals(_HCRED_PROOF_LBL, b, off, c, 3)
+        off += 64
+        off = _hcred_vals(_HCRED_PROOF_LBL, b, off, 2 * n + nb + nd, 3)
+        if off >= len(b):
+            return
+        if b[off] > 1:
+            raise ValueError(f"malformed PEM '{_HCRED_PROOF_LBL}': round {r} has_aux is {b[off]}, "
+                             f"expected 0 or 1")
+        off += 1
+        if b[off - 1]:
+            off = _hcred_vals(_HCRED_PROOF_LBL, b, off, n + nb + nd, 3)
 
 
 # ---------------------------------------------------------------------------

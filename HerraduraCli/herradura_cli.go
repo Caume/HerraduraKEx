@@ -576,13 +576,86 @@ func rawEnd(label string, body []byte, off int) error {
 	return nil
 }
 
-// rawShort is TODO #407's refusal of a per-round length byte shorter than the
-// field n fixes: the verifiers read the full size for n, so a shorter field
-// was read past.  Checked at the length byte, before the truncation checks;
-// same text in all four CLIs.
-func rawShort(label string, round int, field string, got, n, need int) error {
+// rawLen refuses a per-round length byte other than the size n fixes: a
+// shorter field was read past (TODO #407), a longer one carried bytes nothing
+// reads, a second encoding (TODO #408).  Checked at the length byte, before
+// the truncation checks; same text in all four CLIs.
+func rawLen(label string, round int, field string, got, n, need int) error {
 	return fmt.Errorf("malformed PEM '%s': round %d %s is %d bytes, n=%d needs %d",
 		label, round, field, got, n, need)
+}
+
+// rawBits (TODO #408): an nb-byte big-endian field of an n-bit value has no
+// bit above n; the writers mask every one and nothing reads the extra bits,
+// so a set one is a second encoding.  round < 0 for a key field.
+func rawBits(label string, round int, field string, v []byte, n int) error {
+	spare := (n+7)/8*8 - n
+	if spare == 0 || v[0]>>(8-spare) == 0 {
+		return nil
+	}
+	if round < 0 {
+		return fmt.Errorf("malformed PEM '%s': %s has bits above n=%d", label, field, n)
+	}
+	return fmt.Errorf("malformed PEM '%s': round %d %s has bits above n=%d", label, round, field, n)
+}
+
+// hcredVals (TODO #408): every HCRED coefficient is written reduced, Z_q (3
+// bytes) below q = 65537 and Z_p (2 bytes) below p = 4096.  Checks cnt values
+// of width w from off; returns the offset after them.
+func hcredVals(label string, b []byte, off, cnt, w int) (int, error) {
+	lim := 65537
+	if w == 2 {
+		lim = 4096
+	}
+	for i := 0; i < cnt; i++ {
+		if off+w > len(b) {
+			return off, nil // the reader's own truncation check
+		}
+		v := int(b[off])<<8 | int(b[off+1])
+		if w == 3 {
+			v = v<<8 | int(b[off+2])
+		}
+		if v >= lim {
+			return off, fmt.Errorf("malformed PEM '%s': value %d at byte %d is not below %d", label, v, off, lim)
+		}
+		off += w
+	}
+	return off, nil
+}
+
+// hcredProofVals walks an accepted HCRED proof body in wire order: every
+// Z_q value below q, each has_aux 0 or 1 (TODO #408).
+func hcredProofVals(b []byte, n, rounds int) error {
+	nb, nd, rows := hcredNbNd(n)
+	off := 12
+	var err error
+	for r := 0; r < rounds; r++ {
+		off += 96
+		for j := 0; j < 3; j++ {
+			for _, c := range []int{n, nb, nd, 1, rows, rows, n} {
+				if off, err = hcredVals(lblHcredProof, b, off, c, 3); err != nil {
+					return err
+				}
+			}
+		}
+		off += 64
+		if off, err = hcredVals(lblHcredProof, b, off, 2*n+nb+nd, 3); err != nil {
+			return err
+		}
+		if off >= len(b) {
+			return nil
+		}
+		if b[off] > 1 {
+			return fmt.Errorf("malformed PEM '%s': round %d has_aux is %d, expected 0 or 1", lblHcredProof, r, b[off])
+		}
+		off++
+		if b[off-1] == 1 {
+			if off, err = hcredVals(lblHcredProof, b, off, n+nb+nd, 3); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // checkDerCaps holds each field to the generated PEM_DER_FIELD_CAPS width
@@ -3441,7 +3514,14 @@ func decodeZkpNlPriv(body []byte) (A, B, y uint64, n int, err error) {
 	for i := 0; i < nb; i++ {
 		y = (y << 8) | uint64(body[4+2*nb+i])
 	}
-	err = rawEnd(lblZkpNlPriv, body, 4+3*nb)
+	if err = rawEnd(lblZkpNlPriv, body, 4+3*nb); err != nil {
+		return
+	}
+	for i, f := range []string{"A", "B", "y"} { // TODO #408
+		if err = rawBits(lblZkpNlPriv, -1, f, body[4+i*nb:], n); err != nil {
+			return
+		}
+	}
 	return
 }
 
@@ -3477,7 +3557,14 @@ func decodeZkpNlPub(body []byte) (B, y uint64, n int, err error) {
 	for i := 0; i < nb; i++ {
 		y = (y << 8) | uint64(body[4+nb+i])
 	}
-	err = rawEnd(lblZkpNlPub, body, 4+2*nb)
+	if err = rawEnd(lblZkpNlPub, body, 4+2*nb); err != nil {
+		return
+	}
+	for i, f := range []string{"B", "y"} { // TODO #408
+		if err = rawBits(lblZkpNlPub, -1, f, body[4+i*nb:], n); err != nil {
+			return
+		}
+	}
 	return
 }
 
@@ -3519,7 +3606,8 @@ func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
 	}
 	off := 8
 	proof = make([]ZkpNlRound, R)
-	viewNeed := 2*((n+7)/8) + 32 + n - 1 // the view zkpNlVerify reads (n >= 1)
+	nb := (n + 7) / 8
+	viewNeed := 2*nb + 32 + n - 1 // the view zkpNlVerify reads (n >= 1)
 	for j := 0; j < R; j++ {
 		// 96B commitments + 1B e + 2B len_p1 = 99, not 97: the length field
 		// itself has to be in range before it can be read.
@@ -3531,22 +3619,34 @@ func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
 		copy(proof[j].Com2[:], body[off:off+32]); off += 32
 		proof[j].E = int(body[off]); off++
 		l1 := int(body[off])<<8 | int(body[off+1]); off += 2
-		if l1 < viewNeed {
-			return nil, 0, rawShort(lblZkpNlProof, j, "view_p1", l1, n, viewNeed)
+		if l1 != viewNeed {
+			return nil, 0, rawLen(lblZkpNlProof, j, "view_p1", l1, n, viewNeed)
 		}
 		if l1 > len(body)-off {
 			return nil, 0, fmt.Errorf("ZKP-NL proof round %d view1 truncated", j)
+		}
+		if e := rawBits(lblZkpNlProof, j, "view_p1 share", body[off:], n); e != nil {
+			return nil, 0, e
+		}
+		if e := rawBits(lblZkpNlProof, j, "view_p1 out", body[off+nb+32:], n); e != nil {
+			return nil, 0, e
 		}
 		proof[j].ViewP1 = body[off : off+l1]; off += l1
 		if off+2 > len(body) {
 			return nil, 0, fmt.Errorf("ZKP-NL proof round %d view2 truncated", j)
 		}
 		l2 := int(body[off])<<8 | int(body[off+1]); off += 2
-		if l2 < viewNeed {
-			return nil, 0, rawShort(lblZkpNlProof, j, "view_p2", l2, n, viewNeed)
+		if l2 != viewNeed {
+			return nil, 0, rawLen(lblZkpNlProof, j, "view_p2", l2, n, viewNeed)
 		}
 		if l2 > len(body)-off {
 			return nil, 0, fmt.Errorf("ZKP-NL proof round %d view2 truncated", j)
+		}
+		if e := rawBits(lblZkpNlProof, j, "view_p2 share", body[off:], n); e != nil {
+			return nil, 0, e
+		}
+		if e := rawBits(lblZkpNlProof, j, "view_p2 out", body[off+nb+32:], n); e != nil {
+			return nil, 0, e
 		}
 		proof[j].ViewP2 = body[off : off+l2]; off += l2
 	}
@@ -3610,6 +3710,9 @@ func decodeZkpNlPpProof(body []byte) (proof []ZkpNlPpRound, n int, err error) {
 		}
 		copy(proof[j].ComE[:], body[off:off+32]); off += 32
 		proof[j].E = int(body[off]); off++
+		if e := rawBits(lblZkpNlPpSig, j, "out_e", body[off:], n); e != nil {
+			return nil, 0, e
+		}
 		proof[j].OutE = make([]byte, nb)
 		copy(proof[j].OutE, body[off:off+nb]); off += nb
 		copy(proof[j].SeedP1[:], body[off:off+16]); off += 16
@@ -3618,8 +3721,8 @@ func decodeZkpNlPpProof(body []byte) (proof []ZkpNlPpRound, n int, err error) {
 			return nil, 0, fmt.Errorf("ZKP-NL-PP proof round %d truncated (gates_len)", j)
 		}
 		gl := int(body[off]); off++
-		if gl < gatesNeed {
-			return nil, 0, rawShort(lblZkpNlPpSig, j, "gates_p2", gl, n, gatesNeed)
+		if gl != gatesNeed {
+			return nil, 0, rawLen(lblZkpNlPpSig, j, "gates_p2", gl, n, gatesNeed)
 		}
 		if off+gl+1 > len(body) {
 			return nil, 0, fmt.Errorf("ZKP-NL-PP proof round %d truncated (gates)", j)
@@ -3627,9 +3730,21 @@ func decodeZkpNlPpProof(body []byte) (proof []ZkpNlPpRound, n int, err error) {
 		proof[j].GatesP2 = make([]byte, gl)
 		copy(proof[j].GatesP2, body[off:off+gl]); off += gl
 		hasShare2 := int(body[off]); off++
+		// TODO #408: the writer sends share2 exactly when e != 2.
+		needS2 := 0
+		if proof[j].E != 2 {
+			needS2 = 1
+		}
+		if hasShare2 != needS2 {
+			return nil, 0, fmt.Errorf("malformed PEM '%s': round %d has_share2 is %d, e=%d needs %d",
+				lblZkpNlPpSig, j, hasShare2, proof[j].E, needS2)
+		}
 		if hasShare2 != 0 {
 			if off+nb > len(body) {
 				return nil, 0, fmt.Errorf("ZKP-NL-PP proof round %d truncated (share2)", j)
+			}
+			if e := rawBits(lblZkpNlPpSig, j, "share2", body[off:], n); e != nil {
+				return nil, 0, e
 			}
 			proof[j].Share2 = make([]byte, nb)
 			copy(proof[j].Share2, body[off:off+nb]); off += nb
@@ -3787,6 +3902,12 @@ func decodeHcredPriv(body []byte) (sPoly, cPoly, mPoly []int, seedH *BitArray, s
 		return nil, nil, nil, nil, nil, 0, fmt.Errorf("HCRED private key: body length does not match n=%d", n)
 	}
 	off := 4
+	for _, w := range []int{3, 2, 3} { // s, C, m (TODO #408)
+		if off, err = hcredVals(lblHcredPriv, body, off, n, w); err != nil {
+			return
+		}
+	}
+	off = 4
 	sPoly, off = hcredDeser3(body, off, n)
 	cPoly, off = hcredDeser2(body, off, n)
 	mPoly, off = hcredDeser3(body, off, n)
@@ -3834,6 +3955,12 @@ func decodeHcredPub(body []byte) (cPoly, mPoly []int, seedH *BitArray, syndr *bi
 		return nil, nil, nil, nil, 0, fmt.Errorf("HCRED public key: body length does not match n=%d", n)
 	}
 	off := 4
+	for _, w := range []int{2, 3} { // C, m (TODO #408)
+		if off, err = hcredVals(lblHcredPub, body, off, n, w); err != nil {
+			return
+		}
+	}
+	off = 4
 	cPoly, off = hcredDeser2(body, off, n)
 	mPoly, off = hcredDeser3(body, off, n)
 	seedNb := n / 8
@@ -3986,6 +4113,9 @@ func decodeHcredProof(body []byte) (*HcredProof, int, error) {
 		proof.Rounds[j] = rd
 	}
 	if e := rawEnd(lblHcredProof, body, off); e != nil {
+		return nil, 0, e
+	}
+	if e := hcredProofVals(body, n, R); e != nil { // TODO #408
 		return nil, 0, e
 	}
 	return proof, n, nil
@@ -5153,6 +5283,13 @@ func cmdVerify(args []string) {
 			fmt.Fprintf(os.Stderr, "verify nl-zkboo: %v\n", perr)
 			os.Exit(1)
 		}
+		// TODO #408: a proof over another n is not about this key, and its
+		// fields are sized from its own n, so compare before reading them.
+		if len(proofBody) >= 4 {
+			if hn := int(binary.BigEndian.Uint32(proofBody[0:4])); hn != zkpN {
+				die("verify", fmt.Errorf("proof n mismatch with pubkey n (%d vs %d)", hn, zkpN))
+			}
+		}
 		proof, prfN, uerr := decodeZkpNlProof(proofBody)
 		if uerr != nil {
 			die("verify", uerr)
@@ -5187,6 +5324,13 @@ func cmdVerify(args []string) {
 		if perr != nil {
 			fmt.Fprintf(os.Stderr, "verify nl-zkbpp: %v\n", perr)
 			os.Exit(1)
+		}
+		// TODO #408: a proof over another n is not about this key, and its
+		// fields are sized from its own n, so compare before reading them.
+		if len(proofBody) >= 4 {
+			if hn := int(binary.BigEndian.Uint32(proofBody[0:4])); hn != zkpN {
+				die("verify", fmt.Errorf("proof n mismatch with pubkey n (%d vs %d)", hn, zkpN))
+			}
 		}
 		proof, _, uerr := decodeZkpNlPpProof(proofBody)
 		if uerr != nil {
