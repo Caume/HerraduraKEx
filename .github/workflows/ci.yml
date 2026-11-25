@@ -484,6 +484,7 @@ jobs:
             case "$f" in test_pem_reader_diff.sh) continue ;; esac    # claimed by cross-lang-compat (TODO #403)
             case "$f" in test_der_reader_diff.sh) continue ;; esac    # claimed by cross-lang-compat (TODO #404)
             case "$f" in test_raw_body_diff.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #406)
+            case "$f" in test_wrong_secret_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #410)
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_round_floor.sh) continue ;; esac        # claimed by cross-lang-compat (TODO #364)
             case "$f" in test_stern_128.sh) continue ;; esac          # claimed by cross-lang-compat (TODO #382)
@@ -857,6 +858,13 @@ jobs:
       # through the four real CLIs: one result per case, and no CLI may crash.
       - name: Raw-body PEM differential
         run: bash CliTest/test_raw_body_diff.sh
+
+      # TODO #410: every acceptance decision probed with a WRONG secret -- another
+      # key's, a spliced private key's, and #409's own cheat (a wrong witness for
+      # the true statement, from a patched prover) -- through the four CLIs, each
+      # cell beside an accept-control.  Its KNOWN cells are TODO #412 and #413.
+      - name: Wrong-secret matrix
+        run: bash CliTest/test_wrong_secret_matrix.sh
 
       # TODO #269: --digest is a 4-way concern for the same reason. The gap it
       # guards (Java had no --digest at all) was invisible to every existing

@@ -2,6 +2,49 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [19.0.1] - 2026-11-24
+
+**TODO #410: every acceptance decision probed with a wrong secret (new test; five defects
+filed).**  #409's universal forgery survived because every check tampered an honest
+artifact or ran a weaker cheat than an adversary's.  The new
+`CliTest/test_wrong_secret_matrix.sh` runs the adversary's first move against every
+decision a CLI makes, through all four CLIs.  It makes each artifact with a secret that
+does not match the public statement:
+- another key pair's secret;
+- a private key spliced from the target's public fields and another secret
+  (`CliTest/wrong_secret/splice.py`);
+- #409's own cheat, a wrong witness for the TRUE statement.  The honest CLIs never
+  produce that, so `CliTest/wrong_secret/cheat_sign.py` runs the Python CLI with its
+  statement derivation patched, and exits 3 when the patch is not reached.
+
+It covers hpks, hpks-nl, rnl-sigma, hpks-stern and hpks-ring at N = 256 and 2304,
+hpks-wots, hpks-xmss, HCRED proofs and credentials, hske-nla1 --aead, hske-duplex(3),
+encfile/decfile and the passphrase envelope.  Every cell has an accept-control, and an
+accept-everything stand-in verifier is shown to fail the wrong-secret cells.  Cheats are
+made at shipped round counts, so no cell is a sampled verdict.  It runs in CI's
+cross-lang-compat job: 81 PASS and 2 KNOWN, in about 4 minutes on an SBC.
+
+Every proof system, signature and authenticated decryption rejects every wrong secret in
+all four CLIs.  The probes, a dead-value pass (an AST scan of the shipped Python, gcc's
+unused-variable warnings over the C) and a transcript review found five defects, each
+filed as an open TODO and none fixed here:
+
+- **#412:** `verify --algo hpks-t` checks the signature against the aggregate key it
+  carries and ignores `--pubkey`, so a threshold signature from ANY group verifies (a
+  KNOWN cell).
+- **#413:** an `hpke-stern` ciphertext carries e', so its plaintext is recovered from the
+  ciphertext and the public key alone, with no private key (a KNOWN cell; found from a
+  `K_int` the Python decoder read and ignored).
+- **#414:** every unauthenticated mode (hske, hske-nla1 without --aead, hske-nla2/3,
+  hpke, hpke-nl, hpke-nl3, hpke-stern) decrypts under the wrong key with exit 0, and
+  nothing documents that they carry no integrity.
+- **#415:** the Stern-F (both forms), ring and Schnorr-family Fiat-Shamir challenges omit
+  the public key: no forgery under a fixed key, but the weak Fiat-Shamir pattern.
+- **#416:** the Python test harness reimplements 79 suite functions, every verifier its
+  tests use among them, and imports none, so its numbered tests check the copies.
+
+#411 gains the by-hand reading of the Go and Java verifiers, which no compiler flag covers.
+
 ## [19.0.0] - 2026-11-24
 
 Two breaking changes: the raw-body ZKP-NL and HCRED encodings (TODO #408) and the ZKBoo
