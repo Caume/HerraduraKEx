@@ -10,6 +10,122 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
+### #410: wrong-secret and dead-value probes for every acceptance decision (the #409 class)
+
+#409's ZKBoo verifier accepted a proof made from ANY witness, in all four ports, for as long
+as it shipped.  Nothing caught it because every check that existed compared the ports with
+each other (they agreed), tampered an honest artifact (the commitments caught that), or ran
+a cheat that was weaker than a real one (`zkp_pqc_exploration.py` hashed the wrong y).  The
+defect itself was visible in the source: a value the verifier computed and never read
+(Python named it `out_pe`).  This item looks for the same class everywhere a CLI or library
+DECIDES to accept something.
+
+**A. Wrong-secret probe, per acceptance decision.**  Produce the artifact through the honest
+code path but with a secret that does not match the public statement, and require every CLI
+to reject it.  This is the cheat a real adversary runs first, and the one tamper tests miss.
+Run it at the shipped round count, so that a chance pass is negligible, and at a second
+width.  The decisions to cover, at least:
+
+- proof systems: ZKB++ (`nl-zkbpp`), ZKP-RNL (`rnl-sigma`), HCRED `cred-verify`, and the
+  KKW library path (`hcred_verify_kkw` and its ports), which no CLI reaches;
+- signatures: HPKS (Schnorr), HPKS-NL, HPKS-Stern-F in both the short and the N = 2304
+  form, the ring signatures (with a non-member's secret, as #321's test does, but through
+  the CLIs), and WOTS / any hash-based signer;
+- key confirmation and authentication: the aPAKE login (a client without the password must
+  not be accepted, and a server without the record must not be), OPRF evaluation
+  verification if any, HKEX-RNL key confirmation if any;
+- decryption: AEAD / `encfile` tags (wrong key, a ciphertext under another key, a tag from
+  another file), `.hkx` authentication, HPKE-Stern-KEM (implicit rejection: `dec` always
+  exits 0, so compare BYTES, per `lib_dfr.sh`), and every `dec` that claims to
+  authenticate.
+
+**B. Dead-value audit.**  List every value a verifier or decryptor computes and then
+ignores: a recomputed hash, an inferred share, a parsed field, a `has_*` flag.  Each one is
+either a missing check (#409) or dead code to delete.  Use the compilers and linters already
+on the host as tooling only, never as a shipped dependency: `gcc -Wunused-but-set-variable`,
+`go vet` (and `staticcheck` SA4006 if it is available), pyflakes F841, and `javac -Xlint`.
+Then read each verifier by hand against its paper protocol, listing every check the paper
+makes and where the code makes it.
+
+**C. What is committed and what the challenge binds.**  For every Fiat-Shamir transcript,
+the statement (public key, public output, message) must enter the challenge, and every
+field the verifier reads must be covered by a commitment or recomputed.  A field the
+verifier reads that neither covers is a malleability bug (#409's gate bits), and a
+statement the challenge omits is a forgery.
+
+**D. Copies that are not the shipped code.**  The Python test harness carried its own ZKBoo
+copy, and its tests passed against that copy.  `SecurityProofsCode/` models carry
+independent implementations whose verdicts SecurityProofs cites as evidence.  List every
+harness test and every cited model that exercises a copy rather than the shipped function.
+For each, either point it at the shipped code or add a parity check that fails when the two
+diverge.  Any cheat a findings gate runs must be the adversary's best simple strategy: it
+hashes the real statement, not a strawman.
+
+**Deliverable.**  A table of every acceptance decision with its probe result, filed in
+`spec/` or a CliTest script (proposed: `CliTest/test_wrong_secret_matrix.sh`, four CLIs, each
+cell with an accept-control that is shown to fire).  Each defect found becomes its own TODO.
+A fix that changes what a verifier accepts is MAJOR, as #409 was.
+
+Status: **OPEN**
+
+---
+
+### #411: a general security review of the shipped code
+
+The project has had targeted audits: the constant-time audits (#129, #182, #249), the parser
+and encoding work (#130, #367, #372, #403-#408), the file permissions (#395) and peer-value
+screening (#371).  It has never had a review of the whole shipped surface in one pass.
+#409 shows the cost: a universal forgery survived every targeted check.  This item is that
+pass.  #410 is its proof-system part; this item covers the rest.
+
+**Scope:** the four CLIs, `herradura.h`, `herradura/`, the Python suite and codec, the Java
+port, `Mcp/`, `bindings/ffi/`, the Dockerfile, CI, and anything else that ships or runs on a
+user's data.  The analysis-only code in `SecurityProofsCode/` is out of scope, except where
+#410 D covers it.
+
+**Checklist (at least):**
+
+- **Randomness:** every secret comes from the OS CSPRNG, a failed or short read is fatal in
+  every port, and no seeded or test PRNG reaches a shipped path (the replay hooks of
+  `KAT/*_replay.json` included).  Nonces and ephemerals are never reused across calls.
+- **Secret handling:** private values are zeroized where the language allows it (C, Java
+  arrays), and no secret reaches an error message, a log line, `--help` output, the MCP
+  server's responses or a temp file.  The MCP trust model (`Mcp/README.md`) matches what
+  the server enforces.
+- **Comparisons and oracles:** every tag, commitment and MAC comparison is constant-time
+  (extending #249 to code added since).  Decryption and verification failures have one
+  message and one exit status per case, so they leak no padding, parse or step oracle.
+  Implicit rejection stays implicit.
+- **Memory and integer safety in C:** size arithmetic before every `malloc`/`memcpy`
+  (overflow at large n, rounds or file sizes), stack buffers sized from wire values, and
+  `ASAN`/`UBSan` plus `valgrind` runs over the CliTest corpus as well as the harnesses.
+  Also `clang --analyze` / `cppcheck` as tooling.
+- **Go / Python / Java:** panics or uncaught exceptions on hostile input (extending #367);
+  `gosec` and `bandit` as tooling if they are available.
+- **Files and the CLI surface:** output paths (symlink-following on create, overwriting an
+  input, `-` handling), large-file streaming in `encfile` / `decfile` (memory blow-up,
+  truncated input), the 0600 rule (#395) on every new writer, and argument parsing
+  (#130's fuzzer).
+- **Protocol use:** domain separation between every hash use (#348's tags, checked for
+  collisions), the statement in every transcript (#410 C), downgrade paths (a flag that
+  selects a weaker variant, a `--min-rounds` default, legacy readers), and key reuse across
+  protocols (one ZKP-NL key under ZKBoo and ZKB++, one key for HKEX and HPKS).
+- **Supply chain and CI:** the CI actions pinned to a commit, install steps bounded (#353),
+  the Docker base image, and the "no third-party dependency" property of shipped code
+  checked by a tool, not by habit.
+- **Documentation honesty:** SECURITY.md's maturity levels against what the review finds.
+  Every protocol marked demo or research says so in `--help` as well.
+
+**Method:** one pass per area, each yielding findings with a severity (forgery, key or
+plaintext recovery, DoS / crash, hardening) and a reproducer.  Tools are run as analysis
+only.  The `/security-review` and `/code-review` skills can be used over each component's
+source as a second reader.  Each finding becomes its own TODO; this item closes when every
+area is reviewed and its findings filed, not when they are all fixed.
+
+Status: **OPEN**
+
+---
+
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
