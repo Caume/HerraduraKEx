@@ -698,27 +698,3 @@ at n = 256 would remove the conjecture.
 Status: **OPEN**
 
 ---
-
-### #418: CI third-party actions are pinned to mutable tags, not commit SHAs
-
-Filed by the #411 review (Supply chain and CI).  `.github/workflows/ci.yml` and
-`.github/workflows/codeql.yml` reference their actions by moving tag — `actions/checkout@v4`,
-`actions/setup-node@v4`, `github/codeql-action/init@v3`, `github/codeql-action/analyze@v3` —
-rather than by a full 40-hex commit SHA.  A tag is mutable: whoever can move it (an upstream
-compromise, or a maintainer-account takeover) changes what every CI run on this repo executes,
-with the repo's `GITHUB_TOKEN` in scope.  All the actions in use are first-party
-(`actions/*`, `github/*`), which lowers but does not remove the risk; GitHub's own hardening
-guidance (and OpenSSF Scorecard's Pinned-Dependencies check) is to pin to a SHA with the tag
-in a trailing comment.
-
-**Severity:** hardening (supply chain).  No reproducer — this is a standing exposure, not a
-triggered defect.
-
-**Fix direction:** replace each `uses: owner/action@vN` with
-`uses: owner/action@<full-sha>  # vN`, and add a tool check (extend
-`tools/check_ci_install_bounds.py` or a new `tools/check_action_pinning.py`) that fails a
-`uses:` line referencing a non-local action by anything other than a 40-hex SHA, so the
-property is held by a tool and not by habit (the #411 checklist's explicit ask).  Dependabot
-can still bump the SHAs.
-
-Status: **OPEN**

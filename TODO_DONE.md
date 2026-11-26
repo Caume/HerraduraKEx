@@ -27588,3 +27588,42 @@ state (sig-before-burn as seen from outside) fails both unwritable-`.idx` cells.
 Status: **DONE v22.0.0** — no CLI writes through an output symlink; WOTS/XMSS burn their leaf (fsync'd) before the signature exists and a failed burn is fatal; MAJOR (MIGRATING §56).
 
 ---
+
+### #418: CI third-party actions are pinned to mutable tags, not commit SHAs
+
+Filed by the #411 review (Supply chain and CI).  `.github/workflows/ci.yml` and
+`.github/workflows/codeql.yml` reference their actions by moving tag — `actions/checkout@v4`,
+`actions/setup-node@v4`, `github/codeql-action/init@v3`, `github/codeql-action/analyze@v3` —
+rather than by a full 40-hex commit SHA.  A tag is mutable: whoever can move it (an upstream
+compromise, or a maintainer-account takeover) changes what every CI run on this repo executes,
+with the repo's `GITHUB_TOKEN` in scope.  All the actions in use are first-party
+(`actions/*`, `github/*`), which lowers but does not remove the risk; GitHub's own hardening
+guidance (and OpenSSF Scorecard's Pinned-Dependencies check) is to pin to a SHA with the tag
+in a trailing comment.
+
+**Severity:** hardening (supply chain).  No reproducer — this is a standing exposure, not a
+triggered defect.
+
+**Fix direction:** replace each `uses: owner/action@vN` with
+`uses: owner/action@<full-sha>  # vN`, and add a tool check (extend
+`tools/check_ci_install_bounds.py` or a new `tools/check_action_pinning.py`) that fails a
+`uses:` line referencing a non-local action by anything other than a 40-hex SHA, so the
+property is held by a tool and not by habit (the #411 checklist's explicit ask).  Dependabot
+can still bump the SHAs.
+
+**Done.**  All 20 `uses:` lines (17 checkout, 1 setup-node, 2 codeql-action) are pinned to
+the commit their tag pointed at on 2026-11-26, resolved with `git ls-remote --tags` (peeled):
+`actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0`,
+`actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0`,
+`github/codeql-action/{init,analyze}@74c1aea9df7c0f02e9b7bfe4a8935abf2e5e3aa6  # v3.39.5`.
+The major versions are unchanged (v4/v4/v3) so no run changes behaviour; moving to newer
+majors (checkout v7, setup-node v7, codeql-action v4) is a separate bump.  New
+`tools/check_action_pinning.py` holds the property over every `.github/**/*.y{a,}ml`:
+non-SHA pins, missing `# vX.Y.Z` comments, an unpinned `docker://`, one action pinned two
+ways, and unparseable `uses:` lines all fail; `./` actions are exempt.  Seven controls
+(six refused, one accepted) run first; an accept-everything and a refuse-everything
+stand-in each make them fail.  Run in `native-python-cli` and by `tools/check_fast.sh`.
+No Dependabot config was added (none exists; adding one would open bot PRs, a separate
+decision).
+
+Status: **DONE v22.0.1** — every CI action pinned to a commit SHA with its release in a comment; tools/check_action_pinning.py fails a tag pin.

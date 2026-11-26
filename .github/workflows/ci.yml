@@ -19,6 +19,12 @@ name: CI
 # install steps in 40 runs the median was 12 s and the slowest 821 s, during
 # that same mirror incident; 20 minutes sits above it. The bound is held by
 # tools/check_ci_install_bounds.py in native-python.
+#
+# TODO #418: every remote action is pinned to a full commit SHA, with the
+# release it was resolved from in a trailing `# vX.Y.Z` comment; a tag can be
+# moved, a SHA cannot. Held by tools/check_action_pinning.py. To bump, resolve
+# the new tag with `git ls-remote --tags` (the peeled ^{} commit for an
+# annotated tag) and update every line of that action at once.
 
 on:
   push:
@@ -39,7 +45,7 @@ jobs:
     name: C (build + tests + CliTest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -129,7 +135,7 @@ jobs:
     name: Go (build + tests + CliTest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -219,7 +225,7 @@ jobs:
       matrix:
         shard: [1, 2]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -234,7 +240,7 @@ jobs:
     name: Python (CliTest + checks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -346,6 +352,14 @@ jobs:
       - name: CI install steps are time-bounded
         run: python3 tools/check_ci_install_bounds.py
 
+      # TODO #418. A `uses: owner/action@v4` names a mutable tag: whoever can
+      # move it changes what every run here executes, with GITHUB_TOKEN in
+      # scope. This fails any remote action (here or in codeql.yml) not pinned
+      # to a 40-hex commit sha with a `# vX.Y.Z` comment, or pinned two ways,
+      # and shows its controls firing first.
+      - name: CI actions are pinned to commit SHAs
+        run: python3 tools/check_action_pinning.py
+
       # TODO #285. About 34 of the SecurityProofsCode/ scripts advertise "exits
       # non-zero if a finding stops reproducing" and until now NO job collected
       # that status, so the promise was untested. That is how
@@ -420,7 +434,7 @@ jobs:
     name: C / Go / Python cross-CLI interop
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       # default-jdk-headless is for test_threshold_interop.sh,
       # test_v3_family.sh (TODO #260) and test_zkp_hybrid_family.sh
@@ -735,7 +749,7 @@ jobs:
     name: Java (build + demo + CliTest interop)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -796,7 +810,7 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -830,7 +844,7 @@ jobs:
     needs: [native-c, native-go, native-java]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -987,7 +1001,7 @@ jobs:
     name: ARM Thumb-2 / NASM i386 (build + tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -1024,9 +1038,9 @@ jobs:
     name: KaTeX math rendering validation (TODO #179)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: '20'
 
@@ -1050,7 +1064,7 @@ jobs:
     name: Arduino / AVR (build + simavr tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -1074,7 +1088,7 @@ jobs:
     name: Fuzz smoke test (TODO #187)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -1095,7 +1109,7 @@ jobs:
     name: C sanitizers + valgrind (TODO #188)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -1191,7 +1205,7 @@ jobs:
     # what catches a hang.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       # highspy (the HiGHS LP solver, which pulls in numpy) backs
       # local_potential_certificate.py and local_certificate_n256.py (TODO
@@ -1288,7 +1302,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: The shards are a partition of every gate
         run: python3 SecurityProofsCode/run_findings_gates.py --verify-shards 6
@@ -1320,7 +1334,7 @@ jobs:
     #   ~75-90 min on an ARM SBC, which would make this the slowest job in the
     #   matrix and re-create #289's recorded runtime problem on purpose.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20

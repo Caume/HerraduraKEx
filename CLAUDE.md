@@ -92,7 +92,8 @@ tools/                     — check_fast.sh (CI's cheap consistency checks in o
                              command), poison_build.sh (run-time BitArray width poisoning
                              over every C TU), check_runnable_coverage.py,
                              check_rate_format.py, check_docker_mirror.py,
-                             check_ci_install_bounds.py, check_ba_width_guard.c
+                             check_ci_install_bounds.py, check_action_pinning.py,
+                             check_ba_width_guard.c
 benchmarks/                — cost measurements (host-specific; figures do not belong in CI,
                              but CI checks they still build/run).  rnl_deployed_ring_cost.*
                              is the deployed HKEX-RNL ring (benchmark [40] uses retired rings)
@@ -302,7 +303,9 @@ on purpose (defense in depth, TODO #336).  `.github/workflows/codeql.yml` is a s
 non-blocking CodeQL matrix (TODO #189).  Every step that installs packages (apt-get, npm,
 pip) carries `timeout-minutes: 20`, so a stalled mirror fails in minutes instead of the
 360-minute job default; `tools/check_ci_install_bounds.py` fails a new install step
-without one (TODO #353).
+without one (TODO #353).  Every remote `uses:` is pinned to a 40-hex commit SHA with its
+release in a `# vX.Y.Z` comment, one pin per action across both workflows;
+`tools/check_action_pinning.py` fails a tag pin (TODO #418).
 
 ### Commands
 

@@ -2,6 +2,28 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [22.0.1] - 2026-11-26
+
+**CI actions are pinned to commit SHAs, and a tool holds them there (TODO #418).**
+`ci.yml` and `codeql.yml` ran `actions/checkout@v4`, `actions/setup-node@v4` and
+`github/codeql-action/{init,analyze}@v3` — moving tags, so whoever can move one changes
+what every run here executes with `GITHUB_TOKEN` in scope.  Each of the 20 `uses:` lines is
+now `owner/action@<40-hex sha>  # vX.Y.Z`, pinned to the commit its tag pointed at when
+resolved (`git ls-remote --tags`, peeled): checkout `11d5960a…` (v4.4.0), setup-node
+`49933ea5…` (v4.4.0), codeql-action `74c1aea9…` (v3.39.5).  No action changes version, so
+no run changes behaviour.
+
+New `tools/check_action_pinning.py` (in `native-python-cli` and `tools/check_fast.sh`)
+scans every workflow under `.github/` and fails a remote `uses:` that is not a 40-hex
+lowercase SHA with a `# vX[.Y[.Z]]` comment, a `docker://` image not pinned by `sha256`,
+one action pinned two different ways, or a `uses:` line it cannot parse (so a layout it
+misreads fails rather than passes empty).  Local `./` actions are exempt.  Its controls run
+first and must fire: a tag pin, a 39-hex SHA, an uppercase SHA, a missing comment, a
+second SHA for the same action and a flow-style `{uses: …}` are each refused, and an added
+local action is accepted; against an accept-everything checker six controls fail, against
+a refuse-everything one the accept-control does.  Before the pins it reported all 20
+lines.  Known limit: it cannot check offline that a SHA is the commit its comment names.
+
 ## [22.0.0] - 2026-11-25
 
 **No CLI writes through a symbolic link, and a one-time signature burns its leaf
