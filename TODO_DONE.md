@@ -27379,3 +27379,138 @@ to CLAUDE.md.  Run by native-python-cli and tools/check_fast.sh.
 Status: **DONE v21.0.2** — check_suite_parity.py holds the harness copies to the suite; found and fixed two Stern drifts; CLAUDE.md rule added.
 
 ---
+
+### #411: a general security review of the shipped code
+
+The project has had targeted audits: the constant-time audits (#129, #182, #249), the parser
+and encoding work (#130, #367, #372, #403-#408), the file permissions (#395) and peer-value
+screening (#371).  It has never had a review of the whole shipped surface in one pass.
+#409 shows the cost: a universal forgery survived every targeted check.  This item is that
+pass.  #410 is its proof-system part; this item covers the rest.
+
+**Scope:** the four CLIs, `herradura.h`, `herradura/`, the Python suite and codec, the Java
+port, `Mcp/`, `bindings/ffi/`, the Dockerfile, CI, and anything else that ships or runs on a
+user's data.  The analysis-only code in `SecurityProofsCode/` is out of scope, except where
+#410 D covers it.
+
+**Checklist (at least):**
+
+- **Randomness:** every secret comes from the OS CSPRNG, a failed or short read is fatal in
+  every port, and no seeded or test PRNG reaches a shipped path (the replay hooks of
+  `KAT/*_replay.json` included).  Nonces and ephemerals are never reused across calls.
+- **Secret handling:** private values are zeroized where the language allows it (C, Java
+  arrays), and no secret reaches an error message, a log line, `--help` output, the MCP
+  server's responses or a temp file.  The MCP trust model (`Mcp/README.md`) matches what
+  the server enforces.
+- **Comparisons and oracles:** every tag, commitment and MAC comparison is constant-time
+  (extending #249 to code added since).  Decryption and verification failures have one
+  message and one exit status per case, so they leak no padding, parse or step oracle.
+  Implicit rejection stays implicit.
+- **Memory and integer safety in C:** size arithmetic before every `malloc`/`memcpy`
+  (overflow at large n, rounds or file sizes), stack buffers sized from wire values, and
+  `ASAN`/`UBSan` plus `valgrind` runs over the CliTest corpus as well as the harnesses.
+  Also `clang --analyze` / `cppcheck` as tooling.
+- **Go / Python / Java:** panics or uncaught exceptions on hostile input (extending #367);
+  `gosec` and `bandit` as tooling if they are available.
+- **Files and the CLI surface:** output paths (symlink-following on create, overwriting an
+  input, `-` handling), large-file streaming in `encfile` / `decfile` (memory blow-up,
+  truncated input), the 0600 rule (#395) on every new writer, and argument parsing
+  (#130's fuzzer).
+- **Protocol use:** domain separation between every hash use (#348's tags, checked for
+  collisions), the statement in every transcript (#410 C), downgrade paths (a flag that
+  selects a weaker variant, a `--min-rounds` default, legacy readers), and key reuse across
+  protocols (one ZKP-NL key under ZKBoo and ZKB++, one key for HKEX and HPKS).
+- **Supply chain and CI:** the CI actions pinned to a commit, install steps bounded (#353),
+  the Docker base image, and the "no third-party dependency" property of shipped code
+  checked by a tool, not by habit.
+- **Verifiers read by hand (from #410 B):** for each Go and Java verifier and decryptor,
+  every check its paper protocol makes, and where it makes it.  #410's tools (gcc's
+  unused-variable warnings, an AST pass over the Python) cover C and Python only.  The
+  Go and Java compilers do not flag a value that is computed and never read, so those two
+  ports are held only by the four-CLI matrix's behaviour.
+- **Documentation honesty:** SECURITY.md's maturity levels against what the review finds.
+  Every protocol marked demo or research says so in `--help` as well.
+
+**Method:** one pass per area, each yielding findings with a severity (forgery, key or
+plaintext recovery, DoS / crash, hardening) and a reproducer.  Tools are run as analysis
+only.  The `/security-review` and `/code-review` skills can be used over each component's
+source as a second reader.  Each finding becomes its own TODO; this item closes when every
+area is reviewed and its findings filed, not when they are all fixed.
+
+**Review results (one pass per checklist area).** Tools on this host, analysis only:
+`clang --analyze`, `clang -Wall -Wextra -Wunused-but-set-variable`, `go vet`, `javac`,
+an AST pass over the shipped Python (#410 B's, re-run), and `valgrind`.  Two findings
+filed; the rest of the surface held.
+
+- **Randomness — clean.**  Every secret draws from the OS CSPRNG in every port
+  (`/dev/urandom` in C with a fatal short read at every site, `crypto/rand` in Go with
+  `log.Fatalf`/`[FAIL]` on error, `os.urandom` in Python which raises on a short read,
+  `SecureRandom` in Java; the Java CLI's one RNG is `new SecureRandom()`).  No `math/rand`,
+  `rand()`/`srand()`, or seeded PRNG reaches a shipped path.  The `KAT/*_replay.json`
+  machinery lives only in the test harnesses and `generate_kat.py`; the suite files mention
+  it only in comments, and no env var or flag swaps the RNG.
+
+- **Secret handling — clean.**  No CLI writes a temp file.  No error message, `--help`
+  string, or log line interpolates key or secret material (the "wrong key type" messages
+  print a path and a PEM label, not contents).  C zeroizes DRBG/duplex state and PAKE
+  nonces with `explicit_bzero`.
+
+- **Comparisons and oracles — clean.**  Every secret-dependent tag/MAC comparison is
+  constant-time: `subtle.ConstantTimeCompare` (Go), `ct_eq32`/`ct_eq_keybytes` (C),
+  `hmac.compare_digest` (Python), `Hfscx256.constantTimeEquals` / `MessageDigest.isEqual`
+  (Java).  The remaining `bytes.Equal` / `memcmp` sites compare PUBLIC proof commitments
+  and Merkle roots during verification, where both operands are attacker-computable and a
+  timing difference leaks no secret.  Extends #249 to the code added since.
+
+- **Memory / integer safety in C — clean on the shipped path.**  The `clang --analyze`
+  hits are false positives (`der_int_enc`'s `val[0] & 0x80` is guarded by a `val_len &&`
+  short-circuit; `der_len` at `herradura_cli.c:766` is set by `der_seq_enc` on the success
+  path the caller requires).  `decfile` bounds the attacker-controlled 8-byte header length
+  by the actual file size BEFORE any arithmetic and verifies the tag before decrypting
+  (#368 already closed the `n_blocks * KEYBYTES` overflow).  `encfile` holds ~3x the input
+  in memory (whole-file, not streamed), but on the user's OWN input — a scalability note,
+  not an adversarial vector.
+
+- **Go / Python / Java hostile input — clean.**  `go vet` is clean on the shipped Go CLI
+  (the test harness's `fmt.Println` warnings are out of scope).  #367's parser hardening
+  holds.
+
+- **Files and the CLI surface — ONE FINDING, #417.**  Output writers follow symlinks on
+  create (`O_NOFOLLOW` missing) in all four ports: a symlinked output path is followed, the
+  target truncated and overwritten, and because `O_CREAT`'s mode applies only on creation a
+  private key can land in a world-readable file — defeating #395's 0600 intent — and any
+  pointed-at file is destroyed.  Reproduced in C and Go.  Otherwise the 0600 rule is on
+  every writer (all four ports), `-` is stdout everywhere (#399), and nothing follows an
+  artifact's last field (#368).
+
+- **Protocol use — clean / already tracked.**  Domain-separation tags are distinct:
+  0x20-0x23 (FPE/TWK families), 0x30 (Schnorr challenge), 0x31 (Stern-F chain, with a
+  second ds byte for c0/c1/c2), string tags for the AEAD/duplex MACs, a full 32-byte DRBG
+  domain.  The 0x30 tag is shared by HPKS-NL and HPKS-T, which is the surface #412 (HPKS-T
+  must bind the signing group) and #415 (the Schnorr-family challenge omits the public key)
+  already cover.  The Stern verifiers refuse fewer than 219 rounds unless given
+  `--min-rounds` (#364); 219 is the production count in every port.  No new downgrade path.
+
+- **Supply chain and CI — ONE FINDING, #418.**  CI actions are pinned to mutable tags
+  (`actions/checkout@v4`, `github/codeql-action/*@v3`), not commit SHAs.  All are
+  first-party, so the risk is lower, but the checklist asks for SHA pinning held by a tool.
+  The "no third-party dependency" property of shipped code is already a real property
+  (confirmed: no shipped suite or CLI imports anything outside its standard library).
+
+- **Verifiers read by hand (from #410 B) — clean.**  Go errors on an unread local and Java
+  on none, so the #409 pattern surfaces differently: the Go/Java verifiers were read for a
+  check computed but not gating the return (a comparison whose result is discarded, a `_ =`,
+  a struct field set but never checked).  None found; #410 A's wrong-secret matrix already
+  proved all four CLIs propagate every verdict to the exit code.
+
+- **Documentation honesty — clean.**  SECURITY.md's maturity levels match what the review
+  found; the demo/research variants say so in `--help` (and #414 added the "no integrity"
+  statements for the unauthenticated modes).
+
+Net: two hardening findings (#417 symlink-follow on create; #418 CI action pinning), both
+local/standing rather than a forgery or key-recovery class.  Consistent with #410 having
+already swept the acceptance decisions (which yielded #412-#416).
+
+Status: **DONE v21.0.3** — one pass per checklist area; filed #417 (symlink-follow on output create) and #418 (CI action pinning); the rest of the shipped surface held.
+
+---

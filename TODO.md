@@ -87,67 +87,6 @@ Status: **OPEN**
 
 ---
 
-### #411: a general security review of the shipped code
-
-The project has had targeted audits: the constant-time audits (#129, #182, #249), the parser
-and encoding work (#130, #367, #372, #403-#408), the file permissions (#395) and peer-value
-screening (#371).  It has never had a review of the whole shipped surface in one pass.
-#409 shows the cost: a universal forgery survived every targeted check.  This item is that
-pass.  #410 is its proof-system part; this item covers the rest.
-
-**Scope:** the four CLIs, `herradura.h`, `herradura/`, the Python suite and codec, the Java
-port, `Mcp/`, `bindings/ffi/`, the Dockerfile, CI, and anything else that ships or runs on a
-user's data.  The analysis-only code in `SecurityProofsCode/` is out of scope, except where
-#410 D covers it.
-
-**Checklist (at least):**
-
-- **Randomness:** every secret comes from the OS CSPRNG, a failed or short read is fatal in
-  every port, and no seeded or test PRNG reaches a shipped path (the replay hooks of
-  `KAT/*_replay.json` included).  Nonces and ephemerals are never reused across calls.
-- **Secret handling:** private values are zeroized where the language allows it (C, Java
-  arrays), and no secret reaches an error message, a log line, `--help` output, the MCP
-  server's responses or a temp file.  The MCP trust model (`Mcp/README.md`) matches what
-  the server enforces.
-- **Comparisons and oracles:** every tag, commitment and MAC comparison is constant-time
-  (extending #249 to code added since).  Decryption and verification failures have one
-  message and one exit status per case, so they leak no padding, parse or step oracle.
-  Implicit rejection stays implicit.
-- **Memory and integer safety in C:** size arithmetic before every `malloc`/`memcpy`
-  (overflow at large n, rounds or file sizes), stack buffers sized from wire values, and
-  `ASAN`/`UBSan` plus `valgrind` runs over the CliTest corpus as well as the harnesses.
-  Also `clang --analyze` / `cppcheck` as tooling.
-- **Go / Python / Java:** panics or uncaught exceptions on hostile input (extending #367);
-  `gosec` and `bandit` as tooling if they are available.
-- **Files and the CLI surface:** output paths (symlink-following on create, overwriting an
-  input, `-` handling), large-file streaming in `encfile` / `decfile` (memory blow-up,
-  truncated input), the 0600 rule (#395) on every new writer, and argument parsing
-  (#130's fuzzer).
-- **Protocol use:** domain separation between every hash use (#348's tags, checked for
-  collisions), the statement in every transcript (#410 C), downgrade paths (a flag that
-  selects a weaker variant, a `--min-rounds` default, legacy readers), and key reuse across
-  protocols (one ZKP-NL key under ZKBoo and ZKB++, one key for HKEX and HPKS).
-- **Supply chain and CI:** the CI actions pinned to a commit, install steps bounded (#353),
-  the Docker base image, and the "no third-party dependency" property of shipped code
-  checked by a tool, not by habit.
-- **Verifiers read by hand (from #410 B):** for each Go and Java verifier and decryptor,
-  every check its paper protocol makes, and where it makes it.  #410's tools (gcc's
-  unused-variable warnings, an AST pass over the Python) cover C and Python only.  The
-  Go and Java compilers do not flag a value that is computed and never read, so those two
-  ports are held only by the four-CLI matrix's behaviour.
-- **Documentation honesty:** SECURITY.md's maturity levels against what the review finds.
-  Every protocol marked demo or research says so in `--help` as well.
-
-**Method:** one pass per area, each yielding findings with a severity (forgery, key or
-plaintext recovery, DoS / crash, hardening) and a reproducer.  Tools are run as analysis
-only.  The `/security-review` and `/code-review` skills can be used over each component's
-source as a second reader.  Each finding becomes its own TODO; this item closes when every
-area is reviewed and its findings filed, not when they are all fixed.
-
-Status: **OPEN**
-
----
-
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
@@ -759,3 +698,68 @@ at n = 256 would remove the conjecture.
 Status: **OPEN**
 
 ---
+
+### #417: output files are created following symlinks (O_NOFOLLOW missing)
+
+Filed by the #411 review (Files and the CLI surface).  Every CLI writer creates its
+output with the equivalent of `open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600)` and no
+`O_NOFOLLOW`: C's `hkx_fopen_out` (`HerraduraCli/herradura_codec.h`), Go's
+`os.WriteFile(path, b, 0600)`, Python's `os.open(..., 0o600)`
+(`HerraduraCli/herradura.py` `_open_out`), and Java's `Files.write` after a
+`Files.createFile` whose `FileAlreadyExistsException` is caught
+(`bindings/java/herradurakex/HerraduraCli.java`).  When the chosen output path is a
+symlink an attacker pre-placed, the open follows it: the target is truncated and
+overwritten, and because `O_CREAT`'s mode applies only on creation, the target KEEPS
+its existing mode.  So a private key written over a pre-existing world-readable file is
+world-readable — the 0600 intent of #395 is defeated — and any file the symlink points
+at is destroyed.
+
+**Severity:** hardening / local (private-key confidentiality + destructive overwrite).
+Requires an attacker to place a symlink at the victim's output path first — realistic in
+a shared or predictable working directory, or when a user is induced to write to a path.
+
+**Reproducer (C and Go, confirmed):**
+```
+cd "$(mktemp -d)"
+printf 'VICTIM\n' > victim.txt; chmod 0644 victim.txt
+ln -s "$PWD/victim.txt" key.pem
+herradura_cli genpkey --algo hkex-gf --out key.pem     # or herradura_cli_go
+# victim.txt is now the PRIVATE KEY, still mode 0644 (world-readable)
+ls -l victim.txt; head -1 victim.txt
+```
+
+**Fix direction:** open the final component with `O_NOFOLLOW` (C/Python), `os.OpenFile`
+with a NOFOLLOW flag in Go, and `LinkOption.NOFOLLOW_LINKS` / refuse a symlink target in
+Java; OR refuse to write when the path is an existing symlink.  Weigh against the OpenSSL
+precedent (overwriting your own key file must still work): `O_NOFOLLOW` breaks only the
+symlink case, not a regular existing file, so it is the narrow fix.  Covered by a new
+cell in a CliTest output-path script, with an accept-control (a regular file still
+overwrites) and the symlink case shown to be refused.
+
+Status: **OPEN**
+
+---
+
+### #418: CI third-party actions are pinned to mutable tags, not commit SHAs
+
+Filed by the #411 review (Supply chain and CI).  `.github/workflows/ci.yml` and
+`.github/workflows/codeql.yml` reference their actions by moving tag — `actions/checkout@v4`,
+`actions/setup-node@v4`, `github/codeql-action/init@v3`, `github/codeql-action/analyze@v3` —
+rather than by a full 40-hex commit SHA.  A tag is mutable: whoever can move it (an upstream
+compromise, or a maintainer-account takeover) changes what every CI run on this repo executes,
+with the repo's `GITHUB_TOKEN` in scope.  All the actions in use are first-party
+(`actions/*`, `github/*`), which lowers but does not remove the risk; GitHub's own hardening
+guidance (and OpenSSF Scorecard's Pinned-Dependencies check) is to pin to a SHA with the tag
+in a trailing comment.
+
+**Severity:** hardening (supply chain).  No reproducer — this is a standing exposure, not a
+triggered defect.
+
+**Fix direction:** replace each `uses: owner/action@vN` with
+`uses: owner/action@<full-sha>  # vN`, and add a tool check (extend
+`tools/check_ci_install_bounds.py` or a new `tools/check_action_pinning.py`) that fails a
+`uses:` line referencing a non-local action by anything other than a 40-hex SHA, so the
+property is held by a tool and not by habit (the #411 checklist's explicit ask).  Dependabot
+can still bump the SHAs.
+
+Status: **OPEN**

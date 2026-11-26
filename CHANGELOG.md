@@ -2,6 +2,38 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [21.0.3] - 2026-11-25
+
+**A general security review of the shipped code (TODO #411).** The project had had
+targeted audits — constant-time (#129, #182, #249), parser/encoding (#130, #367,
+#403-#408), file modes (#395), peer-value screening (#371) — but never one pass over the
+whole shipped surface; #409 showed the cost. This item is that pass: the four CLIs,
+`herradura.h`, the Go package, the Python suite/codec, the Java port, CI and the
+Dockerfile, one checklist area at a time, with the host's analyzers (`clang --analyze`,
+`go vet`, `javac`, an AST pass over the Python, `valgrind`) run as analysis only.
+
+Most of the surface held — randomness is OS-CSPRNG-only with fatal short reads in every
+port and no seeded PRNG on any shipped path (the `KAT/*_replay.json` hooks live only in
+the test harnesses); secret-dependent tag comparisons are constant-time everywhere;
+`decfile` bounds its attacker-controlled length field before any arithmetic and verifies
+before decrypting (#368); no CLI writes a temp file or leaks key material into an error
+message; domain-separation tags are distinct; and no shipped code imports a third-party
+dependency. The review filed two hardening findings as their own TODOs, consistent with
+#411's method (it closes when each area is reviewed and its findings filed, not when they
+are fixed):
+
+- **#417** — every CLI creates its output with `O_CREAT`/`O_TRUNC` and no `O_NOFOLLOW`,
+  so a symlinked output path is followed: the target is overwritten and, because the mode
+  applies only on creation, a private key can land in a pre-existing world-readable file,
+  defeating #395's 0600 intent. Reproduced in C and Go.
+- **#418** — CI actions are pinned to mutable tags (`actions/checkout@v4`,
+  `github/codeql-action/*@v3`), not commit SHAs. All first-party, but the checklist asks
+  for SHA pinning held by a tool.
+
+Both are local/standing hardening issues, not a forgery or key-recovery class — #410
+having already swept the acceptance decisions (yielding #412-#416) is why. No shipped
+code changed in this item.
+
 ## [21.0.2] - 2026-11-25
 
 **The Python test harness is now held to the shipped suite (TODO #416).**
