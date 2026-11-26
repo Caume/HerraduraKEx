@@ -71,7 +71,8 @@ exact choices list per subcommand.
   (code-based, syndrome decoding) turned into a Fiat-Shamir signature / Niederreiter KEM.
   N = 256 by default (~2^24, demo); N = 2304 is the 128-bit set (--level 128), the "long
   form": N-bit values as byte strings, 256-bit commitments and message (SPEC.md §11.1).
-- HPKS-ring: ring signature built on HPKS-Stern-F.
+- HPKS-ring: ring signature built on HPKS-Stern-F.  BROKEN (TODO #415): forgeable
+  with no member's secret key; do not use.
 - rnl-sigma / nl-zkboo / nl-zkbpp: Sigma-protocol and ZKBoo/ZKB++ MPC-in-the-head proofs
   over Ring-LWR / NL-FSCX statements.
 - HPKS-t: threshold Schnorr signature (4-phase protocol: commit, aggregate, respond,

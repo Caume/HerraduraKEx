@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [23.0.1] - 2026-11-26
+
+**HPKS-Ring is re-rated broken, and HPKS/HPKS-NL key substitution is recorded as accepted
+(TODO #415, documentation only).**  A fresh review of the four ports' ring verifiers
+(not the old tests) confirms #415's finding.  `hpks-ring` is existentially forgeable with
+no member's secret key, at N = 256 and N = 2304 and at 219 rounds.  The OR-composition
+splits each round's challenge across members mod 3, but a keyless party can answer two
+of Stern's three challenges, and `b = 2`, the only branch that reads the public key, is
+never forced.  SECURITY.md and `spec/` now rate it **Broken — do not use** (it was
+demo-only), and `llms.txt` says so.  The #415 line under [19.0.1] ("no
+forgery under a fixed key") is superseded.  The scheme itself is unchanged; refusing it
+in the CLIs and redesigning it stay open in #415, which now records a revised fix
+direction.  HPKS and HPKS-NL omit the public key from the challenge, so about half of
+all signatures also verify under a publicly computable second key.  Reconfirmed through
+all four CLIs, with a refused negative control.  This is recorded as accepted: the
+schemes are already pedagogical, and binding the key would change the wire format.
+HPKS-T is not affected, because #412's verifier rebuilds its aggregate from the member
+list.  `spec/check_security_md.py` accepts the status prose "Broken".
+
 ## [23.0.0] - 2026-11-26
 
 **A one-time-signature key's state is read fail-closed, and the key must be a file

@@ -91,6 +91,7 @@ ROW_PROTOCOLS = {
 # verdict does.
 STATUS_PROSE = [
     ("Broken as named",              {"broken"}),
+    ("Broken",                       {"broken"}),        # TODO #415: hpks-ring
     ("Production-track",             {"production"}),
     ("Demo-only / pedagogical",      {"demo-only", "pedagogical"}),
     ("Demo-only",                    {"demo-only"}),

@@ -83,6 +83,51 @@ both the seed (b = 1: c0 = h(pi, H r)) and the syndrome (b = 2: c0 = h(pi, H y +
 a changed seed or syndrome misses a commitment; verified that a one-bit change to either
 is rejected.  No action.
 
+**Re-reviewed 2026-11-26 (v23.0.0), from the code, not the old tests.**
+- **(a) holds in all four ports.** `hpks_stern_ring_verify` (Python), `stern_ring_verify`
+  (herradura.h), `HpksSternRingVerify` (Go) and `SternRing.verify` (Java) each make one
+  check per round, `Σ_i b_i ≡ J (mod 3)`, and then check each member's round on its own.
+  The `b = 0` branch reads neither H_i nor s_i, and `b = 1` reads H_i only, so the public
+  key s_i is read only when `b = 2`.  A keyless party can make a round answerable for both
+  `b = 0` and `b = 1`; with k ≥ 2 such members, {0,1} + {0,1} = Z_3, so `b = 2` is never
+  forced.  The flaw is in the composition, so hashing the ring's keys changes nothing.
+  The long form uses the same composition.
+- **New code-review observation (unverified, not exploited):** the ring signature's
+  challenge byte is not range-checked.  Python, Go and Java read the whole byte, and C
+  masks it to 2 bits.  Every port sends any value other than 0 or 1 to the `b = 2`
+  branch but sums the raw value mod 3.  So a `b = 2` round re-encoded as 5 keeps the sum
+  and the check: an encoding-malleability candidate, separate from (a).  Fix: refuse
+  b ∉ {0,1,2} at decode.
+- **(b) holds; reconfirmed end to end** through all four CLIs: of 40 honest signatures,
+  HPKS had 14 and HPKS-NL 17 that also verify under C' = C·z (with z^e = 1, found from
+  e and the factors of 2^256 − 1).  The predicted share is 0.501.  A z whose order does
+  not divide e was refused by every CLI.  It is key substitution only: neither the
+  message nor the substitute key's secret is under the attacker's control.  **HPKS-T is
+  not affected by this direct substitution**, because #412's verifier rebuilds C_agg
+  from the member list with MuSig coefficients that hash the whole list.
+- **(c) holds analytically.** The single-signer verifier pins H (from the seed) in every
+  `b = 1` round and the syndrome in every `b = 2` round.  A different key would have to
+  agree with the honest one on ~73 random H·r values and on H·y ⊕ s, which means
+  matching the seed through the hash.
+- **Fix direction, revised.** The pause note says a sound ring needs new ZK machinery
+  (MPC/VOLE-in-the-head).  That is too pessimistic.  A single Stern proof over a
+  block-diagonal statement avoids challenge-splitting altogether:
+  - augment each H_i with s_i as an extra column, so the statement is H̃·z = 0 with
+    H̃ = diag([H_1 | s_1], …, [H_k | s_k]) and the witness z = (0, …, (e_j, 1), …, 0);
+  - the permutations permute the blocks and the positions within each block, but keep
+    each block's last coordinate in place;
+  - `b = 0` also checks that σ(z) has exactly one non-zero block, of weight t + 1, with
+    its last coordinate set.
+  This keeps Stern's (2/3)-per-round soundness at 219 rounds and its anonymity
+  argument.  The construction is in the style of Aguilar Melchor–Cayrel–Gaborit's
+  Stern-based ring signatures.  It still needs a prototype, a written soundness and
+  anonymity argument, wire format, KATs and four ports, and it is MAJOR.
+- **Documented in v23.0.1:** SECURITY.md and spec/ re-rate `hpks-ring` as broken, and
+  record (b) as accepted for HPKS and HPKS-NL.  The CHANGELOG [19.0.1] #415 line
+  ("no forgery under a fixed key") is superseded; [23.0.1] says so.  Not done (the
+  maintainer's call): making `hpks-ring` refuse to sign and verify (MAJOR), the
+  challenge-byte bound, and the redesign.
+
 Status: **OPEN**
 
 ---

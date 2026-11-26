@@ -402,8 +402,11 @@ SECURITY = {
                        source=["TODO.md #127 (6943-6949)", "TODO_DONE.md #212"]),
     "hpks":      dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~36.5 (n=256)",
                        notes="Schnorr signature over GF(2^n)*; same group-choice caveat as hkex-gf, and the "
-                             "same ~2^36.5 Pohlig-Hellman key recovery, which yields arbitrary forgery.",
-                       source=["TODO.md #127", "TODO_DONE.md #212"]),
+                             "same ~2^36.5 Pohlig-Hellman key recovery, which yields arbitrary forgery. "
+                             "The challenge omits the public key, so about half of all signatures (those "
+                             "with gcd(e, 2^n - 1) > 1) also verify under a publicly computable second key "
+                             "C*z with z^e = 1: key substitution, not forgery; accepted (TODO #415).",
+                       source=["TODO.md #127", "TODO_DONE.md #212", "TODO.md #415"]),
     "hpke":      dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~36.5 (n=256)",
                        notes="El Gamal encryption over GF(2^n)*; same group-choice caveat as hkex-gf, and the "
                              "same ~2^36.5 Pohlig-Hellman recovery of the decryption key. Independently, the "
@@ -423,9 +426,11 @@ SECURITY = {
                              "`pedagogical` is what SECURITY.md has always said, and matches hpks. "
                              "Since v12.0.0 (TODO #348) the challenge is HFSCX-256-DS(0x30, R || msg) "
                              "truncated to n bits, not nl_fscx_revolve_v1(R, msg, n/4), which put the "
-                             "signer's msg in v1's B.",
+                             "signer's msg in v1's B. That challenge omits the public key, so hpks's "
+                             "key substitution applies (about half of all signatures also verify under "
+                             "a publicly computable second key); accepted (TODO #415).",
                        source=["SECURITY.md", "TODO_DONE.md #212", "SecurityProofs-4.md 11.7",
-                               "TODO_DONE.md #348"]),
+                               "TODO_DONE.md #348", "TODO.md #415"]),
     "hpke-nl":   dict(status="pedagogical", quantum_resistant=False,
                        classical_security_bits="~36.5 (n=256)",
                        notes="NL-FSCX-hardened El Gamal over the same GF(2^n)* group as hpke, with the same "
@@ -592,10 +597,16 @@ SECURITY = {
                               "the claim, which is what this item was filed about.",
                        source=["TODO_DONE.md #208", "TODO_DONE.md #201",
                                "CliTest/test_cross_lang_matrix.sh", "TODO_DONE.md #346"]),
-    "hpks-ring": dict(status="demo-only", quantum_resistant="conjectured",
-                       notes="Anonymous ring signature built on hpks-stern keys; inherits hpks-stern's "
-                             "demo-rounds soundness caveat.",
-                       source=["herradura.h SDF_* constants"]),
+    "hpks-ring": dict(status="broken", quantum_resistant="conjectured",
+                       notes="BROKEN (TODO #415, v23.0.1): existentially forgeable with no member's "
+                             "secret key, at N = 256 and N = 2304, at 219 rounds. The OR-composition "
+                             "splits each round's challenge across members mod 3, which is sound only if "
+                             "a party without the witness can answer one challenge per round; in Stern, "
+                             "b = 0 and b = 1 never read the syndrome, so two keyless members cover every "
+                             "residue and nobody is ever forced to answer b = 2. Hashing the ring's keys "
+                             "does not help. A repair must replace the composition. Was demo-only, "
+                             "inheriting hpks-stern's caveats.",
+                       source=["herradura.h SDF_* constants", "TODO.md #415"]),
     "hpks-t":    dict(status="pedagogical", quantum_resistant=False,
                        classical_security_bits="~36.5 (n=256)",
                        notes="Threshold / aggregate Schnorr over GF(2^n)* (herradura.h 4074), with signing "

@@ -470,10 +470,11 @@
         "status": "pedagogical",
         "quantum_resistant": false,
         "classical_security_bits": "~36.5 (n=256)",
-        "notes": "Schnorr signature over GF(2^n)*; same group-choice caveat as hkex-gf, and the same ~2^36.5 Pohlig-Hellman key recovery, which yields arbitrary forgery.",
+        "notes": "Schnorr signature over GF(2^n)*; same group-choice caveat as hkex-gf, and the same ~2^36.5 Pohlig-Hellman key recovery, which yields arbitrary forgery. The challenge omits the public key, so about half of all signatures (those with gcd(e, 2^n - 1) > 1) also verify under a publicly computable second key C*z with z^e = 1: key substitution, not forgery; accepted (TODO #415).",
         "source": [
           "TODO.md #127",
-          "TODO_DONE.md #212"
+          "TODO_DONE.md #212",
+          "TODO.md #415"
         ]
       }
     },
@@ -504,12 +505,13 @@
         "status": "pedagogical",
         "quantum_resistant": false,
         "classical_security_bits": "~36.5 (n=256)",
-        "notes": "NL-FSCX-hardened Schnorr over the same GF(2^n)* group as hpks, so the same ~2^36.5 Pohlig-Hellman key recovery applies unchanged -- the NL-FSCX challenge hardens the hash, not the group. NOT quantum-resistant despite the 'NL' naming suggesting a PQC upgrade; that claim is withdrawn and no lattice-based replacement is planned. This row said `deprecated` until TODO #238, which conflated the withdrawn PQC *claim* with the algo being superseded: it is neither superseded nor removed -- it still ships in all four implementations and is covered by the cross-language matrix. `pedagogical` is what SECURITY.md has always said, and matches hpks. Since v12.0.0 (TODO #348) the challenge is HFSCX-256-DS(0x30, R || msg) truncated to n bits, not nl_fscx_revolve_v1(R, msg, n/4), which put the signer's msg in v1's B.",
+        "notes": "NL-FSCX-hardened Schnorr over the same GF(2^n)* group as hpks, so the same ~2^36.5 Pohlig-Hellman key recovery applies unchanged -- the NL-FSCX challenge hardens the hash, not the group. NOT quantum-resistant despite the 'NL' naming suggesting a PQC upgrade; that claim is withdrawn and no lattice-based replacement is planned. This row said `deprecated` until TODO #238, which conflated the withdrawn PQC *claim* with the algo being superseded: it is neither superseded nor removed -- it still ships in all four implementations and is covered by the cross-language matrix. `pedagogical` is what SECURITY.md has always said, and matches hpks. Since v12.0.0 (TODO #348) the challenge is HFSCX-256-DS(0x30, R || msg) truncated to n bits, not nl_fscx_revolve_v1(R, msg, n/4), which put the signer's msg in v1's B. That challenge omits the public key, so hpks's key substitution applies (about half of all signatures also verify under a publicly computable second key); accepted (TODO #415).",
         "source": [
           "SECURITY.md",
           "TODO_DONE.md #212",
           "SecurityProofs-4.md 11.7",
-          "TODO_DONE.md #348"
+          "TODO_DONE.md #348",
+          "TODO.md #415"
         ]
       }
     },
@@ -532,11 +534,12 @@
         "java": true
       },
       "security": {
-        "status": "demo-only",
+        "status": "broken",
         "quantum_resistant": "conjectured",
-        "notes": "Anonymous ring signature built on hpks-stern keys; inherits hpks-stern's demo-rounds soundness caveat.",
+        "notes": "BROKEN (TODO #415, v23.0.1): existentially forgeable with no member's secret key, at N = 256 and N = 2304, at 219 rounds. The OR-composition splits each round's challenge across members mod 3, which is sound only if a party without the witness can answer one challenge per round; in Stern, b = 0 and b = 1 never read the syndrome, so two keyless members cover every residue and nobody is ever forced to answer b = 2. Hashing the ring's keys does not help. A repair must replace the composition. Was demo-only, inheriting hpks-stern's caveats.",
         "source": [
-          "herradura.h SDF_* constants"
+          "herradura.h SDF_* constants",
+          "TODO.md #415"
         ]
       }
     },
