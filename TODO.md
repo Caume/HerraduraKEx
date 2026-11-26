@@ -34,6 +34,55 @@ To do:
 2. Either prefix the key and the ring into the challenge (a wire change, MAJOR), or
    record in SECURITY.md why the omission is safe.
 
+**Investigated 2026-11-25** (prototypes in scratchpad against the real suite; NO shipped
+code changed).  Item 1 answered for all three; it is worse than "omits the public key".
+
+**(a) HPKS-Ring is EXISTENTIALLY FORGEABLE — no secret key, both forms.** A ring
+signature for a freshly-generated ring holding NONE of the members' secrets is accepted
+by the shipped `hpks_stern_ring_verify` (k = 2 and 3) and `hpks_stern_l_ring_verify`
+(N = 2304), at the production round count (219).  This is not key-substitution of an
+honest signature; it is a from-scratch forgery, so the stated "EUF-CMA under SD(N,t) per
+member" is false.  #410's matrix missed it: its ring cell presents ANOTHER ring's honest
+signature, never a forgery built for the target ring.
+
+Root cause: the OR-composition is CDS challenge-splitting (`Σ b_i ≡ joint_b mod 3`),
+sound only for a 2-special-sound base protocol (unqualified prover answers ONE challenge).
+Stern is 3-challenge with 2/3 cheating: an honest round on a FAKE weight-t vector answers
+b ∈ {0,1} (only b = 2 reads the key).  With the free split, {0,1}+{0,1} = Z_3 covers
+every joint challenge, so no member ever has to answer b = 2.  Prefixing the ring/keys
+into the hash (item 2's suggestion) does NOT fix it — the forgery is independent of the
+hash contents.
+
+Both tractable repairs were prototyped and BROKEN, pinning the obstruction:
+- local-hash chain (removes the free split): rounds become independent, so a forger
+  grinds each round's commitments until its challenges avoid b = 2 — ~477 tries total for
+  k = 2 over 219 rounds (demonstrated);
+- global hash + per-member forced challenges (stops grinding and covering): the honest
+  signer can no longer simulate non-signers (their challenge is the hash of their own
+  commitment — circular), and grinding to sign needs (2/3)^((k-1)*rounds) ~ 2^-128.
+Making the hash global is what stops grinding and is exactly what makes signing
+infeasible, because the base protocol's answerable set is a constant fraction (2/3), not
+a singleton.  A sound construction must REPLACE the composition with a 2-special-sound
+(single-shot) proof of syndrome decoding — MPC/VOLE-in-the-head (Feneuil-Joux-Rivain) or
+a Merkle-accumulator one-out-of-many proof — new ZK machinery, wire format, KATs and
+analysis across four ports.  That is a dedicated multi-session project, tracked here.
+PAUSED 2026-11-25 by maintainer: do not ship a hand-rolled OR fix; `hpks-ring` stays
+shipping (and forgeable) until the redesign.  The safe interim, if revisited, is to make
+`sign`/`verify --algo hpks-ring` refuse (MAJOR).
+
+**(b) HPKS / HPKS-NL / HPKS-T: duplicate-signature key selection (the weak-FS item).**
+The challenge e omits the public key C, so a signature (R, s) on a message verifies under
+a SECOND key C' = C*z whenever gcd(e, 2^n - 1) > 1, which anyone computes from public
+values.  Measured 95/200 honest signatures (~ the predicted 1 - Prod(1 - 1/p) = 0.50)
+verify under a forgeable second key.  No existing message is forged; this is
+key-substitution.  Fix: prefix C (and the group, for -T) into the challenge (MAJOR), or
+record why it is acceptable.  Not yet done.
+
+**(c) HPKS-Stern single-signer (non-ring) BINDS its key — safe.** Its commitments pin
+both the seed (b = 1: c0 = h(pi, H r)) and the syndrome (b = 2: c0 = h(pi, H y + s)), so
+a changed seed or syndrome misses a commitment; verified that a one-bit change to either
+is rejected.  No action.
+
 Status: **OPEN**
 
 ---
