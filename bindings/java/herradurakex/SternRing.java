@@ -284,7 +284,11 @@ public final class SternRing {
         int[] joint = jointChallenges(BitArray.fromBigInteger(seed, n), rounds);
         for (int r = 0; r < rounds; r++) {
             int sum = 0;
-            for (int i = 0; i < k; i++) sum += sig.challenges[i][r];
+            for (int i = 0; i < k; i++) {
+                int b = sig.challenges[i][r];
+                if (b < 0 || b > 2) return false;   // TODO #421: a trit, not b mod 3
+                sum += b;
+            }
             if (floorMod3(sum) != joint[r]) return false;
         }
 

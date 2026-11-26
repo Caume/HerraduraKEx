@@ -2725,6 +2725,11 @@ def hpks_stern_ring_verify(msg: 'BitArray', sig, ring_keys: list,
     t      = max(2, n // 16)
     all_commits, all_challenges, all_responses = sig
     rounds = len(all_challenges[0])
+    # TODO #421: every challenge is a trit.  The branches below send any value
+    # other than 0 or 1 to the b = 2 check while the sum takes it mod 3, so a
+    # b = 2 round re-encoded as 5 kept both and still verified (malleability).
+    if any(b not in (0, 1, 2) for row in all_challenges for b in row):
+        return False
 
     # Re-derive joint Fiat-Shamir challenges
     flat = [msg]
@@ -2880,6 +2885,8 @@ def _sternl_fs_state(msg, flat_commits) -> 'BitArray':
 
 
 def _sternl_check_round(b, commit, resp, H_rows, syndrome, n, t) -> bool:
+    if b not in (0, 1, 2):                       # TODO #421: as C, Go and Java
+        return False
     c0, c1, c2 = commit
     a, v = resp
     if not (0 <= a < (1 << n) and 0 <= v < (1 << n)):
@@ -3016,6 +3023,8 @@ def hpks_stern_l_ring_verify(msg: 'BitArray', sig, ring_keys: list,
     if k == 0 or len(commits) != k:
         return False
     rounds = len(chals[0])
+    if any(b not in (0, 1, 2) for row in chals for b in row):   # TODO #421
+        return False
     st = _sternl_fs_state(msg, [c for i in range(k) for r in range(rounds)
                                 for c in commits[i][r]])
     for r in range(rounds):

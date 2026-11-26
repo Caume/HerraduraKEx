@@ -93,7 +93,7 @@ is rejected.  No action.
   forced.  The flaw is in the composition, so hashing the ring's keys changes nothing.
   The long form uses the same composition.
 - **New code-review observation (unverified, not exploited):** the ring signature's
-  challenge byte is not range-checked.  Python, Go and Java read the whole byte, and C
+  challenge byte is not range-checked.  (Confirmed and fixed by #421, v24.0.0.)  Python, Go and Java read the whole byte, and C
   masks it to 2 bits.  Every port sends any value other than 0 or 1 to the `b = 2`
   branch but sums the raw value mod 3.  So a `b = 2` round re-encoded as 5 keeps the sum
   and the check: an encoding-malleability candidate, separate from (a).  Fix: refuse
@@ -125,8 +125,8 @@ is rejected.  No action.
 - **Documented in v23.0.1:** SECURITY.md and spec/ re-rate `hpks-ring` as broken, and
   record (b) as accepted for HPKS and HPKS-NL.  The CHANGELOG [19.0.1] #415 line
   ("no forgery under a fixed key") is superseded; [23.0.1] says so.  Not done (the
-  maintainer's call): making `hpks-ring` refuse to sign and verify (MAJOR), the
-  challenge-byte bound, and the redesign.
+  maintainer's call): making `hpks-ring` refuse to sign and verify (MAJOR) and the
+  redesign.  The challenge-byte bound was done as #421 (v24.0.0).
 
 Status: **OPEN**
 

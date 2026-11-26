@@ -3203,7 +3203,14 @@ func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) b
 	for r := 0; r < rounds; r++ {
 		s := 0
 		for i := 0; i < k; i++ {
-			s += sig.Members[i].Rounds[r].B
+			// TODO #421: each b must be a trit; the switch below sends any b
+			// other than 0 or 1 to the b = 2 check while the sum takes it mod
+			// 3, so a b = 2 round re-encoded as 5 still verified.
+			b := sig.Members[i].Rounds[r].B
+			if b < 0 || b > 2 {
+				return false
+			}
+			s += b
 		}
 		if (s%3+3)%3 != joint[r] {
 			return false

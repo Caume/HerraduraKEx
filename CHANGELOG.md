@@ -2,6 +2,33 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [24.0.0] - 2026-11-26
+
+**An HPKS-Ring challenge byte must be a trit (TODO #421).**  **MAJOR**: it refuses
+signature files earlier builds verified — see MIGRATING.md section 58.
+
+Found by #415's code review.  Each ring-signature entry carries its challenge `b` as one
+byte.  Every verifier sent a `b` other than 0 or 1 to the `b = 2` check, while the
+per-round sum took it mod 3, so rewriting a `b = 2` round as 5 (or as any byte up to
+254 with residue 2) kept both checks and still verified.  This was confirmed against
+v23.0.1 through the CLIs: all four short-form (N = 256) verifiers accepted the
+re-encoding, and so did Python's long-form (N = 2304) verifier.  The C, Go and Java
+long-form round checkers already refused any `b` outside {0, 1, 2}.  It is
+malleability, not forgery: the responses are the signer's own.
+
+Every ring verifier now refuses any challenge outside {0, 1, 2} before the sum check:
+`hpks_stern_ring_verify` and `hpks_stern_l_ring_verify` / `_sternl_check_round` (Python),
+`stern_ring_verify` (herradura.h), `HpksSternRingVerify` (Go), `SternRing.verify`
+(Java), and the Python harness's `hpks_stern_ring_verify_local` copy.  Because it is a
+verifier invariant, it covers every CLI's decoder at once.
+
+New `CliTest/test_ring_challenge_bound.sh` (cross-lang-compat) re-encodes an honest
+signature (it never builds one).  Per CLI it has 2 accept-controls (short and long
+form) and 5 re-encodings: b = 2 → 5, b = 0 → 3, b = 1 → 4, one b = 2 → 254, and long
+b = 2 → 5.  That makes 28 cells plus a control that reduces each byte mod 3 before
+verifying, which fails exactly the 5 re-encoded cells.  The v23.0.1 build fails 9 of the
+cells, which is the defect exactly.
+
 ## [23.0.1] - 2026-11-26
 
 **HPKS-Ring is re-rated broken, and HPKS/HPKS-NL key substitution is recorded as accepted

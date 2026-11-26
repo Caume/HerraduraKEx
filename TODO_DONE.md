@@ -27732,3 +27732,30 @@ genpkey `--out -` and no `--out`, for WOTS and XMSS; each also asserts no `./-.i
 which a stdin-spooling stand-in fails exactly.  MAJOR: MIGRATING §57.
 
 Status: **DONE v23.0.0** — a WOTS/XMSS key must be a regular file: sign refuses --key - and non-regular keys, genpkey refuses stdout; MAJOR (MIGRATING §57).
+
+---
+
+### #421: an HPKS-Ring challenge byte outside {0, 1, 2} still verified
+
+Found by #415's 2026-11-26 code review.  Each (member, round) entry of a ring signature
+carries its challenge `b` as one byte, and no decoder bounds it.  Every verifier sends
+any `b` other than 0 or 1 to the `b = 2` branch, but the per-round consistency check
+sums the raw value mod 3.  So rewriting a `b = 2` round as 5 (or 8, …, 254) keeps both
+checks, and an honest signature has many encodings that all verify: malleability, not
+forgery.  Confirmed against v23.0.1 through the CLIs: all four short-form verifiers
+accepted the re-encoding, and so did Python's long form.  The C, Go and Java long-form
+round checkers already refused `b ∉ {0,1,2}`.
+
+**MAJOR (MIGRATING entry required):** the fix refuses signature files that existing
+builds verified (the section 50 reading).
+
+**Done.**  The bound is a verifier invariant in every ring verifier, so it covers every
+CLI's decoder: Python `hpks_stern_ring_verify`, `hpks_stern_l_ring_verify` and
+`_sternl_check_round`; herradura.h `stern_ring_verify`; Go `HpksSternRingVerify`; Java
+`SternRing.verify`; and the Python harness copy `hpks_stern_ring_verify_local`.  The new
+`CliTest/test_ring_challenge_bound.sh` re-encodes an honest signature and never builds
+one.  It has 28 cells over four CLIs (2 accept-controls and 5 re-encodings each, short
+and long form) plus a mod-3-reducing stand-in, which fails exactly the 5 re-encoded
+cells.  The v23.0.1 build fails 9 cells, which is the defect exactly.
+
+Status: **DONE v24.0.0** — every HPKS-Ring verifier refuses a challenge byte outside {0, 1, 2}; MAJOR (MIGRATING §58).

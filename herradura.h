@@ -3730,10 +3730,17 @@ static int stern_ring_verify(const SternRingSig *sig,
     if (!joint) { fprintf(stderr, "stern_ring_verify: out of memory\n"); exit(1); }
     stern_ring_challenges(joint, rounds, k, msg, sig->c0, sig->c1, sig->c2);
 
-    /* Check challenge consistency: sum_i b[i,r] mod 3 == joint[r] */
+    /* Check challenge consistency: sum_i b[i,r] mod 3 == joint[r].  TODO #421:
+     * each b must be a trit -- the branches below send any b other than 0 or 1
+     * to the b = 2 check while the sum takes it mod 3, so a b = 2 round
+     * re-encoded as 5 kept both and still verified (malleability). */
     for (r = 0; r < rounds; r++) {
         int s = 0;
-        for (i = 0; i < k; i++) s += sig->b[i * rounds + r];
+        for (i = 0; i < k; i++) {
+            int bv = sig->b[i * rounds + r];
+            if (bv < 0 || bv > 2) { free(joint); return 0; }
+            s += bv;
+        }
         if ((s % 3 + 3) % 3 != joint[r]) { free(joint); return 0; }
     }
     free(joint);

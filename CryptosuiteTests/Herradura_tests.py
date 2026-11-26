@@ -916,6 +916,8 @@ def hpks_stern_ring_verify_local(msg, sig, ring_keys, n):
     k = len(ring_keys); rounds = len(all_commits[0]); t = max(2, n // 16); n_rows = n // 2
 
     joint = _ring_stern_challenges(rounds, k, msg, all_commits)
+    if any(b not in (0, 1, 2) for row in all_challenges for b in row):   # TODO #421
+        return False
 
     for r in range(rounds):
         s = sum(all_challenges[i][r] for i in range(k)) % 3

@@ -2725,3 +2725,29 @@ untouched.
 
 **Why this is MAJOR.** It refuses `sign` and `genpkey` invocations that existing
 subcommands accepted, the 2.0.0 surface (the reading section 38 applied).
+
+## 58. An HPKS-Ring challenge byte must be 0, 1 or 2 (v24.0.0)
+
+**Who is affected:** only someone holding an HPKS-Ring signature whose per-round challenge
+byte is outside {0, 1, 2}. No signer in this repository writes one: every port's
+`sign --algo hpks-ring` emits trits. A signature of that shape was made or altered by
+hand.
+
+**What changed (TODO #421).** Each (member, round) entry of an `HERRADURA HPKS-RING
+SIGNATURE` carries its challenge `b` as one byte. Every verifier sent any `b` other than
+0 or 1 to the `b = 2` check, while the per-round consistency check summed the raw value
+mod 3. So rewriting a `b = 2` round as 5 (or 8, …, 254) changed neither, and the result
+still verified. An honest signature therefore had many byte encodings that all verified.
+That is malleability, not forgery: the responses are still the signer's. It affected all
+four short-form (N = 256) verifiers and Python's long-form (N = 2304) verifier; the C,
+Go and Java long-form checkers already refused such a byte. Every ring verifier, in the
+suite libraries and so in every CLI, now refuses a signature with any challenge outside
+{0, 1, 2}.
+
+**What to do.** Nothing, for signatures produced by these tools. A hand-altered one can be
+made canonical by reducing each challenge byte mod 3. Nothing else about the format
+changes. HPKS-Ring itself is rated broken (SECURITY.md, TODO #415); this change only
+closes the encoding gap.
+
+**Why this is MAJOR.** It refuses signature files that existing builds verified. That is
+the reading section 50 applied to non-canonical base64.
