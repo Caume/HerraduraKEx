@@ -83,7 +83,7 @@ both the seed (b = 1: c0 = h(pi, H r)) and the syndrome (b = 2: c0 = h(pi, H y +
 a changed seed or syndrome misses a commitment; verified that a one-bit change to either
 is rejected.  No action.
 
-**Re-reviewed 2026-11-26 (v23.0.0), from the code, not the old tests.**
+**Re-reviewed 2026-11-26, from the code, not the old tests.**
 - **(a) holds in all four ports.** `hpks_stern_ring_verify` (Python), `stern_ring_verify`
   (herradura.h), `HpksSternRingVerify` (Go) and `SternRing.verify` (Java) each make one
   check per round, `Σ_i b_i ≡ J (mod 3)`, and then check each member's round on its own.
@@ -93,7 +93,7 @@ is rejected.  No action.
   forced.  The flaw is in the composition, so hashing the ring's keys changes nothing.
   The long form uses the same composition.
 - **New code-review observation (unverified, not exploited):** the ring signature's
-  challenge byte is not range-checked.  (Confirmed and fixed by #421, v24.0.0.)  Python, Go and Java read the whole byte, and C
+  challenge byte is not range-checked.  (Confirmed and fixed by #421, v20.0.0.)  Python, Go and Java read the whole byte, and C
   masks it to 2 bits.  Every port sends any value other than 0 or 1 to the `b = 2`
   branch but sums the raw value mod 3.  So a `b = 2` round re-encoded as 5 keeps the sum
   and the check: an encoding-malleability candidate, separate from (a).  Fix: refuse
@@ -122,11 +122,11 @@ is rejected.  No action.
   argument.  The construction is in the style of Aguilar Melchor–Cayrel–Gaborit's
   Stern-based ring signatures.  It still needs a prototype, a written soundness and
   anonymity argument, wire format, KATs and four ports, and it is MAJOR.
-- **Documented in v23.0.1:** SECURITY.md and spec/ re-rate `hpks-ring` as broken, and
-  record (b) as accepted for HPKS and HPKS-NL.  The CHANGELOG [19.0.1] #415 line
-  ("no forgery under a fixed key") is superseded; [23.0.1] says so.  Not done (the
+- **Documented in v20.0.0:** SECURITY.md and spec/ re-rate `hpks-ring` as broken, and
+  record (b) as accepted for HPKS and HPKS-NL.  The CHANGELOG's #410 section line on #415
+  ("no forgery under a fixed key") is superseded; the #415 section says so.  Not done (the
   maintainer's call): making `hpks-ring` refuse to sign and verify (MAJOR) and the
-  redesign.  The challenge-byte bound was done as #421 (v24.0.0).
+  redesign.  The challenge-byte bound was done as #421 (v20.0.0).
 
 Status: **OPEN**
 

@@ -2598,13 +2598,13 @@ takes the same `--pubkey`.  Re-check any signature you accepted before v20.0.0 a
 the group you meant: the old verifier would have accepted one from any group.
 
 
-## 55. `enc` / `dec --algo hpke-stern` are removed (v21.0.0)
+## 55. `enc` / `dec --algo hpke-stern` are removed (v20.0.0)
 
 **Who is affected:** anyone who encrypted with `--algo hpke-stern`.  Both directions are
 now refused, in every CLI and at every width:
 
 ```
-enc: --algo hpke-stern was removed in v21.0.0 (TODO #413): its ciphertext carried the error vector, so anyone could decrypt it; use --algo hpke-stern-kem
+enc: --algo hpke-stern was removed in v20.0.0 (TODO #413): its ciphertext carried the error vector, so anyone could decrypt it; use --algo hpke-stern-kem
 ```
 
 (Python prints the same reason through argparse, exit 2.)  `hpke-stern` keys are NOT
@@ -2631,7 +2631,7 @@ dec --algo hpke-stern-kem --key kem.pem --in ct.pem --out msg.out
 **Treat every `hpke-stern` ciphertext ever written as public**, and re-encrypt anything
 that needed to stay secret.  To read an old one, use a v20 build; anyone else can too.
 
-## 56. Output paths may not be symbolic links; one-time signatures burn their leaf first (v22.0.0)
+## 56. Output paths may not be symbolic links; one-time signatures burn their leaf first (v20.0.0)
 
 **Who is affected:** a script that points `--out` (or any other output flag) at a
 symbolic link — including `--out /dev/stdout`, which is itself a link on Linux — and
@@ -2647,7 +2647,7 @@ key.pem: is a symbolic link; refusing to write through it (use - for stdout)
 
 A new path is still created 0600 and an existing regular file is still overwritten
 (keeping its mode), exactly as before; symlinked directories above the last component
-are still followed. Before 22.0.0 the link was followed: its target was truncated and
+are still followed. Before 20.0.0 the link was followed: its target was truncated and
 overwritten and, because `O_CREAT`'s mode applies only on creation, kept whatever mode it
 had — so a private key written through a link to a world-readable file was
 world-readable, which defeated #395's 0600 rule, and a dangling link created a file
@@ -2660,7 +2660,7 @@ flushed and fsync'd — BEFORE the signature exists, and stop with
 cannot write one-time-signature state file key.pem.idx
 ```
 
-if that fails. Before 22.0.0 the signature was written first and C and Go ignored a
+if that fails. Before 20.0.0 the signature was written first and C and Go ignored a
 failed burn, so an unwritable sidecar (a read-only directory, a full disk) released a
 signature and left the leaf for the next `sign` to reuse — two WOTS signatures under one
 key, which is a forgery. A failure AFTER the burn (say, `--out` is refused) now wastes
@@ -2674,7 +2674,7 @@ Nothing stored changes: every key, signature and ciphertext reads as before.
 **Why this is MAJOR.** It refuses invocations that existing subcommands accepted, the
 2.0.0 surface (the reading section 38 applied).
 
-## 57. A one-time-signature key must be a file, and its state file must be intact (v23.0.0)
+## 57. A one-time-signature key must be a file, and its state file must be intact (v20.0.0)
 
 **Who is affected:** anyone who signs with `hpks-wots` or `hpks-xmss` where the key's
 `<key>.idx` sidecar is missing, empty or holds anything but one plain count; anyone who
@@ -2692,7 +2692,7 @@ sign: one-time-signature state file key.pem.idx is damaged (not one canonical de
 ```
 
 The other reasons it can give are `missing`, `not a regular file`, `unreadable` and
-`damaged (count out of range)`. Before 23.0.0 every port read a file it could not parse
+`damaged (count out of range)`. Before 20.0.0 every port read a file it could not parse
 as `0`, meaning unused. An empty file, which is what a crash mid-write leaves, let a used
 WOTS key sign again in all four CLIs. The ports also disagreed on the same bytes: Go
 refused `garbage` and C refused `1x`, while Python and Java signed with both.
@@ -2706,7 +2706,7 @@ refused:
 sign: a one-time-signature key must be a regular file given by --key (its state lives in <key>.idx); it cannot be read from or written to stdin, a pipe or a device
 ```
 
-Before 23.0.0, C and Go derived the sidecar from the name `-`, so the state went to
+Before 20.0.0, C and Go derived the sidecar from the name `-`, so the state went to
 `./-.idx` in the current directory. That one file was shared by every key piped in from
 there, and the same key piped in from another directory signed again. Java kept no
 state for a stdin key, so a WOTS key read from stdin signed twice. Python already
@@ -2714,7 +2714,7 @@ refused, but only because its PEM reader did.
 
 **What to do.** Keep WOTS/XMSS keys in files and pass `--key FILE`. Generate them with
 `--out FILE`, which writes `FILE.idx` beside the key. A key generated to stdout before
-23.0.0 has no state file; treat it as burned and generate a new one.
+20.0.0 has no state file; treat it as burned and generate a new one.
 
 If a `.idx` is lost or damaged, do **not** recreate it as `0`. Restore it from wherever
 the key was last used, or set it to a count at least as large as any ever used: `1` for
@@ -2726,7 +2726,7 @@ untouched.
 **Why this is MAJOR.** It refuses `sign` and `genpkey` invocations that existing
 subcommands accepted, the 2.0.0 surface (the reading section 38 applied).
 
-## 58. An HPKS-Ring challenge byte must be 0, 1 or 2 (v24.0.0)
+## 58. An HPKS-Ring challenge byte must be 0, 1 or 2 (v20.0.0)
 
 **Who is affected:** only someone holding an HPKS-Ring signature whose per-round challenge
 byte is outside {0, 1, 2}. No signer in this repository writes one: every port's

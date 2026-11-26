@@ -4239,13 +4239,13 @@ static void cmd_rand(int argc, char **argv)
  * enc
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* TODO #413 (v21.0.0): `enc`/`dec --algo hpke-stern` are gone.  The demo
+/* TODO #413 (v20.0.0): `enc`/`dec --algo hpke-stern` are gone.  The demo
  * ciphertext carried the error vector e', and K = hash(seed, e') needs only the
  * PUBLIC seed, so anyone holding the ciphertext and the public key decrypted it. */
 static void retired_hpke_stern(const char *sub, const char *algo)
 {
     if (strcmp(algo, "hpke-stern") == 0)
-        dief("%s: --algo hpke-stern was removed in v21.0.0 (TODO #413): its "
+        dief("%s: --algo hpke-stern was removed in v20.0.0 (TODO #413): its "
              "ciphertext carried the error vector, so anyone could decrypt it; "
              "use --algo hpke-stern-kem", sub);
 }

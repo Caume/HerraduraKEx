@@ -1054,7 +1054,7 @@ HPKE-Stern-F in the suite uses this construction: the ciphertext is the syndrome
 `ct = H · e'^T`, and the shared secret is `K = Hash(seed, e')`.  Two algo tags exist:
 `--algo hpke-stern` was the demo, which decapsulated from a known e' carried
 in the ciphertext -- so anyone holding the ciphertext and the public key could
-decrypt it, and v21.0.0 (TODO #413) removed its `enc`/`dec` (an `hpke-stern` key
+decrypt it, and v20.0.0 (TODO #413) removed its `enc`/`dec` (an `hpke-stern` key
 remains a Stern signing key) -- while `--algo hpke-stern-kem` ships a real Black-Gray-Flip (BGF) QC-MDPC decoder
 (`qcmdpc_keygen`/`qcmdpc_encap`/`qcmdpc_decap_bgf`) and needs no plaintext error
 vector at decapsulation.  The KEM tag is still demo-only, for a different reason:

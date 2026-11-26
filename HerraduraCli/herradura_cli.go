@@ -4403,13 +4403,13 @@ func cmdCredVerify(args []string) {
 
 // ── enc ───────────────────────────────────────────────────────────────────────
 
-// retiredHpkeStern refuses `enc`/`dec --algo hpke-stern` (TODO #413, v21.0.0).
+// retiredHpkeStern refuses `enc`/`dec --algo hpke-stern` (TODO #413, v20.0.0).
 // The demo ciphertext carried the error vector e', and K = hash(seed, e') needs
 // only the PUBLIC seed, so anyone holding the ciphertext and the public key
 // decrypted it.
 func retiredHpkeStern(sub, algo string) {
 	if algo == "hpke-stern" {
-		fmt.Fprintf(os.Stderr, "%s: --algo hpke-stern was removed in v21.0.0 (TODO #413): "+
+		fmt.Fprintf(os.Stderr, "%s: --algo hpke-stern was removed in v20.0.0 (TODO #413): "+
 			"its ciphertext carried the error vector, so anyone could decrypt it; "+
 			"use --algo hpke-stern-kem\n", sub)
 		os.Exit(1)

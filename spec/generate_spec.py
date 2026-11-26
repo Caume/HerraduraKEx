@@ -494,7 +494,7 @@ SECURITY = {
                         notes="Niederreiter KEM (Stern-based). Demo uses a known error vector e'. "
                               "NO CONFIDENTIALITY: the CLI ciphertext carried e', and K = hash(seed, e') "
                               "needs only the PUBLIC seed, so anyone holding the ciphertext and the "
-                              "public key decrypted it (found by TODO #410). TODO #413 (v21.0.0) removed "
+                              "public key decrypted it (found by TODO #410). TODO #413 (v20.0.0) removed "
                               "enc/dec --algo hpke-stern from every CLI; hpke-stern-kem decodes with the "
                               "private key. The tag remains a genpkey key type, a Stern signing key "
                               "(the same error vector + seed as hpks-stern), and the suites keep the "
@@ -598,7 +598,7 @@ SECURITY = {
                        source=["TODO_DONE.md #208", "TODO_DONE.md #201",
                                "CliTest/test_cross_lang_matrix.sh", "TODO_DONE.md #346"]),
     "hpks-ring": dict(status="broken", quantum_resistant="conjectured",
-                       notes="BROKEN (TODO #415, v23.0.1): existentially forgeable with no member's "
+                       notes="BROKEN (TODO #415, v20.0.0): existentially forgeable with no member's "
                              "secret key, at N = 256 and N = 2304, at 219 rounds. The OR-composition "
                              "splits each round's challenge across members mod 3, which is sound only if "
                              "a party without the witness can answer one challenge per round; in Stern, "

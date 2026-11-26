@@ -2,333 +2,15 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
-## [24.0.0] - 2026-11-26
+## [20.0.0] - 2026-11-26
 
-**An HPKS-Ring challenge byte must be a trit (TODO #421).**  **MAJOR**: it refuses
-signature files earlier builds verified — see MIGRATING.md section 58.
+**One release for eleven development steps (TODO #410–#421), five of them breaking.**
+Each breaking change has its own MIGRATING.md section: #412 (§54), #413 (§55), #417
+(§56), #419 and #420 (§57), and #421 (§58).  They were developed on `devtest` as
+v19.0.1–v24.0.0, and were folded into this one release before it shipped; those numbers
+appear only in commit messages.  The sections below follow the order the work was done.
 
-Found by #415's code review.  Each ring-signature entry carries its challenge `b` as one
-byte.  Every verifier sent a `b` other than 0 or 1 to the `b = 2` check, while the
-per-round sum took it mod 3, so rewriting a `b = 2` round as 5 (or as any byte up to
-254 with residue 2) kept both checks and still verified.  This was confirmed against
-v23.0.1 through the CLIs: all four short-form (N = 256) verifiers accepted the
-re-encoding, and so did Python's long-form (N = 2304) verifier.  The C, Go and Java
-long-form round checkers already refused any `b` outside {0, 1, 2}.  It is
-malleability, not forgery: the responses are the signer's own.
-
-Every ring verifier now refuses any challenge outside {0, 1, 2} before the sum check:
-`hpks_stern_ring_verify` and `hpks_stern_l_ring_verify` / `_sternl_check_round` (Python),
-`stern_ring_verify` (herradura.h), `HpksSternRingVerify` (Go), `SternRing.verify`
-(Java), and the Python harness's `hpks_stern_ring_verify_local` copy.  Because it is a
-verifier invariant, it covers every CLI's decoder at once.
-
-New `CliTest/test_ring_challenge_bound.sh` (cross-lang-compat) re-encodes an honest
-signature (it never builds one).  Per CLI it has 2 accept-controls (short and long
-form) and 5 re-encodings: b = 2 → 5, b = 0 → 3, b = 1 → 4, one b = 2 → 254, and long
-b = 2 → 5.  That makes 28 cells plus a control that reduces each byte mod 3 before
-verifying, which fails exactly the 5 re-encoded cells.  The v23.0.1 build fails 9 of the
-cells, which is the defect exactly.
-
-## [23.0.1] - 2026-11-26
-
-**HPKS-Ring is re-rated broken, and HPKS/HPKS-NL key substitution is recorded as accepted
-(TODO #415, documentation only).**  A fresh review of the four ports' ring verifiers
-(not the old tests) confirms #415's finding.  `hpks-ring` is existentially forgeable with
-no member's secret key, at N = 256 and N = 2304 and at 219 rounds.  The OR-composition
-splits each round's challenge across members mod 3, but a keyless party can answer two
-of Stern's three challenges, and `b = 2`, the only branch that reads the public key, is
-never forced.  SECURITY.md and `spec/` now rate it **Broken — do not use** (it was
-demo-only), and `llms.txt` says so.  The #415 line under [19.0.1] ("no
-forgery under a fixed key") is superseded.  The scheme itself is unchanged; refusing it
-in the CLIs and redesigning it stay open in #415, which now records a revised fix
-direction.  HPKS and HPKS-NL omit the public key from the challenge, so about half of
-all signatures also verify under a publicly computable second key.  Reconfirmed through
-all four CLIs, with a refused negative control.  This is recorded as accepted: the
-schemes are already pedagogical, and binding the key would change the wire format.
-HPKS-T is not affected, because #412's verifier rebuilds its aggregate from the member
-list.  `spec/check_security_md.py` accepts the status prose "Broken".
-
-## [23.0.0] - 2026-11-26
-
-**A one-time-signature key's state is read fail-closed, and the key must be a file
-(TODO #419, #420).**  **MAJOR**: it refuses invocations the CLIs accepted — see
-MIGRATING.md section 57.
-
-*#419.*  `<key>.idx` is all that stops a WOTS key signing twice or an XMSS key reusing a
-leaf, and every port read it fail-open: a missing, empty or unparseable file read as `0`
-(unused).  Reproduced against v22.0.1: an empty `.idx` let a used WOTS key sign again in
-all four CLIs, `garbage` in C, Python and Java, `1x` in Python and Java; empty or
-`garbage` made all four XMSS signers reuse leaf 0; C and Go clamped a negative count to 0.
-Each port now has ONE reader (`ots_state_read` / `otsStateRead` / `_ots_state_read` /
-`readIdxState`) shared by WOTS (max 1) and XMSS (max 2^h): the file must exist, be a
-regular file (not a link), and hold one canonical decimal (`0` or `[1-9][0-9]*`, at most
-10 digits, at most one trailing newline) within range, or `sign` refuses before a
-signature exists, naming the reason.
-
-*#420.*  With the key on stdin there is nowhere to keep its state: C and Go wrote it to
-`./-.idx`, shared by every key piped in from that directory (a fresh key was refused as
-used; the same key from another directory signed again), and Java skipped state entirely,
-so a WOTS key read from stdin signed twice.  `sign --algo hpks-wots|hpks-xmss` now refuses
-a `--key` that is `-` or not a regular file, before reading it, and `genpkey` for those
-algorithms refuses `--out -` or no `--out`, in all four CLIs (Python's refusal was a PEM
-parse side effect and is now the deliberate check).
-
-New `CliTest/test_ots_state.sh` (cross-lang-compat): per CLI, 4 accept-controls, 22
-damaged-state cells (each must exit non-zero, write no signature and leave the `.idx`
-byte-identical), 2 used/exhausted cells and 8 stdin/stdout cells — 144 cells plus two
-negative controls, both shown to fire: a stand-in that resets a refused `.idx` to `0` and
-signs fails exactly the 22 damaged cells, and one that spools a stdin key through a
-temporary file fails exactly the 8 stdin cells.  Against the v22.0.1 CLIs the same
-matrix fails 82 cells across all four ports.
-
-## [22.0.1] - 2026-11-26
-
-**CI actions are pinned to commit SHAs, and a tool holds them there (TODO #418).**
-`ci.yml` and `codeql.yml` ran `actions/checkout@v4`, `actions/setup-node@v4` and
-`github/codeql-action/{init,analyze}@v3` — moving tags, so whoever can move one changes
-what every run here executes with `GITHUB_TOKEN` in scope.  Each of the 20 `uses:` lines is
-now `owner/action@<40-hex sha>  # vX.Y.Z`, pinned to the commit its tag pointed at when
-resolved (`git ls-remote --tags`, peeled): checkout `11d5960a…` (v4.4.0), setup-node
-`49933ea5…` (v4.4.0), codeql-action `74c1aea9…` (v3.39.5).  No action changes version, so
-no run changes behaviour.
-
-New `tools/check_action_pinning.py` (in `native-python-cli` and `tools/check_fast.sh`)
-scans every workflow under `.github/` and fails a remote `uses:` that is not a 40-hex
-lowercase SHA with a `# vX[.Y[.Z]]` comment, a `docker://` image not pinned by `sha256`,
-one action pinned two different ways, or a `uses:` line it cannot parse (so a layout it
-misreads fails rather than passes empty).  Local `./` actions are exempt.  Its controls run
-first and must fire: a tag pin, a 39-hex SHA, an uppercase SHA, a missing comment, a
-second SHA for the same action and a flow-style `{uses: …}` are each refused, and an added
-local action is accepted; against an accept-everything checker six controls fail, against
-a refuse-everything one the accept-control does.  Before the pins it reported all 20
-lines.  Known limit: it cannot check offline that a SHA is the commit its comment names.
-
-## [22.0.0] - 2026-11-25
-
-**No CLI writes through a symbolic link, and a one-time signature burns its leaf
-first (TODO #417).**  **MAJOR**: it refuses invocations the CLIs accepted — see
-MIGRATING.md section 56.
-
-Every writer in the four CLIs created its output with `O_CREAT | O_TRUNC` and no
-`O_NOFOLLOW`.  A symlink at the output path was followed: its target was overwritten and,
-because `O_CREAT`'s mode applies only on creation, kept its mode — so a private key written
-through a link to a world-readable file was world-readable (defeating #395's 0600 rule),
-and a dangling link created a file wherever it pointed.  Reproduced in C and Go by the
-#411 review.  The last path component may no longer be a link, in every port:
-
-```
-key.pem: is a symbolic link; refusing to write through it (use - for stdout)
-```
-
-C and Python use `O_NOFOLLOW` where the platform defines it; Java uses
-`LinkOption.NOFOLLOW_LINKS`; Go — a single-file build that cross-compiles for Windows,
-where `syscall.O_NOFOLLOW` does not exist — opens without `O_TRUNC`, checks
-`os.SameFile(opened, Lstat(path))`, and only then truncates, so no byte of a link's target
-changes even if a link is swapped in mid-call.  New paths are still created 0600 and
-existing regular files still overwritten with their mode kept.  `--out /dev/stdout`
-(itself a link) is now refused; use `--out -`.
-
-**Fixing it exposed a worse ordering defect.**  `sign --algo hpks-wots` / `hpks-xmss`
-wrote the signature BEFORE burning the leaf in `<key>.idx`, and C and Go discarded a
-failed burn, so an unwritable sidecar (read-only directory, full disk — or a symlinked
-`.idx` once refused) released a signature and left the leaf for the next `sign`: two WOTS
-signatures under one key, which is a forgery.  Python and Java raised, but only after the
-signature was on disk.  All four now write, flush and fsync the leaf before the signature
-exists, and stop if that fails; a failure after the burn wastes the leaf, the safe side.
-Java's sidecar also no longer passes through the passphrase envelope.
-
-New `CliTest/test_output_symlink.sh` (cross-lang-compat): 52 cells over four CLIs —
-accept-controls (new path 0600; regular file overwritten, mode kept; `/dev/null`; WOTS signs once,
-XMSS advances), symlink / dangling / `encfile --out` refusals with the target
-byte-identical, and an unwritable or symlinked `.idx` releasing no signature for both
-WOTS and XMSS — plus two negative controls shown to fire: a link-following writer fails
-exactly the 3 symlink cells, and a signer that burns a copy of the state fails both
-unwritable-sidecar cells.
-
-## [21.0.3] - 2026-11-25
-
-**A general security review of the shipped code (TODO #411).** The project had had
-targeted audits — constant-time (#129, #182, #249), parser/encoding (#130, #367,
-#403-#408), file modes (#395), peer-value screening (#371) — but never one pass over the
-whole shipped surface; #409 showed the cost. This item is that pass: the four CLIs,
-`herradura.h`, the Go package, the Python suite/codec, the Java port, CI and the
-Dockerfile, one checklist area at a time, with the host's analyzers (`clang --analyze`,
-`go vet`, `javac`, an AST pass over the Python, `valgrind`) run as analysis only.
-
-Most of the surface held — randomness is OS-CSPRNG-only with fatal short reads in every
-port and no seeded PRNG on any shipped path (the `KAT/*_replay.json` hooks live only in
-the test harnesses); secret-dependent tag comparisons are constant-time everywhere;
-`decfile` bounds its attacker-controlled length field before any arithmetic and verifies
-before decrypting (#368); no CLI writes a temp file or leaks key material into an error
-message; domain-separation tags are distinct; and no shipped code imports a third-party
-dependency. The review filed two hardening findings as their own TODOs, consistent with
-#411's method (it closes when each area is reviewed and its findings filed, not when they
-are fixed):
-
-- **#417** — every CLI creates its output with `O_CREAT`/`O_TRUNC` and no `O_NOFOLLOW`,
-  so a symlinked output path is followed: the target is overwritten and, because the mode
-  applies only on creation, a private key can land in a pre-existing world-readable file,
-  defeating #395's 0600 intent. Reproduced in C and Go.
-- **#418** — CI actions are pinned to mutable tags (`actions/checkout@v4`,
-  `github/codeql-action/*@v3`), not commit SHAs. All first-party, but the checklist asks
-  for SHA pinning held by a tool.
-
-Both are local/standing hardening issues, not a forgery or key-recovery class — #410
-having already swept the acceptance decisions (yielding #412-#416) is why. No shipped
-code changed in this item.
-
-## [21.0.2] - 2026-11-25
-
-**The Python test harness is now held to the shipped suite (TODO #416).**
-`CryptosuiteTests/Herradura_tests.py` is standalone by design: it re-implements 72 of the
-suite's functions rather than importing them, so its `[FAIL]`-gated numbered tests held the
-COPY to its own expectations.  C's harness uses `herradura.h`, Go's the package and Java's
-`SelfTest` the shipped classes, so Python was the one port whose numbered tests did not test
-what ships.  #409 is what that cost: the harness's ZKBoo copy carried the shipped bug and
-its tests passed.
-
-- **New checker `CryptosuiteTests/check_suite_parity.py`** (run by `native-python-cli` and
-  `tools/check_fast.sh`):
-  - a CENSUS forces every harness function whose name shadows a suite function to be
-    classified (PARITY / RANDOMIZED / HELPER); a new un-classified shadow fails, as the
-    `spec/` censuses do;
-  - every deterministic primitive is run in both modules on the same inputs and compared;
-  - each verifier (`hpks_stern_f`, ZKBoo `zkp_nl`) is cross-verified BOTH WAYS and a
-    wrong-statement and a tampered artifact must be REJECTED by BOTH verifiers — the
-    rejection asserted against the SHIPPED verifier, so a shipped verifier that accepts a
-    bad proof fails here even when the harness copy shares the bug (the #409 class).  A pure
-    agreement check would not catch that.
-- **Two real drifts found and fixed** in the harness's Stern copy, which its standalone
-  tests never caught:
-  - `_stern_gen_perm` was the pre-TODO-#129 version (advance-every-swap, modulo bias); the
-    suite uses counter-mode + Lemire multiply-shift, bit-identical with C/Go.  Synced.
-  - the Stern Fiat-Shamir challenge was `ch_st.uint % 3` (full 256-bit) against the suite's
-    `(ch_st.uint & 0xFFFFFFFF) % 3` (low 32 bits), in sign, verify and the ring.  Synced.
-  The harness's `[17]`/`[20]`/`[53]` had been exercising a permutation and challenge schedule
-  that no longer ship; they now match the suite and still pass.
-- **SecurityProofsCode (item 3):** no self-contained script reimplements a shipped verifier
-  by name; the "the null is a model and nothing checked the model" risk (the
-  `zkp_pqc_exploration.py` case) is already governed by `run_findings_gates.py`'s MEASURED-
-  null requirement for `follows` gates (TODO #304).  No change needed.
-- **CLAUDE.md** gains the rule under "Rules for writing tests".
-
-## [21.0.1] - 2026-11-25
-
-**The unauthenticated encryption modes now say so (TODO #414).**  Found by #410's
-wrong-secret matrix: `dec` under the wrong key, or of a modified ciphertext, exits 0 and
-writes wrong bytes in all four CLIs for every mode without a tag, and neither SECURITY.md
-nor `--help` said which modes those are.
-
-- **Measured.**  Flipping one bit of the ciphertext's E field, in all four CLIs:
-  `hske`, `hpke` and `hpke-stern-kem` flip plaintext bits j and j ± n/4 (E's part of
-  `fscx_revolve` is M^(3n/4) = M^(n/4) = I ⊕ ROL^(n/4) ⊕ ROR^(n/4)), and `hske-nla1`
-  without `--aead` flips bit j, the same under every key, so anyone holding a ciphertext
-  can change chosen plaintext bits.  `hske-nla2`, `hske-nla3`, `hpke-nl` and `hpke-nl3`
-  change about half the block, which nothing detects either.
-- **One table.**  `ENC_INTEGRITY` in `spec/generate_spec.py` states each enc/dec `--algo`'s
-  integrity (`tag`, `none`, or `aead-flag` for hske-nla1) and malleability.  It is the
-  spec's new `enc_integrity` array and is generated into all four CLIs beside the
-  key-label table.
-- **A warning.**  `enc` and `dec` of an untagged mode print `<sub>: warning: --algo <a>
-  has no integrity check: ...` to stderr, with what a flip does and what to use instead.
-  `dec --algo hske-nla1` warns only for a format-tag-1 ciphertext.  Exit status and output
-  are unchanged.
-- **Documented.**  The C, Go and Java `--help` synopses gain a generated `NO INTEGRITY`
-  line under `enc` and `dec`, and Python's gains an epilog.  SECURITY.md has a new
-  "Integrity of the encryption modes" section, and SPEC.md §12 and llms.txt say the same.
-- **Tested.**  `CliTest/test_wrong_secret_matrix.sh` (89 to 134 checks) gains four cells
-  per untagged mode, read from the spec table:
-  - `enc` warns;
-  - the control decrypts and warns;
-  - the wrong key gives exit 0, garbage and the warning;
-  - the measured malleability class matches the table, and a predictable mode's flip
-    pattern matches the warning's text exactly.
-
-  Tagged modes must print no warning.  Negative controls show that a CLI with its
-  stderr dropped fails three cells, and that a wrong malleability claim fails in both
-  directions.
-- **A #413 leftover.**  `CliTest/test_single_block_enc.sh` still ran `enc`/`dec --algo
-  hpke-stern`, removed by v21.0.0, so 24 of its cells failed.  It drops hpke-stern from
-  its lists and passes 392 of 392.
-- **Not done: `--aead` as hske-nla1's default.**  #414's fourth item was considered and
-  declined.  It is MAJOR, it changes what `enc --algo hske-nla1` writes, and `--aead`
-  needs a 256-bit key where plain hske-nla1 takes any width from 16 to 256 bits.  The
-  warning now names the tagged modes instead.
-
-## [21.0.0] - 2026-11-25
-
-**BREAKING (CLI accept surface): `enc` / `dec --algo hpke-stern` are removed (TODO #413;
-MIGRATING.md section 55).**  Found by #410's wrong-secret matrix.  The HPKE-Stern-F demo
-ciphertext carried the error vector e′, and K = hash(seed, e′) needs only the public
-seed, so anyone holding a ciphertext and the public key decrypted it.  This was true in
-all four CLIs, at every width, the N = 2304 form included.  Of #413's two fixes, the mode
-is removed rather than kept behind a flag: its format had no confidentiality to label.
-`hpke-stern-kem`, which decodes with the private key, is the Stern-family encryption mode.
-
-What changed, in all four CLIs:
-- **Refused:** `enc` and `dec --algo hpke-stern` exit non-zero, naming the reason and
-  `hpke-stern-kem`, before any key or ciphertext is read.  Python's argparse `--algo`
-  choices drop the tag, so the generated C, Go and Java synopses drop it too.
-- **Removed:** the encap/decap branches, and the ciphertext codecs: Python's
-  `_encode_stern_ct`/`_decode_stern_ct`, Go's `encodeSternCT`/`encodeSternCTInts`, and
-  Java's `Codec.encodeSternCt`/`decodeSternCt`/`SternCt`.
-- **Spec tables:** `KEY_LABEL_SITES` loses the enc/dec hpke-stern rows.
-  `PEM_DER_FIELD_CAPS` loses the 5-item HPKE-Stern ciphertext layout, so a 5-item
-  CIPHERTEXT is held to hske-nla1's layout.
-- **Kept:** `hpke-stern` keys.  `genpkey --algo hpke-stern` still works, and the key
-  signs as a Stern key, as before.  The suites keep `hpke_stern_f_*` / `hpke_stern_l_*` as
-  library demonstrations.
-
-SECURITY.md's Stern-F row and the spec's hpke-stern note now say the mode gave no
-confidentiality.
-
-Tests:
-- `test_wrong_secret_matrix.sh`'s KNOWN cell becomes ordinary ones: the key still signs
-  (the control); `enc` is refused; `dec` of a v20-format ciphertext, with the right key,
-  is refused.  No KNOWN cell remains.
-- `test_encrypt.sh`, `test_c_encrypt.sh` and `test_go_encrypt.sh` check both refusals,
-  that the refusal points to hpke-stern-kem and writes nothing, and that the key signs.
-- `test_stern_128.sh` checks the refusal at N = 2304 in every CLI.
-- `test_java_stern_interop.sh` swaps hpke-stern keys between Java and Python and signs.
-- `test_width_matrix.sh` runs sign/verify on hpke-stern keys at every width.
-- `test_cross_lang_matrix.sh`, `test_canonical_encoding_matrix.sh`, the DER fixtures, the
-  key-label matrix and the CLI fuzzer drop the hpke-stern enc/dec cells.
-
-## [20.0.0] - 2026-11-24
-
-**BREAKING (CLI accept surface): `verify --algo hpks-t` needs the signing group's public
-keys (TODO #412; MIGRATING.md section 54).**  Found by #410's wrong-secret matrix.  An
-HPKS-T signature carries its aggregate key C_agg, and every CLI verified it against that
-embedded key and nothing else, ignoring `--pubkey`.  So a threshold signature made by ANY
-group verified, even beside an unrelated `--pubkey`, in all four CLIs.
-
-What changed, in all four CLIs (C's `cmd_threshold_verify`, Go's `threshold-verify`, which
-`verify` forwards to, and Python's and Java's `verify` branch):
-- **The group:** `--pubkey` is required, as the group's member public keys,
-  comma-separated.  Their order does not matter, since L is built sorted.
-- **The check:** each key must be an HPKS or HPKS-NL public key at 256 bits that passes
-  `gf_pub_is_valid`.  The verifier recomputes C_agg = Π C_j^μ_j with the signers'
-  MuSig-style μ_j = H(L, C_j), the same function `threshold-aggregate` uses, so no
-  member's key choice can set the aggregate on its own.
-- **The verdict:** a signature carrying any other C_agg fails, with `verify: the
-  signature's aggregate key is not the one --pubkey gives` and `Verification FAILED`, exit
-  1.  No `--pubkey` gives `verify: hpks-t needs --pubkey: the signing group's public keys,
-  comma-separated`.
-
-The key-label checkers split hpks-t's `--pubkey` the way they split `--ring`, and
-`KEY_LABEL_SITES` gains the row (hpks, hpks-nl).  No signature file changes, and an honest
-group's signatures verify against that group.
-
-Tests:
-- `test_wrong_secret_matrix.sh`'s KNOWN cell becomes six ordinary ones: the group in
-  either order verifies; an unrelated key, one member alone, the group plus an outsider,
-  and no `--pubkey` are each refused or FAILED in every CLI.
-- `test_threshold_sign.sh` checks another group and a missing key.
-- `test_key_label_matrix.sh` gets a one-member threshold signature for its template.
-- `test_threshold_interop.sh`, `test_digest_matrix.sh` and `lib_der_fixtures.sh` pass the
-  group.
-
-## [19.0.1] - 2026-11-24
+### #410: a wrong-secret matrix for every acceptance decision
 
 **TODO #410: every acceptance decision probed with a wrong secret (new test; five defects
 filed).**  #409's universal forgery survived because every check tampered an honest
@@ -370,6 +52,332 @@ filed as an open TODO and none fixed here:
   tests use among them, and imports none, so its numbered tests check the copies.
 
 #411 gains the by-hand reading of the Go and Java verifiers, which no compiler flag covers.
+
+### #412: `verify --algo hpks-t` needs the signing group (breaking, MIGRATING §54)
+
+**BREAKING (CLI accept surface): `verify --algo hpks-t` needs the signing group's public
+keys (TODO #412; MIGRATING.md section 54).**  Found by #410's wrong-secret matrix.  An
+HPKS-T signature carries its aggregate key C_agg, and every CLI verified it against that
+embedded key and nothing else, ignoring `--pubkey`.  So a threshold signature made by ANY
+group verified, even beside an unrelated `--pubkey`, in all four CLIs.
+
+What changed, in all four CLIs (C's `cmd_threshold_verify`, Go's `threshold-verify`, which
+`verify` forwards to, and Python's and Java's `verify` branch):
+- **The group:** `--pubkey` is required, as the group's member public keys,
+  comma-separated.  Their order does not matter, since L is built sorted.
+- **The check:** each key must be an HPKS or HPKS-NL public key at 256 bits that passes
+  `gf_pub_is_valid`.  The verifier recomputes C_agg = Π C_j^μ_j with the signers'
+  MuSig-style μ_j = H(L, C_j), the same function `threshold-aggregate` uses, so no
+  member's key choice can set the aggregate on its own.
+- **The verdict:** a signature carrying any other C_agg fails, with `verify: the
+  signature's aggregate key is not the one --pubkey gives` and `Verification FAILED`, exit
+  1.  No `--pubkey` gives `verify: hpks-t needs --pubkey: the signing group's public keys,
+  comma-separated`.
+
+The key-label checkers split hpks-t's `--pubkey` the way they split `--ring`, and
+`KEY_LABEL_SITES` gains the row (hpks, hpks-nl).  No signature file changes, and an honest
+group's signatures verify against that group.
+
+Tests:
+- `test_wrong_secret_matrix.sh`'s KNOWN cell becomes six ordinary ones: the group in
+  either order verifies; an unrelated key, one member alone, the group plus an outsider,
+  and no `--pubkey` are each refused or FAILED in every CLI.
+- `test_threshold_sign.sh` checks another group and a missing key.
+- `test_key_label_matrix.sh` gets a one-member threshold signature for its template.
+- `test_threshold_interop.sh`, `test_digest_matrix.sh` and `lib_der_fixtures.sh` pass the
+  group.
+
+### #413: `enc` / `dec --algo hpke-stern` are removed (breaking, MIGRATING §55)
+
+**BREAKING (CLI accept surface): `enc` / `dec --algo hpke-stern` are removed (TODO #413;
+MIGRATING.md section 55).**  Found by #410's wrong-secret matrix.  The HPKE-Stern-F demo
+ciphertext carried the error vector e′, and K = hash(seed, e′) needs only the public
+seed, so anyone holding a ciphertext and the public key decrypted it.  This was true in
+all four CLIs, at every width, the N = 2304 form included.  Of #413's two fixes, the mode
+is removed rather than kept behind a flag: its format had no confidentiality to label.
+`hpke-stern-kem`, which decodes with the private key, is the Stern-family encryption mode.
+
+What changed, in all four CLIs:
+- **Refused:** `enc` and `dec --algo hpke-stern` exit non-zero, naming the reason and
+  `hpke-stern-kem`, before any key or ciphertext is read.  Python's argparse `--algo`
+  choices drop the tag, so the generated C, Go and Java synopses drop it too.
+- **Removed:** the encap/decap branches, and the ciphertext codecs: Python's
+  `_encode_stern_ct`/`_decode_stern_ct`, Go's `encodeSternCT`/`encodeSternCTInts`, and
+  Java's `Codec.encodeSternCt`/`decodeSternCt`/`SternCt`.
+- **Spec tables:** `KEY_LABEL_SITES` loses the enc/dec hpke-stern rows.
+  `PEM_DER_FIELD_CAPS` loses the 5-item HPKE-Stern ciphertext layout, so a 5-item
+  CIPHERTEXT is held to hske-nla1's layout.
+- **Kept:** `hpke-stern` keys.  `genpkey --algo hpke-stern` still works, and the key
+  signs as a Stern key, as before.  The suites keep `hpke_stern_f_*` / `hpke_stern_l_*` as
+  library demonstrations.
+
+SECURITY.md's Stern-F row and the spec's hpke-stern note now say the mode gave no
+confidentiality.
+
+Tests:
+- `test_wrong_secret_matrix.sh`'s KNOWN cell becomes ordinary ones: the key still signs
+  (the control); `enc` is refused; `dec` of a v20-format ciphertext, with the right key,
+  is refused.  No KNOWN cell remains.
+- `test_encrypt.sh`, `test_c_encrypt.sh` and `test_go_encrypt.sh` check both refusals,
+  that the refusal points to hpke-stern-kem and writes nothing, and that the key signs.
+- `test_stern_128.sh` checks the refusal at N = 2304 in every CLI.
+- `test_java_stern_interop.sh` swaps hpke-stern keys between Java and Python and signs.
+- `test_width_matrix.sh` runs sign/verify on hpke-stern keys at every width.
+- `test_cross_lang_matrix.sh`, `test_canonical_encoding_matrix.sh`, the DER fixtures, the
+  key-label matrix and the CLI fuzzer drop the hpke-stern enc/dec cells.
+
+### #414: the unauthenticated encryption modes say so
+
+**The unauthenticated encryption modes now say so (TODO #414).**  Found by #410's
+wrong-secret matrix: `dec` under the wrong key, or of a modified ciphertext, exits 0 and
+writes wrong bytes in all four CLIs for every mode without a tag, and neither SECURITY.md
+nor `--help` said which modes those are.
+
+- **Measured.**  Flipping one bit of the ciphertext's E field, in all four CLIs:
+  `hske`, `hpke` and `hpke-stern-kem` flip plaintext bits j and j ± n/4 (E's part of
+  `fscx_revolve` is M^(3n/4) = M^(n/4) = I ⊕ ROL^(n/4) ⊕ ROR^(n/4)), and `hske-nla1`
+  without `--aead` flips bit j, the same under every key, so anyone holding a ciphertext
+  can change chosen plaintext bits.  `hske-nla2`, `hske-nla3`, `hpke-nl` and `hpke-nl3`
+  change about half the block, which nothing detects either.
+- **One table.**  `ENC_INTEGRITY` in `spec/generate_spec.py` states each enc/dec `--algo`'s
+  integrity (`tag`, `none`, or `aead-flag` for hske-nla1) and malleability.  It is the
+  spec's new `enc_integrity` array and is generated into all four CLIs beside the
+  key-label table.
+- **A warning.**  `enc` and `dec` of an untagged mode print `<sub>: warning: --algo <a>
+  has no integrity check: ...` to stderr, with what a flip does and what to use instead.
+  `dec --algo hske-nla1` warns only for a format-tag-1 ciphertext.  Exit status and output
+  are unchanged.
+- **Documented.**  The C, Go and Java `--help` synopses gain a generated `NO INTEGRITY`
+  line under `enc` and `dec`, and Python's gains an epilog.  SECURITY.md has a new
+  "Integrity of the encryption modes" section, and SPEC.md §12 and llms.txt say the same.
+- **Tested.**  `CliTest/test_wrong_secret_matrix.sh` (89 to 134 checks) gains four cells
+  per untagged mode, read from the spec table:
+  - `enc` warns;
+  - the control decrypts and warns;
+  - the wrong key gives exit 0, garbage and the warning;
+  - the measured malleability class matches the table, and a predictable mode's flip
+    pattern matches the warning's text exactly.
+
+  Tagged modes must print no warning.  Negative controls show that a CLI with its
+  stderr dropped fails three cells, and that a wrong malleability claim fails in both
+  directions.
+- **A #413 leftover.**  `CliTest/test_single_block_enc.sh` still ran `enc`/`dec --algo
+  hpke-stern`, removed by #413 above, so 24 of its cells failed.  It drops hpke-stern from
+  its lists and passes 392 of 392.
+- **Not done: `--aead` as hske-nla1's default.**  #414's fourth item was considered and
+  declined.  It is MAJOR, it changes what `enc --algo hske-nla1` writes, and `--aead`
+  needs a 256-bit key where plain hske-nla1 takes any width from 16 to 256 bits.  The
+  warning now names the tagged modes instead.
+
+### #416: the Python harness copies are held to the shipped suite
+
+**The Python test harness is now held to the shipped suite (TODO #416).**
+`CryptosuiteTests/Herradura_tests.py` is standalone by design: it re-implements 72 of the
+suite's functions rather than importing them, so its `[FAIL]`-gated numbered tests held the
+COPY to its own expectations.  C's harness uses `herradura.h`, Go's the package and Java's
+`SelfTest` the shipped classes, so Python was the one port whose numbered tests did not test
+what ships.  #409 is what that cost: the harness's ZKBoo copy carried the shipped bug and
+its tests passed.
+
+- **New checker `CryptosuiteTests/check_suite_parity.py`** (run by `native-python-cli` and
+  `tools/check_fast.sh`):
+  - a CENSUS forces every harness function whose name shadows a suite function to be
+    classified (PARITY / RANDOMIZED / HELPER); a new un-classified shadow fails, as the
+    `spec/` censuses do;
+  - every deterministic primitive is run in both modules on the same inputs and compared;
+  - each verifier (`hpks_stern_f`, ZKBoo `zkp_nl`) is cross-verified BOTH WAYS and a
+    wrong-statement and a tampered artifact must be REJECTED by BOTH verifiers — the
+    rejection asserted against the SHIPPED verifier, so a shipped verifier that accepts a
+    bad proof fails here even when the harness copy shares the bug (the #409 class).  A pure
+    agreement check would not catch that.
+- **Two real drifts found and fixed** in the harness's Stern copy, which its standalone
+  tests never caught:
+  - `_stern_gen_perm` was the pre-TODO-#129 version (advance-every-swap, modulo bias); the
+    suite uses counter-mode + Lemire multiply-shift, bit-identical with C/Go.  Synced.
+  - the Stern Fiat-Shamir challenge was `ch_st.uint % 3` (full 256-bit) against the suite's
+    `(ch_st.uint & 0xFFFFFFFF) % 3` (low 32 bits), in sign, verify and the ring.  Synced.
+  The harness's `[17]`/`[20]`/`[53]` had been exercising a permutation and challenge schedule
+  that no longer ship; they now match the suite and still pass.
+- **SecurityProofsCode (item 3):** no self-contained script reimplements a shipped verifier
+  by name; the "the null is a model and nothing checked the model" risk (the
+  `zkp_pqc_exploration.py` case) is already governed by `run_findings_gates.py`'s MEASURED-
+  null requirement for `follows` gates (TODO #304).  No change needed.
+- **CLAUDE.md** gains the rule under "Rules for writing tests".
+
+### #411: a general security review of the shipped code
+
+**A general security review of the shipped code (TODO #411).** The project had had
+targeted audits — constant-time (#129, #182, #249), parser/encoding (#130, #367,
+#403-#408), file modes (#395), peer-value screening (#371) — but never one pass over the
+whole shipped surface; #409 showed the cost. This item is that pass: the four CLIs,
+`herradura.h`, the Go package, the Python suite/codec, the Java port, CI and the
+Dockerfile, one checklist area at a time, with the host's analyzers (`clang --analyze`,
+`go vet`, `javac`, an AST pass over the Python, `valgrind`) run as analysis only.
+
+Most of the surface held — randomness is OS-CSPRNG-only with fatal short reads in every
+port and no seeded PRNG on any shipped path (the `KAT/*_replay.json` hooks live only in
+the test harnesses); secret-dependent tag comparisons are constant-time everywhere;
+`decfile` bounds its attacker-controlled length field before any arithmetic and verifies
+before decrypting (#368); no CLI writes a temp file or leaks key material into an error
+message; domain-separation tags are distinct; and no shipped code imports a third-party
+dependency. The review filed two hardening findings as their own TODOs, consistent with
+#411's method (it closes when each area is reviewed and its findings filed, not when they
+are fixed):
+
+- **#417** — every CLI creates its output with `O_CREAT`/`O_TRUNC` and no `O_NOFOLLOW`,
+  so a symlinked output path is followed: the target is overwritten and, because the mode
+  applies only on creation, a private key can land in a pre-existing world-readable file,
+  defeating #395's 0600 intent. Reproduced in C and Go.
+- **#418** — CI actions are pinned to mutable tags (`actions/checkout@v4`,
+  `github/codeql-action/*@v3`), not commit SHAs. All first-party, but the checklist asks
+  for SHA pinning held by a tool.
+
+Both are local/standing hardening issues, not a forgery or key-recovery class — #410
+having already swept the acceptance decisions (yielding #412-#416) is why. No shipped
+code changed in this item.
+
+### #417: no CLI writes through a symlink; one-time signatures burn first (breaking, MIGRATING §56)
+
+**No CLI writes through a symbolic link, and a one-time signature burns its leaf
+first (TODO #417).**  **MAJOR**: it refuses invocations the CLIs accepted — see
+MIGRATING.md section 56.
+
+Every writer in the four CLIs created its output with `O_CREAT | O_TRUNC` and no
+`O_NOFOLLOW`.  A symlink at the output path was followed: its target was overwritten and,
+because `O_CREAT`'s mode applies only on creation, kept its mode — so a private key written
+through a link to a world-readable file was world-readable (defeating #395's 0600 rule),
+and a dangling link created a file wherever it pointed.  Reproduced in C and Go by the
+#411 review.  The last path component may no longer be a link, in every port:
+
+```
+key.pem: is a symbolic link; refusing to write through it (use - for stdout)
+```
+
+C and Python use `O_NOFOLLOW` where the platform defines it; Java uses
+`LinkOption.NOFOLLOW_LINKS`; Go — a single-file build that cross-compiles for Windows,
+where `syscall.O_NOFOLLOW` does not exist — opens without `O_TRUNC`, checks
+`os.SameFile(opened, Lstat(path))`, and only then truncates, so no byte of a link's target
+changes even if a link is swapped in mid-call.  New paths are still created 0600 and
+existing regular files still overwritten with their mode kept.  `--out /dev/stdout`
+(itself a link) is now refused; use `--out -`.
+
+**Fixing it exposed a worse ordering defect.**  `sign --algo hpks-wots` / `hpks-xmss`
+wrote the signature BEFORE burning the leaf in `<key>.idx`, and C and Go discarded a
+failed burn, so an unwritable sidecar (read-only directory, full disk — or a symlinked
+`.idx` once refused) released a signature and left the leaf for the next `sign`: two WOTS
+signatures under one key, which is a forgery.  Python and Java raised, but only after the
+signature was on disk.  All four now write, flush and fsync the leaf before the signature
+exists, and stop if that fails; a failure after the burn wastes the leaf, the safe side.
+Java's sidecar also no longer passes through the passphrase envelope.
+
+New `CliTest/test_output_symlink.sh` (cross-lang-compat): 52 cells over four CLIs —
+accept-controls (new path 0600; regular file overwritten, mode kept; `/dev/null`; WOTS signs once,
+XMSS advances), symlink / dangling / `encfile --out` refusals with the target
+byte-identical, and an unwritable or symlinked `.idx` releasing no signature for both
+WOTS and XMSS — plus two negative controls shown to fire: a link-following writer fails
+exactly the 3 symlink cells, and a signer that burns a copy of the state fails both
+unwritable-sidecar cells.
+
+### #418: CI actions are pinned to commit SHAs
+
+**CI actions are pinned to commit SHAs, and a tool holds them there (TODO #418).**
+`ci.yml` and `codeql.yml` ran `actions/checkout@v4`, `actions/setup-node@v4` and
+`github/codeql-action/{init,analyze}@v3` — moving tags, so whoever can move one changes
+what every run here executes with `GITHUB_TOKEN` in scope.  Each of the 20 `uses:` lines is
+now `owner/action@<40-hex sha>  # vX.Y.Z`, pinned to the commit its tag pointed at when
+resolved (`git ls-remote --tags`, peeled): checkout `11d5960a…` (v4.4.0), setup-node
+`49933ea5…` (v4.4.0), codeql-action `74c1aea9…` (v3.39.5).  No action changes version, so
+no run changes behaviour.
+
+New `tools/check_action_pinning.py` (in `native-python-cli` and `tools/check_fast.sh`)
+scans every workflow under `.github/` and fails a remote `uses:` that is not a 40-hex
+lowercase SHA with a `# vX[.Y[.Z]]` comment, a `docker://` image not pinned by `sha256`,
+one action pinned two different ways, or a `uses:` line it cannot parse (so a layout it
+misreads fails rather than passes empty).  Local `./` actions are exempt.  Its controls run
+first and must fire: a tag pin, a 39-hex SHA, an uppercase SHA, a missing comment, a
+second SHA for the same action and a flow-style `{uses: …}` are each refused, and an added
+local action is accepted; against an accept-everything checker six controls fail, against
+a refuse-everything one the accept-control does.  Before the pins it reported all 20
+lines.  Known limit: it cannot check offline that a SHA is the commit its comment names.
+
+### #419, #420: one-time-signature state is read fail-closed; the key must be a file (breaking, MIGRATING §57)
+
+**A one-time-signature key's state is read fail-closed, and the key must be a file
+(TODO #419, #420).**  **MAJOR**: it refuses invocations the CLIs accepted — see
+MIGRATING.md section 57.
+
+*#419.*  `<key>.idx` is all that stops a WOTS key signing twice or an XMSS key reusing a
+leaf, and every port read it fail-open: a missing, empty or unparseable file read as `0`
+(unused).  Reproduced against the pre-fix build: an empty `.idx` let a used WOTS key sign again in
+all four CLIs, `garbage` in C, Python and Java, `1x` in Python and Java; empty or
+`garbage` made all four XMSS signers reuse leaf 0; C and Go clamped a negative count to 0.
+Each port now has ONE reader (`ots_state_read` / `otsStateRead` / `_ots_state_read` /
+`readIdxState`) shared by WOTS (max 1) and XMSS (max 2^h): the file must exist, be a
+regular file (not a link), and hold one canonical decimal (`0` or `[1-9][0-9]*`, at most
+10 digits, at most one trailing newline) within range, or `sign` refuses before a
+signature exists, naming the reason.
+
+*#420.*  With the key on stdin there is nowhere to keep its state: C and Go wrote it to
+`./-.idx`, shared by every key piped in from that directory (a fresh key was refused as
+used; the same key from another directory signed again), and Java skipped state entirely,
+so a WOTS key read from stdin signed twice.  `sign --algo hpks-wots|hpks-xmss` now refuses
+a `--key` that is `-` or not a regular file, before reading it, and `genpkey` for those
+algorithms refuses `--out -` or no `--out`, in all four CLIs (Python's refusal was a PEM
+parse side effect and is now the deliberate check).
+
+New `CliTest/test_ots_state.sh` (cross-lang-compat): per CLI, 4 accept-controls, 22
+damaged-state cells (each must exit non-zero, write no signature and leave the `.idx`
+byte-identical), 2 used/exhausted cells and 8 stdin/stdout cells — 144 cells plus two
+negative controls, both shown to fire: a stand-in that resets a refused `.idx` to `0` and
+signs fails exactly the 22 damaged cells, and one that spools a stdin key through a
+temporary file fails exactly the 8 stdin cells.  Against the pre-fix CLIs the same
+matrix fails 82 cells across all four ports.
+
+### #415: HPKS-Ring is re-rated broken; HPKS key substitution is recorded
+
+**HPKS-Ring is re-rated broken, and HPKS/HPKS-NL key substitution is recorded as accepted
+(TODO #415, documentation only).**  A fresh review of the four ports' ring verifiers
+(not the old tests) confirms #415's finding.  `hpks-ring` is existentially forgeable with
+no member's secret key, at N = 256 and N = 2304 and at 219 rounds.  The OR-composition
+splits each round's challenge across members mod 3, but a keyless party can answer two
+of Stern's three challenges, and `b = 2`, the only branch that reads the public key, is
+never forced.  SECURITY.md and `spec/` now rate it **Broken — do not use** (it was
+demo-only), and `llms.txt` says so.  The #415 line in the #410 section above ("no
+forgery under a fixed key") is superseded.  The scheme itself is unchanged; refusing it
+in the CLIs and redesigning it stay open in #415, which now records a revised fix
+direction.  HPKS and HPKS-NL omit the public key from the challenge, so about half of
+all signatures also verify under a publicly computable second key.  Reconfirmed through
+all four CLIs, with a refused negative control.  This is recorded as accepted: the
+schemes are already pedagogical, and binding the key would change the wire format.
+HPKS-T is not affected, because #412's verifier rebuilds its aggregate from the member
+list.  `spec/check_security_md.py` accepts the status prose "Broken".
+
+### #421: an HPKS-Ring challenge byte must be 0, 1 or 2 (breaking, MIGRATING §58)
+
+**An HPKS-Ring challenge byte must be a trit (TODO #421).**  **MAJOR**: it refuses
+signature files earlier builds verified — see MIGRATING.md section 58.
+
+Found by #415's code review.  Each ring-signature entry carries its challenge `b` as one
+byte.  Every verifier sent a `b` other than 0 or 1 to the `b = 2` check, while the
+per-round sum took it mod 3, so rewriting a `b = 2` round as 5 (or as any byte up to
+254 with residue 2) kept both checks and still verified.  This was confirmed against
+the pre-fix build through the CLIs: all four short-form (N = 256) verifiers accepted the
+re-encoding, and so did Python's long-form (N = 2304) verifier.  The C, Go and Java
+long-form round checkers already refused any `b` outside {0, 1, 2}.  It is
+malleability, not forgery: the responses are the signer's own.
+
+Every ring verifier now refuses any challenge outside {0, 1, 2} before the sum check:
+`hpks_stern_ring_verify` and `hpks_stern_l_ring_verify` / `_sternl_check_round` (Python),
+`stern_ring_verify` (herradura.h), `HpksSternRingVerify` (Go), `SternRing.verify`
+(Java), and the Python harness's `hpks_stern_ring_verify_local` copy.  Because it is a
+verifier invariant, it covers every CLI's decoder at once.
+
+New `CliTest/test_ring_challenge_bound.sh` (cross-lang-compat) re-encodes an honest
+signature (it never builds one).  Per CLI it has 2 accept-controls (short and long
+form) and 5 re-encodings: b = 2 → 5, b = 0 → 3, b = 1 → 4, one b = 2 → 254, and long
+b = 2 → 5.  That makes 28 cells plus a control that reduces each byte mod 3 before
+verifying, which fails exactly the 5 re-encoded cells.  The pre-fix build fails 9 of the
+cells, which is the defect exactly.
 
 ## [19.0.0] - 2026-11-24
 

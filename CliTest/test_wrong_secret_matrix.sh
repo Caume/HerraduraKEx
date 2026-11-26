@@ -33,7 +33,7 @@
 #
 # hpks-t was a KNOWN cell until TODO #412 (v20.0.0) bound the signature to
 # --pubkey's group; it now has ordinary cells.
-# hpke-stern was a KNOWN cell until TODO #413 (v21.0.0) retired its enc/dec.
+# hpke-stern was a KNOWN cell until TODO #413 (v20.0.0) retired its enc/dec.
 # KNOWN cells record a defect this test found and a TODO now owns.  Each passes
 # while the defect stands and FAILS once it is fixed, so the fix must turn the
 # cell into an ordinary one.  None is open.
@@ -388,7 +388,7 @@ if need "$TMP/env_plain.pem" "pkey --decrypt"; then
 fi
 
 # ── HPKE-Stern-F: retired (TODO #413) ───────────────────────────────────────
-# Until v21.0.0 the ciphertext carried e', and K = hash(seed, e') needs only the
+# Until v20.0.0 the ciphertext carried e', and K = hash(seed, e') needs only the
 # PUBLIC seed, so the plaintext came from the ciphertext and public key alone
 # (a KNOWN cell here).  enc and dec --algo hpke-stern are now refused, a v20
 # ciphertext included; the key still signs, which is the accept-control.

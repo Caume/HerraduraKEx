@@ -74,7 +74,7 @@ for a in hpke hpke-nl hpke-nl3 hpke-stern-kem; do
 done
 SYM1=(hske hske-nla1 hske-nla2 hske-nla3)          # single-block, --key
 ASYM1=(hpke hpke-nl hpke-nl3)                      # single-block, --pubkey
-# (hpke-stern left this list when TODO #413 removed its enc/dec, v21.0.0.)
+# (hpke-stern left this list when TODO #413 removed its enc/dec, v20.0.0.)
 # keyflag <algo>: the enc key arguments for an algo; deckey: the dec ones.
 keyflag() { case $1 in hske*) echo "--key $SK" ;; *) echo "--pubkey $TMP/$1.pub.pem" ;; esac; }
 deckey()  { case $1 in hske*) echo "--key $SK" ;; *) echo "--key $TMP/$1.pem" ;; esac; }

@@ -1249,12 +1249,12 @@ public final class HerraduraCli {
         return new DuplexCt(nonce, ct, tag, nbits);
     }
 
-    /** TODO #413 (v21.0.0): {@code enc}/{@code dec --algo hpke-stern} are gone.  The
+    /** TODO #413 (v20.0.0): {@code enc}/{@code dec --algo hpke-stern} are gone.  The
      *  demo ciphertext carried the error vector e', and K = hash(seed, e') needs only
      *  the PUBLIC seed, so anyone holding the ciphertext and the public key decrypted it. */
     private static void retiredHpkeStern(String sub, String algo) {
         if (algo.equals("hpke-stern"))
-            throw new CliError(sub + ": --algo hpke-stern was removed in v21.0.0 (TODO #413): "
+            throw new CliError(sub + ": --algo hpke-stern was removed in v20.0.0 (TODO #413): "
                 + "its ciphertext carried the error vector, so anyone could decrypt it; "
                 + "use --algo hpke-stern-kem");
     }

@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v24.0.0)
+# Herradura Cryptographic Suite (v20.0.0)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -428,7 +428,7 @@ visible without having to search `TODO_DONE.md`.
   reference implementations of the Stern ZKP construction, not as production-ready code
   signing or KEM at their current defaults. The `hpke-stern` CLI algo tag no longer
   encrypts: its ciphertext carried the plaintext error vector, so anyone could decrypt
-  it, and v21.0.0 removed its `enc`/`dec` (TODO #413); the separate
+  it, and v20.0.0 removed its `enc`/`dec` (TODO #413); the separate
   `hpke-stern-kem` tag uses a real BGF QC-MDPC decoder instead and doesn't share that
   particular limitation, but is demo-only for its own reasons: since v7.0.0 (TODO #276) it
   runs at BIKE-128's parameters (r = 12323, d = 71, t = 134), adopted verbatim together

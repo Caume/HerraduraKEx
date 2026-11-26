@@ -27190,7 +27190,7 @@ hashes the real statement, not a strawman.
 cell with an accept-control that is shown to fire).  Each defect found becomes its own TODO.
 A fix that changes what a verifier accepts is MAJOR, as #409 was.
 
-**Resolution (v19.0.1).**  Parts A-D were run against every acceptance decision a CLI
+**Resolution (v20.0.0).**  Parts A-D were run against every acceptance decision a CLI
 makes.
 
 **A. Wrong-secret probes.**  `CliTest/test_wrong_secret_matrix.sh` runs through all four
@@ -27235,7 +27235,7 @@ The Stern-F (both forms), ring and Schnorr-family challenges omit the public key
 **D. Copies.**  The Python harness reimplements 79 suite functions and imports none
 (**#416**).
 
-Status: **DONE v19.0.1** — wrong-secret matrix across four CLIs (81 cells, 2 KNOWN); found #412-#416.
+Status: **DONE v20.0.0** — wrong-secret matrix across four CLIs (81 cells, 2 KNOWN); found #412-#416.
 
 ---
 
@@ -27306,7 +27306,7 @@ Either way, the KNOWN cell becomes an ordinary one.
 **Chosen: remove the mode** (recorded in SECURITY.md's Stern-F row).  Keeping it behind a
 flag would keep a ciphertext format whose only property is that everyone can read it.
 
-Status: **DONE v21.0.0** — `enc`/`dec --algo hpke-stern` removed from all four CLIs (MAJOR, MIGRATING.md section 55); hpke-stern keys remain Stern signing keys.
+Status: **DONE v20.0.0** — `enc`/`dec --algo hpke-stern` removed from all four CLIs (MAJOR, MIGRATING.md section 55); hpke-stern keys remain Stern signing keys.
 
 ---
 
@@ -27337,7 +27337,7 @@ warning ships.
 Chosen: items 1-3 done; item 4 declined.  The default stays: `--aead` needs a 256-bit
 key where hske-nla1 takes 16 to 256 bits, and the warning names the tagged modes.
 
-Status: **DONE v21.0.1** — enc_integrity table generated into all four CLIs; enc/dec warn on stderr for every untagged mode; malleability measured and held by the wrong-secret matrix; SECURITY.md, SPEC.md, --help and llms.txt state it.
+Status: **DONE v20.0.0** — enc_integrity table generated into all four CLIs; enc/dec warn on stderr for every untagged mode; malleability measured and held by the wrong-secret matrix; SECURITY.md, SPEC.md, --help and llms.txt state it.
 
 ---
 
@@ -27363,7 +27363,7 @@ To do:
    about a shipped protocol.
 4. Record the rule in CLAUDE.md's "Rules for writing tests".
 
-Done (v21.0.2).  `CryptosuiteTests/check_suite_parity.py` holds every re-implemented
+Done (v20.0.0).  `CryptosuiteTests/check_suite_parity.py` holds every re-implemented
 copy to the shipped suite: (1) a census classifies all 72 name-shadows; (2) each
 deterministic primitive is compared on shared inputs; (3) the verifiers (hpks_stern_f,
 ZKBoo zkp_nl) are cross-verified both ways with wrong-statement/tamper rejection asserted
@@ -27376,7 +27376,7 @@ verifier by name, and the "null is a model, unchecked" risk is already governed 
 run_findings_gates.py's MEASURED-null rule for `follows` gates (#304).  Item 4: rule added
 to CLAUDE.md.  Run by native-python-cli and tools/check_fast.sh.
 
-Status: **DONE v21.0.2** — check_suite_parity.py holds the harness copies to the suite; found and fixed two Stern drifts; CLAUDE.md rule added.
+Status: **DONE v20.0.0** — check_suite_parity.py holds the harness copies to the suite; found and fixed two Stern drifts; CLAUDE.md rule added.
 
 ---
 
@@ -27511,7 +27511,7 @@ Net: two hardening findings (#417 symlink-follow on create; #418 CI action pinni
 local/standing rather than a forgery or key-recovery class.  Consistent with #410 having
 already swept the acceptance decisions (which yielded #412-#416).
 
-Status: **DONE v21.0.3** — one pass per checklist area; filed #417 (symlink-follow on output create) and #418 (CI action pinning); the rest of the shipped surface held.
+Status: **DONE v20.0.0** — one pass per checklist area; filed #417 (symlink-follow on output create) and #418 (CI action pinning); the rest of the shipped surface held.
 
 ---
 
@@ -27562,7 +27562,7 @@ failed burn, but only after the signature file was on disk.  Fixing the writers 
 this would have widened it, so it is fixed here: the leaf is written, flushed and fsync'd
 BEFORE the signature exists, and a failure stops the command.
 
-**This is a MAJOR (CLI-surface) change -> v22.0.0, MIGRATING.md section 56.**  It refuses
+**This is a MAJOR (CLI-surface) change -> v20.0.0, MIGRATING.md section 56.**  It refuses
 invocations the CLIs accepted: an output path whose last component is a symlink (including
 `--out /dev/stdout`; `-` is stdout), and a WOTS/XMSS `sign` whose sidecar cannot be written.
 The reading is section 38's: refusing input existing subcommands accepted is the 2.0.0
@@ -27585,7 +27585,7 @@ two negative controls shown to fire: a writer that follows links (the shell's `>
 `umask 077`) fails exactly the 3 symlink cells, and a signer that burns a copy of the
 state (sig-before-burn as seen from outside) fails both unwritable-`.idx` cells.
 
-Status: **DONE v22.0.0** — no CLI writes through an output symlink; WOTS/XMSS burn their leaf (fsync'd) before the signature exists and a failed burn is fatal; MAJOR (MIGRATING §56).
+Status: **DONE v20.0.0** — no CLI writes through an output symlink; WOTS/XMSS burn their leaf (fsync'd) before the signature exists and a failed burn is fatal; MAJOR (MIGRATING §56).
 
 ---
 
@@ -27626,7 +27626,7 @@ stand-in each make them fail.  Run in `native-python-cli` and by `tools/check_fa
 No Dependabot config was added (none exists; adding one would open bot PRs, a separate
 decision).
 
-Status: **DONE v22.0.1** — every CI action pinned to a commit SHA with its release in a comment; tools/check_action_pinning.py fails a tag pin.
+Status: **DONE v20.0.0** — every CI action pinned to a commit SHA with its release in a comment; tools/check_action_pinning.py fails a tag pin.
 
 ---
 
@@ -27635,7 +27635,7 @@ Status: **DONE v22.0.1** — every CI action pinned to a commit SHA with its rel
 Found while closing #417.  `<key>.idx` is the only thing stopping a WOTS key from signing
 twice or an XMSS key from reusing a leaf, and every port reads it fail-OPEN: a file it
 cannot parse is treated as `0` (unused / leaf 0).  Reproduced on 2026-11-26 against
-v22.0.1, after one successful `sign` (which leaves the file at `1`), overwriting the file
+v20.0.0, after one successful `sign` (which leaves the file at `1`), overwriting the file
 and signing again with the same key:
 
 | `.idx` contents | C | Go | Python | Java |
@@ -27687,14 +27687,14 @@ no signature and a byte-identical `.idx`, beside 4 accept-controls; a fail-open 
 fails exactly the 22.  MAJOR: MIGRATING §57, which says how to restore a lost state file
 (never as `0`).
 
-Status: **DONE v23.0.0** — every port reads <key>.idx through one fail-closed reader; missing, non-regular, non-canonical or out-of-range state stops sign; MAJOR (MIGRATING §57).
+Status: **DONE v20.0.0** — every port reads <key>.idx through one fail-closed reader; missing, non-regular, non-canonical or out-of-range state stops sign; MAJOR (MIGRATING §57).
 
 ---
 
 ### #420: `sign --key -` for WOTS/XMSS keeps its state in `./-.idx`, or (Java) nowhere
 
 Found while closing #417.  With the private key on stdin there is no key path to put the
-`.idx` sidecar beside.  Reproduced on 2026-11-26 against v22.0.1, signing twice with
+`.idx` sidecar beside.  Reproduced on 2026-11-26 against v20.0.0, signing twice with
 `sign --algo hpks-wots --key - < s.pem`, each port in its own empty directory:
 
 - **C and Go** derive the sidecar name from the path string `-`, so the state goes to
@@ -27731,7 +27731,7 @@ stdout could never sign, so it is refused where it is made.  Tested by
 genpkey `--out -` and no `--out`, for WOTS and XMSS; each also asserts no `./-.idx`),
 which a stdin-spooling stand-in fails exactly.  MAJOR: MIGRATING §57.
 
-Status: **DONE v23.0.0** — a WOTS/XMSS key must be a regular file: sign refuses --key - and non-regular keys, genpkey refuses stdout; MAJOR (MIGRATING §57).
+Status: **DONE v20.0.0** — a WOTS/XMSS key must be a regular file: sign refuses --key - and non-regular keys, genpkey refuses stdout; MAJOR (MIGRATING §57).
 
 ---
 
@@ -27742,7 +27742,7 @@ carries its challenge `b` as one byte, and no decoder bounds it.  Every verifier
 any `b` other than 0 or 1 to the `b = 2` branch, but the per-round consistency check
 sums the raw value mod 3.  So rewriting a `b = 2` round as 5 (or 8, …, 254) keeps both
 checks, and an honest signature has many encodings that all verify: malleability, not
-forgery.  Confirmed against v23.0.1 through the CLIs: all four short-form verifiers
+forgery.  Confirmed against v20.0.0 through the CLIs: all four short-form verifiers
 accepted the re-encoding, and so did Python's long form.  The C, Go and Java long-form
 round checkers already refused `b ∉ {0,1,2}`.
 
@@ -27756,6 +27756,6 @@ CLI's decoder: Python `hpks_stern_ring_verify`, `hpks_stern_l_ring_verify` and
 `CliTest/test_ring_challenge_bound.sh` re-encodes an honest signature and never builds
 one.  It has 28 cells over four CLIs (2 accept-controls and 5 re-encodings each, short
 and long form) plus a mod-3-reducing stand-in, which fails exactly the 5 re-encoded
-cells.  The v23.0.1 build fails 9 cells, which is the defect exactly.
+cells.  The v20.0.0 build fails 9 cells, which is the defect exactly.
 
-Status: **DONE v24.0.0** — every HPKS-Ring verifier refuses a challenge byte outside {0, 1, 2}; MAJOR (MIGRATING §58).
+Status: **DONE v20.0.0** — every HPKS-Ring verifier refuses a challenge byte outside {0, 1, 2}; MAJOR (MIGRATING §58).

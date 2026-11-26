@@ -4899,12 +4899,12 @@ def cmd_cred_verify(args):
 
 def _retired_hpke_stern(algo):
     """argparse type for enc/dec --algo: refuse hpke-stern with the reason
-    (TODO #413, v21.0.0).  The demo ciphertext carried the error vector e', and
+    (TODO #413, v20.0.0).  The demo ciphertext carried the error vector e', and
     K = hash(seed, e') needs only the PUBLIC seed, so anyone holding the
     ciphertext and the public key decrypted it."""
     if algo == 'hpke-stern':
         raise argparse.ArgumentTypeError(
-            "--algo hpke-stern was removed in v21.0.0 (TODO #413): its ciphertext "
+            "--algo hpke-stern was removed in v20.0.0 (TODO #413): its ciphertext "
             "carried the error vector, so anyone could decrypt it; use --algo hpke-stern-kem")
     return algo
 

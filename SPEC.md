@@ -688,7 +688,7 @@ responses, weight check and ds tags); these rules apply above N = 256:
   at 256 bits, exactly as above; a ring signature hashes every member's
   commitments, member-major.
 - **Demo KEM (`hpke-stern`).** `K = H_4(seed, e′)`; the payload is one
-  32-octet block, `E = fscx_revolve(P, K, 64)`.  Library only since v21.0.0
+  32-octet block, `E = fscx_revolve(P, K, 64)`.  Library only since v20.0.0
   (TODO #413): the CLI's ciphertext carried e′, so anyone holding it and the
   public key decrypted it, and `enc`/`dec --algo hpke-stern` are refused.
 - **Wire.** The short form's PEM layouts with `n = 2304`: keys
