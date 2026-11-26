@@ -334,7 +334,7 @@ func writeString(path, s string) error {
 		_, err := fmt.Fprint(os.Stdout, s)
 		return err
 	}
-	return os.WriteFile(path, []byte(s), 0600) // TODO #395: created 0600; an existing file keeps its mode
+	return writeOutFile(path, []byte(s), false)
 }
 
 func writeBytes(path string, b []byte) error {
@@ -342,7 +342,60 @@ func writeBytes(path string, b []byte) error {
 		_, err := os.Stdout.Write(b)
 		return err
 	}
-	return os.WriteFile(path, b, 0600) // TODO #395: created 0600; an existing file keeps its mode
+	return writeOutFile(path, b, false)
+}
+
+// errOutSymlink is the TODO #417 refusal, worded as in the other three CLIs.
+func errOutSymlink(path string) error {
+	return fmt.Errorf("%s: is a symbolic link; refusing to write through it (use - for stdout)", path)
+}
+
+// writeOutFile writes every output file (TODO #395, #417).  A new file is
+// created 0600; an existing regular file is overwritten and keeps its mode, as
+// O_CREAT does.  The last path component must not be a symbolic link: following
+// one truncated the link's target and left a private key in whatever mode that
+// target had (a world-readable file stayed world-readable).  The other CLIs use
+// O_NOFOLLOW; syscall.O_NOFOLLOW does not exist on every GOOS this single-file
+// build targets, so this is the portable equivalent, race-safe for what
+// matters: open WITHOUT O_TRUNC, check that the opened file is the same
+// non-link entry the path names (os.SameFile against Lstat), and only then
+// truncate and write.  A link swapped in at any point is caught before a byte
+// of its target changes.  (A dangling link created in the window between the
+// pre-check and the open can still leave an EMPTY file at its target.)
+// durable fsyncs before close: the one-time-signature state sidecars need it.
+func writeOutFile(path string, b []byte, durable bool) error {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return errOutSymlink(path)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	opened, err1 := f.Stat()
+	named, err2 := os.Lstat(path)
+	if err1 != nil || err2 != nil || named.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, named) {
+		f.Close()
+		return errOutSymlink(path)
+	}
+	// O_TRUNC's semantics: only a regular file is truncated.  A device such as
+	// /dev/null cannot be, and O_TRUNC is ignored for it in the other CLIs.
+	if opened.Mode().IsRegular() {
+		if err := f.Truncate(0); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if durable {
+		if err := f.Sync(); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	return f.Close()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1383,8 +1436,17 @@ func wotsIsUsed(keyPath string) bool {
 	return v != "" && v != "0"
 }
 
+// wotsWriteIdx writes a one-time-signature state sidecar or exits.  TODO
+// #417: the error used to be discarded, and sign wrote the signature BEFORE
+// burning the leaf, so an unwritable .idx released a signature and left its
+// leaf unconsumed for the next sign.  Now the state is written and fsync'd
+// first, and a failure stops the command before a signature exists.
 func wotsWriteIdx(keyPath string, val int) {
-	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0600) // TODO #395: created 0600; an existing file keeps its mode
+	p := wotsIdxPath(keyPath)
+	if err := writeOutFile(p, []byte(fmt.Sprintf("%d\n", val)), true); err != nil {
+		fmt.Fprintf(os.Stderr, "cannot write one-time-signature state file %s: %v\n", p, err)
+		os.Exit(1)
+	}
 }
 
 func wotsBlobPack(vals [WotsL]*BitArray) []byte {
@@ -1434,9 +1496,7 @@ func xmssReadIdx(keyPath string) int {
 	return v
 }
 
-func xmssWriteIdx(keyPath string, val int) {
-	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0600) // TODO #395: created 0600; an existing file keeps its mode
-}
+func xmssWriteIdx(keyPath string, val int) { wotsWriteIdx(keyPath, val) } // same sidecar, same rule (#417)
 
 // alignBlob right-aligns v into a dst_len-byte slice (generic version of
 // wotsBlobUnpack's alignment, for arbitrary blob sizes).
@@ -5017,12 +5077,12 @@ func cmdSign(args []string) {
 		if len(ourInts) >= 2 {
 			leafIdx = uint32(wireInt(ourInts[1], "WOTS leaf index", "sign"))
 		}
+		wotsWriteIdx(*key, 1) // TODO #417: burn the key before the signature exists
 		sig := HpksWotsSign(inBytes, seed, leafIdx)
 		pem := encodeWotsBlobPEM(sig, lblHpksWotsSig)
 		if err := writeString(*out, pem); err != nil {
 			die("sign", err)
 		}
-		wotsWriteIdx(*key, 1)
 		fmt.Fprintln(os.Stderr, "HPKS-WOTS key burned (one-time use); do not sign again with it.")
 
 	case "hpks-xmss":
@@ -5051,6 +5111,7 @@ func cmdSign(args []string) {
 				numLeaves)
 			os.Exit(1)
 		}
+		xmssWriteIdx(*key, leafIdx+1) // TODO #417: consume the leaf before its signature exists
 		sig, serr := HpksXmssSign(inBytes, kp, leafIdx)
 		if serr != nil {
 			die("sign", serr)
@@ -5078,7 +5139,6 @@ func cmdSign(args []string) {
 		if werr := writeString(*out, pem); werr != nil {
 			die("sign", werr)
 		}
-		xmssWriteIdx(*key, leafIdx+1)
 		fmt.Fprintf(os.Stderr, "XMSS leaf %d used; %d leaves remaining.\n",
 			leafIdx, numLeaves-leafIdx-1)
 

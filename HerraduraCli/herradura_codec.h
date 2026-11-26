@@ -21,8 +21,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #ifndef _WIN32
-#include <fcntl.h>   /* hkx_fopen_out: open(O_CREAT, 0600), TODO #395 */
+#include <fcntl.h>   /* hkx_fopen_out: open(O_CREAT | O_NOFOLLOW, 0600), TODO #395/#417 */
 #include <unistd.h>
+#include <errno.h>
 #endif
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -649,14 +650,31 @@ static int pem_read_file(const char *path, char *label_out,
  * #395).  Every file a CLI writes -- private keys, plaintext, shared secrets,
  * state sidecars, and public outputs too -- comes through here, so no output
  * is world-readable under the default umask.  A file that already exists keeps
- * its mode: O_CREAT's mode applies only on creation, as with OpenSSL. */
+ * its mode: O_CREAT's mode applies only on creation, as with OpenSSL.
+ *
+ * TODO #417: the last path component must not be a symbolic link.  Following
+ * one truncated the link's target and, since O_CREAT's mode applies only on
+ * creation, left a private key in whatever mode that target already had (a
+ * world-readable file stayed world-readable), or created a file wherever a
+ * dangling link pointed.  O_NOFOLLOW refuses it; a regular existing file is
+ * still overwritten.  Symlinked DIRECTORIES above the last component are still
+ * followed, as everywhere.  For stdout use "-" (/dev/stdout is itself a link). */
 static FILE *hkx_fopen_out(const char *path, const char *mode)
 {
 #ifdef _WIN32
     return fopen(path, mode);
 #else
+#ifdef O_NOFOLLOW
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
+#else
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    if (fd < 0) return NULL;
+#endif
+    if (fd < 0) {
+        if (errno == ELOOP || errno == EMLINK)   /* EMLINK: FreeBSD's O_NOFOLLOW */
+            fprintf(stderr, "%s: is a symbolic link; refusing to write through it "
+                    "(use - for stdout)\n", path);
+        return NULL;
+    }
     FILE *f = fdopen(fd, mode);
     if (!f) close(fd);
     return f;

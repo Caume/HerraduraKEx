@@ -27514,3 +27514,77 @@ already swept the acceptance decisions (which yielded #412-#416).
 Status: **DONE v21.0.3** — one pass per checklist area; filed #417 (symlink-follow on output create) and #418 (CI action pinning); the rest of the shipped surface held.
 
 ---
+
+### #417: output files are created following symlinks (O_NOFOLLOW missing)
+
+Filed by the #411 review (Files and the CLI surface).  Every CLI writer creates its
+output with the equivalent of `open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600)` and no
+`O_NOFOLLOW`: C's `hkx_fopen_out` (`HerraduraCli/herradura_codec.h`), Go's
+`os.WriteFile(path, b, 0600)`, Python's `os.open(..., 0o600)`
+(`HerraduraCli/herradura.py` `_open_out`), and Java's `Files.write` after a
+`Files.createFile` whose `FileAlreadyExistsException` is caught
+(`bindings/java/herradurakex/HerraduraCli.java`).  When the chosen output path is a
+symlink an attacker pre-placed, the open follows it: the target is truncated and
+overwritten, and because `O_CREAT`'s mode applies only on creation, the target KEEPS
+its existing mode.  So a private key written over a pre-existing world-readable file is
+world-readable — the 0600 intent of #395 is defeated — and any file the symlink points
+at is destroyed.
+
+**Severity:** hardening / local (private-key confidentiality + destructive overwrite).
+Requires an attacker to place a symlink at the victim's output path first — realistic in
+a shared or predictable working directory, or when a user is induced to write to a path.
+
+**Reproducer (C and Go, confirmed):**
+```
+cd "$(mktemp -d)"
+printf 'VICTIM\n' > victim.txt; chmod 0644 victim.txt
+ln -s "$PWD/victim.txt" key.pem
+herradura_cli genpkey --algo hkex-gf --out key.pem     # or herradura_cli_go
+# victim.txt is now the PRIVATE KEY, still mode 0644 (world-readable)
+ls -l victim.txt; head -1 victim.txt
+```
+
+**Fix direction:** open the final component with `O_NOFOLLOW` (C/Python), `os.OpenFile`
+with a NOFOLLOW flag in Go, and `LinkOption.NOFOLLOW_LINKS` / refuse a symlink target in
+Java; OR refuse to write when the path is an existing symlink.  Weigh against the OpenSSL
+precedent (overwriting your own key file must still work): `O_NOFOLLOW` breaks only the
+symlink case, not a regular existing file, so it is the narrow fix.  Covered by a new
+cell in a CliTest output-path script, with an accept-control (a regular file still
+overwrites) and the symlink case shown to be refused.
+
+**Scope found while fixing it: the one-time-signature sidecar.**  Every port's `sign
+--algo hpks-wots` / `hpks-xmss` wrote the SIGNATURE first and burned the leaf in
+`<key>.idx` second, and C (`if (f) {...}`) and Go (`_ = os.WriteFile`) discarded a failed
+burn.  So an unwritable sidecar -- a read-only directory, a full disk, or a symlinked
+`.idx` once this fix refuses it -- released a signature and left the leaf for the next
+`sign`: two WOTS signatures under one key, a forgery.  Python and Java raised on the
+failed burn, but only after the signature file was on disk.  Fixing the writers without
+this would have widened it, so it is fixed here: the leaf is written, flushed and fsync'd
+BEFORE the signature exists, and a failure stops the command.
+
+**This is a MAJOR (CLI-surface) change -> v22.0.0, MIGRATING.md section 56.**  It refuses
+invocations the CLIs accepted: an output path whose last component is a symlink (including
+`--out /dev/stdout`; `-` is stdout), and a WOTS/XMSS `sign` whose sidecar cannot be written.
+The reading is section 38's: refusing input existing subcommands accepted is the 2.0.0
+surface.  No stored key, signature or ciphertext changes.
+
+**Done.**  C and Python open with `O_NOFOLLOW` where the platform defines it (Windows
+keeps plain `fopen` / no flag); Java opens with `LinkOption.NOFOLLOW_LINKS`.  Go's CLI is
+a single-file build that cross-compiles for Windows, where `syscall.O_NOFOLLOW` does not
+exist, so it uses the portable equivalent: `Lstat` pre-check, open WITHOUT `O_TRUNC`,
+`os.SameFile` between the opened file and `Lstat(path)`, then truncate and write -- no
+byte of a link's target changes even if a link is swapped in mid-call (only a dangling
+link raced into the window can leave an empty file at its target).  All four print the
+same refusal.  Java's sidecar no longer goes through `writeString`, which could have
+wrapped it in the passphrase envelope.  `CliTest/test_output_symlink.sh`
+(cross-lang-compat): 52 cells over four CLIs -- new path 0600, regular file overwritten
+with its mode kept, `/dev/null` written, symlink / dangling symlink / `encfile --out` symlink refused with the
+target untouched; WOTS signs once and refuses twice, XMSS advances its leaf; an
+unwritable or symlinked `.idx` exits non-zero and releases NO signature, for both -- plus
+two negative controls shown to fire: a writer that follows links (the shell's `>` under
+`umask 077`) fails exactly the 3 symlink cells, and a signer that burns a copy of the
+state (sig-before-burn as seen from outside) fails both unwritable-`.idx` cells.
+
+Status: **DONE v22.0.0** — no CLI writes through an output symlink; WOTS/XMSS burn their leaf (fsync'd) before the signature exists and a failed burn is fatal; MAJOR (MIGRATING §56).
+
+---

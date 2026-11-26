@@ -37,6 +37,7 @@
 # Production use requires a QC-MDPC decoder (N=256, t=16).
 
 import argparse
+import errno
 import hmac as _hmac
 import sys
 import os
@@ -1405,9 +1406,38 @@ def _open_out(path, mode):
     Every file the CLI writes comes through here, public outputs included, so
     nothing it produces is world-readable under the default umask.  A file that
     already exists keeps its mode: O_CREAT's mode applies only on creation.
+
+    TODO #417: the last path component must not be a symbolic link.  Following
+    one truncated the link's target and left a private key in whatever mode
+    that target had (a world-readable file stayed world-readable).  O_NOFOLLOW
+    refuses it; a regular existing file is still overwritten.  For stdout use
+    '-' (/dev/stdout is itself a link).
     """
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_BINARY', 0)
-    return os.fdopen(os.open(path, flags, 0o600), mode)
+    flags = (os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_BINARY', 0)
+             | getattr(os, 'O_NOFOLLOW', 0))
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.EMLINK):   # EMLINK: FreeBSD's O_NOFOLLOW
+            sys.exit(f"{path}: is a symbolic link; refusing to write through it "
+                     "(use - for stdout)")
+        raise
+    return os.fdopen(fd, mode)
+
+
+def _write_idx_state(sp, value):
+    """Write a one-time-signature state sidecar, durably, or exit (TODO #417).
+
+    The leaf is consumed BEFORE its signature is produced, and any failure stops
+    the command before a signature exists; a failure after the burn only wastes
+    the leaf, which is the safe side."""
+    try:
+        with _open_out(sp, 'w') as f:
+            f.write(str(value) + '\n')
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as e:
+        sys.exit(f"cannot write one-time-signature state file {sp}: {e}")
 
 
 def _write_file(path, data):
@@ -2119,8 +2149,7 @@ def _xmss_read_idx(key_path: str, h: int) -> int:
 
 
 def _xmss_write_idx(key_path: str, next_idx: int):
-    with _open_out(_xmss_state_path(key_path), 'w') as f:
-        f.write(str(next_idx) + '\n')
+    _write_idx_state(_xmss_state_path(key_path), next_idx)
 
 
 # ---------------------------------------------------------------------------
@@ -2208,8 +2237,7 @@ def _wots_is_used(key_path: str) -> bool:
 
 
 def _wots_mark_used(key_path: str):
-    with _open_out(_xmss_state_path(key_path), 'w') as f:
-        f.write('1\n')
+    _write_idx_state(_xmss_state_path(key_path), 1)
 
 
 def _load_zkp_nl_privkey(path):
@@ -3873,10 +3901,10 @@ def cmd_sign(args):
         num_leaves = 1 << h
         if leaf_idx >= num_leaves:
             sys.exit(f"sign: XMSS key exhausted ({num_leaves} leaves used). Generate a new key.")
+        _xmss_write_idx(key_path, leaf_idx + 1)   # TODO #417: consume the leaf first
         sig  = hpks_xmss_sign(in_bytes, master_seed, leaf_hashes, leaf_idx)
         pem_out = _pack_xmss_sig(sig, KEYBITS)
         _write_file(args.out, pem_out)
-        _xmss_write_idx(key_path, leaf_idx + 1)
         print(f"XMSS leaf {leaf_idx} used; {num_leaves - leaf_idx - 1} leaves remaining.",
               file=sys.stderr)
 
@@ -3887,9 +3915,9 @@ def cmd_sign(args):
             sys.exit("sign: this HPKS-WOTS key was already used — WOTS keys are "
                      "ONE-TIME. Generate a fresh key (genpkey --algo hpks-wots).")
         master_seed, leaf_idx = _decode_wots_privkey(key_path)
+        _wots_mark_used(key_path)                 # TODO #417: burn the key first
         sig, _pk = hpks_wots_sign(in_bytes, master_seed, leaf_idx)
         _write_file(args.out, _pack_wots_sig(sig))
-        _wots_mark_used(key_path)
         print("HPKS-WOTS key burned (one-time use); do not sign again with it.",
               file=sys.stderr)
 

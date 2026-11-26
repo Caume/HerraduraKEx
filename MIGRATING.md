@@ -2630,3 +2630,46 @@ dec --algo hpke-stern-kem --key kem.pem --in ct.pem --out msg.out
 
 **Treat every `hpke-stern` ciphertext ever written as public**, and re-encrypt anything
 that needed to stay secret.  To read an old one, use a v20 build; anyone else can too.
+
+## 56. Output paths may not be symbolic links; one-time signatures burn their leaf first (v22.0.0)
+
+**Who is affected:** a script that points `--out` (or any other output flag) at a
+symbolic link — including `--out /dev/stdout`, which is itself a link on Linux — and
+anyone signing with `hpks-wots` or `hpks-xmss` where the key's `<key>.idx` sidecar cannot
+be written.
+
+**What changed (TODO #417).** Every CLI now refuses to write through a symbolic link at
+the LAST component of an output path, in all four ports:
+
+```
+key.pem: is a symbolic link; refusing to write through it (use - for stdout)
+```
+
+A new path is still created 0600 and an existing regular file is still overwritten
+(keeping its mode), exactly as before; symlinked directories above the last component
+are still followed. Before 22.0.0 the link was followed: its target was truncated and
+overwritten and, because `O_CREAT`'s mode applies only on creation, kept whatever mode it
+had — so a private key written through a link to a world-readable file was
+world-readable, which defeated #395's 0600 rule, and a dangling link created a file
+wherever it pointed.
+
+`sign --algo hpks-wots` / `hpks-xmss` now consume the leaf in `<key>.idx` — written,
+flushed and fsync'd — BEFORE the signature exists, and stop with
+
+```
+cannot write one-time-signature state file key.pem.idx
+```
+
+if that fails. Before 22.0.0 the signature was written first and C and Go ignored a
+failed burn, so an unwritable sidecar (a read-only directory, a full disk) released a
+signature and left the leaf for the next `sign` to reuse — two WOTS signatures under one
+key, which is a forgery. A failure AFTER the burn (say, `--out` is refused) now wastes
+the leaf instead: the safe direction for a one-time key.
+
+**What to do.** Write to stdout with `--out -` instead of `--out /dev/stdout`. Point
+`--out` at the real file rather than at a link to it (`--out "$(readlink -f link)"`). Make
+sure the directory holding a WOTS/XMSS key, or its `.idx`, is writable before signing.
+Nothing stored changes: every key, signature and ciphertext reads as before.
+
+**Why this is MAJOR.** It refuses invocations that existing subcommands accepted, the
+2.0.0 surface (the reading section 38 applied).

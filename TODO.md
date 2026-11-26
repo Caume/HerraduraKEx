@@ -699,47 +699,6 @@ Status: **OPEN**
 
 ---
 
-### #417: output files are created following symlinks (O_NOFOLLOW missing)
-
-Filed by the #411 review (Files and the CLI surface).  Every CLI writer creates its
-output with the equivalent of `open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600)` and no
-`O_NOFOLLOW`: C's `hkx_fopen_out` (`HerraduraCli/herradura_codec.h`), Go's
-`os.WriteFile(path, b, 0600)`, Python's `os.open(..., 0o600)`
-(`HerraduraCli/herradura.py` `_open_out`), and Java's `Files.write` after a
-`Files.createFile` whose `FileAlreadyExistsException` is caught
-(`bindings/java/herradurakex/HerraduraCli.java`).  When the chosen output path is a
-symlink an attacker pre-placed, the open follows it: the target is truncated and
-overwritten, and because `O_CREAT`'s mode applies only on creation, the target KEEPS
-its existing mode.  So a private key written over a pre-existing world-readable file is
-world-readable — the 0600 intent of #395 is defeated — and any file the symlink points
-at is destroyed.
-
-**Severity:** hardening / local (private-key confidentiality + destructive overwrite).
-Requires an attacker to place a symlink at the victim's output path first — realistic in
-a shared or predictable working directory, or when a user is induced to write to a path.
-
-**Reproducer (C and Go, confirmed):**
-```
-cd "$(mktemp -d)"
-printf 'VICTIM\n' > victim.txt; chmod 0644 victim.txt
-ln -s "$PWD/victim.txt" key.pem
-herradura_cli genpkey --algo hkex-gf --out key.pem     # or herradura_cli_go
-# victim.txt is now the PRIVATE KEY, still mode 0644 (world-readable)
-ls -l victim.txt; head -1 victim.txt
-```
-
-**Fix direction:** open the final component with `O_NOFOLLOW` (C/Python), `os.OpenFile`
-with a NOFOLLOW flag in Go, and `LinkOption.NOFOLLOW_LINKS` / refuse a symlink target in
-Java; OR refuse to write when the path is an existing symlink.  Weigh against the OpenSSL
-precedent (overwriting your own key file must still work): `O_NOFOLLOW` breaks only the
-symlink case, not a regular existing file, so it is the narrow fix.  Covered by a new
-cell in a CliTest output-path script, with an accept-control (a regular file still
-overwrites) and the symlink case shown to be refused.
-
-Status: **OPEN**
-
----
-
 ### #418: CI third-party actions are pinned to mutable tags, not commit SHAs
 
 Filed by the #411 review (Supply chain and CI).  `.github/workflows/ci.yml` and

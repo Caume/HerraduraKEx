@@ -496,6 +496,7 @@ jobs:
             case "$f" in test_der_reader_diff.sh) continue ;; esac    # claimed by cross-lang-compat (TODO #404)
             case "$f" in test_raw_body_diff.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #406)
             case "$f" in test_wrong_secret_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #410)
+            case "$f" in test_output_symlink.sh) continue ;; esac     # claimed by cross-lang-compat (TODO #417)
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_round_floor.sh) continue ;; esac        # claimed by cross-lang-compat (TODO #364)
             case "$f" in test_stern_128.sh) continue ;; esac          # claimed by cross-lang-compat (TODO #382)
@@ -876,6 +877,12 @@ jobs:
       # cell beside an accept-control.  Its KNOWN cell is TODO #413.
       - name: Wrong-secret matrix
         run: bash CliTest/test_wrong_secret_matrix.sh
+
+      # TODO #417: no CLI writes through a symlink at its output path (the link's
+      # target kept its mode, so a private key could land world-readable), and no
+      # WOTS/XMSS signature is released before its leaf is burned in <key>.idx.
+      - name: Output symlinks and one-time-signature state
+        run: bash CliTest/test_output_symlink.sh
 
       # TODO #269: --digest is a 4-way concern for the same reason. The gap it
       # guards (Java had no --digest at all) was invisible to every existing

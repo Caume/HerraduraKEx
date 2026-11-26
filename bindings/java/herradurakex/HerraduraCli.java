@@ -1769,9 +1769,9 @@ public final class HerraduraCli {
             if (leafIdx >= numLeaves) {
                 throw new CliError("sign: XMSS key exhausted (" + numLeaves + " leaves used). Generate a new key.");
             }
+            writeIdxState(keyPath, leafIdx + 1); // TODO #417: consume the leaf first
             Xmss.Signature sig = Xmss.sign(msg, pk.masterSeed, pk.leafHashes, leafIdx);
             writeString(out, Codec.encodeXmssSig(sig));
-            writeIdxState(keyPath, leafIdx + 1);
             System.err.println("XMSS leaf " + leafIdx + " used; " + (numLeaves - leafIdx - 1) + " leaves remaining.");
             return;
         }
@@ -1784,9 +1784,9 @@ public final class HerraduraCli {
                     + "ONE-TIME. Generate a fresh key (genpkey --algo hpks-wots).");
             }
             Codec.WotsPrivKey pk = Codec.decodeWotsPrivKey(readString(keyPath));
+            writeIdxState(keyPath, 1); // TODO #417: burn the key first
             Wots.Signature sig = Wots.sign(msg, pk.masterSeed, pk.leafIdx);
             writeString(out, Codec.encodeWotsSig(sig.sig));
-            writeIdxState(keyPath, 1);
             System.err.println("HPKS-WOTS key burned (one-time use); do not sign again with it.");
             return;
         }
@@ -2698,18 +2698,41 @@ public final class HerraduraCli {
             out.flush();
             return;
         }
+        writeOutFile(path, data, false);
+    }
+
+    /** Every output file (TODO #395, #417).  A new file is created 0600; an
+     * existing regular file is overwritten and keeps its mode, as O_CREAT does
+     * in the other three CLIs; on a filesystem without POSIX modes the file is
+     * created plainly.  The last path component must not be a symbolic link:
+     * following one truncated the link's target and left a private key in
+     * whatever mode that target had (a world-readable file stayed
+     * world-readable).  NOFOLLOW_LINKS is O_NOFOLLOW.  {@code durable} forces
+     * the data to disk before returning (the one-time-signature sidecars). */
+    private static void writeOutFile(String path, byte[] data, boolean durable) throws IOException {
         Path p = Paths.get(path);
-        // TODO #395: create every output 0600, so nothing the CLI writes is
-        // world-readable under the default umask.  A file that already exists
-        // keeps its mode, as O_CREAT does in the other three CLIs; on a
-        // filesystem without POSIX modes the file is created plainly.
         try {
             Files.createFile(p, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
                     java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
         } catch (java.nio.file.FileAlreadyExistsException | UnsupportedOperationException e) {
-            // existing file: keep its mode; no POSIX attributes: default creation below
+            // existing entry (a link included -- refused below): keep its mode;
+            // no POSIX attributes: default creation below
         }
-        Files.write(p, data);
+        try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(p,
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.WRITE,
+                java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(data);
+            while (buf.hasRemaining()) ch.write(buf);
+            if (durable) ch.force(true);
+        } catch (IOException e) {
+            if (Files.isSymbolicLink(p)) {
+                throw new CliError(path + ": is a symbolic link; refusing to write through it "
+                    + "(use - for stdout)");
+            }
+            throw e;
+        }
     }
 
     // -----------------------------------------------------------------
@@ -2860,9 +2883,17 @@ public final class HerraduraCli {
     // stores a 0/1 used flag (reusing the same file name convention).
     // -----------------------------------------------------------------
 
+    /** TODO #417: a one-time-signature sidecar is written directly (never
+     * through writeString's passphrase envelope) and forced to disk, BEFORE the
+     * signature it accounts for is produced; a failure stops the command. */
     private static void writeIdxState(String keyPath, int value) throws IOException {
         if (keyPath == null || keyPath.equals("-")) return;
-        writeString(keyPath + ".idx", value + "\n");
+        String sp = keyPath + ".idx";
+        try {
+            writeOutFile(sp, (value + "\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII), true);
+        } catch (IOException e) {
+            throw new CliError("cannot write one-time-signature state file " + sp + ": " + e.getMessage());
+        }
     }
 
     private static int readIdxState(String keyPath) {

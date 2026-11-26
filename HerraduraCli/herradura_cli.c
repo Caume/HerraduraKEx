@@ -1648,11 +1648,29 @@ static int wots_is_used(const char *key_path)
     return v != 0;
 }
 
+/* Write a one-time-signature state sidecar, or die.  TODO #417: this used to
+ * drop a failed open silently, and sign wrote the signature BEFORE burning the
+ * leaf -- so an unwritable .idx (read-only directory, full disk, or a symlink
+ * hkx_fopen_out now refuses) released a signature and left its WOTS leaf
+ * unconsumed, and the next sign reused it.  Now the state is written, flushed
+ * and fsync'd first, and any failure stops the command before a signature
+ * exists.  A failure AFTER the burn wastes the leaf, which is the safe side. */
+static void idx_state_write_or_die(const char *p, int val)
+{
+    FILE *f = hkx_fopen_out(p, "w");
+    if (!f) dief("cannot write one-time-signature state file %s", p);
+    int bad = fprintf(f, "%d\n", val) < 0 || fflush(f) != 0;
+#ifndef _WIN32
+    if (!bad && fsync(fileno(f)) != 0) bad = 1;
+#endif
+    if (fclose(f) != 0) bad = 1;
+    if (bad) dief("cannot write one-time-signature state file %s", p);
+}
+
 static void wots_write_idx(const char *key_path, int val)
 {
     char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = hkx_fopen_out(p, "w");
-    if (f) { fprintf(f, "%d\n", val); fclose(f); }
+    idx_state_write_or_die(p, val);
 }
 
 /* Serialise ℓ WOTS chain values into a flat (WOTS_L * KEYBYTES)-byte blob. */
@@ -1697,8 +1715,7 @@ static int xmss_read_idx(const char *key_path)
 static void xmss_write_idx(const char *key_path, int val)
 {
     char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = hkx_fopen_out(p, "w");
-    if (f) { fprintf(f, "%d\n", val); fclose(f); }
+    idx_state_write_or_die(p, val);
 }
 
 /* Upper bound on the XMSS tree height this build accepts, on the wire and on
@@ -5221,6 +5238,8 @@ static void cmd_sign(int argc, char **argv)
         } else {
             wmsg = in_buf; wmlen = in_len;
         }
+        /* TODO #417: burn the key before the signature exists. */
+        wots_write_idx(key_path, 1);
         BitArray sig[WOTS_L]; ba_init_array(sig, WOTS_L);
         hpks_wots_sign(sig, wmsg, wmlen, seed_ba.b, leaf_idx);
         free(in_buf);
@@ -5235,7 +5254,6 @@ static void cmd_sign(int argc, char **argv)
         const uint8_t *it[2] = {ib, iell}; size_t il[2] = {lb, lell};
         seq_and_write(it, il, 2, PEM_HPKS_WOTS_SIG, out_path);
         free(ib);
-        wots_write_idx(key_path, 1);
         fprintf(stderr, "HPKS-WOTS key burned (one-time use); do not sign again with it.\n");
         return;
     }
@@ -5273,6 +5291,8 @@ static void cmd_sign(int argc, char **argv)
         } else {
             wmsg = in_buf; wmlen = in_len;
         }
+        /* TODO #417: consume the leaf before its signature exists. */
+        xmss_write_idx(key_path, (int)(leaf_idx + 1));
         HpksXmssSig sig;
         hpks_xmss_sign(&sig, wmsg, wmlen, seed, flat, num_leaves, leaf_idx);
         free(in_buf);
@@ -5296,7 +5316,6 @@ static void cmd_sign(int argc, char **argv)
         seq_and_write(it, il, 5, PEM_HPKS_XMSS_SIG, out_path);
         free(isig); free(ipath);
         hpks_xmss_sig_free(&sig);
-        xmss_write_idx(key_path, (int)(leaf_idx + 1));
         fprintf(stderr, "XMSS leaf %u used; %zu leaves remaining.\n",
                 leaf_idx, num_leaves - leaf_idx - 1);
         return;

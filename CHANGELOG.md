@@ -2,6 +2,48 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [22.0.0] - 2026-11-25
+
+**No CLI writes through a symbolic link, and a one-time signature burns its leaf
+first (TODO #417).**  **MAJOR**: it refuses invocations the CLIs accepted — see
+MIGRATING.md section 56.
+
+Every writer in the four CLIs created its output with `O_CREAT | O_TRUNC` and no
+`O_NOFOLLOW`.  A symlink at the output path was followed: its target was overwritten and,
+because `O_CREAT`'s mode applies only on creation, kept its mode — so a private key written
+through a link to a world-readable file was world-readable (defeating #395's 0600 rule),
+and a dangling link created a file wherever it pointed.  Reproduced in C and Go by the
+#411 review.  The last path component may no longer be a link, in every port:
+
+```
+key.pem: is a symbolic link; refusing to write through it (use - for stdout)
+```
+
+C and Python use `O_NOFOLLOW` where the platform defines it; Java uses
+`LinkOption.NOFOLLOW_LINKS`; Go — a single-file build that cross-compiles for Windows,
+where `syscall.O_NOFOLLOW` does not exist — opens without `O_TRUNC`, checks
+`os.SameFile(opened, Lstat(path))`, and only then truncates, so no byte of a link's target
+changes even if a link is swapped in mid-call.  New paths are still created 0600 and
+existing regular files still overwritten with their mode kept.  `--out /dev/stdout`
+(itself a link) is now refused; use `--out -`.
+
+**Fixing it exposed a worse ordering defect.**  `sign --algo hpks-wots` / `hpks-xmss`
+wrote the signature BEFORE burning the leaf in `<key>.idx`, and C and Go discarded a
+failed burn, so an unwritable sidecar (read-only directory, full disk — or a symlinked
+`.idx` once refused) released a signature and left the leaf for the next `sign`: two WOTS
+signatures under one key, which is a forgery.  Python and Java raised, but only after the
+signature was on disk.  All four now write, flush and fsync the leaf before the signature
+exists, and stop if that fails; a failure after the burn wastes the leaf, the safe side.
+Java's sidecar also no longer passes through the passphrase envelope.
+
+New `CliTest/test_output_symlink.sh` (cross-lang-compat): 52 cells over four CLIs —
+accept-controls (new path 0600; regular file overwritten, mode kept; `/dev/null`; WOTS signs once,
+XMSS advances), symlink / dangling / `encfile --out` refusals with the target
+byte-identical, and an unwritable or symlinked `.idx` releasing no signature for both
+WOTS and XMSS — plus two negative controls shown to fire: a link-following writer fails
+exactly the 3 symlink cells, and a signer that burns a copy of the state fails both
+unwritable-sidecar cells.
+
 ## [21.0.3] - 2026-11-25
 
 **A general security review of the shipped code (TODO #411).** The project had had
