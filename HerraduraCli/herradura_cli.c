@@ -1637,15 +1637,64 @@ static void wots_idx_path(const char *key_path, char *buf, size_t buflen)
     snprintf(buf, buflen, "%s.idx", key_path);
 }
 
-static int wots_is_used(const char *key_path)
+/* TODO #420: a one-time-signature key must be a regular file, because its
+ * state lives beside it in <key>.idx.  From stdin (`-`), a pipe or a device
+ * there is no such place: C and Go used to keep it in ./-.idx, shared by every
+ * key ever piped in from that directory, and Java kept none at all. */
+static void ots_require_key_file(const char *cmd, const char *path, const char *flag)
+{
+    struct stat st;
+    if (!path || strcmp(path, "-") == 0 || (stat(path, &st) == 0 && !S_ISREG(st.st_mode)))
+        dievf("%s: a one-time-signature key must be a regular file given by %s "
+             "(its state lives in <key>.idx); it cannot be read from or written to "
+             "stdin, a pipe or a device", cmd, flag);
+}
+
+/* TODO #419: the ONE reader of a one-time-signature state sidecar, for WOTS
+ * (max 1) and XMSS (max 2^h).  It fails CLOSED: the file must exist, be a
+ * regular file (not a link), and hold exactly one canonical decimal -- `0` or
+ * a digit string with no leading zero, at most 10 digits, an optional single
+ * trailing newline -- no larger than max.  Anything else used to read as 0
+ * (unused), so an empty file left by a crash let a WOTS key sign again. */
+static uint64_t ots_state_read(const char *key_path, uint64_t max)
 {
     char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = fopen(p, "r");
-    if (!f) return 0;
-    int v = 0;
-    if (fscanf(f, "%d", &v) != 1) v = 0;
-    fclose(f);
-    return v != 0;
+    const char *why = NULL;
+    char buf[16]; size_t n = 0;
+    struct stat st;
+#ifndef _WIN32
+    int sr = lstat(p, &st);
+#else
+    int sr = stat(p, &st);
+#endif
+    if (sr != 0) why = "missing";
+    else if (!S_ISREG(st.st_mode)) why = "not a regular file";
+    else {
+        FILE *f = fopen(p, "rb");
+        if (!f) why = "unreadable";
+        else { n = fread(buf, 1, sizeof buf, f); fclose(f); }
+    }
+    uint64_t v = 0;
+    if (!why) {
+        size_t d = n;
+        if (d > 0 && buf[d - 1] == '\n') d--;
+        int ok = d >= 1 && d <= 10 && n < sizeof buf && !(d > 1 && buf[0] == '0');
+        for (size_t i = 0; ok && i < d; i++) {
+            if (buf[i] < '0' || buf[i] > '9') ok = 0;
+            else v = v * 10 + (uint64_t)(buf[i] - '0');
+        }
+        if (!ok) why = "damaged (not one canonical decimal count)";
+        else if (v > max) why = "damaged (count out of range)";
+    }
+    if (why)
+        dievf("sign: one-time-signature state file %s is %s; refusing to sign "
+             "(restore it, or generate a new key)", p, why);
+    return v;
+}
+
+static int wots_is_used(const char *key_path)
+{
+    return ots_state_read(key_path, 1) != 0;
 }
 
 /* Write a one-time-signature state sidecar, or die.  TODO #417: this used to
@@ -1701,15 +1750,9 @@ static void wots_blob_unpack(BitArray vals[WOTS_L], const uint8_t *v, size_t vl)
  * reused by HPKS-WOTS-F (see wots_idx_path above) for its 0/1 burned flag.
  * ───────────────────────────────────────────────────────────────────────────── */
 
-static int xmss_read_idx(const char *key_path)
+static uint32_t xmss_read_idx(const char *key_path, size_t num_leaves)
 {
-    char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = fopen(p, "r");
-    if (!f) return 0;
-    int v = 0;
-    if (fscanf(f, "%d", &v) != 1) v = 0;
-    fclose(f);
-    return v < 0 ? 0 : v;
+    return (uint32_t)ots_state_read(key_path, (uint64_t)num_leaves);   /* TODO #419 */
 }
 
 static void xmss_write_idx(const char *key_path, int val)
@@ -2048,6 +2091,7 @@ static void cmd_genpkey(int argc, char **argv)
 
     /* HPKS-WOTS-F one-time key: SEQUENCE(INTEGER(seed,32), INTEGER(leaf_idx=0)) */
     if (strcmp(algo, "hpks-wots") == 0) {
+        ots_require_key_file("genpkey", out, "--out");     /* TODO #420 */
         uint8_t seed[KEYBYTES];
         if (fread(seed, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
         uint8_t is[DER_INT_LEN(KEYBYTES)], il0[DER_INT_LEN(8)];
@@ -2056,7 +2100,7 @@ static void cmd_genpkey(int argc, char **argv)
         der_i_uint(0, il0, &ll);
         const uint8_t *it[2] = {is, il0}; size_t ill[2] = {ls, ll};
         seq_and_write(it, ill, 2, PEM_HPKS_WOTS_PRIV, out);
-        if (out && strcmp(out, "-") != 0) wots_write_idx(out, 0);
+        wots_write_idx(out, 0);
         fprintf(stderr, "HPKS-WOTS: ONE-TIME key — it may sign exactly one message.\n");
         explicit_bzero(seed, KEYBYTES);
         fclose(urnd); return;
@@ -2065,6 +2109,7 @@ static void cmd_genpkey(int argc, char **argv)
     /* HPKS-XMSS-F key: SEQUENCE(INTEGER(seed,32), INTEGER(h), INTEGER(next_idx=0),
      * INTEGER(leaf_hashes_blob, 32*2^h)) — mirrors the Python CLI exactly. */
     if (strcmp(algo, "hpks-xmss") == 0) {
+        ots_require_key_file("genpkey", out, "--out");     /* TODO #420 */
         int h_val = (int)num_arg(argc, argv, "--xmss-height", "genpkey", 1, XMSS_MAX_H, 10);
         uint8_t seed[KEYBYTES];
         if (fread(seed, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
@@ -2086,7 +2131,7 @@ static void cmd_genpkey(int argc, char **argv)
         const uint8_t *it[4] = {is, ih, iidx, ib};
         size_t ill[4] = {ls, lh, lidx, lb};
         seq_and_write(it, ill, 4, PEM_HPKS_XMSS_PRIV, out);
-        if (out && strcmp(out, "-") != 0) xmss_write_idx(out, 0);
+        xmss_write_idx(out, 0);
         free(ib); free(flat);
         explicit_bzero(seed, KEYBYTES);
         fclose(urnd); return;
@@ -5218,6 +5263,7 @@ static void cmd_sign(int argc, char **argv)
     /* HPKS-WOTS-F signs the full message (hashed internally), not a truncated
      * 256-bit block — handle it before the block-truncation logic below. */
     if (strcmp(algo, "hpks-wots") == 0) {
+        ots_require_key_file("sign", key_path, "--key");   /* TODO #420 */
         PemKey wk;
         pem_key_load(&wk, key_path);
         if (strcmp(wk.label, PEM_HPKS_WOTS_PRIV) != 0)
@@ -5261,6 +5307,7 @@ static void cmd_sign(int argc, char **argv)
     /* HPKS-XMSS-F signs the full message (hashed internally) at the next unused
      * leaf, tracked in the `<key>.idx` sidecar. */
     if (strcmp(algo, "hpks-xmss") == 0) {
+        ots_require_key_file("sign", key_path, "--key");   /* TODO #420 */
         PemKey xk;
         pem_key_load(&xk, key_path);
         if (strcmp(xk.label, PEM_HPKS_XMSS_PRIV) != 0)
@@ -5276,7 +5323,7 @@ static void cmd_sign(int argc, char **argv)
         xmss_blob_align(flat, blob_len, xk.vals[3], xk.vlens[3]);
         pem_key_free(&xk);
 
-        uint32_t leaf_idx = (uint32_t)xmss_read_idx(key_path);
+        uint32_t leaf_idx = xmss_read_idx(key_path, num_leaves);
         if (leaf_idx >= num_leaves) {
             free(flat);
             fprintf(stderr, "sign: XMSS key exhausted (%zu leaves used). "

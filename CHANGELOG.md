@@ -2,6 +2,39 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [23.0.0] - 2026-11-26
+
+**A one-time-signature key's state is read fail-closed, and the key must be a file
+(TODO #419, #420).**  **MAJOR**: it refuses invocations the CLIs accepted — see
+MIGRATING.md section 57.
+
+*#419.*  `<key>.idx` is all that stops a WOTS key signing twice or an XMSS key reusing a
+leaf, and every port read it fail-open: a missing, empty or unparseable file read as `0`
+(unused).  Reproduced against v22.0.1: an empty `.idx` let a used WOTS key sign again in
+all four CLIs, `garbage` in C, Python and Java, `1x` in Python and Java; empty or
+`garbage` made all four XMSS signers reuse leaf 0; C and Go clamped a negative count to 0.
+Each port now has ONE reader (`ots_state_read` / `otsStateRead` / `_ots_state_read` /
+`readIdxState`) shared by WOTS (max 1) and XMSS (max 2^h): the file must exist, be a
+regular file (not a link), and hold one canonical decimal (`0` or `[1-9][0-9]*`, at most
+10 digits, at most one trailing newline) within range, or `sign` refuses before a
+signature exists, naming the reason.
+
+*#420.*  With the key on stdin there is nowhere to keep its state: C and Go wrote it to
+`./-.idx`, shared by every key piped in from that directory (a fresh key was refused as
+used; the same key from another directory signed again), and Java skipped state entirely,
+so a WOTS key read from stdin signed twice.  `sign --algo hpks-wots|hpks-xmss` now refuses
+a `--key` that is `-` or not a regular file, before reading it, and `genpkey` for those
+algorithms refuses `--out -` or no `--out`, in all four CLIs (Python's refusal was a PEM
+parse side effect and is now the deliberate check).
+
+New `CliTest/test_ots_state.sh` (cross-lang-compat): per CLI, 4 accept-controls, 22
+damaged-state cells (each must exit non-zero, write no signature and leave the `.idx`
+byte-identical), 2 used/exhausted cells and 8 stdin/stdout cells — 144 cells plus two
+negative controls, both shown to fire: a stand-in that resets a refused `.idx` to `0` and
+signs fails exactly the 22 damaged cells, and one that spools a stdin key through a
+temporary file fails exactly the 8 stdin cells.  Against the v22.0.1 CLIs the same
+matrix fails 82 cells across all four ports.
+
 ## [22.0.1] - 2026-11-26
 
 **CI actions are pinned to commit SHAs, and a tool holds them there (TODO #418).**

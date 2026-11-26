@@ -2673,3 +2673,55 @@ Nothing stored changes: every key, signature and ciphertext reads as before.
 
 **Why this is MAJOR.** It refuses invocations that existing subcommands accepted, the
 2.0.0 surface (the reading section 38 applied).
+
+## 57. A one-time-signature key must be a file, and its state file must be intact (v23.0.0)
+
+**Who is affected:** anyone who signs with `hpks-wots` or `hpks-xmss` where the key's
+`<key>.idx` sidecar is missing, empty or holds anything but one plain count; anyone who
+pipes such a key into `sign --key -`; and anyone who runs `genpkey --algo hpks-wots` /
+`hpks-xmss` with `--out -` or without `--out`.
+
+**What changed (TODO #419).** `sign` reads `<key>.idx` through one strict reader in all
+four CLIs. The file must exist, be a regular file (not a symlink or a directory), and
+hold exactly one canonical decimal count: `0`, or digits with no leading zero, at most
+10 of them, with at most one trailing newline. For WOTS the count is 0 or 1; for XMSS it
+is 0 to 2^h. Anything else stops `sign` before a signature exists:
+
+```
+sign: one-time-signature state file key.pem.idx is damaged (not one canonical decimal count); refusing to sign (restore it, or generate a new key)
+```
+
+The other reasons it can give are `missing`, `not a regular file`, `unreadable` and
+`damaged (count out of range)`. Before 23.0.0 every port read a file it could not parse
+as `0`, meaning unused. An empty file, which is what a crash mid-write leaves, let a used
+WOTS key sign again in all four CLIs. The ports also disagreed on the same bytes: Go
+refused `garbage` and C refused `1x`, while Python and Java signed with both.
+
+**What changed (TODO #420).** A one-time-signature key must be a regular file, because
+its state lives beside it. `sign --algo hpks-wots|hpks-xmss --key -` (or `/dev/stdin`, a
+pipe, a device) and `genpkey --algo hpks-wots|hpks-xmss` with `--out -` or no `--out` are
+refused:
+
+```
+sign: a one-time-signature key must be a regular file given by --key (its state lives in <key>.idx); it cannot be read from or written to stdin, a pipe or a device
+```
+
+Before 23.0.0, C and Go derived the sidecar from the name `-`, so the state went to
+`./-.idx` in the current directory. That one file was shared by every key piped in from
+there, and the same key piped in from another directory signed again. Java kept no
+state for a stdin key, so a WOTS key read from stdin signed twice. Python already
+refused, but only because its PEM reader did.
+
+**What to do.** Keep WOTS/XMSS keys in files and pass `--key FILE`. Generate them with
+`--out FILE`, which writes `FILE.idx` beside the key. A key generated to stdout before
+23.0.0 has no state file; treat it as burned and generate a new one.
+
+If a `.idx` is lost or damaged, do **not** recreate it as `0`. Restore it from wherever
+the key was last used, or set it to a count at least as large as any ever used: `1` for
+WOTS (that is, the key is spent), or for XMSS one past the highest leaf index that
+appears in any signature it made. If in doubt, generate a new key. Nothing stored
+changes: every key and signature reads and verifies as before, and `verify` is
+untouched.
+
+**Why this is MAJOR.** It refuses `sign` and `genpkey` invocations that existing
+subcommands accepted, the 2.0.0 surface (the reading section 38 applied).

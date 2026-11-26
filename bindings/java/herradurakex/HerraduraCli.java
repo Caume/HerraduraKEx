@@ -582,6 +582,7 @@ public final class HerraduraCli {
             return;
         }
         if (algo.equals("hpks-wots")) {
+            otsRequireKeyFile("genpkey", out, "--out");   // TODO #420
             byte[] masterSeed = new byte[32];
             RNG.nextBytes(masterSeed);
             writeString(out, Codec.encodeWotsPrivKey(masterSeed, 0));
@@ -601,6 +602,7 @@ public final class HerraduraCli {
             return;
         }
         if (algo.equals("hpks-xmss")) {
+            otsRequireKeyFile("genpkey", out, "--out");   // TODO #420
             int h = numArg(opt, "xmss-height", 1, Codec.XMSS_MAX_H, Xmss.DEFAULT_H, "genpkey");
             // Codec.XMSS_MAX_H's own comment calls itself "genpkey's
             // --xmss-height cap", and until TODO #278 genpkey was the one path
@@ -1763,9 +1765,10 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
+            otsRequireKeyFile("sign", keyPath, "--key");   // TODO #420 (before the key is read)
             Codec.XmssPrivKey pk = Codec.decodeXmssPrivKey(readString(keyPath));
-            int leafIdx = readIdxState(keyPath);
             int numLeaves = 1 << pk.h;
+            int leafIdx = (int) readIdxState(keyPath, numLeaves);   // TODO #419
             if (leafIdx >= numLeaves) {
                 throw new CliError("sign: XMSS key exhausted (" + numLeaves + " leaves used). Generate a new key.");
             }
@@ -1779,11 +1782,12 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            if (readIdxState(keyPath) != 0) {
+            otsRequireKeyFile("sign", keyPath, "--key");   // TODO #420
+            Codec.WotsPrivKey pk = Codec.decodeWotsPrivKey(readString(keyPath));
+            if (readIdxState(keyPath, 1) != 0) {   // TODO #419
                 throw new CliError("sign: this HPKS-WOTS key was already used — WOTS keys are "
                     + "ONE-TIME. Generate a fresh key (genpkey --algo hpks-wots).");
             }
-            Codec.WotsPrivKey pk = Codec.decodeWotsPrivKey(readString(keyPath));
             writeIdxState(keyPath, 1); // TODO #417: burn the key first
             Wots.Signature sig = Wots.sign(msg, pk.masterSeed, pk.leafIdx);
             writeString(out, Codec.encodeWotsSig(sig.sig));
@@ -2887,8 +2891,7 @@ public final class HerraduraCli {
      * through writeString's passphrase envelope) and forced to disk, BEFORE the
      * signature it accounts for is produced; a failure stops the command. */
     private static void writeIdxState(String keyPath, int value) throws IOException {
-        if (keyPath == null || keyPath.equals("-")) return;
-        String sp = keyPath + ".idx";
+        String sp = keyPath + ".idx";   // TODO #420: no stdin key reaches here
         try {
             writeOutFile(sp, (value + "\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII), true);
         } catch (IOException e) {
@@ -2896,13 +2899,63 @@ public final class HerraduraCli {
         }
     }
 
-    private static int readIdxState(String keyPath) {
-        try {
-            String s = readString(keyPath + ".idx").trim();
-            return Integer.parseInt(s);
-        } catch (Exception e) {
-            return 0;
+    /** TODO #420: a one-time-signature key must be a regular file, because its
+     * state lives beside it in <key>.idx.  From stdin ({@code -}), a pipe or a
+     * device there is no such place: C and Go used to keep it in ./-.idx, shared
+     * by every key piped in from that directory, and this CLI kept none at all
+     * (writeIdxState returned early), so a WOTS key read from stdin signed twice. */
+    private static void otsRequireKeyFile(String cmd, String path, String flag) {
+        boolean bad = path == null || path.equals("-");
+        if (!bad) {
+            java.nio.file.Path p = java.nio.file.Paths.get(path);
+            bad = java.nio.file.Files.exists(p) && !java.nio.file.Files.isRegularFile(p);
         }
+        if (bad) {
+            throw new CliError(cmd + ": a one-time-signature key must be a regular file given by " + flag
+                + " (its state lives in <key>.idx); it cannot be read from or written to "
+                + "stdin, a pipe or a device");
+        }
+    }
+
+    /** The ONE reader of a one-time-signature state sidecar, for WOTS (max 1)
+     * and XMSS (max 2^h).  TODO #419: it fails CLOSED -- the file must exist, be
+     * a regular file (not a link), and hold exactly one canonical decimal
+     * ({@code 0}, or digits with no leading zero, at most 10, an optional single
+     * trailing newline) no larger than max.  Anything else used to read as 0
+     * (unused), so an empty file left by a crash let a WOTS key sign again. */
+    private static long readIdxState(String keyPath, long max) {
+        String sp = keyPath + ".idx";
+        java.nio.file.Path p = java.nio.file.Paths.get(sp);
+        String why = null;
+        long v = 0;
+        if (!java.nio.file.Files.exists(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            why = "missing";
+        } else if (!java.nio.file.Files.isRegularFile(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            why = "not a regular file";
+        } else {
+            byte[] b = null;
+            try (java.io.InputStream in = java.nio.file.Files.newInputStream(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                b = in.readNBytes(16);
+            } catch (IOException e) {
+                why = "unreadable";
+            }
+            if (b != null) {
+                int d = b.length;
+                if (d > 0 && b[d - 1] == '\n') d--;
+                boolean ok = b.length < 16 && d >= 1 && d <= 10 && !(d > 1 && b[0] == '0');
+                for (int i = 0; ok && i < d; i++) {
+                    if (b[i] < '0' || b[i] > '9') ok = false;
+                    else v = v * 10 + (b[i] - '0');
+                }
+                if (!ok) why = "damaged (not one canonical decimal count)";
+                else if (v > max) why = "damaged (count out of range)";
+            }
+        }
+        if (why != null) {
+            throw new CliError("sign: one-time-signature state file " + sp + " is " + why
+                + "; refusing to sign (restore it, or generate a new key)");
+        }
+        return v;
     }
 
     /** Refuses --aead / --ad on an --algo that would ignore them (TODO #378).

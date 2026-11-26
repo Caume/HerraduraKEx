@@ -276,8 +276,10 @@ ALGOS9="hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-ster
         hpke-stern-kem hpks-zkp-nl oprf hpks-xmss hpks-wots hcred"
 for t in $ALGOS9; do
     extra=""; [ "$t" = hpks-xmss ] && extra="--xmss-height 4"
+    # To a file, not stdout: a WOTS/XMSS key must be a file since TODO #420.
     # shellcheck disable=SC2086
-    want=$(${CLI[c]} genpkey --algo "$t" $extra 2>/dev/null | head -1)
+    ${CLI[c]} genpkey --algo "$t" $extra --out "$TMP/a9_want_$t.pem" >/dev/null 2>&1
+    want=$(head -1 "$TMP/a9_want_$t.pem")
     for w in $LANGS; do
         # shellcheck disable=SC2086
         if ! ${CLI[$w]} genpkey --algo "$t" $extra --passphrase "$PHRASE" --kdf-iterations 1 \

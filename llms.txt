@@ -275,7 +275,9 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     --rounds (hpks-stern, hpks-ring, nl-zkboo, nl-zkbpp) defaults to 219 in all
     four CLIs, the 128-bit Fiat-Shamir count.
     hpks-wots / hpks-xmss keep one-time-use / leaf-index state in a <keyfile>.idx
-    sidecar; reusing a WOTS key or an XMSS leaf breaks the signature.
+    sidecar; reusing a WOTS key or an XMSS leaf breaks the signature.  The key
+    must be a regular file (no --key -, and genpkey needs a real --out), and a
+    missing or damaged .idx is refused, never read as unused (TODO #419, #420).
   verify --algo {sign algos + hpks-t} --pubkey FILE [--ring ...] --in FILE --sig FILE
          [--digest {hfscx-256,none}] [--min-rounds N]
     The round count travels in the artifact, so the verifier sets a floor:

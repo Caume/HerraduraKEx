@@ -154,7 +154,9 @@ scope for this binding.
   `<keyfile>.idx` sidecar file next to the private-key PEM — XMSS's
   authoritative next-unused-leaf-index counter (hard-fails once
   exhausted) or WOTS's used/unused flag (refuses a second sign) —
-  exactly mirroring the Python CLI's state-file convention.
+  exactly mirroring the Python CLI's state-file convention.  The key
+  must be a file (no `--out -` / `--key -`), and a missing or damaged
+  `.idx` is refused (TODO #419, #420).
   `pake-register` requires `--password` explicitly (no interactive
   `getpass` prompt fallback, unlike the Python CLI). PEM/DER output is
   byte-for-byte identical to the other three CLIs.

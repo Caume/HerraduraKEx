@@ -41,6 +41,7 @@ import errno
 import hmac as _hmac
 import sys
 import os
+import stat
 import textwrap
 
 # Add parent directory to path so relative imports work when run directly
@@ -2138,14 +2139,64 @@ def _xmss_state_path(key_path: str) -> str:
     return key_path + '.idx'
 
 
-def _xmss_read_idx(key_path: str, h: int) -> int:
-    sp = _xmss_state_path(key_path)
-    if os.path.exists(sp):
+def _ots_require_key_file(cmd: str, path, flag: str):
+    """TODO #420: a one-time-signature key must be a regular file, because its
+    state lives beside it in <key>.idx.  From stdin (`-`), a pipe or a device
+    there is no such place: C and Go used to keep it in ./-.idx, shared by every
+    key piped in from that directory, and Java kept none at all."""
+    bad = not path or path == '-'
+    if not bad:
         try:
-            return int(open(sp).read().strip())
-        except Exception:
+            bad = not stat.S_ISREG(os.stat(path).st_mode)
+        except OSError:
             pass
-    return 0
+    if bad:
+        sys.exit(f"{cmd}: a one-time-signature key must be a regular file given by {flag} "
+                 "(its state lives in <key>.idx); it cannot be read from or written to "
+                 "stdin, a pipe or a device")
+
+
+def _ots_state_read(key_path: str, maximum: int) -> int:
+    """The ONE reader of a one-time-signature state sidecar, for WOTS (max 1)
+    and XMSS (max 2^h).  TODO #419: it fails CLOSED -- the file must exist, be
+    a regular file (not a link), and hold exactly one canonical decimal (`0`,
+    or digits with no leading zero, at most 10, an optional single trailing
+    newline) no larger than max.  Anything else used to read as 0 (unused), so
+    an empty file left by a crash let a WOTS key sign again."""
+    sp = _xmss_state_path(key_path)
+    why, v = None, 0
+    try:
+        st = os.lstat(sp)
+    except OSError:
+        why = 'missing'
+    else:
+        if not stat.S_ISREG(st.st_mode):
+            why = 'not a regular file'
+        else:
+            try:
+                with open(sp, 'rb') as f:
+                    b = f.read(16)
+            except OSError:
+                why = 'unreadable'
+            else:
+                d = b[:-1] if b.endswith(b'\n') else b
+                ok = (len(b) < 16 and 1 <= len(d) <= 10
+                      and all(0x30 <= c <= 0x39 for c in d)
+                      and not (len(d) > 1 and d[0] == 0x30))
+                if not ok:
+                    why = 'damaged (not one canonical decimal count)'
+                else:
+                    v = int(d)
+                    if v > maximum:
+                        why = 'damaged (count out of range)'
+    if why:
+        sys.exit(f"sign: one-time-signature state file {sp} is {why}; refusing to sign "
+                 "(restore it, or generate a new key)")
+    return v
+
+
+def _xmss_read_idx(key_path: str, h: int) -> int:
+    return _ots_state_read(key_path, 1 << h)   # TODO #419
 
 
 def _xmss_write_idx(key_path: str, next_idx: int):
@@ -2227,13 +2278,7 @@ def _unpack_wots_sig(path: str):
 
 
 def _wots_is_used(key_path: str) -> bool:
-    sp = _xmss_state_path(key_path)   # reuse <key>.idx convention
-    if os.path.exists(sp):
-        try:
-            return int(open(sp).read().strip()) != 0
-        except Exception:
-            pass
-    return False
+    return _ots_state_read(key_path, 1) != 0   # TODO #419; reuses <key>.idx
 
 
 def _wots_mark_used(key_path: str):
@@ -3082,6 +3127,7 @@ def cmd_genpkey(args):
         pem_out = pem_wrap(_PRIV_ALGOS['oprf'], der)
 
     elif algo == 'hpks-xmss':
+        _ots_require_key_file('genpkey', args.out, '--out')   # TODO #420
         import secrets as _sec
         h_val = getattr(args, 'xmss_height', None)
         # `or 10` here until TODO #278, which made 0 FALSY and therefore silently
@@ -3100,17 +3146,14 @@ def cmd_genpkey(args):
         sk_seed, root, leaf_hashes = hpks_xmss_keygen(master_seed, h_val)
         pem_out = _encode_xmss_privkey(master_seed, h_val, 0, leaf_hashes)
         # Write state file alongside output if output is a named file
-        out_path = args.out
-        if out_path and out_path != '-':
-            _xmss_write_idx(out_path, 0)
+        _xmss_write_idx(args.out, 0)
 
     elif algo == 'hpks-wots':
+        _ots_require_key_file('genpkey', args.out, '--out')   # TODO #420
         import secrets as _sec
         master_seed = _sec.token_bytes(32)
         pem_out = _encode_wots_privkey(master_seed, 0)
-        out_path = args.out
-        if out_path and out_path != '-':
-            _xmss_write_idx(out_path, 0)   # 0 = unused (one-time key)
+        _xmss_write_idx(args.out, 0)   # 0 = unused (one-time key)
         print("HPKS-WOTS: ONE-TIME key — it may sign exactly one message.",
               file=sys.stderr)
 
@@ -3785,6 +3828,8 @@ def cmd_sign(args):
     if args.digest == 'hfscx-256':
         in_bytes = hfscx_256(in_bytes)   # pre-hash: sign the 32-byte digest
 
+    if algo in ('hpks-wots', 'hpks-xmss'):
+        _ots_require_key_file('sign', key_path, '--key')   # TODO #420
     our_algo, our_ints = _decode_privkey(key_path)
 
     if algo in ('hpks', 'hpks-nl'):

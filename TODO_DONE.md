@@ -27627,3 +27627,108 @@ No Dependabot config was added (none exists; adding one would open bot PRs, a se
 decision).
 
 Status: **DONE v22.0.1** — every CI action pinned to a commit SHA with its release in a comment; tools/check_action_pinning.py fails a tag pin.
+
+---
+
+### #419: a damaged one-time-signature state file reads as "unused", so the key signs again
+
+Found while closing #417.  `<key>.idx` is the only thing stopping a WOTS key from signing
+twice or an XMSS key from reusing a leaf, and every port reads it fail-OPEN: a file it
+cannot parse is treated as `0` (unused / leaf 0).  Reproduced on 2026-11-26 against
+v22.0.1, after one successful `sign` (which leaves the file at `1`), overwriting the file
+and signing again with the same key:
+
+| `.idx` contents | C | Go | Python | Java |
+|---|---|---|---|---|
+| WOTS, empty | signs again | signs again | signs again | signs again |
+| WOTS, `garbage` | signs again | refused | signs again | signs again |
+| WOTS, `1x` | refused | refused | signs again | signs again |
+| XMSS, empty or `garbage` | reuses leaf 0 | reuses leaf 0 | reuses leaf 0 | reuses leaf 0 |
+
+Reading the code, a negative XMSS value is also clamped to 0 in C and Go
+(`xmss_read_idx`, `xmssReadIdx`), and a MISSING file reads as unused everywhere, although
+`genpkey` always writes one.  The four ports also disagree with each other on the same
+input, which no cross-port test sees because none feeds a damaged file.
+
+A truncated write (power loss between the `O_TRUNC` and the data reaching disk, despite
+#417's fsync of the completed write) leaves an empty file, which is the row every port
+gets wrong.  Two signatures from one WOTS key, or two XMSS signatures at one leaf, let an
+observer forge.
+
+**Fix direction:** one strict reader per port, shared by WOTS and XMSS: the file must
+exist and hold exactly one canonical non-negative decimal integer and a newline (WOTS: `0`
+or `1`; XMSS: `0..2^h`), or `sign` refuses with "one-time-signature state file X is
+missing or damaged; refusing to sign (restore it, or generate a new key)".  Leave `verify`
+untouched.  Test: a 4-CLI matrix in `CliTest/test_output_symlink.sh` (or a sibling) over
+missing, empty, garbage, `1x`, `-1`, ` 1`, `01` and out-of-range contents, with an
+accept-control for the well-formed file, and a negative control (a reader that maps junk
+to 0) shown to fail the cells.
+
+**MAJOR (MIGRATING entry required):** this refuses `sign` invocations every CLI accepts
+today: a key whose `.idx` is missing (deleted, or never copied alongside the key) or has
+contents a lenient parser accepted.  Per the §38 precedent, refusing previously accepted
+input is MAJOR.  The MIGRATING entry should say how to recover a lost state file safely:
+only by setting it to a value at least as large as any index ever used, never by
+recreating it as `0`.
+
+**Done.**  One strict reader per port (`ots_state_read` in C, `otsStateRead` in Go,
+`_ots_state_read` in Python, `readIdxState(path, max)` in Java), shared by WOTS (max 1)
+and XMSS (max 2^h), checked after the key decodes and before the burn.  It requires the
+file to exist, be a regular file (lstat: not a link, not a directory), and hold `0` or
+`[1-9][0-9]*` (at most 10 digits) with at most one trailing newline, within range;
+otherwise `sign: one-time-signature state file X is <missing | not a regular file |
+unreadable | damaged (not one canonical decimal count) | damaged (count out of range)>;
+refusing to sign (restore it, or generate a new key)`.  2^h itself still gives the
+existing "XMSS key exhausted" message.  `verify` is untouched.  Tested by the new
+`CliTest/test_ots_state.sh`: 22 damaged cells per CLI (the table above plus ` 0`, `0 `,
+`00`, `01`, `0\n\n`, `0\r\n`, `+0`, `2`, `99999999999`, a symlink and a directory for
+WOTS; missing, empty, `garbage`, `-1`, `01`, `5` for XMSS), each asserting non-zero exit,
+no signature and a byte-identical `.idx`, beside 4 accept-controls; a fail-open stand-in
+fails exactly the 22.  MAJOR: MIGRATING §57, which says how to restore a lost state file
+(never as `0`).
+
+Status: **DONE v23.0.0** — every port reads <key>.idx through one fail-closed reader; missing, non-regular, non-canonical or out-of-range state stops sign; MAJOR (MIGRATING §57).
+
+---
+
+### #420: `sign --key -` for WOTS/XMSS keeps its state in `./-.idx`, or (Java) nowhere
+
+Found while closing #417.  With the private key on stdin there is no key path to put the
+`.idx` sidecar beside.  Reproduced on 2026-11-26 against v22.0.1, signing twice with
+`sign --algo hpks-wots --key - < s.pem`, each port in its own empty directory:
+
+- **C and Go** derive the sidecar name from the path string `-`, so the state goes to
+  `-.idx` in the current directory.  The second sign there is refused, but that file is
+  shared by every key ever piped in from that directory.  A fresh key piped in later is
+  refused as "already used", and the same key piped in from any other directory signs
+  again.  (Reproducing this left a stray `-.idx` in the repo root, since removed.)
+- **Java** skips state tracking entirely: `writeIdxState` returns early on `-`, and
+  `readIdxState` finds no `-.idx`.  Both signs succeed, so the WOTS key signed twice.
+- **Python** refuses `--key -` for this subcommand ("PEM: missing BEGIN marker").  That is
+  safe, if by accident.
+
+**Fix direction:** refuse `--key -` (and any key source that is not a regular file path)
+for `sign --algo hpks-wots` / `hpks-xmss` in all four ports, before reading the key, with
+one message: "a one-time-signature key must be a file (its state lives in <key>.idx); it
+cannot be read from stdin".  Python's refusal should become that deliberate check rather
+than a PEM-parse side effect.  Test: a 4-CLI cell that `--key -` is refused with no
+signature written and no `-.idx` created, beside an accept-control for the same key given
+by path.
+
+**MAJOR (MIGRATING entry required):** C, Go and Java accept `sign --key -` for these
+algorithms today.
+
+**Done.**  `sign --algo hpks-wots|hpks-xmss` refuses a `--key` that is `-` or exists and
+is not a regular file (so `/dev/stdin`, a FIFO, a device), before the key is read, and
+`genpkey` for both algorithms refuses `--out -` or an omitted `--out` (every CLI's
+default is stdout), with one message in all four CLIs: "a one-time-signature key must be
+a regular file given by --key|--out (its state lives in <key>.idx); it cannot be read
+from or written to stdin, a pipe or a device".  Python's refusal is now that check, not a
+PEM-parse side effect; Java's `writeIdxState` no longer has a silent `-` early return.
+The genpkey side is included because #419 refuses a missing `.idx`: a key written to
+stdout could never sign, so it is refused where it is made.  Tested by
+`CliTest/test_ots_state.sh`'s 8 stdin cells per CLI (sign `--key -` and `/dev/stdin`,
+genpkey `--out -` and no `--out`, for WOTS and XMSS; each also asserts no `./-.idx`),
+which a stdin-spooling stand-in fails exactly.  MAJOR: MIGRATING §57.
+
+Status: **DONE v23.0.0** — a WOTS/XMSS key must be a regular file: sign refuses --key - and non-regular keys, genpkey refuses stdout; MAJOR (MIGRATING §57).

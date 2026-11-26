@@ -1236,6 +1236,9 @@ assert K_enc == K_dec
 `hpks-wots` is a hash-based **one-time** signature (Winternitz OTS over HFSCX-256).
 A WOTS key may sign **exactly one** message; the CLI burns the key after signing
 (tracked in a `<key>.idx` file next to the private key) and refuses any reuse.
+Because that file is the key's state, the key must be a regular file — `genpkey` needs a
+real `--out` and `sign` a real `--key`, never `-` — and a missing or damaged `.idx` stops
+`sign` rather than reading as "unused".  Never recreate a lost `.idx` as `0`.
 `hpks-xmss` is the many-time wrapper (library API only) that manages a tree of
 WOTS leaves.
 

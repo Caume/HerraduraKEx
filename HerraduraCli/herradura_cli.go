@@ -1427,14 +1427,73 @@ func decodeHybridResponse(ints [][]byte) (K *big.Int, C_B []int, hintPacked []by
 
 func wotsIdxPath(keyPath string) string { return keyPath + ".idx" }
 
-func wotsIsUsed(keyPath string) bool {
-	b, err := os.ReadFile(wotsIdxPath(keyPath))
-	if err != nil {
-		return false
+// otsRequireKeyFile: TODO #420.  A one-time-signature key must be a regular
+// file, because its state lives beside it in <key>.idx.  From stdin (`-`), a
+// pipe or a device there is no such place: C and Go used to keep it in
+// ./-.idx, shared by every key piped in from that directory, and Java kept
+// none at all.
+func otsRequireKeyFile(cmd, path, flagName string) {
+	bad := path == "" || path == "-"
+	if !bad {
+		if st, err := os.Stat(path); err == nil && !st.Mode().IsRegular() {
+			bad = true
+		}
 	}
-	v := strings.TrimSpace(string(b))
-	return v != "" && v != "0"
+	if bad {
+		fmt.Fprintf(os.Stderr, "%s: a one-time-signature key must be a regular file given by %s "+
+			"(its state lives in <key>.idx); it cannot be read from or written to "+
+			"stdin, a pipe or a device\n", cmd, flagName)
+		os.Exit(1)
+	}
 }
+
+// otsStateRead is the ONE reader of a one-time-signature state sidecar, for
+// WOTS (max 1) and XMSS (max 2^h).  TODO #419: it fails CLOSED -- the file must
+// exist, be a regular file (not a link), and hold exactly one canonical decimal
+// (`0`, or digits with no leading zero, at most 10, an optional single trailing
+// newline) no larger than max.  Anything else used to read as 0 (unused), so an
+// empty file left by a crash let a WOTS key sign again.
+func otsStateRead(keyPath string, max uint64) uint64 {
+	p := wotsIdxPath(keyPath)
+	why := ""
+	var v uint64
+	if st, err := os.Lstat(p); err != nil {
+		why = "missing"
+	} else if !st.Mode().IsRegular() {
+		why = "not a regular file"
+	} else if b, rerr := os.ReadFile(p); rerr != nil {
+		why = "unreadable"
+	} else {
+		d := b
+		if len(d) > 0 && d[len(d)-1] == '\n' {
+			d = d[:len(d)-1]
+		}
+		ok := len(d) >= 1 && len(d) <= 10 && !(len(d) > 1 && d[0] == '0')
+		for _, c := range d {
+			if !ok {
+				break
+			}
+			if c < '0' || c > '9' {
+				ok = false
+			} else {
+				v = v*10 + uint64(c-'0')
+			}
+		}
+		if !ok {
+			why = "damaged (not one canonical decimal count)"
+		} else if v > max {
+			why = "damaged (count out of range)"
+		}
+	}
+	if why != "" {
+		fmt.Fprintf(os.Stderr, "sign: one-time-signature state file %s is %s; refusing to sign "+
+			"(restore it, or generate a new key)\n", p, why)
+		os.Exit(1)
+	}
+	return v
+}
+
+func wotsIsUsed(keyPath string) bool { return otsStateRead(keyPath, 1) != 0 }
 
 // wotsWriteIdx writes a one-time-signature state sidecar or exits.  TODO
 // #417: the error used to be discarded, and sign wrote the signature BEFORE
@@ -1484,16 +1543,8 @@ func encodeWotsBlobPEM(vals [WotsL]*BitArray, label string) string {
 // (0-based next-unused-leaf), reusing the same convention as HPKS-WOTS-F's
 // 0/1 burned flag (wotsIdxPath above).
 
-func xmssReadIdx(keyPath string) int {
-	b, err := os.ReadFile(wotsIdxPath(keyPath))
-	if err != nil {
-		return 0
-	}
-	v, cerr := strconv.Atoi(strings.TrimSpace(string(b)))
-	if cerr != nil || v < 0 {
-		return 0
-	}
-	return v
+func xmssReadIdx(keyPath string, numLeaves int) int {
+	return int(otsStateRead(keyPath, uint64(numLeaves))) // TODO #419
 }
 
 func xmssWriteIdx(keyPath string, val int) { wotsWriteIdx(keyPath, val) } // same sidecar, same rule (#417)
@@ -1974,6 +2025,7 @@ func cmdGenpkey(args []string) {
 		pem = PemWrap(lblOprfPriv, seq)
 
 	case *algo == "hpks-wots":
+		otsRequireKeyFile("genpkey", *out, "--out") // TODO #420
 		seed := NewRandBitArray(256).Bytes() // 32-byte master seed
 		sd, e1 := derIntBig(new(big.Int).SetBytes(seed), 32)
 		ld, e2 := derIntSmall(0) // leaf_idx = 0
@@ -1987,12 +2039,11 @@ func cmdGenpkey(args []string) {
 			os.Exit(1)
 		}
 		pem = PemWrap(lblHpksWotsPriv, seq)
-		if *out != "-" {
-			wotsWriteIdx(*out, 0)
-		}
+		wotsWriteIdx(*out, 0)
 		fmt.Fprintln(os.Stderr, "HPKS-WOTS: ONE-TIME key — it may sign exactly one message.")
 
 	case *algo == "hpks-xmss":
+		otsRequireKeyFile("genpkey", *out, "--out") // TODO #420
 		h := xmssHeight
 		fmt.Fprintf(os.Stderr, "Generating XMSS tree (h=%d, %d leaves) — may take a moment...\n",
 			h, 1<<uint(h))
@@ -2016,9 +2067,7 @@ func cmdGenpkey(args []string) {
 			os.Exit(1)
 		}
 		pem = PemWrap(lblHpksXmssPriv, seq)
-		if *out != "-" {
-			xmssWriteIdx(*out, 0)
-		}
+		xmssWriteIdx(*out, 0)
 
 	default:
 		fmt.Fprintf(os.Stderr, "genpkey: unknown algorithm %q\n", *algo)
@@ -4936,6 +4985,9 @@ func cmdSign(args []string) {
 		return
 	}
 
+	if *algo == "hpks-wots" || *algo == "hpks-xmss" {
+		otsRequireKeyFile("sign", *key, "--key") // TODO #420
+	}
 	_, ourInts, err := readPEMInts(*key)
 	if err != nil {
 		die("sign", err)
@@ -5105,7 +5157,7 @@ func cmdSign(args []string) {
 		}
 		kp := &HpksXmssKeypair{MasterSeed: seed, Root: HaccumRoot(leafHashes), LeafHashes: leafHashes}
 
-		leafIdx := xmssReadIdx(*key)
+		leafIdx := xmssReadIdx(*key, numLeaves)
 		if leafIdx >= numLeaves {
 			fmt.Fprintf(os.Stderr, "sign: XMSS key exhausted (%d leaves used). Generate a new key.\n",
 				numLeaves)
