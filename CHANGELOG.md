@@ -2,6 +2,41 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [21.0.2] - 2026-11-25
+
+**The Python test harness is now held to the shipped suite (TODO #416).**
+`CryptosuiteTests/Herradura_tests.py` is standalone by design: it re-implements 72 of the
+suite's functions rather than importing them, so its `[FAIL]`-gated numbered tests held the
+COPY to its own expectations.  C's harness uses `herradura.h`, Go's the package and Java's
+`SelfTest` the shipped classes, so Python was the one port whose numbered tests did not test
+what ships.  #409 is what that cost: the harness's ZKBoo copy carried the shipped bug and
+its tests passed.
+
+- **New checker `CryptosuiteTests/check_suite_parity.py`** (run by `native-python-cli` and
+  `tools/check_fast.sh`):
+  - a CENSUS forces every harness function whose name shadows a suite function to be
+    classified (PARITY / RANDOMIZED / HELPER); a new un-classified shadow fails, as the
+    `spec/` censuses do;
+  - every deterministic primitive is run in both modules on the same inputs and compared;
+  - each verifier (`hpks_stern_f`, ZKBoo `zkp_nl`) is cross-verified BOTH WAYS and a
+    wrong-statement and a tampered artifact must be REJECTED by BOTH verifiers — the
+    rejection asserted against the SHIPPED verifier, so a shipped verifier that accepts a
+    bad proof fails here even when the harness copy shares the bug (the #409 class).  A pure
+    agreement check would not catch that.
+- **Two real drifts found and fixed** in the harness's Stern copy, which its standalone
+  tests never caught:
+  - `_stern_gen_perm` was the pre-TODO-#129 version (advance-every-swap, modulo bias); the
+    suite uses counter-mode + Lemire multiply-shift, bit-identical with C/Go.  Synced.
+  - the Stern Fiat-Shamir challenge was `ch_st.uint % 3` (full 256-bit) against the suite's
+    `(ch_st.uint & 0xFFFFFFFF) % 3` (low 32 bits), in sign, verify and the ring.  Synced.
+  The harness's `[17]`/`[20]`/`[53]` had been exercising a permutation and challenge schedule
+  that no longer ship; they now match the suite and still pass.
+- **SecurityProofsCode (item 3):** no self-contained script reimplements a shipped verifier
+  by name; the "the null is a model and nothing checked the model" risk (the
+  `zkp_pqc_exploration.py` case) is already governed by `run_findings_gates.py`'s MEASURED-
+  null requirement for `follows` gates (TODO #304).  No change needed.
+- **CLAUDE.md** gains the rule under "Rules for writing tests".
+
 ## [21.0.1] - 2026-11-25
 
 **The unauthenticated encryption modes now say so (TODO #414).**  Found by #410's

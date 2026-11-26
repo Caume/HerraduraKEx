@@ -27340,3 +27340,42 @@ key where hske-nla1 takes 16 to 256 bits, and the warning names the tagged modes
 Status: **DONE v21.0.1** — enc_integrity table generated into all four CLIs; enc/dec warn on stderr for every untagged mode; malleability measured and held by the wrong-secret matrix; SECURITY.md, SPEC.md, --help and llms.txt state it.
 
 ---
+
+### #416: the Python test harness tests its own copies, not the shipped suite
+
+Found by #410 part D.  `CryptosuiteTests/Herradura_tests.py` imports nothing from
+`Herradura cryptographic suite.py`.  It reimplements 79 of the suite's functions, among them
+every verifier its numbered tests exercise: `_zkp_nl_verify`, `hcred_verify`,
+`hpks_stern_f_verify`, `_rnl_sigma_verify`, the NL-FSCX rounds and `gf_pow`.  Its
+`[FAIL]`-gated results therefore hold the COPY to its own expectations.  #409 is what
+that costs: the harness's ZKBoo copy had the shipped bug and its tests passed.  C's harness
+uses `herradura.h`, Go's the package and Java's `SelfTest` the shipped classes, so
+Python is the one port whose numbered tests do not test what ships.  `SecurityProofsCode/`
+has the same split: about 20 scripts load the shipped suite on purpose, and the rest carry
+models (`zkp_pqc_exploration.py`'s was #409's other blind spot).
+
+To do:
+1. List every harness function that shadows a suite function.
+2. Either import the suite's function, or add a parity check that fails when the two
+   diverge on the same inputs: for a randomised prover, cross-verify both ways and
+   compare verdicts on the matrix's wrong-secret artifacts.
+3. Do the same for every `SecurityProofsCode/` model whose verdict SecurityProofs cites
+   about a shipped protocol.
+4. Record the rule in CLAUDE.md's "Rules for writing tests".
+
+Done (v21.0.2).  `CryptosuiteTests/check_suite_parity.py` holds every re-implemented
+copy to the shipped suite: (1) a census classifies all 72 name-shadows; (2) each
+deterministic primitive is compared on shared inputs; (3) the verifiers (hpks_stern_f,
+ZKBoo zkp_nl) are cross-verified both ways with wrong-statement/tamper rejection asserted
+against the SHIPPED verifier -- not just agreement, which a shared bug (the #409 class)
+would pass.  It FOUND two real drifts in the harness Stern copy -- `_stern_gen_perm` was
+the pre-#129 version (modulo bias) and the FS challenge was full-256-bit `% 3` not the
+suite's low-32-bit form, in sign/verify/ring -- both synced so [17]/[20]/[53] now exercise
+what ships.  Item 3 (SecurityProofsCode): no self-contained script shadows a shipped
+verifier by name, and the "null is a model, unchecked" risk is already governed by
+run_findings_gates.py's MEASURED-null rule for `follows` gates (#304).  Item 4: rule added
+to CLAUDE.md.  Run by native-python-cli and tools/check_fast.sh.
+
+Status: **DONE v21.0.2** — check_suite_parity.py holds the harness copies to the suite; found and fixed two Stern drifts; CLAUDE.md rule added.
+
+---

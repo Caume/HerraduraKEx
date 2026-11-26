@@ -87,32 +87,6 @@ Status: **OPEN**
 
 ---
 
-### #416: the Python test harness tests its own copies, not the shipped suite
-
-Found by #410 part D.  `CryptosuiteTests/Herradura_tests.py` imports nothing from
-`Herradura cryptographic suite.py`.  It reimplements 79 of the suite's functions, among them
-every verifier its numbered tests exercise: `_zkp_nl_verify`, `hcred_verify`,
-`hpks_stern_f_verify`, `_rnl_sigma_verify`, the NL-FSCX rounds and `gf_pow`.  Its
-`[FAIL]`-gated results therefore hold the COPY to its own expectations.  #409 is what
-that costs: the harness's ZKBoo copy had the shipped bug and its tests passed.  C's harness
-uses `herradura.h`, Go's the package and Java's `SelfTest` the shipped classes, so
-Python is the one port whose numbered tests do not test what ships.  `SecurityProofsCode/`
-has the same split: about 20 scripts load the shipped suite on purpose, and the rest carry
-models (`zkp_pqc_exploration.py`'s was #409's other blind spot).
-
-To do:
-1. List every harness function that shadows a suite function.
-2. Either import the suite's function, or add a parity check that fails when the two
-   diverge on the same inputs: for a randomised prover, cross-verify both ways and
-   compare verdicts on the matrix's wrong-secret artifacts.
-3. Do the same for every `SecurityProofsCode/` model whose verdict SecurityProofs cites
-   about a shipped protocol.
-4. Record the rule in CLAUDE.md's "Rules for writing tests".
-
-Status: **OPEN**
-
----
-
 ### #411: a general security review of the shipped code
 
 The project has had targeted audits: the constant-time audits (#129, #182, #249), the parser

@@ -265,6 +265,16 @@ themselves, and **any `[FAIL]` fails the build**.
   verdict fingerprints and sampled-test rates.  That is intended — file the row it asks for
   rather than working around it.  Rates in `_SAMPLED_TEST_RATES` are EXPRESSIONS over
   constants read from source; do not hand-compute them.
+- **The Python harness re-implements the suite; hold every copy to what ships**
+  (`CryptosuiteTests/check_suite_parity.py`, TODO #416).  `CryptosuiteTests/Herradura_tests.py`
+  is standalone by design, so its `[FAIL]`-gated tests hold the COPY to its own
+  expectations — C/Go/Java call the shipped code, Python does not.  #409 is the cost: the
+  harness's ZKBoo copy carried the shipped bug and passed.  So a new harness function whose
+  NAME shadows a suite function must be classified in that checker (PARITY / RANDOMIZED /
+  HELPER), a deterministic copy is compared to the suite on shared inputs, and a verifier
+  is cross-verified BOTH WAYS with wrong-statement/tamper rejection asserted against the
+  SHIPPED verifier — never only against the copy.  A pure agreement check is not enough: a
+  bug both copies share passes it, which is exactly #409.
 - **If a gate flakes, fix that gate's threshold** (replicate per #299) — never add
   `continue-on-error` to make a red run pass.
 - When a TODO adds or removes a test number or CLI subcommand, re-check this section and

@@ -320,6 +320,17 @@ jobs:
       - name: cross-document consistency (README / INTRODUCTION / CHANGELOG vs. sources)
         run: python3 spec/check_docs_consistency.py
 
+      # TODO #416. The Python harness re-implements the suite's functions rather
+      # than importing them, so its [FAIL]-gated numbered tests hold the COPY to
+      # its own expectations (C/Go/Java call the shipped code). This holds every
+      # re-implemented copy to the shipped suite: a census forces each name-shadow
+      # to be classified, every primitive is compared on shared inputs, and each
+      # verifier is cross-verified both ways with wrong-statement/tamper rejection
+      # asserted against the SHIPPED verifier (the #409 class). It found the
+      # harness's Stern permutation and challenge width had drifted from shipped.
+      - name: Python harness parity with the shipped suite
+        run: python3 CryptosuiteTests/check_suite_parity.py
+
       # TODO #341. tools/check_fast.sh runs the cheap checks above (and the KAT
       # currency checks the CliTest scripts run) locally in one command. This
       # step does not re-run them; it holds the script's list to this file in

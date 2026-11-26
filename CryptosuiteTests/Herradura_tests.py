@@ -647,13 +647,28 @@ def _stern_syndrome(seed_int: int, e_int: int, n: int, n_rows: int) -> int:
     return s
 
 def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
-    n    = pi_seed.size
-    key  = pi_seed.rotated(n // 8)
-    perm = list(range(N))
-    st   = pi_seed.copy()
+    # Counter-mode + Lemire multiply-shift, bit-identical with the shipped suite
+    # and the C/Go ports (CT-01, TODO #129): consume all n/8 bytes of each state
+    # block as sequential 32-bit draws before advancing, and map each to [0,
+    # range) via (v*range)>>32.  This harness carried the pre-#129 copy (advance
+    # every swap, modulo bias) until TODO #416 synced it; check_suite_parity.py
+    # now holds it to the suite.
+    n       = pi_seed.size
+    nb      = n // 8
+    key     = pi_seed.rotated(n // 8)
+    perm    = list(range(N))
+    st      = pi_seed.copy()
+    buf     = b'\x00' * nb
+    cursor  = nb                               # force a state advance on the first draw
     for i in range(N - 1, 0, -1):
-        st = nl_fscx_v1(st, key)
-        perm[i], perm[st.uint % (i + 1)] = perm[st.uint % (i + 1)], perm[i]
+        range_ = i + 1
+        if cursor + 4 > nb:
+            st     = nl_fscx_v1(st, key)
+            buf    = st.bytes
+            cursor = 0
+        v       = int.from_bytes(buf[cursor:cursor + 4], 'big')
+        cursor += 4
+        perm[i], perm[(v * range_) >> 32] = perm[(v * range_) >> 32], perm[i]
     return perm
 
 def _stern_apply_perm(perm: list, v_int: int, N: int) -> int:
@@ -705,7 +720,7 @@ def hpks_stern_f_sign(msg, e_int, seed, syndrome, n, rounds):
     ch_st = _stern_hash(n, *flat); challenges = []
     for i in range(rounds):
         ch_st = nl_fscx_v1(ch_st, BitArray(n, i))
-        challenges.append(ch_st.uint % 3)
+        challenges.append((ch_st.uint & 0xFFFFFFFF) % 3)  # low 32 bits, matching the suite (TODO #416)
     responses = []
     for i, (r_int, y_int, pi_seed, _Hr, sr, sy) in enumerate(round_data):
         b = challenges[i]
@@ -723,7 +738,7 @@ def hpks_stern_f_verify(msg, sig, seed, syndrome, n):
     ch_st = _stern_hash(n, *flat)
     for i, b in enumerate(challenges):
         ch_st = nl_fscx_v1(ch_st, BitArray(n, i))
-        if ch_st.uint % 3 != b: return False
+        if (ch_st.uint & 0xFFFFFFFF) % 3 != b: return False  # TODO #416: low 32 bits
     for i, b in enumerate(challenges):
         c0, c1, c2 = commits[i]; resp = responses[i]
         if b == 0:
@@ -835,7 +850,7 @@ def _ring_stern_challenges(rounds, k, msg, all_commits):
     joint = []
     for r in range(rounds):
         ch_st = nl_fscx_v1(ch_st, BitArray(n, r))
-        joint.append(ch_st.uint % 3)
+        joint.append((ch_st.uint & 0xFFFFFFFF) % 3)  # TODO #416: low 32 bits, matching the suite
     return joint
 
 

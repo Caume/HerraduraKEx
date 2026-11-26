@@ -31,6 +31,7 @@ COMMANDS=(
   "python3 spec/check_security_md.py"
   "python3 spec/check_language_parity.py"
   "python3 spec/check_docs_consistency.py"
+  "python3 CryptosuiteTests/check_suite_parity.py"
   "python3 SecurityProofsCode/check_part_index.py --require-counts"
   "python3 tools/check_runnable_coverage.py"
   "python3 tools/check_docker_mirror.py"
