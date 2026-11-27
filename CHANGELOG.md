@@ -2,7 +2,7 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
-## [20.0.0] - 2026-11-26
+## [20.0.0] - 2026-11-27
 
 **One release for sixteen development steps (TODO #410–#425, and #415's redesign of
 HPKS-Ring), eight of them breaking.**  Each breaking change has its own MIGRATING.md
